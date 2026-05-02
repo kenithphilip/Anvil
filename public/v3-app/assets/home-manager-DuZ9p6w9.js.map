@@ -1,1 +1,0 @@
-{"version":3,"file":"home-manager-DuZ9p6w9.js","sources":["../../../src/v3-app/screens/home-manager.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"My Day (Manager)\");\n"],"names":["homeManager","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,kBAAkB"}

@@ -1,1 +1,0 @@
-{"version":3,"file":"audit-9DEk9RMU.js","sources":["../../../src/v3-app/screens/audit.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Audit Log\");\n"],"names":["audit","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,WAAW"}

@@ -1,139 +1,149 @@
-// Orders screen, ESM port. Lists every order with stage chip + age + value.
-// Search box filters in place. Click a row to navigate to the legacy SO
-// Workspace by changing the hash; the legacy app picks it up. (Sub-PR 2
-// brings the workspace itself across.)
-
-import React, { useMemo, useState } from "react";
-import { ObaraBackend } from "../lib/api.js";
-import { useFetch, ageLabel, fmtINRShort, stageOf } from "../lib/helpers.js";
-import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives.jsx";
+import React, { useEffect, useState } from "react";
+import { ageLabel, fmtINRShort, sevOf, stageOf } from "../lib/helpers.js";
+import { Banner, Btn, Card, Chip, KPI, KPIRow, Sev, WSTabs, WSTitle } from "../lib/primitives.jsx";
 import { Icon } from "../lib/icons.jsx";
+import { ObaraBackend } from "../lib/api.js";
 
-const rowsOf = (resp) => {
-  if (!resp) return [];
-  if (Array.isArray(resp)) return resp;
-  if (Array.isArray(resp.orders)) return resp.orders;
-  if (Array.isArray(resp.rows)) return resp.rows;
-  return [];
-};
+// ============================================================
+// ANVIL v3 — wired Sales Orders list
+// ============================================================
 
-export default function Orders() {
-  const orders = useFetch(() => ObaraBackend?.orders?.list?.({ limit: 200 }) || Promise.resolve([]), []);
-  const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
+const WiredSOList = () => {
+  const { useState: u, useEffect: e } = React;
+  const [orders, setOrders] = u({ rows: [], loading: true, error: null });
+  const [active, setActive] = u("all");
+  const [query, setQuery] = u("");
 
-  const rows = rowsOf(orders.data);
+  e(() => {
+    let cancel = false;
+    setOrders((s) => ({ ...s, loading: true }));
+    Promise.resolve(ObaraBackend?.orders?.list?.({ limit: 200 }) || [])
+      .then((data) => {
+        if (cancel) return;
+        const rows = Array.isArray(data) ? data : (data?.rows || []);
+        setOrders({ rows, loading: false, error: null });
+      })
+      .catch((err) => { if (!cancel) setOrders({ rows: [], loading: false, error: err }); });
+    return () => { cancel = true; };
+  }, []);
 
-  const allStatuses = useMemo(() => {
-    const s = new Set();
-    for (const r of rows) if (r.status) s.add(r.status);
-    return Array.from(s).sort();
-  }, [rows]);
+  const tabs = [
+    { id: "all",      label: "All",        match: () => true },
+    { id: "mine",     label: "Mine",       match: (_o) => true /* TODO: when user id is plumbed, filter by owner */ },
+    { id: "intake",   label: "Intake",     match: (o) => o.status === "DRAFT" },
+    { id: "validate", label: "Validate",   match: (o) => o.status === "PENDING_REVIEW" },
+    { id: "approval", label: "Approval",   match: (o) => o.status === "APPROVED" },
+    { id: "tally",    label: "Tally",      match: (o) => o.status === "EXPORTED_TO_TALLY" || o.status === "FAILED_TALLY_IMPORT" },
+    { id: "shipped",  label: "Shipped",    match: (o) => o.status === "RECONCILED" },
+    { id: "blocked",  label: "Blocked",    match: (o) => o.status === "BLOCKED" || o.status === "DUPLICATE" },
+    { id: "closed",   label: "Closed",     match: (o) => o.status === "CANCELLED" },
+  ];
 
-  const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (statusFilter && r.status !== statusFilter) return false;
-      if (!needle) return true;
-      const hay = [
-        r.po_number,
-        r.customer_name,
-        r.customer?.customer_name,
-        r.id,
-        r.notes,
-      ].filter(Boolean).join(" ").toLowerCase();
-      return hay.includes(needle);
+  const filtered = (orders.rows || [])
+    .filter(tabs.find((t) => t.id === active)?.match || (() => true))
+    .filter((o) => {
+      if (!query) return true;
+      const q = query.toLowerCase();
+      return (
+        (o.po_number || "").toLowerCase().includes(q) ||
+        (o.quote_number || "").toLowerCase().includes(q) ||
+        (o.customer?.customer_name || "").toLowerCase().includes(q) ||
+        (o.id || "").toLowerCase().includes(q)
+      );
     });
-  }, [rows, q, statusFilter]);
 
-  const totalValue = filtered.reduce((sum, r) => sum + (Number(r.grand_total) || 0), 0);
+  const counts = Object.fromEntries(tabs.map((t) => [t.id, (orders.rows || []).filter(t.match).length]));
 
-  if (orders.loading) {
-    return (
-      <div className="ws ws-no-rail">
-        <WSTitle eyebrow="Sales" title="Sales orders" meta="loading…" />
-        <div className="ws-content"><Card><div className="body">Loading orders…</div></Card></div>
-      </div>
-    );
-  }
-
-  if (orders.error) {
-    return (
-      <div className="ws ws-no-rail">
-        <WSTitle eyebrow="Sales" title="Sales orders" meta="error" />
-        <div className="ws-content">
-          <Banner kind="bad" icon={Icon.alert} title="Could not load orders"
-                  action={<Btn sm onClick={orders.reload}>Retry</Btn>}>
-            <span className="mono-sm">{String(orders.error.message || orders.error)}</span>
-          </Banner>
-        </div>
-      </div>
-    );
-  }
+  // Aggregate KPIs
+  const total = (orders.rows || []).length;
+  const inFlight = (orders.rows || []).filter((o) => !["RECONCILED", "CANCELLED"].includes(o.status)).length;
+  const sumValue = (orders.rows || [])
+    .filter((o) => o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED")
+    .reduce((s, o) => s + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
+  const blocked = (orders.rows || []).filter((o) => o.status === "BLOCKED").length;
 
   return (
     <>
       <WSTitle
-        eyebrow="Sales"
-        title="Sales orders"
-        meta={`${filtered.length} of ${rows.length} · ${fmtINRShort(totalValue)}`}
-        right={<Btn icon kind="ghost" sm onClick={orders.reload} title="Refresh">{Icon.cycle}</Btn>}
+        eyebrow="Workflows · Sales Orders"
+        title="Sales Orders"
+        meta={`${total} total · ${inFlight} active`}
+        right={<>
+          <input className="input" placeholder="search reference, customer…" value={query}
+                 onChange={(ev) => setQuery(ev.target.value)} style={{ width: 260, height: 28 }} />
+          <Btn sm kind="ghost" onClick={() => setOrders((s) => ({ ...s, loading: true })) || ObaraBackend?.orders?.list?.({ limit: 200 }).then((d) => setOrders({ rows: Array.isArray(d) ? d : (d?.rows || []), loading: false, error: null }))}>{Icon.cycle} refresh</Btn>
+          <Btn sm kind="primary" onClick={() => window.location.hash = "#/intake"}>{Icon.plus} New from PO</Btn>
+        </>}
+      />
+      <WSTabs
+        tabs={tabs.map((t) => ({ id: t.id, label: t.label, count: counts[t.id] }))}
+        active={active}
+        onChange={setActive}
       />
 
       <div className="ws-content">
-        <KPIRow cols={3}>
-          <KPI lbl="Total" v={String(rows.length)} d="last 200" />
-          <KPI lbl="Filtered" v={String(filtered.length)} d={q || statusFilter ? "filtered view" : "no filter"} />
-          <KPI lbl="Value" v={fmtINRShort(totalValue)} d="filtered sum" />
+        <KPIRow cols={4}>
+          <KPI lbl="Total" v={String(total)} d="all-time in scope" />
+          <KPI lbl="In flight" v={String(inFlight)} d="not yet shipped" live={inFlight > 0} />
+          <KPI lbl="₹ pushed" v={fmtINRShort(sumValue)} d="completed orders" dKind="up" />
+          <KPI lbl="Blocked" v={String(blocked)} d="needs attention" dKind={blocked ? "down" : ""} />
         </KPIRow>
 
+        {orders.error ? (
+          <Banner kind="bad" icon={Icon.alert} title="Failed to load orders">
+            <span className="mono-sm">{String(orders.error.message || orders.error)}</span>
+          </Banner>
+        ) : null}
+
         <Card flush>
-          <div style={{ display: "flex", gap: 8, padding: 8, borderBottom: "1px solid var(--hairline, #2a2a2a)" }}>
-            <input
-              type="search"
-              placeholder="Search PO / customer / notes"
-              value={q}
-              onChange={(ev) => setQ(ev.target.value)}
-              style={{ flex: 1, padding: "6px 8px" }}
-            />
-            <select value={statusFilter} onChange={(ev) => setStatusFilter(ev.target.value)}>
-              <option value="">all statuses</option>
-              {allStatuses.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
-          {filtered.length === 0 ? (
-            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-              No orders match the filter.
+          <table className="tbl">
+            <thead><tr>
+              <th style={{ width: 22 }}></th>
+              <th>Reference</th>
+              <th>Customer</th>
+              <th>Mode</th>
+              <th>Stage</th>
+              <th className="r">Lines</th>
+              <th className="r">Value</th>
+              <th className="r">Updated</th>
+            </tr></thead>
+            <tbody>
+              {orders.loading ? (
+                <tr><td colSpan={8} className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading orders…</td></tr>
+              ) : filtered.length === 0 ? (
+                <tr><td colSpan={8} className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+                  No orders in this view. {active !== "all" && <a onClick={() => setActive("all")} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>show all</a>}
+                </td></tr>
+              ) : filtered.slice(0, 100).map((o) => {
+                const st = stageOf(o.status);
+                const lines = (o.result?.salesOrder?.lineItems || []).length;
+                const value = Number(o.result?.salesOrder?.grandTotal) || 0;
+                const mode = o.order_mode || (o.result?.salesOrder?.mode) || "—";
+                return (
+                  <tr key={o.id} onClick={() => window.location.hash = `#/so?id=${o.id}`} style={{ cursor: "pointer" }}>
+                    <td><Sev k={sevOf(o)} /></td>
+                    <td className="mono"><span className="pri">{o.po_number || o.quote_number || "draft"}</span></td>
+                    <td>{o.customer?.customer_name || "—"}<div className="mono-sm">{o.customer?.state_code || ""}</div></td>
+                    <td><Chip k={mode === "INTERNAL" ? "plum" : mode.startsWith("PROJECT") ? "info" : "ghost"}>{mode}</Chip></td>
+                    <td><Chip k={st.k}>{st.label}</Chip></td>
+                    <td className="r mono">{lines || "—"}</td>
+                    <td className="r mono">{value ? fmtINRShort(value) : "—"}</td>
+                    <td className="r mono">{ageLabel(o.updated_at || o.created_at)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {filtered.length > 100 && (
+            <div className="mono-sm" style={{ padding: 12, textAlign: "center", color: "var(--ink-3)", borderTop: "1px solid var(--hairline-2)" }}>
+              Showing 100 of {filtered.length} · refine the search to narrow.
             </div>
-          ) : (
-            <table className="tbl">
-              <thead><tr>
-                <th>PO number</th>
-                <th>Customer</th>
-                <th>Status</th>
-                <th className="r">Value</th>
-                <th>Age</th>
-              </tr></thead>
-              <tbody>
-                {filtered.map((r) => {
-                  const chip = stageOf(r.status);
-                  return (
-                    <tr key={r.id}
-                        style={{ cursor: "pointer" }}
-                        onClick={() => { window.location.hash = `#/so?id=${r.id}`; }}>
-                      <td className="mono"><span className="pri">{r.po_number || r.id?.slice(0, 8) || "—"}</span></td>
-                      <td>{r.customer_name || r.customer?.customer_name || "—"}</td>
-                      <td><Chip k={chip.k}>{chip.label}</Chip></td>
-                      <td className="r mono">{r.grand_total != null ? fmtINRShort(r.grand_total) : "—"}</td>
-                      <td className="mono-sm">{r.created_at ? ageLabel(r.created_at) : "—"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
           )}
         </Card>
       </div>
     </>
   );
-}
+};
+
+
+export default WiredSOList;

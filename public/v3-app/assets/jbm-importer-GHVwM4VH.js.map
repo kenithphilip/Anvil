@@ -1,1 +1,0 @@
-{"version":3,"file":"jbm-importer-GHVwM4VH.js","sources":["../../../src/v3-app/screens/jbm-importer.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"JBM Importer\");\n"],"names":["jbmImporter","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,cAAc"}

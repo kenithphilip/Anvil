@@ -1,1 +1,0 @@
-{"version":3,"file":"leads-DZSHb8xD.js","sources":["../../../src/v3-app/screens/leads.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Leads\");\n"],"names":["leads","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,OAAO"}

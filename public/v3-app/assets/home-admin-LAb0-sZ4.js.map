@@ -1,1 +1,0 @@
-{"version":3,"file":"home-admin-LAb0-sZ4.js","sources":["../../../src/v3-app/screens/home-admin.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"My Day (Admin)\");\n"],"names":["homeAdmin","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,gBAAgB"}

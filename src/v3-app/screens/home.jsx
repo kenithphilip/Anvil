@@ -1,39 +1,57 @@
-// Home screen, ESM port. Proves the ESM chain: api + helpers + primitives.
-// Wraps the same ObaraBackend.orders.list / audit.list calls the legacy
-// wired-home.jsx uses and renders the same KPI row + recent orders + audit
-// stream layout, sized down to what's needed to demonstrate the pattern.
-
-import React from "react";
-import { ObaraBackend } from "../lib/api.js";
-import { useFetch, ageLabel, fmtINRShort, stageOf } from "../lib/helpers.js";
-import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle, Stream } from "../lib/primitives.jsx";
+import React, { useEffect, useState } from "react";
+import { ageLabel, fmtINRShort, sevOf, stageOf, useFetch } from "../lib/helpers.js";
+import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Sev, Stream, WSTitle } from "../lib/primitives.jsx";
 import { Icon } from "../lib/icons.jsx";
+import { ObaraBackend } from "../lib/api.js";
+import { RBAC } from "../lib/rbac.js";
+import { Prefs } from "../lib/preferences.js";
 
-const rowsOf = (resp) => {
-  if (!resp) return [];
-  if (Array.isArray(resp)) return resp;
-  if (Array.isArray(resp.orders)) return resp.orders;
-  if (Array.isArray(resp.rows)) return resp.rows;
-  return [];
-};
+// ============================================================
+// ANVIL v3 — wired Home screens
+// Replaces the static demo HomeEngineer/HomeManager/HomeAdmin
+// with live data via ObaraBackend.* methods.
+// ============================================================
 
-const auditOf = (resp) => {
-  if (!resp) return [];
-  if (Array.isArray(resp)) return resp;
-  if (Array.isArray(resp.events)) return resp.events;
-  if (Array.isArray(resp.rows)) return resp.rows;
-  return [];
-};
+// (React hooks imported from 'react')
+// ─────────────────────────────────────────────────────────────
+// useFetch: tiny hook that runs a thunk on mount, exposes
+// { data, error, loading, reload }. Avoids pulling in a state library.
+// ─────────────────────────────────────────────────────────────
 
-export default function Home() {
+// Format a relative age like "14m" / "2h" / "1d 3h"
+
+
+
+
+// ─────────────────────────────────────────────────────────────
+// HomeEngineer (wired) — replaces the static demo of the same name.
+// ─────────────────────────────────────────────────────────────
+const WiredHomeEngineer = () => {
   const orders = useFetch(() => ObaraBackend?.orders?.list?.({ limit: 50 }) || Promise.resolve([]), []);
-  const audit  = useFetch(() => ObaraBackend?.audit?.list?.({ limit: 6 }) || Promise.resolve([]), []);
+  const audit = useFetch(() => ObaraBackend?.audit?.list?.({ limit: 6 }) || Promise.resolve([]), []);
+
+  const list = Array.isArray(orders.data) ? orders.data : (orders.data?.rows || []);
+
+  const myQueue = list
+    .filter((o) => o.status !== "RECONCILED" && o.status !== "CANCELLED")
+    .slice(0, 8);
+
+  const drafts = list.filter((o) => o.status === "DRAFT").length;
+  const inApproval = list.filter((o) => o.status === "PENDING_REVIEW").length;
+  const pushedToday = list.filter((o) => {
+    if (o.status !== "EXPORTED_TO_TALLY" && o.status !== "RECONCILED") return false;
+    const t = o.updated_at || o.created_at;
+    return t && new Date(t).toDateString() === new Date().toDateString();
+  });
+  const pushedValueToday = pushedToday.reduce((sum, o) => sum + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
+
+  const auditRows = (Array.isArray(audit.data) ? audit.data : (audit.data?.rows || [])).slice(0, 6);
 
   if (orders.loading) {
     return (
       <div className="ws ws-no-rail">
-        <WSTitle eyebrow="Home" title="Anvil" meta="loading…" />
-        <div className="ws-content"><Card><div className="body">Loading orders…</div></Card></div>
+        <WSTitle eyebrow="loading" title="Good morning." meta="fetching live state" />
+        <div className="ws-content"><Card><div className="body">Loading queue…</div></Card></div>
       </div>
     );
   }
@@ -41,10 +59,9 @@ export default function Home() {
   if (orders.error) {
     return (
       <div className="ws ws-no-rail">
-        <WSTitle eyebrow="Home" title="Anvil" meta="error" />
+        <WSTitle eyebrow="error" title="Could not load queue" meta="check Backend connection in Admin" />
         <div className="ws-content">
-          <Banner kind="bad" icon={Icon.alert} title="Could not load orders"
-                  action={<Btn sm onClick={orders.reload}>Retry</Btn>}>
+          <Banner kind="bad" icon={Icon.alert} title="Backend unreachable" action={<Btn sm onClick={orders.reload}>Retry</Btn>}>
             <span className="mono-sm">{String(orders.error.message || orders.error)}</span>
           </Banner>
         </div>
@@ -52,75 +69,111 @@ export default function Home() {
     );
   }
 
-  const rows = rowsOf(orders.data);
-  const auditRows = auditOf(audit.data);
-
-  const total = rows.length;
-  const blocked = rows.filter((r) => r.status === "BLOCKED" || r.status === "FAILED_TALLY_IMPORT").length;
-  const pending = rows.filter((r) => r.status === "PENDING_REVIEW" || r.status === "DUPLICATE").length;
-  const totalValue = rows.reduce((sum, r) => sum + (Number(r.grand_total) || 0), 0);
-
   return (
     <>
       <WSTitle
-        eyebrow="Home"
-        title="Anvil v3 (vite)"
-        meta={`${total} orders · ${blocked} blocked`}
-        right={<Btn icon kind="ghost" sm onClick={orders.reload} title="Refresh">{Icon.cycle}</Btn>}
+        eyebrow={new Date().toLocaleString("en-IN", { weekday: "long", hour: "2-digit", minute: "2-digit" })}
+        title="Good morning."
+        meta={`${list.length} orders in scope · ${myQueue.length} awaiting action`}
+        right={<>
+          <Btn icon kind="ghost" sm onClick={orders.reload} title="Refresh">{Icon.cycle}</Btn>
+          <Btn kind="primary" sm onClick={() => window.location.hash = "#/intake"}>{Icon.plus} New SO</Btn>
+        </>}
       />
 
       <div className="ws-content">
+        {myQueue.length > 0 && (
+          <Banner kind="live" icon={Icon.bolt}
+                  title={`${myQueue.length} order${myQueue.length === 1 ? "" : "s"} in your queue · oldest ${ageLabel(myQueue[0]?.updated_at || myQueue[0]?.created_at)}`}
+                  action={<Btn sm kind="live" onClick={() => window.location.hash = "#/so"}>Open queue</Btn>}>
+            <span className="mono-sm">First up: {myQueue[0]?.po_number || myQueue[0]?.quote_number || "draft"} · {myQueue[0]?.customer?.customer_name || ""}</span>
+          </Banner>
+        )}
+
         <KPIRow cols={4}>
-          <KPI lbl="Orders" v={String(total)} d="last 50" />
-          <KPI lbl="Blocked" v={String(blocked)} d="needs action" dKind={blocked > 0 ? "down" : ""} live={blocked > 0} />
-          <KPI lbl="Pending review" v={String(pending)} d="validate / dedupe" />
-          <KPI lbl="Order value" v={fmtINRShort(totalValue)} d="last 50 sum" />
+          <KPI lbl="My queue" v={String(myQueue.length)} d={myQueue.length ? `oldest ${ageLabel(myQueue[0]?.updated_at)}` : "all clear"} live={myQueue.length > 0} />
+          <KPI lbl="Drafts" v={String(drafts)} d="autosaved locally" />
+          <KPI lbl="In approval" v={String(inApproval)} d={inApproval ? "pending review" : "none pending"} />
+          <KPI lbl="Pushed today" v={fmtINRShort(pushedValueToday)} d={`${pushedToday.length} SOs`} dKind={pushedToday.length ? "up" : ""} />
         </KPIRow>
 
-        <Card title="Recent orders" eyebrow="newest first" flush>
-          {rows.length === 0 ? (
-            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-              No orders yet.
+        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 14 }}>
+          <Card flush>
+            <div style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: "1px solid var(--hairline-2)" }}>
+              <span className="h2">My Queue</span>
+              <Chip k="live" lg>{myQueue.length} items</Chip>
+              <span style={{ marginLeft: "auto" }} className="mono-sm">live · {new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span>
             </div>
-          ) : (
-            <table className="tbl">
-              <thead><tr>
-                <th>PO number</th>
-                <th>Customer</th>
-                <th>Status</th>
-                <th className="r">Value</th>
-                <th>Created</th>
-              </tr></thead>
-              <tbody>
-                {rows.slice(0, 25).map((r) => {
-                  const chip = stageOf(r.status);
-                  return (
-                    <tr key={r.id}>
-                      <td className="mono"><span className="pri">{r.po_number || r.id?.slice(0, 8) || "—"}</span></td>
-                      <td>{r.customer_name || r.customer?.customer_name || "—"}</td>
-                      <td><Chip k={chip.k}>{chip.label}</Chip></td>
-                      <td className="r mono">{r.grand_total != null ? fmtINRShort(r.grand_total) : "—"}</td>
-                      <td className="mono-sm">{r.created_at ? ageLabel(r.created_at) : "—"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </Card>
+            {myQueue.length === 0 ? (
+              <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+                Nothing in your queue. <a onClick={() => window.location.hash = "#/intake"} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>Create a new SO</a>
+              </div>
+            ) : (
+              <table className="tbl">
+                <thead><tr>
+                  <th style={{ width: 22 }}></th>
+                  <th>Reference</th>
+                  <th>Customer</th>
+                  <th>Stage</th>
+                  <th className="r">Value</th>
+                  <th className="r">Age</th>
+                  <th style={{ width: 80 }}></th>
+                </tr></thead>
+                <tbody>
+                  {myQueue.map((o, i) => {
+                    const st = stageOf(o.status);
+                    const value = Number(o.result?.salesOrder?.grandTotal) || 0;
+                    return (
+                      <tr key={o.id || i}>
+                        <td><Sev k={sevOf(o)} /></td>
+                        <td className="mono"><span className="pri">{o.po_number || o.quote_number || "draft"}</span></td>
+                        <td>{o.customer?.customer_name || o.customer_id?.slice(0, 8) || "—"}</td>
+                        <td><Chip k={st.k}>{st.label}</Chip></td>
+                        <td className="r mono">{value ? fmtINRShort(value) : "—"}</td>
+                        <td className="r mono">{ageLabel(o.updated_at || o.created_at)}</td>
+                        <td><Btn sm onClick={() => window.location.hash = `#/so?id=${o.id}`}>open {Icon.arrowR}</Btn></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </Card>
 
-        <Card title="Recent activity" eyebrow="audit + system events">
-          {auditRows.length === 0 ? (
-            <div className="body" style={{ color: "var(--ink-3)" }}>No recent activity.</div>
-          ) : (
-            <Stream rows={auditRows.slice(0, 10).map((a) => ({
-              t: a.created_at ? ageLabel(a.created_at) : "—",
-              a: a.actor_email || a.actor_id || "system",
-              m: <span>{a.action || "event"} <span style={{ color: "var(--ink-3)" }}>{a.object_type || ""} {a.object_id?.slice(0, 8) || ""}</span></span>,
-            }))} />
-          )}
-        </Card>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <Card title="Live activity" eyebrow="last events"
+                  right={<Btn sm kind="ghost" onClick={() => window.location.hash = "#/audit"}>{Icon.history} log</Btn>}>
+              {audit.loading ? (
+                <div className="body">Loading…</div>
+              ) : auditRows.length === 0 ? (
+                <div className="mono-sm" style={{ color: "var(--ink-4)" }}>No recent activity.</div>
+              ) : (
+                <Stream rows={auditRows.map((a) => ({
+                  t: new Date(a.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+                  a: (a.action || "evt").toUpperCase().slice(0, 5),
+                  m: `<b>${a.action || "event"}</b> · ${a.object_type || ""} ${a.object_id ? a.object_id.slice(0, 8) : ""}`,
+                }))} />
+              )}
+            </Card>
+
+            <Card title="Backend" eyebrow="health">
+              <KV rows={[
+                ["Tenant", localStorage.getItem("obara:v3_tenant_code") || "OBARA-IN"],
+                ["Role", (RBAC?.role() || "—").replace(/_/g, " ")],
+                ["Session", ObaraBackend?.isReady?.() ? "live" : "anonymous"],
+                ["Theme", Prefs?.theme() || "—"],
+              ]} />
+            </Card>
+          </div>
+        </div>
       </div>
     </>
   );
-}
+};
+
+// Manager + Admin home: re-use the static demo for now (Phase 3 wires).
+// The app.jsx HomeRoute checks role → component, so wiring here just
+// shadows the engineer entry. Override window so app.jsx picks us up.
+
+
+export default WiredHomeEngineer;

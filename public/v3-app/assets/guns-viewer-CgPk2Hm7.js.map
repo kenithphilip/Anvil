@@ -1,1 +1,0 @@
-{"version":3,"file":"guns-viewer-CgPk2Hm7.js","sources":["../../../src/v3-app/screens/guns-viewer.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Guns Viewer\");\n"],"names":["gunsViewer","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,aAAa"}

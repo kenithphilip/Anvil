@@ -1,1 +1,0 @@
-{"version":3,"file":"items-CxvBb9fU.js","sources":["../../../src/v3-app/screens/items.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Item Master\");\n"],"names":["items","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,aAAa"}

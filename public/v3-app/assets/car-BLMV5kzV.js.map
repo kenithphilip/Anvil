@@ -1,1 +1,0 @@
-{"version":3,"file":"car-BLMV5kzV.js","sources":["../../../src/v3-app/screens/car.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"CAR Reports\");\n"],"names":["car","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,aAAa"}

@@ -1,1 +1,0 @@
-{"version":3,"file":"amc-CBrsW2A8.js","sources":["../../../src/v3-app/screens/amc.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"AMC Schedule\");\n"],"names":["amc","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,cAAc"}

@@ -1,1 +1,0 @@
-{"version":3,"file":"service-visits-BEEMaYEA.js","sources":["../../../src/v3-app/screens/service-visits.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Service Visits\");\n"],"names":["serviceVisits","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,gBAAgB"}

@@ -12,6 +12,7 @@ import { NAV, ROLES, crumbFor } from "./lib/nav.js";
 import { RBAC } from "./lib/rbac.js";
 import { Prefs } from "./lib/preferences.js";
 import { ObaraBackend } from "./lib/api.js";
+import { ToastStack } from "./lib/toasts.jsx";
 import { RESOLVERS, ROUTE_IDS, DEFAULT_ROUTE, readHashParams } from "./routes.js";
 
 const ROUTE_KEY = "obara:v3_route";
@@ -222,6 +223,7 @@ export default function App() {
       </Shell>
       <CmdK open={cmdkOpen} onClose={() => setCmdk(false)} onJump={(id) => { onRoute(id); setCmdk(false); }} />
       <ThreadDrawer open={threadOpen} onClose={() => setThread(false)} />
+      <ToastStack />
     </>
   );
 }

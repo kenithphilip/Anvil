@@ -1,1 +1,0 @@
-{"version":3,"file":"studio-DZDkowiZ.js","sources":["../../../src/v3-app/screens/studio.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Profile Studio\");\n"],"names":["studio","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,gBAAgB"}

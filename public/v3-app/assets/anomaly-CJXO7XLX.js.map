@@ -1,1 +1,0 @@
-{"version":3,"file":"anomaly-CJXO7XLX.js","sources":["../../../src/v3-app/screens/anomaly.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Anomaly Compute\");\n"],"names":["anomaly","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,iBAAiB"}

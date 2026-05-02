@@ -1,1 +1,0 @@
-{"version":3,"file":"comms-DaRaFdkh.js","sources":["../../../src/v3-app/screens/comms.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Communications\");\n"],"names":["comms","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,gBAAgB"}

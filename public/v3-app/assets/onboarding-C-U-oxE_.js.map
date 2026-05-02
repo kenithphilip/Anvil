@@ -1,1 +1,0 @@
-{"version":3,"file":"onboarding-C-U-oxE_.js","sources":["../../../src/v3-app/screens/onboarding.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Onboarding\");\n"],"names":["onboarding","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,YAAY"}

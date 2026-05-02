@@ -1,1 +1,0 @@
-{"version":3,"file":"spares-DunEaKV2.js","sources":["../../../src/v3-app/screens/spares.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Spares Matrix\");\n"],"names":["spares","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,eAAe"}

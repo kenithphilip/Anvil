@@ -1,1 +1,0 @@
-{"version":3,"file":"tally-masters-B2DeraUC.js","sources":["../../../src/v3-app/screens/tally-masters.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Tally Masters\");\n"],"names":["tallyMasters","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,eAAe"}

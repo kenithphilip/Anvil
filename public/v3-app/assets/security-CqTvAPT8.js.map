@@ -1,1 +1,0 @@
-{"version":3,"file":"security-CqTvAPT8.js","sources":["../../../src/v3-app/screens/security.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Security Center\");\n"],"names":["security","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,iBAAiB"}

@@ -1,1 +1,0 @@
-{"version":3,"file":"shipments-CaH-TTmt.js","sources":["../../../src/v3-app/screens/shipments.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Shipments\");\n"],"names":["shipments","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,WAAW"}

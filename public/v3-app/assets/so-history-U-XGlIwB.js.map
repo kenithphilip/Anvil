@@ -1,1 +1,0 @@
-{"version":3,"file":"so-history-U-XGlIwB.js","sources":["../../../src/v3-app/screens/so-history.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Sales Order History\");\n"],"names":["soHistory","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,qBAAqB"}

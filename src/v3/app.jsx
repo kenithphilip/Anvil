@@ -1,0 +1,246 @@
+// ============================================================
+// ANVIL v3 — App router
+// Mounts the v3 Shell + a route switch keyed on nav id.
+// Reads role from RBAC and filters the sidebar accordingly.
+// ============================================================
+
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
+
+const ROUTE_KEY = "obara:v3_route";
+
+// Map nav id → React component. Each component is a Window-exposed render
+// function from the screens-*.jsx files we copied alongside.
+const ROUTES = {
+  // Workflows
+  home:        () => <HomeRoute />,
+  intake:      () => (window.Inbox ? <Inbox /> : <Placeholder name="Inbox" />),
+  so:          () => (window.SOList ? <SOList /> : <Placeholder name="Sales Orders" />),
+  internal:    () => (window.InternalSOs ? <InternalSOs /> : <Placeholder name="Internal SOs" />),
+  approvals:   () => (window.Approvals ? <Approvals /> : <Placeholder name="Approvals" />),
+  // Sales
+  leads:       () => (window.Leads ? <Leads /> : <Placeholder name="Leads" />),
+  opps:        () => (window.Opportunities ? <Opportunities /> : <Placeholder name="Opportunities" />),
+  projects:    () => (window.Projects ? <Projects /> : <Placeholder name="Projects" />),
+  shipments:   () => (window.Shipments ? <Shipments /> : <Placeholder name="Shipments" />),
+  // Procurement
+  spo:         () => (window.SPOList ? <SPOList /> : (window.SourcePOs ? <SourcePOs /> : <Placeholder name="Source POs" />)),
+  spares:      () => (window.SparesMatrix ? <SparesMatrix /> : <Placeholder name="Spares Matrix" />),
+  // Service
+  "svc-visits":() => (window.ServiceVisits ? <ServiceVisits /> : <Placeholder name="Service Visits" />),
+  amc:         () => (window.AMCSchedule ? <AMCSchedule /> : <Placeholder name="AMC Schedule" />),
+  car:         () => (window.CARReports ? <CARReports /> : <Placeholder name="CAR Reports" />),
+  // Finance
+  tally:       () => (window.TallyPush ? <TallyPush /> : <Placeholder name="Tally Sync" />),
+  einvoice:    () => (window.EInvoice ? <EInvoice /> : <Placeholder name="e-Invoice" />),
+  cost:        () => (window.CostMargin ? <CostMargin /> : <Placeholder name="Cost & Margin" />),
+  // Data
+  customers:   () => (window.Customers ? <Customers /> : <Placeholder name="Customers" />),
+  items:       () => (window.Items ? <Items /> : <Placeholder name="Item Master" />),
+  graph:       () => (window.MasterDataGraph ? <MasterDataGraph /> : <Placeholder name="Master Data Graph" />),
+  forecasts:   () => (window.Forecasts ? <Forecasts /> : <Placeholder name="Forecasts" />),
+  // Quality
+  evals:       () => (window.EvalSuites ? <EvalSuites /> : <Placeholder name="Eval Suites" />),
+  studio:      () => (window.ProfileStudio ? <ProfileStudio /> : <Placeholder name="Profile Studio" />),
+  anomaly:     () => (window.Findings ? <Findings /> : <Placeholder name="Anomaly" />),
+  duplicates:  () => (window.Duplicates ? <Duplicates /> : <Placeholder name="Duplicates" />),
+  // Comms & Security
+  comms:       () => (window.Communications ? <Communications /> : <Placeholder name="Communications" />),
+  email:       () => (window.EmailTriage ? <EmailTriage /> : <Placeholder name="Email Triage" />),
+  security:    () => (window.Security ? <Security /> : <Placeholder name="Security Center" />),
+  // Admin
+  audit:       () => (window.AuditLog ? <AuditLog /> : <Placeholder name="Audit Log" />),
+  admin:       () => (window.AdminCenter ? <AdminCenter /> : <Placeholder name="Admin Center" />),
+};
+
+const Placeholder = ({ name }) => (
+  <div className="ws ws-no-rail" style={{ padding: 22 }}>
+    <WSTitle eyebrow="Coming soon" title={name} meta="this route is wired but the screen has not yet been imported" />
+    <div className="ws-content">
+      <Card>
+        <div className="body">
+          This nav id resolves to a screen module that has not been registered yet.
+          Implementation continues in Phase 3 of the v3 overhaul. In the meantime
+          the underlying API + table for this route already work via the legacy
+          shell (see <code>?v3=0</code>).
+        </div>
+      </Card>
+    </div>
+  </div>
+);
+
+// HomeRoute picks a role-appropriate home.
+const HomeRoute = () => {
+  const role = window.RBAC?.role() || "sales_engineer";
+  if (role === "sales_manager" && window.HomeManager) return <HomeManager />;
+  if (role === "admin" && window.HomeAdmin) return <HomeAdmin />;
+  if (window.HomeEngineer) return <HomeEngineer />;
+  return <Placeholder name="My Day" />;
+};
+
+// Build a breadcrumb from the active route id.
+const crumbFor = (navId) => {
+  const groups = (window.NAV || []).find((g) => g.items.some((i) => i.id === navId));
+  const item = groups?.items.find((i) => i.id === navId);
+  return groups && item ? ["Anvil", groups.label, item.label] : ["Anvil"];
+};
+
+// Forced rerender on RBAC + Prefs change so the Shell + filtered NAV
+// reflect the new state.
+const useRerenderOnEvents = (eventNames) => {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const bump = () => force((n) => n + 1);
+    eventNames.forEach((e) => window.addEventListener(e, bump));
+    return () => eventNames.forEach((e) => window.removeEventListener(e, bump));
+  }, [eventNames.join("|")]);
+};
+
+const App = () => {
+  useRerenderOnEvents(["rbac:change", "prefs:change", "popstate"]);
+
+  // Route state: read from URL hash if present, otherwise localStorage,
+  // default to home. Role + tenant pop-overs hidden for now (Phase 4).
+  const [route, setRoute] = useState(() => {
+    const hash = (window.location.hash || "").replace(/^#\/?/, "");
+    if (hash && ROUTES[hash]) return hash;
+    try { return localStorage.getItem(ROUTE_KEY) || "home"; } catch { return "home"; }
+  });
+
+  const onRoute = useCallback((id) => {
+    if (!ROUTES[id]) return;
+    if (window.RBAC && !window.RBAC.canRead(id)) {
+      console.warn(`[v3] role ${window.RBAC.role()} cannot access ${id}`);
+      return;
+    }
+    setRoute(id);
+    try { localStorage.setItem(ROUTE_KEY, id); } catch (_) {}
+    try { window.history.replaceState(null, "", `#/${id}`); } catch (_) {}
+  }, []);
+
+  // Cmd+K + Thread overlays
+  const [cmdkOpen, setCmdk] = useState(false);
+  const [threadOpen, setThread] = useState(false);
+
+  // Keyboard shortcut: Cmd+K / Ctrl+K opens the palette
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCmdk((v) => !v);
+      }
+      if (e.key === "Escape") {
+        setCmdk(false);
+        setThread(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Build a role-filtered NAV
+  const NAV_FILTERED = useMemo(() => {
+    if (!window.RBAC || !window.NAV) return window.NAV || [];
+    return window.RBAC.filterNav(window.NAV);
+  }, [window.RBAC?.role(), window.NAV]);
+
+  // If the current route is no longer accessible (role change), bounce to home
+  useEffect(() => {
+    if (!window.RBAC) return;
+    if (!window.RBAC.canRead(route)) onRoute("home");
+  }, [route, onRoute]);
+
+  const role = window.RBAC?.role() || "sales_engineer";
+  const roleObj = (window.ROLES || []).find((r) => r.id === role.split("_")[0]) ||
+                  { id: role, label: role.replace(/_/g, " "), short: role.slice(0, 3).toUpperCase() };
+
+  const Active = ROUTES[route] || (() => <Placeholder name="Unknown route" />);
+
+  return (
+    <>
+      <ShellInner
+        route={route}
+        onRoute={onRoute}
+        navFiltered={NAV_FILTERED}
+        role={roleObj}
+        onRoleChange={() => setCmdk(false) || promptRole()}
+        onCmdK={() => setCmdk(true)}
+        onThread={() => setThread(true)}
+        crumb={crumbFor(route)}
+      >
+        <Active />
+      </ShellInner>
+      {window.CmdK && <CmdK open={cmdkOpen} onClose={() => setCmdk(false)} onJump={(id) => { onRoute(id); setCmdk(false); }} />}
+      {window.ThreadDrawer && <ThreadDrawer open={threadOpen} onClose={() => setThread(false)} />}
+    </>
+  );
+};
+
+// Tiny role-picker that reuses the head-pill drop. Phase 4 replaces this
+// with a proper dropdown panel anchored to the role pill.
+function promptRole() {
+  const roles = (window.RBAC?.ROLES) || [];
+  const cur = window.RBAC?.role();
+  const list = roles.map((r, i) => `${i + 1}. ${r}${r === cur ? " (current)" : ""}`).join("\n");
+  const pick = window.prompt(`Switch role to:\n${list}\n\nEnter 1-${roles.length}:`);
+  const n = parseInt(pick, 10);
+  if (!isNaN(n) && n >= 1 && n <= roles.length) window.RBAC.setRole(roles[n - 1]);
+}
+
+// Wrap the design-system Shell with theme + density + tenant pills.
+// We don't modify shell.jsx itself so future v3 design-system updates can
+// drop in cleanly; this is a thin adapter layer.
+const ShellInner = ({ children, route, onRoute, navFiltered, role, onRoleChange, onCmdK, onThread, crumb }) => {
+  const tenant = { code: localStorage.getItem("obara:v3_tenant_code") || "OBARA-IN" };
+  return (
+    <Shell
+      route={route}
+      onRoute={onRoute}
+      role={role}
+      onRole={onRoleChange}
+      tenant={tenant}
+      onTenant={() => alert("Tenant switching requires admin role. See Admin Center.")}
+      onCmdK={onCmdK}
+      onThread={onThread}
+      crumb={crumb}
+      nav={navFiltered}
+    >
+      <ThemeBar />
+      {children}
+    </Shell>
+  );
+};
+
+// Floating bar in the dock area: theme toggle + density + rail collapse.
+const ThemeBar = () => {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const onChange = () => force((n) => n + 1);
+    window.addEventListener("prefs:change", onChange);
+    return () => window.removeEventListener("prefs:change", onChange);
+  }, []);
+  const theme = window.Prefs?.theme() || "dark";
+  const density = window.Prefs?.density() || "normal";
+  return (
+    <div style={{ position: "fixed", right: 16, bottom: 36, display: "flex", gap: 6, zIndex: 100 }}>
+      <button className="head-pill" title="Toggle theme" onClick={() => window.Prefs.toggleTheme()}>
+        {theme === "dark" ? Icon.eye : Icon.eye} {theme}
+      </button>
+      <button className="head-pill" title="Cycle density" onClick={() => {
+        const order = ["compact", "normal", "comfortable"];
+        const next = order[(order.indexOf(density) + 1) % order.length];
+        window.Prefs.setDensity(next);
+      }}>{Icon.layers} {density}</button>
+      <button className="head-pill" title="Toggle sidebar" onClick={() => window.Prefs.toggleRail()}>
+        {Icon.arrowL}
+      </button>
+    </div>
+  );
+};
+
+// Mount when this file loads; the host HTML provides the #v3-root div.
+window.AnvilV3 = { App };
+const root = document.getElementById("v3-root");
+if (root && typeof ReactDOM !== "undefined") {
+  if (ReactDOM.createRoot) ReactDOM.createRoot(root).render(<App />);
+  else ReactDOM.render(<App />, root);
+}

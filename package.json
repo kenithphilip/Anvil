@@ -8,8 +8,10 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "node src/scripts/build-unified-app.mjs",
-    "check": "for f in $(find api -name '*.js' | sort); do node --check \"$f\" || exit 1; done && node --check src/client/obara-client.js && node --check src/scripts/build-unified-app.mjs",
+    "build": "npm run build:legacy && npm run build:v3",
+    "build:legacy": "node src/scripts/build-unified-app.mjs",
+    "build:v3": "node src/scripts/build-v3.mjs",
+    "check": "for f in $(find api -name '*.js' | sort); do node --check \"$f\" || exit 1; done && node --check src/client/obara-client.js && node --check src/scripts/build-unified-app.mjs && node --check src/scripts/build-v3.mjs && node --check src/v3/rbac.js && node --check src/v3/preferences.js",
     "verify": "node src/scripts/verify-html.mjs",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{js,mjs,jsx,json,md,sql}\"",

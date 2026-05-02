@@ -1,6 +1,26 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>
+(function(){
+  try {
+    var qs = new URLSearchParams(window.location.search);
+    var pinned = localStorage.getItem("obara:v3_pinned");
+    var want = qs.get("v3");
+    if (want === "1" || (pinned === "1" && want !== "0")) {
+      // remember the choice unless explicitly opted out
+      if (want === "1") localStorage.setItem("obara:v3_pinned", "1");
+      // strip the v3 param so the new URL doesn't redirect again from v3.html
+      qs.delete("v3");
+      var search = qs.toString();
+      var hash = window.location.hash || "";
+      window.location.replace("/v3.html" + (search ? "?" + search : "") + hash);
+      return;
+    }
+    if (want === "0") localStorage.removeItem("obara:v3_pinned");
+  } catch (_) { /* fall through to legacy */ }
+})();
+</script>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Obara Operations App</title>

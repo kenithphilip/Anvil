@@ -112,6 +112,7 @@ const SCREEN_FILES = [
   "screens-wired/wired-shipments-crud.jsx",       // overrides wired-shipments-b.jsx
   "screens-wired/wired-internal-sos-crud.jsx",    // overrides wired-internal-sos.jsx
   "screens-wired/wired-einvoice-crud.jsx",        // overrides wired-einvoice-d.jsx
+  "screens-wired/wired-service-visits-crud.jsx",  // overrides wired-service-visits-c.jsx
 ];
 
 const tpl = read(path.join(V3, "index.html.tpl"));

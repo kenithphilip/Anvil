@@ -26,6 +26,8 @@ const ROUTES = {
   home:        () => <HomeRoute />,
   intake:      () => (window.Inbox ? <Inbox /> : <Placeholder name="Inbox" />),
   so:          () => {
+    const view = hashParam("view");
+    if (view === "history") return window.SOHistory ? <SOHistory /> : <Placeholder name="Sales Order History" />;
     if (hashParam("id")) return window.SOWorkspace ? <SOWorkspace /> : <Placeholder name="Sales Order Workspace" />;
     if (hashParam("new")) return window.SOIntake ? <SOIntake /> : <Placeholder name="New Sales Order" />;
     return window.SOList ? <SOList /> : <Placeholder name="Sales Orders" />;
@@ -56,7 +58,14 @@ const ROUTES = {
   cost:        () => (window.CostMargin ? <CostMargin /> : <Placeholder name="Cost & Margin" />),
   // Data
   customers:   () => (window.Customers ? <Customers /> : <Placeholder name="Customers" />),
-  items:       () => (window.Items ? <Items /> : <Placeholder name="Item Master" />),
+  items:       () => {
+    const view = hashParam("view");
+    if (view === "import")     return window.BomImport ? <BomImport /> : <Placeholder name="BOM Import" />;
+    if (view === "guns")       return window.GunsViewer ? <GunsViewer /> : <Placeholder name="Guns Viewer" />;
+    if (view === "equipment")  return window.EquipmentHierarchy ? <EquipmentHierarchy /> : <Placeholder name="Equipment Hierarchy" />;
+    if (view === "jbm-import") return window.JbmImporter ? <JbmImporter /> : <Placeholder name="JBM Importer" />;
+    return window.Items ? <Items /> : <Placeholder name="Item Master" />;
+  },
   graph:       () => (window.MasterDataGraph ? <MasterDataGraph /> : <Placeholder name="Master Data Graph" />),
   forecasts:   () => (window.Forecasts ? <Forecasts /> : <Placeholder name="Forecasts" />),
   // Quality

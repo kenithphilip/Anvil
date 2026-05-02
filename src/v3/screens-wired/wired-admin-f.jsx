@@ -18,6 +18,16 @@ const ADMIN_TABS = [
 
 const ROLES = ["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer"];
 
+const DRAWING_BASE_URL_KEY = "obara:drawing_base_url";
+
+const trimTrailingSlash = (s) => (s || "").replace(/\/+$/, "");
+
+const composeDrawingUrl = (base, drawingNo) => {
+  const b = trimTrailingSlash(base);
+  if (!b || !drawingNo) return null;
+  return `${b}/${encodeURIComponent(drawingNo)}.pdf`;
+};
+
 const adminRows = (resp, key) => {
   if (!resp) return [];
   if (Array.isArray(resp)) return resp;
@@ -49,6 +59,16 @@ const WiredAdmin = () => {
   const [flash, setFlash] = useStateW(null);
   const [memberForm, setMemberForm] = useStateW({ email: "", role: "sales_engineer" });
   const [holidayForm, setHolidayForm] = useStateW({ country: "IN", date: "", name: "" });
+
+  // Drawing-link configuration (Settings tab) — persisted in localStorage.
+  const [drawingBase, setDrawingBase] = useStateW(() => {
+    try { return localStorage.getItem(DRAWING_BASE_URL_KEY) || ""; }
+    catch (_) { return ""; }
+  });
+  const [drawingDraft, setDrawingDraft] = useStateW(() => {
+    try { return localStorage.getItem(DRAWING_BASE_URL_KEY) || ""; }
+    catch (_) { return ""; }
+  });
 
   const members = useFetch(
     () => fetch("/api/admin/members")
@@ -82,6 +102,27 @@ const WiredAdmin = () => {
           return { thresholds: [] };
         }
       }),
+    []
+  );
+  const diagnostics = useFetch(
+    () => {
+      const call = window.ObaraBackend?.admin?.diagnostics;
+      if (typeof call === "function") return call();
+      return fetch("/api/admin/diagnostics")
+        .then((r) => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)));
+    },
+    []
+  );
+  // Used for the "Test" button in the Settings drawing-link card. We pull
+  // the first item_master row to get a real drawing_no to compose against.
+  const itemMaster = useFetch(
+    () => {
+      const call = window.ObaraBackend?.admin?.listItemMaster;
+      if (typeof call === "function") return call({ limit: 1 });
+      return fetch("/api/admin/item_master?limit=1")
+        .then((r) => r.ok ? r.json() : { items: [] })
+        .catch(() => ({ items: [] }));
+    },
     []
   );
 

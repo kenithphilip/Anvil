@@ -385,6 +385,7 @@
     deleteApprovalThreshold: async (id) => apiFetch("/api/admin/quote_approvals?type=thresholds&id=" + encodeURIComponent(id), { method: "DELETE" }),
     listApprovalRequests: async (order_id) => apiFetch("/api/admin/quote_approvals?type=approvals" + (order_id ? "&order_id=" + encodeURIComponent(order_id) : "")),
     decideApprovalRequest: async (payload) => apiFetch("/api/admin/quote_approvals?type=approvals", { method: "POST", body: payload }),
+    diagnostics: async () => apiFetch("/api/admin/diagnostics"),
   };
 
   const email = {

@@ -99,6 +99,15 @@ const SCREEN_FILES = [
   "screens-wired/wired-toasts.jsx",
   "screens-wired/wired-onboarding.jsx",
   "screens-wired/wired-format-guide.jsx",
+  // Phase 7 batch 1 + 2 (large surfaces). These OVERRIDE earlier wired
+  // files via the order rule (last-write wins on window.*).
+  "screens-wired/wired-spares-worksheet.jsx", // overrides wired-spares-c.jsx
+  "screens-wired/wired-graph-cytoscape.jsx",  // overrides wired-graph-e.jsx
+  "screens-wired/wired-bom-import.jsx",
+  "screens-wired/wired-guns-viewer.jsx",
+  "screens-wired/wired-so-history.jsx",
+  "screens-wired/wired-equipment-hierarchy.jsx",
+  "screens-wired/wired-jbm-importer.jsx",
 ];
 
 const tpl = read(path.join(V3, "index.html.tpl"));

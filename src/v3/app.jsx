@@ -8,13 +8,28 @@ const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
 const ROUTE_KEY = "obara:v3_route";
 
+// Read a query param from the URL hash (e.g. #/so?id=abc → "abc" for "id").
+const hashParam = (key) => {
+  try {
+    const hash = window.location.hash || "";
+    const qpos = hash.indexOf("?");
+    if (qpos < 0) return null;
+    return new URLSearchParams(hash.slice(qpos + 1)).get(key);
+  } catch { return null; }
+};
+
 // Map nav id → React component. Each component is a Window-exposed render
 // function from the screens-*.jsx files we copied alongside.
 const ROUTES = {
-  // Workflows
+  // Workflows. SOs branch: ?id=X opens the workspace, ?new=1 opens intake,
+  // otherwise the list.
   home:        () => <HomeRoute />,
   intake:      () => (window.Inbox ? <Inbox /> : <Placeholder name="Inbox" />),
-  so:          () => (window.SOList ? <SOList /> : <Placeholder name="Sales Orders" />),
+  so:          () => {
+    if (hashParam("id")) return window.SOWorkspace ? <SOWorkspace /> : <Placeholder name="Sales Order Workspace" />;
+    if (hashParam("new")) return window.SOIntake ? <SOIntake /> : <Placeholder name="New Sales Order" />;
+    return window.SOList ? <SOList /> : <Placeholder name="Sales Orders" />;
+  },
   internal:    () => (window.InternalSOs ? <InternalSOs /> : <Placeholder name="Internal SOs" />),
   approvals:   () => (window.Approvals ? <Approvals /> : <Placeholder name="Approvals" />),
   // Sales
@@ -29,8 +44,14 @@ const ROUTES = {
   "svc-visits":() => (window.ServiceVisits ? <ServiceVisits /> : <Placeholder name="Service Visits" />),
   amc:         () => (window.AMCSchedule ? <AMCSchedule /> : <Placeholder name="AMC Schedule" />),
   car:         () => (window.CARReports ? <CARReports /> : <Placeholder name="CAR Reports" />),
-  // Finance
-  tally:       () => (window.TallyPush ? <TallyPush /> : <Placeholder name="Tally Sync" />),
+  // Finance. Tally branch: ?sub=masters opens TallyMasters,
+  // ?sub=reconcile opens TallyReconcile, otherwise default to TallyPush.
+  tally:       () => {
+    const sub = hashParam("sub");
+    if (sub === "masters") return window.TallyMasters ? <TallyMasters /> : <Placeholder name="Tally Masters" />;
+    if (sub === "reconcile") return window.TallyReconcile ? <TallyReconcile /> : <Placeholder name="Tally Reconcile" />;
+    return window.TallyPush ? <TallyPush /> : <Placeholder name="Tally Sync" />;
+  },
   einvoice:    () => (window.EInvoice ? <EInvoice /> : <Placeholder name="e-Invoice" />),
   cost:        () => (window.CostMargin ? <CostMargin /> : <Placeholder name="Cost & Margin" />),
   // Data
@@ -96,15 +117,27 @@ const useRerenderOnEvents = (eventNames) => {
 };
 
 const App = () => {
-  useRerenderOnEvents(["rbac:change", "prefs:change", "popstate"]);
+  useRerenderOnEvents(["rbac:change", "prefs:change", "popstate", "hashchange"]);
 
   // Route state: read from URL hash if present, otherwise localStorage,
-  // default to home. Role + tenant pop-overs hidden for now (Phase 4).
+  // default to home. Strips any query params so #/so?id=X resolves to "so".
   const [route, setRoute] = useState(() => {
     const hash = (window.location.hash || "").replace(/^#\/?/, "");
-    if (hash && ROUTES[hash]) return hash;
+    const id = hash.split("?")[0];
+    if (id && ROUTES[id]) return id;
     try { return localStorage.getItem(ROUTE_KEY) || "home"; } catch { return "home"; }
   });
+
+  // Keep route in sync with URL on hashchange (deep-link navigation).
+  useEffect(() => {
+    const onHash = () => {
+      const hash = (window.location.hash || "").replace(/^#\/?/, "");
+      const id = hash.split("?")[0];
+      if (id && ROUTES[id] && id !== route) setRoute(id);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [route]);
 
   const onRoute = useCallback((id) => {
     if (!ROUTES[id]) return;

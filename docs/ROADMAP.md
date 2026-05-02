@@ -40,8 +40,14 @@ audit. Status of each sub-release:
 - 7.5 JBM spare matrix importer: **DONE** (commit 70d7838).
 - 7.6 Equipment hierarchy editor: **DONE** (commit 70d7838).
 - 7.7 Project + Opportunity enum alignment: **DONE** (commit 1fa7aca).
-- 7.8 CRUD completeness: **PARTIAL** (commit a67e9f2 covers Shipments,
-  Internal SOs, e-Invoice). Remaining: see below.
+- 7.8 CRUD completeness: **DONE**. Earlier: Shipments, Internal SOs,
+  e-Invoice (commit a67e9f2). This round added Service Visits, AMC
+  (with bulk-seed + per-row generate-visit), Eval Cases (add/edit/
+  delete + manual run), Profile Studio (fingerprint editor +
+  side-by-side diff + force-LLM-fallback toggle), Admin Center
+  (holiday delete, lead time create/delete, approval thresholds
+  CRUD, customer locations CRUD, contracts CRUD, item master CRUD
+  with CSV bulk import, live diagnostics).
 - 7.9 Master Data Graph Cytoscape view: **DONE** (commit 70d7838).
 - 7.10 Drawing-link configuration: **DONE** (commit 70d7838 inside
   AdminCenter Settings tab).

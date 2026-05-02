@@ -56,19 +56,53 @@ A real bundler with a module system. Recommended stack:
 
 Concrete migration plan (4 sub-PRs, roughly 1 day of focused work):
 
-### Sub-PR 1: scaffold Vite
+### Sub-PR 1: scaffold Vite (LANDED)
 
-- Add `vite`, `@vitejs/plugin-react`, `react`, `react-dom` as deps.
-- Add `vite.config.js` with output to `public/v3-app/` so we don't
-  break the existing `public/v3.html` until the cutover lands.
-- Add a real `src/v3/index.jsx` entry that imports `./app` etc.
-- Convert every `screens-wired/*.jsx` from "uses globals" to "uses
-  ES imports". The `useFetch / ageLabel / fmtINRShort / stageOf /
-  sevOf` helpers move from globals to a `src/v3/lib/helpers.js`
-  module. Each wired screen `import`s what it needs.
-- The window-export pattern (`window.X = WiredX`) gets replaced with
-  default exports + a routes table that imports lazily via
-  `React.lazy`.
+- Added `vite`, `@vitejs/plugin-react`, `react@18`, `react-dom@18`,
+  `vitest`, `jsdom`, `@testing-library/react` as deps.
+- `vite.config.js` outputs to `public/v3-app/` so the existing
+  `public/v3.html` legacy build keeps working until the cutover.
+  Vercel already serves `public/`, so the Vite bundle is reachable
+  at `/v3-app/` immediately.
+- `src/v3-app/` holds the new module tree (kept disjoint from
+  `src/v3/` so the legacy concatenator does not pick up ESM):
+  - `lib/helpers.js`: `useFetch`, `ageLabel`, `fmtINRShort`,
+    `stageOf`, `sevOf` lifted from globals to ESM exports.
+  - `lib/primitives.jsx`: `Btn`, `Card`, `Banner`, `Chip`, `KPI`,
+    `KPIRow`, `WSTitle`, `WSTabs`, `KV`, `Stream`, etc.
+  - `lib/icons.jsx`: `Icon` namespace + `I` wrapper.
+  - `lib/rbac.js`, `lib/preferences.js`: ESM ports of the legacy
+    files. Keep the same `localStorage` keys + custom events so
+    legacy code still sees the same state.
+  - `lib/api.js`: ESM facade over `src/client/obara-client.js`.
+    Side-effect import runs the legacy IIFE; the wrapper exports
+    `ObaraBackend` + `storage`. No client refactor needed.
+  - `index.html`, `index.jsx`, `app.jsx`, `routes.js`: lazy router
+    via `React.lazy` + `Suspense`.
+- Two proof screens converted: `screens/home.jsx`,
+  `screens/orders.jsx`. Each is a `default export` with explicit
+  `import` statements; no globals.
+- Vitest scaffold: `lib/helpers.test.js` (13 tests, all passing).
+  `npm run test` switched from the placeholder to `vitest run`;
+  `npm run test:watch` for HMR-style test cycles.
+- New scripts: `build:v3-vite` (production build),
+  `dev:v3-vite` (Vite dev server with HMR on port 5180).
+  `npm run build` now runs all three (legacy unified, legacy v3,
+  Vite v3-app), so existing CI keeps both alive.
+
+Bundle breakdown after Sub-PR 1:
+
+```
+public/v3-app/index.html                     0.6 kB │ gzip:  0.3 kB
+public/v3-app/assets/index-*.css            23.7 kB │ gzip:  5.2 kB
+public/v3-app/assets/home-*.js               3.4 kB │ gzip:  1.4 kB
+public/v3-app/assets/orders-*.js             3.4 kB │ gzip:  1.5 kB
+public/v3-app/assets/icons-*.js             22.4 kB │ gzip:  6.2 kB
+public/v3-app/assets/index-*.js            146.8 kB │ gzip: 47.8 kB
+```
+
+Initial paint: ~50 kB gzipped. Legacy `public/v3.html` is still
+1224 kB on disk. Cutover (Sub-PR 4) deletes the legacy file.
 
 ### Sub-PR 2: per-route code split + lazy load
 

@@ -48,3 +48,6 @@ venv/
 # Logs
 *.log
 logs/
+
+# Claude Code worktree management
+.claude/

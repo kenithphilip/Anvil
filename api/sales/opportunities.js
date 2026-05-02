@@ -1,0 +1,85 @@
+// /api/sales/opportunities
+//   GET    list (filter by stage, customer, close_from/to)
+//   POST   create
+//   PATCH  update (stage transitions logged)
+//   DELETE soft delete
+
+import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
+import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { serviceClient } from "../_lib/supabase.js";
+import { recordAudit } from "../_lib/audit.js";
+
+const STAGES = new Set(["QUALIFICATION","STRATEGY_CHECK","NEEDS_ANALYSIS","FOLLOW_UP","RFQ","INTERNAL_PROPOSAL","PROPOSAL_PRICE_QUOTE","NEGOTIATION_REVIEW","CLOSE_WON","CLOSE_LOST","REGRETTED"]);
+
+export default async function handler(req, res) {
+  if (handlePreflight(req, res)) return;
+  applyCors(req, res);
+  try {
+    const ctx = await resolveContext(req);
+    const svc = serviceClient();
+    if (req.method === "GET") {
+      requirePermission(ctx, "read");
+      let q = svc.from("opportunities").select("*").eq("tenant_id", ctx.tenantId).order("updated_at", { ascending: false }).limit(500);
+      if (req.query.stage && STAGES.has(req.query.stage)) q = q.eq("stage", req.query.stage);
+      if (req.query.customer_id) q = q.eq("customer_id", req.query.customer_id);
+      if (req.query.close_from) q = q.gte("close_date", req.query.close_from);
+      if (req.query.close_to) q = q.lte("close_date", req.query.close_to);
+      const { data, error } = await q;
+      if (error) throw new Error(error.message);
+      return json(res, 200, { opportunities: data || [] });
+    }
+    if (req.method === "POST") {
+      requirePermission(ctx, "write");
+      const body = await readBody(req);
+      if (!body.opportunity_name || !body.customer_id) return json(res, 400, { error: { message: "opportunity_name and customer_id required" } });
+      const row = {
+        tenant_id: ctx.tenantId,
+        customer_id: body.customer_id,
+        customer_location_id: body.customer_location_id || null,
+        opportunity_name: body.opportunity_name,
+        stage: STAGES.has(body.stage) ? body.stage : "QUALIFICATION",
+        order_mode: body.order_mode || null,
+        amount_inr: body.amount_inr || null,
+        amount_currency: body.amount_currency || "INR",
+        amount_native: body.amount_native || null,
+        fx_rate_used: body.fx_rate_used || null,
+        close_date: body.close_date || null,
+        probability: body.probability != null ? body.probability : 50,
+        product_summary: body.product_summary || null,
+        related_lead_id: body.related_lead_id || null,
+        owner_id: ctx.user ? ctx.user.id : null,
+      };
+      const { data, error } = await svc.from("opportunities").insert(row).select("*").single();
+      if (error) throw new Error(error.message);
+      await recordAudit(ctx, { action: "opp_create", objectType: "opportunity", objectId: data.id, after: data });
+      return json(res, 201, { opportunity: data });
+    }
+    if (req.method === "PATCH") {
+      requirePermission(ctx, "write");
+      const body = await readBody(req);
+      if (!body.id) return json(res, 400, { error: { message: "id required" } });
+      const patch = { updated_at: new Date().toISOString() };
+      const allowed = ["stage","order_mode","amount_inr","amount_currency","amount_native","fx_rate_used","close_date","probability","product_summary","lost_reason","competitor_name","related_quote_id","related_contract_id","customer_location_id"];
+      for (const k of allowed) if (body[k] !== undefined) patch[k] = body[k];
+      if (patch.stage && !STAGES.has(patch.stage)) return json(res, 400, { error: { message: "invalid stage" } });
+      const before = await svc.from("opportunities").select("stage").eq("tenant_id", ctx.tenantId).eq("id", body.id).single();
+      const { data, error } = await svc.from("opportunities").update(patch).eq("tenant_id", ctx.tenantId).eq("id", body.id).select("*").single();
+      if (error) throw new Error(error.message);
+      const stageChanged = before.data && patch.stage && patch.stage !== before.data.stage;
+      await recordAudit(ctx, { action: stageChanged ? "opp_stage_change" : "opp_update", objectType: "opportunity", objectId: body.id, before: before.data, after: data });
+      return json(res, 200, { opportunity: data });
+    }
+    if (req.method === "DELETE") {
+      requirePermission(ctx, "admin");
+      const id = req.query.id;
+      if (!id) return json(res, 400, { error: { message: "id required" } });
+      const { error } = await svc.from("opportunities").delete().eq("tenant_id", ctx.tenantId).eq("id", id);
+      if (error) throw new Error(error.message);
+      await recordAudit(ctx, { action: "opp_delete", objectType: "opportunity", objectId: id });
+      return json(res, 200, { ok: true });
+    }
+    return json(res, 405, { error: { message: "Method not allowed" } });
+  } catch (err) {
+    sendError(res, err);
+  }
+}

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Obara Ops sign-in callback</title>
+<style>
+  body { font-family: Inter, system-ui, sans-serif; background: #fafaf9; color: #1c1917; padding: 32px; max-width: 520px; margin: 6vh auto; }
+  h1 { font-size: 20px; margin-bottom: 12px; }
+  .ok { color: #15803d; }
+  .err { color: #b91c1c; }
+  pre { background: #f5f5f4; padding: 12px; border-radius: 8px; font-size: 12px; overflow: auto; }
+  button { background: #9a3412; color: #fff; border: 0; border-radius: 8px; padding: 9px 16px; font-weight: 600; cursor: pointer; }
+</style>
+</head>
+<body>
+<h1 id="title">Finishing sign-in...</h1>
+<p id="message">Reading the magic link parameters from the URL.</p>
+<pre id="detail" style="display:none"></pre>
+<p>
+  <button id="back" style="display:none">Back to Obara Ops</button>
+</p>
+<script>
+(function () {
+  function parseHashParams() {
+    var hash = window.location.hash.replace(/^#/, "");
+    var search = window.location.search.replace(/^\?/, "");
+    var combined = (hash + (hash && search ? "&" : "") + search).split("&").filter(Boolean);
+    var params = {};
+    combined.forEach(function (pair) {
+      var idx = pair.indexOf("=");
+      if (idx === -1) return;
+      params[decodeURIComponent(pair.slice(0, idx))] = decodeURIComponent(pair.slice(idx + 1));
+    });
+    return params;
+  }
+  function persistSession(params) {
+    var session = {
+      access_token: params.access_token || "",
+      refresh_token: params.refresh_token || "",
+      expires_at: params.expires_at ? Number(params.expires_at) : null,
+      type: params.type || null,
+    };
+    if (window.opener && typeof window.opener.postMessage === "function") {
+      try { window.opener.postMessage({ source: "obara-auth-callback", session: session }, "*"); } catch (_) {}
+    }
+    try { localStorage.setItem("obara:backend_session", JSON.stringify(session)); } catch (_) {}
+    return session;
+  }
+  function showError(message, detail) {
+    document.getElementById("title").textContent = "Sign-in failed";
+    document.getElementById("title").className = "err";
+    document.getElementById("message").textContent = message;
+    if (detail) {
+      var el = document.getElementById("detail");
+      el.textContent = typeof detail === "string" ? detail : JSON.stringify(detail, null, 2);
+      el.style.display = "block";
+    }
+  }
+  function showOk(detail) {
+    document.getElementById("title").textContent = "Signed in";
+    document.getElementById("title").className = "ok";
+    document.getElementById("message").textContent = "You can close this tab and return to the Obara Ops app.";
+    if (detail) {
+      var el = document.getElementById("detail");
+      el.textContent = JSON.stringify(detail, null, 2);
+      el.style.display = "block";
+    }
+    var back = document.getElementById("back");
+    back.style.display = "inline-block";
+    back.addEventListener("click", function () { window.close(); });
+  }
+  var params = parseHashParams();
+  if (params.error) {
+    showError(params.error_description || params.error, params);
+    return;
+  }
+  if (!params.access_token) {
+    showError("Missing access token in URL", params);
+    return;
+  }
+  var session = persistSession(params);
+  showOk({ user: params.user || params.email || "(unknown)", expires_at: session.expires_at });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,117 @@
+// /api/admin/item_master
+//   GET    ?q= part_no/desc search; ?source_country=, ?lifecycle=
+//   POST   upsert
+//   POST  /bulk  bulk import
+//   DELETE ?id=
+
+import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
+import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { serviceClient } from "../_lib/supabase.js";
+import { recordAudit } from "../_lib/audit.js";
+
+const LIFECYCLE = new Set(["ACTIVE","OBSOLETE","DISCONTINUED","NEW","TRIAL"]);
+
+export default async function handler(req, res) {
+  if (handlePreflight(req, res)) return;
+  applyCors(req, res);
+  try {
+    const ctx = await resolveContext(req);
+    const svc = serviceClient();
+    if (req.method === "GET") {
+      requirePermission(ctx, "read");
+      const limit = Math.max(1, Math.min(2000, Number(req.query.limit || 500)));
+      let q = svc.from("item_master").select("*").eq("tenant_id", ctx.tenantId).order("part_no", { ascending: true }).limit(limit);
+      if (req.query.q) q = q.or("part_no.ilike.%" + req.query.q + "%,description.ilike.%" + req.query.q + "%");
+      if (req.query.source_country) q = q.eq("source_country", req.query.source_country);
+      if (req.query.lifecycle && LIFECYCLE.has(req.query.lifecycle)) q = q.eq("lifecycle", req.query.lifecycle);
+      const { data, error } = await q;
+      if (error) throw new Error(error.message);
+      return json(res, 200, { items: data || [] });
+    }
+    if (req.method === "POST") {
+      requirePermission(ctx, "admin");
+      const body = await readBody(req);
+      const isBulk = req.url.includes("/bulk") || Array.isArray(body.rows);
+      if (isBulk) {
+        const rows = (body.rows || []).map((r) => ({
+          tenant_id: ctx.tenantId,
+          part_no: r.part_no,
+          description: r.description || null,
+          drawing_no: r.drawing_no || null,
+          uom: r.uom || null,
+          item_group: r.item_group || null,
+          item_sub_group: r.item_sub_group || null,
+          category: r.category || null,
+          sub_category: r.sub_category || null,
+          source_country: r.source_country || null,
+          source_currency: r.source_currency || null,
+          purchase_price: r.purchase_price != null ? Number(r.purchase_price) : null,
+          purchase_quote_no: r.purchase_quote_no || null,
+          purchase_quote_validity_start: r.purchase_quote_validity_start || null,
+          purchase_quote_validity_end: r.purchase_quote_validity_end || null,
+          hsn_sac: r.hsn_sac || null,
+          sgst_rate: r.sgst_rate != null ? Number(r.sgst_rate) : null,
+          cgst_rate: r.cgst_rate != null ? Number(r.cgst_rate) : null,
+          igst_rate: r.igst_rate != null ? Number(r.igst_rate) : null,
+          default_lead_days: r.default_lead_days != null ? Number(r.default_lead_days) : null,
+          moq: r.moq != null ? Number(r.moq) : 1,
+          pack_size: r.pack_size != null ? Number(r.pack_size) : 1,
+          lifecycle: LIFECYCLE.has(r.lifecycle) ? r.lifecycle : "ACTIVE",
+          is_assembly: !!r.is_assembly,
+          notes: r.notes || null,
+          updated_at: new Date().toISOString(),
+        })).filter((r) => r.part_no);
+        if (!rows.length) return json(res, 400, { error: { message: "no valid rows" } });
+        const out = await svc.from("item_master").upsert(rows, { onConflict: "tenant_id,part_no" });
+        if (out.error) throw new Error(out.error.message);
+        await recordAudit(ctx, { action: "item_master_bulk", objectType: "item_master", objectId: null, detail: "rows=" + rows.length });
+        return json(res, 200, { ok: true, rows: rows.length });
+      }
+      if (!body.part_no) return json(res, 400, { error: { message: "part_no required" } });
+      const row = {
+        tenant_id: ctx.tenantId,
+        part_no: body.part_no,
+        description: body.description || null,
+        drawing_no: body.drawing_no || null,
+        uom: body.uom || null,
+        item_group: body.item_group || null,
+        item_sub_group: body.item_sub_group || null,
+        category: body.category || null,
+        sub_category: body.sub_category || null,
+        source_country: body.source_country || null,
+        source_currency: body.source_currency || null,
+        purchase_price: body.purchase_price != null ? Number(body.purchase_price) : null,
+        purchase_quote_no: body.purchase_quote_no || null,
+        purchase_quote_validity_start: body.purchase_quote_validity_start || null,
+        purchase_quote_validity_end: body.purchase_quote_validity_end || null,
+        hsn_sac: body.hsn_sac || null,
+        sgst_rate: body.sgst_rate != null ? Number(body.sgst_rate) : null,
+        cgst_rate: body.cgst_rate != null ? Number(body.cgst_rate) : null,
+        igst_rate: body.igst_rate != null ? Number(body.igst_rate) : null,
+        default_lead_days: body.default_lead_days != null ? Number(body.default_lead_days) : null,
+        moq: body.moq != null ? Number(body.moq) : 1,
+        pack_size: body.pack_size != null ? Number(body.pack_size) : 1,
+        lifecycle: LIFECYCLE.has(body.lifecycle) ? body.lifecycle : "ACTIVE",
+        is_assembly: !!body.is_assembly,
+        notes: body.notes || null,
+        updated_at: new Date().toISOString(),
+      };
+      const { data, error } = await svc.from("item_master").upsert(row, { onConflict: "tenant_id,part_no" }).select("*").single();
+      if (error) throw new Error(error.message);
+      await recordAudit(ctx, { action: "item_master_upsert", objectType: "item_master", objectId: data.id, after: data });
+      return json(res, 200, { item: data });
+    }
+    if (req.method === "DELETE") {
+      requirePermission(ctx, "admin");
+      const id = req.query.id;
+      if (!id) return json(res, 400, { error: { message: "id required" } });
+      const { error } = await svc.from("item_master").delete().eq("tenant_id", ctx.tenantId).eq("id", id);
+      if (error) throw new Error(error.message);
+      await recordAudit(ctx, { action: "item_master_delete", objectType: "item_master", objectId: id });
+      return json(res, 200, { ok: true });
+    }
+    return json(res, 405, { error: { message: "Method not allowed" } });
+  } catch (err) {
+    sendError(res, err);
+  }
+}

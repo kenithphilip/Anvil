@@ -1,0 +1,65 @@
+import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
+import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { serviceClient } from "../_lib/supabase.js";
+import { recordAudit, recordEvent } from "../_lib/audit.js";
+
+const STATUS_VALUES = new Set(["DRAFT", "PENDING_REVIEW", "APPROVED", "BLOCKED", "DUPLICATE", "REUSED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED", "CANCELLED"]);
+
+const orderRow = (ctx, body) => ({
+  tenant_id: ctx.tenantId,
+  customer_id: body.customer_id || null,
+  status: STATUS_VALUES.has(body.status) ? body.status : "DRAFT",
+  po_number: body.po_number || null,
+  po_date: body.po_date || null,
+  quote_number: body.quote_number || null,
+  quote_date: body.quote_date || null,
+  doc_fingerprint: body.doc_fingerprint || null,
+  result: body.result || {},
+  preflight_payload: body.preflight_payload || {},
+  api_usage: body.api_usage || {},
+  cost_policy_snapshot: body.cost_policy_snapshot || {},
+  token_estimate: body.token_estimate || {},
+  rule_findings: body.rule_findings || [],
+  anomaly_flags: body.anomaly_flags || [],
+  evidence_by_field: body.evidence_by_field || {},
+  line_edits: body.line_edits || [],
+  approval: body.approval || null,
+  payload_hash: body.payload_hash || null,
+  blocker_summary: body.blocker_summary || null,
+  format_change_summary: body.format_change_summary || null,
+  cost_avoided_reason: body.cost_avoided_reason || null,
+});
+
+export default async function handler(req, res) {
+  if (handlePreflight(req, res)) return;
+  applyCors(req, res);
+  try {
+    const ctx = await resolveContext(req);
+    if (req.method === "GET") {
+      requirePermission(ctx, "read");
+      const svc = serviceClient();
+      const status = req.query.status;
+      const limit = Math.max(1, Math.min(200, Number(req.query.limit || 100)));
+      let query = svc.from("orders").select("*").eq("tenant_id", ctx.tenantId).order("created_at", { ascending: false }).limit(limit);
+      if (status && STATUS_VALUES.has(status)) query = query.eq("status", status);
+      if (req.query.po) query = query.ilike("po_number", "%" + req.query.po + "%");
+      if (req.query.customer) query = query.eq("customer_id", req.query.customer);
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+      return json(res, 200, { orders: data });
+    }
+    if (req.method === "POST") {
+      requirePermission(ctx, "write");
+      const body = await readBody(req);
+      const svc = serviceClient();
+      const { data, error } = await svc.from("orders").insert(orderRow(ctx, body)).select("*").single();
+      if (error) throw new Error(error.message);
+      await recordAudit(ctx, { action: "create_order", objectType: "order", objectId: data.id, after: data });
+      await recordEvent(ctx, { caseId: data.id, eventType: "order_created", objectType: "order", objectId: data.id });
+      return json(res, 201, { order: data });
+    }
+    return json(res, 405, { error: { message: "Method not allowed" } });
+  } catch (err) {
+    sendError(res, err);
+  }
+}

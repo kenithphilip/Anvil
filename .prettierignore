@@ -1,0 +1,8 @@
+public/index.html
+src/legacy/
+node_modules/
+.vercel/
+.next/
+dist/
+build/
+coverage/

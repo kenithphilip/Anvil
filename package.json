@@ -1,0 +1,29 @@
+{
+  "name": "anvil",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Obara India sales-ops execution layer. Vercel serverless functions over Supabase Postgres, with a unified browser app built from src/legacy plus the bridge client.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "node src/scripts/build-unified-app.mjs",
+    "check": "for f in $(find api -name '*.js' | sort); do node --check \"$f\" || exit 1; done && node --check src/client/obara-client.js && node --check src/scripts/build-unified-app.mjs",
+    "verify": "node src/scripts/verify-html.mjs",
+    "lint": "eslint .",
+    "format": "prettier --write \"**/*.{js,mjs,jsx,json,md,sql}\"",
+    "test": "echo 'no unit tests yet, see check + verify' && exit 0",
+    "predeploy": "npm run build && npm run check && npm run verify"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0"
+  },
+  "optionalDependencies": {
+    "jszip": "^3.10.1"
+  },
+  "devDependencies": {
+    "eslint": "^9.10.0",
+    "prettier": "^3.3.3"
+  }
+}

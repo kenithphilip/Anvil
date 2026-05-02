@@ -1,0 +1,50 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build artifacts
+# public/index.html is built from src/legacy + src/client. Commit it so Vercel
+# does not need a build step for static deploys, but the canonical sources are
+# in src/. Toggle this if you switch to build-on-deploy only.
+# public/index.html
+.vercel/
+.next/
+.turbo/
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+.env.production
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test + coverage
+coverage/
+*.lcov
+.nyc_output/
+
+# Supabase local dev
+supabase/.branches
+supabase/.temp/
+
+# Python venvs (used during corpus ingestion only)
+.venv/
+venv/
+
+# Logs
+*.log
+logs/

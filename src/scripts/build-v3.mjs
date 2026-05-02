@@ -96,6 +96,9 @@ const SCREEN_FILES = [
   "screens-wired/wired-thread.jsx",
   // Migration gap fills (legacy showBackendModal etc.)
   "screens-wired/wired-backend-connect.jsx",
+  "screens-wired/wired-toasts.jsx",
+  "screens-wired/wired-onboarding.jsx",
+  "screens-wired/wired-format-guide.jsx",
 ];
 
 const tpl = read(path.join(V3, "index.html.tpl"));

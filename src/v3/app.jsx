@@ -74,6 +74,9 @@ const ROUTES = {
   // Sign-in / backend connect (no nav entry; reached via header pill or
   // automatic redirect when not signed in)
   connect:     () => (window.BackendConnect ? <BackendConnect /> : <Placeholder name="Backend Connect" />),
+  // Onboarding checklist + format guide (reached via Cmd+K or first-run)
+  onboarding:  () => (window.Onboarding ? <Onboarding /> : <Placeholder name="Onboarding" />),
+  "format-guide": () => (window.FormatGuide ? <FormatGuide /> : <Placeholder name="Format Guide" />),
 };
 
 const Placeholder = ({ name }) => (
@@ -220,6 +223,7 @@ const App = () => {
       </ShellInner>
       {window.CmdK && <CmdK open={cmdkOpen} onClose={() => setCmdk(false)} onJump={(id) => { onRoute(id); setCmdk(false); }} />}
       {window.ThreadDrawer && <ThreadDrawer open={threadOpen} onClose={() => setThread(false)} />}
+      {window.ToastStack && <ToastStack />}
     </>
   );
 };

@@ -48,6 +48,8 @@
     // Backend connect / sign-in. Always accessible; everyone needs a way
     // to authenticate or switch tenants.
     connect:     { sales_engineer: "rw",  sales_manager: "rw", procurement: "rw", finance: "rw",  admin: "rw", operator: "rw", viewer: "rw" },
+    onboarding:  { sales_engineer: "rw",  sales_manager: "rw", procurement: "rw", finance: "rw",  admin: "rw", operator: "rw", viewer: "rw" },
+    "format-guide": { sales_engineer: "r", sales_manager: "r", procurement: "r",  finance: "r",   admin: "r",  operator: "r",  viewer: "r" },
   };
 
   // Action-level overrides keyed by stable string id.

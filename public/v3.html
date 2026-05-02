@@ -1148,6 +1148,8 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
     // Backend connect / sign-in. Always accessible; everyone needs a way
     // to authenticate or switch tenants.
     connect:     { sales_engineer: "rw",  sales_manager: "rw", procurement: "rw", finance: "rw",  admin: "rw", operator: "rw", viewer: "rw" },
+    onboarding:  { sales_engineer: "rw",  sales_manager: "rw", procurement: "rw", finance: "rw",  admin: "rw", operator: "rw", viewer: "rw" },
+    "format-guide": { sales_engineer: "r", sales_manager: "r", procurement: "r",  finance: "r",   admin: "r",  operator: "r",  viewer: "r" },
   };
 
   // Action-level overrides keyed by stable string id.
@@ -8803,6 +8805,52 @@ const WiredSOWorkspace = () => {
   const canApprove = window.RBAC?.canDo?.("so.approve");
   const canCancel = window.RBAC?.canDo?.("so.cancel");
 
+  // Audit pack export: bundle order + result + findings + signed
+  // evidence URLs into a JSON file the user can hand to compliance.
+  // Rich PDF + ZIP packaging is a follow-up; for now this matches the
+  // legacy exportDocumentPackage shape closely enough.
+  const exportAuditPack = async (orderObj) => {
+    try {
+      const docs = Array.isArray(orderObj.documents) ? orderObj.documents : [];
+      const evidence = [];
+      for (const d of docs) {
+        try {
+          const signed = await window.ObaraBackend?.documents?.fetch?.(d.id);
+          evidence.push({ id: d.id, role: d.role, filename: d.filename, signed });
+        } catch (err) {
+          evidence.push({ id: d.id, role: d.role, error: String(err.message || err) });
+        }
+      }
+      const pack = {
+        exported_at: new Date().toISOString(),
+        order: {
+          id: orderObj.id,
+          po_number: orderObj.po_number,
+          quote_number: orderObj.quote_number,
+          status: orderObj.status,
+          customer: orderObj.customer,
+          result: orderObj.result,
+          rule_findings: orderObj.rule_findings,
+          approval: orderObj.approval,
+          payload_hash: orderObj.payload_hash,
+        },
+        evidence,
+      };
+      const blob = new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `audit-pack-${orderObj.po_number || orderObj.id || "order"}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      window.notifySuccess?.("Audit pack exported", `Saved as ${a.download}`);
+    } catch (err) {
+      window.notifyError?.("Audit pack export failed", String(err.message || err));
+    }
+  };
+
   const customerName = o.customer?.customer_name || o.customer_name || (o.customer_id ? o.customer_id.slice(0, 8) : "—");
   const customerEmail = o.customer?.contact_email || o.customer?.email;
 
@@ -8889,6 +8937,9 @@ const WiredSOWorkspace = () => {
               {Icon.send} email customer
             </Btn>
           )}
+          <Btn sm kind="ghost" onClick={() => exportAuditPack(o)} title="Bundle PO + quote + result + signed evidence URLs into a JSON download">
+            {Icon.download} audit pack
+          </Btn>
           <Btn sm kind="ghost" disabled={!canCancel} title={canCancel ? "" : "needs sales_manager / admin"}>
             {Icon.x} cancel
           </Btn>
@@ -16220,6 +16271,300 @@ const WiredBackendConnect = () => {
 };
 
 window.BackendConnect = WiredBackendConnect;
+
+
+// ===== screens-wired/wired-toasts.jsx =====
+// ============================================================
+// ANVIL v3 — global Toast queue
+// Mirrors the legacy notify family (notifySuccess / notifyWarn /
+// notifyError) with a stacking queue and auto-dismiss.
+// Mounted by app.jsx; exposes window.notify, .notifySuccess,
+// .notifyWarn, .notifyError so any screen can call them.
+// ============================================================
+
+(function () {
+  if (typeof window === "undefined") return;
+
+  // Internal store: { id, kind, title, body, ttlMs, createdAt }
+  const listeners = new Set();
+  let toasts = [];
+  let nextId = 1;
+
+  const emit = () => listeners.forEach((fn) => fn(toasts.slice()));
+
+  const dismiss = (id) => {
+    toasts = toasts.filter((t) => t.id !== id);
+    emit();
+  };
+
+  // kind: "good" | "warn" | "bad" | "info" | "live"
+  const push = (kind, title, body, opts = {}) => {
+    const t = {
+      id: nextId++,
+      kind: kind || "info",
+      title: title || "",
+      body: body || "",
+      ttlMs: typeof opts.ttlMs === "number" ? opts.ttlMs : (kind === "bad" ? 8000 : 4500),
+      createdAt: Date.now(),
+    };
+    toasts = [...toasts, t];
+    emit();
+    if (t.ttlMs > 0) setTimeout(() => dismiss(t.id), t.ttlMs);
+    return t.id;
+  };
+
+  window.notify        = (title, body, opts) => push("info", title, body, opts);
+  window.notifySuccess = (title, body, opts) => push("good", title, body, opts);
+  window.notifyWarn    = (title, body, opts) => push("warn", title, body, opts);
+  window.notifyError   = (title, body, opts) => push("bad", title, body, opts);
+  window.notifyLive    = (title, body, opts) => push("live", title, body, opts);
+  window.notifyDismiss = dismiss;
+  window.__toastSubscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
+  window.__toastsCurrent = () => toasts.slice();
+})();
+
+const ToastStack = () => {
+  const { useState: uS, useEffect: uE } = React;
+  const [list, setList] = uS([]);
+  uE(() => {
+    const off = window.__toastSubscribe?.((next) => setList(next));
+    setList(window.__toastsCurrent?.() || []);
+    return off;
+  }, []);
+
+  if (!list.length) return null;
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        position: "fixed",
+        top: 56,
+        right: 16,
+        zIndex: 200,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        maxWidth: 360,
+      }}
+    >
+      {list.map((t) => (
+        <div
+          key={t.id}
+          className={`banner ${t.kind === "good" ? "live" : t.kind === "warn" ? "warn" : t.kind === "bad" ? "bad" : t.kind === "live" ? "live" : "info"}`}
+          style={{ minWidth: 280, boxShadow: "var(--shadow-2)", paddingRight: 36, position: "relative", animation: "fadeInRight 0.18s ease" }}
+        >
+          {window.Icon?.[t.kind === "bad" ? "alert" : t.kind === "warn" ? "alert" : t.kind === "good" ? "check" : "info"] && (
+            <span className="ic">
+              {window.Icon[t.kind === "bad" ? "alert" : t.kind === "warn" ? "alert" : t.kind === "good" ? "check" : "info"]}
+            </span>
+          )}
+          <div style={{ flex: 1 }}>
+            {t.title && <div className="ti">{t.title}</div>}
+            {t.body && <div>{t.body}</div>}
+          </div>
+          <button
+            onClick={() => window.notifyDismiss(t.id)}
+            aria-label="Dismiss"
+            style={{
+              position: "absolute", top: 6, right: 6,
+              border: "none", background: "transparent", color: "inherit",
+              cursor: "pointer", width: 24, height: 24,
+              display: "grid", placeItems: "center",
+              opacity: 0.6,
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
+            onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.6")}
+          >
+            {window.Icon?.x}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+window.ToastStack = ToastStack;
+
+
+// ===== screens-wired/wired-onboarding.jsx =====
+// ============================================================
+// ANVIL v3 — Onboarding (first-run setup checklist)
+// Migrates the legacy showOnboardingFlow.
+// Reachable at #/onboarding. Auto-shows once for new visitors.
+// ============================================================
+
+const WiredOnboarding = () => {
+  const { useState: uS, useEffect: uE } = React;
+  const [counts, setCounts] = uS({ data: null, loading: true });
+
+  uE(() => {
+    let cancel = false;
+    Promise.allSettled([
+      window.ObaraBackend?.customers?.list?.() || Promise.resolve([]),
+      window.ObaraBackend?.orders?.list?.({ limit: 1 }) || Promise.resolve([]),
+      window.ObaraBackend?.bom?.list?.() || Promise.resolve({ rows: [] }),
+    ]).then((res) => {
+      if (cancel) return;
+      const customers = res[0].status === "fulfilled" ? (Array.isArray(res[0].value) ? res[0].value : (res[0].value?.rows || [])) : [];
+      const orders = res[1].status === "fulfilled" ? (Array.isArray(res[1].value) ? res[1].value : (res[1].value?.rows || [])) : [];
+      const bom = res[2].status === "fulfilled" ? (Array.isArray(res[2].value) ? res[2].value : (res[2].value?.rows || [])) : [];
+      setCounts({ data: { customers: customers.length, orders: orders.length, bom: bom.length }, loading: false });
+    });
+    return () => { cancel = true; };
+  }, []);
+
+  const cfg = (window.ObaraBackend?.getConfig?.()) || {};
+  const ready = !!(window.ObaraBackend?.isReady?.());
+
+  const steps = [
+    {
+      title: "Connect to backend",
+      detail: "Save Vercel deploy URL and tenant id, then sign in with magic link.",
+      done: ready && !!cfg.url,
+      action: () => (window.location.hash = "#/connect"),
+      cta: "Configure backend",
+    },
+    {
+      title: "Apply database migrations",
+      detail: "Run all 10 SQL migrations against the Supabase project plus seed.sql once.",
+      done: counts.data && counts.data.customers > 0,
+      action: () => window.open("https://supabase.com/dashboard", "_blank"),
+      cta: "Open Supabase",
+    },
+    {
+      title: "Add a tenant member",
+      detail: "Insert your auth.users row into tenant_members with role admin.",
+      done: false,
+      action: () => (window.location.hash = "#/admin"),
+      cta: "Open Admin Center",
+    },
+    {
+      title: "Process your first PO",
+      detail: "Drag a PO PDF into Inbox or click 'New from PO' on Sales Orders.",
+      done: counts.data && counts.data.orders > 0,
+      action: () => (window.location.hash = "#/intake"),
+      cta: "Open Inbox",
+    },
+    {
+      title: "Mark complete",
+      detail: "Tells the app to stop showing this screen on first paint.",
+      done: localStorage.getItem("obara:v3_onboarded") === "1",
+      action: () => {
+        localStorage.setItem("obara:v3_onboarded", "1");
+        window.notifySuccess?.("Onboarding marked complete", "You can revisit this checklist via #/onboarding any time.");
+        window.location.hash = "#/home";
+      },
+      cta: "Mark done",
+    },
+  ];
+
+  const doneCount = steps.filter((s) => s.done).length;
+  const pct = Math.round((doneCount / steps.length) * 100);
+
+  return (
+    <>
+      <WSTitle eyebrow="Setup" title="Welcome to Anvil v3"
+               meta={`${doneCount} of ${steps.length} steps complete · ${pct}%`} />
+      <div className="ws-content">
+        <Card>
+          <div className="body" style={{ marginBottom: 8 }}>
+            Walk through these in order. The app re-checks each step's status on every visit, so partial progress is preserved.
+          </div>
+          <div className="hbar" style={{ height: 8, marginBottom: 16 }}>
+            <span style={{ width: pct + "%", background: "var(--accent-2)" }} />
+          </div>
+          <Steps current={Math.min(doneCount, steps.length - 1)} items={steps.map((s) => s.title)} />
+        </Card>
+
+        {steps.map((s, i) => (
+          <Card key={i} title={`${i + 1}. ${s.title}`}
+                eyebrow={s.done ? "complete" : "pending"}
+                right={<Btn sm kind={s.done ? "ghost" : "primary"} onClick={s.action}>
+                  {s.done ? "Re-open" : s.cta}
+                </Btn>}>
+            <div className="body">{s.detail}</div>
+            <div className="row" style={{ marginTop: 8, gap: 6 }}>
+              <Chip k={s.done ? "good" : "warn"}>{s.done ? "done" : "todo"}</Chip>
+              {s.done && Icon.check}
+            </div>
+          </Card>
+        ))}
+      </div>
+    </>
+  );
+};
+
+window.Onboarding = WiredOnboarding;
+
+
+// ===== screens-wired/wired-format-guide.jsx =====
+// ============================================================
+// ANVIL v3 — Format guide (file format auto-detection rules)
+// Migrates the legacy showFormatGuide info modal.
+// Reached via #/format-guide.
+// ============================================================
+
+const WiredFormatGuide = () => (
+  <>
+    <WSTitle eyebrow="Help" title="Supported file formats"
+             meta="Imports + exports across Anvil" />
+    <div className="ws-content">
+      <Card title="Imports" eyebrow="what we accept">
+        <dl className="kv" style={{ gridTemplateColumns: "180px 1fr" }}>
+          <dt>BOM library</dt>
+          <dd>XLSX, XLS, CSV, TSV, TXT, ZIP. Headers must include recognizable part-number and part-name columns. Origin (India / Korea / China / Japan) auto-detected from filename.</dd>
+          <dt>SO history</dt>
+          <dd>XLSX, XLS, CSV, TSV, TXT. PO-tracker and Tally-export layouts auto-detected by column header signatures.</dd>
+          <dt>Spare matrix</dt>
+          <dd>XLSX, XLS, CSV, TSV, TXT. Use the template headers for reliable mapping.</dd>
+          <dt>Customer PO</dt>
+          <dd>PDF (image or text), DOCX, XLSX. Mistral OCR runs on first upload. Confidence shown per page.</dd>
+          <dt>Customer quote</dt>
+          <dd>PDF, DOCX, XLSX. Optional in SO Intake but improves reconciliation.</dd>
+          <dt>Price comparison</dt>
+          <dd>Previous-PO Excel for line-level price drift. Optional.</dd>
+        </dl>
+      </Card>
+
+      <Card title="Exports" eyebrow="what we produce">
+        <dl className="kv" style={{ gridTemplateColumns: "180px 1fr" }}>
+          <dt>Spare matrix</dt>
+          <dd>XLSX, CSV, TSV, JSON.</dd>
+          <dt>Recommended spares</dt>
+          <dd>XLSX, CSV, TSV, JSON.</dd>
+          <dt>SO history</dt>
+          <dd>XLSX, CSV, TSV, JSON.</dd>
+          <dt>SO agent history</dt>
+          <dd>JSON, CSV.</dd>
+          <dt>Audit log</dt>
+          <dd>CSV, JSON.</dd>
+          <dt>Audit pack (per order)</dt>
+          <dd>ZIP bundling PO + quote + price comp + result + signed evidence URLs.</dd>
+        </dl>
+      </Card>
+
+      <Card title="Document safety" eyebrow="zip + scan + redact">
+        <ul style={{ marginTop: 0, paddingLeft: 18, fontSize: 12.5, color: "var(--ink-2)" }}>
+          <li><b>ZIP guards</b>: file size limit 100 MB, member count cap, no nested ZIP, no executable extensions.</li>
+          <li><b>ClamAV proxy</b> scans every accepted upload before OCR.</li>
+          <li><b>Redaction firewall</b> on Claude calls: PII, credit cards, Aadhaar, PAN. Edit the rules in Security Center.</li>
+          <li><b>Storage</b>: Supabase Storage bucket scoped to the tenant, signed URLs with 1-hour TTL.</li>
+        </ul>
+      </Card>
+
+      <Card title="Tally + GSTN export" eyebrow="finance pipeline">
+        <ul style={{ marginTop: 0, paddingLeft: 18, fontSize: 12.5, color: "var(--ink-2)" }}>
+          <li><b>Tally voucher</b>: XML over the Tally HTTP bridge with per-order idempotency hash.</li>
+          <li><b>e-Invoice IRN</b>: GSTN compose-and-submit; 24-hour cancel window.</li>
+          <li><b>Reconcile</b>: voucher-number capture marks orders RECONCILED.</li>
+        </ul>
+      </Card>
+    </div>
+  </>
+);
+
+window.FormatGuide = WiredFormatGuide;
 </script>
   <!-- Shell loads after screens so its exports take precedence on collisions -->
   <script type="text/babel" data-presets="env,react">// ============================================================
@@ -16619,6 +16964,9 @@ const ROUTES = {
   // Sign-in / backend connect (no nav entry; reached via header pill or
   // automatic redirect when not signed in)
   connect:     () => (window.BackendConnect ? <BackendConnect /> : <Placeholder name="Backend Connect" />),
+  // Onboarding checklist + format guide (reached via Cmd+K or first-run)
+  onboarding:  () => (window.Onboarding ? <Onboarding /> : <Placeholder name="Onboarding" />),
+  "format-guide": () => (window.FormatGuide ? <FormatGuide /> : <Placeholder name="Format Guide" />),
 };
 
 const Placeholder = ({ name }) => (
@@ -16765,6 +17113,7 @@ const App = () => {
       </ShellInner>
       {window.CmdK && <CmdK open={cmdkOpen} onClose={() => setCmdk(false)} onJump={(id) => { onRoute(id); setCmdk(false); }} />}
       {window.ThreadDrawer && <ThreadDrawer open={threadOpen} onClose={() => setThread(false)} />}
+      {window.ToastStack && <ToastStack />}
     </>
   );
 };

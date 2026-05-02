@@ -100,6 +100,52 @@ const WiredSOWorkspace = () => {
   const canApprove = window.RBAC?.canDo?.("so.approve");
   const canCancel = window.RBAC?.canDo?.("so.cancel");
 
+  // Audit pack export: bundle order + result + findings + signed
+  // evidence URLs into a JSON file the user can hand to compliance.
+  // Rich PDF + ZIP packaging is a follow-up; for now this matches the
+  // legacy exportDocumentPackage shape closely enough.
+  const exportAuditPack = async (orderObj) => {
+    try {
+      const docs = Array.isArray(orderObj.documents) ? orderObj.documents : [];
+      const evidence = [];
+      for (const d of docs) {
+        try {
+          const signed = await window.ObaraBackend?.documents?.fetch?.(d.id);
+          evidence.push({ id: d.id, role: d.role, filename: d.filename, signed });
+        } catch (err) {
+          evidence.push({ id: d.id, role: d.role, error: String(err.message || err) });
+        }
+      }
+      const pack = {
+        exported_at: new Date().toISOString(),
+        order: {
+          id: orderObj.id,
+          po_number: orderObj.po_number,
+          quote_number: orderObj.quote_number,
+          status: orderObj.status,
+          customer: orderObj.customer,
+          result: orderObj.result,
+          rule_findings: orderObj.rule_findings,
+          approval: orderObj.approval,
+          payload_hash: orderObj.payload_hash,
+        },
+        evidence,
+      };
+      const blob = new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `audit-pack-${orderObj.po_number || orderObj.id || "order"}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      window.notifySuccess?.("Audit pack exported", `Saved as ${a.download}`);
+    } catch (err) {
+      window.notifyError?.("Audit pack export failed", String(err.message || err));
+    }
+  };
+
   const customerName = o.customer?.customer_name || o.customer_name || (o.customer_id ? o.customer_id.slice(0, 8) : "—");
   const customerEmail = o.customer?.contact_email || o.customer?.email;
 
@@ -186,6 +232,9 @@ const WiredSOWorkspace = () => {
               {Icon.send} email customer
             </Btn>
           )}
+          <Btn sm kind="ghost" onClick={() => exportAuditPack(o)} title="Bundle PO + quote + result + signed evidence URLs into a JSON download">
+            {Icon.download} audit pack
+          </Btn>
           <Btn sm kind="ghost" disabled={!canCancel} title={canCancel ? "" : "needs sales_manager / admin"}>
             {Icon.x} cancel
           </Btn>

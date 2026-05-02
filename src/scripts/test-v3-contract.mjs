@@ -35,7 +35,7 @@ const routeKeys = [...routesBlock.matchAll(/^\s+"?([a-z][a-z-]*)"?:\s*\(\)/gm)].
 // Routes intentionally outside the sidebar nav (reached via header pill,
 // auto-redirect, or deep-link). The user wouldn't browse to these from
 // the nav tree, so we allow them to exist as ROUTES without NAV entries.
-const HIDDEN_ROUTES = new Set(["connect"]);
+const HIDDEN_ROUTES = new Set(["connect", "onboarding", "format-guide"]);
 
 const navMissingRoute = navIds.filter((id) => !routeKeys.includes(id));
 const routeMissingNav = routeKeys.filter((id) => !navIds.includes(id) && !HIDDEN_ROUTES.has(id));

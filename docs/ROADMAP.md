@@ -3,7 +3,7 @@
 Living document of work that is planned but not yet shipped, kept next to the
 code so it does not drift out of sync with the implementation.
 
-Last updated: 2026-05-02.
+Last updated: 2026-05-03.
 
 ## Now
 
@@ -27,6 +27,96 @@ Tracking: see the migration plan in conversation thread + the per-wave PR
 sequence under `feature/v3-*` branches.
 
 ## Next
+
+### v3 migration gap closures (Phase 7)
+
+The post-Phase-6 UX migration audit (see git log around commit 95ad4e8)
+identified surfaces that exist in the legacy shell but have no v3
+destination yet. Phase 1 to Phase 5 covered 30 nav routes + Cmd+K +
+ThreadDrawer + auth + onboarding + format-guide + toasts + audit-pack
+export. The remaining work is sized below; each is a Phase 7.x
+sub-release.
+
+7.1. **Spare Matrix worksheet** (largest user-impact gap)
+- Per-customer/project worksheet with editable rows + columns.
+- Add row, add spare column, configure columns dialog.
+- Auto-fill all from gun BOMs, template download, multi-format
+  import preview (XLSX / CSV / TSV / JSON).
+- Recommended Spares sub-tab with sync-from-matrix button + Excel
+  export.
+- Lives at `#/spares?worksheet=1` or as a sub-tab inside the
+  existing Spares Matrix screen.
+
+7.2. **BOM Import workflow**
+- Multi-file XLSX/XLS upload with origin auto-detection (India /
+  Korea / China / Japan).
+- Drag-drop zone, file queue, hierarchy markers L1/L2/L3.
+- Gun-number auto-suggest, mod-detection diff.
+- Lives as a sub-tab inside Items > BOM with "Import" button.
+
+7.3. **Guns viewer**
+- Two-pane gun list + BOM detail viewer.
+- Assembly hierarchy, drawing PDF link, customer-usage chips,
+  click-to-spare-matrix navigation.
+- Lives at `#/items?view=guns` or as a sub-tab on Items.
+
+7.4. **SO History import**
+- Drag-drop XLSX/XLS/CSV/TSV/TXT.
+- Format auto-detection (PO-tracker layout vs Tally export).
+- Multi-format export (XLSX/CSV/TSV/JSON).
+- Lives at `#/so?view=history` or its own nav id.
+
+7.5. **JBM spare matrix importer**
+- One-click XLSX -> equipment_hierarchy + equipment_installed_parts.
+- Schema and API exist; only UI is missing.
+- Lives inside Items > BOM as a customer-specific import variant.
+
+7.6. **Equipment hierarchy editor**
+- No v3 surface for the `equipment_hierarchy` table at all.
+- Tree-view editor with add/remove/move nodes.
+- Lives at `#/items?view=equipment` or under Service.
+
+7.7. **Project/Opportunity enum migration**
+- Legacy phase enum (`INSTALLATION_COMMISSIONING / LB_FINALIZATION /
+  KICKOFF / PAYMENT_FOLLOWUP`) vs v3 phase enum (`MATERIALS_IN /
+  MANUFACTURING / FAT / SAT`).
+- Same drift on `opportunities.stage`.
+- Decide on canonical taxonomy, data migration script, UI updates.
+
+7.8. **CRUD completeness on existing wired screens**
+- Shipments: create form, status update, POD-received toggle, delete.
+- Service Visits: check-in / check-out / delete + plan-visit form.
+- Internal SOs: per-type create form (FOC/Warranty/Trial/Expected/
+  Transfer).
+- Tally Masters: XML/JSON upload to seed masters.
+- AMC: bulk-seed UI + Generate-visit + delete per row.
+- Eval Suites: cases editor (add/run/delete).
+- Profile Studio: visual fingerprint diff with edit-and-save.
+- Admin Center: customer locations editor, item master inline edit,
+  contracts manager, equipment hierarchy editor, holiday delete,
+  approval thresholds CRUD.
+- e-Invoice: compose-draft form + Send to GSTN action.
+
+7.9. **Master Data Graph Cytoscape view**
+- Replace the placeholder list with a real Cytoscape graph.
+- Customer / order / part / supplier nodes, drillable.
+
+7.10. **Drawing-link configuration**
+- Legacy Settings tab has OneDrive base URL for drawing PDFs.
+- Add a tab to AdminCenter > Settings.
+
+7.11. **Storage status / Diagnostics tab**
+- AdminCenter > Diagnostics is currently a placeholder.
+- Build `/api/admin/diagnostics` endpoint.
+- Surface localStorage usage, last backup time, integration health.
+
+7.12. **Schedule Lines editor**
+- Per-order TSV-paste delivery schedule editor inside SOWorkspace.
+- API method `scheduleLines.bulkCreate / clear / deleteOne` exists.
+
+7.13. **Communications timeline merge**
+- SOWorkspace > Activity tab currently shows audit events only.
+- Merge `communications` + `processing_events` for full timeline.
 
 ### Mobile shell (post-v3 cutover)
 The v3 design system already provides mobile screens in

@@ -1,0 +1,1 @@
+{"version":3,"file":"email-DbpNe-BK.js","sources":["../../../src/v3-app/screens/email.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Email Triage\");\n"],"names":["email","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,cAAc"}

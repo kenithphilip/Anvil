@@ -1,0 +1,1 @@
+{"version":3,"file":"einvoice-Dq_UHs6k.js","sources":["../../../src/v3-app/screens/einvoice.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"e-Invoice\");\n"],"names":["einvoice","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,WAAW"}

@@ -1,0 +1,1 @@
+{"version":3,"file":"approvals-jlgBNcRO.js","sources":["../../../src/v3-app/screens/approvals.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Approvals\");\n"],"names":["approvals","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,WAAW"}

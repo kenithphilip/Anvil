@@ -1,35 +1,30 @@
-// Minimal app shell for the Vite v3 build.
+// App router for the Vite v3 build.
 //
-// Hash-based routing keeps parity with the legacy app (#/home, #/so?id=...).
-// Sub-PR 1 ships a tiny shell to prove lazy chunks load. Sub-PR 2 brings
-// over the full Shell (header + sidebar + dock) once enough screens are
-// converted that the sidebar list is meaningful again.
+// Mounts the Shell (header + sidebar + dock) plus the route switch keyed
+// on hash. Reads RBAC role for sidebar filtering and home variant. The
+// CmdK palette + Thread drawer overlays sit on top of the main content.
 
-import React, { Suspense, useEffect, useState } from "react";
-import { LAZY_COMPONENTS, DEFAULT_ROUTE, ROUTES } from "./routes.js";
+import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Shell, CmdK, ThreadDrawer } from "./components/Shell.jsx";
+import { Card, WSTitle } from "./lib/primitives.jsx";
+import { Icon } from "./lib/icons.jsx";
+import { NAV, ROLES, crumbFor } from "./lib/nav.js";
+import { RBAC } from "./lib/rbac.js";
+import { Prefs } from "./lib/preferences.js";
+import { ObaraBackend } from "./lib/api.js";
+import { RESOLVERS, ROUTE_IDS, DEFAULT_ROUTE, readHashParams } from "./routes.js";
 
-const parseHash = () => {
-  const raw = (typeof window !== "undefined" && window.location.hash) || "";
-  const trimmed = raw.replace(/^#\/?/, "");
-  const [route, query] = trimmed.split("?");
-  return { route: route || DEFAULT_ROUTE, query: query || "" };
+const ROUTE_KEY = "obara:v3_route";
+const TENANT_KEY = "obara:v3_tenant_code";
+const INTENDED_ROUTE_KEY = "obara:v3_intended_route";
+
+const parseRoute = () => {
+  const hash = (typeof window !== "undefined" && window.location.hash) || "";
+  const id = hash.replace(/^#\/?/, "").split("?")[0];
+  if (id && RESOLVERS[id]) return id;
+  try { return localStorage.getItem(ROUTE_KEY) || DEFAULT_ROUTE; }
+  catch (_) { return DEFAULT_ROUTE; }
 };
-
-const useHashRoute = () => {
-  const [state, setState] = useState(parseHash);
-  useEffect(() => {
-    const onChange = () => setState(parseHash());
-    window.addEventListener("hashchange", onChange);
-    return () => window.removeEventListener("hashchange", onChange);
-  }, []);
-  return state;
-};
-
-const Fallback = ({ label }) => (
-  <div style={{ padding: 24, color: "var(--ink-3, #888)", fontFamily: "var(--mono, monospace)" }}>
-    Loading {label}…
-  </div>
-);
 
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null }; }
@@ -38,54 +33,209 @@ class ErrorBoundary extends React.Component {
   render() {
     if (!this.state.error) return this.props.children;
     return (
-      <div style={{ padding: 24 }}>
-        <h2>Something broke loading this route.</h2>
-        <pre style={{ color: "var(--rust, #c33)", whiteSpace: "pre-wrap" }}>
-          {String(this.state.error.stack || this.state.error.message || this.state.error)}
-        </pre>
+      <div className="ws ws-no-rail" style={{ padding: 24 }}>
+        <WSTitle eyebrow="Error" title="This route crashed" />
+        <Card>
+          <pre style={{ color: "var(--rust, #c33)", whiteSpace: "pre-wrap", padding: 12 }}>
+            {String(this.state.error.stack || this.state.error.message || this.state.error)}
+          </pre>
+        </Card>
       </div>
     );
   }
 }
 
-export default function App() {
-  const { route } = useHashRoute();
-  const Component = LAZY_COMPONENTS[route];
-  const meta = ROUTES[route];
+const Loading = ({ label }) => (
+  <div className="ws ws-no-rail" style={{ padding: 24, color: "var(--ink-3)" }}>
+    Loading {label}…
+  </div>
+);
 
-  if (!Component) {
-    return (
-      <div style={{ padding: 24 }}>
-        <h2>Unknown route: <code>{route}</code></h2>
-        <p>Available: {Object.keys(ROUTES).map((id) => (
-          <a key={id} href={`#/${id}`} style={{ marginRight: 8 }}>{id}</a>
-        ))}</p>
-      </div>
-    );
-  }
+// Force re-render when RBAC role or prefs change so the sidebar filter +
+// theme reflect the new state without a hash change.
+const useRerenderOnEvents = (eventNames) => {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const bump = () => force((n) => n + 1);
+    eventNames.forEach((e) => window.addEventListener(e, bump));
+    return () => eventNames.forEach((e) => window.removeEventListener(e, bump));
+  }, [eventNames.join("|")]);
+};
 
+const promptRole = () => {
+  const list = RBAC.ROLES.map((r, i) => `${i + 1}. ${r}${r === RBAC.role() ? " (current)" : ""}`).join("\n");
+  const pick = window.prompt(`Switch role to:\n${list}\n\nEnter 1-${RBAC.ROLES.length}:`);
+  const n = parseInt(pick, 10);
+  if (!Number.isNaN(n) && n >= 1 && n <= RBAC.ROLES.length) RBAC.setRole(RBAC.ROLES[n - 1]);
+};
+
+// Floating bar in the dock area: theme + density + rail collapse.
+const ThemeBar = () => {
+  useRerenderOnEvents(["prefs:change"]);
+  const theme = Prefs.theme();
+  const density = Prefs.density();
   return (
-    <div className="v3-app-root">
-      <nav style={{ display: "flex", gap: 12, padding: 12, borderBottom: "1px solid var(--hairline, #333)" }}>
-        <strong style={{ marginRight: 12 }}>Anvil v3 (vite)</strong>
-        {Object.entries(ROUTES).map(([id, r]) => (
-          <a key={id} href={`#/${id}`}
-             style={{
-               textDecoration: "none",
-               color: id === route ? "var(--accent, #cf6)" : "var(--ink-2, #aaa)",
-               fontWeight: id === route ? 600 : 400,
-             }}>
-            {r.label}
-          </a>
-        ))}
-      </nav>
-      <main className="ws">
-        <ErrorBoundary>
-          <Suspense fallback={<Fallback label={meta?.label || route} />}>
-            <Component />
-          </Suspense>
-        </ErrorBoundary>
-      </main>
+    <div style={{ position: "fixed", right: 16, bottom: 36, display: "flex", gap: 6, zIndex: 100 }}>
+      <button className="head-pill" title="Toggle theme" onClick={() => Prefs.toggleTheme()}>
+        {Icon.eye} {theme}
+      </button>
+      <button className="head-pill" title="Cycle density" onClick={() => {
+        const order = ["compact", "normal", "comfortable"];
+        const next = order[(order.indexOf(density) + 1) % order.length];
+        Prefs.setDensity(next);
+      }}>{Icon.layers} {density}</button>
+      <button className="head-pill" title="Toggle sidebar" onClick={() => Prefs.toggleRail()}>
+        {Icon.arrowL}
+      </button>
     </div>
   );
+};
+
+export default function App() {
+  useRerenderOnEvents(["rbac:change", "prefs:change", "popstate", "hashchange"]);
+
+  const [route, setRoute] = useState(parseRoute);
+  const [cmdkOpen, setCmdk] = useState(false);
+  const [threadOpen, setThread] = useState(false);
+
+  const onRoute = useCallback((id) => {
+    if (!RESOLVERS[id]) return;
+    if (!RBAC.canRead(id)) {
+      console.warn(`[v3-app] role ${RBAC.role()} cannot access ${id}`);
+      return;
+    }
+    setRoute(id);
+    try { localStorage.setItem(ROUTE_KEY, id); } catch (_) {}
+    try { window.history.replaceState(null, "", `#/${id}`); } catch (_) {}
+  }, []);
+
+  // Hash-change keeps the route in sync with deep links.
+  useEffect(() => {
+    const onHash = () => {
+      const id = (window.location.hash || "").replace(/^#\/?/, "").split("?")[0];
+      if (id && RESOLVERS[id] && id !== route) setRoute(id);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [route]);
+
+  // First-load: redirect to /connect if backend isn't configured. Save
+  // intended route so /connect can return the user there post-sign-in.
+  useEffect(() => {
+    const ready = !!ObaraBackend?.isReady?.();
+    const cfg = ObaraBackend?.getConfig?.() || {};
+    const hasUrl = !!cfg.url;
+    if (!ready && !hasUrl && route !== "connect") {
+      try {
+        localStorage.setItem(INTENDED_ROUTE_KEY, window.location.hash || "#/home");
+      } catch (_) {}
+      onRoute("connect");
+    }
+    // run once after mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Cross-tab session detection (magic-link flow opens auth/callback in a
+  // separate tab). When the other tab writes the session, this tab picks
+  // it up and routes to the user's intended destination.
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== "obara:backend_session") return;
+      try {
+        const next = e.newValue ? JSON.parse(e.newValue) : null;
+        ObaraBackend?.setSession?.(next);
+        if (next?.access_token) {
+          let target = "home";
+          try {
+            const stored = localStorage.getItem(INTENDED_ROUTE_KEY);
+            if (stored) {
+              const id = stored.replace(/^#\/?/, "").split("?")[0];
+              if (RESOLVERS[id] && id !== "connect") target = id;
+              localStorage.removeItem(INTENDED_ROUTE_KEY);
+            }
+          } catch (_) {}
+          onRoute(target);
+        }
+      } catch (_) {}
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [onRoute]);
+
+  // Cmd+K + Esc shortcuts.
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCmdk((v) => !v);
+      }
+      if (e.key === "Escape") {
+        setCmdk(false);
+        setThread(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const navFiltered = useMemo(() => RBAC.filterNav(NAV), [RBAC.role()]);
+
+  // Bounce to home if the current route is no longer accessible.
+  useEffect(() => {
+    if (!RBAC.canRead(route)) onRoute("home");
+  }, [route, onRoute]);
+
+  const role = RBAC.role();
+  const roleObj = ROLES.find((r) => r.id === role.split("_")[0]) ||
+                  { id: role, label: role.replace(/_/g, " "), short: role.slice(0, 3).toUpperCase() };
+
+  const tenant = { code: (() => {
+    try { return localStorage.getItem(TENANT_KEY) || "OBARA-IN"; }
+    catch (_) { return "OBARA-IN"; }
+  })() };
+
+  // Resolve the active screen. resolver returns a lazy component; key the
+  // Suspense boundary by the screen identity so route changes remount.
+  const resolver = RESOLVERS[route] || RESOLVERS[DEFAULT_ROUTE];
+  const Active = resolver({ params: readHashParams(), role });
+
+  return (
+    <>
+      <Shell
+        route={route}
+        onRoute={onRoute}
+        role={roleObj}
+        onRole={() => promptRole()}
+        tenant={tenant}
+        onTenant={() => onRoute("connect")}
+        onCmdK={() => setCmdk(true)}
+        onThread={() => setThread(true)}
+        crumb={crumbFor(route)}
+        nav={navFiltered}
+      >
+        <ThemeBar />
+        <ErrorBoundary key={route}>
+          <Suspense fallback={<Loading label={route} />}>
+            {Active ? <Active /> : <NotFound id={route} />}
+          </Suspense>
+        </ErrorBoundary>
+      </Shell>
+      <CmdK open={cmdkOpen} onClose={() => setCmdk(false)} onJump={(id) => { onRoute(id); setCmdk(false); }} />
+      <ThreadDrawer open={threadOpen} onClose={() => setThread(false)} />
+    </>
+  );
 }
+
+const NotFound = ({ id }) => (
+  <div className="ws ws-no-rail" style={{ padding: 24 }}>
+    <WSTitle eyebrow="Unknown route" title={String(id)} />
+    <Card>
+      <div className="body" style={{ padding: 16 }}>
+        Available routes:
+        <ul className="mono-sm">
+          {ROUTE_IDS.map((r) => <li key={r}><a href={`#/${r}`}>{r}</a></li>)}
+        </ul>
+      </div>
+    </Card>
+  </div>
+);

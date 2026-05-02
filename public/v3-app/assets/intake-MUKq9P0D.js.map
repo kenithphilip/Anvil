@@ -1,0 +1,1 @@
+{"version":3,"file":"intake-MUKq9P0D.js","sources":["../../../src/v3-app/screens/intake.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Inbox\");\n"],"names":["intake","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,OAAO"}

@@ -1,0 +1,1 @@
+{"version":3,"file":"admin-CIZetmYQ.js","sources":["../../../src/v3-app/screens/admin.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Admin Center\");\n"],"names":["admin","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,cAAc"}

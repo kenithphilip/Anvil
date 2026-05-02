@@ -1,0 +1,1 @@
+{"version":3,"file":"source-pos-LpFJDX0e.js","sources":["../../../src/v3-app/screens/source-pos.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Source POs\");\n"],"names":["sourcePos","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,YAAY"}

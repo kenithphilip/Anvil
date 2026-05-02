@@ -1,0 +1,1 @@
+{"version":3,"file":"format-guide-DY5saksn.js","sources":["../../../src/v3-app/screens/format-guide.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Format Guide\");\n"],"names":["formatGuide","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,cAAc"}

@@ -1,0 +1,1 @@
+{"version":3,"file":"so-intake-BqTy3sE6.js","sources":["../../../src/v3-app/screens/so-intake.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"New Sales Order\");\n"],"names":["soIntake","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,iBAAiB"}

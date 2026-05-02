@@ -1,0 +1,1 @@
+{"version":3,"file":"tally-push-TPoKwNkH.js","sources":["../../../src/v3-app/screens/tally-push.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Tally Sync\");\n"],"names":["tallyPush","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,YAAY"}

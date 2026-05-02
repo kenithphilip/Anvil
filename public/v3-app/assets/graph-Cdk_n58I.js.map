@@ -1,0 +1,1 @@
+{"version":3,"file":"graph-Cdk_n58I.js","sources":["../../../src/v3-app/screens/graph.jsx"],"sourcesContent":["import { placeholderFor } from \"../lib/placeholder.jsx\";\nexport default placeholderFor(\"Master Data Graph\");\n"],"names":["graph","placeholderFor"],"mappings":"0EACA,MAAAA,EAAeC,EAAe,mBAAmB"}

@@ -22,9 +22,12 @@ const OUT = path.join(PUB, "v3.html");
 const read = (p) => fs.readFileSync(p, "utf8");
 
 // Order matters for the screens. Several files reference Window-attached
-// names from earlier files (e.g. screens-orders uses `Steps` from
-// primitives, `Card` from primitives, etc. — primitives loads first).
+// names from earlier files. Static demos load first, then "wired"
+// versions in screens-wired/ overwrite the window.* exports with live-data
+// implementations. The static files remain in the bundle so the design
+// remains a self-documenting reference.
 const SCREEN_FILES = [
+  // Static demo screens (design templates with mock data)
   "screens/screens-home.jsx",
   "screens/screens-orders.jsx",
   "screens/screens-procurement.jsx",
@@ -40,6 +43,10 @@ const SCREEN_FILES = [
   "screens/screens-docs.jsx",
   // intentionally skip screens-mobile + ios-frame; they are mobile-shell
   // surfaces that ship in a follow-up. See docs/ROADMAP.md.
+
+  // Wired screens that override the static ones with live ObaraBackend data
+  "screens-wired/wired-home.jsx",
+  "screens-wired/wired-orders.jsx",
 ];
 
 const tpl = read(path.join(V3, "index.html.tpl"));

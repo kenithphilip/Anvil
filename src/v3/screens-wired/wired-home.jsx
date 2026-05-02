@@ -1,0 +1,225 @@
+// ============================================================
+// ANVIL v3 — wired Home screens
+// Replaces the static demo HomeEngineer/HomeManager/HomeAdmin
+// with live data via ObaraBackend.* methods.
+// ============================================================
+
+const { useState: useStateW, useEffect: useEffectW, useMemo: useMemoW } = React;
+
+// ─────────────────────────────────────────────────────────────
+// useFetch: tiny hook that runs a thunk on mount, exposes
+// { data, error, loading, reload }. Avoids pulling in a state library.
+// ─────────────────────────────────────────────────────────────
+const useFetch = (thunk, deps = []) => {
+  const [state, setState] = useStateW({ data: null, error: null, loading: true });
+  const [bump, setBump] = useStateW(0);
+  useEffectW(() => {
+    let cancelled = false;
+    setState((s) => ({ ...s, loading: true }));
+    Promise.resolve()
+      .then(() => thunk())
+      .then((data) => { if (!cancelled) setState({ data, error: null, loading: false }); })
+      .catch((error) => { if (!cancelled) setState({ data: null, error, loading: false }); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [...deps, bump]);
+  return { ...state, reload: () => setBump((n) => n + 1) };
+};
+
+// Format a relative age like "14m" / "2h" / "1d 3h"
+const ageLabel = (iso) => {
+  if (!iso) return "—";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms)) return "—";
+  const mins = Math.floor(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  const remH = hrs - days * 24;
+  return remH ? `${days}d ${remH}h` : `${days}d`;
+};
+
+const fmtINRShort = (n) => {
+  if (n == null) return "—";
+  if (n >= 10_00_000) return `₹ ${(n / 1_00_000).toFixed(1)} L`;
+  if (n >= 1000) return `₹ ${(n / 1000).toFixed(0)}k`;
+  return `₹ ${n.toLocaleString("en-IN")}`;
+};
+
+const stageOf = (status) => {
+  // Map order_status enum to a v3 chip
+  const map = {
+    DRAFT: { label: "intake", k: "info" },
+    PENDING_REVIEW: { label: "validate", k: "warn" },
+    APPROVED: { label: "approval", k: "good" },
+    BLOCKED: { label: "blocked", k: "bad" },
+    DUPLICATE: { label: "duplicate", k: "warn" },
+    REUSED: { label: "reused", k: "info" },
+    EXPORTED_TO_TALLY: { label: "tally", k: "info" },
+    FAILED_TALLY_IMPORT: { label: "tally fail", k: "bad" },
+    RECONCILED: { label: "shipped", k: "good" },
+    CANCELLED: { label: "cancelled", k: "ghost" },
+  };
+  return map[status] || { label: (status || "draft").toLowerCase(), k: "ghost" };
+};
+
+const sevOf = (order) => {
+  const s = order?.status;
+  if (s === "BLOCKED" || s === "FAILED_TALLY_IMPORT") return "high";
+  if (s === "PENDING_REVIEW" || s === "DUPLICATE") return "med";
+  return "low";
+};
+
+// ─────────────────────────────────────────────────────────────
+// HomeEngineer (wired) — replaces the static demo of the same name.
+// ─────────────────────────────────────────────────────────────
+const WiredHomeEngineer = () => {
+  const orders = useFetch(() => window.ObaraBackend?.orders?.list?.({ limit: 50 }) || Promise.resolve([]), []);
+  const audit = useFetch(() => window.ObaraBackend?.audit?.list?.({ limit: 6 }) || Promise.resolve([]), []);
+
+  const list = Array.isArray(orders.data) ? orders.data : (orders.data?.rows || []);
+
+  const myQueue = list
+    .filter((o) => o.status !== "RECONCILED" && o.status !== "CANCELLED")
+    .slice(0, 8);
+
+  const drafts = list.filter((o) => o.status === "DRAFT").length;
+  const inApproval = list.filter((o) => o.status === "PENDING_REVIEW").length;
+  const pushedToday = list.filter((o) => {
+    if (o.status !== "EXPORTED_TO_TALLY" && o.status !== "RECONCILED") return false;
+    const t = o.updated_at || o.created_at;
+    return t && new Date(t).toDateString() === new Date().toDateString();
+  });
+  const pushedValueToday = pushedToday.reduce((sum, o) => sum + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
+
+  const auditRows = (Array.isArray(audit.data) ? audit.data : (audit.data?.rows || [])).slice(0, 6);
+
+  if (orders.loading) {
+    return (
+      <div className="ws ws-no-rail">
+        <WSTitle eyebrow="loading" title="Good morning." meta="fetching live state" />
+        <div className="ws-content"><Card><div className="body">Loading queue…</div></Card></div>
+      </div>
+    );
+  }
+
+  if (orders.error) {
+    return (
+      <div className="ws ws-no-rail">
+        <WSTitle eyebrow="error" title="Could not load queue" meta="check Backend connection in Admin" />
+        <div className="ws-content">
+          <Banner kind="bad" icon={Icon.alert} title="Backend unreachable" action={<Btn sm onClick={orders.reload}>Retry</Btn>}>
+            <span className="mono-sm">{String(orders.error.message || orders.error)}</span>
+          </Banner>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <WSTitle
+        eyebrow={new Date().toLocaleString("en-IN", { weekday: "long", hour: "2-digit", minute: "2-digit" })}
+        title="Good morning."
+        meta={`${list.length} orders in scope · ${myQueue.length} awaiting action`}
+        right={<>
+          <Btn icon kind="ghost" sm onClick={orders.reload} title="Refresh">{Icon.cycle}</Btn>
+          <Btn kind="primary" sm onClick={() => window.location.hash = "#/intake"}>{Icon.plus} New SO</Btn>
+        </>}
+      />
+
+      <div className="ws-content">
+        {myQueue.length > 0 && (
+          <Banner kind="live" icon={Icon.bolt}
+                  title={`${myQueue.length} order${myQueue.length === 1 ? "" : "s"} in your queue · oldest ${ageLabel(myQueue[0]?.updated_at || myQueue[0]?.created_at)}`}
+                  action={<Btn sm kind="live" onClick={() => window.location.hash = "#/so"}>Open queue</Btn>}>
+            <span className="mono-sm">First up: {myQueue[0]?.po_number || myQueue[0]?.quote_number || "draft"} · {myQueue[0]?.customer?.customer_name || ""}</span>
+          </Banner>
+        )}
+
+        <KPIRow cols={4}>
+          <KPI lbl="My queue" v={String(myQueue.length)} d={myQueue.length ? `oldest ${ageLabel(myQueue[0]?.updated_at)}` : "all clear"} live={myQueue.length > 0} />
+          <KPI lbl="Drafts" v={String(drafts)} d="autosaved locally" />
+          <KPI lbl="In approval" v={String(inApproval)} d={inApproval ? "pending review" : "none pending"} />
+          <KPI lbl="Pushed today" v={fmtINRShort(pushedValueToday)} d={`${pushedToday.length} SOs`} dKind={pushedToday.length ? "up" : ""} />
+        </KPIRow>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 14 }}>
+          <Card flush>
+            <div style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: "1px solid var(--hairline-2)" }}>
+              <span className="h2">My Queue</span>
+              <Chip k="live" lg>{myQueue.length} items</Chip>
+              <span style={{ marginLeft: "auto" }} className="mono-sm">live · {new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span>
+            </div>
+            {myQueue.length === 0 ? (
+              <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+                Nothing in your queue. <a onClick={() => window.location.hash = "#/intake"} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>Create a new SO</a>
+              </div>
+            ) : (
+              <table className="tbl">
+                <thead><tr>
+                  <th style={{ width: 22 }}></th>
+                  <th>Reference</th>
+                  <th>Customer</th>
+                  <th>Stage</th>
+                  <th className="r">Value</th>
+                  <th className="r">Age</th>
+                  <th style={{ width: 80 }}></th>
+                </tr></thead>
+                <tbody>
+                  {myQueue.map((o, i) => {
+                    const st = stageOf(o.status);
+                    const value = Number(o.result?.salesOrder?.grandTotal) || 0;
+                    return (
+                      <tr key={o.id || i}>
+                        <td><Sev k={sevOf(o)} /></td>
+                        <td className="mono"><span className="pri">{o.po_number || o.quote_number || "draft"}</span></td>
+                        <td>{o.customer?.customer_name || o.customer_id?.slice(0, 8) || "—"}</td>
+                        <td><Chip k={st.k}>{st.label}</Chip></td>
+                        <td className="r mono">{value ? fmtINRShort(value) : "—"}</td>
+                        <td className="r mono">{ageLabel(o.updated_at || o.created_at)}</td>
+                        <td><Btn sm onClick={() => window.location.hash = `#/so?id=${o.id}`}>open {Icon.arrowR}</Btn></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </Card>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <Card title="Live activity" eyebrow="last events"
+                  right={<Btn sm kind="ghost" onClick={() => window.location.hash = "#/audit"}>{Icon.history} log</Btn>}>
+              {audit.loading ? (
+                <div className="body">Loading…</div>
+              ) : auditRows.length === 0 ? (
+                <div className="mono-sm" style={{ color: "var(--ink-4)" }}>No recent activity.</div>
+              ) : (
+                <Stream rows={auditRows.map((a) => ({
+                  t: new Date(a.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+                  a: (a.action || "evt").toUpperCase().slice(0, 5),
+                  m: `<b>${a.action || "event"}</b> · ${a.object_type || ""} ${a.object_id ? a.object_id.slice(0, 8) : ""}`,
+                }))} />
+              )}
+            </Card>
+
+            <Card title="Backend" eyebrow="health">
+              <KV rows={[
+                ["Tenant", localStorage.getItem("obara:v3_tenant_code") || "OBARA-IN"],
+                ["Role", (window.RBAC?.role() || "—").replace(/_/g, " ")],
+                ["Session", window.ObaraBackend?.isReady?.() ? "live" : "anonymous"],
+                ["Theme", window.Prefs?.theme() || "—"],
+              ]} />
+            </Card>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+};
+
+// Manager + Admin home: re-use the static demo for now (Phase 3 wires).
+// The app.jsx HomeRoute checks role → component, so wiring here just
+// shadows the engineer entry. Override window so app.jsx picks us up.
+window.HomeEngineer = WiredHomeEngineer;

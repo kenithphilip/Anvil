@@ -1,9 +1,9 @@
 # Setup Tutorial
 
 Goal: a working Anvil deployment on Vercel + Supabase that you can sign in
-to with magic-link auth, with all 8 migrations applied and the demo customer
-and item master rows in place. Time required: 30 to 45 minutes the first
-time, 5 minutes for subsequent environments.
+to with magic-link auth, with all 10 migrations applied and the corpus
+customer and item master rows in place. Time required: 30 to 45 minutes the
+first time, 5 minutes for subsequent environments.
 
 This guide assumes Node 20 (`nvm use` after cloning), a free Supabase
 account, a Vercel account, and an Anthropic API key. Optional integrations
@@ -49,7 +49,8 @@ warn "Backend not connected" until the next steps are done.
 
 Now go to **SQL Editor → New query** and apply each migration in order.
 The migrations live in `supabase/migrations/`. Open them in the order below,
-paste each into the SQL editor, click **Run**.
+paste each into the SQL editor, click **Run**. Wait for "Success. No rows
+returned" before moving to the next.
 
 ```
 001_init.sql
@@ -60,12 +61,22 @@ paste each into the SQL editor, click **Run**.
 006_corpus_alignment.sql
 007_seed_real_corpus_data.sql
 008_einvoice_forecast_amc.sql
+009_corpus_round2_schema.sql
+010_seed_corpus_round2_data.sql
 ```
 
-Each migration is idempotent (`create table if not exists`, `on conflict do
-nothing`), so re-running them is safe if you need to.
+Every migration is fully idempotent: `create type` is wrapped in
+`if not exists` checks, every `add constraint` checks `pg_constraint`
+first, all inserts use `on conflict do nothing` against real unique
+constraints, and the RLS macros only target tables with a `tenant_id`
+column. You can re-run any file safely.
 
-After all eight, run this verification query in the SQL editor:
+If your only access is the SQL Editor and you would rather paste once,
+`supabase/seed.sql` is the inlined concatenation of 007 + 010 with a
+row-count summary at the bottom. Run the schema-only files (001 through
+006, 008, 009) first, then paste `seed.sql`.
+
+After all ten, run this verification query in the SQL editor:
 
 ```sql
 select count(*) as customers from customers;
@@ -74,10 +85,11 @@ select count(*) as holidays from holiday_calendar;
 select count(*) as lost_reasons from lost_reason_taxonomy;
 ```
 
-Expected: at least 4 customers (MG Motor, SRTX, Tata Motors, ABC Motors),
-at least 35 item master rows, at least 60 holiday rows (IN/CN/JP/KR/US 2026),
-9 lost reasons. If any returns 0, re-run the migration that should have
-seeded it.
+Expected: at least 6 customers (MG Motor, SRTX, Tata Motors, ABC Motors,
+JBM Auto Plant 1, RNAIPL), at least 131 item master rows, at least 58 holiday
+rows (IN/CN/JP/KR/US 2026), 9 lost reasons. If any returns 0, re-run the
+migration that should have seeded it (the seed migrations are 004, 007,
+009, 010).
 
 ### Storage buckets
 
@@ -107,7 +119,7 @@ Open **Authentication → URL Configuration**:
 
 ### Create the first tenant + admin user
 
-The 007 migration seeds the default tenant with id
+Migration 001 seeds the default tenant with id
 `00000000-0000-0000-0000-000000000001`. You need to attach a real user to
 that tenant with role `admin`.
 

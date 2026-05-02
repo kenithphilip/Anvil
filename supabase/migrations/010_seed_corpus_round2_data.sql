@@ -216,14 +216,16 @@ begin
     insert into payment_milestones (tenant_id, contract_id, sequence, label, pct, trigger, due_days, payment_method, notes) values
       (default_tenant, abc_for_contract, 1, 'Advance on PO',          30, 'po_received',  0,  'NEFT', 'FOR mode template'),
       (default_tenant, abc_for_contract, 2, 'Pre-dispatch balance',   60, 'pre_dispatch', 0,  'NEFT', 'FOR mode template'),
-      (default_tenant, abc_for_contract, 3, 'Post-installation hold', 10, 'post_install', 30, 'NEFT', 'FOR mode template');
+      (default_tenant, abc_for_contract, 3, 'Post-installation hold', 10, 'post_install', 30, 'NEFT', 'FOR mode template')
+    on conflict (tenant_id, contract_id, sequence) where contract_id is not null do nothing;
   end if;
 
   if abc_hss_contract is not null then
     insert into payment_milestones (tenant_id, contract_id, sequence, label, pct, trigger, due_days, payment_method, notes) values
       (default_tenant, abc_hss_contract, 1, 'L/C at sight',           80, 'shipping_doc', 0,  'Wire',  'HSS mode template'),
       (default_tenant, abc_hss_contract, 2, 'BOL receipt',            15, 'bol_received', 0,  'Wire',  'HSS mode template'),
-      (default_tenant, abc_hss_contract, 3, 'Post-arrival',           5,  'post_arrival', 14, 'Wire',  'HSS mode template');
+      (default_tenant, abc_hss_contract, 3, 'Post-arrival',           5,  'post_arrival', 14, 'Wire',  'HSS mode template')
+    on conflict (tenant_id, contract_id, sequence) where contract_id is not null do nothing;
   end if;
 end $$;
 
@@ -272,7 +274,7 @@ begin
     (default_tenant, 'HX-2628Y-CONS', 'SEA', 'HX', 'HX-2628Y', 'KRPUS', 'INNSA', 'IN_TRANSIT', 'O-KOREA spares consolidation', '2024-06-15'::date),
     (default_tenant, 'HX-2786Y-CONS', 'SEA', 'HX', 'HX-2786Y', 'JPYOK', 'INNSA', 'IN_TRANSIT', 'O-JAPAN gear case + shunt', '2024-07-02'::date),
     (default_tenant, 'HX-2780Y-CONS', 'SEA', 'HX', 'HX-2780Y', 'CNSHA', 'INNSA', 'AT_PORT',    'O-CHINA timer + ATD',       '2024-07-10'::date)
-  on conflict do nothing;
+  on conflict (tenant_id, shipment_number) where shipment_number is not null do nothing;
 end $$;
 
 -- ───────────────────────────────────────────────────────────────────────────

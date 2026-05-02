@@ -1,20 +1,27 @@
 # Schema Reference
 
-Eight migrations in order. Apply with `supabase db push --include-all` or
-paste each file into the Supabase SQL editor.
+Ten migrations in order. Apply with `supabase db push --include-all`, paste
+each file into the Supabase SQL editor, or run via psql with
+`for f in supabase/migrations/0*.sql; do psql "$URL" -f "$f"; done`.
 
 | File | Tables added | Enums added |
 | --- | --- | --- |
 | 001_init.sql | 16 | obara_role, order_status, source_po_status |
 | 002_eval_and_email.sql | 3 | none |
 | 003_studio_ocr_fx_inventory_lead.sql | 9 | none |
-| 004_seed_static_data.sql | 0 | none (seeds 75+ holiday rows + 5 lead-time rows) |
+| 004_seed_static_data.sql | 0 | none (seeds 58 holiday rows + 10 lead-time rows) |
 | 005_close_remaining_gaps.sql | 11 | none (alters orders, customer_format_profiles, source_pos, uom_aliases) |
 | 006_corpus_alignment.sql | 20 | order_mode, customer_type, internal_so_type, contract_type, opportunity_stage, lead_status, project_phase, shipment_mode, item_lifecycle |
 | 007_seed_real_corpus_data.sql | 0 (seeds 4 customers + 3 locations + 35 items) | none |
 | 008_einvoice_forecast_amc.sql | 3 | einvoice_status |
+| 009_corpus_round2_schema.sql | 7 | none (engineering_specs, payment_milestones, expense_rate_cards, inco_terms_taxonomy, blanket_release_drawdown, logistics_ports, logistics_carriers; partial unique indexes on payment_milestones and shipments) |
+| 010_seed_corpus_round2_data.sql | 0 (seeds 2 more customers + JBM equipment + MG master + 11 release POs + 6 fingerprints + 1 eng spec + 11 expense rates + 4 approval thresholds + 96 more items) | none |
 
-Total: 62 tables, 13 enums, 100+ indexes, RLS on every business table.
+Total: 72 tables, 13 enums, 177 indexes, RLS on every business table.
+
+All ten migrations are fully idempotent. See
+[supabase/README.md](../supabase/README.md) for the apply order and the
+patterns used to enforce idempotence.
 
 ## Conventions
 

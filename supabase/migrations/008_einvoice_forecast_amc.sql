@@ -14,13 +14,17 @@
 -- have multiple invoices if it ships in tranches.
 -- ───────────────────────────────────────────────────────────────────────────
 
-create type einvoice_status as enum (
-  'DRAFT',           -- composed locally, not yet sent to GSTN
-  'PENDING_GSTN',    -- request sent, waiting on response
-  'GENERATED',       -- IRN + QR returned by GSTN
-  'CANCELLED',       -- cancelled within 24h window per GSTN policy
-  'REJECTED'         -- GSTN rejected (validation error)
-);
+do $$ begin
+  if not exists (select 1 from pg_type where typname = 'einvoice_status') then
+    create type einvoice_status as enum (
+      'DRAFT',           -- composed locally, not yet sent to GSTN
+      'PENDING_GSTN',    -- request sent, waiting on response
+      'GENERATED',       -- IRN + QR returned by GSTN
+      'CANCELLED',       -- cancelled within 24h window per GSTN policy
+      'REJECTED'         -- GSTN rejected (validation error)
+    );
+  end if;
+end $$;
 
 create table if not exists einvoices (
   id uuid primary key default uuid_generate_v4(),

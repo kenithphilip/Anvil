@@ -21,9 +21,13 @@ insert into tenants (id, slug, display_name)
 values ('00000000-0000-0000-0000-000000000001', 'default', 'Default')
 on conflict (slug) do nothing;
 
-create type obara_role as enum (
-  'sales_engineer', 'sales_manager', 'procurement', 'finance', 'admin', 'viewer'
-);
+do $$ begin
+  if not exists (select 1 from pg_type where typname = 'obara_role') then
+    create type obara_role as enum (
+      'sales_engineer', 'sales_manager', 'procurement', 'finance', 'admin', 'viewer'
+    );
+  end if;
+end $$;
 
 create table if not exists tenant_members (
   tenant_id uuid not null references tenants(id) on delete cascade,
@@ -109,15 +113,23 @@ create index if not exists documents_sha256_idx on documents (tenant_id, sha256)
 -- Orders, source POs, evidence, validation findings
 -- ───────────────────────────────────────────────────────────────────────────
 
-create type order_status as enum (
-  'DRAFT', 'PENDING_REVIEW', 'APPROVED', 'BLOCKED', 'DUPLICATE',
-  'REUSED', 'EXPORTED_TO_TALLY', 'FAILED_TALLY_IMPORT', 'RECONCILED', 'CANCELLED'
-);
+do $$ begin
+  if not exists (select 1 from pg_type where typname = 'order_status') then
+    create type order_status as enum (
+      'DRAFT', 'PENDING_REVIEW', 'APPROVED', 'BLOCKED', 'DUPLICATE',
+      'REUSED', 'EXPORTED_TO_TALLY', 'FAILED_TALLY_IMPORT', 'RECONCILED', 'CANCELLED'
+    );
+  end if;
+end $$;
 
-create type source_po_status as enum (
-  'DRAFT', 'PENDING_INTERNAL_APPROVAL', 'SENT_TO_SUPPLIER', 'SUPPLIER_ACK',
-  'PRICE_CHANGED', 'ETA_CONFIRMED', 'DELAYED', 'RECEIVED', 'CLOSED', 'CANCELLED'
-);
+do $$ begin
+  if not exists (select 1 from pg_type where typname = 'source_po_status') then
+    create type source_po_status as enum (
+      'DRAFT', 'PENDING_INTERNAL_APPROVAL', 'SENT_TO_SUPPLIER', 'SUPPLIER_ACK',
+      'PRICE_CHANGED', 'ETA_CONFIRMED', 'DELAYED', 'RECEIVED', 'CLOSED', 'CANCELLED'
+    );
+  end if;
+end $$;
 
 create table if not exists orders (
   id uuid primary key default uuid_generate_v4(),

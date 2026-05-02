@@ -78,9 +78,19 @@ Optional (set when integrating each):
 
 ## Applying a new migration
 
-1. Add `supabase/migrations/00N_description.sql`. Make it idempotent
-   (`create table if not exists`, `on conflict do nothing`,
-   `drop policy if exists`).
+1. Add `supabase/migrations/00N_description.sql`. Make it idempotent.
+   The patterns we use across 001 - 010:
+   - `create table if not exists`, `add column if not exists`,
+     `create index if not exists`
+   - `create type` wrapped in `do $$ begin if not exists (select 1 from
+     pg_type where typname = 'X') then ... end if; end $$;`
+   - `add constraint` wrapped in `do $$ begin if not exists (select 1 from
+     pg_constraint where conname = 'X' and conrelid = 'T'::regclass) then
+     alter table T add constraint X ...; end if; end $$;`
+   - `insert ... values ... on conflict (target) do nothing` against a real
+     unique constraint, or wrap rows in `where not exists (select 1 ...)`.
+   - `drop policy if exists` ahead of `create policy`.
+   - RLS macros only loop over tables with a `tenant_id` column.
 2. Test locally against a Supabase branch project or scratch project.
 3. Push the branch. Open the PR.
 4. After merge, paste the file into Supabase prod SQL Editor and run.

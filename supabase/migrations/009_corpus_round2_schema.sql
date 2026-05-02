@@ -87,6 +87,16 @@ create table if not exists payment_milestones (
 create index if not exists payment_milestones_contract_idx on payment_milestones (tenant_id, contract_id, sequence);
 create index if not exists payment_milestones_order_idx on payment_milestones (tenant_id, order_id, sequence);
 
+-- Idempotence guards: a milestone is uniquely identified by either
+-- (tenant_id, contract_id, sequence) or (tenant_id, order_id, sequence).
+-- Using partial unique indexes lets seed scripts use ON CONFLICT cleanly.
+create unique index if not exists payment_milestones_contract_seq
+  on payment_milestones (tenant_id, contract_id, sequence)
+  where contract_id is not null;
+create unique index if not exists payment_milestones_order_seq
+  on payment_milestones (tenant_id, order_id, sequence)
+  where order_id is not null;
+
 -- ───────────────────────────────────────────────────────────────────────────
 -- C. Expense rate cards
 -- ───────────────────────────────────────────────────────────────────────────
@@ -179,6 +189,13 @@ alter table item_master
   add column if not exists is_critical boolean not null default false;
 
 create index if not exists item_master_critical_idx on item_master (tenant_id, is_critical) where is_critical = true;
+
+-- Idempotence guard: shipment_number is the natural unique key per tenant.
+-- 006 created shipments without one, so add it here as a partial unique index
+-- (only when shipment_number is not null) so the seeds can use ON CONFLICT.
+create unique index if not exists shipments_number_unique
+  on shipments (tenant_id, shipment_number)
+  where shipment_number is not null;
 
 -- ───────────────────────────────────────────────────────────────────────────
 -- H. Customer location: explicit tax treatment trigger

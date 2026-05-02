@@ -12,53 +12,85 @@
 -- "Type of Customer" picklist in Sales Object Model (Account.Type).
 -- ───────────────────────────────────────────────────────────────────────────
 
-create type order_mode as enum (
-  'SPARES',           -- straight spares quote, OIQTLC prefix
-  'SPARES_ASSEMBLY',  -- gun modification / assembly spares, OIQTLC prefix
-  'PROJECT_FOR',      -- project Free On Rail, INR, road logistics
-  'PROJECT_HSS',      -- project High Sea Sales, OIQTHS prefix, USD with forward FX
-  'INTERNAL'          -- internal SO (FOC, warranty, trials)
-);
+do $$ begin
+  if not exists (select 1 from pg_type where typname = 'order_mode') then
+    create type order_mode as enum (
+      'SPARES',           -- straight spares quote, OIQTLC prefix
+      'SPARES_ASSEMBLY',  -- gun modification / assembly spares, OIQTLC prefix
+      'PROJECT_FOR',      -- project Free On Rail, INR, road logistics
+      'PROJECT_HSS',      -- project High Sea Sales, OIQTHS prefix, USD with forward FX
+      'INTERNAL'          -- internal SO (FOC, warranty, trials)
+    );
+  end if;
+end $$;
 
-create type customer_type as enum (
-  'AUTO_OEM',     -- Tata, MG Motor, Hyundai, etc.
-  'TIER_ONE',     -- Tier-1 line builders downstream of OEMs
-  'LINE_BUILDER', -- system integrators
-  'OTHER'
-);
+do $$ begin
+  if not exists (select 1 from pg_type where typname = 'customer_type') then
+    create type customer_type as enum (
+      'AUTO_OEM',     -- Tata, MG Motor, Hyundai, etc.
+      'TIER_ONE',     -- Tier-1 line builders downstream of OEMs
+      'LINE_BUILDER', -- system integrators
+      'OTHER'
+    );
+  end if;
+end $$;
 
-create type internal_so_type as enum (
-  'FOC_SUPPLY',          -- free of charge replacement
-  'WARRANTY_REPLACEMENT',
-  'PRODUCT_TRIAL',
-  'EXPECTED_PO',         -- supply against an expected but not yet received PO
-  'INTERNAL_TRANSFER'    -- inter-store (Chennai/Pune/Halol) transfer
-);
+do $$ begin
+  if not exists (select 1 from pg_type where typname = 'internal_so_type') then
+    create type internal_so_type as enum (
+      'FOC_SUPPLY',          -- free of charge replacement
+      'WARRANTY_REPLACEMENT',
+      'PRODUCT_TRIAL',
+      'EXPECTED_PO',         -- supply against an expected but not yet received PO
+      'INTERNAL_TRANSFER'    -- inter-store (Chennai/Pune/Halol) transfer
+    );
+  end if;
+end $$;
 
-create type contract_type as enum (
-  'ARC',          -- Annual Rate Contract: prices locked for a year
-  'BLANKET_PO',   -- customer issues a blanket release; multiple ship-against
-  'AMC',          -- Annual Maintenance Contract (services)
-  'ONE_OFF'
-);
+do $$ begin
+  if not exists (select 1 from pg_type where typname = 'contract_type') then
+    create type contract_type as enum (
+      'ARC',          -- Annual Rate Contract: prices locked for a year
+      'BLANKET_PO',   -- customer issues a blanket release; multiple ship-against
+      'AMC',          -- Annual Maintenance Contract (services)
+      'ONE_OFF'
+    );
+  end if;
+end $$;
 
-create type opportunity_stage as enum (
-  'QUALIFICATION', 'STRATEGY_CHECK', 'NEEDS_ANALYSIS', 'FOLLOW_UP',
-  'RFQ', 'INTERNAL_PROPOSAL', 'PROPOSAL_PRICE_QUOTE', 'NEGOTIATION_REVIEW',
-  'CLOSE_WON', 'CLOSE_LOST', 'REGRETTED'
-);
+do $$ begin
+  if not exists (select 1 from pg_type where typname = 'opportunity_stage') then
+    create type opportunity_stage as enum (
+      'QUALIFICATION', 'STRATEGY_CHECK', 'NEEDS_ANALYSIS', 'FOLLOW_UP',
+      'RFQ', 'INTERNAL_PROPOSAL', 'PROPOSAL_PRICE_QUOTE', 'NEGOTIATION_REVIEW',
+      'CLOSE_WON', 'CLOSE_LOST', 'REGRETTED'
+    );
+  end if;
+end $$;
 
-create type lead_status as enum (
-  'NEW', 'CONTACTED', 'QUALIFIED', 'CONVERTED', 'REJECTED', 'REGRETTED'
-);
+do $$ begin
+  if not exists (select 1 from pg_type where typname = 'lead_status') then
+    create type lead_status as enum (
+      'NEW', 'CONTACTED', 'QUALIFIED', 'CONVERTED', 'REJECTED', 'REGRETTED'
+    );
+  end if;
+end $$;
 
-create type project_phase as enum (
-  'INITIAL_INFO', 'STRATEGY', 'PROMOTIONAL', 'RFQ_PREP', 'BUDGETARY_QUOTATION',
-  'PRICE_NEGOTIATION', 'LB_FINALIZATION', 'KICKOFF', 'DESIGN', 'APPROVAL_PROCESSING',
-  'MANUFACTURING', 'SHIPPING', 'INSTALLATION_COMMISSIONING', 'PAYMENT_FOLLOWUP', 'CLOSED'
-);
+do $$ begin
+  if not exists (select 1 from pg_type where typname = 'project_phase') then
+    create type project_phase as enum (
+      'INITIAL_INFO', 'STRATEGY', 'PROMOTIONAL', 'RFQ_PREP', 'BUDGETARY_QUOTATION',
+      'PRICE_NEGOTIATION', 'LB_FINALIZATION', 'KICKOFF', 'DESIGN', 'APPROVAL_PROCESSING',
+      'MANUFACTURING', 'SHIPPING', 'INSTALLATION_COMMISSIONING', 'PAYMENT_FOLLOWUP', 'CLOSED'
+    );
+  end if;
+end $$;
 
-create type shipment_mode as enum ('SEA', 'AIR', 'ROAD', 'COURIER');
+do $$ begin
+  if not exists (select 1 from pg_type where typname = 'shipment_mode') then
+    create type shipment_mode as enum ('SEA', 'AIR', 'ROAD', 'COURIER');
+  end if;
+end $$;
 
 -- Add fields to orders
 alter table orders
@@ -107,9 +139,15 @@ create table if not exists customer_locations (
 
 create index if not exists customer_locations_idx on customer_locations (tenant_id, customer_id);
 
-alter table orders
-  add constraint orders_customer_location_fk foreign key (customer_location_id)
-    references customer_locations(id) on delete set null;
+do $$ begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'orders_customer_location_fk' and conrelid = 'orders'::regclass
+  ) then
+    alter table orders
+      add constraint orders_customer_location_fk foreign key (customer_location_id)
+        references customer_locations(id) on delete set null;
+  end if;
+end $$;
 
 -- ───────────────────────────────────────────────────────────────────────────
 -- C. Item master (first-class)
@@ -120,7 +158,11 @@ alter table orders
 -- SGST 0.09, CGST 0.09, IGST 0.18.
 -- ───────────────────────────────────────────────────────────────────────────
 
-create type item_lifecycle as enum ('ACTIVE', 'OBSOLETE', 'DISCONTINUED', 'NEW', 'TRIAL');
+do $$ begin
+  if not exists (select 1 from pg_type where typname = 'item_lifecycle') then
+    create type item_lifecycle as enum ('ACTIVE', 'OBSOLETE', 'DISCONTINUED', 'NEW', 'TRIAL');
+  end if;
+end $$;
 
 create table if not exists item_master (
   id uuid primary key default uuid_generate_v4(),
@@ -199,9 +241,15 @@ create table if not exists contract_lines (
 
 create index if not exists contract_lines_idx on contract_lines (tenant_id, contract_id);
 
-alter table orders
-  add constraint orders_contract_fk foreign key (contract_id)
-    references contracts(id) on delete set null;
+do $$ begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'orders_contract_fk' and conrelid = 'orders'::regclass
+  ) then
+    alter table orders
+      add constraint orders_contract_fk foreign key (contract_id)
+        references contracts(id) on delete set null;
+  end if;
+end $$;
 
 -- ───────────────────────────────────────────────────────────────────────────
 -- E. Pre-sales: Leads and Opportunities
@@ -268,9 +316,15 @@ create table if not exists opportunities (
 create index if not exists opp_stage_idx on opportunities (tenant_id, stage);
 create index if not exists opp_close_idx on opportunities (tenant_id, close_date);
 
-alter table leads
-  add constraint leads_converted_opp_fk foreign key (converted_opportunity_id)
-    references opportunities(id) on delete set null;
+do $$ begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'leads_converted_opp_fk' and conrelid = 'leads'::regclass
+  ) then
+    alter table leads
+      add constraint leads_converted_opp_fk foreign key (converted_opportunity_id)
+        references opportunities(id) on delete set null;
+  end if;
+end $$;
 
 -- ───────────────────────────────────────────────────────────────────────────
 -- F. Internal Sales Orders (FOC, Warranty, Trial, Expected PO, Internal Transfer)

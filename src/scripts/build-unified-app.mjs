@@ -5435,6 +5435,15 @@ const opsAssistantScript = `<script>
     add(html.includes("audit-pack-pdf") && html.includes("manifest.json") ? "ok" : "err", "Audit pack PDF and manifest", "Audit pack supports PDF and includes a manifest.");
     add(html.includes("showAdminCenter") && html.includes("renderHolidays") && html.includes("renderMembers") ? "ok" : "err", "Admin center modal", "Holidays, lead times, BOM, inventory, FX, members all editable via UI.");
     add(html.includes("renderItemMaster") && html.includes("renderContracts") && html.includes("renderEquipmentHierarchy") && html.includes("renderCustomerLocations") ? "ok" : "err", "Admin center: corpus tabs", "Item master, contracts, equipment hierarchy, customer locations.");
+    add(html.includes("renderQuoteApprovals") && html.includes("renderCsvImportWizard") ? "ok" : "err", "Admin center: approvals + CSV import", "Quote approvals tab and CSV import wizard.");
+    add(html.includes("showEinvoiceModal") && html.includes("Send to GSTN") ? "ok" : "err", "e-Invoice modal", "Compose, send to GSTN, cancel within 24h.");
+    add(html.includes("showForecastingModal") && html.includes("Persist nightly snapshot") ? "ok" : "err", "Forecasting modal", "Pipeline segmented by territory, customer type, order mode.");
+    add(html.includes("showAmcModal") && html.includes("bulkSeedAmcSchedule") ? "ok" : "err", "AMC schedule modal", "Bulk-seed preventive visits from a contract.");
+    add(html.includes("showScheduleLinesModal") && html.includes("scheduleLines.bulkCreate") ? "ok" : "err", "Schedule lines modal", "Paste TSV to attach delivery schedule lines to an order.");
+    add(html.includes("showJbmImporterModal") && html.includes("equipment_hierarchy") ? "ok" : "err", "JBM spare matrix importer", "One-click XLSX import to equipment hierarchy + installed parts.");
+    add(html.includes("eval.run") && html.includes("ops-eval-run") ? "ok" : "err", "Eval Dashboard run button", "Cases tab now has Run button that scores against pasted actual JSON.");
+    add(html.includes("nextIsoNumber") ? "ok" : "err", "Internal SO autogen number", "Next ISO number prefilled to avoid duplicates.");
+    add(html.includes("Golden example uploaded and attached to profile") ? "ok" : "err", "Profile Studio golden persist", "Golden example upload now persists to customer profile.");
     add(html.includes("showSalesPipeline") && html.includes("renderLeads") && html.includes("renderOpps") ? "ok" : "err", "Sales pipeline modal", "Leads + opportunities + loss reasons.");
     add(html.includes("showInternalSoModal") && html.includes("FOC_SUPPLY") && html.includes("INTERNAL_TRANSFER") ? "ok" : "err", "Internal SO modal", "FOC, warranty, trial, expected PO, internal transfer.");
     add(html.includes("showProjectTracker") && html.includes("INSTALLATION_COMMISSIONING") ? "ok" : "err", "Project tracker modal", "14-phase project lifecycle from corpus tracker.");
@@ -7122,8 +7131,27 @@ const opsAssistantScript = `<script>
         const file = e.target.files && e.target.files[0];
         if (!file) return;
         try {
-          await window.ObaraBackend.documents.upload(file, "golden_example");
-          notifySuccess("Golden example uploaded. Attach via SQL or the customer profile API.");
+          const meta = await window.ObaraBackend.documents.upload(file, "golden_example");
+          const docId = meta && (meta.documentId || meta.id);
+          // Persist the document id onto the customer profile so dry-run can find it.
+          const existing = (remote.profile && remote.profile.golden_examples) || [];
+          const next = docId ? Array.from(new Set([...existing, docId])) : existing;
+          await window.ObaraBackend.customers.upsert({
+            customer_key: remote.customer_key,
+            customer_name: remote.customer_name,
+            gstin: remote.gstin,
+            profile: {
+              fingerprint: (local && local.fingerprint) || (remote.profile && remote.profile.fingerprint) || {},
+              orders_processed: (local && local.ordersProcessed) || 0,
+              trusted: !!(local && local.trusted),
+              learned_rules: (local && local.learnedRules) || {},
+              force_llm_fallback: !!(remote.profile && remote.profile.force_llm_fallback),
+              golden_examples: next,
+            },
+          });
+          remote.profile = remote.profile || {};
+          remote.profile.golden_examples = next;
+          notifySuccess("Golden example uploaded and attached to profile (" + next.length + " on file).");
         } catch (err) { notifyError(err.message); }
       });
       const compare = byId("ops-studio-compare");
@@ -7622,15 +7650,32 @@ const opsAssistantScript = `<script>
           const rows = (cases.cases || []).map((c) =>
             '<tr><td>' + escText(c.suite) + '</td><td>' + escText(c.case_id) + '</td>' +
             '<td><pre style="white-space:pre-wrap;max-width:280px;font-size:11px">' + escText(JSON.stringify(c.expected || {})) + '</pre></td>' +
-            '<td><button class="btn btn-ghost ops-eval-del" data-id="' + escText(c.id) + '">Delete</button></td></tr>'
+            '<td><button class="btn btn-ghost ops-eval-run" data-suite="' + escText(c.suite) + '" data-case="' + escText(c.case_id) + '" data-expected="' + escText(JSON.stringify(c.expected || {})) + '">Run</button>' +
+            '<button class="btn btn-ghost ops-eval-del" data-id="' + escText(c.id) + '">Delete</button></td></tr>'
           ).join("");
-          setOpsHtml(body, '<div style="margin-bottom:8px">' +
+          setOpsHtml(body, '<p class="text-[11px]" style="color:var(--text-muted)">Click Run to score a case against extracted output. Paste actual JSON when prompted.</p>' +
+            '<div style="margin-bottom:8px">' +
             '<input id="ops-eval-suite" placeholder="suite" style="width:120px"/>' +
             '<input id="ops-eval-case" placeholder="case_id" style="width:160px"/>' +
-            '<input id="ops-eval-expected" placeholder="expected json" style="width:280px"/>' +
+            '<textarea id="ops-eval-expected" placeholder="expected json" style="width:320px;min-height:48px;font-family:monospace;font-size:11px"></textarea>' +
             '<button class="btn btn-primary" id="ops-eval-add">Add</button>' +
             '</div>' +
             '<table><thead><tr><th>Suite</th><th>Case</th><th>Expected</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>');
+          document.querySelectorAll(".ops-eval-run").forEach((b) => b.addEventListener("click", async () => {
+            const suite = b.getAttribute("data-suite");
+            const caseId = b.getAttribute("data-case");
+            const expected = JSON.parse(b.getAttribute("data-expected") || "{}");
+            const actualRaw = prompt("Paste actual extraction JSON for case " + caseId + " (must match the expected schema). Leave blank to abort.");
+            if (!actualRaw) return;
+            try {
+              const actual = JSON.parse(actualRaw);
+              const out = await window.ObaraBackend.eval.run(suite, [{ id: caseId, expected, actual }]);
+              const verdict = out && out.totals ? "pass=" + out.totals.pass + " fail=" + out.totals.fail + " score=" + (out.totals.score || 0).toFixed(2) : "no_score";
+              notifySuccess("Eval " + caseId + ": " + verdict);
+              cache = null;
+              loadTab("cases");
+            } catch (err) { notifyError(err.message); }
+          }));
           const addBtn = byId("ops-eval-add");
           if (addBtn) addBtn.addEventListener("click", async () => {
             try {
@@ -8247,6 +8292,17 @@ const opsAssistantScript = `<script>
       loadIsoTab("FOC_SUPPLY");
     }, 0);
   }
+  function nextIsoNumber(existing, type) {
+    const year = new Date().getFullYear();
+    const prefix = type.split("_")[0].slice(0, 3) + "-" + year + "-";
+    const taken = new Set((existing || []).map((r) => String(r.iso_number || "")));
+    for (let i = 1; i < 9999; i++) {
+      const cand = prefix + String(i).padStart(4, "0");
+      if (!taken.has(cand)) return cand;
+    }
+    return prefix + Date.now();
+  }
+
   async function loadIsoTab(type) {
     const body = byId("ops-iso-body");
     if (!body) return;
@@ -8263,7 +8319,7 @@ const opsAssistantScript = `<script>
         '<td><button class="btn btn-ghost ops-iso-del" data-id="' + escText(iso.id) + '">Delete</button></td></tr>'
       ).join("");
       setOpsHtml(body, '<div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap">' +
-        '<input id="ops-iso-num" placeholder="ISO number" style="width:140px"/>' +
+        '<input id="ops-iso-num" placeholder="ISO number" style="width:140px" value="' + escText(nextIsoNumber(out.internalSos, type)) + '"/>' +
         '<input id="ops-iso-purpose" placeholder="Purpose" style="width:200px"/>' +
         '<input id="ops-iso-person" placeholder="Requested by" style="width:140px"/>' +
         '<input id="ops-iso-date" type="date"/>' +
@@ -8447,6 +8503,7 @@ const opsAssistantScript = `<script>
       '<div class="ops-tab-strip" id="ops-svc-tabs">' +
       '<button class="ops-tab-btn active" data-svc-tab="visits">Visits</button>' +
       '<button class="ops-tab-btn" data-svc-tab="car">CAR reports</button>' +
+      '<button class="ops-tab-btn" data-svc-tab="closure">Closure reports</button>' +
       '</div>' +
       '<div id="ops-svc-body" style="margin-top:12px">Loading...</div>' +
       '</div>';
@@ -8537,6 +8594,40 @@ const opsAssistantScript = `<script>
             loadServiceTab("car");
           } catch (err) { notifyError(err.message); }
         });
+      } else if (tab === "closure") {
+        const out = await window.ObaraBackend.service.listClosureReports({ limit: 100 });
+        const cars = (await window.ObaraBackend.service.listCarReports({ limit: 100 })).car_reports || [];
+        const carOpts = '<option value="">(link to CAR, optional)</option>' + cars.map((c) => '<option value="' + escText(c.id) + '">' + escText(c.original_so_no || c.original_po_no || c.id.slice(0, 8)) + '</option>').join("");
+        const rows = (out.closure_reports || []).map((c) =>
+          '<tr><td>' + escText((c.issue_date || "").slice(0, 10)) + '</td>' +
+          '<td>' + escText(c.equipment_part_no || "") + '</td>' +
+          '<td>' + escText((c.root_cause || "").slice(0, 80)) + '</td>' +
+          '<td>' + (c.closed_at ? "closed " + (c.closed_at || "").slice(0, 10) : "open") + '</td></tr>'
+        ).join("");
+        setOpsHtml(body, '<div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap">' +
+          '<select id="ops-cls-car">' + carOpts + '</select>' +
+          '<input id="ops-cls-issue" type="date" title="Issue date"/>' +
+          '<input id="ops-cls-part" placeholder="Equipment part #" style="width:140px"/>' +
+          '<input id="ops-cls-root" placeholder="Root cause" style="width:240px"/>' +
+          '<input id="ops-cls-perm" placeholder="Permanent countermeasure" style="width:240px"/>' +
+          '<label><input id="ops-cls-signed" type="checkbox"/> sign off</label>' +
+          '<button class="btn btn-primary" id="ops-cls-add">Add</button>' +
+          '</div>' +
+          '<table><thead><tr><th>Issue date</th><th>Part</th><th>Root cause</th><th>Status</th></tr></thead><tbody>' +
+          (rows || '<tr><td colspan="4" style="color:var(--text-muted)">No closure reports.</td></tr>') + '</tbody></table>');
+        byId("ops-cls-add").addEventListener("click", async () => {
+          try {
+            await window.ObaraBackend.service.createClosureReport({
+              car_report_id: byId("ops-cls-car").value || null,
+              issue_date: byId("ops-cls-issue").value || null,
+              equipment_part_no: byId("ops-cls-part").value || null,
+              root_cause: byId("ops-cls-root").value || null,
+              permanent_countermeasure: byId("ops-cls-perm").value || null,
+              signed_off: byId("ops-cls-signed").checked,
+            });
+            loadServiceTab("closure");
+          } catch (err) { notifyError(err.message); }
+        });
       }
     } catch (err) { setOpsHtml(body, '<p style="color:var(--err)">' + escText(err.message) + '</p>'); }
   }
@@ -8558,6 +8649,8 @@ const opsAssistantScript = `<script>
       '<button class="ops-tab-btn" data-admin-tab="items">Item master</button>' +
       '<button class="ops-tab-btn" data-admin-tab="contracts">Contracts (ARC/Blanket/AMC)</button>' +
       '<button class="ops-tab-btn" data-admin-tab="equipment">Equipment hierarchy</button>' +
+      '<button class="ops-tab-btn" data-admin-tab="approvals">Quote approvals</button>' +
+      '<button class="ops-tab-btn" data-admin-tab="csv-import">CSV import</button>' +
       '</div>' +
       '<div id="ops-admin-body" style="margin-top:12px">Loading...</div>' +
       '</div>';
@@ -8588,7 +8681,190 @@ const opsAssistantScript = `<script>
       if (tab === "items") return renderItemMaster(body);
       if (tab === "contracts") return renderContracts(body);
       if (tab === "equipment") return renderEquipmentHierarchy(body);
+      if (tab === "approvals") return renderQuoteApprovals(body);
+      if (tab === "csv-import") return renderCsvImportWizard(body);
     } catch (err) { setOpsHtml(body, '<p style="color:var(--err)">Failed: ' + escText(err.message) + '</p>'); }
+  }
+
+  async function renderQuoteApprovals(body) {
+    const [thresholds, approvals] = await Promise.all([
+      window.ObaraBackend.admin.listApprovalThresholds(),
+      window.ObaraBackend.admin.listApprovalRequests(),
+    ]);
+    const roles = ["sales_engineer","sales_manager","procurement","finance","admin","viewer"];
+    const tRows = (thresholds.thresholds || []).map((t) =>
+      '<tr><td>' + escText(t.approver_role) + '</td>' +
+      '<td>' + escText(Number(t.min_amount_inr).toLocaleString()) + '</td>' +
+      '<td>' + (t.max_amount_inr != null ? Number(t.max_amount_inr).toLocaleString() : "open") + '</td>' +
+      '<td>' + escText((t.required_for_modes || []).join(",") || "all") + '</td>' +
+      '<td>' + (t.margin_below_pct != null ? (Number(t.margin_below_pct) * 100).toFixed(1) + "%" : "any") + '</td>' +
+      '<td>' + (t.active ? "yes" : "no") + '</td>' +
+      '<td><button class="btn btn-ghost ops-thresh-del" data-id="' + escText(t.id) + '">Delete</button></td></tr>'
+    ).join("");
+    const aRows = (approvals.approvals || []).map((a) =>
+      '<tr><td>' + escText(String(a.order_id || "").slice(0, 8)) + '</td>' +
+      '<td>' + escText(a.approver_role) + '</td>' +
+      '<td><span class="ops-pill">' + escText(a.status) + '</span></td>' +
+      '<td>' + escText((a.created_at || "").slice(0, 16).replace("T", " ")) + '</td>' +
+      '<td>' +
+        (a.status === "PENDING" ? '<button class="btn btn-primary ops-approve" data-id="' + escText(a.id) + '">Approve</button>' +
+          '<button class="btn btn-ghost ops-reject" data-id="' + escText(a.id) + '">Reject</button>' : "") +
+      '</td></tr>'
+    ).join("");
+    setOpsHtml(body, '<h4 style="font-size:12px;font-weight:800;margin-bottom:6px">Approval thresholds</h4>' +
+      '<div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap">' +
+      '<select id="ops-thresh-role">' + roles.map((r) => '<option value="' + r + '">' + r + '</option>').join("") + '</select>' +
+      '<input id="ops-thresh-min" type="number" placeholder="Min INR" style="width:120px"/>' +
+      '<input id="ops-thresh-max" type="number" placeholder="Max INR (blank=open)" style="width:160px"/>' +
+      '<input id="ops-thresh-margin" type="number" step="0.01" placeholder="Margin below (e.g. 0.15)" style="width:160px"/>' +
+      '<button class="btn btn-primary" id="ops-thresh-add">Add</button>' +
+      '</div>' +
+      '<table><thead><tr><th>Role</th><th>Min</th><th>Max</th><th>Modes</th><th>Margin</th><th>Active</th><th></th></tr></thead><tbody>' +
+      (tRows || '<tr><td colspan="7" style="color:var(--text-muted)">No thresholds defined.</td></tr>') + '</tbody></table>' +
+      '<h4 style="font-size:12px;font-weight:800;margin-top:14px;margin-bottom:6px">Pending approvals</h4>' +
+      '<table><thead><tr><th>Order</th><th>Role</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody>' +
+      (aRows || '<tr><td colspan="5" style="color:var(--text-muted)">No approval requests.</td></tr>') + '</tbody></table>');
+    byId("ops-thresh-add").addEventListener("click", async () => {
+      try {
+        await window.ObaraBackend.admin.upsertApprovalThreshold({
+          approver_role: byId("ops-thresh-role").value,
+          min_amount_inr: Number(byId("ops-thresh-min").value) || 0,
+          max_amount_inr: byId("ops-thresh-max").value ? Number(byId("ops-thresh-max").value) : null,
+          margin_below_pct: byId("ops-thresh-margin").value ? Number(byId("ops-thresh-margin").value) : null,
+        });
+        renderQuoteApprovals(body);
+      } catch (err) { notifyError(err.message); }
+    });
+    document.querySelectorAll(".ops-thresh-del").forEach((b) => b.addEventListener("click", async () => {
+      try { await window.ObaraBackend.admin.deleteApprovalThreshold(b.getAttribute("data-id")); renderQuoteApprovals(body); }
+      catch (err) { notifyError(err.message); }
+    }));
+    document.querySelectorAll(".ops-approve").forEach((b) => b.addEventListener("click", async () => {
+      const comment = prompt("Approval comment (optional):") || "";
+      try {
+        await window.ObaraBackend.admin.decideApprovalRequest({ id: b.getAttribute("data-id"), order_id: "x", approver_role: "x", status: "APPROVED", comments: comment });
+        renderQuoteApprovals(body);
+      } catch (err) { notifyError(err.message); }
+    }));
+    document.querySelectorAll(".ops-reject").forEach((b) => b.addEventListener("click", async () => {
+      const comment = prompt("Rejection reason:") || "";
+      if (!comment) return;
+      try {
+        await window.ObaraBackend.admin.decideApprovalRequest({ id: b.getAttribute("data-id"), order_id: "x", approver_role: "x", status: "REJECTED", comments: comment });
+        renderQuoteApprovals(body);
+      } catch (err) { notifyError(err.message); }
+    }));
+  }
+
+  // CSV bulk import wizard for item master, BOM, and lead times.
+  // Source: pending feature "Bulk import wizards - Item Master CSV import endpoint
+  // exists; the UI button to trigger a CSV upload is the next 30-minute add."
+  async function renderCsvImportWizard(body) {
+    setOpsHtml(body, '<p>Paste tab- or comma-separated rows. The first row must be the header.</p>' +
+      '<label>Target <select id="ops-csv-target">' +
+        '<option value="item_master">Item Master</option>' +
+        '<option value="bom">Bill of Materials</option>' +
+        '<option value="lead_times_supplier">Supplier lead times</option>' +
+        '<option value="lead_times_customer">Customer lead times</option>' +
+        '<option value="holidays">Holidays</option>' +
+      '</select></label>' +
+      '<div id="ops-csv-help" class="text-[11px]" style="color:var(--text-muted);margin:6px 0"></div>' +
+      '<textarea id="ops-csv-input" rows="14" style="width:100%;font-family:monospace;font-size:12px"></textarea>' +
+      '<div class="ops-actions" style="margin-top:8px"><button class="btn btn-primary" id="ops-csv-import">Import</button>' +
+      '<button class="btn btn-ghost" id="ops-csv-template">Insert template</button></div>' +
+      '<div id="ops-csv-status" style="margin-top:8px;font-size:12px;color:var(--text-muted)"></div>');
+    const TEMPLATES = {
+      item_master: "part_no\\tdescription\\tdrawing_no\\tuom\\tsource_country\\tsource_currency\\tpurchase_price\\thsn_sac\\tsgst_rate\\tcgst_rate\\tigst_rate\\tlifecycle\\nC007011\\tNIPPLE\\tC007011\\tNos\\tO-INDIA\\tINR\\t150\\t85159000\\t0.09\\t0.09\\t0.18\\tACTIVE",
+      bom: "parent_part_no\\tchild_part_no\\tqty\\tuom\\nIN0-0133\\tCT-16-D-1-FS\\t2\\tNos",
+      lead_times_supplier: "supplier\\tcountry\\tproduct_category\\tlead_days\\tnotes\\tO-KOREA\\tKR\\tspare\\t14\\tdefault",
+      lead_times_customer: "customer_id\\tproduct_category\\tlead_days\\tnotes\\n00000000-0000-0000-0000-000000000001\\tspare\\t7\\tdefault",
+      holidays: "country\\tdate\\tname\\nIN\\t2026-01-26\\tRepublic Day",
+    };
+    const HELP = {
+      item_master: "Required: part_no. Optional: description, drawing_no, uom, source_country (O-KOREA/O-JAPAN/O-CHINA/O-INDIA), source_currency (USD/JPY/CNY/INR), purchase_price, hsn_sac, sgst_rate, cgst_rate, igst_rate, lifecycle (ACTIVE/OBSOLETE/DISCONTINUED/NEW/TRIAL), is_assembly (true/false).",
+      bom: "Required: parent_part_no, child_part_no. Optional: qty (default 1), uom, notes. Upserts on (parent, child).",
+      lead_times_supplier: "Required: country (ISO-2), lead_days (0-365). Optional: supplier, product_category, notes.",
+      lead_times_customer: "Required: lead_days (0-365). Optional: customer_id (uuid), product_category, notes.",
+      holidays: "Required: country (ISO-2), date (YYYY-MM-DD). Optional: name.",
+    };
+    const refreshHelp = () => {
+      const t = byId("ops-csv-target").value;
+      const help = byId("ops-csv-help");
+      if (help) help.textContent = HELP[t] || "";
+    };
+    refreshHelp();
+    byId("ops-csv-target").addEventListener("change", refreshHelp);
+    byId("ops-csv-template").addEventListener("click", () => {
+      const t = byId("ops-csv-target").value;
+      byId("ops-csv-input").value = TEMPLATES[t] || "";
+    });
+    byId("ops-csv-import").addEventListener("click", async () => {
+      const text = byId("ops-csv-input").value || "";
+      const status = byId("ops-csv-status");
+      const lines = text.split(/\\r?\\n/).filter((l) => l.trim().length > 0);
+      if (lines.length < 2) { if (status) status.textContent = "Need at least a header row plus one data row."; return; }
+      const delim = lines[0].includes("\t") ? "\t" : ",";
+      const headers = lines[0].split(delim).map((h) => h.trim());
+      const rows = lines.slice(1).map((line) => {
+        const cells = line.split(delim);
+        const obj = {};
+        headers.forEach((h, i) => { obj[h] = cells[i] != null ? cells[i].trim() : ""; });
+        return obj;
+      });
+      const target = byId("ops-csv-target").value;
+      try {
+        if (status) status.textContent = "Sending " + rows.length + " rows...";
+        if (target === "item_master") {
+          const out = await window.ObaraBackend.admin.bulkItemMaster(rows.map((r) => ({
+            ...r,
+            purchase_price: r.purchase_price ? Number(r.purchase_price) : null,
+            sgst_rate: r.sgst_rate ? Number(r.sgst_rate) : null,
+            cgst_rate: r.cgst_rate ? Number(r.cgst_rate) : null,
+            igst_rate: r.igst_rate ? Number(r.igst_rate) : null,
+            is_assembly: String(r.is_assembly || "").toLowerCase() === "true",
+          })));
+          if (status) status.textContent = "Imported " + (out.rows || 0) + " item master rows.";
+        } else if (target === "bom") {
+          let okCount = 0;
+          for (const r of rows) {
+            try {
+              await window.ObaraBackend.bom.upsert({
+                parent_part_no: r.parent_part_no, child_part_no: r.child_part_no,
+                qty: r.qty ? Number(r.qty) : 1, uom: r.uom || null, notes: r.notes || null,
+              });
+              okCount++;
+            } catch (_) {}
+          }
+          if (status) status.textContent = "Imported " + okCount + "/" + rows.length + " BOM rows.";
+        } else if (target === "lead_times_supplier" || target === "lead_times_customer") {
+          const ltType = target === "lead_times_supplier" ? "supplier" : "customer";
+          let okCount = 0;
+          for (const r of rows) {
+            try {
+              await window.ObaraBackend.admin.upsertLeadTime(ltType, {
+                ...r,
+                lead_days: r.lead_days ? Number(r.lead_days) : 0,
+              });
+              okCount++;
+            } catch (_) {}
+          }
+          if (status) status.textContent = "Imported " + okCount + "/" + rows.length + " " + ltType + " lead-time rows.";
+        } else if (target === "holidays") {
+          let okCount = 0;
+          for (const r of rows) {
+            try {
+              await window.ObaraBackend.admin.upsertHoliday({ country: r.country, date: r.date, name: r.name || null });
+              okCount++;
+            } catch (_) {}
+          }
+          if (status) status.textContent = "Imported " + okCount + "/" + rows.length + " holiday rows.";
+        }
+        notifySuccess("CSV import complete");
+      } catch (err) {
+        if (status) status.textContent = "Import failed: " + err.message;
+        notifyError(err.message);
+      }
+    });
   }
 
   async function renderCustomerLocations(body) {
@@ -9017,6 +9293,324 @@ const opsAssistantScript = `<script>
     }));
   }
 
+  // ── E-INVOICE (Indian GST IRN/QR generation against an order) ──
+  async function showEinvoiceModal() {
+    if (!ensureBackend()) return;
+    const html = '<div class="ops-modal-body" style="max-width:none;width:100%">' +
+      '<p>Indian GST e-Invoice (IRN + QR). Configure GSTN_API_URL to send to GSTN; without it, drafts persist locally.</p>' +
+      '<div id="ops-einv-body">Loading...</div></div>';
+    showOpsModal("e-Invoice", html);
+    await renderEinvoices();
+  }
+  async function renderEinvoices() {
+    const body = byId("ops-einv-body");
+    if (!body) return;
+    try {
+      const out = await window.ObaraBackend.einvoice.list({ limit: 200 });
+      const orders = (await window.ObaraBackend.orders.list({ limit: 50, status: "APPROVED" })).orders || [];
+      const orderOpts = '<option value="">(approved order)</option>' + orders.map((o) => '<option value="' + escText(o.id) + '">' + escText(o.po_number || o.id.slice(0, 8)) + '</option>').join("");
+      const banner = out.gstn_configured
+        ? '<p class="text-[11px]" style="color:var(--text-muted)">GSTN_API_URL is configured. "Send to GSTN" calls the production API.</p>'
+        : '<p class="text-[11px]" style="color:#92400e">GSTN_API_URL not configured. "Send to GSTN" parks rows in PENDING_GSTN until you set the env var.</p>';
+      const rows = (out.einvoices || []).map((ei) =>
+        '<tr><td><strong>' + escText(ei.invoice_number) + '</strong><br/><span class="text-[11px]" style="color:var(--text-muted)">' + escText(ei.invoice_date) + '</span></td>' +
+        '<td>' + escText(String(ei.order_id || "").slice(0, 8)) + '</td>' +
+        '<td><span class="ops-pill">' + escText(ei.status) + '</span></td>' +
+        '<td>' + (ei.taxable_value != null ? Number(ei.taxable_value).toLocaleString() : "") + '</td>' +
+        '<td>' + escText(ei.irn || "") + '</td>' +
+        '<td>' +
+          (ei.status === "DRAFT" ? '<button class="btn btn-primary ops-einv-send" data-id="' + escText(ei.id) + '">Send to GSTN</button>' : '') +
+          (ei.status === "GENERATED" ? '<button class="btn btn-ghost ops-einv-cancel" data-id="' + escText(ei.id) + '">Cancel</button>' : '') +
+          (ei.status === "DRAFT" || ei.status === "REJECTED" ? '<button class="btn btn-ghost ops-einv-del" data-id="' + escText(ei.id) + '">Delete</button>' : '') +
+        '</td></tr>'
+      ).join("");
+      setOpsHtml(body, banner +
+        '<div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap">' +
+        '<select id="ops-einv-order">' + orderOpts + '</select>' +
+        '<input id="ops-einv-num" placeholder="Invoice #" style="width:140px"/>' +
+        '<input id="ops-einv-date" type="date"/>' +
+        '<input id="ops-einv-seller" placeholder="Seller GSTIN" style="width:160px" value="27AAACO8335K1Z5"/>' +
+        '<button class="btn btn-primary" id="ops-einv-add">Compose draft</button>' +
+        '</div>' +
+        '<table><thead><tr><th>Invoice</th><th>Order</th><th>Status</th><th>Taxable</th><th>IRN</th><th></th></tr></thead><tbody>' +
+        (rows || '<tr><td colspan="6" style="color:var(--text-muted)">No e-invoices.</td></tr>') + '</tbody></table>');
+      byId("ops-einv-add").addEventListener("click", async () => {
+        try {
+          await window.ObaraBackend.einvoice.createDraft({
+            order_id: byId("ops-einv-order").value,
+            invoice_number: byId("ops-einv-num").value,
+            invoice_date: byId("ops-einv-date").value,
+            seller_gstin: byId("ops-einv-seller").value || null,
+          });
+          renderEinvoices();
+        } catch (err) { notifyError(err.message); }
+      });
+      document.querySelectorAll(".ops-einv-send").forEach((b) => b.addEventListener("click", async () => {
+        try { const r = await window.ObaraBackend.einvoice.sendToGstn(b.getAttribute("data-id")); notifySuccess("Status: " + ((r.einvoice && r.einvoice.status) || "?")); renderEinvoices(); }
+        catch (err) { notifyError(err.message); }
+      }));
+      document.querySelectorAll(".ops-einv-cancel").forEach((b) => b.addEventListener("click", async () => {
+        const reason = prompt("Cancel reason (1=duplicate, 2=data entry, 3=order cancelled, 4=other):"); if (!reason) return;
+        const remarks = prompt("Cancel remarks:") || "";
+        try { await window.ObaraBackend.einvoice.cancel({ id: b.getAttribute("data-id"), cancel_reason: reason, cancel_remarks: remarks }); renderEinvoices(); }
+        catch (err) { notifyError(err.message); }
+      }));
+      document.querySelectorAll(".ops-einv-del").forEach((b) => b.addEventListener("click", async () => {
+        try { await window.ObaraBackend.einvoice.remove(b.getAttribute("data-id")); renderEinvoices(); }
+        catch (err) { notifyError(err.message); }
+      }));
+    } catch (err) { setOpsHtml(body, '<p style="color:var(--err)">' + escText(err.message) + '</p>'); }
+  }
+
+  // ── FORECASTING DASHBOARD ──
+  async function showForecastingModal() {
+    if (!ensureBackend()) return;
+    const html = '<div class="ops-modal-body" style="max-width:none;width:100%">' +
+      '<div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap">' +
+      '<label>Segment <select id="ops-fc-dim">' +
+        '<option value="overall">Overall</option>' +
+        '<option value="customer_type">Customer type</option>' +
+        '<option value="territory">Territory (state)</option>' +
+        '<option value="order_mode">Order mode</option>' +
+      '</select></label>' +
+      '<label><input id="ops-fc-fresh" type="checkbox"/> Real-time (skip cached snapshot)</label>' +
+      '<button class="btn btn-primary" id="ops-fc-go">Refresh</button>' +
+      '<button class="btn btn-ghost" id="ops-fc-snap">Persist nightly snapshot</button>' +
+      '</div>' +
+      '<div id="ops-fc-body">Loading...</div></div>';
+    showOpsModal("Forecasting", html);
+    const load = async () => {
+      const out = await window.ObaraBackend.forecast.get({ dimension: byId("ops-fc-dim").value, fresh: byId("ops-fc-fresh").checked ? "1" : "0" });
+      const buckets = out.buckets || [];
+      const rows = buckets.map((b) =>
+        '<tr><td>' + escText(b.segment_value) + '</td>' +
+        '<td>' + (b.open_count || 0) + '</td>' +
+        '<td>' + (b.open_amount_inr ? Number(b.open_amount_inr).toLocaleString() : 0) + '</td>' +
+        '<td>' + (b.weighted_amount_inr ? Number(b.weighted_amount_inr).toLocaleString() : 0) + '</td>' +
+        '<td>' + (b.next_30_days_amount_inr ? Number(b.next_30_days_amount_inr).toLocaleString() : 0) + '</td>' +
+        '<td>' + (b.next_90_days_amount_inr ? Number(b.next_90_days_amount_inr).toLocaleString() : 0) + '</td>' +
+        '<td>' + (b.won_count || 0) + ' / ' + (b.lost_count || 0) + '</td>' +
+        '</tr>'
+      ).join("");
+      setOpsHtml(byId("ops-fc-body"), '<p class="text-[11px]" style="color:var(--text-muted)">As of ' + escText(out.as_of || "n/a") + (out.fresh ? " (real-time)" : " (cached snapshot)") + '</p>' +
+        '<table><thead><tr><th>Segment</th><th>Open count</th><th>Open INR</th><th>Weighted INR</th><th>Next 30d</th><th>Next 90d</th><th>Won / Lost</th></tr></thead><tbody>' +
+        (rows || '<tr><td colspan="7" style="color:var(--text-muted)">No data. Add opportunities under Sales Pipeline.</td></tr>') + '</tbody></table>');
+    };
+    byId("ops-fc-go").addEventListener("click", load);
+    byId("ops-fc-snap").addEventListener("click", async () => {
+      try { const out = await window.ObaraBackend.forecast.snapshot(); notifySuccess("Snapshot written: " + out.written + " rows for " + out.asOf); load(); }
+      catch (err) { notifyError(err.message); }
+    });
+    byId("ops-fc-dim").addEventListener("change", load);
+    byId("ops-fc-fresh").addEventListener("change", load);
+    load();
+  }
+
+  // ── AMC SCHEDULE (preventive maintenance) ──
+  async function showAmcModal() {
+    if (!ensureBackend()) return;
+    const html = '<div class="ops-modal-body" style="max-width:none;width:100%">' +
+      '<p>AMC schedules drive auto-generated service visits. Visits also auto-generate via the daily cron at /api/service/amc_cron.</p>' +
+      '<div id="ops-amc-body">Loading...</div></div>';
+    showOpsModal("AMC Schedule", html);
+    await renderAmc();
+  }
+  async function renderAmc() {
+    const body = byId("ops-amc-body");
+    if (!body) return;
+    try {
+      const out = await window.ObaraBackend.service.listAmcSchedules({ limit: 500 });
+      const contracts = (await window.ObaraBackend.admin.listContracts({ type: "AMC" })).contracts || [];
+      const contractOpts = '<option value="">(AMC contract)</option>' + contracts.map((c) => '<option value="' + escText(c.id) + '" data-customer="' + escText(c.customer_id || "") + '">' + escText(c.contract_number) + '</option>').join("");
+      const rows = (out.amc_schedules || []).map((s) =>
+        '<tr><td>' + escText(s.scheduled_date) + '</td>' +
+        '<td>' + escText(s.visit_label || "") + '</td>' +
+        '<td>' + escText(s.visit_type) + '</td>' +
+        '<td><span class="ops-pill">' + escText(s.status) + '</span></td>' +
+        '<td>' +
+          (s.status === "SCHEDULED" ? '<button class="btn btn-primary ops-amc-gen" data-id="' + escText(s.id) + '">Generate visit</button>' : '') +
+          '<button class="btn btn-ghost ops-amc-del" data-id="' + escText(s.id) + '">Delete</button>' +
+        '</td></tr>'
+      ).join("");
+      setOpsHtml(body, '<h4 style="font-size:12px;font-weight:800">Bulk seed from contract</h4>' +
+        '<div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+        '<select id="ops-amc-contract">' + contractOpts + '</select>' +
+        '<select id="ops-amc-freq"><option value="QUARTERLY">Quarterly</option><option value="MONTHLY">Monthly</option><option value="BIANNUAL">Bi-annual</option><option value="ANNUAL">Annual</option></select>' +
+        '<input id="ops-amc-start" type="date"/>' +
+        '<input id="ops-amc-count" type="number" value="4" style="width:60px" placeholder="count"/>' +
+        '<input id="ops-amc-label" placeholder="visit label (optional)" style="width:200px"/>' +
+        '<button class="btn btn-primary" id="ops-amc-seed">Seed</button>' +
+        '</div>' +
+        '<table><thead><tr><th>Date</th><th>Label</th><th>Type</th><th>Status</th><th></th></tr></thead><tbody>' +
+        (rows || '<tr><td colspan="5" style="color:var(--text-muted)">No AMC schedules.</td></tr>') + '</tbody></table>');
+      byId("ops-amc-seed").addEventListener("click", async () => {
+        const sel = byId("ops-amc-contract"); const opt = sel.options[sel.selectedIndex];
+        const customer_id = opt && opt.getAttribute("data-customer");
+        if (!sel.value || !customer_id) { notifyWarn("Pick an AMC contract"); return; }
+        try {
+          await window.ObaraBackend.service.bulkSeedAmcSchedule({
+            contract_id: sel.value,
+            frequency: byId("ops-amc-freq").value,
+            start_date: byId("ops-amc-start").value,
+            count: Number(byId("ops-amc-count").value) || 4,
+            visit_label: byId("ops-amc-label").value || null,
+          });
+          renderAmc();
+        } catch (err) { notifyError(err.message); }
+      });
+      document.querySelectorAll(".ops-amc-gen").forEach((b) => b.addEventListener("click", async () => {
+        try { await window.ObaraBackend.service.generateAmcVisit(b.getAttribute("data-id")); notifySuccess("Visit created"); renderAmc(); }
+        catch (err) { notifyError(err.message); }
+      }));
+      document.querySelectorAll(".ops-amc-del").forEach((b) => b.addEventListener("click", async () => {
+        try { await window.ObaraBackend.service.deleteAmcSchedule(b.getAttribute("data-id")); renderAmc(); }
+        catch (err) { notifyError(err.message); }
+      }));
+    } catch (err) { setOpsHtml(body, '<p style="color:var(--err)">' + escText(err.message) + '</p>'); }
+  }
+
+  // ── SCHEDULE LINES (delivery schedules attached to a customer PO) ──
+  // Source: real MG Motor POs that say "*As per Schedule Lines, to be sent separately".
+  async function showScheduleLinesModal(orderId) {
+    if (!ensureBackend()) return;
+    if (!orderId) {
+      const orders = (await window.ObaraBackend.orders.list({ limit: 50 })).orders || [];
+      const sel = prompt("Order id (one of):\\n" + orders.slice(0, 8).map((o) => o.id.slice(0, 8) + " " + (o.po_number || "")).join("\\n"));
+      if (!sel) return;
+      const match = orders.find((o) => o.id.startsWith(sel));
+      if (!match) { notifyWarn("No matching order"); return; }
+      orderId = match.id;
+    }
+    showOpsModal("Schedule Lines", '<div class="ops-modal-body" style="max-width:none;width:100%"><p>Order ' + escText(orderId.slice(0, 8)) + '</p><div id="ops-sched-body">Loading...</div></div>');
+    await renderScheduleLines(orderId);
+  }
+  async function renderScheduleLines(orderId) {
+    const body = byId("ops-sched-body");
+    if (!body) return;
+    try {
+      const out = await window.ObaraBackend.scheduleLines.list(orderId);
+      const rows = (out.schedule_lines || []).map((s) =>
+        '<tr><td>' + (s.line_index != null ? s.line_index : "") + '</td>' +
+        '<td>' + escText(s.part_no || "") + '</td>' +
+        '<td>' + escText(s.scheduled_qty) + '</td>' +
+        '<td>' + escText(s.scheduled_date) + '</td>' +
+        '<td>' + escText(s.delivery_location || "") + '</td>' +
+        '<td>' + escText(s.remark || "") + '</td>' +
+        '<td><button class="btn btn-ghost ops-sched-del" data-id="' + escText(s.id) + '">Delete</button></td></tr>'
+      ).join("");
+      setOpsHtml(body, '<p class="text-[11px]" style="color:var(--text-muted)">Paste schedule rows TSV: part_no\\tqty\\tdate\\tlocation\\tremark</p>' +
+        '<textarea id="ops-sched-paste" rows="6" style="width:100%;font-family:monospace;font-size:12px" placeholder="C007011\\t10\\t2026-06-01\\tHALOL\\tFirst dispatch"></textarea>' +
+        '<div class="ops-actions"><button class="btn btn-primary" id="ops-sched-import">Import</button>' +
+        '<button class="btn btn-ghost" id="ops-sched-clear">Clear all</button></div>' +
+        '<table><thead><tr><th>#</th><th>Part</th><th>Qty</th><th>Date</th><th>Location</th><th>Remark</th><th></th></tr></thead><tbody>' +
+        (rows || '<tr><td colspan="7" style="color:var(--text-muted)">No schedule lines.</td></tr>') + '</tbody></table>');
+      byId("ops-sched-import").addEventListener("click", async () => {
+        const text = byId("ops-sched-paste").value || "";
+        const lines = text.split(/\\r?\\n/).filter((l) => l.trim().length > 0);
+        const rowsIn = lines.map((l, i) => {
+          const c = l.split("\t");
+          return { line_index: i + 1, part_no: c[0] || null, scheduled_qty: Number(c[1]) || 0, scheduled_date: c[2] || null, delivery_location: c[3] || null, remark: c[4] || null };
+        });
+        try { await window.ObaraBackend.scheduleLines.bulkCreate(orderId, rowsIn); renderScheduleLines(orderId); }
+        catch (err) { notifyError(err.message); }
+      });
+      byId("ops-sched-clear").addEventListener("click", async () => {
+        if (!confirm("Clear all schedule lines for this order?")) return;
+        try { await window.ObaraBackend.scheduleLines.clear(orderId); renderScheduleLines(orderId); }
+        catch (err) { notifyError(err.message); }
+      });
+      document.querySelectorAll(".ops-sched-del").forEach((b) => b.addEventListener("click", async () => {
+        try { await window.ObaraBackend.scheduleLines.deleteOne(b.getAttribute("data-id")); renderScheduleLines(orderId); }
+        catch (err) { notifyError(err.message); }
+      }));
+    } catch (err) { setOpsHtml(body, '<p style="color:var(--err)">' + escText(err.message) + '</p>'); }
+  }
+
+  // ── JBM SPARE MATRIX IMPORTER ──
+  // Source: pending feature "JBM spare matrix one-click import - the 6.5MB JBM file
+  // is structured enough to write a custom importer that populates equipment_hierarchy
+  // and equipment_installed_parts automatically."
+  async function showJbmImporterModal() {
+    if (!ensureBackend()) return;
+    const html = '<div class="ops-modal-body" style="max-width:none;width:100%">' +
+      '<p>Upload a JBM-style spare matrix XLSX. Columns expected: Line, Zone, Station Name, Robot Make, Robot No, GUN NO, GUN TYPE, Timer, ATD, plus part columns. Each row becomes one equipment_hierarchy node; the part columns are exploded into equipment_installed_parts.</p>' +
+      '<label>Customer <select id="ops-jbm-customer">Loading...</select></label>' +
+      '<label>File <input id="ops-jbm-file" type="file" accept=".xlsx,.xls" /></label>' +
+      '<div class="ops-actions"><button class="btn btn-primary" id="ops-jbm-go">Import</button></div>' +
+      '<div id="ops-jbm-status" style="margin-top:8px;font-size:12px;color:var(--text-muted)"></div></div>';
+    showOpsModal("JBM Spare Matrix Importer", html);
+    const customers = (await window.ObaraBackend.customers.list()).customers || [];
+    setOpsHtml(byId("ops-jbm-customer"), customers.map((c) => '<option value="' + escText(c.id) + '">' + escText(c.customer_name || c.customer_key) + '</option>').join(""));
+    byId("ops-jbm-go").addEventListener("click", async () => {
+      const status = byId("ops-jbm-status");
+      const file = byId("ops-jbm-file").files[0];
+      const customerId = byId("ops-jbm-customer").value;
+      if (!file) { if (status) status.textContent = "Pick a file"; return; }
+      if (!customerId) { if (status) status.textContent = "Pick a customer"; return; }
+      if (!window.XLSX) { if (status) status.textContent = "XLSX library not loaded"; return; }
+      try {
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: "array" });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+        if (aoa.length < 2) { if (status) status.textContent = "Sheet has no rows"; return; }
+        const header = aoa[0].map((h) => String(h || "").trim());
+        const idxOf = (label) => header.findIndex((h) => h.toLowerCase() === label.toLowerCase());
+        const lineIdx = idxOf("Line");
+        const zoneIdx = idxOf("Zone");
+        const stationIdx = idxOf("Station Name");
+        const robotMakeIdx = idxOf("Robot Make");
+        const robotNoIdx = idxOf("Robot No");
+        const gunIdx = header.findIndex((h) => /gun\s*no/i.test(h));
+        const gunTypeIdx = header.findIndex((h) => /gun\s*type/i.test(h));
+        const timerIdx = idxOf("Timer");
+        const atdIdx = idxOf("ATD");
+        const knownCols = new Set([lineIdx, zoneIdx, stationIdx, robotMakeIdx, robotNoIdx, gunIdx, gunTypeIdx, timerIdx, atdIdx, idxOf("SI NO"), idxOf("S NO"), idxOf("Sl No"), idxOf("Qty"), idxOf("QTY")]);
+        let nodesCreated = 0;
+        let partsCreated = 0;
+        for (let r = 1; r < aoa.length; r++) {
+          const row = aoa[r];
+          if (!row || !row.length) continue;
+          const gunNo = gunIdx >= 0 ? String(row[gunIdx] || "").trim() : "";
+          const station = stationIdx >= 0 ? String(row[stationIdx] || "").trim() : "";
+          if (!gunNo && !station) continue;
+          const eq = await window.ObaraBackend.admin.upsertEquipment({
+            customer_id: customerId,
+            line_name: lineIdx >= 0 ? String(row[lineIdx] || "").trim() : null,
+            zone_name: zoneIdx >= 0 ? String(row[zoneIdx] || "").trim() : null,
+            station_name: station || null,
+            robot_make: robotMakeIdx >= 0 ? String(row[robotMakeIdx] || "").trim() : null,
+            robot_no: robotNoIdx >= 0 ? String(row[robotNoIdx] || "").trim() : null,
+            gun_no: gunNo || null,
+            gun_type: gunTypeIdx >= 0 ? String(row[gunTypeIdx] || "").trim() : null,
+            timer_model: timerIdx >= 0 ? String(row[timerIdx] || "").trim() : null,
+            atd_model: atdIdx >= 0 ? String(row[atdIdx] || "").trim() : null,
+            installed_parts: header.map((h, i) => {
+              if (knownCols.has(i)) return null;
+              const v = row[i];
+              if (v == null || String(v).trim() === "") return null;
+              const qty = Number(v);
+              return {
+                part_no: h,
+                description: h,
+                installed_qty: Number.isFinite(qty) && qty > 0 ? qty : 1,
+                is_critical: false,
+              };
+            }).filter(Boolean),
+          });
+          nodesCreated++;
+          partsCreated += (eq.equipment && eq.equipment.installed_parts && eq.equipment.installed_parts.length) || 0;
+          if (status && r % 5 === 0) status.textContent = "Imported " + nodesCreated + " nodes...";
+        }
+        if (status) status.textContent = "Done. " + nodesCreated + " equipment nodes imported.";
+        notifySuccess("JBM matrix imported: " + nodesCreated + " nodes");
+      } catch (err) {
+        if (status) status.textContent = "Import failed: " + err.message;
+        notifyError(err.message);
+      }
+    });
+  }
+
   // ── EXTEND ACTION LIST ──
   actionList.push(
     { id:"backend-connect", label:"Connect Backend", detail:"Configure the Vercel API URL and Supabase token", run:showBackendModal, key:"Backend" },
@@ -9041,6 +9635,11 @@ const opsAssistantScript = `<script>
     { id:"project-tracker", label:"Project Tracker", detail:"14-phase project lifecycle from corpus tracker", run:showProjectTracker, key:"Project" },
     { id:"shipments-pod", label:"Shipments and POD", detail:"Mode (SEA/AIR), vessel, port arrival, warehouse receipt, POD", run:showShipmentsModal, key:"Shipping" },
     { id:"service-module", label:"Service (Visits, CAR)", detail:"Field visits with check-in/out and Concern Analysis Reports", run:showServiceModal, key:"Service" },
+    { id:"einvoice", label:"e-Invoice (GST IRN)", detail:"Compose, send to GSTN, view IRN/QR, cancel within 24h", run:showEinvoiceModal, key:"einvoice" },
+    { id:"forecasting", label:"Forecasting", detail:"Pipeline by territory, customer type, order mode", run:showForecastingModal, key:"Forecast" },
+    { id:"amc-schedule", label:"AMC Schedule", detail:"Bulk-seed preventive visits from contracts; auto-generate visits via cron", run:showAmcModal, key:"AMC" },
+    { id:"schedule-lines", label:"Schedule Lines", detail:"Customer delivery schedules attached to a PO", run:() => showScheduleLinesModal(null), key:"Schedule" },
+    { id:"jbm-importer", label:"JBM Spare Matrix Importer", detail:"One-click XLSX import to equipment_hierarchy + installed_parts", run:showJbmImporterModal, key:"Importer" },
     { id:"theme-toggle", label:"Toggle Theme", detail:"Switch between light and dark mode", run:toggleTheme, key:"Theme" },
     { id:"sample-load", label:"Load Sample Data", detail:"Seed a demo customer profile and order so you can explore without uploads", run:seedSampleDataIntoStorage, key:"Demo" },
     { id:"sample-clear", label:"Clear Sample Data", detail:"Remove the demo profile and order", run:clearSampleDataFromStorage, key:"Demo" },
@@ -9113,6 +9712,11 @@ const opsAssistantScript = `<script>
   window.showProjectTracker = showProjectTracker;
   window.showShipmentsModal = showShipmentsModal;
   window.showServiceModal = showServiceModal;
+  window.showEinvoiceModal = showEinvoiceModal;
+  window.showForecastingModal = showForecastingModal;
+  window.showAmcModal = showAmcModal;
+  window.showScheduleLinesModal = showScheduleLinesModal;
+  window.showJbmImporterModal = showJbmImporterModal;
   window.notify = notify;
   window.notifySuccess = notifySuccess;
   window.notifyWarn = notifyWarn;

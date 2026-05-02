@@ -13,6 +13,11 @@ const BRIDGE_TOKEN = process.env.TALLY_BRIDGE_TOKEN;
 
 const idempotencyKey = (gstin, poNumber, payloadHash) => [String(gstin || ""), String(poNumber || ""), String(payloadHash || "")].join("|");
 
+const extractVoucherId = (xml) => {
+  const m = String(xml || "").match(/<VOUCHERID>([^<]+)<\/VOUCHERID>/i) || String(xml || "").match(/<MASTERID>([^<]+)<\/MASTERID>/i);
+  return m ? m[1] : null;
+};
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);
@@ -85,8 +90,3 @@ export default async function handler(req, res) {
     sendError(res, err);
   }
 }
-
-const extractVoucherId = (xml) => {
-  const m = String(xml || "").match(/<VOUCHERID>([^<]+)<\/VOUCHERID>/i) || String(xml || "").match(/<MASTERID>([^<]+)<\/MASTERID>/i);
-  return m ? m[1] : null;
-};

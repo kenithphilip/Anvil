@@ -109,11 +109,23 @@ export default async function handler(req, res) {
     let totalPass = 0;
     let totalFail = 0;
     const caseResults = [];
+    const skipped = [];
     for (const caseInput of cases) {
-      const scored = scoreCase(caseInput.expected || {}, caseInput.actual || {});
+      if (!caseInput || !caseInput.expected) {
+        skipped.push({ case_id: (caseInput && caseInput.id) || "?", reason: "missing_expected" });
+        continue;
+      }
+      if (!caseInput.actual) {
+        skipped.push({ case_id: caseInput.id || "?", reason: "missing_actual" });
+        continue;
+      }
+      const scored = scoreCase(caseInput.expected, caseInput.actual);
       totalPass += scored.pass;
       totalFail += scored.fail;
       caseResults.push({ case_id: caseInput.id || ("case_" + caseResults.length), ...scored });
+    }
+    if (skipped.length === cases.length && cases.length > 0) {
+      return json(res, 400, { error: { message: "every case missing expected or actual. nothing scored." }, skipped });
     }
     const score = totalPass + totalFail === 0 ? 0 : totalPass / (totalPass + totalFail);
 

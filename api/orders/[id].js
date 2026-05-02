@@ -3,7 +3,16 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 
-const APPROVE_INPUTS = ["status", "approval", "payload_hash", "result", "rule_findings", "anomaly_flags", "evidence_by_field", "line_edits", "blocker_summary", "format_change_summary", "cost_avoided_reason", "api_usage", "token_estimate"];
+const APPROVE_INPUTS = [
+  "status", "approval", "payload_hash", "result",
+  "rule_findings", "anomaly_flags", "evidence_by_field", "line_edits",
+  "blocker_summary", "format_change_summary", "cost_avoided_reason",
+  "api_usage", "token_estimate",
+  // Corpus-derived columns (migration 006).
+  "order_mode", "parent_order_id", "contract_id", "customer_location_id",
+  "forward_fx_rate", "forward_contract_ref", "internal_so_type", "project_phase",
+  "lost_reason", "competitor_name",
+];
 
 const buildPatch = (body) => {
   const patch = {};

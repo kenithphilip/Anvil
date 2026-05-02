@@ -305,6 +305,38 @@
     listCarReports: async (params) => apiFetch("/api/service/car_reports" + (params ? "?" + new URLSearchParams(params).toString() : "")),
     createCarReport: async (payload) => apiFetch("/api/service/car_reports", { method: "POST", body: payload }),
     updateCarReport: async (payload) => apiFetch("/api/service/car_reports", { method: "PATCH", body: payload }),
+    listClosureReports: async (params) => apiFetch("/api/service/closure_reports" + (params ? "?" + new URLSearchParams(params).toString() : "")),
+    createClosureReport: async (payload) => apiFetch("/api/service/closure_reports", { method: "POST", body: payload }),
+    updateClosureReport: async (payload) => apiFetch("/api/service/closure_reports", { method: "PATCH", body: payload }),
+    listAmcSchedules: async (params) => apiFetch("/api/service/amc" + (params ? "?" + new URLSearchParams(params).toString() : "")),
+    createAmcSchedule: async (payload) => apiFetch("/api/service/amc", { method: "POST", body: payload }),
+    bulkSeedAmcSchedule: async (payload) => apiFetch("/api/service/amc", { method: "POST", body: { bulk_seed: payload } }),
+    updateAmcSchedule: async (payload) => apiFetch("/api/service/amc", { method: "PATCH", body: payload }),
+    generateAmcVisit: async (id) => apiFetch("/api/service/amc", { method: "PATCH", body: { id, generate_visit: true } }),
+    deleteAmcSchedule: async (id) => apiFetch("/api/service/amc?id=" + encodeURIComponent(id), { method: "DELETE" }),
+  };
+
+  const einvoice = {
+    list: async (params) => apiFetch("/api/einvoice" + (params ? "?" + new URLSearchParams(params).toString() : "")),
+    createDraft: async (payload) => apiFetch("/api/einvoice", { method: "POST", body: payload }),
+    update: async (payload) => apiFetch("/api/einvoice", { method: "PATCH", body: payload }),
+    sendToGstn: async (id) => apiFetch("/api/einvoice", { method: "PATCH", body: { id, action: "send_to_gstn" } }),
+    cancel: async (payload) => apiFetch("/api/einvoice", { method: "PATCH", body: { ...payload, action: "cancel" } }),
+    remove: async (id) => apiFetch("/api/einvoice?id=" + encodeURIComponent(id), { method: "DELETE" }),
+  };
+
+  const forecast = {
+    get: async (params) => apiFetch("/api/forecast" + (params ? "?" + new URLSearchParams(params).toString() : "")),
+    snapshot: async () => apiFetch("/api/forecast", { method: "POST", body: {} }),
+  };
+
+  const scheduleLines = {
+    list: async (orderId) => apiFetch("/api/orders/schedule_lines?order_id=" + encodeURIComponent(orderId)),
+    create: async (payload) => apiFetch("/api/orders/schedule_lines", { method: "POST", body: payload }),
+    bulkCreate: async (orderId, rows, sourceDocId) =>
+      apiFetch("/api/orders/schedule_lines", { method: "POST", body: { order_id: orderId, rows, source_document_id: sourceDocId || null } }),
+    deleteOne: async (id) => apiFetch("/api/orders/schedule_lines?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    clear: async (orderId) => apiFetch("/api/orders/schedule_lines?order_id=" + encodeURIComponent(orderId), { method: "DELETE" }),
   };
 
   const admin = {
@@ -534,6 +566,9 @@
     admin,
     sales,
     service,
+    einvoice,
+    forecast,
+    scheduleLines,
   };
 
   global.ObaraBackend = api;

@@ -5,6 +5,8 @@ import { recordAudit, recordEvent } from "../_lib/audit.js";
 
 const STATUS_VALUES = new Set(["DRAFT", "PENDING_REVIEW", "APPROVED", "BLOCKED", "DUPLICATE", "REUSED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED", "CANCELLED"]);
 
+const ORDER_MODES = new Set(["SPARES", "SPARES_ASSEMBLY", "PROJECT_FOR", "PROJECT_HSS", "INTERNAL"]);
+
 const orderRow = (ctx, body) => ({
   tenant_id: ctx.tenantId,
   customer_id: body.customer_id || null,
@@ -28,6 +30,17 @@ const orderRow = (ctx, body) => ({
   blocker_summary: body.blocker_summary || null,
   format_change_summary: body.format_change_summary || null,
   cost_avoided_reason: body.cost_avoided_reason || null,
+  // Corpus-derived columns (migration 006).
+  order_mode: ORDER_MODES.has(body.order_mode) ? body.order_mode : null,
+  parent_order_id: body.parent_order_id || null,
+  contract_id: body.contract_id || null,
+  customer_location_id: body.customer_location_id || null,
+  forward_fx_rate: body.forward_fx_rate != null ? Number(body.forward_fx_rate) : null,
+  forward_contract_ref: body.forward_contract_ref || null,
+  internal_so_type: body.internal_so_type || null,
+  project_phase: body.project_phase || null,
+  lost_reason: body.lost_reason || null,
+  competitor_name: body.competitor_name || null,
 });
 
 export default async function handler(req, res) {

@@ -18,7 +18,10 @@ export default async function handler(req, res) {
       requirePermission(ctx, "read");
       const limit = Math.max(1, Math.min(2000, Number(req.query.limit || 500)));
       let q = svc.from("tally_inventory").select("*").eq("tenant_id", ctx.tenantId).order("stock_item_name", { ascending: true }).limit(limit);
-      if (req.query.q) q = q.ilike("stock_item_name", "%" + req.query.q + "%");
+      if (req.query.q) {
+        const safe = String(req.query.q).replace(/[%_]/g, "\\$&");
+        q = q.ilike("stock_item_name", "%" + safe + "%");
+      }
       const { data, error } = await q;
       if (error) throw new Error(error.message);
       return json(res, 200, { items: data || [] });

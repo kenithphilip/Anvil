@@ -21,7 +21,11 @@ export default async function handler(req, res) {
       requirePermission(ctx, "read");
       const limit = Math.max(1, Math.min(2000, Number(req.query.limit || 500)));
       let q = svc.from("item_master").select("*").eq("tenant_id", ctx.tenantId).order("part_no", { ascending: true }).limit(limit);
-      if (req.query.q) q = q.or("part_no.ilike.%" + req.query.q + "%,description.ilike.%" + req.query.q + "%");
+      if (req.query.q) {
+        // Escape PostgREST .or() and LIKE special chars to prevent filter injection.
+        const safe = String(req.query.q).replace(/[%_,()*]/g, "\\$&");
+        q = q.or("part_no.ilike.%" + safe + "%,description.ilike.%" + safe + "%");
+      }
       if (req.query.source_country) q = q.eq("source_country", req.query.source_country);
       if (req.query.lifecycle && LIFECYCLE.has(req.query.lifecycle)) q = q.eq("lifecycle", req.query.lifecycle);
       const { data, error } = await q;

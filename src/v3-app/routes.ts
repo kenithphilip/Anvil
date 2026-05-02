@@ -15,10 +15,14 @@ import React, { lazy } from "react";
 
 // One lazy component per screen file. Vite emits one chunk per entry.
 const screens = {
-  // Workflows
+  // Workflows. The legacy build had role-specialized home variants
+  // (HomeManager, HomeAdmin) sourced from the static demo file
+  // src/v3/screens/screens-home.jsx. Those were never wired to live
+  // data; they showed hard-coded customer names + dates. After cutover
+  // every role lands on the wired engineer home, which is data-driven
+  // and correct for all roles. Role-tailored widgets (manager approvals
+  // queue, admin diagnostics) are tracked as a migration follow-up.
   home:               lazy(() => import("./screens/home")),
-  homeManager:        lazy(() => import("./screens/home-manager")),
-  homeAdmin:          lazy(() => import("./screens/home-admin")),
   intake:             lazy(() => import("./screens/intake")),
   soList:             lazy(() => import("./screens/orders")),
   soWorkspace:        lazy(() => import("./screens/so-workspace")),
@@ -71,19 +75,10 @@ const screens = {
   formatGuide:        lazy(() => import("./screens/format-guide")),
 };
 
-// Lazy-resolve role-aware HomeRoute. Reads RBAC role at render time so a
-// role switch instantly shows the right home variant.
-const HomeRoute = (params) => {
-  const role = params.role || "sales_engineer";
-  if (role === "sales_manager") return screens.homeManager;
-  if (role === "admin")          return screens.homeAdmin;
-  return screens.home;
-};
-
 // Resolver per top-level nav id. Each receives `{ params, role }` where
 // `params` is a URLSearchParams view of the hash query.
 export const RESOLVERS = {
-  home:        ({ role }) => HomeRoute({ role }),
+  home:        () => screens.home,
   intake:      () => screens.intake,
   so:          ({ params }) => {
     const view = params.get("view");

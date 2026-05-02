@@ -278,7 +278,7 @@ const WiredEinvoiceCRUD = () => {
           ) : filtered.length === 0 ? (
             <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
               {list.rows.length === 0 ? "No invoices yet." :
-                <>No invoices in this view. <a onClick={() => setActive("all")} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>show all</a></>}
+                <>No invoices in this view. <button type="button" onClick={() => setActive("all")} className="link-btn" style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>show all</button></>}
             </div>
           ) : (
             <table className="tbl">

@@ -1070,3 +1070,110 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .stream-row .a { color: var(--ink-3); }
 .stream-row .m { color: var(--ink-2); }
 .stream-row .m b { color: var(--ink); font-weight: 600; }
+
+/* ─────────────────────────────────────────────────────────────────────
+ * Phase 8 a11y + UX hardening (Vite cutover).
+ * Bakes in the lint findings from src/scripts/audit-ux.mjs and a few
+ * defensive guards against text overflow / spill.
+ * ───────────────────────────────────────────────────────────────────── */
+
+/* Link-styled button for empty-state CTAs. Replaces the legacy
+ * `<a onClick>` pattern with a real button that gets keyboard focus +
+ * screen-reader announcement. */
+.link-btn {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.link-btn:hover { color: var(--accent, var(--ink)); }
+.link-btn:disabled { color: var(--ink-4); cursor: not-allowed; text-decoration: none; }
+
+/* WCAG 2.4.7 — Focus visible. The legacy stylesheet relied on browser
+ * defaults; we make focus rings deliberate so keyboard users always
+ * know where they are. Mouse-only users keep the unobtrusive UI via
+ * :focus:not(:focus-visible). */
+*:focus { outline: none; }
+*:focus-visible {
+  outline: 2px solid var(--accent, #cf6);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+.btn:focus-visible {
+  outline: 2px solid var(--accent, #cf6);
+  outline-offset: 2px;
+}
+.nav-item:focus-visible,
+.ws-tab:focus-visible,
+.tab:focus-visible {
+  outline: 2px solid var(--accent, #cf6);
+  outline-offset: -2px;
+}
+
+/* Min interactive target size (WCAG 2.5.5 best-practice 24x24, AAA 44x44).
+ * We keep the existing dense look but enforce a minimum on tap targets
+ * so mobile / touch users aren't fighting the layout. */
+.btn.sm { min-height: 26px; }
+.btn:not(.sm):not(.lg) { min-height: 30px; }
+.btn.icon { min-width: 26px; }
+
+/* Text-overflow guards. The data-heavy tables sometimes get long
+ * customer names / part numbers; truncate with an ellipsis instead of
+ * letting the cell wrap and break row alignment. Title attribute on
+ * <td> via Btn primitives will surface the full string on hover. */
+.tbl td {
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tbl td.r { text-align: right; }
+.tbl td .pri { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+
+/* Banner + KPI value spill guard. Long INR strings like "₹ 12,34,567" L
+ * shouldn't push the row off-screen. */
+.kpi .v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.banner .ti { overflow-wrap: anywhere; }
+
+/* Modal dialog: clamp height and let body scroll. Prevents tall forms
+ * from pushing the close button off the viewport on short screens. */
+.modal {
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
+/* Reduced-motion users: kill the animations the toast stack adds. */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+/* High-contrast users: thicken the hairline so tables remain legible. */
+@media (prefers-contrast: more) {
+  :root {
+    --hairline: rgba(0, 0, 0, 0.4);
+    --hairline-2: rgba(0, 0, 0, 0.25);
+  }
+  [data-theme="dark"] {
+    --hairline: rgba(255, 255, 255, 0.5);
+    --hairline-2: rgba(255, 255, 255, 0.3);
+  }
+}
+
+/* Skip-to-main link for keyboard users; rendered visually hidden until
+ * focused. Apps inject a single <a class="skip-link" href="#main">. */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  z-index: 999;
+  padding: 8px 12px;
+  background: var(--accent, #cf6);
+  color: var(--paper, #000);
+  font-weight: 600;
+  text-decoration: none;
+}
+.skip-link:focus { top: 0; }

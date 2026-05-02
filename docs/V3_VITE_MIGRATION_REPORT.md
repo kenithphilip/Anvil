@@ -179,6 +179,68 @@ Old links to `/v3.html` are rewritten to `/v3-app/index.html` in
 `vercel.json` so external bookmarks keep resolving. The unified app's
 `?v3=1` shim now redirects to `/v3-app/` directly.
 
+## Post-migration audit (Sub-PR 5)
+
+After cutover the following deeper audits were added under
+`src/scripts/`. Each runs as part of `npm run audit`:
+
+- `audit-screens-deep.mjs`: rejects screens that use forbidden globals
+  (`window.runOpsAction`, `window.showOpsModal`, etc.) or reference a
+  primitive/helper that wasn't imported.
+- `audit-cross-screen.mjs`: detects identifiers used in one screen but
+  declared in another (the legacy concatenator hoisted these; ESM
+  splits them and they break at runtime). Caught `parseXlsx` /
+  `parseDelimited` cross-references between bom-import and so-history.
+- `audit-undefined-refs.mjs`: temporarily strips `// @ts-nocheck` from
+  every screen, runs `tsc`, captures only TS2304 / TS2552 ("cannot
+  find name") errors. These are the bug class that masked itself
+  behind the relaxed type checks. 0 findings.
+- `audit-ux.mjs`: catches icon-only buttons without labels, modals
+  missing `role="dialog"` + `aria-modal`, `<a onClick>` without href,
+  inputs without labels.
+- `audit-backend-calls.mjs`: confirms every `ObaraBackend.X.Y()` call
+  resolves to an actual method on the legacy obara-client (silent
+  no-ops on the Proxy were masking dead clicks).
+
+Issues found and fixed in this audit pass:
+
+- **Dead modal call.** `audit.tsx` was calling
+  `window.runOpsAction("export-audit-csv")` left over from the legacy
+  unified-app surface. The Vite app has no such global; the inline
+  `downloadBlob(rowsToCsv(filtered))` fallback now runs unconditionally.
+- **Cross-screen helper leak.** `so-history.tsx` was calling
+  `parseXlsx` / `parseDelimited` defined in `bom-import.tsx`. Updated
+  to use the locally-defined `parseXlsxSoh` / `parseDelimitedSoh`
+  variants the converter preserved.
+- **Inert primary actions on SO Workspace.** Cancel / Approve / Push
+  to Tally rendered + RBAC-gated but had no `onClick`. Wired up to
+  `ObaraBackend.orders.update({ status })` for cancel + approve and
+  `ObaraBackend.tally.push({ orderId })` for the Tally hand-off, all
+  with toast feedback.
+- **Inert review/dismiss buttons on Duplicates.** Now navigate to the
+  candidate orders so the user can resolve manually.
+- **Inert open buttons on Communications.** Now navigate to the
+  attached order.
+- **Static demo home variants.** `home-manager.tsx` and `home-admin.tsx`
+  were copied from the legacy demo file with hard-coded customer
+  names + dates. Removed; every role lands on the wired engineer
+  home (data-driven, works for all roles).
+- **Modal a11y.** Every `.modal-backdrop` now has `role="dialog"` +
+  `aria-modal="true"`. The new `Modal` primitive in
+  `lib/primitives.tsx` provides Escape-to-close + initial focus +
+  body-scroll-lock for new code.
+- **Anchor-as-button.** 14 instances of `<a onClick>` (used as
+  empty-state CTAs) replaced with `<button className="link-btn">`.
+  Adds keyboard focus + screen-reader announcement.
+- **Icon-only buttons.** 6 instances missing `aria-label` / `title`
+  patched.
+- **Skip-to-main link** + `id="main"` on `<main>` for keyboard users.
+- **Focus-visible styling** (WCAG 2.4.7) added to styles.css.
+- **Min tap-target sizes** (24×24+) enforced on `.btn`.
+- **Text overflow guards** on `.tbl td` and `.kpi .v` so long values
+  don't break row alignment.
+- **Reduced-motion + high-contrast media queries** in styles.css.
+
 ## Open follow-ups
 
 These don't block the cutover but are worth tracking:

@@ -104,8 +104,26 @@ const WiredDuplicates = () => {
                       <td>
                         {status !== "confirmed" && status !== "dismissed" && (
                           <div style={{ display: "flex", gap: 6 }}>
-                            <Btn sm kind="primary">mark dup</Btn>
-                            <Btn sm kind="ghost">dismiss</Btn>
+                            <Btn sm
+                                 kind="primary"
+                                 disabled={!(r.order_a_id || r.left_id)}
+                                 onClick={() => {
+                                   const orderId = r.order_a_id || r.left_id;
+                                   if (orderId) window.location.hash = `#/so?id=${orderId}`;
+                                 }}
+                                 title="Open the candidate order to confirm or reject the duplicate manually">
+                              review
+                            </Btn>
+                            <Btn sm
+                                 kind="ghost"
+                                 disabled={!(r.order_b_id || r.right_id)}
+                                 onClick={() => {
+                                   const orderId = r.order_b_id || r.right_id;
+                                   if (orderId) window.location.hash = `#/so?id=${orderId}`;
+                                 }}
+                                 title="Open the matched order">
+                              compare
+                            </Btn>
                           </div>
                         )}
                       </td>

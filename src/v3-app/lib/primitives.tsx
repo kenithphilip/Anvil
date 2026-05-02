@@ -187,3 +187,137 @@ export const Stream: React.FC<{ rows: StreamRow[] }> = ({ rows }) => (
 export const fmtINR = (n: number): string => "₹ " + n.toLocaleString("en-IN");
 export const fmtUSD = (n: number): string => "$ " + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 export const fmtPct = (n: number): string => (n * 100).toFixed(1) + "%";
+
+// ─────────────────────────────────────────────────────────────────────
+// Modal primitive: backdrop + dialog. Bakes in:
+//   - role="dialog" + aria-modal="true" so screen readers announce it.
+//   - Escape closes (callable from any caller without per-modal wiring).
+//   - Click-outside closes.
+//   - Initial focus moves into the dialog so keyboard users land inside.
+//   - aria-labelledby points at the title element.
+//   - Body scroll lock while open so the page underneath does not jump.
+//
+// Usage:
+//   <Modal open={open} onClose={close} title="Edit threshold">
+//     <Modal.Body> ... </Modal.Body>
+//     <Modal.Footer>
+//       <Btn kind="ghost" onClick={close}>Cancel</Btn>
+//       <Btn kind="primary" onClick={save}>Save</Btn>
+//     </Modal.Footer>
+//   </Modal>
+//
+// Existing screens still use the raw `.modal-backdrop` / `.modal`
+// classNames. This primitive emits the same DOM structure so the v3
+// stylesheet keeps working unchanged.
+// ─────────────────────────────────────────────────────────────────────
+
+import { useEffect, useId, useRef } from "react";
+
+export interface ModalProps {
+  open: boolean;
+  onClose: () => void;
+  title?: ReactNode;
+  children?: ReactNode;
+  maxWidth?: number | string;
+  className?: string;
+  ariaLabel?: string;
+}
+
+interface ModalSubcomponents {
+  Body: React.FC<{ children?: ReactNode; className?: string }>;
+  Footer: React.FC<{ children?: ReactNode; className?: string }>;
+  Header: React.FC<{ children?: ReactNode; onClose?: () => void }>;
+}
+
+const ModalImpl: React.FC<ModalProps> = ({ open, onClose, title, children, maxWidth, className = "", ariaLabel }) => {
+  const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    // Move focus into the dialog so a keyboard user lands inside.
+    const focusTimer = window.setTimeout(() => {
+      const node = dialogRef.current;
+      if (!node) return;
+      const focusable = node.querySelector<HTMLElement>(
+        'input, select, textarea, button, [tabindex]:not([tabindex="-1"])'
+      );
+      (focusable || node).focus();
+    }, 0);
+    // Prevent body scroll while the dialog is open.
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.clearTimeout(focusTimer);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        ref={dialogRef}
+        className={`modal ${className}`}
+        onClick={(ev) => ev.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
+        aria-label={!title ? ariaLabel : undefined}
+        tabIndex={-1}
+        style={maxWidth ? { maxWidth } : undefined}
+      >
+        {title != null && (
+          <div className="modal-h">
+            <span className="ti" id={titleId}>{title}</span>
+            <button
+              type="button"
+              className="btn ghost icon sm"
+              onClick={onClose}
+              aria-label="Close dialog"
+              title="Close (Esc)"
+            >
+              ×
+            </button>
+          </div>
+        )}
+        {children}
+      </div>
+    </div>
+  );
+};
+
+const ModalBody: React.FC<{ children?: ReactNode; className?: string }> = ({ children, className = "" }) => (
+  <div className={`modal-body ${className}`} style={{ display: "grid", gap: 10 }}>{children}</div>
+);
+
+const ModalFooter: React.FC<{ children?: ReactNode; className?: string }> = ({ children, className = "" }) => (
+  <div className={`modal-f ${className}`}>{children}</div>
+);
+
+const ModalHeader: React.FC<{ children?: ReactNode; onClose?: () => void }> = ({ children, onClose }) => (
+  <div className="modal-h">
+    <span className="ti">{children}</span>
+    {onClose && (
+      <button type="button" className="btn ghost icon sm" onClick={onClose} aria-label="Close dialog" title="Close (Esc)">
+        ×
+      </button>
+    )}
+  </div>
+);
+
+export const Modal: React.FC<ModalProps> & ModalSubcomponents = Object.assign(ModalImpl, {
+  Body: ModalBody,
+  Footer: ModalFooter,
+  Header: ModalHeader,
+});

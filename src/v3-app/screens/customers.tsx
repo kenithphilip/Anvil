@@ -108,7 +108,7 @@ const WiredCustomers = () => {
         <Card flush>
           {filtered.length === 0 ? (
             <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-              {query ? <>No customers match <span className="mono">{query}</span>. <a onClick={() => setQuery("")} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>clear search</a></> : "No customers yet."}
+              {query ? <>No customers match <span className="mono">{query}</span>. <button type="button" onClick={() => setQuery("")} className="link-btn" style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>clear search</button></> : "No customers yet."}
             </div>
           ) : (
             <table className="tbl">

@@ -232,7 +232,7 @@ const GunsLeftPane = ({ loading, guns, total, filter, onFilter, selected, onSele
           <div className="body" style={{ padding: 18, color: "var(--ink-3)", textAlign: "center" }}>
             No guns match <span className="mono">{filter}</span>.
             <br />
-            <a onClick={() => onFilter("")} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>clear</a>
+            <button type="button" onClick={() => onFilter("")} className="link-btn" style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>clear</button>
           </div>
         ) : (
           <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
@@ -433,7 +433,7 @@ const GunsRightPane = ({ gun, ordersData, ordersLoading, ordersError, customerLo
         {matrixUsage.length === 0 ? (
           <div className="body" style={{ color: "var(--ink-3)" }}>
             Not referenced in any spare matrix yet.
-            <a onClick={() => window.location.hash = "#/spares"} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline", marginLeft: 6 }}>Open Spares Matrix →</a>
+            <button type="button" onClick={() => window.location.hash = "#/spares"} className="link-btn" style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline", marginLeft: 6 }}>Open Spares Matrix →</button>
           </div>
         ) : (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>

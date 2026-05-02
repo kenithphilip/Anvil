@@ -11,7 +11,9 @@ import { ObaraBackend } from "../lib/api";
 // ============================================================
 
 const forecastFetch = async () => {
-  if (ObaraBackend?.forecast?.pipeline) return ObaraBackend.forecast.pipeline();
+  // The legacy unified app exposed `forecast.pipeline()` for a richer
+  // pivot view. Phase 8 backend exposes `forecast.get()` only; that
+  // returns the same snapshot rows so we use it directly.
   if (ObaraBackend?.forecast?.get) return ObaraBackend.forecast.get();
   // Fallback to direct fetch
   const cfg = (() => { try { return JSON.parse(localStorage.getItem("obara:backend_config") || "{}"); } catch (_) { return {}; } })();

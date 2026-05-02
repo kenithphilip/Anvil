@@ -460,12 +460,12 @@ const WiredStudioCRUD = () => {
 
       {diffData && (
         <div className="modal-backdrop" onClick={() => setDiffAgainst(null)}>
-          <div className="modal" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 920, maxHeight: "80vh", overflow: "auto" }}>
+          <div className="modal" role="dialog" aria-modal="true" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 920, maxHeight: "80vh", overflow: "auto" }}>
             <div className="modal-h">
               <span className="ti">
                 Diff · v{diffData.target.version_no || diffData.target.version || "—"} → current
               </span>
-              <Btn icon kind="ghost" sm onClick={() => setDiffAgainst(null)}>{Icon.close}</Btn>
+              <Btn icon kind="ghost" sm onClick={() => setDiffAgainst(null)} aria-label="Close dialog" title="Close (Esc)">{Icon.close}</Btn>
             </div>
             <div className="modal-body" style={{ display: "grid", gap: 10 }}>
               <div className="mono-sm" style={{ display: "flex", gap: 16, color: "var(--ink-3)" }}>

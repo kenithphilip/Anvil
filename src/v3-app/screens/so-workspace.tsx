@@ -145,6 +145,53 @@ const WiredSOWorkspace = () => {
   const canWrite = RBAC?.canDo?.("so.write") !== false;
   const canAdmin = RBAC?.canDo?.("so.admin") !== false;
 
+  const cancelOrder = async () => {
+    if (!o?.id) return;
+    if (!confirm(`Cancel order ${o.po_number || o.quote_number || o.id.slice(0, 8)}? This sets status to CANCELLED.`)) return;
+    setBusy(true);
+    try {
+      await ObaraBackend?.orders?.update?.(o.id, { status: "CANCELLED" });
+      window.notifySuccess?.("Order cancelled", o.po_number || o.id.slice(0, 8));
+      setBump((n) => n + 1);
+    } catch (err) {
+      window.notifyError?.("Cancel failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const approveOrder = async () => {
+    if (!o?.id) return;
+    setBusy(true);
+    try {
+      await ObaraBackend?.orders?.update?.(o.id, { status: "APPROVED" });
+      window.notifySuccess?.("Order approved", o.po_number || o.id.slice(0, 8));
+      setBump((n) => n + 1);
+    } catch (err) {
+      window.notifyError?.("Approve failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pushToTally = async () => {
+    if (!o?.id) return;
+    setBusy(true);
+    try {
+      const result = await ObaraBackend?.tally?.push?.({ orderId: o.id });
+      if (result?.error) {
+        window.notifyError?.("Tally push failed", result.error.message || "see audit log");
+      } else {
+        window.notifySuccess?.("Pushed to Tally", o.po_number || o.id.slice(0, 8));
+      }
+      setBump((n) => n + 1);
+    } catch (err) {
+      window.notifyError?.("Tally push failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Audit pack export: bundle order + result + findings + signed
   // evidence URLs into a JSON file the user can hand to compliance.
   // Rich PDF + ZIP packaging is a follow-up; for now this matches the
@@ -445,14 +492,23 @@ const WiredSOWorkspace = () => {
           <Btn sm kind="ghost" onClick={() => exportAuditPack(o)} title="Bundle PO + quote + result + signed evidence URLs into a JSON download">
             {Icon.download} audit pack
           </Btn>
-          <Btn sm kind="ghost" disabled={!canCancel} title={canCancel ? "" : "needs sales_manager / admin"}>
+          <Btn sm kind="ghost"
+               disabled={!canCancel || busy || o.status === "CANCELLED"}
+               onClick={cancelOrder}
+               title={canCancel ? "Set order status to CANCELLED" : "needs sales_manager / admin"}>
             {Icon.x} cancel
           </Btn>
-          <Btn sm kind="ghost" disabled={!canApprove} title={canApprove ? "" : "needs sales_manager / finance / admin"}>
+          <Btn sm kind="ghost"
+               disabled={!canApprove || busy || o.status === "APPROVED" || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED"}
+               onClick={approveOrder}
+               title={canApprove ? "Approve order" : "needs sales_manager / finance / admin"}>
             {Icon.shieldCheck} approve
           </Btn>
-          <Btn sm kind="primary" disabled={!canPushTally} title={canPushTally ? "" : "needs finance / admin"}>
-            {Icon.send} push to Tally
+          <Btn sm kind="primary"
+               disabled={!canPushTally || busy || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED" || o.status === "CANCELLED"}
+               onClick={pushToTally}
+               title={canPushTally ? "Push the order payload to Tally" : "needs finance / admin"}>
+            {Icon.send} {busy ? "pushing…" : "push to Tally"}
           </Btn>
         </div>
         <div className="row mono-sm" style={{ color: "var(--ink-3)" }}>
@@ -746,7 +802,7 @@ const WiredSOWorkspace = () => {
         {tab === "shipments" && (
           <Card title="Shipments" eyebrow="schedule lines">
             <div className="mono-sm" style={{ color: "var(--ink-3)" }}>
-              Shipment timeline loads from <code>order_schedule_lines</code> in the Shipments route. Open <a onClick={() => window.location.hash = "#/shipments"} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>shipments</a> to see active dispatches, or jump to the <a onClick={() => setTab("schedule")} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>Schedule</a> tab to edit lines.
+              Shipment timeline loads from <code>order_schedule_lines</code> in the Shipments route. Open <button type="button" onClick={() => window.location.hash = "#/shipments"} className="link-btn" style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>shipments</button> to see active dispatches, or jump to the <button type="button" onClick={() => setTab("schedule")} className="link-btn" style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>Schedule</button> tab to edit lines.
             </div>
           </Card>
         )}

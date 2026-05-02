@@ -119,7 +119,7 @@ export const Shell: React.FC<ShellProps> = ({
       </div>
     </aside>
 
-    <main className="app-main">{children}</main>
+    <main className="app-main" id="main" tabIndex={-1}>{children}</main>
 
     <footer className="app-dock">
       <span><Dot k="live" /> Live · DB ↔ Vercel</span>

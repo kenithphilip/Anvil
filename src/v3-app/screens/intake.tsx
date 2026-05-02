@@ -160,7 +160,7 @@ const WiredInbox = () => {
 
           {intake.length === 0 ? (
             <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-              No untriaged documents. <a onClick={() => window.location.hash = "#/intake"} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>Capture a new PO</a>
+              No untriaged documents. <button type="button" onClick={() => window.location.hash = "#/intake"} className="link-btn" style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>Capture a new PO</button>
             </div>
           ) : (
             <table className="tbl">

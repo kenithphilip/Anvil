@@ -544,10 +544,10 @@ const WiredAmcCRUD = () => {
 
       {seeding && seedForm && (
         <div className="modal-backdrop" onClick={closeForm}>
-          <div className="modal" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 560 }}>
+          <div className="modal" role="dialog" aria-modal="true" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 560 }}>
             <div className="modal-h">
               <span className="ti">Bulk-seed visits from contract</span>
-              <Btn icon kind="ghost" sm onClick={closeForm}>{Icon.close}</Btn>
+              <Btn icon kind="ghost" sm onClick={closeForm} aria-label="Close dialog" title="Close (Esc)">{Icon.close}</Btn>
             </div>
             <div className="modal-body" style={{ display: "grid", gap: 10 }}>
               <label className="lbl">Contract
@@ -602,10 +602,10 @@ const WiredAmcCRUD = () => {
 
       {editing && form && !seeding && (
         <div className="modal-backdrop" onClick={closeForm}>
-          <div className="modal" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 640 }}>
+          <div className="modal" role="dialog" aria-modal="true" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 640 }}>
             <div className="modal-h">
               <span className="ti">{editing === "__new__" ? "New AMC schedule" : "Edit AMC schedule"}</span>
-              <Btn icon kind="ghost" sm onClick={closeForm}>{Icon.close}</Btn>
+              <Btn icon kind="ghost" sm onClick={closeForm} aria-label="Close dialog" title="Close (Esc)">{Icon.close}</Btn>
             </div>
             <div className="modal-body" style={{ display: "grid", gap: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>

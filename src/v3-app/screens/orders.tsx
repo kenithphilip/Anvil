@@ -113,7 +113,7 @@ const WiredSOList = () => {
                 <tr><td colSpan={8} className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading orders…</td></tr>
               ) : filtered.length === 0 ? (
                 <tr><td colSpan={8} className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-                  No orders in this view. {active !== "all" && <a onClick={() => setActive("all")} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>show all</a>}
+                  No orders in this view. {active !== "all" && <button type="button" onClick={() => setActive("all")} className="link-btn" style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>show all</button>}
                 </td></tr>
               ) : filtered.slice(0, 100).map((o) => {
                 const st = stageOf(o.status);

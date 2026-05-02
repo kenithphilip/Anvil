@@ -466,10 +466,10 @@ const WiredEvalsCRUD = () => {
 
       {editing && form && (
         <div className="modal-backdrop" onClick={closeForm}>
-          <div className="modal" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 760 }}>
+          <div className="modal" role="dialog" aria-modal="true" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 760 }}>
             <div className="modal-h">
               <span className="ti">{editing === "__new__" ? "New eval case" : "Edit eval case"}</span>
-              <Btn icon kind="ghost" sm onClick={closeForm}>{Icon.close}</Btn>
+              <Btn icon kind="ghost" sm onClick={closeForm} aria-label="Close dialog" title="Close (Esc)">{Icon.close}</Btn>
             </div>
             <div className="modal-body" style={{ display: "grid", gap: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -524,10 +524,10 @@ const WiredEvalsCRUD = () => {
 
       {running && (
         <div className="modal-backdrop" onClick={closeForm}>
-          <div className="modal" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 720 }}>
+          <div className="modal" role="dialog" aria-modal="true" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 720 }}>
             <div className="modal-h">
               <span className="ti">Run suite</span>
-              <Btn icon kind="ghost" sm onClick={closeForm}>{Icon.close}</Btn>
+              <Btn icon kind="ghost" sm onClick={closeForm} aria-label="Close dialog" title="Close (Esc)">{Icon.close}</Btn>
             </div>
             <div className="modal-body" style={{ display: "grid", gap: 10 }}>
               <label className="lbl">Suite

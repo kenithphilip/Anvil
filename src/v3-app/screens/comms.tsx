@@ -189,7 +189,17 @@ const WiredComms = () => {
                       <td className="mono-sm">{r.recipient}</td>
                       <td>{r.subject}</td>
                       <td><Chip k={r.status === "sent" ? "good" : "warn"}>{r.status}</Chip></td>
-                      <td><Btn sm kind="ghost">open</Btn></td>
+                      <td>
+                        <Btn sm kind="ghost"
+                             disabled={!r.order_id && !r.orderId}
+                             onClick={() => {
+                               const orderId = r.order_id || r.orderId;
+                               if (orderId) window.location.hash = `#/so?id=${orderId}`;
+                             }}
+                             title="Open the order this message is attached to">
+                          open
+                        </Btn>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

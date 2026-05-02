@@ -212,10 +212,7 @@ const WiredLeads = () => {
           {rows.length === 0 ? (
             <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
               No leads yet.{" "}
-              <a
-                onClick={() => setCreating(true)}
-                style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}
-              >Create one</a>
+              <button type="button" onClick={() => setCreating(true)} className="link-btn" style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>Create one</button>
             </div>
           ) : (
             <table className="tbl">

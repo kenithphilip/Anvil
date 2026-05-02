@@ -204,7 +204,7 @@ const WiredSourcePOs = () => {
               <tbody>
                 {filtered.length === 0 ? (
                   <tr><td colSpan={8} className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-                    No source POs in this tab. {active !== "open" && <a onClick={() => setActive("open")} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>show open</a>}
+                    No source POs in this tab. {active !== "open" && <button type="button" onClick={() => setActive("open")} className="link-btn" style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>show open</button>}
                   </td></tr>
                 ) : filtered.map((po) => {
                   const ccy = spoCurrency(po);

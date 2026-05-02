@@ -107,7 +107,7 @@ const WiredHomeEngineer = () => {
             </div>
             {myQueue.length === 0 ? (
               <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-                Nothing in your queue. <a onClick={() => window.location.hash = "#/intake"} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>Create a new SO</a>
+                Nothing in your queue. <button type="button" onClick={() => window.location.hash = "#/intake"} className="link-btn" style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>Create a new SO</button>
               </div>
             ) : (
               <table className="tbl">

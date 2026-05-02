@@ -870,10 +870,10 @@ const WiredAdminCRUD = () => {
 
       {threshForm && (
         <div className="modal-backdrop" onClick={() => setThreshForm(null)}>
-          <div className="modal" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 520 }}>
+          <div className="modal" role="dialog" aria-modal="true" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 520 }}>
             <div className="modal-h">
               <span className="ti">{threshForm.id ? "Edit threshold" : "New approval threshold"}</span>
-              <Btn icon kind="ghost" sm onClick={() => setThreshForm(null)}>{Icon.close}</Btn>
+              <Btn icon kind="ghost" sm onClick={() => setThreshForm(null)} aria-label="Close dialog" title="Close (Esc)">{Icon.close}</Btn>
             </div>
             <div className="modal-body" style={{ display: "grid", gap: 10 }}>
               <label className="lbl">Role
@@ -903,10 +903,10 @@ const WiredAdminCRUD = () => {
 
       {locForm && (
         <div className="modal-backdrop" onClick={() => setLocForm(null)}>
-          <div className="modal" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 640 }}>
+          <div className="modal" role="dialog" aria-modal="true" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 640 }}>
             <div className="modal-h">
               <span className="ti">{locForm.id ? "Edit location" : "New customer location"}</span>
-              <Btn icon kind="ghost" sm onClick={() => setLocForm(null)}>{Icon.close}</Btn>
+              <Btn icon kind="ghost" sm onClick={() => setLocForm(null)} aria-label="Close dialog" title="Close (Esc)">{Icon.close}</Btn>
             </div>
             <div className="modal-body" style={{ display: "grid", gap: 10 }}>
               <label className="lbl">Customer
@@ -951,10 +951,10 @@ const WiredAdminCRUD = () => {
 
       {contractForm && (
         <div className="modal-backdrop" onClick={() => setContractForm(null)}>
-          <div className="modal" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 640 }}>
+          <div className="modal" role="dialog" aria-modal="true" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 640 }}>
             <div className="modal-h">
               <span className="ti">{contractForm.id ? "Edit contract" : "New contract"}</span>
-              <Btn icon kind="ghost" sm onClick={() => setContractForm(null)}>{Icon.close}</Btn>
+              <Btn icon kind="ghost" sm onClick={() => setContractForm(null)} aria-label="Close dialog" title="Close (Esc)">{Icon.close}</Btn>
             </div>
             <div className="modal-body" style={{ display: "grid", gap: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -1003,10 +1003,10 @@ const WiredAdminCRUD = () => {
 
       {itemForm && (
         <div className="modal-backdrop" onClick={() => setItemForm(null)}>
-          <div className="modal" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 640 }}>
+          <div className="modal" role="dialog" aria-modal="true" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 640 }}>
             <div className="modal-h">
               <span className="ti">{itemForm.id ? "Edit item" : "New item"}</span>
-              <Btn icon kind="ghost" sm onClick={() => setItemForm(null)}>{Icon.close}</Btn>
+              <Btn icon kind="ghost" sm onClick={() => setItemForm(null)} aria-label="Close dialog" title="Close (Esc)">{Icon.close}</Btn>
             </div>
             <div className="modal-body" style={{ display: "grid", gap: 10 }}>
               <label className="lbl">Tally item name (required)

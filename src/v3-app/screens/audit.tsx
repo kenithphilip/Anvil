@@ -97,12 +97,10 @@ const WiredAudit = () => {
   });
 
   const exportCsv = () => {
-    if (typeof window.runOpsAction === "function") {
-      try {
-        const result = window.runOpsAction("export-audit-csv");
-        if (result) return;
-      } catch (_) { /* fall through to client-side */ }
-    }
+    // Client-side CSV export. The legacy unified app exposed a
+    // `window.runOpsAction("export-audit-csv")` shortcut that filtered
+    // server-side; in the Vite v3-app we already have the filtered rows
+    // in memory, so we serialize directly.
     downloadBlob(`audit-${new Date().toISOString().slice(0, 10)}.csv`, rowsToCsv(filtered), "text/csv");
   };
 

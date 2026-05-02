@@ -204,6 +204,7 @@ export default function App() {
 
   return (
     <>
+      <a className="skip-link" href="#main">Skip to main content</a>
       <Shell
         route={route}
         onRoute={onRoute}

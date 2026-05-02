@@ -273,10 +273,10 @@ const parseSohFile = async (file) => {
   let rows;
   if (isXlsx) {
     const buf = await file.arrayBuffer();
-    rows = await parseXlsx(buf);
+    rows = await parseXlsxSoh(buf);
   } else {
     const text = await file.text();
-    rows = parseDelimited(text);
+    rows = parseDelimitedSoh(text);
   }
   if (!rows || !rows.length) return { format: "PO", rows: [] };
   const hi = sohFindHeaderRow(rows);

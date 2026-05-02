@@ -8243,6 +8243,2356 @@ const WiredSOList = () => {
 };
 
 window.SOList = WiredSOList;
+
+
+// ===== screens-wired/wired-inbox.jsx =====
+// ============================================================
+// ANVIL v3 — wired Inbox
+// Replaces the static demo Inbox with live data from documents
+// + email-derived DRAFT orders + recent intake activity.
+// ============================================================
+
+const WiredInbox = () => {
+  const { useState: u, useEffect: e } = React;
+  const [orders, setOrders] = u({ data: null, loading: true, error: null });
+  const [audit, setAudit] = u({ data: null, loading: true, error: null });
+  const [bump, setBump] = u(0);
+
+  e(() => {
+    let cancelled = false;
+    setOrders((s) => ({ ...s, loading: true }));
+    Promise.resolve(window.ObaraBackend?.orders?.list?.({ limit: 200 }) || Promise.resolve([]))
+      .then((data) => { if (!cancelled) setOrders({ data, loading: false, error: null }); })
+      .catch((error) => { if (!cancelled) setOrders({ data: null, loading: false, error }); });
+    return () => { cancelled = true; };
+  }, [bump]);
+
+  e(() => {
+    let cancelled = false;
+    Promise.resolve(window.ObaraBackend?.audit?.list?.({ limit: 50 }) || Promise.resolve([]))
+      .then((data) => { if (!cancelled) setAudit({ data, loading: false, error: null }); })
+      .catch((error) => { if (!cancelled) setAudit({ data: null, loading: false, error }); });
+    return () => { cancelled = true; };
+  }, [bump]);
+
+  const reload = () => setBump((n) => n + 1);
+
+  if (orders.loading) {
+    return (
+      <>
+        <WSTitle eyebrow="Workflows · Inbox" title="Inbox" meta="loading…" />
+        <div className="ws-content"><Card><div className="body">Loading inbox…</div></Card></div>
+      </>
+    );
+  }
+
+  if (orders.error) {
+    return (
+      <>
+        <WSTitle eyebrow="Workflows · Inbox" title="Inbox" meta="error" />
+        <div className="ws-content">
+          <Banner kind="bad" icon={Icon.alert} title="Could not load inbox" action={<Btn sm onClick={reload}>Retry</Btn>}>
+            <span className="mono-sm">{String(orders.error.message || orders.error)}</span>
+          </Banner>
+        </div>
+      </>
+    );
+  }
+
+  // The orders endpoint returns { orders: [...] }; older callers used .rows.
+  // Handle both shapes plus a raw array.
+  const orderList = Array.isArray(orders.data)
+    ? orders.data
+    : (orders.data?.orders || orders.data?.rows || []);
+  const auditList = Array.isArray(audit.data)
+    ? audit.data
+    : (audit.data?.events || audit.data?.rows || []);
+
+  // Inbox rows: drafts that originated from intake (capture surface).
+  // We surface DRAFT, PENDING_REVIEW, and DUPLICATE so operators see anything
+  // that hasn't been resolved yet, regardless of capture source.
+  const intake = orderList.filter((o) => ["DRAFT", "PENDING_REVIEW", "DUPLICATE"].includes(o.status));
+
+  const today = new Date().toDateString();
+  const docsToday = intake.filter((o) => {
+    const t = o.created_at;
+    return t && new Date(t).toDateString() === today;
+  }).length;
+  const ocrPending = intake.filter((o) => {
+    // Heuristic: if there's no extracted result yet but there's a preflight payload,
+    // OCR is in flight or pending.
+    const hasResult = o.result && o.result.salesOrder;
+    return !hasResult;
+  }).length;
+  const emailBacklog = intake.filter((o) => o.preflight_payload?.source === "email_inbound").length;
+  const recentUploads = auditList.filter((a) => /document_upload|upload_intent/i.test(a.action || "")).length;
+
+  const sourceOf = (o) => {
+    const src = o.preflight_payload?.source;
+    if (src === "email_inbound") return "email";
+    if (src === "drop") return "drop";
+    if (src === "api") return "api";
+    return o.po_number ? "drop" : "drop";
+  };
+
+  const fileNameOf = (o) => {
+    return o.preflight_payload?.subject
+      || o.po_number
+      || o.quote_number
+      || (o.preflight_payload?.from ? `from ${o.preflight_payload.from}` : null)
+      || (o.id ? `draft ${o.id.slice(0, 8)}` : "draft");
+  };
+
+  const sizeOf = (o) => {
+    const s = o.preflight_payload?.size_bytes;
+    if (!s) return "—";
+    if (s > 1024 * 1024) return (s / 1024 / 1024).toFixed(1) + " MB";
+    if (s > 1024) return Math.round(s / 1024) + " KB";
+    return s + " B";
+  };
+
+  const classifyChip = (o) => {
+    const intent = o.preflight_payload?.intent;
+    const map = {
+      purchase_order: { k: "info", l: "Customer PO" },
+      quote_request: { k: "ghost", l: "Quote request" },
+      po_revision: { k: "warn", l: "PO revision" },
+      status_request: { k: "ghost", l: "Status" },
+    };
+    if (intent && map[intent]) return map[intent];
+    if (o.po_number) return { k: "info", l: "Customer PO" };
+    if (o.quote_number) return { k: "ghost", l: "Quote" };
+    return { k: "ghost", l: "untriaged" };
+  };
+
+  const ocrConfOf = (o) => {
+    const c = o.evidence_by_field && Object.values(o.evidence_by_field)[0];
+    if (typeof c === "object" && c?.confidence != null) return Number(c.confidence).toFixed(2);
+    return "—";
+  };
+
+  return (
+    <>
+      <WSTitle
+        eyebrow="Workflows · Inbox"
+        title="Inbox"
+        meta={`${intake.length} untriaged · email + drop + connectors`}
+        right={<>
+          <Btn icon kind="ghost" sm onClick={reload} title="Refresh">{Icon.cycle}</Btn>
+          <Btn sm kind="primary" onClick={() => window.location.hash = "#/intake"}>{Icon.upload} new SO from PO</Btn>
+        </>}
+      />
+
+      <div className="ws-content">
+        <KPIRow cols={4}>
+          <KPI lbl="Documents · today" v={String(docsToday)} d={docsToday ? "since 00:00 IST" : "no captures yet"} live={docsToday > 0} />
+          <KPI lbl="OCR pending" v={String(ocrPending)} d={ocrPending ? "awaiting extract" : "queue clear"} dKind={ocrPending > 5 ? "down" : ""} />
+          <KPI lbl="Email backlog" v={String(emailBacklog)} d={emailBacklog ? "from inbound provider" : "no inbound"} />
+          <KPI lbl="Recent uploads" v={String(recentUploads)} d="last audit window" />
+        </KPIRow>
+
+        <Card flush>
+          <div style={{ padding: "12px 16px" }}>
+            <Banner kind="info" icon={Icon.upload} title="Drop or upload a document to capture intent"
+                    action={<Btn sm kind="ghost" onClick={() => window.location.hash = "#/intake"}>open intake</Btn>}>
+              <span className="mono-sm">PDF · DOCX · XLSX · ZIP · max 100 MB · ClamAV scanned · OCR auto-runs once accepted.</span>
+            </Banner>
+          </div>
+
+          {intake.length === 0 ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+              No untriaged documents. <a onClick={() => window.location.hash = "#/intake"} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>Capture a new PO</a>
+            </div>
+          ) : (
+            <table className="tbl">
+              <thead><tr>
+                <th>Source</th>
+                <th>Subject / file</th>
+                <th className="r">Size</th>
+                <th>Detected</th>
+                <th className="r">OCR conf</th>
+                <th className="r">Age</th>
+                <th style={{ width: 90 }}></th>
+              </tr></thead>
+              <tbody>
+                {intake.slice(0, 100).map((o) => {
+                  const cls = classifyChip(o);
+                  const src = sourceOf(o);
+                  return (
+                    <tr key={o.id} onClick={() => window.location.hash = `#/so?id=${o.id}`} style={{ cursor: "pointer" }}>
+                      <td className="mono-sm">{src}{o.preflight_payload?.from ? ` · ${o.preflight_payload.from}` : ""}</td>
+                      <td>{fileNameOf(o)}</td>
+                      <td className="r mono-sm">{sizeOf(o)}</td>
+                      <td><Chip k={cls.k}>{cls.l}</Chip></td>
+                      <td className="r mono">{ocrConfOf(o)}</td>
+                      <td className="r mono">{ageLabel(o.created_at)}</td>
+                      <td><Btn sm onClick={(ev) => { ev.stopPropagation(); window.location.hash = `#/so?id=${o.id}`; }}>open OCR {Icon.arrowR}</Btn></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+          {intake.length > 100 && (
+            <div className="mono-sm" style={{ padding: 12, textAlign: "center", color: "var(--ink-3)", borderTop: "1px solid var(--hairline-2)" }}>
+              Showing 100 of {intake.length}.
+            </div>
+          )}
+        </Card>
+      </div>
+    </>
+  );
+};
+
+window.Inbox = WiredInbox;
+
+
+// ===== screens-wired/wired-so-intake.jsx =====
+// ============================================================
+// ANVIL v3 — wired SO Intake
+// Capture step: pick mode + customer, drop a PO, kick off OCR.
+// ============================================================
+
+const ORDER_MODES = [
+  { id: "SPARES",          ti: "Spares",            code: "SPARES · OIQTLC-** · INR",     desc: "Standard spares to a domestic customer. Margin floor 10%, target 30%. Road logistics. Most common mode." },
+  { id: "SPARES_ASSEMBLY", ti: "Spares · Assembly", code: "SPARES_ASSEMBLY · OIQTLC-** · INR", desc: "Gun modification spares with assembly. Same prefix and floor as SPARES, but assembly service line is mandatory." },
+  { id: "PROJECT_FOR",     ti: "Project · Free On Rail", code: "PROJECT_FOR · OFRPRJ-** · INR", desc: "Domestic project with freight inclusive in line price. Forward FX irrelevant. Floor 10%." },
+  { id: "PROJECT_HSS",     ti: "Project · CIF Nhava Sheva", code: "PROJECT_HSS · OIQTHS-** · USD", desc: "Hyundai Steel / Voestalpine pattern. Forward FX explicit, USD line items, customs cost band, floor 10%." },
+  { id: "INTERNAL",        ti: "Internal · Free of cost", code: "INTERNAL · INT-* · FOC",   desc: "Warranty replacement, product trial, expected PO, internal transfer. No margin, no Tally voucher." },
+  { id: null,              ti: "Decide later",      code: "— · ASK ME LATER",            desc: "Capture documents now and let OCR + Claude pre-classifier suggest the mode at extraction time." },
+];
+
+const WiredSOIntake = () => {
+  const { useState: u, useEffect: e, useRef: r } = React;
+  const [mode, setMode] = u("SPARES");
+  const [customers, setCustomers] = u({ data: null, loading: true, error: null });
+  const [customerId, setCustomerId] = u("");
+  const [doc, setDoc] = u(null);
+  const [busy, setBusy] = u(null);
+  const [err, setErr] = u(null);
+  const fileRef = r(null);
+
+  e(() => {
+    let cancelled = false;
+    Promise.resolve(window.ObaraBackend?.customers?.list?.() || Promise.resolve({ customers: [] }))
+      .then((data) => { if (!cancelled) setCustomers({ data, loading: false, error: null }); })
+      .catch((error) => { if (!cancelled) setCustomers({ data: null, loading: false, error }); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const customerList = (customers.data?.customers) || (Array.isArray(customers.data) ? customers.data : []);
+  const selectedCustomer = customerList.find((c) => c.id === customerId);
+
+  const onPickFile = async (file) => {
+    if (!file) return;
+    setErr(null);
+    setBusy("upload");
+    try {
+      const meta = await window.ObaraBackend?.documents?.upload?.(file, "purchase_order");
+      if (!meta || !meta.documentId) throw new Error("Upload returned no document id");
+      setDoc({ id: meta.documentId, filename: file.name, size: file.size });
+      setBusy(null);
+    } catch (e2) {
+      setErr(String(e2.message || e2));
+      setBusy(null);
+    }
+  };
+
+  const onDrop = (ev) => {
+    ev.preventDefault();
+    const f = ev.dataTransfer?.files?.[0];
+    if (f) onPickFile(f);
+  };
+
+  const onContinue = async () => {
+    setErr(null);
+    if (!mode) { setErr("Pick an order mode (or 'Decide later' is not allowed yet)."); return; }
+    if (!customerId) { setErr("Pick a customer."); return; }
+    setBusy("create");
+    try {
+      const res = await window.ObaraBackend?.orders?.create?.({
+        order_mode: mode,
+        customer_id: customerId,
+        status: "DRAFT",
+      });
+      const newId = res?.order?.id || res?.id;
+      if (!newId) throw new Error("Order create returned no id");
+      // Best-effort OCR kickoff if a doc was uploaded; don't block navigation on it.
+      if (doc?.id) {
+        try { await window.ObaraBackend?.ocr?.run?.(doc.id, newId); } catch (_) { /* surface in workspace */ }
+      }
+      window.location.hash = `#/so?id=${newId}`;
+    } catch (e2) {
+      setErr(String(e2.message || e2));
+      setBusy(null);
+    }
+  };
+
+  return (
+    <>
+      <WSTitle
+        eyebrow="Workflows · Sales Orders · New"
+        title="Capture · choose Order Mode"
+        meta="step 1 of 6"
+        right={<>
+          <Btn sm kind="ghost" onClick={() => window.location.hash = "#/so"}>cancel</Btn>
+          <Btn sm kind="primary" disabled={busy === "create"} onClick={onContinue}>
+            {busy === "create" ? "creating…" : <>continue {Icon.arrowR}</>}
+          </Btn>
+        </>}
+      />
+
+      <div className="ws-content">
+        <Steps current={0} items={["Capture", "Preflight", "Extract", "Validate", "Approve", "Push to Tally"]} />
+
+        {err && (
+          <Banner kind="bad" icon={Icon.alert} title="Could not continue" action={<Btn sm onClick={() => setErr(null)}>dismiss</Btn>}>
+            <span className="mono-sm">{err}</span>
+          </Banner>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 14 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <Card title="Order Mode" eyebrow="drives prefix · currency · logistics · margin floor">
+              <div className="choice-grid" style={{ "--cols": 2 }} role="radiogroup" aria-label="Order Mode">
+                {ORDER_MODES.map((m) => (
+                  <div
+                    key={m.code}
+                    role="radio"
+                    aria-checked={mode === m.id}
+                    tabIndex={0}
+                    className={`choice ${mode === m.id ? "sel" : ""}`}
+                    onClick={() => setMode(m.id)}
+                    onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); setMode(m.id); } }}
+                  >
+                    <span className="code">{m.code}</span>
+                    <span className="ti">{m.ti}</span>
+                    <span className="desc">{m.desc}</span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+
+            <Card title="Documents" eyebrow="PO required · others optional">
+              <label htmlFor="so-intake-customer" className="label" style={{ marginBottom: 6 }}>Customer</label>
+              <select
+                id="so-intake-customer"
+                className="select"
+                value={customerId}
+                onChange={(ev) => setCustomerId(ev.target.value)}
+                disabled={customers.loading}
+                style={{ marginBottom: 12 }}
+              >
+                <option value="">{customers.loading ? "loading customers…" : "select a customer…"}</option>
+                {customerList.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.customer_name}{c.gstin ? ` · ${c.gstin}` : ""}
+                  </option>
+                ))}
+              </select>
+
+              <div
+                onDragOver={(ev) => ev.preventDefault()}
+                onDrop={onDrop}
+                style={{
+                  border: "1.5px dashed var(--hairline-3)", borderRadius: 6, padding: "32px 16px",
+                  textAlign: "center", color: "var(--ink-3)", background: "var(--paper-2)",
+                }}
+              >
+                {doc ? (
+                  <>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)" }}>{doc.filename}</div>
+                    <div className="mono-sm" style={{ marginTop: 4 }}>document id {doc.id.slice(0, 8)} · {(doc.size / 1024).toFixed(1)} KB</div>
+                    <Btn sm kind="ghost" style={{ marginTop: 12 }} onClick={() => setDoc(null)}>{Icon.x} remove</Btn>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)" }}>Drop the customer PO here</div>
+                    <div className="mono-sm" style={{ marginTop: 4 }}>or pick a file · PDF · DOCX · XLSX</div>
+                    <input
+                      ref={fileRef}
+                      id="so-intake-file"
+                      type="file"
+                      style={{ display: "none" }}
+                      onChange={(ev) => onPickFile(ev.target.files?.[0])}
+                      aria-label="Upload purchase order"
+                    />
+                    <Btn sm kind="ghost" style={{ marginTop: 12 }} onClick={() => fileRef.current?.click()} disabled={busy === "upload"}>
+                      {busy === "upload" ? "uploading…" : <>{Icon.upload} browse</>}
+                    </Btn>
+                  </>
+                )}
+              </div>
+
+              <div className="divider" />
+              <div className="mono-sm">
+                <Dot k="good" /> ZIP guard · 100 MB cap · no recursion<br />
+                <Dot k="good" /> ClamAV · scanned before parse<br />
+                <Dot k="good" /> PDF · max 80 pages<br />
+                <Dot k="info" /> XLSX · max 12 sheets, parsed first then OCR
+              </div>
+            </Card>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <Card title="Customer" eyebrow={selectedCustomer ? "selected" : "pick from the list"}>
+              {selectedCustomer ? (
+                <>
+                  <div className="row" style={{ marginBottom: 8 }}>
+                    <div style={{ width: 32, height: 32, background: "var(--ink)", color: "var(--paper)", display: "grid", placeItems: "center", fontFamily: "var(--mono)", fontWeight: 700, fontSize: 12 }}>
+                      {(selectedCustomer.customer_name || "").slice(0, 2).toUpperCase()}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{selectedCustomer.customer_name}</div>
+                      <div className="mono-sm">{selectedCustomer.customer_key || selectedCustomer.id?.slice(0, 8)}</div>
+                    </div>
+                  </div>
+                  <KV rows={[
+                    ["GSTIN", selectedCustomer.gstin || "—"],
+                    ["State", selectedCustomer.state_code || "—"],
+                    ["Currency", selectedCustomer.currency || "INR"],
+                    ["Pay terms", selectedCustomer.payment_terms || "—"],
+                    ["Margin floor", selectedCustomer.margin_floor_pct != null ? `${selectedCustomer.margin_floor_pct}%` : "10% (default)"],
+                  ]} />
+                </>
+              ) : (
+                <div className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                  Select a customer to see GSTIN, state, currency, and margin floor.
+                </div>
+              )}
+            </Card>
+
+            <Card title="Profile match" eyebrow="prediction · cached">
+              <div className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                Profile match runs after OCR completes. The pre-classifier picks Haiku when confidence is above 0.85,
+                otherwise falls back to Sonnet and logs to <b>model_routing_log</b>.
+              </div>
+            </Card>
+
+            <Card title="Estimated cost" eyebrow="this SO">
+              <div className="row" style={{ alignItems: "baseline", gap: 6 }}>
+                <span style={{ fontFamily: "var(--mono)", fontSize: 22, fontWeight: 600 }}>
+                  {doc ? "₹ 2.40" : "—"}
+                </span>
+                <span className="mono-sm">{doc ? "all-in · OCR + Claude + Tally" : "upload a PO to estimate"}</span>
+              </div>
+              {doc && (
+                <>
+                  <div className="divider" />
+                  <div className="mono-sm">
+                    <div className="row"><span>OCR · Mistral</span><span style={{ marginLeft: "auto" }}>₹ 0.80</span></div>
+                    <div className="row"><span>Pre-classifier · Haiku</span><span style={{ marginLeft: "auto" }}>₹ 1.20</span></div>
+                    <div className="row"><span>Validation pass</span><span style={{ marginLeft: "auto" }}>₹ 0.40</span></div>
+                  </div>
+                </>
+              )}
+            </Card>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+};
+
+window.SOIntake = WiredSOIntake;
+
+
+// ===== screens-wired/wired-so-workspace.jsx =====
+// ============================================================
+// ANVIL v3 — wired SO Workspace
+// The hero screen: reconciliation grid + margin cockpit + why
+// + evidence + approval + tally + shipments + activity, all
+// keyed by ?id= in the URL hash.
+// ============================================================
+
+const WiredSOWorkspace = () => {
+  const { useState: u, useEffect: e } = React;
+  const [order, setOrder] = u({ data: null, loading: true, error: null });
+  const [audit, setAudit] = u({ data: [], loading: true });
+  const [cost, setCost] = u({ data: null, loading: true });
+  const [tab, setTab] = u("recon");
+  const [bump, setBump] = u(0);
+
+  // Read order id from URL hash query: #/so?id=...
+  const orderId = (() => {
+    const hash = window.location.hash || "";
+    const q = hash.split("?")[1];
+    if (!q) return null;
+    return new URLSearchParams(q).get("id");
+  })();
+
+  e(() => {
+    if (!orderId) { setOrder({ data: null, loading: false, error: new Error("no order id in URL") }); return; }
+    let cancelled = false;
+    setOrder((s) => ({ ...s, loading: true }));
+    Promise.resolve(window.ObaraBackend?.orders?.get?.(orderId))
+      .then((data) => { if (!cancelled) setOrder({ data: data?.order || data, loading: false, error: null }); })
+      .catch((error) => { if (!cancelled) setOrder({ data: null, loading: false, error }); });
+    return () => { cancelled = true; };
+  }, [orderId, bump]);
+
+  e(() => {
+    if (!orderId) return;
+    let cancelled = false;
+    Promise.resolve(window.ObaraBackend?.audit?.list?.({ object_id: orderId, limit: 50 }) || Promise.resolve([]))
+      .then((data) => {
+        if (cancelled) return;
+        const rows = Array.isArray(data) ? data : (data?.events || data?.rows || []);
+        setAudit({ data: rows, loading: false });
+      })
+      .catch(() => { if (!cancelled) setAudit({ data: [], loading: false }); });
+    return () => { cancelled = true; };
+  }, [orderId, bump]);
+
+  e(() => {
+    if (!orderId || !order.data?.customer_id) return;
+    let cancelled = false;
+    Promise.resolve(window.ObaraBackend?.cost?.breakdown?.({ customer_id: order.data.customer_id }) || Promise.resolve(null))
+      .then((data) => { if (!cancelled) setCost({ data, loading: false }); })
+      .catch(() => { if (!cancelled) setCost({ data: null, loading: false }); });
+    return () => { cancelled = true; };
+  }, [orderId, order.data?.customer_id]);
+
+  if (!orderId) {
+    return (
+      <>
+        <WSTitle eyebrow="Sales Orders · Workspace" title="Pick an order" meta="no id in URL" />
+        <div className="ws-content">
+          <Banner kind="info" icon={Icon.info} title="No order selected"
+                  action={<Btn sm onClick={() => window.location.hash = "#/so"}>open list</Btn>}>
+            <span className="mono-sm">Pass an id via the URL: <code>#/so?id=ORDER_ID</code></span>
+          </Banner>
+        </div>
+      </>
+    );
+  }
+
+  if (order.loading) {
+    return (
+      <>
+        <WSTitle eyebrow="Sales Orders · Workspace" title="Loading…" meta={orderId.slice(0, 8)} />
+        <div className="ws-content"><Card><div className="body">Loading order…</div></Card></div>
+      </>
+    );
+  }
+
+  if (order.error || !order.data) {
+    return (
+      <>
+        <WSTitle eyebrow="Sales Orders · Workspace" title="Could not load order" meta={orderId.slice(0, 8)} />
+        <div className="ws-content">
+          <Banner kind="bad" icon={Icon.alert} title="Order fetch failed"
+                  action={<Btn sm onClick={() => setBump((n) => n + 1)}>retry</Btn>}>
+            <span className="mono-sm">{String(order.error?.message || order.error || "not found")}</span>
+          </Banner>
+        </div>
+      </>
+    );
+  }
+
+  const o = order.data;
+  const lines = o.result?.salesOrder?.lineItems || [];
+  const grandTotal = Number(o.result?.salesOrder?.grandTotal) || 0;
+  const subtotal = lines.reduce((s, ln) => s + (Number(ln.lineTotal) || (Number(ln.qty) * Number(ln.rate)) || 0), 0);
+  const findings = Array.isArray(o.rule_findings) ? o.rule_findings : [];
+
+  const canPushTally = window.RBAC?.canDo?.("so.push_tally");
+  const canApprove = window.RBAC?.canDo?.("so.approve");
+  const canCancel = window.RBAC?.canDo?.("so.cancel");
+
+  const customerName = o.customer?.customer_name || o.customer_name || (o.customer_id ? o.customer_id.slice(0, 8) : "—");
+  const customerEmail = o.customer?.contact_email || o.customer?.email;
+
+  const st = stageOf(o.status);
+
+  // Reconciliation columns: number, item, UoM, qty, rate, prev, delta, line ₹, evidence, issues
+  const reconRow = (ln, i) => {
+    const sku = ln.itemCode || ln.sku || ln.code || "";
+    const desc = ln.description || ln.name || ln.item || "";
+    const uom = ln.uom || ln.unit || "—";
+    const qty = ln.qty != null ? ln.qty : ln.quantity;
+    const qtyQuoted = ln.qtyQuoted != null ? ln.qtyQuoted : qty;
+    const rate = Number(ln.rate || ln.unitPrice || 0);
+    const ratePrev = Number(ln.ratePrev || ln.previousRate || 0);
+    const drift = ratePrev > 0 ? (rate - ratePrev) / ratePrev : null;
+    const lineTotal = Number(ln.lineTotal) || (Number(qty) * rate) || 0;
+    const lineFindings = findings.filter((f) => Number(f.line_index) === i || Number(f.lineIndex) === i);
+    const issueChip = lineFindings.length === 0
+      ? "—"
+      : lineFindings.map((f, j) => (
+          <Chip key={j} k={f.severity === "ERROR" || f.blocks ? "bad" : f.severity === "WARNING" ? "warn" : "info"}>
+            {(f.code || f.rule_id || "issue").toLowerCase()}
+          </Chip>
+        ));
+    return (
+      <tr key={i}>
+        <td className="mono">{i + 1}</td>
+        <td>
+          <div style={{ fontWeight: 600 }}>{desc || "—"}</div>
+          {sku && <div className="mono-sm">SKU {sku}</div>}
+        </td>
+        <td>{uom}</td>
+        <td className="r mono">{qty != null ? qty : "—"}</td>
+        <td className="r mono">{qtyQuoted != null ? qtyQuoted : "—"}</td>
+        <td className="r mono">{rate ? fmtINRShort(rate) : "—"}</td>
+        <td className="r mono">{ratePrev ? fmtINRShort(ratePrev) : "—"}</td>
+        <td className="r mono" style={{ color: drift == null ? "var(--ink-4)" : drift > 0.10 ? "var(--rust)" : drift > 0 ? "var(--amber-2)" : "var(--sage)" }}>
+          {drift == null ? "·" : (drift >= 0 ? "+" : "") + (drift * 100).toFixed(1) + "%"}
+        </td>
+        <td className="r mono"><span className="pri">{lineTotal ? fmtINRShort(lineTotal) : "—"}</span></td>
+        <td className="row gap-sm">{ln.evidence?.page ? <Prov>p{ln.evidence.page}{ln.evidence.line ? `·l${ln.evidence.line}` : ""}</Prov> : "—"}</td>
+        <td>{issueChip}</td>
+      </tr>
+    );
+  };
+
+  // Margin cockpit data
+  const policy = o.cost_policy_snapshot || {};
+  const matCost = Number(policy.materialsLanded || policy.materials || 0);
+  const freight = Number(policy.freight || 0);
+  const customs = Number(policy.customs || 0);
+  const service = Number(policy.service || 0);
+  const totalCost = matCost + freight + customs + service;
+  const realizedMargin = grandTotal > 0 ? (grandTotal - totalCost) / grandTotal : 0;
+  const pct = (n) => grandTotal > 0 ? Math.round((n / grandTotal) * 100) : 0;
+
+  const tabs = [
+    { id: "recon", label: "Reconciliation", count: findings.length || null },
+    { id: "margin", label: "Margin cockpit" },
+    { id: "why", label: "Why" },
+    { id: "evidence", label: "Evidence" },
+    { id: "approval", label: "Approval" },
+    { id: "tally", label: "Tally" },
+    { id: "shipments", label: "Shipments" },
+    { id: "activity", label: "Activity", count: audit.data.length || null },
+  ];
+
+  return (
+    <div className="ws">
+      <div className="ws-title" style={{ alignItems: "stretch", flexDirection: "column", gap: 8 }}>
+        <div className="row" style={{ width: "100%" }}>
+          <div>
+            <div className="h-eyebrow">Sales Orders · Workspace</div>
+            <div className="row gap-sm" style={{ marginTop: 2 }}>
+              <h1>{o.po_number || o.quote_number || `draft ${o.id?.slice(0, 8)}`}</h1>
+              {o.order_mode && <Chip k={o.order_mode === "INTERNAL" ? "plum" : o.order_mode.startsWith("PROJECT") ? "info" : "ghost"}>{o.order_mode}</Chip>}
+              <Chip k={st.k}>{st.label}</Chip>
+              {o.payload_hash && <Chip k="ghost">payload {String(o.payload_hash).slice(0, 8)}…</Chip>}
+            </div>
+          </div>
+          <span style={{ flex: 1 }} />
+          {customerEmail && (
+            <Btn sm kind="ghost" onClick={() => window.location.href = `mailto:${customerEmail}?subject=${encodeURIComponent(o.po_number || o.quote_number || "Order update")}`}>
+              {Icon.send} email customer
+            </Btn>
+          )}
+          <Btn sm kind="ghost" disabled={!canCancel} title={canCancel ? "" : "needs sales_manager / admin"}>
+            {Icon.x} cancel
+          </Btn>
+          <Btn sm kind="ghost" disabled={!canApprove} title={canApprove ? "" : "needs sales_manager / finance / admin"}>
+            {Icon.shieldCheck} approve
+          </Btn>
+          <Btn sm kind="primary" disabled={!canPushTally} title={canPushTally ? "" : "needs finance / admin"}>
+            {Icon.send} push to Tally
+          </Btn>
+        </div>
+        <div className="row mono-sm" style={{ color: "var(--ink-3)" }}>
+          {customerName}
+          <span style={{ color: "var(--ink-5)" }}>·</span>
+          <span>created {ageLabel(o.created_at)} ago</span>
+          <span style={{ color: "var(--ink-5)" }}>·</span>
+          <span>updated {ageLabel(o.updated_at || o.created_at)} ago</span>
+          <span style={{ marginLeft: "auto" }}>id <span className="mono">{o.id?.slice(0, 8)}…</span></span>
+        </div>
+      </div>
+
+      <WSTabs tabs={tabs} active={tab} onChange={setTab} />
+
+      <div className="ws-content">
+        <Steps current={
+          o.status === "DRAFT" ? 0
+          : o.status === "PENDING_REVIEW" ? 3
+          : o.status === "APPROVED" ? 4
+          : o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED" ? 5
+          : 2
+        } items={["Capture", "Preflight", "Extract", "Validate", "Approve", "Push to Tally"]} />
+
+        {tab === "recon" && (
+          <Card flush>
+            <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--hairline-2)", display: "flex", gap: 10, alignItems: "center" }}>
+              <span className="h2">Line reconciliation</span>
+              <span className="mono-sm">{lines.length} line{lines.length === 1 ? "" : "s"} · {findings.length} issue{findings.length === 1 ? "" : "s"}</span>
+            </div>
+            {lines.length === 0 ? (
+              <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+                No line items extracted yet. Extraction completes after OCR finishes.
+              </div>
+            ) : (
+              <table className="tbl">
+                <thead><tr>
+                  <th style={{ width: 28 }}>#</th>
+                  <th>Item</th>
+                  <th>UoM</th>
+                  <th className="r">Qty · PO</th>
+                  <th className="r">Qty · Q</th>
+                  <th className="r">Rate · PO</th>
+                  <th className="r">Rate · prev</th>
+                  <th className="r">Δ</th>
+                  <th className="r">Line ₹</th>
+                  <th>Evidence</th>
+                  <th>Issues</th>
+                </tr></thead>
+                <tbody>{lines.map(reconRow)}</tbody>
+                <tfoot>
+                  <tr style={{ background: "var(--paper-2)" }}>
+                    <td colSpan={8} className="r mono" style={{ paddingTop: 10, paddingBottom: 10 }}>
+                      <span style={{ color: "var(--ink-3)" }}>subtotal · before tax & freight</span>
+                    </td>
+                    <td className="r mono"><b style={{ fontSize: 13 }}>{fmtINRShort(subtotal)}</b></td>
+                    <td colSpan={2}></td>
+                  </tr>
+                </tfoot>
+              </table>
+            )}
+          </Card>
+        )}
+
+        {tab === "margin" && (
+          <Card title="Margin cockpit" eyebrow="this SO">
+            {grandTotal === 0 ? (
+              <div className="mono-sm" style={{ color: "var(--ink-3)" }}>No grand total yet — extraction or pricing has not completed.</div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+                <div>
+                  <div className="h-eyebrow">Realized margin</div>
+                  <div style={{ fontFamily: "var(--mono)", fontSize: 32, fontWeight: 500, letterSpacing: "-0.02em", color: "var(--ink)", marginTop: 4 }}>
+                    {(realizedMargin * 100).toFixed(1)}%
+                  </div>
+                  <div className="mono-sm">{fmtINRShort(grandTotal - totalCost)} on {fmtINRShort(grandTotal)}</div>
+                </div>
+                <div>
+                  <div className="h-eyebrow">Cost decomposition</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 6 }}>
+                    {[
+                      ["Materials · landed", pct(matCost), fmtINRShort(matCost)],
+                      ["Freight",            pct(freight), fmtINRShort(freight)],
+                      ["Customs · GST",      pct(customs), fmtINRShort(customs)],
+                      ["Service",            pct(service), fmtINRShort(service)],
+                      ["Margin",             Math.round(realizedMargin * 100), fmtINRShort(grandTotal - totalCost), true],
+                    ].map((r, i) => (
+                      <div key={i} className="row mono-sm">
+                        <span style={{ minWidth: 130 }}>{r[0]}</span>
+                        <div className="hbar" style={{ flex: 1 }}>
+                          <span style={{ width: `${Math.max(0, Math.min(100, r[1]))}%`, background: r[3] ? "var(--accent-2)" : "var(--ink)" }} />
+                        </div>
+                        <span style={{ minWidth: 80, textAlign: "right" }}>{r[2]}</span>
+                        <span style={{ minWidth: 36, textAlign: "right", color: "var(--ink-3)" }}>{r[1]}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            {cost.data && (
+              <>
+                <div className="divider" />
+                <div className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                  Customer cost-to-serve: {fmtUSD(cost.data.totalUsd || 0)} across {cost.data.totalSuccess || 0} successful SOs · per-success {fmtUSD(cost.data.costPerSuccess || 0)}.
+                </div>
+              </>
+            )}
+          </Card>
+        )}
+
+        {tab === "why" && (
+          <Card title="Why · model reasoning" eyebrow="redacted · audit">
+            {findings.length === 0 ? (
+              <div className="mono-sm" style={{ color: "var(--ink-3)" }}>No findings recorded for this order.</div>
+            ) : (
+              <div className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {findings.map((f, i) => (
+                  <div key={i} style={{ background: "var(--paper-3)", padding: 10, borderRadius: 4, lineHeight: 1.55 }}>
+                    <b style={{ color: "var(--ink)" }}>{(f.code || f.rule_id || "finding").toUpperCase()}</b>
+                    {f.line_index != null && <> · L{Number(f.line_index) + 1}</>}
+                    {f.detail ? ` — ${f.detail}` : ""}
+                    {f.suggested_fix && <div style={{ marginTop: 4, color: "var(--ink-3)" }}>suggested fix · {f.suggested_fix}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        )}
+
+        {tab === "evidence" && (
+          <Card title="Evidence" eyebrow={o.doc_fingerprint ? `fingerprint ${String(o.doc_fingerprint).slice(0, 12)}…` : "no fingerprint"}>
+            {o.evidence_by_field && Object.keys(o.evidence_by_field).length > 0 ? (
+              <table className="tbl">
+                <thead><tr><th>Field</th><th>Page · line</th><th>Value</th></tr></thead>
+                <tbody>
+                  {Object.entries(o.evidence_by_field).map(([field, ev]) => (
+                    <tr key={field}>
+                      <td className="mono-sm">{field}</td>
+                      <td className="mono-sm">{ev?.page ? `p${ev.page}${ev.line ? "·l" + ev.line : ""}` : "—"}</td>
+                      <td>{ev?.value != null ? String(ev.value) : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="mono-sm" style={{ color: "var(--ink-3)" }}>Evidence map is empty. After OCR + extraction completes, every populated field has a citation here.</div>
+            )}
+          </Card>
+        )}
+
+        {tab === "approval" && (
+          <Card title="Approval" eyebrow={o.approval ? "decided" : "pending"}>
+            {o.approval ? (
+              <KV rows={[
+                ["Status", o.approval.status || o.approval.decision || "—"],
+                ["Approver", o.approval.approver || o.approval.approver_role || "—"],
+                ["Reason", o.approval.reason || o.approval.comments || "—"],
+                ["Payload hash", o.approval.payloadHash || o.payload_hash || "—"],
+              ]} />
+            ) : (
+              <div className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                No approval recorded yet. Approvals are logged once a manager / finance role decides via the Approvals queue.
+              </div>
+            )}
+          </Card>
+        )}
+
+        {tab === "tally" && (
+          <Card title="Tally" eyebrow={o.status === "EXPORTED_TO_TALLY" ? "exported" : o.status === "FAILED_TALLY_IMPORT" ? "failed" : "queued"}>
+            <KV rows={[
+              ["Voucher", o.payload_hash ? `SO/${o.order_mode || "GEN"}/${(o.po_number || o.id || "").slice(0, 12)}` : "—"],
+              ["Hash", o.payload_hash || "—"],
+              ["Status", o.status],
+              ["Pushed", o.status === "EXPORTED_TO_TALLY" ? "yes" : "no"],
+            ]} />
+          </Card>
+        )}
+
+        {tab === "shipments" && (
+          <Card title="Shipments" eyebrow="schedule lines">
+            <div className="mono-sm" style={{ color: "var(--ink-3)" }}>
+              Shipment timeline loads from <code>order_schedule_lines</code> in the Shipments route. Open <a onClick={() => window.location.hash = "#/shipments"} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>shipments</a> to see active dispatches.
+            </div>
+          </Card>
+        )}
+
+        {tab === "activity" && (
+          <Card title="Activity" eyebrow={`${audit.data.length} event${audit.data.length === 1 ? "" : "s"}`}>
+            {audit.loading ? (
+              <div className="body">Loading…</div>
+            ) : audit.data.length === 0 ? (
+              <div className="mono-sm" style={{ color: "var(--ink-4)" }}>No audit events for this order yet.</div>
+            ) : (
+              <Stream rows={audit.data.slice(0, 30).map((a) => ({
+                t: new Date(a.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+                a: (a.action || "evt").toUpperCase().slice(0, 5),
+                m: `<b>${a.action || "event"}</b> · ${a.object_type || ""}${a.detail ? " · " + a.detail : ""}`,
+              }))} />
+            )}
+          </Card>
+        )}
+      </div>
+    </div>
+  );
+};
+
+window.SOWorkspace = WiredSOWorkspace;
+
+
+// ===== screens-wired/wired-approvals.jsx =====
+// ============================================================
+// ANVIL v3 — wired Approvals queue
+// Pulls quote_approvals via /api/admin/quote_approvals?type=approvals
+// (no client wrapper exists yet, so direct fetch.)
+// ============================================================
+
+const WiredApprovals = () => {
+  const { useState: u, useEffect: e } = React;
+  const [state, setState] = u({ data: null, loading: true, error: null });
+  const [bump, setBump] = u(0);
+
+  const fetchApprovals = async () => {
+    const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
+    const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
+    if (!cfg.url) throw new Error("Backend URL not configured");
+    const headers = { "Content-Type": "application/json" };
+    if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+    if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+    const resp = await fetch(cfg.url.replace(/\/+$/, "") + "/api/admin/quote_approvals?type=approvals", { headers });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    return resp.json();
+  };
+
+  const decideApproval = async (id, order_id, approver_role, status) => {
+    const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
+    const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
+    if (!cfg.url) throw new Error("Backend URL not configured");
+    const headers = { "Content-Type": "application/json" };
+    if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+    if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+    const resp = await fetch(cfg.url.replace(/\/+$/, "") + "/api/admin/quote_approvals?type=approvals", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ id, order_id, approver_role, status }),
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    return resp.json();
+  };
+
+  e(() => {
+    let cancelled = false;
+    setState((s) => ({ ...s, loading: true }));
+    fetchApprovals()
+      .then((data) => { if (!cancelled) setState({ data, loading: false, error: null }); })
+      .catch((error) => { if (!cancelled) setState({ data: null, loading: false, error }); });
+    return () => { cancelled = true; };
+  }, [bump]);
+
+  const reload = () => setBump((n) => n + 1);
+  const onDecide = async (a, decision) => {
+    try {
+      await decideApproval(a.id, a.order_id, a.approver_role || "sales_manager", decision);
+      reload();
+    } catch (err) {
+      window.alert("Could not record decision: " + (err.message || err));
+    }
+  };
+
+  const canApprove = window.RBAC?.canApprove?.("approvals") !== false;
+
+  if (state.loading) {
+    return (
+      <>
+        <WSTitle eyebrow="Workflows · Approvals" title="Approvals" meta="loading…" />
+        <div className="ws-content"><Card><div className="body">Loading queue…</div></Card></div>
+      </>
+    );
+  }
+
+  if (state.error) {
+    return (
+      <>
+        <WSTitle eyebrow="Workflows · Approvals" title="Approvals" meta="error" />
+        <div className="ws-content">
+          <Banner kind="bad" icon={Icon.alert} title="Could not load approvals" action={<Btn sm onClick={reload}>retry</Btn>}>
+            <span className="mono-sm">{String(state.error.message || state.error)}</span>
+          </Banner>
+        </div>
+      </>
+    );
+  }
+
+  const all = state.data?.approvals || [];
+  const pending = all.filter((a) => (a.status || "").toUpperCase() === "PENDING");
+  const decided = all.filter((a) => (a.status || "").toUpperCase() !== "PENDING");
+
+  // KPI math
+  const expiringSoon = pending.filter((a) => {
+    if (!a.expires_at) return false;
+    const ms = new Date(a.expires_at).getTime() - Date.now();
+    return ms > 0 && ms < 6 * 3600 * 1000;
+  }).length;
+  const marginBreaches = pending.filter((a) => Number(a.margin_pct) > 0 && Number(a.margin_pct) < 10).length;
+  const approvedToday = decided.filter((a) => {
+    const t = a.decided_at;
+    return t && new Date(t).toDateString() === new Date().toDateString() && (a.status === "APPROVED");
+  }).length;
+
+  const expiresLabel = (iso) => {
+    if (!iso) return "—";
+    const ms = new Date(iso).getTime() - Date.now();
+    if (ms <= 0) return "expired";
+    const mins = Math.floor(ms / 60000);
+    if (mins < 60) return `${mins}m`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ${mins - hrs * 60}m`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ${hrs - days * 24}h`;
+  };
+
+  const reasonOf = (a) => {
+    if (a.reasons && Array.isArray(a.reasons) && a.reasons.length) return a.reasons[0];
+    if (Number(a.margin_pct) > 0 && Number(a.margin_pct) < 10) return "margin breach";
+    if (a.over_threshold) return "value > threshold";
+    return a.comments || "policy match";
+  };
+
+  return (
+    <>
+      <WSTitle
+        eyebrow="Workflows · Approvals"
+        title="Approvals"
+        meta={`${pending.length} pending · ${expiringSoon} expiring soon`}
+        right={<>
+          <Btn icon kind="ghost" sm onClick={reload} title="Refresh">{Icon.cycle}</Btn>
+        </>}
+      />
+
+      <div className="ws-content">
+        <KPIRow cols={4}>
+          <KPI lbl="Pending" v={String(pending.length)} d={pending.length ? "needs decision" : "queue clear"} live={pending.length > 0} />
+          <KPI lbl="Expiring < 6h" v={String(expiringSoon)} d={expiringSoon ? "act now" : "no rush"} dKind={expiringSoon ? "down" : ""} />
+          <KPI lbl="Margin breaches" v={String(marginBreaches)} d={marginBreaches ? "below floor" : "all healthy"} dKind={marginBreaches ? "down" : ""} />
+          <KPI lbl="Approved today" v={String(approvedToday)} d="auto + manual" />
+        </KPIRow>
+
+        <Card flush>
+          {pending.length === 0 ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+              Queue is empty. Pending approvals appear here when an SO breaches policy.
+            </div>
+          ) : (
+            <table className="tbl">
+              <thead><tr>
+                <th>Reference</th>
+                <th>Customer</th>
+                <th>Mode</th>
+                <th>Why</th>
+                <th className="r">Value</th>
+                <th className="r">Margin</th>
+                <th className="r">Expires</th>
+                {canApprove && <th style={{ width: 200 }}>Actions</th>}
+              </tr></thead>
+              <tbody>
+                {pending.map((a) => {
+                  const margin = Number(a.margin_pct) || 0;
+                  return (
+                    <tr key={a.id}>
+                      <td className="mono"><span className="pri">{a.po_number || a.order_reference || (a.order_id ? a.order_id.slice(0, 12) : "—")}</span></td>
+                      <td>{a.customer_name || "—"}</td>
+                      <td><Chip k={a.order_mode === "INTERNAL" ? "plum" : (a.order_mode || "").startsWith("PROJECT") ? "info" : "ghost"}>{a.order_mode || "—"}</Chip></td>
+                      <td><Chip k="warn">{reasonOf(a)}</Chip></td>
+                      <td className="r mono">{a.value_inr ? fmtINRShort(Number(a.value_inr)) : "—"}</td>
+                      <td className="r mono" style={{ color: margin > 0 && margin < 10 ? "var(--rust)" : "var(--ink)", fontWeight: 600 }}>
+                        {margin > 0 ? margin.toFixed(1) + "%" : "—"}
+                      </td>
+                      <td className="r mono" style={{ color: a.expires_at && new Date(a.expires_at).getTime() - Date.now() < 6 * 3600 * 1000 ? "var(--rust)" : "var(--ink-3)" }}>
+                        {expiresLabel(a.expires_at)}
+                      </td>
+                      {canApprove && (
+                        <td className="row gap-sm">
+                          <Btn sm kind="ghost" onClick={() => window.location.hash = `#/so?id=${a.order_id}`}>review</Btn>
+                          <Btn sm kind="primary" onClick={() => onDecide(a, "APPROVED")}>{Icon.check} approve</Btn>
+                          <Btn sm kind="danger" onClick={() => onDecide(a, "REJECTED")}>reject</Btn>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      </div>
+    </>
+  );
+};
+
+window.Approvals = WiredApprovals;
+
+
+// ===== screens-wired/wired-internal-sos.jsx =====
+// ============================================================
+// ANVIL v3 — wired Internal SOs
+// FOC · Warranty · Trial · Expected PO · Internal Transfer
+// ============================================================
+
+const WiredInternalSOs = () => {
+  const { useState: u, useEffect: e } = React;
+  const [state, setState] = u({ data: null, loading: true, error: null });
+  const [bump, setBump] = u(0);
+
+  e(() => {
+    let cancelled = false;
+    setState((s) => ({ ...s, loading: true }));
+    const thunk = window.ObaraBackend?.sales?.listInternalSos
+      ? window.ObaraBackend.sales.listInternalSos()
+      : (async () => {
+          // Fallback: direct fetch if the client wrapper is missing.
+          const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
+          const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
+          if (!cfg.url) throw new Error("Backend URL not configured");
+          const headers = { "Content-Type": "application/json" };
+          if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+          if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+          const resp = await fetch(cfg.url.replace(/\/+$/, "") + "/api/sales/internal_so", { headers });
+          if (!resp.ok) throw new Error("HTTP " + resp.status);
+          return resp.json();
+        })();
+    Promise.resolve(thunk)
+      .then((data) => { if (!cancelled) setState({ data, loading: false, error: null }); })
+      .catch((error) => { if (!cancelled) setState({ data: null, loading: false, error }); });
+    return () => { cancelled = true; };
+  }, [bump]);
+
+  if (state.loading) {
+    return (
+      <>
+        <WSTitle eyebrow="Workflows · Internal SOs" title="Internal Sales Orders" meta="loading…" />
+        <div className="ws-content"><Card><div className="body">Loading internal SOs…</div></Card></div>
+      </>
+    );
+  }
+
+  if (state.error) {
+    return (
+      <>
+        <WSTitle eyebrow="Workflows · Internal SOs" title="Internal Sales Orders" meta="error" />
+        <div className="ws-content">
+          <Banner kind="bad" icon={Icon.alert} title="Could not load internal SOs"
+                  action={<Btn sm onClick={() => setBump((n) => n + 1)}>retry</Btn>}>
+            <span className="mono-sm">{String(state.error.message || state.error)}</span>
+          </Banner>
+        </div>
+      </>
+    );
+  }
+
+  const list = state.data?.internalSos || (Array.isArray(state.data) ? state.data : []);
+  const counts = {
+    foc: list.filter((r) => r.iso_type === "FOC_SUPPLY").length,
+    warranty: list.filter((r) => r.iso_type === "WARRANTY_REPLACEMENT").length,
+    trial: list.filter((r) => r.iso_type === "PRODUCT_TRIAL").length,
+    transfer: list.filter((r) => r.iso_type === "INTERNAL_TRANSFER").length,
+    expected: list.filter((r) => r.iso_type === "EXPECTED_PO").length,
+  };
+
+  const typeChip = (t) => {
+    const map = {
+      FOC_SUPPLY:           { k: "plum",  l: "FOC" },
+      WARRANTY_REPLACEMENT: { k: "warn",  l: "Warranty" },
+      PRODUCT_TRIAL:        { k: "info",  l: "Trial" },
+      EXPECTED_PO:          { k: "ghost", l: "Expected PO" },
+      INTERNAL_TRANSFER:    { k: "plum",  l: "Transfer" },
+    };
+    return map[t] || { k: "ghost", l: t || "—" };
+  };
+
+  const statusChip = (s) => {
+    const map = {
+      DRAFT: { k: "ghost", l: "draft" },
+      PENDING_APPROVAL: { k: "warn", l: "pending" },
+      APPROVED: { k: "info", l: "approved" },
+      DISPATCHED: { k: "warn", l: "in transit" },
+      CLOSED: { k: "good", l: "closed" },
+      CANCELLED: { k: "ghost", l: "cancelled" },
+    };
+    return map[s] || { k: "ghost", l: (s || "").toLowerCase() };
+  };
+
+  return (
+    <>
+      <WSTitle
+        eyebrow="Workflows · Internal SOs"
+        title="Internal Sales Orders"
+        meta="FOC · Warranty · Trial · Expected PO · Transfer"
+        right={<>
+          <Btn icon kind="ghost" sm onClick={() => setBump((n) => n + 1)} title="Refresh">{Icon.cycle}</Btn>
+        </>}
+      />
+
+      <div className="ws-content">
+        <KPIRow cols={5}>
+          <KPI lbl="Total internal" v={String(list.length)} d="all types" />
+          <KPI lbl="FOC supply" v={String(counts.foc)} d="zero revenue" />
+          <KPI lbl="Warranty" v={String(counts.warranty)} d="CAR-linked" dKind={counts.warranty ? "down" : ""} />
+          <KPI lbl="Trial" v={String(counts.trial)} d="PoC + demo" />
+          <KPI lbl="Transfer" v={String(counts.transfer)} d="inter-tenant" />
+        </KPIRow>
+
+        <Banner kind="info" icon={Icon.info} title="Internal SOs do not push to Tally">
+          <span className="mono-sm">FOC and Trial generate stock issue notes; Warranty cross-references CAR reports; Transfer becomes inter-tenant; Expected PO converts when the PO arrives. None create voucher revenue.</span>
+        </Banner>
+
+        <Card flush>
+          {list.length === 0 ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+              No internal sales orders yet. Create one from the SO intake by picking the INTERNAL mode.
+            </div>
+          ) : (
+            <table className="tbl">
+              <thead><tr>
+                <th>Reference</th>
+                <th>Type</th>
+                <th>Counterparty</th>
+                <th className="r">Lines</th>
+                <th>Status</th>
+                <th className="r">Age</th>
+                <th>Owner</th>
+              </tr></thead>
+              <tbody>
+                {list.slice(0, 200).map((r) => {
+                  const tc = typeChip(r.iso_type);
+                  const sc = statusChip(r.status);
+                  const lineCount = (r.lines || []).length;
+                  return (
+                    <tr key={r.id} onClick={() => window.location.hash = `#/internal?id=${r.id}`} style={{ cursor: "pointer" }}>
+                      <td className="mono"><span className="pri">{r.iso_number || r.id.slice(0, 12)}</span></td>
+                      <td><Chip k={tc.k}>{tc.l}</Chip></td>
+                      <td>{r.customer_name || r.vendor_name || (r.customer_id ? r.customer_id.slice(0, 8) : "—")}</td>
+                      <td className="r mono">{lineCount || "—"}</td>
+                      <td><Chip k={sc.k}>{sc.l}</Chip></td>
+                      <td className="r mono">{ageLabel(r.created_at)}</td>
+                      <td className="mono-sm">{r.requested_person || "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      </div>
+    </>
+  );
+};
+
+window.InternalSOs = WiredInternalSOs;
+
+
+// ===== screens-wired/wired-tally-masters-d.jsx =====
+// ============================================================
+// ANVIL v3 — wired Tally · masters
+// Wave D · Finance
+// Backed by ObaraBackend.tally.listMasters(type)
+// ============================================================
+
+const TALLY_MASTER_TABS = [
+  { id: "stock_item",    label: "Stock items" },
+  { id: "ledger",        label: "Ledgers" },
+  { id: "gst_ledger",    label: "GST ledgers" },
+  { id: "uom",           label: "UoM" },
+  { id: "voucher_type",  label: "Voucher types" },
+];
+
+// Shared helpers for the Wave D Tally screens. Declared here (loaded first
+// in the screen-wired bundle) so push + reconcile can reuse them without
+// re-declaration in the shared babel scope.
+const tallyMasterRows = (resp) => {
+  if (!resp) return [];
+  if (Array.isArray(resp)) return resp;
+  if (Array.isArray(resp.masters)) return resp.masters;
+  if (Array.isArray(resp.rows)) return resp.rows;
+  return [];
+};
+
+const tallyOrderRows = (resp) => {
+  if (!resp) return [];
+  if (Array.isArray(resp)) return resp;
+  if (Array.isArray(resp.orders)) return resp.orders;
+  if (Array.isArray(resp.rows)) return resp.rows;
+  return [];
+};
+
+const shortHash = (h) => {
+  if (!h) return "—";
+  const s = String(h);
+  return s.length > 10 ? s.slice(0, 10) + "…" : s;
+};
+
+const renderMastersTable = (type, rows) => {
+  if (!rows.length) {
+    return (
+      <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+        No {TALLY_MASTER_TABS.find((t) => t.id === type)?.label.toLowerCase() || "masters"} synced yet.
+      </div>
+    );
+  }
+  if (type === "stock_item") {
+    return (
+      <table className="tbl">
+        <thead><tr>
+          <th scope="col">Name</th>
+          <th scope="col">Parent group</th>
+          <th scope="col">Base UoM</th>
+          <th scope="col" className="r">Opening qty</th>
+          <th scope="col" className="r">Closing qty</th>
+        </tr></thead>
+        <tbody>
+          {rows.map((r, i) => {
+            const p = r.payload || {};
+            return (
+              <tr key={r.id || i}>
+                <td><span className="pri">{r.name}</span></td>
+                <td className="mono-sm">{p.parent_group || p.parentGroup || "—"}</td>
+                <td className="mono-sm">{p.base_uom || p.baseUom || p.uom || "—"}</td>
+                <td className="r mono">{p.opening_qty != null ? p.opening_qty : (p.openingQty != null ? p.openingQty : "—")}</td>
+                <td className="r mono">{p.closing_qty != null ? p.closing_qty : (p.closingQty != null ? p.closingQty : "—")}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    );
+  }
+  if (type === "ledger") {
+    return (
+      <table className="tbl">
+        <thead><tr>
+          <th scope="col">Name</th>
+          <th scope="col">Parent group</th>
+          <th scope="col" className="r">Opening balance</th>
+          <th scope="col">Currency</th>
+        </tr></thead>
+        <tbody>
+          {rows.map((r, i) => {
+            const p = r.payload || {};
+            return (
+              <tr key={r.id || i}>
+                <td><span className="pri">{r.name}</span></td>
+                <td className="mono-sm">{p.parent_group || p.parentGroup || p.group || "—"}</td>
+                <td className="r mono">{p.opening_balance != null ? p.opening_balance : (p.openingBalance != null ? p.openingBalance : "—")}</td>
+                <td className="mono-sm">{p.currency || "INR"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    );
+  }
+  if (type === "gst_ledger") {
+    return (
+      <table className="tbl">
+        <thead><tr>
+          <th scope="col">Name</th>
+          <th scope="col">GSTIN</th>
+          <th scope="col">GST type</th>
+        </tr></thead>
+        <tbody>
+          {rows.map((r, i) => {
+            const p = r.payload || {};
+            return (
+              <tr key={r.id || i}>
+                <td><span className="pri">{r.name}</span></td>
+                <td className="mono-sm">{p.gstin || "—"}</td>
+                <td className="mono-sm">{p.gst_type || p.gstType || "—"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    );
+  }
+  if (type === "uom") {
+    return (
+      <table className="tbl">
+        <thead><tr>
+          <th scope="col">Name</th>
+          <th scope="col" className="r">Conversion factor</th>
+          <th scope="col">Tally UoM</th>
+        </tr></thead>
+        <tbody>
+          {rows.map((r, i) => {
+            const p = r.payload || {};
+            return (
+              <tr key={r.id || i}>
+                <td><span className="pri">{r.name}</span></td>
+                <td className="r mono">{p.conversion_factor != null ? p.conversion_factor : (p.conversionFactor != null ? p.conversionFactor : "1")}</td>
+                <td className="mono-sm">{p.tally_uom || p.tallyUom || r.name}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    );
+  }
+  // voucher_type
+  return (
+    <table className="tbl">
+      <thead><tr>
+        <th scope="col">Name</th>
+        <th scope="col">Parent type</th>
+        <th scope="col">Default narration</th>
+      </tr></thead>
+      <tbody>
+        {rows.map((r, i) => {
+          const p = r.payload || {};
+          return (
+            <tr key={r.id || i}>
+              <td><span className="pri">{r.name}</span></td>
+              <td className="mono-sm">{p.parent_type || p.parentType || "—"}</td>
+              <td className="mono-sm">{p.default_narration || p.defaultNarration || "—"}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+};
+
+const WiredTallyMasters = () => {
+  const [active, setActive] = useStateW("stock_item");
+
+  // Fetch each master type once for KPI counts.
+  const stock    = useFetch(() => window.ObaraBackend?.tally?.listMasters?.("stock_item")   || Promise.resolve({ masters: [] }), []);
+  const ledgers  = useFetch(() => window.ObaraBackend?.tally?.listMasters?.("ledger")       || Promise.resolve({ masters: [] }), []);
+  const gst      = useFetch(() => window.ObaraBackend?.tally?.listMasters?.("gst_ledger")   || Promise.resolve({ masters: [] }), []);
+  const uoms     = useFetch(() => window.ObaraBackend?.tally?.listMasters?.("uom")          || Promise.resolve({ masters: [] }), []);
+  const vouchers = useFetch(() => window.ObaraBackend?.tally?.listMasters?.("voucher_type") || Promise.resolve({ masters: [] }), []);
+
+  const byType = {
+    stock_item:   tallyMasterRows(stock.data),
+    ledger:       tallyMasterRows(ledgers.data),
+    gst_ledger:   tallyMasterRows(gst.data),
+    uom:          tallyMasterRows(uoms.data),
+    voucher_type: tallyMasterRows(vouchers.data),
+  };
+
+  const loading  = stock.loading || ledgers.loading || gst.loading || uoms.loading || vouchers.loading;
+  const error    = stock.error || ledgers.error || gst.error || uoms.error || vouchers.error;
+  const reloadAll = () => {
+    stock.reload(); ledgers.reload(); gst.reload(); uoms.reload(); vouchers.reload();
+  };
+
+  const activeRows = byType[active] || [];
+
+  return (
+    <>
+      <WSTitle
+        eyebrow="Finance · Tally"
+        title="Tally · masters"
+        meta={`${byType.stock_item.length} items · ${byType.ledger.length} ledgers · ${byType.gst_ledger.length} GST · ${byType.uom.length} UoM · ${byType.voucher_type.length} voucher types`}
+        right={<>
+          <Btn icon kind="ghost" sm onClick={reloadAll} title="Refresh">{Icon.cycle}</Btn>
+        </>}
+      />
+      <WSTabs
+        tabs={TALLY_MASTER_TABS.map((t) => ({ id: t.id, label: t.label, count: byType[t.id].length }))}
+        active={active}
+        onChange={setActive}
+      />
+
+      <div className="ws-content">
+        {error ? (
+          <Banner kind="bad" icon={Icon.alert} title="Failed to load Tally masters" action={<Btn sm onClick={reloadAll}>Retry</Btn>}>
+            <span className="mono-sm">{String(error.message || error)}</span>
+          </Banner>
+        ) : null}
+
+        <KPIRow cols={5}>
+          <KPI lbl="Stock items"   v={String(byType.stock_item.length)}   d="synced from Tally" />
+          <KPI lbl="Ledgers"       v={String(byType.ledger.length)}       d="all groups" />
+          <KPI lbl="GST ledgers"   v={String(byType.gst_ledger.length)}   d="tax categories" />
+          <KPI lbl="UoM"           v={String(byType.uom.length)}          d="unit conversions" />
+          <KPI lbl="Voucher types" v={String(byType.voucher_type.length)} d="document types" />
+        </KPIRow>
+
+        <Card flush>
+          {loading ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading masters…</div>
+          ) : (
+            renderMastersTable(active, activeRows)
+          )}
+        </Card>
+      </div>
+    </>
+  );
+};
+
+window.TallyMasters = WiredTallyMasters;
+
+
+// ===== screens-wired/wired-tally-push-d.jsx =====
+// ============================================================
+// ANVIL v3 — wired Tally · push queue
+// Wave D · Finance
+// Pulls APPROVED + EXPORTED_TO_TALLY orders, drives ObaraBackend.tally.push.
+// Reuses tallyOrderRows + shortHash from wired-tally-masters-d.jsx.
+// ============================================================
+
+const tallyPushSnapshot = (order) => ({
+  orderId: order.id,
+  voucherNo: order.po_number || ("SO:" + String(order.id).slice(0, 8)),
+  payloadHash: order.payload_hash || (order.approval && order.approval.payloadHash) || null,
+  // Server requires tallyXml in body; with no client-side composer, emit a
+  // minimal envelope so the push endpoint can record an attempt and surface
+  // any bridge error in the UI.
+  tallyXml: "<ENVELOPE/>",
+  salesOrder: (order.result && order.result.salesOrder) || null,
+});
+
+const WiredTallyPush = () => {
+  const queue   = useFetch(() => window.ObaraBackend?.orders?.list?.({ status: "APPROVED", limit: 200 })          || Promise.resolve({ orders: [] }), []);
+  const pushed  = useFetch(() => window.ObaraBackend?.orders?.list?.({ status: "EXPORTED_TO_TALLY", limit: 200 }) || Promise.resolve({ orders: [] }), []);
+
+  const [busyId, setBusyId] = useStateW(null);
+  const [flash, setFlash]   = useStateW(null);
+
+  const queueRows  = tallyOrderRows(queue.data);
+  const pushedRows = tallyOrderRows(pushed.data);
+
+  // Order-level amendments are jsonb on each order. Surface any order whose
+  // result.amendments[] is non-empty as a "pending amendment" diff card.
+  const amendOrders = queueRows.concat(pushedRows).filter((o) => {
+    const amends = (o.result && (o.result.amendments || o.result.order_amendments)) || [];
+    return Array.isArray(amends) && amends.length > 0;
+  });
+
+  const pushedToday = pushedRows.filter((o) => {
+    const t = o.updated_at || o.created_at;
+    return t && new Date(t).toDateString() === new Date().toDateString();
+  });
+  const failed = queueRows.concat(pushedRows).filter((o) => o.status === "FAILED_TALLY_IMPORT" || o.tally_status === "failed");
+
+  const canPush  = !!(window.RBAC && window.RBAC.canDo && window.RBAC.canDo("tally.push"));
+
+  const handlePush = async (order) => {
+    if (!canPush) return;
+    setBusyId(order.id);
+    setFlash(null);
+    try {
+      await window.ObaraBackend?.tally?.push?.(tallyPushSnapshot(order));
+      setFlash({ kind: "good", msg: `Pushed ${order.po_number || order.id.slice(0, 8)}` });
+      queue.reload();
+      pushed.reload();
+    } catch (err) {
+      setFlash({ kind: "bad", msg: String(err.message || err) });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <>
+      <WSTitle
+        eyebrow="Finance · Tally"
+        title="Push queue"
+        meta={`${queueRows.length} queued · ${pushedToday.length} pushed today · ${failed.length} failed · ${amendOrders.length} amend`}
+        right={<>
+          <Btn icon kind="ghost" sm onClick={() => { queue.reload(); pushed.reload(); }} title="Refresh">{Icon.cycle}</Btn>
+        </>}
+      />
+
+      <div className="ws-content">
+        {!canPush && (
+          <Banner kind="warn" icon={Icon.lock} title="Push permission required">
+            <span className="mono-sm">Your role cannot push to Tally. Contact an admin or finance manager to enable <b>tally.push</b>.</span>
+          </Banner>
+        )}
+
+        {flash && (
+          <Banner kind={flash.kind} icon={flash.kind === "bad" ? Icon.alert : Icon.check} title={flash.kind === "bad" ? "Push failed" : "Push complete"}>
+            <span className="mono-sm">{flash.msg}</span>
+          </Banner>
+        )}
+
+        {(queue.error || pushed.error) ? (
+          <Banner kind="bad" icon={Icon.alert} title="Failed to load Tally queue">
+            <span className="mono-sm">{String((queue.error || pushed.error).message || (queue.error || pushed.error))}</span>
+          </Banner>
+        ) : null}
+
+        <KPIRow cols={4}>
+          <KPI lbl="Queued"        v={String(queueRows.length)}  d={queueRows.length ? `oldest ${ageLabel(queueRows[0]?.updated_at || queueRows[0]?.created_at)}` : "all clear"} live={queueRows.length > 0} />
+          <KPI lbl="Pushed today"  v={String(pushedToday.length)} d="EXPORTED_TO_TALLY" dKind={pushedToday.length ? "up" : ""} />
+          <KPI lbl="Failed"        v={String(failed.length)}     d="needs retry" dKind={failed.length ? "down" : ""} />
+          <KPI lbl="Amendments"    v={String(amendOrders.length)} d="re-hash + push" />
+        </KPIRow>
+
+        <Card title="Push queue" eyebrow="approved · awaiting Tally" flush>
+          {queue.loading ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading queue…</div>
+          ) : queueRows.length === 0 ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Nothing waiting to push.</div>
+          ) : (
+            <table className="tbl">
+              <thead><tr>
+                <th scope="col">Order reference</th>
+                <th scope="col">Customer</th>
+                <th scope="col" className="r">Value</th>
+                <th scope="col">Payload hash</th>
+                <th scope="col">Status</th>
+                <th scope="col" className="r">Age</th>
+                <th scope="col" style={{ width: 120 }}></th>
+              </tr></thead>
+              <tbody>
+                {queueRows.map((o) => {
+                  const st = stageOf(o.status);
+                  const value = Number(o.result?.salesOrder?.grandTotal) || 0;
+                  const hash = o.payload_hash || (o.approval && o.approval.payloadHash) || null;
+                  return (
+                    <tr key={o.id}>
+                      <td className="mono"><span className="pri">{o.po_number || o.quote_number || "draft"}</span></td>
+                      <td>{o.customer?.customer_name || o.customer_id?.slice(0, 8) || "—"}</td>
+                      <td className="r mono">{value ? fmtINRShort(value) : "—"}</td>
+                      <td className="mono-sm">{shortHash(hash)}</td>
+                      <td><Chip k={st.k}>{st.label}</Chip></td>
+                      <td className="r mono">{ageLabel(o.updated_at || o.created_at)}</td>
+                      <td>
+                        <Btn sm kind="primary" disabled={!canPush || busyId === o.id} onClick={() => handlePush(o)}>
+                          {busyId === o.id ? "pushing…" : <>push {Icon.send}</>}
+                        </Btn>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </Card>
+
+        {amendOrders.length > 0 && (
+          <Card title="Pending amendments" eyebrow="diff before re-hash">
+            {amendOrders.slice(0, 6).map((o) => {
+              const amends = (o.result && (o.result.amendments || o.result.order_amendments)) || [];
+              return (
+                <div key={o.id} style={{ marginBottom: 14 }}>
+                  <div className="row" style={{ marginBottom: 6 }}>
+                    <span className="mono" style={{ fontWeight: 600 }}>{o.po_number || o.id.slice(0, 8)}</span>
+                    <span style={{ marginLeft: 8 }}>·</span>
+                    <span style={{ marginLeft: 8 }}>{o.customer?.customer_name || "—"}</span>
+                  </div>
+                  {amends.slice(0, 4).map((amd, i) => (
+                    <div key={i} className="diff-row" style={{ marginBottom: 6 }}>
+                      <div className="l">
+                        <div style={{ color: "var(--ink-4)", textTransform: "uppercase", fontSize: 9, letterSpacing: 0.06 }}>before</div>
+                        {amd.before ? <span>{typeof amd.before === "string" ? amd.before : JSON.stringify(amd.before)}</span> : <span>—</span>}
+                      </div>
+                      <div className="r">
+                        <div style={{ color: "var(--ink-4)", textTransform: "uppercase", fontSize: 9, letterSpacing: 0.06 }}>after</div>
+                        {amd.after ? <span>{typeof amd.after === "string" ? amd.after : JSON.stringify(amd.after)}</span> : <span>—</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </Card>
+        )}
+
+        <Card title="Recently pushed" eyebrow="exported to Tally" flush>
+          {pushed.loading ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading…</div>
+          ) : pushedRows.length === 0 ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Nothing pushed yet.</div>
+          ) : (
+            <table className="tbl">
+              <thead><tr>
+                <th scope="col">Order reference</th>
+                <th scope="col">Customer</th>
+                <th scope="col" className="r">Value</th>
+                <th scope="col">Payload hash</th>
+                <th scope="col">Status</th>
+                <th scope="col" className="r">Age</th>
+              </tr></thead>
+              <tbody>
+                {pushedRows.slice(0, 50).map((o) => {
+                  const st = stageOf(o.status);
+                  const value = Number(o.result?.salesOrder?.grandTotal) || 0;
+                  const hash = o.payload_hash || (o.approval && o.approval.payloadHash) || null;
+                  return (
+                    <tr key={o.id}>
+                      <td className="mono"><span className="pri">{o.po_number || o.quote_number || "draft"}</span></td>
+                      <td>{o.customer?.customer_name || "—"}</td>
+                      <td className="r mono">{value ? fmtINRShort(value) : "—"}</td>
+                      <td className="mono-sm">{shortHash(hash)}</td>
+                      <td><Chip k={st.k}>{st.label}</Chip></td>
+                      <td className="r mono">{ageLabel(o.updated_at || o.created_at)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      </div>
+    </>
+  );
+};
+
+window.TallyPush = WiredTallyPush;
+
+
+// ===== screens-wired/wired-tally-reconcile-d.jsx =====
+// ============================================================
+// ANVIL v3 — wired Tally · reconciliation
+// Wave D · Finance
+// Lists EXPORTED_TO_TALLY orders, calls ObaraBackend.tally.reconcile.
+// Reuses tallyOrderRows + shortHash from wired-tally-masters-d.jsx.
+// ============================================================
+
+const WiredTallyReconcile = () => {
+  const exported = useFetch(() => window.ObaraBackend?.orders?.list?.({ status: "EXPORTED_TO_TALLY", limit: 200 }) || Promise.resolve({ orders: [] }), []);
+  const [busyId, setBusyId] = useStateW(null);
+  const [flash, setFlash]   = useStateW(null);
+
+  const rows = tallyOrderRows(exported.data);
+
+  const handleReconcile = async (order) => {
+    setBusyId(order.id);
+    setFlash(null);
+    try {
+      const tallyVoucherId =
+        (order.result && order.result.tally && order.result.tally.voucherId) ||
+        (order.result && order.result.tally_voucher_id) ||
+        order.tally_voucher_id ||
+        null;
+      await window.ObaraBackend?.tally?.reconcile?.({
+        orderId: order.id,
+        status: "reconciled",
+        tally_voucher_id: tallyVoucherId,
+      });
+      setFlash({ kind: "good", msg: `Reconciled ${order.po_number || order.id.slice(0, 8)}` });
+      exported.reload();
+    } catch (err) {
+      setFlash({ kind: "bad", msg: String(err.message || err) });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const totalValue = rows.reduce((s, o) => s + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
+  const oldest = rows.length ? ageLabel(rows[rows.length - 1].updated_at || rows[rows.length - 1].created_at) : "—";
+
+  return (
+    <>
+      <WSTitle
+        eyebrow="Finance · Tally"
+        title="Reconciliation"
+        meta={`${rows.length} pushed · awaiting reconciliation`}
+        right={<>
+          <Btn icon kind="ghost" sm onClick={exported.reload} title="Refresh">{Icon.cycle}</Btn>
+        </>}
+      />
+
+      <div className="ws-content">
+        {flash && (
+          <Banner kind={flash.kind} icon={flash.kind === "bad" ? Icon.alert : Icon.check} title={flash.kind === "bad" ? "Reconcile failed" : "Reconcile complete"}>
+            <span className="mono-sm">{flash.msg}</span>
+          </Banner>
+        )}
+
+        {exported.error ? (
+          <Banner kind="bad" icon={Icon.alert} title="Failed to load Tally exports" action={<Btn sm onClick={exported.reload}>Retry</Btn>}>
+            <span className="mono-sm">{String(exported.error.message || exported.error)}</span>
+          </Banner>
+        ) : null}
+
+        <KPIRow cols={4}>
+          <KPI lbl="Awaiting" v={String(rows.length)} d={rows.length ? `oldest ${oldest}` : "all clear"} live={rows.length > 0} />
+          <KPI lbl="Total ₹"  v={fmtINRShort(totalValue)} d="value pending" />
+          <KPI lbl="Today"    v={String(rows.filter((o) => { const t = o.updated_at || o.created_at; return t && new Date(t).toDateString() === new Date().toDateString(); }).length)} d="pushed today" />
+          <KPI lbl="Stale"    v={String(rows.filter((o) => {
+            const t = o.updated_at || o.created_at;
+            if (!t) return false;
+            return (Date.now() - new Date(t).getTime()) > 24 * 3600_000;
+          }).length)} d=">24h waiting" dKind="down" />
+        </KPIRow>
+
+        <Card title="Pushed · awaiting Tally confirmation" eyebrow="mark reconciled when the voucher is confirmed in Tally" flush>
+          {exported.loading ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading exports…</div>
+          ) : rows.length === 0 ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Nothing waiting for reconciliation.</div>
+          ) : (
+            <table className="tbl">
+              <thead><tr>
+                <th scope="col">Reference</th>
+                <th scope="col">Customer</th>
+                <th scope="col">Pushed at</th>
+                <th scope="col">Voucher number</th>
+                <th scope="col">Payload hash</th>
+                <th scope="col">Status</th>
+                <th scope="col" style={{ width: 160 }}></th>
+              </tr></thead>
+              <tbody>
+                {rows.map((o) => {
+                  const st = stageOf(o.status);
+                  const pushedAt = o.updated_at || o.created_at;
+                  const voucher =
+                    (o.result && o.result.tally && (o.result.tally.voucherId || o.result.tally.voucherNo)) ||
+                    o.tally_voucher_id ||
+                    "—";
+                  const hash = o.payload_hash || (o.approval && o.approval.payloadHash) || null;
+                  return (
+                    <tr key={o.id}>
+                      <td className="mono"><span className="pri">{o.po_number || o.quote_number || "draft"}</span></td>
+                      <td>{o.customer?.customer_name || o.customer_id?.slice(0, 8) || "—"}</td>
+                      <td className="mono-sm">{pushedAt ? new Date(pushedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                      <td className="mono-sm">{voucher}</td>
+                      <td className="mono-sm">{shortHash(hash)}</td>
+                      <td><Chip k={st.k}>{st.label}</Chip></td>
+                      <td>
+                        <Btn sm kind="primary" disabled={busyId === o.id} onClick={() => handleReconcile(o)}>
+                          {busyId === o.id ? "marking…" : <>mark reconciled {Icon.check}</>}
+                        </Btn>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      </div>
+    </>
+  );
+};
+
+window.TallyReconcile = WiredTallyReconcile;
+
+
+// ===== screens-wired/wired-einvoice-d.jsx =====
+// ============================================================
+// ANVIL v3 — wired e-Invoice queue
+// Wave D · Finance
+// Reads via ObaraBackend.einvoice.list (api/einvoice GET).
+// ============================================================
+
+const EINVOICE_TABS = [
+  { id: "PENDING_GSTN", label: "Pending" },
+  { id: "GENERATED",    label: "Generated" },
+  { id: "CANCELLED",    label: "Cancelled" },
+  { id: "REJECTED",     label: "Rejected" },
+];
+
+const einvoiceRows = (resp) => {
+  if (!resp) return [];
+  if (Array.isArray(resp)) return resp;
+  if (Array.isArray(resp.einvoices)) return resp.einvoices;
+  if (Array.isArray(resp.rows)) return resp.rows;
+  return [];
+};
+
+const einvoiceStatusChip = (status) => {
+  switch (status) {
+    case "DRAFT":         return { k: "ghost",  label: "DRAFT" };
+    case "PENDING_GSTN":  return { k: "warn",   label: "PENDING_GSTN" };
+    case "GENERATED":     return { k: "good",   label: "GENERATED" };
+    case "CANCELLED":     return { k: "ghost",  label: "CANCELLED" };
+    case "REJECTED":      return { k: "bad",    label: "REJECTED" };
+    default:              return { k: "ghost",  label: status || "—" };
+  }
+};
+
+// Hours remaining inside the GSTN 24h cancellation window.
+const cancelCountdown = (ackDate, createdAt) => {
+  const start = new Date(ackDate || createdAt || 0).getTime();
+  if (!start) return null;
+  const elapsedMs = Date.now() - start;
+  const remainingMs = 24 * 3600_000 - elapsedMs;
+  if (remainingMs <= 0) return { expired: true, label: "expired" };
+  const hours = Math.floor(remainingMs / 3600_000);
+  const mins = Math.floor((remainingMs % 3600_000) / 60_000);
+  return { expired: false, label: `${hours}h ${mins}m` };
+};
+
+const WiredEInvoice = () => {
+  const list = useFetch(() => window.ObaraBackend?.einvoice?.list?.() || Promise.resolve({ einvoices: [] }), []);
+  const [active, setActive] = useStateW("PENDING_GSTN");
+  const [busyId, setBusyId] = useStateW(null);
+  const [flash, setFlash]   = useStateW(null);
+
+  const rows = einvoiceRows(list.data);
+  const counts = Object.fromEntries(EINVOICE_TABS.map((t) => [t.id, rows.filter((r) => r.status === t.id).length]));
+  const drafts = rows.filter((r) => r.status === "DRAFT").length;
+  const filtered = rows.filter((r) => r.status === active);
+
+  const canCancel = !!(window.RBAC && window.RBAC.canDo && window.RBAC.canDo("einvoice.cancel"));
+
+  const refresh = async (id) => {
+    setBusyId(id);
+    setFlash(null);
+    try {
+      // No GET-by-id; just refresh the list.
+      list.reload();
+      setFlash({ kind: "good", msg: "Refreshed e-Invoice list" });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const cancel = async (row) => {
+    if (!canCancel) return;
+    setBusyId(row.id);
+    setFlash(null);
+    try {
+      await window.ObaraBackend?.einvoice?.cancel?.({ id: row.id, cancel_reason: "1", cancel_remarks: "Cancelled by operator" });
+      setFlash({ kind: "good", msg: `Cancelled ${row.invoice_number}` });
+      list.reload();
+    } catch (err) {
+      setFlash({ kind: "bad", msg: String(err.message || err) });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const resubmit = async (row) => {
+    setBusyId(row.id);
+    setFlash(null);
+    try {
+      await window.ObaraBackend?.einvoice?.sendToGstn?.(row.id);
+      setFlash({ kind: "good", msg: `Resubmitted ${row.invoice_number}` });
+      list.reload();
+    } catch (err) {
+      setFlash({ kind: "bad", msg: String(err.message || err) });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <>
+      <WSTitle
+        eyebrow="Finance · e-Invoice"
+        title="GSTN · IRN queue"
+        meta={`${rows.length} total · ${drafts} drafts · ${counts.PENDING_GSTN} pending · ${counts.GENERATED} generated`}
+        right={<>
+          <Btn icon kind="ghost" sm onClick={list.reload} title="Refresh">{Icon.cycle}</Btn>
+        </>}
+      />
+      <WSTabs
+        tabs={EINVOICE_TABS.map((t) => ({ id: t.id, label: t.label, count: counts[t.id] }))}
+        active={active}
+        onChange={setActive}
+      />
+
+      <div className="ws-content">
+        {flash && (
+          <Banner kind={flash.kind} icon={flash.kind === "bad" ? Icon.alert : Icon.check} title={flash.kind === "bad" ? "Action failed" : "Action complete"}>
+            <span className="mono-sm">{flash.msg}</span>
+          </Banner>
+        )}
+
+        {list.error ? (
+          <Banner kind="bad" icon={Icon.alert} title="Failed to load e-Invoices" action={<Btn sm onClick={list.reload}>Retry</Btn>}>
+            <span className="mono-sm">{String(list.error.message || list.error)}</span>
+          </Banner>
+        ) : null}
+
+        <KPIRow cols={4}>
+          <KPI lbl="Drafts"        v={String(drafts)}                 d="awaiting send" />
+          <KPI lbl="Pending GSTN"  v={String(counts.PENDING_GSTN)}    d="oldest first" live={counts.PENDING_GSTN > 0} />
+          <KPI lbl="Generated"     v={String(counts.GENERATED)}       d="MTD" />
+          <KPI lbl="Rejected"      v={String(counts.REJECTED)}        d="needs resubmit" dKind={counts.REJECTED ? "down" : ""} />
+        </KPIRow>
+
+        <Card flush>
+          {list.loading ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading e-Invoices…</div>
+          ) : filtered.length === 0 ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>No invoices in this view.</div>
+          ) : (
+            <table className="tbl">
+              <thead><tr>
+                <th scope="col">Invoice number</th>
+                <th scope="col">IRN</th>
+                <th scope="col">Customer</th>
+                <th scope="col" className="r">Value</th>
+                <th scope="col">Status</th>
+                <th scope="col">Cancel window</th>
+                <th scope="col" style={{ width: 160 }}></th>
+              </tr></thead>
+              <tbody>
+                {filtered.map((r) => {
+                  const chip = einvoiceStatusChip(r.status);
+                  const value = Number(r.total_value) || 0;
+                  const countdown = r.status === "GENERATED" ? cancelCountdown(r.ack_date, r.created_at) : null;
+                  return (
+                    <tr key={r.id}>
+                      <td className="mono"><span className="pri">{r.invoice_number}</span></td>
+                      <td className="mono-sm">{r.irn ? shortHash(r.irn) : "—"}</td>
+                      <td>{(r.customer && r.customer.customer_name) || (r.customer_id ? r.customer_id.slice(0, 8) : "—")}<div className="mono-sm">{r.customer_gstin || ""}</div></td>
+                      <td className="r mono">{value ? fmtINRShort(value) : "—"}</td>
+                      <td><Chip k={chip.k}>{chip.label}</Chip></td>
+                      <td className="mono-sm" style={{ color: countdown && countdown.expired ? "var(--ink-4)" : "var(--amber-2)" }}>
+                        {r.status === "GENERATED" ? (countdown ? countdown.label : "—") : "—"}
+                      </td>
+                      <td>
+                        {r.status === "PENDING_GSTN" && (
+                          <Btn sm disabled={busyId === r.id} onClick={() => refresh(r.id)}>{busyId === r.id ? "…" : <>refresh {Icon.cycle}</>}</Btn>
+                        )}
+                        {r.status === "GENERATED" && (
+                          <div className="row gap-sm">
+                            {r.qr_code_b64 ? (
+                              <a className="btn sm" href={"data:image/png;base64," + r.qr_code_b64} download={(r.invoice_number || "qr") + ".png"}>{Icon.download} QR</a>
+                            ) : null}
+                            <Btn sm kind="ghost" disabled={!canCancel || (countdown && countdown.expired) || busyId === r.id} onClick={() => cancel(r)}>
+                              {busyId === r.id ? "…" : "cancel"}
+                            </Btn>
+                          </div>
+                        )}
+                        {r.status === "REJECTED" && (
+                          <Btn sm kind="primary" disabled={busyId === r.id} onClick={() => resubmit(r)}>{busyId === r.id ? "…" : <>resubmit {Icon.send}</>}</Btn>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </Card>
+
+        <Banner kind="info" icon={Icon.info} title="Cancel-within-24h policy">
+          <span className="mono-sm">An e-Invoice can be cancelled at GSTN within 24 hours of generation. After that, the only correction is a Credit Note. The 24h window starts at GSTN ack, not Anvil queue time.</span>
+        </Banner>
+      </div>
+    </>
+  );
+};
+
+window.EInvoice = WiredEInvoice;
+
+
+// ===== screens-wired/wired-cost-margin-d.jsx =====
+// ============================================================
+// ANVIL v3 — wired Cost & Margin
+// Wave D · Finance
+// Tabs:
+//   Breakdown  — ObaraBackend.cost.breakdown()  + by-month bar chart
+//   Simulator  — ObaraBackend.cost.simulator(...) per-scenario projection
+//   History    — ObaraBackend.cost.marginHistory(customerId) sparkline
+// ============================================================
+
+const COST_TABS = [
+  { id: "breakdown", label: "Breakdown" },
+  { id: "sim",       label: "Simulator" },
+  { id: "hist",      label: "Margin history" },
+];
+
+const COST_SCENARIOS = [
+  { id: "full_sonnet",         label: "Full Sonnet" },
+  { id: "haiku_pf_sonnet_gen", label: "Haiku preflight + Sonnet generation" },
+  { id: "template_dry_run",    label: "Template dry run" },
+  { id: "cached_duplicate",    label: "Cached duplicate" },
+  { id: "opus_complex",        label: "Opus reasoning fallback" },
+];
+
+const SIMULATOR_TOKEN_ESTIMATE = { totalInput: 8000, call2Output: 1200 };
+
+const usdToInr = (n) => `₹ ${(Number(n) * 83).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+const fmtUsd = (n) => `$ ${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// ---------- Breakdown tab --------------------------------
+const CostBreakdown = () => {
+  const breakdown = useFetch(() => window.ObaraBackend?.cost?.breakdown?.() || Promise.resolve({}), []);
+
+  if (breakdown.loading) {
+    return <Card><div className="body">Loading breakdown…</div></Card>;
+  }
+  if (breakdown.error) {
+    return (
+      <Banner kind="bad" icon={Icon.alert} title="Failed to load cost breakdown" action={<Btn sm onClick={breakdown.reload}>Retry</Btn>}>
+        <span className="mono-sm">{String(breakdown.error.message || breakdown.error)}</span>
+      </Banner>
+    );
+  }
+
+  const data = breakdown.data || {};
+  const byMonth = Array.isArray(data.byMonth) ? data.byMonth : [];
+  const totalUsd      = Number(data.totalUsd) || 0;
+  const totalSuccess  = Number(data.totalSuccess) || 0;
+  const totalFields   = Number(data.totalFields) || 0;
+  const costPerSuccess = Number(data.costPerSuccess) || 0;
+
+  // Inline SVG bar chart for byMonth.usd.
+  const W = 600, H = 180, P = 24;
+  const max = byMonth.reduce((m, r) => Math.max(m, Number(r.usd) || 0), 0) || 1;
+  const barW = byMonth.length ? (W - P * 2) / byMonth.length - 6 : 0;
+
+  return (
+    <>
+      <KPIRow cols={4}>
+        <KPI lbl="USD spent"      v={fmtUsd(totalUsd)}                 d={`≈ ${usdToInr(totalUsd)}`} />
+        <KPI lbl="₹/successful SO" v={usdToInr(costPerSuccess)}        d={`${totalSuccess} successes`} dKind={costPerSuccess ? "up" : ""} />
+        <KPI lbl="Total fields"    v={String(totalFields)}             d="evidence captured" />
+        <KPI lbl="Total successes" v={String(totalSuccess)}            d="approved → tally" live={totalSuccess > 0} />
+      </KPIRow>
+
+      <Card title="Spend by month" eyebrow="USD">
+        {byMonth.length === 0 ? (
+          <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>No monthly data yet.</div>
+        ) : (
+          <>
+            <div role="img" aria-label="Monthly USD spend bar chart" style={{ height: H, position: "relative" }}>
+              <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="100%" preserveAspectRatio="none">
+                <line x1={P} y1={H - P} x2={W - P} y2={H - P} stroke="var(--hairline-2)" />
+                {byMonth.map((r, i) => {
+                  const v = Number(r.usd) || 0;
+                  const h = ((H - P * 2) * v) / max;
+                  const x = P + i * (barW + 6);
+                  const y = H - P - h;
+                  return (
+                    <g key={r.month || i}>
+                      <rect x={x} y={y} width={barW} height={h} fill="var(--ink)" />
+                      <text x={x + barW / 2} y={H - 8} textAnchor="middle" fontFamily="var(--mono)" fontSize="9" fill="var(--ink-3)">{(r.month || "").slice(2)}</text>
+                      <text x={x + barW / 2} y={y - 4} textAnchor="middle" fontFamily="var(--mono)" fontSize="9" fill="var(--ink-2)">{fmtUsd(v).replace("$ ", "$")}</text>
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
+            <div className="divider" />
+            <table className="tbl">
+              <thead><tr>
+                <th scope="col">Month</th>
+                <th scope="col" className="r">USD</th>
+                <th scope="col" className="r">Orders</th>
+                <th scope="col" className="r">Successes</th>
+              </tr></thead>
+              <tbody>
+                {byMonth.map((r) => (
+                  <tr key={r.month}>
+                    <td className="mono">{r.month}</td>
+                    <td className="r mono">{fmtUsd(r.usd)}</td>
+                    <td className="r mono">{r.count}</td>
+                    <td className="r mono">{r.successCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+      </Card>
+    </>
+  );
+};
+
+// ---------- Simulator tab --------------------------------
+const CostSimulator = () => {
+  const [scenarioId, setScenarioId] = useStateW(COST_SCENARIOS[0].id);
+  const [busy, setBusy] = useStateW(false);
+  const [resp, setResp] = useStateW(null);
+  const [err,  setErr]  = useStateW(null);
+
+  // Prime the simulator with current cost-per-success so we can show a delta.
+  const breakdown = useFetch(() => window.ObaraBackend?.cost?.breakdown?.() || Promise.resolve({}), []);
+
+  useEffectW(() => {
+    let cancelled = false;
+    setBusy(true);
+    setErr(null);
+    Promise.resolve(window.ObaraBackend?.cost?.simulator?.({ tokenEstimate: SIMULATOR_TOKEN_ESTIMATE }))
+      .then((r) => { if (!cancelled) setResp(r); })
+      .catch((e) => { if (!cancelled) setErr(e); })
+      .finally(() => { if (!cancelled) setBusy(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const scenarios = (resp && Array.isArray(resp.scenarios)) ? resp.scenarios : [];
+  const picked = scenarios.find((s) => s.id === scenarioId) || null;
+  const baselineUsd = Number((breakdown.data || {}).costPerSuccess) || 0;
+  const deltaUsd = picked ? (Number(picked.usd) || 0) - baselineUsd : 0;
+  const deltaKind = picked ? (deltaUsd < 0 ? "up" : deltaUsd > 0 ? "down" : "") : "";
+
+  return (
+    <>
+      <Card title="₹/SO simulator" eyebrow="what-if · per-routing scenario">
+        <div className="row" style={{ alignItems: "center", gap: 10 }}>
+          <label htmlFor="cost-sim-scenario" className="mono-sm">Scenario</label>
+          <select
+            id="cost-sim-scenario"
+            className="input"
+            value={scenarioId}
+            onChange={(ev) => setScenarioId(ev.target.value)}
+            style={{ height: 28 }}
+          >
+            {COST_SCENARIOS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+          <span style={{ flex: 1 }} />
+          <span className="mono-sm">tokens · in {SIMULATOR_TOKEN_ESTIMATE.totalInput.toLocaleString()} · out {SIMULATOR_TOKEN_ESTIMATE.call2Output.toLocaleString()}</span>
+        </div>
+
+        {busy && <div className="body" style={{ padding: 12 }}>Simulating…</div>}
+        {err && (
+          <Banner kind="bad" icon={Icon.alert} title="Simulator failed">
+            <span className="mono-sm">{String(err.message || err)}</span>
+          </Banner>
+        )}
+
+        {picked && (
+          <>
+            <div className="divider" />
+            <KPIRow cols={3}>
+              <KPI lbl="Projected · USD" v={fmtUsd(picked.usd)} d={picked.label} />
+              <KPI lbl="Projected · INR" v={usdToInr(picked.usd)} d="@ ₹83/$" />
+              <KPI lbl="Δ vs current"
+                   v={deltaUsd === 0 ? "—" : (deltaUsd > 0 ? "+ " : "− ") + fmtUsd(Math.abs(deltaUsd))}
+                   d={baselineUsd > 0 ? `current ${fmtUsd(baselineUsd)}/SO` : "no baseline yet"}
+                   dKind={deltaKind} />
+            </KPIRow>
+          </>
+        )}
+
+        {scenarios.length > 0 && (
+          <>
+            <div className="divider" />
+            <table className="tbl">
+              <thead><tr>
+                <th scope="col">Scenario</th>
+                <th scope="col" className="r">USD</th>
+                <th scope="col" className="r">INR</th>
+              </tr></thead>
+              <tbody>
+                {scenarios.map((s) => (
+                  <tr key={s.id} style={{ background: s.id === scenarioId ? "var(--paper-2)" : "" }}>
+                    <td>{s.label}</td>
+                    <td className="r mono">{fmtUsd(s.usd)}</td>
+                    <td className="r mono">{usdToInr(s.usd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+      </Card>
+    </>
+  );
+};
+
+// ---------- Margin history tab ---------------------------
+const CostMarginHistory = () => {
+  const customers = useFetch(() => window.ObaraBackend?.customers?.list?.() || Promise.resolve({ customers: [] }), []);
+  const [customerId, setCustomerId] = useStateW("");
+  const [history, setHistory] = useStateW({ data: null, error: null, loading: false });
+
+  const customerList = (customers.data && Array.isArray(customers.data.customers))
+    ? customers.data.customers
+    : (Array.isArray(customers.data) ? customers.data : []);
+
+  useEffectW(() => {
+    if (!customerId) {
+      setHistory({ data: null, error: null, loading: false });
+      return;
+    }
+    let cancelled = false;
+    setHistory({ data: null, error: null, loading: true });
+    Promise.resolve(window.ObaraBackend?.cost?.marginHistory?.(customerId))
+      .then((d) => { if (!cancelled) setHistory({ data: d, error: null, loading: false }); })
+      .catch((e) => { if (!cancelled) setHistory({ data: null, error: e, loading: false }); });
+    return () => { cancelled = true; };
+  }, [customerId]);
+
+  const data = history.data || {};
+  const recent = Array.isArray(data.recent) ? data.recent.slice().reverse() : [];
+
+  // Inline SVG sparkline of marginPct over time (oldest left, newest right).
+  const W = 480, H = 80, P = 6;
+  const pcts = recent.map((r) => Number(r.marginPct) || 0);
+  const min = pcts.length ? Math.min(...pcts) : 0;
+  const max = pcts.length ? Math.max(...pcts) : 1;
+  const span = (max - min) || 1;
+  const points = recent.map((r, i) => {
+    const x = P + (i / Math.max(1, recent.length - 1)) * (W - P * 2);
+    const y = H - P - ((Number(r.marginPct) - min) / span) * (H - P * 2);
+    return `${x},${y}`;
+  }).join(" ");
+
+  return (
+    <>
+      <Card title="Margin history" eyebrow="per customer">
+        <div className="row" style={{ alignItems: "center", gap: 10 }}>
+          <label htmlFor="cost-margin-customer" className="mono-sm">Customer</label>
+          <select
+            id="cost-margin-customer"
+            className="input"
+            value={customerId}
+            onChange={(ev) => setCustomerId(ev.target.value)}
+            style={{ height: 28, minWidth: 280 }}
+            disabled={customers.loading || !!customers.error}
+          >
+            <option value="">{customers.loading ? "Loading customers…" : "Select a customer…"}</option>
+            {customerList.map((c) => <option key={c.id} value={c.id}>{c.customer_name || c.customer_key || c.id.slice(0, 8)}</option>)}
+          </select>
+        </div>
+
+        {customers.error && (
+          <Banner kind="bad" icon={Icon.alert} title="Failed to load customers">
+            <span className="mono-sm">{String(customers.error.message || customers.error)}</span>
+          </Banner>
+        )}
+
+        {history.loading && <div className="body" style={{ padding: 12 }}>Loading margin history…</div>}
+        {history.error && (
+          <Banner kind="bad" icon={Icon.alert} title="Margin history failed">
+            <span className="mono-sm">{String(history.error.message || history.error)}</span>
+          </Banner>
+        )}
+
+        {customerId && !history.loading && !history.error && (data.sample === 0 || !recent.length) && (
+          <div className="body" style={{ padding: 12, color: "var(--ink-3)" }}>
+            No price-composition history for this customer yet.
+          </div>
+        )}
+
+        {recent.length > 0 && (
+          <>
+            <div className="divider" />
+            <KPIRow cols={3}>
+              <KPI lbl="Median margin" v={`${(Number(data.medianMarginPct) || 0).toFixed(1)}%`} d={`${data.sample || recent.length} orders`} />
+              <KPI lbl="Low (P10-ish)" v={`${(Number(data.lowMarginPct) || 0).toFixed(1)}%`} d="worst observed" dKind={Number(data.lowMarginPct) < 10 ? "down" : ""} />
+              <KPI lbl="High (P90-ish)" v={`${(Number(data.highMarginPct) || 0).toFixed(1)}%`} d="best observed" dKind="up" />
+            </KPIRow>
+
+            <div className="divider" />
+            <div role="img" aria-label="Margin percent sparkline over recent orders" style={{ height: H, padding: "10px 0" }}>
+              <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="100%" preserveAspectRatio="none">
+                <line x1="0" y1={H / 2} x2={W} y2={H / 2} stroke="var(--hairline-2)" strokeDasharray="3 3" />
+                <polyline fill="none" stroke="var(--ink)" strokeWidth="2" points={points} />
+                {recent.map((r, i) => {
+                  const x = P + (i / Math.max(1, recent.length - 1)) * (W - P * 2);
+                  const y = H - P - ((Number(r.marginPct) - min) / span) * (H - P * 2);
+                  return <circle key={i} cx={x} cy={y} r={2.5} fill={Number(r.marginPct) < 10 ? "var(--rust)" : "var(--ink)"} />;
+                })}
+              </svg>
+            </div>
+
+            <div className="divider" />
+            <table className="tbl">
+              <thead><tr>
+                <th scope="col">Order</th>
+                <th scope="col" className="r">Margin %</th>
+                <th scope="col" className="r">Selling ₹</th>
+                <th scope="col" className="r">Landed ₹</th>
+                <th scope="col">When</th>
+              </tr></thead>
+              <tbody>
+                {data.recent && data.recent.map((r, i) => (
+                  <tr key={r.orderId || i}>
+                    <td className="mono-sm">{(r.orderId || "").slice(0, 8)}</td>
+                    <td className="r mono">{(Number(r.marginPct) || 0).toFixed(1)}%</td>
+                    <td className="r mono">{fmtINRShort(Number(r.selling) || 0)}</td>
+                    <td className="r mono">{fmtINRShort(Number(r.landed) || 0)}</td>
+                    <td className="mono-sm">{r.at ? ageLabel(r.at) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+      </Card>
+    </>
+  );
+};
+
+const WiredCostMargin = () => {
+  const [active, setActive] = useStateW("breakdown");
+  return (
+    <>
+      <WSTitle
+        eyebrow="Finance · Cost & Margin"
+        title="Cost & margin"
+        meta="breakdown · simulator · margin history"
+      />
+      <WSTabs
+        tabs={COST_TABS}
+        active={active}
+        onChange={setActive}
+      />
+      <div className="ws-content">
+        {active === "breakdown" && <CostBreakdown />}
+        {active === "sim"       && <CostSimulator />}
+        {active === "hist"      && <CostMarginHistory />}
+      </div>
+    </>
+  );
+};
+
+window.CostMargin = WiredCostMargin;
 </script>
   <!-- Shell loads after screens so its exports take precedence on collisions -->
   <script type="text/babel" data-presets="env,react">// ============================================================

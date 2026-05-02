@@ -47,6 +47,18 @@ const SCREEN_FILES = [
   // Wired screens that override the static ones with live ObaraBackend data
   "screens-wired/wired-home.jsx",
   "screens-wired/wired-orders.jsx",
+  // Wave A: Workflows
+  "screens-wired/wired-inbox.jsx",
+  "screens-wired/wired-so-intake.jsx",
+  "screens-wired/wired-so-workspace.jsx",
+  "screens-wired/wired-approvals.jsx",
+  "screens-wired/wired-internal-sos.jsx",
+  // Wave D: Finance
+  "screens-wired/wired-tally-masters-d.jsx",
+  "screens-wired/wired-tally-push-d.jsx",
+  "screens-wired/wired-tally-reconcile-d.jsx",
+  "screens-wired/wired-einvoice-d.jsx",
+  "screens-wired/wired-cost-margin-d.jsx",
 ];
 
 const tpl = read(path.join(V3, "index.html.tpl"));

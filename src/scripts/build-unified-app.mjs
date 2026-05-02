@@ -9810,9 +9810,11 @@ const iframeInitBlock =
   /\/\/ ═{10,}\n\/\/ SO AGENT IFRAME INIT\n\/\/ ═{10,}[\s\S]*?(?=\/\/ ── Init)/;
 
 // v3 feature-flag shim. If the URL has ?v3=1 (or the user previously
-// pinned v3 via the toggle in localStorage), redirect to /v3.html before
-// any of the legacy app loads. The redirect preserves the rest of the
-// query string so deep links keep working.
+// pinned v3 via the toggle in localStorage), redirect to the Vite-built
+// v3 app under /v3-app/. Phase 8 cutover: the legacy /v3.html target was
+// dropped, replaced by the per-route-chunked Vite bundle. The redirect
+// preserves the rest of the query string + hash so deep links keep
+// working.
 const v3FlagShim = `
 <script>
 (function(){
@@ -9821,13 +9823,11 @@ const v3FlagShim = `
     var pinned = localStorage.getItem("obara:v3_pinned");
     var want = qs.get("v3");
     if (want === "1" || (pinned === "1" && want !== "0")) {
-      // remember the choice unless explicitly opted out
       if (want === "1") localStorage.setItem("obara:v3_pinned", "1");
-      // strip the v3 param so the new URL doesn't redirect again from v3.html
       qs.delete("v3");
       var search = qs.toString();
       var hash = window.location.hash || "";
-      window.location.replace("/v3.html" + (search ? "?" + search : "") + hash);
+      window.location.replace("/v3-app/" + (search ? "?" + search : "") + hash);
       return;
     }
     if (want === "0") localStorage.removeItem("obara:v3_pinned");

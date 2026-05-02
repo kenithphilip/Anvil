@@ -56,5 +56,8 @@
         { "key": "Access-Control-Max-Age", "value": "86400" }
       ]
     }
+  ],
+  "rewrites": [
+    { "source": "/v3.html", "destination": "/v3-app/index.html" }
   ]
 }

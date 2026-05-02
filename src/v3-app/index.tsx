@@ -6,14 +6,13 @@ import { createRoot } from "react-dom/client";
 import App from "./app";
 import { Prefs } from "./lib/preferences";
 
-// Reuse the legacy stylesheet directly so we don't fork the design system.
-// Vite resolves the relative path and inlines/serves the CSS file. Once the
-// cutover lands, this file moves under src/v3-app/.
-import "../v3/styles.css";
+// Design-system stylesheet. Lifted into src/v3-app/ at cutover; previously
+// shared with the deleted src/v3/ legacy build.
+import "./styles.css";
 
 Prefs.apply();
 
-const root = createRoot(document.getElementById("root"));
+const root = createRoot(document.getElementById("root")!);
 root.render(
   <React.StrictMode>
     <App />

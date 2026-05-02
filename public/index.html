@@ -8,13 +8,11 @@
     var pinned = localStorage.getItem("obara:v3_pinned");
     var want = qs.get("v3");
     if (want === "1" || (pinned === "1" && want !== "0")) {
-      // remember the choice unless explicitly opted out
       if (want === "1") localStorage.setItem("obara:v3_pinned", "1");
-      // strip the v3 param so the new URL doesn't redirect again from v3.html
       qs.delete("v3");
       var search = qs.toString();
       var hash = window.location.hash || "";
-      window.location.replace("/v3.html" + (search ? "?" + search : "") + hash);
+      window.location.replace("/v3-app/" + (search ? "?" + search : "") + hash);
       return;
     }
     if (want === "0") localStorage.removeItem("obara:v3_pinned");
@@ -5288,6 +5286,7 @@ window.addEventListener('DOMContentLoaded',()=>{
     deleteApprovalThreshold: async (id) => apiFetch("/api/admin/quote_approvals?type=thresholds&id=" + encodeURIComponent(id), { method: "DELETE" }),
     listApprovalRequests: async (order_id) => apiFetch("/api/admin/quote_approvals?type=approvals" + (order_id ? "&order_id=" + encodeURIComponent(order_id) : "")),
     decideApprovalRequest: async (payload) => apiFetch("/api/admin/quote_approvals?type=approvals", { method: "POST", body: payload }),
+    diagnostics: async () => apiFetch("/api/admin/diagnostics"),
   };
 
   const email = {

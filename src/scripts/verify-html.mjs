@@ -1,12 +1,12 @@
-// Verify every <script> block in both built HTMLs.
+// Verify every <script> block in the legacy unified HTML.
 //
 // Plain JS blocks parsed via vm.Script (V8 built-in parser).
-// Babel/JSX blocks parsed via @babel/parser with the jsx plugin so const
-//   re-declarations across concatenated screen files are caught (the kind
-//   V8 cannot see because it stops at JSX syntax).
+// Babel/JSX blocks parsed via @babel/parser with the jsx plugin.
 //
-// Targets: public/index.html (legacy) and public/v3.html (v3). Missing
-// files are skipped with a warning so partial builds still verify.
+// After Phase 8 cutover, only `public/index.html` (the legacy SO Agent
+// unified app) is shipped from a concatenated build. The v3 surface is
+// emitted by Vite as ESM chunks under `public/v3-app/` and validated by
+// Vitest + tsc, so it does not need this static analyzer.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -26,7 +26,6 @@ try {
 const ROOT = process.cwd();
 const TARGETS = [
   { label: "legacy", path: path.join(ROOT, "public", "index.html") },
-  { label: "v3",     path: path.join(ROOT, "public", "v3.html") },
 ];
 
 let totalCount = 0;

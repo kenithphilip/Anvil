@@ -7,8 +7,10 @@ service scheduling, GSTN e-Invoice, and a unified single-page browser
 app.
 
 Stack: Vercel serverless functions (Node 20), Supabase Postgres with RLS,
-single-page HTML app built from a legacy Obara Ops shell plus a React SO
-Agent component plus a unified bridge client.
+two single-page HTML apps: the legacy Obara Ops shell at `/` and the new
+v3 Operator Console at `/v3.html` (also reachable via `/?v3=1`). The flag
+pins the choice in localStorage so users stay on their preferred shell
+between sessions. Both run against the same backend.
 
 ## Documentation
 
@@ -42,6 +44,16 @@ Read in this order:
     code style.
 13. **[docs/SECURITY.md](docs/SECURITY.md)**: threat model and incident
     reporting.
+14. **[docs/V3_ROUTE_CONTRACT.md](docs/V3_ROUTE_CONTRACT.md)**: v3 nav id
+    to backing table + endpoint + client method, with confirmed gaps.
+15. **[docs/RBAC.md](docs/RBAC.md)**: 7 roles, 30 routes, action-level
+    matrix, server + client enforcement.
+16. **[docs/V3_WIRING_PATTERN.md](docs/V3_WIRING_PATTERN.md)**: how to
+    convert a static design-system screen into a wired screen.
+17. **[docs/V3_VERIFICATION.md](docs/V3_VERIFICATION.md)**: Phase 5
+    smoke + WCAG + spill checklist.
+18. **[docs/ROADMAP.md](docs/ROADMAP.md)**: living list of what is next
+    (mobile shell, i18n, real-time, push notifications).
 
 ## Layout
 
@@ -62,14 +74,26 @@ api/                       80 Vercel serverless functions across 31 resource gro
   ...                      customers, aliases, anomaly, audit, auth, bom, claude, communications, delivery, duplicates, email, eval, events, findings, fx, inventory, master_data, sales_history, security
 
 public/                    Static site root
-  index.html               Built unified app (~975KB)
+  index.html               Built legacy app (~979KB)
+  v3.html                  Built v3 operator console (~777KB)
   auth/callback.html       Supabase magic-link landing
 
 src/
-  client/obara-client.js   Bridge client used by the unified app
+  client/obara-client.js   Bridge client used by both shells
   scripts/build-unified-app.mjs  Composes index.html from legacy + client
-  scripts/verify-html.mjs  Parses every script block in the built HTML
-  legacy/                  obara-ops-v11.1.html, so-agent-pocv4.jsx (build inputs)
+  scripts/build-v3.mjs     Composes v3.html from src/v3/* + client
+  scripts/verify-html.mjs  Parses every script block in the built HTMLs
+  legacy/                  obara-ops-v11.1.html, so-agent-pocv4.jsx (legacy build inputs)
+  v3/                      v3 design system + 35 wired screens
+    styles.css             tokens (light + dark, IBM Plex)
+    primitives.jsx         Btn, Chip, Card, KPI, etc. (47 icons)
+    shell.jsx              Shell + CmdK + ThreadDrawer
+    rbac.js                client-side gating (7 roles, 30 routes)
+    preferences.js         theme + density + rail (persisted)
+    app.jsx                router with hash-based deep-linking
+    screens/               14 static design templates
+    screens-wired/         35 wired screens (live ObaraBackend data)
+    index.html.tpl         build template
 
 supabase/
   migrations/              10 SQL files (001 init through 010 corpus round-2 seeds)
@@ -109,7 +133,11 @@ vercel dev
 - 80 api files, all syntax-clean.
 - 10 migrations: 72 tables, 13 enums, 177 indexes, RLS on every business
   table.
-- 35-modal unified app built from `src/legacy/` plus `src/client/`.
+- Two shells: legacy 35-modal app from `src/legacy/`, and v3 operator
+  console (30 routes, RBAC-gated, dark by default, Cmd+K palette,
+  thread drawer) from `src/v3/` reached via `/?v3=1`. v3 has 35 wired
+  screens fetching live data via `ObaraBackend.*`. Both run against the
+  same backend.
 - 71-item feature audit passes 71 of 71 (50 trust + 12 corpus + 9 closing).
 - Two daily crons: FX rates (04:00 UTC) and AMC visit auto-generation
   (05:00 UTC).

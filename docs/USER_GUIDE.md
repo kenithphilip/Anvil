@@ -1,7 +1,180 @@
 # User Guide
 
-A modal-by-modal walkthrough of every UI surface. Open the command palette
-with `Cmd/Ctrl+K` to reach any of these.
+Two shells ship side-by-side:
+
+- **Legacy** at `/`. The original 8-tab app (Import, Guns, Search, Usage,
+  Spare Matrix, Sales Orders, SO History, Settings). Modal-driven.
+- **v3** at `/?v3=1`. The new operator console (sidebar + 30 routes,
+  Cmd+K palette, role-based access, dark theme by default). The choice
+  pins in localStorage as `obara:v3_pinned`. `/?v3=0` flips back.
+
+Both run against the same backend; data flows through the same
+`ObaraBackend.*` client either way.
+
+This guide is split:
+
+- **Part 1: v3 console** (below) explains the v3 IA, every nav route,
+  role gates, theme + density.
+- **Part 2: Legacy reference** (further down) explains each legacy
+  modal, kept while the legacy shell ships. Migrates out in a follow-up.
+
+---
+
+# Part 1: v3 console
+
+## Layout
+
+The v3 shell has three regions:
+
+- **Sidebar** (left, 232px or 56px collapsed). 9 nav sections, 30 routes.
+  Sections are filtered by your role (Sales Engineer hides admin and
+  security; Viewer reads everything but writes nothing).
+- **Header** (top, 44px). Brand mark, breadcrumb, Cmd+K search,
+  tenant pill, role pill, thread drawer button, notifications bell.
+- **Main** (center). The active workspace.
+- **Dock** (bottom, 28px). Live status indicators (DB, Tally bridge, FX
+  cron, ClamAV).
+
+A floating preference bar (bottom right of dock) holds the theme toggle,
+density toggle, and sidebar collapse.
+
+## Default behavior
+
+- Theme defaults to **dark**. Toggle in the floating bar; choice persists
+  in localStorage.
+- Density defaults to **normal**. Cycle through compact / normal /
+  comfortable.
+- Role defaults to **Sales Engineer**. Click the role pill to switch
+  (dev only; prod reads role from `tenant_members`).
+
+## Cmd+K palette
+
+`Cmd+K` (Mac) or `Ctrl+K` opens the palette. Type 2+ characters to
+search live across orders + customers (debounced 180ms). Without a
+query, the palette shows:
+
+1. RBAC-filtered jump-to entries for every nav route the role can reach.
+2. Quick actions: create SO, create lead, log service visit, send
+   missing-doc nudge, open audit log.
+
+Arrow up/down navigates, Enter activates, Esc closes.
+
+## Thread drawer
+
+Click the "Thread" pill in the header to open the right-side drawer. It
+shows the timeline for the currently active order (read from
+`#/so?id=X` query). Empty state: "Open a Sales Order to see its thread."
+
+## Routes (30)
+
+### Workflows
+
+- **My Day** (`#/home`). Role-aware home. Engineer sees queue, drafts,
+  approval count, and ₹ pushed today; Manager sees approval queue, margin
+  cockpit, and pipeline; Admin sees system health, tenants, cron, and
+  model routing log.
+- **Inbox** (`#/intake`). Documents and emails awaiting classification.
+  Drag-and-drop POs, OCR confidence per row, click row to open the OCR
+  workspace.
+- **Sales Orders** (`#/so`). Tabbed list (All, Mine, Intake, Validate,
+  Approval, Tally, Shipped, Blocked, Closed). Click "+ New from PO" to go
+  to `#/so?new=1` (intake wizard). Click a row to go to `#/so?id=X` (the
+  order workspace, 8 tabs: Reconciliation, Margin cockpit, Why, Evidence,
+  Approval, Tally, Shipments, Activity).
+- **Internal SOs** (`#/internal`). FOC, warranty, trial, expected PO,
+  internal transfer.
+- **Approvals** (`#/approvals`). Pending decisions with margin breach
+  reasons. Approve/reject inline; only managers, finance, and admins.
+
+### Sales
+
+- **Leads** (`#/leads`). Status board (NEW, CONTACTED, QUALIFIED,
+  CONVERTED). Inline create form.
+- **Opportunities** (`#/opps`). Horizontal kanban across 11 stages with
+  weighted-₹ KPIs.
+- **Projects** (`#/projects`). Phase tracker (15 phases).
+- **Shipments** (`#/shipments`). 7-tab status board with mode, carrier,
+  vessel, ports.
+
+### Procurement
+
+- **Source POs** (`#/spo`). Supplier scorecards + 5-status filter.
+  Click row to open ack form (price, ETA, qty, notes).
+- **Spares Matrix** (`#/spares`). 4-tab (Recommend, Kit, Opportunities,
+  Obsolete) per customer.
+
+### Service
+
+- **Service Visits** (`#/svc-visits`). Scheduled, In progress, Completed.
+- **AMC Schedule** (`#/amc`). Active contracts and visits-due-30d.
+- **CAR Reports** (`#/car`). Concern Analysis Reports with closure
+  reports linked.
+
+### Finance
+
+- **Tally Sync** (`#/tally`). Default view: TallyPush queue. Sub-routes:
+  `#/tally?sub=masters` (Tally master sync, 5-tab), `#/tally?sub=reconcile`
+  (reconcile push to received voucher).
+- **e-Invoice** (`#/einvoice`). 4-tab GSTN queue (Pending, Generated,
+  Cancelled, Rejected). 24h cancel countdown on Generated rows.
+- **Cost & Margin** (`#/cost`). 3-tab: cost breakdown, simulator,
+  margin history per customer.
+
+### Data
+
+- **Customers** (`#/customers`). Master with live search.
+- **Item Master** (`#/items`). 4-tab (Items, Aliases, Inventory, BOM).
+- **Master Data Graph** (`#/graph`). Connection stats. Full graph view
+  is a follow-up.
+- **Forecasts** (`#/forecasts`). 3 groupings (territory, customer type,
+  order mode).
+
+### Quality
+
+- **Eval Suites** (`#/evals`). Pass rate, recent runs, field heatmap.
+- **Profile Studio** (`#/studio`). Customer format profile history with
+  rollback.
+- **Anomaly** (`#/anomaly`). Validation findings, severity-coloured.
+- **Duplicates** (`#/duplicates`). Candidate pairs from `payload_hash`
+  and `doc_fingerprint` similarity.
+
+### Comms & Security
+
+- **Communications** (`#/comms`). Template-driven outbound.
+- **Email Triage** (`#/email`). Two-pane: inbound list + detail with
+  promote, attach, missing-doc actions.
+- **Security** (`#/security`). Admin-only. Redaction rules, injection
+  test history, model routing log.
+
+### Admin
+
+- **Audit** (`#/audit`). Full audit-event browser with filter bar plus
+  CSV/JSON export.
+- **Admin Center** (`#/admin`). Admin-only. 7-tab: Members, Settings,
+  Holidays, Lead times, FX rates, Approval thresholds, Diagnostics.
+
+## Roles + access
+
+See [docs/RBAC.md](RBAC.md). Quick mental model:
+
+- **Sales Engineer**: intake to draft to validate. Cannot approve.
+- **Sales Manager**: approves up to delegate cap. Sees team queues.
+- **Procurement**: source POs, items, supplier scorecards.
+- **Finance**: Tally, e-invoice, cost. Approves above-cap orders.
+- **Admin**: full tenant access including security and members.
+- **Operator**: internal SOs and service flows.
+- **Viewer**: read-only across the tenant.
+
+The sidebar hides routes the role cannot read. Buttons disable when the
+role cannot perform the action (e.g. "Push to Tally" greys for engineers).
+
+---
+
+# Part 2: Legacy reference
+
+A modal-by-modal walkthrough of the legacy UI surface (kept while both
+shells ship). Open the command palette with `Cmd/Ctrl+K` to reach any of
+these.
 
 ## Sign in
 

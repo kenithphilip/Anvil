@@ -71,6 +71,9 @@ const ROUTES = {
   // Admin
   audit:       () => (window.AuditLog ? <AuditLog /> : <Placeholder name="Audit Log" />),
   admin:       () => (window.AdminCenter ? <AdminCenter /> : <Placeholder name="Admin Center" />),
+  // Sign-in / backend connect (no nav entry; reached via header pill or
+  // automatic redirect when not signed in)
+  connect:     () => (window.BackendConnect ? <BackendConnect /> : <Placeholder name="Backend Connect" />),
 };
 
 const Placeholder = ({ name }) => (
@@ -148,6 +151,19 @@ const App = () => {
     setRoute(id);
     try { localStorage.setItem(ROUTE_KEY, id); } catch (_) {}
     try { window.history.replaceState(null, "", `#/${id}`); } catch (_) {}
+  }, []);
+
+  // First-load: if backend isn't configured, route to the sign-in screen
+  // so the user has an obvious next step. Skip when already on /connect.
+  useEffect(() => {
+    const ready = !!(window.ObaraBackend?.isReady?.());
+    const cfg = window.ObaraBackend?.getConfig?.() || {};
+    const hasUrl = !!cfg.url;
+    if (!ready && !hasUrl && route !== "connect") {
+      onRoute("connect");
+    }
+    // run once after mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Cmd+K + Thread overlays
@@ -231,7 +247,7 @@ const ShellInner = ({ children, route, onRoute, navFiltered, role, onRoleChange,
       role={role}
       onRole={onRoleChange}
       tenant={tenant}
-      onTenant={() => alert("Tenant switching requires admin role. See Admin Center.")}
+      onTenant={() => onRoute("connect")}
       onCmdK={onCmdK}
       onThread={onThread}
       crumb={crumb}

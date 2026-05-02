@@ -32,11 +32,16 @@ const navIds = [...navBlock.matchAll(/id: "([a-z][a-z-]*)"/g)].map((m) => m[1]);
 const routesBlock = app.match(/const ROUTES = \{([\s\S]*?)\n\};/)[1];
 const routeKeys = [...routesBlock.matchAll(/^\s+"?([a-z][a-z-]*)"?:\s*\(\)/gm)].map((m) => m[1]);
 
+// Routes intentionally outside the sidebar nav (reached via header pill,
+// auto-redirect, or deep-link). The user wouldn't browse to these from
+// the nav tree, so we allow them to exist as ROUTES without NAV entries.
+const HIDDEN_ROUTES = new Set(["connect"]);
+
 const navMissingRoute = navIds.filter((id) => !routeKeys.includes(id));
-const routeMissingNav = routeKeys.filter((id) => !navIds.includes(id));
+const routeMissingNav = routeKeys.filter((id) => !navIds.includes(id) && !HIDDEN_ROUTES.has(id));
 if (navMissingRoute.length === 0) pass(`every nav id (${navIds.length}) has a route handler`);
 else fail("nav ids without a route: " + navMissingRoute.join(", "));
-if (routeMissingNav.length === 0) pass("every route key has a nav id");
+if (routeMissingNav.length === 0) pass(`every visible route has a nav id (${HIDDEN_ROUTES.size} hidden routes ok: ${[...HIDDEN_ROUTES].join(", ")})`);
 else fail("routes without a nav id: " + routeMissingNav.join(", "));
 
 // 2. Every component referenced by ROUTES must be window-defined

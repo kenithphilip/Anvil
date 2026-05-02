@@ -94,6 +94,8 @@ const SCREEN_FILES = [
   // Phase 4: shell-level overrides (Cmd+K palette + Thread drawer)
   "screens-wired/wired-cmdk.jsx",
   "screens-wired/wired-thread.jsx",
+  // Migration gap fills (legacy showBackendModal etc.)
+  "screens-wired/wired-backend-connect.jsx",
 ];
 
 const tpl = read(path.join(V3, "index.html.tpl"));

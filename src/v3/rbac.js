@@ -45,6 +45,9 @@
     security:    { sales_engineer: "",    sales_manager: "",   procurement: "",   finance: "",    admin: "x",  operator: "",   viewer: "" },
     audit:       { sales_engineer: "r",   sales_manager: "r",  procurement: "r",  finance: "r",   admin: "rw", operator: "",   viewer: "r" },
     admin:       { sales_engineer: "",    sales_manager: "",   procurement: "",   finance: "",    admin: "x",  operator: "",   viewer: "" },
+    // Backend connect / sign-in. Always accessible; everyone needs a way
+    // to authenticate or switch tenants.
+    connect:     { sales_engineer: "rw",  sales_manager: "rw", procurement: "rw", finance: "rw",  admin: "rw", operator: "rw", viewer: "rw" },
   };
 
   // Action-level overrides keyed by stable string id.

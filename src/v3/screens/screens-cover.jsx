@@ -1,7 +1,7 @@
 /* SECTION 00 — COVER + BRAND SYSTEM
    Single 1280×1600 long-form artboard documenting the system. */
 
-const Cover = () => (
+const CoverHero = () => (
   <div className="cover" style={{width:1280, minHeight:1700, background:"var(--paper)", position:"relative"}}>
 
     {/* ── Hero ───────────────────────────────────────────── */}
@@ -383,4 +383,4 @@ const Cover = () => (
   </div>
 );
 
-Object.assign(window, { Cover });
+Object.assign(window, { CoverHero });

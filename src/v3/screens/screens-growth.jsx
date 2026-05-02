@@ -579,7 +579,7 @@ const CommsTemplates = () => (
 /* ─────────────────────────────────────────────────────────
    12 · COST simulator + margin history
    ───────────────────────────────────────────────────────── */
-const CostSimulator = () => (
+const CostSimulatorDemo = () => (
   <Screen url="cost/simulator" active="Cost & Margin" crumbs={["Growth","Cost & Margin","Simulator"]}>
     <div style={{display:"flex",alignItems:"baseline",gap:14}}>
       <div className="h1" style={{fontSize:24}}>Cost simulator</div>
@@ -907,6 +907,6 @@ Object.assign(window, {
   SPOList, SPODetail, SupplierScorecard,
   SpareMatrix, SpareOpportunities, ObsoletePartsScreen,
   CommsInbox, CommsMissingDoc, CommsTemplates,
-  CostSimulator, MarginHistory,
+  CostSimulatorDemo, MarginHistory,
   SecurityInjection, SecurityRedaction,
 });

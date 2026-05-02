@@ -221,7 +221,7 @@ const SparesMatrix = () => {
 // ─────────────────────────────────────────────────────────────
 // Customers
 // ─────────────────────────────────────────────────────────────
-const Customers = () => (
+const ProcurementCustomers = () => (
   <>
     <WSTitle
       eyebrow="Data · Customers"
@@ -316,4 +316,4 @@ const Items = () => (
   </>
 );
 
-Object.assign(window, { Inbox, SourcePOs, SparesMatrix, Customers, Audit, Items });
+Object.assign(window, { Inbox, SourcePOs, SparesMatrix, ProcurementCustomers, Audit, Items });

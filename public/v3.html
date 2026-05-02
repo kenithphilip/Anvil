@@ -3225,7 +3225,7 @@ const SparesMatrix = () => {
 // ─────────────────────────────────────────────────────────────
 // Customers
 // ─────────────────────────────────────────────────────────────
-const Customers = () => (
+const ProcurementCustomers = () => (
   <>
     <WSTitle
       eyebrow="Data · Customers"
@@ -3320,7 +3320,7 @@ const Items = () => (
   </>
 );
 
-Object.assign(window, { Inbox, SourcePOs, SparesMatrix, Customers, Audit, Items });
+Object.assign(window, { Inbox, SourcePOs, SparesMatrix, ProcurementCustomers, Audit, Items });
 
 
 // ===== screens/screens-finance.jsx =====
@@ -5434,7 +5434,7 @@ const CommsTemplates = () => (
 /* ─────────────────────────────────────────────────────────
    12 · COST simulator + margin history
    ───────────────────────────────────────────────────────── */
-const CostSimulator = () => (
+const CostSimulatorDemo = () => (
   <Screen url="cost/simulator" active="Cost & Margin" crumbs={["Growth","Cost & Margin","Simulator"]}>
     <div style={{display:"flex",alignItems:"baseline",gap:14}}>
       <div className="h1" style={{fontSize:24}}>Cost simulator</div>
@@ -5762,7 +5762,7 @@ Object.assign(window, {
   SPOList, SPODetail, SupplierScorecard,
   SpareMatrix, SpareOpportunities, ObsoletePartsScreen,
   CommsInbox, CommsMissingDoc, CommsTemplates,
-  CostSimulator, MarginHistory,
+  CostSimulatorDemo, MarginHistory,
   SecurityInjection, SecurityRedaction,
 });
 
@@ -7378,7 +7378,7 @@ Object.assign(window, { Cover, AuthSignIn, AuthSent, AuthCallback, AuthError, Au
 /* SECTION 00 — COVER + BRAND SYSTEM
    Single 1280×1600 long-form artboard documenting the system. */
 
-const Cover = () => (
+const CoverHero = () => (
   <div className="cover" style={{width:1280, minHeight:1700, background:"var(--paper)", position:"relative"}}>
 
     {/* ── Hero ───────────────────────────────────────────── */}
@@ -7760,7 +7760,7 @@ const Cover = () => (
   </div>
 );
 
-Object.assign(window, { Cover });
+Object.assign(window, { CoverHero });
 
 
 // ===== screens/screens-docs.jsx =====

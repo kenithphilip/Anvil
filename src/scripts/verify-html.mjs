@@ -1,36 +1,74 @@
-// Compile every plain <script> block in public/index.html with vm.Script.
-// vm.Script parses but does not execute; perfect for verifying the build
-// produced syntactically valid JS without spawning subprocesses.
-// Skips Babel/JSX blocks (those need Babel, not the V8 parser).
+// Verify every <script> block in both built HTMLs.
+//
+// Plain JS blocks parsed via vm.Script (V8 built-in parser).
+// Babel/JSX blocks parsed via @babel/parser with the jsx plugin so const
+//   re-declarations across concatenated screen files are caught (the kind
+//   V8 cannot see because it stops at JSX syntax).
+//
+// Targets: public/index.html (legacy) and public/v3.html (v3). Missing
+// files are skipped with a warning so partial builds still verify.
 
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 
-const htmlPath = path.join(process.cwd(), "public/index.html");
-if (!fs.existsSync(htmlPath)) {
-  console.error("public/index.html not found, run npm run build first");
-  process.exit(2);
+let parseBabel = null;
+try {
+  ({ parse: parseBabel } = await import("@babel/parser"));
+} catch (_) {
+  console.warn(
+    "[verify-html] @babel/parser not installed; skipping JSX blocks. " +
+    "Install with `npm install --save-dev @babel/parser` to catch " +
+    "const collisions across concatenated screen files."
+  );
 }
 
-const html = fs.readFileSync(htmlPath, "utf8");
-const re = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g;
+const ROOT = process.cwd();
+const TARGETS = [
+  { label: "legacy", path: path.join(ROOT, "public", "index.html") },
+  { label: "v3",     path: path.join(ROOT, "public", "v3.html") },
+];
 
-let count = 0;
-let failed = 0;
-let m;
-while ((m = re.exec(html))) {
-  if (/type=["'](text\/babel|text\/jsx)["']/.test(m[0])) continue;
-  const body = m[1].trim();
-  if (!body) continue;
-  count++;
-  try {
-    new vm.Script(body, { filename: "block_" + count + ".js" });
-  } catch (e) {
-    console.error("block " + count + " failed: " + e.message);
-    failed++;
+let totalCount = 0;
+let totalFailed = 0;
+
+for (const target of TARGETS) {
+  if (!fs.existsSync(target.path)) {
+    console.warn(`[verify-html] ${target.label}: ${target.path} missing, skipping`);
+    continue;
   }
+  const html = fs.readFileSync(target.path, "utf8");
+  const re = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g;
+  let count = 0;
+  let failed = 0;
+  let m;
+  while ((m = re.exec(html))) {
+    const body = m[1].trim();
+    if (!body) continue;
+    const isBabel = /type=["'](text\/babel|text\/jsx)["']/.test(m[0]);
+    count++;
+    try {
+      if (isBabel) {
+        if (parseBabel) {
+          parseBabel(m[1], {
+            sourceType: "script",
+            plugins: ["jsx"],
+            allowReturnOutsideFunction: true,
+          });
+        }
+      } else {
+        new vm.Script(body, { filename: target.label + "_block_" + count + ".js" });
+      }
+    } catch (e) {
+      console.error(`[${target.label}] block ${count} (${isBabel ? "babel" : "plain"}) failed: ${e.message}`);
+      if (e.loc) console.error(`  at line ${e.loc.line}, col ${e.loc.column}`);
+      failed++;
+    }
+  }
+  console.log(`[${target.label}] verified ${count} script blocks, ${failed} failed`);
+  totalCount += count;
+  totalFailed += failed;
 }
 
-console.log("verified " + count + " script blocks, " + failed + " failed");
-process.exit(failed === 0 ? 0 : 1);
+console.log(`verified ${totalCount} script blocks, ${totalFailed} failed`);
+process.exit(totalFailed === 0 ? 0 : 1);

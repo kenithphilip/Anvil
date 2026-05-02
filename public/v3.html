@@ -15712,13 +15712,31 @@ const WiredCmdK = ({ open, onClose, onJump }) => {
     setResults((s) => ({ ...s, loading: true }));
     const t = setTimeout(async () => {
       try {
-        const [orders, customers] = await Promise.all([
+        // Item search uses a direct fetch since admin.listItemMaster
+        // isn't exposed on the client wrapper in all builds. Pull a
+        // small page and filter client-side.
+        const itemFetch = async () => {
+          const cfg = (() => { try { return JSON.parse(localStorage.getItem("obara:backend_config") || "{}"); } catch { return {}; } })();
+          const session = (() => { try { return JSON.parse(localStorage.getItem("obara:backend_session") || "null"); } catch { return null; } })();
+          if (!cfg.url) return [];
+          const headers = { "Content-Type": "application/json" };
+          if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+          if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+          const u = cfg.url.replace(/\/+$/, "") + "/api/admin/item_master?limit=200";
+          const r = await fetch(u, { headers });
+          if (!r.ok) return [];
+          const j = await r.json();
+          return Array.isArray(j) ? j : (j?.rows || j?.items || []);
+        };
+        const [orders, customers, items] = await Promise.all([
           window.ObaraBackend?.orders?.list?.({ limit: 8 }).catch(() => []) || Promise.resolve([]),
           window.ObaraBackend?.customers?.list?.().catch(() => []) || Promise.resolve([]),
+          itemFetch().catch(() => []),
         ]);
         if (cancel) return;
         const oList = Array.isArray(orders) ? orders : (orders?.rows || []);
         const cList = Array.isArray(customers) ? customers : (customers?.rows || []);
+        const iList = Array.isArray(items) ? items : (items?.rows || items?.items || []);
         const ql = q.toLowerCase();
         setResults({
           orders: oList.filter((o) =>
@@ -15731,7 +15749,11 @@ const WiredCmdK = ({ open, onClose, onJump }) => {
             (c.customer_key || "").toLowerCase().includes(ql) ||
             (c.gstin || "").toLowerCase().includes(ql)
           ).slice(0, 6),
-          items: [], // item_master search would need a server-side endpoint
+          items: iList.filter((it) =>
+            (it.part_no || "").toLowerCase().includes(ql) ||
+            (it.description || "").toLowerCase().includes(ql) ||
+            (it.drawing_no || "").toLowerCase().includes(ql)
+          ).slice(0, 6),
           loading: false,
         });
       } catch (err) {
@@ -15767,6 +15789,17 @@ const WiredCmdK = ({ open, onClose, onJump }) => {
             t: `${c.customer_name} · ${c.customer_key}`,
             m: c.gstin || c.state_code || "",
             onPick: () => { window.location.hash = `#/customers?id=${c.id}`; onJump?.("customers"); onClose?.(); },
+          })),
+        });
+      }
+      if (results.items.length) {
+        out.push({
+          label: "Items",
+          items: results.items.map((it) => ({
+            ic: window.Icon?.tag,
+            t: `${it.part_no} · ${it.description || "—"}`,
+            m: it.source_country || it.hsn_sac || "",
+            onPick: () => { window.location.hash = `#/items?part=${encodeURIComponent(it.part_no)}`; onJump?.("items"); onClose?.(); },
           })),
         });
       }

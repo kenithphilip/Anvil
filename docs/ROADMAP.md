@@ -28,14 +28,52 @@ sequence under `feature/v3-*` branches.
 
 ## Next
 
-### v3 migration gap closures (Phase 7)
+### v3 migration gap closures (Phase 7) — substantially complete
 
-The post-Phase-6 UX migration audit (see git log around commit 95ad4e8)
-identified surfaces that exist in the legacy shell but have no v3
-destination yet. Phase 1 to Phase 5 covered 30 nav routes + Cmd+K +
-ThreadDrawer + auth + onboarding + format-guide + toasts + audit-pack
-export. The remaining work is sized below; each is a Phase 7.x
-sub-release.
+Phase 7 closed the major user-visible gaps from the Phase 6 migration
+audit. Status of each sub-release:
+
+- 7.1 Spare Matrix worksheet: **DONE** (commit 70d7838).
+- 7.2 BOM Import workflow: **DONE** (commit 70d7838).
+- 7.3 Guns viewer: **DONE** (commit 70d7838).
+- 7.4 SO History import: **DONE** (commit 70d7838).
+- 7.5 JBM spare matrix importer: **DONE** (commit 70d7838).
+- 7.6 Equipment hierarchy editor: **DONE** (commit 70d7838).
+- 7.7 Project + Opportunity enum alignment: **DONE** (commit 1fa7aca).
+- 7.8 CRUD completeness: **PARTIAL** (commit a67e9f2 covers Shipments,
+  Internal SOs, e-Invoice). Remaining: see below.
+- 7.9 Master Data Graph Cytoscape view: **DONE** (commit 70d7838).
+- 7.10 Drawing-link configuration: **DONE** (commit 70d7838 inside
+  AdminCenter Settings tab).
+- 7.11 Storage status / Diagnostics tab: **DONE** (commit 70d7838 +
+  api/admin/diagnostics.js).
+- 7.12 Schedule Lines editor: **DONE** (commit 70d7838 inside
+  SOWorkspace as a 9th tab).
+- 7.13 Communications timeline merge: **DONE** (commit 70d7838 inside
+  the SOWorkspace Activity tab, merging audit_events +
+  communications + processing_events into one chronological feed).
+
+### Phase 7.8 CRUD remaining (~5 surfaces)
+
+These wired screens have read-only views but no create / edit / delete:
+
+- **Service Visits**: check-in / check-out / delete actions and a
+  plan-visit form (date + technician + checklist).
+- **AMC**: bulk-seed UI (contract picker + frequency form), per-row
+  Generate-visit button, per-row delete.
+- **Eval Cases**: add / run / delete cases form (the fourth legacy tab
+  that existed inside the eval modal).
+- **Profile Studio**: visual fingerprint diff editor with
+  edit-and-save (currently rollback-only).
+- **Admin Center**: customer locations editor, item master inline
+  edit, contracts manager (ARC / Blanket / AMC), CSV bulk import
+  wizard, holiday delete, approval thresholds CRUD (currently
+  read-only).
+
+Each is approximately the same shape as the Shipments / Internal SOs /
+e-Invoice CRUD overlays already shipped: a `wired-X-crud.jsx` file that
+overrides `wired-X.jsx` via build-v3.mjs load order. The pattern is
+codified in [docs/V3_WIRING_PATTERN.md](V3_WIRING_PATTERN.md).
 
 7.1. **Spare Matrix worksheet** (largest user-impact gap)
 - Per-customer/project worksheet with editable rows + columns.

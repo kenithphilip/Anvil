@@ -1,54 +1,234 @@
 # Deploy
 
-## Supabase
+Short version: see `docs/SETUP.md` for the zero-to-deployed walkthrough.
+This document covers the deployment lifecycle: pushing changes, applying
+migrations, rolling back, and managing per-environment config.
 
-1. Create a new Supabase project. Note the URL, anon key, service role key.
-2. Open the SQL editor and run each file in `supabase/migrations/` in order.
-   The migrations are idempotent (create-if-not-exists).
-3. Create the storage buckets the app references (defaults: `documents`,
-   `audit-pack`). Set them to private.
-4. Configure Auth: enable email magic-link sign-in. Add the deployed URL to
-   the redirect allow-list (e.g., `https://anvil.example.com/auth/callback.html`).
-5. (Optional) Enable Realtime for the `orders` table if you want live
-   approval-banner updates.
+## Branches and environments
 
-## Vercel
+Two long-lived environments:
 
-1. Connect the GitHub repo to Vercel. The repo root is the project root.
-2. Set environment variables from `.env.example`. At minimum:
-   - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
-   - `ANTHROPIC_API_KEY`
-   - `DEFAULT_TENANT_ID` (the seed tenant uuid)
-   - `EMAIL_INBOUND_TOKEN` (random)
-   - `CRON_SECRET` (random)
-3. Optional vars enable extra features:
-   - `MISTRAL_API_KEY` for server-side OCR with bbox
-   - `CLAMAV_URL` + `CLAMAV_TOKEN` for malware scanning of uploads
-   - `TALLY_BRIDGE_URL` + `TALLY_BRIDGE_TOKEN` for actual Tally export
-   - `COMMS_PROVIDER_URL` for outbound email send
-4. Deploy. The build command (`npm run build`) writes `public/index.html`.
-   Vercel serves `public/` and discovers serverless functions in `api/`.
+| Env | Branch | Vercel project | Supabase project |
+| --- | --- | --- | --- |
+| Production | `main` | `anvil` | `anvil-prod` |
+| Preview | feature branches | auto-preview | `anvil-preview` (or branch DBs) |
 
-## First-run checks
+Vercel auto-creates a preview deploy for every PR. Supabase branch
+databases are optional and require Pro plan; for personal projects use a
+single shared `anvil-preview` Supabase project for all PRs.
 
-After deploy, hit these endpoints to confirm wiring:
+## Deploy flow
 
-- `GET /api/orders` with a valid Supabase access token. Should return `{orders: []}`.
-- `POST /api/admin/fx_rates` with `{ asOf: "2024-04-01" }` and an admin
-  session. Should return a row count.
-- Open `https://<your-domain>/` and run "Show Integration Report" from the
-  Ops palette. All rows should be `ok`.
+```
+local change -> git push feature -> Vercel preview -> review -> merge to main -> Vercel prod
+```
 
-## Rolling out a new migration
+Migrations are NOT auto-applied. Apply them manually after merge:
 
-1. Add a new file `supabase/migrations/007_*.sql`. Make it idempotent.
-2. Run it locally against a Supabase branch before merging.
-3. After merge to main, apply on production via SQL editor or
-   `supabase db push --include-all`.
+1. Open Supabase production project -> SQL Editor.
+2. Open the new migration file from `supabase/migrations/`.
+3. Paste, click **Run**.
+4. Verify with the queries at the bottom of `docs/SCHEMA_REFERENCE.md`.
 
-## Rollback
+## Build configuration
 
-- Frontend: redeploy a prior Vercel commit.
-- Backend functions: same.
-- Database: write a reverse migration. Migrations only roll forward; never
-  edit a committed migration.
+`vercel.json` declares:
+
+- `buildCommand: npm run build` (writes `public/index.html`)
+- `outputDirectory: public`
+- `functions:` per-route timeout and memory overrides
+- `crons:` daily fx_cron at 04:00 UTC and amc_cron at 05:00 UTC
+- `headers:` CORS for `/api/*`
+
+Function sizing:
+
+| Path | Memory | Max duration |
+| --- | --- | --- |
+| `api/claude/messages.js` | 1024 MB | 60s |
+| `api/documents/ocr.js` | 1024 MB | 60s |
+| `api/documents/scan.js` | 768 MB | 30s |
+| `api/master_data/graph.js` | 768 MB | 30s |
+| `api/documents/upload.js` | 512 MB | 30s |
+| (default for everything else) | 512 MB | 30s |
+
+If a function regularly times out, raise the duration in `vercel.json` and
+redeploy.
+
+## Environment variables
+
+See `docs/ENV_VARS.md` for the full inventory. Required for prod:
+
+```
+SUPABASE_URL
+SUPABASE_ANON_KEY
+SUPABASE_SERVICE_ROLE_KEY      (mark secret)
+ANTHROPIC_API_KEY              (mark secret)
+DEFAULT_TENANT_ID
+ALLOW_ANONYMOUS_TENANT=false   (lock down for prod)
+ALLOWED_ORIGINS=https://your-prod-url
+MAGIC_LINK_REDIRECT_URL=https://your-prod-url/auth/callback.html
+CRON_SECRET                    (mark secret)
+EMAIL_INBOUND_TOKEN            (mark secret)
+```
+
+Optional (set when integrating each):
+`MISTRAL_API_KEY`, `CLAMAV_URL`, `CLAMAV_TOKEN`, `TALLY_BRIDGE_URL`,
+`TALLY_BRIDGE_TOKEN`, `COMMS_PROVIDER_URL`, `GSTN_API_URL`, `GSTN_API_KEY`,
+`FX_PROVIDER_URL` (default Frankfurter).
+
+## Applying a new migration
+
+1. Add `supabase/migrations/00N_description.sql`. Make it idempotent
+   (`create table if not exists`, `on conflict do nothing`,
+   `drop policy if exists`).
+2. Test locally against a Supabase branch project or scratch project.
+3. Push the branch. Open the PR.
+4. After merge, paste the file into Supabase prod SQL Editor and run.
+5. Verify by counting rows / checking RLS:
+   ```sql
+   select c.relname, c.relrowsecurity
+   from pg_class c join pg_namespace n on n.oid=c.relnamespace
+   where n.nspname='public' and c.relkind='r' and c.relname like 'YOUR_NEW_TABLE%';
+   ```
+
+Never edit a previously applied migration. If you find a mistake, write a
+new migration that corrects it.
+
+## First-deploy checklist
+
+After Vercel build succeeds:
+
+- [ ] Open `https://your-prod-url/`. UI loads.
+- [ ] Cmd/Ctrl+K -> **Show Integration Report**. Every row green.
+- [ ] Cmd/Ctrl+K -> **Connect Backend** -> magic link tab. Send to
+      yourself, click the link, callback page lands at `/auth/callback.html`,
+      session stored.
+- [ ] Reload main app. Header shows your email and role admin.
+- [ ] Open **Admin Center -> Customer locations**. MG Motor shows two
+      GSTINs.
+- [ ] Open **Admin Center -> Item master**. At least 35 rows.
+- [ ] Run an end-to-end test: upload a sample PO, click through preflight
+      and generation, approve, push to Tally (will fail without the bridge
+      configured, that is expected).
+
+## Production hardening
+
+Before letting real users in:
+
+```
+ALLOW_ANONYMOUS_TENANT=false
+ALLOWED_ORIGINS=https://your-prod-url
+```
+
+This prevents unauthenticated callers from acting under
+`DEFAULT_TENANT_ID` and locks CORS to the production origin.
+
+Other production concerns:
+
+- Enable **Supabase Realtime** on `orders` and `shipments` if you want
+  live approval-banner updates.
+- Set up Vercel **Speed Insights** for frontend performance monitoring.
+- Set up Vercel **Log Drains** to forward function logs to a SIEM.
+- Schedule daily Supabase backups.
+
+## Rolling back
+
+### Frontend / functions
+
+In Vercel: **Deployments -> click a previous successful deploy -> Promote
+to Production**. Atomic, no DB changes.
+
+### Database
+
+Migrations only roll forward. To "roll back" a schema change:
+
+1. Write a new migration that reverses it (`drop column`, `drop table`,
+   re-create RLS as it was).
+2. Apply via SQL editor.
+
+For a deeper rollback (e.g., recover from a bad data migration), restore
+from a Supabase point-in-time backup:
+
+1. **Project Settings -> Database -> Backups -> Point-in-Time**.
+2. Pick a timestamp before the problem.
+3. Restore to a new project.
+4. Repoint Vercel env vars at the new project URL/keys.
+
+This is destructive: data added between the restore point and now is
+lost. Plan accordingly.
+
+## Multi-tenant onboarding
+
+To add a new customer (tenant) to an existing deploy:
+
+```sql
+-- 1. Create the tenant
+insert into tenants (id, slug, display_name)
+values (gen_random_uuid(), 'newco', 'NewCo Manufacturing')
+returning id;
+-- save the returned id, e.g. 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+
+-- 2. Attach an admin user (user must have signed in once already)
+insert into tenant_members (tenant_id, user_id, role)
+select 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', id, 'admin'
+from auth.users where email = 'admin@newco.example';
+
+-- 3. Optional: copy the seed data from migration 007
+--    Replace tenant id in the migration file and re-run.
+```
+
+The new tenant's members will see only their own data thanks to RLS.
+
+## Cron triggers
+
+Two cron jobs are wired in `vercel.json`:
+
+- `0 4 * * *` (daily 04:00 UTC): `/api/fx/cron`
+- `0 5 * * *` (daily 05:00 UTC): `/api/service/amc_cron`
+
+Both accept an optional `Authorization: Bearer $CRON_SECRET` header. Vercel
+sends this automatically when `CRON_SECRET` is set in the project env. To
+trigger manually:
+
+```sh
+curl -X GET 'https://YOUR-URL/api/fx/cron' \
+  -H "Authorization: Bearer $CRON_SECRET"
+
+curl -X GET 'https://YOUR-URL/api/service/amc_cron' \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+## Cost optimization
+
+Anvil uses the model routing ladder (Haiku preflight -> Sonnet generation
+-> Opus reasoning) plus extraction caching. A typical SO costs $0.02-0.05
+in Anthropic API. Watch the **Cost Analytics Deep** modal weekly.
+
+To force the cheaper path on a specific customer:
+
+1. Open **Profile Studio** for that customer.
+2. Toggle **Force Claude fallback** OFF (default).
+3. Save. Subsequent intakes use the local template extractor where
+   possible.
+
+To diagnose unexpected Sonnet/Opus usage, check `model_routing_log` for
+`fallback_reason`.
+
+## Disaster recovery
+
+Recovery scenarios and their RTOs:
+
+| Scenario | Detection | Recovery | RTO |
+| --- | --- | --- | --- |
+| Vercel deploy bad | Integration Report fails, user reports | Roll back via Deployments | 5 min |
+| Anthropic outage | 500s on /api/claude/messages | Wait, no fallback | up to Anthropic |
+| Supabase outage | every API call 5xx | Wait, status.supabase.com | up to Supabase |
+| Migration broke prod | data missing, queries fail | Forward-fix migration or restore | 30 min |
+| Service role leaked | external party access | Rotate immediately, audit access | 15 min to rotate, hours to audit |
+
+For the service-role-leaked case:
+
+1. Rotate the key in Supabase **Settings -> API**.
+2. Update Vercel env var.
+3. Redeploy.
+4. Pull `audit_events` for the past 30 days, look for unusual patterns.

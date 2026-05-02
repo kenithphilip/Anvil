@@ -44,7 +44,12 @@ const SCREEN_FILES = [
   // intentionally skip screens-mobile + ios-frame; they are mobile-shell
   // surfaces that ship in a follow-up. See docs/ROADMAP.md.
 
-  // Wired screens that override the static ones with live ObaraBackend data
+  // Wired screens override the static demos with live ObaraBackend data.
+  // Order matters: helpers (useFetch / ageLabel / fmtINRShort / stageOf /
+  // sevOf) live at top level in wired-home.jsx, so it loads first and the
+  // rest reference them without redeclaration. Each wired file ends with
+  // `window.<Name> = Wired<Name>;` so the App router picks up the live
+  // version over the static demo from screens/.
   "screens-wired/wired-home.jsx",
   "screens-wired/wired-orders.jsx",
   // Wave A: Workflows
@@ -53,12 +58,42 @@ const SCREEN_FILES = [
   "screens-wired/wired-so-workspace.jsx",
   "screens-wired/wired-approvals.jsx",
   "screens-wired/wired-internal-sos.jsx",
+  // Wave B: Sales
+  "screens-wired/wired-leads-b.jsx",
+  "screens-wired/wired-opps-b.jsx",
+  "screens-wired/wired-projects-b.jsx",
+  "screens-wired/wired-shipments-b.jsx",
+  // Wave C: Procurement + Service
+  "screens-wired/wired-source-pos-c.jsx",
+  "screens-wired/wired-spares-c.jsx",
+  "screens-wired/wired-service-visits-c.jsx",
+  "screens-wired/wired-amc-c.jsx",
+  "screens-wired/wired-car-c.jsx",
   // Wave D: Finance
   "screens-wired/wired-tally-masters-d.jsx",
   "screens-wired/wired-tally-push-d.jsx",
   "screens-wired/wired-tally-reconcile-d.jsx",
   "screens-wired/wired-einvoice-d.jsx",
   "screens-wired/wired-cost-margin-d.jsx",
+  // Wave E: Data + Quality
+  "screens-wired/wired-customers-e.jsx",
+  "screens-wired/wired-items-e.jsx",
+  "screens-wired/wired-graph-e.jsx",
+  "screens-wired/wired-forecasts-e.jsx",
+  "screens-wired/wired-evals-e.jsx",
+  "screens-wired/wired-studio-e.jsx",
+  "screens-wired/wired-anomaly-e.jsx",
+  "screens-wired/wired-duplicates-e.jsx",
+  "screens-wired/wired-aliases-e.jsx",
+  // Wave F: Comms + Admin
+  "screens-wired/wired-comms-f.jsx",
+  "screens-wired/wired-email-f.jsx",
+  "screens-wired/wired-security-f.jsx",
+  "screens-wired/wired-audit-f.jsx",
+  "screens-wired/wired-admin-f.jsx",
+  // Phase 4: shell-level overrides (Cmd+K palette + Thread drawer)
+  "screens-wired/wired-cmdk.jsx",
+  "screens-wired/wired-thread.jsx",
 ];
 
 const tpl = read(path.join(V3, "index.html.tpl"));

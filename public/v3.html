@@ -21701,6 +21701,1011 @@ const WiredJbmImporter = () => {
 };
 
 window.JbmImporter = WiredJbmImporter;
+
+
+// ===== screens-wired/wired-shipments-crud.jsx =====
+// ============================================================
+// ANVIL v3 — Shipments CRUD overlay
+// Adds create / edit / status-update / POD-toggle / delete on top
+// of the read-only list in wired-shipments-b.jsx. Wins via load order.
+// ============================================================
+
+const SHIPMENT_MODES = ["sea", "air", "road", "courier"];
+const SHIPMENT_STATUSES = [
+  "PLANNED", "READY", "IN_TRANSIT", "AT_PORT", "CLEARED",
+  "DELIVERED", "POD_RECEIVED", "EXCEPTION",
+];
+
+const SHIPMENT_FORM_BLANK = () => ({
+  shipment_number: "",
+  mode: "sea",
+  carrier: "",
+  vessel_name: "",
+  flight_number: "",
+  vehicle_number: "",
+  port_of_loading: "",
+  port_of_discharge: "",
+  eta: "",
+  status: "PLANNED",
+  pod_received: false,
+  notes: "",
+  order_id: "",
+});
+
+const shipReadParams = () => {
+  const hash = window.location.hash || "";
+  const q = hash.split("?")[1];
+  return new URLSearchParams(q || "");
+};
+
+const WiredShipmentsCRUD = () => {
+  const { useState: u, useEffect: e } = React;
+  const params = shipReadParams();
+  const editId = params.get("id");
+  const isNew = params.get("new") === "1";
+
+  const [list, setList] = u({ rows: [], loading: true, error: null });
+  const [active, setActive] = u("all");
+  const [editing, setEditing] = u(null);
+  const [form, setForm] = u(null);
+  const [busy, setBusy] = u(false);
+
+  const reload = () => {
+    setList((s) => ({ ...s, loading: true }));
+    Promise.resolve(window.ObaraBackend?.sales?.listShipments?.() || { shipments: [] })
+      .then((r) => {
+        const rows = Array.isArray(r) ? r : (r?.shipments || r?.rows || []);
+        setList({ rows, loading: false, error: null });
+      })
+      .catch((err) => setList({ rows: [], loading: false, error: err }));
+  };
+
+  e(reload, []);
+
+  // Sync form state when query param changes
+  e(() => {
+    if (isNew) {
+      setForm(SHIPMENT_FORM_BLANK());
+      setEditing("__new__");
+      return;
+    }
+    if (editId) {
+      const found = list.rows.find((r) => r.id === editId);
+      if (found) {
+        setForm({ ...SHIPMENT_FORM_BLANK(), ...found });
+        setEditing(editId);
+      }
+      return;
+    }
+    setForm(null);
+    setEditing(null);
+  }, [editId, isNew, list.rows.length]);
+
+  const closeForm = () => {
+    setForm(null);
+    setEditing(null);
+    window.location.hash = "#/shipments";
+  };
+
+  const submit = async () => {
+    if (!form) return;
+    if (!form.shipment_number?.trim()) {
+      window.notifyError?.("Shipment number is required");
+      return;
+    }
+    setBusy(true);
+    try {
+      const payload = { ...form };
+      if (editing && editing !== "__new__") payload.id = editing;
+      // Try the dedicated client wrappers if exposed; otherwise direct fetch.
+      const fn = (editing && editing !== "__new__")
+        ? (window.ObaraBackend?.sales?.updateShipment || window.ObaraBackend?.sales?.upsertShipment)
+        : (window.ObaraBackend?.sales?.createShipment || window.ObaraBackend?.sales?.upsertShipment);
+      let result;
+      if (typeof fn === "function") {
+        result = await fn(payload);
+      } else {
+        const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
+        const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
+        const headers = { "Content-Type": "application/json" };
+        if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
+        if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+        const url = cfg.url.replace(/\/+$/, "") + "/api/sales/shipments";
+        const resp = await fetch(url, {
+          method: editing && editing !== "__new__" ? "PATCH" : "POST",
+          headers,
+          body: JSON.stringify(payload),
+        });
+        if (!resp.ok) throw new Error("HTTP " + resp.status + ": " + (await resp.text()));
+        result = await resp.json();
+      }
+      window.notifySuccess?.(editing === "__new__" ? "Shipment created" : "Shipment updated", result?.shipment?.shipment_number || form.shipment_number);
+      reload();
+      closeForm();
+    } catch (err) {
+      window.notifyError?.("Save failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (id, num) => {
+    if (!window.confirm(`Delete shipment ${num || id}? This cannot be undone.`)) return;
+    setBusy(true);
+    try {
+      const fn = window.ObaraBackend?.sales?.deleteShipment;
+      if (typeof fn === "function") {
+        await fn(id);
+      } else {
+        const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
+        const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
+        const headers = {};
+        if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
+        if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+        const url = cfg.url.replace(/\/+$/, "") + "/api/sales/shipments?id=" + encodeURIComponent(id);
+        const resp = await fetch(url, { method: "DELETE", headers });
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+      }
+      window.notifySuccess?.("Shipment deleted", num || id);
+      reload();
+      closeForm();
+    } catch (err) {
+      window.notifyError?.("Delete failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Quick status update
+  const setStatus = async (id, status) => {
+    setBusy(true);
+    try {
+      const fn = window.ObaraBackend?.sales?.updateShipment || window.ObaraBackend?.sales?.upsertShipment;
+      if (typeof fn === "function") {
+        await fn({ id, status });
+      } else {
+        const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
+        const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
+        const headers = { "Content-Type": "application/json" };
+        if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
+        if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+        const url = cfg.url.replace(/\/+$/, "") + "/api/sales/shipments";
+        await fetch(url, { method: "PATCH", headers, body: JSON.stringify({ id, status }) });
+      }
+      window.notifySuccess?.("Status updated", status);
+      reload();
+    } catch (err) {
+      window.notifyError?.("Status update failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const togglePod = async (row) => {
+    await setStatus(row.id, row.pod_received ? row.status : "POD_RECEIVED");
+  };
+
+  const tabs = [
+    { id: "all",          label: "All",          match: () => true },
+    { id: "PLANNED",      label: "Planned",      match: (s) => s.status === "PLANNED" },
+    { id: "READY",        label: "Ready",        match: (s) => s.status === "READY" },
+    { id: "IN_TRANSIT",   label: "In transit",   match: (s) => s.status === "IN_TRANSIT" },
+    { id: "AT_PORT",      label: "At port",      match: (s) => s.status === "AT_PORT" || s.status === "CLEARED" },
+    { id: "DELIVERED",    label: "Delivered",    match: (s) => s.status === "DELIVERED" },
+    { id: "POD_RECEIVED", label: "POD",          match: (s) => s.status === "POD_RECEIVED" },
+    { id: "EXCEPTION",    label: "Exception",    match: (s) => s.status === "EXCEPTION" },
+  ];
+  const matcher = tabs.find((t) => t.id === active)?.match || (() => true);
+  const filtered = list.rows.filter(matcher);
+  const counts = Object.fromEntries(tabs.map((t) => [t.id, list.rows.filter(t.match).length]));
+
+  return (
+    <>
+      <WSTitle
+        eyebrow="Sales · Shipments"
+        title="Shipments"
+        meta={`${list.rows.length} total · ${counts.IN_TRANSIT || 0} in transit · ${counts.EXCEPTION || 0} exceptions`}
+        right={<>
+          <Btn icon kind="ghost" sm onClick={reload} title="Refresh">{Icon.cycle}</Btn>
+          <Btn sm kind="primary" onClick={() => window.location.hash = "#/shipments?new=1"}>{Icon.plus} New shipment</Btn>
+        </>}
+      />
+      <WSTabs tabs={tabs.map((t) => ({ id: t.id, label: t.label, count: counts[t.id] }))} active={active} onChange={setActive} />
+
+      <div className="ws-content">
+        {list.error && (
+          <Banner kind="bad" icon={Icon.alert} title="Could not load shipments" action={<Btn sm onClick={reload}>Retry</Btn>}>
+            <span className="mono-sm">{String(list.error.message || list.error)}</span>
+          </Banner>
+        )}
+
+        {form && (
+          <Card title={editing === "__new__" ? "New shipment" : "Edit " + form.shipment_number}
+                eyebrow="form"
+                right={<Btn sm icon kind="ghost" onClick={closeForm} aria-label="Close">{Icon.x}</Btn>}>
+            <div className="form-grid">
+              <div>
+                <label htmlFor="sh-num" className="label">Shipment number *</label>
+                <input id="sh-num" className="input mono" value={form.shipment_number}
+                       onChange={(ev) => setForm({ ...form, shipment_number: ev.target.value })} />
+              </div>
+              <div>
+                <label htmlFor="sh-mode" className="label">Mode</label>
+                <select id="sh-mode" className="select" value={form.mode} onChange={(ev) => setForm({ ...form, mode: ev.target.value })}>
+                  {SHIPMENT_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="sh-carr" className="label">Carrier</label>
+                <input id="sh-carr" className="input" value={form.carrier} onChange={(ev) => setForm({ ...form, carrier: ev.target.value })} />
+              </div>
+              <div>
+                <label htmlFor="sh-status" className="label">Status</label>
+                <select id="sh-status" className="select" value={form.status} onChange={(ev) => setForm({ ...form, status: ev.target.value })}>
+                  {SHIPMENT_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="sh-vessel" className="label">Vessel name</label>
+                <input id="sh-vessel" className="input mono" value={form.vessel_name} onChange={(ev) => setForm({ ...form, vessel_name: ev.target.value })} />
+              </div>
+              <div>
+                <label htmlFor="sh-flight" className="label">Flight / vehicle</label>
+                <input id="sh-flight" className="input mono" value={form.flight_number || form.vehicle_number || ""}
+                       onChange={(ev) => setForm({ ...form, flight_number: ev.target.value, vehicle_number: ev.target.value })} />
+              </div>
+              <div>
+                <label htmlFor="sh-pol" className="label">Port of loading</label>
+                <input id="sh-pol" className="input" value={form.port_of_loading} onChange={(ev) => setForm({ ...form, port_of_loading: ev.target.value })} />
+              </div>
+              <div>
+                <label htmlFor="sh-pod" className="label">Port of discharge</label>
+                <input id="sh-pod" className="input" value={form.port_of_discharge} onChange={(ev) => setForm({ ...form, port_of_discharge: ev.target.value })} />
+              </div>
+              <div>
+                <label htmlFor="sh-eta" className="label">ETA</label>
+                <input id="sh-eta" type="date" className="input mono" value={(form.eta || "").slice(0, 10)} onChange={(ev) => setForm({ ...form, eta: ev.target.value })} />
+              </div>
+              <div>
+                <label htmlFor="sh-order" className="label">Order id (optional)</label>
+                <input id="sh-order" className="input mono" placeholder="UUID" value={form.order_id || ""} onChange={(ev) => setForm({ ...form, order_id: ev.target.value })} />
+              </div>
+              <div className="span-2">
+                <label className="label">
+                  <input type="checkbox" checked={!!form.pod_received}
+                         onChange={(ev) => setForm({ ...form, pod_received: ev.target.checked, status: ev.target.checked ? "POD_RECEIVED" : form.status })} />
+                  {" "}POD received
+                </label>
+              </div>
+              <div className="span-2">
+                <label htmlFor="sh-notes" className="label">Notes</label>
+                <textarea id="sh-notes" className="input" rows={3} value={form.notes || ""} onChange={(ev) => setForm({ ...form, notes: ev.target.value })} />
+              </div>
+            </div>
+            <div className="row" style={{ gap: 8, marginTop: 12 }}>
+              <Btn kind="primary" disabled={busy} onClick={submit}>{busy ? "Saving…" : editing === "__new__" ? "Create" : "Save"}</Btn>
+              <Btn kind="ghost" onClick={closeForm}>Cancel</Btn>
+              <span style={{ flex: 1 }} />
+              {editing && editing !== "__new__" && (
+                <Btn kind="danger" disabled={busy} onClick={() => remove(editing, form.shipment_number)}>{Icon.x} Delete</Btn>
+              )}
+            </div>
+          </Card>
+        )}
+
+        <Card flush>
+          {list.loading ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading shipments…</div>
+          ) : filtered.length === 0 ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+              {list.rows.length === 0 ? "No shipments yet." :
+                <>No shipments in this view. <a onClick={() => setActive("all")} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>show all</a></>}
+            </div>
+          ) : (
+            <table className="tbl">
+              <thead><tr>
+                <th>Number</th>
+                <th>Mode</th>
+                <th>Carrier</th>
+                <th>Vessel · flight</th>
+                <th>Route</th>
+                <th>ETA</th>
+                <th>Status</th>
+                <th style={{ width: 200 }}></th>
+              </tr></thead>
+              <tbody>
+                {filtered.slice(0, 200).map((r) => (
+                  <tr key={r.id}>
+                    <td className="mono"><span className="pri">{r.shipment_number || (r.id ? r.id.slice(0, 12) : "—")}</span></td>
+                    <td><Chip k={r.mode === "air" ? "live" : r.mode === "courier" ? "plum" : "info"}>{r.mode || "—"}</Chip></td>
+                    <td className="mono-sm">{r.carrier || "—"}</td>
+                    <td className="mono-sm">{r.vessel_name || r.flight_number || r.vehicle_number || "—"}</td>
+                    <td className="mono-sm">{(r.port_of_loading || r.origin || "—") + " → " + (r.port_of_discharge || r.destination || "—")}</td>
+                    <td className="mono-sm">{(r.eta || "").slice(0, 10) || "—"}</td>
+                    <td><Chip k={r.status === "DELIVERED" || r.status === "POD_RECEIVED" ? "good" : r.status === "EXCEPTION" ? "bad" : r.status === "IN_TRANSIT" || r.status === "AT_PORT" ? "warn" : "ghost"}>{(r.status || "PLANNED").toLowerCase().replace(/_/g, " ")}</Chip></td>
+                    <td>
+                      <div className="row" style={{ gap: 4, justifyContent: "flex-end" }}>
+                        <Btn sm kind="ghost" onClick={() => window.location.hash = `#/shipments?id=${r.id}`} title="Edit">{Icon.eye}</Btn>
+                        {r.status !== "POD_RECEIVED" && (
+                          <Btn sm kind="ghost" onClick={() => togglePod(r)} title="Mark POD received" disabled={busy}>{Icon.check}</Btn>
+                        )}
+                        <Btn sm kind="ghost" onClick={() => remove(r.id, r.shipment_number)} disabled={busy} title="Delete">{Icon.x}</Btn>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      </div>
+    </>
+  );
+};
+
+window.Shipments = WiredShipmentsCRUD;
+
+
+// ===== screens-wired/wired-internal-sos-crud.jsx =====
+// ============================================================
+// ANVIL v3 — Internal SOs CRUD overlay
+// Adds per-type tab strip + create form on top of the read-only
+// list in wired-internal-sos.jsx.
+// ============================================================
+
+const ISO_TYPES = [
+  { id: "FOC_SUPPLY",           label: "FOC Supply",          k: "good"  },
+  { id: "WARRANTY_REPLACEMENT", label: "Warranty replacement", k: "info"  },
+  { id: "PRODUCT_TRIAL",        label: "Product trial",       k: "live"  },
+  { id: "EXPECTED_PO",          label: "Expected PO",         k: "warn"  },
+  { id: "INTERNAL_TRANSFER",    label: "Internal transfer",   k: "plum"  },
+];
+
+const ISO_FORM_BLANK = (type) => ({
+  iso_type: type || "FOC_SUPPLY",
+  reference: "",
+  customer_id: "",
+  customer_location_id: "",
+  notes: "",
+  status: "DRAFT",
+  expected_value_inr: "",
+  iso_lines: [{ part_no: "", description: "", qty: 1, uom: "Nos" }],
+});
+
+const isoReadParams = () => {
+  const hash = window.location.hash || "";
+  const q = hash.split("?")[1];
+  return new URLSearchParams(q || "");
+};
+
+const WiredInternalSosCRUD = () => {
+  const { useState: u, useEffect: e } = React;
+  const params = isoReadParams();
+  const editId = params.get("id");
+  const isNew = params.get("new") === "1";
+  const presetType = params.get("type") || "FOC_SUPPLY";
+
+  const [list, setList] = u({ rows: [], loading: true, error: null });
+  const [customers, setCustomers] = u([]);
+  const [active, setActive] = u("all");
+  const [editing, setEditing] = u(null);
+  const [form, setForm] = u(null);
+  const [busy, setBusy] = u(false);
+
+  const reload = () => {
+    setList((s) => ({ ...s, loading: true }));
+    Promise.resolve(window.ObaraBackend?.sales?.listInternalSos?.() || { rows: [] })
+      .then((r) => {
+        const rows = Array.isArray(r) ? r : (r?.internal_sales_orders || r?.rows || []);
+        setList({ rows, loading: false, error: null });
+      })
+      .catch((err) => setList({ rows: [], loading: false, error: err }));
+  };
+
+  e(reload, []);
+  e(() => {
+    Promise.resolve(window.ObaraBackend?.customers?.list?.() || [])
+      .then((r) => setCustomers(Array.isArray(r) ? r : (r?.rows || [])));
+  }, []);
+
+  e(() => {
+    if (isNew) {
+      setForm(ISO_FORM_BLANK(presetType));
+      setEditing("__new__");
+      return;
+    }
+    if (editId) {
+      const found = list.rows.find((r) => r.id === editId);
+      if (found) {
+        setForm({ ...ISO_FORM_BLANK(), ...found });
+        setEditing(editId);
+      }
+      return;
+    }
+    setForm(null);
+    setEditing(null);
+  }, [editId, isNew, presetType, list.rows.length]);
+
+  const closeForm = () => {
+    setForm(null);
+    setEditing(null);
+    window.location.hash = "#/internal";
+  };
+
+  const updateLine = (i, field, value) => {
+    const lines = [...(form.iso_lines || [])];
+    lines[i] = { ...lines[i], [field]: value };
+    setForm({ ...form, iso_lines: lines });
+  };
+
+  const addLine = () => {
+    setForm({ ...form, iso_lines: [...(form.iso_lines || []), { part_no: "", description: "", qty: 1, uom: "Nos" }] });
+  };
+
+  const removeLine = (i) => {
+    const lines = (form.iso_lines || []).filter((_, j) => j !== i);
+    setForm({ ...form, iso_lines: lines });
+  };
+
+  const submit = async () => {
+    if (!form) return;
+    if (!form.reference?.trim()) {
+      window.notifyError?.("Reference is required");
+      return;
+    }
+    if (!form.customer_id) {
+      window.notifyError?.("Customer is required");
+      return;
+    }
+    setBusy(true);
+    try {
+      const payload = { ...form };
+      if (payload.expected_value_inr) payload.expected_value_inr = Number(payload.expected_value_inr);
+      if (editing && editing !== "__new__") payload.id = editing;
+      const fn = (editing && editing !== "__new__")
+        ? window.ObaraBackend?.sales?.updateInternalSo
+        : window.ObaraBackend?.sales?.createInternalSo;
+      let result;
+      if (typeof fn === "function") {
+        result = await fn(payload);
+      } else {
+        const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
+        const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
+        const headers = { "Content-Type": "application/json" };
+        if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
+        if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+        const url = cfg.url.replace(/\/+$/, "") + "/api/sales/internal_so";
+        const resp = await fetch(url, {
+          method: editing && editing !== "__new__" ? "PATCH" : "POST",
+          headers,
+          body: JSON.stringify(payload),
+        });
+        if (!resp.ok) throw new Error("HTTP " + resp.status + ": " + (await resp.text()));
+        result = await resp.json();
+      }
+      window.notifySuccess?.(editing === "__new__" ? "Internal SO created" : "Internal SO updated", result?.iso?.reference || form.reference);
+      reload();
+      closeForm();
+    } catch (err) {
+      window.notifyError?.("Save failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (id, ref) => {
+    if (!window.confirm(`Delete internal SO ${ref || id}?`)) return;
+    setBusy(true);
+    try {
+      const fn = window.ObaraBackend?.sales?.deleteInternalSo;
+      if (typeof fn === "function") {
+        await fn(id);
+      } else {
+        const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
+        const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
+        const headers = {};
+        if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
+        if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+        const url = cfg.url.replace(/\/+$/, "") + "/api/sales/internal_so?id=" + encodeURIComponent(id);
+        await fetch(url, { method: "DELETE", headers });
+      }
+      window.notifySuccess?.("Internal SO deleted");
+      reload();
+      closeForm();
+    } catch (err) {
+      window.notifyError?.("Delete failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const tabs = [
+    { id: "all", label: "All", match: () => true },
+    ...ISO_TYPES.map((t) => ({ id: t.id, label: t.label, match: (r) => r.iso_type === t.id })),
+  ];
+  const matcher = tabs.find((t) => t.id === active)?.match || (() => true);
+  const filtered = list.rows.filter(matcher);
+  const counts = Object.fromEntries(tabs.map((t) => [t.id, list.rows.filter(t.match).length]));
+
+  const customerName = (id) => customers.find((c) => c.id === id)?.customer_name || (id || "—");
+
+  return (
+    <>
+      <WSTitle
+        eyebrow="Workflows · Internal SOs"
+        title="Internal sales orders"
+        meta={`${list.rows.length} total · ${counts.FOC_SUPPLY || 0} FOC · ${counts.WARRANTY_REPLACEMENT || 0} warranty · ${counts.PRODUCT_TRIAL || 0} trials`}
+        right={<>
+          <Btn icon kind="ghost" sm onClick={reload} title="Refresh">{Icon.cycle}</Btn>
+          <Btn sm kind="primary" onClick={() => window.location.hash = "#/internal?new=1&type=" + (active === "all" ? "FOC_SUPPLY" : active)}>{Icon.plus} New {active === "all" ? "" : ISO_TYPES.find(t => t.id === active)?.label || ""}</Btn>
+        </>}
+      />
+      <WSTabs tabs={tabs.map((t) => ({ id: t.id, label: t.label, count: counts[t.id] }))} active={active} onChange={setActive} />
+
+      <div className="ws-content">
+        {list.error && (
+          <Banner kind="bad" icon={Icon.alert} title="Could not load internal SOs">
+            <span className="mono-sm">{String(list.error.message || list.error)}</span>
+          </Banner>
+        )}
+
+        {form && (
+          <Card title={editing === "__new__" ? "New internal SO" : "Edit " + form.reference}
+                eyebrow={ISO_TYPES.find(t => t.id === form.iso_type)?.label || "form"}
+                right={<Btn sm icon kind="ghost" onClick={closeForm} aria-label="Close">{Icon.x}</Btn>}>
+            <div className="form-grid">
+              <div>
+                <label htmlFor="iso-type" className="label">Type *</label>
+                <select id="iso-type" className="select" value={form.iso_type} onChange={(ev) => setForm({ ...form, iso_type: ev.target.value })}>
+                  {ISO_TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="iso-ref" className="label">Reference *</label>
+                <input id="iso-ref" className="input mono" value={form.reference} onChange={(ev) => setForm({ ...form, reference: ev.target.value })} />
+              </div>
+              <div>
+                <label htmlFor="iso-customer" className="label">Customer *</label>
+                <select id="iso-customer" className="select" value={form.customer_id} onChange={(ev) => setForm({ ...form, customer_id: ev.target.value })}>
+                  <option value="">Pick customer…</option>
+                  {customers.map((c) => <option key={c.id} value={c.id}>{c.customer_name || c.customer_key}</option>)}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="iso-status" className="label">Status</label>
+                <select id="iso-status" className="select" value={form.status} onChange={(ev) => setForm({ ...form, status: ev.target.value })}>
+                  {["DRAFT", "ISSUED", "DELIVERED", "CLOSED", "CANCELLED"].map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="iso-value" className="label">Expected value INR (optional)</label>
+                <input id="iso-value" type="number" className="input mono" value={form.expected_value_inr || ""} onChange={(ev) => setForm({ ...form, expected_value_inr: ev.target.value })} />
+              </div>
+              <div className="span-2">
+                <label htmlFor="iso-notes" className="label">Notes</label>
+                <textarea id="iso-notes" className="input" rows={2} value={form.notes || ""} onChange={(ev) => setForm({ ...form, notes: ev.target.value })} />
+              </div>
+            </div>
+
+            <div className="divider" />
+
+            <div className="row" style={{ marginBottom: 8 }}>
+              <span className="h2">Lines</span>
+              <span style={{ flex: 1 }} />
+              <Btn sm kind="ghost" onClick={addLine}>{Icon.plus} Add line</Btn>
+            </div>
+
+            <table className="tbl">
+              <thead><tr>
+                <th>Part no</th>
+                <th>Description</th>
+                <th className="r">Qty</th>
+                <th>UoM</th>
+                <th></th>
+              </tr></thead>
+              <tbody>
+                {(form.iso_lines || []).map((ln, i) => (
+                  <tr key={i}>
+                    <td><input className="input mono" value={ln.part_no || ""} onChange={(ev) => updateLine(i, "part_no", ev.target.value)} aria-label={`Line ${i + 1} part number`} style={{ height: 26 }} /></td>
+                    <td><input className="input" value={ln.description || ""} onChange={(ev) => updateLine(i, "description", ev.target.value)} aria-label={`Line ${i + 1} description`} style={{ height: 26 }} /></td>
+                    <td className="r"><input type="number" className="input mono r" value={ln.qty || 0} onChange={(ev) => updateLine(i, "qty", Number(ev.target.value))} aria-label={`Line ${i + 1} qty`} style={{ height: 26, textAlign: "right" }} /></td>
+                    <td><input className="input mono" value={ln.uom || ""} onChange={(ev) => updateLine(i, "uom", ev.target.value)} aria-label={`Line ${i + 1} uom`} style={{ height: 26, width: 80 }} /></td>
+                    <td><Btn sm icon kind="ghost" onClick={() => removeLine(i)} aria-label="Remove line">{Icon.x}</Btn></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="row" style={{ gap: 8, marginTop: 12 }}>
+              <Btn kind="primary" disabled={busy} onClick={submit}>{busy ? "Saving…" : editing === "__new__" ? "Create" : "Save"}</Btn>
+              <Btn kind="ghost" onClick={closeForm}>Cancel</Btn>
+              <span style={{ flex: 1 }} />
+              {editing && editing !== "__new__" && (
+                <Btn kind="danger" disabled={busy} onClick={() => remove(editing, form.reference)}>{Icon.x} Delete</Btn>
+              )}
+            </div>
+          </Card>
+        )}
+
+        <Card flush>
+          {list.loading ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading…</div>
+          ) : filtered.length === 0 ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+              {list.rows.length === 0 ? "No internal SOs yet." :
+                <>No internal SOs in this view. <a onClick={() => setActive("all")} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>show all</a></>}
+            </div>
+          ) : (
+            <table className="tbl">
+              <thead><tr>
+                <th>Reference</th>
+                <th>Type</th>
+                <th>Customer</th>
+                <th className="r">Lines</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th></th>
+              </tr></thead>
+              <tbody>
+                {filtered.slice(0, 200).map((r) => {
+                  const tdef = ISO_TYPES.find((t) => t.id === r.iso_type);
+                  return (
+                    <tr key={r.id}>
+                      <td className="mono"><span className="pri">{r.reference}</span></td>
+                      <td><Chip k={tdef?.k || "ghost"}>{tdef?.label || r.iso_type}</Chip></td>
+                      <td className="mono-sm">{customerName(r.customer_id)}</td>
+                      <td className="r mono">{(r.iso_lines || []).length || "—"}</td>
+                      <td><Chip k={r.status === "CLOSED" || r.status === "DELIVERED" ? "good" : r.status === "CANCELLED" ? "bad" : "ghost"}>{(r.status || "DRAFT").toLowerCase()}</Chip></td>
+                      <td className="mono-sm">{ageLabel(r.created_at)}</td>
+                      <td>
+                        <div className="row" style={{ gap: 4, justifyContent: "flex-end" }}>
+                          <Btn sm kind="ghost" onClick={() => window.location.hash = `#/internal?id=${r.id}`}>{Icon.eye}</Btn>
+                          <Btn sm kind="ghost" onClick={() => remove(r.id, r.reference)} disabled={busy}>{Icon.x}</Btn>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      </div>
+    </>
+  );
+};
+
+window.InternalSOs = WiredInternalSosCRUD;
+
+
+// ===== screens-wired/wired-einvoice-crud.jsx =====
+// ============================================================
+// ANVIL v3 — e-Invoice CRUD overlay
+// Adds compose-draft form + Send to GSTN action on top of the
+// read-only queue in wired-einvoice-d.jsx.
+// ============================================================
+
+const EI_STATUSES = [
+  { id: "all",          label: "All",        match: () => true },
+  { id: "DRAFT",        label: "Draft",      match: (e) => e.status === "DRAFT" },
+  { id: "PENDING_GSTN", label: "Pending",    match: (e) => e.status === "PENDING_GSTN" },
+  { id: "GENERATED",    label: "Generated",  match: (e) => e.status === "GENERATED" },
+  { id: "CANCELLED",    label: "Cancelled",  match: (e) => e.status === "CANCELLED" },
+  { id: "REJECTED",     label: "Rejected",   match: (e) => e.status === "REJECTED" },
+];
+
+const EI_FORM_BLANK = () => ({
+  order_id: "",
+  invoice_number: "",
+  invoice_date: new Date().toISOString().slice(0, 10),
+  seller_gstin: "",
+  buyer_gstin: "",
+  total_value_inr: "",
+  notes: "",
+});
+
+const eiReadParams = () => {
+  const hash = window.location.hash || "";
+  const q = hash.split("?")[1];
+  return new URLSearchParams(q || "");
+};
+
+const eiFetch = async (path, opts = {}) => {
+  const cfg = (() => { try { return JSON.parse(localStorage.getItem("obara:backend_config") || "{}"); } catch (_) { return {}; } })();
+  const session = (() => { try { return JSON.parse(localStorage.getItem("obara:backend_session") || "null"); } catch (_) { return null; } })();
+  const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+  if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
+  if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+  const url = (cfg.url || "").replace(/\/+$/, "") + path;
+  const resp = await fetch(url, { ...opts, headers });
+  if (!resp.ok) throw new Error("HTTP " + resp.status + ": " + (await resp.text()));
+  return resp.json();
+};
+
+const WiredEinvoiceCRUD = () => {
+  const { useState: u, useEffect: e } = React;
+  const params = eiReadParams();
+  const editId = params.get("id");
+  const isNew = params.get("new") === "1";
+
+  const [list, setList] = u({ rows: [], loading: true, error: null });
+  const [orders, setOrders] = u([]);
+  const [active, setActive] = u("all");
+  const [editing, setEditing] = u(null);
+  const [form, setForm] = u(null);
+  const [busy, setBusy] = u(false);
+
+  const reload = () => {
+    setList((s) => ({ ...s, loading: true }));
+    Promise.resolve(window.ObaraBackend?.einvoice?.list?.() || eiFetch("/api/einvoice"))
+      .then((r) => {
+        const rows = Array.isArray(r) ? r : (r?.einvoices || r?.rows || []);
+        setList({ rows, loading: false, error: null });
+      })
+      .catch((err) => setList({ rows: [], loading: false, error: err }));
+  };
+
+  e(reload, []);
+  e(() => {
+    Promise.resolve(window.ObaraBackend?.orders?.list?.({ limit: 200 }) || [])
+      .then((r) => setOrders(Array.isArray(r) ? r : (r?.rows || [])));
+  }, []);
+
+  e(() => {
+    if (isNew) {
+      setForm(EI_FORM_BLANK());
+      setEditing("__new__");
+      return;
+    }
+    if (editId) {
+      const found = list.rows.find((r) => r.id === editId);
+      if (found) {
+        setForm({ ...EI_FORM_BLANK(), ...found });
+        setEditing(editId);
+      }
+      return;
+    }
+    setForm(null);
+    setEditing(null);
+  }, [editId, isNew, list.rows.length]);
+
+  const closeForm = () => {
+    setForm(null);
+    setEditing(null);
+    window.location.hash = "#/einvoice";
+  };
+
+  const submit = async () => {
+    if (!form) return;
+    if (!form.invoice_number?.trim()) {
+      window.notifyError?.("Invoice number is required");
+      return;
+    }
+    setBusy(true);
+    try {
+      const payload = { ...form };
+      if (payload.total_value_inr) payload.total_value_inr = Number(payload.total_value_inr);
+      if (editing && editing !== "__new__") payload.id = editing;
+      const result = await eiFetch("/api/einvoice", {
+        method: editing && editing !== "__new__" ? "PATCH" : "POST",
+        body: JSON.stringify(payload),
+      });
+      window.notifySuccess?.(editing === "__new__" ? "Draft saved" : "Invoice updated", form.invoice_number);
+      reload();
+      closeForm();
+    } catch (err) {
+      window.notifyError?.("Save failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendToGstn = async (id, num) => {
+    if (!window.RBAC?.canDo?.("einvoice.generate")) {
+      window.notifyError?.("Permission denied", "einvoice.generate role required");
+      return;
+    }
+    setBusy(true);
+    try {
+      // The backend expects PATCH with action=submit per einvoice/index.js convention.
+      const result = await eiFetch("/api/einvoice", {
+        method: "PATCH",
+        body: JSON.stringify({ id, action: "submit_to_gstn" }),
+      });
+      window.notifySuccess?.("Sent to GSTN", num + " · IRN " + (result?.irn || "pending"));
+      reload();
+    } catch (err) {
+      window.notifyError?.("Send to GSTN failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancel = async (id, num) => {
+    if (!window.confirm(`Cancel invoice ${num}? Within the 24h GSTN window only.`)) return;
+    setBusy(true);
+    try {
+      await eiFetch("/api/einvoice", {
+        method: "PATCH",
+        body: JSON.stringify({ id, action: "cancel", cancel_reason: "User-initiated" }),
+      });
+      window.notifySuccess?.("Cancellation requested", num);
+      reload();
+    } catch (err) {
+      window.notifyError?.("Cancel failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (id, num) => {
+    if (!window.confirm(`Delete draft invoice ${num}?`)) return;
+    setBusy(true);
+    try {
+      await eiFetch("/api/einvoice?id=" + encodeURIComponent(id), { method: "DELETE" });
+      window.notifySuccess?.("Deleted", num);
+      reload();
+      closeForm();
+    } catch (err) {
+      window.notifyError?.("Delete failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const matcher = EI_STATUSES.find((t) => t.id === active)?.match || (() => true);
+  const filtered = list.rows.filter(matcher);
+  const counts = Object.fromEntries(EI_STATUSES.map((t) => [t.id, list.rows.filter(t.match).length]));
+
+  // 24h cancel window helper
+  const within24h = (iso) => {
+    if (!iso) return false;
+    return Date.now() - new Date(iso).getTime() < 24 * 3600 * 1000;
+  };
+
+  const orderRef = (id) => orders.find((o) => o.id === id)?.po_number || orders.find((o) => o.id === id)?.quote_number || (id ? id.slice(0, 8) : "—");
+
+  return (
+    <>
+      <WSTitle
+        eyebrow="Finance · e-Invoice"
+        title="GSTN e-Invoices"
+        meta={`${list.rows.length} total · ${counts.PENDING_GSTN || 0} pending · ${counts.GENERATED || 0} generated`}
+        right={<>
+          <Btn icon kind="ghost" sm onClick={reload} title="Refresh">{Icon.cycle}</Btn>
+          <Btn sm kind="primary" onClick={() => window.location.hash = "#/einvoice?new=1"}>{Icon.plus} New invoice</Btn>
+        </>}
+      />
+      <WSTabs tabs={EI_STATUSES.map((t) => ({ id: t.id, label: t.label, count: counts[t.id] }))} active={active} onChange={setActive} />
+
+      <div className="ws-content">
+        {list.error && (
+          <Banner kind="bad" icon={Icon.alert} title="Could not load invoices">
+            <span className="mono-sm">{String(list.error.message || list.error)}</span>
+          </Banner>
+        )}
+
+        {form && (
+          <Card title={editing === "__new__" ? "New invoice draft" : "Edit invoice " + form.invoice_number}
+                eyebrow="form"
+                right={<Btn sm icon kind="ghost" onClick={closeForm} aria-label="Close">{Icon.x}</Btn>}>
+            <div className="form-grid">
+              <div>
+                <label htmlFor="ei-num" className="label">Invoice number *</label>
+                <input id="ei-num" className="input mono" value={form.invoice_number} onChange={(ev) => setForm({ ...form, invoice_number: ev.target.value })} />
+              </div>
+              <div>
+                <label htmlFor="ei-date" className="label">Invoice date</label>
+                <input id="ei-date" type="date" className="input mono" value={form.invoice_date} onChange={(ev) => setForm({ ...form, invoice_date: ev.target.value })} />
+              </div>
+              <div className="span-2">
+                <label htmlFor="ei-order" className="label">Order *</label>
+                <select id="ei-order" className="select" value={form.order_id} onChange={(ev) => setForm({ ...form, order_id: ev.target.value })}>
+                  <option value="">Pick order…</option>
+                  {orders.filter((o) => o.status === "APPROVED" || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED").map((o) => (
+                    <option key={o.id} value={o.id}>{o.po_number || o.quote_number || o.id.slice(0, 8)} · {o.customer?.customer_name || "—"}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="ei-seller" className="label">Seller GSTIN</label>
+                <input id="ei-seller" className="input mono" value={form.seller_gstin} onChange={(ev) => setForm({ ...form, seller_gstin: ev.target.value })} placeholder="15-char GSTIN" />
+              </div>
+              <div>
+                <label htmlFor="ei-buyer" className="label">Buyer GSTIN</label>
+                <input id="ei-buyer" className="input mono" value={form.buyer_gstin} onChange={(ev) => setForm({ ...form, buyer_gstin: ev.target.value })} placeholder="15-char GSTIN" />
+              </div>
+              <div>
+                <label htmlFor="ei-value" className="label">Total value INR</label>
+                <input id="ei-value" type="number" className="input mono" value={form.total_value_inr || ""} onChange={(ev) => setForm({ ...form, total_value_inr: ev.target.value })} />
+              </div>
+              <div className="span-2">
+                <label htmlFor="ei-notes" className="label">Notes</label>
+                <textarea id="ei-notes" className="input" rows={2} value={form.notes || ""} onChange={(ev) => setForm({ ...form, notes: ev.target.value })} />
+              </div>
+            </div>
+            <div className="row" style={{ gap: 8, marginTop: 12 }}>
+              <Btn kind="primary" disabled={busy} onClick={submit}>{busy ? "Saving…" : editing === "__new__" ? "Save draft" : "Save"}</Btn>
+              {editing && editing !== "__new__" && form.status === "DRAFT" && (
+                <Btn kind="live" disabled={busy} onClick={() => sendToGstn(editing, form.invoice_number)}>{Icon.send} Send to GSTN</Btn>
+              )}
+              <Btn kind="ghost" onClick={closeForm}>Cancel</Btn>
+              <span style={{ flex: 1 }} />
+              {editing && editing !== "__new__" && (
+                <Btn kind="danger" disabled={busy} onClick={() => remove(editing, form.invoice_number)}>{Icon.x} Delete</Btn>
+              )}
+            </div>
+            {editing && editing !== "__new__" && form.status === "GENERATED" && (
+              <div className="row" style={{ marginTop: 12, gap: 8 }}>
+                <Chip k="good">IRN {form.irn || "(present)"}</Chip>
+                {within24h(form.generated_at) && (
+                  <Btn sm kind="danger" disabled={busy} onClick={() => cancel(editing, form.invoice_number)}>{Icon.x} Cancel within 24h</Btn>
+                )}
+              </div>
+            )}
+          </Card>
+        )}
+
+        <Card flush>
+          {list.loading ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading…</div>
+          ) : filtered.length === 0 ? (
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+              {list.rows.length === 0 ? "No invoices yet." :
+                <>No invoices in this view. <a onClick={() => setActive("all")} style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>show all</a></>}
+            </div>
+          ) : (
+            <table className="tbl">
+              <thead><tr>
+                <th>Invoice #</th>
+                <th>IRN</th>
+                <th>Order</th>
+                <th>Buyer GSTIN</th>
+                <th className="r">Value</th>
+                <th>Status</th>
+                <th>Date</th>
+                <th></th>
+              </tr></thead>
+              <tbody>
+                {filtered.slice(0, 200).map((r) => {
+                  const k = r.status === "GENERATED" ? "good" : r.status === "REJECTED" ? "bad" : r.status === "CANCELLED" ? "ghost" : r.status === "PENDING_GSTN" ? "warn" : "info";
+                  const inWindow = r.status === "GENERATED" && within24h(r.generated_at || r.created_at);
+                  return (
+                    <tr key={r.id}>
+                      <td className="mono"><span className="pri">{r.invoice_number}</span></td>
+                      <td className="mono-sm">{r.irn || "—"}</td>
+                      <td className="mono-sm">{orderRef(r.order_id)}</td>
+                      <td className="mono-sm">{r.buyer_gstin || "—"}</td>
+                      <td className="r mono">{r.total_value_inr ? "₹ " + Number(r.total_value_inr).toLocaleString("en-IN") : "—"}</td>
+                      <td><Chip k={k}>{(r.status || "—").toLowerCase().replace(/_/g, " ")}</Chip></td>
+                      <td className="mono-sm">{(r.invoice_date || "").slice(0, 10) || "—"}</td>
+                      <td>
+                        <div className="row" style={{ gap: 4, justifyContent: "flex-end" }}>
+                          <Btn sm kind="ghost" onClick={() => window.location.hash = `#/einvoice?id=${r.id}`}>{Icon.eye}</Btn>
+                          {r.status === "DRAFT" && (
+                            <Btn sm kind="live" onClick={() => sendToGstn(r.id, r.invoice_number)} disabled={busy} title="Send to GSTN">{Icon.send}</Btn>
+                          )}
+                          {inWindow && (
+                            <Btn sm kind="ghost" onClick={() => cancel(r.id, r.invoice_number)} disabled={busy} title="Cancel within 24h">{Icon.x}</Btn>
+                          )}
+                          {r.status === "DRAFT" && (
+                            <Btn sm kind="ghost" onClick={() => remove(r.id, r.invoice_number)} disabled={busy}>{Icon.x}</Btn>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      </div>
+    </>
+  );
+};
+
+window.EInvoice = WiredEinvoiceCRUD;
 </script>
   <!-- Shell loads after screens so its exports take precedence on collisions -->
   <script type="text/babel" data-presets="env,react">// ============================================================

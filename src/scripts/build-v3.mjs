@@ -108,6 +108,10 @@ const SCREEN_FILES = [
   "screens-wired/wired-so-history.jsx",
   "screens-wired/wired-equipment-hierarchy.jsx",
   "screens-wired/wired-jbm-importer.jsx",
+  // Phase 7 batch 3 (CRUD completeness overlays)
+  "screens-wired/wired-shipments-crud.jsx",       // overrides wired-shipments-b.jsx
+  "screens-wired/wired-internal-sos-crud.jsx",    // overrides wired-internal-sos.jsx
+  "screens-wired/wired-einvoice-crud.jsx",        // overrides wired-einvoice-d.jsx
 ];
 
 const tpl = read(path.join(V3, "index.html.tpl"));

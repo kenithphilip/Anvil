@@ -3,6 +3,7 @@ import { ageLabel, fmtINRShort, stageOf, useFetch } from "../lib/helpers.js";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives.jsx";
 import { Icon } from "../lib/icons.jsx";
 import { ObaraBackend } from "../lib/api.js";
+import { tallyOrderRows, shortHash } from "../lib/tally.js";
 
 // ============================================================
 // ANVIL v3 — wired Tally · reconciliation

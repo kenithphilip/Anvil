@@ -4,6 +4,7 @@ import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives
 import { Icon } from "../lib/icons.jsx";
 import { ObaraBackend } from "../lib/api.js";
 import { RBAC } from "../lib/rbac.js";
+import { tallyOrderRows, shortHash } from "../lib/tally.js";
 
 // ============================================================
 // ANVIL v3 — wired Tally · push queue

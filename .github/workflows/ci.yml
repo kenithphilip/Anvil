@@ -15,8 +15,23 @@ jobs:
         with:
           node-version-file: ".nvmrc"
           cache: "npm"
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
       - run: npm run check
       - run: npm run build
       - run: npm run verify
       - run: test -f public/index.html
+      - run: test -f public/v3.html
+      - name: assert v3 wired exports landed
+        run: |
+          for name in HomeEngineer SOList Inbox SOIntake SOWorkspace Approvals \
+                      InternalSOs Leads Opportunities Projects Shipments \
+                      SourcePOs SparesMatrix ServiceVisits AMCSchedule CARReports \
+                      TallyMasters TallyPush TallyReconcile EInvoice CostMargin \
+                      Customers Items MasterDataGraph Forecasts EvalSuites \
+                      ProfileStudio Findings Duplicates Aliases \
+                      Communications EmailTriage Security AuditLog AdminCenter \
+                      CmdK ThreadDrawer; do
+            grep -q "^window\.$name *= *Wired" public/v3.html \
+              || (echo "missing wired override: $name"; exit 1)
+          done
+          echo "all 37 wired overrides present"

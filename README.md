@@ -33,7 +33,7 @@ Read in this order:
 8. **[docs/API_REFERENCE.md](docs/API_REFERENCE.md)**: every Vercel
    endpoint with method, body, response, side effects.
 9. **[docs/SCHEMA_REFERENCE.md](docs/SCHEMA_REFERENCE.md)**: every table,
-   column, enum, RLS policy across the 8 migrations.
+   column, enum, RLS policy across the 10 migrations.
 10. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: high-level system
     design and request flow.
 11. **[docs/CORPUS_MAPPING.md](docs/CORPUS_MAPPING.md)**: how the data
@@ -72,7 +72,8 @@ src/
   legacy/                  obara-ops-v11.1.html, so-agent-pocv4.jsx (build inputs)
 
 supabase/
-  migrations/              8 SQL files (001 init through 008 e-invoice/forecast/AMC)
+  migrations/              10 SQL files (001 init through 010 corpus round-2 seeds)
+  seed.sql                 Standalone consolidated 007+010 for SQL editor
   README.md                Migration overview
 
 docs/                      All documentation listed above
@@ -106,11 +107,16 @@ vercel dev
 ## Status
 
 - 80 api files, all syntax-clean.
-- 8 migrations: 62 tables, 13 enums, 100+ indexes, RLS on every business
+- 10 migrations: 72 tables, 13 enums, 177 indexes, RLS on every business
   table.
 - 35-modal unified app built from `src/legacy/` plus `src/client/`.
 - 71-item feature audit passes 71 of 71 (50 trust + 12 corpus + 9 closing).
 - Two daily crons: FX rates (04:00 UTC) and AMC visit auto-generation
   (05:00 UTC).
-- Real customer master seeded for MG Motor (with Halol + Haryana GSTINs),
-  SRTX, Tata Motors, ABC Motors. 35 sample item master rows.
+- Real customer master seeded for 6 customers: MG Motor (Halol + Haryana
+  GSTINs), SRTX, Tata Motors, ABC Motors, JBM Auto Plant 1, Renault Nissan
+  India. 131 sample item master rows. MG master quote OIQTLC-240123 with all
+  11 release POs (5100002515 to 5100002595). 6 customer-format fingerprints
+  including 4 ABC mode variants (SPARES, MODIFICATION, FOR, HSS). 11 expense
+  rate cards. 4 approval thresholds. 15 JBM Plant-1 equipment rows + 54
+  auto-linked installed parts. SRTX engineering BOM with FANUC motor model.

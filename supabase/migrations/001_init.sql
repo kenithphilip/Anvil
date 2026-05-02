@@ -392,8 +392,11 @@ alter table extraction_cache enable row level security;
 do $$
 declare
   t text;
+  -- order_documents is intentionally excluded: it's a join table with no
+  -- tenant_id of its own. RLS for order_documents is enforced transitively
+  -- through the parent orders row.
   business_tables text[] := array[
-    'customers','customer_format_profiles','documents','orders','order_documents',
+    'customers','customer_format_profiles','documents','orders',
     'source_pos','source_po_events','evidence','validation_findings','part_aliases',
     'tally_masters','tally_voucher_records','uom_aliases','audit_events','processing_events',
     'extraction_cache'

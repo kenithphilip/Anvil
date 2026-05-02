@@ -15,9 +15,10 @@ declare
   tata_customer_id uuid;
   abc_customer_id uuid;
 begin
-  -- Default tenant (idempotent)
-  insert into tenants (id, name)
-  values (default_tenant, 'Obara India (default)')
+  -- Default tenant (idempotent). Migration 001 already creates this row,
+  -- but we double-up here so 007 can run standalone in a fresh DB.
+  insert into tenants (id, slug, display_name)
+  values (default_tenant, 'default', 'Obara India (default)')
   on conflict (id) do nothing;
 
   -- ── Customers ─────────────────────────────────────────────────────────────

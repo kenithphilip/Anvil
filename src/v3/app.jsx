@@ -158,16 +158,55 @@ const App = () => {
 
   // First-load: if backend isn't configured, route to the sign-in screen
   // so the user has an obvious next step. Skip when already on /connect.
+  // We remember the intended route in localStorage so post-sign-in we
+  // can drop the user back where they were trying to go (instead of
+  // leaving them on /connect after a successful auth).
   useEffect(() => {
     const ready = !!(window.ObaraBackend?.isReady?.());
     const cfg = window.ObaraBackend?.getConfig?.() || {};
     const hasUrl = !!cfg.url;
     if (!ready && !hasUrl && route !== "connect") {
+      try {
+        // Save where the user was trying to go, so /connect can return them.
+        const hash = window.location.hash || "#/home";
+        localStorage.setItem("obara:v3_intended_route", hash);
+      } catch (_) {}
       onRoute("connect");
     }
     // run once after mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Cross-tab session detection: when auth/callback.html in another tab
+  // writes obara:backend_session, this tab picks it up and refreshes its
+  // view of "is signed in". Combined with the post-sign-in nav in
+  // BackendConnect, the user gets a coherent flow even when the magic
+  // link opens in a new tab.
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== "obara:backend_session") return;
+      try {
+        const next = e.newValue ? JSON.parse(e.newValue) : null;
+        if (window.ObaraBackend?.setSession) window.ObaraBackend.setSession(next);
+        if (next?.access_token) {
+          window.notifySuccess?.("Signed in", "Session received from another tab.");
+          // Route to last intended route (if any) or home.
+          let target = "home";
+          try {
+            const stored = localStorage.getItem("obara:v3_intended_route");
+            if (stored) {
+              const id = stored.replace(/^#\/?/, "").split("?")[0];
+              if (ROUTES[id] && id !== "connect") target = id;
+              localStorage.removeItem("obara:v3_intended_route");
+            }
+          } catch (_) {}
+          onRoute(target);
+        }
+      } catch (_) {}
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [onRoute]);
 
   // Cmd+K + Thread overlays
   const [cmdkOpen, setCmdk] = useState(false);

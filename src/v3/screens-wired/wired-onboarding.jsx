@@ -1,7 +1,14 @@
 // ============================================================
 // ANVIL v3 — Onboarding (first-run setup checklist)
 // Migrates the legacy showOnboardingFlow.
-// Reachable at #/onboarding. Auto-shows once for new visitors.
+//
+// Reachable at #/onboarding. We DO NOT auto-show the screen anywhere
+// (the auto-redirect on first-load is /connect, never /onboarding).
+// The user reaches this screen via Cmd+K or after completing /connect.
+// Once obara:v3_onboarded is set, we still let the user revisit the
+// checklist for re-entry, but each step's done-status is auto-detected
+// from real backend data so completed steps render as "complete" and
+// don't nag the user.
 // ============================================================
 
 const WiredOnboarding = () => {

@@ -16128,6 +16128,20 @@ const WiredBackendConnect = () => {
     return () => window.removeEventListener("storage", onChange);
   }, []);
 
+  // Navigate the user back to where they were trying to go before the
+  // /connect redirect kicked in. Falls back to /home for first-run.
+  const goToIntendedOrHome = () => {
+    let target = "#/home";
+    try {
+      const stored = localStorage.getItem("obara:v3_intended_route");
+      if (stored && stored !== "#/connect" && stored !== "#/" && stored !== "#") {
+        target = stored;
+      }
+      localStorage.removeItem("obara:v3_intended_route");
+    } catch (_) {}
+    window.location.hash = target;
+  };
+
   const saveAndTest = async () => {
     try {
       window.ObaraBackend?.setConfig?.({ url: url.trim().replace(/\/+$/, ""), tenantId: tenantId.trim() || null });
@@ -16138,11 +16152,16 @@ const WiredBackendConnect = () => {
         try { localStorage.setItem("obara:auth_profile", JSON.stringify(verified)); } catch (_) {}
         setStatus({ kind: "good", text: "Signed in as " + (verified.user?.email || verified.user?.id || "user") });
         setSignedIn(true);
+        window.notifySuccess?.("Signed in", verified.user?.email || verified.user?.id || "Welcome.");
+        // Brief pause so the user sees the success state, then route.
+        setTimeout(goToIntendedOrHome, 600);
       } else {
         setStatus({ kind: "good", text: "Saved. Backend at " + url });
+        window.notifySuccess?.("Backend saved", url.trim());
       }
     } catch (err) {
       setStatus({ kind: "bad", text: "Failed: " + (err?.message || String(err)) });
+      window.notifyError?.("Sign-in failed", err?.message || String(err));
     }
   };
 
@@ -16206,10 +16225,16 @@ const WiredBackendConnect = () => {
           </div>
         </Card>
 
-        <Card title="Sign in" eyebrow="step 2 · pick one">
+        <Card title={signedIn ? "Sign in (already authenticated)" : "Sign in"}
+              eyebrow={signedIn ? "step 2 · re-auth or stay signed in" : "step 2 · pick one"}>
           <div className="row" style={{ gap: 6, marginBottom: 12 }}>
             <Btn sm kind={tab === "magic" ? "primary" : "ghost"} onClick={() => setTab("magic")}>Magic link</Btn>
             <Btn sm kind={tab === "dev" ? "primary" : "ghost"} onClick={() => setTab("dev")}>Dev token</Btn>
+            {signedIn && (
+              <span style={{ marginLeft: "auto" }}>
+                <Btn sm kind="ghost" onClick={goToIntendedOrHome}>{Icon.arrowR} Continue to app</Btn>
+              </span>
+            )}
           </div>
 
           {tab === "magic" && (
@@ -16391,7 +16416,14 @@ window.ToastStack = ToastStack;
 // ============================================================
 // ANVIL v3 — Onboarding (first-run setup checklist)
 // Migrates the legacy showOnboardingFlow.
-// Reachable at #/onboarding. Auto-shows once for new visitors.
+//
+// Reachable at #/onboarding. We DO NOT auto-show the screen anywhere
+// (the auto-redirect on first-load is /connect, never /onboarding).
+// The user reaches this screen via Cmd+K or after completing /connect.
+// Once obara:v3_onboarded is set, we still let the user revisit the
+// checklist for re-entry, but each step's done-status is auto-detected
+// from real backend data so completed steps render as "complete" and
+// don't nag the user.
 // ============================================================
 
 const WiredOnboarding = () => {
@@ -17048,16 +17080,55 @@ const App = () => {
 
   // First-load: if backend isn't configured, route to the sign-in screen
   // so the user has an obvious next step. Skip when already on /connect.
+  // We remember the intended route in localStorage so post-sign-in we
+  // can drop the user back where they were trying to go (instead of
+  // leaving them on /connect after a successful auth).
   useEffect(() => {
     const ready = !!(window.ObaraBackend?.isReady?.());
     const cfg = window.ObaraBackend?.getConfig?.() || {};
     const hasUrl = !!cfg.url;
     if (!ready && !hasUrl && route !== "connect") {
+      try {
+        // Save where the user was trying to go, so /connect can return them.
+        const hash = window.location.hash || "#/home";
+        localStorage.setItem("obara:v3_intended_route", hash);
+      } catch (_) {}
       onRoute("connect");
     }
     // run once after mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Cross-tab session detection: when auth/callback.html in another tab
+  // writes obara:backend_session, this tab picks it up and refreshes its
+  // view of "is signed in". Combined with the post-sign-in nav in
+  // BackendConnect, the user gets a coherent flow even when the magic
+  // link opens in a new tab.
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== "obara:backend_session") return;
+      try {
+        const next = e.newValue ? JSON.parse(e.newValue) : null;
+        if (window.ObaraBackend?.setSession) window.ObaraBackend.setSession(next);
+        if (next?.access_token) {
+          window.notifySuccess?.("Signed in", "Session received from another tab.");
+          // Route to last intended route (if any) or home.
+          let target = "home";
+          try {
+            const stored = localStorage.getItem("obara:v3_intended_route");
+            if (stored) {
+              const id = stored.replace(/^#\/?/, "").split("?")[0];
+              if (ROUTES[id] && id !== "connect") target = id;
+              localStorage.removeItem("obara:v3_intended_route");
+            }
+          } catch (_) {}
+          onRoute(target);
+        }
+      } catch (_) {}
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [onRoute]);
 
   // Cmd+K + Thread overlays
   const [cmdkOpen, setCmdk] = useState(false);

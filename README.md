@@ -104,6 +104,25 @@ docs/                      All documentation listed above
 .github/workflows/ci.yml   CI: check + build + verify on PRs
 ```
 
+## One-click deploy
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fkenithphilip%2FAnvil&env=SUPABASE_URL,SUPABASE_ANON_KEY,SUPABASE_SERVICE_ROLE_KEY,ANTHROPIC_API_KEY,MAGIC_LINK_REDIRECT_URL,DEFAULT_TENANT_ID,ALLOW_ANONYMOUS_TENANT,ALLOWED_ORIGINS&envDescription=Anvil+needs+Supabase+%2B+Anthropic+credentials.+See+the+linked+docs+for+each+variable.&envLink=https%3A%2F%2Fgithub.com%2Fkenithphilip%2FAnvil%2Fblob%2Fmain%2Fdocs%2FENV_VARS.md&project-name=anvil&repository-name=anvil)
+
+The button lands you on Vercel's import page with the required env vars
+pre-filled. After deploy:
+
+1. Run `supabase/setup.sh` against your Supabase project (see
+   [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md)).
+2. Add `https://YOUR-DEPLOY.vercel.app/auth/callback.html` to your
+   Supabase Auth redirect allowlist.
+3. Sign in via magic link. Add yourself to `tenant_members` with role
+   admin (one SQL statement).
+
+Optional integrations (Mistral OCR, ClamAV, Tally bridge, GSTN e-Invoice,
+inbound email, comms provider) are documented in
+[docs/INTEGRATIONS.md](docs/INTEGRATIONS.md). Add their env vars to your
+Vercel project later. The app degrades gracefully without them.
+
 ## Quick start (local)
 
 ```sh
@@ -111,8 +130,8 @@ nvm use
 npm install
 cp .env.example .env.local && edit .env.local
 npm run check                   # syntax-check every api file + bridge client
-npm run build                   # writes public/index.html
-npm run verify                  # parses every script block
+npm run build                   # writes public/index.html and public/v3.html
+npm run verify                  # parses every script block + runs v3 contract test
 ```
 
 Open `public/index.html` directly, or:

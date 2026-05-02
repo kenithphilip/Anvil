@@ -23,6 +23,20 @@ const WiredBackendConnect = () => {
     return () => window.removeEventListener("storage", onChange);
   }, []);
 
+  // Navigate the user back to where they were trying to go before the
+  // /connect redirect kicked in. Falls back to /home for first-run.
+  const goToIntendedOrHome = () => {
+    let target = "#/home";
+    try {
+      const stored = localStorage.getItem("obara:v3_intended_route");
+      if (stored && stored !== "#/connect" && stored !== "#/" && stored !== "#") {
+        target = stored;
+      }
+      localStorage.removeItem("obara:v3_intended_route");
+    } catch (_) {}
+    window.location.hash = target;
+  };
+
   const saveAndTest = async () => {
     try {
       window.ObaraBackend?.setConfig?.({ url: url.trim().replace(/\/+$/, ""), tenantId: tenantId.trim() || null });
@@ -33,11 +47,16 @@ const WiredBackendConnect = () => {
         try { localStorage.setItem("obara:auth_profile", JSON.stringify(verified)); } catch (_) {}
         setStatus({ kind: "good", text: "Signed in as " + (verified.user?.email || verified.user?.id || "user") });
         setSignedIn(true);
+        window.notifySuccess?.("Signed in", verified.user?.email || verified.user?.id || "Welcome.");
+        // Brief pause so the user sees the success state, then route.
+        setTimeout(goToIntendedOrHome, 600);
       } else {
         setStatus({ kind: "good", text: "Saved. Backend at " + url });
+        window.notifySuccess?.("Backend saved", url.trim());
       }
     } catch (err) {
       setStatus({ kind: "bad", text: "Failed: " + (err?.message || String(err)) });
+      window.notifyError?.("Sign-in failed", err?.message || String(err));
     }
   };
 
@@ -101,10 +120,16 @@ const WiredBackendConnect = () => {
           </div>
         </Card>
 
-        <Card title="Sign in" eyebrow="step 2 · pick one">
+        <Card title={signedIn ? "Sign in (already authenticated)" : "Sign in"}
+              eyebrow={signedIn ? "step 2 · re-auth or stay signed in" : "step 2 · pick one"}>
           <div className="row" style={{ gap: 6, marginBottom: 12 }}>
             <Btn sm kind={tab === "magic" ? "primary" : "ghost"} onClick={() => setTab("magic")}>Magic link</Btn>
             <Btn sm kind={tab === "dev" ? "primary" : "ghost"} onClick={() => setTab("dev")}>Dev token</Btn>
+            {signedIn && (
+              <span style={{ marginLeft: "auto" }}>
+                <Btn sm kind="ghost" onClick={goToIntendedOrHome}>{Icon.arrowR} Continue to app</Btn>
+              </span>
+            )}
           </div>
 
           {tab === "magic" && (

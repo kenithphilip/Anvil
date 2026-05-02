@@ -51,7 +51,7 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     // vite.config sets root to src/v3-app; vitest scans relative to root.
-    include: ["**/*.{test,spec}.{js,jsx}"],
-    setupFiles: ["./test-setup.js"],
+    include: ["**/*.{test,spec}.{js,jsx,ts,tsx}"],
+    setupFiles: ["./test-setup.ts"],
   },
 });

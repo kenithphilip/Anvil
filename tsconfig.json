@@ -1,0 +1,45 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["node", "vitest/globals"],
+    "baseUrl": ".",
+    "paths": {
+      "@v3/*": ["src/v3-app/*"],
+      "@v3-lib/*": ["src/v3-app/lib/*"],
+      "@v3-screens/*": ["src/v3-app/screens/*"]
+    }
+  },
+  "include": [
+    "src/v3-app/**/*",
+    "vite.config.js"
+  ],
+  "exclude": [
+    "node_modules",
+    "public",
+    "dist",
+    "src/v3",
+    "src/legacy",
+    "src/scripts",
+    "src/client",
+    "api"
+  ]
+}

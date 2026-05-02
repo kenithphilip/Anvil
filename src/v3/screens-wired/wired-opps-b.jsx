@@ -4,26 +4,35 @@
 // Reads via ObaraBackend.sales.listOpportunities (api/sales/opportunities GET)
 // ============================================================
 
+// Stage enum matches the opportunity_stage Postgres enum in
+// supabase/migrations/006_corpus_alignment.sql. Weights drive the
+// pipeline KPI so they reflect the canonical stage progression.
 const OPP_STAGES = [
-  { id: "DISCOVERY",     t: "Discovery",       w: 0.10 },
-  { id: "DEMO",          t: "Demo",            w: 0.25 },
-  { id: "POC",           t: "PoC",             w: 0.40 },
-  { id: "QUOTE",         t: "Quote",           w: 0.55 },
-  { id: "NEGOTIATION",   t: "Negotiation",     w: 0.70 },
-  { id: "VERBAL",        t: "Verbal",          w: 0.85 },
-  { id: "LETTER_OF_INTENT", t: "Letter of intent", w: 0.92 },
-  { id: "PO_RECEIVED",   t: "PO received",     w: 0.97 },
-  { id: "WON",           t: "Won",             w: 1.00 },
-  { id: "LOST",          t: "Lost",            w: 0 },
-  { id: "STALLED",       t: "Stalled",         w: 0 },
+  { id: "QUALIFICATION",        t: "Qualification",         w: 0.05 },
+  { id: "STRATEGY_CHECK",       t: "Strategy check",        w: 0.10 },
+  { id: "NEEDS_ANALYSIS",       t: "Needs analysis",        w: 0.20 },
+  { id: "FOLLOW_UP",            t: "Follow-up",             w: 0.30 },
+  { id: "RFQ",                  t: "RFQ",                   w: 0.45 },
+  { id: "INTERNAL_PROPOSAL",    t: "Internal proposal",     w: 0.55 },
+  { id: "PROPOSAL_PRICE_QUOTE", t: "Proposal + price quote", w: 0.70 },
+  { id: "NEGOTIATION_REVIEW",   t: "Negotiation review",    w: 0.85 },
+  { id: "CLOSE_WON",            t: "Closed won",            w: 1.00 },
+  { id: "CLOSE_LOST",           t: "Closed lost",           w: 0 },
+  { id: "REGRETTED",            t: "Regretted",             w: 0 },
 ];
 
+const OPP_STAGE_LABEL = (stage) => {
+  const found = OPP_STAGES.find((s) => s.id === stage);
+  return found ? found.t.toLowerCase() : (stage || "").toLowerCase().replace(/_/g, " ");
+};
+
 const OPP_STAGE_CHIP = (stage) => {
-  if (stage === "WON") return { k: "good", label: "won" };
-  if (stage === "LOST") return { k: "bad", label: "lost" };
-  if (stage === "STALLED") return { k: "warn", label: "stalled" };
-  if (stage === "NEGOTIATION" || stage === "VERBAL") return { k: "live", label: (stage || "").toLowerCase() };
-  return { k: "info", label: (stage || "").toLowerCase() };
+  if (stage === "CLOSE_WON") return { k: "good", label: OPP_STAGE_LABEL(stage) };
+  if (stage === "CLOSE_LOST") return { k: "bad", label: OPP_STAGE_LABEL(stage) };
+  if (stage === "REGRETTED") return { k: "warn", label: OPP_STAGE_LABEL(stage) };
+  if (stage === "NEGOTIATION_REVIEW") return { k: "live", label: OPP_STAGE_LABEL(stage) };
+  if (stage === "PROPOSAL_PRICE_QUOTE") return { k: "warn", label: OPP_STAGE_LABEL(stage) };
+  return { k: "info", label: OPP_STAGE_LABEL(stage) };
 };
 
 const oppRows = (resp) => {

@@ -10101,26 +10101,35 @@ window.Leads = WiredLeads;
 // Reads via ObaraBackend.sales.listOpportunities (api/sales/opportunities GET)
 // ============================================================
 
+// Stage enum matches the opportunity_stage Postgres enum in
+// supabase/migrations/006_corpus_alignment.sql. Weights drive the
+// pipeline KPI so they reflect the canonical stage progression.
 const OPP_STAGES = [
-  { id: "DISCOVERY",     t: "Discovery",       w: 0.10 },
-  { id: "DEMO",          t: "Demo",            w: 0.25 },
-  { id: "POC",           t: "PoC",             w: 0.40 },
-  { id: "QUOTE",         t: "Quote",           w: 0.55 },
-  { id: "NEGOTIATION",   t: "Negotiation",     w: 0.70 },
-  { id: "VERBAL",        t: "Verbal",          w: 0.85 },
-  { id: "LETTER_OF_INTENT", t: "Letter of intent", w: 0.92 },
-  { id: "PO_RECEIVED",   t: "PO received",     w: 0.97 },
-  { id: "WON",           t: "Won",             w: 1.00 },
-  { id: "LOST",          t: "Lost",            w: 0 },
-  { id: "STALLED",       t: "Stalled",         w: 0 },
+  { id: "QUALIFICATION",        t: "Qualification",         w: 0.05 },
+  { id: "STRATEGY_CHECK",       t: "Strategy check",        w: 0.10 },
+  { id: "NEEDS_ANALYSIS",       t: "Needs analysis",        w: 0.20 },
+  { id: "FOLLOW_UP",            t: "Follow-up",             w: 0.30 },
+  { id: "RFQ",                  t: "RFQ",                   w: 0.45 },
+  { id: "INTERNAL_PROPOSAL",    t: "Internal proposal",     w: 0.55 },
+  { id: "PROPOSAL_PRICE_QUOTE", t: "Proposal + price quote", w: 0.70 },
+  { id: "NEGOTIATION_REVIEW",   t: "Negotiation review",    w: 0.85 },
+  { id: "CLOSE_WON",            t: "Closed won",            w: 1.00 },
+  { id: "CLOSE_LOST",           t: "Closed lost",           w: 0 },
+  { id: "REGRETTED",            t: "Regretted",             w: 0 },
 ];
 
+const OPP_STAGE_LABEL = (stage) => {
+  const found = OPP_STAGES.find((s) => s.id === stage);
+  return found ? found.t.toLowerCase() : (stage || "").toLowerCase().replace(/_/g, " ");
+};
+
 const OPP_STAGE_CHIP = (stage) => {
-  if (stage === "WON") return { k: "good", label: "won" };
-  if (stage === "LOST") return { k: "bad", label: "lost" };
-  if (stage === "STALLED") return { k: "warn", label: "stalled" };
-  if (stage === "NEGOTIATION" || stage === "VERBAL") return { k: "live", label: (stage || "").toLowerCase() };
-  return { k: "info", label: (stage || "").toLowerCase() };
+  if (stage === "CLOSE_WON") return { k: "good", label: OPP_STAGE_LABEL(stage) };
+  if (stage === "CLOSE_LOST") return { k: "bad", label: OPP_STAGE_LABEL(stage) };
+  if (stage === "REGRETTED") return { k: "warn", label: OPP_STAGE_LABEL(stage) };
+  if (stage === "NEGOTIATION_REVIEW") return { k: "live", label: OPP_STAGE_LABEL(stage) };
+  if (stage === "PROPOSAL_PRICE_QUOTE") return { k: "warn", label: OPP_STAGE_LABEL(stage) };
+  return { k: "info", label: OPP_STAGE_LABEL(stage) };
 };
 
 const oppRows = (resp) => {
@@ -10295,34 +10304,56 @@ window.Opportunities = WiredOpportunities;
 // Reads via ObaraBackend.sales.listProjects (api/sales/projects GET)
 // ============================================================
 
+// Phase enum matches the project_phase Postgres enum in
+// supabase/migrations/006_corpus_alignment.sql. Display labels are
+// rendered in lowercase and de-snaked for the operator's eye.
 const PROJECT_PHASES = [
   "INITIAL_INFO",
-  "REQUIREMENT_GATHERING",
+  "STRATEGY",
+  "PROMOTIONAL",
+  "RFQ_PREP",
+  "BUDGETARY_QUOTATION",
+  "PRICE_NEGOTIATION",
+  "LB_FINALIZATION",
+  "KICKOFF",
   "DESIGN",
-  "QUOTE",
-  "PO_RECEIVED",
-  "PRODUCTION_PLANNING",
-  "MATERIALS_IN",
+  "APPROVAL_PROCESSING",
   "MANUFACTURING",
-  "FAT",
-  "PRE_DISPATCH",
-  "DISPATCHED",
-  "ON_SITE_INSTALL",
-  "SAT",
-  "COMMISSIONED",
+  "SHIPPING",
+  "INSTALLATION_COMMISSIONING",
+  "PAYMENT_FOLLOWUP",
   "CLOSED",
 ];
 
-const PROJECT_PHASE_LABEL = (ph) => {
-  if (!ph) return "—";
-  return ph.replace(/_/g, " ").toLowerCase();
+// Map from the canonical enum to an operator-friendly display.
+const PROJECT_PHASE_LABEL_MAP = {
+  INITIAL_INFO:               "initial info",
+  STRATEGY:                   "strategy",
+  PROMOTIONAL:                "promotional",
+  RFQ_PREP:                   "RFQ prep",
+  BUDGETARY_QUOTATION:        "budgetary quotation",
+  PRICE_NEGOTIATION:          "price negotiation",
+  LB_FINALIZATION:            "LB finalization",
+  KICKOFF:                    "kickoff",
+  DESIGN:                     "design",
+  APPROVAL_PROCESSING:        "approval processing",
+  MANUFACTURING:              "manufacturing",
+  SHIPPING:                   "shipping",
+  INSTALLATION_COMMISSIONING: "installation + commissioning",
+  PAYMENT_FOLLOWUP:           "payment follow-up",
+  CLOSED:                     "closed",
 };
+
+const PROJECT_PHASE_LABEL = (ph) => PROJECT_PHASE_LABEL_MAP[ph] || (ph || "—").replace(/_/g, " ").toLowerCase();
 
 const PROJECT_PHASE_CHIP = (ph) => {
   if (ph === "CLOSED") return { k: "good", label: PROJECT_PHASE_LABEL(ph) };
-  if (ph === "SAT" || ph === "COMMISSIONED") return { k: "good", label: PROJECT_PHASE_LABEL(ph) };
-  if (ph === "DISPATCHED" || ph === "PRE_DISPATCH" || ph === "ON_SITE_INSTALL") {
+  if (ph === "PAYMENT_FOLLOWUP") return { k: "good", label: PROJECT_PHASE_LABEL(ph) };
+  if (ph === "INSTALLATION_COMMISSIONING" || ph === "SHIPPING") {
     return { k: "live", label: PROJECT_PHASE_LABEL(ph) };
+  }
+  if (ph === "MANUFACTURING" || ph === "APPROVAL_PROCESSING") {
+    return { k: "warn", label: PROJECT_PHASE_LABEL(ph) };
   }
   return { k: "info", label: PROJECT_PHASE_LABEL(ph) };
 };

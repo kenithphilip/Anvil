@@ -4,34 +4,56 @@
 // Reads via ObaraBackend.sales.listProjects (api/sales/projects GET)
 // ============================================================
 
+// Phase enum matches the project_phase Postgres enum in
+// supabase/migrations/006_corpus_alignment.sql. Display labels are
+// rendered in lowercase and de-snaked for the operator's eye.
 const PROJECT_PHASES = [
   "INITIAL_INFO",
-  "REQUIREMENT_GATHERING",
+  "STRATEGY",
+  "PROMOTIONAL",
+  "RFQ_PREP",
+  "BUDGETARY_QUOTATION",
+  "PRICE_NEGOTIATION",
+  "LB_FINALIZATION",
+  "KICKOFF",
   "DESIGN",
-  "QUOTE",
-  "PO_RECEIVED",
-  "PRODUCTION_PLANNING",
-  "MATERIALS_IN",
+  "APPROVAL_PROCESSING",
   "MANUFACTURING",
-  "FAT",
-  "PRE_DISPATCH",
-  "DISPATCHED",
-  "ON_SITE_INSTALL",
-  "SAT",
-  "COMMISSIONED",
+  "SHIPPING",
+  "INSTALLATION_COMMISSIONING",
+  "PAYMENT_FOLLOWUP",
   "CLOSED",
 ];
 
-const PROJECT_PHASE_LABEL = (ph) => {
-  if (!ph) return "—";
-  return ph.replace(/_/g, " ").toLowerCase();
+// Map from the canonical enum to an operator-friendly display.
+const PROJECT_PHASE_LABEL_MAP = {
+  INITIAL_INFO:               "initial info",
+  STRATEGY:                   "strategy",
+  PROMOTIONAL:                "promotional",
+  RFQ_PREP:                   "RFQ prep",
+  BUDGETARY_QUOTATION:        "budgetary quotation",
+  PRICE_NEGOTIATION:          "price negotiation",
+  LB_FINALIZATION:            "LB finalization",
+  KICKOFF:                    "kickoff",
+  DESIGN:                     "design",
+  APPROVAL_PROCESSING:        "approval processing",
+  MANUFACTURING:              "manufacturing",
+  SHIPPING:                   "shipping",
+  INSTALLATION_COMMISSIONING: "installation + commissioning",
+  PAYMENT_FOLLOWUP:           "payment follow-up",
+  CLOSED:                     "closed",
 };
+
+const PROJECT_PHASE_LABEL = (ph) => PROJECT_PHASE_LABEL_MAP[ph] || (ph || "—").replace(/_/g, " ").toLowerCase();
 
 const PROJECT_PHASE_CHIP = (ph) => {
   if (ph === "CLOSED") return { k: "good", label: PROJECT_PHASE_LABEL(ph) };
-  if (ph === "SAT" || ph === "COMMISSIONED") return { k: "good", label: PROJECT_PHASE_LABEL(ph) };
-  if (ph === "DISPATCHED" || ph === "PRE_DISPATCH" || ph === "ON_SITE_INSTALL") {
+  if (ph === "PAYMENT_FOLLOWUP") return { k: "good", label: PROJECT_PHASE_LABEL(ph) };
+  if (ph === "INSTALLATION_COMMISSIONING" || ph === "SHIPPING") {
     return { k: "live", label: PROJECT_PHASE_LABEL(ph) };
+  }
+  if (ph === "MANUFACTURING" || ph === "APPROVAL_PROCESSING") {
+    return { k: "warn", label: PROJECT_PHASE_LABEL(ph) };
   }
   return { k: "info", label: PROJECT_PHASE_LABEL(ph) };
 };

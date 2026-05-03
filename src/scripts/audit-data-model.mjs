@@ -22,7 +22,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const API = path.join(ROOT, "api");
+const API = path.join(ROOT, "src", "api");
 const SCREENS = path.join(ROOT, "src", "v3-app", "screens");
 
 const walk = (dir) => {
@@ -65,28 +65,27 @@ for (const f of apiFiles) {
   handlerFields.set(path.relative(ROOT, f), fields);
 }
 
-// Convert from "/api/orders" REST path back to the file under api/.
-// The legacy client uses paths like `/api/sales/shipments`. We expect
-// `api/sales/shipments.js` or `api/sales/shipments/index.js`. We look
-// up by suffix match against handlerFields' keys.
+// Convert "/api/orders" REST path back to the file under src/api/.
+// Legacy client uses paths like `/api/sales/shipments`. We expect
+// `src/api/sales/shipments.js` or `src/api/sales/shipments/index.js`.
+// Suffix match against handlerFields' keys is tolerant to whichever
+// directory layout the handlers live in.
 const findHandlerByPath = (apiPath) => {
-  // Strip query, leading /
   const base = apiPath.replace(/^\//, "").split("?")[0];
-  // Drop dynamic segments at the end (we don't know yet)
   const candidates = [
     `${base}.js`,
     `${base}/index.js`,
   ];
   for (const c of candidates) {
     for (const key of handlerFields.keys()) {
-      if (key === c) return key;
+      if (key.endsWith(c)) return key;
     }
   }
   // Try without trailing dynamic segment
   const trimmed = base.replace(/\/[^/]+$/, "");
   for (const c of [`${trimmed}.js`, `${trimmed}/index.js`]) {
     for (const key of handlerFields.keys()) {
-      if (key === c) return key;
+      if (key.endsWith(c)) return key;
     }
   }
   return null;

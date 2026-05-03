@@ -52,31 +52,50 @@ Migrations are NOT auto-applied. Apply them manually after merge:
    route code splitting, source maps, and gzipped chunks. The Vite
    build emits its own `index.html` that loads the React shell.
 
+### Function consolidation
+
+Vercel Hobby plans cap a deployment at 12 serverless functions. The
+backend has 75+ REST endpoints, so we consolidate everything into a
+SINGLE function:
+
+- The dispatcher lives at `api/[...path].js`. Vercel sees one file
+  and provisions one function.
+- The actual handlers live under `src/api/`. They are unchanged from
+  before the consolidation; only the directory moved.
+- The dispatcher imports from `src/api/router.js`, which has a
+  static-import map of every endpoint plus a tiny dynamic resolver
+  for `/orders/<id>`, `/source_pos/<id>`, `/documents/<id>`.
+
+To add an endpoint:
+
+1. Write the handler under `src/api/<group>/<name>.js` with
+   `export default async function handler(req, res) { ... }`.
+2. Add a row to `STATIC_ROUTES` (or `DYNAMIC_ROUTES`) in
+   `src/api/router.js`.
+3. Done. No Vercel config tweak needed.
+
+The router test at `src/v3-app/api-router.test.js` walks every literal
+`/api/...` path the obara-client uses and asserts each resolves. CI
+catches a missing route the moment a screen calls a method without a
+matching handler.
+
 ### Function runtime
 
-Vercel auto-detects Node.js for `api/**/*.js` from the `engines.node`
-field in `package.json` (currently `>=20.0.0`). Do NOT specify a
-`runtime` value in `vercel.json`. The legacy `nodejs20.x` literal is
-not a valid runtime descriptor in current Vercel projects and causes:
+Vercel auto-detects Node.js from the `engines.node` field in
+`package.json` (currently `"20.x"`, pinned to a single major so the
+auto-upgrade warnings stop). Do NOT specify a `runtime` value in
+`vercel.json`. The legacy `nodejs20.x` literal is not a valid
+descriptor in current Vercel projects and causes:
 
 ```
 Error: Function Runtimes must have a valid version, for example
 `now-php@1.0.0`.
 ```
 
-Per-function `memory` + `maxDuration` overrides ARE valid:
-
-| Path | Memory | Max duration |
-| --- | --- | --- |
-| `api/claude/messages.js` | 1024 MB | 60s |
-| `api/documents/ocr.js` | 1024 MB | 60s |
-| `api/documents/scan.js` | 768 MB | 30s |
-| `api/master_data/graph.js` | 768 MB | 30s |
-| `api/documents/upload.js` | 512 MB | 30s |
-| (default for everything else) | 512 MB | 30s |
-
-If a function regularly times out, raise the duration in `vercel.json`
-and redeploy.
+Vercel's Active CPU billing model also IGNORES `memory` overrides
+in `vercel.json` (it allocates per-request automatically). Only
+`maxDuration` is honored. The catch-all dispatcher uses the highest
+duration any inner endpoint needs (60s for OCR + Claude + Tally).
 
 ### Pre-deploy check
 

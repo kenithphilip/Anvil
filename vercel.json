@@ -5,25 +5,8 @@
   "buildCommand": "npm run build",
   "outputDirectory": "public",
   "functions": {
-    "api/claude/messages.js": {
-      "memory": 1024,
+    "api/[...path].js": {
       "maxDuration": 60
-    },
-    "api/documents/upload.js": {
-      "memory": 512,
-      "maxDuration": 30
-    },
-    "api/documents/ocr.js": {
-      "memory": 1024,
-      "maxDuration": 60
-    },
-    "api/documents/scan.js": {
-      "memory": 768,
-      "maxDuration": 30
-    },
-    "api/master_data/graph.js": {
-      "memory": 768,
-      "maxDuration": 30
     }
   },
   "crons": [

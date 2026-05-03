@@ -1,13 +1,14 @@
 // Application shell: header, sidebar, dock. ESM port of src/v3/shell.jsx
 // `Shell` component. CmdK + ThreadDrawer overlays live alongside.
 //
-// Pure presentation: every state lives in the parent (App.jsx). The shell
-// renders whatever children + nav tree it gets handed.
+// Pure presentation: every state lives in the parent (App.tsx). The shell
+// renders whatever children, nav tree, and live telemetry it gets handed.
 
 import React, { ReactNode } from "react";
 import { Icon } from "../lib/icons";
 import { Dot } from "../lib/primitives";
-import type { NavGroup, RoleEntry } from "../lib/nav";
+import type { NavGroup, RoleEntry, NavBadge } from "../lib/nav";
+import type { ShellTelemetry, BadgeMap } from "../lib/telemetry";
 
 export interface ShellTenant { code?: string; }
 
@@ -23,14 +24,46 @@ export interface ShellProps {
   onThread?: () => void;
   crumb?: string[];
   nav?: NavGroup[];
+  telemetry?: ShellTelemetry;
 }
+
+const resolveBadge = (id: string, item: { badge?: NavBadge }, badges?: BadgeMap): NavBadge | undefined => {
+  // Live counts from telemetry win when present. Otherwise no badge.
+  // We deliberately do NOT fall back to the static badge defined on
+  // the nav item: those values were demo placeholders that disagreed
+  // with the real data, which was the bug.
+  return badges?.[id];
+};
+
+const formatRate = (n: number | undefined, digits = 2): string => {
+  if (n == null || Number.isNaN(n)) return "-";
+  return n.toFixed(digits);
+};
+
+const StatusDot: React.FC<{ ok: boolean | null; label: string }> = ({ ok, label }) => {
+  if (ok === true) return (
+    <span>{label} <span style={{ color: "var(--sage)" }}>online</span></span>
+  );
+  if (ok === false) return (
+    <span>{label} <span style={{ color: "var(--rust)" }}>offline</span></span>
+  );
+  return <span style={{ color: "var(--ink-4)" }}>{label} <span>unknown</span></span>;
+};
 
 export const Shell: React.FC<ShellProps> = ({
   children, route, onRoute,
   role, onRole, tenant, onTenant,
   onCmdK, onThread,
-  crumb, nav,
-}) => (
+  crumb, nav, telemetry,
+}) => {
+  const badges = telemetry?.badges;
+  const session = telemetry?.session;
+  const fx = telemetry?.fx;
+  const drafts = telemetry?.drafts ?? 0;
+  const time = telemetry?.time || "";
+  const version = telemetry?.version || "dev";
+
+  return (
   <div className="app">
     <header className="app-head">
       <div className="brand">
@@ -89,50 +122,63 @@ export const Shell: React.FC<ShellProps> = ({
         {(nav || []).map((group) => (
           <div className="nav-section" key={group.label}>
             <div className="nav-section-label">{group.label}</div>
-            {group.items.map((item) => (
-              <div
-                key={item.id}
-                className={`nav-item ${route === item.id ? "active" : ""}`}
-                onClick={() => onRoute?.(item.id)}
-              >
-                <span className="nav-icon">{item.icon}</span>
-                <span className="nav-label">{item.label}</span>
-                {item.badge && (
-                  <span className={`nav-badge ${item.badge.k || ""}`}>{item.badge.v}</span>
-                )}
-              </div>
-            ))}
+            {group.items.map((item) => {
+              const badge = resolveBadge(item.id, item, badges);
+              return (
+                <div
+                  key={item.id}
+                  className={`nav-item ${route === item.id ? "active" : ""}`}
+                  onClick={() => onRoute?.(item.id)}
+                >
+                  <span className="nav-icon">{item.icon}</span>
+                  <span className="nav-label">{item.label}</span>
+                  {badge && (
+                    <span className={`nav-badge ${badge.k || ""}`}>{badge.v}</span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         ))}
       </nav>
       <div className="side-foot">
-        <div className="av">RP</div>
+        <div className="av">{session?.initials || "GU"}</div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 11, fontFamily: "var(--sans)", color: "var(--ink-2)", fontWeight: 600 }}>
-            Rajesh P.
+            {session?.displayName || "Guest"}
           </div>
           <div style={{ fontSize: 10, fontFamily: "var(--mono)", color: "var(--ink-4)" }}>
             {role?.label || "Sales Engineer"}
           </div>
         </div>
-        <button className="btn ghost icon sm">{Icon.settings}</button>
+        <button className="btn ghost icon sm" onClick={() => onRoute?.("admin")} title="Settings">{Icon.settings}</button>
       </div>
     </aside>
 
     <main className="app-main" id="main" tabIndex={-1}>{children}</main>
 
     <footer className="app-dock">
-      <span><Dot k="live" /> Live · DB ↔ Vercel</span>
+      <span>
+        <Dot k={telemetry?.dbOk === false ? "warn" : "live"} />
+        {telemetry?.dbOk === false ? "Degraded" : "Live"}
+        {" "}, DB {telemetry?.dbOk === false ? "unreachable" : "reachable"}
+      </span>
       <span style={{ color: "var(--ink-4)" }}>·</span>
-      <span>Tally bridge <span style={{ color: "var(--sage)" }}>online</span> · v6.6.3</span>
+      <span><StatusDot ok={telemetry?.tallyOk ?? null} label="Tally bridge" /> · v{version}</span>
       <span style={{ color: "var(--ink-4)" }}>·</span>
-      <span>FX cron <span style={{ color: "var(--sage)" }}>04:00 UTC</span> · USD 83.42 · JPY 0.55</span>
+      <span>
+        FX
+        {fx?.cronAt ? <> <span style={{ color: "var(--sage)" }}>{fx.cronAt}</span></> : <span style={{ color: "var(--ink-4)" }}> n/a</span>}
+        {fx?.usd != null && <> · USD {formatRate(fx.usd)}</>}
+        {fx?.jpy != null && <> · JPY {formatRate(fx.jpy)}</>}
+      </span>
       <span style={{ color: "var(--ink-4)" }}>·</span>
-      <span>ClamAV <span style={{ color: "var(--sage)" }}>OK</span></span>
-      <span style={{ marginLeft: "auto" }}>3 drafts autosaved · 12:42 IST</span>
+      <span><StatusDot ok={telemetry?.clamAvOk ?? null} label="ClamAV" /></span>
+      <span style={{ marginLeft: "auto" }}>{drafts} draft{drafts === 1 ? "" : "s"} autosaved · {time}</span>
     </footer>
   </div>
-);
+  );
+};
 
 // CmdK + ThreadDrawer were ported to dedicated files
 // (components/CmdK.tsx, components/ThreadDrawer.tsx) with real backend

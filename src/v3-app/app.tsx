@@ -15,6 +15,7 @@ import { RBAC } from "./lib/rbac";
 import { Prefs } from "./lib/preferences";
 import { ObaraBackend } from "./lib/api";
 import { ToastStack } from "./lib/toasts";
+import { useShellTelemetry } from "./lib/telemetry";
 import { RESOLVERS, ROUTE_IDS, DEFAULT_ROUTE, readHashParams } from "./routes";
 
 const ROUTE_KEY = "obara:v3_route";
@@ -204,6 +205,8 @@ export default function App() {
   const resolver = RESOLVERS[route] || RESOLVERS[DEFAULT_ROUTE];
   const Active = resolver({ params: readHashParams(), role });
 
+  const telemetry = useShellTelemetry();
+
   return (
     <>
       <a className="skip-link" href="#main">Skip to main content</a>
@@ -218,6 +221,7 @@ export default function App() {
         onThread={() => setThread(true)}
         crumb={crumbFor(route)}
         nav={navFiltered}
+        telemetry={telemetry}
       >
         <ThemeBar />
         <ErrorBoundary key={route}>

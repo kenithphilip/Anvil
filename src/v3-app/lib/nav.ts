@@ -15,11 +15,12 @@ export const NAV: NavGroup[] = [
   {
     label: "Workflows",
     items: [
+      // Badges are populated live from telemetry. See lib/telemetry.ts.
       { id: "home",      label: "My Day",        icon: Icon.bolt },
-      { id: "intake",    label: "Inbox",         icon: Icon.inbox,       badge: { v: "12", k: "live" } },
-      { id: "so",        label: "Sales Orders",  icon: Icon.layers,      badge: { v: "47" } },
+      { id: "intake",    label: "Inbox",         icon: Icon.inbox },
+      { id: "so",        label: "Sales Orders",  icon: Icon.layers },
       { id: "internal",  label: "Internal SOs",  icon: Icon.cycle },
-      { id: "approvals", label: "Approvals",     icon: Icon.shieldCheck, badge: { v: "3", k: "warn" } },
+      { id: "approvals", label: "Approvals",     icon: Icon.shieldCheck },
     ],
   },
   {

@@ -16,13 +16,21 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import fs from "node:fs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Surface the package version to the running app so the status-bar
+// can render a real "v0.1.0" string instead of a fabricated one.
+const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "package.json"), "utf8"));
 
 export default defineConfig({
   root: path.resolve(__dirname, "src/v3-app"),
   base: "/",
   plugins: [react()],
+  define: {
+    "import.meta.env.VITE_APP_VERSION": JSON.stringify(pkg.version || "dev"),
+  },
   build: {
     outDir: path.resolve(__dirname, "public"),
     emptyOutDir: false,

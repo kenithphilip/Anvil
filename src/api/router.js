@@ -112,8 +112,11 @@ import tallyPush               from "./tally/push.js";
 import tallyReconcile          from "./tally/reconcile.js";
 import tallyValidate           from "./tally/validate.js";
 
+import healthCheck             from "./health.js";
+
 // Static routes resolved by exact match. Order does not matter.
 const STATIC_ROUTES = {
+  "/health":                        healthCheck,
   "/admin/contracts":               adminContracts,
   "/admin/customer_locations":      adminCustomerLocations,
   "/admin/diagnostics":             adminDiagnostics,

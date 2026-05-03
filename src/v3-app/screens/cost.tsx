@@ -29,12 +29,38 @@ const COST_SCENARIOS = [
 
 const SIMULATOR_TOKEN_ESTIMATE = { totalInput: 8000, call2Output: 1200 };
 
-const usdToInr = (n) => `₹ ${(Number(n) * 83).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+const usdToInr = (n: number, rate: number) =>
+  `₹ ${(Number(n) * (Number(rate) || 0)).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 const fmtUsd = (n) => `$ ${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// Pull the live USD->INR rate from the FX endpoint. We cache it for the
+// lifetime of the component because the simulator is interactive and we
+// don't want the projected value to shift mid-tweak.
+const useUsdInrRate = (): number | null => {
+  const [rate, setRate] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve(ObaraBackend?.fx?.lookup?.({ from: "USD", to: "INR" }))
+      .then((res: any) => {
+        if (cancelled) return;
+        const rows = Array.isArray(res) ? res : (res?.rows || res?.rates || []);
+        const usd = Array.isArray(rows)
+          ? rows.find((r: any) => /USD/i.test(r.code || r.currency || r.from || ""))
+          : null;
+        const direct = res && (res.usd_to_inr || res.rate || res.value);
+        const value = Number((usd && (usd.rate || usd.value)) || direct);
+        if (Number.isFinite(value) && value > 0) setRate(value);
+      })
+      .catch(() => { /* leave null; UI shows "rate unavailable" */ });
+    return () => { cancelled = true; };
+  }, []);
+  return rate;
+};
 
 // ---------- Breakdown tab --------------------------------
 const CostBreakdown = () => {
   const breakdown = useFetch(() => ObaraBackend?.cost?.breakdown?.() || Promise.resolve({}), []);
+  const fxRate = useUsdInrRate();
 
   if (breakdown.loading) {
     return <Card><div className="body">Loading breakdown…</div></Card>;
@@ -62,8 +88,10 @@ const CostBreakdown = () => {
   return (
     <>
       <KPIRow cols={4}>
-        <KPI lbl="USD spent"      v={fmtUsd(totalUsd)}                 d={`≈ ${usdToInr(totalUsd)}`} />
-        <KPI lbl="₹/successful SO" v={usdToInr(costPerSuccess)}        d={`${totalSuccess} successes`} dKind={costPerSuccess ? "up" : ""} />
+        <KPI lbl="USD spent"      v={fmtUsd(totalUsd)}
+             d={fxRate != null ? `≈ ${usdToInr(totalUsd, fxRate)} @ ₹${fxRate.toFixed(2)}/$` : "INR rate unavailable"} />
+        <KPI lbl="₹/successful SO" v={fxRate != null ? usdToInr(costPerSuccess, fxRate) : "—"}
+             d={`${totalSuccess} successes`} dKind={costPerSuccess ? "up" : ""} />
         <KPI lbl="Total fields"    v={String(totalFields)}             d="evidence captured" />
         <KPI lbl="Total successes" v={String(totalSuccess)}            d="approved → tally" live={totalSuccess > 0} />
       </KPIRow>
@@ -123,6 +151,7 @@ const CostSimulator = () => {
   const [busy, setBusy] = useState(false);
   const [resp, setResp] = useState(null);
   const [err,  setErr]  = useState(null);
+  const fxRate = useUsdInrRate();
 
   // Prime the simulator with current cost-per-success so we can show a delta.
   const breakdown = useFetch(() => ObaraBackend?.cost?.breakdown?.() || Promise.resolve({}), []);
@@ -174,7 +203,9 @@ const CostSimulator = () => {
             <div className="divider" />
             <KPIRow cols={3}>
               <KPI lbl="Projected · USD" v={fmtUsd(picked.usd)} d={picked.label} />
-              <KPI lbl="Projected · INR" v={usdToInr(picked.usd)} d="@ ₹83/$" />
+              <KPI lbl="Projected · INR"
+                   v={fxRate != null ? usdToInr(picked.usd, fxRate) : "—"}
+                   d={fxRate != null ? `@ ₹${fxRate.toFixed(2)}/$` : "INR rate unavailable"} />
               <KPI lbl="Δ vs current"
                    v={deltaUsd === 0 ? "—" : (deltaUsd > 0 ? "+ " : "− ") + fmtUsd(Math.abs(deltaUsd))}
                    d={baselineUsd > 0 ? `current ${fmtUsd(baselineUsd)}/SO` : "no baseline yet"}
@@ -197,7 +228,7 @@ const CostSimulator = () => {
                   <tr key={s.id} style={{ background: s.id === scenarioId ? "var(--paper-2)" : "" }}>
                     <td>{s.label}</td>
                     <td className="r mono">{fmtUsd(s.usd)}</td>
-                    <td className="r mono">{usdToInr(s.usd)}</td>
+                    <td className="r mono">{fxRate != null ? usdToInr(s.usd, fxRate) : "—"}</td>
                   </tr>
                 ))}
               </tbody>

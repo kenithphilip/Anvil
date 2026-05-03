@@ -28,6 +28,25 @@
     return headers;
   };
 
+  // Once-per-session warning when the backend rejects requests for
+  // a tenant-membership reason. Without this, every screen just shows
+  // "Failed to load <thing>" and the user can't tell whether the data
+  // is empty or the backend is locking them out.
+  let warnedNoTenant = false;
+  const surfaceAuthError = (status, message) => {
+    if (typeof global === "undefined" || !global.notifyError) return;
+    if (status === 403 && /tenant membership/i.test(message || "")) {
+      if (warnedNoTenant) return;
+      warnedNoTenant = true;
+      global.notifyError(
+        "Account not onboarded",
+        "Your sign-in succeeded but no tenant is attached to your user. Sign out and back in, or have an admin invite you via the Admin Center."
+      );
+    } else if (status === 401) {
+      global.notifyError("Session expired", "Sign in again to continue. Your last action was not saved.");
+    }
+  };
+
   const handleResponse = async (resp) => {
     const text = await resp.text();
     let body = null;
@@ -37,6 +56,7 @@
     }
     if (!resp.ok) {
       const message = (body && body.error && body.error.message) || ("HTTP " + resp.status);
+      surfaceAuthError(resp.status, message);
       const err = new Error(message);
       err.status = resp.status;
       err.body = body;
@@ -81,6 +101,8 @@
   const ping = async () => {
     return apiFetch("/api/audit?limit=1");
   };
+
+  const health = async () => apiFetch("/api/health");
 
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });
 
@@ -536,6 +558,7 @@
     setSession,
     getSession: readSession,
     ping,
+    health,
     claudeCall,
     documents,
     orders,

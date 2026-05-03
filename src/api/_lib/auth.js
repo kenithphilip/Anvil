@@ -1,4 +1,5 @@
 import { serviceClient, userClient } from "./supabase.js";
+import { ensureMembership, isAutoOnboardEnabled } from "./tenancy.js";
 
 const DEFAULT_TENANT = process.env.DEFAULT_TENANT_ID || "00000000-0000-0000-0000-000000000001";
 const ALLOW_ANONYMOUS = String(process.env.ALLOW_ANONYMOUS_TENANT || "true").toLowerCase() === "true";
@@ -36,13 +37,22 @@ export const resolveContext = async (req) => {
   }
   const user = data.user;
   const svc = serviceClient();
-  const memberships = await svc.from("tenant_members").select("tenant_id, role").eq("user_id", user.id);
+  let memberships = await svc.from("tenant_members").select("tenant_id, role").eq("user_id", user.id);
   if (memberships.error) {
     const err = new Error("Tenant lookup failed: " + memberships.error.message);
     err.status = 500;
     throw err;
   }
-  const allowed = memberships.data || [];
+  let allowed = memberships.data || [];
+
+  // If the user has no membership yet, auto-onboard them. This catches
+  // the case where a user signed in BEFORE auth/verify.js learned to
+  // create the row. Without this, every request returned 403 and the
+  // UI silently rendered empty arrays.
+  if (!allowed.length && isAutoOnboardEnabled()) {
+    allowed = await ensureMembership(svc, user);
+  }
+
   if (!allowed.length) {
     const err = new Error("User has no tenant membership");
     err.status = 403;

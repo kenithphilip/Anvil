@@ -19,13 +19,14 @@ export interface ShellSession {
   displayName: string;
 }
 
+export interface IntegrationStatus { id: string; label: string; configured: boolean; }
+
 export interface ShellTelemetry {
   badges: BadgeMap;
   fx: { usd?: number; jpy?: number; cronAt?: string } | null;
   version: string;
   drafts: number;
-  clamAvOk: boolean | null;
-  tallyOk: boolean | null;
+  integrations: IntegrationStatus[];
   dbOk: boolean | null;
   time: string;
   session: ShellSession;
@@ -108,8 +109,7 @@ export const useShellTelemetry = (): ShellTelemetry => {
   const [badges, setBadges] = useState<BadgeMap>({});
   const [fx, setFx] = useState<{ usd?: number; jpy?: number; cronAt?: string } | null>(null);
   const [drafts, setDrafts] = useState<number>(0);
-  const [clamAvOk, setClamAvOk] = useState<boolean | null>(null);
-  const [tallyOk, setTallyOk] = useState<boolean | null>(null);
+  const [integrations, setIntegrations] = useState<IntegrationStatus[]>([]);
   const [dbOk, setDbOk] = useState<boolean | null>(null);
   const [time, setTime] = useState<string>(formatIST(new Date()));
 
@@ -121,11 +121,14 @@ export const useShellTelemetry = (): ShellTelemetry => {
 
   const refresh = async () => {
     if (!ObaraBackend?.isReady?.()) return;
-    const [orders, audit, fxRates, diag] = await Promise.all([
+    // /api/health is public + tenant-agnostic, so it works whether
+    // the user is signed in or not. Orders + audit require a tenant
+    // context; a 403 from those is non-fatal for the shell.
+    const [orders, audit, fxRates, healthRes] = await Promise.all([
       safe<any>(ObaraBackend?.orders?.list?.({ limit: 200 })),
       safe<any>(ObaraBackend?.audit?.list?.({ limit: 50 })),
       safe<any>(ObaraBackend?.fx?.lookup?.()),
-      safe<any>(ObaraBackend?.admin?.diagnostics?.()),
+      safe<any>(ObaraBackend?.health?.()),
     ]);
 
     const orderArr = arrayOf(orders);
@@ -146,17 +149,17 @@ export const useShellTelemetry = (): ShellTelemetry => {
       setFx(null);
     }
 
-    if (diag) {
-      const checks = diag.checks || diag;
-      setClamAvOk(checks?.clamav?.ok ?? checks?.clamav_ok ?? null);
-      setTallyOk(checks?.tally?.ok ?? checks?.tally_bridge_ok ?? null);
-      setDbOk(checks?.db?.ok ?? checks?.database_ok ?? true);
+    if (healthRes) {
+      setDbOk(healthRes.db_ok === true);
+      const list = Array.isArray(healthRes.integrations) ? healthRes.integrations : [];
+      setIntegrations(list.map((i: any) => ({
+        id: String(i.id || ""),
+        label: String(i.label || i.id || ""),
+        configured: i.configured === true,
+      })));
     } else {
-      // No diagnostics endpoint reachable. Mark DB as not-ok so the
-      // user sees the real degraded state instead of a green dot.
-      setClamAvOk(null);
-      setTallyOk(null);
       setDbOk(false);
+      setIntegrations([]);
     }
   };
 
@@ -179,8 +182,7 @@ export const useShellTelemetry = (): ShellTelemetry => {
     fx,
     version: APP_VERSION,
     drafts,
-    clamAvOk,
-    tallyOk,
+    integrations,
     dbOk,
     time,
     session,

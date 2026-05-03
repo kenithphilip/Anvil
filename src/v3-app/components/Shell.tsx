@@ -40,15 +40,14 @@ const formatRate = (n: number | undefined, digits = 2): string => {
   return n.toFixed(digits);
 };
 
-const StatusDot: React.FC<{ ok: boolean | null; label: string }> = ({ ok, label }) => {
-  if (ok === true) return (
-    <span>{label} <span style={{ color: "var(--sage)" }}>online</span></span>
-  );
-  if (ok === false) return (
-    <span>{label} <span style={{ color: "var(--rust)" }}>offline</span></span>
-  );
-  return <span style={{ color: "var(--ink-4)" }}>{label} <span>unknown</span></span>;
-};
+const IntegrationPill: React.FC<{ label: string; configured: boolean }> = ({ label, configured }) => (
+  <span>
+    {label}{" "}
+    <span style={{ color: configured ? "var(--sage)" : "var(--ink-4)" }}>
+      {configured ? "configured" : "not configured"}
+    </span>
+  </span>
+);
 
 export const Shell: React.FC<ShellProps> = ({
   children, route, onRoute,
@@ -159,22 +158,36 @@ export const Shell: React.FC<ShellProps> = ({
 
     <footer className="app-dock">
       <span>
-        <Dot k={telemetry?.dbOk === false ? "warn" : "live"} />
-        {telemetry?.dbOk === false ? "Degraded" : "Live"}
-        {" "}, DB {telemetry?.dbOk === false ? "unreachable" : "reachable"}
+        <Dot k={telemetry?.dbOk === true ? "live" : telemetry?.dbOk === false ? "warn" : "ghost"} />
+        {telemetry?.dbOk === true ? "DB reachable" : telemetry?.dbOk === false ? "DB unreachable" : "DB checking…"}
       </span>
       <span style={{ color: "var(--ink-4)" }}>·</span>
-      <span><StatusDot ok={telemetry?.tallyOk ?? null} label="Tally bridge" /> · v{version}</span>
+      <span>v{version}</span>
       <span style={{ color: "var(--ink-4)" }}>·</span>
+      {telemetry?.integrations?.find((i) => i.id === "tally") && (
+        <>
+          <IntegrationPill
+            label="Tally bridge"
+            configured={!!telemetry.integrations.find((i) => i.id === "tally")?.configured}
+          />
+          <span style={{ color: "var(--ink-4)" }}>·</span>
+        </>
+      )}
+      {telemetry?.integrations?.find((i) => i.id === "clamav") && (
+        <>
+          <IntegrationPill
+            label="ClamAV"
+            configured={!!telemetry.integrations.find((i) => i.id === "clamav")?.configured}
+          />
+          <span style={{ color: "var(--ink-4)" }}>·</span>
+        </>
+      )}
       <span>
         FX
-        {fx?.cronAt ? <> <span style={{ color: "var(--sage)" }}>{fx.cronAt}</span></> : <span style={{ color: "var(--ink-4)" }}> n/a</span>}
-        {fx?.usd != null && <> · USD {formatRate(fx.usd)}</>}
+        {fx?.usd != null ? <> · USD {formatRate(fx.usd)}</> : <span style={{ color: "var(--ink-4)" }}> n/a</span>}
         {fx?.jpy != null && <> · JPY {formatRate(fx.jpy)}</>}
       </span>
-      <span style={{ color: "var(--ink-4)" }}>·</span>
-      <span><StatusDot ok={telemetry?.clamAvOk ?? null} label="ClamAV" /></span>
-      <span style={{ marginLeft: "auto" }}>{drafts} draft{drafts === 1 ? "" : "s"} autosaved · {time}</span>
+      <span style={{ marginLeft: "auto" }}>{drafts} draft{drafts === 1 ? "" : "s"} · {time}</span>
     </footer>
   </div>
   );

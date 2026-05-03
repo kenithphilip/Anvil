@@ -9809,12 +9809,16 @@ const soIframeBlock =
 const iframeInitBlock =
   /\/\/ ═{10,}\n\/\/ SO AGENT IFRAME INIT\n\/\/ ═{10,}[\s\S]*?(?=\/\/ ── Init)/;
 
-// v3 feature-flag shim. If the URL has ?v3=1 (or the user previously
-// pinned v3 via the toggle in localStorage), redirect to the Vite-built
-// v3 app under /v3-app/. Phase 8 cutover: the legacy /v3.html target was
-// dropped, replaced by the per-route-chunked Vite bundle. The redirect
-// preserves the rest of the query string + hash so deep links keep
-// working.
+// v3 feature-flag shim. v3 is now the default UI; this script
+// runs at the very top of the legacy unified app and redirects
+// the user to /v3-app/ unless they explicitly opt out with
+// `?v3=0` (or have `obara:v3_pinned: "0"` from a prior opt-out).
+//
+// Why a JS shim instead of a server-side rewrite? Some Vercel
+// deployments serve `public/index.html` ahead of vercel.json
+// rewrites for the root URL. The shim is belt-and-suspenders:
+// even when the static file wins, the user is bounced to v3
+// before any of the legacy app initializes.
 const v3FlagShim = `
 <script>
 (function(){
@@ -9822,15 +9826,22 @@ const v3FlagShim = `
     var qs = new URLSearchParams(window.location.search);
     var pinned = localStorage.getItem("obara:v3_pinned");
     var want = qs.get("v3");
-    if (want === "1" || (pinned === "1" && want !== "0")) {
-      if (want === "1") localStorage.setItem("obara:v3_pinned", "1");
-      qs.delete("v3");
-      var search = qs.toString();
-      var hash = window.location.hash || "";
-      window.location.replace("/v3-app/" + (search ? "?" + search : "") + hash);
+    // Explicit opt-out: ?v3=0. Stay on legacy and persist the choice.
+    if (want === "0") {
+      localStorage.setItem("obara:v3_pinned", "0");
       return;
     }
-    if (want === "0") localStorage.removeItem("obara:v3_pinned");
+    // Sticky opt-out from a prior visit.
+    if (pinned === "0") return;
+    // Default: send the user to v3 immediately, preserving any
+    // remaining query params and hash.
+    if (want === "1") {
+      localStorage.removeItem("obara:v3_pinned");
+      qs.delete("v3");
+    }
+    var search = qs.toString();
+    var hash = window.location.hash || "";
+    window.location.replace("/v3-app/" + (search ? "?" + search : "") + hash);
   } catch (_) { /* fall through to legacy */ }
 })();
 </script>`;

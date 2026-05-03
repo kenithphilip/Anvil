@@ -7,15 +7,22 @@
     var qs = new URLSearchParams(window.location.search);
     var pinned = localStorage.getItem("obara:v3_pinned");
     var want = qs.get("v3");
-    if (want === "1" || (pinned === "1" && want !== "0")) {
-      if (want === "1") localStorage.setItem("obara:v3_pinned", "1");
-      qs.delete("v3");
-      var search = qs.toString();
-      var hash = window.location.hash || "";
-      window.location.replace("/v3-app/" + (search ? "?" + search : "") + hash);
+    // Explicit opt-out: ?v3=0. Stay on legacy and persist the choice.
+    if (want === "0") {
+      localStorage.setItem("obara:v3_pinned", "0");
       return;
     }
-    if (want === "0") localStorage.removeItem("obara:v3_pinned");
+    // Sticky opt-out from a prior visit.
+    if (pinned === "0") return;
+    // Default: send the user to v3 immediately, preserving any
+    // remaining query params and hash.
+    if (want === "1") {
+      localStorage.removeItem("obara:v3_pinned");
+      qs.delete("v3");
+    }
+    var search = qs.toString();
+    var hash = window.location.hash || "";
+    window.location.replace("/v3-app/" + (search ? "?" + search : "") + hash);
   } catch (_) { /* fall through to legacy */ }
 })();
 </script>

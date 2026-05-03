@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
@@ -40,7 +39,7 @@ const smUpsert = (matrix) => {
 
 const smRemove = (id) => smWriteAll(smReadAll().filter((m) => m.id !== id));
 
-const smLoadXlsx = () => new Promise((resolve, reject) => {
+const smLoadXlsx = (): Promise<any> => new Promise((resolve, reject) => {
   if (window.XLSX) return resolve(window.XLSX);
   const existing = document.querySelector('script[data-sm-xlsx="1"]');
   if (existing) { existing.addEventListener("load", () => resolve(window.XLSX)); existing.addEventListener("error", reject); return; }
@@ -357,9 +356,9 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       const values = {};
       spareCols.forEach((c) => { const v = row[c.i]; if (v != null && String(v) !== "") values[c.name] = String(v); });
       const upper = gunNo.toUpperCase();
-      const exists = existingByGun.get(upper);
+      const exists = existingByGun.get(upper) as any;
       if (exists) {
-        const ixR = merged.findIndex((m) => m.id === exists.id);
+        const ixR = merged.findIndex((m: any) => m.id === exists.id);
         if (ixR >= 0) merged[ixR] = { ...exists, qty, values: { ...(exists.values || {}), ...values } };
       } else {
         const newRow = { id: smUid(), gun_no: gunNo, qty, values };
@@ -487,7 +486,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
               autoFocus
               defaultValue={draft.name}
               onBlur={(e) => onTitleCommit(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") setTitleEdit(false); }}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setTitleEdit(false); }}
               style={{ height: 28, fontSize: 16, fontWeight: 600 }}
             />
           ) : (
@@ -686,7 +685,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
 const SMAddRowForm = ({ onAdd, onCancel }) => {
   const { useState: uF, useRef: rF, useEffect: eF } = React;
   const [gunNo, setGunNo] = uF("");
-  const [qty, setQty] = uF(1);
+  const [qty, setQty] = uF<number | string>(1);
   const ref = rF(null);
   eF(() => { ref.current?.focus(); }, []);
   const submit = (e) => { e?.preventDefault(); onAdd(gunNo, qty); };
@@ -765,7 +764,7 @@ const SMConfigColsModal = ({ cols, onMove, onLockToggle, onDelete, onRename, onC
                     className="input mono"
                     defaultValue={c.col_name}
                     onBlur={(e) => onRename(ix, e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+                    onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                     style={{ flex: 1 }}
                   />
                   <span className="chip ghost" style={{ minWidth: 70, justifyContent: "center" }}>{c.col_type}</span>
@@ -974,8 +973,8 @@ const SMWorksheetTab = () => {
 // ---------- Sub-tabs (recommend/kit/opps/obsolete) — re-implemented inline ----------
 const SMSubTab = ({ tab, customerId, customers, onCustomerChange }) => {
   const { useState: uS, useEffect: eS, useMemo: mS } = React;
-  const [months, setMonths] = uS(12);
-  const [obsMonths, setObsMonths] = uS(18);
+  const [months, setMonths] = uS<number | string>(12);
+  const [obsMonths, setObsMonths] = uS<number | string>(18);
   const [state, setState] = uS({ data: null, loading: false, error: null });
 
   const run = async () => {

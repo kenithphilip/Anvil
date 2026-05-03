@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useMemo, useState } from "react";
 import { useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTitle } from "../lib/primitives";
@@ -53,20 +52,20 @@ const buildEquipmentTree = (rows, customersById) => {
     zn.stations.get(stn).guns.push({ kind: "gun", id: r.id, label: r.gun_no || "(no gun)", row: r });
   });
   // Convert maps to arrays, sorted alphabetically by label.
-  const sortByLabel = (a, b) => String(a.label).localeCompare(String(b.label));
-  return Array.from(customers.values()).sort(sortByLabel).map((c) => ({
+  const sortByLabel = (a: any, b: any) => String(a.label).localeCompare(String(b.label));
+  return (Array.from(customers.values()) as any[]).sort(sortByLabel).map((c: any) => ({
     ...c,
-    children: Array.from(c.locations.values()).sort(sortByLabel).map((loc) => ({
+    children: (Array.from(c.locations.values()) as any[]).sort(sortByLabel).map((loc: any) => ({
       ...loc,
-      children: Array.from(loc.plants.values()).sort(sortByLabel).map((pl) => ({
+      children: (Array.from(loc.plants.values()) as any[]).sort(sortByLabel).map((pl: any) => ({
         ...pl,
-        children: Array.from(pl.lines.values()).sort(sortByLabel).map((ln) => ({
+        children: (Array.from(pl.lines.values()) as any[]).sort(sortByLabel).map((ln: any) => ({
           ...ln,
-          children: Array.from(ln.zones.values()).sort(sortByLabel).map((zn) => ({
+          children: (Array.from(ln.zones.values()) as any[]).sort(sortByLabel).map((zn: any) => ({
             ...zn,
-            children: Array.from(zn.stations.values()).sort(sortByLabel).map((stn) => ({
+            children: (Array.from(zn.stations.values()) as any[]).sort(sortByLabel).map((stn: any) => ({
               ...stn,
-              children: stn.guns.sort(sortByLabel),
+              children: (stn.guns as any[]).sort(sortByLabel),
             })),
           })),
         })),
@@ -286,7 +285,7 @@ const EquipmentDetail = ({ node, customers, locations, onSave, onDelete, onCance
     if (window.confirm(msg)) onDelete(seedRow.id);
   };
 
-  const fld = (label, ctrl, hint) => (
+  const fld = (label: React.ReactNode, ctrl: React.ReactNode, hint?: React.ReactNode) => (
     <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <span className="mono-sm" style={{ color: "var(--ink-3)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.04 }}>{label}</span>
       {ctrl}
@@ -452,9 +451,9 @@ const WiredEquipmentHierarchy = () => {
     // Merge optimistic upserts: replace by id, append for new ids.
     const map = new Map();
     base.forEach((r) => map.set(r.id, r));
-    Object.values(optimistic).forEach((r) => {
+    Object.values(optimistic).forEach((r: any) => {
       if (r === null) return; // deleted
-      if (r.id) map.set(r.id, r);
+      if (r?.id) map.set(r.id, r);
     });
     // Apply tombstones (null = deleted).
     Object.entries(optimistic).forEach(([k, v]) => { if (v === null) map.delete(k); });

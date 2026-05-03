@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useState } from "react";
 import { ageLabel } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
@@ -124,8 +123,8 @@ const WiredInbox = () => {
     return { k: "ghost", l: "untriaged" };
   };
 
-  const ocrConfOf = (o) => {
-    const c = o.evidence_by_field && Object.values(o.evidence_by_field)[0];
+  const ocrConfOf = (o: any): string => {
+    const c = o.evidence_by_field && Object.values(o.evidence_by_field)[0] as any;
     if (typeof c === "object" && c?.confidence != null) return Number(c.confidence).toFixed(2);
     return "—";
   };

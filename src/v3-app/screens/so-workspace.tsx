@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useMemo, useState } from "react";
 import { ageLabel, fmtINRShort, stageOf } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Prov, Steps, Stream, WSTabs, WSTitle, fmtUSD } from "../lib/primitives";
@@ -598,7 +597,7 @@ const WiredSOWorkspace = () => {
                       <div key={i} className="row mono-sm">
                         <span style={{ minWidth: 130 }}>{r[0]}</span>
                         <div className="hbar" style={{ flex: 1 }}>
-                          <span style={{ width: `${Math.max(0, Math.min(100, r[1]))}%`, background: r[3] ? "var(--accent-2)" : "var(--ink)" }} />
+                          <span style={{ width: `${Math.max(0, Math.min(100, Number(r[1])))}%`, background: r[3] ? "var(--accent-2)" : "var(--ink)" }} />
                         </div>
                         <span style={{ minWidth: 80, textAlign: "right" }}>{r[2]}</span>
                         <span style={{ minWidth: 36, textAlign: "right", color: "var(--ink-3)" }}>{r[1]}%</span>
@@ -644,7 +643,7 @@ const WiredSOWorkspace = () => {
               <table className="tbl">
                 <thead><tr><th>Field</th><th>Page · line</th><th>Value</th></tr></thead>
                 <tbody>
-                  {Object.entries(o.evidence_by_field).map(([field, ev]) => (
+                  {Object.entries(o.evidence_by_field as Record<string, any>).map(([field, ev]: [string, any]) => (
                     <tr key={field}>
                       <td className="mono-sm">{field}</td>
                       <td className="mono-sm">{ev?.page ? `p${ev.page}${ev.line ? "·l" + ev.line : ""}` : "—"}</td>

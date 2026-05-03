@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 // Auto-generated smoke test for screens/tally-reconcile.jsx.
 // Hand-edit if a screen needs a more specific assertion; the generator
 // only overwrites files that match the auto-generated header below.

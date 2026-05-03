@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useState } from "react";
 import { ageLabel, fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
@@ -77,7 +76,7 @@ const WiredForecasts = () => {
     const filtered = allRows.filter((r) => r.grouping === groupKey || r.group === groupKey || r.dimension === groupKey);
     if (!filtered.length) return [];
     // Sort desc by snapshot_at then take rows with the same most-recent snapshot timestamp.
-    const sorted = filtered.slice().sort((a, b) => new Date(b.snapshot_at || b.created_at || 0) - new Date(a.snapshot_at || a.created_at || 0));
+    const sorted = filtered.slice().sort((a, b) => new Date(b.snapshot_at || b.created_at || 0).getTime() - new Date(a.snapshot_at || a.created_at || 0).getTime());
     const pivot = sorted[0].snapshot_at || sorted[0].created_at;
     return sorted.filter((r) => (r.snapshot_at || r.created_at) === pivot);
   };

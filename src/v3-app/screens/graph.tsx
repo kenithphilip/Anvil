@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useRef, useState } from "react";
 import { Banner, Btn, Card, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
@@ -16,7 +15,7 @@ const CYTOSCAPE_CDN = "https://cdn.jsdelivr.net/npm/cytoscape@3.30.0/dist/cytosc
 const CYTOSCAPE_DAGRE_CDN = "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js";
 const DAGRE_CDN = "https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js";
 
-const lazyLoadScript = (src) => new Promise((resolve, reject) => {
+const lazyLoadScript = (src: string): Promise<void> => new Promise<void>((resolve, reject) => {
   if (document.querySelector(`script[src="${src}"]`)) {
     resolve();
     return;

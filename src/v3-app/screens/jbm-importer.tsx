@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useRef, useState } from "react";
 import { Banner, Btn, Card, KPI, KPIRow, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
@@ -18,7 +17,7 @@ const ensureXlsxJbm = async () => {
   if (window.XLSX) return window.XLSX;
   if (document.querySelector(`script[src="${XLSX_CDN_JBM}"]`)) {
     // Wait for it to attach
-    await new Promise((resolve) => {
+    await new Promise<void>((resolve) => {
       const t0 = Date.now();
       const tick = () => {
         if (window.XLSX || Date.now() - t0 > 5000) return resolve();

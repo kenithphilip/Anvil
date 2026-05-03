@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useMemo, useState } from "react";
 import { ageLabel } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
@@ -27,10 +26,10 @@ const evalReadParams = () => {
   return new URLSearchParams(q || "");
 };
 
-const evalCrudFetch = async (path, opts = {}) => {
+const evalCrudFetch = async (path: string, opts: { method?: string; body?: any; headers?: Record<string, string> } = {}) => {
   const cfg = (() => { try { return JSON.parse(localStorage.getItem("obara:backend_config") || "{}"); } catch (_) { return {}; } })();
   const session = (() => { try { return JSON.parse(localStorage.getItem("obara:backend_session") || "null"); } catch (_) { return null; } })();
-  const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...((opts.headers as Record<string, string>) || {}) };
   if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
   if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
   const url = (cfg.url || "").replace(/\/+$/, "") + path;
@@ -248,8 +247,8 @@ const WiredEvalsCRUD = () => {
   }, [cases.rows, suiteFilter]);
 
   const allSuites = m(() => {
-    const s = new Set();
-    for (const c of cases.rows) if (c.suite) s.add(c.suite);
+    const s = new Set<string>();
+    for (const c of cases.rows) if (c.suite) s.add(String(c.suite));
     return Array.from(s).sort();
   }, [cases.rows]);
 

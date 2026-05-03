@@ -7,17 +7,17 @@ hard pass/fail; record results inline as `[x]` / `[ ]`.
 
 - [ ] `npm run check` exits 0 (every JS/JSX file syntax-clean).
 - [ ] `npm run build` produces both `public/index.html` (legacy) and
-      `public/v3.html` (v3) without warnings.
+      `public/v3-app/` (v3) without warnings.
 - [ ] `npm run verify` reports `0 failed` on script blocks.
 - [ ] No new files in `node_modules/` or unstaged secrets.
 
 ## Feature flag
 
-- [ ] Open `/?v3=1` → redirects to `/v3.html`, pins
+- [ ] Open `/?v3=1` → redirects to `/v3-app/`, pins
       `localStorage.obara:v3_pinned = "1"`.
 - [ ] Open `/?v3=0` → unpins and lands on the legacy shell.
-- [ ] Open `/` while pinned → lands on `/v3.html` (no manual flag needed).
-- [ ] Open `/v3.html?v3=0` → unpins, redirects to `/`.
+- [ ] Open `/` while pinned → lands on `/v3-app/` (no manual flag needed).
+- [ ] Open `/v3-app/?v3=0` → unpins, redirects to `/`.
 - [ ] Reload the v3 page → still v3 (pin survives).
 
 ## Shell & navigation
@@ -102,7 +102,7 @@ A blank or mock-data render = fail.
       visible on focus.
 - [ ] Every clickable rendered as `<button>` (via `<Btn>`) or `<a href>`,
       not bare `<div onClick>`. Quick grep:
-      `grep -rE 'onClick=' src/v3/screens-wired/ | grep -v "<Btn\\|<button\\|<a "`
+      `grep -rE 'onClick=' src/v3-app/screens/ | grep -v "<Btn\\|<button\\|<a "`
       should return `0` rows ideally.
 - [ ] Contrast: chartreuse accent on dark theme = 4.6:1 (passes).
       Ink #ECECE6 on #16181B (paper) = 14:1 (passes AA + AAA).
@@ -140,4 +140,4 @@ A blank or mock-data render = fail.
 - [ ] `docs/USER_GUIDE.md` updated (if user-facing change).
 - [ ] `docs/V3_ROUTE_CONTRACT.md` matches the wired files.
 - [ ] No stray `console.log` in production code:
-      `grep -r 'console.log' src/v3/screens-wired/` should be 0.
+      `grep -r 'console.log' src/v3-app/screens/` should be 0.

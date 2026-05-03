@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useState } from "react";
 import { fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KV, WSTabs, WSTitle } from "../lib/primitives";
@@ -47,10 +46,10 @@ const ADMIN_ROLES = ["sales_engineer", "sales_manager", "procurement", "finance"
 const ADMIN_DRAWING_BASE_KEY = "obara:drawing_base_url";
 const CONTRACT_TYPES = ["ARC", "BLANKET", "AMC", "PROJECT"];
 
-const adminCrudFetch = async (path, opts = {}) => {
+const adminCrudFetch = async (path: string, opts: { method?: string; body?: any; headers?: Record<string, string> } = {}) => {
   const cfg = (() => { try { return JSON.parse(localStorage.getItem("obara:backend_config") || "{}"); } catch (_) { return {}; } })();
   const session = (() => { try { return JSON.parse(localStorage.getItem("obara:backend_session") || "null"); } catch (_) { return null; } })();
-  const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...((opts.headers as Record<string, string>) || {}) };
   if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
   if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
   const url = (cfg.url || "").replace(/\/+$/, "") + path;
@@ -78,10 +77,10 @@ const adminFxRowsFromResp = (resp) => {
   if (Array.isArray(resp.rates)) return resp.rates;
   if (Array.isArray(resp.rows)) return resp.rows;
   if (resp.pairs && typeof resp.pairs === "object") {
-    return Object.entries(resp.pairs).map(([pair, info]) => ({
+    return Object.entries(resp.pairs).map(([pair, info]: [string, any]) => ({
       pair,
-      rate: typeof info === "object" ? (info.rate || info.spot) : info,
-      as_of: typeof info === "object" ? (info.as_of || info.timestamp) : null,
+      rate: typeof info === "object" ? (info?.rate ?? info?.spot) : info,
+      as_of: typeof info === "object" ? (info?.as_of ?? info?.timestamp) : null,
     }));
   }
   return [];
@@ -436,7 +435,7 @@ const WiredAdminCRUD = () => {
       if (rows.length < 2) throw new Error("CSV needs header + 1 row");
       const header = rows[0].map((h) => h.trim());
       const items = rows.slice(1).map((r) => {
-        const o = {};
+        const o: Record<string, string> = {};
         header.forEach((h, i) => { if (h) o[h] = r[i]; });
         return o;
       }).filter((o) => o.tally_item_name);

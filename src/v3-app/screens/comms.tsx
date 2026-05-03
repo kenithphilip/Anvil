@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useState } from "react";
 import { useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
@@ -71,7 +70,7 @@ const WiredComms = () => {
   const draftRows = commsRowsFromAudit(drafts.data);
   const sentRows = commsRowsFromAudit(sent.data).map((r) => ({ ...r, status: "sent" }));
   const allRows = [...draftRows, ...sentRows].sort((a, b) =>
-    new Date(b.created_at || 0) - new Date(a.created_at || 0)
+    new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
   );
 
   const counts = {

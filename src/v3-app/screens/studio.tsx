@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useMemo, useState } from "react";
 import { ageLabel, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTitle } from "../lib/primitives";
@@ -25,10 +24,10 @@ import { RBAC } from "../lib/rbac";
 // trusted, learned_rules, recipe, golden_examples, force_llm_fallback.
 // ============================================================
 
-const studioCrudFetch = async (path, opts = {}) => {
+const studioCrudFetch = async (path: string, opts: { method?: string; body?: any; headers?: Record<string, string> } = {}) => {
   const cfg = (() => { try { return JSON.parse(localStorage.getItem("obara:backend_config") || "{}"); } catch (_) { return {}; } })();
   const session = (() => { try { return JSON.parse(localStorage.getItem("obara:backend_session") || "null"); } catch (_) { return null; } })();
-  const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...((opts.headers as Record<string, string>) || {}) };
   if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
   if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
   const url = (cfg.url || "").replace(/\/+$/, "") + path;

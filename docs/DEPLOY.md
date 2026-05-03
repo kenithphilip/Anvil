@@ -34,13 +34,37 @@ Migrations are NOT auto-applied. Apply them manually after merge:
 
 `vercel.json` declares:
 
-- `buildCommand: npm run build` (writes `public/index.html`)
+- `buildCommand: npm run build`
 - `outputDirectory: public`
-- `functions:` per-route timeout and memory overrides
+- `functions:` per-route memory + maxDuration overrides
 - `crons:` daily fx_cron at 04:00 UTC and amc_cron at 05:00 UTC
 - `headers:` CORS for `/api/*`
+- `rewrites:` `/v3.html` to `/v3-app/index.html` (kept for backwards
+  compatibility with bookmarks from the legacy build)
 
-Function sizing:
+`npm run build` does two things in order:
+
+1. `node src/scripts/build-unified-app.mjs`. Builds the legacy
+   single-file app and writes `public/index.html`. The shim at the top
+   of that file redirects `?v3=1` (or `obara:v3_pinned` users) to
+   `/v3-app/`.
+2. `vite build`. Builds the v3 app under `public/v3-app/` with per-
+   route code splitting, source maps, and gzipped chunks. The Vite
+   build emits its own `index.html` that loads the React shell.
+
+### Function runtime
+
+Vercel auto-detects Node.js for `api/**/*.js` from the `engines.node`
+field in `package.json` (currently `>=20.0.0`). Do NOT specify a
+`runtime` value in `vercel.json`. The legacy `nodejs20.x` literal is
+not a valid runtime descriptor in current Vercel projects and causes:
+
+```
+Error: Function Runtimes must have a valid version, for example
+`now-php@1.0.0`.
+```
+
+Per-function `memory` + `maxDuration` overrides ARE valid:
 
 | Path | Memory | Max duration |
 | --- | --- | --- |
@@ -51,8 +75,21 @@ Function sizing:
 | `api/documents/upload.js` | 512 MB | 30s |
 | (default for everything else) | 512 MB | 30s |
 
-If a function regularly times out, raise the duration in `vercel.json` and
-redeploy.
+If a function regularly times out, raise the duration in `vercel.json`
+and redeploy.
+
+### Pre-deploy check
+
+`npm run predeploy` chains `build` + `check` + `verify`. The `verify`
+step runs `audit-migration`, `audit-screens-deep`, `audit-cross-screen`,
+`audit-ux`, `audit-backend-calls`, `audit-hardcoded-data`,
+`audit-data-model`, and `audit-cross-module`. All eight must pass for
+the deploy to proceed. If any audit reports a finding, the build
+fails fast before Vercel ever sees it.
+
+If you want to ship a hotfix without running the full audit, set the
+`SKIP_AUDIT=1` env var locally and run `npm run build` directly. The
+production Vercel project should never have that var set.
 
 ## Environment variables
 

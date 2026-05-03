@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useState } from "react";
 import { ageLabel } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
@@ -19,7 +18,7 @@ const ISO_TYPES = [
   { id: "INTERNAL_TRANSFER",    label: "Internal transfer",   k: "plum"  },
 ];
 
-const ISO_FORM_BLANK = (type) => ({
+const ISO_FORM_BLANK = (type?: string): any => ({
   iso_type: type || "FOC_SUPPLY",
   reference: "",
   customer_id: "",
@@ -129,7 +128,7 @@ const WiredInternalSosCRUD = () => {
       } else {
         const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
         const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
-        const headers = { "Content-Type": "application/json" };
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
         if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
         const url = cfg.url.replace(/\/+$/, "") + "/api/sales/internal_so";
@@ -161,7 +160,7 @@ const WiredInternalSosCRUD = () => {
       } else {
         const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
         const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
-        const headers = {};
+        const headers: Record<string, string> = {};
         if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
         if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
         const url = cfg.url.replace(/\/+$/, "") + "/api/sales/internal_so?id=" + encodeURIComponent(id);

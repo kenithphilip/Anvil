@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fmtINRShort } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTabs, WSTitle } from "../lib/primitives";
@@ -32,7 +31,7 @@ let _xlsxPromise = null;
 const ensureXlsx = () => {
   if (typeof window !== "undefined" && window.XLSX) return Promise.resolve(window.XLSX);
   if (_xlsxPromise) return _xlsxPromise;
-  const toastId = window.notify?.("Loading parser…", "fetching xlsx engine", { ttlMs: 0 });
+  const toastId = window.notify?.("Loading parser…", "fetching xlsx engine", { ttlMs: 0 }) as number | undefined;
   _xlsxPromise = new Promise((resolve, reject) => {
     const s = document.createElement("script");
     s.src = SOH_XLSX_CDN;
@@ -222,7 +221,7 @@ const sohBuildRows = (rows, headerIdx, format) => {
     const desc    = partGet(colMap.description);
     if (!obaraPN && !custPN && !desc) continue;
     const rec = { source_format: fmtKey, format, obara_part_no: obaraPN || null, customer_part_no: custPN || null, description: desc || null };
-    const setIf = (key, idx, fn) => {
+    const setIf = (key: string, idx: number | null | undefined, fn?: (v: any) => any) => {
       if (idx == null || idx === -1) return;
       const v = row[idx];
       if (v === "" || v == null) return;
@@ -568,15 +567,15 @@ const WiredSOHistory = () => {
     let totalParsed = 0;
     let formats = new Set();
     const errors = [];
-    for (const file of Array.from(fileList)) {
+    for (const file of Array.from(fileList) as File[]) {
       try {
         const parsed = await parseSohFile(file);
         if (!parsed.rows.length) { errors.push(`${file.name}: no rows`); continue; }
         applySohImport(parsed);
         totalParsed += parsed.rows.length;
         formats.add(parsed.format);
-      } catch (err) {
-        errors.push(`${file.name}: ${err.message || err}`);
+      } catch (err: any) {
+        errors.push(`${file.name}: ${err?.message || err}`);
       }
     }
     setBusy(false);

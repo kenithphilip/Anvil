@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";

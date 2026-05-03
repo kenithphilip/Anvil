@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useRef, useState } from "react";
 import { Banner, Btn, Card, Chip, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
@@ -127,11 +126,11 @@ const parseXlsx = async (arrayBuffer) => {
 };
 
 // ── ZIP expansion ───────────────────────────────────────────
-const parseZip = async (arrayBuffer) => {
-  const JSZip = await loadJSZipForBom();
+const parseZip = async (arrayBuffer: ArrayBuffer) => {
+  const JSZip: any = await loadJSZipForBom();
   const zip = await JSZip.loadAsync(arrayBuffer);
-  const out = [];
-  const entries = Object.values(zip.files).filter((e) => !e.dir);
+  const out: Array<{ name: string; content: ArrayBuffer }> = [];
+  const entries = (Object.values(zip.files) as any[]).filter((e) => !e.dir);
   for (const entry of entries) {
     const ext = (entry.name.split(".").pop() || "").toLowerCase();
     if (ext === "zip") continue; // disallow nested ZIPs
@@ -317,8 +316,8 @@ const WiredBomImport = () => {
     }
   };
 
-  const ingestList = async (rawList) => {
-    const list = Array.from(rawList || []);
+  const ingestList = async (rawList: FileList | File[]) => {
+    const list = Array.from(rawList || []) as File[];
     if (!list.length) return;
     // Show "Loading parser…" the first time we touch XLSX or ZIP.
     const hasXlsx = list.some((f) => /\.(xlsx|xls)$/i.test(f.name));
@@ -328,14 +327,14 @@ const WiredBomImport = () => {
       try {
         if (hasXlsx) await loadXLSX();
         if (hasZip)  await loadJSZipForBom();
-      } catch (err) {
-        window.notifyError?.("Parser load failed", String(err.message || err));
+      } catch (err: any) {
+        window.notifyError?.("Parser load failed", String(err?.message || err));
       }
       setParserLoading(false);
     }
 
     // Expand any ZIPs first.
-    const flat = [];
+    const flat: File[] = [];
     for (const f of list) {
       const ext = (f.name.split(".").pop() || "").toLowerCase();
       if (ext === "zip") {
@@ -343,8 +342,8 @@ const WiredBomImport = () => {
           const buf = await f.arrayBuffer();
           const inner = await parseZip(buf);
           for (const entry of inner) flat.push(entryToFile(entry));
-        } catch (err) {
-          window.notifyError?.("ZIP unpack failed", f.name + " · " + (err.message || err));
+        } catch (err: any) {
+          window.notifyError?.("ZIP unpack failed", f.name + " · " + (err?.message || err));
         }
       } else if (["xlsx", "xls", "csv", "tsv", "txt"].includes(ext)) {
         flat.push(f);
@@ -428,7 +427,7 @@ const WiredBomImport = () => {
   };
 
   // Drop-zone styling
-  const dropStyle = {
+  const dropStyle: React.CSSProperties = {
     border: "2px dashed " + (dragActive ? "var(--accent)" : "var(--hairline)"),
     borderRadius: 12,
     padding: "28px 18px",

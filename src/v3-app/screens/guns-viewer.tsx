@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useMemo, useState } from "react";
 import { ageLabel, stageOf, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KV, WSTitle } from "../lib/primitives";
@@ -354,7 +353,7 @@ const GunsRightPane = ({ gun, ordersData, ordersLoading, ordersError, customerLo
       });
     }
     return matches
-      .sort((a, b) => new Date(b.when || 0) - new Date(a.when || 0))
+      .sort((a, b) => new Date(b.when || 0).getTime() - new Date(a.when || 0).getTime())
       .slice(0, 12);
   }, [ordersData, partSet, customerLookup]);
 

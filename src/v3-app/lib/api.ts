@@ -32,6 +32,14 @@ declare global {
     notifyDismiss?: (id: number) => void;
     __toastSubscribe?: (fn: (rows: unknown[]) => void) => () => void;
     __toastsCurrent?: () => unknown[];
+    // Runtime-loaded CDN libraries. The screens that use them inject a
+    // <script src="cdn"> tag on demand; once loaded, the global is set
+    // by the library itself. Typing as `any` keeps the screens working
+    // without pulling in the libraries' real type definitions.
+    XLSX?: any;
+    JSZip?: any;
+    cytoscape?: any;
+    dagre?: any;
   }
 }
 

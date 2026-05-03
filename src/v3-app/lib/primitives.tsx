@@ -17,15 +17,16 @@ export interface BtnProps {
   type?: "button" | "submit" | "reset";
   className?: string;
   title?: string;
+  style?: CSSProperties;
   "aria-label"?: string;
 }
 
 export const Btn: React.FC<BtnProps> = ({
-  children, kind, sm, lg, icon, full, onClick, disabled, type = "button", className = "", title, "aria-label": ariaLabel,
+  children, kind, sm, lg, icon, full, onClick, disabled, type = "button", className = "", title, style, "aria-label": ariaLabel,
 }) => {
   const cls = ["btn", kind, sm && "sm", lg && "lg", icon && "icon", full && "full", className].filter(Boolean).join(" ");
   return (
-    <button type={type} className={cls} onClick={onClick} disabled={disabled} title={title} aria-label={ariaLabel}>
+    <button type={type} className={cls} onClick={onClick} disabled={disabled} title={title} aria-label={ariaLabel} style={style}>
       {children}
     </button>
   );

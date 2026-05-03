@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
@@ -107,7 +106,7 @@ const WiredShipmentsCRUD = () => {
       } else {
         const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
         const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
-        const headers = { "Content-Type": "application/json" };
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
         if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
         const url = cfg.url.replace(/\/+$/, "") + "/api/sales/shipments";
@@ -139,7 +138,7 @@ const WiredShipmentsCRUD = () => {
       } else {
         const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
         const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
-        const headers = {};
+        const headers: Record<string, string> = {};
         if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
         if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
         const url = cfg.url.replace(/\/+$/, "") + "/api/sales/shipments?id=" + encodeURIComponent(id);
@@ -166,7 +165,7 @@ const WiredShipmentsCRUD = () => {
       } else {
         const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
         const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
-        const headers = { "Content-Type": "application/json" };
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
         if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
         const url = cfg.url.replace(/\/+$/, "") + "/api/sales/shipments";

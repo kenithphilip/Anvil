@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useState } from "react";
 import { ageLabel, fmtINRShort, sevOf, stageOf } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, Sev, WSTabs, WSTitle } from "../lib/primitives";
@@ -72,7 +71,11 @@ const WiredSOList = () => {
         right={<>
           <input className="input" placeholder="search reference, customer…" value={query}
                  onChange={(ev) => setQuery(ev.target.value)} style={{ width: 260, height: 28 }} />
-          <Btn sm kind="ghost" onClick={() => setOrders((s) => ({ ...s, loading: true })) || ObaraBackend?.orders?.list?.({ limit: 200 }).then((d) => setOrders({ rows: Array.isArray(d) ? d : (d?.rows || []), loading: false, error: null }))}>{Icon.cycle} refresh</Btn>
+          <Btn sm kind="ghost" onClick={() => {
+            setOrders((s) => ({ ...s, loading: true }));
+            const p = ObaraBackend?.orders?.list?.({ limit: 200 });
+            if (p) p.then((d: any) => setOrders({ rows: Array.isArray(d) ? d : (d?.rows || []), loading: false, error: null }));
+          }}>{Icon.cycle} refresh</Btn>
           <Btn sm kind="primary" onClick={() => window.location.hash = "#/intake"}>{Icon.plus} New from PO</Btn>
         </>}
       />

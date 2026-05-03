@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
@@ -38,10 +37,10 @@ const svReadParams = () => {
   return new URLSearchParams(q || "");
 };
 
-const svFetch = async (path, opts = {}) => {
+const svFetch = async (path: string, opts: { method?: string; body?: any; headers?: Record<string, string> } = {}) => {
   const cfg = (() => { try { return JSON.parse(localStorage.getItem("obara:backend_config") || "{}"); } catch (_) { return {}; } })();
   const session = (() => { try { return JSON.parse(localStorage.getItem("obara:backend_session") || "null"); } catch (_) { return null; } })();
-  const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...((opts.headers as Record<string, string>) || {}) };
   if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
   if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
   const url = (cfg.url || "").replace(/\/+$/, "") + path;
@@ -64,7 +63,7 @@ const svDateLabel = (iso) => {
   if (Number.isNaN(d.getTime())) return "—";
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const target = new Date(d); target.setHours(0, 0, 0, 0);
-  const days = Math.round((target - today) / 86400000);
+  const days = Math.round((target.getTime() - today.getTime()) / 86400000);
   if (days === 0) return "today";
   if (days === 1) return "tomorrow";
   if (days === -1) return "yesterday";

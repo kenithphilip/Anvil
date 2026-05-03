@@ -1,4 +1,3 @@
-// @ts-nocheck — converted screen, types follow in a focused TS pass
 import React, { useEffect, useRef, useState } from "react";
 import { Banner, Btn, Card, Dot, KV, Steps, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
@@ -110,7 +109,7 @@ const WiredSOIntake = () => {
         <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 14 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <Card title="Order Mode" eyebrow="drives prefix · currency · logistics · margin floor">
-              <div className="choice-grid" style={{ "--cols": 2 }} role="radiogroup" aria-label="Order Mode">
+              <div className="choice-grid" style={{ ["--cols" as any]: 2 } as React.CSSProperties} role="radiogroup" aria-label="Order Mode">
                 {ORDER_MODES.map((m) => (
                   <div
                     key={m.code}

@@ -5,7 +5,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": "public",
   "functions": {
-    "api/[...path].js": {
+    "api/dispatch.js": {
       "maxDuration": 60
     }
   },
@@ -37,6 +37,7 @@
     }
   ],
   "rewrites": [
+    { "source": "/api/:p*", "destination": "/api/dispatch?_p=:p*" },
     { "source": "/v3.html", "destination": "/index.html" },
     { "source": "/v3-app", "destination": "/index.html" },
     { "source": "/v3-app/", "destination": "/index.html" },

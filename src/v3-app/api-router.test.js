@@ -85,6 +85,38 @@ describe("router dispatch", () => {
     // would have set req.query.id = "" if it had matched.
     expect(req.query.id).toBeUndefined();
   });
+
+  // The production code path: Vercel rewrites /api/<rest> to
+  // /api/dispatch?_p=<rest>. The dispatcher should resolve based on
+  // _p and ignore the dispatch URL itself.
+  it("resolves a route from the _p query param when Vercel rewrites", async () => {
+    const { req, res } = mockReqRes("/api/dispatch?_p=auth/magic_link", "POST");
+    try { await dispatch(req, res); } catch (_) { /* handler may fail */ }
+    // The auth/magic_link handler exists; we should not see Route-not-found.
+    expect(res.statusCode).not.toBe(404);
+  });
+
+  it("resolves a dynamic /<group>/<id> route from _p", async () => {
+    const { req, res } = mockReqRes("/api/dispatch?_p=orders/abc-789");
+    try { await dispatch(req, res); } catch (_) {}
+    expect(req.query.id).toBe("abc-789");
+  });
+
+  it("merges other query params alongside _p", async () => {
+    const { req, res } = mockReqRes("/api/dispatch?_p=orders&limit=25&status=DRAFT");
+    try { await dispatch(req, res); } catch (_) {}
+    expect(req.query.limit).toBe("25");
+    expect(req.query.status).toBe("DRAFT");
+    // _p must not leak through into the handler's query object.
+    expect(req.query._p).toBeUndefined();
+  });
+
+  it("returns a clear error if Vercel rewrite leaves us at /dispatch with empty _p", async () => {
+    const { req, res } = mockReqRes("/api/dispatch");
+    await dispatch(req, res);
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toContain("Empty path");
+  });
 });
 
 // Coverage gate: build a list of routes the v3 client expects and

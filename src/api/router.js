@@ -1,7 +1,8 @@
 // Route table + URL dispatcher. Hobby Vercel deploys cap us at 12
 // serverless functions, so all 75 endpoints share a single function
-// (api/[...path].js). The dispatcher reads req.url, matches it against
-// the table below, and calls the right handler.
+// (api/dispatch.js, reached via a vercel.json rewrite that maps
+// /api/:p* to /api/dispatch?_p=:p*). The dispatcher reads `_p`,
+// matches it against the table below, and calls the right handler.
 //
 // Each handler is the default export of its file under src/api/. The
 // imports are static so Vercel's Node.js cold start picks them up
@@ -237,18 +238,57 @@ const resolve = (pathname) => {
   return null;
 };
 
-// Public dispatcher. Strips the /api prefix, parses query, resolves
-// the handler, merges path params into req.query so legacy handlers
-// that read req.query.id keep working unchanged.
+// Public dispatcher. Resolves the original `/api/<rest>` path the
+// browser asked for, strips the /api prefix, parses the query string,
+// and calls the matching handler. Path params (e.g. /orders/:id) get
+// merged into req.query so handlers that read req.query.id keep
+// working without changes.
+//
+// Path resolution order, most reliable first:
+//
+//   1. `req.query._p`. Set by the `vercel.json` rewrite that maps
+//      `/api/:p*` to `/api/dispatch?_p=:p*`. Always present in
+//      production traffic. Survives Vercel's req.url-rewriting quirks.
+//
+//   2. `req.url`. Used in unit tests + local development where the
+//      request bypasses Vercel's rewrite layer. Also a fallback if
+//      the rewrite is misconfigured.
+//
+// Both shapes get the same parsing.
 export const dispatch = async (req, res) => {
   const fullUrl = req.url || "/";
   const [pathWithApi, queryString] = fullUrl.split("?");
-  // Vercel passes /api/<rest>; the [...path] catch-all strips the
-  // leading /api. We tolerate either shape.
-  let pathname = pathWithApi.replace(/^\/api/, "");
-  if (!pathname.startsWith("/")) pathname = "/" + pathname;
-  // Trim trailing slash for canonical match.
+
+  // Pull `_p` out of the query string FIRST so we can use it as the
+  // canonical path. Anything else stays in the per-request query.
+  const query = {};
+  let pPath = null;
+  if (queryString) {
+    for (const [k, v] of new URLSearchParams(queryString)) {
+      if (k === "_p") pPath = v;
+      else query[k] = v;
+    }
+  }
+
+  let pathname;
+  if (pPath != null && pPath !== "") {
+    // _p comes from a Vercel splat capture, may be slash-joined.
+    // Normalize to a leading slash + no trailing slash.
+    pathname = pPath.startsWith("/") ? pPath : "/" + pPath;
+  } else {
+    // Local / test path: req.url has the original /api/<rest>.
+    pathname = pathWithApi.replace(/^\/api/, "");
+    if (!pathname.startsWith("/")) pathname = "/" + pathname;
+  }
   if (pathname.length > 1 && pathname.endsWith("/")) pathname = pathname.slice(0, -1);
+  // Defensive: if the rewrite landed us at /dispatch directly,
+  // there is no original path to resolve. Surface that explicitly.
+  if (pathname === "/dispatch") {
+    res.statusCode = 404;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ error: { message: "Empty path. Hit /api/<endpoint> instead." } }));
+    return;
+  }
 
   const match = resolve(pathname);
   if (!match) {
@@ -258,13 +298,6 @@ export const dispatch = async (req, res) => {
     return;
   }
 
-  // Reconstruct req.query so handlers that read req.query.<x> work.
-  // Vercel populates req.query for normal routes; with the [...path]
-  // dispatcher we have to do it ourselves.
-  const query = {};
-  if (queryString) {
-    for (const [k, v] of new URLSearchParams(queryString)) query[k] = v;
-  }
   Object.assign(query, match.params);
   req.query = query;
 

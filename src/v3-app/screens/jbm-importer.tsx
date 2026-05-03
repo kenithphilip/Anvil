@@ -205,8 +205,12 @@ const WiredJbmImporter = () => {
         atd_model: gun.atd_model || null,
       };
       try {
+        // /api/admin/equipment expects flat body fields (customer_id,
+        // plant_name, ...). The legacy build wrapped them in an
+        // `equipment:` key by mistake; spread them directly so the
+        // handler picks each up via body.<field>.
         await ObaraBackend.admin.upsertEquipment({
-          equipment,
+          ...equipment,
           installed_parts: gun.installed_parts,
         });
         success++;

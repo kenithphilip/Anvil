@@ -171,7 +171,7 @@ const WiredSourcePOs = () => {
         meta={`${rows.length} total · ${totalOpen} active`}
         right={<>
           <Btn icon kind="ghost" sm onClick={reload} title="Refresh">{Icon.cycle}</Btn>
-          <Btn sm kind="primary" onClick={() => window.location.hash = "#/source-pos?new=1"}>{Icon.plus} New SPO</Btn>
+          <Btn sm kind="primary" onClick={() => window.location.hash = "#/spo?new=1"}>{Icon.plus} New SPO</Btn>
         </>}
       />
       <WSTabs

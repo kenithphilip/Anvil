@@ -6,7 +6,7 @@
 
 import React, { ReactNode } from "react";
 import { Icon } from "../lib/icons";
-import { Chip, Dot } from "../lib/primitives";
+import { Dot } from "../lib/primitives";
 import type { NavGroup, RoleEntry } from "../lib/nav";
 
 export interface ShellTenant { code?: string; }
@@ -134,124 +134,12 @@ export const Shell: React.FC<ShellProps> = ({
   </div>
 );
 
-// Cmd+K palette. The static groups below are placeholders that match the
-// legacy palette content; the `wired-cmdk.jsx` overlay replaces them with
-// live recents once that screen lands in the Vite app.
-export interface CmdKProps {
-  open?: boolean;
-  onClose?: () => void;
-  onJump?: (id: string) => void;
-}
-
-export const CmdK: React.FC<CmdKProps> = ({ open, onClose, onJump }) => {
-  if (!open) return null;
-  const groups = [
-    {
-      label: "Recent threads",
-      items: [
-        { ic: Icon.layers, t: "OIQTLC-26-1015 · Hyderabad Refractories · 4 line items", m: "↵ open" },
-        { ic: Icon.layers, t: "OIQTHS-26-0021 · Voestalpine Spec. · USD 124,500", m: "↵ open" },
-        { ic: Icon.pkg,    t: "SPO/JP/26/0091 · Yokoi Manufacturing · ETA 14 May", m: "↵ open" },
-      ],
-    },
-    {
-      label: "Jump to",
-      items: [
-        { ic: Icon.bolt,     t: "My Day", m: "G H", id: "home" },
-        { ic: Icon.inbox,    t: "Inbox · 12 new", m: "G I", id: "intake" },
-        { ic: Icon.layers,   t: "Sales Orders", m: "G S", id: "so" },
-        { ic: Icon.flame,    t: "Leads", m: "G L", id: "leads" },
-        { ic: Icon.signal,   t: "Opportunities pipeline", m: "G O", id: "opps" },
-        { ic: Icon.ledger,   t: "Tally sync queue", m: "G T", id: "tally" },
-        { ic: Icon.brain,    t: "Eval suites", m: "G E", id: "evals" },
-        { ic: Icon.settings, t: "Admin Center", m: "G A", id: "admin" },
-      ],
-    },
-    {
-      label: "Actions",
-      items: [
-        { ic: Icon.plus, t: "Create Sales Order from PO upload", m: "C O" },
-        { ic: Icon.plus, t: "Create Lead", m: "C L" },
-        { ic: Icon.plus, t: "Log Service Visit", m: "C V" },
-        { ic: Icon.plus, t: "Add Customer Format Profile", m: "C P" },
-        { ic: Icon.send, t: "Send missing-doc nudge", m: "C N" },
-      ],
-    },
-  ];
-  return (
-    <div className="cmdk-bg" onClick={onClose}>
-      <div className="cmdk" onClick={(e) => e.stopPropagation()}>
-        <div className="cmdk-input">
-          {Icon.search}
-          <input autoFocus placeholder="Search orders, jump to module, run action…" />
-          <kbd style={{ fontFamily: "var(--mono)", fontSize: 10, padding: "2px 5px", border: "1px solid var(--hairline)", borderRadius: 2, color: "var(--ink-3)" }}>esc</kbd>
-        </div>
-        <div className="cmdk-list">
-          {groups.map((g) => (
-            <div key={g.label}>
-              <div className="cmdk-group">{g.label}</div>
-              {g.items.map((it, i) => (
-                <div
-                  key={i}
-                  className={`cmdk-row ${i === 0 && g.label === "Recent threads" ? "active" : ""}`}
-                  onClick={() => { if (it.id && onJump) onJump(it.id); }}
-                  style={{ cursor: it.id ? "pointer" : "default" }}
-                >
-                  <span className="ic">{it.ic}</span>
-                  <span>{it.t}</span>
-                  <span className="meta">{it.m}</span>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Thread drawer. Currently shows a static event timeline; wired-thread.jsx
-// in the legacy build replaces the contents with the live order activity.
-export interface ThreadDrawerProps { open?: boolean; onClose?: () => void; }
-
-export const ThreadDrawer: React.FC<ThreadDrawerProps> = ({ open, onClose }) => {
-  if (!open) return null;
-  return (
-    <div className="cmdk-bg" style={{ padding: 0, alignItems: "stretch", justifyItems: "end" }} onClick={onClose}>
-      <div className="drawer" onClick={(e) => e.stopPropagation()}>
-        <div className="drawer-h">
-          <div>
-            <div className="h-eyebrow">Thread · OIQTLC-26-1015</div>
-            <div className="h2" style={{ marginTop: 2 }}>Hyderabad Refractories Pvt Ltd</div>
-          </div>
-          <button className="btn icon sm ghost" style={{ marginLeft: "auto" }} onClick={onClose}>{Icon.x}</button>
-        </div>
-        <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10, overflow: "auto", flex: 1 }}>
-          {[
-            { k: "PO", t: "PO 2024-7821 · Hyderabad Refractories", d: "uploaded · 12 Apr 09:14", c: "good" },
-            { k: "QU", t: "Quote OIQTLC-26-1015", d: "drafted · 12 Apr 10:22", c: "good" },
-            { k: "VA", t: "Validation · 2 findings", d: "12 Apr 10:24 · auto", c: "warn" },
-            { k: "AP", t: "Approval · margin 28% under floor", d: "pending · sent to V. Suri", c: "warn" },
-            { k: "TA", t: "Tally push", d: "queued · payload hash a8f2c1…", c: "info" },
-            { k: "SP", t: "Source PO · Yokoi Manufacturing JP", d: "drafted · 13 Apr 11:00", c: "info" },
-            { k: "SH", t: "Shipment · Nhava Sheva → Hyderabad", d: "ETA 14 May · CIF", c: "info" },
-            { k: "EI", t: "e-Invoice IRN", d: "PENDING_GSTN · since 10:30", c: "warn" },
-          ].map((s, i) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "32px 1fr auto", gap: 10, alignItems: "start", padding: 10, border: "1px solid var(--hairline)", borderRadius: 6, background: "var(--paper)" }}>
-              <div style={{
-                width: 28, height: 28, display: "grid", placeItems: "center",
-                background: "var(--paper-3)",
-                borderRadius: 4, fontFamily: "var(--mono)", fontSize: 10, fontWeight: 700, color: "var(--ink)",
-              }}>{s.k}</div>
-              <div>
-                <div style={{ fontSize: 12.5, fontWeight: 600 }}>{s.t}</div>
-                <div className="mono-sm">{s.d}</div>
-              </div>
-              <Chip k={s.c}>{s.k.toLowerCase()}</Chip>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-};
+// CmdK + ThreadDrawer were ported to dedicated files
+// (components/CmdK.tsx, components/ThreadDrawer.tsx) with real backend
+// wiring. Re-exports below preserve any older callers that imported
+// from the Shell module; new code should import the wired versions
+// directly.
+export { CmdK } from "./CmdK";
+export type { CmdKProps } from "./CmdK";
+export { ThreadDrawer } from "./ThreadDrawer";
+export type { ThreadDrawerProps } from "./ThreadDrawer";

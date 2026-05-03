@@ -425,10 +425,10 @@ const WiredAmcCRUD = () => {
           <Btn icon kind="ghost" sm onClick={reload} title="Refresh">{Icon.cycle}</Btn>
           {canWrite && (
             <>
-              <Btn sm onClick={() => { window.location.hash = "#/service/amc?seed=1"; }} title="Bulk-seed visits from a contract">
+              <Btn sm onClick={() => { window.location.hash = "#/amc?seed=1"; }} title="Bulk-seed visits from a contract">
                 {Icon.bolt} Seed from contract
               </Btn>
-              <Btn sm kind="primary" onClick={() => { window.location.hash = "#/service/amc?new=1"; }}>
+              <Btn sm kind="primary" onClick={() => { window.location.hash = "#/amc?new=1"; }}>
                 {Icon.plus} New schedule
               </Btn>
             </>
@@ -511,12 +511,12 @@ const WiredAmcCRUD = () => {
                         </Btn>
                       )}
                       {r.generated_visit_id && (
-                        <Btn sm kind="ghost" onClick={() => { window.location.hash = `#/service/visits?id=${r.generated_visit_id}`; }} title="Open generated visit">
+                        <Btn sm kind="ghost" onClick={() => { window.location.hash = `#/svc-visits?id=${r.generated_visit_id}`; }} title="Open generated visit">
                           {Icon.arrowR} Visit
                         </Btn>
                       )}
                       {canWrite && (
-                        <Btn sm kind="ghost" onClick={() => { window.location.hash = `#/service/amc?id=${r.id}`; }}>
+                        <Btn sm kind="ghost" onClick={() => { window.location.hash = `#/amc?id=${r.id}`; }}>
                           {Icon.edit} Edit
                         </Btn>
                       )}

@@ -5,33 +5,23 @@
   "buildCommand": "npm run build",
   "outputDirectory": "public",
   "functions": {
-    "api/**/*.js": {
-      "runtime": "nodejs20.x",
-      "memory": 512,
-      "maxDuration": 30
-    },
     "api/claude/messages.js": {
-      "runtime": "nodejs20.x",
       "memory": 1024,
       "maxDuration": 60
     },
     "api/documents/upload.js": {
-      "runtime": "nodejs20.x",
       "memory": 512,
       "maxDuration": 30
     },
     "api/documents/ocr.js": {
-      "runtime": "nodejs20.x",
       "memory": 1024,
       "maxDuration": 60
     },
     "api/documents/scan.js": {
-      "runtime": "nodejs20.x",
       "memory": 768,
       "maxDuration": 30
     },
     "api/master_data/graph.js": {
-      "runtime": "nodejs20.x",
       "memory": 768,
       "maxDuration": 30
     }

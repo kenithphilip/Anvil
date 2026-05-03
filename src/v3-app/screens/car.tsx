@@ -116,7 +116,7 @@ const WiredCAR = () => {
         meta={`${carRows.length} total · ${counts.open || 0} open · ${closureRows.length} closures`}
         right={<>
           <Btn icon kind="ghost" sm onClick={cars.reload} title="Refresh">{Icon.cycle}</Btn>
-          <Btn sm kind="primary" onClick={() => window.location.hash = "#/service/car?new=1"}>{Icon.plus} New CAR</Btn>
+          <Btn sm kind="primary" onClick={() => window.location.hash = "#/car?new=1"}>{Icon.plus} New CAR</Btn>
         </>}
       />
       <WSTabs
@@ -168,7 +168,7 @@ const WiredCAR = () => {
                     <td><Chip k={sevChip.k}>{sevChip.label}</Chip></td>
                     <td><Chip k={chip.k}>{chip.label}</Chip></td>
                     <td className="mono-sm">{c.owner_name || c.owner?.name || c.assigned_to_name || "—"}</td>
-                    <td><Btn sm onClick={() => window.location.hash = `#/service/car?id=${c.id}`}>open {Icon.arrowR}</Btn></td>
+                    <td><Btn sm onClick={() => window.location.hash = `#/car?id=${c.id}`}>open {Icon.arrowR}</Btn></td>
                   </tr>
                 );
               })}

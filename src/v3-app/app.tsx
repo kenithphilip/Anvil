@@ -5,7 +5,9 @@
 // CmdK palette + Thread drawer overlays sit on top of the main content.
 
 import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { Shell, CmdK, ThreadDrawer } from "./components/Shell";
+import { Shell } from "./components/Shell";
+import { CmdK } from "./components/CmdK";
+import { ThreadDrawer } from "./components/ThreadDrawer";
 import { Card, WSTitle } from "./lib/primitives";
 import { Icon } from "./lib/icons";
 import { NAV, ROLES, crumbFor } from "./lib/nav";

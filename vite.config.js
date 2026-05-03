@@ -1,13 +1,16 @@
-// Vite config for the v3-app rewrite (Phase 8 Sub-PR 1).
+// Vite config. After Phase 8 Sub-PR 10, the Vite build IS the only
+// frontend the deployed app serves. The legacy concatenated unified
+// app is gone; `public/index.html` is now the Vite entry HTML and
+// `public/assets/*` are the per-route hashed JS + CSS chunks Rollup
+// emits. Vercel serves `/` and `/assets/*` directly with no shim,
+// no redirect, no second build.
 //
-// Lives alongside the legacy `node src/scripts/build-v3.mjs` pipeline so we
-// can ship the Vite build under public/v3-app/ without breaking the existing
-// public/v3.html. Once Sub-PR 4 cuts over, the legacy pipeline goes away and
-// this config takes over the canonical v3 entry.
-//
-// Source root is src/v3-app/ (kept disjoint from src/v3/ so the legacy
-// concatenation script does not pick up ESM modules and so Vite does not try
-// to bundle the babel-standalone scripts).
+// `emptyOutDir: false` because outDir lives outside the project root
+// (we point it at the repo's `public/`) and we share that folder with
+// `public/auth/callback.html` (the magic-link return URL) which must
+// not be wiped between builds. The package.json `build` script does
+// `rm -rf public/assets public/index.html public/v3-app` first so
+// Vite always writes a fresh tree without piling up stale chunks.
 
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
@@ -18,17 +21,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   root: path.resolve(__dirname, "src/v3-app"),
-  base: "/v3-app/",
+  base: "/",
   plugins: [react()],
   build: {
-    outDir: path.resolve(__dirname, "public/v3-app"),
-    emptyOutDir: true,
+    outDir: path.resolve(__dirname, "public"),
+    emptyOutDir: false,
     sourcemap: true,
     target: "es2020",
     rollupOptions: {
       output: {
-        // Stable chunk names so a route maps cleanly to a chunk in the
-        // network panel. Vite still hashes for cache busting.
         chunkFileNames: "assets/[name]-[hash].js",
         entryFileNames: "assets/[name]-[hash].js",
         assetFileNames: "assets/[name]-[hash][extname]",
@@ -50,7 +51,6 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
-    // vite.config sets root to src/v3-app; vitest scans relative to root.
     include: ["**/*.{test,spec}.{js,jsx,ts,tsx}"],
     setupFiles: ["./test-setup.ts"],
   },

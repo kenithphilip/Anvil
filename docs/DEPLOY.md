@@ -36,21 +36,36 @@ Migrations are NOT auto-applied. Apply them manually after merge:
 
 - `buildCommand: npm run build`
 - `outputDirectory: public`
-- `functions:` per-route memory + maxDuration overrides
+- `functions:` `maxDuration` 60s for the catch-all dispatcher
 - `crons:` daily fx_cron at 04:00 UTC and amc_cron at 05:00 UTC
-- `headers:` CORS for `/api/*`
-- `rewrites:` `/v3.html` to `/v3-app/index.html` (kept for backwards
-  compatibility with bookmarks from the legacy build)
+- `headers:` CORS for `/api/*` and immutable cache for `/assets/*`
+- `rewrites:` `/v3.html` and `/v3-app/*` map back to `/index.html`
+  for any user with stale bookmarks from the soft-launch period
 
-`npm run build` does two things in order:
+`npm run build` runs Vite directly. There is no second build step:
 
-1. `node src/scripts/build-unified-app.mjs`. Builds the legacy
-   single-file app and writes `public/index.html`. The shim at the top
-   of that file redirects `?v3=1` (or `obara:v3_pinned` users) to
-   `/v3-app/`.
-2. `vite build`. Builds the v3 app under `public/v3-app/` with per-
-   route code splitting, source maps, and gzipped chunks. The Vite
-   build emits its own `index.html` that loads the React shell.
+```
+rm -rf public/assets public/index.html public/v3-app && vite build
+```
+
+The clean step removes any stale chunks from previous builds (the
+hashed filenames mean old chunks would otherwise pile up because
+`emptyOutDir: false`). `public/auth/callback.html` is preserved
+because it sits outside `public/assets/` and `public/index.html`.
+
+The Vite build:
+
+- Reads `src/v3-app/index.html` as the entry document
+- Bundles `src/v3-app/index.tsx` and the per-route lazy imports from
+  `src/v3-app/routes.ts`
+- Writes `public/index.html` (the entry HTML, around 4 KB) and
+  `public/assets/*` (per-route hashed chunks, source maps, CSS)
+- Initial paint loads ~70 KB gzipped (React + Shell + design system).
+  Visiting a route lazy-loads only that route's chunk.
+
+There is no separate "legacy" or "unified" build anymore. The
+src/legacy/ directory is preserved for historical reference but is
+not wired into any script.
 
 ### Function consolidation
 
@@ -99,11 +114,25 @@ duration any inner endpoint needs (60s for OCR + Claude + Tally).
 
 ### Pre-deploy check
 
-`npm run predeploy` chains `build` + `check` + `verify`. The `verify`
-step runs `audit-migration`, `audit-screens-deep`, `audit-cross-screen`,
-`audit-ux`, `audit-backend-calls`, `audit-hardcoded-data`,
-`audit-data-model`, and `audit-cross-module`. All eight must pass for
-the deploy to proceed. If any audit reports a finding, the build
+`npm run predeploy` chains `build` + `check` + `verify`. The `check`
+step runs `node --check` over every API handler under `api/` and
+`src/api/`, plus the obara-client, then `tsc --noEmit` over the
+v3-app TypeScript sources. The `verify` step runs `npm run audit`
+which chains all eight audits:
+
+- `audit-migration`     (9 invariants: legacy paths gone, route
+                         coverage, screen tests, etc.)
+- `audit-screens-deep`  (forbidden globals)
+- `audit-cross-screen`  (legacy hoist references that broke after
+                         the ESM split)
+- `audit-ux`            (modal a11y, anchor-vs-button, icon labels)
+- `audit-backend-calls` (silent dead method calls)
+- `audit-hardcoded-data` (no demo customer names / dates / refs)
+- `audit-data-model`    (form payload keys match handler reads)
+- `audit-cross-module`  (every window.location.hash points at a
+                         registered route)
+
+All eight pass with 0 findings. If any reports a finding, the build
 fails fast before Vercel ever sees it.
 
 If you want to ship a hotfix without running the full audit, set the

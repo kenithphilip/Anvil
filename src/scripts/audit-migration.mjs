@@ -117,13 +117,19 @@ grepFor(/^const useFetch\s*=\s*\(/m, "no-local-useFetch-redef", APP);
 
 // Check 6: package.json has the new scripts and not the old ones.
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
-const requiredScripts = ["build", "build:v3", "build:legacy", "dev:v3", "typecheck", "test", "test:watch", "verify", "check"];
+const requiredScripts = ["build", "dev", "typecheck", "test", "test:watch", "verify", "check", "audit"];
 const missingScripts = requiredScripts.filter((s) => !pkg.scripts[s]);
 if (missingScripts.length) fail("npm-scripts", `missing: ${missingScripts.join(", ")}`);
 else ok("npm-scripts", `${requiredScripts.length} required scripts present`);
 
-const forbiddenScripts = pkg.scripts["build:v3"]?.includes("build-v3.mjs");
-if (forbiddenScripts) fail("npm-scripts", "build:v3 still points at the deleted build-v3.mjs concatenator");
+// After Phase 8 Sub-PR 10, the legacy concatenated build is gone.
+// `build` should run vite directly, not the legacy unified-app script.
+if (pkg.scripts["build:legacy"] || pkg.scripts["build:v3"]) {
+  fail("npm-scripts", "legacy build:legacy / build:v3 scripts still defined; should be deleted");
+}
+if (pkg.scripts.build && pkg.scripts.build.includes("build-unified-app.mjs")) {
+  fail("npm-scripts", "build script still references legacy build-unified-app.mjs");
+}
 
 // Final report.
 console.log("\nv3 Phase 8 Migration Audit");

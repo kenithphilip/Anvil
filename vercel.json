@@ -28,9 +28,18 @@
         { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization, x-obara-tenant" },
         { "key": "Access-Control-Max-Age", "value": "86400" }
       ]
+    },
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
     }
   ],
   "rewrites": [
-    { "source": "/v3.html", "destination": "/v3-app/index.html" }
+    { "source": "/v3.html", "destination": "/index.html" },
+    { "source": "/v3-app", "destination": "/index.html" },
+    { "source": "/v3-app/", "destination": "/index.html" },
+    { "source": "/v3-app/index.html", "destination": "/index.html" }
   ]
 }

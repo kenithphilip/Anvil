@@ -132,19 +132,37 @@ create index if not exists einvoices_customer_idx on einvoices (tenant_id, custo
 -- E. RLS for new tables
 -- ───────────────────────────────────────────────────────────────────────────
 
-do $$
-declare
-  t text;
-begin
-  for t in select unnest(array['einvoices','forecast_snapshots','amc_schedules'])
-  loop
-    execute format('alter table %I enable row level security;', t);
-    execute format('drop policy if exists %I_select on %I;', t, t);
-    execute format('create policy %I_select on %I for select using (tenant_id in (select current_tenant_ids()));', t, t);
-    execute format('drop policy if exists %I_write on %I;', t, t);
-    execute format('create policy %I_write on %I for all using (tenant_id in (select current_tenant_ids())) with check (tenant_id in (select current_tenant_ids()));', t, t);
-  end loop;
-end $$;
+-- Explicit per-table form so Supabase's static analyzer can
+-- verify RLS is on for every table created above. Semantics:
+-- tenant-scoped reads AND writes (no global pass-through).
+
+alter table einvoices enable row level security;
+drop policy if exists einvoices_select on einvoices;
+create policy einvoices_select on einvoices
+  for select using (tenant_id in (select current_tenant_ids()));
+drop policy if exists einvoices_write on einvoices;
+create policy einvoices_write on einvoices
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table forecast_snapshots enable row level security;
+drop policy if exists forecast_snapshots_select on forecast_snapshots;
+create policy forecast_snapshots_select on forecast_snapshots
+  for select using (tenant_id in (select current_tenant_ids()));
+drop policy if exists forecast_snapshots_write on forecast_snapshots;
+create policy forecast_snapshots_write on forecast_snapshots
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table amc_schedules enable row level security;
+drop policy if exists amc_schedules_select on amc_schedules;
+create policy amc_schedules_select on amc_schedules
+  for select using (tenant_id in (select current_tenant_ids()));
+drop policy if exists amc_schedules_write on amc_schedules;
+create policy amc_schedules_write on amc_schedules
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
 
 -- ───────────────────────────────────────────────────────────────────────────
 -- F. RLS fix: redaction_rules write policy was over-restrictive.

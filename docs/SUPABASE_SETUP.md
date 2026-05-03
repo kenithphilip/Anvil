@@ -176,6 +176,15 @@ Click any nav item to confirm data loads.
 - **`column tenant_id does not exist`**: an old version of migration 001
   is applied and missing the patch. Pull latest, re-run 001 (it is
   idempotent).
+- **Supabase warns "New tables will not have Row Level Security
+  enabled"** while running a migration: false positive. Migrations
+  001, 005, 006, 008, 009 enable RLS plus tenant policies on every
+  table they create. Verify by grepping the migration file:
+  `grep -c "enable row level security"` should match
+  `grep -c "create table if not exists"`. Click "Run" on the
+  warning dialog. If you want belt-and-suspenders, paste only the
+  RLS block first, then the rest, but the migration is idempotent
+  and safe to run end-to-end.
 - **Magic link does not arrive**: the default Supabase SMTP is severely
   rate-limited. Use a real provider for any volume above 3 emails per hour.
 

@@ -211,24 +211,76 @@ alter table customer_locations
 -- I. RLS for new tables
 -- ───────────────────────────────────────────────────────────────────────────
 
-do $$
-declare
-  t text;
-begin
-  for t in
-    select unnest(array[
-      'engineering_specs','payment_milestones','expense_rate_cards',
-      'inco_terms_taxonomy','blanket_release_drawdown',
-      'logistics_ports','logistics_carriers'
-    ])
-  loop
-    execute format('alter table %I enable row level security;', t);
-    execute format('drop policy if exists %I_select on %I;', t, t);
-    execute format('create policy %I_select on %I for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));', t, t);
-    execute format('drop policy if exists %I_write on %I;', t, t);
-    execute format('create policy %I_write on %I for all using (tenant_id is null or tenant_id in (select current_tenant_ids())) with check (tenant_id is null or tenant_id in (select current_tenant_ids()));', t, t);
-  end loop;
-end $$;
+-- Explicit per-table form so Supabase's static analyzer can
+-- verify RLS is on for every table created above. Semantics:
+-- tenant-scoped reads AND writes WITH NULL pass-through (these
+-- tables hold both tenant-private data + global reference data
+-- like incoterms / ports / carriers; admins manage the global
+-- rows by leaving tenant_id NULL).
+
+alter table engineering_specs enable row level security;
+drop policy if exists engineering_specs_select on engineering_specs;
+create policy engineering_specs_select on engineering_specs
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists engineering_specs_write on engineering_specs;
+create policy engineering_specs_write on engineering_specs
+  for all using (tenant_id is null or tenant_id in (select current_tenant_ids()))
+         with check (tenant_id is null or tenant_id in (select current_tenant_ids()));
+
+alter table payment_milestones enable row level security;
+drop policy if exists payment_milestones_select on payment_milestones;
+create policy payment_milestones_select on payment_milestones
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists payment_milestones_write on payment_milestones;
+create policy payment_milestones_write on payment_milestones
+  for all using (tenant_id is null or tenant_id in (select current_tenant_ids()))
+         with check (tenant_id is null or tenant_id in (select current_tenant_ids()));
+
+alter table expense_rate_cards enable row level security;
+drop policy if exists expense_rate_cards_select on expense_rate_cards;
+create policy expense_rate_cards_select on expense_rate_cards
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists expense_rate_cards_write on expense_rate_cards;
+create policy expense_rate_cards_write on expense_rate_cards
+  for all using (tenant_id is null or tenant_id in (select current_tenant_ids()))
+         with check (tenant_id is null or tenant_id in (select current_tenant_ids()));
+
+alter table inco_terms_taxonomy enable row level security;
+drop policy if exists inco_terms_taxonomy_select on inco_terms_taxonomy;
+create policy inco_terms_taxonomy_select on inco_terms_taxonomy
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists inco_terms_taxonomy_write on inco_terms_taxonomy;
+create policy inco_terms_taxonomy_write on inco_terms_taxonomy
+  for all using (tenant_id is null or tenant_id in (select current_tenant_ids()))
+         with check (tenant_id is null or tenant_id in (select current_tenant_ids()));
+
+alter table blanket_release_drawdown enable row level security;
+drop policy if exists blanket_release_drawdown_select on blanket_release_drawdown;
+create policy blanket_release_drawdown_select on blanket_release_drawdown
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists blanket_release_drawdown_write on blanket_release_drawdown;
+create policy blanket_release_drawdown_write on blanket_release_drawdown
+  for all using (tenant_id is null or tenant_id in (select current_tenant_ids()))
+         with check (tenant_id is null or tenant_id in (select current_tenant_ids()));
+
+alter table logistics_ports enable row level security;
+drop policy if exists logistics_ports_select on logistics_ports;
+create policy logistics_ports_select on logistics_ports
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists logistics_ports_write on logistics_ports;
+create policy logistics_ports_write on logistics_ports
+  for all using (tenant_id is null or tenant_id in (select current_tenant_ids()))
+         with check (tenant_id is null or tenant_id in (select current_tenant_ids()));
+
+alter table logistics_carriers enable row level security;
+drop policy if exists logistics_carriers_select on logistics_carriers;
+create policy logistics_carriers_select on logistics_carriers
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists logistics_carriers_write on logistics_carriers;
+create policy logistics_carriers_write on logistics_carriers
+  for all using (tenant_id is null or tenant_id in (select current_tenant_ids()))
+         with check (tenant_id is null or tenant_id in (select current_tenant_ids()));
+
 
 -- ───────────────────────────────────────────────────────────────────────────
 -- J. Seed global incoterms + ports + carriers (tenant_id null)

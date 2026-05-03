@@ -651,25 +651,192 @@ create table if not exists lost_reason_taxonomy (
 -- N. RLS for every new table
 -- ───────────────────────────────────────────────────────────────────────────
 
-do $$
-declare
-  t text;
-begin
-  for t in
-    select unnest(array[
-      'customer_locations','item_master','contracts','contract_lines','leads','opportunities',
-      'internal_sales_orders','internal_so_lines','equipment_hierarchy','equipment_installed_parts',
-      'shipments','projects','project_phase_log','service_visits','car_reports','closure_reports',
-      'order_schedule_lines','quote_approval_thresholds','quote_approvals','lost_reason_taxonomy'
-    ])
-  loop
-    execute format('alter table %I enable row level security;', t);
-    execute format('drop policy if exists %I_select on %I;', t, t);
-    execute format('create policy %I_select on %I for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));', t, t);
-    execute format('drop policy if exists %I_write on %I;', t, t);
-    execute format('create policy %I_write on %I for all using (tenant_id in (select current_tenant_ids())) with check (tenant_id in (select current_tenant_ids()));', t, t);
-  end loop;
-end $$;
+-- Explicit per-table form (rather than a dynamic DO loop) so the
+-- Supabase static analyzer can verify RLS is enabled on every table.
+-- Semantics: tenant-scoped read with NULL pass-through (so global rows
+-- like default lost-reason taxonomy are visible to everyone),
+-- tenant-scoped write only (no global writes).
+
+alter table customer_locations enable row level security;
+drop policy if exists customer_locations_select on customer_locations;
+create policy customer_locations_select on customer_locations
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists customer_locations_write on customer_locations;
+create policy customer_locations_write on customer_locations
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table item_master enable row level security;
+drop policy if exists item_master_select on item_master;
+create policy item_master_select on item_master
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists item_master_write on item_master;
+create policy item_master_write on item_master
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table contracts enable row level security;
+drop policy if exists contracts_select on contracts;
+create policy contracts_select on contracts
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists contracts_write on contracts;
+create policy contracts_write on contracts
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table contract_lines enable row level security;
+drop policy if exists contract_lines_select on contract_lines;
+create policy contract_lines_select on contract_lines
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists contract_lines_write on contract_lines;
+create policy contract_lines_write on contract_lines
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table leads enable row level security;
+drop policy if exists leads_select on leads;
+create policy leads_select on leads
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists leads_write on leads;
+create policy leads_write on leads
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table opportunities enable row level security;
+drop policy if exists opportunities_select on opportunities;
+create policy opportunities_select on opportunities
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists opportunities_write on opportunities;
+create policy opportunities_write on opportunities
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table internal_sales_orders enable row level security;
+drop policy if exists internal_sales_orders_select on internal_sales_orders;
+create policy internal_sales_orders_select on internal_sales_orders
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists internal_sales_orders_write on internal_sales_orders;
+create policy internal_sales_orders_write on internal_sales_orders
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table internal_so_lines enable row level security;
+drop policy if exists internal_so_lines_select on internal_so_lines;
+create policy internal_so_lines_select on internal_so_lines
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists internal_so_lines_write on internal_so_lines;
+create policy internal_so_lines_write on internal_so_lines
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table equipment_hierarchy enable row level security;
+drop policy if exists equipment_hierarchy_select on equipment_hierarchy;
+create policy equipment_hierarchy_select on equipment_hierarchy
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists equipment_hierarchy_write on equipment_hierarchy;
+create policy equipment_hierarchy_write on equipment_hierarchy
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table equipment_installed_parts enable row level security;
+drop policy if exists equipment_installed_parts_select on equipment_installed_parts;
+create policy equipment_installed_parts_select on equipment_installed_parts
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists equipment_installed_parts_write on equipment_installed_parts;
+create policy equipment_installed_parts_write on equipment_installed_parts
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table shipments enable row level security;
+drop policy if exists shipments_select on shipments;
+create policy shipments_select on shipments
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists shipments_write on shipments;
+create policy shipments_write on shipments
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table projects enable row level security;
+drop policy if exists projects_select on projects;
+create policy projects_select on projects
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists projects_write on projects;
+create policy projects_write on projects
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table project_phase_log enable row level security;
+drop policy if exists project_phase_log_select on project_phase_log;
+create policy project_phase_log_select on project_phase_log
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists project_phase_log_write on project_phase_log;
+create policy project_phase_log_write on project_phase_log
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table service_visits enable row level security;
+drop policy if exists service_visits_select on service_visits;
+create policy service_visits_select on service_visits
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists service_visits_write on service_visits;
+create policy service_visits_write on service_visits
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table car_reports enable row level security;
+drop policy if exists car_reports_select on car_reports;
+create policy car_reports_select on car_reports
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists car_reports_write on car_reports;
+create policy car_reports_write on car_reports
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table closure_reports enable row level security;
+drop policy if exists closure_reports_select on closure_reports;
+create policy closure_reports_select on closure_reports
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists closure_reports_write on closure_reports;
+create policy closure_reports_write on closure_reports
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table order_schedule_lines enable row level security;
+drop policy if exists order_schedule_lines_select on order_schedule_lines;
+create policy order_schedule_lines_select on order_schedule_lines
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists order_schedule_lines_write on order_schedule_lines;
+create policy order_schedule_lines_write on order_schedule_lines
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table quote_approval_thresholds enable row level security;
+drop policy if exists quote_approval_thresholds_select on quote_approval_thresholds;
+create policy quote_approval_thresholds_select on quote_approval_thresholds
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists quote_approval_thresholds_write on quote_approval_thresholds;
+create policy quote_approval_thresholds_write on quote_approval_thresholds
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table quote_approvals enable row level security;
+drop policy if exists quote_approvals_select on quote_approvals;
+create policy quote_approvals_select on quote_approvals
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists quote_approvals_write on quote_approvals;
+create policy quote_approvals_write on quote_approvals
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
+alter table lost_reason_taxonomy enable row level security;
+drop policy if exists lost_reason_taxonomy_select on lost_reason_taxonomy;
+create policy lost_reason_taxonomy_select on lost_reason_taxonomy
+  for select using (tenant_id is null or tenant_id in (select current_tenant_ids()));
+drop policy if exists lost_reason_taxonomy_write on lost_reason_taxonomy;
+create policy lost_reason_taxonomy_write on lost_reason_taxonomy
+  for all using (tenant_id in (select current_tenant_ids()))
+         with check (tenant_id in (select current_tenant_ids()));
+
 
 -- ───────────────────────────────────────────────────────────────────────────
 -- O. Seed default lost-reason codes (global; tenant_id null)

@@ -76,7 +76,7 @@ const WiredSOList = () => {
             const p = ObaraBackend?.orders?.list?.({ limit: 200 });
             if (p) p.then((d: any) => setOrders({ rows: Array.isArray(d) ? d : (d?.rows || []), loading: false, error: null }));
           }}>{Icon.cycle} refresh</Btn>
-          <Btn sm kind="primary" onClick={() => window.location.hash = "#/intake"}>{Icon.plus} New from PO</Btn>
+          <Btn sm kind="primary" onClick={() => window.location.hash = "#/so?new=1"}>{Icon.plus} New from PO</Btn>
         </>}
       />
       <WSTabs

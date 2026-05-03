@@ -137,7 +137,7 @@ const WiredInbox = () => {
         meta={`${intake.length} untriaged · email + drop + connectors`}
         right={<>
           <Btn icon kind="ghost" sm onClick={reload} title="Refresh">{Icon.cycle}</Btn>
-          <Btn sm kind="primary" onClick={() => window.location.hash = "#/intake"}>{Icon.upload} new SO from PO</Btn>
+          <Btn sm kind="primary" onClick={() => window.location.hash = "#/so?new=1"}>{Icon.upload} new SO from PO</Btn>
         </>}
       />
 
@@ -152,14 +152,14 @@ const WiredInbox = () => {
         <Card flush>
           <div style={{ padding: "12px 16px" }}>
             <Banner kind="info" icon={Icon.upload} title="Drop or upload a document to capture intent"
-                    action={<Btn sm kind="ghost" onClick={() => window.location.hash = "#/intake"}>open intake</Btn>}>
-              <span className="mono-sm">PDF · DOCX · XLSX · ZIP · max 100 MB · ClamAV scanned · OCR auto-runs once accepted.</span>
+                    action={<Btn sm kind="ghost" onClick={() => window.location.hash = "#/so?new=1"}>open intake</Btn>}>
+              <span className="mono-sm">PDF, DOCX, XLSX, ZIP, max 100 MB, ClamAV scanned, OCR auto-runs once accepted.</span>
             </Banner>
           </div>
 
           {intake.length === 0 ? (
             <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-              No untriaged documents. <button type="button" onClick={() => window.location.hash = "#/intake"} className="link-btn" style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>Capture a new PO</button>
+              No untriaged documents. <button type="button" onClick={() => window.location.hash = "#/so?new=1"} className="link-btn" style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>Capture a new PO</button>
             </div>
           ) : (
             <table className="tbl">

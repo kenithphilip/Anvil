@@ -77,7 +77,7 @@ const WiredHomeEngineer = () => {
         meta={`${list.length} orders in scope · ${myQueue.length} awaiting action`}
         right={<>
           <Btn icon kind="ghost" sm onClick={orders.reload} title="Refresh">{Icon.cycle}</Btn>
-          <Btn kind="primary" sm onClick={() => window.location.hash = "#/intake"}>{Icon.plus} New SO</Btn>
+          <Btn kind="primary" sm onClick={() => window.location.hash = "#/so?new=1"}>{Icon.plus} New SO</Btn>
         </>}
       />
 
@@ -106,7 +106,7 @@ const WiredHomeEngineer = () => {
             </div>
             {myQueue.length === 0 ? (
               <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-                Nothing in your queue. <button type="button" onClick={() => window.location.hash = "#/intake"} className="link-btn" style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>Create a new SO</button>
+                Nothing in your queue. <button type="button" onClick={() => window.location.hash = "#/so?new=1"} className="link-btn" style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>Create a new SO</button>
               </div>
             ) : (
               <table className="tbl">

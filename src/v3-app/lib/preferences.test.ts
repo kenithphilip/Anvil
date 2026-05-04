@@ -2,9 +2,11 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { Prefs, theme, setTheme, density, setDensity, rail, setRail, toggleTheme, toggleRail, apply } from "./preferences";
 
 beforeEach(() => {
-  for (const k of ["obara:v3_theme", "obara:v3_density", "obara:v3_rail"]) {
-    try { window.localStorage.removeItem(k); }
-    catch (_) {}
+  // Clear both old and new prefixes so the read-fallback layer in
+  // storage-keys.ts has nothing to migrate during the test.
+  for (const suffix of ["v3_theme", "v3_density", "v3_rail"]) {
+    try { window.localStorage.removeItem("anvil:" + suffix); } catch (_) {}
+    try { window.localStorage.removeItem("obara:" + suffix); } catch (_) {}
   }
   document.documentElement.removeAttribute("data-theme");
   document.documentElement.removeAttribute("data-density");

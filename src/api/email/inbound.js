@@ -14,6 +14,7 @@
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
+import { documentsBucket } from "../_lib/storage.js";
 
 const TENANT_DEFAULT = process.env.DEFAULT_TENANT_ID || "00000000-0000-0000-0000-000000000001";
 const TOKEN = process.env.EMAIL_INBOUND_TOKEN || "";
@@ -55,14 +56,15 @@ const persistAttachment = async (svc, tenantId, attachment) => {
   const filename = sanitize(attachment.filename || "attachment");
   const path = tenantId + "/email/" + Date.now() + "_" + filename;
   const buffer = Buffer.from(attachment.content, attachment.encoding || "base64");
-  const upload = await svc.storage.from("obara-documents").upload(path, buffer, {
+  const bucket = documentsBucket();
+  const upload = await svc.storage.from(bucket).upload(path, buffer, {
     contentType: attachment.contentType || "application/octet-stream",
     upsert: false,
   });
   if (upload.error) throw new Error("Storage upload failed: " + upload.error.message);
   const insert = await svc.from("documents").insert({
     tenant_id: tenantId,
-    storage_bucket: "obara-documents",
+    storage_bucket: bucket,
     storage_path: path,
     filename,
     mime_type: attachment.contentType || null,

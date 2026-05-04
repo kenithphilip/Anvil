@@ -7,8 +7,12 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { ROLES, MATRIX, ACTIONS, RBAC, getRole, setRole, canRead, canWrite, canApprove, isAdmin, canDo, filterNav } from "./rbac";
 
 beforeEach(() => {
-  try { window.localStorage.removeItem("obara:v3_role"); }
-  catch (_) {}
+  // Clear both prefixes so the storage-keys read-fallback layer
+  // doesn't carry a value over into the test.
+  try {
+    window.localStorage.removeItem("anvil:v3_role");
+    window.localStorage.removeItem("obara:v3_role");
+  } catch (_) {}
 });
 
 describe("ROLES + MATRIX shape", () => {

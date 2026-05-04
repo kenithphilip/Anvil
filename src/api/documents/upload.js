@@ -2,6 +2,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { recordAudit } from "../_lib/audit.js";
 import { serviceClient } from "../_lib/supabase.js";
+import { documentsBucket } from "../_lib/storage.js";
 
 const sanitizeName = (s) => String(s || "upload").replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
 
@@ -17,11 +18,12 @@ export default async function handler(req, res) {
     const svc = serviceClient();
     const filename = sanitizeName(body.filename);
     const path = ctx.tenantId + "/" + Date.now() + "_" + filename;
-    const { data: signed, error: signErr } = await svc.storage.from("obara-documents").createSignedUploadUrl(path);
+    const bucket = documentsBucket();
+    const { data: signed, error: signErr } = await svc.storage.from(bucket).createSignedUploadUrl(path);
     if (signErr) throw new Error("Signed URL error: " + signErr.message);
     const insert = await svc.from("documents").insert({
       tenant_id: ctx.tenantId,
-      storage_bucket: "obara-documents",
+      storage_bucket: bucket,
       storage_path: path,
       filename,
       mime_type: body.mime_type || null,

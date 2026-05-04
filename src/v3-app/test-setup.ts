@@ -1,6 +1,6 @@
 // Global Vitest setup. Runs once before any test imports a screen.
 //
-// Order matters here. The legacy obara-client.js is an IIFE that
+// Order matters here. The legacy anvil-client.js is an IIFE that
 // attaches `window.ObaraBackend` on first run; loading it in setup
 // guarantees the IIFE has executed BEFORE any test's beforeEach hook
 // replaces `window.ObaraBackend` with a stub. Without this, the first
@@ -8,4 +8,4 @@
 // real client wired in.
 
 import "@testing-library/react";
-import "../client/obara-client.js";
+import "../client/anvil-client.js";

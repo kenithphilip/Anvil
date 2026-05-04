@@ -91,9 +91,9 @@ const findHandlerByPath = (apiPath) => {
   return null;
 };
 
-// Pull the entire src/client/obara-client.js so we can map a method
+// Pull the entire src/client/anvil-client.js so we can map a method
 // reference back to its REST path.
-const clientText = fs.readFileSync(path.join(ROOT, "src", "client", "obara-client.js"), "utf8");
+const clientText = fs.readFileSync(path.join(ROOT, "src", "client", "anvil-client.js"), "utf8");
 // Build {nsKey.method -> apiPath} by parsing the const-of-object-literal blocks.
 const methodToPath = new Map();
 {

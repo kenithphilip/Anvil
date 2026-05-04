@@ -19,7 +19,7 @@ import { Prefs } from "../lib/preferences";
 //   - Live diagnostics from /api/admin/diagnostics
 //
 // All admin-only. Backend methods on ObaraBackend.admin (already
-// in src/client/obara-client.js):
+// in src/client/anvil-client.js):
 //   listHolidays/upsertHoliday/deleteHoliday
 //   listLeadTimes/upsertLeadTime/deleteLeadTime
 //   listApprovalThresholds/upsertApprovalThreshold/deleteApprovalThreshold

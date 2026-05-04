@@ -121,7 +121,7 @@ describe("router dispatch", () => {
 
 // Coverage gate: build a list of routes the v3 client expects and
 // ensure dispatch returns a non-404 for each. We do this by walking
-// every `apiFetch("/api/...")` literal in src/client/obara-client.js
+// every `apiFetch("/api/...")` literal in src/client/anvil-client.js
 // and testing dispatch on it with an empty body. Failing to match any
 // one is a hard regression.
 describe("client coverage", async () => {
@@ -129,7 +129,7 @@ describe("client coverage", async () => {
   const path = await import("node:path");
   // import.meta.dirname here = repoRoot/src/v3-app, walk up two levels.
   const ROOT = path.resolve(import.meta.dirname, "..", "..");
-  const clientText = fs.readFileSync(path.join(ROOT, "src", "client", "obara-client.js"), "utf8");
+  const clientText = fs.readFileSync(path.join(ROOT, "src", "client", "anvil-client.js"), "utf8");
 
   // Pull every literal path. Keep only the bit before any template
   // expression — `?` + `query` + `+ id` etc are not part of routing.
@@ -145,7 +145,7 @@ describe("client coverage", async () => {
     literalPaths.add(p);
   }
 
-  it("knows about every literal /api/ path the obara-client uses", async () => {
+  it("knows about every literal /api/ path the anvil-client uses", async () => {
     const missing = [];
     for (const p of literalPaths) {
       const { req, res } = mockReqRes(p);

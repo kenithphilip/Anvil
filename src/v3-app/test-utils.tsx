@@ -77,13 +77,18 @@ export const stubBackend = (overrides = {}) => {
 
 export const installBackend = (overrides?: Record<string, unknown>) => {
   if (typeof window === "undefined") return undefined;
-  (window as any).ObaraBackend = stubBackend(overrides);
-  return (window as any).ObaraBackend;
+  const stub = stubBackend(overrides);
+  // Both names point at the same stub; the lib/api.ts proxy reads
+  // AnvilBackend first then falls back to ObaraBackend, so the test
+  // has to set both for the override to win.
+  (window as any).ObaraBackend = stub;
+  (window as any).AnvilBackend = stub;
+  return stub;
 };
 
 export const installRbac = (role: string = "admin") => {
   if (typeof window === "undefined") return;
-  try { window.localStorage.setItem("obara:v3_role", role); }
+  try { window.localStorage.setItem("anvil:v3_role", role); window.localStorage.setItem("obara:v3_role", role); }
   catch (_) {}
 };
 

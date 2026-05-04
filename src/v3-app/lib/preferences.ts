@@ -1,21 +1,22 @@
 // Anvil v3 — UI preferences (theme + density + rail) with persistence.
+//
+// Keys are stored under the `anvil:` prefix; the helper reads
+// `obara:`-prefixed values one last time and migrates them forward
+// so the rebrand does not nuke an existing user's saved theme.
+
+import { lsGet, lsSet } from "./storage-keys";
 
 export type Theme = "dark" | "light";
 export type Density = "compact" | "normal" | "comfortable";
 export type Rail = "expanded" | "collapsed";
 
-const KEY_THEME = "obara:v3_theme";
-const KEY_DENSITY = "obara:v3_density";
-const KEY_RAIL = "obara:v3_rail";
+const KEY_THEME = "v3_theme";
+const KEY_DENSITY = "v3_density";
+const KEY_RAIL = "v3_rail";
 
 const ls = {
-  get: <T extends string>(k: string, dflt: T): T => {
-    try { return (localStorage.getItem(k) as T) || dflt; }
-    catch (_) { return dflt; }
-  },
-  set: (k: string, v: string): void => {
-    try { localStorage.setItem(k, v); } catch (_) {}
-  },
+  get: <T extends string>(k: string, dflt: T): T => (lsGet(k) as T) || dflt,
+  set: (k: string, v: string): void => { lsSet(k, v); },
 };
 
 export const apply = (): void => {

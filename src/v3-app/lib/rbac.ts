@@ -82,16 +82,19 @@ export const ACTIONS: Record<string, Role[]> = {
   "security.run_test":    ["admin"],
 };
 
-const ROLE_KEY = "obara:v3_role";
+// Role is persisted under the `anvil:` prefix; legacy `obara:`
+// reads still work via the storage-keys helper.
+import { lsGet, lsSet } from "./storage-keys";
+
+const ROLE_KEY = "v3_role";
 
 export const getRole = (): Role => {
-  try { return (localStorage.getItem(ROLE_KEY) as Role) || "sales_engineer"; }
-  catch (_) { return "sales_engineer"; }
+  return (lsGet(ROLE_KEY) as Role) || "sales_engineer";
 };
 
 export const setRole = (role: Role): void => {
   if (!ROLES.includes(role)) throw new Error("Unknown role: " + role);
-  try { localStorage.setItem(ROLE_KEY, role); } catch (_) {}
+  lsSet(ROLE_KEY, role);
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("rbac:change", { detail: { role } }));
   }

@@ -18,15 +18,19 @@ import { ToastStack } from "./lib/toasts";
 import { useShellTelemetry } from "./lib/telemetry";
 import { RESOLVERS, ROUTE_IDS, DEFAULT_ROUTE, readHashParams } from "./routes";
 
-const ROUTE_KEY = "obara:v3_route";
-const TENANT_KEY = "obara:v3_tenant_code";
-const INTENDED_ROUTE_KEY = "obara:v3_intended_route";
+// localStorage keys live under the canonical `anvil:` prefix; the
+// helper falls back to `obara:` for users who signed in pre-rebrand.
+import { lsGet, lsSet, lsRemove, lsKey, lsLegacyKey } from "./lib/storage-keys";
+
+const ROUTE_KEY_SUFFIX = "v3_route";
+const TENANT_KEY_SUFFIX = "v3_tenant_code";
+const INTENDED_ROUTE_KEY_SUFFIX = "v3_intended_route";
 
 const parseRoute = () => {
   const hash = (typeof window !== "undefined" && window.location.hash) || "";
   const id = hash.replace(/^#\/?/, "").split("?")[0];
   if (id && RESOLVERS[id]) return id;
-  try { return localStorage.getItem(ROUTE_KEY) || DEFAULT_ROUTE; }
+  try { return lsGet(ROUTE_KEY_SUFFIX) || DEFAULT_ROUTE; }
   catch (_) { return DEFAULT_ROUTE; }
 };
 
@@ -119,7 +123,7 @@ export default function App() {
       return;
     }
     setRoute(id);
-    try { localStorage.setItem(ROUTE_KEY, id); } catch (_) {}
+    lsSet(ROUTE_KEY_SUFFIX, id);
     try { window.history.replaceState(null, "", `#/${id}`); } catch (_) {}
   }, []);
 
@@ -141,7 +145,7 @@ export default function App() {
     const hasUrl = !!cfg.url;
     if (!ready && !hasUrl && route !== "connect") {
       try {
-        localStorage.setItem(INTENDED_ROUTE_KEY, window.location.hash || "#/home");
+        lsSet(INTENDED_ROUTE_KEY_SUFFIX, window.location.hash || "#/home");
       } catch (_) {}
       onRoute("connect");
     }
@@ -158,13 +162,13 @@ export default function App() {
     const session = ObaraBackend?.getSession?.();
     if (!session?.access_token) return;
     let cached = null;
-    try { cached = JSON.parse(localStorage.getItem("obara:auth_profile") || "null"); } catch (_) {}
+    try { cached = JSON.parse(lsGet("auth_profile") || "null"); } catch (_) {}
     if (cached?.user?.email) return;
     let cancelled = false;
     Promise.resolve(ObaraBackend?.auth?.getProfile?.())
       .then((p: any) => {
         if (cancelled || !p) return;
-        try { localStorage.setItem("obara:auth_profile", JSON.stringify(p)); } catch (_) {}
+        lsSet("auth_profile", JSON.stringify(p));
         // Force a re-render so telemetry picks up the new cache.
         window.dispatchEvent(new Event("prefs:change"));
       })
@@ -178,18 +182,21 @@ export default function App() {
   // it up and routes to the user's intended destination.
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
-      if (e.key !== "obara:backend_session") return;
+      // Storage events fire under whichever prefix the writer used.
+      // Accept both names so a tab running an older bundle still
+      // notifies a tab running the new bundle.
+      if (e.key !== lsKey("backend_session") && e.key !== lsLegacyKey("backend_session")) return;
       try {
         const next = e.newValue ? JSON.parse(e.newValue) : null;
         ObaraBackend?.setSession?.(next);
         if (next?.access_token) {
           let target = "home";
           try {
-            const stored = localStorage.getItem(INTENDED_ROUTE_KEY);
+            const stored = lsGet(INTENDED_ROUTE_KEY_SUFFIX);
             if (stored) {
               const id = stored.replace(/^#\/?/, "").split("?")[0];
               if (RESOLVERS[id] && id !== "connect") target = id;
-              localStorage.removeItem(INTENDED_ROUTE_KEY);
+              lsRemove(INTENDED_ROUTE_KEY_SUFFIX);
             }
           } catch (_) {}
           onRoute(target);
@@ -228,7 +235,7 @@ export default function App() {
                   { id: role, label: role.replace(/_/g, " "), short: role.slice(0, 3).toUpperCase() };
 
   const tenant = { code: (() => {
-    try { return localStorage.getItem(TENANT_KEY) || "OBARA-IN"; }
+    try { return lsGet(TENANT_KEY_SUFFIX) || "OBARA-IN"; }
     catch (_) { return "OBARA-IN"; }
   })() };
 

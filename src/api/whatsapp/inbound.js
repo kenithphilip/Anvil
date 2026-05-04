@@ -25,6 +25,7 @@
 import { applyCors, handlePreflight, json } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
+import { documentsBucket } from "../_lib/storage.js";
 
 const TENANT_DEFAULT = process.env.DEFAULT_TENANT_ID || "00000000-0000-0000-0000-000000000001";
 const TOKEN = process.env.WHATSAPP_INBOUND_TOKEN || "";
@@ -125,17 +126,21 @@ const persistMedia = async (svc, tenantId, m) => {
       const resp = await fetch(m.url, { headers });
       if (resp.ok) {
         buffer = Buffer.from(await resp.arrayBuffer());
-        const up = await svc.storage.from("obara-documents").upload(path, buffer, {
+        const bucket = documentsBucket();
+        const up = await svc.storage.from(bucket).upload(path, buffer, {
           contentType: m.contentType || "application/octet-stream",
           upsert: false,
         });
-        if (!up.error) stored = true;
+        if (!up.error) {
+          stored = true;
+          m._bucket_used = bucket;
+        }
       }
     } catch (_) { /* fall through, store as unfetched */ }
   }
   const insert = await svc.from("documents").insert({
     tenant_id: tenantId,
-    storage_bucket: stored ? "obara-documents" : null,
+    storage_bucket: stored ? (m._bucket_used || documentsBucket()) : null,
     storage_path: stored ? path : null,
     filename,
     mime_type: m.contentType || null,

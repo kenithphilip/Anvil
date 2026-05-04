@@ -15,7 +15,7 @@ describe("useTallyBridgeStatus", () => {
   afterEach(() => { (window as any).ObaraBackend = prev; });
 
   it("returns configured: true when /api/health reports tally configured", async () => {
-    (window as any).ObaraBackend = {
+    (window as any).ObaraBackend = (window as any).AnvilBackend = {
       isReady: () => true,
       health: vi.fn().mockResolvedValue({
         integrations: [
@@ -31,7 +31,7 @@ describe("useTallyBridgeStatus", () => {
   });
 
   it("returns configured: false when tally is not configured", async () => {
-    (window as any).ObaraBackend = {
+    (window as any).ObaraBackend = (window as any).AnvilBackend = {
       isReady: () => true,
       health: vi.fn().mockResolvedValue({
         integrations: [{ id: "tally", configured: false }],
@@ -43,7 +43,7 @@ describe("useTallyBridgeStatus", () => {
   });
 
   it("returns configured: false and stores the error when /api/health rejects", async () => {
-    (window as any).ObaraBackend = {
+    (window as any).ObaraBackend = (window as any).AnvilBackend = {
       isReady: () => true,
       health: vi.fn().mockRejectedValue(new Error("Backend down")),
     };

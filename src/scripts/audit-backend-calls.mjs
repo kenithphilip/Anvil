@@ -1,5 +1,5 @@
 // Verify every `ObaraBackend.<ns>.<method>` call site in the converted
-// screens corresponds to a real method on the legacy obara-client.
+// screens corresponds to a real method on the legacy anvil-client.
 //
 // The Vite ObaraBackend Proxy returns undefined for missing methods, so
 // optional-chained calls silently no-op. That's safe but it means a
@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SCREENS = path.join(ROOT, "src", "v3-app", "screens");
-const CLIENT = path.join(ROOT, "src", "client", "obara-client.js");
+const CLIENT = path.join(ROOT, "src", "client", "anvil-client.js");
 
 const clientText = fs.readFileSync(CLIENT, "utf8");
 

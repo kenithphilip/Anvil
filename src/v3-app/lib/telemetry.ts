@@ -127,7 +127,15 @@ export const useShellTelemetry = (): ShellTelemetry => {
       || undefined;
     if (!displayName || !email) {
       try {
-        const cached = JSON.parse(localStorage.getItem("obara:auth_profile") || "null");
+        // Read via storage-keys helper so legacy `obara:auth_profile`
+        // values keep flowing through after the rebrand.
+        const cachedRaw = (() => {
+          try {
+            return localStorage.getItem("anvil:auth_profile")
+              || localStorage.getItem("obara:auth_profile");
+          } catch (_) { return null; }
+        })();
+        const cached = JSON.parse(cachedRaw || "null");
         if (cached?.user) {
           email = email || cached.user.email;
           displayName = displayName

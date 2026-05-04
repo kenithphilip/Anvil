@@ -4,6 +4,7 @@ import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 import { Prefs } from "../lib/preferences";
+import { lsGet, lsSet, lsRemove } from "../lib/storage-keys";
 
 // ============================================================
 // ANVIL v3 — Backend connect (sign-in / config)
@@ -38,11 +39,11 @@ const WiredBackendConnect = () => {
   const goToIntendedOrHome = () => {
     let target = "#/home";
     try {
-      const stored = localStorage.getItem("obara:v3_intended_route");
+      const stored = lsGet("v3_intended_route");
       if (stored && stored !== "#/connect" && stored !== "#/" && stored !== "#") {
         target = stored;
       }
-      localStorage.removeItem("obara:v3_intended_route");
+      lsRemove("v3_intended_route");
     } catch (_) {}
     window.location.hash = target;
   };
@@ -54,7 +55,7 @@ const WiredBackendConnect = () => {
         ObaraBackend?.setSession?.({ access_token: token.trim() });
         setStatus({ kind: "live", text: "Verifying access token…" });
         const verified = await ObaraBackend.auth.verifyToken(token.trim());
-        try { localStorage.setItem("obara:auth_profile", JSON.stringify(verified)); } catch (_) {}
+        try { lsSet("auth_profile", JSON.stringify(verified)); } catch (_) {}
         setStatus({ kind: "good", text: "Signed in as " + (verified.user?.email || verified.user?.id || "user") });
         setSignedIn(true);
         window.notifySuccess?.("Signed in", verified.user?.email || verified.user?.id || "Welcome.");
@@ -107,7 +108,7 @@ const WiredBackendConnect = () => {
         expires_at: sess.expires_at,
         user: resp.user,
       });
-      try { localStorage.setItem("obara:auth_profile", JSON.stringify({ user: resp.user, memberships: [] })); } catch (_) {}
+      try { lsSet("auth_profile", JSON.stringify({ user: resp.user, memberships: [] })); } catch (_) {}
       setStatus({ kind: "good", text: "Welcome, " + n + "! Routing you in…" });
       setSignedIn(true);
       window.notifySuccess?.("Account created", "Welcome, " + n + ".");
@@ -139,7 +140,7 @@ const WiredBackendConnect = () => {
         expires_at: sess.expires_at,
         user: resp.user,
       });
-      try { localStorage.setItem("obara:auth_profile", JSON.stringify({ user: resp.user, memberships: [] })); } catch (_) {}
+      try { lsSet("auth_profile", JSON.stringify({ user: resp.user, memberships: [] })); } catch (_) {}
       setStatus({ kind: "good", text: "Signed in. Routing you in…" });
       setSignedIn(true);
       window.notifySuccess?.("Signed in", resp.user?.display_name || resp.user?.email || "Welcome.");
@@ -156,14 +157,14 @@ const WiredBackendConnect = () => {
   const signOut = () => {
     try {
       ObaraBackend?.setSession?.(null);
-      localStorage.removeItem("obara:auth_profile");
+      lsRemove("auth_profile");
     } catch (_) {}
     setToken("");
     setSignedIn(false);
     setStatus({ kind: "good", text: "Signed out." });
   };
 
-  const profile = (() => { try { return JSON.parse(localStorage.getItem("obara:auth_profile") || "null"); } catch { return null; } })();
+  const profile = (() => { try { return JSON.parse(lsGet("auth_profile") || "null"); } catch { return null; } })();
 
   return (
     <>

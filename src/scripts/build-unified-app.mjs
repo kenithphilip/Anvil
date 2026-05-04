@@ -6,7 +6,7 @@ const opsPath = path.join(workspace, "src/legacy/obara-ops-v11.1.html");
 const soPath = path.join(workspace, "src/legacy/so-agent-pocv4.jsx");
 const outDir = path.join(workspace, "public");
 const outPath = path.join(outDir, "index.html");
-const backendClientPath = path.join(workspace, "src/client/obara-client.js");
+const backendClientPath = path.join(workspace, "src/client/anvil-client.js");
 
 if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 

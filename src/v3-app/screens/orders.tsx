@@ -14,14 +14,26 @@ const WiredSOList = () => {
   const [active, setActive] = u("all");
   const [query, setQuery] = u("");
 
+  // Normalise the API response into a flat array. The /api/orders
+  // endpoint returns { orders: [...] }; some callers expect
+  // { rows: [...] }, and a couple of older code paths return a bare
+  // array. Accept all three so a future endpoint refactor doesn't
+  // silently empty this list again (which is what shipped before
+  // and made the sidebar badge say 12 while this view showed 0).
+  const toRows = (data: any): any[] => {
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.rows)) return data.rows;
+    if (Array.isArray(data?.orders)) return data.orders;
+    return [];
+  };
+
   e(() => {
     let cancel = false;
     setOrders((s) => ({ ...s, loading: true }));
     Promise.resolve(ObaraBackend?.orders?.list?.({ limit: 200 }) || [])
       .then((data) => {
         if (cancel) return;
-        const rows = Array.isArray(data) ? data : (data?.rows || []);
-        setOrders({ rows, loading: false, error: null });
+        setOrders({ rows: toRows(data), loading: false, error: null });
       })
       .catch((err) => { if (!cancel) setOrders({ rows: [], loading: false, error: err }); });
     return () => { cancel = true; };
@@ -74,7 +86,7 @@ const WiredSOList = () => {
           <Btn sm kind="ghost" onClick={() => {
             setOrders((s) => ({ ...s, loading: true }));
             const p = ObaraBackend?.orders?.list?.({ limit: 200 });
-            if (p) p.then((d: any) => setOrders({ rows: Array.isArray(d) ? d : (d?.rows || []), loading: false, error: null }));
+            if (p) p.then((d: any) => setOrders({ rows: toRows(d), loading: false, error: null }));
           }}>{Icon.cycle} refresh</Btn>
           <Btn sm kind="primary" onClick={() => window.location.hash = "#/so?new=1"}>{Icon.plus} New from PO</Btn>
         </>}

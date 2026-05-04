@@ -204,6 +204,11 @@ import mcpServer               from "./mcp/server.js";
 import mcpTokens               from "./mcp/tokens.js";
 import mcpUsage                from "./mcp/usage.js";
 
+import inboundEmailWebhook     from "./inbound/email/webhook.js";
+import inboundEmailParse       from "./inbound/email/parse.js";
+import inboundEmailThreads     from "./inbound/email/threads.js";
+import inboundEmailConfigure   from "./inbound/email/configure.js";
+
 import healthCheck             from "./health.js";
 
 // Static routes resolved by exact match. Order does not matter.
@@ -266,6 +271,10 @@ const STATIC_ROUTES = {
   "/mcp/server":                    mcpServer,
   "/mcp/tokens":                    mcpTokens,
   "/mcp/usage":                     mcpUsage,
+  "/inbound/email/webhook":         inboundEmailWebhook,
+  "/inbound/email/parse":           inboundEmailParse,
+  "/inbound/email/threads":         inboundEmailThreads,
+  "/inbound/email/configure":       inboundEmailConfigure,
   "/admin/contracts":               adminContracts,
   "/admin/customer_locations":      adminCustomerLocations,
   "/admin/diagnostics":             adminDiagnostics,

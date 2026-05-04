@@ -378,6 +378,14 @@
     usage:        async (since) => apiFetch("/api/mcp/usage" + (since ? "?since=" + encodeURIComponent(since) : "")),
   };
 
+  const inbound = {
+    listThreads:   async (q) => apiFetch("/api/inbound/email/threads" + (q ? "?" + new URLSearchParams(q).toString() : "")),
+    getThread:     async (id) => apiFetch("/api/inbound/email/threads?id=" + encodeURIComponent(id) + "&messages=true"),
+    parseNow:      async () => apiFetch("/api/inbound/email/parse", { method: "POST", body: {} }),
+    getConfigure:  async () => apiFetch("/api/inbound/email/configure"),
+    saveConfigure: async (payload) => apiFetch("/api/inbound/email/configure", { method: "PUT", body: payload }),
+  };
+
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });
 
   const documents = {
@@ -888,6 +896,7 @@
     rlhf,
     erpChat,
     mcp,
+    inbound,
     claudeCall,
     documents,
     orders,

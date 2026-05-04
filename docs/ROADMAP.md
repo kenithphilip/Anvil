@@ -1,5 +1,11 @@
 # Anvil Roadmap
 
+> **Superseded.** This file is retained for historical context only.
+> The current source of truth for what's shipped and what's next is
+> `docs/IMPROVEMENT_PLAN.md`. New work should be tracked there.
+> Items below are preserved as a snapshot of the pre-strategic-gap-analysis
+> roadmap.
+
 Living document of work that is planned but not yet shipped, kept next to the
 code so it does not drift out of sync with the implementation.
 

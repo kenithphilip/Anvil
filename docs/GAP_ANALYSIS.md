@@ -1,7 +1,13 @@
-# Anvil — Gap Analysis & Roadmap
+# Anvil, Gap Analysis and Roadmap
 
 Date: 2026-05-04
 Scope: codebase audit of `Anvil-main`, 11-company competitive scan, gap matrix, prioritized roadmap, consolidation plan for Smartbase / Korso / Lumari.
+
+> **Superseded.** This is the original internal gap analysis. The current
+> source of truth, including a competitor-mapped 18-month plan and the
+> grouped-by-shared-infrastructure phasing, is `docs/IMPROVEMENT_PLAN.md`.
+> Everything below this banner is retained as historical context for the
+> matrices and competitor research.
 
 > **Status note (2026-05-04, post-execution pass).** All eleven
 > Now-block items have shipped on `main`. The doc is preserved

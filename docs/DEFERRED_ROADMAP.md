@@ -1,5 +1,12 @@
 # Deferred Roadmap
 
+> **See also**: `docs/IMPROVEMENT_PLAN.md` is the active source of truth
+> for shipped vs. pending work. This file is the narrower companion that
+> covers items requiring product or program decisions before code can
+> proceed (voice AI scope, vertical-pack scope, native iOS, SOC 2 program
+> kickoff). When a deferred item gets a decision and code is greenlit, it
+> moves into a phase in IMPROVEMENT_PLAN.md.
+
 This doc covers items the gap analysis flagged in **Later** that we
 have **deliberately not built in code yet**. Each item explains
 *why* it's deferred (what scope decision needs to land first), what

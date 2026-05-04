@@ -97,6 +97,10 @@
     {
       "path": "/api/sxe/retry",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/analytics/refresh",
+      "schedule": "0 2 * * *"
     }
   ],
   "headers": [

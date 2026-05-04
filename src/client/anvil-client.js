@@ -355,6 +355,11 @@
     cancelJob:    async (id) => apiFetch("/api/orders/print_jobs?id=" + encodeURIComponent(id), { method: "PATCH", body: { cancel: true } }),
   };
 
+  const analytics = {
+    winloss:  async (q) => apiFetch("/api/analytics/winloss" + (q ? "?" + new URLSearchParams(q).toString() : "")),
+    refresh:  async (payload) => apiFetch("/api/analytics/refresh", { method: "POST", body: payload || {} }),
+  };
+
   const esign = {
     connect:      async (payload) => apiFetch("/api/esign/connect", { method: "POST", body: payload }),
     list:         async () => apiFetch("/api/esign/envelopes"),
@@ -920,6 +925,7 @@
     portal,
     portalCustomer,
     travelers,
+    analytics,
     esign,
     edi,
     rlhf,

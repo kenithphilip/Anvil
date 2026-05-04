@@ -190,6 +190,9 @@ import portalAcceptQuote       from "./portal/accept_quote.js";
 import ordersTraveler          from "./orders/traveler.js";
 import ordersPrintJobs         from "./orders/print_jobs.js";
 
+import analyticsWinloss        from "./analytics/winloss.js";
+import analyticsRefresh        from "./analytics/refresh.js";
+
 import esignConnect            from "./esign/connect.js";
 import esignEnvelopes          from "./esign/envelopes.js";
 import esignWebhook            from "./esign/webhook.js";
@@ -295,6 +298,8 @@ const STATIC_ROUTES = {
   "/portal/accept_quote":           portalAcceptQuote,
   "/orders/traveler":               ordersTraveler,
   "/orders/print_jobs":             ordersPrintJobs,
+  "/analytics/winloss":             analyticsWinloss,
+  "/analytics/refresh":             analyticsRefresh,
   "/esign/connect":                 esignConnect,
   "/esign/envelopes":               esignEnvelopes,
   "/esign/webhook":                 esignWebhook,

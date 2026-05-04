@@ -115,8 +115,41 @@ export const useShellTelemetry = (): ShellTelemetry => {
 
   const session = ((): ShellSession => {
     const s = ObaraBackend?.getSession?.() || null;
-    const email: string | undefined = s?.user?.email || s?.email || undefined;
-    return { email, initials: initialsFromEmail(email), displayName: displayFromEmail(email) };
+    // Prefer user info on the session (we now persist it via setSession).
+    // Fall back to the cached profile that connect.tsx writes after a
+    // password login or signup. Final fallback is the magic-link path
+    // that does not yet round-trip /api/auth/profile, in which case we
+    // know nothing.
+    let email: string | undefined = s?.user?.email || s?.email || undefined;
+    let displayName: string | undefined = s?.user?.user_metadata?.name
+      || s?.user?.user_metadata?.full_name
+      || s?.user?.display_name
+      || undefined;
+    if (!displayName || !email) {
+      try {
+        const cached = JSON.parse(localStorage.getItem("obara:auth_profile") || "null");
+        if (cached?.user) {
+          email = email || cached.user.email;
+          displayName = displayName
+            || cached.user.display_name
+            || cached.user.user_metadata?.name
+            || cached.user.user_metadata?.full_name
+            || undefined;
+        }
+      } catch (_) { /* ignore */ }
+    }
+    const finalDisplay = displayName || displayFromEmail(email);
+    const initials = displayName
+      ? displayName
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((p) => p[0]!)
+          .join("")
+          .toUpperCase()
+          .slice(0, 2) || initialsFromEmail(email)
+      : initialsFromEmail(email);
+    return { email, initials, displayName: finalDisplay };
   })();
 
   const refresh = async () => {

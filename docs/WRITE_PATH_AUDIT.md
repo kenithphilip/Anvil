@@ -5,7 +5,7 @@ screen handler that performs a mutation. Run `npm run audit:write-paths`
 to refresh.
 
 Summary:
-- OK:   10
+- OK:   11
 - INFO: 0
 - WARN: 7
 - FAIL: 0
@@ -24,6 +24,7 @@ Summary:
 | OK | src/v3-app/screens/admin.tsx | `submitLocation` | admin.upsertCustomerLocation upsertCustomerLocation | src/api/admin/contracts.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `submitItem` | admin.upsertItemMaster upsertItemMaster | src/api/admin/contracts.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `submitContract` | admin.upsertContract upsertContract | src/api/admin/contracts.js [ok] | ok |
+| OK | src/v3-app/screens/admin.tsx | `saveProfile` | /api/auth/profile PATCH | /api/auth/profile (PATCH) | ok |
 | OK | src/v3-app/screens/admin.tsx | `refreshFx` | fx.refresh refresh | src/api/fx/rates.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `onRemoveMember` | /api/admin/members?user_id=${encodeURIComponent(revokeFor.user_id)} DELETE | /api/admin/members?user_id=${encodeURIComponent(revokeFor.user_id)} (DELETE) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onAddMember` | /api/admin/members POST | /api/admin/members (POST) | ok |

@@ -32,6 +32,9 @@ import anomalyCompute          from "./anomaly/compute.js";
 import auditIndex              from "./audit/index.js";
 
 import authMagicLink           from "./auth/magic_link.js";
+import authPasswordLogin       from "./auth/password_login.js";
+import authProfile             from "./auth/profile.js";
+import authSignup              from "./auth/signup.js";
 import authVerify              from "./auth/verify.js";
 
 import bomIndex                from "./bom/index.js";
@@ -135,6 +138,9 @@ const STATIC_ROUTES = {
   "/audit":                         auditIndex,
 
   "/auth/magic_link":               authMagicLink,
+  "/auth/password_login":           authPasswordLogin,
+  "/auth/profile":                  authProfile,
+  "/auth/signup":                   authSignup,
   "/auth/verify":                   authVerify,
 
   "/bom":                           bomIndex,

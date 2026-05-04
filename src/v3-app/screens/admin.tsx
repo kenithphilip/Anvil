@@ -31,6 +31,7 @@ import { Prefs } from "../lib/preferences";
 
 const ADMIN_CRUD_TABS = [
   { id: "members",   label: "Members" },
+  { id: "profile",   label: "My profile" },
   { id: "settings",  label: "Settings" },
   { id: "holidays",  label: "Holidays" },
   { id: "leadtimes", label: "Lead times" },
@@ -127,6 +128,11 @@ const WiredAdminCRUD = () => {
   // Confirm-revoke dialog. We replaced window.confirm() so the modal
   // matches the rest of the design system.
   const [revokeFor, setRevokeFor] = u<{ user_id: string; email: string } | null>(null);
+  // My Profile tab state. Loaded from /api/auth/profile on mount once
+  // the user opens the tab, persisted via PATCH on the same route.
+  const [profile, setProfile] = u<{ user?: any; memberships?: any[] } | null>(null);
+  const [profileName, setProfileName] = u("");
+  const [profileBusy, setProfileBusy] = u(false);
   const [holidayForm, setHolidayForm] = u({ country: "IN", date: "", name: "" });
   const [leadTimeForm, setLeadTimeForm] = u({ type: "supplier", entity_id: "", days: "", notes: "" });
   const [threshForm, setThreshForm] = u(null);
@@ -282,6 +288,43 @@ const WiredAdminCRUD = () => {
       members.reload();
     } catch (err) { flashErr(err); }
     finally { setBusy(false); }
+  };
+
+  // ---------- My profile ----------
+  const loadProfile = async () => {
+    try {
+      const resp = await adminCrudFetch("/api/auth/profile");
+      setProfile(resp);
+      setProfileName(resp?.user?.display_name || "");
+    } catch (err) { flashErr(err); }
+  };
+
+  e(() => {
+    if (active === "profile" && !profile) loadProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
+
+  const saveProfile = async (ev) => {
+    ev.preventDefault();
+    if (!profileName.trim()) return flashErr(new Error("Name is required"));
+    setProfileBusy(true); setFlash(null);
+    try {
+      const resp = await adminCrudFetch("/api/auth/profile", {
+        method: "PATCH",
+        body: { display_name: profileName.trim() },
+      });
+      setProfile((p) => ({ ...(p || {}), user: { ...(p?.user || {}), display_name: resp?.user?.display_name } }));
+      // Update the cached profile so the shell avatar refreshes without
+      // a page reload. The telemetry hook reads obara:auth_profile.
+      try {
+        const cached = JSON.parse(localStorage.getItem("obara:auth_profile") || "null") || {};
+        cached.user = { ...(cached.user || {}), display_name: resp?.user?.display_name };
+        localStorage.setItem("obara:auth_profile", JSON.stringify(cached));
+      } catch (_) {}
+      flashOk("Profile updated");
+      members.reload();
+    } catch (err) { flashErr(err); }
+    finally { setProfileBusy(false); }
   };
 
   // ---------- Holidays ----------
@@ -531,6 +574,7 @@ const WiredAdminCRUD = () => {
               ) : (
                 <table className="tbl">
                   <thead><tr>
+                    <th>Name</th>
                     <th>Email</th>
                     <th>Role</th>
                     <th>Status</th>
@@ -543,9 +587,11 @@ const WiredAdminCRUD = () => {
                       const lastSignIn = m.last_sign_in_at || null;
                       const pending = !lastSignIn;
                       const email = m.email || m.user_email || "—";
+                      const name = m.display_name || m.name || (email !== "—" ? email.split("@")[0] : "—");
                       const userId = m.user_id || m.id;
                       return (
                         <tr key={userId || email}>
+                          <td>{name}</td>
                           <td className="mono-sm">{email}</td>
                           <td>
                             <select className="input" value={m.role || "viewer"}
@@ -623,6 +669,54 @@ const WiredAdminCRUD = () => {
                   </div>
                 </div>
               </div>
+            )}
+          </>
+        )}
+
+        {active === "profile" && (
+          <>
+            {!profile ? (
+              <Card><div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading your profile…</div></Card>
+            ) : (
+              <>
+                <Card title="My profile" eyebrow="who you are in Anvil">
+                  <form onSubmit={saveProfile} style={{ display: "grid", gridTemplateColumns: "2fr auto", gap: 12, alignItems: "end" }}>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span className="mono-sm" style={{ color: "var(--ink-3)" }}>Display name</span>
+                      <input className="input" type="text" required value={profileName}
+                             onChange={(ev) => setProfileName(ev.target.value)}
+                             placeholder="How your name appears across Anvil" style={{ height: 30 }} />
+                    </label>
+                    <Btn type="submit" kind="primary" sm disabled={profileBusy}>
+                      {profileBusy ? "saving…" : "save"}
+                    </Btn>
+                  </form>
+                </Card>
+                <Card title="Account details" eyebrow="read-only">
+                  <KV rows={[
+                    ["Email", profile.user?.email || "—"],
+                    ["User ID", profile.user?.id || "—"],
+                    ["Last sign-in", profile.user?.last_sign_in_at ? new Date(profile.user.last_sign_in_at).toLocaleString("en-IN") : "—"],
+                    ["Account created", profile.user?.created_at ? new Date(profile.user.created_at).toLocaleString("en-IN") : "—"],
+                    ["Tenant memberships", String(profile.memberships?.length || 0)],
+                  ]} />
+                </Card>
+                {Array.isArray(profile.memberships) && profile.memberships.length > 0 && (
+                  <Card title="Your roles" eyebrow="across all tenants you belong to">
+                    <table className="tbl">
+                      <thead><tr><th>Tenant</th><th>Role</th></tr></thead>
+                      <tbody>
+                        {profile.memberships.map((m: any) => (
+                          <tr key={m.tenant_id}>
+                            <td>{m.tenants?.display_name || m.tenants?.slug || m.tenant_id}</td>
+                            <td>{String(m.role || "viewer").replace(/_/g, " ")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </Card>
+                )}
+              </>
             )}
           </>
         )}

@@ -31,9 +31,11 @@ export default async function handler(req, res) {
       const usersById = new Map(users.map((u) => [u.id, u]));
       const rows = (members || []).map((m) => {
         const u = usersById.get(m.user_id) || {};
+        const meta = u.user_metadata || {};
         return {
           user_id: m.user_id,
           email: u.email || "",
+          display_name: meta.name || meta.full_name || null,
           role: m.role,
           created_at: m.created_at,
           last_sign_in_at: u.last_sign_in_at || null,

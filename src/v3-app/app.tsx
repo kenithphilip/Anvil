@@ -147,6 +147,30 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // After sign-in (any flow), make sure we have a cached profile so the
+  // shell avatar shows the real display name. The magic-link callback
+  // page only writes access_token / refresh_token / expires_at, so for
+  // those users we round-trip /api/auth/profile here. Idempotent: skips
+  // when the cache is already populated or when the user is anonymous.
+  useEffect(() => {
+    const session = ObaraBackend?.getSession?.();
+    if (!session?.access_token) return;
+    let cached = null;
+    try { cached = JSON.parse(localStorage.getItem("obara:auth_profile") || "null"); } catch (_) {}
+    if (cached?.user?.email) return;
+    let cancelled = false;
+    Promise.resolve(ObaraBackend?.auth?.getProfile?.())
+      .then((p: any) => {
+        if (cancelled || !p) return;
+        try { localStorage.setItem("obara:auth_profile", JSON.stringify(p)); } catch (_) {}
+        // Force a re-render so telemetry picks up the new cache.
+        window.dispatchEvent(new Event("prefs:change"));
+      })
+      .catch(() => { /* surfacing 401 is handled elsewhere */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Cross-tab session detection (magic-link flow opens auth/callback in a
   // separate tab). When the other tab writes the session, this tab picks
   // it up and routes to the user's intended destination.

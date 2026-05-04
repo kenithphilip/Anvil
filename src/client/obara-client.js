@@ -142,8 +142,17 @@
     // warned again the NEXT time their token expires.
     warnedNoTenant = false;
     warnedExpired = false;
-    if (!session) clearSession();
-    else writeSession({ access_token: session.access_token, refresh_token: session.refresh_token, expires_at: session.expires_at });
+    if (!session) { clearSession(); return; }
+    // Preserve user info when present so the shell can render the real
+    // identity (email, display name) without an extra /api/auth/profile
+    // round trip. The previous implementation stripped session.user
+    // and the sidebar rendered "Guest" for every signed-in session.
+    writeSession({
+      access_token: session.access_token,
+      refresh_token: session.refresh_token,
+      expires_at: session.expires_at,
+      user: session.user || null,
+    });
   };
 
   const ping = async () => {
@@ -251,6 +260,10 @@
   const authMethods = {
     requestMagicLink: async (email, redirectTo) => apiFetch("/api/auth/magic_link", { method: "POST", body: { email, redirectTo } }),
     verifyToken: async (access_token) => apiFetch("/api/auth/verify", { method: "POST", body: { access_token } }),
+    signup: async (payload) => apiFetch("/api/auth/signup", { method: "POST", body: payload }),
+    passwordLogin: async (email, password) => apiFetch("/api/auth/password_login", { method: "POST", body: { email, password } }),
+    getProfile: async () => apiFetch("/api/auth/profile"),
+    updateProfile: async (patch) => apiFetch("/api/auth/profile", { method: "PATCH", body: patch }),
   };
 
   const ocr = {

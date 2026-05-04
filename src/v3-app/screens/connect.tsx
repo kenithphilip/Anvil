@@ -18,11 +18,14 @@ const WiredBackendConnect = () => {
   const session = (ObaraBackend && ObaraBackend.getSession && ObaraBackend.getSession()) || {};
   const [url, setUrl] = uS(cfg.url || "");
   const [tenantId, setTenantId] = uS(cfg.tenantId || "");
-  const [tab, setTab] = uS("magic");
+  const [tab, setTab] = uS("signup");
   const [email, setEmail] = uS("");
+  const [password, setPassword] = uS("");
+  const [signupName, setSignupName] = uS("");
   const [token, setToken] = uS(session.access_token || "");
   const [status, setStatus] = uS({ kind: "", text: "" });
-  const [signedIn, setSignedIn] = uS(!!(ObaraBackend?.isReady?.()));
+  const [busy, setBusy] = uS(false);
+  const [signedIn, setSignedIn] = uS(!!(ObaraBackend?.isReady?.() && session.access_token));
 
   uE(() => {
     const onChange = () => setSignedIn(!!(ObaraBackend?.isReady?.()));
@@ -81,6 +84,75 @@ const WiredBackendConnect = () => {
     }
   };
 
+  // Self-serve account creation. The endpoint creates the user with
+  // email_confirm:true, auto-onboards the tenant_members row, and
+  // returns a fresh session so we can sign the user in immediately.
+  const signUp = async () => {
+    const e = email.trim();
+    const p = password;
+    const n = signupName.trim();
+    if (!e || !p || !n) { setStatus({ kind: "bad", text: "Email, password, and name are required." }); return; }
+    if (p.length < 8) { setStatus({ kind: "bad", text: "Password must be at least 8 characters." }); return; }
+    if (!url.trim()) { setStatus({ kind: "bad", text: "Backend URL is required first." }); return; }
+    setBusy(true);
+    setStatus({ kind: "live", text: "Creating your account…" });
+    try {
+      ObaraBackend?.setConfig?.({ url: url.trim().replace(/\/+$/, ""), tenantId: tenantId.trim() || null });
+      const resp = await ObaraBackend.auth.signup({ email: e, password: p, display_name: n });
+      const sess = resp?.session;
+      if (!sess?.access_token) throw new Error("Signup did not return a session");
+      ObaraBackend?.setSession?.({
+        access_token: sess.access_token,
+        refresh_token: sess.refresh_token,
+        expires_at: sess.expires_at,
+        user: resp.user,
+      });
+      try { localStorage.setItem("obara:auth_profile", JSON.stringify({ user: resp.user, memberships: [] })); } catch (_) {}
+      setStatus({ kind: "good", text: "Welcome, " + n + "! Routing you in…" });
+      setSignedIn(true);
+      window.notifySuccess?.("Account created", "Welcome, " + n + ".");
+      setPassword("");
+      setTimeout(goToIntendedOrHome, 600);
+    } catch (err) {
+      setStatus({ kind: "bad", text: "Sign-up failed: " + (err?.message || String(err)) });
+      window.notifyError?.("Sign-up failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const passwordLogin = async () => {
+    const e = email.trim();
+    const p = password;
+    if (!e || !p) { setStatus({ kind: "bad", text: "Email and password are required." }); return; }
+    if (!url.trim()) { setStatus({ kind: "bad", text: "Backend URL is required first." }); return; }
+    setBusy(true);
+    setStatus({ kind: "live", text: "Signing in…" });
+    try {
+      ObaraBackend?.setConfig?.({ url: url.trim().replace(/\/+$/, ""), tenantId: tenantId.trim() || null });
+      const resp = await ObaraBackend.auth.passwordLogin(e, p);
+      const sess = resp?.session;
+      if (!sess?.access_token) throw new Error("Sign-in did not return a session");
+      ObaraBackend?.setSession?.({
+        access_token: sess.access_token,
+        refresh_token: sess.refresh_token,
+        expires_at: sess.expires_at,
+        user: resp.user,
+      });
+      try { localStorage.setItem("obara:auth_profile", JSON.stringify({ user: resp.user, memberships: [] })); } catch (_) {}
+      setStatus({ kind: "good", text: "Signed in. Routing you in…" });
+      setSignedIn(true);
+      window.notifySuccess?.("Signed in", resp.user?.display_name || resp.user?.email || "Welcome.");
+      setPassword("");
+      setTimeout(goToIntendedOrHome, 600);
+    } catch (err) {
+      const msg = err?.message || String(err);
+      setStatus({ kind: "bad", text: /credentials/i.test(msg) ? "Wrong email or password." : ("Sign-in failed: " + msg) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const signOut = () => {
     try {
       ObaraBackend?.setSession?.(null);
@@ -130,6 +202,8 @@ const WiredBackendConnect = () => {
         <Card title={signedIn ? "Sign in (already authenticated)" : "Sign in"}
               eyebrow={signedIn ? "step 2 · re-auth or stay signed in" : "step 2 · pick one"}>
           <div className="row" style={{ gap: 6, marginBottom: 12 }}>
+            <Btn sm kind={tab === "signup" ? "primary" : "ghost"} onClick={() => setTab("signup")}>Create account</Btn>
+            <Btn sm kind={tab === "login" ? "primary" : "ghost"} onClick={() => setTab("login")}>Sign in</Btn>
             <Btn sm kind={tab === "magic" ? "primary" : "ghost"} onClick={() => setTab("magic")}>Magic link</Btn>
             <Btn sm kind={tab === "dev" ? "primary" : "ghost"} onClick={() => setTab("dev")}>Dev token</Btn>
             {signedIn && (
@@ -138,6 +212,47 @@ const WiredBackendConnect = () => {
               </span>
             )}
           </div>
+
+          {tab === "signup" && (
+            <div>
+              <label htmlFor="su-name" className="label">Your name</label>
+              <input id="su-name" type="text" className="input" placeholder="Kenith Philip"
+                     value={signupName} onChange={(e) => setSignupName(e.target.value)} aria-label="Display name"
+                     autoComplete="name" />
+              <label htmlFor="su-email" className="label" style={{ marginTop: 10 }}>Email</label>
+              <input id="su-email" type="email" className="input" placeholder="you@example.com"
+                     value={email} onChange={(e) => setEmail(e.target.value)} aria-label="Email"
+                     autoComplete="email" />
+              <label htmlFor="su-pwd" className="label" style={{ marginTop: 10 }}>Password</label>
+              <input id="su-pwd" type="password" className="input" placeholder="at least 8 characters"
+                     value={password} onChange={(e) => setPassword(e.target.value)} aria-label="Password"
+                     autoComplete="new-password" minLength={8} />
+              <div className="fieldnote" style={{ marginTop: 6 }}>
+                Stored hashed by Supabase Auth. You can change it later from Admin Center, My Profile.
+              </div>
+              <div className="row" style={{ marginTop: 12, gap: 8 }}>
+                <Btn kind="primary" onClick={signUp} disabled={busy}>{busy ? "creating…" : <>{Icon.plus} Create account</>}</Btn>
+                <Btn kind="ghost" onClick={() => setTab("login")}>Already have one?</Btn>
+              </div>
+            </div>
+          )}
+
+          {tab === "login" && (
+            <div>
+              <label htmlFor="li-email" className="label">Email</label>
+              <input id="li-email" type="email" className="input" placeholder="you@example.com"
+                     value={email} onChange={(e) => setEmail(e.target.value)} aria-label="Email"
+                     autoComplete="email" />
+              <label htmlFor="li-pwd" className="label" style={{ marginTop: 10 }}>Password</label>
+              <input id="li-pwd" type="password" className="input"
+                     value={password} onChange={(e) => setPassword(e.target.value)} aria-label="Password"
+                     autoComplete="current-password" />
+              <div className="row" style={{ marginTop: 12, gap: 8 }}>
+                <Btn kind="primary" onClick={passwordLogin} disabled={busy}>{busy ? "signing in…" : <>{Icon.shieldCheck} Sign in</>}</Btn>
+                <Btn kind="ghost" onClick={() => setTab("magic")}>Forgot password? Use magic link</Btn>
+              </div>
+            </div>
+          )}
 
           {tab === "magic" && (
             <div>
@@ -149,8 +264,8 @@ const WiredBackendConnect = () => {
                 <Btn kind="ghost" onClick={saveAndTest}>Save URL only</Btn>
               </div>
               <div className="fieldnote" style={{ marginTop: 10 }}>
-                Click the link in the email. The callback page (auth/callback.html) stores the access
-                token in localStorage. Refresh this page to pick up the session.
+                We email you a one-time link. Click it to sign in. Requires SMTP configured in Supabase
+                (or RESEND_API_KEY); use Create account if SMTP is unset.
               </div>
             </div>
           )}
@@ -164,7 +279,7 @@ const WiredBackendConnect = () => {
                         aria-label="Supabase access token"
                         style={{ fontSize: 11 }} />
               <Banner kind="warn" icon={Icon.alert} title="Dev only">
-                <span className="mono-sm">Production users sign in via magic link. This pane exists for headless test rigs.</span>
+                <span className="mono-sm">Production users sign in via Create account or Sign in. This pane exists for headless test rigs.</span>
               </Banner>
               <div className="row" style={{ marginTop: 12, gap: 8 }}>
                 <Btn kind="primary" onClick={saveAndTest}>Save and verify</Btn>

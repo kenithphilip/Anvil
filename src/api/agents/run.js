@@ -107,29 +107,128 @@ const executeAction = async (svc, goal, step) => {
     return { result: "ok", result_detail: "escalation event recorded" };
   }
   if (step.action === "send_email") {
-    // The runner does not call communications.send directly: those
-    // endpoints require an authenticated context and we run as the
-    // service role. Instead we draft the row directly into the
-    // communications table with status 'queued' so the existing
-    // UI + cron + provider plumbing picks it up. The send.js endpoint
-    // already polls / fires by id.
+    // Draft the row at status=queued. The reaper at the end of the
+    // run picks it up and fires it through the configured provider
+    // (SendGrid first, generic webhook second). Drafting in the
+    // queued state is intentional: if the reaper crashes, the row
+    // remains in the database for manual flush from the UI.
     const draft = {
       tenant_id: goal.tenant_id,
-      object_type: goal.object_type,
-      object_id: goal.object_id,
+      object_type: step.action_payload?.object_type || goal.object_type,
+      object_id: step.action_payload?.object_id || goal.object_id,
       kind: step.action_payload?.kind || "agent_message",
-      to_address: step.action_payload?.to || null,
+      to_addr: step.action_payload?.to || null,
       subject: step.action_payload?.subject || "Follow-up",
-      body: step.action_payload?.hint || "(agent-generated; body filled at send time)",
+      body: step.action_payload?.body || step.action_payload?.hint || "(agent-generated)",
       status: "queued",
       sent_by: null,
-      meta: { agent_goal_id: goal.id, payload: step.action_payload },
+      metadata: { agent_goal_id: goal.id, payload: step.action_payload },
     };
     const ins = await svc.from("communications").insert(draft).select("id").maybeSingle();
     if (ins.error) return { result: "error", result_detail: ins.error.message, error: ins.error.message };
     return { result: "ok", result_detail: "queued comm " + (ins.data?.id || "") };
   }
   return { result: "skipped", result_detail: "unknown action " + step.action };
+};
+
+// Send any communications row currently in status=queued. The
+// agent's send_email action drops rows here; this reaper actually
+// fires them. We resolve the provider the same way
+// /api/communications/send does (SendGrid first, generic webhook
+// second, manual fallback). Failures are persisted on the row's
+// metadata so the UI shows what happened.
+const SENDGRID_KEY = process.env.SENDGRID_API_KEY;
+const SENDGRID_FROM = process.env.SENDGRID_FROM_EMAIL;
+const SENDGRID_FROM_NAME = process.env.SENDGRID_FROM_NAME || "Anvil";
+const PROVIDER_URL = process.env.COMMS_PROVIDER_URL;
+const PROVIDER_TOKEN = process.env.COMMS_PROVIDER_TOKEN;
+
+const sendViaSendGrid = async ({ to, subject, body, from }) => {
+  if (!SENDGRID_KEY || !SENDGRID_FROM) return null;
+  const fromAddress = from || SENDGRID_FROM;
+  try {
+    const resp = await fetch("https://api.sendgrid.com/v3/mail/send", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + SENDGRID_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        personalizations: [{ to: [{ email: to }] }],
+        from: { email: fromAddress, name: SENDGRID_FROM_NAME },
+        subject: subject || "(no subject)",
+        content: [
+          { type: "text/plain", value: body || "" },
+          { type: "text/html",  value: (body || "").replace(/\n/g, "<br/>") },
+        ],
+      }),
+    });
+    return { provider: "sendgrid", status: resp.status, ok: resp.ok };
+  } catch (err) {
+    return { provider: "sendgrid", status: 0, ok: false, detail: err.message };
+  }
+};
+
+const sendViaGenericWebhook = async ({ to, subject, body, from }) => {
+  if (!PROVIDER_URL) return null;
+  try {
+    const headers = { "Content-Type": "application/json" };
+    if (PROVIDER_TOKEN) headers["Authorization"] = "Bearer " + PROVIDER_TOKEN;
+    const resp = await fetch(PROVIDER_URL, {
+      method: "POST", headers, body: JSON.stringify({ to, subject, body, from }),
+    });
+    return { provider: "generic", status: resp.status, ok: resp.ok };
+  } catch (err) {
+    return { provider: "generic", status: 0, ok: false, detail: err.message };
+  }
+};
+
+const reapQueuedCommsForTenant = async (svc, tenantId) => {
+  const queued = await svc
+    .from("communications")
+    .select("*")
+    .eq("tenant_id", tenantId)
+    .eq("status", "queued")
+    .order("created_at", { ascending: true })
+    .limit(100);
+  if (queued.error) return { fired: 0, errors: 1 };
+  let fired = 0;
+  let errors = 0;
+  for (const row of queued.data || []) {
+    if (!row.to_addr) {
+      // Cannot send without a recipient; flip to failed so the
+      // operator can fix it.
+      await svc.from("communications").update({
+        status: "failed",
+        metadata: { ...(row.metadata || {}), error: "no recipient" },
+      }).eq("id", row.id);
+      errors++;
+      continue;
+    }
+    let result = null;
+    try { result = await sendViaSendGrid({ to: row.to_addr, subject: row.subject, body: row.body, from: row.from_addr }); } catch (_) {}
+    if (!result) { try { result = await sendViaGenericWebhook({ to: row.to_addr, subject: row.subject, body: row.body, from: row.from_addr }); } catch (_) {} }
+
+    const configured = !!result;
+    const newStatus = !configured ? "sent" : (result.ok ? "sent" : "failed");
+    await svc.from("communications").update({
+      status: newStatus,
+      sent_at: new Date().toISOString(),
+      metadata: {
+        ...(row.metadata || {}),
+        provider: result?.provider || "manual",
+        provider_status: result?.status || null,
+        reaped_by: "agents/run",
+      },
+    }).eq("id", row.id);
+    if (newStatus === "sent") fired++; else errors++;
+    // Audit so the meter sees it.
+    await svc.from("audit_events").insert({
+      tenant_id: tenantId,
+      action: "comm_send",
+      object_type: "communication",
+      object_id: row.id,
+      detail: (result?.provider || "manual") + "::" + newStatus,
+    });
+  }
+  return { fired, errors };
 };
 
 export default async function handler(req, res) {
@@ -174,7 +273,22 @@ export default async function handler(req, res) {
         }).eq("id", g.id);
       }
     }
-    return json(res, 200, { ran_at: new Date().toISOString(), considered: (goals || []).length, results });
+    // Reap queued comms across every tenant we just touched. The
+    // agent's send_email actions enqueue them; this fires them. We
+    // dedupe tenants so a tenant with N agents triggers one reap.
+    const touchedTenants = Array.from(new Set((goals || []).map((g) => g.tenant_id)));
+    const reaped = [];
+    for (const tid of touchedTenants) {
+      const r = await reapQueuedCommsForTenant(svc, tid);
+      reaped.push({ tenant_id: tid, fired: r.fired, errors: r.errors });
+    }
+
+    return json(res, 200, {
+      ran_at: new Date().toISOString(),
+      considered: (goals || []).length,
+      results,
+      reaped,
+    });
   } catch (err) {
     res.statusCode = err.status || 500;
     res.setHeader("Content-Type", "application/json");

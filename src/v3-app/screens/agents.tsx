@@ -21,8 +21,8 @@ const GOAL_TYPES = [
   {
     id: "ar_collect_by_due_plus_7",
     label: "Collect on an unpaid invoice",
-    detail: "Sends a dunning sequence (gentle, firm, final) until paid or 7 days past the due date.",
-    objectType: "einvoice",
+    detail: "Sends a dunning sequence (gentle, firm, final) until paid or 7 days past the due date. Works on either an `invoice` (non-India) or `einvoice` (GSTN).",
+    objectType: "invoice",
   },
   {
     id: "missing_doc_followup",

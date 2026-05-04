@@ -82,7 +82,10 @@ const arrayOf = (v: any): any[] => {
 const computeBadges = (orders: any[], audit: any[]): BadgeMap => {
   const intake = orders.filter((o) => ["DRAFT", "PENDING_REVIEW", "DUPLICATE"].includes(o.status));
   const active = orders.filter((o) => o.status && !["SHIPPED", "CLOSED", "CANCELLED"].includes(o.status));
-  const approvals = orders.filter((o) => /APPROVAL|APPROVE/.test(o.status || ""));
+  // Approvals badge: only orders that actually need a decision. The
+  // earlier regex /APPROVAL|APPROVE/ matched "APPROVED" too, which
+  // led to the sidebar saying 12 while the queue showed 0 pending.
+  const approvals = orders.filter((o) => ["PENDING_REVIEW", "PENDING_APPROVAL"].includes(o.status));
 
   const badge = (n: number, kind?: string): ShellBadge | undefined => {
     if (n <= 0) return undefined;

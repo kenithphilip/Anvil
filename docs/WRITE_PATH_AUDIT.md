@@ -7,7 +7,7 @@ to refresh.
 Summary:
 - OK:   11
 - INFO: 0
-- WARN: 7
+- WARN: 9
 - FAIL: 0
 
 | Severity | Screen | Handler | Mutation | API handler | Reason |
@@ -19,6 +19,8 @@ Summary:
 | WARN | src/v3-app/screens/so-workspace.tsx | `approveOrder` | orders.update update | src/api/orders/[id].js [ok] | no list reload |
 | WARN | src/v3-app/screens/so-intake.tsx | `onContinue` | orders.create create | src/api/orders/[id].js [ok] | no success feedback; no list reload |
 | WARN | src/v3-app/screens/bom-import.tsx | `doImportAll` | bom.upsert upsert | src/api/bom/index.js [ok] | no list reload |
+| WARN | src/v3-app/screens/admin.tsx | `onTallyRetryNow` | tally.retry retry | src/api/tally/retry.js [ok] | no list reload |
+| WARN | src/v3-app/screens/admin.tsx | `onNsRetryNow` | netsuite.retry retry | src/api/netsuite/retry.js [ok] | no list reload |
 | OK | src/v3-app/screens/email.tsx | `promote` | orders.create create | src/api/orders/[id].js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `submitThreshold` | admin.upsertApprovalThreshold upsertApprovalThreshold | src/api/admin/contracts.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `submitLocation` | admin.upsertCustomerLocation upsertCustomerLocation | src/api/admin/contracts.js [ok] | ok |

@@ -51,6 +51,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | `home` | `r` | `r` | `r` | `r` | `r` | `r` | `r` |
 | `intake` | `rw` | `rw` | `r` | `r` | `r` | `r` | `r` |
 | `internal` | `r` | `rw` | `r` | `r` | `rw` | `rw` | `r` |
+| `invoices` | `r` | `rw` | `` | `rwa` | `rwa` | `` | `r` |
 | `items` | `r` | `r` | `rw` | `r` | `rw` | `r` | `r` |
 | `leads` | `rw` | `rw` | `` | `r` | `r` | `` | `r` |
 | `onboarding` | `rw` | `rw` | `rw` | `rw` | `rw` | `rw` | `rw` |
@@ -69,6 +70,13 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 
 | Handler | Levels |
 |---------|--------|
+| src/api/acumatica/connect.js | admin |
+| src/api/acumatica/diagnostics.js | read |
+| src/api/acumatica/field_map.js | read, admin |
+| src/api/acumatica/health.js | read |
+| src/api/acumatica/push.js | approve |
+| src/api/acumatica/retry.js | admin |
+| src/api/acumatica/sync.js | admin |
 | src/api/admin/contracts.js | read, admin |
 | src/api/admin/customer_locations.js | read, admin |
 | src/api/admin/diagnostics.js | admin |
@@ -83,10 +91,22 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/admin/quote_approvals.js | read, admin, write |
 | src/api/agents/goals.js | read, write |
 | src/api/aliases/index.js | read, write |
+| src/api/analytics/refresh.js | approve |
+| src/api/analytics/winloss.js | read |
 | src/api/anomaly/compute.js | read |
 | src/api/audit/index.js | read, write |
+| src/api/billing/razorpay/checkout.js | approve |
+| src/api/billing/razorpay/connect.js | admin |
+| src/api/billing/razorpay/status.js | read |
+| src/api/billing/stripe/checkout.js | write |
+| src/api/billing/stripe/connect_onboard.js | admin |
+| src/api/billing/stripe/connect_status.js | read |
 | src/api/billing/usage.js | read |
 | src/api/bom/index.js | read, write |
+| src/api/catalog/alternatives.js | read, approve |
+| src/api/catalog/private_label.js | read, approve, admin |
+| src/api/catalog/search.js | read |
+| src/api/catalog/synonyms.js | read, approve |
 | src/api/claude/messages.js | read, write |
 | src/api/communications/draft.js | write |
 | src/api/communications/missing_doc.js | write |
@@ -96,13 +116,38 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/cost/simulator.js | read |
 | src/api/customers/index.js | read, write |
 | src/api/customers/profile_versions.js | read, approve |
+| src/api/d365/connect.js | admin |
+| src/api/d365/diagnostics.js | read |
+| src/api/d365/field_map.js | read, admin |
+| src/api/d365/health.js | read |
+| src/api/d365/push.js | approve |
+| src/api/d365/retry.js | admin |
+| src/api/d365/sync.js | admin |
 | src/api/delivery/promise.js | read |
+| src/api/docai/correction.js | approve |
+| src/api/docai/extract.js | approve |
+| src/api/docai/runs.js | read |
 | src/api/documents/[id].js | read, admin |
 | src/api/documents/ocr.js | write |
 | src/api/documents/scan.js | write |
 | src/api/documents/upload.js | write |
 | src/api/duplicates/search.js | read |
+| src/api/eclipse/connect.js | admin |
+| src/api/eclipse/diagnostics.js | read |
+| src/api/eclipse/field_map.js | read, admin |
+| src/api/eclipse/health.js | read |
+| src/api/eclipse/push.js | approve |
+| src/api/eclipse/retry.js | admin |
+| src/api/eclipse/sync.js | admin |
+| src/api/edi/envelopes.js | read |
+| src/api/edi/inbound.js | approve |
+| src/api/edi/outbound.js | approve |
+| src/api/edi/partners.js | read, admin |
 | src/api/einvoice/index.js | read, write, admin |
+| src/api/erp_chat/send.js | read |
+| src/api/erp_chat/sessions.js | read |
+| src/api/esign/connect.js | admin |
+| src/api/esign/envelopes.js | read, approve |
 | src/api/eval/cases.js | read, write, admin |
 | src/api/eval/dashboard.js | read |
 | src/api/eval/run.js | write |
@@ -110,18 +155,59 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/findings/index.js | write |
 | src/api/forecast/index.js | read, admin |
 | src/api/fx/rates.js | read, write |
+| src/api/inbound/email/configure.js | read, admin |
+| src/api/inbound/email/parse.js | approve |
+| src/api/inbound/email/threads.js | read |
 | src/api/inventory/availability.js | read |
 | src/api/inventory/sync.js | write |
+| src/api/invoices/[id].js | read, write |
+| src/api/invoices/index.js | read, write |
+| src/api/invoices/pdf.js | read |
+| src/api/invoices/send.js | write |
+| src/api/kb/ask.js | read |
 | src/api/master_data/graph.js | read |
+| src/api/mcp/tokens.js | read, admin |
+| src/api/mcp/usage.js | read |
+| src/api/netsuite/connect.js | admin |
+| src/api/netsuite/diagnostics.js | read |
+| src/api/netsuite/field_map.js | read, admin |
+| src/api/netsuite/health.js | read |
+| src/api/netsuite/push.js | approve |
+| src/api/netsuite/retry.js | admin |
+| src/api/netsuite/sync.js | admin |
 | src/api/orders/[id].js | read, write, approve, admin |
 | src/api/orders/index.js | read, write |
+| src/api/orders/print_jobs.js | read, approve |
+| src/api/orders/reconcile.js | approve |
 | src/api/orders/schedule_lines.js | read, write, admin |
+| src/api/orders/traveler.js | approve |
+| src/api/p21/connect.js | admin |
+| src/api/p21/diagnostics.js | read |
+| src/api/p21/field_map.js | read, admin |
+| src/api/p21/health.js | read |
+| src/api/p21/push.js | approve |
+| src/api/p21/retry.js | admin |
+| src/api/p21/sync.js | admin |
+| src/api/portal/tokens.js | read, approve, admin |
+| src/api/push/send.js | approve |
+| src/api/push/subscribe.js | read |
+| src/api/quotes/pdf.js | read |
+| src/api/rlhf/aggregate.js | approve |
+| src/api/rlhf/dataset.js | approve |
+| src/api/rlhf/feedback.js | read |
 | src/api/sales_history/price_band.js | read |
 | src/api/sales/internal_so.js | read, write, admin |
 | src/api/sales/leads.js | read, write, admin |
 | src/api/sales/opportunities.js | read, write, admin |
 | src/api/sales/projects.js | read, write, admin |
 | src/api/sales/shipments.js | read, write, admin |
+| src/api/sap/connect.js | admin |
+| src/api/sap/diagnostics.js | read |
+| src/api/sap/field_map.js | read, admin |
+| src/api/sap/health.js | read |
+| src/api/sap/push.js | approve |
+| src/api/sap/retry.js | admin |
+| src/api/sap/sync.js | admin |
 | src/api/security/inject_test.js | admin |
 | src/api/security/redact.js | read, admin |
 | src/api/service/amc.js | read, write, admin |
@@ -136,10 +222,28 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/spare_matrix/obsolete.js | read |
 | src/api/spare_matrix/opportunities.js | read |
 | src/api/spare_matrix/recommend.js | write |
+| src/api/supplier_rfq/award.js | approve |
+| src/api/supplier_rfq/index.js | read, approve, admin |
+| src/api/supplier_rfq/matrix.js | read |
+| src/api/supplier_rfq/quote.js | approve |
+| src/api/supplier_rfq/send.js | approve |
+| src/api/supplier_rfq/vendors.js | read, approve, admin |
+| src/api/sxe/connect.js | admin |
+| src/api/sxe/diagnostics.js | read |
+| src/api/sxe/field_map.js | read, admin |
+| src/api/sxe/health.js | read |
+| src/api/sxe/push.js | approve |
+| src/api/sxe/retry.js | admin |
+| src/api/sxe/sync.js | admin |
 | src/api/tally/amend.js | write |
+| src/api/tally/companies.js | read, admin |
+| src/api/tally/diagnostics.js | read |
+| src/api/tally/health.js | read |
 | src/api/tally/masters.js | read, write |
 | src/api/tally/push.js | approve |
 | src/api/tally/reconcile.js | write |
+| src/api/tally/retry.js | admin |
+| src/api/tally/sync.js | admin |
 | src/api/tally/validate.js | read |
 | src/api/whatsapp/send.js | write |
 

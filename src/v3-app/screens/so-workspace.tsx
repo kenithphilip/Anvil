@@ -95,6 +95,36 @@ const WiredSOWorkspace = () => {
     return () => { cancelled = true; };
   }, [orderId, scheduleBump]);
 
+  // ─────────────────────────────────────────────────────────────
+  // Schedule lines KPIs + helpers (Surface A)
+  //
+  // IMPORTANT: these useMemo calls MUST stay above the early
+  // returns below. React's rules-of-hooks require the same
+  // number of hooks per render; if the order is loading we'd
+  // bail before these and trip React error #310 on the next
+  // render once data arrived. Keeping them here makes the hook
+  // count stable.
+  // ─────────────────────────────────────────────────────────────
+  const scheduleRows = m(() => {
+    const rows = Array.isArray(schedule.data) ? schedule.data.slice() : [];
+    rows.sort((a, b) => {
+      const da = a.scheduled_date || "";
+      const db = b.scheduled_date || "";
+      if (da !== db) return da < db ? -1 : 1;
+      return (a.line_index || 0) - (b.line_index || 0);
+    });
+    return rows;
+  }, [schedule.data]);
+
+  const scheduleKpis = m(() => {
+    if (!scheduleRows.length) return { totalQty: 0, lineCount: 0, next: null, last: null };
+    const totalQty = scheduleRows.reduce((s, r) => s + (Number(r.scheduled_qty) || 0), 0);
+    const dates = scheduleRows.map((r) => r.scheduled_date).filter(Boolean).sort();
+    const today = new Date().toISOString().slice(0, 10);
+    const upcoming = dates.find((d) => d >= today);
+    return { totalQty, lineCount: scheduleRows.length, next: upcoming || dates[0] || null, last: dates[dates.length - 1] || null };
+  }, [scheduleRows]);
+
   if (!orderId) {
     return (
       <>
@@ -348,29 +378,6 @@ const WiredSOWorkspace = () => {
   const totalCost = matCost + freight + customs + service;
   const realizedMargin = grandTotal > 0 ? (grandTotal - totalCost) / grandTotal : 0;
   const pct = (n) => grandTotal > 0 ? Math.round((n / grandTotal) * 100) : 0;
-
-  // ─────────────────────────────────────────────────────────────
-  // Schedule lines KPIs + helpers (Surface A)
-  // ─────────────────────────────────────────────────────────────
-  const scheduleRows = m(() => {
-    const rows = Array.isArray(schedule.data) ? schedule.data.slice() : [];
-    rows.sort((a, b) => {
-      const da = a.scheduled_date || "";
-      const db = b.scheduled_date || "";
-      if (da !== db) return da < db ? -1 : 1;
-      return (a.line_index || 0) - (b.line_index || 0);
-    });
-    return rows;
-  }, [schedule.data]);
-
-  const scheduleKpis = m(() => {
-    if (!scheduleRows.length) return { totalQty: 0, lineCount: 0, next: null, last: null };
-    const totalQty = scheduleRows.reduce((s, r) => s + (Number(r.scheduled_qty) || 0), 0);
-    const dates = scheduleRows.map((r) => r.scheduled_date).filter(Boolean).sort();
-    const today = new Date().toISOString().slice(0, 10);
-    const upcoming = dates.find((d) => d >= today);
-    return { totalQty, lineCount: scheduleRows.length, next: upcoming || dates[0] || null, last: dates[dates.length - 1] || null };
-  }, [scheduleRows]);
 
   const scheduleStatus = (row) => {
     // Synthetic status chip — schema has no status column; derive from date.

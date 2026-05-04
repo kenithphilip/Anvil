@@ -318,6 +318,9 @@
   const sap = erpFactory("sap");
   const d365 = erpFactory("d365");
   const acumatica = erpFactory("acumatica");
+  const p21 = erpFactory("p21");
+  const eclipse = erpFactory("eclipse");
+  const sxe = erpFactory("sxe");
 
   const razorpay = {
     status:   async () => apiFetch("/api/billing/razorpay/status"),
@@ -895,6 +898,9 @@
     sap,
     d365,
     acumatica,
+    p21,
+    eclipse,
+    sxe,
     razorpay,
     push,
     portal,

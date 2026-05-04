@@ -213,6 +213,30 @@ import docaiExtract            from "./docai/extract.js";
 import docaiCorrection         from "./docai/correction.js";
 import docaiRuns               from "./docai/runs.js";
 
+import p21Connect              from "./p21/connect.js";
+import p21Health               from "./p21/health.js";
+import p21Sync                 from "./p21/sync.js";
+import p21Push                 from "./p21/push.js";
+import p21Retry                from "./p21/retry.js";
+import p21Diagnostics          from "./p21/diagnostics.js";
+import p21FieldMap             from "./p21/field_map.js";
+
+import eclipseConnect          from "./eclipse/connect.js";
+import eclipseHealth           from "./eclipse/health.js";
+import eclipseSync             from "./eclipse/sync.js";
+import eclipsePush             from "./eclipse/push.js";
+import eclipseRetry            from "./eclipse/retry.js";
+import eclipseDiagnostics      from "./eclipse/diagnostics.js";
+import eclipseFieldMap         from "./eclipse/field_map.js";
+
+import sxeConnect              from "./sxe/connect.js";
+import sxeHealth               from "./sxe/health.js";
+import sxeSync                 from "./sxe/sync.js";
+import sxePush                 from "./sxe/push.js";
+import sxeRetry                from "./sxe/retry.js";
+import sxeDiagnostics          from "./sxe/diagnostics.js";
+import sxeFieldMap             from "./sxe/field_map.js";
+
 import healthCheck             from "./health.js";
 
 // Static routes resolved by exact match. Order does not matter.
@@ -282,6 +306,27 @@ const STATIC_ROUTES = {
   "/docai/extract":                 docaiExtract,
   "/docai/correction":              docaiCorrection,
   "/docai/runs":                    docaiRuns,
+  "/p21/connect":                   p21Connect,
+  "/p21/health":                    p21Health,
+  "/p21/sync":                      p21Sync,
+  "/p21/push":                      p21Push,
+  "/p21/retry":                     p21Retry,
+  "/p21/diagnostics":               p21Diagnostics,
+  "/p21/field_map":                 p21FieldMap,
+  "/eclipse/connect":               eclipseConnect,
+  "/eclipse/health":                eclipseHealth,
+  "/eclipse/sync":                  eclipseSync,
+  "/eclipse/push":                  eclipsePush,
+  "/eclipse/retry":                 eclipseRetry,
+  "/eclipse/diagnostics":           eclipseDiagnostics,
+  "/eclipse/field_map":             eclipseFieldMap,
+  "/sxe/connect":                   sxeConnect,
+  "/sxe/health":                    sxeHealth,
+  "/sxe/sync":                      sxeSync,
+  "/sxe/push":                      sxePush,
+  "/sxe/retry":                     sxeRetry,
+  "/sxe/diagnostics":               sxeDiagnostics,
+  "/sxe/field_map":                 sxeFieldMap,
   "/admin/contracts":               adminContracts,
   "/admin/customer_locations":      adminCustomerLocations,
   "/admin/diagnostics":             adminDiagnostics,

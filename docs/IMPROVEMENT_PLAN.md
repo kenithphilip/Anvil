@@ -127,14 +127,16 @@ commit family lands them together with no rework:
   controls cluster around audit log export, access reviews, and
   evidence collection. Bundle separately from feature work.
 
-## 4. Phase 3: ICP wedge (Tier 1, current target)
+## 4. Phase 3: ICP wedge (Tier 1, COMPLETE)
 
 **Goal.** Ship enough to win the recommended ICP (US mid-market industrial
 distributors in fasteners, PVF, electrical wholesale, HVAC supply,
 $20M to $300M revenue) per the strategic doc's Phase 1 plus the
 extraction-quality risk callout.
 
-### 3.1 Distributor ERP connectors `[open]`
+**Status.** All five sub-items shipped. Commit references inline.
+
+### 3.1 Distributor ERP connectors `[done]` (this commit family)
 
 Add Epicor Prophet 21, Epicor Eclipse, Infor SX.e using the existing
 `erp-runner.js` framework.
@@ -185,7 +187,7 @@ Add Epicor Prophet 21, Epicor Eclipse, Infor SX.e using the existing
 - Audit clean. Tests for each `_lib/<erp>-client.js` round-trip
   encryption.
 
-### 3.2 Inbound email connector `[open]`
+### 3.2 Inbound email connector `[done]` (commit on `main`)
 
 Catch RFQs and POs landing in customer inboxes and feed them into the
 existing intake.
@@ -232,7 +234,7 @@ existing intake.
 - A duplicate message is correctly flagged.
 - Intake auto-extracts on inbound and produces a draft quote.
 
-### 3.3 Document AI v2 (layout-aware extraction) `[open]`
+### 3.3 Document AI v2 (layout-aware extraction) `[done]` (commit on `main`)
 
 Replace the single LLM call with a layered ingestion pipeline that
 hits the doc's #1 technical risk: extraction quality at scale.
@@ -287,7 +289,7 @@ hits the doc's #1 technical risk: extraction quality at scale.
   and shows up in the next extraction's context.
 - 90% accuracy on a held-out PDF corpus from one design partner.
 
-### 3.4 MCP server (external AI surface) `[open]`
+### 3.4 MCP server (external AI surface) `[done]` (commit on `main`)
 
 Expose Anvil's data plane via the Anthropic Model Context Protocol
 so external AI assistants (Claude desktop, ChatGPT plugins, Copilot)
@@ -327,7 +329,7 @@ can read Anvil data with per-tenant scoping.
   call `search_invoices`).
 - Audit events fire on every call.
 
-### 3.5 Customer-tier RFQ priority and dedup `[open]`
+### 3.5 Customer-tier RFQ priority and dedup `[done]` (folded into 3.2 commit)
 
 Soff-style routing: high-tier customers' RFQs jump the queue, dup
 RFQs across CC'd recipients collapse to one.
@@ -937,3 +939,22 @@ shifts priorities, a competitor ships something material):
   through commit `e03503e`. Phases 1 and 2 mapped to already-shipped
   work. Phases 3 to 7 mapped to open work, grouped by shared
   infrastructure rather than by strategic-doc month boundary.
+- Phase 3 complete: every Phase 3 sub-item shipped in a four-commit
+  family on `main`. ICP wedge is in:
+  - 3.4 MCP server: external AI surface, 9-tool registry shared
+    with internal ERP chat, scope-gated tokens, JSON-RPC 2.0 wire
+    protocol, per-call audit log.
+  - 3.2 + 3.5 inbound email + customer-tier priority + dedup:
+    Postmark + Microsoft Graph adapters, thread-state, dup-hash
+    7-day window, customer-tier weighted priority scoring,
+    auto-RFQ detection.
+  - 3.3 Document AI v2: 5-adapter layered pipeline (Reducto +
+    Azure DI + Unstructured + multi-tab Excel + Claude fallback),
+    extraction_runs audit, per-customer correction loop with
+    automatic prompt-overrides rebuild at 50-correction threshold.
+  - 3.1 Distributor ERP connectors: Epicor Prophet 21 (token auth,
+    OData v2), Epicor Eclipse (Basic auth, JSON-first with SOAP
+    fallback), Infor SX.e (OAuth2 via ION, M3 REST). Each with
+    7 endpoints + 30m sync + 5m retry crons. Total live ERPs
+    now 8 (NetSuite, Tally, SAP, D365, Acumatica, P21, Eclipse,
+    SX.e).

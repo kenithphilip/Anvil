@@ -73,6 +73,30 @@
     {
       "path": "/api/inbound/email/parse",
       "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/p21/sync",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/p21/retry",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/eclipse/sync",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/eclipse/retry",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/sxe/sync",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/sxe/retry",
+      "schedule": "*/5 * * * *"
     }
   ],
   "headers": [

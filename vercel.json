@@ -37,6 +37,30 @@
     {
       "path": "/api/tally/retry",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/sap/sync",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/sap/retry",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/d365/sync",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/d365/retry",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/acumatica/sync",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/acumatica/retry",
+      "schedule": "*/5 * * * *"
     }
   ],
   "headers": [

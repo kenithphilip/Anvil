@@ -147,6 +147,30 @@ import netsuiteRetry           from "./netsuite/retry.js";
 import netsuiteDiagnostics     from "./netsuite/diagnostics.js";
 import netsuiteFieldMap        from "./netsuite/field_map.js";
 
+import sapConnect              from "./sap/connect.js";
+import sapHealth               from "./sap/health.js";
+import sapSync                 from "./sap/sync.js";
+import sapPush                 from "./sap/push.js";
+import sapRetry                from "./sap/retry.js";
+import sapDiagnostics          from "./sap/diagnostics.js";
+import sapFieldMap             from "./sap/field_map.js";
+
+import d365Connect             from "./d365/connect.js";
+import d365Health              from "./d365/health.js";
+import d365Sync                from "./d365/sync.js";
+import d365Push                from "./d365/push.js";
+import d365Retry               from "./d365/retry.js";
+import d365Diagnostics         from "./d365/diagnostics.js";
+import d365FieldMap            from "./d365/field_map.js";
+
+import acuConnect              from "./acumatica/connect.js";
+import acuHealth               from "./acumatica/health.js";
+import acuSync                 from "./acumatica/sync.js";
+import acuPush                 from "./acumatica/push.js";
+import acuRetry                from "./acumatica/retry.js";
+import acuDiagnostics          from "./acumatica/diagnostics.js";
+import acuFieldMap             from "./acumatica/field_map.js";
+
 import healthCheck             from "./health.js";
 
 // Static routes resolved by exact match. Order does not matter.
@@ -163,6 +187,27 @@ const STATIC_ROUTES = {
   "/netsuite/retry":                netsuiteRetry,
   "/netsuite/diagnostics":          netsuiteDiagnostics,
   "/netsuite/field_map":            netsuiteFieldMap,
+  "/sap/connect":                   sapConnect,
+  "/sap/health":                    sapHealth,
+  "/sap/sync":                      sapSync,
+  "/sap/push":                      sapPush,
+  "/sap/retry":                     sapRetry,
+  "/sap/diagnostics":               sapDiagnostics,
+  "/sap/field_map":                 sapFieldMap,
+  "/d365/connect":                  d365Connect,
+  "/d365/health":                   d365Health,
+  "/d365/sync":                     d365Sync,
+  "/d365/push":                     d365Push,
+  "/d365/retry":                    d365Retry,
+  "/d365/diagnostics":              d365Diagnostics,
+  "/d365/field_map":                d365FieldMap,
+  "/acumatica/connect":             acuConnect,
+  "/acumatica/health":              acuHealth,
+  "/acumatica/sync":                acuSync,
+  "/acumatica/push":                acuPush,
+  "/acumatica/retry":               acuRetry,
+  "/acumatica/diagnostics":         acuDiagnostics,
+  "/acumatica/field_map":           acuFieldMap,
   "/admin/contracts":               adminContracts,
   "/admin/customer_locations":      adminCustomerLocations,
   "/admin/diagnostics":             adminDiagnostics,

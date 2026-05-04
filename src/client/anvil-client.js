@@ -301,6 +301,24 @@
                      apiFetch("/api/netsuite/field_map", { method: "PUT", body: { field_map: map } }),
   };
 
+  const erpFactory = (prefix) => ({
+    health:        async () => apiFetch("/api/" + prefix + "/health"),
+    connect:       async (payload) => apiFetch("/api/" + prefix + "/connect", { method: "POST", body: payload }),
+    push:          async (orderId, options) =>
+                     apiFetch("/api/" + prefix + "/push", { method: "POST", body: { orderId, ...(options || {}) } }),
+    pushPreview:   async (orderId) =>
+                     apiFetch("/api/" + prefix + "/push", { method: "POST", body: { orderId, dry_run: true } }),
+    syncNow:       async (payload) => apiFetch("/api/" + prefix + "/sync", { method: "POST", body: payload || {} }),
+    retry:         async (payload) => apiFetch("/api/" + prefix + "/retry", { method: "POST", body: payload || {} }),
+    diagnostics:   async () => apiFetch("/api/" + prefix + "/diagnostics"),
+    fieldMap:      async () => apiFetch("/api/" + prefix + "/field_map"),
+    saveFieldMap:  async (map) => apiFetch("/api/" + prefix + "/field_map", { method: "PUT", body: { field_map: map } }),
+  });
+
+  const sap = erpFactory("sap");
+  const d365 = erpFactory("d365");
+  const acumatica = erpFactory("acumatica");
+
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });
 
   const documents = {
@@ -800,6 +818,9 @@
     agents,
     whatsapp,
     netsuite,
+    sap,
+    d365,
+    acumatica,
     claudeCall,
     documents,
     orders,

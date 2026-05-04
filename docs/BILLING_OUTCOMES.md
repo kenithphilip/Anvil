@@ -14,7 +14,8 @@ there must be reflected here.
 | Orders processed | $0.50 each | A new sales order entered the system. |
 | Orders pushed to ERP | $1.00 each | An SO was pushed, amended, or reconciled in a real ERP (Tally today; NetSuite/SAP next). |
 | Quotes drafted | $0.25 each | A customer-facing quote was drafted. |
-| Invoices generated | $0.50 each | An invoice was created (GSTN today; non-India invoicing on the roadmap). |
+| Invoices generated | $0.50 each | An invoice was created or its PDF rendered. Both `einvoice_*` (GSTN) and `invoice_*` (non-India, Phase 2.1 module) flow through this category. |
+| Payments collected | $1.00 each | A payment landed against an invoice (Stripe `payment_intent.succeeded` once Phase 2.2 ships). |
 | Approval decisions | $0.10 each | A manager or finance role accepted or rejected an approval. |
 | Documents extracted | $0.10 each | A document was uploaded, scanned, or ingested via email and turned into structured fields. |
 | Communications sent | $0.10 each | An outbound email, SMS, or WhatsApp message was sent through the platform. |

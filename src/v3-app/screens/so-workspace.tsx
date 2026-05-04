@@ -214,6 +214,25 @@ const WiredSOWorkspace = () => {
     }
   };
 
+  // Draft a new invoice from this order. Templates totals + line items
+  // from result.salesOrder; the operator can edit fields on the
+  // Invoices screen after creation. We navigate there on success.
+  const createInvoiceForOrder = async (orderObj) => {
+    if (!orderObj?.id) return;
+    try {
+      const resp: any = await ObaraBackend?.invoices?.create?.({
+        order_id: orderObj.id,
+        net_days: 30,
+      });
+      const inv = resp?.invoice;
+      if (!inv) throw new Error("Invoice create returned no row");
+      window.notifySuccess?.("Invoice drafted", inv.invoice_number);
+      window.location.hash = "#/invoices";
+    } catch (err: any) {
+      window.notifyError?.("Could not create invoice", err?.message || String(err));
+    }
+  };
+
   // Share-link flow. Server uploads the PDF to storage and returns a
   // 7-day signed URL we copy to the operator's clipboard.
   const shareQuotePdf = async (orderObj) => {
@@ -529,6 +548,11 @@ const WiredSOWorkspace = () => {
                onClick={() => downloadQuotePdf(o)}
                title="Render a branded PDF of the quote and download it">
             {Icon.download} quote PDF
+          </Btn>
+          <Btn sm kind="ghost"
+               onClick={() => createInvoiceForOrder(o)}
+               title="Draft a new invoice templated from this order">
+            {Icon.plus} new invoice
           </Btn>
           <Btn sm kind="ghost"
                onClick={() => shareQuotePdf(o)}

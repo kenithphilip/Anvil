@@ -221,6 +221,31 @@
   // so for direct browser navigation we expose a download blob via
   // pdfBlob instead). `share(orderId)` requests a 7-day signed URL
   // that can be sent to a customer.
+  const invoices = {
+    list: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/invoices" + (qs ? "?" + qs : ""));
+    },
+    create: async (payload) => apiFetch("/api/invoices", { method: "POST", body: payload }),
+    get: async (id) => apiFetch("/api/invoices/" + encodeURIComponent(id)),
+    update: async (id, patch) => apiFetch("/api/invoices/" + encodeURIComponent(id), { method: "PATCH", body: patch }),
+    void: async (id) => apiFetch("/api/invoices/" + encodeURIComponent(id), { method: "DELETE" }),
+    send: async (payload) => apiFetch("/api/invoices/send", { method: "POST", body: payload }),
+    pdfBlob: async (id) => {
+      const cfg = readConfig();
+      if (!cfg.url) throw new Error("Backend URL not configured");
+      const session = readSession();
+      const url = cfg.url.replace(/\/+$/, "") + "/api/invoices/pdf?id=" + encodeURIComponent(id);
+      const headers = {};
+      if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+      if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+      const resp = await fetch(url, { headers });
+      if (!resp.ok) throw new Error("PDF " + resp.status);
+      return await resp.blob();
+    },
+    share: async (id) => apiFetch("/api/invoices/pdf?id=" + encodeURIComponent(id) + "&format=share"),
+  };
+
   const quotes = {
     pdfUrl: (orderId) => {
       const cfg = readConfig();
@@ -742,6 +767,7 @@
     health,
     billing,
     quotes,
+    invoices: invoices,
     agents,
     whatsapp,
     claudeCall,

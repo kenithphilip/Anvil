@@ -39,10 +39,20 @@ export const ACTION_TO_OUTCOME = {
   quote_pdf_downloaded:   "quote_drafted",
   quote_pdf_shared:       "quote_drafted",
 
-  // Invoicing (India today; non-India lands here when invoicing module ships)
+  // Invoicing (India + non-India). einvoice_* is the GSTN-specific
+  // path; invoice_* is the new Phase 2.1 module that works for any
+  // tenant. Both map to invoice_generated; payment_collected is a
+  // separate outcome flipped by the Stripe webhook (Phase 2.2).
   einvoice_draft:         "invoice_generated",
   einvoice_generated:     "invoice_generated",
   einvoice_send_pending:  "invoice_generated",
+  invoice_create:         "invoice_generated",
+  invoice_sent:           "communication_sent",
+  invoice_pdf_downloaded: "invoice_generated",
+  invoice_pdf_shared:     "invoice_generated",
+  invoice_paid:           "payment_collected",
+  invoice_voided:         "invoice_generated",
+  payment_received:       "payment_collected",
 
   // Approvals (only the decision counts, not the request)
   approval_decision:      "approval_decision",
@@ -73,6 +83,7 @@ export const OUTCOME_LABELS = {
   quote_drafted:        "Quotes drafted",
   communication_sent:   "Communications sent",
   invoice_generated:    "Invoices generated",
+  payment_collected:    "Payments collected",
   approval_decision:    "Approval decisions",
   document_extracted:   "Documents extracted",
   service_visit_closed: "Service visits closed",
@@ -86,6 +97,7 @@ export const OUTCOME_ORDER = [
   "order_pushed",
   "quote_drafted",
   "invoice_generated",
+  "payment_collected",
   "approval_decision",
   "document_extracted",
   "communication_sent",
@@ -103,6 +115,7 @@ export const OUTCOME_UNIT_PRICE_CENTS = {
   order_pushed:         100,
   quote_drafted:        25,
   invoice_generated:    50,
+  payment_collected:    100,
   approval_decision:    10,
   document_extracted:   10,
   communication_sent:   10,

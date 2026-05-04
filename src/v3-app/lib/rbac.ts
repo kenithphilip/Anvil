@@ -40,6 +40,7 @@ export const MATRIX: Record<string, MatrixRow> = {
   car:         { sales_engineer: "r",   sales_manager: "r",  procurement: "",   finance: "",    admin: "rw", operator: "rw", viewer: "r" },
   tally:       { sales_engineer: "r",   sales_manager: "r",  procurement: "r",  finance: "rwa", admin: "rw", operator: "",   viewer: "r" },
   einvoice:    { sales_engineer: "r",   sales_manager: "r",  procurement: "",   finance: "rw",  admin: "rw", operator: "",   viewer: "r" },
+  invoices:    { sales_engineer: "r",   sales_manager: "rw", procurement: "",   finance: "rwa", admin: "rwa",operator: "",   viewer: "r" },
   cost:        { sales_engineer: "r",   sales_manager: "rw", procurement: "r",  finance: "rw",  admin: "rw", operator: "",   viewer: "r" },
   customers:   { sales_engineer: "rw",  sales_manager: "rw", procurement: "r",  finance: "r",   admin: "rw", operator: "r",  viewer: "r" },
   items:       { sales_engineer: "r",   sales_manager: "r",  procurement: "rw", finance: "r",   admin: "rw", operator: "r",  viewer: "r" },

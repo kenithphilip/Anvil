@@ -125,6 +125,11 @@ import whatsappSend            from "./whatsapp/send.js";
 
 import quotesPdf               from "./quotes/pdf.js";
 
+import invoicesIndex           from "./invoices/index.js";
+import invoicesById            from "./invoices/[id].js";
+import invoicesPdf             from "./invoices/pdf.js";
+import invoicesSend            from "./invoices/send.js";
+
 import healthCheck             from "./health.js";
 
 // Static routes resolved by exact match. Order does not matter.
@@ -159,6 +164,10 @@ const STATIC_ROUTES = {
   "/billing/usage":                 billingUsage,
 
   "/quotes/pdf":                    quotesPdf,
+
+  "/invoices":                      invoicesIndex,
+  "/invoices/pdf":                  invoicesPdf,
+  "/invoices/send":                 invoicesSend,
 
   "/bom":                           bomIndex,
   "/claude/messages":               claudeMessages,
@@ -248,6 +257,10 @@ const DYNAMIC_ROUTES = [
   { prefix: "/orders/",      handler: ordersById,     param: "id" },
   // "/source_pos/<id>"
   { prefix: "/source_pos/",  handler: sourcePosById,  param: "id" },
+  // Invoices: /invoices/<id>. The static "/invoices" + "/invoices/pdf"
+  // + "/invoices/send" entries above take precedence; the dynamic
+  // path only resolves when none of those match.
+  { prefix: "/invoices/",    handler: invoicesById,   param: "id" },
 ];
 
 // Resolve a request URL to a handler. Returns null if not matched.

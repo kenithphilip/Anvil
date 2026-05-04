@@ -52,6 +52,7 @@ export const NAV: NavGroup[] = [
     items: [
       { id: "tally",     label: "Tally Sync",    icon: Icon.ledger },
       { id: "einvoice",  label: "e-Invoice",     icon: Icon.doc },
+      { id: "invoices",  label: "Invoices",      icon: Icon.doc },
       { id: "cost",      label: "Cost & Margin", icon: Icon.cash },
     ],
   },

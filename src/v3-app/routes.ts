@@ -47,6 +47,7 @@ const screens = {
   tallyMasters:       lazy(() => import("./screens/tally-masters")),
   tallyReconcile:     lazy(() => import("./screens/tally-reconcile")),
   einvoice:           lazy(() => import("./screens/einvoice")),
+  invoices:           lazy(() => import("./screens/invoices")),
   cost:               lazy(() => import("./screens/cost")),
   // Data
   customers:          lazy(() => import("./screens/customers")),
@@ -106,6 +107,7 @@ export const RESOLVERS = {
     return screens.tallyPush;
   },
   einvoice:    () => screens.einvoice,
+  invoices:    () => screens.invoices,
   cost:        () => screens.cost,
   customers:   () => screens.customers,
   items:       ({ params }) => {

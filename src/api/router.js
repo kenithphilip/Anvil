@@ -138,6 +138,9 @@ import netsuiteConnect         from "./netsuite/connect.js";
 import netsuiteHealth          from "./netsuite/health.js";
 import netsuitePush            from "./netsuite/push.js";
 import netsuiteSync            from "./netsuite/sync.js";
+import netsuiteRetry           from "./netsuite/retry.js";
+import netsuiteDiagnostics     from "./netsuite/diagnostics.js";
+import netsuiteFieldMap        from "./netsuite/field_map.js";
 
 import healthCheck             from "./health.js";
 
@@ -152,6 +155,9 @@ const STATIC_ROUTES = {
   "/netsuite/health":               netsuiteHealth,
   "/netsuite/push":                 netsuitePush,
   "/netsuite/sync":                 netsuiteSync,
+  "/netsuite/retry":                netsuiteRetry,
+  "/netsuite/diagnostics":          netsuiteDiagnostics,
+  "/netsuite/field_map":            netsuiteFieldMap,
   "/admin/contracts":               adminContracts,
   "/admin/customer_locations":      adminCustomerLocations,
   "/admin/diagnostics":             adminDiagnostics,

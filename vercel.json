@@ -25,6 +25,10 @@
     {
       "path": "/api/netsuite/sync",
       "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/netsuite/retry",
+      "schedule": "*/5 * * * *"
     }
   ],
   "headers": [

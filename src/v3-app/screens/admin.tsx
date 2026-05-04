@@ -166,7 +166,14 @@ const WiredAdminCRUD = () => {
   const [nsBusy, setNsBusy] = u(false);
   const [nsForm, setNsForm] = u({
     account_id: "", consumer_key: "", consumer_secret: "", token_id: "", token_secret: "",
+    subsidiary_id: "", default_location_id: "",
   });
+  const [nsDiag, setNsDiag] = u<any>(null);
+  const [nsDiagBusy, setNsDiagBusy] = u(false);
+  const [nsSyncBusy, setNsSyncBusy] = u(false);
+  const [nsRetryBusy, setNsRetryBusy] = u(false);
+  const [nsFieldMapDraft, setNsFieldMapDraft] = u<string>("{}");
+  const [nsFieldMapBusy, setNsFieldMapBusy] = u(false);
   const [holidayForm, setHolidayForm] = u({ country: "IN", date: "", name: "" });
   const [leadTimeForm, setLeadTimeForm] = u({ type: "supplier", entity_id: "", days: "", notes: "" });
   const [threshForm, setThreshForm] = u(null);
@@ -367,6 +374,10 @@ const WiredAdminCRUD = () => {
     try {
       const resp = await ObaraBackend?.netsuite?.health?.();
       setNetsuite(resp);
+      if (resp?.field_map) {
+        try { setNsFieldMapDraft(JSON.stringify(resp.field_map, null, 2)); }
+        catch (_e) { setNsFieldMapDraft("{}"); }
+      }
     } catch (err) { flashErr(err); }
   };
 
@@ -377,15 +388,62 @@ const WiredAdminCRUD = () => {
     try {
       const resp: any = await ObaraBackend?.netsuite?.connect?.(nsForm);
       if (resp?.ok) {
-        flashOk("NetSuite probe succeeded; sync will run on the next 30-minute cron tick");
+        flashOk("NetSuite probe succeeded; credentials stored " + (resp?.storage_mode || "plaintext") + ". Sync runs every 30 minutes.");
       } else {
         flashErr(new Error("NetSuite probe failed: " + JSON.stringify(resp?.probe_error || resp).slice(0, 200)));
       }
       setNetsuite(null);
       loadNetsuite();
-      setNsForm({ account_id: "", consumer_key: "", consumer_secret: "", token_id: "", token_secret: "" });
+      setNsForm({ account_id: "", consumer_key: "", consumer_secret: "", token_id: "", token_secret: "", subsidiary_id: "", default_location_id: "" });
     } catch (err) { flashErr(err); }
     finally { setNsBusy(false); }
+  };
+
+  const onNsRunDiagnostics = async () => {
+    setNsDiagBusy(true);
+    try {
+      const resp = await ObaraBackend?.netsuite?.diagnostics?.();
+      setNsDiag(resp);
+      if (resp?.summary?.all_ok) flashOk("All probes passed in " + (resp?.probes || []).length + " entities");
+      else flashErr(new Error((resp?.summary?.failed || 0) + " probe(s) failed; see diagnostics table"));
+    } catch (err) { flashErr(err); }
+    finally { setNsDiagBusy(false); }
+  };
+
+  const onNsSyncNow = async (entity: string | null, full: boolean) => {
+    setNsSyncBusy(true);
+    try {
+      const body: any = {};
+      if (entity) body.entity = entity;
+      if (full) body.full = true;
+      const resp = await ObaraBackend?.netsuite?.syncNow?.(body);
+      flashOk("Manual sync ran for " + ((resp?.results || []).length || 0) + " entities");
+      loadNetsuite();
+    } catch (err) { flashErr(err); }
+    finally { setNsSyncBusy(false); }
+  };
+
+  const onNsRetryNow = async () => {
+    setNsRetryBusy(true);
+    try {
+      const resp = await ObaraBackend?.netsuite?.retry?.();
+      flashOk("Replayed " + ((resp?.processed || 0)) + " queued pushes");
+      loadNetsuite();
+    } catch (err) { flashErr(err); }
+    finally { setNsRetryBusy(false); }
+  };
+
+  const onNsSaveFieldMap = async () => {
+    setNsFieldMapBusy(true);
+    try {
+      let parsed: any = {};
+      try { parsed = JSON.parse(nsFieldMapDraft || "{}"); }
+      catch (_e) { throw new Error("Field map must be valid JSON"); }
+      await ObaraBackend?.netsuite?.saveFieldMap?.(parsed);
+      flashOk("Field map saved (" + Object.keys(parsed).length + " entries)");
+      loadNetsuite();
+    } catch (err) { flashErr(err); }
+    finally { setNsFieldMapBusy(false); }
   };
 
   e(() => {
@@ -1024,40 +1082,75 @@ const WiredAdminCRUD = () => {
 
         {active === "netsuite" && (
           <>
-            <Card title="NetSuite Connect" eyebrow="ERP read + push for non-India tenants">
+            <Card title="NetSuite Connect" eyebrow="ERP read + push, encrypted at rest, retry on failure">
               {!netsuite ? (
                 <div className="body" style={{ padding: 16, textAlign: "center", color: "var(--ink-3)" }}>Loading…</div>
               ) : netsuite.configured ? (
                 <>
-                  <div className="row" style={{ gap: 6, marginBottom: 10 }}>
+                  <div className="row" style={{ gap: 6, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
                     <Chip k="live">connected</Chip>
+                    {netsuite.storage_mode === "encrypted"
+                      ? <Chip k="ghost">encrypted</Chip>
+                      : netsuite.storage_mode === "plaintext"
+                        ? <Chip k="warn">plaintext (set ANVIL_SECRETS_KEY to encrypt)</Chip>
+                        : null}
                     <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
                       account {netsuite.account_id}
+                      {netsuite.subsidiary_id ? " · sub " + netsuite.subsidiary_id : ""}
                       {netsuite.connected_at ? " · since " + new Date(netsuite.connected_at).toLocaleDateString("en-US") : ""}
                     </span>
                   </div>
+                  {(netsuite.retry_pending || netsuite.retry_gave_up) ? (
+                    <Banner kind={netsuite.retry_gave_up ? "bad" : "warn"} icon={Icon.alert}
+                            title={"Retry queue: " + (netsuite.retry_pending || 0) + " pending, " + (netsuite.retry_gave_up || 0) + " gave up"}>
+                      <div className="row" style={{ gap: 8 }}>
+                        <Btn sm kind="ghost" onClick={onNsRetryNow} disabled={nsRetryBusy}>
+                          {nsRetryBusy ? "replaying…" : <>{Icon.cycle} Retry now</>}
+                        </Btn>
+                      </div>
+                    </Banner>
+                  ) : null}
                   <table className="tbl mono-sm">
-                    <thead><tr><th>Entity</th><th>Last sync</th><th>Status</th><th className="r">Rows</th><th>Error</th></tr></thead>
+                    <thead><tr>
+                      <th>Entity</th><th>Last sync</th><th>High water</th><th>Status</th>
+                      <th className="r">Pulled</th><th className="r">Updated</th>
+                      <th>Error</th><th>Sync</th>
+                    </tr></thead>
                     <tbody>
                       {(netsuite.sync_state || []).length === 0 ? (
-                        <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--ink-3)" }}>No syncs yet. Cron runs every 30 minutes.</td></tr>
+                        <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--ink-3)" }}>No syncs yet. Cron runs every 30 minutes.</td></tr>
                       ) : (netsuite.sync_state || []).map((s: any) => (
                         <tr key={s.entity}>
                           <td>{s.entity}</td>
                           <td>{s.last_sync_at ? new Date(s.last_sync_at).toLocaleString("en-IN") : "—"}</td>
+                          <td style={{ color: "var(--ink-3)" }}>{s.last_modified_high_water ? new Date(s.last_modified_high_water).toLocaleDateString("en-US") : "—"}</td>
                           <td>
                             {s.status === "running" ? <Chip k="warn">running</Chip>
                               : s.status === "error" ? <Chip k="bad">error</Chip>
                               : <Chip k="ghost">idle</Chip>}
                           </td>
                           <td className="r">{s.rows_pulled || 0}</td>
-                          <td style={{ color: "var(--rust)", fontSize: 11 }}>{s.error || ""}</td>
+                          <td className="r">{s.records_updated || 0}</td>
+                          <td style={{ color: "var(--rust)", fontSize: 11 }}>{s.error ? String(s.error).slice(0, 80) : ""}</td>
+                          <td>
+                            <Btn sm kind="ghost" onClick={() => onNsSyncNow(s.entity, false)} disabled={nsSyncBusy}>delta</Btn>{" "}
+                            <Btn sm kind="ghost" onClick={() => onNsSyncNow(s.entity, true)} disabled={nsSyncBusy}>full</Btn>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                  <div style={{ marginTop: 10 }}>
+                  <div className="row" style={{ marginTop: 10, gap: 8, flexWrap: "wrap" }}>
                     <Btn sm kind="ghost" onClick={() => { setNetsuite(null); loadNetsuite(); }}>{Icon.cycle} refresh</Btn>
+                    <Btn sm kind="primary" onClick={() => onNsSyncNow(null, false)} disabled={nsSyncBusy}>
+                      {nsSyncBusy ? "syncing…" : "Sync all (delta)"}
+                    </Btn>
+                    <Btn sm kind="ghost" onClick={() => onNsSyncNow(null, true)} disabled={nsSyncBusy}>
+                      Full re-sync
+                    </Btn>
+                    <Btn sm kind="ghost" onClick={onNsRunDiagnostics} disabled={nsDiagBusy}>
+                      {nsDiagBusy ? "probing…" : <>{Icon.shieldCheck} Run diagnostics</>}
+                    </Btn>
                   </div>
                 </>
               ) : (
@@ -1066,6 +1159,77 @@ const WiredAdminCRUD = () => {
                 </Banner>
               )}
             </Card>
+
+            {netsuite?.configured && nsDiag && (
+              <Card title="Diagnostics" eyebrow={"ran at " + (nsDiag.ran_at ? new Date(nsDiag.ran_at).toLocaleTimeString("en-US") : "—")}>
+                <table className="tbl mono-sm">
+                  <thead><tr><th>Entity</th><th>Status</th><th className="r">HTTP</th><th className="r">Latency</th><th className="r">Rows</th><th>Error</th></tr></thead>
+                  <tbody>
+                    {(nsDiag.probes || []).map((p: any) => (
+                      <tr key={p.entity}>
+                        <td>{p.entity}</td>
+                        <td>{p.ok ? <Chip k="live">ok</Chip> : <Chip k="bad">fail</Chip>}</td>
+                        <td className="r">{p.status}</td>
+                        <td className="r">{p.latency_ms} ms</td>
+                        <td className="r">{p.rows_returned}</td>
+                        <td style={{ color: "var(--rust)", fontSize: 11 }}>{p.error ? String(p.error).slice(0, 120) : ""}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            )}
+
+            {netsuite?.configured && (
+              <Card title="Recent sync runs" eyebrow="last 20 ticks across cron + manual">
+                {(netsuite.recent_runs || []).length === 0 ? (
+                  <div className="body" style={{ padding: 12, color: "var(--ink-3)" }}>No runs recorded yet.</div>
+                ) : (
+                  <table className="tbl mono-sm">
+                    <thead><tr><th>Started</th><th>Entity</th><th>Status</th><th>Trigger</th><th className="r">Pulled</th><th className="r">Errored</th><th>Error</th></tr></thead>
+                    <tbody>
+                      {(netsuite.recent_runs || []).map((r: any, idx: number) => (
+                        <tr key={idx}>
+                          <td>{new Date(r.run_started_at).toLocaleTimeString("en-US")}</td>
+                          <td>{r.entity}</td>
+                          <td>
+                            {r.status === "ok" ? <Chip k="live">ok</Chip>
+                              : r.status === "error" ? <Chip k="bad">error</Chip>
+                              : r.status === "partial" ? <Chip k="warn">partial</Chip>
+                              : <Chip k="ghost">running</Chip>}
+                          </td>
+                          <td>{r.triggered_by}</td>
+                          <td className="r">{r.rows_pulled || 0}</td>
+                          <td className="r">{r.rows_errored || 0}</td>
+                          <td style={{ color: "var(--rust)", fontSize: 11 }}>{r.error ? String(r.error).slice(0, 100) : ""}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </Card>
+            )}
+
+            {netsuite?.configured && (
+              <Card title="Field map" eyebrow="JSON: source path -> target path on the SO payload">
+                <textarea
+                  className="input mono-sm"
+                  rows={8}
+                  value={nsFieldMapDraft}
+                  onChange={(ev) => setNsFieldMapDraft(ev.target.value)}
+                  style={{ width: "100%", fontFamily: "var(--mono)" }}
+                  placeholder='{"memo": "custbody_short_memo"}'
+                />
+                <div className="row" style={{ marginTop: 8, gap: 8 }}>
+                  <Btn sm kind="primary" onClick={onNsSaveFieldMap} disabled={nsFieldMapBusy}>
+                    {nsFieldMapBusy ? "saving…" : "Save field map"}
+                  </Btn>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)", alignSelf: "center" }}>
+                    Up to 50 entries. Source paths reference the rendered SO payload; targets are where to move the value.
+                  </span>
+                </div>
+              </Card>
+            )}
 
             <Card title="Configure NetSuite credentials" eyebrow="TBA · stored in tenant_settings">
               <form onSubmit={onNsConnect} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -1095,12 +1259,24 @@ const WiredAdminCRUD = () => {
                   <input className="input mono-sm" type="password" required value={nsForm.token_secret}
                          onChange={(ev) => setNsForm({ ...nsForm, token_secret: ev.target.value })} />
                 </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)" }}>Subsidiary id (optional)</span>
+                  <input className="input mono-sm" type="text" value={nsForm.subsidiary_id}
+                         onChange={(ev) => setNsForm({ ...nsForm, subsidiary_id: ev.target.value })}
+                         placeholder="numeric id" />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)" }}>Default location id (optional)</span>
+                  <input className="input mono-sm" type="text" value={nsForm.default_location_id}
+                         onChange={(ev) => setNsForm({ ...nsForm, default_location_id: ev.target.value })}
+                         placeholder="numeric id" />
+                </label>
                 <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8 }}>
                   <Btn type="submit" kind="primary" sm disabled={nsBusy}>
                     {nsBusy ? "probing…" : <>{Icon.shieldCheck} Save and probe</>}
                   </Btn>
                   <span className="mono-sm" style={{ color: "var(--ink-3)", alignSelf: "center" }}>
-                    Credentials are stored on tenant_settings; only admin can read them.
+                    Credentials encrypt with AES-256-GCM if ANVIL_SECRETS_KEY is set; otherwise stored as plaintext.
                   </span>
                 </div>
               </form>

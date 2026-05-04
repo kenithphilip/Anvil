@@ -287,9 +287,18 @@
   };
 
   const netsuite = {
-    health:  async () => apiFetch("/api/netsuite/health"),
-    connect: async (payload) => apiFetch("/api/netsuite/connect", { method: "POST", body: payload }),
-    push:    async (orderId) => apiFetch("/api/netsuite/push", { method: "POST", body: { orderId } }),
+    health:        async () => apiFetch("/api/netsuite/health"),
+    connect:       async (payload) => apiFetch("/api/netsuite/connect", { method: "POST", body: payload }),
+    push:          async (orderId, options) =>
+                     apiFetch("/api/netsuite/push", { method: "POST", body: { orderId, ...(options || {}) } }),
+    pushPreview:   async (orderId) =>
+                     apiFetch("/api/netsuite/push", { method: "POST", body: { orderId, dry_run: true } }),
+    syncNow:       async (payload) => apiFetch("/api/netsuite/sync", { method: "POST", body: payload || {} }),
+    retry:         async (payload) => apiFetch("/api/netsuite/retry", { method: "POST", body: payload || {} }),
+    diagnostics:   async () => apiFetch("/api/netsuite/diagnostics"),
+    fieldMap:      async () => apiFetch("/api/netsuite/field_map"),
+    saveFieldMap:  async (map) =>
+                     apiFetch("/api/netsuite/field_map", { method: "PUT", body: { field_map: map } }),
   };
 
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });

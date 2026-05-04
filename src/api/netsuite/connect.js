@@ -1,10 +1,18 @@
 // POST /api/netsuite/connect
-// Body: { account_id, consumer_key, consumer_secret, token_id, token_secret }
+// Body: { account_id, consumer_key, consumer_secret, token_id, token_secret,
+//         subsidiary_id?, default_location_id? }
 //
-// Stores TBA credentials on tenant_settings, runs a probe call to
-// confirm the account is reachable + the integration record + token
-// are valid. Returns { ok, probe } so the UI can show whether the
-// connection works.
+// Stores TBA credentials encrypted at rest on tenant_settings, runs a
+// probe call to confirm the account is reachable + the integration
+// record + token are valid. Returns { ok, probe } so the UI can show
+// whether the connection works.
+//
+// v2: credentials live in netsuite_*_enc columns under AES-256-GCM
+// with a per-tenant IV. The plaintext columns remain on the schema
+// for the rotation window but are written as null so a stolen DB
+// dump doesn't expose live tokens. If ANVIL_SECRETS_KEY is missing
+// we fall back to plaintext (with a deprecation warning) so dev
+// environments without the key still work.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
@@ -12,6 +20,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings, updateTenantSettings } from "../_lib/stripe-client.js";
 import { netsuiteFetch } from "../_lib/netsuite-client.js";
+import { encryptNetsuiteCreds, decryptNetsuiteCreds, isSecretsConfigured } from "../_lib/secrets.js";
 
 const REQUIRED = ["account_id", "consumer_key", "consumer_secret", "token_id", "token_secret"];
 
@@ -28,19 +37,43 @@ export default async function handler(req, res) {
     }
     const svc = serviceClient();
     await tenantSettings(svc, ctx.tenantId);
-    const updated = await updateTenantSettings(svc, ctx.tenantId, {
+
+    const patch = {
       netsuite_account_id: body.account_id,
-      netsuite_consumer_key: body.consumer_key,
-      netsuite_consumer_secret: body.consumer_secret,
-      netsuite_token_id: body.token_id,
-      netsuite_token_secret: body.token_secret,
-    });
+      netsuite_subsidiary_id: body.subsidiary_id || null,
+      netsuite_default_location_id: body.default_location_id || null,
+    };
+
+    let storageMode = "plaintext";
+    if (isSecretsConfigured()) {
+      const enc = encryptNetsuiteCreds({
+        consumer_key: body.consumer_key,
+        consumer_secret: body.consumer_secret,
+        token_id: body.token_id,
+        token_secret: body.token_secret,
+      });
+      Object.assign(patch, enc);
+      // Null out plaintext columns so dumps don't carry them.
+      patch.netsuite_consumer_key = null;
+      patch.netsuite_consumer_secret = null;
+      patch.netsuite_token_id = null;
+      patch.netsuite_token_secret = null;
+      storageMode = "encrypted";
+    } else {
+      patch.netsuite_consumer_key = body.consumer_key;
+      patch.netsuite_consumer_secret = body.consumer_secret;
+      patch.netsuite_token_id = body.token_id;
+      patch.netsuite_token_secret = body.token_secret;
+    }
+
+    const updated = await updateTenantSettings(svc, ctx.tenantId, patch);
+    const decrypted = decryptNetsuiteCreds(updated);
 
     // Probe: cheap SuiteQL call. The empty-result-but-200 case is
     // the success signal; a 401/403 means the credentials are wrong.
     let probe = null;
     try {
-      probe = await netsuiteFetch(updated, {
+      probe = await netsuiteFetch(decrypted, {
         method: "POST",
         path: "/services/rest/query/v1/suiteql",
         body: { q: "SELECT id FROM customer FETCH FIRST 1 ROWS ONLY" },
@@ -57,13 +90,14 @@ export default async function handler(req, res) {
       action: "netsuite_connect",
       objectType: "tenant_settings",
       objectId: ctx.tenantId,
-      detail: probe.ok ? "probe_ok" : ("probe_failed::" + probe.status),
+      detail: (probe.ok ? "probe_ok" : ("probe_failed::" + probe.status)) + "::" + storageMode,
     });
 
     return json(res, 200, {
       ok: probe.ok,
       probe_status: probe.status,
       probe_error: probe.ok ? null : (probe.body?.["o:errorDetails"] || probe.body?.error || probe.body?.raw || null),
+      storage_mode: storageMode,
     });
   } catch (err) {
     sendError(res, err);

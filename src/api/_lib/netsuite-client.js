@@ -73,6 +73,27 @@ export const netsuiteIsConfigured = (settings) => !!(
   settings?.netsuite_token_secret
 );
 
+// Settings rows come in two shapes:
+//   1. Plaintext path: netsuite_consumer_key etc. populated directly.
+//   2. Encrypted path: netsuite_*_enc bytea columns + netsuite_creds_iv.
+// Callers that have access to the raw row should pass it through
+// decryptNetsuiteCreds(row) from _lib/secrets.js before calling
+// netsuiteFetch / suiteql; this helper is a defensive double-check
+// that flags the encrypted-but-undecrypted case so we don't try to
+// sign a request with binary nonsense.
+export const netsuiteAssertDecrypted = (settings) => {
+  if (!settings) throw new Error("NetSuite settings missing");
+  if (!settings.netsuite_account_id) {
+    throw new Error("NetSuite not configured for this tenant");
+  }
+  const stillCiphertext = ["netsuite_consumer_key", "netsuite_consumer_secret",
+    "netsuite_token_id", "netsuite_token_secret"]
+    .some((k) => !settings[k] && settings[k + "_enc"]);
+  if (stillCiphertext) {
+    throw new Error("NetSuite credentials are encrypted; call decryptNetsuiteCreds before fetch");
+  }
+};
+
 export const netsuiteFetch = async (settings, { method, path, body, query }) => {
   if (!netsuiteIsConfigured(settings)) {
     throw new Error("NetSuite credentials missing for this tenant");

@@ -11,10 +11,6 @@
   },
   "crons": [
     {
-      "path": "/api/cron/tick",
-      "schedule": "*/5 * * * *"
-    },
-    {
       "path": "/api/cron/daily",
       "schedule": "30 2 * * *"
     }

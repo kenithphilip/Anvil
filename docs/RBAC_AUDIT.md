@@ -141,6 +141,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/tally/push.js | approve |
 | src/api/tally/reconcile.js | write |
 | src/api/tally/validate.js | read |
+| src/api/whatsapp/send.js | write |
 
 ## Findings
 

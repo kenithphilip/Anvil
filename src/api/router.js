@@ -120,6 +120,9 @@ import tallyPush               from "./tally/push.js";
 import tallyReconcile          from "./tally/reconcile.js";
 import tallyValidate           from "./tally/validate.js";
 
+import whatsappInbound         from "./whatsapp/inbound.js";
+import whatsappSend            from "./whatsapp/send.js";
+
 import healthCheck             from "./health.js";
 
 // Static routes resolved by exact match. Order does not matter.
@@ -227,6 +230,9 @@ const STATIC_ROUTES = {
   "/tally/push":                    tallyPush,
   "/tally/reconcile":               tallyReconcile,
   "/tally/validate":                tallyValidate,
+
+  "/whatsapp/inbound":              whatsappInbound,
+  "/whatsapp/send":                 whatsappSend,
 };
 
 // Dynamic routes: prefix match. The handler receives the segment via

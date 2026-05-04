@@ -220,3 +220,87 @@ in the SQL editor). The action codes you'll see:
 If an integration silently fails to fire (e.g., the Tally button does
 nothing), check that the env var is set and that the Vercel function logs
 show the call attempt.
+
+## WhatsApp Business
+
+What it does: ingests inbound WhatsApp messages and sends outbound
+ones. Useful for the India + SE Asia + Latam distributor ICP where
+RFQs and PO updates routinely arrive via WhatsApp instead of email.
+
+Inbound flow mirrors `api/email/inbound.js`: provider POSTs to
+`/api/whatsapp/inbound`, we classify intent, persist media to the
+documents table, attempt to bundle into an existing DRAFT order from
+the same sender within 7 days, and audit the event. Outbound flow
+abstracts over Twilio first then Meta Cloud API.
+
+### Inbound
+
+1. Pick a provider:
+   - **Twilio Sandbox** for dev (free, sender phone whitelist).
+   - **Twilio production** with a registered WhatsApp Business sender.
+   - **Meta WhatsApp Cloud API** (different envelope shape).
+2. Set `WHATSAPP_INBOUND_TOKEN` to a long random string in Vercel.
+3. Configure the provider's webhook to POST
+   `https://your-deploy.vercel.app/api/whatsapp/inbound?token=<value>`
+   with `Content-Type: application/x-www-form-urlencoded` (Twilio) or
+   `application/json` (Meta).
+4. Optional: pass `x-obara-tenant: <uuid>` so messages are attributed
+   to a specific tenant. Defaults to `DEFAULT_TENANT_ID`.
+
+The endpoint refuses calls with a missing or wrong token (403) and
+refuses entirely if `WHATSAPP_INBOUND_TOKEN` is unset (503).
+
+### Outbound
+
+Pick one provider and set both halves:
+
+**Twilio** (preferred):
+- `TWILIO_ACCOUNT_SID`
+- `TWILIO_AUTH_TOKEN`
+- `TWILIO_WHATSAPP_FROM` (e.g. `whatsapp:+14155238886`)
+
+**Meta Cloud API**:
+- `META_WHATSAPP_TOKEN`
+- `META_WHATSAPP_PHONE_ID`
+
+Without any provider configured, `/api/whatsapp/send` records the row
+as `manual` so the timeline view stays useful. Mirrors the email
+comms.send pattern.
+
+Smoke test:
+
+1. Send a WhatsApp from your phone to your Twilio Sandbox number with
+   "Need quote for SRTC-K12464 qty 50".
+2. Check the Anvil Inbox: a DRAFT order should appear with
+   `preflight_payload.source = "whatsapp_inbound"` and
+   `intent = "quote_request"`.
+3. From the order workspace, send an outbound. Provider response code
+   is stored on the communications row's `meta`.
+
+## Autonomous agent runner
+
+What it does: runs the autonomous follow-up agent on an hourly cron,
+walking active goals (`agent_goals` table) and taking the next
+appropriate action.
+
+Setup:
+1. Set `CRON_SECRET` to a long random string in Vercel. The cron
+   request is authenticated via `Authorization: Bearer <CRON_SECRET>`;
+   without the secret, `/api/agents/run` returns 401 to anyone
+   including the cron itself.
+2. Confirm the cron entry exists in `vercel.json`:
+   ```
+   { "path": "/api/agents/run", "schedule": "0 * * * *" }
+   ```
+3. Operators arm goals from Quality > Agents in the app.
+
+Smoke test:
+
+1. From an order's workspace, copy the order id.
+2. Quality > Agents > Arm a new goal. Pick "Drive a quote to
+   acceptance". Paste the order id. Set deadline 14 days.
+3. Within an hour the runner ticks; expand the goal to see the step
+   timeline ("thought / action / result").
+4. Mark the order APPROVED. The next tick flips the goal to
+   `completed` and emits `agent_goal_completed` in the audit log,
+   which the Billing tab counts as one `agent_action` outcome.

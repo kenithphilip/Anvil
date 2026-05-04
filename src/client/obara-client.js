@@ -178,6 +178,10 @@
     cancelGoal: async (id) => apiFetch("/api/agents/goals?id=" + encodeURIComponent(id), { method: "DELETE" }),
   };
 
+  const whatsapp = {
+    send: async (payload) => apiFetch("/api/whatsapp/send", { method: "POST", body: payload }),
+  };
+
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });
 
   const documents = {
@@ -664,6 +668,7 @@
     health,
     billing,
     agents,
+    whatsapp,
     claudeCall,
     documents,
     orders,

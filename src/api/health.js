@@ -27,6 +27,25 @@ const INTEGRATIONS = [
   { id: "email",       env: ["EMAIL_INBOUND_TOKEN"],                        label: "Inbound email webhook" },
   { id: "fx",          env: ["FX_PROVIDER_URL"],                            label: "FX provider" },
   { id: "resend",      env: ["RESEND_API_KEY"],                             label: "Resend (magic links)" },
+  // WhatsApp: configured if either provider is set up. We mark configured
+  // when ANY of the per-provider env-var tuples are complete; the runtime
+  // picks Twilio first, then Meta, then falls back to manual.
+  {
+    id: "whatsapp_inbound",
+    env: ["WHATSAPP_INBOUND_TOKEN"],
+    label: "WhatsApp inbound webhook",
+  },
+  {
+    id: "whatsapp_twilio",
+    env: ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_WHATSAPP_FROM"],
+    label: "WhatsApp via Twilio",
+  },
+  {
+    id: "whatsapp_meta",
+    env: ["META_WHATSAPP_TOKEN", "META_WHATSAPP_PHONE_ID"],
+    label: "WhatsApp via Meta Cloud API",
+  },
+  { id: "agent_runner", env: ["CRON_SECRET"], label: "Autonomous agent cron" },
 ];
 
 let cached = null;

@@ -46,6 +46,7 @@ export const ACTION_TO_OUTCOME = {
   document_upload_intent: "document_extracted",
   document_scan:          "document_extracted",
   email_intake:           "document_extracted",
+  whatsapp_intake:        "document_extracted",
 
   // Service ops
   closure_create:         "service_visit_closed",

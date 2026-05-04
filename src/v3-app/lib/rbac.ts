@@ -49,6 +49,7 @@ export const MATRIX: Record<string, MatrixRow> = {
   studio:      { sales_engineer: "r",   sales_manager: "rw", procurement: "",   finance: "",    admin: "rw", operator: "",   viewer: "r" },
   anomaly:     { sales_engineer: "r",   sales_manager: "r",  procurement: "r",  finance: "r",   admin: "rw", operator: "",   viewer: "r" },
   duplicates:  { sales_engineer: "r",   sales_manager: "r",  procurement: "r",  finance: "r",   admin: "rw", operator: "",   viewer: "r" },
+  agents:      { sales_engineer: "rw",  sales_manager: "rw", procurement: "rw", finance: "rw",  admin: "rw", operator: "r",  viewer: "r" },
   comms:       { sales_engineer: "rw",  sales_manager: "rw", procurement: "r",  finance: "r",   admin: "rw", operator: "",   viewer: "r" },
   email:       { sales_engineer: "r",   sales_manager: "rw", procurement: "r",  finance: "r",   admin: "rw", operator: "",   viewer: "r" },
   security:    { sales_engineer: "",    sales_manager: "",   procurement: "",   finance: "",    admin: "x",  operator: "",   viewer: "" },

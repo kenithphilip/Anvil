@@ -14,6 +14,9 @@
 //   2. Add a row below: `[METHOD, "/path", handlerImport]`.
 //   3. Done. The dispatcher picks it up automatically.
 
+import agentsGoals             from "./agents/goals.js";
+import agentsRun               from "./agents/run.js";
+
 import adminContracts          from "./admin/contracts.js";
 import adminCustomerLocations  from "./admin/customer_locations.js";
 import adminDiagnostics        from "./admin/diagnostics.js";
@@ -122,6 +125,9 @@ import healthCheck             from "./health.js";
 // Static routes resolved by exact match. Order does not matter.
 const STATIC_ROUTES = {
   "/health":                        healthCheck,
+
+  "/agents/goals":                  agentsGoals,
+  "/agents/run":                    agentsRun,
   "/admin/contracts":               adminContracts,
   "/admin/customer_locations":      adminCustomerLocations,
   "/admin/diagnostics":             adminDiagnostics,

@@ -8,10 +8,10 @@ describe("NAV", () => {
       "Finance", "Data", "Quality", "Comms & Security", "Admin",
     ]);
   });
-  it("exposes 30 unique nav ids", () => {
+  it("exposes 31 unique nav ids", () => {
     const ids = NAV.flatMap((g) => g.items.map((i) => i.id));
-    expect(ids.length).toBe(30);
-    expect(new Set(ids).size).toBe(30);
+    expect(ids.length).toBe(31);
+    expect(new Set(ids).size).toBe(31);
   });
   it("each item has id + label + icon", () => {
     for (const group of NAV) {

@@ -31,6 +31,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | Nav id | sales_engineer | sales_manager | procurement | finance | admin | operator | viewer |
 |--------|---|---|---|---|---|---|---|
 | `admin` | `` | `` | `` | `` | `x` | `` | `` |
+| `agents` | `rw` | `rw` | `rw` | `rw` | `rw` | `r` | `r` |
 | `amc` | `r` | `r` | `` | `` | `rw` | `rw` | `r` |
 | `anomaly` | `r` | `r` | `r` | `r` | `rw` | `` | `r` |
 | `approvals` | `r` | `rwa` | `` | `rwa` | `rwa` | `` | `r` |
@@ -80,6 +81,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/admin/lost_reasons.js | read, admin |
 | src/api/admin/members.js | read, admin |
 | src/api/admin/quote_approvals.js | read, admin, write |
+| src/api/agents/goals.js | read, write |
 | src/api/aliases/index.js | read, write |
 | src/api/anomaly/compute.js | read |
 | src/api/audit/index.js | read, write |

@@ -62,6 +62,7 @@ const screens = {
   studio:             lazy(() => import("./screens/studio")),
   anomaly:            lazy(() => import("./screens/anomaly")),
   duplicates:         lazy(() => import("./screens/duplicates")),
+  agents:             lazy(() => import("./screens/agents")),
   // Comms & Security
   comms:              lazy(() => import("./screens/comms")),
   email:              lazy(() => import("./screens/email")),
@@ -121,6 +122,7 @@ export const RESOLVERS = {
   studio:      () => screens.studio,
   anomaly:     () => screens.anomaly,
   duplicates:  () => screens.duplicates,
+  agents:      () => screens.agents,
   comms:       () => screens.comms,
   email:       () => screens.email,
   security:    () => screens.security,

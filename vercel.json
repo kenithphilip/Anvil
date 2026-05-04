@@ -17,6 +17,10 @@
     {
       "path": "/api/service/amc_cron",
       "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/agents/run",
+      "schedule": "0 * * * *"
     }
   ],
   "headers": [

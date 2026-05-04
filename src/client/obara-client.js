@@ -168,6 +168,16 @@
     },
   };
 
+  const agents = {
+    listGoals: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/agents/goals" + (qs ? "?" + qs : ""));
+    },
+    armGoal: async (payload) => apiFetch("/api/agents/goals", { method: "POST", body: payload }),
+    updateGoal: async (payload) => apiFetch("/api/agents/goals", { method: "PATCH", body: payload }),
+    cancelGoal: async (id) => apiFetch("/api/agents/goals?id=" + encodeURIComponent(id), { method: "DELETE" }),
+  };
+
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });
 
   const documents = {
@@ -653,6 +663,7 @@
     ping,
     health,
     billing,
+    agents,
     claudeCall,
     documents,
     orders,

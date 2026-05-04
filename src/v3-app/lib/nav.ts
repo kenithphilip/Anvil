@@ -71,6 +71,7 @@ export const NAV: NavGroup[] = [
       { id: "studio",    label: "Profile Studio",icon: Icon.diff },
       { id: "anomaly",   label: "Anomaly Compute", icon: Icon.alert },
       { id: "duplicates",label: "Duplicates",    icon: Icon.layers },
+      { id: "agents",    label: "Agents",        icon: Icon.bolt },
     ],
   },
   {

@@ -184,6 +184,22 @@ import portalTokens            from "./portal/tokens.js";
 import portalView              from "./portal/view.js";
 import portalPay               from "./portal/pay.js";
 
+import esignConnect            from "./esign/connect.js";
+import esignEnvelopes          from "./esign/envelopes.js";
+import esignWebhook            from "./esign/webhook.js";
+
+import ediInbound              from "./edi/inbound.js";
+import ediOutbound             from "./edi/outbound.js";
+import ediPartners             from "./edi/partners.js";
+import ediEnvelopes            from "./edi/envelopes.js";
+
+import rlhfFeedback            from "./rlhf/feedback.js";
+import rlhfAggregate           from "./rlhf/aggregate.js";
+import rlhfDataset             from "./rlhf/dataset.js";
+
+import erpChatSend             from "./erp_chat/send.js";
+import erpChatSessions         from "./erp_chat/sessions.js";
+
 import healthCheck             from "./health.js";
 
 // Static routes resolved by exact match. Order does not matter.
@@ -231,6 +247,18 @@ const STATIC_ROUTES = {
   "/portal/tokens":                 portalTokens,
   "/portal/view":                   portalView,
   "/portal/pay":                    portalPay,
+  "/esign/connect":                 esignConnect,
+  "/esign/envelopes":               esignEnvelopes,
+  "/esign/webhook":                 esignWebhook,
+  "/edi/inbound":                   ediInbound,
+  "/edi/outbound":                  ediOutbound,
+  "/edi/partners":                  ediPartners,
+  "/edi/envelopes":                 ediEnvelopes,
+  "/rlhf/feedback":                 rlhfFeedback,
+  "/rlhf/aggregate":                rlhfAggregate,
+  "/rlhf/dataset":                  rlhfDataset,
+  "/erp_chat/send":                 erpChatSend,
+  "/erp_chat/sessions":             erpChatSessions,
   "/admin/contracts":               adminContracts,
   "/admin/customer_locations":      adminCustomerLocations,
   "/admin/diagnostics":             adminDiagnostics,

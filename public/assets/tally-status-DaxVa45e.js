@@ -1,0 +1,2 @@
+import{r as a,O as o}from"./index-BmxtSmgA.js";const c=()=>{const[s,t]=a.useState({configured:!1,loading:!0,error:null});return a.useEffect(()=>{let e=!1;return Promise.resolve(o?.health?.()).then(r=>{if(e)return;const l=(Array.isArray(r?.integrations)?r.integrations:[]).find(n=>n?.id==="tally");t({configured:!!l?.configured,loading:!1,error:null})}).catch(r=>{e||t({configured:!1,loading:!1,error:r})}),()=>{e=!0}},[]),s};export{c as u};
+//# sourceMappingURL=tally-status-DaxVa45e.js.map

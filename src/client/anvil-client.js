@@ -338,6 +338,38 @@
     deleteToken:  async (id) => apiFetch("/api/portal/tokens?id=" + encodeURIComponent(id), { method: "DELETE" }),
   };
 
+  const esign = {
+    connect:      async (payload) => apiFetch("/api/esign/connect", { method: "POST", body: payload }),
+    list:         async () => apiFetch("/api/esign/envelopes"),
+    create:       async (payload) => apiFetch("/api/esign/envelopes", { method: "POST", body: payload }),
+    voidEnvelope: async (id, reason) => apiFetch("/api/esign/envelopes?id=" + encodeURIComponent(id), { method: "PATCH", body: { void: true, voidedReason: reason } }),
+  };
+
+  const edi = {
+    listEnvelopes:  async (q) => apiFetch("/api/edi/envelopes" + (q ? "?" + new URLSearchParams(q).toString() : "")),
+    getEnvelope:    async (id) => apiFetch("/api/edi/envelopes?id=" + encodeURIComponent(id)),
+    inbound:        async (payload) => apiFetch("/api/edi/inbound", { method: "POST", body: payload }),
+    outbound:       async (payload) => apiFetch("/api/edi/outbound", { method: "POST", body: payload }),
+    listPartners:   async () => apiFetch("/api/edi/partners"),
+    createPartner:  async (payload) => apiFetch("/api/edi/partners", { method: "POST", body: payload }),
+    updatePartner:  async (id, payload) => apiFetch("/api/edi/partners?id=" + encodeURIComponent(id), { method: "PATCH", body: payload }),
+    deletePartner:  async (id) => apiFetch("/api/edi/partners?id=" + encodeURIComponent(id), { method: "DELETE" }),
+  };
+
+  const rlhf = {
+    submit:    async (payload) => apiFetch("/api/rlhf/feedback", { method: "POST", body: payload }),
+    list:      async (q) => apiFetch("/api/rlhf/feedback" + (q ? "?" + new URLSearchParams(q).toString() : "")),
+    aggregate: async (payload) => apiFetch("/api/rlhf/aggregate", { method: "POST", body: payload || {} }),
+    dataset:   async (q) => apiFetch("/api/rlhf/dataset" + (q ? "?" + new URLSearchParams(q).toString() : "")),
+  };
+
+  const erpChat = {
+    sessions:    async () => apiFetch("/api/erp_chat/sessions"),
+    session:     async (id) => apiFetch("/api/erp_chat/sessions?id=" + encodeURIComponent(id) + "&messages=true"),
+    deleteSession: async (id) => apiFetch("/api/erp_chat/sessions?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    send:        async (payload) => apiFetch("/api/erp_chat/send", { method: "POST", body: payload }),
+  };
+
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });
 
   const documents = {
@@ -843,6 +875,10 @@
     razorpay,
     push,
     portal,
+    esign,
+    edi,
+    rlhf,
+    erpChat,
     claudeCall,
     documents,
     orders,

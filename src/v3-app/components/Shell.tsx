@@ -142,6 +142,10 @@ export const Shell: React.FC<ShellProps> = ({
 
   return (
   <div className="app">
+    {/* Skip-to-main link: visible only when focused via keyboard,
+     * lets users bypass the nav. Required for WCAG 2.4.1 (Bypass
+     * Blocks). The target id matches the <main id="app-main"> below. */}
+    <a className="skip-link" href="#app-main">Skip to main content</a>
     <header className="app-head">
       <div className="brand">
         <div className="brand-mark">
@@ -161,17 +165,17 @@ export const Shell: React.FC<ShellProps> = ({
         ))}
       </div>
 
-      <div className="head-search" onClick={onCmdK}>
+      <button type="button" className="head-search" onClick={onCmdK} aria-label="Open search (Cmd+K)">
         {Icon.search}
         <span>Search orders, customers, items, jobs…</span>
         <kbd>⌘K</kbd>
-      </div>
+      </button>
 
-      <div className="head-pill tenant" onClick={onTenant} title="Switch tenant">
+      <button type="button" className="head-pill tenant" onClick={onTenant} title="Switch tenant" aria-label={`Switch tenant (current: ${tenant?.code || "OBARA-IN"})`}>
         <Dot k="live" />
         {tenant?.code || "OBARA-IN"}
         {Icon.caret}
-      </div>
+      </button>
 
       {roleOptions && roleOptions.length > 0 && onRoleChange ? (
         <PillMenu
@@ -193,13 +197,13 @@ export const Shell: React.FC<ShellProps> = ({
           onSelect={onRoleChange}
         />
       ) : (
-        <div className="head-pill role" onClick={onRole} title="Switch role">
+        <button type="button" className="head-pill role" onClick={onRole} title="Switch role" aria-label={`Switch role (current: ${role?.label || "Sales Engineer"})`}>
           <span style={{ fontFamily: "var(--mono)", color: "var(--ink-3)" }}>{role?.short || "ENG"}</span>
           <span style={{ borderLeft: "1px solid var(--hairline)", paddingLeft: 8, marginLeft: 2 }}>
             {role?.label || "Sales Engineer"}
           </span>
           {Icon.caret}
-        </div>
+        </button>
       )}
 
       <button className="head-pill" title="Thread drawer" onClick={onThread}>
@@ -223,17 +227,19 @@ export const Shell: React.FC<ShellProps> = ({
             {group.items.map((item) => {
               const badge = resolveBadge(item.id, item, badges);
               return (
-                <div
+                <button
+                  type="button"
                   key={item.id}
                   className={`nav-item ${route === item.id ? "active" : ""}`}
                   onClick={() => onRoute?.(item.id)}
+                  aria-current={route === item.id ? "page" : undefined}
                 >
                   <span className="nav-icon">{item.icon}</span>
                   <span className="nav-label">{item.label}</span>
                   {badge && (
                     <span className={`nav-badge ${badge.k || ""}`}>{badge.v}</span>
                   )}
-                </div>
+                </button>
               );
             })}
           </div>
@@ -253,7 +259,7 @@ export const Shell: React.FC<ShellProps> = ({
       </div>
     </aside>
 
-    <main className="app-main" id="main" tabIndex={-1}>{children}</main>
+    <main className="app-main" id="app-main" tabIndex={-1}>{children}</main>
 
     <footer className="app-dock">
       <span>

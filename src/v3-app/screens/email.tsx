@@ -228,9 +228,9 @@ const WiredEmailTriage = () => {
                   <input
                     className="input"
                     placeholder="search by PO / customer…"
+                    aria-label="Search orders by PO number or customer"
                     value={attachQuery}
                     onChange={(ev) => setAttachQuery(ev.target.value)}
-                    aria-label="Search orders"
                     style={{ width: "100%", height: 28, marginBottom: 8 }}
                   />
                   {orderList.length === 0 ? (

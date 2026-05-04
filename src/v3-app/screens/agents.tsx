@@ -7,7 +7,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { ageLabel } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
+import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle, rowActivateProps } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 
@@ -233,7 +233,10 @@ const WiredAgents = () => {
                   const goalSteps = stepsByGoal[g.id] || [];
                   return (
                     <React.Fragment key={g.id}>
-                      <tr style={{ cursor: "pointer" }} onClick={() => setExpandedGoal(open ? null : g.id)}>
+                      <tr {...rowActivateProps(
+                        () => setExpandedGoal(open ? null : g.id),
+                        `${open ? "Collapse" : "Expand"} agent goal ${g.id?.slice(0, 8) || ""}`,
+                      )}>
                         <td>{goalTypeLabel(g.goal_type)}</td>
                         <td className="mono-sm">{g.object_type}:{String(g.object_id).slice(0, 8)}</td>
                         <td>{statusChip(g.status)}</td>

@@ -25,8 +25,15 @@ export const Btn: React.FC<BtnProps> = ({
   children, kind, sm, lg, icon, full, onClick, disabled, type = "button", className = "", title, style, "aria-label": ariaLabel,
 }) => {
   const cls = ["btn", kind, sm && "sm", lg && "lg", icon && "icon", full && "full", className].filter(Boolean).join(" ");
+  // For icon-only buttons (no visible text), fall back to `title` as
+  // the accessible name so screen readers announce something
+  // meaningful. Without this, a `<Btn icon>{Icon.cycle}</Btn>` was
+  // unreadable to assistive tech. Visible-text buttons keep their
+  // text as the accessible name and only use `aria-label` if
+  // explicitly overridden.
+  const accessibleName = ariaLabel ?? (icon ? title : undefined);
   return (
-    <button type={type} className={cls} onClick={onClick} disabled={disabled} title={title} aria-label={ariaLabel} style={style}>
+    <button type={type} className={cls} onClick={onClick} disabled={disabled} title={title} aria-label={accessibleName} style={style}>
       {children}
     </button>
   );
@@ -37,11 +44,29 @@ export const Chip: React.FC<ChipProps> = ({ children, k, lg }) => (
   <span className={["chip", k, lg && "lg"].filter(Boolean).join(" ")}>{children}</span>
 );
 
-export const Dot: React.FC<{ k?: Kind }> = ({ k }) => (
-  <span className={["dot", k].filter(Boolean).join(" ")} />
+/*
+ * Dot and Sev are color-coded glyphs. Their meaning ("live",
+ * "warn", "high severity") is communicated only by colour, which
+ * fails WCAG 1.4.1 (Use of Color) for screen-reader and color-
+ * blind users. Both now accept an optional `label` that becomes
+ * the accessible name; without one, the element is marked
+ * `aria-hidden` so assistive tech ignores it (the surrounding
+ * text usually carries the meaning).
+ */
+export const Dot: React.FC<{ k?: Kind; label?: string }> = ({ k, label }) => (
+  <span
+    className={["dot", k].filter(Boolean).join(" ")}
+    role={label ? "img" : undefined}
+    aria-label={label}
+    aria-hidden={label ? undefined : true}
+  />
 );
-export const Sev: React.FC<{ k?: "low" | "med" | "high" | string }> = ({ k = "low" }) => (
-  <span className={`sev ${k}`} />
+export const Sev: React.FC<{ k?: "low" | "med" | "high" | string; label?: string }> = ({ k = "low", label }) => (
+  <span
+    className={`sev ${k}`}
+    role={label ? "img" : undefined}
+    aria-label={label || `severity ${k}`}
+  />
 );
 export const Prov: React.FC<{ children?: ReactNode }> = ({ children }) => (
   <span className="prov">{children}</span>
@@ -71,20 +96,55 @@ export const WSTitle: React.FC<WSTitleProps> = ({ eyebrow, title, meta, right })
 
 export interface WSTab { id: string; label: ReactNode; count?: number; }
 export interface WSTabsProps { tabs: WSTab[]; active?: string; onChange?: (id: string) => void; }
-export const WSTabs: React.FC<WSTabsProps> = ({ tabs, active, onChange }) => (
-  <div className="ws-tabs">
-    {tabs.map((t) => (
-      <div
-        key={t.id}
-        className={`ws-tab ${active === t.id ? "active" : ""}`}
-        onClick={() => onChange?.(t.id)}
-      >
-        {t.label}
-        {t.count != null && <span className="tab-count">{t.count}</span>}
-      </div>
-    ))}
-  </div>
-);
+/*
+ * WSTabs implements the WAI-ARIA Authoring Practices "Tabs"
+ * pattern: a tablist of buttons with arrow-key navigation, Home /
+ * End jumps, and roving tabindex (only the active tab is in the
+ * Tab order; arrow keys move within the tablist). The tab strip
+ * was previously a row of <div onClick> with no keyboard support
+ * at all, so screen-reader and keyboard users could not switch
+ * tabs.
+ */
+export const WSTabs: React.FC<WSTabsProps> = ({ tabs, active, onChange }) => {
+  const onKey = (ev: React.KeyboardEvent<HTMLButtonElement>, idx: number) => {
+    if (!tabs.length) return;
+    let next: number | null = null;
+    if (ev.key === "ArrowRight") next = (idx + 1) % tabs.length;
+    else if (ev.key === "ArrowLeft") next = (idx - 1 + tabs.length) % tabs.length;
+    else if (ev.key === "Home") next = 0;
+    else if (ev.key === "End") next = tabs.length - 1;
+    if (next == null) return;
+    ev.preventDefault();
+    onChange?.(tabs[next].id);
+    // Focus the now-active tab so the user sees the focus ring move.
+    const target = (ev.currentTarget.parentElement?.children?.[next] as HTMLElement | undefined);
+    target?.focus?.();
+  };
+  return (
+    <div className="ws-tabs" role="tablist">
+      {tabs.map((t, i) => {
+        const isActive = active === t.id;
+        return (
+          <button
+            type="button"
+            key={t.id}
+            role="tab"
+            id={`ws-tab-${t.id}`}
+            aria-selected={isActive}
+            aria-controls={`ws-tabpanel-${t.id}`}
+            tabIndex={isActive ? 0 : -1}
+            className={`ws-tab ${isActive ? "active" : ""}`}
+            onClick={() => onChange?.(t.id)}
+            onKeyDown={(ev) => onKey(ev, i)}
+          >
+            {t.label}
+            {t.count != null && <span className="tab-count">{t.count}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
 
 export interface CardProps {
   title?: ReactNode;
@@ -107,6 +167,31 @@ export const Card: React.FC<CardProps> = ({ title, eyebrow, right, children, flu
     {children}
   </div>
 );
+
+/*
+ * Keyboard-activatable wrapper for clickable rows / tiles. The
+ * v3 list views often use `<tr onClick>` to navigate into a detail
+ * view; that pattern is invisible to keyboard and screen-reader
+ * users. Spreading the props returned here onto an element
+ * (typically a `<tr>`) makes it focusable, gives it a button role,
+ * and triggers the click on Enter or Space.
+ *
+ * Usage:
+ *   <tr {...rowActivateProps(() => goTo(o.id))} key={o.id}>...</tr>
+ */
+export const rowActivateProps = (onActivate: () => void, label?: string) => ({
+  role: "button",
+  tabIndex: 0,
+  "aria-label": label,
+  onClick: onActivate,
+  onKeyDown: (ev: React.KeyboardEvent<HTMLElement>) => {
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      onActivate();
+    }
+  },
+  style: { cursor: "pointer" } as CSSProperties,
+});
 
 export type KVRow = [ReactNode, ReactNode];
 export const KV: React.FC<{ rows: KVRow[] }> = ({ rows }) => (
@@ -159,16 +244,28 @@ export interface BannerProps {
   children?: ReactNode;
   action?: ReactNode;
 }
-export const Banner: React.FC<BannerProps> = ({ kind = "info", icon, title, children, action }) => (
-  <div className={`banner ${kind}`}>
-    {icon && <span className="ic">{icon}</span>}
-    <div style={{ flex: 1 }}>
-      {title && <div className="ti">{title}</div>}
-      <div>{children}</div>
+export const Banner: React.FC<BannerProps> = ({ kind = "info", icon, title, children, action }) => {
+  // Bad / warn banners get role="alert" so screen readers announce
+  // them when they appear. Info / good get role="status" with
+  // aria-live="polite" (announced when the user is idle, never
+  // interrupting). Without this banners that flash up after a
+  // failed fetch are silent for assistive-tech users.
+  const isAlert = kind === "bad" || kind === "warn";
+  return (
+    <div
+      className={`banner ${kind}`}
+      role={isAlert ? "alert" : "status"}
+      aria-live={isAlert ? "assertive" : "polite"}
+    >
+      {icon && <span className="ic" aria-hidden="true">{icon}</span>}
+      <div style={{ flex: 1 }}>
+        {title && <div className="ti">{title}</div>}
+        <div>{children}</div>
+      </div>
+      {action && <div style={{ display: "flex", gap: 8, marginLeft: 8 }}>{action}</div>}
     </div>
-    {action && <div style={{ display: "flex", gap: 8, marginLeft: 8 }}>{action}</div>}
-  </div>
-);
+  );
+};
 
 export interface RailPanelProps { title?: ReactNode; count?: number; children?: ReactNode; action?: ReactNode; }
 export const RailPanel: React.FC<RailPanelProps> = ({ title, count, children, action }) => (

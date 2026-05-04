@@ -53,12 +53,20 @@ const WiredApprovals = () => {
   }, [bump]);
 
   const reload = () => setBump((n) => n + 1);
+  // Approval decisions are non-trivial (they unblock or block a sales
+  // order); confirm before sending so a stray click doesn't auto-
+  // approve. Errors flow into a notify toast (visible, dismissable)
+  // instead of `window.alert` (modal, blocking, ugly).
   const onDecide = async (a, decision) => {
+    const ref = a.po_number || a.order_reference || (a.order_id ? a.order_id.slice(0, 12) : "this order");
+    const verb = decision === "APPROVED" ? "approve" : "reject";
+    if (!window.confirm(`Are you sure you want to ${verb} ${ref}?`)) return;
     try {
       await decideApproval(a.id, a.order_id, a.approver_role || "sales_manager", decision);
+      window.notifySuccess?.(decision === "APPROVED" ? "Approved" : "Rejected", ref);
       reload();
-    } catch (err) {
-      window.alert("Could not record decision: " + (err.message || err));
+    } catch (err: any) {
+      window.notifyError?.("Could not record decision", err?.message || String(err));
     }
   };
 

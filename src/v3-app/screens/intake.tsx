@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { ageLabel } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
+import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle, rowActivateProps } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 
@@ -177,7 +177,10 @@ const WiredInbox = () => {
                   const cls = classifyChip(o);
                   const src = sourceOf(o);
                   return (
-                    <tr key={o.id} onClick={() => window.location.hash = `#/so?id=${o.id}`} style={{ cursor: "pointer" }}>
+                    <tr key={o.id} {...rowActivateProps(
+                      () => { window.location.hash = `#/so?id=${o.id}`; },
+                      `Open draft ${o.po_number || o.quote_number || o.id?.slice(0, 8) || "order"}`,
+                    )}>
                       <td className="mono-sm">{src}{o.preflight_payload?.from ? ` · ${o.preflight_payload.from}` : ""}</td>
                       <td>{fileNameOf(o)}</td>
                       <td className="r mono-sm">{sizeOf(o)}</td>

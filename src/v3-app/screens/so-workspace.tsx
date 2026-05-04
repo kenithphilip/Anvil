@@ -503,6 +503,11 @@ const WiredSOWorkspace = () => {
 
   const handleDeleteOne = async (row) => {
     if (busy || !row?.id) return;
+    // Match handleClearAll: schedule-line deletion is irreversible,
+    // so confirm before firing. Without this a misclick on the row's
+    // delete button silently dropped the line.
+    const ok = window.confirm(`Delete schedule line for ${row.scheduled_date} (qty ${row.scheduled_qty})? This cannot be undone.`);
+    if (!ok) return;
     setBusy(true);
     try {
       await ObaraBackend?.scheduleLines?.deleteOne?.(row.id);

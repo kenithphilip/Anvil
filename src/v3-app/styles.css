@@ -239,16 +239,27 @@ button { cursor: pointer; }
   font-size: 11px;
   color: var(--ink-3);
   white-space: nowrap;
+  /* Long breadcrumbs (Org / Division / Team / ...) used to push the
+   * search and tenant pills off the right edge. min-width: 0 lets
+   * the crumb shrink, and the inner b ellipsizes on overflow. */
+  min-width: 0;
+  overflow: hidden;
 }
-.crumb b { color: var(--ink); font-weight: 600; }
-.crumb-sep { color: var(--ink-5); }
+.crumb b { color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.crumb-sep { color: var(--ink-5); flex-shrink: 0; }
 
 .head-search {
   flex: 1;
-  max-width: 480px;
+  /* Cap at 480px on roomy desktops, but never claim more than the
+   * remaining flex space; on tablets the head-pills + brand can
+   * otherwise force the search to wrap or push them off-screen. */
+  max-width: min(480px, 100%);
+  min-width: 120px;
   display: flex; align-items: center; gap: 6px;
   height: 28px;
   padding: 0 10px;
+  /* Now rendered as <button>; reset native styling so it still
+   * reads as a search input. */
   background: var(--paper-2);
   border: 1px solid var(--hairline);
   border-radius: var(--r-2);
@@ -257,7 +268,9 @@ button { cursor: pointer; }
   color: var(--ink-3);
   cursor: text;
   margin-left: auto;
+  text-align: left;
 }
+.head-search > span { flex: 1; text-align: left; }
 .head-search kbd {
   font-family: var(--mono);
   font-size: 10px;
@@ -296,6 +309,9 @@ button { cursor: pointer; }
   top: calc(100% + 4px);
   right: 0;
   min-width: 220px;
+  /* Never wider than the viewport. On a 320px window without this
+   * cap the menu would overflow the right edge with no scroll. */
+  max-width: calc(100vw - 16px);
   max-height: 360px;
   overflow: auto;
   /* `--paper-1` doesn't exist; using `--paper` (the canonical card
@@ -353,13 +369,20 @@ button { cursor: pointer; }
   font-weight: 600;
 }
 .nav-item {
+  /* Now rendered as <button> for keyboard accessibility; reset
+   * native button look so the visual matches the previous div. */
+  background: transparent;
+  border: 0;
+  border-left: 2px solid transparent;
+  font-family: inherit;
+  text-align: left;
+  width: 100%;
   display: flex; align-items: center; gap: 10px;
   height: 28px;
   padding: 0 14px;
   font-size: 12.5px;
   color: var(--ink-2);
   cursor: pointer;
-  border-left: 2px solid transparent;
   position: relative;
 }
 .nav-item:hover { background: var(--paper-2); color: var(--ink); }
@@ -525,6 +548,11 @@ button { cursor: pointer; }
 }
 .ws-tabs::-webkit-scrollbar { display: none; }
 .ws-tab {
+  /* Reset native button defaults so the tab still looks identical
+   * to the previous div-based markup. */
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
   padding: 0 14px;
   height: 100%;
   display: flex; align-items: center; gap: 6px;
@@ -532,7 +560,6 @@ button { cursor: pointer; }
   font-size: 12.5px;
   color: var(--ink-3);
   cursor: pointer;
-  border-bottom: 2px solid transparent;
   margin-bottom: -1px;
   font-weight: 500;
   flex-shrink: 0;
@@ -779,19 +806,36 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   margin-top: 4px;
   color: var(--ink-3);
 }
+/* WCAG 1.4.1 (Use of Color): up/down deltas were color-only, so
+ * red/green-blind users could not tell direction. Prefix with an
+ * arrow glyph so the meaning carries without color. */
 .kpi .d.up { color: var(--sage); }
+.kpi .d.up::before { content: "\2191 "; }
 .kpi .d.down { color: var(--rust); }
+.kpi .d.down::before { content: "\2193 "; }
 
 .kpi-row {
   display: grid;
-  grid-template-columns: repeat(var(--cols, 4), 1fr);
+  /* Auto-fit: never wider than viewport allows. The minmax floor
+   * stops cells from getting so narrow the value text becomes
+   * unreadable; cells reflow to a 2nd / 3rd row instead. */
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   border: 1px solid var(--hairline);
   border-radius: var(--r-3);
   background: var(--paper);
   overflow: hidden;
 }
+/* On wide desktops, honour the explicit --cols hint so a 4-up KPI
+ * row stays 4-up even though auto-fit would also fit 4 cols. The
+ * media query keeps mobile auto-fit behaviour. */
+@media (min-width: 900px) {
+  .kpi-row { grid-template-columns: repeat(var(--cols, 4), 1fr); }
+}
 .kpi-row .kpi { border-right: 1px solid var(--hairline); }
 .kpi-row .kpi:last-child { border-right: none; }
+/* When cells wrap to a 2nd row, the last cell on row 1 still has
+ * a right border. Hide it by checking the next sibling that
+ * doesn't exist (visual cleanup). */
 .kpi-row .kpi.live { background: var(--accent-3); }
 .kpi-row .kpi.live .v { color: var(--ink); }
 
@@ -893,7 +937,10 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   backdrop-filter: blur(2px);
 }
 .cmdk {
-  width: 640px;
+  /* Cap at 640px on wide screens; cap at 90vw on narrow ones so
+   * the palette never overflows the viewport. */
+  width: min(640px, 90vw);
+  max-width: 640px;
   background: var(--paper);
   border: 1px solid var(--ink);
   border-radius: var(--r-4);
@@ -938,7 +985,9 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .drawer {
   position: absolute;
   top: 0; right: 0; bottom: 0;
-  width: 480px;
+  /* Cap at 480px on wide screens; cap at 85vw on narrow ones so
+   * the drawer never overflows the right edge. */
+  width: min(480px, 85vw);
   background: var(--paper);
   border-left: 1px solid var(--ink);
   box-shadow: -10px 0 30px -10px rgba(0,0,0,0.18);
@@ -1009,10 +1058,17 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 }
 .annot { font-family: var(--mono); font-size: 11.5px; line-height: 1.55; color: var(--ink-2); }
 
-/* Two-column form */
+/* Two- and three-column forms.
+ * Below 600px the columns collapse to a single column so labels
+ * and inputs don't get squeezed under the sidebar on phones. */
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; }
 .form-grid.three { grid-template-columns: 1fr 1fr 1fr; }
 .form-grid .span-2 { grid-column: span 2; }
+@media (max-width: 600px) {
+  .form-grid,
+  .form-grid.three { grid-template-columns: 1fr; }
+  .form-grid .span-2 { grid-column: auto; }
+}
 
 /* Visualization helpers */
 .hbar {
@@ -1027,8 +1083,18 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .hbar.warn > span { background: var(--amber); }
 .hbar.bad  > span { background: var(--rust); }
 
-/* Selectable card list (e.g., order mode picker) */
-.choice-grid { display: grid; grid-template-columns: repeat(var(--cols, 3), 1fr); gap: 10px; }
+/* Selectable card list (e.g., order mode picker).
+ * Auto-fit floor of 200px keeps each card readable; on a 320px
+ * viewport that means a single column, on a 800px viewport three
+ * columns. The --cols hint kicks in on wide screens. */
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+@media (min-width: 900px) {
+  .choice-grid { grid-template-columns: repeat(var(--cols, 3), 1fr); }
+}
 .choice {
   border: 1px solid var(--hairline);
   background: var(--paper);
@@ -1202,6 +1268,30 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .link-btn:hover { color: var(--accent, var(--ink)); }
 .link-btn:disabled { color: var(--ink-4); cursor: not-allowed; text-decoration: none; }
 
+/* WCAG 2.4.1 — Bypass Blocks. Skip-link is hidden until keyboard
+ * focus reveals it; clicking it jumps focus to <main>. Mouse users
+ * never see it. */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 8px;
+  z-index: var(--z-overlay);
+  padding: 8px 12px;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--sans);
+  font-size: 12px;
+  border-radius: var(--r-2);
+  text-decoration: none;
+  transition: top 0.12s;
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+  top: 8px;
+  outline: 2px solid var(--accent, #cf6);
+  outline-offset: 2px;
+}
+
 /* WCAG 2.4.7 — Focus visible. The legacy stylesheet relied on browser
  * defaults; we make focus rings deliberate so keyboard users always
  * know where they are. Mouse-only users keep the unobtrusive UI via
@@ -1219,8 +1309,12 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .nav-item:focus-visible,
 .ws-tab:focus-visible,
 .tab:focus-visible {
+  /* Inset rings can disappear against the active-tab underline /
+   * nav-item left border, so use a strong outline + small offset
+   * that still reads as inset on dark themes. */
   outline: 2px solid var(--accent, #cf6);
   outline-offset: -2px;
+  box-shadow: inset 0 0 0 1px var(--paper);
 }
 
 /* Min interactive target size (WCAG 2.5.5 best-practice 24x24, AAA 44x44).
@@ -1229,19 +1323,41 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .btn.sm { min-height: 26px; }
 .btn:not(.sm):not(.lg) { min-height: 30px; }
 .btn.icon { min-width: 26px; }
+/* On true touch devices, bump every button to the AAA 44x44 floor
+ * via a coarse-pointer media query. Desktops keep the dense layout. */
+@media (pointer: coarse) {
+  .btn { min-height: 44px; min-width: 44px; }
+  .btn.sm { min-height: 36px; min-width: 36px; }
+  .btn.icon { min-width: 44px; }
+}
 
 /* Text-overflow guards. The data-heavy tables sometimes get long
  * customer names / part numbers; truncate with an ellipsis instead of
  * letting the cell wrap and break row alignment. Title attribute on
- * <td> via Btn primitives will surface the full string on hover. */
+ * <td> via Btn primitives will surface the full string on hover.
+ *
+ * The 32ch cap was too aggressive on tablets, where it left no room
+ * for the rest of a wide row. Cap at 24ch and let cells get tighter
+ * on small viewports rather than disappearing entirely. The parent
+ * .card.flush already provides horizontal scroll for tables that
+ * still don't fit. */
 .tbl td {
-  max-width: 32ch;
+  max-width: 24ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+@media (max-width: 700px) {
+  .tbl td { max-width: 16ch; }
+}
 .tbl td.r { text-align: right; }
 .tbl td .pri { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+
+/* Wrap every table in a horizontally-scrollable container by default.
+ * Cards used as table shells are already `.card.flush`; add overflow-x
+ * there too so wide tables can scroll on narrow viewports without
+ * any per-screen change. */
+.card.flush { overflow-x: auto; }
 
 /* Banner + KPI value spill guard. Long INR strings like "₹ 12,34,567" L
  * shouldn't push the row off-screen. */
@@ -1249,9 +1365,13 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .banner .ti { overflow-wrap: anywhere; }
 
 /* Modal dialog: clamp height and let body scroll. Prevents tall forms
- * from pushing the close button off the viewport on short screens. */
+ * from pushing the close button off the viewport on short screens.
+ * Use `100dvh` (dynamic viewport height) so the iOS URL bar's show /
+ * hide doesn't truncate the modal, and reserve space for the
+ * platform safe-area insets so notched phones don't clip the close
+ * button into the status bar. */
 .modal {
-  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
   overflow: auto;
 }
 
@@ -1337,7 +1457,10 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 
 .app-mobile-tabbar {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  /* auto-fit lets the bar render 4, 5, or 6 tabs without breaking
+   * the layout if a future change adds or removes one. The 60px
+   * floor is the minimum readable label width on a 320px screen. */
+  grid-template-columns: repeat(auto-fit, minmax(60px, 1fr));
   border-top: 1px solid var(--hairline);
   background: var(--paper);
   padding-bottom: env(safe-area-inset-bottom, 0);
@@ -1382,7 +1505,10 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .app-mobile-more-nav {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 0 80px;        /* leave room for the tab bar */
+  /* Reserve room for the tab bar (~64px) plus the platform's
+   * safe-area inset so notched iPhones don't hide the last row
+   * under the home indicator. */
+  padding: 8px 0 calc(80px + env(safe-area-inset-bottom, 0px));
 }
 .app-mobile-more-group {
   padding: 8px 0;

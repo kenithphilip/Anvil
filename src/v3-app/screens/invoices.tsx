@@ -44,22 +44,35 @@ const WiredInvoices = () => {
   const [busy, setBusy] = useState<string | null>(null);
   const [flash, setFlash] = useState<{ kind: string; msg: string } | null>(null);
 
-  const load = async () => {
+  // load() is shared by the tab-change effect and by manual refetch
+  // (after a mutation). The cancel-flag pattern prevents a stale
+  // response from clobbering newer state when the user flips tabs
+  // faster than the API responds. Without it, switching `paid` ->
+  // `draft` while the `paid` request was in flight could overwrite
+  // the `draft` rows with the late `paid` response.
+  const load = async (signal?: { cancelled: boolean }) => {
     setLoading(true);
     setError(null);
     try {
       const params: Record<string, string> = {};
       if (tab !== "all") params.status = tab;
       const resp: any = await ObaraBackend?.invoices?.list?.(params);
+      if (signal?.cancelled) return;
       setRows(resp?.invoices || []);
     } catch (err: any) {
+      if (signal?.cancelled) return;
       setError(err);
       setRows([]);
     } finally {
-      setLoading(false);
+      if (!signal?.cancelled) setLoading(false);
     }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [tab]);
+  useEffect(() => {
+    const signal = { cancelled: false };
+    load(signal);
+    return () => { signal.cancelled = true; };
+    /* eslint-disable-next-line */
+  }, [tab]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: 0, draft: 0, sent: 0, overdue: 0, paid: 0, void: 0, partial: 0 };
@@ -116,9 +129,11 @@ const WiredInvoices = () => {
         try { await ObaraBackend?.communications?.send?.({ id: resp.communication_id }); } catch (_) {}
       }
       setFlash({ kind: "good", msg: "Invoice " + row.invoice_number + " queued + sent" });
+      window.notifySuccess?.("Invoice sent", row.invoice_number);
       await load();
     } catch (err: any) {
       setFlash({ kind: "bad", msg: err.message || String(err) });
+      window.notifyError?.("Send failed", err?.message || String(err));
     } finally { setBusy(null); }
   };
 
@@ -150,7 +165,7 @@ const WiredInvoices = () => {
         eyebrow="Finance · Invoices"
         title="Invoices"
         meta={`${counts.all} total · ${counts.sent || 0} sent · ${counts.overdue || 0} overdue · ${counts.paid || 0} paid`}
-        right={<Btn icon kind="ghost" sm onClick={load} title="Refresh">{Icon.cycle}</Btn>}
+        right={<Btn icon kind="ghost" sm onClick={() => load()} title="Refresh">{Icon.cycle}</Btn>}
       />
       <WSTabs
         tabs={STATUS_TABS.map((t) => ({ id: t.id, label: t.label, count: counts[t.id] || 0 }))}
@@ -165,7 +180,7 @@ const WiredInvoices = () => {
           </Banner>
         )}
         {error && (
-          <Banner kind="bad" icon={Icon.alert} title="Failed to load invoices" action={<Btn sm onClick={load}>Retry</Btn>}>
+          <Banner kind="bad" icon={Icon.alert} title="Failed to load invoices" action={<Btn sm onClick={() => load()}>Retry</Btn>}>
             <span className="mono-sm">{String(error.message || error)}</span>
           </Banner>
         )}

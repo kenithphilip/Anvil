@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { ageLabel, fmtINRShort, sevOf, stageOf } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, KPI, KPIRow, Sev, WSTabs, WSTitle } from "../lib/primitives";
+import { Banner, Btn, Card, Chip, KPI, KPIRow, Sev, WSTabs, WSTitle, rowActivateProps } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 
@@ -82,6 +82,7 @@ const WiredSOList = () => {
         meta={`${total} total · ${inFlight} active`}
         right={<>
           <input className="input" placeholder="search reference, customer…" value={query}
+                 aria-label="Search orders by reference or customer"
                  onChange={(ev) => setQuery(ev.target.value)} style={{ width: 260, height: 28 }} />
           <Btn sm kind="ghost" onClick={() => {
             setOrders((s) => ({ ...s, loading: true }));
@@ -136,7 +137,10 @@ const WiredSOList = () => {
                 const value = Number(o.result?.salesOrder?.grandTotal) || 0;
                 const mode = o.order_mode || (o.result?.salesOrder?.mode) || "—";
                 return (
-                  <tr key={o.id} onClick={() => window.location.hash = `#/so?id=${o.id}`} style={{ cursor: "pointer" }}>
+                  <tr key={o.id} {...rowActivateProps(
+                    () => { window.location.hash = `#/so?id=${o.id}`; },
+                    `Open order ${o.po_number || o.quote_number || o.id?.slice(0, 8) || "draft"}`,
+                  )}>
                     <td><Sev k={sevOf(o)} /></td>
                     <td className="mono"><span className="pri">{o.po_number || o.quote_number || "draft"}</span></td>
                     <td>{o.customer?.customer_name || "—"}<div className="mono-sm">{o.customer?.state_code || ""}</div></td>

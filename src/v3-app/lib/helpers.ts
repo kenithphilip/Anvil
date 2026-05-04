@@ -54,6 +54,47 @@ export const fmtINRShort = (n: number | null | undefined): string => {
   return `₹ ${n.toLocaleString("en-IN")}`;
 };
 
+/*
+ * Canonical currency + date formatters. Screens were previously
+ * using `Intl.NumberFormat` inline, raw ISO strings, custom
+ * helpers like `spoFmtDate`, etc. Standardising here keeps the
+ * presentation consistent and makes locale changes a one-file
+ * edit.
+ */
+export const fmtCurrency = (
+  n: number | null | undefined,
+  currency: string = "INR",
+  opts: { compact?: boolean } = {},
+): string => {
+  if (n == null || Number.isNaN(Number(n))) return "—";
+  if (opts.compact && currency === "INR") return fmtINRShort(Number(n));
+  try {
+    return new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-US", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    }).format(Number(n));
+  } catch (_) {
+    return `${currency} ${Number(n).toLocaleString()}`;
+  }
+};
+
+// fmtDate: stable, locale-aware. Use "short" for table cells,
+// "medium" for detail headers, "iso" if you really need YYYY-MM-DD.
+export const fmtDate = (
+  iso: string | Date | null | undefined,
+  format: "short" | "medium" | "iso" = "short",
+): string => {
+  if (!iso) return "—";
+  const d = typeof iso === "string" ? new Date(iso) : iso;
+  if (Number.isNaN(d.getTime())) return "—";
+  if (format === "iso") return d.toISOString().slice(0, 10);
+  if (format === "medium") {
+    return d.toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "numeric" });
+  }
+  return d.toLocaleDateString("en-IN", { month: "short", day: "2-digit", year: "2-digit" });
+};
+
 export interface StageChip { label: string; k: "info" | "warn" | "good" | "bad" | "ghost" | string; }
 
 // Map order_status enum to a v3 chip { label, k }.

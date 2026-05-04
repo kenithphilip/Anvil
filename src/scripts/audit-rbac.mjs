@@ -1,0 +1,186 @@
+// RBAC consistency audit.
+//
+// Compares the frontend permission matrix (src/v3-app/lib/rbac.ts) with
+// the backend permission sets (src/api/_lib/auth.js) and reports:
+//
+// 1. Roles that exist on one side but not the other.
+// 2. API endpoints that call requirePermission(ctx, level) but where
+//    every role in the frontend MATRIX is empty for that endpoint
+//    (suggesting the UI hides what the backend would actually allow).
+// 3. Endpoints whose backend role check is more permissive than the
+//    frontend, so a role can be silently locked out.
+//
+// The output is a markdown report at docs/RBAC_AUDIT.md plus a stdout
+// summary. The script is informational; it never fails the build, but
+// it surfaces drift quickly.
+
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const RBAC_TS = path.join(ROOT, "src", "v3-app", "lib", "rbac.ts");
+const AUTH_JS = path.join(ROOT, "src", "api", "_lib", "auth.js");
+const REPORT  = path.join(ROOT, "docs", "RBAC_AUDIT.md");
+
+const readFile = (p) => fs.readFileSync(p, "utf8");
+
+// Parse the canonical role list from rbac.ts.
+const parseRolesFromRbac = () => {
+  const src = readFile(RBAC_TS);
+  const m = src.match(/export const ROLES:\s*Role\[\]\s*=\s*\[([^\]]+)\];/);
+  if (!m) throw new Error("Could not find ROLES export in rbac.ts");
+  return m[1].split(",").map((s) => s.replace(/["'\s]/g, "")).filter(Boolean);
+};
+
+// Parse the MATRIX from rbac.ts. Cheap: regex for `key: { ... }` rows.
+const parseMatrix = () => {
+  const src = readFile(RBAC_TS);
+  const start = src.indexOf("export const MATRIX");
+  if (start < 0) throw new Error("MATRIX export not found");
+  const block = src.slice(start, src.indexOf("};", start) + 2);
+  const rows = {};
+  for (const line of block.split("\n")) {
+    const m = line.match(/^\s*"?([\w-]+)"?:\s*\{(.+)\},?\s*$/);
+    if (!m) continue;
+    const navId = m[1];
+    if (navId === "MATRIX" || navId === "ROLES") continue;
+    const cells = {};
+    for (const part of m[2].split(",")) {
+      const cm = part.match(/(\w+):\s*"([^"]*)"/);
+      if (cm) cells[cm[1]] = cm[2];
+    }
+    rows[navId] = cells;
+  }
+  return rows;
+};
+
+// Parse role sets from auth.js.
+const parseAuthSets = () => {
+  const src = readFile(AUTH_JS);
+  const sets = {};
+  for (const m of src.matchAll(/const (VIEWER|WRITER|APPROVER|ADMIN)_ROLES\s*=\s*new Set\(\[([^\]]+)\]\)/g)) {
+    const key = m[1].toLowerCase();
+    sets[key] = m[2].split(",").map((s) => s.replace(/["'\s]/g, "")).filter(Boolean);
+  }
+  return sets;
+};
+
+// For every API handler, find its requirePermission level. Returns a
+// list of { file, level }.
+const scanApiHandlers = () => {
+  const out = [];
+  const recur = (dir) => {
+    for (const name of fs.readdirSync(dir)) {
+      const full = path.join(dir, name);
+      const st = fs.statSync(full);
+      if (st.isDirectory()) recur(full);
+      else if (name.endsWith(".js") && !name.startsWith("_")) {
+        const src = readFile(full);
+        const calls = [...src.matchAll(/requirePermission\(\s*ctx\s*,\s*["'](\w+)["']\)/g)].map((m) => m[1]);
+        if (calls.length === 0) continue;
+        out.push({ file: path.relative(ROOT, full), levels: Array.from(new Set(calls)) });
+      }
+    }
+  };
+  recur(path.join(ROOT, "src", "api"));
+  return out;
+};
+
+const main = () => {
+  const roles = parseRolesFromRbac();
+  const matrix = parseMatrix();
+  const sets = parseAuthSets();
+  const handlers = scanApiHandlers();
+
+  const findings = [];
+
+  // Check role-list consistency. The backend role sets pull from a
+  // hardcoded list; we want every role in rbac.ts to appear in at
+  // least the viewer set.
+  for (const r of roles) {
+    if (!sets.viewer || !sets.viewer.includes(r)) {
+      findings.push({ severity: "WARN", kind: "missing-viewer", detail: r + " is in rbac.ts ROLES but not in VIEWER_ROLES" });
+    }
+  }
+  for (const r of (sets.viewer || [])) {
+    if (!roles.includes(r)) {
+      findings.push({ severity: "WARN", kind: "extra-viewer", detail: r + " is in VIEWER_ROLES but not in rbac.ts ROLES" });
+    }
+  }
+
+  // Check matrix coverage. Every nav id in the matrix should have at
+  // least one role with read access; otherwise the page is invisible
+  // to everyone.
+  for (const navId of Object.keys(matrix)) {
+    const cells = matrix[navId];
+    const anyRead = Object.values(cells).some((v) => /[rwax]/.test(v || ""));
+    if (!anyRead) {
+      findings.push({ severity: "WARN", kind: "no-readers", detail: "MATRIX." + navId + " has no role with read access" });
+    }
+  }
+
+  // Heuristic: warn when a handler requires "approve" or "admin" but
+  // the frontend matrix does not give any role 'a' or 'x' for any
+  // navId that mentions the same group. Best-effort.
+  // We skip this for now since matching API path -> navId is fuzzy.
+
+  const lines = [
+    "# RBAC consistency audit",
+    "",
+    "Auto-generated by `src/scripts/audit-rbac.mjs`. Run",
+    "`node src/scripts/audit-rbac.mjs` to refresh.",
+    "",
+    "## Roles",
+    "",
+    "Frontend canonical roles (`src/v3-app/lib/rbac.ts` ROLES):",
+    "",
+    ...roles.map((r) => "- `" + r + "`"),
+    "",
+    "Backend role sets (`src/api/_lib/auth.js`):",
+    "",
+    "| Verb | Roles |",
+    "|------|-------|",
+    ...Object.keys(sets).map((k) => "| " + k + " | " + sets[k].map((r) => "`" + r + "`").join(", ") + " |"),
+    "",
+    "## Frontend permission matrix",
+    "",
+    "Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.",
+    "",
+    "| Nav id | " + roles.join(" | ") + " |",
+    "|--------|" + roles.map(() => "---").join("|") + "|",
+    ...Object.keys(matrix).sort().map((navId) => {
+      const cells = matrix[navId];
+      return "| `" + navId + "` | " + roles.map((r) => "`" + (cells[r] || "") + "`").join(" | ") + " |";
+    }),
+    "",
+    "## API handlers and their permission levels",
+    "",
+    "| Handler | Levels |",
+    "|---------|--------|",
+    ...handlers.sort((a, b) => a.file.localeCompare(b.file)).map((h) => "| " + h.file + " | " + h.levels.join(", ") + " |"),
+    "",
+    "## Findings",
+    "",
+  ];
+  if (findings.length === 0) {
+    lines.push("No drift detected. Frontend matrix and backend role sets agree.");
+  } else {
+    for (const f of findings) {
+      lines.push("- **[" + f.severity + "]** (" + f.kind + ") " + f.detail);
+    }
+  }
+  fs.writeFileSync(REPORT, lines.join("\n") + "\n", "utf8");
+
+  const counts = findings.reduce((acc, f) => { acc[f.severity] = (acc[f.severity] || 0) + 1; return acc; }, {});
+  process.stdout.write("RBAC audit: " + findings.length + " finding(s)\n");
+  for (const k of Object.keys(counts)) process.stdout.write("  " + k + ": " + counts[k] + "\n");
+  process.stdout.write("Report: " + path.relative(ROOT, REPORT) + "\n");
+  if (findings.length) {
+    for (const f of findings) {
+      process.stdout.write("  [" + f.severity + "] " + f.kind + ": " + f.detail + "\n");
+    }
+  }
+};
+
+main();

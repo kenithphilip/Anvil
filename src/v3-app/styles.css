@@ -295,13 +295,17 @@ button { cursor: pointer; }
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
-  min-width: 200px;
-  max-height: 320px;
+  min-width: 220px;
+  max-height: 360px;
   overflow: auto;
-  background: var(--paper-1);
+  /* `--paper-1` doesn't exist; using `--paper` (the canonical card
+     surface) so the menu is fully opaque in both light and dark
+     themes. The previous transparent menu let the page content bleed
+     through onto the role rows. */
+  background: var(--paper);
   border: 1px solid var(--hairline);
   border-radius: var(--r-2);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.32);
   padding: 4px;
   z-index: 200;
 }

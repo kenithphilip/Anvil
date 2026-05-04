@@ -4,10 +4,18 @@ import { ensureMembership, isAutoOnboardEnabled } from "./tenancy.js";
 const DEFAULT_TENANT = process.env.DEFAULT_TENANT_ID || "00000000-0000-0000-0000-000000000001";
 const ALLOW_ANONYMOUS = String(process.env.ALLOW_ANONYMOUS_TENANT || "true").toLowerCase() === "true";
 
-const VIEWER_ROLES = new Set(["viewer", "sales_engineer", "sales_manager", "procurement", "finance", "admin"]);
-const WRITER_ROLES = new Set(["sales_engineer", "sales_manager", "procurement", "finance", "admin"]);
+// Role permission sets. Mirrors the frontend matrix in
+// src/v3-app/lib/rbac.ts. Run `node src/scripts/audit-rbac.mjs` to
+// confirm consistency.
+//
+// `operator` was previously missing from VIEWER_ROLES, which meant
+// operator-role users (service-visit and AMC handlers) got 403 on
+// every read endpoint that asked for "read" permission, despite the
+// frontend matrix granting them read across most pages.
+const VIEWER_ROLES   = new Set(["viewer", "sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator"]);
+const WRITER_ROLES   = new Set(["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator"]);
 const APPROVER_ROLES = new Set(["sales_manager", "finance", "admin"]);
-const ADMIN_ROLES = new Set(["admin"]);
+const ADMIN_ROLES    = new Set(["admin"]);
 
 const REQUIRED_ROLES = {
   read: VIEWER_ROLES,

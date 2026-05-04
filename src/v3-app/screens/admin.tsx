@@ -3,7 +3,7 @@ import { ageLabel, fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KV, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
-import { RBAC } from "../lib/rbac";
+import { RBAC, MATRIX, ACTIONS } from "../lib/rbac";
 import { Prefs } from "../lib/preferences";
 
 // ============================================================
@@ -32,6 +32,7 @@ import { Prefs } from "../lib/preferences";
 const ADMIN_CRUD_TABS = [
   { id: "members",   label: "Members" },
   { id: "profile",   label: "My profile" },
+  { id: "roles",     label: "Roles & permissions" },
   { id: "settings",  label: "Settings" },
   { id: "holidays",  label: "Holidays" },
   { id: "leadtimes", label: "Lead times" },
@@ -113,9 +114,28 @@ const parseCSV = (text) => {
   return rows.filter((r) => r.length > 1 || (r.length === 1 && r[0] !== ""));
 };
 
+// Read the currently signed-in user id from the cached profile (or the
+// session payload) so we can decorate the row that represents "you" in
+// the Members table. Without this, last-sign-in for the user actively
+// using the app shows the timestamp of when their last fresh sign-in
+// happened (Supabase only updates `last_sign_in_at` on session create,
+// not on every refresh), which the user reads as "stale".
+const readCurrentUserId = (): string | null => {
+  try {
+    const cached = JSON.parse(localStorage.getItem("obara:auth_profile") || "null");
+    if (cached?.user?.id) return String(cached.user.id);
+  } catch (_) { /* ignore */ }
+  try {
+    const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
+    if (session?.user?.id) return String(session.user.id);
+  } catch (_) { /* ignore */ }
+  return null;
+};
+
 const WiredAdminCRUD = () => {
   const { useState: u, useEffect: e } = React;
   const isAdmin = !!(RBAC && RBAC.isAdmin && RBAC.isAdmin());
+  const currentUserId = readCurrentUserId();
 
   const [active, setActive] = u("members");
   const [busy, setBusy] = u(false);
@@ -589,9 +609,10 @@ const WiredAdminCRUD = () => {
                       const email = m.email || m.user_email || "—";
                       const name = m.display_name || m.name || (email !== "—" ? email.split("@")[0] : "—");
                       const userId = m.user_id || m.id;
+                      const isMe = currentUserId && userId === currentUserId;
                       return (
-                        <tr key={userId || email}>
-                          <td>{name}</td>
+                        <tr key={userId || email} style={isMe ? { background: "var(--paper-2)" } : undefined}>
+                          <td>{name}{isMe && <span className="mono-sm" style={{ marginLeft: 6, color: "var(--ink-3)" }}>(you)</span>}</td>
                           <td className="mono-sm">{email}</td>
                           <td>
                             <select className="input" value={m.role || "viewer"}
@@ -601,11 +622,17 @@ const WiredAdminCRUD = () => {
                             </select>
                           </td>
                           <td>
-                            {pending
-                              ? <Chip k="ghost">pending</Chip>
-                              : <Chip k="live">active</Chip>}
+                            {isMe
+                              ? <Chip k="live">active now</Chip>
+                              : pending
+                                ? <Chip k="ghost">pending</Chip>
+                                : <Chip k="live">active</Chip>}
                           </td>
-                          <td className="mono-sm">{lastSignIn ? ageLabel(lastSignIn) : "—"}</td>
+                          <td className="mono-sm" title={lastSignIn ? new Date(lastSignIn).toLocaleString("en-IN") : ""}>
+                            {isMe
+                              ? "in this session"
+                              : lastSignIn ? ageLabel(lastSignIn) : "—"}
+                          </td>
                           <td className="mono-sm">{(m.joined_at || m.created_at) ? new Date(m.joined_at || m.created_at).toLocaleDateString("en-IN") : "—"}</td>
                           <td>
                             <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
@@ -718,6 +745,71 @@ const WiredAdminCRUD = () => {
                 )}
               </>
             )}
+          </>
+        )}
+
+        {active === "roles" && (
+          <>
+            <Card title="Permission matrix" eyebrow="who can do what · canonical source">
+              <p className="body" style={{ margin: "0 0 12px 0", color: "var(--ink-3)" }}>
+                Read = <code>r</code>, Write = <code>w</code>, Approve = <code>a</code>, Admin-only = <code>x</code>, blank = hidden.
+                The same matrix is enforced server-side via <code>requirePermission(ctx, level)</code>.
+                Changes here require editing <code>src/v3-app/lib/rbac.ts</code> + <code>src/api/_lib/auth.js</code> together.
+              </p>
+              <div style={{ overflow: "auto" }}>
+                <table className="tbl mono-sm" style={{ minWidth: 720 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ position: "sticky", left: 0, background: "var(--paper)" }}>Screen</th>
+                      {RBAC.ROLES.map((r) => (
+                        <th key={r} style={{ textAlign: "center" }}>{r.replace(/_/g, " ")}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.keys(MATRIX).sort().map((navId) => {
+                      const row: Record<string, string> = MATRIX[navId];
+                      return (
+                        <tr key={navId}>
+                          <td style={{ position: "sticky", left: 0, background: "var(--paper)" }}>{navId}</td>
+                          {RBAC.ROLES.map((r) => {
+                            const cell = row[r] || "";
+                            const k = cell.includes("x") ? "warn"
+                              : cell.includes("a") ? "live"
+                              : cell.includes("w") ? "info"
+                              : cell.includes("r") ? "ghost"
+                              : null;
+                            return (
+                              <td key={r} style={{ textAlign: "center" }}>
+                                {k ? <Chip k={k}>{cell}</Chip> : <span style={{ color: "var(--ink-4)" }}>—</span>}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+
+            <Card title="Action gates" eyebrow="fine-grained checks beyond the matrix">
+              <p className="body" style={{ margin: "0 0 8px 0", color: "var(--ink-3)" }}>
+                Some actions are gated by an explicit allow-list, independent of the screen-level matrix.
+                Examples: <code>tally.push</code>, <code>einvoice.generate</code>, <code>so.approve</code>.
+              </p>
+              <table className="tbl mono-sm">
+                <thead><tr><th>Action</th><th>Allowed roles</th></tr></thead>
+                <tbody>
+                  {Object.keys(ACTIONS).sort().map((a) => (
+                    <tr key={a}>
+                      <td>{a}</td>
+                      <td>{ACTIONS[a].map((r) => <Chip key={r} k="ghost">{r.replace(/_/g, " ")}</Chip>)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
           </>
         )}
 

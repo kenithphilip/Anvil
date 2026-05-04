@@ -90,14 +90,20 @@ export const NAV: NavGroup[] = [
   },
 ];
 
+// Display tuples for each canonical RBAC role. The id MUST match the
+// id stored by RBAC.setRole / read by RBAC.role(); the previous file
+// used loose short ids ("engineer", "manager") which never matched the
+// canonical ones ("sales_engineer", "sales_manager"), so the lookup
+// in app.tsx fell back to `slice(0,3).toUpperCase()` for both sales_*
+// roles, producing two "SAL" pills that the user could not tell apart.
 export const ROLES: RoleEntry[] = [
-  { id: "engineer", label: "Sales Engineer", short: "ENG" },
-  { id: "manager",  label: "Sales Manager",  short: "MGR" },
-  { id: "approver", label: "Approver",       short: "APR" },
-  { id: "admin",    label: "Admin",          short: "ADM" },
-  { id: "operator", label: "Operator",       short: "OPS" },
-  { id: "finance",  label: "Finance",        short: "FIN" },
-  { id: "viewer",   label: "Viewer",         short: "VWR" },
+  { id: "sales_engineer", label: "Sales Engineer", short: "ENG" },
+  { id: "sales_manager",  label: "Sales Manager",  short: "MGR" },
+  { id: "procurement",    label: "Procurement",    short: "PRO" },
+  { id: "finance",        label: "Finance",        short: "FIN" },
+  { id: "admin",          label: "Admin",          short: "ADM" },
+  { id: "operator",       label: "Operator",       short: "OPS" },
+  { id: "viewer",         label: "Viewer",         short: "VWR" },
 ];
 
 // Build a breadcrumb from a nav id by walking NAV.

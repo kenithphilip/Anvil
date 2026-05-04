@@ -26,10 +26,17 @@ describe("NAV", () => {
 
 describe("ROLES", () => {
   it("ships the canonical role display tuples", () => {
+    // ids match the canonical RBAC role identifiers used by both the
+    // frontend matrix and the backend requirePermission sets. The old
+    // short tuples ("engineer", "manager", "approver") let two roles
+    // collapse onto the same "SAL" badge in the header pill.
     expect(ROLES.map((r) => r.id)).toEqual([
-      "engineer", "manager", "approver", "admin", "operator", "finance", "viewer",
+      "sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer",
     ]);
     for (const r of ROLES) expect(r.short.length).toBeLessThanOrEqual(3);
+    // Short labels must be unique so the user can tell roles apart.
+    const shorts = ROLES.map((r) => r.short);
+    expect(new Set(shorts).size).toBe(shorts.length);
   });
 });
 

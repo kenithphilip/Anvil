@@ -70,10 +70,12 @@ const useRerenderOnEvents = (eventNames: string[]): void => {
 
 // Build the dropdown payload for the role pill. Each option carries the
 // canonical role id (what RBAC.setRole expects), a human-readable label,
-// and a short tag rendered on the right of the menu row.
+// and a short tag rendered on the right of the menu row. We look up by
+// full id; the old "split('_')[0]" fallback collided sales_engineer
+// with sales_manager and rendered both as "SAL".
 const buildRoleOptions = (): Array<{ id: string; label: string; short: string }> =>
   RBAC.ROLES.map((id) => {
-    const meta = ROLES.find((r) => r.id === id.split("_")[0]);
+    const meta = ROLES.find((r) => r.id === id);
     return {
       id,
       label: meta?.label || id.replace(/_/g, " "),
@@ -222,7 +224,7 @@ export default function App() {
   }, [route, onRoute]);
 
   const role = RBAC.role();
-  const roleObj = ROLES.find((r) => r.id === role.split("_")[0]) ||
+  const roleObj = ROLES.find((r) => r.id === role) ||
                   { id: role, label: role.replace(/_/g, " "), short: role.slice(0, 3).toUpperCase() };
 
   const tenant = { code: (() => {

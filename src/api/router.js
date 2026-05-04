@@ -41,6 +41,10 @@ import authSignup              from "./auth/signup.js";
 import authVerify              from "./auth/verify.js";
 
 import billingUsage            from "./billing/usage.js";
+import stripeConnectOnboard    from "./billing/stripe/connect_onboard.js";
+import stripeConnectStatus     from "./billing/stripe/connect_status.js";
+import stripeCheckout          from "./billing/stripe/checkout.js";
+import stripeWebhook           from "./billing/stripe/webhook.js";
 
 import bomIndex                from "./bom/index.js";
 import claudeMessages          from "./claude/messages.js";
@@ -162,6 +166,10 @@ const STATIC_ROUTES = {
   "/auth/verify":                   authVerify,
 
   "/billing/usage":                 billingUsage,
+  "/billing/stripe/connect_onboard":stripeConnectOnboard,
+  "/billing/stripe/connect_status": stripeConnectStatus,
+  "/billing/stripe/checkout":       stripeCheckout,
+  "/billing/stripe/webhook":        stripeWebhook,
 
   "/quotes/pdf":                    quotesPdf,
 

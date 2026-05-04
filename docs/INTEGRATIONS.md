@@ -322,3 +322,61 @@ Smoke test:
 4. Mark the order APPROVED. The next tick flips the goal to
    `completed` and emits `agent_goal_completed` in the audit log,
    which the Billing tab counts as one `agent_action` outcome.
+
+## Stripe Connect (payments)
+
+What it does: Anvil is the platform; each tenant has its own Stripe
+Connect Express account; customers pay the tenant directly via
+Stripe Checkout. Anvil takes an optional platform fee (default 0%,
+per-tenant configurable in basis points on
+`tenant_settings.stripe_platform_fee_bps`).
+
+### Setup (platform-side, one-time)
+
+1. Create a Stripe account.
+2. In the Stripe Dashboard > Connect, enable Express accounts.
+3. Set in Vercel:
+   - `STRIPE_SECRET_KEY` (the platform secret, not the tenant's)
+   - `STRIPE_WEBHOOK_SECRET` (created in step 5)
+   - `PUBLIC_APP_URL` (e.g. `https://anvil.example.com`) — used as
+     the return URL for the onboarding redirect.
+4. Optional: set `STRIPE_PLATFORM_FEE_BPS` for the default platform
+   fee on new tenants. Default `0` (no fee). Per-tenant overrides
+   live on `tenant_settings.stripe_platform_fee_bps`.
+5. Create a webhook endpoint pointing at
+   `https://<your-deploy>/api/billing/stripe/webhook` listening to:
+   `checkout.session.completed`, `payment_intent.succeeded`,
+   `charge.refunded`. Copy the signing secret into
+   `STRIPE_WEBHOOK_SECRET`.
+
+### Setup (per-tenant, in-app)
+
+1. Sign in as admin, open Admin Center > Billing.
+2. Click "Connect Stripe". A new tab opens to Stripe's hosted
+   onboarding (identity + bank account).
+3. Return to Anvil; the Stripe section now shows
+   `charges enabled` and `payouts enabled` once Stripe is satisfied.
+
+### Smoke test
+
+1. Issue an invoice from any order. Status `draft`.
+2. Click `send`; the customer-facing link includes a "Pay now" URL
+   pointing to Stripe Checkout.
+3. Pay with Stripe's test card `4242 4242 4242 4242` on a future
+   expiry. The webhook fires `payment_intent.succeeded`, the
+   invoice flips to `paid`, a `payment_records` row lands, and the
+   audit log emits both `invoice_paid` and `payment_received`. Both
+   verbs map to the `payment_collected` outcome on the Billing meter
+   ($1.00 each on the public price card).
+
+Refunds: refund the payment in Stripe; the `charge.refunded` event
+flips the invoice back to `partial` (or `void` on full refund) and
+records `invoice_refunded` in the audit log.
+
+### Razorpay (India)
+
+Sibling integration. Same shape (onboarding, checkout, webhook,
+payment_records). Schema is provider-agnostic except for the
+`stripe_*` columns on `tenant_settings`, which would gain
+`razorpay_*` siblings. Not implemented in this round; tracked as
+Phase 2.4.

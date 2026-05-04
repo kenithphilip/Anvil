@@ -214,6 +214,11 @@
       const qs = new URLSearchParams(params || {}).toString();
       return apiFetch("/api/billing/usage" + (qs ? "?" + qs : ""));
     },
+    stripe: {
+      onboard: async (payload) => apiFetch("/api/billing/stripe/connect_onboard", { method: "POST", body: payload || {} }),
+      status:  async () => apiFetch("/api/billing/stripe/connect_status"),
+      checkout: async (payload) => apiFetch("/api/billing/stripe/checkout", { method: "POST", body: payload }),
+    },
   };
 
   // Quote PDF helpers. `pdf(orderId)` resolves the binary URL the

@@ -157,6 +157,9 @@ const WiredAdminCRUD = () => {
   // Billing tab state. Loaded lazily; the billing endpoint is read-only.
   const [billing, setBilling] = u<any>(null);
   const [billingFrom, setBillingFrom] = u<string>("month-to-date");
+  // Stripe Connect status loaded alongside billing.
+  const [stripe, setStripe] = u<any>(null);
+  const [stripeBusy, setStripeBusy] = u(false);
   const [holidayForm, setHolidayForm] = u({ country: "IN", date: "", name: "" });
   const [leadTimeForm, setLeadTimeForm] = u({ type: "supplier", entity_id: "", days: "", notes: "" });
   const [threshForm, setThreshForm] = u(null);
@@ -337,8 +340,25 @@ const WiredAdminCRUD = () => {
     } catch (err) { flashErr(err); }
   };
 
+  const loadStripe = async () => {
+    try {
+      const resp = await ObaraBackend?.billing?.stripe?.status?.();
+      setStripe(resp);
+    } catch (err) { flashErr(err); }
+  };
+
+  const onStripeConnect = async () => {
+    setStripeBusy(true);
+    try {
+      const resp: any = await ObaraBackend?.billing?.stripe?.onboard?.();
+      if (resp?.onboarding_url) window.open(resp.onboarding_url, "_blank", "noopener");
+    } catch (err) { flashErr(err); }
+    finally { setStripeBusy(false); }
+  };
+
   e(() => {
     if (active === "billing" && !billing) loadBilling(billingFrom);
+    if (active === "billing" && !stripe) loadStripe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
@@ -911,6 +931,58 @@ const WiredAdminCRUD = () => {
                     <code> src/api/_lib/outcomes.js</code>. Pricing is the public price card; tenant-specific
                     overrides land in tenant_settings in a follow-up.
                   </div>
+                </>
+              )}
+            </Card>
+
+            <Card title="Stripe Connect" eyebrow="payment rails for non-India tenants">
+              {!stripe ? (
+                <div className="body mono-sm" style={{ color: "var(--ink-3)" }}>Loading Stripe status…</div>
+              ) : !stripe.configured ? (
+                <Banner kind="warn" icon={Icon.alert} title="Stripe not configured on the platform">
+                  <span className="mono-sm">
+                    Set <code>STRIPE_SECRET_KEY</code> + <code>STRIPE_WEBHOOK_SECRET</code> in Vercel to enable
+                    payment collection. Tenants then onboard their own connected accounts here.
+                  </span>
+                </Banner>
+              ) : !stripe.account_id ? (
+                <>
+                  <div className="body" style={{ marginBottom: 10 }}>
+                    No Stripe Connect account on file for this tenant. Click below to start onboarding;
+                    Stripe walks you through identity + bank-account setup. The window opens in a new tab.
+                  </div>
+                  <Btn sm kind="primary" onClick={onStripeConnect} disabled={stripeBusy}>
+                    {stripeBusy ? "starting…" : <>{Icon.send} Connect Stripe</>}
+                  </Btn>
+                </>
+              ) : (
+                <>
+                  <div className="row" style={{ gap: 6, marginBottom: 10 }}>
+                    {stripe.charges_enabled
+                      ? <Chip k="live">charges enabled</Chip>
+                      : <Chip k="warn">charges disabled</Chip>}
+                    {stripe.payouts_enabled
+                      ? <Chip k="live">payouts enabled</Chip>
+                      : <Chip k="warn">payouts disabled</Chip>}
+                    {stripe.details_submitted
+                      ? <Chip k="ghost">details submitted</Chip>
+                      : <Chip k="warn">details pending</Chip>}
+                    <span style={{ flex: 1 }} />
+                    <Btn sm kind="ghost" onClick={() => { setStripe(null); loadStripe(); }}>{Icon.cycle} refresh</Btn>
+                  </div>
+                  <KV rows={[
+                    ["Account id", stripe.account_id],
+                    ["Country", stripe.country || "—"],
+                    ["Default currency", String(stripe.default_currency || "usd").toUpperCase()],
+                    ["Requirements due", (stripe.requirements_currently_due || []).join(", ") || "—"],
+                  ]} />
+                  {(stripe.requirements_currently_due || []).length > 0 && (
+                    <div style={{ marginTop: 10 }}>
+                      <Btn sm kind="ghost" onClick={onStripeConnect} disabled={stripeBusy}>
+                        {stripeBusy ? "opening…" : "Continue onboarding"}
+                      </Btn>
+                    </div>
+                  )}
                 </>
               )}
             </Card>

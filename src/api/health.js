@@ -47,6 +47,8 @@ const INTEGRATIONS = [
     label: "WhatsApp via Meta Cloud API",
   },
   { id: "agent_runner", env: ["CRON_SECRET"], label: "Autonomous agent cron" },
+  { id: "stripe",       env: ["STRIPE_SECRET_KEY"], label: "Stripe (payments platform)" },
+  { id: "stripe_webhook", env: ["STRIPE_WEBHOOK_SECRET"], label: "Stripe webhook signing" },
 ];
 
 let cached = null;

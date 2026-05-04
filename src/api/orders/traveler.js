@@ -12,8 +12,39 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-import { renderQuotePdf } from "../_lib/pdf-renderer.js";
+import { renderPdf } from "../_lib/pdf-renderer.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
+
+// Build the canonical PDF payload from an order. Mirrors the shape
+// in src/api/quotes/pdf.js so the renderer's kind switch picks up
+// "Production Traveler" as the document title.
+const buildTravelerPdfData = (tenant, order, customer) => {
+  const so = order.result?.salesOrder || {};
+  return {
+    kind: "Production Traveler",
+    number: order.po_number || order.quote_number || String(order.id || "").slice(0, 8),
+    date: new Date(order.created_at || Date.now()).toLocaleDateString("en-US"),
+    brand: {
+      name: tenant?.display_name || "Anvil",
+      tagline: tenant?.tagline || null,
+      address: tenant?.billing_address || null,
+    },
+    from: {
+      name: tenant?.display_name || "Anvil",
+      line2: tenant?.billing_address || null,
+    },
+    to: {
+      name: customer?.customer_name || customer?.name || "Customer",
+      line2: customer?.billing_address || null,
+    },
+    items: Array.isArray(so.lineItems) ? so.lineItems : [],
+    subtotal: so.subtotal,
+    tax: so.taxTotal || so.gstTotal,
+    total: so.grandTotal || so.total,
+    currency: so.currency || "USD",
+    notes: so.notes || order.notes || null,
+  };
+};
 
 const enqueueTraveler = async (svc, { tenantId, orderId, pdfStoragePath, pdfSignedUrl, printerId, triggeredBy }) => {
   const ins = await svc.from("print_jobs").insert({
@@ -40,13 +71,11 @@ export const enqueueTravelerForOrder = async (svc, { tenantId, orderId, triggere
     const c = await svc.from("customers").select("*").eq("id", orderQ.data.customer_id).maybeSingle();
     customer = c.data || null;
   }
+  const tenantQ = await svc.from("tenants").select("display_name, slug, tagline, billing_address").eq("id", tenantId).maybeSingle();
   // Render + upload.
-  const pdfBuffer = await renderQuotePdf({
-    tenant: { display_name: "Anvil" },
-    customer: customer || {},
-    salesOrder: orderQ.data.result?.salesOrder || {},
-    brand: { title: "Production Traveler" },
-  }).catch(() => null);
+  const pdfBuffer = await renderPdf(
+    buildTravelerPdfData(tenantQ.data, orderQ.data, customer)
+  ).catch(() => null);
   if (!pdfBuffer) return null;
   const prefix = (settings.travelers_storage_prefix || "travelers/").replace(/\/?$/, "/");
   const path = prefix + tenantId + "/" + orderId + ".pdf";
@@ -87,12 +116,10 @@ export default async function handler(req, res) {
       const c = await svc.from("customers").select("*").eq("id", orderQ.data.customer_id).maybeSingle();
       customer = c.data || null;
     }
-    const pdfBuffer = await renderQuotePdf({
-      tenant: { display_name: "Anvil" },
-      customer: customer || {},
-      salesOrder: orderQ.data.result?.salesOrder || {},
-      brand: { title: "Production Traveler" },
-    });
+    const tenantQ = await svc.from("tenants").select("display_name, slug, tagline, billing_address").eq("id", ctx.tenantId).maybeSingle();
+    const pdfBuffer = await renderPdf(
+      buildTravelerPdfData(tenantQ.data, orderQ.data, customer)
+    );
     const prefix = (settings?.travelers_storage_prefix || "travelers/").replace(/\/?$/, "/");
     const path = prefix + ctx.tenantId + "/" + orderQ.data.id + ".pdf";
     let signedUrl = null;

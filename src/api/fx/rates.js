@@ -2,14 +2,27 @@
 //   -> returns the closest persisted rate or fetches from provider when missing
 // POST /api/fx/rates  body: { as_of?, from?, to_list? }
 //   -> refreshes rates for the given date and persists them.
-// Uses Frankfurter (https://www.frankfurter.app) by default. No API key required.
+//
+// Provider: Frankfurter (https://api.frankfurter.dev). No API key
+// required. Frankfurter 404s on:
+//   - dates before 1999
+//   - dates in the future
+//   - weekends and ECB holidays (no published rates)
+// We tolerate provider 404 with a three-tier fallback:
+//   1. Try the requested date.
+//   2. Fall back to /latest (most recent ECB publish).
+//   3. Fall back to the most recent persisted rate in our DB.
+// We only return 502 when all three fail.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 
-const PROVIDER_URL = process.env.FX_PROVIDER_URL || "https://api.frankfurter.app";
+// frankfurter.app redirects to frankfurter.dev; default direct to
+// .dev to avoid the redirect hop. FX_PROVIDER_URL env var still
+// overrides for self-hosted instances.
+const PROVIDER_URL = process.env.FX_PROVIDER_URL || "https://api.frankfurter.dev";
 const DEFAULT_TARGETS = ["INR", "CNY", "JPY", "KRW", "USD"];
 
 const isoDate = (d) => {
@@ -19,12 +32,26 @@ const isoDate = (d) => {
   return date.toISOString().slice(0, 10);
 };
 
-const fetchProviderRates = async (asOf, fromCcy, targets) => {
+const callProvider = async (path, fromCcy, targets) => {
   const params = new URLSearchParams({ from: fromCcy, to: targets.filter((t) => t !== fromCcy).join(",") });
-  const url = PROVIDER_URL.replace(/\/$/, "") + "/" + asOf + "?" + params.toString();
-  const resp = await fetch(url, { headers: { Accept: "application/json" } });
-  if (!resp.ok) throw new Error("FX provider " + resp.status + " for " + url);
-  const data = await resp.json();
+  const url = PROVIDER_URL.replace(/\/$/, "") + path + "?" + params.toString();
+  const resp = await fetch(url, { headers: { Accept: "application/json" }, redirect: "follow" });
+  return { ok: resp.ok, status: resp.status, url, body: resp.ok ? await resp.json() : null };
+};
+
+const fetchProviderRates = async (asOf, fromCcy, targets) => {
+  // Tier 1: requested date.
+  let r = await callProvider("/" + asOf, fromCcy, targets);
+  // Tier 2: /latest (Frankfurter's most recent publish).
+  if (!r.ok && r.status === 404) {
+    r = await callProvider("/latest", fromCcy, targets);
+  }
+  if (!r.ok) {
+    const err = new Error("FX provider " + r.status + " for " + r.url);
+    err.providerStatus = r.status;
+    throw err;
+  }
+  const data = r.body;
   const rates = data.rates || {};
   const list = Object.entries(rates).map(([to, rate]) => ({ to, rate: Number(rate) || 0 }));
   list.push({ to: fromCcy, rate: 1 });
@@ -78,6 +105,27 @@ export default async function handler(req, res) {
         await recordAudit(ctx, { action: "fx_rate_fetch", objectType: "fx", objectId: fromCcy + "/" + toCcy, detail: "as_of=" + asOf + " rate=" + match.rate });
         return json(res, 200, { rate: { ...match, as_of: asOf }, fresh: true });
       } catch (fetchErr) {
+        // Tier 3 fallback: surface the most recent persisted rate
+        // (no as_of upper bound) as stale rather than 502. Quoting
+        // a slightly stale FX is materially better than failing the
+        // request, and the operator can refresh via POST when the
+        // provider recovers.
+        const fallback = await svc.from("fx_rates")
+          .select("*")
+          .eq("tenant_id", ctx.tenantId)
+          .eq("from_ccy", fromCcy)
+          .eq("to_ccy", toCcy)
+          .order("as_of", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (fallback.data) {
+          return json(res, 200, {
+            rate: fallback.data,
+            fresh: false,
+            stale: true,
+            note: "Provider unavailable; returning most recent stored rate. " + (fetchErr.message || ""),
+          });
+        }
         return json(res, 502, { error: { message: "FX lookup failed: " + fetchErr.message } });
       }
     }

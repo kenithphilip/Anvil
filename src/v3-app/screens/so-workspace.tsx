@@ -192,6 +192,43 @@ const WiredSOWorkspace = () => {
   };
 
   // Audit pack export: bundle order + result + findings + signed
+  // Quote PDF download. Hits /api/quotes/pdf and triggers a browser
+  // download. We do the request through the auth-aware client helper
+  // so the Authorization + tenant headers are attached.
+  const downloadQuotePdf = async (orderObj) => {
+    if (!orderObj?.id) return;
+    try {
+      const blob = await ObaraBackend?.quotes?.pdfBlob?.(orderObj.id);
+      if (!blob) throw new Error("Quote PDF helper unavailable");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "quote-" + (orderObj.quote_number || orderObj.po_number || String(orderObj.id).slice(0, 8)) + ".pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      window.notifySuccess?.("Quote PDF ready", "Saved to Downloads.");
+    } catch (err: any) {
+      window.notifyError?.("Quote PDF failed", err?.message || String(err));
+    }
+  };
+
+  // Share-link flow. Server uploads the PDF to storage and returns a
+  // 7-day signed URL we copy to the operator's clipboard.
+  const shareQuotePdf = async (orderObj) => {
+    if (!orderObj?.id) return;
+    try {
+      const resp: any = await ObaraBackend?.quotes?.share?.(orderObj.id);
+      const url = resp?.url;
+      if (!url) throw new Error("Share endpoint did not return a URL");
+      try { await navigator.clipboard.writeText(url); } catch (_) { /* ignore */ }
+      window.notifySuccess?.("Share link copied", "Valid for 7 days.");
+    } catch (err: any) {
+      window.notifyError?.("Could not generate share link", err?.message || String(err));
+    }
+  };
+
   // evidence URLs into a JSON file the user can hand to compliance.
   // Rich PDF + ZIP packaging is a follow-up; for now this matches the
   // legacy exportDocumentPackage shape closely enough.
@@ -488,6 +525,16 @@ const WiredSOWorkspace = () => {
               {Icon.send} email customer
             </Btn>
           )}
+          <Btn sm kind="ghost"
+               onClick={() => downloadQuotePdf(o)}
+               title="Render a branded PDF of the quote and download it">
+            {Icon.download} quote PDF
+          </Btn>
+          <Btn sm kind="ghost"
+               onClick={() => shareQuotePdf(o)}
+               title="Generate a 7-day signed share link to the quote PDF">
+            {Icon.send} share link
+          </Btn>
           <Btn sm kind="ghost" onClick={() => exportAuditPack(o)} title="Bundle PO + quote + result + signed evidence URLs into a JSON download">
             {Icon.download} audit pack
           </Btn>

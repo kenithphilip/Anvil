@@ -216,6 +216,32 @@
     },
   };
 
+  // Quote PDF helpers. `pdf(orderId)` resolves the binary URL the
+  // browser can navigate to (auth header is on apiFetch's contract,
+  // so for direct browser navigation we expose a download blob via
+  // pdfBlob instead). `share(orderId)` requests a 7-day signed URL
+  // that can be sent to a customer.
+  const quotes = {
+    pdfUrl: (orderId) => {
+      const cfg = readConfig();
+      const base = (cfg.url || "").replace(/\/+$/, "");
+      return base + "/api/quotes/pdf?orderId=" + encodeURIComponent(orderId);
+    },
+    pdfBlob: async (orderId) => {
+      const cfg = readConfig();
+      if (!cfg.url) throw new Error("Backend URL not configured");
+      const session = readSession();
+      const url = cfg.url.replace(/\/+$/, "") + "/api/quotes/pdf?orderId=" + encodeURIComponent(orderId);
+      const headers = {};
+      if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+      if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+      const resp = await fetch(url, { headers });
+      if (!resp.ok) throw new Error("PDF " + resp.status);
+      return await resp.blob();
+    },
+    share: async (orderId) => apiFetch("/api/quotes/pdf?orderId=" + encodeURIComponent(orderId) + "&format=share"),
+  };
+
   const agents = {
     listGoals: async (params) => {
       const qs = new URLSearchParams(params || {}).toString();
@@ -715,6 +741,7 @@
     ping,
     health,
     billing,
+    quotes,
     agents,
     whatsapp,
     claudeCall,

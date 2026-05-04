@@ -33,6 +33,11 @@ export const ACTION_TO_OUTCOME = {
   comm_draft:             "quote_drafted",
   comm_send:              "communication_sent",
   comm_missing_doc:       "communication_sent",
+  // Quote PDF rendering counts as a quote-drafted outcome: it is the
+  // operator-facing artifact of the quote, regardless of whether the
+  // customer ever sees it.
+  quote_pdf_downloaded:   "quote_drafted",
+  quote_pdf_shared:       "quote_drafted",
 
   // Invoicing (India today; non-India lands here when invoicing module ships)
   einvoice_draft:         "invoice_generated",

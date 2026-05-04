@@ -123,6 +123,8 @@ import tallyValidate           from "./tally/validate.js";
 import whatsappInbound         from "./whatsapp/inbound.js";
 import whatsappSend            from "./whatsapp/send.js";
 
+import quotesPdf               from "./quotes/pdf.js";
+
 import healthCheck             from "./health.js";
 
 // Static routes resolved by exact match. Order does not matter.
@@ -155,6 +157,8 @@ const STATIC_ROUTES = {
   "/auth/verify":                   authVerify,
 
   "/billing/usage":                 billingUsage,
+
+  "/quotes/pdf":                    quotesPdf,
 
   "/bom":                           bomIndex,
   "/claude/messages":               claudeMessages,

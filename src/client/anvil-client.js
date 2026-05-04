@@ -370,6 +370,14 @@
     send:        async (payload) => apiFetch("/api/erp_chat/send", { method: "POST", body: payload }),
   };
 
+  const mcp = {
+    listTokens:   async () => apiFetch("/api/mcp/tokens"),
+    createToken:  async (payload) => apiFetch("/api/mcp/tokens", { method: "POST", body: payload }),
+    revokeToken:  async (id) => apiFetch("/api/mcp/tokens?id=" + encodeURIComponent(id), { method: "PATCH", body: { revoke: true } }),
+    deleteToken:  async (id) => apiFetch("/api/mcp/tokens?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    usage:        async (since) => apiFetch("/api/mcp/usage" + (since ? "?since=" + encodeURIComponent(since) : "")),
+  };
+
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });
 
   const documents = {
@@ -879,6 +887,7 @@
     edi,
     rlhf,
     erpChat,
+    mcp,
     claudeCall,
     documents,
     orders,

@@ -200,6 +200,10 @@ import rlhfDataset             from "./rlhf/dataset.js";
 import erpChatSend             from "./erp_chat/send.js";
 import erpChatSessions         from "./erp_chat/sessions.js";
 
+import mcpServer               from "./mcp/server.js";
+import mcpTokens               from "./mcp/tokens.js";
+import mcpUsage                from "./mcp/usage.js";
+
 import healthCheck             from "./health.js";
 
 // Static routes resolved by exact match. Order does not matter.
@@ -259,6 +263,9 @@ const STATIC_ROUTES = {
   "/rlhf/dataset":                  rlhfDataset,
   "/erp_chat/send":                 erpChatSend,
   "/erp_chat/sessions":             erpChatSessions,
+  "/mcp/server":                    mcpServer,
+  "/mcp/tokens":                    mcpTokens,
+  "/mcp/usage":                     mcpUsage,
   "/admin/contracts":               adminContracts,
   "/admin/customer_locations":      adminCustomerLocations,
   "/admin/diagnostics":             adminDiagnostics,

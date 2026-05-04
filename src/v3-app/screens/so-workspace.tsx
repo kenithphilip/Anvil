@@ -125,6 +125,45 @@ const WiredSOWorkspace = () => {
     return { totalQty, lineCount: scheduleRows.length, next: upcoming || dates[0] || null, last: dates[dates.length - 1] || null };
   }, [scheduleRows]);
 
+  // ─────────────────────────────────────────────────────────────
+  // Activity timeline merge (Surface B). Same hook-rule constraint:
+  // must run on every render, including the loading and error
+  // branches below, so the hook count stays constant.
+  // ─────────────────────────────────────────────────────────────
+  const mergedTimeline = m(() => {
+    const all = [];
+    const auditRows = Array.isArray(audit.data) ? audit.data : [];
+    for (const a of auditRows) {
+      const action = String(a.action || "");
+      const isComm = action.startsWith("communication.") || action.startsWith("comm.") || action.includes("communication");
+      all.push({
+        ts: a.created_at || a.at || null,
+        source: isComm ? "CM" : "AU",
+        action,
+        summary: `<b>${action || "event"}</b>${a.object_type ? " · " + a.object_type : ""}${a.detail ? " · " + a.detail : ""}`,
+        raw: a,
+      });
+    }
+    const procRows = Array.isArray(procEvents.data) ? procEvents.data : [];
+    for (const p of procRows) {
+      const action = String(p.event_type || p.action || p.type || "processing");
+      const detail = p.detail || p.message || (p.payload ? (typeof p.payload === "string" ? p.payload : JSON.stringify(p.payload).slice(0, 120)) : "");
+      all.push({
+        ts: p.created_at || p.at || p.timestamp || null,
+        source: "PR",
+        action,
+        summary: `<b>${action}</b>${p.stage ? " · " + p.stage : ""}${detail ? " · " + String(detail).slice(0, 160) : ""}`,
+        raw: p,
+      });
+    }
+    all.sort((x, y) => {
+      const tx = x.ts ? new Date(x.ts).getTime() : 0;
+      const ty = y.ts ? new Date(y.ts).getTime() : 0;
+      return ty - tx;
+    });
+    return all;
+  }, [audit.data, procEvents.data]);
+
   if (!orderId) {
     return (
       <>
@@ -475,48 +514,6 @@ const WiredSOWorkspace = () => {
       setBusy(false);
     }
   };
-
-  // ─────────────────────────────────────────────────────────────
-  // Activity timeline merge (Surface B)
-  // Three sources, normalized to { ts, source, action, summary, raw }:
-  //   AU = audit (everything else)
-  //   CM = audit filtered by action LIKE 'communication.%'
-  //   PR = processing_events
-  // Sorted desc by ts.
-  // ─────────────────────────────────────────────────────────────
-  const mergedTimeline = m(() => {
-    const all = [];
-    const auditRows = Array.isArray(audit.data) ? audit.data : [];
-    for (const a of auditRows) {
-      const action = String(a.action || "");
-      const isComm = action.startsWith("communication.") || action.startsWith("comm.") || action.includes("communication");
-      all.push({
-        ts: a.created_at || a.at || null,
-        source: isComm ? "CM" : "AU",
-        action,
-        summary: `<b>${action || "event"}</b>${a.object_type ? " · " + a.object_type : ""}${a.detail ? " · " + a.detail : ""}`,
-        raw: a,
-      });
-    }
-    const procRows = Array.isArray(procEvents.data) ? procEvents.data : [];
-    for (const p of procRows) {
-      const action = String(p.event_type || p.action || p.type || "processing");
-      const detail = p.detail || p.message || (p.payload ? (typeof p.payload === "string" ? p.payload : JSON.stringify(p.payload).slice(0, 120)) : "");
-      all.push({
-        ts: p.created_at || p.at || p.timestamp || null,
-        source: "PR",
-        action,
-        summary: `<b>${action}</b>${p.stage ? " · " + p.stage : ""}${detail ? " · " + String(detail).slice(0, 160) : ""}`,
-        raw: p,
-      });
-    }
-    all.sort((x, y) => {
-      const tx = x.ts ? new Date(x.ts).getTime() : 0;
-      const ty = y.ts ? new Date(y.ts).getTime() : 0;
-      return ty - tx;
-    });
-    return all;
-  }, [audit.data, procEvents.data]);
 
   const tagChipKind = (src) => src === "CM" ? "plum" : src === "PR" ? "info" : "ghost";
 

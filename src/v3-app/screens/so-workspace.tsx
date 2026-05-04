@@ -530,8 +530,14 @@ const WiredSOWorkspace = () => {
   ];
 
   return (
-    <div className="ws">
+    <div className="ws ws-no-rail">
       {/*
+       * ws-no-rail: this screen never renders a right-side rail,
+       * so opt out of the grid template. Without it the WSTabs
+       * sibling gets auto-placed into the (empty) rail column and
+       * floats to the right edge instead of sitting under the
+       * title.
+       *
        * Title row layout:
        *   row 1: identity (eyebrow + PO + chips), wraps if narrow
        *   row 2: action bar, wraps to a 2nd line if narrow

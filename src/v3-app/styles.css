@@ -431,17 +431,31 @@ button { cursor: pointer; }
 /* If no element with class ws-rail is mounted, collapse the rail
  * column so the content area gets the full width. Without this
  * the workspace wastes 320px of horizontal space on screens that
- * choose not to render a rail (e.g. so-workspace.tsx). */
+ * choose not to render a rail (e.g. so-workspace.tsx).
+ *
+ * Modern browsers handle this via :has(). For older Safari (pre-
+ * 15.4) and the same case in general, the .ws-no-rail class is the
+ * explicit opt-out: just stack children vertically and unset the
+ * grid template entirely. Without unsetting, leftover grid-area
+ * declarations on .ws-title / .ws-content can still place
+ * unassigned siblings (like .ws-tabs) into a phantom column. */
 .ws:not(:has(.ws-rail)) {
   grid-template-columns: 1fr;
   grid-template-areas:
     "title"
     "content";
 }
+.ws.ws-no-rail,
 .ws-no-rail {
   display: flex;
   flex-direction: column;
+  grid-template-columns: none;
+  grid-template-rows: none;
+  grid-template-areas: none;
 }
+.ws-no-rail > .ws-title,
+.ws-no-rail > .ws-content,
+.ws-no-rail > .ws-tabs { grid-area: auto; }
 .ws-title {
   grid-area: title;
   display: flex; align-items: center;

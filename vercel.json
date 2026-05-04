@@ -29,6 +29,14 @@
     {
       "path": "/api/netsuite/retry",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/tally/sync",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/tally/retry",
+      "schedule": "*/5 * * * *"
     }
   ],
   "headers": [

@@ -458,8 +458,17 @@
     listMasters: async (type) => apiFetch("/api/tally/masters" + (type ? "?type=" + encodeURIComponent(type) : "")),
     syncMasters: async (master_type, records, replace) => apiFetch("/api/tally/masters", { method: "POST", body: { master_type, records, replace: !!replace } }),
     push: async (payload) => apiFetch("/api/tally/push", { method: "POST", body: payload }),
+    pushPreview: async (payload) => apiFetch("/api/tally/push", { method: "POST", body: { ...(payload || {}), dry_run: true } }),
     reconcile: async (payload) => apiFetch("/api/tally/reconcile", { method: "POST", body: payload }),
     amend: async (payload) => apiFetch("/api/tally/amend", { method: "POST", body: payload }),
+    health: async () => apiFetch("/api/tally/health"),
+    diagnostics: async (companyId) => apiFetch("/api/tally/diagnostics" + (companyId ? "?companyId=" + encodeURIComponent(companyId) : "")),
+    listCompanies: async () => apiFetch("/api/tally/companies"),
+    createCompany: async (payload) => apiFetch("/api/tally/companies", { method: "POST", body: payload }),
+    updateCompany: async (id, payload) => apiFetch("/api/tally/companies?id=" + encodeURIComponent(id), { method: "PATCH", body: payload }),
+    deleteCompany: async (id) => apiFetch("/api/tally/companies?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    syncNow: async (payload) => apiFetch("/api/tally/sync", { method: "POST", body: payload || {} }),
+    retry: async (payload) => apiFetch("/api/tally/retry", { method: "POST", body: payload || {} }),
   };
 
   const sourcePos = {

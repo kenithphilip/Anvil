@@ -35,6 +35,7 @@ const ADMIN_CRUD_TABS = [
   { id: "roles",     label: "Roles & permissions" },
   { id: "billing",   label: "Billing" },
   { id: "netsuite",  label: "NetSuite" },
+  { id: "tally",     label: "Tally" },
   { id: "settings",  label: "Settings" },
   { id: "holidays",  label: "Holidays" },
   { id: "leadtimes", label: "Lead times" },
@@ -446,10 +447,97 @@ const WiredAdminCRUD = () => {
     finally { setNsFieldMapBusy(false); }
   };
 
+  // Tally v2 state.
+  const [tally, setTally] = u<any>(null);
+  const [tallyDiag, setTallyDiag] = u<any>(null);
+  const [tallyDiagBusy, setTallyDiagBusy] = u(false);
+  const [tallySyncBusy, setTallySyncBusy] = u(false);
+  const [tallyRetryBusy, setTallyRetryBusy] = u(false);
+  const [tallyCompanyForm, setTallyCompanyForm] = u<any>({
+    name: "", bridge_url: "", bridge_token: "", gstin: "",
+    default_voucher_series: "", default_sales_ledger: "",
+  });
+  const [tallyCompanyBusy, setTallyCompanyBusy] = u(false);
+
+  const loadTally = async () => {
+    try {
+      const resp = await ObaraBackend?.tally?.health?.();
+      setTally(resp);
+    } catch (err) { flashErr(err); }
+  };
+
+  const onTallyAddCompany = async (ev) => {
+    ev.preventDefault();
+    if (!tallyCompanyForm.name) return flashErr(new Error("name required"));
+    setTallyCompanyBusy(true);
+    try {
+      await ObaraBackend?.tally?.createCompany?.(tallyCompanyForm);
+      flashOk("Company added");
+      setTallyCompanyForm({
+        name: "", bridge_url: "", bridge_token: "", gstin: "",
+        default_voucher_series: "", default_sales_ledger: "",
+      });
+      loadTally();
+    } catch (err) { flashErr(err); }
+    finally { setTallyCompanyBusy(false); }
+  };
+
+  const onTallySetDefault = async (id: string) => {
+    try {
+      await ObaraBackend?.tally?.updateCompany?.(id, { is_default: true });
+      flashOk("Default updated");
+      loadTally();
+    } catch (err) { flashErr(err); }
+  };
+
+  const onTallyDeleteCompany = async (id: string) => {
+    if (!confirm("Remove this Tally company? Vouchers stay; the bridge config is removed.")) return;
+    try {
+      await ObaraBackend?.tally?.deleteCompany?.(id);
+      flashOk("Company removed");
+      loadTally();
+    } catch (err) { flashErr(err); }
+  };
+
+  const onTallyDiagnostics = async (companyId?: string) => {
+    setTallyDiagBusy(true);
+    try {
+      const resp = await ObaraBackend?.tally?.diagnostics?.(companyId);
+      setTallyDiag(resp);
+      if (resp?.summary?.all_ok) flashOk("All Tally bridge probes passed");
+      else flashErr(new Error("Bridge probes failed: " + ((resp?.probes || []).filter((p:any)=>!p.ok).map((p:any)=>p.probe).join(", "))));
+    } catch (err) { flashErr(err); }
+    finally { setTallyDiagBusy(false); }
+  };
+
+  const onTallySyncNow = async (entity: string | null, full: boolean) => {
+    setTallySyncBusy(true);
+    try {
+      const body: any = {};
+      if (entity) body.entity = entity;
+      if (full) body.full = true;
+      const resp = await ObaraBackend?.tally?.syncNow?.(body);
+      flashOk("Tally sync ran (" + ((resp?.results || []).length || 0) + " entities)");
+      loadTally();
+    } catch (err) { flashErr(err); }
+    finally { setTallySyncBusy(false); }
+  };
+
+  const onTallyRetryNow = async () => {
+    setTallyRetryBusy(true);
+    try {
+      const resp = await ObaraBackend?.tally?.retry?.();
+      flashOk("Replayed " + (resp?.processed || 0) + " queued vouchers");
+      loadTally();
+    } catch (err) { flashErr(err); }
+    finally { setTallyRetryBusy(false); }
+  };
+
   e(() => {
     if (active === "billing" && !billing) loadBilling(billingFrom);
     if (active === "billing" && !stripe) loadStripe();
     if (active === "netsuite" && !netsuite) loadNetsuite();
+    if (active === "tally" && !tally) loadTally();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
@@ -1281,6 +1369,175 @@ const WiredAdminCRUD = () => {
                 </div>
               </form>
             </Card>
+          </>
+        )}
+
+        {active === "tally" && (
+          <>
+            <Card title="Tally Connect" eyebrow="multi-company XML bridge with retry + reverse sync">
+              {!tally ? (
+                <div className="body" style={{ padding: 16, textAlign: "center", color: "var(--ink-3)" }}>Loading…</div>
+              ) : (tally.companies || []).length === 0 && !tally.configured ? (
+                <Banner kind="warn" icon={Icon.alert} title="No Tally companies configured">
+                  <span className="mono-sm">Add at least one company below to enable XML push, retry queue, and reverse sync.</span>
+                </Banner>
+              ) : (
+                <>
+                  <div className="row" style={{ gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+                    <Chip k={tally.configured ? "live" : "warn"}>{tally.configured ? "configured" : "legacy env bridge"}</Chip>
+                    <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                      {tally.companies?.length || 0} compan{(tally.companies?.length || 0) === 1 ? "y" : "ies"}
+                      {" · " + (tally.voucher_state_count || 0) + " mirrored vouchers"}
+                      {" · " + (tally.payment_count || 0) + " payments"}
+                      {tally.payment_total ? " (₹" + Number(tally.payment_total).toLocaleString("en-IN") + ")" : ""}
+                    </span>
+                  </div>
+                  {(tally.retry_pending || tally.retry_gave_up) ? (
+                    <Banner kind={tally.retry_gave_up ? "bad" : "warn"} icon={Icon.alert}
+                            title={"Retry queue: " + (tally.retry_pending || 0) + " pending, " + (tally.retry_gave_up || 0) + " gave up"}>
+                      <Btn sm kind="ghost" onClick={onTallyRetryNow} disabled={tallyRetryBusy}>
+                        {tallyRetryBusy ? "replaying…" : <>{Icon.cycle} Retry now</>}
+                      </Btn>
+                    </Banner>
+                  ) : null}
+                  <table className="tbl mono-sm">
+                    <thead><tr><th>Company</th><th>Bridge URL</th><th>Token</th><th>Last health</th><th>GSTIN</th><th></th></tr></thead>
+                    <tbody>
+                      {(tally.companies || []).length === 0 ? (
+                        <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--ink-3)" }}>No companies; using TALLY_BRIDGE_URL env legacy fallback if set.</td></tr>
+                      ) : (tally.companies || []).map((c: any) => (
+                        <tr key={c.id}>
+                          <td>
+                            {c.is_default ? <Chip k="live">default</Chip> : null}{" "}
+                            {c.name}
+                          </td>
+                          <td style={{ color: "var(--ink-3)", fontSize: 11 }}>{c.bridge_url || "—"}</td>
+                          <td>{c.bridge_token_set ? <Chip k="ghost">set</Chip> : <Chip k="warn">none</Chip>}</td>
+                          <td>
+                            {c.last_health_status === "ok" ? <Chip k="live">ok</Chip>
+                             : c.last_health_status === "down" ? <Chip k="bad">down</Chip>
+                             : c.last_health_status === "degraded" ? <Chip k="warn">degraded</Chip>
+                             : <Chip k="ghost">—</Chip>}
+                          </td>
+                          <td>{c.gstin || "—"}</td>
+                          <td>
+                            <Btn sm kind="ghost" onClick={() => onTallyDiagnostics(c.id)} disabled={tallyDiagBusy}>probe</Btn>{" "}
+                            {!c.is_default && <Btn sm kind="ghost" onClick={() => onTallySetDefault(c.id)}>set default</Btn>}{" "}
+                            <Btn sm kind="ghost" onClick={() => onTallyDeleteCompany(c.id)}>remove</Btn>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="row" style={{ marginTop: 10, gap: 8, flexWrap: "wrap" }}>
+                    <Btn sm kind="ghost" onClick={() => { setTally(null); loadTally(); }}>{Icon.cycle} refresh</Btn>
+                    <Btn sm kind="primary" onClick={() => onTallySyncNow(null, false)} disabled={tallySyncBusy}>
+                      {tallySyncBusy ? "syncing…" : "Reverse-sync (delta)"}
+                    </Btn>
+                    <Btn sm kind="ghost" onClick={() => onTallySyncNow(null, true)} disabled={tallySyncBusy}>
+                      Full reverse-sync
+                    </Btn>
+                    <Btn sm kind="ghost" onClick={() => onTallyDiagnostics(undefined)} disabled={tallyDiagBusy}>
+                      {tallyDiagBusy ? "probing…" : <>{Icon.shieldCheck} Probe default bridge</>}
+                    </Btn>
+                  </div>
+                </>
+              )}
+            </Card>
+
+            <Card title="Add Tally company" eyebrow="bridge token encrypted at rest if ANVIL_SECRETS_KEY is set">
+              <form onSubmit={onTallyAddCompany} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)" }}>Company name</span>
+                  <input className="input mono-sm" type="text" required value={tallyCompanyForm.name}
+                         onChange={(ev) => setTallyCompanyForm({ ...tallyCompanyForm, name: ev.target.value })}
+                         placeholder="Anvil Industries Pvt Ltd" />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)" }}>GSTIN (optional)</span>
+                  <input className="input mono-sm" type="text" value={tallyCompanyForm.gstin}
+                         onChange={(ev) => setTallyCompanyForm({ ...tallyCompanyForm, gstin: ev.target.value })} />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4, gridColumn: "1 / -1" }}>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)" }}>Bridge URL</span>
+                  <input className="input mono-sm" type="url" value={tallyCompanyForm.bridge_url}
+                         onChange={(ev) => setTallyCompanyForm({ ...tallyCompanyForm, bridge_url: ev.target.value })}
+                         placeholder="https://tally-bridge.local:8000" />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)" }}>Bridge token (optional)</span>
+                  <input className="input mono-sm" type="password" value={tallyCompanyForm.bridge_token}
+                         onChange={(ev) => setTallyCompanyForm({ ...tallyCompanyForm, bridge_token: ev.target.value })} />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)" }}>Default voucher series</span>
+                  <input className="input mono-sm" type="text" value={tallyCompanyForm.default_voucher_series}
+                         onChange={(ev) => setTallyCompanyForm({ ...tallyCompanyForm, default_voucher_series: ev.target.value })}
+                         placeholder="SO/2026/" />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)" }}>Default sales ledger</span>
+                  <input className="input mono-sm" type="text" value={tallyCompanyForm.default_sales_ledger}
+                         onChange={(ev) => setTallyCompanyForm({ ...tallyCompanyForm, default_sales_ledger: ev.target.value })}
+                         placeholder="Sales (Domestic)" />
+                </label>
+                <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8 }}>
+                  <Btn type="submit" kind="primary" sm disabled={tallyCompanyBusy}>
+                    {tallyCompanyBusy ? "saving…" : <>{Icon.shieldCheck} Add company</>}
+                  </Btn>
+                </div>
+              </form>
+            </Card>
+
+            {tally?.recent_runs?.length > 0 && (
+              <Card title="Recent Tally sync runs">
+                <table className="tbl mono-sm">
+                  <thead><tr><th>Started</th><th>Entity</th><th>Status</th><th>Trigger</th><th className="r">Pulled</th><th className="r">Updated</th><th>Error</th></tr></thead>
+                  <tbody>
+                    {(tally.recent_runs || []).map((r: any, idx: number) => (
+                      <tr key={idx}>
+                        <td>{new Date(r.run_started_at).toLocaleTimeString("en-US")}</td>
+                        <td>{r.entity}</td>
+                        <td>
+                          {r.status === "ok" ? <Chip k="live">ok</Chip>
+                            : r.status === "error" ? <Chip k="bad">error</Chip>
+                            : r.status === "partial" ? <Chip k="warn">partial</Chip>
+                            : <Chip k="ghost">running</Chip>}
+                        </td>
+                        <td>{r.triggered_by}</td>
+                        <td className="r">{r.rows_pulled || 0}</td>
+                        <td className="r">{(r.rows_updated || 0) + (r.rows_inserted || 0)}</td>
+                        <td style={{ color: "var(--rust)", fontSize: 11 }}>{r.error ? String(r.error).slice(0, 100) : ""}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            )}
+
+            {tallyDiag && (
+              <Card title="Tally diagnostics" eyebrow={tallyDiag.company || "default"}>
+                <table className="tbl mono-sm">
+                  <thead><tr><th>Probe</th><th>Status</th><th className="r">HTTP</th><th className="r">Latency</th><th>Detail</th></tr></thead>
+                  <tbody>
+                    {(tallyDiag.probes || []).map((p: any, idx: number) => (
+                      <tr key={idx}>
+                        <td>{p.probe}</td>
+                        <td>{p.ok ? <Chip k="live">ok</Chip> : <Chip k="bad">fail</Chip>}</td>
+                        <td className="r">{p.status}</td>
+                        <td className="r">{p.latency_ms || 0} ms</td>
+                        <td style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                          {p.vouchers_returned !== undefined ? "vouchers=" + p.vouchers_returned : ""}
+                          {p.receipts_returned !== undefined ? "receipts=" + p.receipts_returned : ""}
+                          {p.body && typeof p.body === "object"
+                            ? " " + JSON.stringify(p.body).slice(0, 120) : ""}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            )}
           </>
         )}
 

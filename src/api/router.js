@@ -123,6 +123,11 @@ import tallyMasters            from "./tally/masters.js";
 import tallyPush               from "./tally/push.js";
 import tallyReconcile          from "./tally/reconcile.js";
 import tallyValidate           from "./tally/validate.js";
+import tallyCompanies          from "./tally/companies.js";
+import tallyHealth             from "./tally/health.js";
+import tallyDiagnostics        from "./tally/diagnostics.js";
+import tallyRetry              from "./tally/retry.js";
+import tallySync               from "./tally/sync.js";
 
 import whatsappInbound         from "./whatsapp/inbound.js";
 import whatsappSend            from "./whatsapp/send.js";
@@ -267,6 +272,11 @@ const STATIC_ROUTES = {
   "/tally/push":                    tallyPush,
   "/tally/reconcile":               tallyReconcile,
   "/tally/validate":                tallyValidate,
+  "/tally/companies":               tallyCompanies,
+  "/tally/health":                  tallyHealth,
+  "/tally/diagnostics":             tallyDiagnostics,
+  "/tally/retry":                   tallyRetry,
+  "/tally/sync":                    tallySync,
 
   "/whatsapp/inbound":              whatsappInbound,
   "/whatsapp/send":                 whatsappSend,

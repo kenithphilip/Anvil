@@ -147,22 +147,40 @@ button returns 422 since GSTN refuses cancellations beyond the window.
 
 ## Outbound email (communications.send)
 
-What it does: actually sends customer ack emails, missing-doc requests,
-delivery-conflict drafts.
+What it does: sends customer ack emails, missing-doc requests, AR
+dunning, agent-driven follow-ups, delivery-conflict drafts.
 
-Setup:
-1. Pick a transactional email service (SendGrid, Resend, Postmark, AWS SES).
-2. Build a small relay that accepts `POST /send` with
-   `{ id, to, subject, body }` and posts to your provider's SDK or API.
-3. Set `COMMS_PROVIDER_URL` to that relay.
+Provider abstraction (resolved on every send in this order):
 
-Without the env var, **Send** marks the row `sent` in `communications` so
-the timeline view stays useful, but no email goes out. This is intentional
-for dev environments.
+1. **SendGrid** if `SENDGRID_API_KEY` and `SENDGRID_FROM_EMAIL` are
+   both set. Uses the v3 mail/send REST API directly, no SDK
+   dependency.
+2. **Generic webhook** if `COMMS_PROVIDER_URL` is set. Useful for
+   self-hosted relays or alternative providers (Resend, Postmark,
+   AWS SES wrappers, etc.). The webhook receives
+   `POST { to, subject, body, from }` and is expected to return
+   2xx on success.
+3. **Manual** if neither is configured. The communications row is
+   still flipped to `sent` so the timeline stays useful in dev, but
+   no email is sent.
 
-Smoke test: from a customer ack draft click **Send**. Inbox should receive
-the email; the draft row's `status` should flip to `sent` with
-`sent_at` populated.
+### SendGrid setup
+
+1. Create an API key with **Mail Send** scope in SendGrid.
+2. Verify a sender (single sender or domain authentication).
+3. In Vercel set:
+   - `SENDGRID_API_KEY` = your API key
+   - `SENDGRID_FROM_EMAIL` = the verified sender address
+   - `SENDGRID_FROM_NAME` (optional) = display name on outbound
+     mail (default `Anvil`)
+
+The send endpoint logs the provider name + HTTP status code to the
+communications row's `metadata.provider` and `metadata.provider_status`,
+so failed sends are visible from the activity timeline.
+
+Smoke test: from a customer ack draft click **Send**. Inbox should
+receive the email; the draft row's `status` flips to `sent` with
+`sent_at` populated and `metadata.provider = "sendgrid"`.
 
 ## Inbound email (email.inbound)
 

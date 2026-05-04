@@ -49,18 +49,38 @@ for (let i = 0; i < lines.length; i++) {
   }
 }
 
-// The legacy file ends with `const api = { customers, orders, ... }`.
-// Extract the property->aliasNamespace map. Most are 1:1 (key === ns
-// name). A few rename the namespace (e.g. `eval: evalExt`).
-const apiBlockMatch = clientText.match(/const\s+api\s*=\s*\{([\s\S]*?)\}\s*;\s*\n\s*global\.ObaraBackend/);
+// The legacy file ends with `const api = { customers, orders, ... }`
+// then `global.AnvilBackend = api; global.ObaraBackend = api;`. We
+// walk the `const api = {` block with a brace counter to find the
+// matching `};` (the previous regex anchored on `global.ObaraBackend`
+// immediately after the block, which broke when the brand-cleanup
+// commit inserted a comment between the two).
 const apiAliases = {}; // public namespace key -> internal const name
-if (apiBlockMatch) {
-  const inner = apiBlockMatch[1];
-  for (const part of inner.split(",")) {
-    const t = part.trim();
-    if (!t) continue;
-    const m = t.match(/^([A-Za-z_$][\w$]*)\s*(?::\s*([A-Za-z_$][\w$]*))?$/);
-    if (m) apiAliases[m[1]] = m[2] || m[1];
+{
+  const start = clientText.search(/\bconst\s+api\s*=\s*\{/);
+  if (start >= 0) {
+    const openIdx = clientText.indexOf("{", start);
+    let i = openIdx + 1;
+    let depth = 1;
+    while (i < clientText.length && depth > 0) {
+      const ch = clientText[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      i++;
+    }
+    if (depth === 0) {
+      const inner = clientText.slice(openIdx + 1, i - 1);
+      // Strip line comments + block comments before splitting.
+      const stripped = inner
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "");
+      for (const part of stripped.split(",")) {
+        const t = part.trim();
+        if (!t) continue;
+        const m = t.match(/^([A-Za-z_$][\w$]*)\s*(?::\s*([A-Za-z_$][\w$]*))?$/);
+        if (m) apiAliases[m[1]] = m[2] || m[1];
+      }
+    }
   }
 }
 

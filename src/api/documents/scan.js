@@ -7,39 +7,16 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-import crypto from "node:crypto";
+import { sha256, scanWithClamAV } from "./_lib/scan-runner.js";
 
 const DEFAULT_MAX_TOTAL = 50 * 1024 * 1024;
 const DEFAULT_MAX_FILE = 25 * 1024 * 1024;
 const DEFAULT_MAX_COUNT = 1000;
 const DEFAULT_EXTENSIONS = new Set(["xlsx", "xls", "csv", "tsv", "txt", "json", "jsonl", "pdf", "png", "jpg", "jpeg", "webp"]);
 
-const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
 const extOf = (name) => String(name || "").toLowerCase().split(".").pop() || "";
 
-// ClamAV REST proxy. Set CLAMAV_URL to enable.
-// Expected proxy contract: POST { sha256, filename, content_b64 } -> { infected: bool, virus?: string }.
-// We try the lighter sha256-only check first; if the server signals "send_content", we re-send the bytes.
 const CLAMAV_URL = process.env.CLAMAV_URL || "";
-const CLAMAV_TOKEN = process.env.CLAMAV_TOKEN || "";
-
-async function scanWithClamAV(buffer, filename) {
-  if (!CLAMAV_URL) return { skipped: true };
-  try {
-    const headers = { "Content-Type": "application/json" };
-    if (CLAMAV_TOKEN) headers["Authorization"] = "Bearer " + CLAMAV_TOKEN;
-    const body = { filename, sha256: sha256(buffer), content_b64: buffer.toString("base64") };
-    const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), 12000);
-    const resp = await fetch(CLAMAV_URL.replace(/\/$/, "") + "/scan", { method: "POST", headers, body: JSON.stringify(body), signal: ctrl.signal });
-    clearTimeout(timeout);
-    if (!resp.ok) return { skipped: true, error: "clamav_http_" + resp.status };
-    const data = await resp.json();
-    return { skipped: false, infected: !!data.infected, virus: data.virus || null, raw: data };
-  } catch (err) {
-    return { skipped: true, error: err.message };
-  }
-}
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -64,13 +41,24 @@ export default async function handler(req, res) {
     if (Number(doc.size_bytes || 0) > maxTotal) {
       threats.push({ code: "SIZE_LIMIT_EXCEEDED", detail: "Document size " + doc.size_bytes + " exceeds " + maxTotal });
     }
-    let clamavSummary = { invoked: false, skipped: !CLAMAV_URL, scans: [] };
+    let clamavSummary = { invoked: false, configured: !!CLAMAV_URL, scans: [] };
     const runClam = async (buf, name) => {
-      if (!CLAMAV_URL) return;
       const r = await scanWithClamAV(buf, name);
-      clamavSummary.invoked = true;
-      clamavSummary.scans.push({ name, infected: !!r.infected, virus: r.virus || null, error: r.error || null, skipped: !!r.skipped });
-      if (r && r.infected) threats.push({ code: "MALWARE_DETECTED", detail: name + " :: " + (r.virus || "unknown") });
+      clamavSummary.scans.push({
+        name,
+        invoked: !!r.invoked,
+        infected: !!r.infected,
+        virus: r.virus || null,
+        reason: r.reason || null,
+      });
+      if (r.invoked) clamavSummary.invoked = true;
+      if (r && r.invoked && r.infected) threats.push({ code: "MALWARE_DETECTED", detail: name + " :: " + (r.virus || "unknown") });
+      if (!r.invoked && CLAMAV_URL) {
+        // AV is configured but we could not reach it. Surface as a warning,
+        // never a rejection: we don't want a flaky AV sidecar to bring intake
+        // down. The dock + diagnostics already report the integration state.
+        threats.push({ code: "AV_PROBE_FAILED", detail: name + " :: " + r.reason });
+      }
     };
     if (ext !== "zip") {
       try {
@@ -82,7 +70,9 @@ export default async function handler(req, res) {
             await runClam(buf, doc.filename);
           }
         }
-      } catch (e) { clamavSummary.scans.push({ name: doc.filename, error: e.message, skipped: true }); }
+      } catch (e) {
+        clamavSummary.scans.push({ name: doc.filename, invoked: false, reason: e.message });
+      }
     }
     if (ext === "zip") {
       // Need JSZip for nested inspection. Lazy require so the function still works
@@ -119,7 +109,16 @@ export default async function handler(req, res) {
         if (totalUncompressed > maxTotal * 4) threats.push({ code: "ZIP_BOMB_RISK", detail: "Uncompressed size " + totalUncompressed + " is more than 4x cap" });
       }
     }
-    const status = threats.length === 0 ? "clean" : threats.some((t) => ["NESTED_ZIP", "ZIP_BOMB_RISK", "EXECUTABLE_DETECTED", "SIZE_LIMIT_EXCEEDED", "MALWARE_DETECTED"].includes(t.code)) ? "rejected" : "warn";
+    // Hard-rejection codes flip the doc to "rejected". Soft codes
+    // (extension warning, macro hint, AV reachability issues, file count
+    // overrun) only raise it to "warn"; the doc still moves through OCR.
+    const HARD_REJECT = new Set([
+      "NESTED_ZIP", "ZIP_BOMB_RISK", "EXECUTABLE_DETECTED",
+      "SIZE_LIMIT_EXCEEDED", "MALWARE_DETECTED",
+    ]);
+    const status = threats.length === 0 ? "clean"
+      : threats.some((t) => HARD_REJECT.has(t.code)) ? "rejected"
+      : "warn";
     const totalSize = innerFiles.reduce((s, f) => s + f.size, 0);
     await svc.from("zip_scans").insert({
       tenant_id: ctx.tenantId,

@@ -25,6 +25,19 @@ export default async function handler(req, res) {
   try {
     const ctx = await resolveContext(req);
     requirePermission(ctx, "approve");
+    // Refuse early when the bridge is not configured. Previously we wrote
+    // a "failed" tally_voucher_records row with the not-configured error,
+    // which trained users to ignore real failures because the queue was
+    // full of misconfiguration noise. The shell already exposes the
+    // integration state via /api/health; the UI disables the button.
+    if (!BRIDGE_URL) {
+      return json(res, 409, {
+        error: {
+          code: "BRIDGE_NOT_CONFIGURED",
+          message: "TALLY_BRIDGE_URL is not set. Configure the bridge in Vercel env, see docs/INTEGRATIONS.md.",
+        },
+      });
+    }
     const body = await readBody(req);
     if (!body || !body.orderId || !body.tallyXml) return json(res, 400, { error: { message: "orderId and tallyXml required" } });
     const svc = serviceClient();
@@ -45,21 +58,17 @@ export default async function handler(req, res) {
 
     let bridgeResponse = null;
     let bridgeError = null;
-    if (BRIDGE_URL) {
-      try {
-        const resp = await fetch(BRIDGE_URL, {
-          method: "POST",
-          headers: { "Content-Type": "text/xml", ...(BRIDGE_TOKEN ? { Authorization: "Bearer " + BRIDGE_TOKEN } : {}) },
-          body: body.tallyXml,
-        });
-        const text = await resp.text();
-        bridgeResponse = { status: resp.status, body: text.slice(0, 10000) };
-        if (!resp.ok) bridgeError = "Bridge returned " + resp.status;
-      } catch (err) {
-        bridgeError = err.message;
-      }
-    } else {
-      bridgeError = "TALLY_BRIDGE_URL not configured";
+    try {
+      const resp = await fetch(BRIDGE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/xml", ...(BRIDGE_TOKEN ? { Authorization: "Bearer " + BRIDGE_TOKEN } : {}) },
+        body: body.tallyXml,
+      });
+      const text = await resp.text();
+      bridgeResponse = { status: resp.status, body: text.slice(0, 10000) };
+      if (!resp.ok) bridgeError = "Bridge returned " + resp.status;
+    } catch (err) {
+      bridgeError = err.message;
     }
 
     const status = bridgeError ? "failed" : "exported";

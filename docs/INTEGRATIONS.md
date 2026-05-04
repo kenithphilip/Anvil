@@ -99,17 +99,23 @@ on the same network because Tally's listener is not authenticated.
 Setup:
 1. On a machine that can reach Tally, run a bridge that:
    - Listens on a public-or-VPN URL.
-   - Accepts `POST /push` with our voucher payload as JSON.
-   - Translates to Tally XML and POSTs to `http://tally-host:9000`.
-   - Returns Tally's response and a `body` field with the raw XML so we
-     can extract the voucher id.
+   - Accepts `POST` with `Content-Type: text/xml` at the URL root (the
+     value you set `TALLY_BRIDGE_URL` to). The body is a fully-formed
+     Tally ENVELOPE document, ready to forward.
+   - Forwards the bytes to `http://tally-host:9000` and returns Tally's
+     raw XML response back to us in the response body. We slice the
+     first 10000 bytes and store it on
+     `tally_voucher_records.validation` so we can extract `<VOUCHERID>`
+     and surface the round-trip in the UI.
    - Validates a bearer token if `TALLY_BRIDGE_TOKEN` is set.
 2. Set `TALLY_BRIDGE_URL` and `TALLY_BRIDGE_TOKEN` in Vercel.
 
 Smoke test: approve an order, click **Push to Tally**. The order's
 `tally_status` should flip to `exported` and a row should appear in
-`tally_voucher_records` with the `tally_voucher_id` populated. Without the
-bridge, the row gets `failed` status with the error string.
+`tally_voucher_records` with the `tally_voucher_id` populated. Without
+the bridge, the API returns `409 BRIDGE_NOT_CONFIGURED` and the UI
+disables the push button with a "Tally bridge not configured" banner;
+no failed rows accumulate.
 
 The idempotency key is `(customer_gstin, po_number, payload_hash)`. Network
 retries that re-push the same approved payload are safe.

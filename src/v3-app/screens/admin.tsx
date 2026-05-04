@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { fmtINRShort, useFetch } from "../lib/helpers";
+import { ageLabel, fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KV, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
@@ -120,6 +120,13 @@ const WiredAdminCRUD = () => {
   const [busy, setBusy] = u(false);
   const [flash, setFlash] = u(null);
   const [memberForm, setMemberForm] = u({ email: "", role: "sales_engineer" });
+  // After a successful invite, hold onto the action_link so the admin can
+  // copy it and forward it manually when SMTP is misconfigured. Cleared on
+  // any subsequent flash or form change.
+  const [inviteLink, setInviteLink] = u<string | null>(null);
+  // Confirm-revoke dialog. We replaced window.confirm() so the modal
+  // matches the rest of the design system.
+  const [revokeFor, setRevokeFor] = u<{ user_id: string; email: string } | null>(null);
   const [holidayForm, setHolidayForm] = u({ country: "IN", date: "", name: "" });
   const [leadTimeForm, setLeadTimeForm] = u({ type: "supplier", entity_id: "", days: "", notes: "" });
   const [threshForm, setThreshForm] = u(null);
@@ -214,17 +221,45 @@ const WiredAdminCRUD = () => {
   };
 
   // ---------- Members ----------
+  // RFC 5322 simplified: any non-space, @, any non-space, dot, any non-space.
+  // Good enough to catch typos without rejecting valid edge cases.
+  const isValidEmail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+
   const onAddMember = async (ev) => {
     ev.preventDefault();
-    if (!memberForm.email) return flashErr(new Error("Email required"));
-    setBusy(true); setFlash(null);
+    const email = memberForm.email.trim();
+    if (!isValidEmail(email)) return flashErr(new Error("Enter a valid email address"));
+    setBusy(true); setFlash(null); setInviteLink(null);
     try {
-      await adminCrudFetch("/api/admin/members", { method: "POST", body: { email: memberForm.email, role: memberForm.role } });
-      flashOk(`Invited ${memberForm.email}`);
+      const resp = await adminCrudFetch("/api/admin/members", { method: "POST", body: { email, role: memberForm.role } });
+      flashOk(`Invited ${email}`);
+      setInviteLink(resp?.action_link || null);
       setMemberForm({ email: "", role: "sales_engineer" });
       members.reload();
     } catch (err) { flashErr(err); }
     finally { setBusy(false); }
+  };
+
+  const onResendInvite = async (email: string) => {
+    setBusy(true); setFlash(null); setInviteLink(null);
+    try {
+      const resp = await adminCrudFetch("/api/admin/members", { method: "POST", body: { email, resend: true } });
+      flashOk(`Invite link regenerated for ${email}`);
+      setInviteLink(resp?.action_link || null);
+    } catch (err) { flashErr(err); }
+    finally { setBusy(false); }
+  };
+
+  const onCopyInviteLink = async () => {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      flashOk("Invite link copied to clipboard");
+    } catch (_) {
+      // Clipboard API can be blocked (insecure context). Fall back to a
+      // visible textarea so the admin can copy manually.
+      flashErr(new Error("Could not access clipboard. Select the link below and copy it manually."));
+    }
   };
 
   const onChangeRole = async (userId, role) => {
@@ -237,12 +272,13 @@ const WiredAdminCRUD = () => {
     finally { setBusy(false); }
   };
 
-  const onRemoveMember = async (userId) => {
-    if (!confirm("Remove this member?")) return;
+  const onRemoveMember = async () => {
+    if (!revokeFor) return;
     setBusy(true); setFlash(null);
     try {
-      await adminCrudFetch(`/api/admin/members?user_id=${encodeURIComponent(userId)}`, { method: "DELETE" });
-      flashOk("Member removed");
+      await adminCrudFetch(`/api/admin/members?user_id=${encodeURIComponent(revokeFor.user_id)}`, { method: "DELETE" });
+      flashOk(`Removed ${revokeFor.email}`);
+      setRevokeFor(null);
       members.reload();
     } catch (err) { flashErr(err); }
     finally { setBusy(false); }
@@ -494,22 +530,48 @@ const WiredAdminCRUD = () => {
                 <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>No members yet.</div>
               ) : (
                 <table className="tbl">
-                  <thead><tr><th>Email</th><th>Role</th><th>Joined</th><th style={{ width: 220 }}></th></tr></thead>
+                  <thead><tr>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Last sign-in</th>
+                    <th>Joined</th>
+                    <th style={{ width: 240 }}></th>
+                  </tr></thead>
                   <tbody>
-                    {memberRows.map((m) => (
-                      <tr key={m.user_id || m.id || m.email}>
-                        <td className="mono-sm">{m.email || m.user_email || "—"}</td>
-                        <td>
-                          <select className="input" value={m.role || "viewer"}
-                                  onChange={(ev) => onChangeRole(m.user_id || m.id, ev.target.value)}
-                                  disabled={busy} style={{ height: 26 }}>
-                            {ADMIN_ROLES.map((r) => <option key={r} value={r}>{r.replace(/_/g, " ")}</option>)}
-                          </select>
-                        </td>
-                        <td className="mono-sm">{m.joined_at ? new Date(m.joined_at).toLocaleDateString("en-IN") : "—"}</td>
-                        <td><Btn sm kind="ghost" disabled={busy} onClick={() => onRemoveMember(m.user_id || m.id)}>remove</Btn></td>
-                      </tr>
-                    ))}
+                    {memberRows.map((m) => {
+                      const lastSignIn = m.last_sign_in_at || null;
+                      const pending = !lastSignIn;
+                      const email = m.email || m.user_email || "—";
+                      const userId = m.user_id || m.id;
+                      return (
+                        <tr key={userId || email}>
+                          <td className="mono-sm">{email}</td>
+                          <td>
+                            <select className="input" value={m.role || "viewer"}
+                                    onChange={(ev) => onChangeRole(userId, ev.target.value)}
+                                    disabled={busy} style={{ height: 26 }}>
+                              {ADMIN_ROLES.map((r) => <option key={r} value={r}>{r.replace(/_/g, " ")}</option>)}
+                            </select>
+                          </td>
+                          <td>
+                            {pending
+                              ? <Chip k="ghost">pending</Chip>
+                              : <Chip k="live">active</Chip>}
+                          </td>
+                          <td className="mono-sm">{lastSignIn ? ageLabel(lastSignIn) : "—"}</td>
+                          <td className="mono-sm">{(m.joined_at || m.created_at) ? new Date(m.joined_at || m.created_at).toLocaleDateString("en-IN") : "—"}</td>
+                          <td>
+                            <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                              {pending && email !== "—" && (
+                                <Btn sm kind="ghost" disabled={busy} onClick={() => onResendInvite(email)}>resend</Btn>
+                              )}
+                              <Btn sm kind="ghost" disabled={busy || !userId} onClick={() => setRevokeFor({ user_id: userId, email })}>remove</Btn>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
@@ -530,7 +592,38 @@ const WiredAdminCRUD = () => {
                 </label>
                 <Btn type="submit" kind="primary" sm disabled={busy}>{busy ? "inviting…" : <>{Icon.plus} invite</>}</Btn>
               </form>
+              {inviteLink && (
+                <div style={{ marginTop: 12, padding: 10, background: "var(--paper-3)", borderRadius: 6, border: "1px solid var(--hairline-2)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+                    <span className="mono-sm" style={{ color: "var(--ink-2)" }}>
+                      Invite link (forward manually if email did not arrive):
+                    </span>
+                    <Btn sm kind="ghost" onClick={onCopyInviteLink}>copy</Btn>
+                  </div>
+                  <textarea readOnly className="input mono-sm" value={inviteLink}
+                            style={{ width: "100%", minHeight: 56, resize: "vertical", fontSize: 11 }} />
+                </div>
+              )}
             </Card>
+
+            {revokeFor && (
+              <div className="modal-backdrop" onClick={() => !busy && setRevokeFor(null)}>
+                <div className="modal" onClick={(ev) => ev.stopPropagation()}
+                     role="dialog" aria-modal="true" aria-labelledby="revoke-title" style={{ maxWidth: 420 }}>
+                  <div className="modal-h"><span id="revoke-title">Remove member</span></div>
+                  <div className="modal-body">
+                    <p className="body" style={{ margin: 0 }}>
+                      Remove <b>{revokeFor.email}</b> from this tenant? They will lose access immediately.
+                      Their auth account is preserved; you can re-invite them later.
+                    </p>
+                  </div>
+                  <div className="modal-f" style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                    <Btn sm kind="ghost" onClick={() => setRevokeFor(null)} disabled={busy}>cancel</Btn>
+                    <Btn sm kind="primary" onClick={onRemoveMember} disabled={busy}>{busy ? "removing…" : "remove"}</Btn>
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
 

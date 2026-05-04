@@ -3,6 +3,7 @@ import { useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
+import { useTallyBridgeStatus } from "../lib/tally-status";
 
 // ============================================================
 // ANVIL v3 — wired Tally · masters
@@ -175,6 +176,7 @@ const renderMastersTable = (type, rows) => {
 
 const WiredTallyMasters = () => {
   const [active, setActive] = useState("stock_item");
+  const bridge = useTallyBridgeStatus();
 
   // Fetch each master type once for KPI counts.
   const stock    = useFetch(() => ObaraBackend?.tally?.listMasters?.("stock_item")   || Promise.resolve({ masters: [] }), []);
@@ -216,6 +218,15 @@ const WiredTallyMasters = () => {
       />
 
       <div className="ws-content">
+        {!bridge.loading && !bridge.configured && (
+          <Banner kind="warn" icon={Icon.alert} title="Tally bridge not configured">
+            <span className="mono-sm">
+              The masters list below shows what was last synced from Tally. To trigger a fresh
+              sync, set <code>TALLY_BRIDGE_URL</code> and <code>TALLY_BRIDGE_TOKEN</code> in
+              Vercel env.
+            </span>
+          </Banner>
+        )}
         {error ? (
           <Banner kind="bad" icon={Icon.alert} title="Failed to load Tally masters" action={<Btn sm onClick={reloadAll}>Retry</Btn>}>
             <span className="mono-sm">{String(error.message || error)}</span>

@@ -4,6 +4,7 @@ import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { tallyOrderRows, shortHash } from "../lib/tally";
+import { useTallyBridgeStatus } from "../lib/tally-status";
 
 // ============================================================
 // ANVIL v3 — wired Tally · reconciliation
@@ -16,6 +17,7 @@ const WiredTallyReconcile = () => {
   const exported = useFetch(() => ObaraBackend?.orders?.list?.({ status: "EXPORTED_TO_TALLY", limit: 200 }) || Promise.resolve({ orders: [] }), []);
   const [busyId, setBusyId] = useState(null);
   const [flash, setFlash]   = useState(null);
+  const bridge = useTallyBridgeStatus();
 
   const rows = tallyOrderRows(exported.data);
 
@@ -57,6 +59,15 @@ const WiredTallyReconcile = () => {
       />
 
       <div className="ws-content">
+        {!bridge.loading && !bridge.configured && (
+          <Banner kind="warn" icon={Icon.alert} title="Tally bridge not configured">
+            <span className="mono-sm">
+              Reconciliation works without the bridge: it updates our records of what is in
+              Tally based on what you mark here. To push fresh exports, set
+              <code> TALLY_BRIDGE_URL</code> and <code>TALLY_BRIDGE_TOKEN</code> in Vercel env.
+            </span>
+          </Banner>
+        )}
         {flash && (
           <Banner kind={flash.kind} icon={flash.kind === "bad" ? Icon.alert : Icon.check} title={flash.kind === "bad" ? "Reconcile failed" : "Reconcile complete"}>
             <span className="mono-sm">{flash.msg}</span>

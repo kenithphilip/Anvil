@@ -5,6 +5,7 @@ import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 import { tallyOrderRows, shortHash } from "../lib/tally";
+import { useTallyBridgeStatus } from "../lib/tally-status";
 
 // ============================================================
 // ANVIL v3 — wired Tally · push queue
@@ -48,6 +49,7 @@ const WiredTallyPush = () => {
   const failed = queueRows.concat(pushedRows).filter((o) => o.status === "FAILED_TALLY_IMPORT" || o.tally_status === "failed");
 
   const canPush  = !!(RBAC && RBAC.canDo && RBAC.canDo("tally.push"));
+  const bridge   = useTallyBridgeStatus();
 
   const handlePush = async (order) => {
     if (!canPush) return;
@@ -77,6 +79,15 @@ const WiredTallyPush = () => {
       />
 
       <div className="ws-content">
+        {!bridge.loading && !bridge.configured && (
+          <Banner kind="warn" icon={Icon.alert} title="Tally bridge not configured">
+            <span className="mono-sm">
+              Set <code>TALLY_BRIDGE_URL</code> and <code>TALLY_BRIDGE_TOKEN</code> in Vercel
+              env to enable push. Reconcile and Masters tabs still work without the bridge.
+            </span>
+          </Banner>
+        )}
+
         {!canPush && (
           <Banner kind="warn" icon={Icon.lock} title="Push permission required">
             <span className="mono-sm">Your role cannot push to Tally. Contact an admin or finance manager to enable <b>tally.push</b>.</span>
@@ -132,7 +143,10 @@ const WiredTallyPush = () => {
                       <td><Chip k={st.k}>{st.label}</Chip></td>
                       <td className="r mono">{ageLabel(o.updated_at || o.created_at)}</td>
                       <td>
-                        <Btn sm kind="primary" disabled={!canPush || busyId === o.id} onClick={() => handlePush(o)}>
+                        <Btn sm kind="primary"
+                             disabled={!canPush || busyId === o.id || !bridge.configured}
+                             title={!bridge.configured ? "Tally bridge not configured" : undefined}
+                             onClick={() => handlePush(o)}>
                           {busyId === o.id ? "pushing…" : <>push {Icon.send}</>}
                         </Btn>
                       </td>

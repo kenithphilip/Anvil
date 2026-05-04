@@ -55,7 +55,7 @@ const validateMasters = async (svc, tenantId, so) => {
 
 const tryRemoteDryRun = async (xml) => {
   const url = process.env.TALLY_BRIDGE_URL;
-  if (!url || !xml) return null;
+  if (!url || !xml) return { skipped: true, reason: "not_configured" };
   const headers = { "Content-Type": "text/xml" };
   if (process.env.TALLY_BRIDGE_TOKEN) headers["Authorization"] = "Bearer " + process.env.TALLY_BRIDGE_TOKEN;
   try {

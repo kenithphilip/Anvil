@@ -45,6 +45,18 @@ export default async function handler(req, res) {
       requirePermission(ctx, "admin");
       const body = await readBody(req);
       if (!body.email) return json(res, 400, { error: { message: "email required" } });
+
+      // Resend path: regenerate an invite link without touching tenant_members.
+      // Used when the original invite email never landed (SMTP misconfigured)
+      // and an admin needs to copy-paste the magic link to the invitee.
+      if (body.resend === true) {
+        const link = await svc.auth.admin.generateLink({ type: "invite", email: body.email });
+        if (link.error) throw new Error(link.error.message);
+        const action_link = link.data && link.data.properties && link.data.properties.action_link;
+        await recordAudit(ctx, { action: "member_invite_resend", objectType: "tenant_members", objectId: body.email, after: { email: body.email } });
+        return json(res, 200, { resent: true, action_link: action_link || null });
+      }
+
       const role = ALLOWED_ROLES.has(body.role) ? body.role : "sales_engineer";
       const invite = await svc.auth.admin.inviteUserByEmail(body.email);
       if (invite.error) throw new Error(invite.error.message);
@@ -53,7 +65,15 @@ export default async function handler(req, res) {
       const upsert = await svc.from("tenant_members").upsert({ tenant_id: ctx.tenantId, user_id: userId, role }, { onConflict: "tenant_id,user_id" }).select("*").single();
       if (upsert.error) throw new Error(upsert.error.message);
       await recordAudit(ctx, { action: "member_invite", objectType: "tenant_members", objectId: userId, after: { email: body.email, role } });
-      return json(res, 200, { member: { user_id: userId, email: body.email, role, created_at: upsert.data.created_at } });
+      // Surface the action_link so the UI can offer a copy-link fallback when
+      // SMTP isn't configured. Supabase returns it on the invite payload when
+      // the project is configured to surface it (which is always for the
+      // service-role admin path).
+      const action_link = invite.data && invite.data.properties && invite.data.properties.action_link;
+      return json(res, 200, {
+        member: { user_id: userId, email: body.email, role, created_at: upsert.data.created_at },
+        action_link: action_link || null,
+      });
     }
     if (req.method === "PATCH") {
       requirePermission(ctx, "admin");

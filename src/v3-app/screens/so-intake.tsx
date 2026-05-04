@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Banner, Btn, Card, Dot, KV, Steps, WSTitle } from "../lib/primitives";
+import { Banner, Btn, Card, Chip, Dot, KV, Steps, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 
@@ -27,6 +27,19 @@ const WiredSOIntake = () => {
   const [err, setErr] = u(null);
   const fileRef = r(null);
 
+  // Read shell health to decide which doc-pipeline guarantees are real
+  // versus aspirational. Without it the pre-flight checklist below was
+  // a hardcoded set of green dots regardless of actual integration state.
+  const [health, setHealth] = u<{ integrations?: Array<{ id: string; configured: boolean }> } | null>(null);
+  e(() => {
+    let cancelled = false;
+    Promise.resolve(ObaraBackend?.health?.()).then((h) => {
+      if (!cancelled && h) setHealth(h);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+  const clamavConfigured = !!health?.integrations?.find((i: any) => i.id === "clamav")?.configured;
+
   e(() => {
     let cancelled = false;
     Promise.resolve(ObaraBackend?.customers?.list?.() || Promise.resolve({ customers: [] }))
@@ -45,7 +58,7 @@ const WiredSOIntake = () => {
     try {
       const meta = await ObaraBackend?.documents?.upload?.(file, "purchase_order");
       if (!meta || !meta.documentId) throw new Error("Upload returned no document id");
-      setDoc({ id: meta.documentId, filename: file.name, size: file.size });
+      setDoc({ id: meta.documentId, filename: file.name, size: file.size, scan: meta.scan || null });
       setBusy(null);
     } catch (e2) {
       setErr(String(e2.message || e2));
@@ -158,6 +171,21 @@ const WiredSOIntake = () => {
                   <>
                     <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)" }}>{doc.filename}</div>
                     <div className="mono-sm" style={{ marginTop: 4 }}>document id {doc.id.slice(0, 8)} · {(doc.size / 1024).toFixed(1)} KB</div>
+                    {doc.scan && (
+                      <div style={{ marginTop: 8, display: "flex", justifyContent: "center" }}>
+                        {doc.scan.status === "rejected" ? (
+                          <Chip k="bad">quarantined · {(doc.scan.threats?.[0]?.code) || "rejected"}</Chip>
+                        ) : doc.scan.status === "warn" ? (
+                          <Chip k="warn">{doc.scan.clamav?.invoked ? "scanned · with warnings" : "unscanned"}</Chip>
+                        ) : doc.scan.status === "clean" ? (
+                          doc.scan.clamav?.invoked
+                            ? <Chip k="live">scanned · clean</Chip>
+                            : <Chip k="ghost">unscanned · AV not configured</Chip>
+                        ) : doc.scan.status === "scan_error" ? (
+                          <Chip k="warn">scan failed · {String(doc.scan.error).slice(0, 32)}</Chip>
+                        ) : null}
+                      </div>
+                    )}
                     <Btn sm kind="ghost" style={{ marginTop: 12 }} onClick={() => setDoc(null)}>{Icon.x} remove</Btn>
                   </>
                 ) : (
@@ -182,7 +210,9 @@ const WiredSOIntake = () => {
               <div className="divider" />
               <div className="mono-sm">
                 <Dot k="good" /> ZIP guard · 100 MB cap · no recursion<br />
-                <Dot k="good" /> ClamAV · scanned before parse<br />
+                {clamavConfigured
+                  ? <><Dot k="good" /> ClamAV · scanned before parse<br /></>
+                  : <><Dot k="warn" /> ClamAV · not configured · uploads pass through<br /></>}
                 <Dot k="good" /> PDF · max 80 pages<br />
                 <Dot k="info" /> XLSX · max 12 sheets, parsed first then OCR
               </div>

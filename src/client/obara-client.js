@@ -107,15 +107,39 @@
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });
 
   const documents = {
-    upload: async (file, classification) => {
+    // Default flow: request signed URL, PUT the file, then trigger a scan
+    // and return the verdict alongside the upload metadata. Pass
+    // `{ autoScan: false }` to opt out (e.g. bulk imports where the
+    // caller will scan in batches).
+    upload: async (file, classification, options) => {
+      const opts = options || {};
       const meta = await apiFetch("/api/documents/upload", {
         method: "POST",
         body: { filename: file.name, mime_type: file.type, size_bytes: file.size, classification: classification || null },
       });
-      const upstream = await fetch(meta.uploadUrl, { method: "PUT", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file });
+      const upstream = await fetch(meta.uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+      });
       if (!upstream.ok) throw new Error("Upload failed: " + upstream.status);
-      return meta;
+      let scan = null;
+      if (opts.autoScan !== false) {
+        try {
+          scan = await apiFetch("/api/documents/scan", {
+            method: "POST",
+            body: { documentId: meta.documentId },
+          });
+        } catch (err) {
+          // Scan failure does not undo the upload. The doc row exists; the
+          // caller can re-trigger /api/documents/scan later. We surface
+          // the error inline so the UI can flag the unscanned state.
+          scan = { error: err.message || String(err), status: "scan_error" };
+        }
+      }
+      return { ...meta, scan };
     },
+    scan: async (documentId) => apiFetch("/api/documents/scan", { method: "POST", body: { documentId } }),
     fetch: async (id) => apiFetch("/api/documents/" + id),
     remove: async (id) => apiFetch("/api/documents/" + id, { method: "DELETE" }),
   };
@@ -373,6 +397,7 @@
     deleteLeadTime: async (type, id) => apiFetch("/api/admin/lead_times?type=" + encodeURIComponent(type) + "&id=" + encodeURIComponent(id), { method: "DELETE" }),
     listMembers: async () => apiFetch("/api/admin/members"),
     inviteMember: async (payload) => apiFetch("/api/admin/members", { method: "POST", body: payload }),
+    resendInvite: async (email) => apiFetch("/api/admin/members", { method: "POST", body: { email, resend: true } }),
     updateMemberRole: async (payload) => apiFetch("/api/admin/members", { method: "PATCH", body: payload }),
     revokeMember: async (userId) => apiFetch("/api/admin/members?user_id=" + encodeURIComponent(userId), { method: "DELETE" }),
     listInventory: async (params) => {

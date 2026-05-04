@@ -1224,3 +1224,140 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   text-decoration: none;
 }
 .skip-link:focus { top: 0; }
+
+/* Mobile shell. Engaged when viewport width < 768px (see
+   src/v3-app/lib/viewport.ts). Replaces the desktop sidebar
+   layout with a top header + main + bottom tab bar, plus a
+   full-screen More drawer for non-primary nav items. */
+
+.app-mobile {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100dvh;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.app-mobile-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--paper);
+}
+.app-mobile-head .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.app-mobile-crumb {
+  flex: 1;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  text-transform: capitalize;
+}
+.app-mobile-id {
+  width: 32px; height: 32px;
+  border-radius: 999px;
+  background: var(--paper-3);
+  border: 1px solid var(--hairline);
+  display: grid; place-items: center;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.app-mobile-main {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px 12px 16px;
+}
+
+.app-mobile-tabbar {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  border-top: 1px solid var(--hairline);
+  background: var(--paper);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.app-mobile-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 4px;
+  background: transparent;
+  border: 0;
+  color: var(--ink-3);
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 56px;          /* iOS HIG / Material 44px+ touch target */
+}
+.app-mobile-tab.active { color: var(--ink); }
+.app-mobile-tab-icon { display: grid; place-items: center; }
+.app-mobile-tab.active .app-mobile-tab-icon { color: var(--accent-2); }
+.app-mobile-tab-label { white-space: nowrap; }
+
+.app-mobile-more {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.app-mobile-more-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+.app-mobile-more-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0 80px;        /* leave room for the tab bar */
+}
+.app-mobile-more-group {
+  padding: 8px 0;
+}
+.app-mobile-more-label {
+  padding: 8px 16px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-4);
+}
+.app-mobile-more-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 16px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--hairline-2);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  min-height: 48px;
+}
+.app-mobile-more-item:hover,
+.app-mobile-more-item:focus,
+.app-mobile-more-item.active { background: var(--paper-2); }
+.app-mobile-more-item .nav-badge {
+  margin-left: auto;
+}
+
+@media (min-width: 768px) {
+  /* Defensive: if MobileShell is rendered above the breakpoint
+     (e.g. test harness), let it still scroll correctly. */
+  .app-mobile { height: auto; min-height: 100vh; }
+}

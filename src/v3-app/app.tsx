@@ -6,6 +6,8 @@
 
 import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Shell } from "./components/Shell";
+import { MobileShell } from "./components/MobileShell";
+import { useViewport } from "./lib/viewport";
 import { CmdK } from "./components/CmdK";
 import { ThreadDrawer } from "./components/ThreadDrawer";
 import { Card, WSTitle } from "./lib/primitives";
@@ -245,36 +247,54 @@ export default function App() {
   const Active = resolver({ params: readHashParams(), role });
 
   const telemetry = useShellTelemetry();
+  const viewport = useViewport();
 
   return (
     <>
       <a className="skip-link" href="#main">Skip to main content</a>
-      <Shell
-        route={route}
-        onRoute={onRoute}
-        role={roleObj}
-        roleOptions={buildRoleOptions()}
-        onRoleChange={(roleId) => {
-          // The Shell hands back the raw id string; cast to the
-          // canonical Role union here. RBAC.setRole validates against
-          // ROLES at runtime so an unknown id throws.
-          RBAC.setRole(roleId as (typeof RBAC.ROLES)[number]);
-        }}
-        tenant={tenant}
-        onTenant={() => onRoute("connect")}
-        onCmdK={() => setCmdk(true)}
-        onThread={() => setThread(true)}
-        crumb={crumbFor(route)}
-        nav={navFiltered}
-        telemetry={telemetry}
-      >
-        <ThemeBar />
-        <ErrorBoundary key={route}>
-          <Suspense fallback={<Loading label={route} />}>
-            {Active ? <Active /> : <NotFound id={route} />}
-          </Suspense>
-        </ErrorBoundary>
-      </Shell>
+      {viewport.isMobile ? (
+        <MobileShell
+          route={route}
+          onRoute={onRoute}
+          role={roleObj}
+          nav={navFiltered}
+          crumb={crumbFor(route)}
+          telemetry={telemetry}
+        >
+          <ErrorBoundary key={route}>
+            <Suspense fallback={<Loading label={route} />}>
+              {Active ? <Active /> : <NotFound id={route} />}
+            </Suspense>
+          </ErrorBoundary>
+        </MobileShell>
+      ) : (
+        <Shell
+          route={route}
+          onRoute={onRoute}
+          role={roleObj}
+          roleOptions={buildRoleOptions()}
+          onRoleChange={(roleId) => {
+            // The Shell hands back the raw id string; cast to the
+            // canonical Role union here. RBAC.setRole validates against
+            // ROLES at runtime so an unknown id throws.
+            RBAC.setRole(roleId as (typeof RBAC.ROLES)[number]);
+          }}
+          tenant={tenant}
+          onTenant={() => onRoute("connect")}
+          onCmdK={() => setCmdk(true)}
+          onThread={() => setThread(true)}
+          crumb={crumbFor(route)}
+          nav={navFiltered}
+          telemetry={telemetry}
+        >
+          <ThemeBar />
+          <ErrorBoundary key={route}>
+            <Suspense fallback={<Loading label={route} />}>
+              {Active ? <Active /> : <NotFound id={route} />}
+            </Suspense>
+          </ErrorBoundary>
+        </Shell>
+      )}
       <CmdK open={cmdkOpen} onClose={() => setCmdk(false)} onJump={(id) => { onRoute(id); setCmdk(false); }} />
       <ThreadDrawer open={threadOpen} onClose={() => setThread(false)} />
       <ToastStack />

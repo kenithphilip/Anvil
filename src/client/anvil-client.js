@@ -319,6 +319,25 @@
   const d365 = erpFactory("d365");
   const acumatica = erpFactory("acumatica");
 
+  const razorpay = {
+    status:   async () => apiFetch("/api/billing/razorpay/status"),
+    connect:  async (payload) => apiFetch("/api/billing/razorpay/connect", { method: "POST", body: payload }),
+    checkout: async (invoiceId) => apiFetch("/api/billing/razorpay/checkout", { method: "POST", body: { invoice_id: invoiceId } }),
+  };
+
+  const push = {
+    subscribe:   async (payload) => apiFetch("/api/push/subscribe", { method: "POST", body: payload }),
+    unsubscribe: async (payload) => apiFetch("/api/push/unsubscribe", { method: "POST", body: payload || {} }),
+    send:        async (payload) => apiFetch("/api/push/send", { method: "POST", body: payload }),
+  };
+
+  const portal = {
+    listTokens:   async () => apiFetch("/api/portal/tokens"),
+    createToken:  async (payload) => apiFetch("/api/portal/tokens", { method: "POST", body: payload }),
+    revokeToken:  async (id) => apiFetch("/api/portal/tokens?id=" + encodeURIComponent(id), { method: "PATCH", body: { revoke: true } }),
+    deleteToken:  async (id) => apiFetch("/api/portal/tokens?id=" + encodeURIComponent(id), { method: "DELETE" }),
+  };
+
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });
 
   const documents = {
@@ -821,6 +840,9 @@
     sap,
     d365,
     acumatica,
+    razorpay,
+    push,
+    portal,
     claudeCall,
     documents,
     orders,

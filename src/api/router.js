@@ -171,6 +171,19 @@ import acuRetry                from "./acumatica/retry.js";
 import acuDiagnostics          from "./acumatica/diagnostics.js";
 import acuFieldMap             from "./acumatica/field_map.js";
 
+import razorpayConnect         from "./billing/razorpay/connect.js";
+import razorpayCheckout        from "./billing/razorpay/checkout.js";
+import razorpayWebhook         from "./billing/razorpay/webhook.js";
+import razorpayStatus          from "./billing/razorpay/status.js";
+
+import pushSubscribe           from "./push/subscribe.js";
+import pushUnsubscribe         from "./push/unsubscribe.js";
+import pushSend                from "./push/send.js";
+
+import portalTokens            from "./portal/tokens.js";
+import portalView              from "./portal/view.js";
+import portalPay               from "./portal/pay.js";
+
 import healthCheck             from "./health.js";
 
 // Static routes resolved by exact match. Order does not matter.
@@ -208,6 +221,16 @@ const STATIC_ROUTES = {
   "/acumatica/retry":               acuRetry,
   "/acumatica/diagnostics":         acuDiagnostics,
   "/acumatica/field_map":           acuFieldMap,
+  "/billing/razorpay/connect":      razorpayConnect,
+  "/billing/razorpay/checkout":     razorpayCheckout,
+  "/billing/razorpay/webhook":      razorpayWebhook,
+  "/billing/razorpay/status":       razorpayStatus,
+  "/push/subscribe":                pushSubscribe,
+  "/push/unsubscribe":              pushUnsubscribe,
+  "/push/send":                     pushSend,
+  "/portal/tokens":                 portalTokens,
+  "/portal/view":                   portalView,
+  "/portal/pay":                    portalPay,
   "/admin/contracts":               adminContracts,
   "/admin/customer_locations":      adminCustomerLocations,
   "/admin/diagnostics":             adminDiagnostics,

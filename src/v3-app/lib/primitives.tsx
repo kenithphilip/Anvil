@@ -48,14 +48,24 @@ export const Prov: React.FC<{ children?: ReactNode }> = ({ children }) => (
 );
 
 export interface WSTitleProps { eyebrow?: ReactNode; title?: ReactNode; meta?: ReactNode; right?: ReactNode; }
+/*
+ * Title-bar primitive used by every workflow screen.
+ * The left block (eyebrow + h1) gets `min-width: 0` so the h1 can
+ * ellipsize; the right block (action buttons / search bar / etc.)
+ * keeps its natural width with `flex-shrink: 0`. The whole row
+ * inherits `flex-wrap: wrap` from `.ws-title` so action bars drop
+ * to a second line on narrow viewports instead of pushing the
+ * title off-screen (the bug that produced the "NANCE SPARES-REV-1"
+ * clipping in SO Workspace).
+ */
 export const WSTitle: React.FC<WSTitleProps> = ({ eyebrow, title, meta, right }) => (
   <div className="ws-title">
-    <div>
+    <div style={{ minWidth: 0, flex: "1 1 auto", overflow: "hidden" }}>
       {eyebrow && <div className="h-eyebrow" style={{ marginBottom: 2 }}>{eyebrow}</div>}
       <h1>{title}</h1>
     </div>
-    {meta && <span className="h-meta">· {meta}</span>}
-    <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>{right}</div>
+    {meta && <span className="h-meta" style={{ flexShrink: 0 }}>· {meta}</span>}
+    <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexShrink: 0, flexWrap: "wrap" }}>{right}</div>
   </div>
 );
 

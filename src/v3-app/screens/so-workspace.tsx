@@ -531,18 +531,32 @@ const WiredSOWorkspace = () => {
 
   return (
     <div className="ws">
-      <div className="ws-title" style={{ alignItems: "stretch", flexDirection: "column", gap: 8 }}>
-        <div className="row" style={{ width: "100%" }}>
-          <div>
+      {/*
+       * Title row layout:
+       *   row 1: identity (eyebrow + PO + chips), wraps if narrow
+       *   row 2: action bar, wraps to a 2nd line if narrow
+       *   row 3: customer/timestamp meta
+       * Each row is its own flex container with min-width: 0 so the
+       * h1 can ellipsize without pushing the action buttons off the
+       * left edge (the bug that produced the "NANCE SPARES-REV-1"
+       * clipping). Action buttons get flex-shrink: 0 so they keep
+       * their natural width when the row wraps.
+       */}
+      <div className="ws-title" style={{ alignItems: "stretch", flexDirection: "column", gap: 10 }}>
+        <div className="row gap-sm" style={{ width: "100%", minWidth: 0, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ minWidth: 0, flex: "1 1 auto", overflow: "hidden" }}>
             <div className="h-eyebrow">Sales Orders · Workspace</div>
-            <div className="row gap-sm" style={{ marginTop: 2 }}>
-              <h1>{o.po_number || o.quote_number || `draft ${o.id?.slice(0, 8)}`}</h1>
+            <div className="row gap-sm" style={{ marginTop: 2, minWidth: 0, flexWrap: "wrap", alignItems: "center" }}>
+              <h1 style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {o.po_number || o.quote_number || `draft ${o.id?.slice(0, 8)}`}
+              </h1>
               {o.order_mode && <Chip k={o.order_mode === "INTERNAL" ? "plum" : o.order_mode.startsWith("PROJECT") ? "info" : "ghost"}>{o.order_mode}</Chip>}
               <Chip k={st.k}>{st.label}</Chip>
               {o.payload_hash && <Chip k="ghost">payload {String(o.payload_hash).slice(0, 8)}…</Chip>}
             </div>
           </div>
-          <span style={{ flex: 1 }} />
+        </div>
+        <div className="row gap-sm" style={{ width: "100%", flexWrap: "wrap", alignItems: "center" }}>
           {customerEmail && (
             <Btn sm kind="ghost" onClick={() => window.location.href = `mailto:${customerEmail}?subject=${encodeURIComponent(o.po_number || o.quote_number || "Order update")}`}>
               {Icon.send} email customer
@@ -566,6 +580,7 @@ const WiredSOWorkspace = () => {
           <Btn sm kind="ghost" onClick={() => exportAuditPack(o)} title="Bundle PO + quote + result + signed evidence URLs into a JSON download">
             {Icon.download} audit pack
           </Btn>
+          <span style={{ flex: 1 }} />
           <Btn sm kind="ghost"
                disabled={!canCancel || busy || o.status === "CANCELLED"}
                onClick={cancelOrder}
@@ -585,8 +600,8 @@ const WiredSOWorkspace = () => {
             {Icon.send} {busy ? "pushing…" : "push to Tally"}
           </Btn>
         </div>
-        <div className="row mono-sm" style={{ color: "var(--ink-3)" }}>
-          {customerName}
+        <div className="row mono-sm" style={{ color: "var(--ink-3)", flexWrap: "wrap", gap: 8 }}>
+          <span>{customerName}</span>
           <span style={{ color: "var(--ink-5)" }}>·</span>
           <span>created {ageLabel(o.created_at)} ago</span>
           <span style={{ color: "var(--ink-5)" }}>·</span>

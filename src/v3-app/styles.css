@@ -410,6 +410,13 @@ button { cursor: pointer; }
 }
 
 /* ── Workspace ─────────────────────────────────────────── */
+/*
+ * .ws is the workspace shell used by the SO Workspace and any
+ * screen that wants a right-side rail. The grid reserves 320px
+ * for the rail. When no rail is rendered, modern browsers shrink
+ * the empty column via `:has()`. Older Safari (pre-15.4) falls
+ * back to the explicit .ws-no-rail class which switches to flex.
+ */
 .ws {
   display: grid;
   grid-template-columns: 1fr 320px;
@@ -419,6 +426,17 @@ button { cursor: pointer; }
     "content rail";
   min-height: 100%;
   gap: 0;
+  min-width: 0;
+}
+/* If no element with class ws-rail is mounted, collapse the rail
+ * column so the content area gets the full width. Without this
+ * the workspace wastes 320px of horizontal space on screens that
+ * choose not to render a rail (e.g. so-workspace.tsx). */
+.ws:not(:has(.ws-rail)) {
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "title"
+    "content";
 }
 .ws-no-rail {
   display: flex;
@@ -426,16 +444,24 @@ button { cursor: pointer; }
 }
 .ws-title {
   grid-area: title;
-  display: flex; align-items: center; gap: 12px;
+  display: flex; align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
   padding: 14px 22px 12px;
   border-bottom: 1px solid var(--hairline);
   background: var(--paper);
+  min-width: 0;
 }
+.ws-title > * { min-width: 0; }
 .ws-title h1 {
   margin: 0;
   font-size: 17px;
   font-weight: 600;
   letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 .ws-title .h-meta {
   font-family: var(--mono);
@@ -466,7 +492,12 @@ button { cursor: pointer; }
   font-weight: 600;
 }
 
-/* Tabs row under title */
+/* Tabs row under title.
+ * Scrolls horizontally when the tab strip is wider than the
+ * viewport instead of clipping the rightmost tabs (which is what
+ * happens with the default flex/no-overflow combo). The
+ * scrollbar is hidden visually but the touchpad/swipe gesture
+ * still works. */
 .ws-tabs {
   display: flex; align-items: center; gap: 0;
   padding: 0 22px;
@@ -474,7 +505,11 @@ button { cursor: pointer; }
   background: var(--paper);
   height: 36px;
   flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
+.ws-tabs::-webkit-scrollbar { display: none; }
 .ws-tab {
   padding: 0 14px;
   height: 100%;
@@ -486,6 +521,8 @@ button { cursor: pointer; }
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
   font-weight: 500;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .ws-tab:hover { color: var(--ink); }
 .ws-tab.active { color: var(--ink); border-bottom-color: var(--ink); font-weight: 600; }
@@ -536,6 +573,7 @@ button { cursor: pointer; }
   border-radius: var(--r-2);
   cursor: pointer;
   white-space: nowrap;
+  flex-shrink: 0;
   transition: background 0.08s, border 0.08s;
 }
 .btn:hover { background: var(--paper-2); border-color: var(--ink-4); }
@@ -771,16 +809,25 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .sev.low  { background: var(--sage); }
 
 /* ── Steps ────────────────────────────────────────────── */
+/*
+ * Horizontal scroll on overflow instead of clipping. min-width
+ * on .step keeps each label readable; the container scrolls when
+ * the total exceeds the available width.
+ */
 .steps {
   display: flex; align-items: center; gap: 0;
   padding: 0;
   border: 1px solid var(--hairline);
   border-radius: var(--r-3);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   background: var(--paper);
+  scrollbar-width: none;
 }
+.steps::-webkit-scrollbar { display: none; }
 .step {
-  flex: 1;
+  flex: 1 0 auto;
+  min-width: 130px;
   display: flex; align-items: center; gap: 8px;
   padding: 8px 12px;
   font-family: var(--mono);
@@ -788,6 +835,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   color: var(--ink-3);
   border-right: 1px solid var(--hairline);
   position: relative;
+  white-space: nowrap;
 }
 .step:last-child { border-right: none; }
 .step .n {

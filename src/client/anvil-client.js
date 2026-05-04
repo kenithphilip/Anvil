@@ -386,6 +386,13 @@
     saveConfigure: async (payload) => apiFetch("/api/inbound/email/configure", { method: "PUT", body: payload }),
   };
 
+  const docai = {
+    extract:    async (payload) => apiFetch("/api/docai/extract", { method: "POST", body: payload }),
+    correction: async (payload) => apiFetch("/api/docai/correction", { method: "POST", body: payload }),
+    listRuns:   async (q) => apiFetch("/api/docai/runs" + (q ? "?" + new URLSearchParams(q).toString() : "")),
+    getRun:     async (id) => apiFetch("/api/docai/runs?id=" + encodeURIComponent(id)),
+  };
+
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });
 
   const documents = {
@@ -897,6 +904,7 @@
     erpChat,
     mcp,
     inbound,
+    docai,
     claudeCall,
     documents,
     orders,

@@ -30,7 +30,8 @@
     "stripe": "^22.1.0"
   },
   "optionalDependencies": {
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@babel/parser": "^7.29.3",

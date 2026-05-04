@@ -209,6 +209,10 @@ import inboundEmailParse       from "./inbound/email/parse.js";
 import inboundEmailThreads     from "./inbound/email/threads.js";
 import inboundEmailConfigure   from "./inbound/email/configure.js";
 
+import docaiExtract            from "./docai/extract.js";
+import docaiCorrection         from "./docai/correction.js";
+import docaiRuns               from "./docai/runs.js";
+
 import healthCheck             from "./health.js";
 
 // Static routes resolved by exact match. Order does not matter.
@@ -275,6 +279,9 @@ const STATIC_ROUTES = {
   "/inbound/email/parse":           inboundEmailParse,
   "/inbound/email/threads":         inboundEmailThreads,
   "/inbound/email/configure":       inboundEmailConfigure,
+  "/docai/extract":                 docaiExtract,
+  "/docai/correction":              docaiCorrection,
+  "/docai/runs":                    docaiRuns,
   "/admin/contracts":               adminContracts,
   "/admin/customer_locations":      adminCustomerLocations,
   "/admin/diagnostics":             adminDiagnostics,

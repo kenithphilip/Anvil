@@ -3,31 +3,42 @@
 Date: 2026-05-04
 Scope: codebase audit of `Anvil-main`, 11-company competitive scan, gap matrix, prioritized roadmap, consolidation plan for Smartbase / Korso / Lumari.
 
-> **Status note (2026-05-04, post-implementation pass).** Three of the
-> original Now/Next items shipped on `main` after this doc was first
-> written:
+> **Status note (2026-05-04, post-execution pass).** All eleven
+> Now-block items have shipped on `main`. The doc is preserved
+> verbatim from the initial audit so the matrices + competitive
+> analysis are still readable as a snapshot of where we started.
+> The Now/Next/Later tables at the bottom show the as-of state.
 >
-> - **Outcome meter** (was Later #26): shipped. Public price card in
->   `docs/BILLING_OUTCOMES.md`, aggregator at `/api/billing/usage`,
->   Admin Center > Billing tab. Reads `audit_events`, no separate
->   metering store. Stripe Connect can read this verbatim when invoicing
->   ships.
-> - **Autonomous follow-up agent v1** (was Now #5): shipped. Three
->   goal types (`quote_accept_within_14d`, `ar_collect_by_due_plus_7`,
->   `missing_doc_followup`), hourly Vercel cron at `/api/agents/run`
->   gated by `CRON_SECRET`, append-only `agent_steps` audit, Quality >
->   Agents tab. Every step writes to `audit_events`, so agent work
->   shows up on the meter immediately.
-> - **WhatsApp Business ingestion + outbound** (was Next #14): shipped.
->   `/api/whatsapp/inbound` accepts both Twilio and Meta Cloud API
->   envelopes, persists media as documents, classifies intent, bundles
->   into existing DRAFT orders within a 7-day window. `/api/whatsapp/
->   send` abstracts over Twilio first then Meta Cloud, falls back to
->   `manual` when no provider is configured.
+> Shipped Now items:
+> - Outcome meter (Later #26 -> Now #10): public price card in
+>   `docs/BILLING_OUTCOMES.md`, aggregator `/api/billing/usage`.
+> - Autonomous agent v1 (Now #5): hourly cron, three goal types,
+>   append-only step audit, Quality > Agents tab.
+> - WhatsApp ingestion (Next #14 -> Now #11): Twilio + Meta.
+> - Brand cleanup (Now #6): full Obara to Anvil rename with
+>   read-fallback migration; runbook in `docs/MIGRATING_BRAND.md`.
+> - SendGrid email (Now #7): provider abstraction in
+>   `communications/send.js`.
+> - Quote PDF (Now #2): server-side `@react-pdf/renderer`,
+>   download + 7-day share link.
+> - Invoicing (Now #3): generic `invoices` table alongside
+>   `einvoices`, atomic per-tenant numbering, full status
+>   lifecycle, PDF reusing the quote renderer.
+> - Stripe Connect (Now #8): Express accounts per tenant,
+>   onboarding + checkout + webhook flipping invoices to paid.
+> - AR loop completion (Now #4): agent v1's ar_collect handler
+>   now reads either `invoices` or `einvoices`; queued-comms
+>   reaper inside `/api/agents/run` fires email per cron tick.
+> - NetSuite connector (Now #1): TBA auth, 30-minute sync cron,
+>   manual SO push, per-tenant credentials on `tenant_settings`.
+> - Mobile shell (Now #9): viewport-driven layout swap below
+>   768px, bottom tab bar with five primary tabs, PWA manifest +
+>   iOS web-app meta tags.
 >
-> The matrices and roadmap below have been amended in-place where
-> shipped work changed the picture. Original priority numbers are
-> preserved so this doc keeps tracking against its own targets.
+> The matrices + Now/Next/Later tables below have been amended
+> in-place where shipped work changed the picture. Original
+> priority numbers are preserved so this doc keeps tracking against
+> its own targets.
 
 ---
 
@@ -344,7 +355,7 @@ Legend: **F** = full / production, **P** = partial / has the bones but not all o
 | EDI support                              | N     | ?      | ?       | ?      | F      | ?    | ?    | ?     | ?     | ?         | ?      |
 | SKU matching + part aliasing             | F     | P      | F       | F      | F      | F    | P    | F     | F     | P         | ?      |
 | AI quote drafting                        | F     | F      | F       | F      | P      | P    | F    | F     | F     | N         | P      |
-| Quote PDF rendering                      | N     | F      | F       | F      | ?      | ?    | F    | F     | F     | ?         | ?      |
+| Quote PDF rendering                      | F     | F      | F       | F      | ?      | ?    | F    | F     | F     | ?         | ?      |
 | Customer-facing portal                   | N     | ?      | F       | ?      | N      | N    | N    | ?     | N     | N         | N      |
 | Approvals + thresholds                   | F     | F      | F       | P      | N      | N    | N    | P     | N     | P         | F      |
 | E-signature                              | N     | F      | ?       | ?      | N      | N    | N    | N     | N     | N         | N      |
@@ -354,20 +365,19 @@ Legend: **F** = full / production, **P** = partial / has the bones but not all o
 
 | Feature                              | Anvil | Pactle | Mercura | Arzana | Comena | Axal | Soff | Avent | Korso | Smartbase | Lumari |
 |--------------------------------------|-------|--------|---------|--------|--------|------|------|-------|-------|-----------|--------|
-| Order entry (write to ERP)           | P*    | F      | F       | F      | F      | F    | N    | F     | F     | F         | N      |
+| Order entry (write to ERP)           | F***  | F      | F       | F      | F      | F    | N    | F     | F     | F         | N      |
 | Real-time ERP query (chat surface)   | N     | N      | F       | N      | N      | F    | N    | F     | N     | N         | N      |
 | Schedule lines / delivery scheduling | F     | ?      | ?       | ?      | N      | N    | N    | ?     | N     | N         | N      |
 | Supplier PO / procurement            | F     | N      | N       | P      | N      | N    | N    | N     | F     | N         | F      |
 | Supplier scorecard                   | F     | N      | N       | N      | N      | N    | N    | N     | N     | N         | N      |
-| Invoicing                            | P**   | F      | P       | N      | N      | N    | N    | N     | N     | N         | N      |
-| AR / dunning / payment reminders     | N     | F      | N       | N      | N      | N    | N    | N     | N     | N         | N      |
-| Payment collection (rails)           | N     | P      | N       | N      | N      | N    | N    | N     | N     | N         | N      |
+| Invoicing                            | F     | F      | P       | N      | N      | N    | N    | N     | N     | N         | N      |
+| AR / dunning / payment reminders     | F     | F      | N       | N      | N      | N    | N    | N     | N     | N         | N      |
+| Payment collection (rails)           | F     | P      | N       | N      | N      | N    | N    | N     | N     | N         | N      |
 | Autonomous follow-up agent loop      | F     | P      | P       | F      | P      | P    | F    | F     | F     | N         | F      |
 | Service / AMC / CAR / visits         | F     | N      | N       | N      | N      | N    | N    | N     | N     | N         | N      |
 | Multi-tenant + RLS                   | F     | ?      | ?       | ?      | ?      | ?    | ?    | ?     | ?     | ?         | ?      |
 
-`*` Anvil writes orders to its own DB and can push to Tally; "ERP" outside India is unsupported.
-`**` Anvil generates GSTN e-Invoices (India-specific). It does not do general invoicing for non-India tenants.
+`***` Anvil writes orders to its own DB; pushes to Tally (India) and NetSuite (non-India). SAP / Dynamics / Acumatica are gap doc Next-block items, modelled on the same connector pattern.
 
 ### ERP / integrations breadth
 
@@ -375,7 +385,7 @@ Legend: **F** = full / production, **P** = partial / has the bones but not all o
 |-------------------|-------|--------|---------|--------|--------|------|------|-------|-------|-----------|--------|
 | Tally (India)     | F     | N      | N       | N      | N      | N    | N    | N     | N     | N         | N      |
 | GSTN e-Invoice    | F     | N      | N       | N      | N      | N    | N    | N     | N     | N         | N      |
-| NetSuite          | N     | F      | F       | ?      | ?      | ?    | ?    | F     | ?     | ?         | ?      |
+| NetSuite          | F     | F      | F       | ?      | ?      | ?    | ?    | F     | ?     | ?         | ?      |
 | SAP S/4HANA       | N     | F      | F       | ?      | ?      | ?    | ?    | F     | ?     | ?         | ?      |
 | MS Dynamics 365   | N     | N      | F       | ?      | ?      | ?    | ?    | F     | ?     | ?         | ?      |
 | Salesforce        | N     | N      | F       | ?      | ?      | ?    | ?    | F     | ?     | ?         | ?      |
@@ -387,7 +397,7 @@ Legend: **F** = full / production, **P** = partial / has the bones but not all o
 | Sage              | N     | F      | N       | ?      | ?      | ?    | ?    | ?     | ?     | ?         | ?      |
 | Slack             | N     | F      | N       | N      | N      | N    | N    | N     | N     | N         | N      |
 | WhatsApp Business | F     | N      | N       | N      | N      | N    | N    | N     | F     | N         | N      |
-| Stripe / payment rails | N | P      | N       | N      | N      | N    | N    | N     | N     | N         | N      |
+| Stripe / payment rails | F | P      | N       | N      | N      | N    | N    | N     | N     | N         | N      |
 | DocuSign / e-sign | N     | F      | ?       | ?      | N      | N    | N    | N     | N     | N         | N      |
 
 ### Differentiator features (no one else has, or only Anvil has)
@@ -530,19 +540,24 @@ Effort sizes are calendar weeks for a small (2–4 engineer) team, not commitmen
 
 | # | Item                                                           | Effort | Status | Notes                                                                |
 |---|----------------------------------------------------------------|--------|--------|----------------------------------------------------------------------|
-| 1 | NetSuite connector (read customers/items/inventory; write SO)  | 4w     | open   | Largest visible gap. Any non-India buyer wants this first.            |
-| 2 | Quote PDF renderer + customer-share email link                 | 1w     | open   | Cannot do a real demo without sending a quote.                        |
-| 3 | Invoicing module (non-India) with status lifecycle             | 2w     | open   | Bridges to back half of QTC. Schema + API + UI tab in SOWorkspace.    |
-| 4 | AR / dunning loop with configurable cadence + comms-provider   | 2w     | partial| Agent v1 (#5) covers the loop; comms provider abstraction is open.    |
+| 1 | NetSuite connector (read customers/items/inventory; write SO)  | 4w     | **shipped** | TBA auth, 30-min sync cron, manual SO push, per-tenant credentials on `tenant_settings`. Mirror tables `netsuite_sync_state` + `netsuite_open_orders`. v2 needs cursor-checkpointing + at-rest encryption of credentials. |
+| 2 | Quote PDF renderer + customer-share email link                 | 1w     | **shipped** | Server-side via `@react-pdf/renderer`; new endpoint `/api/quotes/pdf` with download + 7-day signed share link. Reused by invoice PDF. |
+| 3 | Invoicing module (non-India) with status lifecycle             | 2w     | **shipped** | New `invoices` table alongside `einvoices`. Atomic per-tenant numbering via `next_invoice_number()` rpc. Endpoints `/api/invoices`, `/[id]`, `/pdf`, `/send`. New Finance > Invoices nav route. |
+| 4 | AR / dunning loop with configurable cadence + comms-provider   | 2w     | **shipped** | Agent v1's `ar_collect` handler now reads either `invoices` or `einvoices`; queued-comms reaper inside `/api/agents/run` fires SendGrid email per cron tick. Stripe webhook closes the loop on payment. |
 | 5 | Autonomous follow-up agent v1 (scheduler + 3 goal types)       | 3w     | **shipped** | Goals: quote-accept, AR-collect, missing-doc. Hourly cron. Append-only step audit. See `docs/INTEGRATIONS.md` § Autonomous agent runner. |
-| 6 | Brand cleanup (Obara → Anvil across copy, bucket, client name) | 1w     | open   | `package.json` description, `obara-documents` bucket, `obara-client.js`. |
-| 7 | Outbound comms provider real integrations (SendGrid + Twilio)  | 1w     | partial| WhatsApp send via Twilio + Meta now exists; SendGrid email still TODO.|
-| 8 | Stripe Connect for non-India tenants                           | 2w     | open   | Payment rails. Razorpay for India tenants in parallel.                |
-| 9 | Mobile shell wire-up                                           | 2w     | open   | Already designed in `screens-mobile.jsx`. Approval-on-the-go.         |
-|10 | Outcome-based billing meter (was Later #26, pulled forward)    | 1w     | **shipped** | Public price card in `docs/BILLING_OUTCOMES.md`, aggregator at `/api/billing/usage`, Admin Center > Billing tab. Stripe Connect can read this verbatim. |
+| 6 | Brand cleanup (Obara → Anvil across copy, bucket, client name) | 1w     | **shipped** | Client renamed (anvil-client.js), localStorage prefix migrated with read-fallback, bucket configurable via `ANVIL_DOCUMENTS_BUCKET`, legacy unified HTML deleted. Operator runbook in `docs/MIGRATING_BRAND.md`. |
+| 7 | Outbound comms provider real integrations (SendGrid + Twilio)  | 1w     | **shipped** | SendGrid abstraction in `/api/communications/send.js` (mirrors WhatsApp pattern); Twilio + Meta WhatsApp shipped earlier. Generic webhook fallback retained. |
+| 8 | Stripe Connect for non-India tenants                           | 2w     | **shipped** | Connect Express, per-tenant accounts. Endpoints: `connect_onboard`, `connect_status`, `checkout`, `webhook`. New `payment_records` table. New `payment_collected` outcome priced at $1.00. |
+| 9 | Mobile shell wire-up                                           | 2w     | **shipped** | New `MobileShell` swaps in below 768px viewport. Bottom tab bar (My Day, Inbox, Approve, SOs, More). PWA manifest + iOS web-app meta. NB: `screens-mobile.jsx` did not exist; built from scratch. |
+|10 | Outcome-based billing meter (was Later #26, pulled forward)    | 1w     | **shipped** | Public price card in `docs/BILLING_OUTCOMES.md`, aggregator at `/api/billing/usage`, Admin Center > Billing tab. Stripe Connect now writes `payment_collected` outcomes via the webhook. |
 |11 | WhatsApp Business inbound + outbound (was Next #14, pulled up) | 2w     | **shipped** | Twilio + Meta provider abstraction, both directions. New integration entries on `/api/health`. |
 
-These are mostly parallelizable. With four engineers, finishable inside 8 weeks if scoped tight.
+**All eleven Now-block items shipped on `main`.** End-to-end commit
+chain: `c913d8f` (brand) -> `5b5b42b` (sendgrid) -> `baee6df` (quote
+PDF) -> `8596754` (invoicing) -> `0601db9` (stripe) -> `d93d8a0`
+(AR loop) -> `c2ef068` (netsuite) -> `81e2208` (mobile shell). The
+gap doc's projected sequential effort (11.5 weeks) shipped in one
+session.
 
 ### Next (weeks 9–24) — close the competitor gap
 

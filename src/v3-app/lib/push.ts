@@ -42,9 +42,15 @@ export const subscribeToPush = async (vapidPublicKey: string): Promise<PushSubsc
   if (!reg) return { ok: false, permission, error: "service worker registration failed" };
   let subscription = await reg.pushManager.getSubscription();
   if (!subscription) {
+    // TS 5.7+ narrows Uint8Array's buffer to ArrayBufferLike (which
+    // includes SharedArrayBuffer). PushManager.subscribe expects
+    // BufferSource (ArrayBufferView<ArrayBuffer>). The Uint8Array
+    // we build is always over a regular ArrayBuffer, so this cast
+    // is sound; the stricter type just doesn't capture that.
+    const applicationServerKey = urlBase64ToUint8Array(vapidPublicKey) as unknown as BufferSource;
     subscription = await reg.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+      applicationServerKey,
     });
   }
   const sub = subscription.toJSON();

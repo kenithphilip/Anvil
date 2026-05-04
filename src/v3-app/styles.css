@@ -287,6 +287,49 @@ button { cursor: pointer; }
 .head-pill.role { font-weight: 600; }
 .head-pill.tenant { font-weight: 600; }
 
+/* Anchored dropdown for the role + tenant pills. Positioned absolutely
+   below the button. Pure CSS, no portal: the parent .head-pill-wrap
+   uses position:relative so the menu pops in place. */
+.head-pill-wrap { position: relative; display: inline-flex; }
+.head-pill-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 200px;
+  max-height: 320px;
+  overflow: auto;
+  background: var(--paper-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-2);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  z-index: 200;
+}
+.head-pill-menu-item {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: var(--r-1);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+}
+.head-pill-menu-item:hover { background: var(--paper-3); }
+.head-pill-menu-item.active { background: var(--paper-3); color: var(--ink); }
+.head-pill-menu-item .badge {
+  font-size: 9px;
+  color: var(--ink-3);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 /* ── Sidebar ────────────────────────────────────────────── */
 .nav {
   flex: 1;

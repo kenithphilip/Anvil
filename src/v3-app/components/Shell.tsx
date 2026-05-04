@@ -4,7 +4,7 @@
 // Pure presentation: every state lives in the parent (App.tsx). The shell
 // renders whatever children, nav tree, and live telemetry it gets handed.
 
-import React, { ReactNode } from "react";
+import React, { ReactNode, useEffect, useRef, useState } from "react";
 import { Icon } from "../lib/icons";
 import { Dot } from "../lib/primitives";
 import type { NavGroup, RoleEntry, NavBadge } from "../lib/nav";
@@ -12,11 +12,18 @@ import type { ShellTelemetry, BadgeMap } from "../lib/telemetry";
 
 export interface ShellTenant { code?: string; }
 
+export interface RoleOption { id: string; label: string; short: string; }
+
 export interface ShellProps {
   children?: ReactNode;
   route?: string;
   onRoute?: (id: string) => void;
   role?: RoleEntry;
+  /** Full list of roles the user can switch into. */
+  roleOptions?: RoleOption[];
+  /** Called with the chosen role id when the user picks from the menu. */
+  onRoleChange?: (roleId: string) => void;
+  /** Legacy fallback when no roleOptions are provided. */
   onRole?: () => void;
   tenant?: ShellTenant;
   onTenant?: () => void;
@@ -26,6 +33,76 @@ export interface ShellProps {
   nav?: NavGroup[];
   telemetry?: ShellTelemetry;
 }
+
+// Anchored dropdown menu. Used by the role pill in the header. We
+// keep it inline here instead of building a generic <Popover> because
+// it's the only place the shell needs one, and a portal-based primitive
+// would be overkill for a 200x320 anchored menu.
+interface PillMenuProps {
+  trigger: ReactNode;
+  triggerClassName?: string;
+  triggerTitle?: string;
+  options: Array<{ id: string; label: string; right?: ReactNode; active?: boolean }>;
+  onSelect: (id: string) => void;
+  align?: "start" | "end";
+}
+
+const PillMenu: React.FC<PillMenuProps> = ({
+  trigger, triggerClassName, triggerTitle, options, onSelect, align = "end",
+}) => {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  // Close on click-outside or Escape. We listen on capture so a click
+  // on a menu item still fires the item handler before the menu closes.
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!wrapRef.current) return;
+      if (!wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="head-pill-wrap" ref={wrapRef}>
+      <button
+        type="button"
+        className={triggerClassName || "head-pill"}
+        title={triggerTitle}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {trigger}
+      </button>
+      {open && (
+        <div className="head-pill-menu" role="menu" style={align === "start" ? { left: 0, right: "auto" } : undefined}>
+          {options.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              role="menuitem"
+              className={"head-pill-menu-item" + (opt.active ? " active" : "")}
+              onClick={() => { onSelect(opt.id); setOpen(false); }}
+            >
+              <span>{opt.label}</span>
+              {opt.right && <span className="badge">{opt.right}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const resolveBadge = (id: string, item: { badge?: NavBadge }, badges?: BadgeMap): NavBadge | undefined => {
   // Live counts from telemetry win when present. Otherwise no badge.
@@ -51,7 +128,8 @@ const IntegrationPill: React.FC<{ label: string; configured: boolean }> = ({ lab
 
 export const Shell: React.FC<ShellProps> = ({
   children, route, onRoute,
-  role, onRole, tenant, onTenant,
+  role, roleOptions, onRoleChange, onRole,
+  tenant, onTenant,
   onCmdK, onThread,
   crumb, nav, telemetry,
 }) => {
@@ -95,13 +173,34 @@ export const Shell: React.FC<ShellProps> = ({
         {Icon.caret}
       </div>
 
-      <div className="head-pill role" onClick={onRole} title="Switch role">
-        <span style={{ fontFamily: "var(--mono)", color: "var(--ink-3)" }}>{role?.short || "ENG"}</span>
-        <span style={{ borderLeft: "1px solid var(--hairline)", paddingLeft: 8, marginLeft: 2 }}>
-          {role?.label || "Sales Engineer"}
-        </span>
-        {Icon.caret}
-      </div>
+      {roleOptions && roleOptions.length > 0 && onRoleChange ? (
+        <PillMenu
+          triggerClassName="head-pill role"
+          triggerTitle="Switch role"
+          trigger={<>
+            <span style={{ fontFamily: "var(--mono)", color: "var(--ink-3)" }}>{role?.short || "ENG"}</span>
+            <span style={{ borderLeft: "1px solid var(--hairline)", paddingLeft: 8, marginLeft: 2 }}>
+              {role?.label || "Sales Engineer"}
+            </span>
+            {Icon.caret}
+          </>}
+          options={roleOptions.map((r) => ({
+            id: r.id,
+            label: r.label,
+            right: r.short,
+            active: r.id === role?.id,
+          }))}
+          onSelect={onRoleChange}
+        />
+      ) : (
+        <div className="head-pill role" onClick={onRole} title="Switch role">
+          <span style={{ fontFamily: "var(--mono)", color: "var(--ink-3)" }}>{role?.short || "ENG"}</span>
+          <span style={{ borderLeft: "1px solid var(--hairline)", paddingLeft: 8, marginLeft: 2 }}>
+            {role?.label || "Sales Engineer"}
+          </span>
+          {Icon.caret}
+        </div>
+      )}
 
       <button className="head-pill" title="Thread drawer" onClick={onThread}>
         {Icon.history} Thread

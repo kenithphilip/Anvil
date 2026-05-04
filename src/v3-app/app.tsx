@@ -68,12 +68,18 @@ const useRerenderOnEvents = (eventNames: string[]): void => {
   }, [eventNames.join("|")]);
 };
 
-const promptRole = (): void => {
-  const list = RBAC.ROLES.map((r, i) => `${i + 1}. ${r}${r === RBAC.role() ? " (current)" : ""}`).join("\n");
-  const pick = window.prompt(`Switch role to:\n${list}\n\nEnter 1-${RBAC.ROLES.length}:`);
-  const n = parseInt(pick || "", 10);
-  if (!Number.isNaN(n) && n >= 1 && n <= RBAC.ROLES.length) RBAC.setRole(RBAC.ROLES[n - 1]);
-};
+// Build the dropdown payload for the role pill. Each option carries the
+// canonical role id (what RBAC.setRole expects), a human-readable label,
+// and a short tag rendered on the right of the menu row.
+const buildRoleOptions = (): Array<{ id: string; label: string; short: string }> =>
+  RBAC.ROLES.map((id) => {
+    const meta = ROLES.find((r) => r.id === id.split("_")[0]);
+    return {
+      id,
+      label: meta?.label || id.replace(/_/g, " "),
+      short: meta?.short || id.slice(0, 3).toUpperCase(),
+    };
+  });
 
 // Floating bar in the dock area: theme + density + rail collapse.
 const ThemeBar: React.FC = () => {
@@ -214,7 +220,13 @@ export default function App() {
         route={route}
         onRoute={onRoute}
         role={roleObj}
-        onRole={() => promptRole()}
+        roleOptions={buildRoleOptions()}
+        onRoleChange={(roleId) => {
+          // The Shell hands back the raw id string; cast to the
+          // canonical Role union here. RBAC.setRole validates against
+          // ROLES at runtime so an unknown id throws.
+          RBAC.setRole(roleId as (typeof RBAC.ROLES)[number]);
+        }}
         tenant={tenant}
         onTenant={() => onRoute("connect")}
         onCmdK={() => setCmdk(true)}

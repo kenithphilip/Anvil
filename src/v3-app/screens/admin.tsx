@@ -33,6 +33,7 @@ const ADMIN_CRUD_TABS = [
   { id: "members",   label: "Members" },
   { id: "profile",   label: "My profile" },
   { id: "roles",     label: "Roles & permissions" },
+  { id: "billing",   label: "Billing" },
   { id: "settings",  label: "Settings" },
   { id: "holidays",  label: "Holidays" },
   { id: "leadtimes", label: "Lead times" },
@@ -153,6 +154,9 @@ const WiredAdminCRUD = () => {
   const [profile, setProfile] = u<{ user?: any; memberships?: any[] } | null>(null);
   const [profileName, setProfileName] = u("");
   const [profileBusy, setProfileBusy] = u(false);
+  // Billing tab state. Loaded lazily; the billing endpoint is read-only.
+  const [billing, setBilling] = u<any>(null);
+  const [billingFrom, setBillingFrom] = u<string>("month-to-date");
   const [holidayForm, setHolidayForm] = u({ country: "IN", date: "", name: "" });
   const [leadTimeForm, setLeadTimeForm] = u({ type: "supplier", entity_id: "", days: "", notes: "" });
   const [threshForm, setThreshForm] = u(null);
@@ -321,6 +325,20 @@ const WiredAdminCRUD = () => {
 
   e(() => {
     if (active === "profile" && !profile) loadProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
+
+  const loadBilling = async (from?: string) => {
+    try {
+      const params: Record<string, string> = {};
+      if (from && from !== "month-to-date") params.from = from;
+      const resp = await ObaraBackend?.billing?.usage?.(params);
+      setBilling(resp);
+    } catch (err) { flashErr(err); }
+  };
+
+  e(() => {
+    if (active === "billing" && !billing) loadBilling(billingFrom);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
@@ -809,6 +827,92 @@ const WiredAdminCRUD = () => {
                   ))}
                 </tbody>
               </table>
+            </Card>
+          </>
+        )}
+
+        {active === "billing" && (
+          <>
+            <Card title="Outcome meter" eyebrow="what your tenant has actually done · billable units">
+              <div className="row" style={{ gap: 8, alignItems: "end", marginBottom: 12 }}>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)" }}>From</span>
+                  <select className="input" value={billingFrom}
+                          onChange={(ev) => { setBillingFrom(ev.target.value); setBilling(null); loadBilling(ev.target.value); }}
+                          style={{ height: 30 }}>
+                    <option value="month-to-date">Month to date</option>
+                    <option value={new Date(Date.now() - 7 * 86400000).toISOString()}>Last 7 days</option>
+                    <option value={new Date(Date.now() - 30 * 86400000).toISOString()}>Last 30 days</option>
+                    <option value={new Date(Date.now() - 90 * 86400000).toISOString()}>Last 90 days</option>
+                  </select>
+                </label>
+                <Btn sm kind="ghost" onClick={() => { setBilling(null); loadBilling(billingFrom); }}>{Icon.cycle} refresh</Btn>
+                <span style={{ flex: 1 }} />
+                {billing?.generated_at && (
+                  <span className="mono-sm" style={{ color: "var(--ink-4)" }}>
+                    as of {new Date(billing.generated_at).toLocaleString("en-IN")}
+                  </span>
+                )}
+              </div>
+
+              {!billing ? (
+                <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading usage…</div>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 14 }}>
+                    <Card title="Total outcomes" eyebrow="this period">
+                      <div className="h1" style={{ margin: 0, fontFeatureSettings: "'tnum'" }}>{billing.total_outcomes}</div>
+                      <div className="mono-sm" style={{ color: "var(--ink-3)" }}>billable units</div>
+                    </Card>
+                    <Card title="Spend" eyebrow="USD this period">
+                      <div className="h1" style={{ margin: 0, fontFeatureSettings: "'tnum'" }}>
+                        ${(billing.total_cents / 100).toFixed(2)}
+                      </div>
+                      <div className="mono-sm" style={{ color: "var(--ink-3)" }}>at public price card</div>
+                    </Card>
+                    <Card title="Window" eyebrow="UTC">
+                      <div className="mono-sm" style={{ color: "var(--ink-2)" }}>
+                        {new Date(billing.from).toLocaleDateString("en-IN")}
+                      </div>
+                      <div className="mono-sm" style={{ color: "var(--ink-3)" }}>to</div>
+                      <div className="mono-sm" style={{ color: "var(--ink-2)" }}>
+                        {new Date(billing.to).toLocaleDateString("en-IN")}
+                      </div>
+                    </Card>
+                  </div>
+                  <table className="tbl">
+                    <thead>
+                      <tr>
+                        <th>Outcome</th>
+                        <th className="r">Count</th>
+                        <th className="r">Unit price</th>
+                        <th className="r">Subtotal</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {billing.lines.map((l: any) => (
+                        <tr key={l.id} style={l.count === 0 ? { opacity: 0.5 } : undefined}>
+                          <td>{l.label}</td>
+                          <td className="r mono">{l.count}</td>
+                          <td className="r mono">${(l.unit_price_cents / 100).toFixed(2)}</td>
+                          <td className="r mono">${(l.subtotal_cents / 100).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                      <tr style={{ borderTop: "2px solid var(--hairline)", fontWeight: 600 }}>
+                        <td>Total</td>
+                        <td className="r mono">{billing.total_outcomes}</td>
+                        <td></td>
+                        <td className="r mono">${(billing.total_cents / 100).toFixed(2)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div className="body mono-sm" style={{ color: "var(--ink-3)", marginTop: 10 }}>
+                    Outcomes are derived from <code>audit_events</code> via the public mapping in
+                    <code> src/api/_lib/outcomes.js</code>. Pricing is the public price card; tenant-specific
+                    overrides land in tenant_settings in a follow-up.
+                  </div>
+                </>
+              )}
             </Card>
           </>
         )}

@@ -161,6 +161,13 @@
 
   const health = async () => apiFetch("/api/health");
 
+  const billing = {
+    usage: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/billing/usage" + (qs ? "?" + qs : ""));
+    },
+  };
+
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });
 
   const documents = {
@@ -645,6 +652,7 @@
     getSession: readSession,
     ping,
     health,
+    billing,
     claudeCall,
     documents,
     orders,

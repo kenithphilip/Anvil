@@ -83,6 +83,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/aliases/index.js | read, write |
 | src/api/anomaly/compute.js | read |
 | src/api/audit/index.js | read, write |
+| src/api/billing/usage.js | read |
 | src/api/bom/index.js | read, write |
 | src/api/claude/messages.js | read, write |
 | src/api/communications/draft.js | write |

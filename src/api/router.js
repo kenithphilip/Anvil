@@ -37,6 +37,8 @@ import authProfile             from "./auth/profile.js";
 import authSignup              from "./auth/signup.js";
 import authVerify              from "./auth/verify.js";
 
+import billingUsage            from "./billing/usage.js";
+
 import bomIndex                from "./bom/index.js";
 import claudeMessages          from "./claude/messages.js";
 
@@ -142,6 +144,8 @@ const STATIC_ROUTES = {
   "/auth/profile":                  authProfile,
   "/auth/signup":                   authSignup,
   "/auth/verify":                   authVerify,
+
+  "/billing/usage":                 billingUsage,
 
   "/bom":                           bomIndex,
   "/claude/messages":               claudeMessages,

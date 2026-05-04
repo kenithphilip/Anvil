@@ -6,17 +6,16 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { useTallyBridgeStatus } from "./tally-status";
 
-declare global {
-  interface Window { ObaraBackend?: any; }
-}
+// `Window.ObaraBackend` is already declared in `lib/api.ts` with the
+// canonical shape. We don't re-declare here; we cast on assign.
 
 describe("useTallyBridgeStatus", () => {
   let prev: any;
-  beforeEach(() => { prev = window.ObaraBackend; });
-  afterEach(() => { window.ObaraBackend = prev; });
+  beforeEach(() => { prev = (window as any).ObaraBackend; });
+  afterEach(() => { (window as any).ObaraBackend = prev; });
 
   it("returns configured: true when /api/health reports tally configured", async () => {
-    window.ObaraBackend = {
+    (window as any).ObaraBackend = {
       isReady: () => true,
       health: vi.fn().mockResolvedValue({
         integrations: [
@@ -32,7 +31,7 @@ describe("useTallyBridgeStatus", () => {
   });
 
   it("returns configured: false when tally is not configured", async () => {
-    window.ObaraBackend = {
+    (window as any).ObaraBackend = {
       isReady: () => true,
       health: vi.fn().mockResolvedValue({
         integrations: [{ id: "tally", configured: false }],
@@ -44,7 +43,7 @@ describe("useTallyBridgeStatus", () => {
   });
 
   it("returns configured: false and stores the error when /api/health rejects", async () => {
-    window.ObaraBackend = {
+    (window as any).ObaraBackend = {
       isReady: () => true,
       health: vi.fn().mockRejectedValue(new Error("Backend down")),
     };

@@ -28,22 +28,46 @@
     return headers;
   };
 
-  // Once-per-session warning when the backend rejects requests for
-  // a tenant-membership reason. Without this, every screen just shows
-  // "Failed to load <thing>" and the user can't tell whether the data
-  // is empty or the backend is locking them out.
+  // Once-per-session warnings for auth failures. Without these, every
+  // screen just shows "Failed to load <thing>" and the user can't tell
+  // whether the data is empty or the backend is locking them out. The
+  // dedupe matters because a single page render fires 4-6 parallel API
+  // calls; without it the user gets a stack of identical "Session
+  // expired" toasts.
   let warnedNoTenant = false;
+  let warnedExpired = false;
   const surfaceAuthError = (status, message) => {
-    if (typeof global === "undefined" || !global.notifyError) return;
+    const notify = (typeof global !== "undefined" && global.notifyError) || null;
     if (status === 403 && /tenant membership/i.test(message || "")) {
-      if (warnedNoTenant) return;
+      if (warnedNoTenant || !notify) return;
       warnedNoTenant = true;
-      global.notifyError(
+      notify(
         "Account not onboarded",
         "Your sign-in succeeded but no tenant is attached to your user. Sign out and back in, or have an admin invite you via the Admin Center."
       );
     } else if (status === 401) {
-      global.notifyError("Session expired", "Sign in again to continue. Your last action was not saved.");
+      // Stop sending the dead token. Every subsequent request would
+      // otherwise re-fire 401 and re-trigger this toast. We clear the
+      // session so the anonymous fallback (ALLOW_ANONYMOUS_TENANT) at
+      // least lets read-only screens render.
+      clearSession();
+      // Bounce to the connect screen so the user can sign back in. We
+      // do not redirect if the user is already on connect, otherwise
+      // the route reload causes a refresh loop.
+      if (typeof global !== "undefined" && global.location) {
+        const here = String(global.location.hash || "").replace(/^#\/?/, "").split("?")[0];
+        if (here !== "connect") {
+          // Remember where they were so the post-sign-in flow can
+          // bring them back.
+          try {
+            global.localStorage?.setItem("obara:v3_intended_route", global.location.hash || "");
+          } catch (_) { /* localStorage may be blocked */ }
+          global.location.hash = "#/connect";
+        }
+      }
+      if (warnedExpired || !notify) return;
+      warnedExpired = true;
+      notify("Session expired", "Sign in again to continue. Your last action was not saved.");
     }
   };
 
@@ -65,10 +89,30 @@
     return body || {};
   };
 
+  // Compare the session's expires_at (Supabase stores it as Unix
+  // seconds) to the current clock. We shave 30s off so a token that
+  // expires mid-request still gets dropped before we send. Tokens
+  // without an expires_at are considered live; the server will tell
+  // us if they are not.
+  const isSessionExpired = (session) => {
+    if (!session || !session.expires_at) return false;
+    const exp = Number(session.expires_at);
+    if (!Number.isFinite(exp)) return false;
+    return Date.now() / 1000 > (exp - 30);
+  };
+
   const apiFetch = async (path, init) => {
     const cfg = readConfig();
     if (!cfg.url) throw new Error("Backend URL not configured");
-    const session = readSession();
+    let session = readSession();
+    // Drop locally-expired sessions before sending. This prevents the
+    // 401-toast cascade: with a stale token in localStorage, every
+    // parallel call from a screen render would round-trip to Supabase
+    // and bounce off as 401, each one re-firing the toast.
+    if (session && isSessionExpired(session)) {
+      surfaceAuthError(401, "Session expired locally");
+      session = null;
+    }
     const fullUrl = cfg.url.replace(/\/+$/, "") + path;
     const opts = init || {};
     const resp = await fetch(fullUrl, {
@@ -94,6 +138,10 @@
   };
 
   const setSession = (session) => {
+    // Reset the auth-warning dedupe so a freshly signed-in user can be
+    // warned again the NEXT time their token expires.
+    warnedNoTenant = false;
+    warnedExpired = false;
     if (!session) clearSession();
     else writeSession({ access_token: session.access_token, refresh_token: session.refresh_token, expires_at: session.expires_at });
   };

@@ -168,6 +168,15 @@ export default async function handler(req, res) {
       detail: ok ? ("ns_id=" + externalId) : ("status=" + resp.status),
     });
 
+    // Smartbase parity: auto-print a traveler PDF when the tenant
+    // opted in. Best-effort (failure here doesn't fail the push).
+    if (ok) {
+      const { enqueueTravelerForOrder } = await import("../orders/traveler.js");
+      enqueueTravelerForOrder(svc, {
+        tenantId: ctx.tenantId, orderId: orderQ.data.id, triggeredBy: "erp_push",
+      }).catch(() => {});
+    }
+
     if (!ok && isRecoverable(resp.status)) {
       await enqueueRetry(svc, ctx.tenantId, orderQ.data.id, payload, resp.status,
         JSON.stringify(resp.body).slice(0, 800));

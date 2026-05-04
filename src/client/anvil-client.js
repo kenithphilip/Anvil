@@ -341,6 +341,20 @@
     deleteToken:  async (id) => apiFetch("/api/portal/tokens?id=" + encodeURIComponent(id), { method: "DELETE" }),
   };
 
+  // Customer-facing portal v2 client. These calls take a token (not
+  // a session) and run anonymously on the buyer's side.
+  const portalCustomer = {
+    reorder:      async (payload) => apiFetch("/api/portal/reorder", { method: "POST", body: payload }),
+    invoicePdf:   async (token, invoiceId) => apiFetch("/api/portal/invoice_pdf?token=" + encodeURIComponent(token) + "&invoice_id=" + encodeURIComponent(invoiceId)),
+    acceptQuote:  async (payload) => apiFetch("/api/portal/accept_quote", { method: "POST", body: payload }),
+  };
+
+  const travelers = {
+    generate:     async (payload) => apiFetch("/api/orders/traveler", { method: "POST", body: payload }),
+    listJobs:     async (q) => apiFetch("/api/orders/print_jobs" + (q ? "?" + new URLSearchParams(q).toString() : "")),
+    cancelJob:    async (id) => apiFetch("/api/orders/print_jobs?id=" + encodeURIComponent(id), { method: "PATCH", body: { cancel: true } }),
+  };
+
   const esign = {
     connect:      async (payload) => apiFetch("/api/esign/connect", { method: "POST", body: payload }),
     list:         async () => apiFetch("/api/esign/envelopes"),
@@ -904,6 +918,8 @@
     razorpay,
     push,
     portal,
+    portalCustomer,
+    travelers,
     esign,
     edi,
     rlhf,

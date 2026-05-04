@@ -183,6 +183,12 @@ import pushSend                from "./push/send.js";
 import portalTokens            from "./portal/tokens.js";
 import portalView              from "./portal/view.js";
 import portalPay               from "./portal/pay.js";
+import portalReorder           from "./portal/reorder.js";
+import portalInvoicePdf        from "./portal/invoice_pdf.js";
+import portalAcceptQuote       from "./portal/accept_quote.js";
+
+import ordersTraveler          from "./orders/traveler.js";
+import ordersPrintJobs         from "./orders/print_jobs.js";
 
 import esignConnect            from "./esign/connect.js";
 import esignEnvelopes          from "./esign/envelopes.js";
@@ -284,6 +290,11 @@ const STATIC_ROUTES = {
   "/portal/tokens":                 portalTokens,
   "/portal/view":                   portalView,
   "/portal/pay":                    portalPay,
+  "/portal/reorder":                portalReorder,
+  "/portal/invoice_pdf":            portalInvoicePdf,
+  "/portal/accept_quote":           portalAcceptQuote,
+  "/orders/traveler":               ordersTraveler,
+  "/orders/print_jobs":             ordersPrintJobs,
   "/esign/connect":                 esignConnect,
   "/esign/envelopes":               esignEnvelopes,
   "/esign/webhook":                 esignWebhook,

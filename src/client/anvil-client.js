@@ -360,6 +360,26 @@
     refresh:  async (payload) => apiFetch("/api/analytics/refresh", { method: "POST", body: payload || {} }),
   };
 
+  const supplierRfq = {
+    list:        async () => apiFetch("/api/supplier_rfq"),
+    get:         async (id) => apiFetch("/api/supplier_rfq?id=" + encodeURIComponent(id)),
+    create:      async (payload) => apiFetch("/api/supplier_rfq", { method: "POST", body: payload }),
+    update:      async (id, payload) => apiFetch("/api/supplier_rfq?id=" + encodeURIComponent(id), { method: "PATCH", body: payload }),
+    remove:      async (id) => apiFetch("/api/supplier_rfq?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    send:        async (payload) => apiFetch("/api/supplier_rfq/send", { method: "POST", body: payload }),
+    submitQuote: async (payload) => apiFetch("/api/supplier_rfq/quote", { method: "POST", body: payload }),
+    matrix:      async (rfqId) => apiFetch("/api/supplier_rfq/matrix?rfq_id=" + encodeURIComponent(rfqId)),
+    award:       async (payload) => apiFetch("/api/supplier_rfq/award", { method: "POST", body: payload }),
+    listVendors: async () => apiFetch("/api/supplier_rfq/vendors"),
+    createVendor: async (payload) => apiFetch("/api/supplier_rfq/vendors", { method: "POST", body: payload }),
+    updateVendor: async (id, payload) => apiFetch("/api/supplier_rfq/vendors?id=" + encodeURIComponent(id), { method: "PATCH", body: payload }),
+    deleteVendor: async (id) => apiFetch("/api/supplier_rfq/vendors?id=" + encodeURIComponent(id), { method: "DELETE" }),
+  };
+
+  const reconcile = {
+    submit: async (payload) => apiFetch("/api/orders/reconcile", { method: "POST", body: payload }),
+  };
+
   const esign = {
     connect:      async (payload) => apiFetch("/api/esign/connect", { method: "POST", body: payload }),
     list:         async () => apiFetch("/api/esign/envelopes"),
@@ -926,6 +946,8 @@
     portalCustomer,
     travelers,
     analytics,
+    supplierRfq,
+    reconcile,
     esign,
     edi,
     rlhf,

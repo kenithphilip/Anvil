@@ -189,6 +189,14 @@ import portalAcceptQuote       from "./portal/accept_quote.js";
 
 import ordersTraveler          from "./orders/traveler.js";
 import ordersPrintJobs         from "./orders/print_jobs.js";
+import ordersReconcile         from "./orders/reconcile.js";
+
+import supplierRfqIndex        from "./supplier_rfq/index.js";
+import supplierRfqSend         from "./supplier_rfq/send.js";
+import supplierRfqQuote        from "./supplier_rfq/quote.js";
+import supplierRfqMatrix       from "./supplier_rfq/matrix.js";
+import supplierRfqAward        from "./supplier_rfq/award.js";
+import supplierRfqVendors      from "./supplier_rfq/vendors.js";
 
 import analyticsWinloss        from "./analytics/winloss.js";
 import analyticsRefresh        from "./analytics/refresh.js";
@@ -298,6 +306,13 @@ const STATIC_ROUTES = {
   "/portal/accept_quote":           portalAcceptQuote,
   "/orders/traveler":               ordersTraveler,
   "/orders/print_jobs":             ordersPrintJobs,
+  "/orders/reconcile":              ordersReconcile,
+  "/supplier_rfq":                  supplierRfqIndex,
+  "/supplier_rfq/send":             supplierRfqSend,
+  "/supplier_rfq/quote":            supplierRfqQuote,
+  "/supplier_rfq/matrix":           supplierRfqMatrix,
+  "/supplier_rfq/award":            supplierRfqAward,
+  "/supplier_rfq/vendors":          supplierRfqVendors,
   "/analytics/winloss":             analyticsWinloss,
   "/analytics/refresh":             analyticsRefresh,
   "/esign/connect":                 esignConnect,

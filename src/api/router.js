@@ -134,6 +134,11 @@ import invoicesById            from "./invoices/[id].js";
 import invoicesPdf             from "./invoices/pdf.js";
 import invoicesSend            from "./invoices/send.js";
 
+import netsuiteConnect         from "./netsuite/connect.js";
+import netsuiteHealth          from "./netsuite/health.js";
+import netsuitePush            from "./netsuite/push.js";
+import netsuiteSync            from "./netsuite/sync.js";
+
 import healthCheck             from "./health.js";
 
 // Static routes resolved by exact match. Order does not matter.
@@ -142,6 +147,11 @@ const STATIC_ROUTES = {
 
   "/agents/goals":                  agentsGoals,
   "/agents/run":                    agentsRun,
+
+  "/netsuite/connect":              netsuiteConnect,
+  "/netsuite/health":               netsuiteHealth,
+  "/netsuite/push":                 netsuitePush,
+  "/netsuite/sync":                 netsuiteSync,
   "/admin/contracts":               adminContracts,
   "/admin/customer_locations":      adminCustomerLocations,
   "/admin/diagnostics":             adminDiagnostics,

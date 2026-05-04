@@ -21,6 +21,10 @@
     {
       "path": "/api/agents/run",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/netsuite/sync",
+      "schedule": "*/30 * * * *"
     }
   ],
   "headers": [

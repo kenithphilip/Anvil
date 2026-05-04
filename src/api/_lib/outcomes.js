@@ -28,6 +28,7 @@ export const ACTION_TO_OUTCOME = {
   tally_push:             "order_pushed",
   tally_amend:            "order_pushed",
   tally_reconcile:        "order_pushed",
+  netsuite_push:          "order_pushed",
 
   // Quotes + communications
   comm_draft:             "quote_drafted",

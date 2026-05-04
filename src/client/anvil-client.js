@@ -286,6 +286,12 @@
     send: async (payload) => apiFetch("/api/whatsapp/send", { method: "POST", body: payload }),
   };
 
+  const netsuite = {
+    health:  async () => apiFetch("/api/netsuite/health"),
+    connect: async (payload) => apiFetch("/api/netsuite/connect", { method: "POST", body: payload }),
+    push:    async (orderId) => apiFetch("/api/netsuite/push", { method: "POST", body: { orderId } }),
+  };
+
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });
 
   const documents = {
@@ -775,6 +781,7 @@
     invoices: invoices,
     agents,
     whatsapp,
+    netsuite,
     claudeCall,
     documents,
     orders,

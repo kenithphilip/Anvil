@@ -380,3 +380,60 @@ payment_records). Schema is provider-agnostic except for the
 `stripe_*` columns on `tenant_settings`, which would gain
 `razorpay_*` siblings. Not implemented in this round; tracked as
 Phase 2.4.
+
+## NetSuite (ERP)
+
+What it does: per-tenant ERP read sync (customers, items, sales
+orders) + sales-order push from Anvil to NetSuite. Each tenant has
+their own NetSuite account; credentials live on tenant_settings.
+
+### Setup (per-tenant)
+
+1. In NetSuite: Setup > Company > Enable Features > SuiteCloud.
+   Enable: REST Web Services, Token-Based Authentication.
+2. Setup > Integration > Manage Integrations > New. Note the
+   consumer key + consumer secret. State: Enabled. Auth: TBA.
+3. Setup > Users/Roles > Access Tokens > New. Pick the integration
+   record from step 2 and a user with the right role. Note the
+   token id + token secret.
+4. In Anvil: Admin Center > NetSuite. Paste account id (e.g.
+   `1234567` for production or `1234567_SB1` for sandbox), consumer
+   key/secret, token id/secret. Click Save and probe.
+5. Anvil runs a SuiteQL probe to confirm the credentials. On
+   success a green `connected` chip appears and the cron starts
+   syncing customers/items/sales_orders every 30 minutes.
+
+### Smoke test
+
+1. Wait for the next cron tick (or trigger manually with
+   `Authorization: Bearer $CRON_SECRET` against
+   `/api/netsuite/sync`). The Admin Center > NetSuite tab shows
+   per-entity row counts + last sync timestamp.
+2. Open any approved order; the workspace gains an "ERP push"
+   button (in addition to the existing Tally push). Clicking it
+   POSTs the order via the Record API; on success the order's
+   `result.external_systems.netsuite.id` is filled and the audit
+   log shows `netsuite_push`.
+
+### Authentication notes
+
+- TBA (token-based) is the most-supported NetSuite integration
+  pattern and works for both production and sandbox.
+- OAuth 2.0 is also supported but requires a per-user redirect
+  flow we don't yet have UI for.
+- All five fields (account_id, consumer_key, consumer_secret,
+  token_id, token_secret) are required.
+- The credentials are stored on tenant_settings as plain text;
+  Supabase RLS prevents non-admin reads. Encryption at rest is a
+  follow-up.
+
+### Limits
+
+- v1 syncs up to 5000 rows per entity per cron tick. v2 should
+  checkpoint a cursor + resume.
+- Push currently uses the Record API with a flat payload; complex
+  features (bundle assemblies, drop-ship, multiple locations) need
+  schema work in `buildSalesOrderPayload`.
+- No automatic reconciliation between NetSuite open orders and
+  the local Anvil orders table; the mirror in
+  `netsuite_open_orders` is read-only.

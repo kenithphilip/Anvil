@@ -49,6 +49,11 @@ const INTEGRATIONS = [
   { id: "agent_runner", env: ["CRON_SECRET"], label: "Autonomous agent cron" },
   { id: "stripe",       env: ["STRIPE_SECRET_KEY"], label: "Stripe (payments platform)" },
   { id: "stripe_webhook", env: ["STRIPE_WEBHOOK_SECRET"], label: "Stripe webhook signing" },
+  // NetSuite credentials are per-tenant, not platform-wide; this
+  // entry only checks that the platform allows NetSuite (i.e. the
+  // SDK is bundled). Tenant-level connection state lives at
+  // /api/netsuite/health.
+  { id: "netsuite_platform", env: ["PUBLIC_APP_URL"], label: "NetSuite (platform-side ready)" },
 ];
 
 let cached = null;

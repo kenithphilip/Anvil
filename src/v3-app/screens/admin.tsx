@@ -34,6 +34,7 @@ const ADMIN_CRUD_TABS = [
   { id: "profile",   label: "My profile" },
   { id: "roles",     label: "Roles & permissions" },
   { id: "billing",   label: "Billing" },
+  { id: "netsuite",  label: "NetSuite" },
   { id: "settings",  label: "Settings" },
   { id: "holidays",  label: "Holidays" },
   { id: "leadtimes", label: "Lead times" },
@@ -160,6 +161,12 @@ const WiredAdminCRUD = () => {
   // Stripe Connect status loaded alongside billing.
   const [stripe, setStripe] = u<any>(null);
   const [stripeBusy, setStripeBusy] = u(false);
+  // NetSuite tenant state loaded when the operator opens the tab.
+  const [netsuite, setNetsuite] = u<any>(null);
+  const [nsBusy, setNsBusy] = u(false);
+  const [nsForm, setNsForm] = u({
+    account_id: "", consumer_key: "", consumer_secret: "", token_id: "", token_secret: "",
+  });
   const [holidayForm, setHolidayForm] = u({ country: "IN", date: "", name: "" });
   const [leadTimeForm, setLeadTimeForm] = u({ type: "supplier", entity_id: "", days: "", notes: "" });
   const [threshForm, setThreshForm] = u(null);
@@ -356,9 +363,35 @@ const WiredAdminCRUD = () => {
     finally { setStripeBusy(false); }
   };
 
+  const loadNetsuite = async () => {
+    try {
+      const resp = await ObaraBackend?.netsuite?.health?.();
+      setNetsuite(resp);
+    } catch (err) { flashErr(err); }
+  };
+
+  const onNsConnect = async (ev) => {
+    ev.preventDefault();
+    if (!nsForm.account_id || !nsForm.consumer_key) return flashErr(new Error("All fields are required"));
+    setNsBusy(true);
+    try {
+      const resp: any = await ObaraBackend?.netsuite?.connect?.(nsForm);
+      if (resp?.ok) {
+        flashOk("NetSuite probe succeeded; sync will run on the next 30-minute cron tick");
+      } else {
+        flashErr(new Error("NetSuite probe failed: " + JSON.stringify(resp?.probe_error || resp).slice(0, 200)));
+      }
+      setNetsuite(null);
+      loadNetsuite();
+      setNsForm({ account_id: "", consumer_key: "", consumer_secret: "", token_id: "", token_secret: "" });
+    } catch (err) { flashErr(err); }
+    finally { setNsBusy(false); }
+  };
+
   e(() => {
     if (active === "billing" && !billing) loadBilling(billingFrom);
     if (active === "billing" && !stripe) loadStripe();
+    if (active === "netsuite" && !netsuite) loadNetsuite();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
@@ -985,6 +1018,92 @@ const WiredAdminCRUD = () => {
                   )}
                 </>
               )}
+            </Card>
+          </>
+        )}
+
+        {active === "netsuite" && (
+          <>
+            <Card title="NetSuite Connect" eyebrow="ERP read + push for non-India tenants">
+              {!netsuite ? (
+                <div className="body" style={{ padding: 16, textAlign: "center", color: "var(--ink-3)" }}>Loading…</div>
+              ) : netsuite.configured ? (
+                <>
+                  <div className="row" style={{ gap: 6, marginBottom: 10 }}>
+                    <Chip k="live">connected</Chip>
+                    <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                      account {netsuite.account_id}
+                      {netsuite.connected_at ? " · since " + new Date(netsuite.connected_at).toLocaleDateString("en-US") : ""}
+                    </span>
+                  </div>
+                  <table className="tbl mono-sm">
+                    <thead><tr><th>Entity</th><th>Last sync</th><th>Status</th><th className="r">Rows</th><th>Error</th></tr></thead>
+                    <tbody>
+                      {(netsuite.sync_state || []).length === 0 ? (
+                        <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--ink-3)" }}>No syncs yet. Cron runs every 30 minutes.</td></tr>
+                      ) : (netsuite.sync_state || []).map((s: any) => (
+                        <tr key={s.entity}>
+                          <td>{s.entity}</td>
+                          <td>{s.last_sync_at ? new Date(s.last_sync_at).toLocaleString("en-IN") : "—"}</td>
+                          <td>
+                            {s.status === "running" ? <Chip k="warn">running</Chip>
+                              : s.status === "error" ? <Chip k="bad">error</Chip>
+                              : <Chip k="ghost">idle</Chip>}
+                          </td>
+                          <td className="r">{s.rows_pulled || 0}</td>
+                          <td style={{ color: "var(--rust)", fontSize: 11 }}>{s.error || ""}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div style={{ marginTop: 10 }}>
+                    <Btn sm kind="ghost" onClick={() => { setNetsuite(null); loadNetsuite(); }}>{Icon.cycle} refresh</Btn>
+                  </div>
+                </>
+              ) : (
+                <Banner kind="warn" icon={Icon.alert} title="No NetSuite credentials on file">
+                  <span className="mono-sm">Set the TBA credentials below to enable read sync + SO push.</span>
+                </Banner>
+              )}
+            </Card>
+
+            <Card title="Configure NetSuite credentials" eyebrow="TBA · stored in tenant_settings">
+              <form onSubmit={onNsConnect} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)" }}>Account id</span>
+                  <input className="input mono-sm" type="text" required value={nsForm.account_id}
+                         onChange={(ev) => setNsForm({ ...nsForm, account_id: ev.target.value })}
+                         placeholder="1234567 or 1234567_SB1" />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)" }}>Consumer key</span>
+                  <input className="input mono-sm" type="text" required value={nsForm.consumer_key}
+                         onChange={(ev) => setNsForm({ ...nsForm, consumer_key: ev.target.value })} />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)" }}>Consumer secret</span>
+                  <input className="input mono-sm" type="password" required value={nsForm.consumer_secret}
+                         onChange={(ev) => setNsForm({ ...nsForm, consumer_secret: ev.target.value })} />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)" }}>Token id</span>
+                  <input className="input mono-sm" type="text" required value={nsForm.token_id}
+                         onChange={(ev) => setNsForm({ ...nsForm, token_id: ev.target.value })} />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4, gridColumn: "1 / -1" }}>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)" }}>Token secret</span>
+                  <input className="input mono-sm" type="password" required value={nsForm.token_secret}
+                         onChange={(ev) => setNsForm({ ...nsForm, token_secret: ev.target.value })} />
+                </label>
+                <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8 }}>
+                  <Btn type="submit" kind="primary" sm disabled={nsBusy}>
+                    {nsBusy ? "probing…" : <>{Icon.shieldCheck} Save and probe</>}
+                  </Btn>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)", alignSelf: "center" }}>
+                    Credentials are stored on tenant_settings; only admin can read them.
+                  </span>
+                </div>
+              </form>
             </Card>
           </>
         )}

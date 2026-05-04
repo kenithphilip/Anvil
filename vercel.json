@@ -11,96 +11,12 @@
   },
   "crons": [
     {
-      "path": "/api/fx/cron",
-      "schedule": "0 4 * * *"
-    },
-    {
-      "path": "/api/service/amc_cron",
-      "schedule": "0 5 * * *"
-    },
-    {
-      "path": "/api/agents/run",
-      "schedule": "0 * * * *"
-    },
-    {
-      "path": "/api/netsuite/sync",
-      "schedule": "*/30 * * * *"
-    },
-    {
-      "path": "/api/netsuite/retry",
+      "path": "/api/cron/tick",
       "schedule": "*/5 * * * *"
     },
     {
-      "path": "/api/tally/sync",
-      "schedule": "*/30 * * * *"
-    },
-    {
-      "path": "/api/tally/retry",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/sap/sync",
-      "schedule": "*/30 * * * *"
-    },
-    {
-      "path": "/api/sap/retry",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/d365/sync",
-      "schedule": "*/30 * * * *"
-    },
-    {
-      "path": "/api/d365/retry",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/acumatica/sync",
-      "schedule": "*/30 * * * *"
-    },
-    {
-      "path": "/api/acumatica/retry",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/push/send",
-      "schedule": "*/2 * * * *"
-    },
-    {
-      "path": "/api/rlhf/aggregate",
-      "schedule": "0 6 * * *"
-    },
-    {
-      "path": "/api/inbound/email/parse",
-      "schedule": "*/2 * * * *"
-    },
-    {
-      "path": "/api/p21/sync",
-      "schedule": "*/30 * * * *"
-    },
-    {
-      "path": "/api/p21/retry",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/eclipse/sync",
-      "schedule": "*/30 * * * *"
-    },
-    {
-      "path": "/api/eclipse/retry",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/sxe/sync",
-      "schedule": "*/30 * * * *"
-    },
-    {
-      "path": "/api/sxe/retry",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/analytics/refresh",
-      "schedule": "0 2 * * *"
+      "path": "/api/cron/daily",
+      "schedule": "30 2 * * *"
     }
   ],
   "headers": [

@@ -212,6 +212,9 @@ import esignConnect            from "./esign/connect.js";
 import esignEnvelopes          from "./esign/envelopes.js";
 import esignWebhook            from "./esign/webhook.js";
 
+import cronTick                from "./cron/tick.js";
+import cronDaily               from "./cron/daily.js";
+
 import ediInbound              from "./edi/inbound.js";
 import ediOutbound             from "./edi/outbound.js";
 import ediPartners             from "./edi/partners.js";
@@ -330,6 +333,8 @@ const STATIC_ROUTES = {
   "/esign/connect":                 esignConnect,
   "/esign/envelopes":               esignEnvelopes,
   "/esign/webhook":                 esignWebhook,
+  "/cron/tick":                     cronTick,
+  "/cron/daily":                    cronDaily,
   "/edi/inbound":                   ediInbound,
   "/edi/outbound":                  ediOutbound,
   "/edi/partners":                  ediPartners,

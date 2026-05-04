@@ -356,13 +356,16 @@ RFQs across CC'd recipients collapse to one.
 - Inbox screen sorts by priority.
 - A duplicate-CC scenario produces only one canonical thread.
 
-## 5. Phase 4: Cash close, sourcing, and analytics
+## 5. Phase 4: Cash close, sourcing, and analytics (COMPLETE)
 
 **Goal.** Finish the QTC loop's analytics surface and ship the
 buy-side and customer-portal v2. This corresponds to the strategic
 doc's Phase 4 plus the Soff-parity items from Phase 5.
 
-### 4.1 Outbound supplier RFQ orchestration (Lumari module) `[open]`
+**Status.** All seven sub-items shipped in a four-commit family on
+`main`. Migrations 033, 034, 035, 036.
+
+### 4.1 Outbound supplier RFQ orchestration (Lumari module) `[done]`
 
 BOM in, multi-vendor emails out, normalized comparison matrix, PO
 tracking with acknowledgement and ship-date monitoring.
@@ -400,7 +403,7 @@ tracking with acknowledgement and ship-date monitoring.
   price.
 - Follow-up agent fires after 3 days of silence.
 
-### 4.2 Order-confirmation reconciliation (Comena unique) `[open]`
+### 4.2 Order-confirmation reconciliation (Comena unique) `[done]`
 
 Compare a vendor order confirmation against the issued PO.
 
@@ -422,7 +425,7 @@ Compare a vendor order confirmation against the issued PO.
 - Operator can accept or reject the confirmation; rejection sends
   a clarifying email back via the SendGrid path.
 
-### 4.3 Customer portal v2 `[open]`
+### 4.3 Customer portal v2 `[done]`
 
 Full self-service: reorder, invoice download, full quote acceptance
 flow, order status with line-item detail.
@@ -452,7 +455,7 @@ flow, order status with line-item detail.
   the SO Workspace flips to APPROVED.
 - A customer can download an invoice PDF.
 
-### 4.4 Win/loss dashboard (Soff parity) `[open]`
+### 4.4 Win/loss dashboard (Soff parity) `[done]`
 
 Lost-reason trending, rep-level efficiency, response-time SLA,
 customer buying-pattern analytics.
@@ -476,7 +479,7 @@ customer buying-pattern analytics.
 - Lost-reason pie reflects the `lost_reasons` admin CRUD.
 - Rep efficiency table sorts by median response time.
 
-### 4.5 Auto-print travelers (Smartbase unique) `[open]`
+### 4.5 Auto-print travelers (Smartbase unique) `[done]`
 
 After a successful PO push to ERP, generate a traveler PDF and
 optionally route to a network printer.
@@ -503,7 +506,7 @@ optionally route to a network printer.
 - A push to NetSuite generates a traveler PDF in storage.
 - The print-jobs queue surfaces in Admin Center.
 
-### 4.6 Catalog intelligence `[open]`
+### 4.6 Catalog intelligence `[done]`
 
 Synonym and typo-tolerant semantic catalog search, alternative-part
 suggestion, private-label upsell.
@@ -534,7 +537,7 @@ suggestion, private-label upsell.
 - An item with a private-label equivalent surfaces an upsell chip.
 - Operator selection writes back to synonyms.
 
-### 4.7 Knowledge-base assistant for inside-sales reps `[open]`
+### 4.7 Knowledge-base assistant for inside-sales reps `[done]`
 
 Avent / Axal parity. Reps ask "what was Acme's last price on
 SKU-1234?" and get an answer grounded in ERP, CRM, catalog, and
@@ -939,6 +942,31 @@ shifts priorities, a competitor ships something material):
   through commit `e03503e`. Phases 1 and 2 mapped to already-shipped
   work. Phases 3 to 7 mapped to open work, grouped by shared
   infrastructure rather than by strategic-doc month boundary.
+- Phase 4 complete: every Phase 4 sub-item shipped in a four-commit
+  family on `main`. Cash close + sourcing + analytics is in:
+  - 4.3 + 4.5 portal v2 + auto-print travelers: scopes expanded to
+    reorder/download_invoice/accept_quote, portal_quote_acceptances
+    table for defensible signature audit, portal_reorders table,
+    print_jobs queue with on-prem CUPS/IPP relay contract,
+    enqueueTravelerForOrder hooked into NetSuite push.
+  - 4.4 win/loss dashboard: analytics_winloss_daily +
+    analytics_customer_monthly rollups, refreshWinloss helper
+    materialises both, /api/analytics/winloss returns kpis +
+    trend + lost-reasons (hydrated) + rep efficiency + top
+    customers.
+  - 4.1 + 4.2 supplier RFQ + reconciliation: vendors + supplier_rfqs
+    + supplier_rfq_lines + supplier_rfq_invitations +
+    supplier_quotes; comparison-matrix endpoint surfaces
+    delta-to-target plus winner-flag; order_reconciliations diffs
+    confirmation against issued PO across qty/price/lead-time/
+    currency with severity tags.
+  - 4.6 + 4.7 catalog intelligence + KB assistant: catalog_synonyms
+    (pg_trgm-indexed), catalog_alternatives, private_label_items;
+    /api/catalog/search returns items with alternatives + private-
+    label upsell; three new tools (customer_history,
+    last_purchase_price, catalog_lookup) added to ToolRegistry;
+    /api/kb/ask wraps the same Claude tool-use loop with an
+    inside-sales system prompt.
 - Phase 3 complete: every Phase 3 sub-item shipped in a four-commit
   family on `main`. ICP wedge is in:
   - 3.4 MCP server: external AI surface, 9-tool registry shared

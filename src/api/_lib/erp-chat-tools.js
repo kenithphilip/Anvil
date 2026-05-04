@@ -263,6 +263,122 @@ const TOOLS = {
       };
     },
   },
+
+  // KB-assistant tools (Phase 4.7 — Avent/Axal parity).
+
+  customer_history: {
+    scope: "read.customers",
+    description: "Pull a customer's order + invoice history for the last 12 months. Used for 'what's Acme's recent activity' questions.",
+    parameters: {
+      type: "object",
+      properties: {
+        customer_id_or_name: { type: "string", description: "uuid or name fragment" },
+        months: { type: "integer", default: 12 },
+      },
+      required: ["customer_id_or_name"],
+    },
+    run: async (svc, tenantId, args) => {
+      const months = Math.max(1, Math.min(36, Number(args?.months || 12)));
+      const since = new Date(Date.now() - months * 30 * 86400_000).toISOString();
+      // Resolve to a customer id.
+      let customerId = String(args?.customer_id_or_name || "").trim();
+      if (!/^[0-9a-f]{8}-/i.test(customerId)) {
+        const c = await svc.from("customers").select("id").eq("tenant_id", tenantId)
+          .ilike("customer_name", "%" + customerId + "%").limit(1).maybeSingle();
+        customerId = c.data?.id || null;
+      }
+      if (!customerId) return { error: "customer not found" };
+      const [orders, invoices] = await Promise.all([
+        svc.from("orders").select("id, quote_number, po_number, status, total_value, currency, created_at")
+          .eq("tenant_id", tenantId).eq("customer_id", customerId)
+          .gte("created_at", since).order("created_at", { ascending: false }).limit(50),
+        svc.from("invoices").select("id, invoice_number, issue_date, grand_total, paid_amount, status, currency")
+          .eq("tenant_id", tenantId).eq("customer_id", customerId)
+          .gte("issue_date", since.slice(0, 10)).order("issue_date", { ascending: false }).limit(50),
+      ]);
+      return {
+        customer_id: customerId,
+        orders: orders.data || [],
+        invoices: invoices.data || [],
+        source: "customers+orders+invoices",
+      };
+    },
+  },
+
+  last_purchase_price: {
+    scope: "read.orders",
+    description: "Find a customer's last purchase price for a given SKU. Used by inside-sales reps quoting a repeat customer.",
+    parameters: {
+      type: "object",
+      properties: {
+        customer_id_or_name: { type: "string" },
+        part_number: { type: "string" },
+      },
+      required: ["customer_id_or_name", "part_number"],
+    },
+    run: async (svc, tenantId, args) => {
+      let customerId = String(args?.customer_id_or_name || "").trim();
+      if (!/^[0-9a-f]{8}-/i.test(customerId)) {
+        const c = await svc.from("customers").select("id").eq("tenant_id", tenantId)
+          .ilike("customer_name", "%" + customerId + "%").limit(1).maybeSingle();
+        customerId = c.data?.id || null;
+      }
+      if (!customerId) return { error: "customer not found" };
+      const r = await svc.from("orders")
+        .select("id, po_number, created_at, result")
+        .eq("tenant_id", tenantId).eq("customer_id", customerId)
+        .order("created_at", { ascending: false }).limit(50);
+      const part = String(args.part_number).toLowerCase();
+      for (const o of r.data || []) {
+        const lines = o.result?.salesOrder?.lineItems || [];
+        for (const li of lines) {
+          if (String(li.partNumber || li.itemName || "").toLowerCase() === part) {
+            return {
+              part_number: li.partNumber || li.itemName,
+              unit_price: Number(li.rate || li.unitPrice || 0),
+              quantity: Number(li.quantity || li.qty || 0),
+              order_id: o.id,
+              po_number: o.po_number,
+              ordered_at: o.created_at,
+              source: "orders",
+            };
+          }
+        }
+      }
+      return { rows: [], source: "orders", note: "no match" };
+    },
+  },
+
+  catalog_lookup: {
+    scope: "read.misc",
+    description: "Look up an item from the catalog with synonyms, alternatives, and any private-label upsell. Same engine as /api/catalog/search.",
+    parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+    run: async (svc, tenantId, args) => {
+      const q = String(args?.query || "").trim();
+      if (!q) return { error: "query required" };
+      const term = "%" + q.replace(/[%_]/g, "") + "%";
+      const items = await svc.from("item_master")
+        .select("id, part_no, description, list_price")
+        .eq("tenant_id", tenantId)
+        .or(`part_no.ilike.${term},description.ilike.${term}`)
+        .limit(10);
+      const synonyms = await svc.from("catalog_synonyms")
+        .select("item_id, synonym, confidence")
+        .eq("tenant_id", tenantId).ilike("synonym", term).limit(10);
+      const synIds = (synonyms.data || []).map((s) => s.item_id);
+      let synItems = [];
+      if (synIds.length) {
+        const r = await svc.from("item_master").select("id, part_no, description, list_price")
+          .eq("tenant_id", tenantId).in("id", synIds);
+        synItems = r.data || [];
+      }
+      return {
+        items: items.data || [],
+        synonym_matches: synItems,
+        source: "item_master+catalog_synonyms",
+      };
+    },
+  },
 };
 
 // Default scope set for tools that didn't declare one.

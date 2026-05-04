@@ -380,6 +380,24 @@
     submit: async (payload) => apiFetch("/api/orders/reconcile", { method: "POST", body: payload }),
   };
 
+  const catalog = {
+    search:           async (q, limit) => apiFetch("/api/catalog/search?q=" + encodeURIComponent(q) + (limit ? "&limit=" + limit : "")),
+    listSynonyms:     async (itemId) => apiFetch("/api/catalog/synonyms" + (itemId ? "?item_id=" + encodeURIComponent(itemId) : "")),
+    addSynonym:       async (payload) => apiFetch("/api/catalog/synonyms", { method: "POST", body: payload }),
+    removeSynonym:    async (id) => apiFetch("/api/catalog/synonyms?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    listAlternatives: async (itemId) => apiFetch("/api/catalog/alternatives" + (itemId ? "?item_id=" + encodeURIComponent(itemId) : "")),
+    addAlternative:   async (payload) => apiFetch("/api/catalog/alternatives", { method: "POST", body: payload }),
+    removeAlternative: async (id) => apiFetch("/api/catalog/alternatives?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    listPrivateLabel: async () => apiFetch("/api/catalog/private_label"),
+    addPrivateLabel:  async (payload) => apiFetch("/api/catalog/private_label", { method: "POST", body: payload }),
+    updatePrivateLabel: async (id, payload) => apiFetch("/api/catalog/private_label?id=" + encodeURIComponent(id), { method: "PATCH", body: payload }),
+    removePrivateLabel: async (id) => apiFetch("/api/catalog/private_label?id=" + encodeURIComponent(id), { method: "DELETE" }),
+  };
+
+  const kb = {
+    ask: async (payload) => apiFetch("/api/kb/ask", { method: "POST", body: payload }),
+  };
+
   const esign = {
     connect:      async (payload) => apiFetch("/api/esign/connect", { method: "POST", body: payload }),
     list:         async () => apiFetch("/api/esign/envelopes"),
@@ -948,6 +966,8 @@
     analytics,
     supplierRfq,
     reconcile,
+    catalog,
+    kb,
     esign,
     edi,
     rlhf,

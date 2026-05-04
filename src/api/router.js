@@ -201,6 +201,13 @@ import supplierRfqVendors      from "./supplier_rfq/vendors.js";
 import analyticsWinloss        from "./analytics/winloss.js";
 import analyticsRefresh        from "./analytics/refresh.js";
 
+import catalogSearch           from "./catalog/search.js";
+import catalogSynonyms         from "./catalog/synonyms.js";
+import catalogAlternatives     from "./catalog/alternatives.js";
+import catalogPrivateLabel     from "./catalog/private_label.js";
+
+import kbAsk                   from "./kb/ask.js";
+
 import esignConnect            from "./esign/connect.js";
 import esignEnvelopes          from "./esign/envelopes.js";
 import esignWebhook            from "./esign/webhook.js";
@@ -315,6 +322,11 @@ const STATIC_ROUTES = {
   "/supplier_rfq/vendors":          supplierRfqVendors,
   "/analytics/winloss":             analyticsWinloss,
   "/analytics/refresh":             analyticsRefresh,
+  "/catalog/search":                catalogSearch,
+  "/catalog/synonyms":              catalogSynonyms,
+  "/catalog/alternatives":          catalogAlternatives,
+  "/catalog/private_label":         catalogPrivateLabel,
+  "/kb/ask":                        kbAsk,
   "/esign/connect":                 esignConnect,
   "/esign/envelopes":               esignEnvelopes,
   "/esign/webhook":                 esignWebhook,

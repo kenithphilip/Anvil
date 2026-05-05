@@ -39,7 +39,7 @@ const SUCCESS_TOKENS = ["flashOk", "notifySuccess", "notifyLive", '"good"', "kin
 // hopping to so-workspace after creating a draft); the screen the
 // user lands on shows the freshly-mutated state. `setFiles([])`
 // resets a one-shot uploader's queue post-import (bom-import).
-const RELOAD_TOKENS  = [".reload(", "reload()", "setList(", "setRows(", "setOrders(", "setBump(", "setScheduleBump(", "loadVersions(", "loadNetsuite(", "loadTally(", "window.location.hash", "setFiles([])"];
+const RELOAD_TOKENS  = [".reload(", "reload()", "setList(", "setRows(", "setOrders(", "setBump(", "setScheduleBump(", "loadVersions(", "loadNetsuite(", "loadTally(", "loadSageX3(", "loadPlm(", "loadVoice(", "loadChat(", "window.location.hash", "setFiles([])"];
 const ERROR_TOKENS   = ["flashErr", "notifyError", "setErr(", "kind: \"bad\""];
 
 const findings = [];

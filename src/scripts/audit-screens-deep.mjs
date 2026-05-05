@@ -72,9 +72,16 @@ const WORD = "[A-Za-z_$][\\w$]*";
 
 // Strip JS string literals + line/block comments before scanning so a
 // reference inside a comment or a CSS-in-JS string doesn't trigger.
+//
+// Order matters: line comments first, then block comments. The
+// reverse caused a real bug, a line comment containing `/*` (e.g.
+// `// see /api/auth/* endpoints`) made the block-comment regex
+// match forward to the next `*/` later in the file, consuming
+// every import in between and producing bogus "missing-import"
+// warnings.
 const sanitize = (text) => text
-  .replace(/\/\*[\s\S]*?\*\//g, " ")
   .replace(/\/\/[^\n]*/g, " ")
+  .replace(/\/\*[\s\S]*?\*\//g, " ")
   .replace(/'(?:\\.|[^'\\\n])*'/g, "''")
   .replace(/"(?:\\.|[^"\\\n])*"/g, '""')
   .replace(/`(?:\\.|[^`\\])*`/g, "``");

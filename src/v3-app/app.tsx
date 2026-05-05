@@ -111,12 +111,56 @@ const ThemeBar: React.FC = () => {
   );
 };
 
+/*
+ * Auth gate.
+ *
+ * Returns true only when there is an access token AND it has not
+ * expired. Visitors without a session never see the Shell, the
+ * sidebar, or any data screen; they get the marketing Landing page
+ * instead. The check re-runs on every render of App so a token
+ * stale-out (cron, refresh failure, manual signout) immediately
+ * bounces the visitor out of authenticated UI.
+ *
+ * The previous behaviour redirected to /connect only when the
+ * backend URL was unset, leaving authenticated-looking but actually
+ * anonymous users free to render screens that returned 401s on
+ * every fetch. The hard gate below closes that hole.
+ */
+const isSessionValid = (): boolean => {
+  try {
+    const session = ObaraBackend?.getSession?.();
+    if (!session?.access_token) return false;
+    const expiresAt = Number(session.expires_at || 0);
+    if (expiresAt && expiresAt < Math.floor(Date.now() / 1000)) return false;
+    return true;
+  } catch (_) {
+    return false;
+  }
+};
+
+const LandingScreen = React.lazy(() => import("./screens/landing"));
+
 export default function App() {
   useRerenderOnEvents(["rbac:change", "prefs:change", "popstate", "hashchange"]);
 
   const [route, setRoute] = useState(parseRoute);
   const [cmdkOpen, setCmdk] = useState(false);
   const [threadOpen, setThread] = useState(false);
+  // Recompute on every render so token expiry, cross-tab sign-in,
+  // and explicit sign-out propagate without a manual reload.
+  const authed = isSessionValid();
+
+  // When the storage event reports a fresh session in another tab,
+  // force a re-render here so the gate flips to authenticated.
+  useEffect(() => {
+    const onChange = () => { setRoute((r) => r); };
+    window.addEventListener("storage", onChange);
+    window.addEventListener("anvil:session", onChange as EventListener);
+    return () => {
+      window.removeEventListener("storage", onChange);
+      window.removeEventListener("anvil:session", onChange as EventListener);
+    };
+  }, []);
 
   const onRoute = useCallback((id: string) => {
     if (!RESOLVERS[id]) return;
@@ -139,18 +183,17 @@ export default function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, [route]);
 
-  // First-load: redirect to /connect if backend isn't configured. Save
-  // intended route so /connect can return the user there post-sign-in.
+  // Snapshot the intended route on first load so the post-auth
+  // redirect can hop the user back where they were trying to go.
+  // Hard auth gating happens just before render (see `authed` /
+  // `Landing` branch below); this hook only persists the intent.
   useEffect(() => {
-    const ready = !!ObaraBackend?.isReady?.();
-    const cfg = ObaraBackend?.getConfig?.() || {};
-    const hasUrl = !!cfg.url;
-    if (!ready && !hasUrl && route !== "connect") {
-      try {
-        lsSet(INTENDED_ROUTE_KEY_SUFFIX, window.location.hash || "#/home");
-      } catch (_) {}
-      onRoute("connect");
-    }
+    try {
+      const here = window.location.hash || "";
+      if (here && here !== "#/landing" && here !== "#/connect" && here !== "#/" && here !== "#") {
+        lsSet(INTENDED_ROUTE_KEY_SUFFIX, here);
+      }
+    } catch (_) { /* swallow */ }
     // run once after mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -248,6 +291,22 @@ export default function App() {
 
   const telemetry = useShellTelemetry();
   const viewport = useViewport();
+
+  // HARD AUTH GATE. Render the landing surface (sign-in + sign-up
+  // + product copy) for any visitor without a valid session. The
+  // Shell, sidebar, route resolvers, telemetry hooks, and CmdK
+  // overlay are deliberately not rendered. Toasts still mount so
+  // the auth flow can surface a "signed in" notification.
+  if (!authed) {
+    return (
+      <>
+        <Suspense fallback={<Loading label="anvil" />}>
+          <LandingScreen />
+        </Suspense>
+        <ToastStack />
+      </>
+    );
+  }
 
   return (
     <>

@@ -36,6 +36,10 @@ const ADMIN_CRUD_TABS = [
   { id: "billing",   label: "Billing" },
   { id: "netsuite",  label: "NetSuite" },
   { id: "tally",     label: "Tally" },
+  { id: "sage_x3",   label: "Sage X3" },
+  { id: "plm",       label: "PLM" },
+  { id: "voice",     label: "Voice" },
+  { id: "chat",      label: "Chat channels" },
   { id: "settings",  label: "Settings" },
   { id: "holidays",  label: "Holidays" },
   { id: "leadtimes", label: "Lead times" },
@@ -459,6 +463,37 @@ const WiredAdminCRUD = () => {
   });
   const [tallyCompanyBusy, setTallyCompanyBusy] = u(false);
 
+  // ---------- Phase 5 connector state ----------
+  // Sage X3 (5.4a)
+  const [sageX3, setSageX3] = u<any>(null);
+  const [sageX3Busy, setSageX3Busy] = u(false);
+  const [sageX3Form, setSageX3Form] = u<any>({
+    base_url: "", token_url: "", solution: "X3", company: "", locale: "ENG",
+    client_id: "", client_secret: "",
+  });
+  // PLM (5.5)
+  const [plm, setPlm] = u<any>(null);
+  const [plmBusy, setPlmBusy] = u(false);
+  const [plmForm, setPlmForm] = u<any>({
+    system: "windchill", base_url: "", display_name: "",
+    username: "", password: "", api_key: "",
+  });
+  // Voice (5.1)
+  const [voice, setVoice] = u<any>(null);
+  const [voiceBusy, setVoiceBusy] = u(false);
+  const [voiceForm, setVoiceForm] = u<any>({
+    provider: "vapi", display_name: "", phone_number: "",
+    assistant_id: "", api_key: "", webhook_secret: "",
+    handoff_phone_number: "", voice_persona: "", system_prompt: "",
+  });
+  // Chat (5.2)
+  const [chat, setChat] = u<any>(null);
+  const [chatBusy, setChatBusy] = u(false);
+  const [chatForm, setChatForm] = u<any>({
+    channel: "whatsapp", display_name: "",
+    creds: { account_sid: "", auth_token: "", from_number: "" },
+  });
+
   const loadTally = async () => {
     try {
       const resp = await ObaraBackend?.tally?.health?.();
@@ -533,11 +568,164 @@ const WiredAdminCRUD = () => {
     finally { setTallyRetryBusy(false); }
   };
 
+  // ---------- Phase 5: Sage X3 ----------
+  const loadSageX3 = async () => {
+    try {
+      const resp = await adminCrudFetch("/api/sage_x3/health");
+      setSageX3(resp);
+    } catch (err) { flashErr(err); }
+  };
+  const onSageX3Connect = async () => {
+    if (!sageX3Form.base_url || !sageX3Form.token_url || !sageX3Form.client_id || !sageX3Form.client_secret) {
+      return flashErr(new Error("base_url, token_url, client_id, client_secret are required"));
+    }
+    setSageX3Busy(true);
+    try {
+      const resp = await adminCrudFetch("/api/sage_x3/connect", { method: "POST", body: sageX3Form });
+      if (resp?.ok) flashOk("Sage X3 connected (probe ok)");
+      else flashErr(new Error(resp?.probe_error || "Probe failed"));
+      window.notifySuccess?.("Sage X3 saved", resp?.ok ? "probe ok" : "probe failed");
+      loadSageX3();
+    } catch (err: any) { flashErr(err); window.notifyError?.("Sage X3 connect failed", err?.message); }
+    finally { setSageX3Busy(false); }
+  };
+  const onSageX3SyncNow = async () => {
+    setSageX3Busy(true);
+    try {
+      const resp = await adminCrudFetch("/api/sage_x3/sync", { method: "POST", body: {} });
+      flashOk("Sync triggered");
+      window.notifySuccess?.("Sage X3 sync started", `${resp?.results?.length || 0} entities`);
+      loadSageX3();
+    } catch (err: any) { flashErr(err); window.notifyError?.("Sync failed", err?.message); }
+    finally { setSageX3Busy(false); }
+  };
+  const onSageX3RetryNow = async () => {
+    setSageX3Busy(true);
+    try {
+      const resp = await adminCrudFetch("/api/sage_x3/retry", { method: "POST", body: {} });
+      flashOk(`Replayed ${resp?.processed || 0} queued pushes`);
+      window.notifySuccess?.("Retry queue drained", `${resp?.processed || 0} replayed`);
+      loadSageX3();
+    } catch (err: any) { flashErr(err); window.notifyError?.("Retry failed", err?.message); }
+    finally { setSageX3Busy(false); }
+  };
+
+  // ---------- Phase 5: PLM ----------
+  const loadPlm = async () => {
+    try {
+      const resp = await adminCrudFetch("/api/plm/health");
+      setPlm(resp);
+    } catch (err) { flashErr(err); }
+  };
+  const onPlmConnect = async () => {
+    if (!plmForm.base_url) return flashErr(new Error("base_url is required"));
+    if (plmForm.system === "windchill" && (!plmForm.username || !plmForm.password)) {
+      return flashErr(new Error("Windchill needs username + password"));
+    }
+    if (plmForm.system === "arena" && !plmForm.api_key) {
+      return flashErr(new Error("Arena needs api_key"));
+    }
+    setPlmBusy(true);
+    try {
+      const resp = await adminCrudFetch("/api/plm/connect", { method: "POST", body: plmForm });
+      if (resp?.probed) {
+        flashOk("PLM connected (probe ok)");
+        window.notifySuccess?.("PLM saved", `${plmForm.system} probe ok`);
+      } else {
+        flashErr(new Error(resp?.probe_error || "Probe failed"));
+        window.notifyError?.("PLM probe failed", resp?.probe_error || "");
+      }
+      loadPlm();
+    } catch (err: any) { flashErr(err); window.notifyError?.("PLM connect failed", err?.message); }
+    finally { setPlmBusy(false); }
+  };
+  const onPlmSyncNow = async (systemId: string) => {
+    setPlmBusy(true);
+    try {
+      const resp = await adminCrudFetch("/api/plm/sync", { method: "POST", body: { system_id: systemId } });
+      flashOk(`Synced ${resp?.boms || 0} BOMs · ${resp?.changes || 0} ECOs`);
+      window.notifySuccess?.("PLM sync complete", `${resp?.boms || 0} BOMs, ${resp?.changes || 0} ECOs`);
+      loadPlm();
+    } catch (err: any) { flashErr(err); window.notifyError?.("PLM sync failed", err?.message); }
+    finally { setPlmBusy(false); }
+  };
+
+  // ---------- Phase 5: Voice ----------
+  const loadVoice = async () => {
+    try {
+      const resp = await adminCrudFetch("/api/voice/configure");
+      setVoice(resp);
+    } catch (err) { flashErr(err); }
+  };
+  const onVoiceSave = async () => {
+    if (!voiceForm.phone_number) return flashErr(new Error("phone_number (E.164) is required"));
+    setVoiceBusy(true);
+    try {
+      await adminCrudFetch("/api/voice/configure", { method: "POST", body: voiceForm });
+      flashOk("Voice config saved");
+      window.notifySuccess?.("Voice config saved", `${voiceForm.provider} · ${voiceForm.phone_number}`);
+      setVoiceForm({ ...voiceForm, api_key: "", webhook_secret: "" });
+      loadVoice();
+    } catch (err: any) { flashErr(err); window.notifyError?.("Voice save failed", err?.message); }
+    finally { setVoiceBusy(false); }
+  };
+  const onVoiceDeactivate = async (id: string) => {
+    if (!window.confirm("Deactivate this voice config? Inbound calls to its number will stop being handled.")) return;
+    setVoiceBusy(true);
+    try {
+      await adminCrudFetch("/api/voice/configure?id=" + encodeURIComponent(id), { method: "DELETE" });
+      flashOk("Voice config deactivated");
+      window.notifySuccess?.("Voice config deactivated", "");
+      loadVoice();
+    } catch (err: any) { flashErr(err); window.notifyError?.("Deactivate failed", err?.message); }
+    finally { setVoiceBusy(false); }
+  };
+
+  // ---------- Phase 5: Chat ----------
+  const loadChat = async () => {
+    try {
+      const resp = await adminCrudFetch("/api/inbound/chat/configure");
+      setChat(resp);
+    } catch (err) { flashErr(err); }
+  };
+  const onChatSave = async () => {
+    if (!chatForm.channel) return flashErr(new Error("Pick a channel"));
+    setChatBusy(true);
+    try {
+      await adminCrudFetch("/api/inbound/chat/configure", { method: "POST", body: {
+        channel: chatForm.channel,
+        display_name: chatForm.display_name || null,
+        creds: chatForm.creds || {},
+      } });
+      flashOk(`${chatForm.channel} channel saved`);
+      window.notifySuccess?.("Chat channel saved", chatForm.channel);
+      // Wipe credential fields after save so they aren't visible.
+      setChatForm({ ...chatForm, creds: {} });
+      loadChat();
+    } catch (err: any) { flashErr(err); window.notifyError?.("Chat save failed", err?.message); }
+    finally { setChatBusy(false); }
+  };
+  const onChatDeactivate = async (channel: string) => {
+    if (!window.confirm(`Deactivate the ${channel} channel? Inbound messages will stop being processed.`)) return;
+    setChatBusy(true);
+    try {
+      await adminCrudFetch("/api/inbound/chat/configure?channel=" + encodeURIComponent(channel), { method: "DELETE" });
+      flashOk(`${channel} channel deactivated`);
+      window.notifySuccess?.("Channel deactivated", channel);
+      loadChat();
+    } catch (err: any) { flashErr(err); window.notifyError?.("Deactivate failed", err?.message); }
+    finally { setChatBusy(false); }
+  };
+
   e(() => {
     if (active === "billing" && !billing) loadBilling(billingFrom);
     if (active === "billing" && !stripe) loadStripe();
     if (active === "netsuite" && !netsuite) loadNetsuite();
     if (active === "tally" && !tally) loadTally();
+    if (active === "sage_x3" && !sageX3) loadSageX3();
+    if (active === "plm" && !plm) loadPlm();
+    if (active === "voice" && !voice) loadVoice();
+    if (active === "chat" && !chat) loadChat();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
@@ -1531,6 +1719,348 @@ const WiredAdminCRUD = () => {
                           {p.receipts_returned !== undefined ? "receipts=" + p.receipts_returned : ""}
                           {p.body && typeof p.body === "object"
                             ? " " + JSON.stringify(p.body).slice(0, 120) : ""}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            )}
+          </>
+        )}
+
+        {active === "sage_x3" && (
+          <>
+            <Card title="Sage X3 (Sage Enterprise Management)" eyebrow="OAuth2 client_credentials · SData REST">
+              <div className="form-grid">
+                <label className="lbl">Base URL
+                  <input value={sageX3Form.base_url} onChange={(ev) => setSageX3Form({ ...sageX3Form, base_url: ev.target.value })}
+                    placeholder="https://x3.example.com" />
+                </label>
+                <label className="lbl">Token URL
+                  <input value={sageX3Form.token_url} onChange={(ev) => setSageX3Form({ ...sageX3Form, token_url: ev.target.value })}
+                    placeholder="https://idp.example.com/.../token" />
+                </label>
+                <label className="lbl">Solution
+                  <input value={sageX3Form.solution} onChange={(ev) => setSageX3Form({ ...sageX3Form, solution: ev.target.value })} placeholder="X3" />
+                </label>
+                <label className="lbl">Folder / company
+                  <input value={sageX3Form.company} onChange={(ev) => setSageX3Form({ ...sageX3Form, company: ev.target.value })} placeholder="SEED" />
+                </label>
+                <label className="lbl">Locale
+                  <input value={sageX3Form.locale} onChange={(ev) => setSageX3Form({ ...sageX3Form, locale: ev.target.value })} placeholder="ENG" />
+                </label>
+                <label className="lbl">Client ID
+                  <input value={sageX3Form.client_id} onChange={(ev) => setSageX3Form({ ...sageX3Form, client_id: ev.target.value })} />
+                </label>
+                <label className="lbl span-2">Client secret
+                  <input type="password" value={sageX3Form.client_secret} onChange={(ev) => setSageX3Form({ ...sageX3Form, client_secret: ev.target.value })} />
+                </label>
+              </div>
+              <div className="row gap-sm" style={{ marginTop: 12 }}>
+                <Btn kind="primary" disabled={sageX3Busy} onClick={onSageX3Connect}
+                  title="Save credentials and probe the connection">
+                  {sageX3Busy ? "Working…" : <>{Icon.shieldCheck} Save & probe</>}
+                </Btn>
+                <Btn kind="ghost" disabled={sageX3Busy || !sageX3?.configured} onClick={onSageX3SyncNow}
+                  title={sageX3?.configured ? "Pull customers, items, and sales orders from Sage X3" : "Save credentials first"}>
+                  {Icon.cycle} Sync now
+                </Btn>
+                <Btn kind="ghost" disabled={sageX3Busy || !sageX3?.configured || !sageX3?.retry_pending} onClick={onSageX3RetryNow}
+                  title={sageX3?.retry_pending ? "Replay queued pushes" : "Retry queue is empty"}>
+                  {Icon.cycle} Retry queue ({sageX3?.retry_pending || 0})
+                </Btn>
+              </div>
+            </Card>
+
+            {sageX3 && (
+              <Card title="Status" eyebrow="from /api/sage_x3/health">
+                <KV rows={[
+                  ["Configured", String(sageX3.configured ?? false)],
+                  ["Probe ok", sageX3.probe_ok == null ? "—" : String(sageX3.probe_ok)],
+                  ["Connected at", sageX3.connected_at || "—"],
+                  ["Retry queue pending", String(sageX3.retry_pending || 0)],
+                  ["Probe error", sageX3.probe_error || "—"],
+                ]} />
+                {Array.isArray(sageX3.sync_state) && sageX3.sync_state.length > 0 && (
+                  <table className="tbl mono-sm" style={{ marginTop: 12 }}>
+                    <thead><tr><th>Entity</th><th>Status</th><th>Last sync</th><th className="r">Pulled</th><th>Error</th></tr></thead>
+                    <tbody>
+                      {sageX3.sync_state.map((s: any) => (
+                        <tr key={s.entity}>
+                          <td>{s.entity}</td>
+                          <td>{s.status}</td>
+                          <td>{s.last_sync_at ? new Date(s.last_sync_at).toLocaleString("en-IN") : "—"}</td>
+                          <td className="r">{s.rows_pulled || 0}</td>
+                          <td style={{ color: "var(--rust)" }}>{s.last_error || ""}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </Card>
+            )}
+          </>
+        )}
+
+        {active === "plm" && (
+          <>
+            <Card title="PLM connectors" eyebrow="Windchill · Arena (read-only mirror)">
+              <div className="form-grid">
+                <label className="lbl">System
+                  <select value={plmForm.system} onChange={(ev) => setPlmForm({ ...plmForm, system: ev.target.value })}>
+                    <option value="windchill">PTC Windchill</option>
+                    <option value="arena">Arena</option>
+                  </select>
+                </label>
+                <label className="lbl">Display name
+                  <input value={plmForm.display_name} onChange={(ev) => setPlmForm({ ...plmForm, display_name: ev.target.value })} placeholder="Optional label" />
+                </label>
+                <label className="lbl span-2">Base URL
+                  <input value={plmForm.base_url} onChange={(ev) => setPlmForm({ ...plmForm, base_url: ev.target.value })}
+                    placeholder={plmForm.system === "windchill" ? "https://plm.example.com" : "https://api.arenasolutions.com"} />
+                </label>
+                {plmForm.system === "windchill" ? (
+                  <>
+                    <label className="lbl">Username
+                      <input value={plmForm.username} onChange={(ev) => setPlmForm({ ...plmForm, username: ev.target.value })} />
+                    </label>
+                    <label className="lbl">Password
+                      <input type="password" value={plmForm.password} onChange={(ev) => setPlmForm({ ...plmForm, password: ev.target.value })} />
+                    </label>
+                  </>
+                ) : (
+                  <label className="lbl span-2">API key
+                    <input type="password" value={plmForm.api_key} onChange={(ev) => setPlmForm({ ...plmForm, api_key: ev.target.value })} />
+                  </label>
+                )}
+              </div>
+              <div className="row gap-sm" style={{ marginTop: 12 }}>
+                <Btn kind="primary" disabled={plmBusy} onClick={onPlmConnect}
+                  title="Save credentials and probe the PLM endpoint">
+                  {plmBusy ? "Working…" : <>{Icon.shieldCheck} Save & probe</>}
+                </Btn>
+              </div>
+            </Card>
+
+            {plm && (Array.isArray(plm.systems) && plm.systems.length > 0) ? (
+              <Card title="Connected systems" eyebrow="from /api/plm/health">
+                <table className="tbl mono-sm">
+                  <thead><tr><th>System</th><th>Base URL</th><th>Active</th><th>Last error</th><th>Action</th></tr></thead>
+                  <tbody>
+                    {plm.systems.map((s: any) => (
+                      <tr key={s.id}>
+                        <td>{s.system}</td>
+                        <td>{s.base_url}</td>
+                        <td>{s.active ? "yes" : "no"}</td>
+                        <td style={{ color: "var(--rust)" }}>{s.last_error || ""}</td>
+                        <td>
+                          <Btn sm kind="ghost" disabled={plmBusy} onClick={() => onPlmSyncNow(s.id)} title="Pull BOMs + ECOs now">
+                            {Icon.cycle} sync
+                          </Btn>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {Array.isArray(plm.sync_state) && plm.sync_state.length > 0 && (
+                  <>
+                    <div className="divider" />
+                    <table className="tbl mono-sm">
+                      <thead><tr><th>System</th><th>Entity</th><th>Status</th><th>Last sync</th><th className="r">Rows</th></tr></thead>
+                      <tbody>
+                        {plm.sync_state.map((s: any) => (
+                          <tr key={s.system_id + s.entity}>
+                            <td>{(plm.systems.find((x: any) => x.id === s.system_id) || {}).system || "—"}</td>
+                            <td>{s.entity}</td>
+                            <td>{s.status}</td>
+                            <td>{s.last_sync_at ? new Date(s.last_sync_at).toLocaleString("en-IN") : "—"}</td>
+                            <td className="r">{s.rows_pulled || 0}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </>
+                )}
+              </Card>
+            ) : null}
+          </>
+        )}
+
+        {active === "voice" && (
+          <>
+            <Card title="Voice agent" eyebrow="Vapi · Retell">
+              <div className="form-grid">
+                <label className="lbl">Provider
+                  <select value={voiceForm.provider} onChange={(ev) => setVoiceForm({ ...voiceForm, provider: ev.target.value })}>
+                    <option value="vapi">Vapi</option>
+                    <option value="retell">Retell</option>
+                  </select>
+                </label>
+                <label className="lbl">Display name
+                  <input value={voiceForm.display_name} onChange={(ev) => setVoiceForm({ ...voiceForm, display_name: ev.target.value })} placeholder="Sales hotline" />
+                </label>
+                <label className="lbl">Phone number (E.164)
+                  <input value={voiceForm.phone_number} onChange={(ev) => setVoiceForm({ ...voiceForm, phone_number: ev.target.value })} placeholder="+15551234567" />
+                </label>
+                <label className="lbl">Assistant / agent ID
+                  <input value={voiceForm.assistant_id} onChange={(ev) => setVoiceForm({ ...voiceForm, assistant_id: ev.target.value })} />
+                </label>
+                <label className="lbl span-2">API key
+                  <input type="password" value={voiceForm.api_key} onChange={(ev) => setVoiceForm({ ...voiceForm, api_key: ev.target.value })} />
+                </label>
+                <label className="lbl span-2">Webhook secret
+                  <input type="password" value={voiceForm.webhook_secret} onChange={(ev) => setVoiceForm({ ...voiceForm, webhook_secret: ev.target.value })} />
+                </label>
+                <label className="lbl">Handoff number
+                  <input value={voiceForm.handoff_phone_number} onChange={(ev) => setVoiceForm({ ...voiceForm, handoff_phone_number: ev.target.value })} placeholder="+15555550100" />
+                </label>
+                <label className="lbl">Voice persona
+                  <input value={voiceForm.voice_persona} onChange={(ev) => setVoiceForm({ ...voiceForm, voice_persona: ev.target.value })} placeholder="Friendly inside-sales rep" />
+                </label>
+                <label className="lbl span-2">System prompt
+                  <textarea rows={3} value={voiceForm.system_prompt} onChange={(ev) => setVoiceForm({ ...voiceForm, system_prompt: ev.target.value })}
+                    placeholder="You are an inside-sales agent for Acme Distributors..." />
+                </label>
+              </div>
+              <div className="row gap-sm" style={{ marginTop: 12 }}>
+                <Btn kind="primary" disabled={voiceBusy} onClick={onVoiceSave}
+                  title="Save the voice configuration. The webhook URL to point your provider at is /api/voice/webhook?provider=<provider>.">
+                  {voiceBusy ? "Saving…" : <>{Icon.shieldCheck} Save</>}
+                </Btn>
+                <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                  Webhook URL: <code>/api/voice/webhook?provider={voiceForm.provider}</code>
+                </span>
+              </div>
+            </Card>
+
+            {Array.isArray(voice?.configs) && voice.configs.length > 0 && (
+              <Card title="Configured numbers" eyebrow="active inbound voice agents">
+                <table className="tbl mono-sm">
+                  <thead><tr><th>Provider</th><th>Number</th><th>Display name</th><th>Active</th><th>Action</th></tr></thead>
+                  <tbody>
+                    {voice.configs.map((c: any) => (
+                      <tr key={c.id}>
+                        <td>{c.provider}</td>
+                        <td>{c.phone_number}</td>
+                        <td>{c.display_name || "—"}</td>
+                        <td>{c.active ? "yes" : "no"}</td>
+                        <td>
+                          {c.active && (
+                            <Btn sm kind="danger" disabled={voiceBusy} onClick={() => onVoiceDeactivate(c.id)}
+                              title="Stop receiving inbound calls on this number">
+                              {Icon.x} deactivate
+                            </Btn>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            )}
+          </>
+        )}
+
+        {active === "chat" && (
+          <>
+            <Card title="Inbound chat channels" eyebrow="WhatsApp · Slack · Teams">
+              <div className="form-grid">
+                <label className="lbl">Channel
+                  <select value={chatForm.channel}
+                    onChange={(ev) => setChatForm({ ...chatForm, channel: ev.target.value, creds: {} })}>
+                    <option value="whatsapp">WhatsApp (Twilio)</option>
+                    <option value="slack">Slack</option>
+                    <option value="teams">Microsoft Teams</option>
+                  </select>
+                </label>
+                <label className="lbl">Display name
+                  <input value={chatForm.display_name} onChange={(ev) => setChatForm({ ...chatForm, display_name: ev.target.value })} placeholder="Optional label" />
+                </label>
+
+                {chatForm.channel === "whatsapp" && (
+                  <>
+                    <label className="lbl">Twilio Account SID
+                      <input value={chatForm.creds.account_sid || ""}
+                        onChange={(ev) => setChatForm({ ...chatForm, creds: { ...chatForm.creds, account_sid: ev.target.value } })} />
+                    </label>
+                    <label className="lbl">Twilio Auth Token
+                      <input type="password" value={chatForm.creds.auth_token || ""}
+                        onChange={(ev) => setChatForm({ ...chatForm, creds: { ...chatForm.creds, auth_token: ev.target.value } })} />
+                    </label>
+                    <label className="lbl span-2">From number (E.164, optionally prefixed "whatsapp:")
+                      <input value={chatForm.creds.from_number || ""}
+                        onChange={(ev) => setChatForm({ ...chatForm, creds: { ...chatForm.creds, from_number: ev.target.value } })}
+                        placeholder="whatsapp:+15551234567" />
+                    </label>
+                  </>
+                )}
+
+                {chatForm.channel === "slack" && (
+                  <>
+                    <label className="lbl">Slack Bot Token
+                      <input type="password" value={chatForm.creds.bot_token || ""}
+                        onChange={(ev) => setChatForm({ ...chatForm, creds: { ...chatForm.creds, bot_token: ev.target.value } })}
+                        placeholder="xoxb-..." />
+                    </label>
+                    <label className="lbl">Signing secret
+                      <input type="password" value={chatForm.creds.signing_secret || ""}
+                        onChange={(ev) => setChatForm({ ...chatForm, creds: { ...chatForm.creds, signing_secret: ev.target.value } })} />
+                    </label>
+                    <label className="lbl span-2">Workspace team_id
+                      <input value={chatForm.creds.team_id || ""}
+                        onChange={(ev) => setChatForm({ ...chatForm, creds: { ...chatForm.creds, team_id: ev.target.value } })}
+                        placeholder="T0123456" />
+                    </label>
+                  </>
+                )}
+
+                {chatForm.channel === "teams" && (
+                  <>
+                    <label className="lbl">Bot app ID
+                      <input value={chatForm.creds.app_id || ""}
+                        onChange={(ev) => setChatForm({ ...chatForm, creds: { ...chatForm.creds, app_id: ev.target.value } })} />
+                    </label>
+                    <label className="lbl">Azure tenant ID
+                      <input value={chatForm.creds.azure_tenant_id || ""}
+                        onChange={(ev) => setChatForm({ ...chatForm, creds: { ...chatForm.creds, azure_tenant_id: ev.target.value } })} />
+                    </label>
+                    <label className="lbl span-2">Webhook secret
+                      <input type="password" value={chatForm.creds.webhook_secret || ""}
+                        onChange={(ev) => setChatForm({ ...chatForm, creds: { ...chatForm.creds, webhook_secret: ev.target.value } })} />
+                    </label>
+                  </>
+                )}
+              </div>
+              <div className="row gap-sm" style={{ marginTop: 12 }}>
+                <Btn kind="primary" disabled={chatBusy} onClick={onChatSave}
+                  title="Save channel credentials. Provider webhook should target /api/inbound/<channel>/webhook.">
+                  {chatBusy ? "Saving…" : <>{Icon.shieldCheck} Save channel</>}
+                </Btn>
+                <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                  Webhook URL: <code>/api/inbound/{chatForm.channel}/webhook</code>
+                </span>
+              </div>
+            </Card>
+
+            {Array.isArray(chat?.configs) && chat.configs.length > 0 && (
+              <Card title="Configured channels" eyebrow="active inbound chat channels">
+                <table className="tbl mono-sm">
+                  <thead><tr><th>Channel</th><th>Display name</th><th>Active</th><th>Last seen</th><th>Action</th></tr></thead>
+                  <tbody>
+                    {chat.configs.map((c: any) => (
+                      <tr key={c.id}>
+                        <td>{c.channel}</td>
+                        <td>{c.display_name || "—"}</td>
+                        <td>{c.active ? "yes" : "no"}</td>
+                        <td>{c.last_seen_at ? new Date(c.last_seen_at).toLocaleString("en-IN") : "—"}</td>
+                        <td>
+                          {c.active && (
+                            <Btn sm kind="danger" disabled={chatBusy} onClick={() => onChatDeactivate(c.channel)}
+                              title="Stop processing inbound messages on this channel">
+                              {Icon.x} deactivate
+                            </Btn>
+                          )}
                         </td>
                       </tr>
                     ))}

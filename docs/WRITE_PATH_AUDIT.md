@@ -5,7 +5,7 @@ screen handler that performs a mutation. Run `npm run audit:write-paths`
 to refresh.
 
 Summary:
-- OK:   20
+- OK:   26
 - INFO: 0
 - WARN: 0
 - FAIL: 0
@@ -26,9 +26,15 @@ Summary:
 | OK | src/v3-app/screens/admin.tsx | `submitContract` | admin.upsertContract upsertContract | src/api/admin/contracts.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `saveProfile` | /api/auth/profile PATCH | /api/auth/profile (PATCH) | ok |
 | OK | src/v3-app/screens/admin.tsx | `refreshFx` | fx.refresh refresh | src/api/fx/rates.js [ok] | ok |
+| OK | src/v3-app/screens/admin.tsx | `onVoiceSave` | /api/voice/configure POST | /api/voice/configure (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onTallyRetryNow` | tally.retry retry | src/api/tally/retry.js [ok] | ok |
+| OK | src/v3-app/screens/admin.tsx | `onSageX3SyncNow` | /api/sage_x3/sync POST | /api/sage_x3/sync (POST) | ok |
+| OK | src/v3-app/screens/admin.tsx | `onSageX3RetryNow` | /api/sage_x3/retry POST | /api/sage_x3/retry (POST) | ok |
+| OK | src/v3-app/screens/admin.tsx | `onSageX3Connect` | /api/sage_x3/connect POST | /api/sage_x3/connect (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onRemoveMember` | /api/admin/members?user_id=${encodeURIComponent(revokeFor.user_id)} DELETE | /api/admin/members?user_id=${encodeURIComponent(revokeFor.user_id)} (DELETE) | ok |
+| OK | src/v3-app/screens/admin.tsx | `onPlmConnect` | /api/plm/connect POST | /api/plm/connect (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onNsRetryNow` | netsuite.retry retry | src/api/netsuite/retry.js [ok] | ok |
+| OK | src/v3-app/screens/admin.tsx | `onChatSave` | /api/inbound/chat/configure POST | /api/inbound/chat/configure (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onAddMember` | /api/admin/members POST | /api/admin/members (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onAddLeadTime` | admin.upsertLeadTime upsertLeadTime | src/api/admin/contracts.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `onAddHoliday` | admin.upsertHoliday upsertHoliday | src/api/admin/contracts.js [ok] | ok |

@@ -74,6 +74,7 @@ const screens = {
   // Auth + onboarding (no nav entry)
   connect:            lazy(() => import("./screens/connect")),
   onboarding:         lazy(() => import("./screens/onboarding")),
+  landing:            lazy(() => import("./screens/landing")),
   formatGuide:        lazy(() => import("./screens/format-guide")),
 };
 
@@ -132,6 +133,7 @@ export const RESOLVERS = {
   admin:       () => screens.admin,
   connect:     () => screens.connect,
   onboarding:  () => screens.onboarding,
+  landing:     () => screens.landing,
   "format-guide": () => screens.formatGuide,
 };
 

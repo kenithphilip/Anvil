@@ -19,6 +19,12 @@ const DEFAULT_TENANT = process.env.DEFAULT_TENANT_ID || "00000000-0000-0000-0000
 const NEW_USER_ROLE = process.env.NEW_USER_ROLE || "sales_engineer";
 const FIRST_USER_ROLE = process.env.FIRST_USER_ROLE || "admin";
 const AUTO_ONBOARD = String(process.env.AUTO_ONBOARD_TENANT || "true").toLowerCase() === "true";
+// Approval-gated signup. Default: ON (production-safe). When false,
+// a brand-new user is created with status='approved' immediately,
+// preserving the legacy zero-friction dev flow. The first user on
+// a fresh tenant always becomes admin + approved regardless of
+// this flag, so an empty deployment isn't bricked.
+const REQUIRE_APPROVAL = String(process.env.REQUIRE_APPROVAL ?? "true").toLowerCase() === "true";
 
 const VALID_ROLES = new Set([
   "viewer", "sales_engineer", "sales_manager", "procurement", "finance", "admin",
@@ -28,12 +34,14 @@ const safeRole = (role, fallback) => (VALID_ROLES.has(role) ? role : fallback);
 
 export const isAutoOnboardEnabled = () => AUTO_ONBOARD;
 
+export const requiresApproval = () => REQUIRE_APPROVAL;
+
 export const defaultTenantId = () => DEFAULT_TENANT;
 
 // Returns the user's memberships, inserting one if none exist and
 // auto-onboarding is enabled. The returned array always contains at
 // least one row when AUTO_ONBOARD is true.
-export const ensureMembership = async (svc, user) => {
+export const ensureMembership = async (svc, user, opts = {}) => {
   if (!user || !user.id) {
     const err = new Error("ensureMembership requires a user with an id");
     err.status = 400;
@@ -42,7 +50,7 @@ export const ensureMembership = async (svc, user) => {
 
   const existing = await svc
     .from("tenant_members")
-    .select("tenant_id, role")
+    .select("tenant_id, role, status, requested_role")
     .eq("user_id", user.id);
   if (existing.error) {
     const err = new Error("tenant_members lookup failed: " + existing.error.message);
@@ -92,10 +100,32 @@ export const ensureMembership = async (svc, user) => {
   const isFirst = !memberCount.error && (memberCount.count || 0) === 0;
   const role = isFirst ? safeRole(FIRST_USER_ROLE, "admin") : safeRole(NEW_USER_ROLE, "sales_engineer");
 
+  // Approval gate. The first user on the tenant always lands
+  // approved (otherwise nobody could ever approve them). Every
+  // subsequent user lands pending unless approval is disabled.
+  const status = (isFirst || !REQUIRE_APPROVAL) ? "approved" : "pending";
+  const meta = user.user_metadata || {};
+  const requestedRoleHint = (opts && opts.requested_role) || meta.requested_role;
+  const requested_role = isFirst ? null : safeRole(requestedRoleHint, NEW_USER_ROLE);
+  const insertRow = {
+    tenant_id: DEFAULT_TENANT,
+    user_id: user.id,
+    role,
+    status,
+    requested_role,
+    requested_at: new Date().toISOString(),
+    request_email: user.email || null,
+    request_display_name: meta.name || meta.full_name || (opts && opts.display_name) || null,
+    request_notes: (opts && opts.notes) || null,
+  };
+  if (status === "approved") {
+    insertRow.approved_at = new Date().toISOString();
+    insertRow.approved_by = user.id;                   // self-approval for the first user
+  }
   const inserted = await svc
     .from("tenant_members")
-    .insert({ tenant_id: DEFAULT_TENANT, user_id: user.id, role })
-    .select("tenant_id, role");
+    .insert(insertRow)
+    .select("tenant_id, role, status, requested_role");
   if (inserted.error) {
     // Race: another request from the same user inserted concurrently.
     // Re-read and return whatever's there.
@@ -111,4 +141,43 @@ export const ensureMembership = async (svc, user) => {
     throw err;
   }
   return inserted.data || [];
+};
+
+// Fetch tenant admins. Used by /api/auth/signup to know who to
+// notify when a new user requests access. Returns an array of
+// { user_id, email, display_name } objects. Service-role context
+// expected.
+export const listTenantAdmins = async (svc, tenantId) => {
+  const { data: members } = await svc
+    .from("tenant_members")
+    .select("user_id")
+    .eq("tenant_id", tenantId)
+    .eq("role", "admin")
+    .eq("status", "approved");
+  const ids = (members || []).map((m) => m.user_id);
+  if (!ids.length) return [];
+  const { data: users } = await svc.auth.admin.listUsers({ page: 1, perPage: 1000 });
+  const byId = new Map((users?.users || []).map((u) => [u.id, u]));
+  return ids.map((id) => {
+    const u = byId.get(id) || {};
+    return {
+      user_id: id,
+      email: u.email || null,
+      display_name: u.user_metadata?.name || u.user_metadata?.full_name || null,
+    };
+  });
+};
+
+// Read the approval status for a user at a tenant. Returns a
+// status string ('pending'|'approved'|'denied'|'deactivated') or
+// null if no membership exists.
+export const getMemberStatus = async (svc, userId, tenantId) => {
+  const { data, error } = await svc
+    .from("tenant_members")
+    .select("status, role, denied_reason")
+    .eq("user_id", userId)
+    .eq("tenant_id", tenantId || DEFAULT_TENANT)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data;
 };

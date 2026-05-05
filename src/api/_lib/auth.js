@@ -45,7 +45,9 @@ export const resolveContext = async (req) => {
   }
   const user = data.user;
   const svc = serviceClient();
-  let memberships = await svc.from("tenant_members").select("tenant_id, role").eq("user_id", user.id);
+  let memberships = await svc.from("tenant_members")
+    .select("tenant_id, role, status, denied_reason")
+    .eq("user_id", user.id);
   if (memberships.error) {
     const err = new Error("Tenant lookup failed: " + memberships.error.message);
     err.status = 500;
@@ -71,6 +73,18 @@ export const resolveContext = async (req) => {
   if (!membership) {
     const err = new Error("User is not a member of tenant " + tenantId);
     err.status = 403;
+    throw err;
+  }
+  // Approval gate. A user can have a row but be in pending / denied /
+  // deactivated state; in any of those cases we MUST refuse the
+  // request, otherwise the UI would happily render data for an
+  // un-approved account. We surface a structured error code so the
+  // frontend can show a friendly screen instead of a generic 403.
+  if (membership.status && membership.status !== "approved") {
+    const err = new Error("Membership not approved (status=" + membership.status + ")");
+    err.status = 403;
+    err.code = "MEMBERSHIP_" + String(membership.status).toUpperCase();
+    err.detail = membership.denied_reason || null;
     throw err;
   }
   return { user, tenantId, role: membership.role, anonymous: false };

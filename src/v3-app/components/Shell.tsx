@@ -7,8 +7,196 @@
 import React, { ReactNode, useEffect, useRef, useState } from "react";
 import { Icon } from "../lib/icons";
 import { Dot } from "../lib/primitives";
+import { ObaraBackend } from "../lib/api";
 import type { NavGroup, RoleEntry, NavBadge } from "../lib/nav";
 import type { ShellTelemetry, BadgeMap } from "../lib/telemetry";
+
+// Polling cadence for the bell. Notifications volume is low (signups,
+// push failures); a 30-second poll keeps the count fresh without
+// hammering the API. The window is paused while the tab is hidden so
+// background tabs don't burn requests.
+const NOTIFICATION_POLL_MS = 30_000;
+
+interface NotificationRow {
+  id: string;
+  kind: string;
+  title: string;
+  body?: string;
+  link_route?: string;
+  link_params?: Record<string, string>;
+  actor_email?: string;
+  read_by?: string[];
+  resolved?: boolean;
+  created_at?: string;
+}
+
+const NotificationsBell: React.FC<{ onRoute?: (id: string) => void; isAdminLike: boolean }> = ({ onRoute, isAdminLike }) => {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<NotificationRow[]>([]);
+  const [unread, setUnread] = useState<number>(0);
+  const [busy, setBusy] = useState<string | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  const load = async () => {
+    if (!isAdminLike) { setItems([]); setUnread(0); return; }
+    try {
+      const resp: any = await ObaraBackend?.notifications?.list?.();
+      setItems(resp?.notifications || []);
+      setUnread(resp?.unread_count || 0);
+    } catch (_) { /* leave previous state */ }
+  };
+
+  // Poll on mount + when the tab becomes visible. Skip for non-
+  // admins, since the backend filter would still surface tenant-wide
+  // events (resolved=false), but the bell is admin-only.
+  useEffect(() => {
+    if (!isAdminLike) return;
+    let timer: number | undefined;
+    const tick = () => { if (!document.hidden) load(); };
+    tick();
+    timer = window.setInterval(tick, NOTIFICATION_POLL_MS) as unknown as number;
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      if (timer) window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdminLike]);
+
+  // Click-outside to close.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const onItemClick = async (n: NotificationRow) => {
+    setBusy(n.id);
+    try {
+      // Mark read so the user-specific bell count goes down even if
+      // someone else resolves the row later.
+      try { await ObaraBackend?.notifications?.markRead?.(n.id); } catch (_) { /* ignore */ }
+      // Deep-link if the row carries a route hint.
+      if (n.link_route) {
+        const params = n.link_params ? new URLSearchParams(n.link_params as Record<string, string>).toString() : "";
+        window.location.hash = "#/" + n.link_route + (params ? "?" + params : "");
+        if (onRoute) onRoute(n.link_route);
+      }
+      setOpen(false);
+      // Refresh the count.
+      load();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onMarkAll = async () => {
+    try { await ObaraBackend?.notifications?.markAllRead?.(); } catch (_) { /* ignore */ }
+    load();
+  };
+
+  if (!isAdminLike) return null;
+
+  return (
+    <div ref={wrapRef} className="head-pill-wrap" style={{ position: "relative" }}>
+      <button
+        type="button"
+        className="head-pill"
+        title={unread ? `${unread} unread notification${unread === 1 ? "" : "s"}` : "Notifications"}
+        aria-label={unread ? `${unread} unread notifications` : "Notifications"}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        style={{ position: "relative" }}
+      >
+        {Icon.bell}
+        {unread > 0 && (
+          <span
+            aria-hidden="true"
+            style={{
+              position: "absolute", top: 2, right: 4,
+              minWidth: 14, height: 14,
+              padding: "0 4px",
+              borderRadius: 999,
+              background: "var(--rust)",
+              color: "var(--paper)",
+              fontFamily: "var(--mono)",
+              fontSize: 9,
+              fontWeight: 700,
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              lineHeight: 1,
+            }}
+          >
+            {unread > 9 ? "9+" : unread}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="head-pill-menu notifications-menu" role="menu" style={{ width: 360, maxWidth: "90vw", padding: 0 }}>
+          <div className="row" style={{ padding: "10px 12px", borderBottom: "1px solid var(--hairline)", alignItems: "center" }}>
+            <span className="mono-sm" style={{ fontWeight: 600, flex: 1 }}>Notifications</span>
+            {items.length > 0 && (
+              <button type="button" className="link-btn" onClick={onMarkAll} style={{ fontSize: 11 }}>
+                mark all read
+              </button>
+            )}
+          </div>
+          {items.length === 0 ? (
+            <div style={{ padding: 18, textAlign: "center", color: "var(--ink-3)", fontSize: 12 }}>
+              You're all caught up. New activity will show here.
+            </div>
+          ) : (
+            <ul style={{ listStyle: "none", margin: 0, padding: 0, maxHeight: 420, overflowY: "auto" }}>
+              {items.slice(0, 30).map((n) => {
+                const read = (n.read_by || []).length > 0;
+                return (
+                  <li key={n.id}>
+                    <button
+                      type="button"
+                      onClick={() => onItemClick(n)}
+                      disabled={busy === n.id}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        padding: "10px 14px",
+                        background: read ? "transparent" : "var(--paper-2)",
+                        border: 0,
+                        borderBottom: "1px solid var(--hairline-2)",
+                        cursor: "pointer",
+                        font: "inherit",
+                        color: "inherit",
+                      }}
+                    >
+                      <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+                        <span style={{ fontWeight: 600, fontSize: 12.5 }}>{n.title}</span>
+                        <span style={{ marginLeft: "auto", fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-4)" }}>
+                          {n.kind}
+                        </span>
+                      </div>
+                      {n.body && (
+                        <div style={{ fontSize: 12, color: "var(--ink-2)", marginTop: 2, lineHeight: 1.45 }}>
+                          {n.body}
+                        </div>
+                      )}
+                      {n.actor_email && (
+                        <div style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--ink-3)", marginTop: 4 }}>
+                          {n.actor_email}
+                        </div>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export interface ShellTenant { code?: string; }
 
@@ -210,13 +398,7 @@ export const Shell: React.FC<ShellProps> = ({
         {Icon.history} Thread
       </button>
 
-      <button className="head-pill" title="Notifications" style={{ position: "relative" }}>
-        {Icon.bell}
-        <span style={{
-          position: "absolute", top: 2, right: 4,
-          width: 6, height: 6, borderRadius: 999, background: "var(--rust)",
-        }} />
-      </button>
+      <NotificationsBell onRoute={onRoute} isAdminLike={role?.id === "admin" || role?.id === "operator"} />
     </header>
 
     <aside className="app-side">

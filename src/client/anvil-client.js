@@ -558,6 +558,24 @@
     updateProfile: async (patch) => apiFetch("/api/auth/profile", { method: "PATCH", body: patch }),
   };
 
+  // Access-requests + notifications surface (Phase: access approvals).
+  const accessRequests = {
+    list: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/admin/access_requests" + (qs ? "?" + qs : ""));
+    },
+    approve: async (user_id, role) => apiFetch("/api/admin/access_requests", { method: "POST", body: { user_id, action: "approve", role } }),
+    deny: async (user_id, reason) => apiFetch("/api/admin/access_requests", { method: "POST", body: { user_id, action: "deny", reason } }),
+    modify: async (user_id, patch) => apiFetch("/api/admin/access_requests", { method: "POST", body: { user_id, action: "modify", ...(patch || {}) } }),
+  };
+
+  const notifications = {
+    list: async () => apiFetch("/api/admin/notifications"),
+    markRead: async (id) => apiFetch("/api/admin/notifications", { method: "POST", body: { id, action: "mark_read" } }),
+    markAllRead: async () => apiFetch("/api/admin/notifications", { method: "POST", body: { action: "mark_all_read" } }),
+    resolve: async (id, note) => apiFetch("/api/admin/notifications", { method: "POST", body: { id, action: "resolve", note } }),
+  };
+
   const ocr = {
     run: async (documentId, orderId) => apiFetch("/api/documents/ocr", { method: "POST", body: { documentId, orderId } }),
   };
@@ -989,6 +1007,8 @@
     eval: evalExt,
     email,
     auth: authMethods,
+    accessRequests,
+    notifications,
     ocr,
     scan,
     fx,

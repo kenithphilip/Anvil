@@ -77,6 +77,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/acumatica/push.js | approve |
 | src/api/acumatica/retry.js | admin |
 | src/api/acumatica/sync.js | admin |
+| src/api/admin/access_requests.js | admin |
 | src/api/admin/contracts.js | read, admin |
 | src/api/admin/customer_locations.js | read, admin |
 | src/api/admin/diagnostics.js | admin |
@@ -88,6 +89,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/admin/lead_times.js | read, admin |
 | src/api/admin/lost_reasons.js | read, admin |
 | src/api/admin/members.js | read, admin |
+| src/api/admin/notifications.js | read, admin |
 | src/api/admin/quote_approvals.js | read, admin, write |
 | src/api/agents/goals.js | read, write |
 | src/api/aliases/index.js | read, write |

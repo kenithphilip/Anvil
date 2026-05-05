@@ -185,7 +185,13 @@ const auditApiFile = (filePath) => {
   const src = fs.readFileSync(filePath, "utf8");
   return {
     requirePerm: /requirePermission\(\s*ctx\s*,/.test(src),
-    persists:    /\.from\([^)]+\)\.(insert|update|upsert|delete)\(/.test(src),
+    // Tolerate whitespace / newlines between `.from(...)` and the
+    // mutation method. Without `[\s\S]*?`, a chained call broken
+    // across lines (the canonical Supabase style for any non-trivial
+    // query) was reported as "does not persist". Bare `.insert(`,
+    // `.update(`, `.upsert(`, `.delete(` calls also count, since
+    // many helpers receive an already-scoped query builder.
+    persists:    /(?:\.from\([^)]+\)[\s\S]{0,200}?)?\.(?:insert|update|upsert|delete)\(/.test(src),
     audited:     /recordAudit\(/.test(src),
   };
 };

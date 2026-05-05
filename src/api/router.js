@@ -28,6 +28,8 @@ import adminItemMaster         from "./admin/item_master.js";
 import adminLeadTimes          from "./admin/lead_times.js";
 import adminLostReasons        from "./admin/lost_reasons.js";
 import adminMembers            from "./admin/members.js";
+import adminAccessRequests     from "./admin/access_requests.js";
+import adminNotifications      from "./admin/notifications.js";
 import adminQuoteApprovals     from "./admin/quote_approvals.js";
 
 import aliasesIndex            from "./aliases/index.js";
@@ -437,6 +439,8 @@ const STATIC_ROUTES = {
   "/admin/lead_times":              adminLeadTimes,
   "/admin/lost_reasons":            adminLostReasons,
   "/admin/members":                 adminMembers,
+  "/admin/access_requests":         adminAccessRequests,
+  "/admin/notifications":           adminNotifications,
   "/admin/quote_approvals":         adminQuoteApprovals,
 
   "/aliases":                       aliasesIndex,

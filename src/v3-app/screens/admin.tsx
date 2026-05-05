@@ -30,6 +30,7 @@ import { Prefs } from "../lib/preferences";
 // ============================================================
 
 const ADMIN_CRUD_TABS = [
+  { id: "access",    label: "Access requests" },
   { id: "members",   label: "Members" },
   { id: "profile",   label: "My profile" },
   { id: "roles",     label: "Roles & permissions" },
@@ -144,7 +145,18 @@ const WiredAdminCRUD = () => {
   const isAdmin = !!(RBAC && RBAC.isAdmin && RBAC.isAdmin());
   const currentUserId = readCurrentUserId();
 
-  const [active, setActive] = u("members");
+  // Read the initial tab from the URL hash so notifications and
+  // /admin?tab=<x> deep-links land on the right panel.
+  const initialTab = (() => {
+    try {
+      const q = (window.location.hash.split("?")[1] || "");
+      const params = new URLSearchParams(q);
+      const want = params.get("tab");
+      if (want && ADMIN_CRUD_TABS.some((t) => t.id === want)) return want;
+    } catch (_) { /* fallthrough */ }
+    return "members";
+  })();
+  const [active, setActive] = u(initialTab);
   const [busy, setBusy] = u(false);
   const [flash, setFlash] = u(null);
   const [memberForm, setMemberForm] = u({ email: "", role: "sales_engineer" });
@@ -463,6 +475,67 @@ const WiredAdminCRUD = () => {
   });
   const [tallyCompanyBusy, setTallyCompanyBusy] = u(false);
 
+  // ---------- Access requests (approval flow) ----------
+  const [accessRequests, setAccessRequests] = u<any>(null);
+  const [accessBusy, setAccessBusy] = u<string | null>(null);
+  const [accessFilter, setAccessFilter] = u<"pending" | "approved" | "denied" | "all">("pending");
+  const [accessEdits, setAccessEdits] = u<Record<string, { role?: string; display_name?: string; reason?: string }>>({});
+
+  const loadAccessRequests = async () => {
+    try {
+      const params: Record<string, string> = {};
+      if (accessFilter !== "all") params.status = accessFilter;
+      const resp: any = await ObaraBackend?.accessRequests?.list?.(params);
+      setAccessRequests(resp);
+    } catch (err) { flashErr(err); }
+  };
+
+  const onAccessApprove = async (row: any) => {
+    setAccessBusy(row.user_id);
+    try {
+      const edit = accessEdits[row.user_id] || {};
+      const role = edit.role || row.requested_role || row.role || "sales_engineer";
+      // If the admin renamed the user / changed email in the row,
+      // first send a modify, then approve. Modify is idempotent.
+      if (edit.display_name && edit.display_name !== (row.request_display_name || row.meta_name)) {
+        await ObaraBackend?.accessRequests?.modify?.(row.user_id, { display_name: edit.display_name });
+      }
+      await ObaraBackend?.accessRequests?.approve?.(row.user_id, role);
+      window.notifySuccess?.("Access approved", row.user_email || row.request_email);
+      setAccessEdits((prev) => { const next = { ...prev }; delete next[row.user_id]; return next; });
+      loadAccessRequests();
+    } catch (err: any) {
+      flashErr(err); window.notifyError?.("Approve failed", err?.message);
+    } finally { setAccessBusy(null); }
+  };
+
+  const onAccessDeny = async (row: any) => {
+    const reason = (accessEdits[row.user_id]?.reason || "").trim();
+    if (!window.confirm(`Deny access for ${row.user_email || row.request_email}?` + (reason ? `\n\nReason: ${reason}` : ""))) return;
+    setAccessBusy(row.user_id);
+    try {
+      await ObaraBackend?.accessRequests?.deny?.(row.user_id, reason || null);
+      window.notifySuccess?.("Access denied", row.user_email || row.request_email);
+      setAccessEdits((prev) => { const next = { ...prev }; delete next[row.user_id]; return next; });
+      loadAccessRequests();
+    } catch (err: any) {
+      flashErr(err); window.notifyError?.("Deny failed", err?.message);
+    } finally { setAccessBusy(null); }
+  };
+
+  const onAccessReinstate = async (row: any) => {
+    if (!window.confirm(`Reinstate access for ${row.user_email || row.request_email}? They will be able to sign in immediately.`)) return;
+    setAccessBusy(row.user_id);
+    try {
+      const role = row.requested_role || row.role || "sales_engineer";
+      await ObaraBackend?.accessRequests?.approve?.(row.user_id, role);
+      window.notifySuccess?.("Access reinstated", row.user_email || row.request_email);
+      loadAccessRequests();
+    } catch (err: any) {
+      flashErr(err); window.notifyError?.("Reinstate failed", err?.message);
+    } finally { setAccessBusy(null); }
+  };
+
   // ---------- Phase 5 connector state ----------
   // Sage X3 (5.4a)
   const [sageX3, setSageX3] = u<any>(null);
@@ -718,6 +791,7 @@ const WiredAdminCRUD = () => {
   };
 
   e(() => {
+    if (active === "access") loadAccessRequests();
     if (active === "billing" && !billing) loadBilling(billingFrom);
     if (active === "billing" && !stripe) loadStripe();
     if (active === "netsuite" && !netsuite) loadNetsuite();
@@ -727,7 +801,7 @@ const WiredAdminCRUD = () => {
     if (active === "voice" && !voice) loadVoice();
     if (active === "chat" && !chat) loadChat();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active]);
+  }, [active, accessFilter]);
 
   const saveProfile = async (ev) => {
     ev.preventDefault();
@@ -982,6 +1056,145 @@ const WiredAdminCRUD = () => {
                   action={<Btn sm onClick={() => setFlash(null)}>Dismiss</Btn>}>
             <span className="mono-sm">{flash.msg}</span>
           </Banner>
+        )}
+
+        {active === "access" && (
+          <>
+            <Card title="Access requests"
+                  eyebrow={`${accessRequests?.counts?.pending || 0} pending · ${accessRequests?.counts?.approved || 0} approved · ${accessRequests?.counts?.denied || 0} denied`}
+                  right={<>
+                    {(["pending", "approved", "denied", "all"] as const).map((s) => (
+                      <Btn key={s} sm kind={accessFilter === s ? "primary" : "ghost"}
+                           onClick={() => setAccessFilter(s)}
+                           title={"Show " + s + " requests"}>
+                        {s}
+                      </Btn>
+                    ))}
+                    <Btn icon kind="ghost" sm onClick={loadAccessRequests} title="Refresh">{Icon.cycle}</Btn>
+                  </>}>
+              {!accessRequests ? (
+                <div className="body" style={{ padding: 22, color: "var(--ink-3)" }}>Loading access requests…</div>
+              ) : (accessRequests.requests || []).length === 0 ? (
+                <div className="body" style={{ padding: 28, textAlign: "center", color: "var(--ink-3)" }}>
+                  {accessFilter === "pending"
+                    ? <>No pending access requests. New signups will appear here for review.</>
+                    : <>No {accessFilter} access requests in this tenant.</>}
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {accessRequests.requests.map((row: any) => {
+                    const edits = accessEdits[row.user_id] || {};
+                    const editedDisplayName = edits.display_name ?? (row.request_display_name || row.meta_name || "");
+                    const editedRole = edits.role || row.requested_role || row.role || "sales_engineer";
+                    const editedReason = edits.reason ?? "";
+                    const isPending = row.status === "pending";
+                    const isApproved = row.status === "approved";
+                    const isDenied = row.status === "denied";
+                    const updateEdit = (patch: any) => setAccessEdits((prev) => ({
+                      ...prev,
+                      [row.user_id]: { ...prev[row.user_id], ...patch },
+                    }));
+                    return (
+                      <Card key={row.user_id} className="access-request-card">
+                        <div className="row" style={{ gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                          <div style={{ flex: 1, minWidth: 220 }}>
+                            <div style={{ fontWeight: 600 }}>
+                              {row.request_display_name || row.meta_name || row.user_email || row.request_email}
+                            </div>
+                            <div className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                              {row.user_email || row.request_email}
+                            </div>
+                          </div>
+                          <Chip k={isPending ? "warn" : isApproved ? "good" : isDenied ? "bad" : "ghost"}>{row.status}</Chip>
+                          <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                            requested {ageLabel(row.requested_at)} ago
+                          </span>
+                        </div>
+
+                        {row.request_notes && (
+                          <div className="mono-sm" style={{ marginTop: 8, padding: 10, background: "var(--paper-2)", borderRadius: 4, color: "var(--ink-2)" }}>
+                            {row.request_notes}
+                          </div>
+                        )}
+
+                        <div className="form-grid" style={{ marginTop: 12 }}>
+                          <label className="lbl">Display name
+                            <input value={editedDisplayName}
+                                   onChange={(ev) => updateEdit({ display_name: ev.target.value })}
+                                   disabled={!isPending && !isApproved} />
+                          </label>
+                          <label className="lbl">Email (read-only)
+                            <input value={row.user_email || row.request_email || ""} disabled />
+                          </label>
+                          <label className="lbl">Role to assign
+                            <select value={editedRole}
+                                    onChange={(ev) => updateEdit({ role: ev.target.value })}
+                                    disabled={accessBusy === row.user_id}>
+                              {ADMIN_ROLES.map((r) => <option key={r} value={r}>{r.replace(/_/g, " ")}</option>)}
+                            </select>
+                          </label>
+                          {row.requested_role && row.requested_role !== editedRole && (
+                            <div className="mono-sm" style={{ color: "var(--ink-3)", alignSelf: "end" }}>
+                              user requested <strong>{row.requested_role.replace(/_/g, " ")}</strong>
+                            </div>
+                          )}
+                        </div>
+
+                        {isPending && (
+                          <label className="lbl" style={{ marginTop: 8 }}>Denial reason (optional, shown to user)
+                            <input value={editedReason}
+                                   onChange={(ev) => updateEdit({ reason: ev.target.value })}
+                                   placeholder="e.g. We'll re-evaluate next quarter." />
+                          </label>
+                        )}
+
+                        {isDenied && row.denied_reason && (
+                          <div className="mono-sm" style={{ marginTop: 8, color: "var(--rust)" }}>
+                            denied: {row.denied_reason}
+                          </div>
+                        )}
+
+                        <div className="row gap-sm" style={{ marginTop: 12, flexWrap: "wrap" }}>
+                          {isPending && (
+                            <>
+                              <Btn kind="primary" sm
+                                   disabled={accessBusy === row.user_id}
+                                   onClick={() => onAccessApprove(row)}
+                                   title={"Approve and grant " + editedRole.replace(/_/g, " ") + " access"}>
+                                {Icon.shieldCheck} approve as {editedRole.replace(/_/g, " ")}
+                              </Btn>
+                              <Btn kind="danger" sm
+                                   disabled={accessBusy === row.user_id}
+                                   onClick={() => onAccessDeny(row)}
+                                   title="Deny access. The user will see the reason on their next sign-in attempt.">
+                                {Icon.x} deny
+                              </Btn>
+                            </>
+                          )}
+                          {isApproved && row.user_id !== currentUserId && (
+                            <Btn sm kind="ghost"
+                                 disabled={accessBusy === row.user_id}
+                                 onClick={() => onAccessDeny(row)}
+                                 title="Revoke access. The user will be signed out on next request.">
+                              {Icon.x} revoke access
+                            </Btn>
+                          )}
+                          {isDenied && (
+                            <Btn sm kind="ghost"
+                                 disabled={accessBusy === row.user_id}
+                                 onClick={() => onAccessReinstate(row)}
+                                 title="Reinstate this user. They will be able to sign in immediately.">
+                              {Icon.cycle} reinstate
+                            </Btn>
+                          )}
+                        </div>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+          </>
         )}
 
         {active === "members" && (

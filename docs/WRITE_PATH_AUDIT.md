@@ -20,10 +20,10 @@ Summary:
 | OK | src/v3-app/screens/so-intake.tsx | `onContinue` | orders.create create | src/api/orders/[id].js [ok] | ok |
 | OK | src/v3-app/screens/email.tsx | `promote` | orders.create create | src/api/orders/[id].js [ok] | ok |
 | OK | src/v3-app/screens/bom-import.tsx | `doImportAll` | bom.upsert upsert | src/api/bom/index.js [ok] | ok |
-| OK | src/v3-app/screens/admin.tsx | `submitThreshold` | admin.upsertApprovalThreshold upsertApprovalThreshold | src/api/admin/contracts.js [ok] | ok |
-| OK | src/v3-app/screens/admin.tsx | `submitLocation` | admin.upsertCustomerLocation upsertCustomerLocation | src/api/admin/contracts.js [ok] | ok |
-| OK | src/v3-app/screens/admin.tsx | `submitItem` | admin.upsertItemMaster upsertItemMaster | src/api/admin/contracts.js [ok] | ok |
-| OK | src/v3-app/screens/admin.tsx | `submitContract` | admin.upsertContract upsertContract | src/api/admin/contracts.js [ok] | ok |
+| OK | src/v3-app/screens/admin.tsx | `submitThreshold` | admin.upsertApprovalThreshold upsertApprovalThreshold | src/api/admin/access_requests.js [ok] | ok |
+| OK | src/v3-app/screens/admin.tsx | `submitLocation` | admin.upsertCustomerLocation upsertCustomerLocation | src/api/admin/access_requests.js [ok] | ok |
+| OK | src/v3-app/screens/admin.tsx | `submitItem` | admin.upsertItemMaster upsertItemMaster | src/api/admin/access_requests.js [ok] | ok |
+| OK | src/v3-app/screens/admin.tsx | `submitContract` | admin.upsertContract upsertContract | src/api/admin/access_requests.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `saveProfile` | /api/auth/profile PATCH | /api/auth/profile (PATCH) | ok |
 | OK | src/v3-app/screens/admin.tsx | `refreshFx` | fx.refresh refresh | src/api/fx/rates.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `onVoiceSave` | /api/voice/configure POST | /api/voice/configure (POST) | ok |
@@ -36,5 +36,5 @@ Summary:
 | OK | src/v3-app/screens/admin.tsx | `onNsRetryNow` | netsuite.retry retry | src/api/netsuite/retry.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `onChatSave` | /api/inbound/chat/configure POST | /api/inbound/chat/configure (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onAddMember` | /api/admin/members POST | /api/admin/members (POST) | ok |
-| OK | src/v3-app/screens/admin.tsx | `onAddLeadTime` | admin.upsertLeadTime upsertLeadTime | src/api/admin/contracts.js [ok] | ok |
-| OK | src/v3-app/screens/admin.tsx | `onAddHoliday` | admin.upsertHoliday upsertHoliday | src/api/admin/contracts.js [ok] | ok |
+| OK | src/v3-app/screens/admin.tsx | `onAddLeadTime` | admin.upsertLeadTime upsertLeadTime | src/api/admin/access_requests.js [ok] | ok |
+| OK | src/v3-app/screens/admin.tsx | `onAddHoliday` | admin.upsertHoliday upsertHoliday | src/api/admin/access_requests.js [ok] | ok |

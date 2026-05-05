@@ -10,7 +10,7 @@
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
-import { ensureMembership } from "../_lib/tenancy.js";
+import { ensureMembership, getMemberStatus, defaultTenantId } from "../_lib/tenancy.js";
 import { createClient } from "@supabase/supabase-js";
 
 export default async function handler(req, res) {
@@ -38,6 +38,35 @@ export default async function handler(req, res) {
     // Recovery for legacy users who signed up before auto-onboarding.
     const svc = serviceClient();
     await ensureMembership(svc, user);
+
+    // APPROVAL GATE.
+    //
+    // The Supabase password sign-in succeeded, which means the
+    // account exists. But access to Anvil also requires an approved
+    // tenant membership. If the user is pending / denied /
+    // deactivated, we refuse to return the session and immediately
+    // sign them out so the access_token isn't usable. The frontend
+    // shows a friendly screen keyed by the `status` code below.
+    const membership = await getMemberStatus(svc, user.id, defaultTenantId());
+    if (membership && membership.status && membership.status !== "approved") {
+      // Best-effort sign-out so the token can't be replayed. We
+      // don't fail the response on signOut errors because the token
+      // expires fast anyway and we'll refuse it on the next call
+      // via the resolveContext gate.
+      try { await anon.auth.signOut(); } catch (_) { /* ignore */ }
+      const friendly = membership.status === "pending"
+        ? "Your account is pending admin approval. You'll be able to sign in once an admin approves your access request."
+        : membership.status === "denied"
+        ? "Your access request was denied" + (membership.denied_reason ? (": " + membership.denied_reason) : ".")
+        : "Your account has been deactivated. Contact your tenant admin.";
+      return json(res, 403, {
+        error: {
+          code: "MEMBERSHIP_" + String(membership.status).toUpperCase(),
+          message: friendly,
+          status: membership.status,
+        },
+      });
+    }
 
     return json(res, 200, {
       user: {

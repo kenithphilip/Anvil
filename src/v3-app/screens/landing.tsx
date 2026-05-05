@@ -52,6 +52,14 @@ const VALUE_PROPS = [
   "Push: native ERP connectors with retry + reverse sync.",
 ];
 
+const REQUESTABLE_ROLES = [
+  { id: "sales_engineer",  label: "Sales engineer (default)" },
+  { id: "sales_manager",   label: "Sales manager" },
+  { id: "procurement",     label: "Procurement" },
+  { id: "finance",         label: "Finance" },
+  { id: "viewer",          label: "Read-only viewer" },
+];
+
 const Landing: React.FC = () => {
   const cfgRef = (ObaraBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string | null };
   const [mode, setMode] = useState<Mode>("signin");
@@ -60,9 +68,15 @@ const Landing: React.FC = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [requestedRole, setRequestedRole] = useState<string>("sales_engineer");
+  const [signupNotes, setSignupNotes] = useState<string>("");
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<{ kind: "good" | "bad" | "live"; text: string } | null>(null);
+  const [status, setStatus] = useState<{ kind: "good" | "bad" | "live" | "pending"; text: string } | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(!cfgRef.url);
+  // Set after a successful pending signup so we can show a
+  // dedicated "request received" view instead of staying on the
+  // form. Cleared if the user goes back to a different mode.
+  const [pendingFor, setPendingFor] = useState<string | null>(null);
 
   // Returning users typically have a cached backend URL. Persist
   // any change immediately so the auth call doesn't 404 on a
@@ -107,19 +121,37 @@ const Landing: React.FC = () => {
     persistConfig();
     try {
       const resp = await ObaraBackend?.auth?.passwordLogin?.(email.trim(), password);
-      if (!resp?.access_token) throw new Error("No access token returned");
+      // The backend may return 200 with session OR a 2xx envelope
+      // that the client wraps but we still need a token to proceed.
+      // Use access_token from either resp.session or resp directly.
+      const accessToken = resp?.session?.access_token || resp?.access_token;
+      if (!accessToken) throw new Error("No access token returned");
       ObaraBackend?.setSession?.({
-        access_token: resp.access_token,
-        refresh_token: resp.refresh_token,
-        expires_at: resp.expires_at,
+        access_token: accessToken,
+        refresh_token: resp?.session?.refresh_token || resp?.refresh_token,
+        expires_at: resp?.session?.expires_at || resp?.expires_at,
       });
       try { lsSet("auth_profile", JSON.stringify({ user: resp.user })); } catch (_) {}
       setStatus({ kind: "good", text: "Signed in. Redirecting…" });
       window.notifySuccess?.("Welcome back", resp.user?.email || email);
       setTimeout(goAfterAuth, 400);
     } catch (err: any) {
-      setStatus({ kind: "bad", text: err?.message || "Sign-in failed" });
-      window.notifyError?.("Sign-in failed", err?.message || String(err));
+      // Approval-gated rejection: the server returns 403 with a
+      // structured error.code starting with "MEMBERSHIP_". Render a
+      // clear, sympathetic message so the user knows it isn't a
+      // password problem and they don't keep retrying.
+      const errCode = err?.body?.error?.code || "";
+      if (errCode === "MEMBERSHIP_PENDING") {
+        setStatus({ kind: "pending", text: err.body.error.message || "Your account is pending admin approval." });
+        setPendingFor(email);
+      } else if (errCode === "MEMBERSHIP_DENIED") {
+        setStatus({ kind: "bad", text: err.body.error.message || "Your access request was denied." });
+      } else if (errCode === "MEMBERSHIP_DEACTIVATED") {
+        setStatus({ kind: "bad", text: err.body.error.message || "Your account has been deactivated." });
+      } else {
+        setStatus({ kind: "bad", text: err?.message || "Sign-in failed" });
+        window.notifyError?.("Sign-in failed", err?.message || String(err));
+      }
     } finally {
       setBusy(false);
     }
@@ -135,6 +167,10 @@ const Landing: React.FC = () => {
       setStatus({ kind: "bad", text: "Password must be at least 10 characters." });
       return;
     }
+    if (!displayName.trim()) {
+      setStatus({ kind: "bad", text: "Please enter your full name so the admin reviewing your request can identify you." });
+      return;
+    }
     if (!url) {
       setStatus({ kind: "bad", text: "Backend URL is required. Open Advanced to set it." });
       setShowAdvanced(true);
@@ -143,30 +179,49 @@ const Landing: React.FC = () => {
     setBusy(true);
     persistConfig();
     try {
-      const resp = await ObaraBackend?.auth?.signup?.({
+      const resp: any = await ObaraBackend?.auth?.signup?.({
         email: email.trim(),
         password,
         display_name: displayName.trim() || null,
+        requested_role: requestedRole || null,
+        notes: signupNotes.trim() || null,
       });
-      if (resp?.access_token) {
+
+      // Backend semantics:
+      //   status:"pending" with NO session  -> approval gate is on, show pending screen.
+      //   status:"approved" with session    -> first user / approval disabled, sign in immediately.
+      //   legacy shape (access_token at top) -> treat as approved.
+      const accessToken = resp?.session?.access_token || resp?.access_token;
+      if (resp?.status === "pending") {
+        setPendingFor(email);
+        setStatus({
+          kind: "pending",
+          text: resp?.message || "Your access request has been submitted. An admin will review it; you'll be able to sign in once approved.",
+        });
+        window.notifySuccess?.("Request submitted", "Pending admin approval");
+        // Clear the password from local state for safety; the user
+        // will type it again at sign-in time once approved.
+        setPassword("");
+        return;
+      }
+      if (accessToken) {
         ObaraBackend?.setSession?.({
-          access_token: resp.access_token,
-          refresh_token: resp.refresh_token,
-          expires_at: resp.expires_at,
+          access_token: accessToken,
+          refresh_token: resp?.session?.refresh_token || resp?.refresh_token,
+          expires_at: resp?.session?.expires_at || resp?.expires_at,
         });
         try { lsSet("auth_profile", JSON.stringify({ user: resp.user })); } catch (_) {}
         setStatus({ kind: "good", text: "Account created. Redirecting…" });
         window.notifySuccess?.("Welcome to Anvil", resp.user?.email || email);
         setTimeout(goAfterAuth, 400);
-      } else {
-        // Some deployments require email confirmation; show a useful
-        // message instead of looping forever.
-        setStatus({
-          kind: "good",
-          text: resp?.message || "Account created. Check your email to confirm, then sign in.",
-        });
-        setMode("signin");
+        return;
       }
+      // Email-confirmation path (Supabase flag turned on at the project).
+      setStatus({
+        kind: "good",
+        text: resp?.message || "Account created. Check your email to confirm, then sign in.",
+      });
+      setMode("signin");
     } catch (err: any) {
       setStatus({ kind: "bad", text: err?.message || "Sign-up failed" });
       window.notifyError?.("Sign-up failed", err?.message || String(err));
@@ -309,6 +364,36 @@ const Landing: React.FC = () => {
                   />
                 </label>
               )}
+              {mode === "signup" && (
+                <>
+                  <label className="landing-field">
+                    <span>Requested role</span>
+                    <select
+                      className="input"
+                      value={requestedRole}
+                      onChange={(e) => setRequestedRole(e.target.value)}
+                    >
+                      {REQUESTABLE_ROLES.map((r) => (
+                        <option key={r.id} value={r.id}>{r.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="landing-field">
+                    <span>Why you need access (optional)</span>
+                    <textarea
+                      className="input"
+                      rows={2}
+                      placeholder="e.g. New hire on the inside-sales team. Manager: Priya."
+                      value={signupNotes}
+                      onChange={(e) => setSignupNotes(e.target.value.slice(0, 500))}
+                    />
+                  </label>
+                  <p className="landing-hint">
+                    A tenant admin reviews every new request before granting access. You'll be able to sign in once
+                    they approve. Admins may also adjust the role you requested.
+                  </p>
+                </>
+              )}
 
               <button
                 type="button"
@@ -343,15 +428,36 @@ const Landing: React.FC = () => {
                 </>
               )}
 
-              {status && (
+              {status && status.kind !== "pending" && (
                 <Banner kind={status.kind === "good" ? "good" : status.kind === "bad" ? "bad" : "info"}>
                   {status.text}
                 </Banner>
               )}
 
-              <Btn type="submit" kind="primary" full disabled={busy}>
-                {busy ? "Working…" : mode === "signin" ? "Sign in" : mode === "signup" ? "Create account" : "Send magic link"}
-              </Btn>
+              {status?.kind === "pending" && (
+                <div className="landing-pending">
+                  <div className="landing-pending-icon" aria-hidden="true">⌛</div>
+                  <div className="landing-pending-title">Pending admin approval</div>
+                  <p>{status.text}</p>
+                  {pendingFor && (
+                    <p className="landing-pending-meta">
+                      Request linked to <strong>{pendingFor}</strong>. We'll send you an email once you're approved.
+                      You can close this tab.
+                    </p>
+                  )}
+                  <div className="row gap-sm" style={{ marginTop: 12, justifyContent: "center" }}>
+                    <Btn sm kind="ghost" onClick={() => { setStatus(null); setPendingFor(null); setMode("signin"); }}>
+                      Back to sign-in
+                    </Btn>
+                  </div>
+                </div>
+              )}
+
+              {status?.kind !== "pending" && (
+                <Btn type="submit" kind="primary" full disabled={busy}>
+                  {busy ? "Working…" : mode === "signin" ? "Sign in" : mode === "signup" ? "Create account" : "Send magic link"}
+                </Btn>
+              )}
 
               <div className="landing-auth-foot">
                 {mode === "signin" && <>New to Anvil? <button type="button" className="link-btn" onClick={() => setMode("signup")}>Create an account</button></>}

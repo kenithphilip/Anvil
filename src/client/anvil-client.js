@@ -553,7 +553,29 @@
     requestMagicLink: async (email, redirectTo) => apiFetch("/api/auth/magic_link", { method: "POST", body: { email, redirectTo } }),
     verifyToken: async (access_token) => apiFetch("/api/auth/verify", { method: "POST", body: { access_token } }),
     signup: async (payload) => apiFetch("/api/auth/signup", { method: "POST", body: payload }),
-    passwordLogin: async (email, password) => apiFetch("/api/auth/password_login", { method: "POST", body: { email, password } }),
+    // passwordLogin accepts an optional totp_code so the second
+    // step of the MFA dance reuses the same endpoint. The server
+    // returns { mfa_required: true } when a code is needed.
+    passwordLogin: async (email, password, totp_code) =>
+      apiFetch("/api/auth/password_login", { method: "POST", body: { email, password, totp_code } }),
+    requestReset: async (email, redirect_to) =>
+      apiFetch("/api/auth/request_reset", { method: "POST", body: { email, redirect_to } }),
+    completeReset: async (access_token, new_password) =>
+      apiFetch("/api/auth/complete_reset", { method: "POST", body: { access_token, new_password } }),
+    mfaSettings: async () => apiFetch("/api/auth/mfa"),
+    mfaEnroll: async () => apiFetch("/api/auth/mfa", { method: "POST", body: { action: "enroll" } }),
+    mfaVerify: async (code) => apiFetch("/api/auth/mfa", { method: "POST", body: { action: "verify", code } }),
+    mfaUnenroll: async (code) => apiFetch("/api/auth/mfa", { method: "POST", body: { action: "unenroll", code } }),
+    passkeyRegisterBegin: async (label) =>
+      apiFetch("/api/auth/passkey/register/begin", { method: "POST", body: { label } }),
+    passkeyRegisterFinish: async (pending_id, response) =>
+      apiFetch("/api/auth/passkey/register/finish", { method: "POST", body: { pending_id, response } }),
+    passkeyAuthBegin: async (email) =>
+      apiFetch("/api/auth/passkey/auth/begin", { method: "POST", body: { email } }),
+    passkeyAuthFinish: async (email, challenge_id, response) =>
+      apiFetch("/api/auth/passkey/auth/finish", { method: "POST", body: { email, challenge_id, response } }),
+    passkeyList: async () => apiFetch("/api/auth/passkey/list"),
+    passkeyRemove: async (id) => apiFetch("/api/auth/passkey/list?id=" + encodeURIComponent(id), { method: "DELETE" }),
     getProfile: async () => apiFetch("/api/auth/profile"),
     updateProfile: async (patch) => apiFetch("/api/auth/profile", { method: "PATCH", body: patch }),
   };

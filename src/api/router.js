@@ -30,6 +30,16 @@ import adminLostReasons        from "./admin/lost_reasons.js";
 import adminMembers            from "./admin/members.js";
 import adminAccessRequests     from "./admin/access_requests.js";
 import adminNotifications      from "./admin/notifications.js";
+
+// Password reset (Phase: security flows).
+import authRequestReset        from "./auth/request_reset.js";
+import authCompleteReset       from "./auth/complete_reset.js";
+import authMfa                 from "./auth/mfa.js";
+import authPasskeyRegisterBegin  from "./auth/passkey/register_begin.js";
+import authPasskeyRegisterFinish from "./auth/passkey/register_finish.js";
+import authPasskeyAuthBegin       from "./auth/passkey/auth_begin.js";
+import authPasskeyAuthFinish      from "./auth/passkey/auth_finish.js";
+import authPasskeyList            from "./auth/passkey/list.js";
 import adminQuoteApprovals     from "./admin/quote_approvals.js";
 
 import aliasesIndex            from "./aliases/index.js";
@@ -452,6 +462,14 @@ const STATIC_ROUTES = {
   "/auth/profile":                  authProfile,
   "/auth/signup":                   authSignup,
   "/auth/verify":                   authVerify,
+  "/auth/request_reset":            authRequestReset,
+  "/auth/complete_reset":           authCompleteReset,
+  "/auth/mfa":                      authMfa,
+  "/auth/passkey/register/begin":   authPasskeyRegisterBegin,
+  "/auth/passkey/register/finish":  authPasskeyRegisterFinish,
+  "/auth/passkey/auth/begin":       authPasskeyAuthBegin,
+  "/auth/passkey/auth/finish":      authPasskeyAuthFinish,
+  "/auth/passkey/list":             authPasskeyList,
 
   "/billing/usage":                 billingUsage,
   "/billing/stripe/connect_onboard":stripeConnectOnboard,

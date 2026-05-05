@@ -33,6 +33,7 @@ const ADMIN_CRUD_TABS = [
   { id: "access",    label: "Access requests" },
   { id: "members",   label: "Members" },
   { id: "profile",   label: "My profile" },
+  { id: "security",  label: "Security" },
   { id: "roles",     label: "Roles & permissions" },
   { id: "billing",   label: "Billing" },
   { id: "netsuite",  label: "NetSuite" },
@@ -475,6 +476,109 @@ const WiredAdminCRUD = () => {
   });
   const [tallyCompanyBusy, setTallyCompanyBusy] = u(false);
 
+  // ---------- Security: TOTP MFA + passkeys ----------
+  const [security, setSecurity] = u<any>(null);
+  const [securityBusy, setSecurityBusy] = u(false);
+  // The QR-rendering state. enrollData carries { secret, otpauth_uri, expires_at }
+  // returned by /api/auth/mfa enroll. enrollCode is the 6-digit code the
+  // user types from their authenticator. unenrollCode is the same shape
+  // for the disable path.
+  const [enrollData, setEnrollData] = u<{ secret: string; otpauth_uri: string; expires_at: string } | null>(null);
+  const [enrollCode, setEnrollCode] = u("");
+  const [unenrollCode, setUnenrollCode] = u("");
+
+  const loadSecurity = async () => {
+    try {
+      const resp: any = await ObaraBackend?.auth?.mfaSettings?.();
+      setSecurity(resp);
+    } catch (err) { flashErr(err); }
+  };
+  const onMfaStart = async () => {
+    setSecurityBusy(true);
+    try {
+      const resp: any = await ObaraBackend?.auth?.mfaEnroll?.();
+      setEnrollData(resp);
+      setEnrollCode("");
+      flashOk("Scan the QR with Authy / Google Authenticator / 1Password and enter the 6-digit code below.");
+    } catch (err: any) {
+      flashErr(err); window.notifyError?.("Could not start MFA enrolment", err?.message);
+    } finally { setSecurityBusy(false); }
+  };
+  const onMfaVerify = async () => {
+    const code = enrollCode.replace(/\D/g, "");
+    if (code.length !== 6) return flashErr(new Error("Code must be 6 digits"));
+    setSecurityBusy(true);
+    try {
+      await ObaraBackend?.auth?.mfaVerify?.(code);
+      flashOk("Two-factor authentication is on. From now on you'll need a code at sign-in.");
+      window.notifySuccess?.("MFA enabled", "Two-factor authentication is active");
+      setEnrollData(null);
+      setEnrollCode("");
+      loadSecurity();
+    } catch (err: any) {
+      flashErr(err); window.notifyError?.("MFA verification failed", err?.message);
+    } finally { setSecurityBusy(false); }
+  };
+  // ---------- Passkeys (WebAuthn) ----------
+  const [passkeys, setPasskeys] = u<any[]>([]);
+  const [passkeyLabel, setPasskeyLabel] = u("");
+  const [passkeyBusy, setPasskeyBusy] = u(false);
+
+  const loadPasskeys = async () => {
+    try {
+      const resp: any = await ObaraBackend?.auth?.passkeyList?.();
+      setPasskeys(resp?.passkeys || []);
+    } catch (err) { flashErr(err); }
+  };
+  const onPasskeyRegister = async () => {
+    if (!window.PublicKeyCredential) {
+      return flashErr(new Error("This browser doesn't support passkeys (WebAuthn)."));
+    }
+    setPasskeyBusy(true);
+    try {
+      const begin: any = await ObaraBackend?.auth?.passkeyRegisterBegin?.(passkeyLabel.trim() || null);
+      // Lazy-load @simplewebauthn/browser to keep the main bundle small.
+      const { startRegistration } = await import("@simplewebauthn/browser");
+      const att = await startRegistration(begin.options);
+      await ObaraBackend?.auth?.passkeyRegisterFinish?.(begin.pending_id, att);
+      flashOk("Passkey registered.");
+      window.notifySuccess?.("Passkey registered", passkeyLabel || "Default");
+      setPasskeyLabel("");
+      loadPasskeys();
+      loadSecurity();
+    } catch (err: any) {
+      flashErr(err);
+      window.notifyError?.("Passkey registration failed", err?.message);
+    } finally { setPasskeyBusy(false); }
+  };
+  const onPasskeyRemove = async (row: any) => {
+    if (!window.confirm(`Remove the passkey "${row.label || "this device"}"? You'll need at least one other way to sign in.`)) return;
+    setPasskeyBusy(true);
+    try {
+      await ObaraBackend?.auth?.passkeyRemove?.(row.id);
+      flashOk("Passkey removed.");
+      loadPasskeys(); loadSecurity();
+    } catch (err: any) {
+      flashErr(err); window.notifyError?.("Could not remove passkey", err?.message);
+    } finally { setPasskeyBusy(false); }
+  };
+
+  const onMfaDisable = async () => {
+    const code = unenrollCode.replace(/\D/g, "");
+    if (code.length !== 6) return flashErr(new Error("Enter the current 6-digit code from your authenticator"));
+    if (!window.confirm("Disable two-factor authentication for your account? You'll be able to sign in with just your password until you re-enable it.")) return;
+    setSecurityBusy(true);
+    try {
+      await ObaraBackend?.auth?.mfaUnenroll?.(code);
+      flashOk("Two-factor authentication is off.");
+      window.notifySuccess?.("MFA disabled", "");
+      setUnenrollCode("");
+      loadSecurity();
+    } catch (err: any) {
+      flashErr(err); window.notifyError?.("Could not disable MFA", err?.message);
+    } finally { setSecurityBusy(false); }
+  };
+
   // ---------- Access requests (approval flow) ----------
   const [accessRequests, setAccessRequests] = u<any>(null);
   const [accessBusy, setAccessBusy] = u<string | null>(null);
@@ -792,6 +896,8 @@ const WiredAdminCRUD = () => {
 
   e(() => {
     if (active === "access") loadAccessRequests();
+    if (active === "security" && !security) loadSecurity();
+    if (active === "security" && passkeys.length === 0) loadPasskeys();
     if (active === "billing" && !billing) loadBilling(billingFrom);
     if (active === "billing" && !stripe) loadStripe();
     if (active === "netsuite" && !netsuite) loadNetsuite();
@@ -1314,6 +1420,153 @@ const WiredAdminCRUD = () => {
                   </div>
                 </div>
               </div>
+            )}
+          </>
+        )}
+
+        {active === "security" && (
+          <>
+            <Card title="Sign-in security" eyebrow="protect your account">
+              <KV rows={[
+                ["Two-factor authentication (TOTP)", security?.totp_enrolled ? "Enabled" : "Not enabled"],
+                ["Passkeys", security?.passkey_enrolled ? "Enabled" : "Not enabled"],
+                ["MFA required at sign-in", security?.require_mfa ? "Yes" : "No"],
+                ["Last security change", security?.last_security_change_at ? fmtDate(security.last_security_change_at, "medium") : "—"],
+              ]} />
+            </Card>
+
+            {!security?.totp_enrolled && !enrollData && (
+              <Card title="Set up authenticator app" eyebrow="TOTP · Authy / Google Authenticator / 1Password">
+                <p className="body" style={{ color: "var(--ink-2)", lineHeight: 1.55 }}>
+                  Adds a second factor at sign-in: a 6-digit code that refreshes every 30 seconds, generated by an
+                  authenticator app you install on your phone. Recommended.
+                </p>
+                <Btn kind="primary" disabled={securityBusy} onClick={onMfaStart}
+                     title="Generate a fresh QR code and start the enrolment flow.">
+                  {securityBusy ? "Working…" : <>{Icon.shieldCheck} Set up two-factor</>}
+                </Btn>
+              </Card>
+            )}
+
+            {enrollData && (
+              <Card title="Scan and verify" eyebrow="step 2 of 2">
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, alignItems: "start" }}>
+                  <div>
+                    <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 8 }}>
+                      Open Authy or Google Authenticator and scan this QR code, or paste the secret manually.
+                    </div>
+                    {/*
+                      We render the QR via an external chart service for
+                      now. The client never sends the secret to a third
+                      party because the URL itself contains the secret;
+                      this is a deliberate trade-off for keeping the
+                      bundle small. Operators with a security policy
+                      can replace this with a self-hosted renderer.
+                    */}
+                    <img
+                      alt="TOTP QR code"
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(enrollData.otpauth_uri)}`}
+                      style={{ width: 240, height: 240, border: "1px solid var(--hairline)", borderRadius: 6 }}
+                    />
+                    <div className="mono-sm" style={{ marginTop: 8, color: "var(--ink-3)" }}>
+                      Or enter manually: <code style={{ background: "var(--paper-2)", padding: "2px 6px", borderRadius: 3 }}>{enrollData.secret}</code>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="lbl">Code from your authenticator
+                      <input
+                        value={enrollCode}
+                        onChange={(ev) => setEnrollCode(ev.target.value.replace(/\D/g, "").slice(0, 6))}
+                        maxLength={6}
+                        placeholder="123456"
+                        autoFocus
+                        style={{ letterSpacing: "0.4em", fontFamily: "var(--mono)", fontSize: 18, textAlign: "center" }}
+                      />
+                    </label>
+                    <div className="row gap-sm" style={{ marginTop: 12 }}>
+                      <Btn kind="primary" disabled={securityBusy || enrollCode.length !== 6} onClick={onMfaVerify}>
+                        {securityBusy ? "Verifying…" : <>{Icon.shieldCheck} Verify and enable</>}
+                      </Btn>
+                      <Btn kind="ghost" onClick={() => { setEnrollData(null); setEnrollCode(""); }}
+                           title="Discard this enrollment attempt. The pending secret is dropped on the server.">
+                        {Icon.x} cancel
+                      </Btn>
+                    </div>
+                    <div className="mono-sm" style={{ marginTop: 8, color: "var(--ink-3)" }}>
+                      The pending secret expires {ageLabel(enrollData.expires_at)} from now. After that you'll need to start over.
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            )}
+
+            <Card title="Passkeys" eyebrow="WebAuthn · phishing-resistant sign-in">
+              <p className="body" style={{ color: "var(--ink-2)", lineHeight: 1.55 }}>
+                Passkeys replace passwords with a key bound to your device (TouchID, FaceID, Windows Hello, a hardware
+                security key). Strongly recommended for admins. You can keep your password as a fallback.
+              </p>
+              <div className="row gap-sm" style={{ alignItems: "end", marginBottom: 12, flexWrap: "wrap" }}>
+                <label className="lbl" style={{ flex: "1 1 220px" }}>Label
+                  <input value={passkeyLabel}
+                         onChange={(ev) => setPasskeyLabel(ev.target.value.slice(0, 64))}
+                         placeholder="e.g. MacBook Pro"
+                         maxLength={64} />
+                </label>
+                <Btn kind="primary" disabled={passkeyBusy} onClick={onPasskeyRegister}
+                     title="Register a passkey using your device's authenticator (TouchID, Windows Hello, hardware key).">
+                  {passkeyBusy ? "Working…" : <>{Icon.shieldCheck} Register passkey</>}
+                </Btn>
+              </div>
+              {passkeys.length === 0 ? (
+                <div className="mono-sm" style={{ color: "var(--ink-3)" }}>No passkeys yet.</div>
+              ) : (
+                <table className="tbl mono-sm">
+                  <thead><tr>
+                    <th>Label</th>
+                    <th>Device</th>
+                    <th>Registered</th>
+                    <th>Last used</th>
+                    <th></th>
+                  </tr></thead>
+                  <tbody>
+                    {passkeys.map((p: any) => (
+                      <tr key={p.id}>
+                        <td>{p.label || "—"}</td>
+                        <td>{p.device_type || "—"}</td>
+                        <td>{p.created_at ? fmtDate(p.created_at, "medium") : "—"}</td>
+                        <td>{p.last_used_at ? ageLabel(p.last_used_at) + " ago" : "never"}</td>
+                        <td>
+                          <Btn sm kind="danger" disabled={passkeyBusy} onClick={() => onPasskeyRemove(p)}>
+                            {Icon.x} remove
+                          </Btn>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </Card>
+
+            {security?.totp_enrolled && (
+              <Card title="Disable two-factor" eyebrow="enter your current code">
+                <p className="body" style={{ color: "var(--ink-2)", lineHeight: 1.55 }}>
+                  We require the current 6-digit code so a stolen session can't disable MFA without your authenticator.
+                </p>
+                <label className="lbl" style={{ maxWidth: 220 }}>Current code
+                  <input
+                    value={unenrollCode}
+                    onChange={(ev) => setUnenrollCode(ev.target.value.replace(/\D/g, "").slice(0, 6))}
+                    maxLength={6}
+                    placeholder="123456"
+                    style={{ letterSpacing: "0.4em", fontFamily: "var(--mono)", fontSize: 18, textAlign: "center" }}
+                  />
+                </label>
+                <div className="row gap-sm" style={{ marginTop: 12 }}>
+                  <Btn kind="danger" disabled={securityBusy || unenrollCode.length !== 6} onClick={onMfaDisable}>
+                    {Icon.x} Disable two-factor
+                  </Btn>
+                </div>
+              </Card>
             )}
           </>
         )}

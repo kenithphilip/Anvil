@@ -11,7 +11,18 @@
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { ensureMembership, getMemberStatus, defaultTenantId } from "../_lib/tenancy.js";
+import { decryptField } from "../_lib/secrets.js";
+import { verifyTotp } from "../_lib/totp.js";
 import { createClient } from "@supabase/supabase-js";
+
+const readActiveTotpSecret = (row) => {
+  if (!row) return null;
+  if (row.totp_secret_enc && row.totp_secret_iv) {
+    try { return decryptField(row.totp_secret_enc, row.totp_secret_iv); }
+    catch (_) { return row.totp_secret || null; }
+  }
+  return row.totp_secret || null;
+};
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -38,6 +49,52 @@ export default async function handler(req, res) {
     // Recovery for legacy users who signed up before auto-onboarding.
     const svc = serviceClient();
     await ensureMembership(svc, user);
+
+    // MFA gate. If the user has TOTP enrolled, the password alone is
+    // not enough: we require a fresh code from their authenticator.
+    // - If no totp_code in the body, return 200 with mfa_required:true
+    //   and DO NOT issue the session. The client switches to the
+    //   TOTP entry view.
+    // - If totp_code is provided, validate with the same skew window
+    //   the enroll path uses. Wrong code -> 401. Right code -> drop
+    //   through to the existing approval gate + session mint.
+    const { data: secRow } = await svc.from("user_security_settings")
+      .select("totp_enrolled, totp_secret_enc, totp_secret, totp_secret_iv")
+      .eq("user_id", user.id).maybeSingle();
+    if (secRow?.totp_enrolled) {
+      const totpCode = String(body?.totp_code || "").replace(/\D/g, "");
+      if (!totpCode) {
+        // Best-effort: sign out the freshly-minted session so the
+        // access_token can't be used without the second factor.
+        try { await anon.auth.signOut(); } catch (_) { /* ignore */ }
+        return json(res, 200, {
+          mfa_required: true,
+          email: user.email,
+        });
+      }
+      const secret = readActiveTotpSecret(secRow);
+      if (!secret || !verifyTotp(secret, totpCode)) {
+        try { await anon.auth.signOut(); } catch (_) { /* ignore */ }
+        await svc.from("user_security_audit").insert({
+          user_id: user.id,
+          user_email: user.email,
+          event: "mfa_challenge_fail",
+          detail: { phase: "login" },
+        }).catch(() => {});
+        return json(res, 401, {
+          error: {
+            code: "INVALID_TOTP",
+            message: "Two-factor code is incorrect. Try the current code from your authenticator.",
+          },
+        });
+      }
+      await svc.from("user_security_audit").insert({
+        user_id: user.id,
+        user_email: user.email,
+        event: "mfa_challenge_ok",
+        detail: { phase: "login" },
+      }).catch(() => {});
+    }
 
     // APPROVAL GATE.
     //

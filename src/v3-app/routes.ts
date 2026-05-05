@@ -75,6 +75,7 @@ const screens = {
   connect:            lazy(() => import("./screens/connect")),
   onboarding:         lazy(() => import("./screens/onboarding")),
   landing:            lazy(() => import("./screens/landing")),
+  resetPassword:      lazy(() => import("./screens/reset-password")),
   formatGuide:        lazy(() => import("./screens/format-guide")),
 };
 
@@ -134,6 +135,7 @@ export const RESOLVERS = {
   connect:     () => screens.connect,
   onboarding:  () => screens.onboarding,
   landing:     () => screens.landing,
+  reset:       () => screens.resetPassword,
   "format-guide": () => screens.formatGuide,
 };
 

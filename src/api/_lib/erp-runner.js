@@ -17,6 +17,8 @@
 // (see migrations 015, 016, 017, 018, 019). We reference the table
 // name via the `tablePrefix` argument so one runner serves all five.
 
+import { notifyAdmins } from "./notifications.js";
+
 const BACKOFF_MIN = [1, 5, 15, 60, 240, 720];
 
 // Open a sync run row, returns the inserted id.
@@ -71,6 +73,17 @@ export const drainRetryQueue = async (svc, prefix, { tenantId, opts, replay, isR
           last_attempt_at: new Date().toISOString(),
           last_error: "gave_up::status=" + result.status + "::" + (result.error || ""),
         }).eq("id", row.id);
+        // Surface the gave-up event in the admin bell. Dedup'd per
+        // ERP+tenant+5-minute window so a flap doesn't spam.
+        await notifyAdmins(svc, tenantId, {
+          kind: prefix + "_push_gave_up",
+          title: prefix.toUpperCase() + " push gave up",
+          body: `Order ${row.order_id ? row.order_id.slice(0, 8) : "(unknown)"} hit ${nextAttempt} retries. Last error: ${String(result.error || result.status || "unknown").slice(0, 200)}`,
+          link_route: "admin",
+          link_params: { tab: prefix === "netsuite" ? "netsuite" : prefix === "tally" ? "tally" : prefix },
+          object_type: prefix + "_retry_queue_row",
+          object_id: row.id,
+        }, { dedupKey: prefix + ":" + row.id });
         out.push({ id: row.id, gave_up: true, ...result });
       } else {
         const minutes = BACKOFF_MIN[Math.min(nextAttempt, BACKOFF_MIN.length - 1)];
@@ -83,13 +96,23 @@ export const drainRetryQueue = async (svc, prefix, { tenantId, opts, replay, isR
         out.push({ id: row.id, ok: false, attempt: nextAttempt, retry_in_min: minutes, error: result.error });
       }
     } else {
-      // Permanent failure.
+      // Permanent failure (4xx). Push gives up immediately; admin
+      // needs to fix the upstream config or payload.
       await svc.from(prefix + "_retry_queue").update({
         status: "gave_up",
         attempt_count: (row.attempt_count || 0) + 1,
         last_attempt_at: new Date().toISOString(),
         last_error: "permanent::status=" + result.status + "::" + (result.error || ""),
       }).eq("id", row.id);
+      await notifyAdmins(svc, tenantId, {
+        kind: prefix + "_push_permanent_fail",
+        title: prefix.toUpperCase() + " push rejected",
+        body: `Order ${row.order_id ? row.order_id.slice(0, 8) : "(unknown)"} returned HTTP ${result.status}. ${String(result.error || "").slice(0, 200)}`,
+        link_route: "admin",
+        link_params: { tab: prefix === "netsuite" ? "netsuite" : prefix === "tally" ? "tally" : prefix },
+        object_type: prefix + "_retry_queue_row",
+        object_id: row.id,
+      }, { dedupKey: prefix + ":permfail:" + row.id });
       out.push({ id: row.id, gave_up: true, permanent: true, ...result });
     }
   }

@@ -71,12 +71,16 @@ const Landing: React.FC = () => {
   const [requestedRole, setRequestedRole] = useState<string>("sales_engineer");
   const [signupNotes, setSignupNotes] = useState<string>("");
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<{ kind: "good" | "bad" | "live" | "pending"; text: string } | null>(null);
+  const [status, setStatus] = useState<{ kind: "good" | "bad" | "live" | "pending" | "info"; text: string } | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(!cfgRef.url);
   // Set after a successful pending signup so we can show a
   // dedicated "request received" view instead of staying on the
   // form. Cleared if the user goes back to a different mode.
   const [pendingFor, setPendingFor] = useState<string | null>(null);
+  // MFA second-factor prompt. Set when password_login returns
+  // mfa_required:true so we can render a TOTP input and resubmit.
+  const [mfaFor, setMfaFor] = useState<string | null>(null);
+  const [totpCode, setTotpCode] = useState("");
 
   // Returning users typically have a cached backend URL. Persist
   // any change immediately so the auth call doesn't 404 on a
@@ -120,10 +124,17 @@ const Landing: React.FC = () => {
     setBusy(true);
     persistConfig();
     try {
-      const resp = await ObaraBackend?.auth?.passwordLogin?.(email.trim(), password);
-      // The backend may return 200 with session OR a 2xx envelope
-      // that the client wraps but we still need a token to proceed.
-      // Use access_token from either resp.session or resp directly.
+      // First leg: password_login. If the user has TOTP enrolled,
+      // the server returns { mfa_required: true } with no session;
+      // we flip the form into a TOTP-entry view and the user
+      // resubmits via onSubmitTotp. The password is held in state
+      // for the second leg only.
+      const resp: any = await ObaraBackend?.auth?.passwordLogin?.(email.trim(), password);
+      if (resp?.mfa_required) {
+        setMfaFor(email);
+        setStatus({ kind: "info", text: "Enter the 6-digit code from your authenticator." });
+        return;
+      }
       const accessToken = resp?.session?.access_token || resp?.access_token;
       if (!accessToken) throw new Error("No access token returned");
       ObaraBackend?.setSession?.({
@@ -230,6 +241,146 @@ const Landing: React.FC = () => {
     }
   };
 
+  const onSignInWithPasskey = async () => {
+    setStatus(null);
+    if (!email.trim()) {
+      setStatus({ kind: "bad", text: "Type your email so we know which account to sign in." });
+      return;
+    }
+    if (!url) {
+      setStatus({ kind: "bad", text: "Backend URL is required. Open Advanced to set it." });
+      setShowAdvanced(true);
+      return;
+    }
+    if (!window.PublicKeyCredential) {
+      setStatus({ kind: "bad", text: "This browser doesn't support passkeys (WebAuthn)." });
+      return;
+    }
+    setBusy(true);
+    persistConfig();
+    try {
+      const begin: any = await ObaraBackend?.auth?.passkeyAuthBegin?.(email.trim());
+      const { startAuthentication } = await import("@simplewebauthn/browser");
+      const assertion = await startAuthentication(begin.options);
+      const resp: any = await ObaraBackend?.auth?.passkeyAuthFinish?.(email.trim(), begin.challenge_id, assertion);
+      const accessToken = resp?.session?.access_token;
+      if (!accessToken) throw new Error("No session returned after passkey verification");
+      ObaraBackend?.setSession?.({
+        access_token: accessToken,
+        refresh_token: resp?.session?.refresh_token,
+        expires_at: resp?.session?.expires_at,
+      });
+      try { lsSet("auth_profile", JSON.stringify({ user: resp.user })); } catch (_) {}
+      setStatus({ kind: "good", text: "Signed in with passkey. Redirecting…" });
+      window.notifySuccess?.("Welcome back", resp.user?.email || email);
+      setTimeout(goAfterAuth, 400);
+    } catch (err: any) {
+      const errCode = err?.body?.error?.code;
+      if (errCode === "MEMBERSHIP_PENDING") {
+        setStatus({ kind: "pending", text: err.body.error.message });
+        setPendingFor(email);
+      } else if (errCode === "MEMBERSHIP_DENIED" || errCode === "MEMBERSHIP_DEACTIVATED") {
+        setStatus({ kind: "bad", text: err.body.error.message });
+      } else {
+        setStatus({ kind: "bad", text: err?.message || "Passkey sign-in failed. Use password instead." });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onSubmitTotp = async () => {
+    setStatus(null);
+    const code = totpCode.replace(/\D/g, "");
+    if (code.length !== 6) {
+      setStatus({ kind: "bad", text: "Enter the 6-digit code from your authenticator." });
+      return;
+    }
+    if (!email || !password) {
+      setStatus({ kind: "bad", text: "Session lost. Sign in again." });
+      setMfaFor(null);
+      return;
+    }
+    setBusy(true);
+    try {
+      const resp: any = await ObaraBackend?.auth?.passwordLogin?.(email.trim(), password, code);
+      const accessToken = resp?.session?.access_token || resp?.access_token;
+      if (!accessToken) throw new Error("Sign-in failed after TOTP");
+      ObaraBackend?.setSession?.({
+        access_token: accessToken,
+        refresh_token: resp?.session?.refresh_token,
+        expires_at: resp?.session?.expires_at,
+      });
+      try { lsSet("auth_profile", JSON.stringify({ user: resp.user })); } catch (_) {}
+      setStatus({ kind: "good", text: "Signed in. Redirecting…" });
+      window.notifySuccess?.("Welcome back", resp.user?.email || email);
+      // Wipe sensitive state.
+      setPassword("");
+      setTotpCode("");
+      setMfaFor(null);
+      setTimeout(goAfterAuth, 400);
+    } catch (err: any) {
+      const code = err?.body?.error?.code;
+      if (code === "INVALID_TOTP") {
+        setStatus({ kind: "bad", text: err.body.error.message || "Two-factor code is incorrect." });
+        setTotpCode("");
+      } else if (code === "MEMBERSHIP_PENDING") {
+        setMfaFor(null);
+        setPendingFor(email);
+        setStatus({ kind: "pending", text: err.body.error.message });
+      } else {
+        setStatus({ kind: "bad", text: err?.message || "Sign-in failed" });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onForgotPassword = async () => {
+    setStatus(null);
+    if (!email.trim()) {
+      setStatus({ kind: "bad", text: "Type your email above and we'll send a reset link." });
+      return;
+    }
+    if (!url) {
+      setStatus({ kind: "bad", text: "Backend URL is required. Open Advanced to set it." });
+      setShowAdvanced(true);
+      return;
+    }
+    setBusy(true);
+    persistConfig();
+    try {
+      const cfg = (ObaraBackend?.getConfig?.() || {}) as { url?: string };
+      const redirect = (cfg.url || "").replace(/\/+$/, "") + "/#/reset";
+      const resp = await fetch((cfg.url || "").replace(/\/+$/, "") + "/api/auth/request_reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), redirect_to: redirect }),
+      });
+      const body = await resp.json().catch(() => null);
+      if (!resp.ok) {
+        setStatus({ kind: "bad", text: body?.error?.message || "Could not send reset email." });
+        return;
+      }
+      setStatus({
+        kind: "good",
+        text: body?.message || "If an account exists for that address, a reset email has been sent.",
+      });
+      // In dev, the API exposes the action_link so the operator
+      // can copy-paste; click-through directly so we don't get
+      // stuck waiting on email infra in local development.
+      if (body?.dev_action_link) {
+        window.notifySuccess?.("Reset link generated", "Check your inbox or use the dev link in the response.");
+      } else {
+        window.notifySuccess?.("Email sent", "Check your inbox for the reset link.");
+      }
+    } catch (err: any) {
+      setStatus({ kind: "bad", text: err?.message || "Could not request reset." });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onMagicLink = async () => {
     setStatus(null);
     if (!email) {
@@ -259,6 +410,7 @@ const Landing: React.FC = () => {
   const onSubmit = (ev: React.FormEvent) => {
     ev.preventDefault();
     if (busy) return;
+    if (mfaFor) { onSubmitTotp(); return; }
     if (mode === "signin") onSignIn();
     else if (mode === "signup") onSignUp();
     else onMagicLink();
@@ -324,6 +476,31 @@ const Landing: React.FC = () => {
             </div>
 
             <form onSubmit={onSubmit} className="landing-auth-form">
+              {mfaFor ? (
+                <>
+                  <div className="landing-field">
+                    <span>Two-factor code</span>
+                    <input
+                      className="input"
+                      type="text"
+                      inputMode="numeric"
+                      autoFocus
+                      maxLength={6}
+                      pattern="\d{6}"
+                      placeholder="123456"
+                      value={totpCode}
+                      onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                      autoComplete="one-time-code"
+                      style={{ letterSpacing: "0.4em", fontFamily: "var(--mono)", fontSize: 18, textAlign: "center" }}
+                    />
+                  </div>
+                  <p className="landing-hint">
+                    Open Authy / Google Authenticator / 1Password and copy the current 6-digit code for
+                    <strong> {mfaFor}</strong>. Codes refresh every 30 seconds.
+                  </p>
+                </>
+              ) : (
+              <>
               {mode === "signup" && (
                 <label className="landing-field">
                   <span>Display name</span>
@@ -427,6 +604,8 @@ const Landing: React.FC = () => {
                   </label>
                 </>
               )}
+              </>
+              )}
 
               {status && status.kind !== "pending" && (
                 <Banner kind={status.kind === "good" ? "good" : status.kind === "bad" ? "bad" : "info"}>
@@ -454,13 +633,36 @@ const Landing: React.FC = () => {
               )}
 
               {status?.kind !== "pending" && (
-                <Btn type="submit" kind="primary" full disabled={busy}>
-                  {busy ? "Working…" : mode === "signin" ? "Sign in" : mode === "signup" ? "Create account" : "Send magic link"}
+                <Btn type="submit" kind="primary" full disabled={busy || (!!mfaFor && totpCode.length !== 6)}>
+                  {busy ? "Working…"
+                    : mfaFor ? "Verify code"
+                    : mode === "signin" ? "Sign in"
+                    : mode === "signup" ? "Create account"
+                    : "Send magic link"}
                 </Btn>
+              )}
+              {!mfaFor && mode === "signin" && status?.kind !== "pending" && (
+                <Btn type="button" kind="ghost" full disabled={busy} onClick={onSignInWithPasskey}
+                     title="Use a passkey (TouchID, FaceID, Windows Hello, hardware key) instead of your password.">
+                  Sign in with passkey
+                </Btn>
+              )}
+              {mfaFor && (
+                <div className="landing-auth-foot">
+                  <button type="button" className="link-btn" onClick={() => { setMfaFor(null); setTotpCode(""); setStatus(null); }}>
+                    Cancel and sign in as a different user
+                  </button>
+                </div>
               )}
 
               <div className="landing-auth-foot">
-                {mode === "signin" && <>New to Anvil? <button type="button" className="link-btn" onClick={() => setMode("signup")}>Create an account</button></>}
+                {mode === "signin" && <>
+                  New to Anvil? <button type="button" className="link-btn" onClick={() => setMode("signup")}>Create an account</button>
+                  <span style={{ margin: "0 8px", color: "var(--ink-5)" }}>·</span>
+                  <button type="button" className="link-btn" onClick={onForgotPassword} disabled={busy}>
+                    Forgot password?
+                  </button>
+                </>}
                 {mode === "signup" && <>Already have an account? <button type="button" className="link-btn" onClick={() => setMode("signin")}>Sign in</button></>}
                 {mode === "magic" && <>Or use <button type="button" className="link-btn" onClick={() => setMode("signin")}>password sign-in</button></>}
               </div>

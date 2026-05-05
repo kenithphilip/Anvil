@@ -139,6 +139,12 @@ const isSessionValid = (): boolean => {
 };
 
 const LandingScreen = React.lazy(() => import("./screens/landing"));
+const ResetPasswordScreen = React.lazy(() => import("./screens/reset-password"));
+
+// Route ids that the pre-auth surface must serve. Without this the
+// auth gate would clobber e.g. /reset (the password-recovery
+// landing) by always rendering Landing.
+const PRE_AUTH_ROUTES = new Set(["reset"]);
 
 export default function App() {
   useRerenderOnEvents(["rbac:change", "prefs:change", "popstate", "hashchange"]);
@@ -297,7 +303,22 @@ export default function App() {
   // Shell, sidebar, route resolvers, telemetry hooks, and CmdK
   // overlay are deliberately not rendered. Toasts still mount so
   // the auth flow can surface a "signed in" notification.
+  //
+  // Exception: a small allowlist of pre-auth routes (password
+  // reset, magic-link callback) must render their own surface
+  // even when there's no session. We dispatch on the parsed
+  // route id below.
   if (!authed) {
+    if (route === "reset" || PRE_AUTH_ROUTES.has(route)) {
+      return (
+        <>
+          <Suspense fallback={<Loading label="reset" />}>
+            <ResetPasswordScreen />
+          </Suspense>
+          <ToastStack />
+        </>
+      );
+    }
     return (
       <>
         <Suspense fallback={<Loading label="anvil" />}>

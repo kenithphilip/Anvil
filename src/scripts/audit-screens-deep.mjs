@@ -41,6 +41,9 @@ const WINDOW_OK = new Set([
   "matchMedia", "getComputedStyle",
   "crypto", "btoa", "atob",
   "document", "console",
+  // WebAuthn feature-detect. Screens use `if (!window.PublicKeyCredential)`
+  // to short-circuit passkey flows on browsers that lack it.
+  "PublicKeyCredential",
   // Toast compat surface (lib/toasts.tsx attaches these on purpose)
   "notify", "notifySuccess", "notifyWarn", "notifyError", "notifyLive",
   "notifyDismiss", "__toastSubscribe", "__toastsCurrent",

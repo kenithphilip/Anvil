@@ -78,12 +78,14 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/acumatica/retry.js | admin |
 | src/api/acumatica/sync.js | admin |
 | src/api/admin/access_requests.js | admin |
+| src/api/admin/access_review.js | admin |
 | src/api/admin/contracts.js | read, admin |
 | src/api/admin/customer_locations.js | read, admin |
 | src/api/admin/diagnostics.js | admin |
 | src/api/admin/equipment.js | read, admin |
 | src/api/admin/fx_rates.js | read, admin |
 | src/api/admin/holidays.js | read, admin |
+| src/api/admin/install_vertical_pack.js | admin |
 | src/api/admin/inventory.js | read, admin |
 | src/api/admin/item_master.js | read, admin |
 | src/api/admin/lead_times.js | read, admin |
@@ -96,6 +98,9 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/analytics/refresh.js | approve |
 | src/api/analytics/winloss.js | read |
 | src/api/anomaly/compute.js | read |
+| src/api/ap/deductions.js | approve |
+| src/api/ap/match.js | approve |
+| src/api/audit/export.js | admin |
 | src/api/audit/index.js | read, write |
 | src/api/billing/razorpay/checkout.js | approve |
 | src/api/billing/razorpay/connect.js | admin |
@@ -128,6 +133,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/delivery/promise.js | read |
 | src/api/docai/correction.js | approve |
 | src/api/docai/extract.js | approve |
+| src/api/docai/route.js | read |
 | src/api/docai/runs.js | read |
 | src/api/documents/[id].js | read, admin |
 | src/api/documents/ocr.js | write |
@@ -150,6 +156,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/erp_chat/sessions.js | read |
 | src/api/esign/connect.js | admin |
 | src/api/esign/envelopes.js | read, approve |
+| src/api/eval/agent_eval.js | admin |
 | src/api/eval/cases.js | read, write, admin |
 | src/api/eval/dashboard.js | read |
 | src/api/eval/run.js | write |
@@ -157,6 +164,11 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/findings/index.js | write |
 | src/api/forecast/index.js | read, admin |
 | src/api/fx/rates.js | read, write |
+| src/api/ifs/connect.js | admin |
+| src/api/ifs/health.js | read |
+| src/api/ifs/push.js | approve |
+| src/api/ifs/retry.js | admin |
+| src/api/ifs/sync.js | admin |
 | src/api/inbound/chat/configure.js | read, admin |
 | src/api/inbound/email/configure.js | read, admin |
 | src/api/inbound/email/parse.js | approve |
@@ -167,6 +179,16 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/invoices/index.js | read, write |
 | src/api/invoices/pdf.js | read |
 | src/api/invoices/send.js | write |
+| src/api/jde/connect.js | admin |
+| src/api/jde/health.js | read |
+| src/api/jde/push.js | approve |
+| src/api/jde/retry.js | admin |
+| src/api/jde/sync.js | admin |
+| src/api/jobboss/connect.js | admin |
+| src/api/jobboss/health.js | read |
+| src/api/jobboss/push.js | approve |
+| src/api/jobboss/retry.js | admin |
+| src/api/jobboss/sync.js | admin |
 | src/api/kb/ask.js | read |
 | src/api/master_data/graph.js | read |
 | src/api/mcp/tokens.js | read, admin |
@@ -178,6 +200,16 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/netsuite/push.js | approve |
 | src/api/netsuite/retry.js | admin |
 | src/api/netsuite/sync.js | admin |
+| src/api/oracle_ebs/connect.js | admin |
+| src/api/oracle_ebs/health.js | read |
+| src/api/oracle_ebs/push.js | approve |
+| src/api/oracle_ebs/retry.js | admin |
+| src/api/oracle_ebs/sync.js | admin |
+| src/api/oracle_fusion/connect.js | admin |
+| src/api/oracle_fusion/health.js | read |
+| src/api/oracle_fusion/push.js | approve |
+| src/api/oracle_fusion/retry.js | admin |
+| src/api/oracle_fusion/sync.js | admin |
 | src/api/orders/[id].js | read, write, approve, admin |
 | src/api/orders/index.js | read, write |
 | src/api/orders/print_jobs.js | read, approve |
@@ -191,13 +223,31 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/p21/push.js | approve |
 | src/api/p21/retry.js | admin |
 | src/api/p21/sync.js | admin |
+| src/api/plex/connect.js | admin |
+| src/api/plex/health.js | read |
+| src/api/plex/push.js | approve |
+| src/api/plex/retry.js | admin |
+| src/api/plex/sync.js | admin |
 | src/api/plm/connect.js | admin |
 | src/api/plm/health.js | read |
 | src/api/plm/sync.js | read, admin |
 | src/api/portal/tokens.js | read, approve, admin |
+| src/api/proalpha/connect.js | admin |
+| src/api/proalpha/health.js | read |
+| src/api/proalpha/push.js | approve |
+| src/api/proalpha/retry.js | admin |
+| src/api/proalpha/sync.js | admin |
+| src/api/prospecting/campaigns.js | admin |
+| src/api/prospecting/run.js | admin |
+| src/api/prospecting/targets.js | admin |
 | src/api/push/send.js | approve |
 | src/api/push/subscribe.js | read |
 | src/api/quotes/pdf.js | read |
+| src/api/ramco/connect.js | admin |
+| src/api/ramco/health.js | read |
+| src/api/ramco/push.js | approve |
+| src/api/ramco/retry.js | admin |
+| src/api/ramco/sync.js | admin |
 | src/api/rlhf/aggregate.js | approve |
 | src/api/rlhf/dataset.js | approve |
 | src/api/rlhf/feedback.js | read |

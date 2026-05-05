@@ -5,7 +5,7 @@ screen handler that performs a mutation. Run `npm run audit:write-paths`
 to refresh.
 
 Summary:
-- OK:   26
+- OK:   35
 - INFO: 0
 - WARN: 0
 - FAIL: 0
@@ -32,8 +32,17 @@ Summary:
 | OK | src/v3-app/screens/admin.tsx | `onSageX3RetryNow` | /api/sage_x3/retry POST | /api/sage_x3/retry (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onSageX3Connect` | /api/sage_x3/connect POST | /api/sage_x3/connect (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onRemoveMember` | /api/admin/members?user_id=${encodeURIComponent(revokeFor.user_id)} DELETE | /api/admin/members?user_id=${encodeURIComponent(revokeFor.user_id)} (DELETE) | ok |
+| OK | src/v3-app/screens/admin.tsx | `onRamcoSyncNow` | /api/ramco/sync POST | /api/ramco/sync (POST) | ok |
+| OK | src/v3-app/screens/admin.tsx | `onRamcoRetryNow` | /api/ramco/retry POST | /api/ramco/retry (POST) | ok |
+| OK | src/v3-app/screens/admin.tsx | `onRamcoConnect` | /api/ramco/connect POST | /api/ramco/connect (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onPlmConnect` | /api/plm/connect POST | /api/plm/connect (POST) | ok |
+| OK | src/v3-app/screens/admin.tsx | `onOracleFusionSyncNow` | /api/oracle_fusion/sync POST | /api/oracle_fusion/sync (POST) | ok |
+| OK | src/v3-app/screens/admin.tsx | `onOracleFusionRetryNow` | /api/oracle_fusion/retry POST | /api/oracle_fusion/retry (POST) | ok |
+| OK | src/v3-app/screens/admin.tsx | `onOracleFusionConnect` | /api/oracle_fusion/connect POST | /api/oracle_fusion/connect (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onNsRetryNow` | netsuite.retry retry | src/api/netsuite/retry.js [ok] | ok |
+| OK | src/v3-app/screens/admin.tsx | `onIfsSyncNow` | /api/ifs/sync POST | /api/ifs/sync (POST) | ok |
+| OK | src/v3-app/screens/admin.tsx | `onIfsRetryNow` | /api/ifs/retry POST | /api/ifs/retry (POST) | ok |
+| OK | src/v3-app/screens/admin.tsx | `onIfsConnect` | /api/ifs/connect POST | /api/ifs/connect (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onChatSave` | /api/inbound/chat/configure POST | /api/inbound/chat/configure (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onAddMember` | /api/admin/members POST | /api/admin/members (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onAddLeadTime` | admin.upsertLeadTime upsertLeadTime | src/api/admin/access_requests.js [ok] | ok |

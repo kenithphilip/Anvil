@@ -4,7 +4,9 @@ Multi-tenant industrial sales-ops platform: customer PO intake,
 quote-and-pricecompo reconciliation, source PO procurement against
 Korea / Japan / China / India suppliers, ERP export with idempotency
 (NetSuite, SAP, Dynamics 365, Acumatica, Prophet 21, Eclipse,
-Infor SX.e, Tally, Sage X3), AMC service scheduling, GSTN e-Invoice,
+Infor SX.e, Tally, Sage X3, IFS Cloud, Oracle Fusion, Ramco, JD
+Edwards, Plex, JobBoss, Oracle EBS, proALPHA), AMC service
+scheduling, GSTN e-Invoice,
 multi-channel intake (email + WhatsApp + Slack + Teams + voice via
 Vapi/Retell), PLM mirror (PTC Windchill, Arena), in-network
 back-to-back sourcing, and a Vite + React + TypeScript browser app.

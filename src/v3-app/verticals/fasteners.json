@@ -1,0 +1,44 @@
+{
+  "id": "fasteners",
+  "label": "Fasteners",
+  "description": "Industrial fasteners (bolts, nuts, screws, washers, anchors). High SKU count, frequent kit/assembly orders, plating/coating variations.",
+  "version": 1,
+  "approval_thresholds": [
+    { "level": "rep", "min_amount": 0, "max_amount": 2500, "currency": "USD" },
+    { "level": "manager", "min_amount": 2500, "max_amount": 15000, "currency": "USD" },
+    { "level": "director", "min_amount": 15000, "max_amount": 75000, "currency": "USD" },
+    { "level": "vp", "min_amount": 75000, "max_amount": null, "currency": "USD" }
+  ],
+  "lead_time_defaults_days": {
+    "stocked": 1,
+    "domestic_special": 7,
+    "import_standard": 28,
+    "custom_plating": 14
+  },
+  "lost_reasons": [
+    "Price (competitor lower)",
+    "Stock not available",
+    "Lead time too long",
+    "Material grade mismatch (8.8 vs 10.9)",
+    "Plating/coating not available",
+    "Minimum order quantity",
+    "Customer found local supplier",
+    "DFAR / Buy America requirement"
+  ],
+  "contract_types": ["spot", "blanket", "vendor-managed-inventory", "kanban"],
+  "item_master_examples": [
+    { "code": "HHCS-M10-50-8.8-ZP", "description": "Hex Head Cap Screw M10x50 grade 8.8 zinc plated", "uom": "pcs" },
+    { "code": "HEX-NUT-M10-A2", "description": "Hex Nut M10 stainless A2", "uom": "pcs" },
+    { "code": "FW-M10-ZP", "description": "Flat washer M10 zinc plated", "uom": "pcs" }
+  ],
+  "quote_template": {
+    "header_columns": ["customer_po", "customer_part", "manufacturer_part", "qty", "uom", "price_per_unit", "extension"],
+    "footer_blocks": ["material_certs_req", "lead_time", "freight_terms", "validity_days"]
+  },
+  "kpis": [
+    { "id": "lines_quoted", "label": "Lines quoted", "unit": "count", "window": "month" },
+    { "id": "fill_rate", "label": "Fill rate (in-stock %)", "unit": "percent", "window": "month" },
+    { "id": "avg_line_value", "label": "Avg line value", "unit": "USD", "window": "month" },
+    { "id": "kit_orders_pct", "label": "Kit/assembly order share", "unit": "percent", "window": "month" }
+  ]
+}

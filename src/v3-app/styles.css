@@ -1848,3 +1848,724 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   font-size: 11.5px;
   color: var(--ink-3);
 }
+
+
+/* ==========================================================================
+   Landing v2 enhancements (Phase A.2)
+   --------------------------------------------------------------------------
+   Pure CSS: no framer-motion, no Lottie, no GSAP. Three motion idioms:
+     1. Fade-up entrance via @keyframes (.landing-fade-up).
+     2. Counter pulse on visibility via prefers-reduced-motion-aware keyframes.
+     3. Marquee scroll for the channels rail with hover-pause.
+   Every animation is no-op'd by `prefers-reduced-motion: reduce`.
+   ========================================================================== */
+
+@keyframes landing-fade-up {
+  from { opacity: 0; transform: translate3d(0, 18px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes landing-pulse {
+  0%   { transform: scale(0.94); opacity: 0.7; }
+  60%  { transform: scale(1.04); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes landing-marquee {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(-50%, 0, 0); }
+}
+
+@keyframes landing-blob {
+  0%, 100% { transform: translate(-50%, -50%) scale(1); }
+  33%      { transform: translate(-46%, -52%) scale(1.07); }
+  66%      { transform: translate(-54%, -48%) scale(0.94); }
+}
+
+@keyframes landing-shine {
+  from { background-position: -200% 0; }
+  to   { background-position: 200% 0; }
+}
+
+.landing-fade-up {
+  animation: landing-fade-up 540ms ease-out both;
+}
+.landing-fade-up.delay-1 { animation-delay: 80ms; }
+.landing-fade-up.delay-2 { animation-delay: 160ms; }
+.landing-fade-up.delay-3 { animation-delay: 240ms; }
+.landing-fade-up.delay-4 { animation-delay: 320ms; }
+
+/* Hero gradient blob behind the kinetic headline. */
+.landing-hero-copy { position: relative; }
+.landing-hero-blob {
+  position: absolute;
+  top: 50%; left: 25%;
+  width: min(560px, 80vw);
+  height: min(560px, 80vw);
+  background: radial-gradient(closest-side,
+    color-mix(in oklab, var(--accent, #C5F25B) 30%, transparent),
+    transparent 75%);
+  filter: blur(40px);
+  pointer-events: none;
+  z-index: 0;
+  animation: landing-blob 16s ease-in-out infinite;
+  will-change: transform;
+}
+.landing-hero-copy > * { position: relative; z-index: 1; }
+
+/* Kinetic headline: cycles through verbs. The verb element gets
+   replaced via JS or rotates via CSS; we ship the static "Quote /
+   Push / Reconcile" form and let JS upgrade it if loaded. */
+.landing-kinetic {
+  display: inline-block;
+  background: linear-gradient(90deg,
+    var(--ink-1) 0%,
+    color-mix(in oklab, var(--ink-1) 70%, var(--accent, #C5F25B)) 40%,
+    color-mix(in oklab, var(--ink-1) 70%, var(--accent, #C5F25B)) 60%,
+    var(--ink-1) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: landing-shine 6s linear infinite;
+}
+
+/* Live counters strip. */
+.landing-counters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  padding: 20px 24px;
+  margin: 28px auto;
+  max-width: 1180px;
+  background: var(--surface-0);
+  border: 1px solid var(--ink-7);
+  border-radius: 12px;
+}
+.landing-counter {
+  text-align: center;
+  padding: 8px 4px;
+}
+.landing-counter-num {
+  font-family: var(--mono);
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--ink-1);
+  display: block;
+  animation: landing-pulse 700ms ease-out both;
+}
+.landing-counter-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-4);
+}
+
+/* Channels rail (marquee). */
+.landing-channels-rail {
+  margin: 36px 0;
+  overflow: hidden;
+  position: relative;
+  -webkit-mask-image: linear-gradient(90deg,
+    transparent 0, #000 8%, #000 92%, transparent 100%);
+          mask-image: linear-gradient(90deg,
+    transparent 0, #000 8%, #000 92%, transparent 100%);
+}
+.landing-channels-track {
+  display: inline-flex;
+  gap: 32px;
+  white-space: nowrap;
+  animation: landing-marquee 30s linear infinite;
+  width: max-content;
+}
+.landing-channels-rail:hover .landing-channels-track {
+  animation-play-state: paused;
+}
+.landing-channels-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border: 1px solid var(--ink-7);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--ink-2);
+  background: var(--surface-0);
+}
+.landing-channels-pill .dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #C5F25B);
+}
+
+/* Product tour (scroll-pinned, sticky-style). */
+.landing-tour {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 36px;
+  margin: 48px 0;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .landing-tour { grid-template-columns: 1fr; }
+}
+.landing-tour-frames {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.landing-tour-frame {
+  border: 1px solid var(--ink-7);
+  border-radius: 12px;
+  padding: 18px 20px;
+  background: var(--surface-0);
+  transition: border-color 200ms ease, transform 200ms ease;
+}
+.landing-tour-frame:hover {
+  border-color: color-mix(in oklab, var(--accent, #C5F25B) 60%, var(--ink-7));
+  transform: translate3d(0, -2px, 0);
+}
+.landing-tour-frame .step {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent, #C5F25B);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.landing-tour-frame h3 {
+  font-size: 16px;
+  margin: 0 0 6px 0;
+  color: var(--ink-1);
+}
+.landing-tour-frame p {
+  font-size: 13px;
+  color: var(--ink-3);
+  margin: 0;
+}
+.landing-tour-pin {
+  position: sticky;
+  top: 80px;
+  height: fit-content;
+  border: 1px solid var(--ink-7);
+  border-radius: 12px;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 75% 0%,
+      color-mix(in oklab, var(--accent, #C5F25B) 8%, transparent) 0%,
+      transparent 50%),
+    var(--surface-0);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.landing-tour-pin pre {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+/* Outcome stories. */
+.landing-stories {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin: 28px 0;
+}
+.landing-story {
+  border: 1px solid var(--ink-7);
+  border-left: 3px solid var(--accent, #C5F25B);
+  border-radius: 8px;
+  padding: 18px 20px;
+  background: var(--surface-0);
+}
+.landing-story-quote {
+  font-size: 17px;
+  line-height: 1.4;
+  color: var(--ink-1);
+  margin: 0 0 12px 0;
+  font-style: italic;
+}
+.landing-story-meta {
+  font-size: 12px;
+  color: var(--ink-4);
+}
+.landing-story-meta strong { color: var(--ink-2); }
+
+/* Trust strip. */
+.landing-trust {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 18px 24px;
+  margin: 36px auto 12px auto;
+  max-width: 1180px;
+  border-top: 1px solid var(--ink-7);
+  border-bottom: 1px solid var(--ink-7);
+  font-size: 12px;
+  color: var(--ink-4);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.landing-trust-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.landing-trust-item::before {
+  content: "";
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent, #C5F25B);
+  box-shadow: 0 0 10px color-mix(in oklab, var(--accent, #C5F25B) 50%, transparent);
+}
+
+/* prefers-reduced-motion: collapse every animation. The CSS-only
+   approach means we don't need a JS hook — the browser handles it. */
+@media (prefers-reduced-motion: reduce) {
+  .landing-fade-up,
+  .landing-counter-num,
+  .landing-kinetic,
+  .landing-hero-blob,
+  .landing-channels-track {
+    animation: none !important;
+  }
+  .landing-channels-track {
+    transform: none;
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+}
+
+
+/* ==========================================================================
+   Brand animation system v2 (landing oomph + product polish)
+   --------------------------------------------------------------------------
+   Builds on the v2 landing animations above. Goal: when a visitor lands on
+   the page they should immediately sense a product with momentum, while
+   operators inside the app feel that same brand voice through small
+   micro-interactions (button press, card lift, route transition).
+
+   All keyframes obey `prefers-reduced-motion: reduce`. Layout costs are
+   minimised by limiting transforms to compositor-only properties (transform
+   + opacity).
+   ========================================================================== */
+
+/* ---------- Slim scroll-progress bar (top of landing) ---------- */
+.landing-progress {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  z-index: 100;
+  background: linear-gradient(90deg,
+    var(--accent, #C5F25B) 0%,
+    color-mix(in oklab, var(--accent, #C5F25B) 60%, white) 50%,
+    var(--accent, #C5F25B) 100%);
+  transform-origin: 0 50%;
+  transform: scaleX(0);
+  transition: transform 60ms linear;
+  pointer-events: none;
+  box-shadow: 0 0 12px color-mix(in oklab, var(--accent, #C5F25B) 50%, transparent);
+}
+
+/* ---------- Animated mesh gradient hero background ---------- */
+@keyframes brand-mesh-drift-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(8%, -6%, 0) scale(1.1); }
+}
+@keyframes brand-mesh-drift-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(-7%, 5%, 0) scale(1.08); }
+}
+@keyframes brand-mesh-drift-c {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(4%, 6%, 0) scale(0.95); }
+}
+.landing-hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+.landing-mesh {
+  position: absolute;
+  inset: -10%;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.55;
+  filter: blur(70px);
+}
+.landing-mesh::before,
+.landing-mesh::after,
+.landing-mesh > span {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform;
+}
+.landing-mesh::before {
+  width: 50vw; height: 50vw; left: 0; top: 5%;
+  background: radial-gradient(closest-side, color-mix(in oklab, var(--accent, #C5F25B) 60%, transparent), transparent);
+  animation: brand-mesh-drift-a 22s ease-in-out infinite;
+}
+.landing-mesh::after {
+  width: 45vw; height: 45vw; right: 0; top: 10%;
+  background: radial-gradient(closest-side, color-mix(in oklab, #6EE7F9 50%, transparent), transparent);
+  animation: brand-mesh-drift-b 26s ease-in-out infinite;
+}
+.landing-mesh > span {
+  width: 38vw; height: 38vw; left: 30%; bottom: -10%;
+  background: radial-gradient(closest-side, color-mix(in oklab, #FFB6E1 45%, transparent), transparent);
+  animation: brand-mesh-drift-c 30s ease-in-out infinite;
+}
+
+/* ---------- Subtle grid overlay on hero ---------- */
+.landing-grid-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, var(--ink-1) 8%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--ink-1) 8%, transparent) 1px, transparent 1px);
+  background-size: 48px 48px;
+  -webkit-mask-image: radial-gradient(ellipse at 50% 30%, #000 30%, transparent 75%);
+          mask-image: radial-gradient(ellipse at 50% 30%, #000 30%, transparent 75%);
+  opacity: 0.35;
+}
+
+/* ---------- Brand mark "strike" on hero load ---------- */
+@keyframes brand-strike {
+  0%   { transform: translateY(-12px) rotate(-12deg); opacity: 0; }
+  60%  { transform: translateY(2px) rotate(2deg); opacity: 1; }
+  100% { transform: translateY(0) rotate(0); opacity: 1; }
+}
+@keyframes brand-spark {
+  0%   { transform: scale(0); opacity: 1; }
+  60%  { opacity: 0.9; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+.brand-mark {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--accent, #C5F25B) 25%, transparent);
+  color: var(--ink-1);
+  animation: brand-strike 600ms cubic-bezier(.36,1.4,.5,1) both;
+}
+.brand-mark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  background: radial-gradient(closest-side, color-mix(in oklab, var(--accent, #C5F25B) 80%, transparent), transparent);
+  animation: brand-spark 900ms 600ms ease-out both;
+  pointer-events: none;
+}
+
+/* ---------- Reveal-on-scroll utility (paired with useReveal hook) ---------- */
+.reveal {
+  opacity: 0;
+  transform: translate3d(0, 24px, 0);
+  transition: opacity 600ms cubic-bezier(.22,.61,.36,1),
+              transform 600ms cubic-bezier(.22,.61,.36,1);
+  will-change: opacity, transform;
+}
+.reveal.visible {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+}
+.reveal.from-left  { transform: translate3d(-32px, 0, 0); }
+.reveal.from-right { transform: translate3d( 32px, 0, 0); }
+.reveal.from-left.visible,
+.reveal.from-right.visible { transform: translate3d(0, 0, 0); }
+
+/* ---------- Counter card hover lift ---------- */
+.landing-counter {
+  transition: transform 260ms cubic-bezier(.22,.61,.36,1), box-shadow 260ms;
+  cursor: default;
+  position: relative;
+  overflow: hidden;
+}
+.landing-counter::after {
+  content: "";
+  position: absolute;
+  inset: -50%;
+  background: radial-gradient(closest-side, color-mix(in oklab, var(--accent, #C5F25B) 18%, transparent), transparent 70%);
+  opacity: 0;
+  transition: opacity 320ms;
+  pointer-events: none;
+}
+.landing-counter:hover {
+  transform: translate3d(0, -3px, 0);
+  box-shadow: 0 12px 28px -16px color-mix(in oklab, var(--accent, #C5F25B) 40%, transparent);
+}
+.landing-counter:hover::after { opacity: 1; }
+
+/* ---------- Live activity ticker (under counters) ---------- */
+@keyframes ticker-in {
+  from { opacity: 0; transform: translate3d(0, 8px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+.landing-ticker {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  margin: 4px auto 24px auto;
+  background: var(--surface-0);
+  border: 1px solid var(--ink-7);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  max-width: 720px;
+}
+.landing-ticker .pulse {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent, #C5F25B);
+  box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent, #C5F25B) 80%, transparent);
+  animation: brand-pulse 1.6s ease-out infinite;
+  flex: 0 0 auto;
+}
+.landing-ticker .text {
+  animation: ticker-in 360ms ease-out both;
+}
+@keyframes brand-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent, #C5F25B) 80%, transparent); }
+  70%  { box-shadow: 0 0 0 12px color-mix(in oklab, var(--accent, #C5F25B) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent, #C5F25B) 0%, transparent); }
+}
+
+/* ---------- Tour frames: scroll-spy active state ---------- */
+.landing-tour-frame {
+  position: relative;
+  overflow: hidden;
+  transition: border-color 320ms, transform 320ms, box-shadow 320ms;
+}
+.landing-tour-frame::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--accent, #C5F25B);
+  transform: scaleY(0);
+  transform-origin: 0 0;
+  transition: transform 380ms cubic-bezier(.22,.61,.36,1);
+}
+.landing-tour-frame.active {
+  transform: translate3d(0, -2px, 0);
+  border-color: color-mix(in oklab, var(--accent, #C5F25B) 60%, var(--ink-7));
+  box-shadow: 0 18px 40px -28px color-mix(in oklab, var(--accent, #C5F25B) 60%, transparent);
+}
+.landing-tour-frame.active::before { transform: scaleY(1); }
+.landing-tour-frame.active .step {
+  letter-spacing: 0.12em;
+}
+
+/* ---------- Outcome-story: hover sweep ---------- */
+@keyframes story-sweep {
+  from { transform: translate3d(-100%, 0, 0); }
+  to   { transform: translate3d(100%, 0, 0); }
+}
+.landing-story {
+  position: relative;
+  overflow: hidden;
+  transition: transform 280ms cubic-bezier(.22,.61,.36,1), border-color 280ms;
+}
+.landing-story::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg,
+    transparent 0%,
+    color-mix(in oklab, var(--accent, #C5F25B) 12%, transparent) 50%,
+    transparent 100%);
+  transform: translate3d(-100%, 0, 0);
+  transition: transform 0ms;
+  pointer-events: none;
+}
+.landing-story:hover {
+  transform: translate3d(0, -4px, 0);
+  border-color: color-mix(in oklab, var(--accent, #C5F25B) 50%, var(--ink-7));
+}
+.landing-story:hover::after {
+  animation: story-sweep 900ms cubic-bezier(.22,.61,.36,1) forwards;
+}
+
+/* ---------- Channels-rail pill hover glow ---------- */
+.landing-channels-pill {
+  transition: transform 200ms, border-color 200ms, box-shadow 200ms;
+}
+.landing-channels-pill:hover {
+  transform: translate3d(0, -2px, 0) scale(1.04);
+  border-color: color-mix(in oklab, var(--accent, #C5F25B) 60%, var(--ink-7));
+  box-shadow: 0 10px 24px -14px color-mix(in oklab, var(--accent, #C5F25B) 70%, transparent);
+}
+
+/* ---------- Trust strip: pulsing accent ---------- */
+.landing-trust-item::before {
+  animation: brand-pulse 2.4s ease-out infinite;
+}
+.landing-trust-item:nth-child(2)::before { animation-delay: 0.3s; }
+.landing-trust-item:nth-child(3)::before { animation-delay: 0.6s; }
+.landing-trust-item:nth-child(4)::before { animation-delay: 0.9s; }
+.landing-trust-item:nth-child(5)::before { animation-delay: 1.2s; }
+
+/* ---------- Section heading underline reveal ---------- */
+.landing-section h2 {
+  position: relative;
+  display: inline-block;
+  padding-bottom: 8px;
+}
+.landing-section h2::after {
+  content: "";
+  position: absolute;
+  left: 0; bottom: 0;
+  height: 2px;
+  width: 0;
+  background: linear-gradient(90deg, var(--accent, #C5F25B), transparent);
+  transition: width 600ms cubic-bezier(.22,.61,.36,1);
+}
+.landing-section h2.visible::after,
+.reveal.visible h2::after,
+.landing-section.visible h2::after {
+  width: 64px;
+}
+
+/* ---------- Hero CTA buttons: subtle shimmer + spring on hover ---------- */
+@keyframes brand-cta-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.landing-hero-cta .btn.primary {
+  position: relative;
+  overflow: hidden;
+  transition: transform 200ms cubic-bezier(.36,1.4,.5,1), box-shadow 220ms;
+}
+.landing-hero-cta .btn.primary::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg,
+    transparent 0%,
+    rgba(255,255,255,0.18) 50%,
+    transparent 100%);
+  background-size: 200% 100%;
+  animation: brand-cta-shimmer 3.6s linear infinite;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 220ms;
+}
+.landing-hero-cta .btn.primary:hover {
+  transform: translate3d(0, -2px, 0) scale(1.02);
+  box-shadow: 0 16px 36px -16px color-mix(in oklab, var(--accent, #C5F25B) 70%, transparent);
+}
+.landing-hero-cta .btn.primary:hover::after { opacity: 1; }
+
+/* ---------- Auth card: subtle float + shadow polish ---------- */
+.landing-auth {
+  transition: transform 360ms cubic-bezier(.22,.61,.36,1), box-shadow 360ms;
+  box-shadow: 0 24px 60px -32px color-mix(in oklab, var(--ink-1) 30%, transparent);
+}
+.landing-auth:focus-within {
+  transform: translate3d(0, -3px, 0);
+  box-shadow: 0 30px 80px -32px color-mix(in oklab, var(--accent, #C5F25B) 50%, transparent);
+}
+
+/* ---------- Section spacing & enter polish ---------- */
+.landing-section {
+  scroll-margin-top: 24px;
+}
+
+/* ==========================================================================
+   In-app micro-interactions (Btn, Card, route transitions)
+   ========================================================================== */
+
+/* Button press: subtle compress on click. Applies app-wide. */
+.btn {
+  transition: transform 120ms cubic-bezier(.22,.61,.36,1), box-shadow 200ms, background 160ms, border-color 160ms;
+}
+.btn:active:not([disabled]) {
+  transform: translate3d(0, 1px, 0) scale(0.985);
+}
+
+/* Card lift on hover (only when card is interactive — we tag with
+   .card-interactive in screens that want this). */
+.card-interactive {
+  transition: transform 240ms cubic-bezier(.22,.61,.36,1), box-shadow 240ms, border-color 240ms;
+}
+.card-interactive:hover {
+  transform: translate3d(0, -2px, 0);
+  box-shadow: 0 14px 32px -20px color-mix(in oklab, var(--ink-1) 40%, transparent);
+}
+
+/* Shimmer skeleton for loading rows. Drop in <div class="skel"/>. */
+@keyframes brand-skel {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+.skel {
+  background: linear-gradient(90deg,
+    color-mix(in oklab, var(--ink-7) 40%, transparent) 0%,
+    color-mix(in oklab, var(--ink-7) 80%, transparent) 50%,
+    color-mix(in oklab, var(--ink-7) 40%, transparent) 100%);
+  background-size: 200% 100%;
+  animation: brand-skel 1.4s linear infinite;
+  border-radius: 6px;
+  height: 14px;
+}
+.skel.row { height: 12px; margin: 6px 0; }
+.skel.tall { height: 22px; }
+
+/* Route transition: when the screen container appears, fade-up. The
+   shell already swaps innerHTML on hashchange; we trigger this by
+   tagging the container with .route-enter on each navigation. */
+@keyframes route-enter {
+  from { opacity: 0; transform: translate3d(0, 6px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+.route-enter {
+  animation: route-enter 240ms cubic-bezier(.22,.61,.36,1) both;
+}
+
+/* Reduced motion: collapse all of the above to no-ops. */
+@media (prefers-reduced-motion: reduce) {
+  .landing-progress,
+  .landing-mesh,
+  .landing-mesh::before,
+  .landing-mesh::after,
+  .landing-mesh > span,
+  .brand-mark,
+  .brand-mark::after,
+  .reveal,
+  .landing-counter,
+  .landing-counter::after,
+  .landing-ticker .pulse,
+  .landing-ticker .text,
+  .landing-tour-frame,
+  .landing-tour-frame::before,
+  .landing-story,
+  .landing-story::after,
+  .landing-channels-pill,
+  .landing-trust-item::before,
+  .landing-section h2::after,
+  .landing-hero-cta .btn.primary,
+  .landing-hero-cta .btn.primary::after,
+  .landing-auth,
+  .btn,
+  .card-interactive,
+  .skel,
+  .route-enter {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+  .reveal { opacity: 1 !important; }
+  .skel { background: var(--ink-7) !important; }
+}

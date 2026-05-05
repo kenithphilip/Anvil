@@ -39,6 +39,28 @@ import sxeSync          from "../sxe/sync.js";
 import sxeRetry         from "../sxe/retry.js";
 import sageX3Sync       from "../sage_x3/sync.js";
 import sageX3Retry      from "../sage_x3/retry.js";
+// Phase 5.4b cluster A (OAuth2): IFS, Oracle Fusion, Ramco.
+import ifsSync          from "../ifs/sync.js";
+import ifsRetry         from "../ifs/retry.js";
+import oracleFusionSync from "../oracle_fusion/sync.js";
+import oracleFusionRetry from "../oracle_fusion/retry.js";
+import ramcoSync        from "../ramco/sync.js";
+import ramcoRetry       from "../ramco/retry.js";
+// Phase 5.4b cluster B (token-pair): JDE, Plex, JobBoss.
+import jdeSync          from "../jde/sync.js";
+import jdeRetry         from "../jde/retry.js";
+import plexSync         from "../plex/sync.js";
+import plexRetry        from "../plex/retry.js";
+import jobbossSync      from "../jobboss/sync.js";
+import jobbossRetry     from "../jobboss/retry.js";
+// Phase 5.4b cluster C (HTTP Basic): Oracle EBS, proALPHA.
+import oracleEbsSync    from "../oracle_ebs/sync.js";
+import oracleEbsRetry   from "../oracle_ebs/retry.js";
+import proalphaSync     from "../proalpha/sync.js";
+import proalphaRetry    from "../proalpha/retry.js";
+// Phase 6 cron entries: agent eval (weekly) + prospecting (every tick).
+import agentEval        from "../eval/agent_eval.js";
+import prospectingRun   from "../prospecting/run.js";
 import plmSync          from "../plm/sync.js";
 import pushSend         from "../push/send.js";
 import inboundParse     from "../inbound/email/parse.js";
@@ -56,6 +78,14 @@ const RETRIES = [
   { name: "eclipse/retry",   fn: eclipseRetry,   opts: { path: "/api/eclipse/retry"   } },
   { name: "sxe/retry",       fn: sxeRetry,       opts: { path: "/api/sxe/retry"       } },
   { name: "sage_x3/retry",   fn: sageX3Retry,    opts: { path: "/api/sage_x3/retry"   } },
+  { name: "ifs/retry",            fn: ifsRetry,           opts: { path: "/api/ifs/retry" } },
+  { name: "oracle_fusion/retry",  fn: oracleFusionRetry,  opts: { path: "/api/oracle_fusion/retry" } },
+  { name: "ramco/retry",          fn: ramcoRetry,         opts: { path: "/api/ramco/retry" } },
+  { name: "jde/retry",            fn: jdeRetry,           opts: { path: "/api/jde/retry" } },
+  { name: "plex/retry",           fn: plexRetry,          opts: { path: "/api/plex/retry" } },
+  { name: "jobboss/retry",        fn: jobbossRetry,       opts: { path: "/api/jobboss/retry" } },
+  { name: "oracle_ebs/retry",     fn: oracleEbsRetry,     opts: { path: "/api/oracle_ebs/retry" } },
+  { name: "proalpha/retry",       fn: proalphaRetry,      opts: { path: "/api/proalpha/retry" } },
 ];
 
 const SYNCS = [
@@ -68,6 +98,14 @@ const SYNCS = [
   { name: "eclipse/sync",   fn: eclipseSync,   opts: { path: "/api/eclipse/sync"   } },
   { name: "sxe/sync",       fn: sxeSync,       opts: { path: "/api/sxe/sync"       } },
   { name: "sage_x3/sync",   fn: sageX3Sync,    opts: { path: "/api/sage_x3/sync"   } },
+  { name: "ifs/sync",            fn: ifsSync,           opts: { path: "/api/ifs/sync" } },
+  { name: "oracle_fusion/sync", fn: oracleFusionSync,  opts: { path: "/api/oracle_fusion/sync" } },
+  { name: "ramco/sync",          fn: ramcoSync,         opts: { path: "/api/ramco/sync" } },
+  { name: "jde/sync",            fn: jdeSync,           opts: { path: "/api/jde/sync" } },
+  { name: "plex/sync",           fn: plexSync,          opts: { path: "/api/plex/sync" } },
+  { name: "jobboss/sync",        fn: jobbossSync,       opts: { path: "/api/jobboss/sync" } },
+  { name: "oracle_ebs/sync",     fn: oracleEbsSync,     opts: { path: "/api/oracle_ebs/sync" } },
+  { name: "proalpha/sync",       fn: proalphaSync,      opts: { path: "/api/proalpha/sync" } },
   // Phase 5.5: PLM sync. Same 30m cadence as the ERPs since BOM /
   // ECO churn is similar in volume.
   { name: "plm/sync",       fn: plmSync,       opts: { path: "/api/plm/sync", method: "POST" } },
@@ -85,10 +123,17 @@ export default async function handler(req, res) {
     const minute = startedAt.getUTCMinutes();
     const ranSyncs = shouldRunOnMinute(minute, 30);
     const ranAgents = shouldRunOnMinute(minute, 60);
+    // Run the agent-eval harness once per hour at minute 5 (off the
+    // hour-on-the-hour traffic spike). Phase 6 (C.3) — drift trend
+    // chart in Diagnostics is fed from `agent_eval_runs`.
+    const ranAgentEval = minute === 5;
 
     // ALWAYS: every-5-min items.
     const alwaysGroup = [
       { name: "push/send",            fn: pushSend,     opts: { path: "/api/push/send" } },
+      // Prospecting dispatch runs every tick; the inner send-window
+      // + daily-cap checks gate which campaigns actually fire (C.6).
+      { name: "prospecting/run",      fn: prospectingRun, opts: { path: "/api/prospecting/run", method: "POST" } },
       { name: "inbound/email/parse",  fn: inboundParse, opts: { path: "/api/inbound/email/parse" } },
       ...RETRIES,
     ];
@@ -106,7 +151,15 @@ export default async function handler(req, res) {
       ]);
     }
 
-    const results = [...groupAlways, ...groupSyncs, ...groupAgents];
+    // ON minute=5 (hourly off-peak): agent eval harness.
+    let groupAgentEval = [];
+    if (ranAgentEval) {
+      groupAgentEval = await runCronGroup([
+        { name: "eval/agent_eval", fn: agentEval, opts: { path: "/api/eval/agent_eval" } },
+      ]);
+    }
+
+    const results = [...groupAlways, ...groupSyncs, ...groupAgents, ...groupAgentEval];
     const okCount = results.filter((r) => r.ok).length;
     const errCount = results.filter((r) => !r.ok).length;
     return json(res, 200, {
@@ -114,6 +167,7 @@ export default async function handler(req, res) {
       minute,
       ran_syncs: ranSyncs,
       ran_agents: ranAgents,
+      ran_agent_eval: ranAgentEval,
       total: results.length,
       ok: okCount,
       failed: errCount,

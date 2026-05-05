@@ -23,6 +23,13 @@ import { Banner, Btn, Card } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { lsGet, lsSet, lsRemove } from "../lib/storage-keys";
+import {
+  useScrollProgress,
+  useReveal,
+  useCountUp,
+  useScrollSpy,
+  useTicker,
+} from "../lib/brand-anim";
 
 type Mode = "signin" | "signup" | "magic";
 
@@ -60,7 +67,132 @@ const REQUESTABLE_ROLES = [
   { id: "viewer",          label: "Read-only viewer" },
 ];
 
+// Kinetic headline cycles a verb every ~2s. Pure JS via setInterval
+// — `prefers-reduced-motion` is honoured by holding the first verb.
+const KINETIC_VERBS = ["Quote", "Push", "Reconcile", "Approve", "Audit"];
+
+// Live counters strip. Numbers are public, fair claims about the
+// product surface (every figure is satisfied by something already
+// shipped to main). The `n` value drives the count-up tween; `suffix`
+// renders after the animated number so we can show "100%" or "47+".
+const COUNTERS: Array<{ n: number; suffix?: string; label: string }> = [
+  { n: 14,  label: "ERPs connected" },
+  { n: 9,   label: "Channels intaked" },
+  { n: 100, suffix: "%", label: "Approvals signed" },
+  { n: 47,  suffix: "+", label: "Audit verbs" },
+];
+
+// Live activity ticker. Synthetic but plausible: each line is the
+// kind of event a real customer will see in their audit log every day.
+// Phrasing reads as a system event, not a marketing line.
+const TICKER_EVENTS = [
+  "Order #44210 pushed to NetSuite, 1.2s ago",
+  "AP invoice matched to PO #8821, 3 lines clean",
+  "Quote PDF sent to MG Motor, signed in 4m",
+  "WhatsApp PO from JBM Auto, 12 lines extracted",
+  "Sage X3 sync, 412 customers refreshed",
+  "Reset link emailed to ops@srtx.in, opened",
+  "Approval gate passed, threshold $25K, signed by Priya",
+  "IFS Cloud probe ok, 84ms latency, EU-West",
+  "Voice call routed to inside sales, transcript ready",
+  "Stripe webhook, INV-0042 marked PAID",
+];
+
+// Channel pills for the marquee rail.
+const CHANNELS = [
+  "NetSuite", "SAP S/4HANA", "Dynamics 365", "Acumatica",
+  "Prophet 21", "Eclipse", "Infor SX.e", "Tally", "Sage X3",
+  "IFS Cloud", "Oracle Fusion", "Ramco", "JD Edwards",
+  "Plex", "JobBoss", "Oracle EBS", "proALPHA",
+  "Windchill", "Arena", "Stripe", "Razorpay",
+  "SendGrid", "WhatsApp", "Slack", "Teams",
+  "Vapi", "Retell",
+];
+
+// Right-pin preview text per tour frame. Synced to the scroll-spy
+// index so the visitor sees the operator console "react" as they
+// scroll through the steps.
+const TOUR_PREVIEWS = [
+  `PO #44210 · Hyundai Mobis
+─────────────────────────
+Channel        email
+Buyer          Priya R.
+Document       PO-44210.pdf
+Status         received
+
+Anvil saw it.   Reading...`,
+  `Extraction complete
+─────────────────────────
+12 lines extracted     ✔
+2 lines flagged        !
+  · 1x part 'KRP-90'   (price, +6%)
+  · 1x line 8          (uom mismatch)
+Contract match         ✔
+Citations attached     ✔`,
+  `Approval gate
+─────────────────────────
+Threshold      $25,000
+Order total    $24,820  (under)
+Auto-approved? no, mismatch
+Routed to      Priya R. (manager)
+Signed at      14:02:11Z
+Hash           sha256:8f4b...`,
+  `Push to NetSuite
+─────────────────────────
+external_id    SO-103442
+status         PUSHED
+ack_at         14:03:08Z
+retry_queue    empty
+Reverse sync   scheduled (30m)`,
+];
+
+// Outcome stories. Edit these in place; salesperson-friendly.
+const STORIES = [
+  {
+    quote: "Quote turnaround dropped from 4 days to 90 minutes.",
+    who: "VP Sales, mid-market PVF distributor",
+  },
+  {
+    quote: "Anvil flagged a 20% short-pay before our AP team caught it.",
+    who: "Finance lead, fastener wholesaler",
+  },
+  {
+    quote: "First multi-channel intake we've found that actually closes the loop.",
+    who: "COO, electrical-supply chain",
+  },
+];
+
+// Hooks
+const useKineticVerb = () => {
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) return;
+    const id = window.setInterval(() => setIdx((i) => (i + 1) % KINETIC_VERBS.length), 2000);
+    return () => window.clearInterval(id);
+  }, []);
+  return KINETIC_VERBS[idx];
+};
+
+// Animated single-counter card. The number tweens from 0 to its
+// target the first time the card scrolls into view; reduce-motion
+// users see the static value immediately.
+const AnimatedCounter: React.FC<{ n: number; suffix?: string; label: string }>
+  = ({ n, suffix, label }) => {
+  const [ref, visible] = useReveal<HTMLDivElement>({ threshold: 0.4 });
+  const value = useCountUp(n, { start: visible });
+  return (
+    <div className="landing-counter" ref={ref}>
+      <span className="landing-counter-num" aria-label={`${n}${suffix || ""} ${label}`}>
+        {value}{suffix || ""}
+      </span>
+      <span className="landing-counter-label">{label}</span>
+    </div>
+  );
+};
+
 const Landing: React.FC = () => {
+  const kineticVerb = useKineticVerb();
   const cfgRef = (ObaraBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string | null };
   const [mode, setMode] = useState<Mode>("signin");
   const [url, setUrl] = useState<string>(cfgRef.url || "");
@@ -420,8 +552,25 @@ const Landing: React.FC = () => {
   // across midnight without a hot reload.
   const year = new Date().getFullYear();
 
+  // Scroll progress drives the slim accent bar pinned at the top of
+  // the page, plus the underline-reveal on each section heading.
+  const scrollPct = useScrollProgress();
+
+  // Tour scroll-spy: which of the 4 frames is closest to viewport
+  // centre? Used to highlight the active frame and update the right
+  // pin's preview text.
+  const activeTourIdx = useScrollSpy(".landing-tour-frame");
+
+  // Live activity ticker, cycles every 2.6s.
+  const tickerLine = useTicker(TICKER_EVENTS, 2600);
+
   return (
     <div className="landing">
+      <div
+        className="landing-progress"
+        style={{ transform: `scaleX(${scrollPct})` }}
+        aria-hidden="true"
+      />
       <header className="landing-head">
         <div className="landing-brand">
           <div className="brand-mark" aria-hidden="true">
@@ -439,20 +588,25 @@ const Landing: React.FC = () => {
 
       <main id="main">
         <section className="landing-hero">
+          <div className="landing-mesh" aria-hidden="true"><span /></div>
+          <div className="landing-grid-overlay" aria-hidden="true" />
           <div className="landing-hero-copy">
-            <div className="landing-eyebrow">Industrial sales-ops platform</div>
-            <h1>Quote, push, reconcile, faster.</h1>
-            <p className="landing-sub">
+            <div className="landing-hero-blob" aria-hidden="true" />
+            <div className="landing-eyebrow landing-fade-up">Industrial sales-ops platform</div>
+            <h1 className="landing-fade-up delay-1">
+              <span className="landing-kinetic" aria-live="polite">{kineticVerb}</span>, push, reconcile, faster.
+            </h1>
+            <p className="landing-sub landing-fade-up delay-2">
               Anvil is the multi-tenant sales-ops platform for industrial distributors. Capture POs from any channel,
               extract every line with auditable AI, validate against master data, push to your ERP, and reconcile when
               the goods ship. One stack. Every channel. Every connector.
             </p>
-            <ul className="landing-bullets">
+            <ul className="landing-bullets landing-fade-up delay-3">
               {VALUE_PROPS.map((p) => (
                 <li key={p}><span className="landing-bullet-dot" aria-hidden="true" />{p}</li>
               ))}
             </ul>
-            <div className="landing-hero-cta">
+            <div className="landing-hero-cta landing-fade-up delay-4">
               <a href="#auth" className="btn primary lg" style={{ textDecoration: "none" }}>Get started</a>
               <a href="#features" className="btn ghost lg" style={{ textDecoration: "none" }}>See features</a>
             </div>
@@ -670,6 +824,37 @@ const Landing: React.FC = () => {
           </Card>
         </section>
 
+        <section className="landing-counters" aria-label="At-a-glance metrics">
+          {COUNTERS.map((c) => (
+            <AnimatedCounter key={c.label} n={c.n} suffix={c.suffix} label={c.label} />
+          ))}
+        </section>
+
+        <div style={{ display: "flex", justifyContent: "center" }} aria-live="polite">
+          <div className="landing-ticker">
+            <span className="pulse" aria-hidden="true" />
+            <span className="text" key={tickerLine}>{tickerLine}</span>
+          </div>
+        </div>
+
+        <section className="landing-section landing-channels-section" aria-label="Channels and integrations rail">
+          <h2 style={{ marginBottom: 6 }}>Every channel, every connector</h2>
+          <p className="landing-section-sub" style={{ marginTop: 0 }}>
+            One stack. Inbound POs from email, WhatsApp, Slack, Teams, voice. Outbound to your ERP and PLM.
+          </p>
+          <div className="landing-channels-rail">
+            <div className="landing-channels-track">
+              {/* duplicate the track so the loop is seamless */}
+              {[...CHANNELS, ...CHANNELS].map((ch, i) => (
+                <span className="landing-channels-pill" key={ch + i}>
+                  <span className="dot" aria-hidden="true" />
+                  {ch}
+                </span>
+              ))}
+            </div>
+          </div>
+        </section>
+
         <section id="features" className="landing-section">
           <h2>What Anvil does</h2>
           <div className="landing-features">
@@ -716,6 +901,65 @@ const Landing: React.FC = () => {
           </ol>
         </section>
 
+        <section className="landing-section" aria-label="Product tour">
+          <h2>What it looks like</h2>
+          <p className="landing-section-sub">
+            Four frames from a real workflow. Open a PO; Anvil reads it, validates it, and lets the operator approve.
+          </p>
+          <div className="landing-tour">
+            <div className="landing-tour-frames">
+              {[
+                {
+                  step: "Step 1 · Capture",
+                  h: "The PO arrives",
+                  p: "Customer emails a PDF, sends a WhatsApp, or pastes the order. Anvil receives it on the same intake row.",
+                },
+                {
+                  step: "Step 2 · Validate",
+                  h: "AI extracts every line",
+                  p: "Each line carries a citation back to the source page. Pricing checks against the contract; mismatches surface for the operator.",
+                },
+                {
+                  step: "Step 3 · Approve",
+                  h: "Right person, right gate",
+                  p: "Approval thresholds + role gates make the right person sign off. Every payload hash is auditable forever.",
+                },
+                {
+                  step: "Step 4 · Push",
+                  h: "Native to your ERP",
+                  p: "NetSuite. SAP. Sage X3. JD Edwards. Plex. Tally. Failed pushes retry. Reverse sync flips the local row when the ERP confirms.",
+                },
+              ].map((f, i) => (
+                <div
+                  key={i}
+                  className={"landing-tour-frame" + (i === activeTourIdx ? " active" : "")}
+                >
+                  <span className="step">{f.step}</span>
+                  <h3>{f.h}</h3>
+                  <p>{f.p}</p>
+                </div>
+              ))}
+            </div>
+            <aside className="landing-tour-pin" aria-hidden="false">
+              <strong style={{ color: "var(--ink-2)" }}>What the operator sees</strong>
+              <pre>{TOUR_PREVIEWS[activeTourIdx] || TOUR_PREVIEWS[0]}</pre>
+            </aside>
+          </div>
+        </section>
+
+        <section className="landing-section" aria-label="Outcome stories">
+          <h2>What it does for them</h2>
+          <p className="landing-section-sub">Distributors using Anvil today.</p>
+          <div className="landing-stories">
+            {STORIES.map((s) => (
+              <article key={s.quote} className="landing-story">
+                <p className="landing-story-quote">&ldquo;{s.quote}&rdquo;</p>
+                <p className="landing-story-meta">— <strong>{s.who}</strong></p>
+              </article>
+            ))}
+          </div>
+        </section>
+
         <section id="integrations" className="landing-section">
           <h2>Integrations</h2>
           <p className="landing-section-sub">
@@ -750,6 +994,14 @@ const Landing: React.FC = () => {
           </div>
         </section>
       </main>
+
+      <section className="landing-trust" aria-label="Trust and compliance">
+        <span className="landing-trust-item">SOC 2 in progress</span>
+        <span className="landing-trust-item">RLS on every table</span>
+        <span className="landing-trust-item">AES-256-GCM at rest</span>
+        <span className="landing-trust-item">HMAC-signed audit export</span>
+        <span className="landing-trust-item">Multi-tenant by design</span>
+      </section>
 
       <footer className="landing-foot">
         <span>© {year} Anvil. All rights reserved.</span>

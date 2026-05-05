@@ -1,0 +1,45 @@
+{
+  "id": "hvac",
+  "label": "HVAC supply",
+  "description": "HVAC wholesale: AHUs, RTUs, chillers, ductwork, controls, refrigerant, parts. Mix of stocked replacement parts plus engineered project equipment with long lead times.",
+  "version": 1,
+  "approval_thresholds": [
+    { "level": "rep", "min_amount": 0, "max_amount": 4000, "currency": "USD" },
+    { "level": "manager", "min_amount": 4000, "max_amount": 25000, "currency": "USD" },
+    { "level": "director", "min_amount": 25000, "max_amount": 125000, "currency": "USD" },
+    { "level": "vp", "min_amount": 125000, "max_amount": null, "currency": "USD" }
+  ],
+  "lead_time_defaults_days": {
+    "stocked_part": 1,
+    "filter_motor": 5,
+    "rtu_packaged": 56,
+    "custom_ahu": 105,
+    "chiller": 140
+  },
+  "lost_reasons": [
+    "Price (competitor lower)",
+    "Lead time too long",
+    "Refrigerant phaseout (R-410A)",
+    "AHRI rating mismatch",
+    "Capacity miscalculated by customer",
+    "Service contract bundling",
+    "Customer specified different MFR",
+    "Energy efficiency tier (SEER) mismatch"
+  ],
+  "contract_types": ["spot", "project", "service-contract", "preventative-maintenance"],
+  "item_master_examples": [
+    { "code": "FLT-MERV13-20X25X4", "description": "MERV 13 filter 20x25x4", "uom": "pcs" },
+    { "code": "RTU-CARRIER-50TC-7TON", "description": "Carrier 50TC 7-ton packaged rooftop unit", "uom": "pcs" },
+    { "code": "REF-R410A-30LB", "description": "Refrigerant R-410A 30lb cylinder", "uom": "pcs" }
+  ],
+  "quote_template": {
+    "header_columns": ["customer_po", "manufacturer_part", "description", "tonnage", "qty", "uom", "price_per_unit", "extension"],
+    "footer_blocks": ["ahri_rating", "seer_eer", "warranty_terms", "freight_terms", "validity_days"]
+  },
+  "kpis": [
+    { "id": "value_quoted", "label": "Value quoted", "unit": "USD", "window": "month" },
+    { "id": "service_contract_pct", "label": "Service contract attach", "unit": "percent", "window": "quarter" },
+    { "id": "avg_rtu_lead_days", "label": "Avg RTU lead time", "unit": "days", "window": "month" },
+    { "id": "warranty_claim_rate", "label": "Warranty claim rate", "unit": "percent", "window": "quarter" }
+  ]
+}

@@ -656,3 +656,154 @@ Anvil can send mail via four paths; first-configured wins:
 Password-reset email and access-request notifications go through
 the same `_lib/communications/send.js` dispatcher.
 
+
+
+## Phase 5.4b ERP connectors
+
+Eight connectors added in Phase 5.4b, organised into three auth
+clusters that share infrastructure with previously shipped ERPs.
+Every ERP follows the same shape: per-tenant settings encrypted via
+`_lib/secrets.js`, sync entities customer / item / sales_order
+through `_lib/erp-runner.js`, retry queue with exponential backoff
+(1m / 5m / 15m / 60m / 4h / 12h), reverse sync that flips local
+order rows to ERP_PUSHED on confirmation.
+
+### Cluster A — OAuth2 client_credentials
+
+Reuses `_lib/oauth2.js` token cache. Operators register Anvil as an
+OAuth client in the vendor's identity service and supply client_id,
+client_secret, token URL.
+
+**IFS Cloud** (`/api/ifs/*`)
+
+- Auth: OAuth2 via IFS IAM (Identity and Access Manager).
+- Surface: OData v4 projection API at
+  `<base_url>/main/ifsapplications/projection/v1/<projection>/<entity>`.
+- Default projection: `CustomerOrder.svc`. Sales orders are written
+  to `CustomerOrders` with `SalesOrderLines` collection. Headers
+  `IFS-Company` (optional) and `If-Match: *` for ETag bypass on
+  updates.
+- Configure in Admin Center → IFS Cloud. Required: base_url,
+  token_url, client_id, client_secret.
+
+**Oracle Fusion Cloud ERP** (`/api/oracle_fusion/*`)
+
+- Auth: OAuth2 via OCI IDCS (or Identity Domain). The OAuth client
+  must be registered as a Fusion Apps user in the Security Console;
+  username must match client_id exactly.
+- Surface: REST at `/fscmRestApi/resources/<api_version>/<resource>`.
+- Sales orders go through `salesOrdersForOrderHub`; per-call POST
+  limit is 500 records. Pagination: `limit` + `offset` + `hasMore`.
+- Configure in Admin Center → Oracle Fusion. Required: base_url,
+  token_url (typically `https://idcs-<id>.identity.oraclecloud.com/oauth2/v1/token`),
+  client_id, client_secret. Optional: business_unit, api_version
+  (defaults to `11.13.18.05`).
+
+**Ramco ERP** (`/api/ramco/*`)
+
+- Auth: OAuth2 via the Ramco developer portal
+  (developer.ramco.com).
+- Surface: REST tenant-scoped at `<base_url>/<org_unit>/api/v1/<resource>`.
+- Sales orders go to `Sales/SalesOrder`. Pagination: pageSize +
+  pageNumber. Both XML and JSON response shapes are accepted; we
+  default to JSON.
+- Configure in Admin Center → Ramco. Required: base_url, token_url,
+  client_id, client_secret. Optional: org_unit, company.
+
+### Cluster B — Token-pair flow
+
+Each ERP issues a session token via a token endpoint (basic-auth or
+API-key as the request credential). Tokens are cached per
+(tenant_id, token_url, identity) via `_lib/token-cache.js` with a
+default 30-min TTL and 30s refresh slack.
+
+**JD Edwards EnterpriseOne** (`/api/jde/*`)
+
+- Auth: AIS Server REST. POST to `/jderest/v3/tokenrequest` with
+  username + password (Tools 9.2.4+ also supports JWT). Response
+  carries an AIS token used as `jde-AIS-Auth-Token` on every
+  subsequent call.
+- Required token-mint headers: `jde-AIS-Auth-Environment`,
+  `jde-AIS-Auth-Role`, `jde-AIS-Auth-Device`. They pin the session
+  to a specific JDE login context.
+- Surface: dataservice at `/jderest/v3/dataservice` (entity reads
+  via F0101, F4101, F4201) and orchestrator at
+  `/jderest/v3/orchestrator/<name>` (sales-order push). Default
+  push orchestrator is `JDE_ORCH_55_AddSalesOrder`; override via
+  `jde_field_map.orchestrator`.
+- Configure in Admin Center → JD Edwards. Required: base_url,
+  environment, role, username, password. Optional: device (defaults
+  to "Anvil").
+
+**Plex Smart Manufacturing Platform** (`/api/plex/*`)
+
+- Auth: API key issued from the Plex Staff Panel; sent as Basic
+  auth (username = API key, password = empty) plus
+  `X-Plex-Customer-Id` and optional `X-Plex-PCN` headers.
+- Surface: REST at `https://api.plex.com/<scope>/v1/...`. Sales
+  orders go to `/scm/v1/sales-orders`. Pagination: `pageSize` +
+  `page`.
+- Configure in Admin Center → Plex. Required: base_url, customer_id,
+  api_key. Optional: pcn (plant control number).
+
+**JobBoss² (ECi)** (`/api/jobboss/*`)
+
+- Auth: bearer token issued via the ECi customer portal.
+- Surface: REST at `<base_url>/api/v1/<resource>`. Sales orders go
+  to `quotes` by default (a JobBoss "quote" is the typical entry
+  point in a job-shop workflow); override via
+  `jobboss_field_map.resource` for direct job creation.
+- Multi-company: optional `X-JobBoss-Company` header.
+- SFTP fallback: where REST is not enabled (older on-prem
+  deployments), the same migration provides
+  `jobboss_sftp_*` columns. The flat-file adapter is out of scope
+  for v1 but the schema is in place.
+- Configure in Admin Center → JobBoss. Required: base_url, token.
+  Optional: company.
+
+### Cluster C — HTTP Basic auth
+
+Both speak HTTP Basic auth over HTTPS. No token cache; credentials
+encrypted at rest and replayed on every call.
+
+**Oracle E-Business Suite** (`/api/oracle_ebs/*`)
+
+- Auth: HTTP Basic over HTTPS. Plus `RestResponsibility` and
+  `RestOrgId` headers to pin the session to a specific Oracle EBS
+  responsibility (e.g. "Order Management Super User") and operating
+  unit.
+- Surface: Integrated SOA Gateway REST services at
+  `<base_url>/webservices/rest/<service>/<method>`. Services are
+  generated from the Integration Repository against PL/SQL APIs.
+- Sales orders push through `OE_ORDER_PUB.Process_Order`; the
+  default REST path is `oe_order_pub-1/process_order/`. Failures
+  can return HTTP 200 with `OutputParameters.X_RETURN_STATUS != 'S'`,
+  which we treat as a logical failure.
+- Configure in Admin Center → Oracle EBS. Required: base_url,
+  username, password. Optional: responsibility, org_id.
+
+**proALPHA** (`/api/proalpha/*`)
+
+- Auth: HTTP Basic via the BC-REST-API module. Some deployments
+  add an OAuth2 layer in front; we default to Basic since it is
+  the lowest common denominator across supported versions.
+- Surface: REST at `<base_url>/api/v1/<resource>`. Sales orders go
+  to `salesOrder`. Pagination: `limit` + `offset`.
+- Multi-company: optional `X-Proalpha-Company` header.
+- Configure in Admin Center → proALPHA. Required: base_url, username,
+  password. Optional: company.
+
+### Operations notes
+
+- All eight ERPs picked up by the cron mux at `api/cron/tick.js`:
+  30-minute syncs (customer / item / sales_order) plus 5-minute retry
+  drains. Cron secret is per-deploy (`CRON_SECRET`).
+- Failed pushes land in `<erp>_retry_queue` with exponential backoff
+  and admin notification on give-up via `_lib/notifications.js`.
+- Reverse sync runs alongside the forward sync: every order tagged
+  `result.external_systems.<erp>.external_id` is re-checked at each
+  sync tick and the local row's status is patched with the ERP-side
+  state.
+- Health endpoints (`/api/<erp>/health`) return configured /
+  probe_ok / sync_state / retry_pending for the calling tenant.
+  Wired into the Admin Center status panels.

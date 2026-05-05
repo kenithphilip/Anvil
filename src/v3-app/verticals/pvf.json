@@ -1,0 +1,45 @@
+{
+  "id": "pvf",
+  "label": "Pipes, valves & fittings",
+  "description": "PVF distribution: carbon steel / stainless / alloy pipe, valves (gate, ball, check), flanges, fittings. Heavy on certifications (NACE, ASME, API), pressure ratings, and project schedules.",
+  "version": 1,
+  "approval_thresholds": [
+    { "level": "rep", "min_amount": 0, "max_amount": 10000, "currency": "USD" },
+    { "level": "manager", "min_amount": 10000, "max_amount": 50000, "currency": "USD" },
+    { "level": "director", "min_amount": 50000, "max_amount": 250000, "currency": "USD" },
+    { "level": "vp", "min_amount": 250000, "max_amount": null, "currency": "USD" }
+  ],
+  "lead_time_defaults_days": {
+    "stocked_carbon": 3,
+    "stocked_stainless": 5,
+    "alloy_special": 56,
+    "actuated_valve": 28,
+    "project_release": 42
+  },
+  "lost_reasons": [
+    "Price (competitor lower)",
+    "Cert package incomplete",
+    "Pressure class mismatch",
+    "Material trace (NACE/PMI) not available",
+    "Lead time too long",
+    "Project schedule slipped",
+    "Spec downgraded by customer",
+    "Customer specified different MFR"
+  ],
+  "contract_types": ["spot", "project", "blanket", "consignment"],
+  "item_master_examples": [
+    { "code": "PIPE-A106-B-4SCH40", "description": "Pipe ASTM A106 Grade B 4-inch SCH 40 seamless", "uom": "ft" },
+    { "code": "VLV-BALL-150-CS-2IN", "description": "Ball valve 150# carbon steel 2-inch flanged", "uom": "pcs" },
+    { "code": "FLG-WN-150-SS316L-3IN", "description": "Weld neck flange 150# SS316L 3-inch", "uom": "pcs" }
+  ],
+  "quote_template": {
+    "header_columns": ["customer_po", "spec", "size", "schedule", "material", "qty", "uom", "price_per_unit", "extension"],
+    "footer_blocks": ["mtr_required", "nace_required", "pressure_class", "freight_terms", "validity_days"]
+  },
+  "kpis": [
+    { "id": "value_quoted", "label": "Value quoted", "unit": "USD", "window": "month" },
+    { "id": "project_win_rate", "label": "Project win rate", "unit": "percent", "window": "quarter" },
+    { "id": "avg_quote_age_days", "label": "Avg quote age", "unit": "days", "window": "month" },
+    { "id": "cert_compliance_pct", "label": "Cert package complete %", "unit": "percent", "window": "month" }
+  ]
+}

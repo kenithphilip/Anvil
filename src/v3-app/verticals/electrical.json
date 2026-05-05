@@ -1,0 +1,45 @@
+{
+  "id": "electrical",
+  "label": "Electrical wholesale",
+  "description": "Electrical distribution: wire, conduit, circuit breakers, switchgear, lighting, controls. UL listings, NEMA ratings, and project bid cycles drive much of the workflow.",
+  "version": 1,
+  "approval_thresholds": [
+    { "level": "rep", "min_amount": 0, "max_amount": 5000, "currency": "USD" },
+    { "level": "manager", "min_amount": 5000, "max_amount": 35000, "currency": "USD" },
+    { "level": "director", "min_amount": 35000, "max_amount": 150000, "currency": "USD" },
+    { "level": "vp", "min_amount": 150000, "max_amount": null, "currency": "USD" }
+  ],
+  "lead_time_defaults_days": {
+    "stocked": 1,
+    "switchgear": 90,
+    "transformers": 120,
+    "lighting_special": 35,
+    "project_release": 21
+  },
+  "lost_reasons": [
+    "Price (competitor lower)",
+    "Stock not available",
+    "Switchgear lead time",
+    "UL/NEMA spec mismatch",
+    "Project bid lost",
+    "Customer specified different MFR",
+    "Did not include rebate program",
+    "Energy code update not factored"
+  ],
+  "contract_types": ["spot", "project-bid", "blanket", "service-contract"],
+  "item_master_examples": [
+    { "code": "WIRE-THHN-12AWG-BLK", "description": "THHN copper wire 12AWG black", "uom": "ft" },
+    { "code": "BRK-QO-20A-1P", "description": "Square D QO 20A 1-pole circuit breaker", "uom": "pcs" },
+    { "code": "LED-2X4-50W-4000K", "description": "LED 2x4 troffer 50W 4000K", "uom": "pcs" }
+  ],
+  "quote_template": {
+    "header_columns": ["customer_po", "manufacturer_part", "description", "qty", "uom", "list_price", "multiplier", "net_price", "extension"],
+    "footer_blocks": ["ul_listed", "nema_rating", "rebate_program", "freight_terms", "validity_days"]
+  },
+  "kpis": [
+    { "id": "value_quoted", "label": "Value quoted", "unit": "USD", "window": "month" },
+    { "id": "project_bid_count", "label": "Project bids", "unit": "count", "window": "month" },
+    { "id": "avg_multiplier", "label": "Avg multiplier", "unit": "ratio", "window": "month" },
+    { "id": "rebate_capture_pct", "label": "Rebate capture %", "unit": "percent", "window": "quarter" }
+  ]
+}

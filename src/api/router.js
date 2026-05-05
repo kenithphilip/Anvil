@@ -30,6 +30,19 @@ import adminLostReasons        from "./admin/lost_reasons.js";
 import adminMembers            from "./admin/members.js";
 import adminAccessRequests     from "./admin/access_requests.js";
 import adminNotifications      from "./admin/notifications.js";
+import adminInstallVerticalPack from "./admin/install_vertical_pack.js";
+// Phase 6 (C.1): SOC 2 controls.
+import adminAccessReview       from "./admin/access_review.js";
+import auditExport              from "./audit/export.js";
+// Phase 6 (C.5): AP 3-way match + deductions.
+import apMatch                  from "./ap/match.js";
+import apDeductions             from "./ap/deductions.js";
+// Phase 6 (C.3) agent eval, (C.4) docai routing, (C.6) prospecting.
+import agentEval                from "./eval/agent_eval.js";
+import docaiRoute               from "./docai/route.js";
+import prospectingCampaigns     from "./prospecting/campaigns.js";
+import prospectingTargets       from "./prospecting/targets.js";
+import prospectingRun           from "./prospecting/run.js";
 
 // Password reset (Phase: security flows).
 import authRequestReset        from "./auth/request_reset.js";
@@ -304,6 +317,50 @@ import sageX3Retry             from "./sage_x3/retry.js";
 import sxeDiagnostics          from "./sxe/diagnostics.js";
 import sxeFieldMap             from "./sxe/field_map.js";
 
+// Phase 5.4b cluster A (OAuth2): IFS Cloud, Oracle Fusion, Ramco.
+import ifsConnect              from "./ifs/connect.js";
+import ifsHealth               from "./ifs/health.js";
+import ifsSync                 from "./ifs/sync.js";
+import ifsPush                 from "./ifs/push.js";
+import ifsRetry                from "./ifs/retry.js";
+import oracleFusionConnect     from "./oracle_fusion/connect.js";
+import oracleFusionHealth      from "./oracle_fusion/health.js";
+import oracleFusionSync        from "./oracle_fusion/sync.js";
+import oracleFusionPush        from "./oracle_fusion/push.js";
+import oracleFusionRetry       from "./oracle_fusion/retry.js";
+import ramcoConnect            from "./ramco/connect.js";
+import ramcoHealth             from "./ramco/health.js";
+import ramcoSync               from "./ramco/sync.js";
+import ramcoPush               from "./ramco/push.js";
+import ramcoRetry              from "./ramco/retry.js";
+// Phase 5.4b cluster B (token-pair): JDE, Plex, JobBoss.
+import jdeConnect              from "./jde/connect.js";
+import jdeHealth               from "./jde/health.js";
+import jdeSync                 from "./jde/sync.js";
+import jdePush                 from "./jde/push.js";
+import jdeRetry                from "./jde/retry.js";
+import plexConnect             from "./plex/connect.js";
+import plexHealth              from "./plex/health.js";
+import plexSync                from "./plex/sync.js";
+import plexPush                from "./plex/push.js";
+import plexRetry               from "./plex/retry.js";
+import jobbossConnect          from "./jobboss/connect.js";
+import jobbossHealth           from "./jobboss/health.js";
+import jobbossSync             from "./jobboss/sync.js";
+import jobbossPush             from "./jobboss/push.js";
+import jobbossRetry            from "./jobboss/retry.js";
+// Phase 5.4b cluster C (HTTP Basic): Oracle EBS, proALPHA.
+import oracleEbsConnect        from "./oracle_ebs/connect.js";
+import oracleEbsHealth         from "./oracle_ebs/health.js";
+import oracleEbsSync           from "./oracle_ebs/sync.js";
+import oracleEbsPush           from "./oracle_ebs/push.js";
+import oracleEbsRetry          from "./oracle_ebs/retry.js";
+import proalphaConnect         from "./proalpha/connect.js";
+import proalphaHealth          from "./proalpha/health.js";
+import proalphaSync            from "./proalpha/sync.js";
+import proalphaPush            from "./proalpha/push.js";
+import proalphaRetry           from "./proalpha/retry.js";
+
 import healthCheck             from "./health.js";
 
 // Static routes resolved by exact match. Order does not matter.
@@ -436,6 +493,54 @@ const STATIC_ROUTES = {
   "/sage_x3/sync":                  sageX3Sync,
   "/sage_x3/push":                  sageX3Push,
   "/sage_x3/retry":                 sageX3Retry,
+
+  "/ifs/connect":                   ifsConnect,
+  "/ifs/health":                    ifsHealth,
+  "/ifs/sync":                      ifsSync,
+  "/ifs/push":                      ifsPush,
+  "/ifs/retry":                     ifsRetry,
+
+  "/oracle_fusion/connect":         oracleFusionConnect,
+  "/oracle_fusion/health":          oracleFusionHealth,
+  "/oracle_fusion/sync":            oracleFusionSync,
+  "/oracle_fusion/push":            oracleFusionPush,
+  "/oracle_fusion/retry":           oracleFusionRetry,
+
+  "/ramco/connect":                 ramcoConnect,
+  "/ramco/health":                  ramcoHealth,
+  "/ramco/sync":                    ramcoSync,
+  "/ramco/push":                    ramcoPush,
+  "/ramco/retry":                   ramcoRetry,
+
+  "/jde/connect":                   jdeConnect,
+  "/jde/health":                    jdeHealth,
+  "/jde/sync":                      jdeSync,
+  "/jde/push":                      jdePush,
+  "/jde/retry":                     jdeRetry,
+
+  "/plex/connect":                  plexConnect,
+  "/plex/health":                   plexHealth,
+  "/plex/sync":                     plexSync,
+  "/plex/push":                     plexPush,
+  "/plex/retry":                    plexRetry,
+
+  "/jobboss/connect":               jobbossConnect,
+  "/jobboss/health":                jobbossHealth,
+  "/jobboss/sync":                  jobbossSync,
+  "/jobboss/push":                  jobbossPush,
+  "/jobboss/retry":                 jobbossRetry,
+
+  "/oracle_ebs/connect":            oracleEbsConnect,
+  "/oracle_ebs/health":             oracleEbsHealth,
+  "/oracle_ebs/sync":               oracleEbsSync,
+  "/oracle_ebs/push":               oracleEbsPush,
+  "/oracle_ebs/retry":              oracleEbsRetry,
+
+  "/proalpha/connect":              proalphaConnect,
+  "/proalpha/health":               proalphaHealth,
+  "/proalpha/sync":                 proalphaSync,
+  "/proalpha/push":                 proalphaPush,
+  "/proalpha/retry":                proalphaRetry,
   "/sxe/diagnostics":               sxeDiagnostics,
   "/sxe/field_map":                 sxeFieldMap,
   "/admin/contracts":               adminContracts,
@@ -451,6 +556,16 @@ const STATIC_ROUTES = {
   "/admin/members":                 adminMembers,
   "/admin/access_requests":         adminAccessRequests,
   "/admin/notifications":           adminNotifications,
+  "/admin/install_vertical_pack":   adminInstallVerticalPack,
+  "/admin/access_review":           adminAccessReview,
+  "/audit/export":                  auditExport,
+  "/ap/match":                      apMatch,
+  "/ap/deductions":                 apDeductions,
+  "/eval/agent_eval":               agentEval,
+  "/docai/route":                   docaiRoute,
+  "/prospecting/campaigns":         prospectingCampaigns,
+  "/prospecting/targets":           prospectingTargets,
+  "/prospecting/run":               prospectingRun,
   "/admin/quote_approvals":         adminQuoteApprovals,
 
   "/aliases":                       aliasesIndex,

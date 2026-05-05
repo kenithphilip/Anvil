@@ -441,7 +441,16 @@ export const Shell: React.FC<ShellProps> = ({
       </div>
     </aside>
 
-    <main className="app-main" id="app-main" tabIndex={-1}>{children}</main>
+    {/* Keying on `route` triggers the .route-enter animation each time
+        the user navigates. The wrapper is a transparent block so the
+        animation has a box to apply to without disturbing the screen's
+        own layout primitives. Reduced-motion users get no animation
+        per the @media rule in styles.css. */}
+    <main className="app-main" id="app-main" tabIndex={-1}>
+      <div className="route-enter" key={route || "default"}>
+        {children}
+      </div>
+    </main>
 
     <footer className="app-dock">
       <span>

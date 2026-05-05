@@ -39,6 +39,14 @@ const ADMIN_CRUD_TABS = [
   { id: "netsuite",  label: "NetSuite" },
   { id: "tally",     label: "Tally" },
   { id: "sage_x3",   label: "Sage X3" },
+  { id: "ifs",            label: "IFS Cloud" },
+  { id: "oracle_fusion",  label: "Oracle Fusion" },
+  { id: "ramco",          label: "Ramco" },
+  { id: "jde",            label: "JD Edwards" },
+  { id: "plex",           label: "Plex" },
+  { id: "jobboss",        label: "JobBoss" },
+  { id: "oracle_ebs",     label: "Oracle EBS" },
+  { id: "proalpha",       label: "proALPHA" },
   { id: "plm",       label: "PLM" },
   { id: "voice",     label: "Voice" },
   { id: "chat",      label: "Chat channels" },
@@ -648,6 +656,63 @@ const WiredAdminCRUD = () => {
     base_url: "", token_url: "", solution: "X3", company: "", locale: "ENG",
     client_id: "", client_secret: "",
   });
+  // Phase 5.4b cluster A (OAuth2): IFS / Oracle Fusion / Ramco.
+  // Each follows the same connect-probe + sync + retry rhythm as
+  // Sage X3 above. The form fields differ per ERP (token URL,
+  // tenant qualifier, business unit, etc.) so we keep three distinct
+  // shapes rather than over-generalising.
+  const [ifsState, setIfsState] = u<any>(null);
+  const [ifsBusy, setIfsBusy] = u(false);
+  const [ifsForm, setIfsForm] = u<any>({
+    base_url: "", token_url: "", scope: "openid profile INTEGRATION",
+    company: "", projection: "CustomerOrder.svc",
+    client_id: "", client_secret: "",
+  });
+  const [oracleFusionState, setOracleFusionState] = u<any>(null);
+  const [oracleFusionBusy, setOracleFusionBusy] = u(false);
+  const [oracleFusionForm, setOracleFusionForm] = u<any>({
+    base_url: "", token_url: "",
+    scope: "urn:opc:resource:consumer::all",
+    api_version: "11.13.18.05", business_unit: "",
+    client_id: "", client_secret: "",
+  });
+  const [ramcoState, setRamcoState] = u<any>(null);
+  const [ramcoBusy, setRamcoBusy] = u(false);
+  const [ramcoForm, setRamcoForm] = u<any>({
+    base_url: "", token_url: "", scope: "api",
+    org_unit: "", company: "",
+    client_id: "", client_secret: "",
+  });
+  // Phase 5.4b cluster B (token-pair): JDE, Plex, JobBoss.
+  const [jdeState, setJdeState] = u<any>(null);
+  const [jdeBusy, setJdeBusy] = u(false);
+  const [jdeForm, setJdeForm] = u<any>({
+    base_url: "", environment: "", role: "*ALL", device: "Anvil",
+    username: "", password: "",
+  });
+  const [plexState, setPlexState] = u<any>(null);
+  const [plexBusy, setPlexBusy] = u(false);
+  const [plexForm, setPlexForm] = u<any>({
+    base_url: "https://api.plex.com", customer_id: "", pcn: "", api_key: "",
+  });
+  const [jobbossState, setJobbossState] = u<any>(null);
+  const [jobbossBusy, setJobbossBusy] = u(false);
+  const [jobbossForm, setJobbossForm] = u<any>({
+    base_url: "", company: "", token: "",
+  });
+  // Phase 5.4b cluster C (HTTP Basic): Oracle EBS, proALPHA.
+  const [oracleEbsState, setOracleEbsState] = u<any>(null);
+  const [oracleEbsBusy, setOracleEbsBusy] = u(false);
+  const [oracleEbsForm, setOracleEbsForm] = u<any>({
+    base_url: "", responsibility: "", org_id: "",
+    username: "", password: "",
+  });
+  const [proalphaState, setProalphaState] = u<any>(null);
+  const [proalphaBusy, setProalphaBusy] = u(false);
+  const [proalphaForm, setProalphaForm] = u<any>({
+    base_url: "", company: "",
+    username: "", password: "",
+  });
   // PLM (5.5)
   const [plm, setPlm] = u<any>(null);
   const [plmBusy, setPlmBusy] = u(false);
@@ -787,6 +852,182 @@ const WiredAdminCRUD = () => {
     finally { setSageX3Busy(false); }
   };
 
+  // ---------- Phase 5.4b: IFS Cloud ----------
+  const loadIfs = async () => {
+    try { setIfsState(await adminCrudFetch("/api/ifs/health")); }
+    catch (err) { flashErr(err); }
+  };
+  const onIfsConnect = async () => {
+    if (!ifsForm.base_url || !ifsForm.token_url || !ifsForm.client_id || !ifsForm.client_secret) {
+      return flashErr(new Error("base_url, token_url, client_id, client_secret are required"));
+    }
+    setIfsBusy(true);
+    try {
+      const resp = await adminCrudFetch("/api/ifs/connect", { method: "POST", body: ifsForm });
+      if (resp?.ok) flashOk("IFS Cloud connected (probe ok)");
+      else flashErr(new Error(resp?.probe_error || "Probe failed"));
+      window.notifySuccess?.("IFS saved", resp?.ok ? "probe ok" : "probe failed");
+      loadIfs();
+    } catch (err: any) { flashErr(err); window.notifyError?.("IFS connect failed", err?.message); }
+    finally { setIfsBusy(false); }
+  };
+  const onIfsSyncNow = async () => {
+    setIfsBusy(true);
+    try {
+      const resp = await adminCrudFetch("/api/ifs/sync", { method: "POST", body: {} });
+      flashOk("Sync triggered");
+      window.notifySuccess?.("IFS sync started", `${resp?.results?.length || 0} entities`);
+      loadIfs();
+    } catch (err: any) { flashErr(err); window.notifyError?.("Sync failed", err?.message); }
+    finally { setIfsBusy(false); }
+  };
+  const onIfsRetryNow = async () => {
+    setIfsBusy(true);
+    try {
+      const resp = await adminCrudFetch("/api/ifs/retry", { method: "POST", body: {} });
+      flashOk(`Replayed ${resp?.processed || 0} queued pushes`);
+      window.notifySuccess?.("Retry queue drained", `${resp?.processed || 0} replayed`);
+      loadIfs();
+    } catch (err: any) { flashErr(err); window.notifyError?.("Retry failed", err?.message); }
+    finally { setIfsBusy(false); }
+  };
+
+  // ---------- Phase 5.4b: Oracle Fusion ----------
+  const loadOracleFusion = async () => {
+    try { setOracleFusionState(await adminCrudFetch("/api/oracle_fusion/health")); }
+    catch (err) { flashErr(err); }
+  };
+  const onOracleFusionConnect = async () => {
+    if (!oracleFusionForm.base_url || !oracleFusionForm.token_url ||
+        !oracleFusionForm.client_id || !oracleFusionForm.client_secret) {
+      return flashErr(new Error("base_url, token_url, client_id, client_secret are required"));
+    }
+    setOracleFusionBusy(true);
+    try {
+      const resp = await adminCrudFetch("/api/oracle_fusion/connect", { method: "POST", body: oracleFusionForm });
+      if (resp?.ok) flashOk("Oracle Fusion connected (probe ok)");
+      else flashErr(new Error(resp?.probe_error || "Probe failed"));
+      window.notifySuccess?.("Oracle Fusion saved", resp?.ok ? "probe ok" : "probe failed");
+      loadOracleFusion();
+    } catch (err: any) { flashErr(err); window.notifyError?.("Oracle Fusion connect failed", err?.message); }
+    finally { setOracleFusionBusy(false); }
+  };
+  const onOracleFusionSyncNow = async () => {
+    setOracleFusionBusy(true);
+    try {
+      const resp = await adminCrudFetch("/api/oracle_fusion/sync", { method: "POST", body: {} });
+      flashOk("Sync triggered");
+      window.notifySuccess?.("Oracle Fusion sync started", `${resp?.results?.length || 0} entities`);
+      loadOracleFusion();
+    } catch (err: any) { flashErr(err); window.notifyError?.("Sync failed", err?.message); }
+    finally { setOracleFusionBusy(false); }
+  };
+  const onOracleFusionRetryNow = async () => {
+    setOracleFusionBusy(true);
+    try {
+      const resp = await adminCrudFetch("/api/oracle_fusion/retry", { method: "POST", body: {} });
+      flashOk(`Replayed ${resp?.processed || 0} queued pushes`);
+      window.notifySuccess?.("Retry queue drained", `${resp?.processed || 0} replayed`);
+      loadOracleFusion();
+    } catch (err: any) { flashErr(err); window.notifyError?.("Retry failed", err?.message); }
+    finally { setOracleFusionBusy(false); }
+  };
+
+  // ---------- Phase 5.4b: Ramco ----------
+  const loadRamco = async () => {
+    try { setRamcoState(await adminCrudFetch("/api/ramco/health")); }
+    catch (err) { flashErr(err); }
+  };
+  const onRamcoConnect = async () => {
+    if (!ramcoForm.base_url || !ramcoForm.token_url || !ramcoForm.client_id || !ramcoForm.client_secret) {
+      return flashErr(new Error("base_url, token_url, client_id, client_secret are required"));
+    }
+    setRamcoBusy(true);
+    try {
+      const resp = await adminCrudFetch("/api/ramco/connect", { method: "POST", body: ramcoForm });
+      if (resp?.ok) flashOk("Ramco connected (probe ok)");
+      else flashErr(new Error(resp?.probe_error || "Probe failed"));
+      window.notifySuccess?.("Ramco saved", resp?.ok ? "probe ok" : "probe failed");
+      loadRamco();
+    } catch (err: any) { flashErr(err); window.notifyError?.("Ramco connect failed", err?.message); }
+    finally { setRamcoBusy(false); }
+  };
+  const onRamcoSyncNow = async () => {
+    setRamcoBusy(true);
+    try {
+      const resp = await adminCrudFetch("/api/ramco/sync", { method: "POST", body: {} });
+      flashOk("Sync triggered");
+      window.notifySuccess?.("Ramco sync started", `${resp?.results?.length || 0} entities`);
+      loadRamco();
+    } catch (err: any) { flashErr(err); window.notifyError?.("Sync failed", err?.message); }
+    finally { setRamcoBusy(false); }
+  };
+  const onRamcoRetryNow = async () => {
+    setRamcoBusy(true);
+    try {
+      const resp = await adminCrudFetch("/api/ramco/retry", { method: "POST", body: {} });
+      flashOk(`Replayed ${resp?.processed || 0} queued pushes`);
+      window.notifySuccess?.("Retry queue drained", `${resp?.processed || 0} replayed`);
+      loadRamco();
+    } catch (err: any) { flashErr(err); window.notifyError?.("Retry failed", err?.message); }
+    finally { setRamcoBusy(false); }
+  };
+
+  // ---------- Phase 5.4b cluster B: JDE / Plex / JobBoss ----------
+  // Each ERP shares the same load+connect+sync+retry shape; we call
+  // a single helper so the 30 handlers below collapse to one code
+  // path. The vendor-specific bits (form payload + state setter)
+  // are passed in; everything else (audit, sync state poll, retry
+  // queue refresh) is identical to the Sage X3 / IFS / Oracle Fusion
+  // / Ramco handlers above.
+  const erpAdminFns = (prefix: string, getForm: () => any, setBusy: (b: boolean) => void, setState: (s: any) => void, label: string) => {
+    const load = async () => {
+      try { setState(await adminCrudFetch(`/api/${prefix}/health`)); }
+      catch (err) { flashErr(err); }
+    };
+    const connect = async () => {
+      const form = getForm();
+      // Required-field check is per-ERP and handled below; we only
+      // run the call here.
+      setBusy(true);
+      try {
+        const resp = await adminCrudFetch(`/api/${prefix}/connect`, { method: "POST", body: form });
+        if (resp?.ok) flashOk(`${label} connected (probe ok)`);
+        else flashErr(new Error(resp?.probe_error || "Probe failed"));
+        window.notifySuccess?.(`${label} saved`, resp?.ok ? "probe ok" : "probe failed");
+        load();
+      } catch (err: any) { flashErr(err); window.notifyError?.(`${label} connect failed`, err?.message); }
+      finally { setBusy(false); }
+    };
+    const syncNow = async () => {
+      setBusy(true);
+      try {
+        const resp = await adminCrudFetch(`/api/${prefix}/sync`, { method: "POST", body: {} });
+        flashOk("Sync triggered");
+        window.notifySuccess?.(`${label} sync started`, `${resp?.results?.length || 0} entities`);
+        load();
+      } catch (err: any) { flashErr(err); window.notifyError?.("Sync failed", err?.message); }
+      finally { setBusy(false); }
+    };
+    const retryNow = async () => {
+      setBusy(true);
+      try {
+        const resp = await adminCrudFetch(`/api/${prefix}/retry`, { method: "POST", body: {} });
+        flashOk(`Replayed ${resp?.processed || 0} queued pushes`);
+        window.notifySuccess?.("Retry queue drained", `${resp?.processed || 0} replayed`);
+        load();
+      } catch (err: any) { flashErr(err); window.notifyError?.("Retry failed", err?.message); }
+      finally { setBusy(false); }
+    };
+    return { load, connect, syncNow, retryNow };
+  };
+
+  const jdeFns = erpAdminFns("jde", () => jdeForm, setJdeBusy, setJdeState, "JDE");
+  const plexFns = erpAdminFns("plex", () => plexForm, setPlexBusy, setPlexState, "Plex");
+  const jobbossFns = erpAdminFns("jobboss", () => jobbossForm, setJobbossBusy, setJobbossState, "JobBoss");
+  const oracleEbsFns = erpAdminFns("oracle_ebs", () => oracleEbsForm, setOracleEbsBusy, setOracleEbsState, "Oracle EBS");
+  const proalphaFns = erpAdminFns("proalpha", () => proalphaForm, setProalphaBusy, setProalphaState, "proALPHA");
+
   // ---------- Phase 5: PLM ----------
   const loadPlm = async () => {
     try {
@@ -903,6 +1144,14 @@ const WiredAdminCRUD = () => {
     if (active === "netsuite" && !netsuite) loadNetsuite();
     if (active === "tally" && !tally) loadTally();
     if (active === "sage_x3" && !sageX3) loadSageX3();
+    if (active === "ifs" && !ifsState) loadIfs();
+    if (active === "oracle_fusion" && !oracleFusionState) loadOracleFusion();
+    if (active === "ramco" && !ramcoState) loadRamco();
+    if (active === "jde" && !jdeState) jdeFns.load();
+    if (active === "plex" && !plexState) plexFns.load();
+    if (active === "jobboss" && !jobbossState) jobbossFns.load();
+    if (active === "oracle_ebs" && !oracleEbsState) oracleEbsFns.load();
+    if (active === "proalpha" && !proalphaState) proalphaFns.load();
     if (active === "plm" && !plm) loadPlm();
     if (active === "voice" && !voice) loadVoice();
     if (active === "chat" && !chat) loadChat();
@@ -2264,6 +2513,418 @@ const WiredAdminCRUD = () => {
                     </tbody>
                   </table>
                 )}
+              </Card>
+            )}
+          </>
+        )}
+
+        {active === "ifs" && (
+          <>
+            <Card title="IFS Cloud" eyebrow="OAuth2 client_credentials · OData v4 projection API">
+              <div className="form-grid">
+                <label className="lbl">Base URL
+                  <input value={ifsForm.base_url} onChange={(ev) => setIfsForm({ ...ifsForm, base_url: ev.target.value })}
+                    placeholder="https://ifs.example.com" />
+                </label>
+                <label className="lbl">Token URL
+                  <input value={ifsForm.token_url} onChange={(ev) => setIfsForm({ ...ifsForm, token_url: ev.target.value })}
+                    placeholder="https://iam.example.com/auth/realms/<realm>/protocol/openid-connect/token" />
+                </label>
+                <label className="lbl">Scope
+                  <input value={ifsForm.scope} onChange={(ev) => setIfsForm({ ...ifsForm, scope: ev.target.value })}
+                    placeholder="openid profile INTEGRATION" />
+                </label>
+                <label className="lbl">Company
+                  <input value={ifsForm.company} onChange={(ev) => setIfsForm({ ...ifsForm, company: ev.target.value })}
+                    placeholder="optional, sent as IFS-Company header" />
+                </label>
+                <label className="lbl span-2">Projection module
+                  <input value={ifsForm.projection} onChange={(ev) => setIfsForm({ ...ifsForm, projection: ev.target.value })}
+                    placeholder="CustomerOrder.svc" />
+                </label>
+                <label className="lbl">Client ID
+                  <input value={ifsForm.client_id} onChange={(ev) => setIfsForm({ ...ifsForm, client_id: ev.target.value })} />
+                </label>
+                <label className="lbl">Client secret
+                  <input type="password" value={ifsForm.client_secret} onChange={(ev) => setIfsForm({ ...ifsForm, client_secret: ev.target.value })} />
+                </label>
+              </div>
+              <div className="row gap-sm" style={{ marginTop: 12 }}>
+                <Btn kind="primary" disabled={ifsBusy} onClick={onIfsConnect}>
+                  {ifsBusy ? "Working…" : <>{Icon.shieldCheck} Save & probe</>}
+                </Btn>
+                <Btn kind="ghost" disabled={ifsBusy || !ifsState?.configured} onClick={onIfsSyncNow}>
+                  {Icon.cycle} Sync now
+                </Btn>
+                <Btn kind="ghost" disabled={ifsBusy || !ifsState?.configured || !ifsState?.retry_pending} onClick={onIfsRetryNow}>
+                  {Icon.cycle} Retry queue ({ifsState?.retry_pending || 0})
+                </Btn>
+              </div>
+            </Card>
+            {ifsState && (
+              <Card title="Status" eyebrow="from /api/ifs/health">
+                <KV rows={[
+                  ["Configured", String(ifsState.configured ?? false)],
+                  ["Probe ok", ifsState.probe_ok == null ? "—" : String(ifsState.probe_ok)],
+                  ["Connected at", ifsState.connected_at || "—"],
+                  ["Retry queue pending", String(ifsState.retry_pending || 0)],
+                  ["Probe error", ifsState.probe_error || "—"],
+                ]} />
+              </Card>
+            )}
+          </>
+        )}
+
+        {active === "oracle_fusion" && (
+          <>
+            <Card title="Oracle Fusion Cloud ERP" eyebrow="OAuth2 client_credentials · REST salesOrdersForOrderHub">
+              <div className="form-grid">
+                <label className="lbl">Base URL
+                  <input value={oracleFusionForm.base_url} onChange={(ev) => setOracleFusionForm({ ...oracleFusionForm, base_url: ev.target.value })}
+                    placeholder="https://<your-pod>.oracleoutsourcing.com" />
+                </label>
+                <label className="lbl">Token URL
+                  <input value={oracleFusionForm.token_url} onChange={(ev) => setOracleFusionForm({ ...oracleFusionForm, token_url: ev.target.value })}
+                    placeholder="https://idcs-<id>.identity.oraclecloud.com/oauth2/v1/token" />
+                </label>
+                <label className="lbl">Scope
+                  <input value={oracleFusionForm.scope} onChange={(ev) => setOracleFusionForm({ ...oracleFusionForm, scope: ev.target.value })} />
+                </label>
+                <label className="lbl">API version
+                  <input value={oracleFusionForm.api_version} onChange={(ev) => setOracleFusionForm({ ...oracleFusionForm, api_version: ev.target.value })} />
+                </label>
+                <label className="lbl span-2">Business unit
+                  <input value={oracleFusionForm.business_unit} onChange={(ev) => setOracleFusionForm({ ...oracleFusionForm, business_unit: ev.target.value })}
+                    placeholder="Vision Operations" />
+                </label>
+                <label className="lbl">Client ID
+                  <input value={oracleFusionForm.client_id} onChange={(ev) => setOracleFusionForm({ ...oracleFusionForm, client_id: ev.target.value })} />
+                </label>
+                <label className="lbl">Client secret
+                  <input type="password" value={oracleFusionForm.client_secret} onChange={(ev) => setOracleFusionForm({ ...oracleFusionForm, client_secret: ev.target.value })} />
+                </label>
+              </div>
+              <div className="row gap-sm" style={{ marginTop: 12 }}>
+                <Btn kind="primary" disabled={oracleFusionBusy} onClick={onOracleFusionConnect}>
+                  {oracleFusionBusy ? "Working…" : <>{Icon.shieldCheck} Save & probe</>}
+                </Btn>
+                <Btn kind="ghost" disabled={oracleFusionBusy || !oracleFusionState?.configured} onClick={onOracleFusionSyncNow}>
+                  {Icon.cycle} Sync now
+                </Btn>
+                <Btn kind="ghost" disabled={oracleFusionBusy || !oracleFusionState?.configured || !oracleFusionState?.retry_pending} onClick={onOracleFusionRetryNow}>
+                  {Icon.cycle} Retry queue ({oracleFusionState?.retry_pending || 0})
+                </Btn>
+              </div>
+            </Card>
+            {oracleFusionState && (
+              <Card title="Status" eyebrow="from /api/oracle_fusion/health">
+                <KV rows={[
+                  ["Configured", String(oracleFusionState.configured ?? false)],
+                  ["Probe ok", oracleFusionState.probe_ok == null ? "—" : String(oracleFusionState.probe_ok)],
+                  ["Connected at", oracleFusionState.connected_at || "—"],
+                  ["Retry queue pending", String(oracleFusionState.retry_pending || 0)],
+                  ["Probe error", oracleFusionState.probe_error || "—"],
+                ]} />
+              </Card>
+            )}
+          </>
+        )}
+
+        {active === "jde" && (
+          <>
+            <Card title="JD Edwards EnterpriseOne" eyebrow="AIS REST · Basic auth + token-pair">
+              <div className="form-grid">
+                <label className="lbl">Base URL
+                  <input value={jdeForm.base_url} onChange={(ev) => setJdeForm({ ...jdeForm, base_url: ev.target.value })}
+                    placeholder="https://jde.example.com" />
+                </label>
+                <label className="lbl">Environment
+                  <input value={jdeForm.environment} onChange={(ev) => setJdeForm({ ...jdeForm, environment: ev.target.value })}
+                    placeholder="JDV920" />
+                </label>
+                <label className="lbl">Role
+                  <input value={jdeForm.role} onChange={(ev) => setJdeForm({ ...jdeForm, role: ev.target.value })} />
+                </label>
+                <label className="lbl">Device name
+                  <input value={jdeForm.device} onChange={(ev) => setJdeForm({ ...jdeForm, device: ev.target.value })} />
+                </label>
+                <label className="lbl">Username
+                  <input value={jdeForm.username} onChange={(ev) => setJdeForm({ ...jdeForm, username: ev.target.value })} />
+                </label>
+                <label className="lbl">Password
+                  <input type="password" value={jdeForm.password} onChange={(ev) => setJdeForm({ ...jdeForm, password: ev.target.value })} />
+                </label>
+              </div>
+              <div className="row gap-sm" style={{ marginTop: 12 }}>
+                <Btn kind="primary" disabled={jdeBusy} onClick={() => {
+                  if (!jdeForm.base_url || !jdeForm.environment || !jdeForm.role || !jdeForm.username || !jdeForm.password) {
+                    return flashErr(new Error("base_url, environment, role, username, password required"));
+                  }
+                  jdeFns.connect();
+                }}>{jdeBusy ? "Working…" : <>{Icon.shieldCheck} Save & probe</>}</Btn>
+                <Btn kind="ghost" disabled={jdeBusy || !jdeState?.configured} onClick={jdeFns.syncNow}>{Icon.cycle} Sync now</Btn>
+                <Btn kind="ghost" disabled={jdeBusy || !jdeState?.configured || !jdeState?.retry_pending} onClick={jdeFns.retryNow}>
+                  {Icon.cycle} Retry queue ({jdeState?.retry_pending || 0})
+                </Btn>
+              </div>
+            </Card>
+            {jdeState && (
+              <Card title="Status" eyebrow="from /api/jde/health">
+                <KV rows={[
+                  ["Configured", String(jdeState.configured ?? false)],
+                  ["Probe ok", jdeState.probe_ok == null ? "—" : String(jdeState.probe_ok)],
+                  ["Environment", jdeState.environment || "—"],
+                  ["Connected at", jdeState.connected_at || "—"],
+                  ["Retry queue pending", String(jdeState.retry_pending || 0)],
+                  ["Probe error", jdeState.probe_error || "—"],
+                ]} />
+              </Card>
+            )}
+          </>
+        )}
+
+        {active === "plex" && (
+          <>
+            <Card title="Plex Smart Manufacturing Platform" eyebrow="Rockwell · Basic auth (API key)">
+              <div className="form-grid">
+                <label className="lbl span-2">Base URL
+                  <input value={plexForm.base_url} onChange={(ev) => setPlexForm({ ...plexForm, base_url: ev.target.value })}
+                    placeholder="https://api.plex.com" />
+                </label>
+                <label className="lbl">Customer ID
+                  <input value={plexForm.customer_id} onChange={(ev) => setPlexForm({ ...plexForm, customer_id: ev.target.value })}
+                    placeholder="numeric customer id" />
+                </label>
+                <label className="lbl">PCN (optional)
+                  <input value={plexForm.pcn} onChange={(ev) => setPlexForm({ ...plexForm, pcn: ev.target.value })}
+                    placeholder="plant control number" />
+                </label>
+                <label className="lbl span-2">API key
+                  <input type="password" value={plexForm.api_key} onChange={(ev) => setPlexForm({ ...plexForm, api_key: ev.target.value })} />
+                </label>
+              </div>
+              <div className="row gap-sm" style={{ marginTop: 12 }}>
+                <Btn kind="primary" disabled={plexBusy} onClick={() => {
+                  if (!plexForm.base_url || !plexForm.customer_id || !plexForm.api_key) {
+                    return flashErr(new Error("base_url, customer_id, api_key required"));
+                  }
+                  plexFns.connect();
+                }}>{plexBusy ? "Working…" : <>{Icon.shieldCheck} Save & probe</>}</Btn>
+                <Btn kind="ghost" disabled={plexBusy || !plexState?.configured} onClick={plexFns.syncNow}>{Icon.cycle} Sync now</Btn>
+                <Btn kind="ghost" disabled={plexBusy || !plexState?.configured || !plexState?.retry_pending} onClick={plexFns.retryNow}>
+                  {Icon.cycle} Retry queue ({plexState?.retry_pending || 0})
+                </Btn>
+              </div>
+            </Card>
+            {plexState && (
+              <Card title="Status" eyebrow="from /api/plex/health">
+                <KV rows={[
+                  ["Configured", String(plexState.configured ?? false)],
+                  ["Probe ok", plexState.probe_ok == null ? "—" : String(plexState.probe_ok)],
+                  ["Customer ID", plexState.customer_id || "—"],
+                  ["PCN", plexState.pcn || "—"],
+                  ["Connected at", plexState.connected_at || "—"],
+                  ["Retry queue pending", String(plexState.retry_pending || 0)],
+                  ["Probe error", plexState.probe_error || "—"],
+                ]} />
+              </Card>
+            )}
+          </>
+        )}
+
+        {active === "jobboss" && (
+          <>
+            <Card title="JobBoss² (ECi)" eyebrow="REST · Bearer token issued via ECi customer portal">
+              <div className="form-grid">
+                <label className="lbl">Base URL
+                  <input value={jobbossForm.base_url} onChange={(ev) => setJobbossForm({ ...jobbossForm, base_url: ev.target.value })}
+                    placeholder="https://api.jobboss.com" />
+                </label>
+                <label className="lbl">Company
+                  <input value={jobbossForm.company} onChange={(ev) => setJobbossForm({ ...jobbossForm, company: ev.target.value })}
+                    placeholder="optional, X-JobBoss-Company header" />
+                </label>
+                <label className="lbl span-2">Bearer token
+                  <input type="password" value={jobbossForm.token} onChange={(ev) => setJobbossForm({ ...jobbossForm, token: ev.target.value })} />
+                </label>
+              </div>
+              <div className="row gap-sm" style={{ marginTop: 12 }}>
+                <Btn kind="primary" disabled={jobbossBusy} onClick={() => {
+                  if (!jobbossForm.base_url || !jobbossForm.token) {
+                    return flashErr(new Error("base_url and token required"));
+                  }
+                  jobbossFns.connect();
+                }}>{jobbossBusy ? "Working…" : <>{Icon.shieldCheck} Save & probe</>}</Btn>
+                <Btn kind="ghost" disabled={jobbossBusy || !jobbossState?.configured} onClick={jobbossFns.syncNow}>{Icon.cycle} Sync now</Btn>
+                <Btn kind="ghost" disabled={jobbossBusy || !jobbossState?.configured || !jobbossState?.retry_pending} onClick={jobbossFns.retryNow}>
+                  {Icon.cycle} Retry queue ({jobbossState?.retry_pending || 0})
+                </Btn>
+              </div>
+            </Card>
+            {jobbossState && (
+              <Card title="Status" eyebrow="from /api/jobboss/health">
+                <KV rows={[
+                  ["Configured", String(jobbossState.configured ?? false)],
+                  ["Probe ok", jobbossState.probe_ok == null ? "—" : String(jobbossState.probe_ok)],
+                  ["Company", jobbossState.company || "—"],
+                  ["Connected at", jobbossState.connected_at || "—"],
+                  ["Retry queue pending", String(jobbossState.retry_pending || 0)],
+                  ["Probe error", jobbossState.probe_error || "—"],
+                ]} />
+              </Card>
+            )}
+          </>
+        )}
+
+        {active === "oracle_ebs" && (
+          <>
+            <Card title="Oracle E-Business Suite" eyebrow="Integrated SOA Gateway · HTTP Basic">
+              <div className="form-grid">
+                <label className="lbl">Base URL
+                  <input value={oracleEbsForm.base_url} onChange={(ev) => setOracleEbsForm({ ...oracleEbsForm, base_url: ev.target.value })}
+                    placeholder="https://ebs.example.com" />
+                </label>
+                <label className="lbl">Responsibility
+                  <input value={oracleEbsForm.responsibility} onChange={(ev) => setOracleEbsForm({ ...oracleEbsForm, responsibility: ev.target.value })}
+                    placeholder="Order Management Super User" />
+                </label>
+                <label className="lbl">Org ID
+                  <input value={oracleEbsForm.org_id} onChange={(ev) => setOracleEbsForm({ ...oracleEbsForm, org_id: ev.target.value })} placeholder="204" />
+                </label>
+                <label className="lbl">Username
+                  <input value={oracleEbsForm.username} onChange={(ev) => setOracleEbsForm({ ...oracleEbsForm, username: ev.target.value })} />
+                </label>
+                <label className="lbl span-2">Password
+                  <input type="password" value={oracleEbsForm.password} onChange={(ev) => setOracleEbsForm({ ...oracleEbsForm, password: ev.target.value })} />
+                </label>
+              </div>
+              <div className="row gap-sm" style={{ marginTop: 12 }}>
+                <Btn kind="primary" disabled={oracleEbsBusy} onClick={() => {
+                  if (!oracleEbsForm.base_url || !oracleEbsForm.username || !oracleEbsForm.password) {
+                    return flashErr(new Error("base_url, username, password required"));
+                  }
+                  oracleEbsFns.connect();
+                }}>{oracleEbsBusy ? "Working…" : <>{Icon.shieldCheck} Save & probe</>}</Btn>
+                <Btn kind="ghost" disabled={oracleEbsBusy || !oracleEbsState?.configured} onClick={oracleEbsFns.syncNow}>{Icon.cycle} Sync now</Btn>
+                <Btn kind="ghost" disabled={oracleEbsBusy || !oracleEbsState?.configured || !oracleEbsState?.retry_pending} onClick={oracleEbsFns.retryNow}>
+                  {Icon.cycle} Retry queue ({oracleEbsState?.retry_pending || 0})
+                </Btn>
+              </div>
+            </Card>
+            {oracleEbsState && (
+              <Card title="Status" eyebrow="from /api/oracle_ebs/health">
+                <KV rows={[
+                  ["Configured", String(oracleEbsState.configured ?? false)],
+                  ["Probe ok", oracleEbsState.probe_ok == null ? "—" : String(oracleEbsState.probe_ok)],
+                  ["Responsibility", oracleEbsState.responsibility || "—"],
+                  ["Org ID", oracleEbsState.org_id || "—"],
+                  ["Connected at", oracleEbsState.connected_at || "—"],
+                  ["Retry queue pending", String(oracleEbsState.retry_pending || 0)],
+                  ["Probe error", oracleEbsState.probe_error || "—"],
+                ]} />
+              </Card>
+            )}
+          </>
+        )}
+
+        {active === "proalpha" && (
+          <>
+            <Card title="proALPHA" eyebrow="BC-REST-API · HTTP Basic">
+              <div className="form-grid">
+                <label className="lbl">Base URL
+                  <input value={proalphaForm.base_url} onChange={(ev) => setProalphaForm({ ...proalphaForm, base_url: ev.target.value })}
+                    placeholder="https://erp.example.com" />
+                </label>
+                <label className="lbl">Company
+                  <input value={proalphaForm.company} onChange={(ev) => setProalphaForm({ ...proalphaForm, company: ev.target.value })}
+                    placeholder="optional, multi-company header" />
+                </label>
+                <label className="lbl">Username
+                  <input value={proalphaForm.username} onChange={(ev) => setProalphaForm({ ...proalphaForm, username: ev.target.value })} />
+                </label>
+                <label className="lbl">Password
+                  <input type="password" value={proalphaForm.password} onChange={(ev) => setProalphaForm({ ...proalphaForm, password: ev.target.value })} />
+                </label>
+              </div>
+              <div className="row gap-sm" style={{ marginTop: 12 }}>
+                <Btn kind="primary" disabled={proalphaBusy} onClick={() => {
+                  if (!proalphaForm.base_url || !proalphaForm.username || !proalphaForm.password) {
+                    return flashErr(new Error("base_url, username, password required"));
+                  }
+                  proalphaFns.connect();
+                }}>{proalphaBusy ? "Working…" : <>{Icon.shieldCheck} Save & probe</>}</Btn>
+                <Btn kind="ghost" disabled={proalphaBusy || !proalphaState?.configured} onClick={proalphaFns.syncNow}>{Icon.cycle} Sync now</Btn>
+                <Btn kind="ghost" disabled={proalphaBusy || !proalphaState?.configured || !proalphaState?.retry_pending} onClick={proalphaFns.retryNow}>
+                  {Icon.cycle} Retry queue ({proalphaState?.retry_pending || 0})
+                </Btn>
+              </div>
+            </Card>
+            {proalphaState && (
+              <Card title="Status" eyebrow="from /api/proalpha/health">
+                <KV rows={[
+                  ["Configured", String(proalphaState.configured ?? false)],
+                  ["Probe ok", proalphaState.probe_ok == null ? "—" : String(proalphaState.probe_ok)],
+                  ["Company", proalphaState.company || "—"],
+                  ["Connected at", proalphaState.connected_at || "—"],
+                  ["Retry queue pending", String(proalphaState.retry_pending || 0)],
+                  ["Probe error", proalphaState.probe_error || "—"],
+                ]} />
+              </Card>
+            )}
+          </>
+        )}
+
+        {active === "ramco" && (
+          <>
+            <Card title="Ramco ERP" eyebrow="OAuth2 client_credentials · REST tenant-scoped">
+              <div className="form-grid">
+                <label className="lbl">Base URL
+                  <input value={ramcoForm.base_url} onChange={(ev) => setRamcoForm({ ...ramcoForm, base_url: ev.target.value })}
+                    placeholder="https://<tenant>.ramco.com" />
+                </label>
+                <label className="lbl">Token URL
+                  <input value={ramcoForm.token_url} onChange={(ev) => setRamcoForm({ ...ramcoForm, token_url: ev.target.value })}
+                    placeholder="https://auth.ramco.com/oauth2/token" />
+                </label>
+                <label className="lbl">Scope
+                  <input value={ramcoForm.scope} onChange={(ev) => setRamcoForm({ ...ramcoForm, scope: ev.target.value })} />
+                </label>
+                <label className="lbl">Org unit
+                  <input value={ramcoForm.org_unit} onChange={(ev) => setRamcoForm({ ...ramcoForm, org_unit: ev.target.value })}
+                    placeholder="default" />
+                </label>
+                <label className="lbl span-2">Company
+                  <input value={ramcoForm.company} onChange={(ev) => setRamcoForm({ ...ramcoForm, company: ev.target.value })}
+                    placeholder="optional, sent as X-Ramco-Company" />
+                </label>
+                <label className="lbl">Client ID
+                  <input value={ramcoForm.client_id} onChange={(ev) => setRamcoForm({ ...ramcoForm, client_id: ev.target.value })} />
+                </label>
+                <label className="lbl">Client secret
+                  <input type="password" value={ramcoForm.client_secret} onChange={(ev) => setRamcoForm({ ...ramcoForm, client_secret: ev.target.value })} />
+                </label>
+              </div>
+              <div className="row gap-sm" style={{ marginTop: 12 }}>
+                <Btn kind="primary" disabled={ramcoBusy} onClick={onRamcoConnect}>
+                  {ramcoBusy ? "Working…" : <>{Icon.shieldCheck} Save & probe</>}
+                </Btn>
+                <Btn kind="ghost" disabled={ramcoBusy || !ramcoState?.configured} onClick={onRamcoSyncNow}>
+                  {Icon.cycle} Sync now
+                </Btn>
+                <Btn kind="ghost" disabled={ramcoBusy || !ramcoState?.configured || !ramcoState?.retry_pending} onClick={onRamcoRetryNow}>
+                  {Icon.cycle} Retry queue ({ramcoState?.retry_pending || 0})
+                </Btn>
+              </div>
+            </Card>
+            {ramcoState && (
+              <Card title="Status" eyebrow="from /api/ramco/health">
+                <KV rows={[
+                  ["Configured", String(ramcoState.configured ?? false)],
+                  ["Probe ok", ramcoState.probe_ok == null ? "—" : String(ramcoState.probe_ok)],
+                  ["Connected at", ramcoState.connected_at || "—"],
+                  ["Retry queue pending", String(ramcoState.retry_pending || 0)],
+                  ["Probe error", ramcoState.probe_error || "—"],
+                ]} />
               </Card>
             )}
           </>

@@ -1,0 +1,44 @@
+{
+  "id": "paper_converting",
+  "label": "Paper converting",
+  "description": "Slitting, sheeting, laminating, coating. Roll-form input, sheet/roll output. FSC chain-of-custody, basis-weight (gsm) tracking, roll assignments, and core/diameter constraints.",
+  "version": 1,
+  "approval_thresholds": [
+    { "level": "rep", "min_amount": 0, "max_amount": 5000, "currency": "USD" },
+    { "level": "manager", "min_amount": 5000, "max_amount": 25000, "currency": "USD" },
+    { "level": "director", "min_amount": 25000, "max_amount": 100000, "currency": "USD" },
+    { "level": "vp", "min_amount": 100000, "max_amount": null, "currency": "USD" }
+  ],
+  "lead_time_defaults_days": {
+    "stocked_grade": 5,
+    "custom_slit": 14,
+    "laminated_roll": 21,
+    "coated_special": 28
+  },
+  "lost_reasons": [
+    "Price (competitor lower)",
+    "Lead time too long",
+    "Basis weight not available",
+    "Core diameter constraint",
+    "FSC certification required",
+    "Customer cancelled project",
+    "Spec change after quote",
+    "Minimum order quantity missed"
+  ],
+  "contract_types": ["spot", "blanket", "consignment", "vendor-managed"],
+  "item_master_examples": [
+    { "code": "KRP-90-1500", "description": "Kraft paper 90gsm 1500mm wide", "uom": "kg" },
+    { "code": "BWP-120-COATED", "description": "Bleached white paper 120gsm one-side coated", "uom": "kg" },
+    { "code": "FSC-LBL-50", "description": "FSC label stock 50gsm", "uom": "m2" }
+  ],
+  "quote_template": {
+    "header_columns": ["customer_po", "customer_part", "grade", "basis_weight_gsm", "width_mm", "qty_kg", "price_per_kg", "extension"],
+    "footer_blocks": ["fsc_chain_of_custody", "lead_time_window", "freight_terms", "validity_days"]
+  },
+  "kpis": [
+    { "id": "tons_quoted", "label": "Tons quoted", "unit": "tons", "window": "month" },
+    { "id": "win_rate_by_grade", "label": "Win rate by grade", "unit": "percent", "window": "quarter" },
+    { "id": "avg_basis_weight", "label": "Avg basis weight", "unit": "gsm", "window": "month" },
+    { "id": "fsc_quote_pct", "label": "FSC-certified quote share", "unit": "percent", "window": "month" }
+  ]
+}

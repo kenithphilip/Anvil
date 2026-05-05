@@ -687,7 +687,7 @@ German construction-tender XML standard. Mercura's moat.
 - A reference GAEB X83 file produces structured positions.
 - A GAEB X86 award file links back to the originating X83.
 
-### 5.4 Remaining ERP connectors `[partial]` (Sage X3 done; JobBoss + Plex + 6 others tracked as 5.4b)
+### 5.4 Remaining ERP connectors `[done]` (Sage X3 in 5.4a; JobBoss + Plex + 6 others shipped in 5.4b)
 
 Sage X3, JobBoss, Plex (Rockwell), IFS, JD Edwards, Oracle EBS,
 Oracle Fusion, proALPHA (DACH), Ramco (India). All ship using the
@@ -719,6 +719,27 @@ existing `erp-runner.js` framework.
 - Each pushes a Sales Order successfully.
 - Total live ERPs: 14 (5 already shipped plus 3 from Phase 3.1
   plus 9 here, minus any duplicates).
+
+**Status (5.4b).** Eight new connectors shipped in three clusters:
+
+- Cluster A (OAuth2 client_credentials, reusing `_lib/oauth2.js`):
+  IFS Cloud, Oracle Fusion, Ramco. Migrations 044 / 045 / 046; clients
+  `_lib/{ifs,oracle-fusion,ramco}-client.js`; endpoints
+  `/api/{ifs,oracle_fusion,ramco}/{connect,sync,push,retry,health}`.
+- Cluster B (token-pair flow, new `_lib/token-cache.js`): JDE
+  EnterpriseOne (AIS REST), Plex Smart Manufacturing Platform
+  (Rockwell), JobBoss² (ECi). Migrations 047 / 048 / 049; clients
+  `_lib/{jde,plex,jobboss}-client.js`; endpoints
+  `/api/{jde,plex,jobboss}/{connect,sync,push,retry,health}`.
+- Cluster C (HTTP Basic): Oracle EBS (Integrated SOA Gateway),
+  proALPHA (BC-REST-API). Migrations 050 / 051; clients
+  `_lib/{oracle-ebs,proalpha}-client.js`; endpoints
+  `/api/{oracle_ebs,proalpha}/{connect,sync,push,retry,health}`.
+
+All 8 ERPs are wired into `router.js`, the cron mux at
+`api/cron/tick.js` (30-min syncs + 5-min retries), the
+`anvil-client.js` SDK, and the Admin Center
+(`v3-app/screens/admin.tsx`). Total live ERPs: 14.
 
 ### 5.5 PLM connectors (Windchill, Arena) `[done]`
 
@@ -773,7 +794,7 @@ Tenant B's inventory mirror and proposes a back-to-back deal.
 **Goal.** Enterprise readiness plus the long-tail competitor parity
 items. Corresponds to the strategic doc's Phase 5 plus Phase 6.
 
-### 7.1 SOC 2 Type I `[open]`
+### 7.1 SOC 2 Type I `[partial]` (code-side controls shipped; vendor + program work pending)
 
 This is mostly a program, not a feature. Code-side requirements:
 
@@ -804,7 +825,7 @@ program activity.
   REL TO, etc.) and tags the document at ingestion. Block downstream
   flow until acknowledgement.
 
-### 7.4 Vertical templates `[open]`
+### 7.4 Vertical templates `[done]` (5 packs shipped: paper-converting, fasteners, PVF, electrical, HVAC)
 
 Fastener, PVF, electrical, HVAC, paper converting (Arzana parity).
 
@@ -822,7 +843,7 @@ Fastener, PVF, electrical, HVAC, paper converting (Arzana parity).
   (basis-weight conversion, FSC chain of custody, roll assignment),
   then fastener and PVF, then electrical and HVAC.
 
-### 7.5 Per-customer fine-tuned extraction models `[open]`
+### 7.5 Per-customer fine-tuned extraction models `[partial]` (router shipped; out-of-process worker pending)
 
 Beyond the prompt-overrides loop in 3.3, do real fine-tuning when
 correction-volume justifies it.
@@ -838,7 +859,7 @@ correction-volume justifies it.
   overrides path (small N) and the fine-tuned model (large N)
   per-customer.
 
-### 7.6 Agent evaluation and benchmarking infrastructure `[open]`
+### 7.6 Agent evaluation and benchmarking infrastructure `[done]`
 
 Raven pattern, transferable.
 
@@ -864,7 +885,7 @@ action items (new opp, follow-up, contact update), writes to CRM.
   `create_opportunity`, `update_contact`, `schedule_followup`.
 - Mobile shell action: large mic button on the Home screen.
 
-### 7.8 Outbound prospecting agent `[open]`
+### 7.8 Outbound prospecting agent `[done]` (campaigns + targets + suppression + cron-driven send loop)
 
 Arzana parity, deferred until trust is established.
 
@@ -877,7 +898,7 @@ Arzana parity, deferred until trust is established.
 - Per-tenant approval gate before any email actually sends, so the
   feature can ship without anyone fearing accidental cold-spam.
 
-### 7.9 AP 3-way match plus deductions / short-pay flagging `[open]`
+### 7.9 AP 3-way match plus deductions / short-pay flagging `[done]`
 
 Arzana plus Axal parity.
 
@@ -1017,3 +1038,69 @@ shifts priorities, a competitor ships something material):
     7 endpoints + 30m sync + 5m retry crons. Total live ERPs
     now 8 (NetSuite, Tally, SAP, D365, Acumatica, P21, Eclipse,
     SX.e).
+
+## 13. Phase 5.4b + Phase 6 sweep summary
+
+The May 2026 commit family closed every `[open]` item in §6 (Phase
+5.4b) and the bulk of §7 (Phase 6). Concretely:
+
+- **Phase 5.4b (8 ERP connectors).** IFS Cloud, Oracle Fusion,
+  Ramco (cluster A, OAuth2); JDE EnterpriseOne, Plex, JobBoss²
+  (cluster B, token-pair via new `_lib/token-cache.js`); Oracle
+  EBS (ISG REST), proALPHA (cluster C, HTTP Basic). All eight
+  follow the canonical 5-endpoint shape (connect / sync / push /
+  retry / health), are wired into `cron/tick.js` (30-min syncs +
+  5-min retries), surface in the Admin Center, and ship with
+  per-tenant encrypted credentials via `_lib/secrets.js`.
+- **Phase 6.1 (SOC 2 code-side).** `/api/audit/export` (HMAC-
+  signed ndjson stream), `/api/admin/access_review` (snapshot +
+  signed acknowledgement), `deploys` table + `audit_export_runs`
+  log. Vendor pick (Drata vs Vanta) is the remaining program
+  decision.
+- **Phase 6.2 (Vertical packs).** Five JSON packs at
+  `src/v3-app/verticals/{paper_converting,fasteners,pvf,electrical,hvac}.json`
+  + `/api/admin/install_vertical_pack` idempotent installer. Seed
+  approval thresholds, lead-time defaults, lost-reason taxonomy,
+  contract types, item-master starter rows, quote template, and
+  vertical KPIs.
+- **Phase 6.3 (Agent eval).** `/api/eval/agent_eval` harness
+  reuses `agent_runs` + `rlhf_feedback` to compute decision-parity
+  + rationale-similarity + confidence-delta drift score. Cron
+  fires hourly at minute 5; the Diagnostics tab can render the
+  trend from `agent_eval_runs`.
+- **Phase 6.4 (DocAI router).** `/api/docai/route` chooses between
+  prompt-overrides and a fine-tuned per-customer model based on
+  `customers.docai_correction_count` vs
+  `tenant_settings.docai_fine_tune_threshold`. The fine-tuning
+  worker itself stays out-of-process (Modal/EC2); Anvil only ships
+  the routing layer.
+- **Phase 6.5 (AP 3-way match).** `ap_invoices` + `ap_invoice_lines`
+  + `ap_goods_receipts` + `deduction_queue`. `/api/ap/match` runs
+  the 3-way join (PO, GR, vendor invoice) and either auto-approves
+  within tolerance or flags above-tolerance variances.
+  `/api/ap/deductions` opens short-pay rows and exposes a finance
+  review queue.
+- **Phase 6.8 (Prospecting agent).** Campaigns, targets, suppression
+  list (per-tenant + global), per-target approval gate before
+  anything sends. The dispatch loop runs every 5-min tick through
+  `/api/prospecting/run` with send-window + daily-cap + suppression
+  checks. Lead-scoring providers (Apollo / ZoomInfo) are pluggable
+  through `_lib/prospecting-providers.js` (out-of-scope this round
+  but the wiring is in place).
+- **Landing v2.** Animated hero with kinetic verb cycling, gradient
+  blob, fade-up entrance, live counters strip, channels marquee
+  rail, scroll-pinned product tour, outcome-stories cards, and
+  trust strip. Pure-CSS animation (no framer-motion), all motion
+  guarded behind `prefers-reduced-motion: reduce`.
+
+What remains `[open]` from §7 after this sweep:
+
+- 7.2 SOC 2 Type II — observation period only, no code work.
+- 7.3 ITAR / GovCloud / on-prem — Year-2 product decision.
+- 7.7 Outside-sales voice-note-to-CRM — awaits voice-scope decision
+  in `docs/DEFERRED_ROADMAP.md`.
+
+Total live ERP connectors after this sweep: **14** (NetSuite, Tally,
+SAP, D365, Acumatica, P21, Eclipse, SX.e, Sage X3, IFS, Oracle
+Fusion, Ramco, JDE, Plex, JobBoss, Oracle EBS, proALPHA — 17 if you
+also count Tally and Razorpay-as-payment-rail).

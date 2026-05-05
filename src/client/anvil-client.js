@@ -321,6 +321,18 @@
   const p21 = erpFactory("p21");
   const eclipse = erpFactory("eclipse");
   const sxe = erpFactory("sxe");
+  const sageX3 = erpFactory("sage_x3");
+  // Phase 5.4b cluster A (OAuth2): IFS Cloud, Oracle Fusion, Ramco.
+  const ifs = erpFactory("ifs");
+  const oracleFusion = erpFactory("oracle_fusion");
+  const ramco = erpFactory("ramco");
+  // Phase 5.4b cluster B (token-pair): JDE, Plex, JobBoss.
+  const jde = erpFactory("jde");
+  const plex = erpFactory("plex");
+  const jobboss = erpFactory("jobboss");
+  // Phase 5.4b cluster C (HTTP Basic): Oracle EBS, proALPHA.
+  const oracleEbs = erpFactory("oracle_ebs");
+  const proalpha = erpFactory("proalpha");
 
   const razorpay = {
     status:   async () => apiFetch("/api/billing/razorpay/status"),
@@ -596,6 +608,92 @@
     markRead: async (id) => apiFetch("/api/admin/notifications", { method: "POST", body: { id, action: "mark_read" } }),
     markAllRead: async () => apiFetch("/api/admin/notifications", { method: "POST", body: { action: "mark_all_read" } }),
     resolve: async (id, note) => apiFetch("/api/admin/notifications", { method: "POST", body: { id, action: "resolve", note } }),
+  };
+
+  // Phase 6 (C.2): Vertical pack installer. Loads paper-converting /
+  // fasteners / pvf / electrical / hvac configuration into the
+  // tenant's seed tables. Idempotent per content_hash.
+  const verticalPacks = {
+    install: async (vertical_id) =>
+      apiFetch("/api/admin/install_vertical_pack", { method: "POST", body: { vertical_id } }),
+  };
+
+  // Phase 6 (C.1): SOC 2 audit-trail export and access review.
+  const accessReview = {
+    snapshot: async () => apiFetch("/api/admin/access_review"),
+    sign:     async (acknowledgement_text, notes) =>
+      apiFetch("/api/admin/access_review", { method: "POST", body: { acknowledgement_text, notes } }),
+  };
+  // Phase 6 (C.3): Agent eval / drift harness.
+  const agentEval = {
+    list: async () => apiFetch("/api/eval/agent_eval"),
+    run:  async (since) => apiFetch("/api/eval/agent_eval", { method: "POST", body: { since: since || null } }),
+  };
+
+  // Phase 6 (C.4): Per-customer DocAI router.
+  const docaiRoute = {
+    decide:  async (customer_id) => apiFetch("/api/docai/route?customer_id=" + encodeURIComponent(customer_id)),
+    apply:   async (customer_id, payload) =>
+      apiFetch("/api/docai/route", { method: "POST", body: { customer_id, payload } }),
+  };
+
+  // Phase 6 (C.6): Outbound prospecting.
+  const prospecting = {
+    listCampaigns: async () => apiFetch("/api/prospecting/campaigns"),
+    createCampaign: async (payload) => apiFetch("/api/prospecting/campaigns", { method: "POST", body: payload }),
+    updateCampaign: async (id, patch) => apiFetch("/api/prospecting/campaigns", { method: "PATCH", body: { id, ...patch } }),
+    listTargets: async (campaign_id, status) => {
+      const qs = new URLSearchParams();
+      if (campaign_id) qs.set("campaign_id", campaign_id);
+      if (status) qs.set("status", status);
+      return apiFetch("/api/prospecting/targets" + (qs.toString() ? "?" + qs.toString() : ""));
+    },
+    addTargets: async (campaign_id, targets) =>
+      apiFetch("/api/prospecting/targets", { method: "POST", body: { campaign_id, targets } }),
+    approve: async (id) => apiFetch("/api/prospecting/targets", { method: "PATCH", body: { id, action: "approve" } }),
+    deny:    async (id) => apiFetch("/api/prospecting/targets", { method: "PATCH", body: { id, action: "deny" } }),
+    unsubscribe: async (id, notes) => apiFetch("/api/prospecting/targets", { method: "PATCH", body: { id, action: "unsubscribe", notes } }),
+    runNow:  async () => apiFetch("/api/prospecting/run", { method: "POST" }),
+  };
+
+  // Phase 6 (C.5): AP 3-way match + short-pay deductions.
+  const ap = {
+    listInvoices: async () => apiFetch("/api/ap/match"),
+    matchInvoice: async (ap_invoice_id) =>
+      apiFetch("/api/ap/match", { method: "POST", body: { ap_invoice_id } }),
+    listDeductions: async (status) => {
+      const qs = status ? "?status=" + encodeURIComponent(status) : "";
+      return apiFetch("/api/ap/deductions" + qs);
+    },
+    recordPayment: async (invoice_id, paid_amount, opts = {}) =>
+      apiFetch("/api/ap/deductions", { method: "POST", body: { invoice_id, paid_amount, ...opts } }),
+    resolveDeduction: async (id, status, notes) =>
+      apiFetch("/api/ap/deductions", { method: "PATCH", body: { id, status, notes } }),
+  };
+
+  const auditExport = {
+    // Returns the ndjson stream as text. Caller can split lines and
+    // parse each line as JSON; the trailing meta record carries the
+    // HMAC signature and row count.
+    pull: async ({ from, to, types, limit } = {}) => {
+      const qs = new URLSearchParams();
+      if (from) qs.set("from", from);
+      if (to) qs.set("to", to);
+      if (types && types.length) qs.set("types", Array.isArray(types) ? types.join(",") : String(types));
+      if (limit) qs.set("limit", String(limit));
+      // Use raw fetch so the ndjson body is preserved as-is.
+      const cfg = readConfig();
+      if (!cfg.url) throw new Error("Backend URL not configured");
+      const session = readSession();
+      const headers = { Accept: "application/x-ndjson" };
+      if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
+      const resp = await fetch(cfg.url.replace(/\/+$/, "") + "/api/audit/export" + (qs.toString() ? "?" + qs.toString() : ""), { headers });
+      if (!resp.ok) {
+        const body = await resp.text();
+        throw new Error("audit export " + resp.status + " " + body.slice(0, 200));
+      }
+      return resp.text();
+    },
   };
 
   const ocr = {
@@ -998,6 +1096,15 @@
     p21,
     eclipse,
     sxe,
+    sageX3,
+    ifs,
+    oracleFusion,
+    ramco,
+    jde,
+    plex,
+    jobboss,
+    oracleEbs,
+    proalpha,
     razorpay,
     push,
     portal,
@@ -1030,6 +1137,13 @@
     email,
     auth: authMethods,
     accessRequests,
+    verticalPacks,
+    accessReview,
+    auditExport,
+    ap,
+    agentEval,
+    docaiRoute,
+    prospecting,
     notifications,
     ocr,
     scan,

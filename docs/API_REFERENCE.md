@@ -1039,3 +1039,94 @@ runner.
 
 Body: `{ call_id, to_number? }`. Transfers an in-progress call to
 the configured handoff number; marks status=`escalated`.
+
+
+## Phase 5.4b ERP endpoints
+
+Eight new ERP connectors share the canonical 5-endpoint shape
+(connect, sync, push, retry, health). They all behave identically at
+the API level — the ERP-specific differences (auth, base URL,
+field maps) are configured per-tenant via the connect call.
+
+For each ERP `<prefix>` in `{ifs, oracle_fusion, ramco, jde, plex,
+jobboss, oracle_ebs, proalpha}`:
+
+### `POST /api/<prefix>/connect` — admin
+
+Stores credentials on `tenant_settings` (encrypted via
+`ANVIL_SECRETS_KEY` when configured) and runs a probe call to
+validate them. Per-ERP request bodies:
+
+- **ifs**: `{ base_url, token_url, client_id, client_secret,
+  scope?, company?, projection? }`
+- **oracle_fusion**: `{ base_url, token_url, client_id,
+  client_secret, scope?, api_version?, business_unit? }`
+- **ramco**: `{ base_url, token_url, client_id, client_secret,
+  scope?, org_unit?, company? }`
+- **jde**: `{ base_url, environment, role, username, password,
+  device? }`
+- **plex**: `{ base_url, customer_id, api_key, pcn? }`
+- **jobboss**: `{ base_url, token, company? }`
+- **oracle_ebs**: `{ base_url, username, password,
+  responsibility?, org_id? }`
+- **proalpha**: `{ base_url, username, password, company? }`
+
+Response: `{ ok, probe_status, probe_error, storage_mode }`.
+
+### `POST /api/<prefix>/sync` — admin or cron
+
+Pulls customers / items / sales_orders into the local mirror
+tables `<prefix>_{customers, items, sales_orders}`. Body:
+
+- `entity?` — restrict to one entity (`customer | item |
+  sales_order | sales_order_status`).
+- `entities?` — array form of `entity`.
+- `full?: boolean` — bypass the high-water cursor for a full pull.
+
+Cron-only when called with `Authorization: Bearer $CRON_SECRET`;
+fans out to every tenant whose `<prefix>_base_url` is set.
+
+### `POST /api/<prefix>/push` — approve
+
+Body: `{ orderId, dry_run? }`. Translates the Anvil order to the
+ERP's sales-order shape and POSTs it. Recoverable failures (5xx /
+408 / 429 / network) land in `<prefix>_retry_queue`; permanent
+failures (4xx) return 502 immediately.
+
+### `POST /api/<prefix>/retry` — admin or cron
+
+Drains `<prefix>_retry_queue` with exponential backoff
+(1m / 5m / 15m / 60m / 4h / 12h). Body: `{ id?, limit? }`. Cron-only
+when called with `Authorization: Bearer $CRON_SECRET`.
+
+### `GET /api/<prefix>/health` — read
+
+Returns `{ configured, probe_ok, probe_error, base_url,
+connected_at, sync_state[], retry_pending }` for the calling tenant.
+
+## ERP credential storage
+
+Encrypted at rest in `tenant_settings` via AES-256-GCM
+(`_lib/secrets.js`). Per-ERP column families:
+
+- IFS: `ifs_base_url, ifs_token_url, ifs_scope, ifs_company,
+  ifs_projection, ifs_client_id, ifs_client_id_enc,
+  ifs_client_secret_enc, ifs_creds_iv, ifs_field_map,
+  ifs_connected_at`.
+- Oracle Fusion: `oracle_fusion_*` mirroring the IFS shape with
+  `api_version` and `business_unit` extras.
+- Ramco: `ramco_*` with `org_unit` + `company`.
+- JDE: `jde_*` carrying `environment`, `role`, `device` plus the
+  Basic-auth username/password as encrypted bytea.
+- Plex: `plex_base_url, plex_customer_id, plex_pcn,
+  plex_api_key_enc, plex_creds_iv`.
+- JobBoss: `jobboss_base_url, jobboss_company,
+  jobboss_token_enc, jobboss_creds_iv` plus the SFTP-fallback
+  fields `jobboss_sftp_*`.
+- Oracle EBS: `oracle_ebs_*` with `responsibility` + `org_id`.
+- proALPHA: `proalpha_*` with `company`.
+
+The matching mirror tables are
+`<prefix>_{customers, items, sales_orders, sync_state, sync_runs,
+retry_queue}` with RLS scoping by `tenant_id`. See migrations
+044 → 051 for the per-ERP DDL.

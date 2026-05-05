@@ -10,6 +10,7 @@ import { recordAudit } from "../../_lib/audit.js";
 import { tenantSettings, updateTenantSettings } from "../../_lib/stripe-client.js";
 import { razorpayEncryptCreds, razorpayDecryptCreds, razorpayFetch } from "../../_lib/razorpay-client.js";
 import { isSecretsConfigured } from "../../_lib/secrets.js";
+import { safeProbeError } from "../../_lib/sanitize.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -50,7 +51,7 @@ export default async function handler(req, res) {
     return json(res, 200, {
       ok: probe.ok,
       probe_status: probe.status,
-      probe_error: probe.ok ? null : (probe.body?.error?.description || probe.body?.error || probe.body?.raw),
+      probe_error: safeProbeError(probe, "connection_failed"),
       storage_mode: isSecretsConfigured() ? "encrypted" : "plaintext",
     });
   } catch (err) { sendError(res, err); }

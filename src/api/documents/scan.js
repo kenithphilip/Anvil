@@ -35,7 +35,13 @@ const ALLOWED_EXTENSIONS = new Set(
 );
 
 const CLAMAV_URL = process.env.CLAMAV_URL || "";
-const CLAMAV_REQUIRED = process.env.CLAMAV_REQUIRED === "true";
+// Audit follow-up (May 2026): when CLAMAV_URL is set, AV is
+// expected and an outage HARD-REJECTS uploads. The only way to
+// soft-warn instead is to explicitly set CLAMAV_REQUIRED=false.
+// Previous logic was inverted (default off unless explicitly
+// CLAMAV_REQUIRED=true), which silently let documents through on
+// AV outage. New semantics fail-closed by default.
+const CLAMAV_SOFT_WARN = process.env.CLAMAV_REQUIRED === "false";
 
 const extOf = (name) => String(name || "").toLowerCase().split(".").pop() || "";
 
@@ -80,7 +86,7 @@ export default async function handler(req, res) {
       // Audit H9: when CLAMAV_URL is configured, an unreachable
       // sidecar is a HARD reject. Previously soft-warn; an attacker
       // could upload via a coordinated AV-side outage.
-      if (!r.invoked && CLAMAV_URL && CLAMAV_REQUIRED !== false) {
+      if (!r.invoked && CLAMAV_URL && !CLAMAV_SOFT_WARN) {
         threats.push({ code: "AV_PROBE_FAILED", detail: name + " :: " + r.reason });
       }
     };

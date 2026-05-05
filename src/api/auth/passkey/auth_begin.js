@@ -41,8 +41,13 @@ export default async function handler(req, res) {
     // browser will then fail to find a matching credential.
     let userId = null;
     try {
-      const { data } = await svc.auth.admin.listUsers({ page: 1, perPage: 1000 });
-      const u = (data?.users || []).find((u) => u.email?.toLowerCase() === email);
+      // Audit follow-up (May 2026, regression of H11): switched from
+      // project-wide listUsers (which loaded every Supabase user
+      // across all tenants on this unauthenticated pre-auth endpoint)
+      // to a filtered single-row lookup. No cross-tenant emails are
+      // read into memory.
+      const { data } = await svc.auth.admin.listUsers({ page: 1, perPage: 1, email });
+      const u = (data?.users || [])[0];
       userId = u?.id || null;
     } catch (_) { userId = null; }
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Obara Ops sign-in callback</title>
+<title>Anvil sign-in callback</title>
 <style>
   body { font-family: Inter, system-ui, sans-serif; background: #fafaf9; color: #1c1917; padding: 32px; max-width: 520px; margin: 6vh auto; }
   h1 { font-size: 20px; margin-bottom: 12px; }
@@ -18,96 +18,14 @@
 <p id="message">Reading the magic link parameters from the URL.</p>
 <pre id="detail" style="display:none"></pre>
 <p>
-  <button id="back" style="display:none">Back to Obara Ops</button>
+  <button id="back" style="display:none">Back to Anvil</button>
 </p>
-<script>
-(function () {
-  function parseHashParams() {
-    var hash = window.location.hash.replace(/^#/, "");
-    var search = window.location.search.replace(/^\?/, "");
-    var combined = (hash + (hash && search ? "&" : "") + search).split("&").filter(Boolean);
-    var params = {};
-    combined.forEach(function (pair) {
-      var idx = pair.indexOf("=");
-      if (idx === -1) return;
-      params[decodeURIComponent(pair.slice(0, idx))] = decodeURIComponent(pair.slice(idx + 1));
-    });
-    return params;
-  }
-  // Hardened May 2026 (security audit C3).
-  //
-  //   Before: postMessage(..., "*") broadcast the session to any
-  //           window that opened the callback. A malicious popup
-  //           opener could trivially recover the access token.
-  //
-  //   After:  postMessage targets the callback page's own origin
-  //           only (window.location.origin). Cross-origin openers
-  //           cannot read the message.
-  //
-  // The localStorage write is intentionally retained at this stage:
-  // 43 v3 screens currently read the legacy key inline. The
-  // sessionStorage migration is tracked as a P1 follow-up to audit
-  // finding C5; it requires touching every consumer in lockstep.
-  function persistSession(params) {
-    var session = {
-      access_token: params.access_token || "",
-      refresh_token: params.refresh_token || "",
-      expires_at: params.expires_at ? Number(params.expires_at) : null,
-      type: params.type || null,
-    };
-    var ourOrigin = window.location.origin;
-    if (window.opener && typeof window.opener.postMessage === "function") {
-      try { window.opener.postMessage({ source: "obara-auth-callback", session: session }, ourOrigin); } catch (_) {}
-    }
-    try { localStorage.setItem("obara:backend_session", JSON.stringify(session)); } catch (_) {}
-    return session;
-  }
-  function showError(message, detail) {
-    document.getElementById("title").textContent = "Sign-in failed";
-    document.getElementById("title").className = "err";
-    document.getElementById("message").textContent = message;
-    if (detail) {
-      var el = document.getElementById("detail");
-      el.textContent = typeof detail === "string" ? detail : JSON.stringify(detail, null, 2);
-      el.style.display = "block";
-    }
-  }
-  function showOk(detail) {
-    document.getElementById("title").textContent = "Signed in";
-    document.getElementById("title").className = "ok";
-    document.getElementById("message").textContent = "Returning to Anvil...";
-    if (detail) {
-      var el = document.getElementById("detail");
-      el.textContent = JSON.stringify(detail, null, 2);
-      el.style.display = "block";
-    }
-    var back = document.getElementById("back");
-    back.style.display = "inline-block";
-    back.textContent = "Open Anvil";
-    function goHome() {
-      var pinned = false;
-      try { pinned = localStorage.getItem("obara:v3_pinned") === "1"; } catch (_) {}
-      var target = pinned ? "/v3.html" : "/";
-      if (window.opener && !window.opener.closed) {
-        try { window.close(); return; } catch (_) {}
-      }
-      window.location.replace(target);
-    }
-    back.addEventListener("click", goHome);
-    setTimeout(goHome, 1500);
-  }
-  var params = parseHashParams();
-  if (params.error) {
-    showError(params.error_description || params.error, params);
-    return;
-  }
-  if (!params.access_token) {
-    showError("Missing access token in URL", params);
-    return;
-  }
-  var session = persistSession(params);
-  showOk({ user: params.user || params.email || "(unknown)", expires_at: session.expires_at });
-})();
-</script>
+<!--
+  Hardened May 2026 (audit follow-up): the bootstrap was moved out
+  of an inline <script> block to /auth/callback.js so the CSP can
+  drop `script-src 'unsafe-inline'`. Same behaviour, sourced from a
+  same-origin file.
+-->
+<script src="/auth/callback.js"></script>
 </body>
 </html>

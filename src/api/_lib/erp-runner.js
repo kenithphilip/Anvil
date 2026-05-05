@@ -61,6 +61,23 @@ const claimRow = async (svc, prefix, rowId, claimedBy) => {
 // next retry; permanent failures or attempts >= max flip status to
 // gave_up.
 export const drainRetryQueue = async (svc, prefix, { tenantId, opts, replay, isRecoverable, claimedBy }) => {
+  // Audit follow-up (May 2026): reap stuck `processing` rows from
+  // crashed workers. The 059 migration's reset was one-shot at
+  // migration time; without an ongoing reaper here, a worker that
+  // claims a row and crashes mid-replay leaves the row permanently
+  // stuck (status='processing'), and it never appears in the
+  // status='pending' query below. We reset rows that have been
+  // claimed for more than 15 minutes back to pending; the next
+  // drain picks them up cleanly.
+  const stuckCutoff = new Date(Date.now() - 15 * 60_000).toISOString();
+  await svc.from(prefix + "_retry_queue").update({
+    status: "pending",
+    claimed_at: null,
+    claimed_by: null,
+  }).eq("tenant_id", tenantId)
+    .eq("status", "processing")
+    .lt("claimed_at", stuckCutoff);
+
   const q = svc.from(prefix + "_retry_queue").select("*")
     .eq("tenant_id", tenantId)
     .eq("status", "pending")

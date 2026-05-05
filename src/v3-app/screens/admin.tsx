@@ -66,8 +66,8 @@ const ADMIN_DRAWING_BASE_KEY = "obara:drawing_base_url";
 const CONTRACT_TYPES = ["ARC", "BLANKET", "AMC", "PROJECT"];
 
 const adminCrudFetch = async (path: string, opts: { method?: string; body?: any; headers?: Record<string, string> } = {}) => {
-  const cfg = (() => { try { return JSON.parse(localStorage.getItem("obara:backend_config") || "{}"); } catch (_) { return {}; } })();
-  const session = (() => { try { return JSON.parse(localStorage.getItem("obara:backend_session") || "null"); } catch (_) { return null; } })();
+  const cfg = (ObaraBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string };
+  const session = (ObaraBackend?.getSession?.() || null) as { access_token?: string } | null;
   const headers: Record<string, string> = { "Content-Type": "application/json", ...((opts.headers as Record<string, string>) || {}) };
   if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
   if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
@@ -143,7 +143,7 @@ const readCurrentUserId = (): string | null => {
     if (cached?.user?.id) return String(cached.user.id);
   } catch (_) { /* ignore */ }
   try {
-    const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
+    const session = (ObaraBackend?.getSession?.() || null) as { user?: { id?: string } } | null;
     if (session?.user?.id) return String(session.user.id);
   } catch (_) { /* ignore */ }
   return null;

@@ -9,6 +9,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { plmEncryptCreds, plmDecryptCreds, plmIsConfigured, plmProbe } from "../_lib/plm-client.js";
+import { safeProbeError } from "../_lib/sanitize.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -69,10 +70,18 @@ export default async function handler(req, res) {
       after: { system, base_url, probed, probeErr },
     });
 
+    // Audit follow-up (May 2026): never echo raw vendor error
+    // bodies. plm/connect was missed in the H6 sweep; previously
+    // returned `probeErr` which is the raw err.message from the PLM
+    // probe and could contain LDAP base DNs, internal hostnames,
+    // and partial credentials.
     return json(res, 200, {
       system_id: data.id,
       probed,
-      probe_error: probeErr,
+      probe_error: probed ? null : safeProbeError(
+        { ok: false, status: 0, body: { error: probeErr } },
+        "connection_failed",
+      ),
     });
   } catch (err) {
     return sendError(res, err);

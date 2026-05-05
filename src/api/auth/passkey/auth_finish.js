@@ -63,11 +63,14 @@ export default async function handler(req, res) {
     }
     const svc = serviceClient();
 
-    // Resolve the user.
+    // Resolve the user. Audit follow-up (May 2026, regression of
+    // H11): use email-filtered listUsers instead of project-wide
+    // pull. Closes a cross-tenant enumeration vector on this
+    // pre-authentication endpoint.
     let user = null;
     try {
-      const { data } = await svc.auth.admin.listUsers({ page: 1, perPage: 1000 });
-      user = (data?.users || []).find((u) => u.email?.toLowerCase() === email) || null;
+      const { data } = await svc.auth.admin.listUsers({ page: 1, perPage: 1, email });
+      user = (data?.users || [])[0] || null;
     } catch (_) { user = null; }
     if (!user) {
       return json(res, 401, { error: { code: "PASSKEY_FAIL", message: "Could not verify passkey." } });

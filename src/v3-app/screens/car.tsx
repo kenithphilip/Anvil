@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
+import { ObaraBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired CAR Reports (Corrective Action Reports)
@@ -43,9 +44,9 @@ const carFmtDate = (iso) => {
 };
 
 const carFetchPath = async (path) => {
-  const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
+  const cfg = (ObaraBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string };
   if (!cfg.url) return [];
-  const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
+  const session = (ObaraBackend?.getSession?.() || null) as { access_token?: string } | null;
   const headers = { "Content-Type": "application/json" };
   if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
   if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;

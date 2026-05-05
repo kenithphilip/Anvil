@@ -579,3 +579,51 @@ After the six Critical findings and the eleven High findings are remediated, CC6
 - Run a follow-up audit pass after Phase 6.7 (ITAR/GovCloud) is scoped, as that work introduces a parallel deployment with its own threat model.
 
 The audit was conducted by three parallel domain reviews on commit `e7d4c75`. Every finding has been verified against the actual file contents at the cited line numbers. No CVEs were fabricated. The compliance posture statements are based on observable code and configuration, not on assumptions about the deployment environment.
+
+## 6. Follow-up audit pass (May 2026)
+
+Three fresh agents re-reviewed the hardened code after the P0/P1/P2/P3 sweep landed. The pass surfaced the items below; every one is fixed in this same commit.
+
+### F1. `claim_tenant_membership` privilege escalation
+
+Migration 058 added a `SECURITY DEFINER` RPC for first-user tenant claim with no `REVOKE EXECUTE` and no caller-identity guard. PostgREST exposes any function `authenticated` can `EXECUTE`, and the new RPC inherited that grant from `PUBLIC`. Any signed-in user could `POST /rest/v1/rpc/claim_tenant_membership` with a foreign `p_tenant_id` and self-insert into another tenant's `tenant_members` table as `status='pending'`, then social-engineer an admin into approving. **Fix:** migration `060_security_followup.sql` revokes EXECUTE from `PUBLIC`, `anon`, `authenticated`; grants to `service_role` only; pins `search_path = public, pg_temp`; and adds a `current_setting('request.jwt.claims')->>'sub'` guard inside the function body that raises `42501` if the JWT user disagrees with the parameter. Belt-and-braces against a future migration accidentally re-granting EXECUTE.
+
+### F2. Stripe + Razorpay webhook double-credit
+
+Stripe fires both `checkout.session.completed` and `payment_intent.succeeded` for every Checkout Session; Razorpay retries on any non-2xx. Both webhook handlers called `recordPayment` + `updateInvoicePaid` without checking for an existing `payment_records` row keyed by `stripe_payment_intent_id`. A redelivery added paid_amount twice, leaving `paid_amount > grand_total` and corrupting AR reconciliation. **Fix:** `recordPayment` now does a pre-update SELECT on `payment_records` keyed by `stripe_payment_intent_id` (Stripe) or `"razorpay:" + payment_intent_id` (Razorpay) and returns `{ duplicate: true }` if present; the caller skips `updateInvoicePaid` on duplicate.
+
+### F3. AP `record_payment` full-payment idempotency
+
+`/api/ap/deductions` POST with `paid_amount >= grand_total` updated the invoice unconditionally. A double-click on the "Record payment" UI button accumulated paid_amount twice. **Fix:** when the invoice is already in `status='paid'`, the handler returns `{ ok: true, full_payment: true, already_recorded: true }` without touching the row.
+
+### F4. `auth.admin.listUsers` regression in passkey + signup
+
+The H4 sweep moved tenancy admin lookups onto bounded `getUserById` calls, but `auth/passkey/auth_begin.js`, `auth/passkey/auth_finish.js`, and `auth/signup.js` still called project-wide `listUsers({ perPage: 1000 })` (or 200) and filtered in JS. At ~10k tenants per Supabase project this is both slow and a SOC 2 CC6.1 segregation issue (one tenant's auth check reads every other tenant's user list into memory). **Fix:** all three sites now call `listUsers({ page: 1, perPage: 1, email })` so Supabase returns a single matching row.
+
+### F5. CSP `script-src 'unsafe-inline'`
+
+`vercel.json`'s CSP retained `'unsafe-inline'` for script-src to support `public/auth/callback.html`'s inline bootstrap. **Fix:** the bootstrap moved to `public/auth/callback.js` (same-origin file), and the CSP now reads `script-src 'self'` cleanly.
+
+### F6. OCR `unverified` gate gap
+
+Migration 059 backfilled `scan_status='unverified'` for documents created before the ClamAV scan column existed. `/api/documents/ocr` rejected only `pending`/missing scan_status, allowing pre-migration documents to skip the scan. **Fix:** the gate now rejects `unverified` as well.
+
+### F7. Stuck-row reaper for ERP retry queue
+
+Audit M10 added an atomic `WHERE status='pending' RETURNING` claim on `*_retry_queue`. A worker that crashes mid-replay leaves the row permanently `processing`; the migration 059 reset was one-shot and didn't cover ongoing crashes. **Fix:** `drainRetryQueue` now resets rows with `claimed_at < now() - 15min` back to `pending` at the start of each tick.
+
+### F8. CLAMAV soft-warn default
+
+`src/api/documents/scan.js` shipped with `CLAMAV_REQUIRED` defaulting to false, meaning the production deployment was failing open if the operator forgot the env var. **Fix:** flag inverted to `CLAMAV_SOFT_WARN` (default false → hard reject when `CLAMAV_URL` is set but the scan fails to invoke). A deliberate soft-warn is now opt-in via `CLAMAV_REQUIRED=false`.
+
+### F9. PLM + Razorpay `connect.js` raw probe error
+
+Two `connect.js` endpoints (`plm/connect`, `billing/razorpay/connect`) were missed by the H6 sweep that wrapped probe errors in `safeProbeError`. They returned the raw vendor error body, leaking LDAP base DNs, internal hostnames, or Razorpay error stack traces. **Fix:** both now route through `safeProbeError`.
+
+### F10. C5 part 2: 13 screens off `localStorage.getItem`
+
+Phase 5 audit ticket C5 landed sessionStorage-first session storage in the SDK but kept a localStorage mirror because 13 v3 screens read the legacy key inline. Until those readers move to `ObaraBackend.getSession()`, a malicious supply-chain script in any other tab could read the cross-tab JWT. **Fix:** all 13 screens (`admin`, `amc`, `anomaly`, `approvals`, `car`, `einvoice`, `evals`, `forecasts`, `internal-sos`, `items`, `service-visits`, `shipments`, `studio`) now go through the SDK helpers. The localStorage mirror in `anvil-client.js` remains for the popup-callback handoff (callback.html → opener tab) and is tracked for removal once that flow moves to `BroadcastChannel`.
+
+### Verification
+
+`npm run check` clean. `npm run audit` clean (35 mutation handlers OK; 0 RBAC findings; 0 dead handlers; 0 cross-module issues). `npm run test` 271/271 pass across 74 files.

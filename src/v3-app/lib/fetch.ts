@@ -1,8 +1,12 @@
 // Shared backend-fetch helper. Consolidates the per-screen
 // `<thing>Fetch` helpers the converter copied across many files.
-// Reads the active backend URL + session from localStorage and
-// builds the Authorization + x-obara-tenant headers, then calls
-// fetch() with the supplied init.
+//
+// Hardened May 2026 (security audit C5 part 2). Was reading the
+// session + config from localStorage directly, which duplicated
+// the SDK's storage logic and bypassed the sessionStorage-primary
+// migration in anvil-client.js. Now delegates to
+// ObaraBackend.getSession / getConfig so the SDK is the single
+// source of truth.
 //
 // Returns the parsed JSON body. Throws on non-2xx responses with
 // the response body included in the error message so screens can
@@ -13,6 +17,8 @@
 // places that hit endpoints not yet exposed on the client (or that
 // need to compose a one-off URL).
 
+import { ObaraBackend } from "./api";
+
 interface BackendConfig {
   url?: string;
   tenantId?: string;
@@ -22,20 +28,11 @@ interface SessionEnvelope {
   access_token?: string;
 }
 
-const safeParse = <T>(raw: string | null, fallback: T): T => {
-  try { return raw ? JSON.parse(raw) : fallback; }
-  catch (_) { return fallback; }
-};
+const readConfig = (): BackendConfig =>
+  (ObaraBackend?.getConfig?.() as BackendConfig) || {};
 
-const readConfig = (): BackendConfig => safeParse<BackendConfig>(
-  typeof localStorage !== "undefined" ? localStorage.getItem("obara:backend_config") : null,
-  {},
-);
-
-const readSession = (): SessionEnvelope | null => safeParse<SessionEnvelope | null>(
-  typeof localStorage !== "undefined" ? localStorage.getItem("obara:backend_session") : null,
-  null,
-);
+const readSession = (): SessionEnvelope | null =>
+  (ObaraBackend?.getSession?.() as SessionEnvelope | null) || null;
 
 export interface BackendFetchOpts extends Omit<RequestInit, "body" | "headers"> {
   body?: unknown;

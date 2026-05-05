@@ -3,6 +3,7 @@ import { fmtINRShort } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { RBAC } from "../lib/rbac";
+import { ObaraBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired Approvals queue
@@ -16,8 +17,8 @@ const WiredApprovals = () => {
   const [bump, setBump] = u(0);
 
   const fetchApprovals = async () => {
-    const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
-    const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
+    const cfg = (ObaraBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string };
+    const session = (ObaraBackend?.getSession?.() || null) as { access_token?: string } | null;
     if (!cfg.url) throw new Error("Backend URL not configured");
     const headers = { "Content-Type": "application/json" };
     if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
@@ -28,8 +29,8 @@ const WiredApprovals = () => {
   };
 
   const decideApproval = async (id, order_id, approver_role, status) => {
-    const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
-    const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
+    const cfg = (ObaraBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string };
+    const session = (ObaraBackend?.getSession?.() || null) as { access_token?: string } | null;
     if (!cfg.url) throw new Error("Backend URL not configured");
     const headers = { "Content-Type": "application/json" };
     if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;

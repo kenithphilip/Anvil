@@ -131,18 +131,45 @@ export default async function handler(req, res) {
       raw: body,
     }).eq("id", rpQ.data.id);
     if (invoiceUpdate && rpQ.data.invoice_id) {
-      const inv = await svc.from("invoices").select("grand_total, paid_amount").eq("id", rpQ.data.invoice_id).maybeSingle();
-      if (inv.data) {
-        // Audit M9 (May 2026): integer-cents arithmetic. JS double
-        // precision drops cents on certain inputs (0.1+0.2=0.30000…4).
-        // Money columns are numeric(14,2); we round each input to
-        // cents, sum as int, divide back to decimal at the boundary.
-        const cents = (n) => Math.round(Number(n || 0) * 100);
+      // Audit follow-up (May 2026): Razorpay retries webhooks on
+      // any non-2xx or timeout. Without idempotency, a retry adds
+      // the same amount to invoice.paid_amount again. We guard on
+      // a previously-recorded `payment_records` row keyed by
+      // razorpay_payment_id (when available) or the razorpay_order_id
+      // as fallback. If the row is already present, skip the
+      // invoice update.
+      const cents = (n) => Math.round(Number(n || 0) * 100);
+      const piId = payment?.id || rpQ.data.razorpay_payment_id;
+      let alreadyRecorded = false;
+      if (piId) {
+        const prior = await svc.from("payment_records").select("id")
+          .eq("tenant_id", tenantId)
+          .eq("invoice_id", rpQ.data.invoice_id)
+          .eq("stripe_payment_intent_id", "razorpay:" + piId)
+          .limit(1);
+        if (!prior.error && (prior.data || []).length > 0) alreadyRecorded = true;
+      }
+      const inv = await svc.from("invoices").select("grand_total, paid_amount, status")
+        .eq("id", rpQ.data.invoice_id).maybeSingle();
+      if (inv.data && !alreadyRecorded) {
         const paid = (cents(rpQ.data.amount) + cents(inv.data.paid_amount)) / 100;
         await svc.from("invoices").update({
           ...invoiceUpdate,
           paid_amount: paid,
         }).eq("id", rpQ.data.invoice_id);
+        // Mark this payment as recorded so a retry of the same
+        // event is a no-op. We reuse the stripe_payment_intent_id
+        // column with a "razorpay:" prefix to keep the unique
+        // constraint useful across both providers.
+        await svc.from("payment_records").upsert({
+          tenant_id: tenantId,
+          invoice_id: rpQ.data.invoice_id,
+          amount: rpQ.data.amount,
+          currency: (rpQ.data.currency || inv.data.currency || "INR").toUpperCase(),
+          method: "razorpay",
+          stripe_payment_intent_id: piId ? "razorpay:" + piId : null,
+          paid_at: new Date().toISOString(),
+        }, { onConflict: "tenant_id,stripe_payment_intent_id" });
       }
     }
     // Lightweight audit (no ctx since this is webhook-driven).

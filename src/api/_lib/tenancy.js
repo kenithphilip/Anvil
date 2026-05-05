@@ -142,14 +142,24 @@ export const listTenantAdmins = async (svc, tenantId) => {
     .eq("status", "approved");
   const ids = (members || []).map((m) => m.user_id);
   if (!ids.length) return [];
-  const { data: users } = await svc.auth.admin.listUsers({ page: 1, perPage: 1000 });
-  const byId = new Map((users?.users || []).map((u) => [u.id, u]));
+  // Audit follow-up (May 2026, regression of H11): replaced the
+  // project-wide listUsers call (which fetched every Supabase user
+  // across all tenants on every signup, and would silently drop
+  // accounts past the 1000-user pagination boundary) with a bounded
+  // per-admin getUserById loop. Size is exactly the admin count.
+  const userPairs = await Promise.all(ids.map(async (id) => {
+    try {
+      const { data } = await svc.auth.admin.getUserById(id);
+      return [id, data?.user || null];
+    } catch (_) { return [id, null]; }
+  }));
+  const byId = new Map(userPairs);
   return ids.map((id) => {
     const u = byId.get(id) || {};
     return {
       user_id: id,
-      email: u.email || null,
-      display_name: u.user_metadata?.name || u.user_metadata?.full_name || null,
+      email: u?.email || null,
+      display_name: u?.user_metadata?.name || u?.user_metadata?.full_name || null,
     };
   });
 };

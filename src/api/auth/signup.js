@@ -61,9 +61,14 @@ export default async function handler(req, res) {
     // Reject duplicate emails up front. Supabase admin.createUser would
     // also reject, but its error message is opaque ("User already
     // registered"); we want a clear surface for the UI.
-    const existing = await svc.auth.admin.listUsers({ page: 1, perPage: 200 });
+    //
+    // Audit follow-up (May 2026, regression of H11): switched from
+    // project-wide listUsers (perPage: 200, which silently dropped
+    // accounts past that limit and let duplicates through on busy
+    // deployments) to a single-row email-filtered lookup.
+    const existing = await svc.auth.admin.listUsers({ page: 1, perPage: 1, email });
     if (existing.error) throw new Error("listUsers: " + existing.error.message);
-    const dup = (existing.data?.users || []).find((u) => u.email?.toLowerCase() === email);
+    const dup = (existing.data?.users || [])[0];
     if (dup) {
       return json(res, 409, { error: { message: "An account with that email already exists. Sign in instead." } });
     }

@@ -62,7 +62,15 @@ export default async function handler(req, res) {
       const shortCents = expectedCents - paidCents;
 
       if (shortCents <= 0) {
-        // Paid in full or overpaid; just patch the invoice.
+        // Audit follow-up (May 2026): idempotency on full payment.
+        // A double-click on the "Record payment" button (or a UI
+        // retry on a slow response) would otherwise add `paidCents`
+        // again, leaving paid_amount > grand_total and corrupting
+        // reconciliation. If the invoice is already `paid`, return
+        // a no-op success.
+        if (inv.data.status === "paid") {
+          return json(res, 200, { ok: true, full_payment: true, already_recorded: true });
+        }
         await svc.from("invoices").update({
           paid_amount: fromCents(existingPaidCents + paidCents),
           status: "paid",
@@ -100,13 +108,13 @@ export default async function handler(req, res) {
         action: "deduction_flagged",
         objectType: "invoice",
         objectId: inv.data.id,
-        detail: "short=" + short + "::deduction=" + (ins.data?.id || ""),
+        detail: "short=" + fromCents(shortCents).toFixed(2) + "::deduction=" + (ins.data?.id || ""),
       });
 
       return json(res, 200, {
         ok: true,
         full_payment: false,
-        short_amount: short,
+        short_amount: fromCents(shortCents),
         deduction_id: ins.data?.id || null,
       });
     }

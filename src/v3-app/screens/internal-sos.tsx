@@ -126,8 +126,8 @@ const WiredInternalSosCRUD = () => {
       if (typeof fn === "function") {
         result = await fn(payload);
       } else {
-        const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
-        const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
+        const cfg = (ObaraBackend?.getConfig?.() || {});
+        const session = (ObaraBackend?.getSession?.() || null);
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
         if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
@@ -158,8 +158,8 @@ const WiredInternalSosCRUD = () => {
       if (typeof fn === "function") {
         await fn(id);
       } else {
-        const cfg = JSON.parse(localStorage.getItem("obara:backend_config") || "{}");
-        const session = JSON.parse(localStorage.getItem("obara:backend_session") || "null");
+        const cfg = (ObaraBackend?.getConfig?.() || {});
+        const session = (ObaraBackend?.getSession?.() || null);
         const headers: Record<string, string> = {};
         if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
         if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;

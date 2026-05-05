@@ -36,10 +36,23 @@ const findInvoiceFromMetadata = async (svc, meta) => {
   return inv.data || null;
 };
 
+// Records the payment idempotently. Returns { duplicate: true } if
+// a payment_records row already exists for this
+// (tenant_id, stripe_payment_intent_id), in which case the caller
+// MUST NOT call updateInvoicePaid again (audit follow-up: Stripe
+// fires both checkout.session.completed and
+// payment_intent.succeeded for every Checkout Session, so without
+// this guard a single $1000 payment credits the invoice $2000).
 const recordPayment = async (svc, invoice, paymentIntent, amount, currency) => {
-  // Upsert via the unique (tenant_id, stripe_payment_intent_id)
-  // constraint. If the same event is delivered twice, the row stays
-  // single.
+  if (paymentIntent) {
+    const existing = await svc.from("payment_records").select("id")
+      .eq("tenant_id", invoice.tenant_id)
+      .eq("stripe_payment_intent_id", paymentIntent)
+      .limit(1);
+    if (!existing.error && (existing.data || []).length > 0) {
+      return { duplicate: true };
+    }
+  }
   const row = {
     tenant_id: invoice.tenant_id,
     invoice_id: invoice.id,
@@ -50,7 +63,6 @@ const recordPayment = async (svc, invoice, paymentIntent, amount, currency) => {
     paid_at: new Date().toISOString(),
   };
   await svc.from("payment_records").upsert(row, { onConflict: "tenant_id,stripe_payment_intent_id" });
-  // Audit so the meter sees it.
   await svc.from("audit_events").insert({
     tenant_id: invoice.tenant_id,
     action: "payment_received",
@@ -59,6 +71,7 @@ const recordPayment = async (svc, invoice, paymentIntent, amount, currency) => {
     actor_user_id: null,
     detail: amount.toFixed(2) + " " + (currency || invoice.currency || "USD"),
   });
+  return { duplicate: false };
 };
 
 // Audit M9 (May 2026): integer-cents arithmetic. Money columns are
@@ -126,8 +139,13 @@ export default async function handler(req, res) {
       if (invoice) {
         const amount = Number(session.amount_total || 0) / 100;
         const currency = (session.currency || invoice.currency || "USD").toUpperCase();
-        await recordPayment(svc, invoice, session.payment_intent, amount, currency);
-        await updateInvoicePaid(svc, invoice, amount);
+        const result = await recordPayment(svc, invoice, session.payment_intent, amount, currency);
+        // Audit follow-up (May 2026): only credit the invoice when
+        // this is a fresh payment record. Stripe fires BOTH
+        // checkout.session.completed AND payment_intent.succeeded
+        // for every Checkout Session; without this guard we
+        // double-credit the invoice.
+        if (!result.duplicate) await updateInvoicePaid(svc, invoice, amount);
       }
     } else if (event.type === "payment_intent.succeeded") {
       const pi = event.data.object;
@@ -135,8 +153,8 @@ export default async function handler(req, res) {
       if (invoice) {
         const amount = Number(pi.amount_received || pi.amount || 0) / 100;
         const currency = (pi.currency || invoice.currency || "USD").toUpperCase();
-        await recordPayment(svc, invoice, pi.id, amount, currency);
-        await updateInvoicePaid(svc, invoice, amount);
+        const result = await recordPayment(svc, invoice, pi.id, amount, currency);
+        if (!result.duplicate) await updateInvoicePaid(svc, invoice, amount);
       }
     } else if (event.type === "charge.refunded") {
       const charge = event.data.object;

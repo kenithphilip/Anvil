@@ -15,8 +15,8 @@ const forecastFetch = async () => {
   // returns the same snapshot rows so we use it directly.
   if (ObaraBackend?.forecast?.get) return ObaraBackend.forecast.get();
   // Fallback to direct fetch
-  const cfg = (() => { try { return JSON.parse(localStorage.getItem("obara:backend_config") || "{}"); } catch (_) { return {}; } })();
-  const session = (() => { try { return JSON.parse(localStorage.getItem("obara:backend_session") || "null"); } catch (_) { return null; } })();
+  const cfg = (ObaraBackend?.getConfig?.() || {});
+  const session = (ObaraBackend?.getSession?.() || null);
   if (!cfg.url) throw new Error("Backend URL not configured");
   const headers = { "Content-Type": "application/json" };
   if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;

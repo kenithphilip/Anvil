@@ -34,6 +34,20 @@
     });
     return params;
   }
+  // Hardened May 2026 (security audit C3).
+  //
+  //   Before: postMessage(..., "*") broadcast the session to any
+  //           window that opened the callback. A malicious popup
+  //           opener could trivially recover the access token.
+  //
+  //   After:  postMessage targets the callback page's own origin
+  //           only (window.location.origin). Cross-origin openers
+  //           cannot read the message.
+  //
+  // The localStorage write is intentionally retained at this stage:
+  // 43 v3 screens currently read the legacy key inline. The
+  // sessionStorage migration is tracked as a P1 follow-up to audit
+  // finding C5; it requires touching every consumer in lockstep.
   function persistSession(params) {
     var session = {
       access_token: params.access_token || "",
@@ -41,8 +55,9 @@
       expires_at: params.expires_at ? Number(params.expires_at) : null,
       type: params.type || null,
     };
+    var ourOrigin = window.location.origin;
     if (window.opener && typeof window.opener.postMessage === "function") {
-      try { window.opener.postMessage({ source: "obara-auth-callback", session: session }, "*"); } catch (_) {}
+      try { window.opener.postMessage({ source: "obara-auth-callback", session: session }, ourOrigin); } catch (_) {}
     }
     try { localStorage.setItem("obara:backend_session", JSON.stringify(session)); } catch (_) {}
     return session;

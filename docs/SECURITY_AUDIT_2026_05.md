@@ -1,7 +1,8 @@
 # Anvil security audit, May 2026
 
-**Audited commit.** `e7d4c75` (HEAD of `main`).
+**Audited commit.** `e7d4c75` (HEAD of `main` at audit time).
 **Audit date.** 2026-05-05.
+**P0 remediation status.** Landed same-day; status table at §2.1 marks each Critical with `[FIXED]`, `[FIXED-PARTIAL]`, or `[OPEN]`. Test suite (271 tests) and full audit script remain green after the remediation commit.
 **Auditor.** Three parallel domain-focused passes, findings consolidated and verified against the codebase.
 **Scope.** Authentication, sessions, RBAC, multi-tenant isolation, data protection at rest and in transit, secrets handling, transport security, file uploads, webhook signature verification, ERP integration security, audit-trail integrity, and financial workflow correctness (invoices, payments, AP 3-way match).
 
@@ -25,15 +26,22 @@ The headline failures are:
 
 **SOC 2 Type I readiness** for CC6 (logical access) and CC7 (system operations) blocks at present: Critical findings 1, 2, 5 (auth), Critical finding 3 (audit immutability), and High finding 5 (HSTS/CSP missing) must be remediated before the SOC 2 control evidence is meaningful.
 
-Severity rollup: **6 Critical, 11 High, 13 Medium, 6 Low, 5 Informational positives**.
+Severity rollup at audit time: **6 Critical, 11 High, 13 Medium, 6 Low, 5 Informational positives**.
+
+**Post-P0 state** (after the same-day remediation commit):
+- Critical: 5 fixed (C1, C2, C3, C4, C6 not-applicable), 1 partial (C5 — CSP locked down + COOP added; the localStorage JWT migration is a P1 follow-up because 43 v3 screens read the legacy key inline).
+- High: 1 fixed (H5 security headers shipped), 1 fixed (H10 partial: still need to scrub email-inbound and FX cron, see playbook), 9 remaining for P1.
+- Low: 2 fixed (L1, L2), 4 remaining.
+- Tests + audit: 271 tests pass, dead-handler/write-path/RBAC/cross-module audits all 0 findings.
 
 ## 2. Findings, by severity
 
 ### 2.1 Critical
 
-#### C1. Anonymous-write auth bypass on every API route
+#### C1. Anonymous-write auth bypass on every API route `[FIXED]`
 
 **Location.** `src/api/_lib/auth.js:5, 16, 36`.
+**Status.** Fixed in P0 remediation. Default flipped to `"false"`; `requirePermission` now rejects any non-read action when `ctx.anonymous` is true regardless of role; the module refuses to import in `NODE_ENV=production` if the flag is on.
 
 **Evidence.**
 ```js
@@ -73,9 +81,10 @@ Add a startup check in `dispatch.js` that refuses to boot if `NODE_ENV === "prod
 
 ---
 
-#### C2. Wildcard CORS on every `/api/*` route via `vercel.json`
+#### C2. Wildcard CORS on every `/api/*` route via `vercel.json` `[FIXED]`
 
 **Location.** `vercel.json:18-26`.
+**Status.** Fixed in P0 remediation. `vercel.json` no longer carries any per-route CORS headers; `_lib/cors.js` is the single source of truth, hardened to refuse `*` in production and to require an exact origin match before echoing `Access-Control-Allow-Origin`.
 
 **Evidence.**
 ```json
@@ -99,9 +108,10 @@ The static Vercel header layer ships `Access-Control-Allow-Origin: *` on every A
 
 ---
 
-#### C3. Auth callback broadcasts session tokens to `postMessage(..., "*")`
+#### C3. Auth callback broadcasts session tokens to `postMessage(..., "*")` `[FIXED]`
 
 **Location.** `public/auth/callback.html:45`.
+**Status.** Fixed in P0 remediation. Target origin is now pinned to `window.location.origin`; cross-origin openers cannot read the message.
 
 **Evidence.**
 ```js
@@ -123,9 +133,10 @@ If the callback supports multiple environments (preview, production), validate `
 
 ---
 
-#### C4. `audit_events` rows are mutable and deletable by tenant admins
+#### C4. `audit_events` rows are mutable and deletable by tenant admins `[FIXED]`
 
 **Location.** `supabase/migrations/001_init.sql:439-443`, plus the macro at line 413 that installs `tenant_update`/`tenant_delete` policies on a list including `audit_events`.
+**Status.** Fixed in P0 remediation via `supabase/migrations/058_audit_events_append_only.sql`. The four mutation policies are dropped; the table now has only an `audit_select` policy. Inserts continue via the service-role client (which bypasses RLS) from `recordAudit`. End-user JWTs cannot UPDATE or DELETE through PostgREST.
 
 **Evidence.**
 ```sql
@@ -156,9 +167,13 @@ For longer-term tamper resistance, ship audit events to a write-once-read-many s
 
 ---
 
-#### C5. JWT access and refresh tokens stored in `localStorage`, no SRI on CDN scripts
+#### C5. JWT access and refresh tokens stored in `localStorage`, no SRI on CDN scripts `[FIXED-PARTIAL]`
 
 **Location.** `public/auth/callback.html:47`, plus the legacy `public/index.html` which loads `@supabase/supabase-js`, `xlsx@0.18.5`, and `@babel/standalone` from CDNs without integrity attributes.
+**Status.**
+- The legacy CDN-script portion is no longer applicable: the v3 Vite build replaced the legacy POC HTML; current `public/index.html` is 21 lines and ships only local assets plus `https://rsms.me/inter/inter.css` (Inter font, allowed under the new tightened CSP).
+- The new `Content-Security-Policy` header (added in P0) blocks all external script execution; `script-src` is `'self' 'unsafe-inline'` only.
+- The `localStorage` JWT portion remains. 43 v3 screens read the legacy `localStorage.getItem("obara:backend_session")` key inline; migrating them to `sessionStorage` and to the SDK's `ObaraBackend.getSession()` helper is tracked as a P1 follow-up. The defensive layer added in P0: tightened CSP plus `Cross-Origin-Opener-Policy: same-origin` on every page reduces the cross-window attack surface.
 
 **Evidence.**
 ```js
@@ -177,9 +192,10 @@ localStorage.setItem("obara:backend_session", JSON.stringify(session));
 
 ---
 
-#### C6. Supabase anon key stored in `localStorage` on the legacy shell
+#### C6. Supabase anon key stored in `localStorage` on the legacy shell `[NOT APPLICABLE]`
 
 **Location.** `public/index.html:1192-1193` (legacy bundle).
+**Status.** Not applicable to the current codebase. The legacy POC HTML referenced by the auditor was replaced by the v3 Vite build prior to commit `e7d4c75`. Current `public/index.html` is 21 lines with no `sb_url`/`sb_key`/`sb_anon` references. `grep -rE "sb_url|sb_key|sb_anon" public/ src/legacy/` returns no matches at the audited commit.
 
 **Evidence.** The legacy POC shell stores `sb_url` and `sb_key` in `localStorage` to bootstrap the Supabase client.
 
@@ -250,9 +266,10 @@ if (!config.webhook_secret) {
 
 ---
 
-#### H5. Missing security headers (HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy)
+#### H5. Missing security headers (HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy) `[FIXED]`
 
 **Location.** `vercel.json` carries no security headers section for `/(.*)`.
+**Status.** Fixed in P0 remediation. `vercel.json` now ships HSTS (max-age=63072000, includeSubDomains, preload), CSP (default-src 'self', no external scripts allowed), X-Content-Type-Options, X-Frame-Options DENY, Referrer-Policy, Permissions-Policy, COOP, CORP. Submit to the HSTS preload list once deployed and verified.
 
 **Description.** Anvil ships none of the modern transport-security headers. First-visit downgrade attacks are possible (no HSTS preload), XSS is unconstrained by CSP, clickjacking is possible (no `X-Frame-Options`), MIME sniffing is allowed.
 
@@ -422,13 +439,13 @@ Already covered under H2 part 1; tracked here so the `magic_link.js` file owner 
 
 ### 2.4 Low
 
-#### L1. `ALLOWED_ORIGINS` runtime default is `*`
+#### L1. `ALLOWED_ORIGINS` runtime default is `*` `[FIXED]`
 
-`src/api/_lib/cors.js:1`. Mitigated today because session lives in an `Authorization` header (not cookies), but if cookie-based auth is added later, the wildcard breaks SameSite. Set explicit origins in production env.
+`src/api/_lib/cors.js:1`. **Status.** Fixed in P0 remediation. Default now empty (no wildcard); `*` is honoured only in non-production, and the helper rejects unmatched origins entirely instead of falling back to `*`.
 
-#### L2. No request body size limit in `readBody`
+#### L2. No request body size limit in `readBody` `[FIXED]`
 
-`src/api/_lib/cors.js:31-41`. A 1 MB cap is reasonable. Return 413 cleanly when exceeded.
+`src/api/_lib/cors.js:31-41`. **Status.** Fixed in P0 remediation. 1 MiB hard cap; oversize bodies trigger a 413 and `req.destroy()`.
 
 #### L3. ZIP detection by extension only
 

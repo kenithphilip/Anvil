@@ -2,7 +2,25 @@ import { serviceClient, userClient } from "./supabase.js";
 import { ensureMembership, isAutoOnboardEnabled } from "./tenancy.js";
 
 const DEFAULT_TENANT = process.env.DEFAULT_TENANT_ID || "00000000-0000-0000-0000-000000000001";
-const ALLOW_ANONYMOUS = String(process.env.ALLOW_ANONYMOUS_TENANT || "true").toLowerCase() === "true";
+// Hardened May 2026 (security audit C1). Previously defaulted to
+// "true", which combined with the wildcard CORS in vercel.json meant
+// any unauthenticated cross-origin caller could write business data
+// on the default tenant. The default is now "false"; anonymous-write
+// is also blocked at requirePermission below regardless of role.
+//
+// Production deployments must NEVER set this to true. The startup
+// guard further down refuses to operate when NODE_ENV=production
+// and the flag is on.
+const ALLOW_ANONYMOUS = String(process.env.ALLOW_ANONYMOUS_TENANT || "false").toLowerCase() === "true";
+const NODE_ENV = process.env.NODE_ENV || "development";
+if (ALLOW_ANONYMOUS && NODE_ENV === "production") {
+  // Fatal: refuse to import the auth module in this configuration.
+  // dispatch.js will fail to start and the deploy will roll back.
+  throw new Error(
+    "ALLOW_ANONYMOUS_TENANT=true is forbidden in production. " +
+    "Unset the env var or set it to false."
+  );
+}
 
 // Role permission sets. Mirrors the frontend matrix in
 // src/v3-app/lib/rbac.ts. Run `node src/scripts/audit-rbac.mjs` to
@@ -91,6 +109,17 @@ export const resolveContext = async (req) => {
 };
 
 export const requirePermission = (ctx, level) => {
+  // Hard gate: anonymous callers may at most read. Even in dev,
+  // never let an unauthenticated caller cross into write/approve/admin.
+  // Belt-and-braces with the ALLOW_ANONYMOUS default flip above; this
+  // guard is the single line that fails closed if the env var is ever
+  // accidentally re-enabled.
+  if (ctx.anonymous && level !== "read") {
+    const err = new Error("Authentication required for " + level + " actions");
+    err.status = 401;
+    err.code = "AUTH_REQUIRED";
+    throw err;
+  }
   const required = REQUIRED_ROLES[level] || REQUIRED_ROLES.read;
   if (!required.has(ctx.role)) {
     const err = new Error("Role " + ctx.role + " is not allowed to perform " + level + " action");

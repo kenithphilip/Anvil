@@ -13,6 +13,7 @@
 
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
+import { timingSafeEqual } from "../_lib/sanitize.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { documentsBucket } from "../_lib/storage.js";
 
@@ -51,14 +52,51 @@ const parseMultipart = async (req) => {
   });
 };
 
+// Email attachment intake. Audit M8 (May 2026): the same controls
+// that gate POST /api/documents/upload now gate the inbound-email
+// path — server-side size cap, MIME allowlist, extension allowlist,
+// and the documents row lands with scan_status='pending' so the
+// scan endpoint must clear it before downstream OCR / extract can
+// run. Previously this path bypassed every check.
+const ATTACHMENT_MAX_BYTES = Number(process.env.DOCUMENTS_MAX_UPLOAD_BYTES || 50 * 1024 * 1024);
+const ATTACHMENT_ALLOWED_MIME = new Set([
+  "application/pdf",
+  "application/zip",
+  "application/x-zip-compressed",
+  "image/png", "image/jpeg", "image/webp", "image/heic", "image/heif", "image/tiff",
+  "text/plain", "text/csv",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/msword",
+  "application/json",
+  "application/octet-stream",
+]);
+const ATTACHMENT_ALLOWED_EXT = new Set([
+  "pdf", "zip", "png", "jpg", "jpeg", "webp", "heic", "heif", "tiff",
+  "txt", "csv", "tsv", "xls", "xlsx", "doc", "docx", "json", "jsonl",
+]);
 const persistAttachment = async (svc, tenantId, attachment) => {
   if (!attachment || !attachment.content) return null;
   const filename = sanitize(attachment.filename || "attachment");
-  const path = tenantId + "/email/" + Date.now() + "_" + filename;
+  const ext = String(filename).toLowerCase().split(".").pop() || "";
+  const mime = String(attachment.contentType || "").toLowerCase();
+  // Reject before allocating the buffer so a flood of large invalid
+  // attachments can't exhaust function memory.
+  if (mime && !ATTACHMENT_ALLOWED_MIME.has(mime)) {
+    return { skipped: true, reason: "unsupported_mime", filename, mime };
+  }
+  if (ext && !ATTACHMENT_ALLOWED_EXT.has(ext)) {
+    return { skipped: true, reason: "unsupported_extension", filename, ext };
+  }
   const buffer = Buffer.from(attachment.content, attachment.encoding || "base64");
+  if (buffer.length > ATTACHMENT_MAX_BYTES) {
+    return { skipped: true, reason: "too_large", filename, size: buffer.length };
+  }
+  const path = tenantId + "/email/" + Date.now() + "_" + filename;
   const bucket = documentsBucket();
   const upload = await svc.storage.from(bucket).upload(path, buffer, {
-    contentType: attachment.contentType || "application/octet-stream",
+    contentType: mime || "application/octet-stream",
     upsert: false,
   });
   if (upload.error) throw new Error("Storage upload failed: " + upload.error.message);
@@ -67,9 +105,10 @@ const persistAttachment = async (svc, tenantId, attachment) => {
     storage_bucket: bucket,
     storage_path: path,
     filename,
-    mime_type: attachment.contentType || null,
+    mime_type: mime || null,
     size_bytes: buffer.length,
     classification: "email_attachment",
+    scan_status: "pending",
     metadata: { source: "email_inbound" },
   }).select("id").single();
   if (insert.error) throw new Error("Document insert failed: " + insert.error.message);
@@ -88,7 +127,10 @@ export default async function handler(req, res) {
     if (!TOKEN) {
       return json(res, 503, { error: { message: "Inbound disabled: set EMAIL_INBOUND_TOKEN to enable." } });
     }
-    if (TOKEN !== queryToken && TOKEN !== headerToken) {
+    // Audit H10 (May 2026): use crypto.timingSafeEqual to avoid the
+    // string-comparison short-circuit timing oracle. Both the query
+    // and header tokens are checked against TOKEN constant-time.
+    if (!timingSafeEqual(TOKEN, queryToken) && !timingSafeEqual(TOKEN, headerToken)) {
       return json(res, 403, { error: { message: "Inbound token mismatch" } });
     }
     const body = await parseMultipart(req);
@@ -106,10 +148,21 @@ export default async function handler(req, res) {
     const svc = serviceClient();
 
     const documentIds = [];
+    const skippedAttachments = [];
     for (const attachment of attachments) {
       try {
-        const id = await persistAttachment(svc, tenantId, attachment);
-        if (id) documentIds.push(id);
+        const result = await persistAttachment(svc, tenantId, attachment);
+        if (typeof result === "string") {
+          documentIds.push(result);
+        } else if (result && result.skipped) {
+          skippedAttachments.push(result);
+          await recordAudit({ tenantId, role: "admin" }, {
+            action: "email_attachment_skipped",
+            objectType: "email",
+            objectId: messageId,
+            detail: result.filename + " :: " + result.reason,
+          });
+        }
       } catch (err) {
         await recordAudit({ tenantId, role: "admin" }, {
           action: "email_attachment_failed",

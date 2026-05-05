@@ -26,8 +26,19 @@ export default async function handler(req, res) {
     const svc = serviceClient();
     const { data: doc, error: docErr } = await svc.from("documents").select("*").eq("tenant_id", ctx.tenantId).eq("id", body.documentId).single();
     if (docErr || !doc) return json(res, 404, { error: { message: "Document not found" } });
+    // Audit L4 (May 2026): generic message; never echo internal
+    // mime_type back to the client.
     if (!isPdfMime(doc.mime_type) && !isImageMime(doc.mime_type)) {
-      return json(res, 400, { error: { message: "OCR currently supports PDFs and images. mime_type=" + (doc.mime_type || "unknown") } });
+      return json(res, 400, { error: { code: "UNSUPPORTED_MIME", message: "OCR currently supports PDFs and images only." } });
+    }
+    // Audit H9 (May 2026): refuse to OCR documents whose ClamAV /
+    // ZIP scan has not been run or has been quarantined. Operators
+    // re-trigger the scan from the documents UI.
+    if (doc.scan_status === "quarantined" || doc.scan_status === "rejected") {
+      return json(res, 409, { error: { code: "DOCUMENT_QUARANTINED", message: "Document failed scan; cannot OCR." } });
+    }
+    if (doc.scan_status === "pending") {
+      return json(res, 409, { error: { code: "DOCUMENT_NOT_SCANNED", message: "Document has not been scanned yet. Run /api/documents/scan first." } });
     }
     const { data: signed, error: signErr } = await svc.storage.from(doc.storage_bucket).createSignedUrl(doc.storage_path, 60 * 5);
     if (signErr) throw new Error("Signed URL error: " + signErr.message);

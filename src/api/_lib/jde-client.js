@@ -96,7 +96,12 @@ const acquireToken = async (s) => {
       }
       // JDE sessions follow the rest.ini timeout (default 30 min).
       // Trim to 25 min to stay safely inside the server-side TTL.
-      return { token: body.token, expiresInSec: 1500 };
+      // Audit L6 (May 2026): TTL is configurable per tenant via
+      // tenant_settings.jde_session_ttl_sec, defaulting to 1500s.
+      // Hardened JDE deployments configure shorter rest.ini
+      // timeouts; this lets operators match without code changes.
+      const ttlSec = Number(s.jde_session_ttl_sec) || 1500;
+      return { token: body.token, expiresInSec: Math.max(60, Math.min(ttlSec, 30 * 60)) };
     },
   });
 };

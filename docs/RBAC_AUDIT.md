@@ -114,7 +114,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/catalog/private_label.js | read, approve, admin |
 | src/api/catalog/search.js | read |
 | src/api/catalog/synonyms.js | read, approve |
-| src/api/claude/messages.js | read, write |
+| src/api/claude/messages.js | read, write, admin |
 | src/api/communications/draft.js | write |
 | src/api/communications/missing_doc.js | write |
 | src/api/communications/send.js | approve |

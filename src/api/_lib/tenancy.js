@@ -91,56 +91,42 @@ export const ensureMembership = async (svc, user, opts = {}) => {
     }
   }
 
-  // First user wins admin; everyone else gets the configured default
-  // role. We count via head:true so we don't pull rows.
-  const memberCount = await svc
-    .from("tenant_members")
-    .select("user_id", { count: "exact", head: true })
-    .eq("tenant_id", DEFAULT_TENANT);
-  const isFirst = !memberCount.error && (memberCount.count || 0) === 0;
-  const role = isFirst ? safeRole(FIRST_USER_ROLE, "admin") : safeRole(NEW_USER_ROLE, "sales_engineer");
-
-  // Approval gate. The first user on the tenant always lands
-  // approved (otherwise nobody could ever approve them). Every
-  // subsequent user lands pending unless approval is disabled.
-  const status = (isFirst || !REQUIRE_APPROVAL) ? "approved" : "pending";
+  // M2 (May 2026): atomic first-user-admin via a Postgres function
+  // that takes a per-tenant advisory lock before counting + inserting.
+  // This eliminates the count-then-insert TOCTOU race where two
+  // concurrent signups on a fresh tenant could both observe count=0
+  // and both insert as admin.
   const meta = user.user_metadata || {};
-  const requestedRoleHint = (opts && opts.requested_role) || meta.requested_role;
-  const requested_role = isFirst ? null : safeRole(requestedRoleHint, NEW_USER_ROLE);
-  const insertRow = {
-    tenant_id: DEFAULT_TENANT,
-    user_id: user.id,
-    role,
-    status,
-    requested_role,
-    requested_at: new Date().toISOString(),
-    request_email: user.email || null,
-    request_display_name: meta.name || meta.full_name || (opts && opts.display_name) || null,
-    request_notes: (opts && opts.notes) || null,
-  };
-  if (status === "approved") {
-    insertRow.approved_at = new Date().toISOString();
-    insertRow.approved_by = user.id;                   // self-approval for the first user
-  }
-  const inserted = await svc
-    .from("tenant_members")
-    .insert(insertRow)
-    .select("tenant_id, role, status, requested_role");
-  if (inserted.error) {
-    // Race: another request from the same user inserted concurrently.
-    // Re-read and return whatever's there.
-    if (inserted.error.code === "23505") {
-      const retry = await svc
-        .from("tenant_members")
-        .select("tenant_id, role")
-        .eq("user_id", user.id);
-      return retry.data || [];
-    }
-    const err = new Error("tenant_members insert failed: " + inserted.error.message);
+  const requestedRoleHint = safeRole(
+    (opts && opts.requested_role) || meta.requested_role,
+    NEW_USER_ROLE,
+  );
+  const rpc = await svc.rpc("claim_tenant_membership", {
+    p_tenant_id: DEFAULT_TENANT,
+    p_user_id: user.id,
+    p_user_email: user.email || null,
+    p_default_role: safeRole(NEW_USER_ROLE, "sales_engineer"),
+    p_first_role: safeRole(FIRST_USER_ROLE, "admin"),
+    p_requested_role: requestedRoleHint,
+    p_display_name: meta.name || meta.full_name || (opts && opts.display_name) || null,
+    p_notes: (opts && opts.notes) || null,
+    p_require_approval: !!REQUIRE_APPROVAL,
+  });
+  if (rpc.error) {
+    const err = new Error("claim_tenant_membership failed: " + rpc.error.message);
     err.status = 500;
     throw err;
   }
-  return inserted.data || [];
+  // The RPC returns one row { out_tenant_id, out_role, out_status,
+  // out_requested_role, out_was_first }. Re-shape to the existing
+  // contract so callers don't have to change.
+  const rows = Array.isArray(rpc.data) ? rpc.data : (rpc.data ? [rpc.data] : []);
+  return rows.map((r) => ({
+    tenant_id: r.out_tenant_id,
+    role: r.out_role,
+    status: r.out_status,
+    requested_role: r.out_requested_role,
+  }));
 };
 
 // Fetch tenant admins. Used by /api/auth/signup to know who to

@@ -22,13 +22,20 @@ export default async function handler(req, res) {
       requirePermission(ctx, "read");
       const { data: members, error } = await svc.from("tenant_members").select("user_id, role, created_at").eq("tenant_id", ctx.tenantId);
       if (error) throw new Error(error.message);
+      // Audit H11 (May 2026): replace the global listUsers() call
+      // (which read every user across the entire Supabase project
+      // and filtered in memory, leaking cross-tenant emails on a
+      // pagination boundary) with a bounded per-member getUserById
+      // loop. Size of the call is exactly the size of the calling
+      // tenant's member list. No cross-tenant data is loaded.
       const userIds = (members || []).map((m) => m.user_id);
-      let users = [];
-      if (userIds.length) {
-        const { data: usersData } = await svc.auth.admin.listUsers({ page: 1, perPage: 1000 });
-        users = (usersData && usersData.users) || [];
-      }
-      const usersById = new Map(users.map((u) => [u.id, u]));
+      const usersById = new Map();
+      await Promise.all(userIds.map(async (uid) => {
+        try {
+          const { data } = await svc.auth.admin.getUserById(uid);
+          if (data?.user) usersById.set(uid, data.user);
+        } catch (_) { /* per-user lookup failure is non-fatal; the row will render with blanks */ }
+      }));
       const rows = (members || []).map((m) => {
         const u = usersById.get(m.user_id) || {};
         const meta = u.user_metadata || {};

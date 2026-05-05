@@ -29,8 +29,27 @@ const SENDGRID_KEY = process.env.SENDGRID_API_KEY;
 const SENDGRID_FROM = process.env.SENDGRID_FROM_EMAIL;
 const SENDGRID_FROM_NAME = process.env.SENDGRID_FROM_NAME || "Anvil";
 const APP_URL = process.env.APP_URL || process.env.PUBLIC_APP_URL || "";
+const NODE_ENV = process.env.NODE_ENV || "development";
 
 const isValidEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || "").trim());
+
+// Open-redirect allowlist (audit H2). The redirect_to value is
+// embedded in the recovery email by Supabase; an attacker who can
+// trigger a reset on a victim's address could otherwise harvest the
+// recovery token by pointing redirect_to at attacker.com. Only
+// echo the caller's value back to Supabase when it shares the
+// configured APP_URL origin. Otherwise fall back to APP_URL/#/reset.
+const safeRedirectTo = (caller) => {
+  const fallback = APP_URL ? APP_URL.replace(/\/+$/, "") + "/#/reset" : "";
+  if (!caller) return fallback;
+  if (!APP_URL) return fallback;
+  try {
+    const u = new URL(caller);
+    const base = new URL(APP_URL);
+    if (u.origin === base.origin) return caller;
+  } catch (_) { /* malformed URL, fall through */ }
+  return fallback;
+};
 
 const checkRateLimit = async (svc, email) => {
   const now = Date.now();
@@ -112,8 +131,7 @@ export default async function handler(req, res) {
       // Don't leak validation; respond as if accepted.
       return json(res, 200, { ok: true, message: "If an account exists for that address, a reset email has been sent." });
     }
-    const redirectTo = String(body?.redirect_to || "").trim()
-      || (APP_URL ? APP_URL.replace(/\/+$/, "") + "/#/reset" : "");
+    const redirectTo = safeRedirectTo(String(body?.redirect_to || "").trim());
 
     const svc = serviceClient();
     const ip = (req.headers["x-forwarded-for"] || req.headers["x-real-ip"] || "").toString().split(",")[0].trim();
@@ -138,13 +156,14 @@ export default async function handler(req, res) {
 
     // Look up the user (service role); if missing we still return
     // 200 so an attacker can't enumerate accounts via timing.
+    // Audit H11 (May 2026): use Supabase's filtered listUsers
+    // instead of pulling every user across the project. The filter
+    // pins the lookup to a single email; no cross-tenant data is
+    // loaded into memory.
     let user = null;
     try {
-      // Supabase admin.listUsers only returns up to 1000 per page;
-      // we filter client-side. Acceptable until tenant-count is
-      // material, then switch to the (newer) listUsers filter API.
-      const { data } = await svc.auth.admin.listUsers({ page: 1, perPage: 1000 });
-      user = (data?.users || []).find((u) => u.email?.toLowerCase() === email) || null;
+      const { data } = await svc.auth.admin.listUsers({ page: 1, perPage: 1, email });
+      user = (data?.users || [])[0] || null;
     } catch (_) { user = null; }
 
     if (!user) {
@@ -192,14 +211,21 @@ export default async function handler(req, res) {
       detail: { provider: sendResult.provider, sent: sendResult.sent },
     }).catch(() => {});
 
-    // In dev, if SendGrid isn't configured we expose the link in
-    // the response so the operator can copy-paste. Skip when the
-    // app looks production-ish (SENDGRID_FROM set).
-    const exposeLink = !SENDGRID_KEY || !SENDGRID_FROM;
+    // Audit H2 (May 2026): never return the live recovery token in
+    // the API response. Even in dev, exposing the action_link to the
+    // caller is account-takeover-as-a-service: any caller, any CDN
+    // log, any monitoring tool that captures bodies gets a working
+    // sign-in primitive. Instead we log the link to the server stderr
+    // so the dev workflow still has a copy-pasteable artifact.
+    if (!SENDGRID_KEY || !SENDGRID_FROM) {
+      if (NODE_ENV !== "production" && actionLink) {
+        // eslint-disable-next-line no-console
+        console.warn("[auth/request_reset] dev mode: action_link for", email, "->", actionLink);
+      }
+    }
     return json(res, 200, {
       ok: true,
       message: "If an account exists for that address, a reset email has been sent.",
-      ...(exposeLink ? { dev_action_link: actionLink } : {}),
     });
   } catch (err) {
     return sendError(res, err);

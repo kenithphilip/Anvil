@@ -6,6 +6,7 @@
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { timingSafeEqual } from "../_lib/sanitize.js";
 
 const PROVIDER_URL = process.env.FX_PROVIDER_URL || "https://api.frankfurter.app";
 const DEFAULT_TARGETS = ["INR", "CNY", "JPY", "KRW", "USD"];
@@ -30,10 +31,22 @@ export default async function handler(req, res) {
   applyCors(req, res);
   if (req.method !== "GET" && req.method !== "POST") return json(res, 405, { error: { message: "Method not allowed" } });
   try {
+    // Audit H8 + H10 (May 2026): refuse to run when CRON_SECRET is
+    // not configured (previously the secret check was conditional
+    // on the env var being set, which let an attacker hit this
+    // endpoint unauthenticated and trigger external FX provider
+    // calls + DB writes for arbitrary tenants). Compare with
+    // crypto.timingSafeEqual to remove the string-comparison timing
+    // oracle.
     const secret = process.env.CRON_SECRET;
-    if (secret) {
-      const provided = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-      if (provided !== secret) return json(res, 401, { error: { message: "Cron secret mismatch" } });
+    if (!secret) {
+      return json(res, 503, {
+        error: { code: "CRON_SECRET_MISSING", message: "CRON_SECRET must be configured to invoke this endpoint." },
+      });
+    }
+    const provided = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+    if (!timingSafeEqual(provided, secret)) {
+      return json(res, 401, { error: { message: "Cron secret mismatch" } });
     }
     const svc = serviceClient();
     const asOf = (req.query && req.query.as_of) || isoYesterday();

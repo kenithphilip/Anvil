@@ -100,6 +100,17 @@ export default async function handler(req, res) {
       const r = await svc.from("redaction_rules").select("pattern, replacement, enabled").eq("enabled", true).or("tenant_id.is.null,tenant_id.eq." + ctx.tenantId);
       redactionRules = r.data || [];
     } catch (_) {}
+    // Audit H7 (May 2026): bypassFirewall gates the prompt-injection
+    // firewall on customer-document content. It used to be reachable
+    // by any 'write' role (i.e., any sales_engineer). Restrict to
+    // admin so a compromised non-admin session can't disable the
+    // firewall + ship raw PII to Anthropic.
+    if (body.bypassFirewall) {
+      try { requirePermission(ctx, "admin"); }
+      catch (err) {
+        return json(res, 403, { error: { code: "BYPASS_FIREWALL_FORBIDDEN", message: "Only admins can bypass the prompt-injection firewall." } });
+      }
+    }
     const system = body.bypassFirewall ? body.system : applyFirewall(body.system);
     const messages = redactMessages(body.messages, redactionRules);
 

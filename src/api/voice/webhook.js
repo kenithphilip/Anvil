@@ -121,14 +121,27 @@ export default async function handler(req, res) {
       return json(res, 404, { error: { message: "No tenant configured for this number" } });
     }
 
-    // Signature check against the matched config's webhook_secret.
-    if (config.webhook_secret) {
-      const sig = req.headers[provider === "vapi" ? "x-vapi-signature" : "x-retell-signature"] || "";
-      const valid = provider === "vapi"
-        ? verifyVapiSignature(config.webhook_secret, raw, sig)
-        : verifyRetellSignature(config.webhook_secret, raw, sig);
-      if (!valid) return json(res, 403, { error: { message: "Invalid voice webhook signature" } });
+    // Signature check (audit H3, May 2026). Fail closed when the
+    // tenant has not configured a webhook_secret: an unsigned
+    // webhook must be treated as forged. Previously this branch
+    // was conditional on `config.webhook_secret` being truthy,
+    // which let an unconfigured tenant accept any payload that
+    // matched a phone number. That is enough for an attacker who
+    // can guess a tenant's number to inject fake call lifecycle
+    // events, transcripts, and downstream voice_call_actions.
+    if (!config.webhook_secret) {
+      return json(res, 503, {
+        error: {
+          code: "VOICE_WEBHOOK_NOT_CONFIGURED",
+          message: "Voice webhook secret not configured for this tenant.",
+        },
+      });
     }
+    const sig = req.headers[provider === "vapi" ? "x-vapi-signature" : "x-retell-signature"] || "";
+    const valid = provider === "vapi"
+      ? verifyVapiSignature(config.webhook_secret, raw, sig)
+      : verifyRetellSignature(config.webhook_secret, raw, sig);
+    if (!valid) return json(res, 403, { error: { message: "Invalid voice webhook signature" } });
 
     // Lifecycle dispatch. Vapi events: status-update,
     // end-of-call-report, transcript, function-call. Retell events:

@@ -13,6 +13,7 @@
 import { applyCors, handlePreflight, json, sendError } from "../../_lib/cors.js";
 import { serviceClient } from "../../_lib/supabase.js";
 import { decryptChatCreds, ingestInboundMessage, verifySlackSignature } from "../../_lib/inbound-chat.js";
+import { isAlphaNumDashUnderscore } from "../../_lib/sanitize.js";
 
 const readRaw = (req) => new Promise((resolve, reject) => {
   let raw = "";
@@ -38,8 +39,14 @@ export default async function handler(req, res) {
     // 1. URL verification. Slack sends this once when the app is
     // configured. We MUST echo the challenge back to prove we own
     // the URL. No signature on this initial request beyond shape.
+    //
+    // Audit M11 (May 2026): sanitise the echoed challenge so a
+    // malicious caller can't smuggle HTML/script through any
+    // monitoring tool that renders this response. Slack challenges
+    // are always alphanumeric per spec.
     if (payload.type === "url_verification") {
-      return json(res, 200, { challenge: payload.challenge });
+      const safe = isAlphaNumDashUnderscore(payload.challenge, 200) ? String(payload.challenge) : "";
+      return json(res, 200, { challenge: safe });
     }
 
     if (payload.type !== "event_callback" || !payload.event) {

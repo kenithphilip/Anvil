@@ -58,12 +58,56 @@
   const writeConfig = (cfg) => lsSet(CFG_KEY, JSON.stringify(cfg || {}));
   const clearConfig = () => lsRemove(CFG_KEY);
 
-  const readSession = () => {
-    try { return JSON.parse(lsGet(SESSION_KEY) || "null"); }
+  // Audit C5 part 2 (May 2026): session storage migration.
+  //
+  // Primary store is sessionStorage (tab-scoped, cleared on tab
+  // close) under the new `anvil:` prefix. We continue to mirror to
+  // localStorage under both prefixes during the transition window
+  // because 43 v3 screens read the legacy key inline. Once those
+  // screens are migrated to call `ObaraBackend.getSession()` we can
+  // drop the localStorage write and the supply-chain JS exfiltration
+  // surface goes away.
+  //
+  // Read order: sessionStorage → localStorage (with promotion). On a
+  // sign-in via popup callback, the callback page (callback.html)
+  // writes to localStorage; the next API call from this script reads
+  // it, promotes it to sessionStorage, and from then on the tab uses
+  // sessionStorage exclusively.
+  const ssGet = (suffix) => {
+    try { return sessionStorage.getItem(NEW_PREFIX + suffix); }
     catch (_) { return null; }
   };
-  const writeSession = (session) => lsSet(SESSION_KEY, JSON.stringify(session || null));
-  const clearSession = () => lsRemove(SESSION_KEY);
+  const ssSet = (suffix, value) => {
+    try { sessionStorage.setItem(NEW_PREFIX + suffix, value); } catch (_) {}
+  };
+  const ssRemove = (suffix) => {
+    try { sessionStorage.removeItem(NEW_PREFIX + suffix); } catch (_) {}
+  };
+
+  const readSession = () => {
+    try {
+      const fresh = ssGet(SESSION_KEY);
+      if (fresh != null) return JSON.parse(fresh);
+      // Promote legacy localStorage value to sessionStorage on first read.
+      const legacy = lsGet(SESSION_KEY);
+      if (legacy != null) {
+        ssSet(SESSION_KEY, legacy);
+        return JSON.parse(legacy || "null");
+      }
+      return null;
+    } catch (_) { return null; }
+  };
+  const writeSession = (session) => {
+    const value = JSON.stringify(session || null);
+    ssSet(SESSION_KEY, value);
+    // Mirror to localStorage during transition for the 43 screens
+    // that read it directly. Tracked for removal once migrated.
+    lsSet(SESSION_KEY, value);
+  };
+  const clearSession = () => {
+    ssRemove(SESSION_KEY);
+    lsRemove(SESSION_KEY);
+  };
 
   const buildHeaders = (cfg, session, extra) => {
     const headers = Object.assign({}, extra || {});

@@ -55,7 +55,11 @@ export default async function handler(req, res) {
       expectedChallenge: (challenge) => sha256Hex(challenge) === pending.pending_challenge_hash,
       expectedOrigin: expectedOrigin(),
       expectedRPID: rpIdFromOrigin(),
-      requireUserVerification: false,
+      // Hardened May 2026 (security audit M1). Was false: a roaming
+      // hardware key without PIN could register. Now requires the
+      // authenticator to actually perform UV (biometric or PIN) so
+      // the credential is phishing-resistant from day 1.
+      requireUserVerification: true,
     });
 
     if (!verification.verified || !verification.registrationInfo) {

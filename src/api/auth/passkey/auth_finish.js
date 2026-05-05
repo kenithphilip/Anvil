@@ -110,7 +110,10 @@ export default async function handler(req, res) {
         credentialPublicKey: Buffer.from(cred.public_key, "base64"),
         counter: Number(cred.counter || 0),
       },
-      requireUserVerification: false,
+      // Hardened May 2026 (security audit M1). Phishing-resistance
+      // is the whole point of passkeys; we require the authenticator
+      // to actually perform UV at sign-in time.
+      requireUserVerification: true,
     });
 
     // Always drop the challenge row, success or fail.

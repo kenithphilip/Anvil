@@ -80,24 +80,64 @@ const computeTotp = (secret, counter, digits = 6) => {
 };
 
 // Validate a TOTP code with a small skew window (default ±1 step =
-// ±30 s) so a slightly off clock or a code typed at the boundary
-// still passes.
+// ±30 s). Backwards-compatible boolean signature is preserved; the
+// new `verifyTotpWithCounter` variant exposes the matched counter
+// so callers can persist a used-counter ledger and reject replays
+// (security audit H1, May 2026).
 export const verifyTotp = (secret, code, opts = {}) => {
+  return verifyTotpWithCounter(secret, code, opts).valid;
+};
+
+// Single-use verify with replay protection. The combo verifyer +
+// used-counter ledger writer. Use this instead of plain verifyTotp
+// for any auth-gating flow (password_login MFA gate, mfa unenroll,
+// any future high-value verify). Idempotent on collision: a unique
+// violation on (user_id, counter) is treated as a replay and the
+// call returns { valid: false, replayed: true }.
+//
+// Pass `userId = null` to skip the ledger write (e.g. during the
+// initial enroll-verify where there is no user_security_settings
+// row yet, or during a probe). Returns { valid, counter?, replayed? }.
+export const verifyTotpAndConsume = async (svc, userId, secret, code, opts = {}) => {
+  const r = verifyTotpWithCounter(secret, code, opts);
+  if (!r.valid) return { valid: false };
+  if (!userId || !svc) return { valid: true, counter: r.counter };
+  const ins = await svc.from("totp_used_counters")
+    .insert({ user_id: userId, counter: r.counter });
+  if (ins.error) {
+    // 23505 unique_violation → the counter was already consumed.
+    // Postgres returns a structured error via the supabase client;
+    // the code lands on `ins.error.code` for `unique_violation`.
+    if (String(ins.error.code) === "23505") {
+      return { valid: false, replayed: true };
+    }
+    // Any other DB error: fail closed. We refuse to mint trust
+    // when the ledger write would be non-durable.
+    return { valid: false, replayed: false, error: ins.error.message };
+  }
+  return { valid: true, counter: r.counter };
+};
+
+// Returns { valid: boolean, counter?: number }. When `valid` is
+// true, `counter` is the matched RFC 6238 counter value so the
+// caller can store (user_id, counter) in totp_used_counters and
+// reject any future verify against the same counter.
+export const verifyTotpWithCounter = (secret, code, opts = {}) => {
   const period = opts.period || 30;
   const digits = opts.digits || 6;
   const window = opts.window != null ? opts.window : 1;
   const cleaned = String(code || "").replace(/\D/g, "");
-  if (cleaned.length !== digits) return false;
+  if (cleaned.length !== digits) return { valid: false };
   const now = Math.floor(Date.now() / 1000);
   const counter = Math.floor(now / period);
   for (let w = -window; w <= window; w++) {
-    const got = computeTotp(secret, counter + w, digits);
-    // Constant-time compare to avoid timing leak.
+    const c = counter + w;
+    const got = computeTotp(secret, c, digits);
     if (cleaned.length === got.length && crypto.timingSafeEqual(Buffer.from(cleaned), Buffer.from(got))) {
-      return true;
+      return { valid: true, counter: c };
     }
   }
-  return false;
+  return { valid: false };
 };
 
 // Build the otpauth:// URI that authenticator apps render as a

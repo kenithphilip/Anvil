@@ -13,6 +13,7 @@ import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings, updateTenantSettings } from "../_lib/stripe-client.js";
 import { sapEncryptCreds, sapDecryptCreds, sapFetch } from "../_lib/sap-client.js";
 import { isSecretsConfigured } from "../_lib/secrets.js";
+import { safeProbeError } from "../_lib/sanitize.js";
 
 const REQUIRED = ["base_url", "token_url", "client_id", "client_secret"];
 
@@ -61,7 +62,7 @@ export default async function handler(req, res) {
     return json(res, 200, {
       ok: probe.ok,
       probe_status: probe.status,
-      probe_error: probe.ok ? null : (probe.body?.error?.message || probe.body?.error || probe.body?.raw),
+      probe_error: safeProbeError(probe, "connection_failed"),
       storage_mode: isSecretsConfigured() ? "encrypted" : "plaintext",
     });
   } catch (err) { sendError(res, err); }

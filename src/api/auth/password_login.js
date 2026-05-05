@@ -12,7 +12,8 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { serviceClient } from "../_lib/supabase.js";
 import { ensureMembership, getMemberStatus, defaultTenantId } from "../_lib/tenancy.js";
 import { decryptField } from "../_lib/secrets.js";
-import { verifyTotp } from "../_lib/totp.js";
+import { verifyTotpAndConsume } from "../_lib/totp.js";
+import { checkRateLimit, recordRateLimitAttempt } from "../_lib/rate-limit.js";
 import { createClient } from "@supabase/supabase-js";
 
 const readActiveTotpSecret = (row) => {
@@ -72,19 +73,35 @@ export default async function handler(req, res) {
           email: user.email,
         });
       }
-      const secret = readActiveTotpSecret(secRow);
-      if (!secret || !verifyTotp(secret, totpCode)) {
+      // Rate limit + replay protection (audit M3 + H1, May 2026).
+      // 5 failed login-MFA attempts per user per 15 minutes. The
+      // ledger insert inside verifyTotpAndConsume rejects replays
+      // even within a single 30-second window.
+      const rate = await checkRateLimit(svc, "mfa_attempts", "login:" + user.id, { maxAttempts: 5, windowMs: 15 * 60 * 1000 });
+      if (!rate.allowed) {
         try { await anon.auth.signOut(); } catch (_) { /* ignore */ }
+        return json(res, 429, { error: { code: "RATE_LIMITED", message: "Too many failed attempts. Try again in " + rate.retry_in_sec + " seconds." } });
+      }
+      const secret = readActiveTotpSecret(secRow);
+      const verifyRes = secret
+        ? await verifyTotpAndConsume(svc, user.id, secret, totpCode)
+        : { valid: false };
+      if (!verifyRes.valid) {
+        try { await anon.auth.signOut(); } catch (_) { /* ignore */ }
+        await recordRateLimitAttempt(svc, "mfa_attempts", "login:" + user.id);
         await svc.from("user_security_audit").insert({
           user_id: user.id,
           user_email: user.email,
           event: "mfa_challenge_fail",
-          detail: { phase: "login" },
+          detail: { phase: "login", replayed: !!verifyRes.replayed },
         }).catch(() => {});
+        const message = verifyRes.replayed
+          ? "This code has already been used. Wait for the next code from your authenticator."
+          : "Two-factor code is incorrect. Try the current code from your authenticator.";
         return json(res, 401, {
           error: {
-            code: "INVALID_TOTP",
-            message: "Two-factor code is incorrect. Try the current code from your authenticator.",
+            code: verifyRes.replayed ? "TOTP_REPLAY" : "INVALID_TOTP",
+            message,
           },
         });
       }

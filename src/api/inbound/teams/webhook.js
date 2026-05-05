@@ -15,6 +15,7 @@
 import { applyCors, handlePreflight, json, readBody, sendError } from "../../_lib/cors.js";
 import { serviceClient } from "../../_lib/supabase.js";
 import { decryptChatCreds, ingestInboundMessage } from "../../_lib/inbound-chat.js";
+import { timingSafeEqual } from "../../_lib/sanitize.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -54,8 +55,9 @@ export default async function handler(req, res) {
     // full JWT verification using @azure/msal-node + the JWKS at
     // https://login.botframework.com/v1/.well-known/openidconfiguration;
     // we keep the secret-header fallback for simpler ops.
-    const provided = req.headers["x-anvil-teams-secret"] || "";
-    if (creds.webhook_secret && provided !== creds.webhook_secret) {
+    // Audit H10 (May 2026): constant-time secret comparison.
+    const provided = String(req.headers["x-anvil-teams-secret"] || "");
+    if (creds.webhook_secret && !timingSafeEqual(provided, creds.webhook_secret)) {
       return json(res, 403, { error: { message: "Invalid Teams webhook secret" } });
     }
 

@@ -43,8 +43,17 @@ export const oauth2ClientCredentials = async ({
   let parsed = null;
   try { parsed = text ? JSON.parse(text) : null; } catch (_e) { parsed = { raw: text.slice(0, 400) }; }
   if (!resp.ok || !parsed?.access_token) {
-    const err = new Error("oauth2 token request failed: " + resp.status + " " + (parsed?.error_description || parsed?.error || text.slice(0, 200)));
+    // Audit M13 (May 2026): some IDPs (notably ADFS and legacy
+    // Oracle IAM) reflect parts of the client_id back inside
+    // error_description. We never embed the raw provider response
+    // into the thrown Error message; that string ends up in our
+    // server logs and could be picked up by log aggregators. Use a
+    // status-code-only message; the parsed body remains attached
+    // for callers who want to inspect server-side under controlled
+    // logging.
+    const err = new Error("oauth2 token request failed: HTTP " + resp.status);
     err.status = resp.status;
+    err.parsed = parsed;
     throw err;
   }
   const ttlMs = (Number(parsed.expires_in) || 3600) * 1000;

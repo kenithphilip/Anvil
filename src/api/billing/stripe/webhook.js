@@ -16,6 +16,7 @@
 // the same row, no duplicate billing.
 
 import { applyCors, handlePreflight, json, sendError } from "../../_lib/cors.js";
+import { webhookIpRateLimit } from "../../_lib/rate-limit.js";
 import { serviceClient } from "../../_lib/supabase.js";
 import { stripeClient, stripeIsConfigured } from "../../_lib/stripe-client.js";
 
@@ -60,10 +61,19 @@ const recordPayment = async (svc, invoice, paymentIntent, amount, currency) => {
   });
 };
 
+// Audit M9 (May 2026): integer-cents arithmetic. Money columns are
+// numeric(14,2) at the DB layer, but JS Number is binary float
+// (0.1+0.2 = 0.30000000000000004). Sum in integer cents, divide
+// back to decimal at the boundary; the >= total comparison happens
+// on integer cents too.
+const toCents = (n) => Math.round(Number(n || 0) * 100);
+const fromCents = (c) => c / 100;
+
 const updateInvoicePaid = async (svc, invoice, amount) => {
-  const newPaid = Number(invoice.paid_amount || 0) + amount;
-  const total = Number(invoice.grand_total || 0);
-  const status = newPaid >= total - 0.01 ? "paid" : "partial";
+  const newPaidCents = toCents(invoice.paid_amount) + toCents(amount);
+  const totalCents = toCents(invoice.grand_total);
+  const status = newPaidCents >= totalCents ? "paid" : "partial";
+  const newPaid = fromCents(newPaidCents);
   await svc.from("invoices").update({
     paid_amount: newPaid,
     status,
@@ -75,7 +85,7 @@ const updateInvoicePaid = async (svc, invoice, amount) => {
       action: "invoice_paid",
       object_type: "invoice",
       object_id: invoice.id,
-      detail: "stripe::" + total.toFixed(2),
+      detail: "stripe::" + fromCents(totalCents).toFixed(2),
     });
   }
 };
@@ -87,6 +97,9 @@ export default async function handler(req, res) {
     res.setHeader("Allow", "POST");
     return json(res, 405, { error: { message: "Method not allowed" } });
   }
+  // Audit L5: cheap in-process rate limit.
+  const rl = webhookIpRateLimit(req, "stripe", { maxPerMinute: 240 });
+  if (!rl.allowed) return json(res, 429, { error: { message: "rate limited" } });
   if (!stripeIsConfigured()) {
     return json(res, 503, { error: { message: "Stripe not configured" } });
   }
@@ -129,17 +142,21 @@ export default async function handler(req, res) {
       const charge = event.data.object;
       const invoice = await findInvoiceFromMetadata(svc, charge.metadata);
       if (invoice) {
-        const refunded = Number(charge.amount_refunded || 0) / 100;
-        const newPaid = Math.max(0, Number(invoice.paid_amount || 0) - refunded);
-        const total = Number(invoice.grand_total || 0);
-        const status = newPaid <= 0.01 ? "void" : "partial";
-        await svc.from("invoices").update({ paid_amount: newPaid, status }).eq("tenant_id", invoice.tenant_id).eq("id", invoice.id);
+        // Audit M9: integer-cents arithmetic. Refunded amount is
+        // already in cents from Stripe; we still pass through the
+        // helper for symmetry.
+        const refundedCents = Number(charge.amount_refunded || 0); // already cents
+        const newPaidCents = Math.max(0, toCents(invoice.paid_amount) - refundedCents);
+        const status = newPaidCents <= 0 ? "void" : "partial";
+        await svc.from("invoices").update({
+          paid_amount: fromCents(newPaidCents), status,
+        }).eq("tenant_id", invoice.tenant_id).eq("id", invoice.id);
         await svc.from("audit_events").insert({
           tenant_id: invoice.tenant_id,
           action: "invoice_refunded",
           object_type: "invoice",
           object_id: invoice.id,
-          detail: refunded.toFixed(2),
+          detail: fromCents(refundedCents).toFixed(2),
         });
       }
     }

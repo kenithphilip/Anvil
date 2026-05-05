@@ -20,13 +20,21 @@ const matchOne = async (svc, tenantId, apInvoiceId, tolerances) => {
   if (inv.error) throw new Error(inv.error.message);
   if (!inv.data) return { ok: false, error: "ap invoice not found" };
 
-  const lines = await svc.from("ap_invoice_lines").select("*").eq("ap_invoice_id", apInvoiceId);
+  // Audit M12 (May 2026): every related-table query is scoped to
+  // tenant_id. The parent ap_invoices.tenant_id check above is
+  // enough for correctness today (ap_invoice_id is a UUID and not
+  // guessable), but defense-in-depth: a future leak of the UUID
+  // through any other path must not let a Tenant A user trigger a
+  // match against Tenant B's lines. Same for source_pos.
+  const lines = await svc.from("ap_invoice_lines").select("*")
+    .eq("tenant_id", tenantId).eq("ap_invoice_id", apInvoiceId);
   if (lines.error) throw new Error(lines.error.message);
 
   let po = null;
   let receipts = [];
   if (inv.data.source_po_id) {
-    const poQ = await svc.from("source_pos").select("*").eq("id", inv.data.source_po_id).maybeSingle();
+    const poQ = await svc.from("source_pos").select("*")
+      .eq("tenant_id", tenantId).eq("id", inv.data.source_po_id).maybeSingle();
     po = poQ.data || null;
     const recQ = await svc.from("ap_goods_receipts").select("*")
       .eq("tenant_id", tenantId).eq("source_po_id", inv.data.source_po_id);

@@ -19,7 +19,8 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { encryptField, decryptField, isSecretsConfigured, newIv } from "../_lib/secrets.js";
-import { generateTotpSecret, otpauthUri, verifyTotp } from "../_lib/totp.js";
+import { generateTotpSecret, otpauthUri, verifyTotp, verifyTotpAndConsume } from "../_lib/totp.js";
+import { checkRateLimit, recordRateLimitAttempt } from "../_lib/rate-limit.js";
 
 const ENROLL_PENDING_TTL_MIN = 10;
 
@@ -110,12 +111,24 @@ export default async function handler(req, res) {
       // force the user to start over.
       const code = String(body?.code || "").replace(/\D/g, "");
       if (!code) return json(res, 400, { error: { message: "code required" } });
+      // Rate limit (audit M3): 5 enroll-verify failures per user per
+      // 15 minutes. Counted after a failed verify; a successful verify
+      // is not counted so a legitimate user typing two codes back-to-
+      // back isn't punished.
+      const rate = await checkRateLimit(svc, "mfa_attempts", "enroll:" + ctx.user.id, { maxAttempts: 5, windowMs: 15 * 60 * 1000 });
+      if (!rate.allowed) {
+        return json(res, 429, { error: { code: "RATE_LIMITED", message: "Too many failed attempts. Try again in " + rate.retry_in_sec + " seconds." } });
+      }
       if (!existing?.totp_pending_expires_at || new Date(existing.totp_pending_expires_at) < new Date()) {
         return json(res, 400, { error: { code: "ENROLL_EXPIRED", message: "Enrollment expired. Restart the setup flow." } });
       }
       const pending = readSecret(existing, "totp_pending_secret");
       if (!pending) return json(res, 400, { error: { message: "No pending enrollment. Start over." } });
+      // Enroll-verify uses plain verify (no replay ledger yet — there
+      // is no active secret to bind the counter to). The pending
+      // secret has a 10-minute TTL which bounds replay.
       if (!verifyTotp(pending, code)) {
+        await recordRateLimitAttempt(svc, "mfa_attempts", "enroll:" + ctx.user.id);
         await auditEvent(svc, ctx, "mfa_challenge_fail", { phase: "enroll" });
         return json(res, 401, { error: { code: "INVALID_CODE", message: "Code didn't match. Try the current code from your authenticator." } });
       }
@@ -142,10 +155,22 @@ export default async function handler(req, res) {
       if (!existing?.totp_enrolled) {
         return json(res, 400, { error: { message: "TOTP is not enrolled" } });
       }
+      // Rate limit (audit M3) plus replay protection (audit H1).
+      const rate = await checkRateLimit(svc, "mfa_attempts", "unenroll:" + ctx.user.id, { maxAttempts: 5, windowMs: 15 * 60 * 1000 });
+      if (!rate.allowed) {
+        return json(res, 429, { error: { code: "RATE_LIMITED", message: "Too many failed attempts. Try again in " + rate.retry_in_sec + " seconds." } });
+      }
       const active = readSecret(existing, "totp_secret");
-      if (!active || !code || !verifyTotp(active, code)) {
-        await auditEvent(svc, ctx, "mfa_challenge_fail", { phase: "unenroll" });
-        return json(res, 401, { error: { code: "INVALID_CODE", message: "Current TOTP code is required to disable MFA." } });
+      const verifyRes = active && code
+        ? await verifyTotpAndConsume(svc, ctx.user.id, active, code)
+        : { valid: false };
+      if (!verifyRes.valid) {
+        await recordRateLimitAttempt(svc, "mfa_attempts", "unenroll:" + ctx.user.id);
+        await auditEvent(svc, ctx, "mfa_challenge_fail", { phase: "unenroll", replayed: !!verifyRes.replayed });
+        const message = verifyRes.replayed
+          ? "This code has already been used. Wait for the next code."
+          : "Current TOTP code is required to disable MFA.";
+        return json(res, 401, { error: { code: verifyRes.replayed ? "TOTP_REPLAY" : "INVALID_CODE", message } });
       }
       await svc.from("user_security_settings").update({
         totp_secret_enc: null,

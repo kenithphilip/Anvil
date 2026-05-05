@@ -42,20 +42,29 @@ export default async function handler(req, res) {
     if (req.method === "POST") {
       const body = await readBody(req);
       if (!body?.invoice_id) return json(res, 400, { error: { message: "invoice_id required" } });
-      const paid = Number(body.paid_amount || 0);
-      if (!isFinite(paid)) return json(res, 400, { error: { message: "paid_amount required" } });
+      // Audit M9 (May 2026): integer-cents arithmetic. JS Number
+      // arithmetic on decimal money drops cents (0.1+0.2 != 0.3).
+      // Round each input to cents, sum as int, divide back at the
+      // boundary; threshold compare runs on int cents.
+      const toCents = (n) => Math.round(Number(n || 0) * 100);
+      const fromCents = (c) => c / 100;
+
+      const paidCents = toCents(body.paid_amount);
+      if (!Number.isFinite(paidCents)) return json(res, 400, { error: { message: "paid_amount required" } });
 
       const inv = await svc.from("invoices").select("*")
         .eq("tenant_id", ctx.tenantId).eq("id", body.invoice_id).maybeSingle();
       if (inv.error) throw new Error(inv.error.message);
       if (!inv.data) return json(res, 404, { error: { message: "Invoice not found" } });
 
-      const expected = Number(inv.data.grand_total || 0);
-      const short = expected - paid;
-      if (short <= 0) {
+      const expectedCents = toCents(inv.data.grand_total);
+      const existingPaidCents = toCents(inv.data.paid_amount);
+      const shortCents = expectedCents - paidCents;
+
+      if (shortCents <= 0) {
         // Paid in full or overpaid; just patch the invoice.
         await svc.from("invoices").update({
-          paid_amount: (Number(inv.data.paid_amount) || 0) + paid,
+          paid_amount: fromCents(existingPaidCents + paidCents),
           status: "paid",
           paid_at: new Date().toISOString(),
         }).eq("id", inv.data.id);
@@ -63,7 +72,7 @@ export default async function handler(req, res) {
           action: "payment_received",
           objectType: "invoice",
           objectId: inv.data.id,
-          detail: "amount=" + paid + "::full",
+          detail: "amount=" + fromCents(paidCents).toFixed(2) + "::full",
         });
         return json(res, 200, { ok: true, full_payment: true });
       }
@@ -73,9 +82,9 @@ export default async function handler(req, res) {
         tenant_id: ctx.tenantId,
         invoice_id: inv.data.id,
         customer_id: inv.data.customer_id || null,
-        expected_amount: expected,
-        paid_amount: paid,
-        short_amount: short,
+        expected_amount: fromCents(expectedCents),
+        paid_amount: fromCents(paidCents),
+        short_amount: fromCents(shortCents),
         reason_guess: body.reason_guess || null,
         status: "open",
         notes: body.notes || null,
@@ -83,7 +92,7 @@ export default async function handler(req, res) {
       if (ins.error) throw new Error("deduction_queue insert: " + ins.error.message);
 
       await svc.from("invoices").update({
-        paid_amount: (Number(inv.data.paid_amount) || 0) + paid,
+        paid_amount: fromCents(existingPaidCents + paidCents),
         status: "partial",
       }).eq("id", inv.data.id);
 

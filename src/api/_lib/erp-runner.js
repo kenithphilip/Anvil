@@ -36,12 +36,31 @@ export const closeSyncRun = async (svc, prefix, runId, patch) => {
     .eq("id", runId);
 };
 
+// Audit M10 (May 2026): atomic claim. Two concurrent cron firings
+// could previously both pick up the same `pending` row and call
+// replay(), pushing the same sales order to the vendor twice. The
+// claim helper does an atomic SELECT-then-UPDATE inside a single
+// PostgREST update statement: WHERE id = ? AND status = 'pending'
+// ... RETURNING. If the row was already claimed by another worker
+// the UPDATE returns 0 rows and we skip. The 058 migration adds
+// `claimed_at` + `claimed_by` columns so a stuck claim can be
+// reaped after 15 minutes.
+const claimRow = async (svc, prefix, rowId, claimedBy) => {
+  const r = await svc.from(prefix + "_retry_queue").update({
+    status: "processing",
+    claimed_at: new Date().toISOString(),
+    claimed_by: claimedBy || "cron",
+  }).eq("id", rowId).eq("status", "pending").select("*").maybeSingle();
+  if (r.error) return null;
+  return r.data || null;
+};
+
 // Generic retry-queue runner. Caller supplies a replay function that,
 // given the row, returns either { ok: true, externalId, ... } or
 // { ok: false, status, error }. Recoverable failures schedule the
 // next retry; permanent failures or attempts >= max flip status to
 // gave_up.
-export const drainRetryQueue = async (svc, prefix, { tenantId, opts, replay, isRecoverable }) => {
+export const drainRetryQueue = async (svc, prefix, { tenantId, opts, replay, isRecoverable, claimedBy }) => {
   const q = svc.from(prefix + "_retry_queue").select("*")
     .eq("tenant_id", tenantId)
     .eq("status", "pending")
@@ -52,7 +71,15 @@ export const drainRetryQueue = async (svc, prefix, { tenantId, opts, replay, isR
   const rows = await q;
   if (rows.error) throw new Error("retry queue read: " + rows.error.message);
   const out = [];
-  for (const row of rows.data || []) {
+  for (const candidate of rows.data || []) {
+    // Atomic claim. If another concurrent worker already picked
+    // this row up between our SELECT and UPDATE, claimRow returns
+    // null and we move on. No double-pushes.
+    const row = await claimRow(svc, prefix, candidate.id, claimedBy || "cron");
+    if (!row) {
+      out.push({ id: candidate.id, skipped: "already_claimed" });
+      continue;
+    }
     const result = await replay(row).catch((err) => ({
       ok: false, status: 0, error: err?.message || String(err),
     }));

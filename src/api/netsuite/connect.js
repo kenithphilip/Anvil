@@ -21,6 +21,7 @@ import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings, updateTenantSettings } from "../_lib/stripe-client.js";
 import { netsuiteFetch } from "../_lib/netsuite-client.js";
 import { encryptNetsuiteCreds, decryptNetsuiteCreds, isSecretsConfigured } from "../_lib/secrets.js";
+import { safeProbeError } from "../_lib/sanitize.js";
 
 const REQUIRED = ["account_id", "consumer_key", "consumer_secret", "token_id", "token_secret"];
 
@@ -96,7 +97,7 @@ export default async function handler(req, res) {
     return json(res, 200, {
       ok: probe.ok,
       probe_status: probe.status,
-      probe_error: probe.ok ? null : (probe.body?.["o:errorDetails"] || probe.body?.error || probe.body?.raw || null),
+      probe_error: safeProbeError(probe, "connection_failed"),
       storage_mode: storageMode,
     });
   } catch (err) {

@@ -7,6 +7,7 @@ import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings, updateTenantSettings } from "../_lib/stripe-client.js";
 import { proalphaEncryptCreds, proalphaDecryptCreds, proalphaProbe } from "../_lib/proalpha-client.js";
 import { isSecretsConfigured } from "../_lib/secrets.js";
+import { safeProbeError } from "../_lib/sanitize.js";
 
 const REQUIRED = ["base_url", "username", "password"];
 
@@ -54,7 +55,7 @@ export default async function handler(req, res) {
     return json(res, 200, {
       ok: probe.ok,
       probe_status: probe.status,
-      probe_error: probe.ok ? null : (probeErr || probe.body?.error || probe.body?.raw),
+      probe_error: safeProbeError(probe, probeErr || "connection_failed"),
       storage_mode: isSecretsConfigured() ? "encrypted" : "plaintext",
     });
   } catch (err) {

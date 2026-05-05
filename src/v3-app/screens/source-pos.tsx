@@ -131,10 +131,12 @@ const WiredSourcePOs = () => {
         notes:            ackForm.notes || null,
       };
       await ObaraBackend?.sourcePos?.ack?.({ sourcePoId: ackPo.id, ack });
+      window.notifySuccess?.("Ack submitted", ackPo.po_number || ackPo.id?.slice(0, 8));
       closeAck();
       reload();
-    } catch (err) {
+    } catch (err: any) {
       setSubmitErr(err);
+      window.notifyError?.("Ack failed", err?.message || String(err));
     } finally {
       setSubmitting(false);
     }

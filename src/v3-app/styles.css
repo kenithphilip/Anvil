@@ -1153,6 +1153,12 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   display: flex; flex-direction: column; gap: 8px;
   max-height: 100%;
 }
+/* On phones the 220px column is nearly the full viewport, leaving
+ * almost no room to swipe. Shrink the column so the next column is
+ * visibly peeking from the right edge as a "more here" affordance. */
+@media (max-width: 480px) {
+  .col { flex: 0 0 calc(85vw - 24px); }
+}
 .col-h { display: flex; align-items: center; gap: 6px; padding-bottom: 6px; border-bottom: 1px dashed var(--hairline); }
 .col-h .t { font-size: 11px; font-weight: 600; flex: 1; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-2); font-family: var(--mono); }
 .col-h .c { font-family: var(--mono); font-size: 10px; color: var(--ink-4); }
@@ -1221,14 +1227,24 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .rail-panel-h {
   display: flex; align-items: baseline; gap: 8px;
   margin-bottom: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 .rail-panel-h .t {
   font-family: var(--sans);
   font-size: 11.5px;
   font-weight: 600;
   letter-spacing: -0.005em;
+  /* Long titles (e.g. "Recent Communications") used to push the
+   * count off the right edge. Ellipsize the title; the count is
+   * fixed width and reads naturally on the right. */
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.rail-panel-h .c { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--ink-4); }
+.rail-panel-h .c { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--ink-4); flex-shrink: 0; }
 
 /* Activity stream */
 .stream { display: flex; flex-direction: column; gap: 0; }

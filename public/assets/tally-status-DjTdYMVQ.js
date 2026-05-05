@@ -1,0 +1,2 @@
+import{o as a,O as o}from"./index-DQpDfAzv.js";const c=()=>{const[s,t]=a.useState({configured:!1,loading:!0,error:null});return a.useEffect(()=>{let r=!1;return Promise.resolve(o?.health?.()).then(e=>{if(r)return;const l=(Array.isArray(e?.integrations)?e.integrations:[]).find(n=>n?.id==="tally");t({configured:!!l?.configured,loading:!1,error:null})}).catch(e=>{r||t({configured:!1,loading:!1,error:e})}),()=>{r=!0}},[]),s};export{c as u};
+//# sourceMappingURL=tally-status-DjTdYMVQ.js.map

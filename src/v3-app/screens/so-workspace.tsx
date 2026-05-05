@@ -53,7 +53,15 @@ const WiredSOWorkspace = () => {
         const rows = Array.isArray(data) ? data : (data?.events || data?.rows || []);
         setAudit({ data: rows, loading: false });
       })
-      .catch(() => { if (!cancelled) setAudit({ data: [], loading: false }); });
+      .catch((err) => {
+        // Audit list failures are non-fatal: the activity timeline
+        // just shows fewer rows. Log to console so a dev sees the
+        // problem without spamming the UI with a banner.
+        if (!cancelled) {
+          console.warn("[so-workspace] audit fetch failed", err);
+          setAudit({ data: [], loading: false });
+        }
+      });
     return () => { cancelled = true; };
   }, [orderId, bump]);
 
@@ -67,7 +75,12 @@ const WiredSOWorkspace = () => {
         const rows = Array.isArray(data) ? data : (data?.events || data?.rows || []);
         setProcEvents({ data: rows, loading: false });
       })
-      .catch(() => { if (!cancelled) setProcEvents({ data: [], loading: false }); });
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn("[so-workspace] processing-events fetch failed", err);
+          setProcEvents({ data: [], loading: false });
+        }
+      });
     return () => { cancelled = true; };
   }, [orderId, bump]);
 
@@ -76,7 +89,12 @@ const WiredSOWorkspace = () => {
     let cancelled = false;
     Promise.resolve(ObaraBackend?.cost?.breakdown?.({ customer_id: order.data.customer_id }) || Promise.resolve(null))
       .then((data) => { if (!cancelled) setCost({ data, loading: false }); })
-      .catch(() => { if (!cancelled) setCost({ data: null, loading: false }); });
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn("[so-workspace] cost-breakdown fetch failed", err);
+          setCost({ data: null, loading: false });
+        }
+      });
     return () => { cancelled = true; };
   }, [orderId, order.data?.customer_id]);
 

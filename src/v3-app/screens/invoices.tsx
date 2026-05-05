@@ -6,7 +6,7 @@
 // regenerate the share link, mark paid, void.
 
 import React, { useEffect, useMemo, useState } from "react";
-import { ageLabel } from "../lib/helpers";
+import { ageLabel, fmtCurrency, fmtDate } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
@@ -29,12 +29,10 @@ const statusChip = (s: string) => {
   return <Chip k="ghost">draft</Chip>;
 };
 
-const fmtMoney = (amount: any, currency = "USD") => {
-  const n = Number(amount) || 0;
-  try {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 2 }).format(n);
-  } catch (_) { return currency + " " + n.toFixed(2); }
-};
+// fmtMoney is a thin alias kept so the existing call sites read
+// naturally; it delegates to the canonical fmtCurrency helper so
+// every screen uses the same locale + symbol logic.
+const fmtMoney = (amount: any, currency: string = "USD") => fmtCurrency(amount, currency);
 
 const WiredInvoices = () => {
   const [tab, setTab] = useState("all");
@@ -212,8 +210,8 @@ const WiredInvoices = () => {
                   <tr key={r.id}>
                     <td className="mono">{r.invoice_number}</td>
                     <td className="mono-sm">{r.order_id ? String(r.order_id).slice(0, 8) : "—"}</td>
-                    <td className="mono-sm">{r.issue_date}</td>
-                    <td className="mono-sm" title={r.due_date ? ageLabel(r.due_date) : ""}>{r.due_date}</td>
+                    <td className="mono-sm">{fmtDate(r.issue_date)}</td>
+                    <td className="mono-sm" title={r.due_date ? ageLabel(r.due_date) : ""}>{fmtDate(r.due_date)}</td>
                     <td className="r mono">{fmtMoney(r.grand_total, r.currency)}</td>
                     <td>{statusChip(r.status)}</td>
                     <td>

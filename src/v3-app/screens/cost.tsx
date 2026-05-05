@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ageLabel, fmtINRShort, useFetch } from "../lib/helpers";
+import { ageLabel, fmtCurrency, fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
@@ -29,9 +29,15 @@ const COST_SCENARIOS = [
 
 const SIMULATOR_TOKEN_ESTIMATE = { totalInput: 8000, call2Output: 1200 };
 
+// usdToInr converts dollars to rupees at the given fx rate then
+// formats as INR via the canonical fmtCurrency helper.
 const usdToInr = (n: number, rate: number) =>
-  `₹ ${(Number(n) * (Number(rate) || 0)).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
-const fmtUsd = (n) => `$ ${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  fmtCurrency(Number(n) * (Number(rate) || 0), "INR");
+// fmtUsd is a thin wrapper around fmtCurrency to keep call sites
+// short. The "$ 12.50" prefix-with-space style is preserved by
+// post-processing because Intl uses "$12.50" by default; this is
+// the legacy visual.
+const fmtUsd = (n: number | null | undefined) => fmtCurrency(n, "USD").replace(/^\$/, "$ ");
 
 // Pull the live USD->INR rate from the FX endpoint. We cache it for the
 // lifetime of the component because the simulator is interactive and we

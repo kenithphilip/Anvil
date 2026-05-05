@@ -273,7 +273,8 @@ const WiredJbmImporter = () => {
             <input ref={fileRef} type="file" accept=".xlsx,.xls"
                    style={{ display: "none" }}
                    onChange={(e) => onFile(e.target.files?.[0])} />
-            <Btn kind="primary" onClick={() => fileRef.current?.click()} disabled={busy || !customerId}>
+            <Btn kind="primary" onClick={() => fileRef.current?.click()} disabled={busy || !customerId}
+                 title={!customerId ? "Pick a customer first" : "Open file picker for the JBM XLSX export"}>
               {Icon.upload} Choose XLSX
             </Btn>
             <div className="mono-sm" style={{ marginTop: 8, color: "var(--ink-3)" }}>
@@ -328,7 +329,8 @@ const WiredJbmImporter = () => {
 
         {parsed && (
           <Card title="Import" eyebrow="step 4">
-            <Btn kind="primary" onClick={apply} disabled={busy || !customerId || parsed.guns.length === 0}>
+            <Btn kind="primary" onClick={apply} disabled={busy || !customerId || parsed.guns.length === 0}
+                 title={!customerId ? "Pick a customer first" : parsed.guns.length === 0 ? "No guns found in the parsed sheet" : `Upsert ${parsed.guns.length} guns into the database`}>
               {Icon.download} Import {parsed.guns.length} guns to Supabase
             </Btn>
             {progress.total > 0 && (

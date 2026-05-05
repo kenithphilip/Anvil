@@ -253,11 +253,13 @@ const WiredStudioCRUD = () => {
       await (ObaraBackend?.customers?.upsert?.(payload)
              || studioCrudFetch("/api/customers", { method: "POST", body: payload }));
       setOkMsg("Profile saved as new version");
+      window.notifySuccess?.("Profile saved", selectedCustomer.customer_name || "new version");
       setEditing(false);
       loadVersions(customerId);
       customers.reload?.();
-    } catch (error) {
+    } catch (error: any) {
       setErr(error);
+      window.notifyError?.("Save failed", error?.message || String(error));
     } finally {
       setSaving(false);
     }

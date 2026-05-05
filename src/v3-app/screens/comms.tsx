@@ -107,9 +107,11 @@ const WiredComms = () => {
         template_id: composer.templateId,
       });
       setComposer((c) => ({ ...c, busy: false, flash: { kind: "good", msg: "Draft saved" }, recipient: "" }));
+      window.notifySuccess?.("Draft saved", composer.recipient);
       drafts.reload();
-    } catch (err) {
+    } catch (err: any) {
       setComposer((c) => ({ ...c, busy: false, flash: { kind: "bad", msg: String(err.message || err) } }));
+      window.notifyError?.("Draft save failed", err?.message || String(err));
     }
   };
 
@@ -165,8 +167,11 @@ const WiredComms = () => {
             ) : loading ? (
               <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading communications…</div>
             ) : visibleRows.length === 0 ? (
-              <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-                No {active === "all" ? "" : active + " "}communications yet.
+              <div className="body" style={{ padding: 28, textAlign: "center", color: "var(--ink-3)", display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}>
+                <div>No {active === "all" ? "" : active + " "}communications yet.</div>
+                <div className="mono-sm" style={{ color: "var(--ink-4)" }}>
+                  Compose a draft below using one of the templates, or trigger an automated comm from a sales order.
+                </div>
               </div>
             ) : (
               <table className="tbl">
@@ -191,11 +196,11 @@ const WiredComms = () => {
                       <td>
                         <Btn sm kind="ghost"
                              disabled={!r.order_id && !r.orderId}
+                             title={(!r.order_id && !r.orderId) ? "This communication isn't linked to an order" : "Open the linked sales order"}
                              onClick={() => {
                                const orderId = r.order_id || r.orderId;
                                if (orderId) window.location.hash = `#/so?id=${orderId}`;
-                             }}
-                             title="Open the order this message is attached to">
+                             }}>
                           open
                         </Btn>
                       </td>

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ageLabel, stageOf, useFetch } from "../lib/helpers";
+import { ageLabel, fmtDate, stageOf, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
@@ -365,7 +365,7 @@ const GunsRightPane = ({ gun, ordersData, ordersLoading, ordersError, customerLo
           ["Gun #", <span className="mono pri">{gun.gun_no}</span>],
           ["Customer", gun.customer || "—"],
           ["Project / line", gun.project || "—"],
-          ["Last seen", gun.lastUpdated ? `${new Date(gun.lastUpdated).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })} · ${ageLabel(gun.lastUpdated)}` : "—"],
+          ["Last seen", gun.lastUpdated ? `${fmtDate(gun.lastUpdated, "medium")} · ${ageLabel(gun.lastUpdated)}` : "—"],
           ["Source country", gun.source_country || "—"],
           ["Total parts", `${totalParts}${totalQty ? ` · qty ${totalQty.toLocaleString("en-IN")}` : ""}`],
         ]} />

@@ -78,9 +78,11 @@ const WiredEmailTriage = () => {
     try {
       await ObaraBackend?.orders?.create?.({ from_email_id: selected.id });
       setFlash({ kind: "good", msg: "Promoted email to draft order" });
+      window.notifySuccess?.("Promoted to draft order", selected.subject || "");
       inbox.reload();
-    } catch (err) {
+    } catch (err: any) {
       setFlash({ kind: "bad", msg: String(err.message || err) });
+      window.notifyError?.("Promote failed", err?.message || String(err));
     } finally {
       setBusy(false);
     }
@@ -92,9 +94,11 @@ const WiredEmailTriage = () => {
     try {
       await ObaraBackend?.orders?.update?.(orderId, { attached_email_id: selected.id });
       setFlash({ kind: "good", msg: `Attached to ${orderId.slice(0, 8)}` });
+      window.notifySuccess?.("Email attached", `Order ${orderId.slice(0, 8)}`);
       inbox.reload();
-    } catch (err) {
+    } catch (err: any) {
       setFlash({ kind: "bad", msg: String(err.message || err) });
+      window.notifyError?.("Attach failed", err?.message || String(err));
     } finally {
       setBusy(false);
     }
@@ -108,8 +112,10 @@ const WiredEmailTriage = () => {
       if (!orderId) throw new Error("No order linked to this email");
       await ObaraBackend?.communications?.missingDoc?.(orderId);
       setFlash({ kind: "good", msg: "Missing-doc nudge queued" });
-    } catch (err) {
+      window.notifySuccess?.("Nudge queued", selected.subject || "");
+    } catch (err: any) {
       setFlash({ kind: "bad", msg: String(err.message || err) });
+      window.notifyError?.("Nudge failed", err?.message || String(err));
     } finally {
       setBusy(false);
     }
@@ -143,8 +149,14 @@ const WiredEmailTriage = () => {
             {inbox.loading ? (
               <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading inbox…</div>
             ) : rows.length === 0 ? (
-              <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-                Inbox empty. New email-in messages will appear here.
+              <div className="body" style={{ padding: 28, textAlign: "center", color: "var(--ink-3)", display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}>
+                <div>Inbox empty.</div>
+                <div className="mono-sm" style={{ color: "var(--ink-4)" }}>
+                  New email-in messages will appear here as customers reply to your tenant address. Configure the inbound mailbox in Admin → Integrations.
+                </div>
+                <Btn sm kind="ghost" onClick={() => window.location.hash = "#/admin"} title="Open Admin to configure email-in">
+                  {Icon.settings} configure email-in
+                </Btn>
               </div>
             ) : (
               <table className="tbl">
@@ -216,10 +228,12 @@ const WiredEmailTriage = () => {
 
                 <Card title="Actions" eyebrow="promote · attach · nudge">
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    <Btn kind="primary" sm disabled={busy} onClick={promote}>
+                    <Btn kind="primary" sm disabled={busy || !selected} onClick={promote}
+                         title={!selected ? "Select an email from the inbox first" : "Create a draft sales order from this email"}>
                       {Icon.zap} Promote to order
                     </Btn>
-                    <Btn kind="ghost" sm disabled={busy || !selected} onClick={requestMissing}>
+                    <Btn kind="ghost" sm disabled={busy || !selected} onClick={requestMissing}
+                         title={!selected ? "Select an email first" : "Send the customer a templated 'missing document' nudge"}>
                       {Icon.send} Request missing doc
                     </Btn>
                   </div>

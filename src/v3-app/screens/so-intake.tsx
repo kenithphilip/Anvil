@@ -89,9 +89,11 @@ const WiredSOIntake = () => {
       if (doc?.id) {
         try { await ObaraBackend?.ocr?.run?.(doc.id, newId); } catch (_) { /* surface in workspace */ }
       }
+      window.notifySuccess?.("Draft created", String(newId).slice(0, 8));
       window.location.hash = `#/so?id=${newId}`;
-    } catch (e2) {
-      setErr(String(e2.message || e2));
+    } catch (e2: any) {
+      setErr(String(e2?.message || e2));
+      window.notifyError?.("Could not create draft", e2?.message || String(e2));
       setBusy(null);
     }
   };
@@ -148,16 +150,32 @@ const WiredSOIntake = () => {
                 className="select"
                 value={customerId}
                 onChange={(ev) => setCustomerId(ev.target.value)}
-                disabled={customers.loading}
+                disabled={customers.loading || !!customers.error}
                 style={{ marginBottom: 12 }}
               >
-                <option value="">{customers.loading ? "loading customers…" : "select a customer…"}</option>
+                <option value="">
+                  {customers.loading ? "loading customers…"
+                    : customers.error ? "could not load customers"
+                    : "select a customer…"}
+                </option>
                 {customerList.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.customer_name}{c.gstin ? ` · ${c.gstin}` : ""}
                   </option>
                 ))}
               </select>
+              {/*
+               * Surface the fetch error inline. Without this banner the
+               * customer dropdown showed an empty list silently and
+               * the operator had no idea the API call had failed.
+               */}
+              {customers.error && (
+                <Banner kind="bad" icon={Icon.alert}
+                        title="Could not load customers"
+                        action={<Btn sm onClick={() => window.location.reload()}>reload</Btn>}>
+                  <span className="mono-sm">{String(customers.error?.message || customers.error)}</span>
+                </Banner>
+              )}
 
               <div
                 onDragOver={(ev) => ev.preventDefault()}

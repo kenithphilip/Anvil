@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ageLabel, fmtINRShort, useFetch } from "../lib/helpers";
+import { ageLabel, fmtDate, fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KV, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
@@ -850,7 +850,7 @@ const WiredAdminCRUD = () => {
                               ? "in this session"
                               : lastSignIn ? ageLabel(lastSignIn) : "—"}
                           </td>
-                          <td className="mono-sm">{(m.joined_at || m.created_at) ? new Date(m.joined_at || m.created_at).toLocaleDateString("en-IN") : "—"}</td>
+                          <td className="mono-sm">{fmtDate(m.joined_at || m.created_at)}</td>
                           <td>
                             <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
                               {pending && email !== "—" && (
@@ -1071,11 +1071,11 @@ const WiredAdminCRUD = () => {
                     </Card>
                     <Card title="Window" eyebrow="UTC">
                       <div className="mono-sm" style={{ color: "var(--ink-2)" }}>
-                        {new Date(billing.from).toLocaleDateString("en-IN")}
+                        {fmtDate(billing.from, "medium")}
                       </div>
                       <div className="mono-sm" style={{ color: "var(--ink-3)" }}>to</div>
                       <div className="mono-sm" style={{ color: "var(--ink-2)" }}>
-                        {new Date(billing.to).toLocaleDateString("en-IN")}
+                        {fmtDate(billing.to, "medium")}
                       </div>
                     </Card>
                   </div>
@@ -1185,7 +1185,7 @@ const WiredAdminCRUD = () => {
                     <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
                       account {netsuite.account_id}
                       {netsuite.subsidiary_id ? " · sub " + netsuite.subsidiary_id : ""}
-                      {netsuite.connected_at ? " · since " + new Date(netsuite.connected_at).toLocaleDateString("en-US") : ""}
+                      {netsuite.connected_at ? " · since " + fmtDate(netsuite.connected_at, "medium") : ""}
                     </span>
                   </div>
                   {(netsuite.retry_pending || netsuite.retry_gave_up) ? (
@@ -1210,8 +1210,8 @@ const WiredAdminCRUD = () => {
                       ) : (netsuite.sync_state || []).map((s: any) => (
                         <tr key={s.entity}>
                           <td>{s.entity}</td>
-                          <td>{s.last_sync_at ? new Date(s.last_sync_at).toLocaleString("en-IN") : "—"}</td>
-                          <td style={{ color: "var(--ink-3)" }}>{s.last_modified_high_water ? new Date(s.last_modified_high_water).toLocaleDateString("en-US") : "—"}</td>
+                          <td>{s.last_sync_at ? fmtDate(s.last_sync_at, "medium") + " " + new Date(s.last_sync_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                          <td style={{ color: "var(--ink-3)" }}>{fmtDate(s.last_modified_high_water, "medium")}</td>
                           <td>
                             {s.status === "running" ? <Chip k="warn">running</Chip>
                               : s.status === "error" ? <Chip k="bad">error</Chip>

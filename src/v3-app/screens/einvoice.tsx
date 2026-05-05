@@ -205,7 +205,8 @@ const WiredEinvoiceCRUD = () => {
 
       <div className="ws-content">
         {list.error && (
-          <Banner kind="bad" icon={Icon.alert} title="Could not load invoices">
+          <Banner kind="bad" icon={Icon.alert} title="Could not load invoices"
+                  action={<Btn sm onClick={reload}>retry</Btn>}>
             <span className="mono-sm">{String(list.error.message || list.error)}</span>
           </Banner>
         )}

@@ -106,8 +106,25 @@ const WiredCustomers = () => {
 
         <Card flush>
           {filtered.length === 0 ? (
-            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-              {query ? <>No customers match <span className="mono">{query}</span>. <button type="button" onClick={() => setQuery("")} className="link-btn" style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>clear search</button></> : "No customers yet."}
+            <div className="body" style={{ padding: 28, textAlign: "center", color: "var(--ink-3)", display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}>
+              {query ? (
+                <>
+                  <div>No customers match <span className="mono">{query}</span>.</div>
+                  <Btn sm onClick={() => setQuery("")}>{Icon.x} clear search</Btn>
+                </>
+              ) : (
+                <>
+                  <div>No customers yet. Customers appear here once an order, email, or BOM ties them to your tenant.</div>
+                  <div className="row gap-sm">
+                    <Btn sm onClick={() => { window.location.hash = "#/so?new=1"; }} title="Start a new sales order, which will register the customer">
+                      {Icon.plus} new sales order
+                    </Btn>
+                    <Btn sm kind="ghost" onClick={() => window.location.hash = "#/studio"} title="Open Profile Studio to seed a customer + extraction profile">
+                      {Icon.settings} profile studio
+                    </Btn>
+                  </div>
+                </>
+              )}
             </div>
           ) : (
             <table className="tbl">

@@ -5,30 +5,30 @@ screen handler that performs a mutation. Run `npm run audit:write-paths`
 to refresh.
 
 Summary:
-- OK:   11
+- OK:   20
 - INFO: 0
-- WARN: 9
+- WARN: 0
 - FAIL: 0
 
 | Severity | Screen | Handler | Mutation | API handler | Reason |
 |----------|--------|---------|----------|-------------|--------|
-| WARN | src/v3-app/screens/studio.tsx | `saveProfile` | customers.upsert upsert | src/api/customers/index.js [ok] | no success feedback; no list reload |
-| WARN | src/v3-app/screens/source-pos.tsx | `submitAck` | sourcePos.ack ack | src/api/source_pos/ack.js [ok] | no success feedback; no error catch |
-| WARN | src/v3-app/screens/so-workspace.tsx | `pushToTally` | tally.push push | src/api/tally/push.js [ok] | no list reload |
-| WARN | src/v3-app/screens/so-workspace.tsx | `cancelOrder` | orders.update update | src/api/orders/[id].js [ok] | no list reload |
-| WARN | src/v3-app/screens/so-workspace.tsx | `approveOrder` | orders.update update | src/api/orders/[id].js [ok] | no list reload |
-| WARN | src/v3-app/screens/so-intake.tsx | `onContinue` | orders.create create | src/api/orders/[id].js [ok] | no success feedback; no list reload |
-| WARN | src/v3-app/screens/bom-import.tsx | `doImportAll` | bom.upsert upsert | src/api/bom/index.js [ok] | no list reload |
-| WARN | src/v3-app/screens/admin.tsx | `onTallyRetryNow` | tally.retry retry | src/api/tally/retry.js [ok] | no list reload |
-| WARN | src/v3-app/screens/admin.tsx | `onNsRetryNow` | netsuite.retry retry | src/api/netsuite/retry.js [ok] | no list reload |
+| OK | src/v3-app/screens/studio.tsx | `saveProfile` | customers.upsert upsert | src/api/customers/index.js [ok] | ok |
+| OK | src/v3-app/screens/source-pos.tsx | `submitAck` | sourcePos.ack ack | src/api/source_pos/ack.js [ok] | ok |
+| OK | src/v3-app/screens/so-workspace.tsx | `pushToTally` | tally.push push | src/api/tally/push.js [ok] | ok |
+| OK | src/v3-app/screens/so-workspace.tsx | `cancelOrder` | orders.update update | src/api/orders/[id].js [ok] | ok |
+| OK | src/v3-app/screens/so-workspace.tsx | `approveOrder` | orders.update update | src/api/orders/[id].js [ok] | ok |
+| OK | src/v3-app/screens/so-intake.tsx | `onContinue` | orders.create create | src/api/orders/[id].js [ok] | ok |
 | OK | src/v3-app/screens/email.tsx | `promote` | orders.create create | src/api/orders/[id].js [ok] | ok |
+| OK | src/v3-app/screens/bom-import.tsx | `doImportAll` | bom.upsert upsert | src/api/bom/index.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `submitThreshold` | admin.upsertApprovalThreshold upsertApprovalThreshold | src/api/admin/contracts.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `submitLocation` | admin.upsertCustomerLocation upsertCustomerLocation | src/api/admin/contracts.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `submitItem` | admin.upsertItemMaster upsertItemMaster | src/api/admin/contracts.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `submitContract` | admin.upsertContract upsertContract | src/api/admin/contracts.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `saveProfile` | /api/auth/profile PATCH | /api/auth/profile (PATCH) | ok |
 | OK | src/v3-app/screens/admin.tsx | `refreshFx` | fx.refresh refresh | src/api/fx/rates.js [ok] | ok |
+| OK | src/v3-app/screens/admin.tsx | `onTallyRetryNow` | tally.retry retry | src/api/tally/retry.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `onRemoveMember` | /api/admin/members?user_id=${encodeURIComponent(revokeFor.user_id)} DELETE | /api/admin/members?user_id=${encodeURIComponent(revokeFor.user_id)} (DELETE) | ok |
+| OK | src/v3-app/screens/admin.tsx | `onNsRetryNow` | netsuite.retry retry | src/api/netsuite/retry.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `onAddMember` | /api/admin/members POST | /api/admin/members (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onAddLeadTime` | admin.upsertLeadTime upsertLeadTime | src/api/admin/contracts.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `onAddHoliday` | admin.upsertHoliday upsertHoliday | src/api/admin/contracts.js [ok] | ok |

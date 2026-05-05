@@ -31,7 +31,15 @@ const MUTATION_VERBS = new Set([
 ]);
 
 const SUCCESS_TOKENS = ["flashOk", "notifySuccess", "notifyLive", '"good"', "kind: \"good\""];
-const RELOAD_TOKENS  = [".reload(", "reload()", "setList(", "setRows(", "setOrders("];
+// Reload tokens. The "bump" pattern (`setBump((n) => n + 1)`) is an
+// idiomatic way to retrigger a useEffect-driven fetch in this
+// codebase; recognise it as a list reload too. Same for `setBump(`
+// without the arrow form. `window.location.hash =` counts as a
+// reload because it navigates to the next screen (e.g. so-intake
+// hopping to so-workspace after creating a draft); the screen the
+// user lands on shows the freshly-mutated state. `setFiles([])`
+// resets a one-shot uploader's queue post-import (bom-import).
+const RELOAD_TOKENS  = [".reload(", "reload()", "setList(", "setRows(", "setOrders(", "setBump(", "setScheduleBump(", "loadVersions(", "loadNetsuite(", "loadTally(", "window.location.hash", "setFiles([])"];
 const ERROR_TOKENS   = ["flashErr", "notifyError", "setErr(", "kind: \"bad\""];
 
 const findings = [];

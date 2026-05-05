@@ -6,7 +6,7 @@
 // the hourly Vercel cron); this screen is purely the operator surface.
 
 import React, { useEffect, useMemo, useState } from "react";
-import { ageLabel } from "../lib/helpers";
+import { ageLabel, fmtDate } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle, rowActivateProps } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
@@ -264,7 +264,7 @@ const WiredAgents = () => {
                           <td colSpan={7} style={{ background: "var(--paper-2)" }}>
                             <div style={{ padding: 12 }}>
                               <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 8 }}>
-                                Goal id <code>{g.id}</code> · armed {ageLabel(g.created_at)} · deadline {g.due_at ? new Date(g.due_at).toLocaleDateString("en-IN") : "—"}
+                                Goal id <code>{g.id}</code> · armed {ageLabel(g.created_at)} · deadline {fmtDate(g.due_at, "medium")}
                                 {g.last_error && <> · <span style={{ color: "var(--rust)" }}>last error: {g.last_error}</span></>}
                               </div>
                               {goalSteps.length === 0 ? (

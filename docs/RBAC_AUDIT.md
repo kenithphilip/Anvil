@@ -155,6 +155,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/findings/index.js | write |
 | src/api/forecast/index.js | read, admin |
 | src/api/fx/rates.js | read, write |
+| src/api/inbound/chat/configure.js | read, admin |
 | src/api/inbound/email/configure.js | read, admin |
 | src/api/inbound/email/parse.js | approve |
 | src/api/inbound/email/threads.js | read |
@@ -188,6 +189,9 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/p21/push.js | approve |
 | src/api/p21/retry.js | admin |
 | src/api/p21/sync.js | admin |
+| src/api/plm/connect.js | admin |
+| src/api/plm/health.js | read |
+| src/api/plm/sync.js | read, admin |
 | src/api/portal/tokens.js | read, approve, admin |
 | src/api/push/send.js | approve |
 | src/api/push/subscribe.js | read |
@@ -195,6 +199,11 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/rlhf/aggregate.js | approve |
 | src/api/rlhf/dataset.js | approve |
 | src/api/rlhf/feedback.js | read |
+| src/api/sage_x3/connect.js | admin |
+| src/api/sage_x3/health.js | read |
+| src/api/sage_x3/push.js | approve |
+| src/api/sage_x3/retry.js | admin |
+| src/api/sage_x3/sync.js | admin |
 | src/api/sales_history/price_band.js | read |
 | src/api/sales/internal_so.js | read, write, admin |
 | src/api/sales/leads.js | read, write, admin |
@@ -218,6 +227,9 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/source_pos/ack.js | write |
 | src/api/source_pos/index.js | read |
 | src/api/source_pos/scorecard.js | read |
+| src/api/sourcing/network/handoff.js | write |
+| src/api/sourcing/network/listings.js | read, write |
+| src/api/sourcing/network/search.js | read |
 | src/api/spare_matrix/kit.js | read |
 | src/api/spare_matrix/obsolete.js | read |
 | src/api/spare_matrix/opportunities.js | read |
@@ -245,6 +257,8 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/tally/retry.js | admin |
 | src/api/tally/sync.js | admin |
 | src/api/tally/validate.js | read |
+| src/api/voice/configure.js | read, admin |
+| src/api/voice/handoff.js | approve |
 | src/api/whatsapp/send.js | write |
 
 ## Findings

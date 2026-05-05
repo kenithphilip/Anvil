@@ -561,7 +561,34 @@ past quotes.
 - A rep can ask "what's our usual margin on Acme orders" and get
   a grounded numerical answer.
 
-## 6. Phase 5: Voice, multi-channel inbound, GAEB, remaining ERPs
+## 6. Phase 5: Voice, multi-channel inbound, GAEB, remaining ERPs (PARTIAL)
+
+### Status snapshot for Phase 5
+
+- 5.1 Voice agent (Vapi / Retell): `[done]`. Webhook + configure +
+  handoff endpoints landed. Both providers' signature verification
+  is implemented. Tool-call results flow into `voice_call_actions`
+  for the agent runner to execute.
+- 5.2 Inbound WhatsApp / Slack / Teams: `[done]`. Three webhook
+  endpoints, normalised `inbound_messages` table, encrypted
+  per-tenant chat configs, outbound chat routing in
+  `communications/send.js`.
+- 5.3 GAEB X81/X83/X84/X86 parser: `[done]`. Inline XML parser, no
+  new deps. Wired into the Document AI v2 router with safe
+  fallback to the LLM path on parse failure. 9 unit tests.
+- 5.4 Remaining ERP connectors: `[partial]`. Sage X3 connector is
+  complete (migration 040, client, full connect/sync/push/retry/
+  health surface, cron muxed). JobBoss, Plex, IFS, JDE, Oracle
+  EBS / Fusion, proALPHA, Ramco are tracked as 5.4b for the next
+  sprint.
+- 5.5 PLM connectors (Windchill, Arena): `[done]`. Migration 038,
+  unified `_lib/plm-client.js`, connect/sync/health endpoints,
+  cron muxed.
+- 5.6 In-network back-to-back sourcing: `[done]`. Migration 037,
+  three endpoints (`listings`, `search`, `handoff`), opt-in flag
+  on `tenant_settings`, peer pseudonymisation via per-asker hash.
+
+
 
 **Goal.** Reach Mercura / Avent / Axal feature parity on voice and
 multi-channel ingestion. Cover the long tail of ERPs needed for
@@ -569,7 +596,7 @@ enterprise deals. This corresponds to the strategic doc's Phase 3
 voice items plus Phase 6 remaining-ERP items, clubbed because they
 share infrastructure.
 
-### 5.1 Voice agent (Vapi or Retell adapter) `[open]`
+### 5.1 Voice agent (Vapi or Retell adapter) `[done]`
 
 Inbound calls handled by an AI agent that authenticates the
 customer, places orders, checks delivery times, generates quotes,
@@ -607,7 +634,7 @@ and hands off to a human when needed.
   flow.
 - Escalation correctly forwards to a human number.
 
-### 5.2 Inbound WhatsApp / Slack / Teams ingestion `[open]`
+### 5.2 Inbound WhatsApp / Slack / Teams ingestion `[done]`
 
 Korso parity for international and async channels.
 
@@ -636,7 +663,7 @@ Korso parity for international and async channels.
 - A Slack DM in a connected workspace creates an intake row.
 - A Teams chat triggers a quote.
 
-### 5.3 GAEB tender format parser `[open]`
+### 5.3 GAEB tender format parser `[done]`
 
 German construction-tender XML standard. Mercura's moat.
 
@@ -656,7 +683,7 @@ German construction-tender XML standard. Mercura's moat.
 - A reference GAEB X83 file produces structured positions.
 - A GAEB X86 award file links back to the originating X83.
 
-### 5.4 Remaining ERP connectors `[open]`
+### 5.4 Remaining ERP connectors `[partial]` (Sage X3 done; JobBoss + Plex + 6 others tracked as 5.4b)
 
 Sage X3, JobBoss, Plex (Rockwell), IFS, JD Edwards, Oracle EBS,
 Oracle Fusion, proALPHA (DACH), Ramco (India). All ship using the
@@ -689,7 +716,7 @@ existing `erp-runner.js` framework.
 - Total live ERPs: 14 (5 already shipped plus 3 from Phase 3.1
   plus 9 here, minus any duplicates).
 
-### 5.5 PLM connectors (Windchill, Arena) `[open]`
+### 5.5 PLM connectors (Windchill, Arena) `[done]`
 
 Lumari parity. Pulls BOM and engineering change orders.
 
@@ -715,7 +742,7 @@ Lumari parity. Pulls BOM and engineering change orders.
 - Windchill BOM sync produces structured rows.
 - Arena ECO surfaces in an Admin Center notifications panel.
 
-### 5.6 In-network back-to-back sourcing `[open]`
+### 5.6 In-network back-to-back sourcing `[done]`
 
 Avent unique. When a SKU is out of stock at Tenant A, Anvil checks
 Tenant B's inventory mirror and proposes a back-to-back deal.

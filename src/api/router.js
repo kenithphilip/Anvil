@@ -206,6 +206,27 @@ import catalogSynonyms         from "./catalog/synonyms.js";
 import catalogAlternatives     from "./catalog/alternatives.js";
 import catalogPrivateLabel     from "./catalog/private_label.js";
 
+// Phase 5.6: in-network back-to-back sourcing.
+import sourcingNetworkListings  from "./sourcing/network/listings.js";
+import sourcingNetworkSearch    from "./sourcing/network/search.js";
+import sourcingNetworkHandoff   from "./sourcing/network/handoff.js";
+
+// Phase 5.5: PLM connectors (Windchill, Arena).
+import plmConnect               from "./plm/connect.js";
+import plmSync                  from "./plm/sync.js";
+import plmHealth                from "./plm/health.js";
+
+// Phase 5.2: multi-channel inbound (WhatsApp/Slack/Teams).
+import inboundWhatsappWebhook   from "./inbound/whatsapp/webhook.js";
+import inboundSlackWebhook      from "./inbound/slack/webhook.js";
+import inboundTeamsWebhook      from "./inbound/teams/webhook.js";
+import inboundChatConfigure     from "./inbound/chat/configure.js";
+
+// Phase 5.1: voice agent (Vapi / Retell).
+import voiceConfigure           from "./voice/configure.js";
+import voiceWebhook             from "./voice/webhook.js";
+import voiceHandoff             from "./voice/handoff.js";
+
 import kbAsk                   from "./kb/ask.js";
 
 import esignConnect            from "./esign/connect.js";
@@ -261,6 +282,13 @@ import sxeHealth               from "./sxe/health.js";
 import sxeSync                 from "./sxe/sync.js";
 import sxePush                 from "./sxe/push.js";
 import sxeRetry                from "./sxe/retry.js";
+
+// Phase 5.4 batch 1: Sage X3 (Sage Enterprise Management).
+import sageX3Connect           from "./sage_x3/connect.js";
+import sageX3Health            from "./sage_x3/health.js";
+import sageX3Sync              from "./sage_x3/sync.js";
+import sageX3Push              from "./sage_x3/push.js";
+import sageX3Retry             from "./sage_x3/retry.js";
 import sxeDiagnostics          from "./sxe/diagnostics.js";
 import sxeFieldMap             from "./sxe/field_map.js";
 
@@ -329,6 +357,23 @@ const STATIC_ROUTES = {
   "/catalog/synonyms":              catalogSynonyms,
   "/catalog/alternatives":          catalogAlternatives,
   "/catalog/private_label":         catalogPrivateLabel,
+
+  "/sourcing/network/listings":     sourcingNetworkListings,
+  "/sourcing/network/search":       sourcingNetworkSearch,
+  "/sourcing/network/handoff":      sourcingNetworkHandoff,
+
+  "/plm/connect":                   plmConnect,
+  "/plm/sync":                      plmSync,
+  "/plm/health":                    plmHealth,
+
+  "/inbound/whatsapp/webhook":      inboundWhatsappWebhook,
+  "/inbound/slack/webhook":         inboundSlackWebhook,
+  "/inbound/teams/webhook":         inboundTeamsWebhook,
+  "/inbound/chat/configure":        inboundChatConfigure,
+
+  "/voice/configure":               voiceConfigure,
+  "/voice/webhook":                 voiceWebhook,
+  "/voice/handoff":                 voiceHandoff,
   "/kb/ask":                        kbAsk,
   "/esign/connect":                 esignConnect,
   "/esign/envelopes":               esignEnvelopes,
@@ -373,6 +418,12 @@ const STATIC_ROUTES = {
   "/sxe/sync":                      sxeSync,
   "/sxe/push":                      sxePush,
   "/sxe/retry":                     sxeRetry,
+
+  "/sage_x3/connect":               sageX3Connect,
+  "/sage_x3/health":                sageX3Health,
+  "/sage_x3/sync":                  sageX3Sync,
+  "/sage_x3/push":                  sageX3Push,
+  "/sage_x3/retry":                 sageX3Retry,
   "/sxe/diagnostics":               sxeDiagnostics,
   "/sxe/field_map":                 sxeFieldMap,
   "/admin/contracts":               adminContracts,

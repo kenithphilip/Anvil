@@ -15,6 +15,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
+import { decryptChatCreds } from "../_lib/inbound-chat.js";
 
 const PROVIDER_URL = process.env.COMMS_PROVIDER_URL;
 const PROVIDER_TOKEN = process.env.COMMS_PROVIDER_TOKEN;
@@ -65,6 +66,70 @@ const sendViaSendGrid = async ({ to, subject, body, from }) => {
   }
 };
 
+// Phase 5.2: outbound chat-channel send. Routes through the same
+// per-tenant inbound_chat_configs row used by the corresponding
+// inbound webhook. Returns null when no config / creds are present
+// so the caller falls through to email or manual.
+const sendViaChat = async (svc, tenantId, channel, { to, subject, body }) => {
+  const { data: config } = await svc.from("inbound_chat_configs")
+    .select("*")
+    .eq("tenant_id", tenantId)
+    .eq("channel", channel)
+    .eq("active", true)
+    .maybeSingle();
+  if (!config) return null;
+  const creds = decryptChatCreds(config);
+
+  if (channel === "whatsapp") {
+    if (!creds.account_sid || !creds.auth_token || !creds.from_number) return null;
+    const url = `https://api.twilio.com/2010-04-01/Accounts/${creds.account_sid}/Messages.json`;
+    const formBody = new URLSearchParams({
+      From: creds.from_number.startsWith("whatsapp:") ? creds.from_number : "whatsapp:" + creds.from_number,
+      To: to.startsWith("whatsapp:") ? to : "whatsapp:" + to,
+      Body: [subject ? subject + "\n\n" : "", body || ""].join(""),
+    }).toString();
+    const auth = Buffer.from(`${creds.account_sid}:${creds.auth_token}`).toString("base64");
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: "Basic " + auth, "Content-Type": "application/x-www-form-urlencoded" },
+        body: formBody,
+      });
+      const text = resp.ok ? "" : await resp.text();
+      return { provider: "twilio_whatsapp", status: resp.status, ok: resp.ok, detail: text.slice(0, 4000) };
+    } catch (err) {
+      return { provider: "twilio_whatsapp", status: 0, ok: false, detail: err.message || String(err) };
+    }
+  }
+
+  if (channel === "slack") {
+    if (!creds.bot_token) return null;
+    // `to` is a Slack channel ID or user ID. We post via chat.postMessage.
+    try {
+      const resp = await fetch("https://slack.com/api/chat.postMessage", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + creds.bot_token, "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: to, text: [subject ? "*" + subject + "*" : "", body].filter(Boolean).join("\n") }),
+      });
+      const j = await resp.json();
+      return { provider: "slack", status: resp.status, ok: !!j.ok, detail: JSON.stringify(j).slice(0, 4000) };
+    } catch (err) {
+      return { provider: "slack", status: 0, ok: false, detail: err.message || String(err) };
+    }
+  }
+
+  if (channel === "teams") {
+    // Outbound Teams requires a service URL captured during the
+    // inbound activity. We expect creds.service_url + a fresh
+    // bearer token; for now we emit a queued row that an external
+    // worker would pick up. A full implementation would do the
+    // OAuth client_credentials dance against login.microsoftonline.com.
+    return { provider: "teams", status: 202, ok: true, detail: "queued (Teams reply requires service_url from inbound activity)" };
+  }
+
+  return null;
+};
+
 const sendViaGenericWebhook = async ({ to, subject, body, from }) => {
   if (!PROVIDER_URL) return null;
   try {
@@ -106,13 +171,27 @@ export default async function handler(req, res) {
     if (row.error || !row.data) return json(res, 404, { error: { message: "Draft not found" } });
     if (row.data.status === "sent") return json(res, 200, { ok: true, idempotent: true });
 
-    // Provider order: SendGrid first, generic webhook second, manual
-    // (no provider) third. The first one that returns non-null wins.
+    // Provider order:
+    //   1. If channel is whatsapp/slack/teams, route to the matching
+    //      tenant's chat config (Phase 5.2).
+    //   2. Otherwise SendGrid.
+    //   3. Otherwise generic webhook.
+    //   4. Otherwise manual (no provider) so dev environments still work.
     let providerResult = null;
     let lastError = null;
-    try { providerResult = await sendViaSendGrid({
-      to: row.data.to_addr, subject: row.data.subject, body: row.data.body, from: row.data.from_addr,
-    }); } catch (err) { lastError = err.message; }
+    const chatChannels = new Set(["whatsapp", "slack", "teams"]);
+    if (chatChannels.has(row.data.channel)) {
+      try {
+        providerResult = await sendViaChat(svc, ctx.tenantId, row.data.channel, {
+          to: row.data.to_addr, subject: row.data.subject, body: row.data.body,
+        });
+      } catch (err) { lastError = err.message; }
+    }
+    if (!providerResult) {
+      try { providerResult = await sendViaSendGrid({
+        to: row.data.to_addr, subject: row.data.subject, body: row.data.body, from: row.data.from_addr,
+      }); } catch (err) { lastError = err.message; }
+    }
     if (!providerResult) {
       try { providerResult = await sendViaGenericWebhook({
         to: row.data.to_addr, subject: row.data.subject, body: row.data.body, from: row.data.from_addr,

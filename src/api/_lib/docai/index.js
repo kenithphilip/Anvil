@@ -17,15 +17,19 @@ import * as azureDI from "./azure_di.js";
 import * as unstructured from "./unstructured.js";
 import * as excel from "./excel.js";
 import * as claudeAdapter from "./claude.js";
+import * as gaeb from "./gaeb.js";
 
 const ADAPTERS = {
-  reducto, azure_di: azureDI, unstructured, excel, claude: claudeAdapter,
+  reducto, azure_di: azureDI, unstructured, excel, claude: claudeAdapter, gaeb,
 };
 
-const guessSourceType = ({ filename, mime }) => {
+const guessSourceType = ({ filename, mime, bytes }) => {
   const f = (filename || "").toLowerCase();
   if (f.endsWith(".xlsx") || f.endsWith(".xlsm") || f.endsWith(".xls")) return "xlsx";
   if (mime?.startsWith("image/")) return "image";
+  // GAEB DA XML: detect by extension OR by sniffing the file bytes
+  // for a top-level <GAEB> element. Phase 5.3.
+  if (gaeb.looksLikeGaeb({ filename, bytes })) return "gaeb";
   if (f.endsWith(".pdf") || mime === "application/pdf") return "pdf";
   return "pdf";
 };
@@ -57,8 +61,52 @@ export const dispatchExtract = async ({ source, settings, customerId, hints }) =
       confidence_overall: overallConfidence(out.confidences),
     };
   }
-  // GAEB routes to its own deterministic parser (Phase 5.3 will land
-  // a real GAEB module; for now fall through to Claude).
+  // GAEB routes to its own deterministic parser. The schema is
+  // rigid; an LLM only adds noise. If GAEB parsing fails (malformed
+  // XML, unexpected variant) we fall back to the normal LLM
+  // pipeline so the file isn't silently rejected.
+  if (sourceType === "gaeb") {
+    const t0 = Date.now();
+    const out = await gaeb.extract({ ...source, settings, customerId, hints });
+    if (out.ok) {
+      return {
+        adapter_used: "gaeb",
+        latency_ms: Date.now() - t0,
+        ...out,
+        confidence_overall: overallConfidence(out.confidences),
+      };
+    }
+    // Fall through to the LLM order on parse failure, recording the
+    // GAEB attempt so the caller can see what happened.
+    const gaebAttempt = { adapter: "gaeb", status: "failed", ms: Date.now() - t0, error: out.error };
+    const order = settings?.docai_provider_order
+      || ["claude", "reducto", "azure_di", "unstructured"];
+    const attempts = [gaebAttempt];
+    let last = { ok: false, error: out.error };
+    for (const adapterName of order) {
+      const adapter = ADAPTERS[adapterName];
+      if (!adapter || !adapter.isConfigured(settings)) {
+        attempts.push({ adapter: adapterName, status: "skipped_not_configured" });
+        continue;
+      }
+      const tStart = Date.now();
+      try {
+        const fb = await adapter.extract({
+          ...source, settings, customerId, hints,
+          promptOverrides: buildPromptOverrides(settings, customerId),
+        });
+        const conf = overallConfidence(fb.confidences);
+        attempts.push({ adapter: adapterName, status: fb.ok ? "ok" : "failed", ms: Date.now() - tStart, confidence: conf });
+        if (fb.ok) {
+          return { adapter_used: adapterName, latency_ms: Date.now() - tStart, ...fb, confidence_overall: conf, attempts };
+        }
+        last = fb;
+      } catch (err) {
+        attempts.push({ adapter: adapterName, status: "error", ms: Date.now() - tStart, error: err.message });
+      }
+    }
+    return { ...last, attempts };
+  }
   const order = settings?.docai_provider_order
     || ["reducto", "azure_di", "unstructured", "claude"];
   const attempts = [];

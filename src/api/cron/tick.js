@@ -37,6 +37,9 @@ import eclipseSync      from "../eclipse/sync.js";
 import eclipseRetry     from "../eclipse/retry.js";
 import sxeSync          from "../sxe/sync.js";
 import sxeRetry         from "../sxe/retry.js";
+import sageX3Sync       from "../sage_x3/sync.js";
+import sageX3Retry      from "../sage_x3/retry.js";
+import plmSync          from "../plm/sync.js";
 import pushSend         from "../push/send.js";
 import inboundParse     from "../inbound/email/parse.js";
 import agentsRun        from "../agents/run.js";
@@ -52,6 +55,7 @@ const RETRIES = [
   { name: "p21/retry",       fn: p21Retry,       opts: { path: "/api/p21/retry"       } },
   { name: "eclipse/retry",   fn: eclipseRetry,   opts: { path: "/api/eclipse/retry"   } },
   { name: "sxe/retry",       fn: sxeRetry,       opts: { path: "/api/sxe/retry"       } },
+  { name: "sage_x3/retry",   fn: sageX3Retry,    opts: { path: "/api/sage_x3/retry"   } },
 ];
 
 const SYNCS = [
@@ -63,6 +67,10 @@ const SYNCS = [
   { name: "p21/sync",       fn: p21Sync,       opts: { path: "/api/p21/sync"       } },
   { name: "eclipse/sync",   fn: eclipseSync,   opts: { path: "/api/eclipse/sync"   } },
   { name: "sxe/sync",       fn: sxeSync,       opts: { path: "/api/sxe/sync"       } },
+  { name: "sage_x3/sync",   fn: sageX3Sync,    opts: { path: "/api/sage_x3/sync"   } },
+  // Phase 5.5: PLM sync. Same 30m cadence as the ERPs since BOM /
+  // ECO churn is similar in volume.
+  { name: "plm/sync",       fn: plmSync,       opts: { path: "/api/plm/sync", method: "POST" } },
 ];
 
 export default async function handler(req, res) {

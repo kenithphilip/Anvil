@@ -176,18 +176,101 @@ A modal-by-modal walkthrough of the legacy UI surface (kept while both
 shells ship). Open the command palette with `Cmd/Ctrl+K` to reach any of
 these.
 
-## Sign in
+## Sign up and sign in (v3 app)
 
-Open **Connect Backend** from the palette. Three tabs:
+The v3 app shows a Landing page when you visit while signed-out.
+You'll see marketing copy on the left and a sign-in / sign-up
+card on the right. The card has three tabs:
 
-- **Backend URL**: paste your Supabase URL (or the Vercel deploy URL if
-  routing through Vercel). For first-time use, leave the token empty and
-  the app falls back to `DEFAULT_TENANT_ID`.
-- **Magic Link**: paste your email, click **Send link**. Click the link in
-  your inbox; the callback page (`/auth/callback.html`) stores the access
-  token in localStorage. Refresh the main app.
-- **Dev Token**: paste a Supabase access token directly. For headless test
-  rigs.
+### Sign up (new user)
+
+Fill in your full name, work email, password (10 chars minimum),
+and the role you're requesting (sales engineer, sales manager,
+procurement, finance, viewer). Add a short note if you want the
+admin reviewing your request to know why you need access (for
+example: "new hire on the inside-sales team, manager: Priya").
+
+When you submit:
+
+- The very first user on a fresh tenant is auto-approved as admin
+  and signed in immediately.
+- Everyone else lands in pending state. The page replaces the
+  form with a "Pending admin approval" panel. Close the tab; an
+  admin will review your request, possibly adjust the role you
+  requested, and approve or deny it. You'll get an email when
+  the decision is made (or you can just try signing in again
+  later).
+
+You **cannot** sign in until the admin approves you. Trying earlier
+will surface a "your account is pending admin approval" message.
+
+### Sign in (existing user)
+
+Type your email and password and click **Sign in**.
+
+If your account has two-factor authentication enabled, the form
+switches to a 6-digit-code input after the password is accepted.
+Open Authy / Google Authenticator / 1Password and type the
+current code. Codes refresh every 30 seconds; the server accepts
+the current and adjacent steps.
+
+If the admin denied your access request, you'll see the reason
+they wrote (if any) instead of a generic error.
+
+### Sign in with passkey
+
+Click **Sign in with passkey** instead of typing a password.
+Your browser prompts for TouchID / FaceID / Windows Hello / a
+hardware security key. If the passkey is registered to your
+account, you're signed in immediately (no password, no TOTP).
+
+Passkeys work only on the same origin where they were
+registered: a passkey created at `app.example.com` won't work at
+`staging.example.com`.
+
+### Magic link
+
+Pick the **Magic link** tab, type your email, click **Send
+magic link**. The email contains a one-time URL that signs you
+in for 24 hours.
+
+### Forgot password
+
+Click **Forgot password?** under the sign-in form. Type your
+email; we'll send you a single-use reset link that expires in
+one hour. Open the email, click the link, set a new password
+(10 chars minimum), confirm it. After saving, sign in with the
+new password.
+
+The link is single-use: clicking it once and starting the form
+makes a second click invalid. If the link expired, request
+another from the sign-in page.
+
+We rate-limit reset requests to 5 per email per hour. If you've
+hit the limit you'll still get a generic "if an account exists,
+an email has been sent" response, but no email actually goes
+out. Wait an hour or contact your admin.
+
+### Set up two-factor authentication (recommended)
+
+Once signed in, open **Admin Center → Security**. Click **Set up
+two-factor**. A modal shows a QR code; scan it with your
+authenticator app, then type the 6-digit code it generates.
+Click **Verify and enable**. From the next sign-in onward you'll
+need both your password and the current code.
+
+To disable, go back to the same panel and type the current code
+in **Disable two-factor**. We require the current code so a
+stolen session can't disable MFA without your authenticator.
+
+### Register a passkey
+
+In **Admin Center → Security → Passkeys**, type a label (e.g.
+"MacBook Pro"), click **Register passkey**. Your browser will
+prompt for biometrics or a hardware key. Once registered, the
+passkey shows up in the list with a last-used age. You can
+register multiple passkeys (one per device); remove any
+individual passkey from the same panel.
 
 After sign-in the header shows your email and role (`admin`,
 `sales_manager`, etc.). Sign out clears the session.

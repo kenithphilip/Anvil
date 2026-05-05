@@ -437,3 +437,222 @@ their own NetSuite account; credentials live on tenant_settings.
 - No automatic reconciliation between NetSuite open orders and
   the local Anvil orders table; the mirror in
   `netsuite_open_orders` is read-only.
+
+## Sage X3 (Sage Enterprise Management) — Phase 5.4a
+
+REST + SData over HTTPS, OAuth2 client_credentials. Mirrors the
+shape of the older ERPs (NetSuite v2, P21, SX.e).
+
+### Setup (per-tenant)
+
+1. In your Sage X3 OAuth provider (typically Keycloak or AzureAD
+   federated), register Anvil as a confidential client with the
+   `openid` scope. Copy the client_id and client_secret.
+2. In **Admin Center → Sage X3**, fill in:
+   - Base URL: e.g. `https://x3.example.com`
+   - Token URL: e.g. `https://idp.example.com/auth/realms/x3/protocol/openid-connect/token`
+   - Solution: usually `X3`
+   - Folder / company code: e.g. `SEED`
+   - Locale: e.g. `ENG`
+   - Client ID and Client Secret
+3. Click **Save & probe**. The endpoint runs a single CUSTOMER
+   `$top=1` to validate.
+4. Once probed ok, the cron muxer pulls customers, items, and
+   sales orders every 30 minutes; failed pushes land in
+   `sagex3_retry_queue` with exponential backoff.
+
+### Setup notes
+
+- Push targets the SOH (Sales Order Header) endpoint with the
+  canonical Anvil-to-Sage field map. Customise the field map via
+  `tenant_settings.sagex3_field_map` (jsonb).
+- The retry queue surfaces "gave up" rows in the admin
+  notification bell with a deep-link to the Sage X3 tab.
+
+## PLM connectors (Windchill, Arena) — Phase 5.5
+
+Read-only mirror: BOMs (Bill of Materials) and ECOs (Engineering
+Change Orders / Notices). Used by the supplier-RFQ module to pull
+the latest part structure when sourcing.
+
+### Windchill setup (per-tenant)
+
+1. Provision a Windchill REST user with read access to ProdMgmt and
+   ChangeMgmt entities.
+2. **Admin Center → PLM**, choose `windchill`, fill in base URL +
+   username + password.
+3. Click **Save & probe**. The endpoint hits the OData v1 metadata
+   document.
+
+### Arena setup (per-tenant)
+
+1. Generate an API key in Arena's admin console.
+2. **Admin Center → PLM**, choose `arena`, fill in base URL +
+   API key.
+3. Click **Save & probe**. The endpoint hits `/v1/me`.
+
+### Sync
+
+Every 30 minutes the cron mux pulls BOMs (only for parts that have
+at least one usage link, to keep the table from filling with leaf
+items) and changes. Manual triggers from the Admin tab also work.
+
+### Limits
+
+- Counter-based replay protection comes from PLM tags only on
+  Arena. Windchill counter-tracking is not yet wired.
+- Arena BOM expansion is rate-limited (per-item GET) so we cap
+  at 50 parts per sync tick.
+
+## Multi-channel inbound (WhatsApp, Slack, Teams) — Phase 5.2
+
+Inbound messages from chat channels are normalised into the
+`inbound_messages` table and run the same intake pipeline as
+inbound email.
+
+### WhatsApp via Twilio
+
+1. In Twilio Console, configure a WhatsApp-enabled phone number.
+2. Set the inbound webhook to
+   `https://YOUR-VERCEL-URL/api/inbound/whatsapp/webhook`.
+3. **Admin Center → Chat channels**, choose `whatsapp`, paste
+   Account SID, Auth Token, From number (E.164, with or without
+   the `whatsapp:` prefix).
+4. Save. The webhook validates the X-Twilio-Signature against the
+   stored auth_token; mismatched requests get 403 and don't touch
+   the inbox.
+
+### Slack
+
+1. Create a Slack app, enable Events API + Bot Token scopes (`chat:write`,
+   `im:history`, `app_mentions:read`, `files:read`).
+2. Subscribe to events at
+   `https://YOUR-VERCEL-URL/api/inbound/slack/webhook`. Slack will
+   POST a `url_verification` challenge first; the endpoint echoes it.
+3. **Admin Center → Chat channels**, choose `slack`, paste Bot
+   Token, Signing Secret, and the workspace `team_id`.
+4. The webhook verifies `X-Slack-Signature` (v0 scheme) with a
+   5-minute replay window. Bot messages are ignored to prevent
+   loops.
+
+### Microsoft Teams
+
+1. Register a Bot Framework bot in Azure AD, capture the app id +
+   tenant id.
+2. Set the messaging endpoint to
+   `https://YOUR-VERCEL-URL/api/inbound/teams/webhook`.
+3. **Admin Center → Chat channels**, choose `teams`, paste the
+   Bot app id, Azure tenant id, and a webhook secret you choose.
+4. The webhook accepts a shared-secret header
+   `X-Anvil-Teams-Secret` matching what you typed. Production
+   deployments should layer JWT verification on top, see the
+   inline notes in `_lib/inbound-chat.js`.
+
+### Outbound on the same channels
+
+`POST /api/communications/send` with a `channel` field of
+`whatsapp`, `slack`, or `teams` routes through the corresponding
+provider via the saved chat-channel credentials. Email channel
+keeps using SendGrid.
+
+## Voice agent (Vapi or Retell) — Phase 5.1
+
+AI agent answering inbound calls. Configures + verifies via
+provider-issued webhook secrets.
+
+### Setup (per-tenant)
+
+1. In Vapi (or Retell), create an assistant + a phone number.
+   Note the assistant id, the leased phone number, the webhook
+   signing secret, and the API key.
+2. Point the provider's webhook at
+   `https://YOUR-VERCEL-URL/api/voice/webhook?provider=vapi` (or
+   `?provider=retell`).
+3. **Admin Center → Voice**, fill provider, display name,
+   E.164 phone number, assistant id, API key, webhook secret,
+   handoff phone number, voice persona, system prompt.
+
+### Lifecycle
+
+- `call_started` / `status-update` -> insert `voice_calls` row.
+- `transcript` chunks -> append to the row's `transcript` jsonb.
+- `call_ended` / `end-of-call-report` -> finalise + persist
+  summary + enqueue any `voice_call_actions` the agent emitted
+  (place_order, quote_request, check_delivery, escalate).
+- Agent runner picks up pending actions on the next cron tick and
+  drives them through the existing intake / quote endpoints.
+
+### Handoff to a human
+
+`POST /api/voice/handoff { call_id, to_number? }` forwards an
+in-progress call to the configured `handoff_phone_number` (or an
+explicit override). The voice_calls row flips to status=`escalated`.
+
+## Document AI v2 (Phase 5.3 GAEB included)
+
+The dispatcher at `_lib/docai/index.js` tries each adapter in
+order from `tenant_settings.docai_provider_order`, falling through
+on failure or low confidence. Each adapter implements
+`isConfigured(settings)` and `extract({ url, bytes, filename, mime,
+settings, customerId, hints })`.
+
+### Adapters
+
+- **GAEB**: deterministic XML parser for the German construction-
+  tender format (X81 / X83 / X84 / X86). No env. Routes
+  automatically when the file extension or first 4 KB of bytes
+  match. Falls back to the LLM order on parse failure.
+- **Reducto**: layout-aware extraction. `REDUCTO_API_KEY`.
+- **Azure Document Intelligence**: `AZURE_DI_ENDPOINT`, `AZURE_DI_KEY`.
+- **Unstructured.io**: `UNSTRUCTURED_API_KEY`, `UNSTRUCTURED_API_URL`.
+- **Excel**: in-process SheetJS, no env.
+- **Claude**: fallback for unstructured PDFs. Uses the project's
+  Anthropic key.
+
+### Setup
+
+For each adapter you want active, set the env vars and add the
+adapter's id to `docai_provider_order` in `tenant_settings`.
+GAEB is always-on once the migration is applied.
+
+## In-network back-to-back sourcing — Phase 5.6
+
+Tenants can opt in to share approximate stock with the Anvil
+network. When tenant A is short on a SKU, the SO Workspace can
+search peer tenants who have published the same SKU.
+
+### Opt-in (per-tenant)
+
+1. **Admin Center → Settings**, set `network_share=true`.
+2. Optionally set `network_display_name`, `network_min_lead_days`,
+   `network_contact_email`. Anvil never reveals the listing
+   tenant's id; peers see a per-asker pseudonymous hash.
+3. Publish stock via **Admin Center → Network listings** (CRUD on
+   `network_listings`). Each listing has SKU, available qty
+   (rounded), lead time, currency, transfer unit price, notes.
+
+### Search + handoff
+
+`/api/sourcing/network/search?sku=&qty=&order_id=` returns
+matching peer listings. `POST /api/sourcing/network/handoff
+{ query_id, listing_id }` drafts a communications row to the
+listing tenant's `network_contact_email`, marks the query as
+resolved, and writes audit on both sides. The asker never sees
+the peer's tenant id.
+
+## Outbound email recap
+
+Anvil can send mail via four paths; first-configured wins:
+
+1. Per-tenant chat channel (whatsapp / slack / teams) when the
+   communications row's `channel` field is set to one of those.
+2. SendGrid v3 mail/send when `SENDGRID_API_KEY` and
+   `SENDGRID_FROM_EMAIL` are set.
+3. Generic webhook at `COMMS_PROVIDER_URL` (with optional
+   `COMMS_PROVIDER_TOKEN` bearer).
+4. "Manual" mode (no provider) marks the row sent so dev
+   environments still flow.
+
+Password-reset email and access-request notifications go through
+the same `_lib/communications/send.js` dispatcher.
+

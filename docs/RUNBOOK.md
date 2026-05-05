@@ -267,3 +267,155 @@ For every Sev 1 or Sev 2:
    didn't, action items with owners and dates.
 3. File the action items as separate issues. Track them on the next
    weekly review.
+
+## Identity and access (Phase 5)
+
+### Daily: review pending access requests
+
+Anyone who signs up via the public Landing page lands in
+`tenant_members` with `status='pending'`. Admins see them in
+**Admin Center → Access requests** (the bell icon polls every 30s
+and surfaces a notification + count).
+
+Workflow:
+
+1. Click the bell. Each row has the user's name, email, requested
+   role, request notes, requested-at age.
+2. The notification deep-links to `#/admin?tab=access`.
+3. For each pending request:
+   - Confirm the email belongs to a real teammate (look up in your
+     HRIS or ask their manager).
+   - Adjust the role if their request doesn't match their actual
+     job. The dropdown shows what the user requested vs what
+     you're about to assign.
+   - Click **Approve as <role>**. The user is told via the next
+     sign-in attempt.
+   - To deny, type a reason and click **Deny**. The reason is
+     shown to the user on the next sign-in.
+
+If a request is suspicious (unknown email domain, mismatched role
++ notes), **Deny** with the reason "did not recognise this account".
+
+### MFA reset (user lost their authenticator)
+
+You CANNOT see the user's TOTP secret. The unenroll endpoint also
+requires the current code. If a user truly lost access:
+
+1. **Confirm identity out of band.** Phone, in-person, or via a
+   manager confirming on their company chat.
+2. As an admin, the only safe path is to clear the row directly:
+   ```sql
+   update user_security_settings set
+     totp_enrolled = false,
+     totp_secret_enc = null, totp_secret = null, totp_secret_iv = null,
+     totp_pending_secret_enc = null, totp_pending_secret = null, totp_pending_secret_iv = null,
+     totp_pending_expires_at = null,
+     require_mfa = (passkey_enrolled = true),
+     last_security_change_at = now()
+   where user_id = '<USER_UUID>';
+   ```
+3. Audit the action manually:
+   ```sql
+   insert into user_security_audit (user_id, user_email, event, detail)
+   values ('<USER_UUID>', '<email>', 'mfa_unenrolled',
+     '{"reason": "admin_reset_after_lost_authenticator", "actor": "<your_email>"}'::jsonb);
+   ```
+4. Tell the user. They can sign in with password, then re-enrol
+   from **Admin Center → Security**.
+
+### Passkey lost / device bricked
+
+Passkeys aren't centrally recoverable. Two paths:
+
+- **User has another sign-in method** (password, magic link, or
+  another registered passkey). They sign in, then **Admin Center →
+  Security → Passkeys**, click **Remove** on the dead one, register
+  a new one.
+- **User has only the dead passkey.** Delete the row directly:
+  ```sql
+  delete from user_passkeys where user_id = '<USER_UUID>' and id = '<PASSKEY_ROW_ID>';
+
+  -- Recompute the mirror flag
+  update user_security_settings
+  set passkey_enrolled = exists(
+    select 1 from user_passkeys
+    where user_id = '<USER_UUID>'
+      and credential_id not like 'pending::%'
+  )
+  where user_id = '<USER_UUID>';
+  ```
+  Audit the action via `user_security_audit` (event=`passkey_removed`).
+
+### Suspicious sign-in pattern
+
+Inspect `user_security_audit` for the user:
+
+```sql
+select created_at, event, ip, user_agent, detail
+from user_security_audit
+where user_id = '<USER_UUID>'
+order by created_at desc
+limit 50;
+```
+
+Patterns to flag:
+
+- Many `password_login_fail` from a single IP within minutes
+  (credential stuffing / brute force).
+- `password_login_ok` followed quickly by `mfa_challenge_fail`
+  (credential leak; password works, attacker doesn't have TOTP).
+- `passkey_login_fail` with a new device id.
+- `password_reset_requested` with `throttled: true` in detail
+  (attacker hammering reset endpoint).
+
+Mitigations:
+
+- Force a password reset by deleting the user's session in Supabase
+  Auth, or update the password via SQL and notify the user out of
+  band.
+- If the account looks compromised, set
+  `tenant_members.status='deactivated'` for that user. They can no
+  longer sign in via any path; existing sessions are refused on the
+  next request.
+- Open an incident.
+
+### Password-reset throttle hits
+
+`password_reset_attempts` rate-limits to 5 requests per email per
+hour. If a real user is locked out (typoed their email and now
+the address they actually own is throttled), drop the row:
+
+```sql
+delete from password_reset_attempts where email = '<email>';
+```
+
+The endpoint will accept a fresh request immediately.
+
+## Notifications
+
+Admins get an in-portal notification feed at the bell:
+
+- `access_request`: a new signup awaits review.
+- `<erp>_push_gave_up` / `<erp>_push_permanent_fail`: an ERP push
+  exhausted retries or returned a permanent 4xx. Deep-links to the
+  ERP tab in Admin Center.
+
+To check the backlog:
+
+```sql
+select kind, count(*) as unresolved
+from admin_notifications
+where tenant_id = '<TENANT_UUID>' and resolved = false
+group by kind
+order by 2 desc;
+```
+
+Notifications resolve automatically when the underlying issue is
+acted on (access request approved/denied, retry queue replayed).
+Stale rows can be force-resolved:
+
+```sql
+update admin_notifications set resolved = true,
+  resolved_at = now(), resolution_note = 'manual_cleanup'
+where created_at < now() - interval '30 days' and resolved = false;
+```

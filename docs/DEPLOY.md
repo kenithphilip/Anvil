@@ -193,37 +193,78 @@ new migration that corrects it.
 
 After Vercel build succeeds:
 
-- [ ] Open `https://your-prod-url/`. UI loads.
-- [ ] Cmd/Ctrl+K -> **Show Integration Report**. Every row green.
-- [ ] Cmd/Ctrl+K -> **Connect Backend** -> magic link tab. Send to
-      yourself, click the link, callback page lands at `/auth/callback.html`,
-      session stored.
-- [ ] Reload main app. Header shows your email and role admin.
-- [ ] Open **Admin Center -> Customer locations**. MG Motor shows two
-      GSTINs.
-- [ ] Open **Admin Center -> Item master**. At least 35 rows.
-- [ ] Run an end-to-end test: upload a sample PO, click through preflight
-      and generation, approve, push to Tally (will fail without the bridge
-      configured, that is expected).
+- [ ] All migrations applied through `043_security_passkeys_mfa.sql`.
+      Run `supabase db push` or paste each in order via SQL Editor.
+- [ ] Open `https://your-prod-url/`. The Landing page (marketing
+      copy + sign-in / sign-up / magic-link tabs) loads.
+- [ ] Click **Sign up**. Use the email you want as the first admin.
+      Pick any role; the first-user override forces `admin`. The
+      response is a session (not a pending state) because there are
+      zero existing tenant_members. You're routed to `/home`.
+- [ ] **Admin Center → Security** appears. Enrol TOTP (scan QR with
+      Authy / Google Authenticator / 1Password) and register a
+      passkey BEFORE letting anyone else sign up.
+- [ ] **Admin Center → Access requests** is empty.
+- [ ] Cmd/Ctrl+K → **Show Integration Report**. Every relevant row
+      green; missing optional integrations are fine.
+- [ ] Sign out. Sign in again. The TOTP gate prompts. Confirm the
+      6-digit code works.
+- [ ] Visit `/#/reset` directly. Reset-password page renders
+      ("redirecting" if no token, since you arrived without one).
+- [ ] Have a teammate sign up. They land in pending state. Bell
+      badge increments for you within 30s. **Admin Center →
+      Access requests** shows the row. Approve them.
+- [ ] Teammate signs in. Approval gate lets them through.
+- [ ] Run an end-to-end test: upload a sample PO, click through
+      preflight and generation, approve, push to Tally / your
+      configured ERP.
 
 ## Production hardening
 
-Before letting real users in:
+Before letting real users in, set every variable in this block.
+See `docs/ENV_VARS.md → Production checklist` for the canonical
+list with rationale.
 
 ```
+# CORE
 ALLOW_ANONYMOUS_TENANT=false
 ALLOWED_ORIGINS=https://your-prod-url
+APP_URL=https://your-prod-url
+MAGIC_LINK_REDIRECT_URL=https://your-prod-url/auth/callback.html
+CRON_SECRET=$(openssl rand -base64 32)
+
+# ACCESS GATE
+REQUIRE_APPROVAL=true
+
+# SECRETS-AT-REST (encrypts ERP / chat / voice / PLM creds + TOTP secrets)
+ANVIL_SECRETS_KEY=$(openssl rand -hex 32)
+
+# OUTBOUND EMAIL (password reset, comms, dunning, access-request
+# notifications)
+SENDGRID_API_KEY=SG.xxx
+SENDGRID_FROM_EMAIL=auth@your-domain.com
+SENDGRID_FROM_NAME=Anvil
+RESET_RATE_LIMIT=5
 ```
 
-This prevents unauthenticated callers from acting under
-`DEFAULT_TENANT_ID` and locks CORS to the production origin.
+After setting these, **redeploy** so the functions pick up the new
+env. Existing sessions stay valid; new sessions get the stricter
+gate.
 
 Other production concerns:
 
-- Enable **Supabase Realtime** on `orders` and `shipments` if you want
-  live approval-banner updates.
+- Set the Supabase **Site URL** to `https://your-prod-url` and add
+  the Vercel callback + `/#/reset` URLs to the redirect allowlist.
+- Configure SendGrid sender authentication (SPF + DKIM) on the
+  domain in `SENDGRID_FROM_EMAIL`. Without authenticated sending,
+  password-reset emails will land in spam.
+- Enable **Supabase Realtime** on `orders` and `shipments` if you
+  want live approval-banner updates.
 - Set up Vercel **Speed Insights** for frontend performance monitoring.
 - Set up Vercel **Log Drains** to forward function logs to a SIEM.
+  Security audit events fan out from `user_security_audit` and
+  `audit_events` rows; the SIEM ingest path can subscribe to
+  Supabase webhooks if you want near-real-time forwarding.
 - Schedule daily Supabase backups.
 
 ## Rolling back

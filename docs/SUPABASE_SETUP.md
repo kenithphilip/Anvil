@@ -33,8 +33,10 @@ goes only into Vercel environment variables, never into the browser bundle.
 
 ## 3. Apply the schema
 
-There are 10 idempotent migrations under `supabase/migrations/`. Apply
-them in numeric order. Three options:
+There are 43+ idempotent migrations under `supabase/migrations/`.
+Apply them in numeric order. **Always apply the full chain** (don't
+cherry-pick): later migrations assume earlier columns exist. Three
+options:
 
 ### Option A: Supabase CLI (cleanest)
 
@@ -84,6 +86,14 @@ Expected result after migrations + seed.sql:
 | equipment_hierarchy | 15 |
 | equipment_installed_parts | 54 |
 | quote_approval_thresholds | 4 |
+| tenant_members (status='approved') | 0 |
+| user_security_settings | 0 |
+| user_passkeys | 0 |
+| admin_notifications | 0 |
+
+The last four come from migrations `042_access_approvals.sql` and
+`043_security_passkeys_mfa.sql`. They are empty until users sign
+up.
 
 ## 4. Storage bucket
 
@@ -114,43 +124,112 @@ Open **Authentication, Providers, Email** and confirm:
 
 Open **Authentication, URL Configuration**:
 
-- **Site URL**: leave default for now.
-- **Redirect URLs**: add **both**:
-  - `http://localhost:3000/auth/callback.html`  (local dev)
-  - `https://YOUR-VERCEL-URL/auth/callback.html`  (replace with your Vercel
-    domain after deploy)
+- **Site URL**: leave default for now (set to the production URL
+  after step 3).
+- **Redirect URLs**: Anvil uses three callback shapes. Add all of
+  them for both local dev (port 5173, Vite default) and the
+  deployed Vercel URL.
+  - `http://localhost:5173/auth/callback.html` and
+    `https://YOUR-VERCEL-URL/auth/callback.html` (magic-link
+    return).
+  - `http://localhost:5173/#/reset` and
+    `https://YOUR-VERCEL-URL/#/reset` (password-reset return).
+  - Anvil's webhooks for inbound mail / Slack / Twilio / voice are
+    NOT in this list; those are configured at the provider side.
 
-When the user clicks the email link, Supabase posts to your callback page,
-which stores the access token in `localStorage` and redirects back into
-the app.
+The magic-link callback page stores the access token in
+`localStorage` and redirects back into the app. The reset page
+extracts the recovery token from the URL fragment and calls
+`/api/auth/complete_reset`.
 
 ### Optional: SMTP
 
-The default Supabase SMTP is rate-limited to ~3 emails per hour. For
-production, swap to a real provider under **Project Settings, Auth, SMTP**.
+The default Supabase SMTP is rate-limited to ~3 emails per hour.
+For production, you have two options for sending the password-reset
+email and the access-request notifications:
+
+1. **Anvil-side via SendGrid (recommended).** Set
+   `SENDGRID_API_KEY`, `SENDGRID_FROM_EMAIL`, optional
+   `SENDGRID_FROM_NAME`. The reset endpoint and the comms / dunning
+   / supplier-RFQ paths all route through this. Without it, the
+   reset endpoint exposes the action_link in the dev response so
+   local testing still works.
+2. **Supabase-side SMTP.** Configure under **Project Settings,
+   Auth, SMTP** if you want Supabase to send the magic-link emails
+   directly. This still leaves password reset to Anvil + SendGrid
+   in the recommended setup.
+
+### Security flow prerequisites
+
+The Phase-5 security flows assume a few env vars are set:
+
+- `APP_URL=https://YOUR-VERCEL-URL` (no trailing slash). WebAuthn
+  passkeys are bound to this origin: a passkey registered against
+  one origin will not work on another.
+- `ANVIL_SECRETS_KEY=<openssl rand -hex 32>`. Encrypts TOTP
+  secrets and ERP / chat / voice / PLM credentials at rest. Without
+  this, the secrets tables store plaintext (dev-only).
+- `RESET_RATE_LIMIT=5` (default). Per-email password-reset cap.
+- `REQUIRE_APPROVAL=true` (default). Membership-approval gate.
+
+See `docs/ENV_VARS.md` for the full table and `docs/SECURITY.md`
+for the threat model.
 SendGrid, Postmark, Resend, or AWS SES all work; only the host, port,
 username, password, and from-address fields are needed.
 
 ## 6. First tenant member
 
 Migrations seed a default tenant with id
-`00000000-0000-0000-0000-000000000001`. To sign in, your `auth.users`
-row needs to be a member of that tenant.
+`00000000-0000-0000-0000-000000000001`. With the access-approval
+gate landed in migration 042, the recommended path no longer
+requires you to flip a SQL row by hand: **the first signup on a
+fresh tenant auto-lands as `admin` with `status='approved'`.**
 
-After you sign in once via magic link (which creates the
-`auth.users` row), open the SQL editor and run:
+### Recommended: bootstrap via the signup form
+
+1. Open your deployed site (or `npm run dev` for local).
+2. Click **Sign up** on the landing page.
+3. Use the email you want to be the first admin. Pick any
+   requested role; the first-user override forces `admin`.
+4. The endpoint detects an empty `tenant_members` set for the
+   default tenant, sets `status='approved'`, role `admin`, and
+   returns a session immediately. You're in.
+5. Every subsequent signup lands `status='pending'` and shows up
+   in **Admin Center → Access requests**.
+
+### Manual first-user bootstrap
+
+If you'd rather not expose the signup form publicly even for
+the first user, seed the row by hand:
 
 ```sql
 -- Replace <YOUR_USER_UUID> with the id from auth.users for your email.
-insert into tenant_members (tenant_id, user_id, role)
-values ('00000000-0000-0000-0000-000000000001', '<YOUR_USER_UUID>', 'admin')
-on conflict (tenant_id, user_id) do update set role = excluded.role;
+insert into tenant_members (tenant_id, user_id, role, status, approved_at, approved_by)
+values (
+  '00000000-0000-0000-0000-000000000001',
+  '<YOUR_USER_UUID>',
+  'admin',
+  'approved',
+  now(),
+  '<YOUR_USER_UUID>'
+)
+on conflict (tenant_id, user_id) do update set
+  role = excluded.role,
+  status = excluded.status;
 ```
 
-Refresh the app. You are now an admin of the default tenant.
+The `status` and `approved_at` columns come from migration 042;
+omitting them on a fresh insert defaults `status` to `'approved'`,
+which is the correct value for a manually-seeded admin.
 
-To add additional members later, use the v3 Admin Center, Members tab.
-The legacy app has the same flow under the Backend modal.
+To add additional members later:
+
+- **Recommended:** have them sign up via the landing page; you
+  approve them from **Admin Center → Access requests** (you'll
+  see a notification on the bell when they sign up).
+- **Alternative:** use the existing **Admin Center → Members**
+  tab to send a magic-link invite. Invitees still flow through
+  the same approval gate on first sign-in.
 
 ## 7. Verify
 

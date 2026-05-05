@@ -73,6 +73,10 @@ Phase 1 and 2 are in `main`. Concretely, the following are live:
 | EDI X12 + EDIFACT translation          | `e03503e`    | Synthesized gap list, EDI                         |
 | RLHF feedback + reward rollups         | `e03503e`    | Strategic doc Phase 4 (Mercura parity)            |
 | ERP-query chat (internal Claude tools) | `e03503e`    | Strategic doc Phase 5 (MCP partial)               |
+| Phase 5: Voice / chat / GAEB / PLM / network sourcing / Sage X3 | `88b02c5` | Strategic doc Phase 5 (5/6 sub-items done; 5.4 partial) |
+| Auth gate hardening + Landing page     | `9b06aec`    | Internal (security gap close)                     |
+| Approval-gated signup + admin notifications | `a788943` | Internal (production-readiness)                  |
+| Password reset + TOTP MFA + passkeys + broader notifications | `4efa804` | Internal (security flows)               |
 
 ### What's partial
 

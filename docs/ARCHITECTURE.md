@@ -61,6 +61,73 @@ create policy <table>_write on <table>
 Service-role queries from the API layer bypass RLS but always include
 `.eq("tenant_id", ctx.tenantId)` from `_lib/auth.resolveContext`.
 
+## Approval-gated membership (Phase 5)
+
+`tenant_members` carries a `status` column (added in migration 042)
+that gates every authenticated request:
+
+```
+pending      ─┐
+denied       ─┼── resolveContext throws 403 with code=MEMBERSHIP_<X>
+deactivated  ─┘
+approved     ─── resolveContext returns the user's role for the tenant
+```
+
+Sign-up creates a row with `status='pending'` (the first user on a
+fresh tenant is auto-promoted to admin + approved so the
+approval loop can ever start). The frontend's auth gate refuses
+to mount the Shell until `isSessionValid()` AND the resolved
+context returns 200; pending users land on the Landing page's
+"Pending admin approval" panel instead.
+
+Admins approve / deny / modify requests at **Admin Center →
+Access requests**; the action propagates to the matching
+`admin_notifications` row and `auth.users.user_metadata` (name,
+email).
+
+```
+                 sign-up
+                    │
+                    ▼
+         tenant_members row (status='pending')
+                    │
+                    ├──► admin_notifications fan-out
+                    │       │
+                    │       ▼
+                    │   bell badge + Access Requests tab
+                    │       │
+                    │       ▼ admin clicks Approve
+                    │
+                    ▼
+         status='approved' ──► next sign-in mints session
+```
+
+## Authentication surface (Phase 5)
+
+Four sign-in paths converge on the same approval gate:
+
+```
+       password + TOTP        magic link        passkey
+            │                     │                │
+            ▼                     ▼                ▼
+       /api/auth/password_login   verify           auth/finish
+            │                     │                │
+            └──────────► resolveContext approval gate ◄────────────┐
+                                  │                                │
+                                  ▼                                │
+                             session cookie                        │
+                                                                   │
+       password reset (request_reset → email → complete_reset) ────┘
+       (no session minted; user signs in again afterwards)
+```
+
+TOTP secrets, ERP credentials, voice / chat / PLM credentials live
+under AES-256-GCM via `_lib/secrets.js` when `ANVIL_SECRETS_KEY` is
+set; passkey public keys are not secret and are stored in plain
+columns. Every security event lands in `user_security_audit`.
+
+For deeper coverage see `docs/SECURITY.md`.
+
 ## Order modes (corpus-derived)
 
 The corpus revealed four real sales modes plus an internal-only mode:

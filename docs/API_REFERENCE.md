@@ -750,3 +750,292 @@ Permission: admin. Body `{ catalogue?, cases?, model? }`. Runs adversarial promp
 
 The role comes from `tenant_members.role` for the authenticated user, or
 `viewer` if `ALLOW_ANONYMOUS_TENANT=true` and no Authorization header.
+
+## auth (security flows)
+
+The Phase 5 security work added several new endpoints under
+`/api/auth/`. They follow the same JSON-over-HTTPS shape as the
+older auth surface.
+
+### POST /api/auth/signup
+
+Body: `{ email, password, display_name, requested_role?, notes? }`.
+
+`requested_role` ∈ `viewer | sales_engineer | sales_manager |
+procurement | finance`. The admin can override on approve.
+
+Two response shapes:
+
+- **First user on a fresh tenant** (status 200): auto-approved as
+  admin, returns
+  `{ status: "approved", user, session: { access_token, refresh_token, expires_at } }`.
+- **Subsequent signups** (status 202): returns
+  `{ status: "pending", message, user, requested_role }` with no
+  session. Sign-in is blocked until an admin approves.
+
+Failure modes:
+- 400 invalid email / weak password / unrecognised role.
+- 409 email already exists.
+- 403 `SIGNUP_ALLOWED=false`.
+
+Side effects: writes one `admin_notifications` row of kind
+`access_request` per approved admin on the target tenant.
+
+### POST /api/auth/password_login
+
+Body: `{ email, password, totp_code? }`.
+
+Three response shapes:
+
+- **Success**: status 200, `{ user, session: { access_token, ... } }`.
+- **MFA required**: status 200, `{ mfa_required: true, email }` with
+  no session. Resubmit with `totp_code`.
+- **Not approved**: status 403, `{ error: { code: "MEMBERSHIP_PENDING" |
+  "MEMBERSHIP_DENIED" | "MEMBERSHIP_DEACTIVATED", message, status } }`.
+- **Wrong TOTP**: status 401, `{ error: { code: "INVALID_TOTP" } }`.
+
+Audits to `user_security_audit`: `password_login_ok`,
+`password_login_fail`, `mfa_challenge_ok`, `mfa_challenge_fail`.
+
+### POST /api/auth/request_reset
+
+Body: `{ email, redirect_to? }`.
+
+Always returns 200. Generates a single-use Supabase recovery link,
+emails it via SendGrid (when configured), audits the request.
+Per-email rate limit defaults to 5 per hour (`RESET_RATE_LIMIT`).
+
+In dev, when SendGrid is not configured, the response also
+includes `dev_action_link` so you can open it manually.
+
+### POST /api/auth/complete_reset
+
+Body: `{ access_token, new_password }`.
+
+`access_token` is the recovery token from the reset URL fragment.
+Updates the password via the Supabase admin API, signs out the
+recovery session, drops the rate-limit row.
+
+Failure modes:
+- 400 weak password.
+- 401 `INVALID_TOKEN` (link expired or malformed).
+- 500 upstream Supabase update failed.
+
+### POST /api/auth/mfa
+
+Body: `{ action: "enroll" | "verify" | "unenroll", code? }`.
+
+- `enroll`: returns `{ secret, otpauth_uri, expires_at }`. The
+  pending secret expires in 10 minutes.
+- `verify`: requires a 6-digit `code` matching the pending secret;
+  promotes it to active and flips `totp_enrolled` + `require_mfa`.
+- `unenroll`: requires a 6-digit `code` matching the active secret;
+  clears the secret. Refusing here would let a stolen session
+  disable MFA.
+
+Authenticated. Audits `mfa_enrolled`, `mfa_unenrolled`,
+`mfa_challenge_fail`.
+
+### GET /api/auth/mfa
+
+Returns `{ totp_enrolled, passkey_enrolled, require_mfa,
+last_security_change_at }`.
+
+### POST /api/auth/passkey/register/begin
+
+Body: `{ label? }`. Authenticated.
+
+Returns `{ options, pending_id }`. `options` is a
+`PublicKeyCredentialCreationOptions` for `navigator.credentials.create`.
+
+### POST /api/auth/passkey/register/finish
+
+Body: `{ pending_id, response }`. Authenticated.
+
+`response` is the `AuthenticatorAttestationResponse` from the
+browser. Verifies attestation, persists the credential, mirrors
+`passkey_enrolled` onto `user_security_settings`.
+
+### POST /api/auth/passkey/auth/begin
+
+Body: `{ email }`. **Anonymous**.
+
+Returns `{ options, challenge_id }`. Always returns a challenge
+even when the email is unknown to prevent account enumeration.
+
+### POST /api/auth/passkey/auth/finish
+
+Body: `{ email, challenge_id, response }`. **Anonymous**.
+
+Verifies the assertion, bumps the credential counter, runs the
+membership-status approval gate, mints a session by generating +
+verifying a Supabase magic-link token via the service role.
+
+Returns `{ user, session }` on success.
+
+### GET /api/auth/passkey/list
+
+Returns `{ passkeys: [...] }` for the calling user.
+
+### DELETE /api/auth/passkey/list?id=<uuid>
+
+Removes one passkey. Refreshes `passkey_enrolled` mirror.
+
+## admin/access_requests
+
+### GET /api/admin/access_requests?status=pending|approved|denied|deactivated
+
+Returns `{ requests: [...], counts: { pending, approved, denied,
+deactivated } }`. `requests` is the joined view from
+`tenant_members_enriched`: each row carries `user_id`, `status`,
+`role`, `requested_role`, `request_email`, `request_display_name`,
+`request_notes`, `requested_at`, `approved_at/by`, `denied_at/by`,
+`denied_reason`, `user_email`, `last_sign_in_at`, `meta_name`.
+
+Admin only.
+
+### POST /api/admin/access_requests
+
+Body: `{ user_id, action: "approve" | "deny" | "modify", role?,
+display_name?, email?, reason? }`.
+
+- `approve`: sets `status='approved'`, role from body (defaults to
+  `requested_role`), records `approved_by` and `approved_at`,
+  resolves the matching `admin_notifications` row.
+- `deny`: sets `status='denied'`, records `denied_reason`.
+- `modify`: updates editable fields without changing the status;
+  display_name and email also propagate to the Supabase auth user.
+
+Admin only.
+
+## admin/notifications
+
+### GET /api/admin/notifications
+
+Returns `{ notifications: [...], unread_count }`. Filters to
+`resolved=false` rows on the calling tenant. `unread_count` is
+per-user (excludes rows where the caller is in `read_by`).
+
+### POST /api/admin/notifications
+
+Body: `{ id?, action: "mark_read" | "mark_all_read" | "resolve",
+note? }`.
+
+Admin only.
+
+## sourcing/network (Phase 5.6)
+
+### GET /api/sourcing/network/listings
+
+Returns `{ listings: [...] }` for the calling tenant.
+`?include_inactive=1` to show deactivated rows.
+
+### POST /api/sourcing/network/listings
+
+Body: `{ sku, description?, uom?, available_qty?, lead_time_days?,
+currency?, transfer_unit_price?, notes?, active? }`. Upsert by
+`(tenant_id, sku)`.
+
+### DELETE /api/sourcing/network/listings?id=<uuid>
+
+Hard delete.
+
+### GET /api/sourcing/network/search?sku=<sku>&qty=<n>&order_id=<uuid>
+
+Returns matched peer listings, anonymised via per-asker hash.
+Caller's tenant must have `network_share=true`.
+
+### POST /api/sourcing/network/handoff
+
+Body: `{ query_id, listing_id }`. Drafts a communication to the
+listing tenant's `network_contact_email`, marks the query
+resolved.
+
+## plm (Phase 5.5)
+
+### POST /api/plm/connect
+
+Body: `{ system: "windchill" | "arena", base_url, display_name?,
+username?, password?, api_key? }`.
+
+Validates credentials by calling the system's metadata or `/me`
+endpoint. Returns `{ system_id, probed, probe_error }`.
+
+### GET /api/plm/sync
+
+Returns `{ systems, sync_state }` for the calling tenant.
+
+### POST /api/plm/sync
+
+Body: `{ system_id }` for a manual one-off, or no body when called
+with `Authorization: Bearer $CRON_SECRET` for the cron mux. Pulls
+BOMs and changes.
+
+### GET /api/plm/health
+
+Returns `{ systems, sync_state }` for status panels.
+
+## sage_x3 (Phase 5.4a)
+
+Five endpoints mirroring the existing ERP shape: `connect`,
+`sync`, `push`, `retry`, `health`. See the SX.e / Prophet 21
+endpoints for the canonical contract; `sage_x3` follows the same
+shape with `tenant_settings.sagex3_*` config columns.
+
+## inbound/chat (Phase 5.2)
+
+### GET /api/inbound/chat/configure
+
+Returns `{ configs: [...] }` of channels for the calling tenant.
+
+### POST /api/inbound/chat/configure
+
+Body: `{ channel: "whatsapp" | "slack" | "teams" | "wechat",
+display_name?, creds }`. `creds` is a channel-specific bag,
+encrypted at rest.
+
+### DELETE /api/inbound/chat/configure?channel=<channel>
+
+Soft-deactivate.
+
+### POST /api/inbound/whatsapp/webhook
+
+Twilio webhook. Verifies `X-Twilio-Signature` against the stored
+auth token; rejects mismatches with 403.
+
+### POST /api/inbound/slack/webhook
+
+Slack Events API. Echoes `url_verification` challenges; verifies
+`X-Slack-Signature` (v0 scheme, 5-minute replay window).
+
+### POST /api/inbound/teams/webhook
+
+Microsoft Bot Framework activity. Verifies a shared
+`X-Anvil-Teams-Secret` header.
+
+## voice (Phase 5.1)
+
+### GET /api/voice/configure
+
+Returns `{ configs: [...] }`.
+
+### POST /api/voice/configure
+
+Body: `{ provider: "vapi" | "retell", display_name?, phone_number,
+assistant_id?, api_key, webhook_secret?, voice_persona?,
+system_prompt?, handoff_phone_number? }`. Encrypts API key at rest.
+
+### DELETE /api/voice/configure?id=<uuid>
+
+Soft-deactivate.
+
+### POST /api/voice/webhook?provider=vapi|retell
+
+Provider lifecycle webhook. Verifies signature, persists
+`voice_calls` rows, enqueues `voice_call_actions` for the agent
+runner.
+
+### POST /api/voice/handoff
+
+Body: `{ call_id, to_number? }`. Transfers an in-progress call to
+the configured handoff number; marks status=`escalated`.

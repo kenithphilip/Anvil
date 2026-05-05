@@ -1,16 +1,34 @@
 # Anvil
 
-Sales-ops execution system for Obara India: customer PO intake,
+Multi-tenant industrial sales-ops platform: customer PO intake,
 quote-and-pricecompo reconciliation, source PO procurement against
-Korea/Japan/China/India suppliers, Tally export with idempotency, AMC
-service scheduling, GSTN e-Invoice, and a unified single-page browser
-app.
+Korea / Japan / China / India suppliers, ERP export with idempotency
+(NetSuite, SAP, Dynamics 365, Acumatica, Prophet 21, Eclipse,
+Infor SX.e, Tally, Sage X3), AMC service scheduling, GSTN e-Invoice,
+multi-channel intake (email + WhatsApp + Slack + Teams + voice via
+Vapi/Retell), PLM mirror (PTC Windchill, Arena), in-network
+back-to-back sourcing, and a Vite + React + TypeScript browser app.
 
-Stack: Vercel serverless functions (Node 20), Supabase Postgres with RLS,
-two single-page HTML apps: the legacy Obara Ops shell at `/` and the new
-v3 Operator Console at `/v3.html` (also reachable via `/?v3=1`). The flag
-pins the choice in localStorage so users stay on their preferred shell
-between sessions. Both run against the same backend.
+Stack: Vercel serverless functions (Node 20), Supabase Postgres
+with RLS + Auth, Vite + React + TypeScript v3 app at
+`src/v3-app/`, design-system primitives shared across 46 screens.
+
+## Sign-in surface (Phase 5)
+
+- Approval-gated signup. New users land in `tenant_members.status='pending'`
+  and an admin reviews the request from the in-portal Access Requests tab
+  before sign-in is unlocked. The first user on a fresh tenant is auto-
+  promoted to admin so the loop can ever start.
+- Four sign-in paths converging on the same approval gate:
+  password (with optional TOTP MFA), magic link, passkey (WebAuthn,
+  TouchID / FaceID / Windows Hello / hardware keys), password reset
+  via single-use rate-limited recovery link emailed by SendGrid.
+- Self-hosted RFC 6238 TOTP, no third-party MFA provider.
+- Passkeys via `@simplewebauthn/server@^11`, lazy-imported on the
+  client.
+- Per-event security audit log at `user_security_audit`.
+
+See `docs/SECURITY.md` for the full picture.
 
 ## Documentation
 

@@ -220,3 +220,109 @@ back on the production URL:
    `detail` field with the error.
 4. File an issue with: the action you took, the error you saw, the
    browser console output, the Vercel function logs for that call.
+
+## Auth flows (Phase 5)
+
+### "Your account is pending admin approval"
+
+You signed up but the admin hasn't reviewed the request yet.
+The bell icon in the Admin Center pings the assigned admins; if
+they haven't acted, ping them on whatever channel you use.
+
+If you genuinely need access immediately and you know the admin
+trusts you, ask them to open **Admin Center → Access requests**
+and click Approve.
+
+### "Your access request was denied"
+
+The admin denied your request. The denial reason (if any) shows
+under the message. Discuss it with them; if they reverse the
+decision they can re-instate from the same panel.
+
+### "Your account has been deactivated"
+
+Your membership was active but an admin turned it off (offboard,
+suspected compromise). Talk to your tenant admin.
+
+### "Two-factor code is incorrect" loop
+
+Authenticator clocks drift. Make sure your phone's time is set
+to "automatic / network". The server accepts the current code
+and one step on either side (±30s window).
+
+If your authenticator was reset (new phone, lost app), you can't
+fix this yourself. Ask an admin to follow
+`docs/RUNBOOK.md → MFA reset`.
+
+### Magic-link / reset email never arrived
+
+1. Check spam.
+2. SendGrid not configured: in dev, the `/api/auth/request_reset`
+   response carries a `dev_action_link` you can paste into the
+   browser. In production, set `SENDGRID_API_KEY` and
+   `SENDGRID_FROM_EMAIL` and authenticate the sender domain
+   (SPF + DKIM).
+3. Per-email rate limit (5 / hour) tripped. Generic 200 still
+   returned but no email sent. Wait an hour or have the admin
+   drop the row from `password_reset_attempts`.
+
+### Reset link "invalid or expired"
+
+The recovery link is single-use and expires in one hour. Each
+new request invalidates the previous link. Request a fresh one
+from the sign-in page.
+
+### "Could not verify passkey"
+
+Most common cause: origin mismatch. The passkey was registered
+against `app.example.com` but you're trying to sign in on
+`staging.example.com`. WebAuthn binds credentials to the exact
+origin. Sign in with password, then register a fresh passkey on
+the other origin.
+
+Other causes:
+- The `APP_URL` env var was changed after registration. The
+  rpID derived from the URL no longer matches what the browser
+  saw when it stored the credential.
+- The credential was deleted on the server side. Register a new
+  one.
+- The authenticator is offline (e.g. hardware key not plugged in).
+
+### Passkey not offered on the sign-in page
+
+Click the email field first, then click **Sign in with passkey**.
+If you've never registered a passkey or this browser doesn't
+have one stored, you'll get a quick "no passkey" prompt and
+should fall back to password.
+
+WebAuthn requires HTTPS (or `localhost`). On a non-localhost
+HTTP origin, `window.PublicKeyCredential` is undefined and the
+button shows an "unsupported browser" message.
+
+### Reset password works but sign-in still fails
+
+After completing a password reset:
+- The recovery session is signed out (security feature). Use the
+  **new** password on the sign-in form, not the reset URL.
+- If you have TOTP enrolled, you still need the 6-digit code
+  alongside the new password.
+- If your membership is `pending` / `denied` / `deactivated`, the
+  password change doesn't unlock you; an admin still needs to
+  approve.
+
+### Notification bell never increments
+
+Bell polls every 30 seconds while the tab is visible. To check:
+- You're signed in as an admin (only admins see the bell).
+- The browser tab is foregrounded (the poller pauses on hidden
+  tabs to avoid burning requests).
+- `/api/admin/notifications` returns 200 with the unread count.
+  In devtools network tab, look for the JSON envelope.
+- The notifications you expect were created. Check the database:
+  `select kind, count(*) from admin_notifications where resolved = false group by kind;`
+
+### "MEMBERSHIP_DEACTIVATED" while logged in
+
+An admin deactivated you while your tab was open. The next API
+call returns 403; the auth gate refuses to mount the Shell on
+the next render. Reload the tab (you'll land on Landing).

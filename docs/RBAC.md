@@ -23,6 +23,28 @@ The Vercel API enforces a parallel `requirePermission(ctx, "read" | "write"
 inside `_lib/auth.js`. The v3 UI mirrors that mapping so it never offers an
 action the API would refuse.
 
+## Membership status (Phase 5)
+
+In addition to `role`, `tenant_members` carries a `status` column
+(migration 042) that determines whether a user can sign in at all:
+
+| Status | Meaning | Sign-in | Visible to admins |
+| --- | --- | --- | --- |
+| `pending` | Self-service signup awaiting admin review | No, returns 403 `MEMBERSHIP_PENDING` | Admin Center → Access requests (default filter) |
+| `approved` | Active member; role determines permissions | Yes | Admin Center → Members |
+| `denied` | Admin rejected; the user sees the denial reason | No, returns 403 `MEMBERSHIP_DENIED` | Admin Center → Access requests, filter "denied" |
+| `deactivated` | Was approved, then turned off (offboarded employee, compromised account) | No, returns 403 `MEMBERSHIP_DEACTIVATED` | Admin Center → Access requests, filter "deactivated" |
+
+Status is checked twice on every request:
+1. `password_login` and `passkey/auth/finish` refuse to mint a
+   session for any non-approved member.
+2. `_lib/auth.resolveContext` re-checks status on every
+   authenticated API call so a session that survives the sign-in
+   gate (or pre-dates a status flip) is still refused.
+
+The first user on a fresh tenant always lands `status='approved'`
+with role `admin`; otherwise the loop could never start.
+
 ## Permission verbs
 
 - `read`. View the route, its tables, its detail panels.

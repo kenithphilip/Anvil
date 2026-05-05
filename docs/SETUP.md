@@ -114,40 +114,48 @@ Open **Authentication → URL Configuration**:
 
 - **Site URL**: leave as the default for now (you'll change to the Vercel
   domain after step 3).
-- **Redirect URLs**: add `http://localhost:3000/auth/callback.html` for
-  local dev. You'll add the Vercel URL later.
+- **Redirect URLs**: add the following entries. You'll add the production
+  Vercel URL after step 3.
+  - `http://localhost:5173/auth/callback.html` (local dev, Vite default)
+  - `http://localhost:5173/#/reset` (password-reset landing)
 
 ### Create the first tenant + admin user
 
 Migration 001 seeds the default tenant with id
-`00000000-0000-0000-0000-000000000001`. You need to attach a real user to
-that tenant with role `admin`.
+`00000000-0000-0000-0000-000000000001`. With the approval gate
+landed in 042, **you don't need to manually flip a tenant_members
+row anymore**: the very first user to sign up on a fresh tenant
+auto-lands as `admin` with `status='approved'`. Every subsequent
+signup goes through the approval flow.
 
-In **Authentication → Users → Add user → Create new user**, type your email
-and click **Send invite**. Click the magic link in your inbox; you'll land
-on a placeholder page (we'll wire the real callback in step 3). That's fine
-for now: the user record is created.
+To bootstrap the first admin:
 
-Back in **SQL Editor**, run:
+1. Open the deployed site (or local dev) and click **Sign up** on
+   the landing page.
+2. Use the email you want to be admin. Pick any role; the first-
+   user override forces `admin`.
+3. The signup endpoint detects an empty `tenant_members` table for
+   the default tenant, sets `status='approved'`, role `admin`, and
+   returns a session immediately. You're in.
+4. Every other team member who signs up afterwards lands
+   `status='pending'`. They'll show up in **Admin Center → Access
+   requests** with a notification on the bell. Review and approve
+   from there.
 
-```sql
--- Replace YOUR_EMAIL with the email you just invited.
-insert into tenant_members (tenant_id, user_id, role)
-select '00000000-0000-0000-0000-000000000001', id, 'admin'
-from auth.users
-where email = 'YOUR_EMAIL'
-on conflict (tenant_id, user_id) do update set role = excluded.role;
-```
+If you'd rather skip the public signup form for the first user
+and seed manually, see [SUPABASE_SETUP.md → Manual first-user
+bootstrap](./SUPABASE_SETUP.md#manual-first-user-bootstrap).
 
 Verify:
 
 ```sql
-select email, role from tenant_members tm
+select email, role, status from tenant_members tm
 join auth.users u on u.id = tm.user_id
 where tm.tenant_id = '00000000-0000-0000-0000-000000000001';
 ```
 
-You should see your email with role `admin`.
+You should see at least your email with role `admin` and status
+`approved`.
 
 ## 3. Deploy to Vercel
 
@@ -173,6 +181,13 @@ You should see your email with role `admin`.
    | `EMAIL_INBOUND_TOKEN` | `openssl rand -base64 32` | random; only set if you wire an inbound email provider |
    | `CRON_SECRET` | `openssl rand -base64 32` | required if you want to keep crons private |
    | `MAGIC_LINK_REDIRECT_URL` | will be your Vercel URL + `/auth/callback.html` | fill after first deploy |
+   | `APP_URL` | will be your Vercel URL | required for WebAuthn passkeys + password-reset email links. **No trailing slash.** |
+   | `REQUIRE_APPROVAL` | `true` | the access-approval gate. Always on in production. |
+   | `ANVIL_SECRETS_KEY` | `openssl rand -hex 32` | encrypts ERP / chat / voice / PLM credentials and TOTP secrets at rest. **Always set in production.** |
+   | `RESET_RATE_LIMIT` | `5` | max password-reset requests per email per hour |
+   | `SENDGRID_API_KEY` | from SendGrid console | required for password-reset emails to actually send. Without it the reset endpoint exposes the action_link in the dev response. |
+   | `SENDGRID_FROM_EMAIL` | a verified sender domain | shown as the from-address of every Anvil email |
+   | `SENDGRID_FROM_NAME` | `Anvil` | display name |
 
    Optional integrations (skip on first deploy, add later):
 

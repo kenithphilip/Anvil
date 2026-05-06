@@ -28,6 +28,15 @@
   --ink-4:     #8A8E96;       /* metadata */
   --ink-5:     #B6B9BF;       /* placeholders, disabled */
 
+  /* Landing-v2 token aliases. The landing CSS shipped with three
+     names that were never defined in the palette (--ink-1, --ink-7,
+     --surface-0). When unresolved, color-mix() calls become invalid
+     and gradients silently disappear (kinetic verb invisible,
+     borders missing). Map them onto canonical tokens. */
+  --ink-1:     var(--ink);
+  --ink-7:     var(--hairline);
+  --surface-0: var(--paper);
+
   /* ── Hairlines ─────────────────────────────────────────── */
   --hairline:   #D8D8D0;
   --hairline-2: #E5E5DD;

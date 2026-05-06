@@ -97,7 +97,12 @@ declare
   password_hash      text;
   totp_b32           text := 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
   rec                record;
-  user_id            uuid;
+  -- Local variable holding the per-row user UUID. Named `v_user_id`
+  -- to avoid shadowing `tenant_members.user_id` /
+  -- `user_security_settings.user_id` inside the ON CONFLICT clauses
+  -- below (Postgres rejects the column reference as ambiguous when a
+  -- PL/pgSQL variable shares its name).
+  v_user_id          uuid;
 begin
   if not exists (select 1 from information_schema.schemata where schema_name = 'auth') then
     raise notice 'auth schema not found; skipping auth.users seed (run on a Supabase project).';
@@ -126,7 +131,7 @@ begin
     ('deactivated.user@anvil.test',        'sales_engineer', 'deactivated', false,      false,          'Dipti Naidu')
   ) as t(email, role, status, wants_totp, wants_passkey, display_name)
   loop
-    user_id := uuid_generate_v5(uuid_ns_dns(), 'anvil-seed-user:' || rec.email);
+    v_user_id := uuid_generate_v5(uuid_ns_dns(), 'anvil-seed-user:' || rec.email);
 
     -- auth.users row. instance_id and aud per Supabase 2024+ schema.
     begin
@@ -135,7 +140,7 @@ begin
         email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
         created_at, updated_at, is_sso_user, is_anonymous
       ) values (
-        user_id,
+        v_user_id,
         '00000000-0000-0000-0000-000000000000'::uuid,
         'authenticated',
         'authenticated',
@@ -170,7 +175,7 @@ begin
       request_email, request_display_name, request_notes, created_at
     ) values (
       default_tenant,
-      user_id,
+      v_user_id,
       rec.role::obara_role,
       rec.status::tenant_member_status,
       case when rec.status in ('pending','denied','deactivated') then rec.role::obara_role else null end,
@@ -182,7 +187,7 @@ begin
       end,
       case when rec.status = 'approved' and rec.email <> 'admin.primary@anvil.test'
            then uuid_generate_v5(uuid_ns_dns(), 'anvil-seed-user:admin.primary@anvil.test')
-           when rec.status = 'approved' and rec.email = 'admin.primary@anvil.test' then user_id
+           when rec.status = 'approved' and rec.email = 'admin.primary@anvil.test' then v_user_id
            else null end,
       case when rec.status = 'approved' then seed_now - interval '89 days' else null end,
       case when rec.status = 'denied'
@@ -206,7 +211,7 @@ begin
       user_id, totp_enrolled, totp_secret, passkey_enrolled,
       require_mfa, last_security_change_at, created_at, updated_at
     ) values (
-      user_id,
+      v_user_id,
       rec.wants_totp,
       case when rec.wants_totp then totp_b32 else null end,
       rec.wants_passkey,

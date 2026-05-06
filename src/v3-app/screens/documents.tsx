@@ -50,6 +50,11 @@ interface DocRow {
       hsn?: string | null;
       confidence?: number | null;
     }>;
+    // Optional per-field confidence map for header fields. Keyed by
+    // FieldKey ("po_number" etc.) -> 0..1. When present, the input
+    // border is tinted green/amber/red as a confidence band.
+    field_confidence?: Partial<Record<FieldKey, number>>;
+    extraction_run_id?: string | null;
   } | null;
   // Customer PO format pre-check report. Populated by the
   // extractor against the per-customer profile (customer_profile_versions).
@@ -81,6 +86,26 @@ const TABS: Array<{ id: Tab; label: string; n?: number }> = [
   { id: "review",  label: "OCR review" },
   { id: "upload",  label: "Upload" },
 ];
+
+// Confidence band: 0..1 -> Tailwind-ish color tone. Drives the
+// inline border on header / line inputs so the operator's eye is
+// drawn to low-confidence cells first. Pure helper; no React deps.
+const confKind = (c: number | null | undefined): "good" | "warn" | "bad" | null => {
+  if (c == null || !Number.isFinite(c)) return null;
+  if (c >= 0.9) return "good";
+  if (c >= 0.7) return "warn";
+  return "bad";
+};
+
+const confBorder = (k: ReturnType<typeof confKind>): React.CSSProperties => {
+  if (!k) return {};
+  const map: Record<NonNullable<ReturnType<typeof confKind>>, string> = {
+    good: "var(--ok, #16a34a)",
+    warn: "var(--rust, #d97706)",
+    bad:  "var(--bad, #dc2626)",
+  };
+  return { borderColor: map[k], borderWidth: 2, borderStyle: "solid" };
+};
 
 const fmtBytes = (n: number | null | undefined): string => {
   if (!n) return "—";
@@ -121,16 +146,49 @@ const OCRReview: React.FC<{
   onCorrected: () => void;
 }> = ({ selected, onCorrected }) => {
   // Local mutable copy of the extraction so the operator can edit
-  // before saving.
+  // before saving. We keep the original separately so we can compute
+  // a diff indicator + a single "Save all" payload.
   const [draft, setDraft] = useState<DocRow["extraction"]>(null);
+  const [original, setOriginal] = useState<DocRow["extraction"]>(null);
   const [savingHeaders, setSavingHeaders] = useState(false);
   const [savingLine, setSavingLine] = useState<number | null>(null);
+  const [savingAll, setSavingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setDraft(selected?.extraction ? JSON.parse(JSON.stringify(selected.extraction)) : null);
+    const fresh = selected?.extraction ? JSON.parse(JSON.stringify(selected.extraction)) : null;
+    setDraft(fresh);
+    setOriginal(selected?.extraction ? JSON.parse(JSON.stringify(selected.extraction)) : null);
     setError(null);
   }, [selected?.id]);
+
+  // Field-level dirty check. Used to show a small "edited" chip per
+  // input so the operator can see at a glance which cells changed.
+  const isHeaderDirty = (k: FieldKey): boolean => {
+    const a = (draft && (draft as any)[k]) ?? "";
+    const b = (original && (original as any)[k]) ?? "";
+    return String(a) !== String(b);
+  };
+  const isLineCellDirty = (i: number, k: string): boolean => {
+    const a = (draft?.line_items?.[i] as any)?.[k];
+    const b = (original?.line_items?.[i] as any)?.[k];
+    if (a == null && b == null) return false;
+    return String(a ?? "") !== String(b ?? "");
+  };
+  const dirtyCount = (() => {
+    if (!draft || !original) return 0;
+    let n = 0;
+    (["po_number", "po_date", "customer_name", "buyer_email", "delivery_date"] as FieldKey[]).forEach((k) => {
+      if (isHeaderDirty(k)) n += 1;
+    });
+    const len = Math.max(draft.line_items?.length || 0, original.line_items?.length || 0);
+    for (let i = 0; i < len; i++) {
+      ["part_no", "description", "qty", "uom", "rate", "hsn", "gst_pct"].forEach((k) => {
+        if (isLineCellDirty(i, k)) n += 1;
+      });
+    }
+    return n;
+  })();
 
   if (!selected) {
     return (
@@ -184,6 +242,86 @@ const OCRReview: React.FC<{
       setError(e?.message || "Save failed");
     } finally {
       setSavingLine(null);
+    }
+  };
+  // Single round-trip save of the entire corrected payload. Hits
+  // /api/documents/correct via the backend client; the server diffs
+  // it against the persisted normalized_extract, writes one
+  // extraction_corrections row per changed leaf, learns aliases, and
+  // bumps the customer's format profile version. Falls back to a raw
+  // fetch when the backend client doesn't expose `.correct`.
+  const saveAll = async () => {
+    if (!draft) return;
+    setSavingAll(true);
+    setError(null);
+    try {
+      const runId = (selected?.extraction as any)?.extraction_run_id;
+      const payload = {
+        extraction_run_id: runId,
+        corrected_payload: {
+          header: {
+            po_number: draft.po_number ?? null,
+            po_date: draft.po_date ?? null,
+            customer_name: draft.customer_name ?? null,
+            buyer_email: draft.buyer_email ?? null,
+            delivery_date: draft.delivery_date ?? null,
+          },
+          lines: (draft.line_items || []).map((li) => ({
+            part_number: li.part_no ?? null,
+            description: li.description ?? null,
+            qty: li.qty ?? null,
+            uom: li.uom ?? null,
+            unit_price: li.rate ?? null,
+            hsn: li.hsn ?? null,
+            gst_rate: li.gst_pct ?? null,
+          })),
+        },
+        original_payload: original ? {
+          header: {
+            po_number: original.po_number ?? null,
+            po_date: original.po_date ?? null,
+            customer_name: original.customer_name ?? null,
+            buyer_email: original.buyer_email ?? null,
+            delivery_date: original.delivery_date ?? null,
+          },
+          lines: (original.line_items || []).map((li) => ({
+            part_number: li.part_no ?? null,
+            description: li.description ?? null,
+            qty: li.qty ?? null,
+            uom: li.uom ?? null,
+            unit_price: li.rate ?? null,
+            hsn: li.hsn ?? null,
+            gst_rate: li.gst_pct ?? null,
+          })),
+        } : undefined,
+        customer_id: selected.customer_id || null,
+      };
+      let res: any = null;
+      const fn = (ObaraBackend as any)?.documents?.correctBulk;
+      if (typeof fn === "function") {
+        res = await fn(payload);
+      } else {
+        const cfg = (ObaraBackend?.getConfig?.() || {}) as { url?: string };
+        const session = (ObaraBackend?.getSession?.() || null) as { access_token?: string } | null;
+        if (!cfg.url) throw new Error("Backend URL not configured");
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+        const resp = await fetch(cfg.url.replace(/\/+$/, "") + "/api/documents/correct", {
+          method: "POST", headers, body: JSON.stringify(payload),
+        });
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        res = await resp.json();
+      }
+      const n = res && typeof res.diff_count === "number" ? res.diff_count : dirtyCount;
+      window.notifySuccess?.("Saved", n + " field" + (n === 1 ? "" : "s") + " recorded");
+      // Re-baseline the original so subsequent diffs are against the
+      // freshly-saved state, not the original extraction.
+      setOriginal(draft ? JSON.parse(JSON.stringify(draft)) : null);
+      onCorrected();
+    } catch (e: any) {
+      setError(e?.message || "Save failed");
+    } finally {
+      setSavingAll(false);
     }
   };
 
@@ -256,27 +394,46 @@ const OCRReview: React.FC<{
         {/* RIGHT: editable extraction */}
         <div className="col gap-md" style={{ flex: 1, minWidth: 0 }}>
           <Card title="Header fields"
-                eyebrow="extracted, editable"
-                right={<Btn sm kind="primary" disabled={!draft || savingHeaders} onClick={saveHeaders}>
-                  {savingHeaders ? "Saving…" : "Save corrections"}
-                </Btn>}>
+                eyebrow={dirtyCount ? dirtyCount + " edited · click Save all to commit" : "extracted, editable"}
+                right={<div className="row gap-sm">
+                  <Btn sm kind="ghost" disabled={!draft || savingHeaders} onClick={saveHeaders}>
+                    {savingHeaders ? "Saving…" : "Save headers"}
+                  </Btn>
+                  <Btn sm kind="primary" disabled={!draft || savingAll || dirtyCount === 0} onClick={saveAll}>
+                    {savingAll ? "Saving…" : (dirtyCount ? "Save all (" + dirtyCount + ")" : "Save all")}
+                  </Btn>
+                </div>}>
             <table className="tbl">
               <tbody>
                 {headers.map((k) => {
                   const v = (draft?.[k] as string | null | undefined) ?? "";
+                  const conf = (draft?.field_confidence || {})[k];
+                  const cKind = confKind(conf);
+                  const dirty = isHeaderDirty(k);
                   return (
                     <tr key={k}>
                       <td style={{ width: 160, color: "var(--ink-3)", fontFamily: "var(--mono)", fontSize: 11 }}>
                         {FIELD_LABELS[k]}
+                        {cKind ? (
+                          <span style={{ marginLeft: 6 }}>
+                            <Chip k={cKind === "good" ? "good" : cKind === "warn" ? "warn" : "bad"}>
+                              {Math.round((conf || 0) * 100)}%
+                            </Chip>
+                          </span>
+                        ) : null}
                       </td>
                       <td>
-                        <input
-                          className="input"
-                          type="text"
-                          value={v || ""}
-                          onChange={(e) => onHeaderChange(k, e.target.value)}
-                          aria-label={FIELD_LABELS[k]}
-                        />
+                        <div className="row gap-sm" style={{ alignItems: "center" }}>
+                          <input
+                            className="input"
+                            type="text"
+                            value={v || ""}
+                            onChange={(e) => onHeaderChange(k, e.target.value)}
+                            aria-label={FIELD_LABELS[k]}
+                            style={confBorder(cKind)}
+                          />
+                          {dirty ? <Chip k="info">edited</Chip> : null}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -307,53 +464,61 @@ const OCRReview: React.FC<{
                   <th />
                 </tr></thead>
                 <tbody>
-                  {draft.line_items.map((li, i) => (
-                    <tr key={i}>
-                      <td className="mono">{i + 1}</td>
-                      <td>
-                        <input className="input mono" value={li.part_no || ""}
-                               onChange={(e) => onLineChange(i, "part_no", e.target.value)} />
-                      </td>
-                      <td>
-                        <input className="input" value={li.description || ""}
-                               onChange={(e) => onLineChange(i, "description", e.target.value)} />
-                      </td>
-                      <td className="r">
-                        <input className="input mono r" type="number" step="0.01"
-                               value={li.qty == null ? "" : li.qty}
-                               onChange={(e) => onLineChange(i, "qty", e.target.value === "" ? null : Number(e.target.value))} />
-                      </td>
-                      <td>
-                        <input className="input mono" value={li.uom || ""}
-                               onChange={(e) => onLineChange(i, "uom", e.target.value)} />
-                      </td>
-                      <td className="r">
-                        <input className="input mono r" type="number" step="0.01"
-                               value={li.rate == null ? "" : li.rate}
-                               onChange={(e) => onLineChange(i, "rate", e.target.value === "" ? null : Number(e.target.value))} />
-                      </td>
-                      <td>
-                        <input className="input mono" value={li.hsn || ""}
-                               onChange={(e) => onLineChange(i, "hsn", e.target.value)} />
-                      </td>
-                      <td className="r">
-                        <input className="input mono r" type="number" step="0.01"
-                               value={li.gst_pct == null ? "" : li.gst_pct}
-                               onChange={(e) => onLineChange(i, "gst_pct", e.target.value === "" ? null : Number(e.target.value))} />
-                      </td>
-                      <td>
-                        {li.confidence == null ? "—" :
-                          <Chip k={li.confidence >= 0.9 ? "good" : li.confidence >= 0.7 ? "warn" : "bad"}>
-                            {Math.round(li.confidence * 100)}%
-                          </Chip>}
-                      </td>
-                      <td>
-                        <Btn sm disabled={savingLine === i} onClick={() => saveLine(i)}>
-                          {savingLine === i ? "saving…" : "save"}
-                        </Btn>
-                      </td>
-                    </tr>
-                  ))}
+                  {draft.line_items.map((li, i) => {
+                    const lineConf = confKind(li.confidence);
+                    const rowDirty = ["part_no", "description", "qty", "uom", "rate", "hsn", "gst_pct"]
+                      .some((k) => isLineCellDirty(i, k));
+                    return (
+                      <tr key={i} style={rowDirty ? { background: "rgba(200, 255, 43, 0.04)" } : undefined}>
+                        <td className="mono">
+                          {i + 1}{rowDirty ? <span style={{ marginLeft: 6 }}><Chip k="info">edit</Chip></span> : null}
+                        </td>
+                        <td>
+                          <input className="input mono" value={li.part_no || ""}
+                                 style={isLineCellDirty(i, "part_no") ? { borderColor: "var(--accent, #C8FF2B)", borderWidth: 2, borderStyle: "solid" } : confBorder(lineConf)}
+                                 onChange={(e) => onLineChange(i, "part_no", e.target.value)} />
+                        </td>
+                        <td>
+                          <input className="input" value={li.description || ""}
+                                 onChange={(e) => onLineChange(i, "description", e.target.value)} />
+                        </td>
+                        <td className="r">
+                          <input className="input mono r" type="number" step="0.01"
+                                 value={li.qty == null ? "" : li.qty}
+                                 onChange={(e) => onLineChange(i, "qty", e.target.value === "" ? null : Number(e.target.value))} />
+                        </td>
+                        <td>
+                          <input className="input mono" value={li.uom || ""}
+                                 onChange={(e) => onLineChange(i, "uom", e.target.value)} />
+                        </td>
+                        <td className="r">
+                          <input className="input mono r" type="number" step="0.01"
+                                 value={li.rate == null ? "" : li.rate}
+                                 onChange={(e) => onLineChange(i, "rate", e.target.value === "" ? null : Number(e.target.value))} />
+                        </td>
+                        <td>
+                          <input className="input mono" value={li.hsn || ""}
+                                 onChange={(e) => onLineChange(i, "hsn", e.target.value)} />
+                        </td>
+                        <td className="r">
+                          <input className="input mono r" type="number" step="0.01"
+                                 value={li.gst_pct == null ? "" : li.gst_pct}
+                                 onChange={(e) => onLineChange(i, "gst_pct", e.target.value === "" ? null : Number(e.target.value))} />
+                        </td>
+                        <td>
+                          {li.confidence == null ? "—" :
+                            <Chip k={li.confidence >= 0.9 ? "good" : li.confidence >= 0.7 ? "warn" : "bad"}>
+                              {Math.round(li.confidence * 100)}%
+                            </Chip>}
+                        </td>
+                        <td>
+                          <Btn sm disabled={savingLine === i} onClick={() => saveLine(i)}>
+                            {savingLine === i ? "saving…" : "save"}
+                          </Btn>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}

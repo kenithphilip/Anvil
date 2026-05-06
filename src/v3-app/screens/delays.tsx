@@ -32,6 +32,13 @@ interface DelayFlag {
   elapsed_days: number | null;
   sla_days: number;
   detail: string;
+  // Predictor enhancements (additive; older API responses ignore these).
+  delay_probability?: number;     // 0..1
+  eta_predicted?: string | null;  // ISO date
+  criticality?: number;           // 1.0 standalone, 1.25 / 1.5 with deps
+  risk_score?: number;            // 0..100
+  sla_source?: "default" | "learned";
+  supplier_samples?: number;
 }
 
 const TABS: Array<{ id: string; label: string; kind: DelayFlag["kind"][] }> = [
@@ -132,6 +139,9 @@ const Delays: React.FC = () => {
   const total = data?.summary?.total || 0;
   const byKind = data?.summary?.byKind || {};
   const high = (data?.delays || []).filter((d) => d.severity === "high").length;
+  const risks = (data?.delays || []).map((d) => Number(d.risk_score || 0)).filter((n) => Number.isFinite(n));
+  const maxRisk = risks.length ? Math.max(...risks) : 0;
+  const critical = (data?.delays || []).filter((d) => (d.criticality || 1) >= 1.25).length;
 
   return (
     <>
@@ -141,12 +151,13 @@ const Delays: React.FC = () => {
         meta={`${total} flagged · ${high} high-severity`}
         right={<Btn icon kind="ghost" sm onClick={load} title="Refresh">{Icon.cycle}</Btn>}
       />
-      <KPIRow cols={5}>
+      <KPIRow cols={6}>
         <KPI lbl="Total flagged"    v={String(total)} live={total > 0} />
         <KPI lbl="High severity"    v={String(high)} dKind={high > 0 ? "bad" : "ghost"} />
+        <KPI lbl="Max risk score"   v={String(maxRisk)} dKind={maxRisk >= 75 ? "bad" : maxRisk >= 50 ? "warn" : "ghost"} />
+        <KPI lbl="Critical-path"    v={String(critical)} dKind={critical > 0 ? "warn" : "ghost"} />
         <KPI lbl="Foreign POs"      v={String(byKind.po_source_country || 0)} />
         <KPI lbl="Work orders"      v={String(byKind.work_order_manufacturing || 0)} />
-        <KPI lbl="Orphan ETAs"      v={String(byKind.ready_date_orphan || 0)} />
       </KPIRow>
       <WSTabs tabs={tabs} active={tab} onChange={setTab} />
       <div className="ws-content">
@@ -164,26 +175,49 @@ const Delays: React.FC = () => {
                 <th>Severity</th>
                 <th className="r">Elapsed</th>
                 <th className="r">SLA</th>
+                <th className="r" title="Logistic delay probability">Risk</th>
+                <th>Predicted ETA</th>
                 <th>Detail</th>
                 <th />
               </tr></thead>
               <tbody>
-                {filtered.map((f) => (
-                  <tr key={f.kind + ":" + f.ref_id}>
-                    <td className="mono">
-                      <a href={refRoute(f)} className="link">{f.ref_label}</a>
-                    </td>
-                    <td><Chip k="info">{KIND_LABEL[f.kind]}</Chip></td>
-                    <td>{f.supplier || "—"}{f.country ? <span className="mono-sm" style={{ color: "var(--ink-3)", marginLeft: 6 }}>· {f.country}</span> : null}</td>
-                    <td>{SEV_CHIP(f.severity)}</td>
-                    <td className="r mono">{f.elapsed_days != null ? f.elapsed_days + "d" : "—"}</td>
-                    <td className="r mono">{f.sla_days ? f.sla_days + "d" : "—"}</td>
-                    <td className="mono-sm" style={{ color: "var(--ink-2)" }}>{f.detail}</td>
-                    <td>
-                      <Btn sm onClick={() => { window.location.hash = refRoute(f).slice(1); }}>open</Btn>
-                    </td>
-                  </tr>
-                ))}
+                {filtered.map((f) => {
+                  const score = Math.round(Number(f.risk_score || 0));
+                  const scoreKind = score >= 75 ? "bad" : score >= 50 ? "warn" : "ghost";
+                  const slaSrc = f.sla_source === "learned" ? " (learned)" : "";
+                  const isCritical = (f.criticality || 1) >= 1.25;
+                  return (
+                    <tr key={f.kind + ":" + f.ref_id}>
+                      <td className="mono">
+                        <a href={refRoute(f)} className="link">{f.ref_label}</a>
+                        {isCritical ? (
+                          <span style={{ marginLeft: 6 }}>
+                            <Chip k="warn">critical-path</Chip>
+                          </span>
+                        ) : null}
+                      </td>
+                      <td><Chip k="info">{KIND_LABEL[f.kind]}</Chip></td>
+                      <td>
+                        {f.supplier || "—"}
+                        {f.country ? <span className="mono-sm" style={{ color: "var(--ink-3)", marginLeft: 6 }}>· {f.country}</span> : null}
+                        {f.supplier_samples ? <span className="mono-sm" style={{ color: "var(--ink-3)", marginLeft: 6 }} title="Historical samples used to learn this supplier's SLA">· n={f.supplier_samples}</span> : null}
+                      </td>
+                      <td>{SEV_CHIP(f.severity)}</td>
+                      <td className="r mono">{f.elapsed_days != null ? f.elapsed_days + "d" : "—"}</td>
+                      <td className="r mono" title={f.sla_source === "learned" ? "Learned from supplier history" : "Static default"}>
+                        {f.sla_days ? f.sla_days + "d" + slaSrc : "—"}
+                      </td>
+                      <td className="r">
+                        <Chip k={scoreKind}>{score}</Chip>
+                      </td>
+                      <td className="mono-sm">{f.eta_predicted || "—"}</td>
+                      <td className="mono-sm" style={{ color: "var(--ink-2)" }}>{f.detail}</td>
+                      <td>
+                        <Btn sm onClick={() => { window.location.hash = refRoute(f).slice(1); }}>open</Btn>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}

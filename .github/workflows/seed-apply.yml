@@ -1,0 +1,151 @@
+name: seed-apply
+
+# Manually triggered workflow that applies migrations and/or the
+# seed pack against a Supabase project. The DB URL lives in a
+# repository secret; we never echo it.
+#
+# Required secret (Settings -> Secrets and variables -> Actions):
+#   SUPABASE_DB_URL  --  the direct connection URI from the
+#                        Supabase dashboard (Project Settings ->
+#                        Database -> Connection string -> URI),
+#                        with the actual db password substituted in.
+#
+# How to dispatch:
+#   gh workflow run seed-apply.yml --ref seed-pack-phase-1-2 \
+#     -f phase=verify -f seed_env=staging
+#
+# Phase choices:
+#   migrations  -- apply supabase/migrations/0*.sql in order
+#   corpus      -- apply supabase/seed.sql (default tenant + 6 customers + 35 items)
+#   seed        -- apply supabase/seed/{100,200,300,400,500}_*.sql in order
+#   verify      -- run supabase/seed/999_verify.sql (read-only)
+#   teardown    -- run supabase/seed/900_teardown.sql (env-guarded)
+#   all         -- migrations + corpus + seed + verify
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: "Which phase to apply"
+        required: true
+        type: choice
+        default: verify
+        options:
+          - migrations
+          - corpus
+          - seed
+          - verify
+          - teardown
+          - all
+      seed_env:
+        description: "app.seed_env value"
+        required: true
+        type: choice
+        default: staging
+        options:
+          - staging
+          - local
+          - ci
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PGCONNECT_TIMEOUT: "30"
+      PGAPPNAME: "anvil-seed-apply"
+      PHASE: ${{ inputs.phase }}
+      SEED_ENV: ${{ inputs.seed_env }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install psql client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client
+          psql --version
+
+      - name: Sanity check connection
+        env:
+          PGURL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PGURL" ]; then
+            echo "::error::SUPABASE_DB_URL repo secret is not set."
+            exit 1
+          fi
+          psql "$PGURL" -At -v ON_ERROR_STOP=1 \
+            -c "select 'connected as ' || current_user || ' / db=' || current_database() as info;"
+
+      - name: Apply migrations
+        if: ${{ inputs.phase == 'migrations' || inputs.phase == 'all' }}
+        env:
+          PGURL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          for f in $(ls supabase/migrations/0*.sql | sort); do
+            echo "::group::$f"
+            psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"
+            echo "::endgroup::"
+          done
+          echo "==> migrations applied"
+
+      - name: Apply corpus seed
+        if: ${{ inputs.phase == 'corpus' || inputs.phase == 'all' }}
+        env:
+          PGURL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/seed.sql
+          echo "==> corpus seed applied"
+
+      - name: Apply seed pack 100..500
+        if: ${{ inputs.phase == 'seed' || inputs.phase == 'all' }}
+        env:
+          PGURL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          for f in supabase/seed/100_users_and_tenants.sql \
+                   supabase/seed/200_master_data.sql \
+                   supabase/seed/300_workflow_data.sql \
+                   supabase/seed/400_logs_and_analytics.sql \
+                   supabase/seed/500_erp_mirrors.sql; do
+            echo "::group::$f"
+            psql "$PGURL" -v ON_ERROR_STOP=1 \
+              -c "set app.seed_env = '$SEED_ENV';" \
+              -f "$f"
+            echo "::endgroup::"
+          done
+          echo "==> seed pack applied"
+
+      - name: Run verification queries
+        if: ${{ inputs.phase == 'verify' || inputs.phase == 'all' }}
+        env:
+          PGURL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          psql "$PGURL" -v ON_ERROR_STOP=1 \
+            -c "set app.seed_env = '$SEED_ENV';" \
+            -f supabase/seed/999_verify.sql 2>&1 | tee verify.txt
+          echo "================ verify summary ================"
+          grep -E '^NOTICE:.*verify:' verify.txt || echo "(no verify summary line found)"
+
+      - name: Run teardown
+        if: ${{ inputs.phase == 'teardown' }}
+        env:
+          PGURL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          psql "$PGURL" -v ON_ERROR_STOP=1 \
+            -c "set app.seed_env = '$SEED_ENV';" \
+            -f supabase/seed/900_teardown.sql
+          echo "==> teardown applied"
+
+      - name: Upload verify output
+        if: ${{ always() && (inputs.phase == 'verify' || inputs.phase == 'all') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-output
+          path: verify.txt
+          if-no-files-found: ignore
+          retention-days: 14

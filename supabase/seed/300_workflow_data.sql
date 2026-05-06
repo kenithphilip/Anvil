@@ -702,6 +702,10 @@ declare
   -- non-DRAFT order_status values so shipments only attach to
   -- approved/in-flight orders.
   ord_statuses   text[] := array['PENDING_REVIEW','APPROVED','BLOCKED','DUPLICATE','REUSED','EXPORTED_TO_TALLY','FAILED_TALLY_IMPORT','RECONCILED'];
+  -- order_mode values (NOT shipment_mode). shipments.order_id keys
+  -- come from the orders table's (status, mode) grid where mode is
+  -- one of these five.
+  ord_modes      text[] := array['SPARES','SPARES_ASSEMBLY','PROJECT_FOR','PROJECT_HSS','INTERNAL'];
   modes          text[] := array['SEA','AIR','ROAD','COURIER'];
   s              text;
   k              int := 0;
@@ -712,7 +716,7 @@ begin
   foreach s in array statuses loop
     for variant in 1..2 loop
       k := k + 1;
-      ord_id := uuid_generate_v5(ns, 'order:' || ord_statuses[((k - 1) % 8) + 1] || ':' || modes[((k - 1) % 4) + 1]);
+      ord_id := uuid_generate_v5(ns, 'order:' || ord_statuses[((k - 1) % 8) + 1] || ':' || ord_modes[((k - 1) % 5) + 1]);
       spo_id := case (k % 3) when 0 then uuid_generate_v5(ns, 'spo:SUPPLIER_ACK:1') else null end;
       iso_id := case (k % 5) when 0 then uuid_generate_v5(ns, 'iso:WARRANTY_REPLACEMENT:DISPATCHED') else null end;
 

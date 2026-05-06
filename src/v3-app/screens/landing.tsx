@@ -528,6 +528,49 @@ const Landing: React.FC = () => {
   const [navOpen, setNavOpen] = useState(false);
   const year = new Date().getFullYear();
 
+  // Reveal-on-scroll for every `.lp .reveal` block. The CSS sets these
+  // to opacity:0 by default and switches to opacity:1 only when the
+  // element gains class `in`. Without this observer the section
+  // headers stay invisible and leave giant empty rectangles between
+  // sections. We install one observer for the whole page and add `in`
+  // when any reveal block crosses the viewport. Honours
+  // prefers-reduced-motion by marking everything visible immediately.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const root = document.querySelector(".lp");
+    if (!root) return;
+    const els = Array.from(root.querySelectorAll<HTMLElement>(".reveal:not(.in)"));
+    if (!els.length) return;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduce || typeof IntersectionObserver === "undefined") {
+      els.forEach((el) => el.classList.add("in"));
+      return;
+    }
+    // Gate the fade animation on a class on .lp so the page is fully
+    // readable until JS gets a chance to install the observer.
+    root.classList.add("js-reveal-ready");
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting) {
+          (e.target as HTMLElement).classList.add("in");
+          obs.unobserve(e.target);
+        }
+      });
+    }, { threshold: 0.12, rootMargin: "0px 0px -8% 0px" });
+    els.forEach((el) => obs.observe(el));
+    // Failsafe: if for any reason the observer never fires (e.g. the
+    // section is already past the fold on a tall viewport, or a layout
+    // shift skips the threshold), reveal everything after a short
+    // grace period so visitors never see permanent blank rectangles.
+    const failsafe = window.setTimeout(() => {
+      els.forEach((el) => el.classList.add("in"));
+    }, 1200);
+    return () => {
+      obs.disconnect();
+      window.clearTimeout(failsafe);
+    };
+  }, []);
+
   return (
     <div className="lp">
       <a className="skip-link" href="#main">Skip to content</a>

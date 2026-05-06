@@ -573,8 +573,8 @@ declare
 begin
   select id into mg_id   from customers where tenant_id = default_tenant and customer_key = 'MG_MOTOR_INDIA';
   select id into tata_id from customers where tenant_id = default_tenant and customer_key = 'TATA_MOTORS_PV_PUNE';
-  select id into jbm_id  from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO';
-  select id into rn_id   from customers where tenant_id = default_tenant and customer_key = 'RENAULT_NISSAN';
+  select id into jbm_id  from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO_PLANT_1';
+  select id into rn_id   from customers where tenant_id = default_tenant and customer_key = 'RNAIPL';
 
   if mg_id is not null then
     insert into customer_lead_times (id, tenant_id, customer_id, product_category, lead_days, notes, created_at, updated_at)

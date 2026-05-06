@@ -517,7 +517,7 @@ declare
   k              int;
 begin
   select id into mg  from customers where tenant_id = default_tenant and customer_key = 'MG_MOTOR_INDIA';
-  select id into jbm from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO';
+  select id into jbm from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO_PLANT_1';
 
   for k in 0..11 loop
     d := date_trunc('month', now() - (k * 30 || ' days')::interval)::date;
@@ -662,7 +662,7 @@ declare
   j              int;
   status_v       text;
   cust_id        uuid;
-  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO','RENAULT_NISSAN','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH','ACME_ROBOTICS_LLC','NIPPON_KOGYO'];
+  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO_PLANT_1','RNAIPL','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH','ACME_ROBOTICS_LLC','NIPPON_KOGYO'];
   total_emails   int := 0;
 begin
   for i in 1..40 loop

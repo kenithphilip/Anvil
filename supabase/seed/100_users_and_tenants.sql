@@ -68,6 +68,45 @@ begin
 end $guard$;
 
 -- ───────────────────────────────────────────────────────────────────
+-- TEMP DIAGNOSTIC: dump auth schema state for debugging signin failures
+-- (will be removed once login works)
+-- ───────────────────────────────────────────────────────────────────
+do $diag$
+declare
+  r record;
+  s text;
+begin
+  -- Count users + identities
+  select count(*) into r from auth.users where email like '%@anvil.test';
+  raise notice 'PROBE: anvil.test users count=%', (select count(*) from auth.users where email like '%@anvil.test');
+  raise notice 'PROBE: anvil.test identities count=%', (select count(*) from auth.identities i join auth.users u on u.id=i.user_id where u.email like '%@anvil.test');
+
+  -- Sample user row
+  for r in select email, aud, role, is_super_admin, is_sso_user, is_anonymous,
+                  confirmation_token IS NULL as ct_null,
+                  recovery_token IS NULL as rt_null,
+                  email_change IS NULL as ec_null,
+                  phone_change IS NULL as pc_null,
+                  reauthentication_token IS NULL as reath_null
+           from auth.users where email='admin.primary@anvil.test'
+  loop
+    raise notice 'PROBE: user=% aud=% role=% super=% sso=% anon=% ct_null=% rt_null=% ec_null=% pc_null=% reath_null=%',
+      r.email, r.aud, r.role, r.is_super_admin, r.is_sso_user, r.is_anonymous,
+      r.ct_null, r.rt_null, r.ec_null, r.pc_null, r.reath_null;
+  end loop;
+
+  -- auth migrations version
+  begin
+    for r in select version from auth.schema_migrations order by version desc limit 3 loop
+      raise notice 'PROBE: auth migration version=%', r.version;
+    end loop;
+  exception when undefined_table then
+    raise notice 'PROBE: auth.schema_migrations table not present';
+  end;
+end $diag$;
+
+
+-- ───────────────────────────────────────────────────────────────────
 -- 1. SCHEMA REPAIRS  --  fill enum gaps the migrations missed
 -- ───────────────────────────────────────────────────────────────────
 -- Add 'operator' to obara_role if absent. ALTER TYPE ... ADD VALUE

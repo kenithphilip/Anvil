@@ -67,6 +67,20 @@ begin
   end if;
 end $guard$;
 
+-- ───────────────────────────────────────────────────────────────────
+-- 1. SCHEMA REPAIRS  --  fill enum gaps the migrations missed
+-- ───────────────────────────────────────────────────────────────────
+-- Add 'operator' to obara_role if absent. ALTER TYPE ... ADD VALUE
+-- IF NOT EXISTS is supported on Postgres 12+ and is itself idempotent.
+--
+-- Must run OUTSIDE any explicit transaction. Postgres rejects use of
+-- a newly-added enum value in the same transaction that adds it
+-- ('unsafe use of new value of enum type'); psql's implicit
+-- per-statement transaction commits this immediately so the rest of
+-- the file (in an explicit `begin; ... commit;` block below) can
+-- cast strings to `obara_role` freely.
+alter type obara_role add value if not exists 'operator';
+
 begin;
 
 -- Best-effort: prefer the postgres role inside the transaction. Harmless if not permitted.
@@ -78,14 +92,6 @@ begin
     null;
   end;
 end $role$;
-
--- ───────────────────────────────────────────────────────────────────
--- 1. SCHEMA REPAIRS  --  fill enum gaps the migrations missed
--- ───────────────────────────────────────────────────────────────────
--- Add 'operator' to obara_role if absent. ALTER TYPE ... ADD VALUE
--- IF NOT EXISTS is supported on Postgres 12+ and is itself idempotent.
--- Must run outside any block that depends on the new value.
-alter type obara_role add value if not exists 'operator';
 
 -- ───────────────────────────────────────────────────────────────────
 -- 2. AUTH USERS  --  15 deterministic identities

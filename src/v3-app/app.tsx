@@ -89,13 +89,44 @@ const buildRoleOptions = (): Array<{ id: string; label: string; short: string }>
     };
   });
 
-// Floating bar in the dock area: theme + density + rail collapse.
+// Shared sign-out helper. Clears the Supabase session, removes any
+// cached auth profile / tenant / intended-route keys, and bounces the
+// visitor back to the marketing landing. Exposed so the ThemeBar
+// (every authenticated page) and the connect screen agree on what
+// "signed out" means.
+export const signOutAndRedirect = (): void => {
+  try {
+    ObaraBackend?.setSession?.(null);
+    lsRemove("auth_profile");
+    lsRemove(INTENDED_ROUTE_KEY_SUFFIX);
+  } catch (_) {
+    // Storage may be unavailable (private mode, locked-down browsers);
+    // we still want the in-memory session cleared, which the call
+    // above accomplishes before throwing.
+  }
+  // Redirect to the marketing landing rather than /signin so a
+  // signed-out visitor can re-discover the product before
+  // re-entering. The hash change triggers App's hashchange listener
+  // and unmounts the Shell.
+  if (typeof window !== "undefined") {
+    window.location.hash = "#/landing";
+    // Soft-reload after a microtask so any in-flight fetches see the
+    // null session immediately and don't race the route change.
+    setTimeout(() => { try { window.location.reload(); } catch (_) {} }, 0);
+  }
+};
+
+// Floating bar in the dock area: theme + density + rail collapse +
+// sign-out. The bar is `position: fixed` so it follows the visitor
+// across screens; `.app-main { padding-bottom }` keeps page content
+// above it (otherwise the bottom rows of forms / tables disappear
+// under the floating buttons).
 const ThemeBar: React.FC = () => {
   useRerenderOnEvents(["prefs:change"]);
   const theme = Prefs.theme();
   const density = Prefs.density();
   return (
-    <div style={{ position: "fixed", right: 16, bottom: 36, display: "flex", gap: 6, zIndex: 100 }}>
+    <div className="theme-bar" style={{ position: "fixed", right: 16, bottom: 36, display: "flex", gap: 6, zIndex: 100 }}>
       <button className="head-pill" title="Toggle theme" onClick={() => Prefs.toggleTheme()}>
         {Icon.eye} {theme}
       </button>
@@ -106,6 +137,17 @@ const ThemeBar: React.FC = () => {
       }}>{Icon.layers} {density}</button>
       <button className="head-pill" title="Toggle sidebar" onClick={() => Prefs.toggleRail()}>
         {Icon.arrowL}
+      </button>
+      <button
+        className="head-pill"
+        title="Sign out"
+        aria-label="Sign out"
+        onClick={() => {
+          if (typeof window !== "undefined" && window.confirm?.("Sign out of Anvil?") === false) return;
+          signOutAndRedirect();
+        }}
+      >
+        {Icon.logout} sign out
       </button>
     </div>
   );

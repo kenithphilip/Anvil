@@ -61,6 +61,7 @@ export const Icon = {
   zap:      <I d={<path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/>} />,
   history:  <I d={<><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></>} />,
   lock:     <I d={<><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></>} />,
+  logout:   <I d={<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></>} />,
   eye:      <I d={<><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></>} />,
   star:     <I d={<polygon points="12,2 15,9 22,9 16,14 19,22 12,17 5,22 8,14 2,9 9,9"/>} />,
   ext:      <I d={<><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></>} />,

@@ -67,6 +67,25 @@ begin
   end if;
 end $guard$;
 
+do $diag2$
+declare
+  c_name text;
+  c_null_count int := 0;
+begin
+  for c_name in
+    select column_name from information_schema.columns
+    where table_schema='auth' and table_name='users'
+      and is_nullable='YES'
+    order by ordinal_position
+  loop
+    execute format('select count(*) from auth.users where email=%L and %I is null',
+                   'admin.primary@anvil.test', c_name) into c_null_count;
+    if c_null_count > 0 then
+      raise notice 'PROBE2: column % is NULL on admin.primary', c_name;
+    end if;
+  end loop;
+end $diag2$;
+
 
 -- ───────────────────────────────────────────────────────────────────
 -- 1. SCHEMA REPAIRS  --  fill enum gaps the migrations missed

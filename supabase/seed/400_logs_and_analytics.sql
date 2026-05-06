@@ -238,20 +238,20 @@ declare
   i              int;
   j              int;
   case_id        text;
-  suite          text;
+  v_suite        text;
   run_id         uuid;
   passed_total   int;
   case_passed    int;
 begin
   -- Cases.
   for i in 1..20 loop
-    suite := suites[((i - 1) % 3) + 1];
-    case_id := suite || '-case-' || lpad(i::text,3,'0');
+    v_suite := suites[((i - 1) % 3) + 1];
+    case_id := v_suite || '-case-' || lpad(i::text,3,'0');
     insert into eval_cases (id, tenant_id, suite, case_id, description, documents, expected, enabled, created_at)
     values (
       uuid_generate_v5(ns, 'evcase:' || case_id),
-      default_tenant, suite, case_id,
-      'Seed eval case ' || i::text || ' (' || suite || ')',
+      default_tenant, v_suite, case_id,
+      'Seed eval case ' || i::text || ' (' || v_suite || ')',
       jsonb_build_array(jsonb_build_object('storage_path','documents/seed/eval/'||case_id||'.pdf','filename',case_id||'.pdf','seed_marker','anvil-test-seed-v1')),
       jsonb_build_object('expected_lines', 5 + (i % 4), 'expected_total', 250000 + i * 5000, 'seed_marker','anvil-test-seed-v1'),
       true,
@@ -261,11 +261,11 @@ begin
 
   -- Runs (5 cycles across suites).
   for i in 1..5 loop
-    suite := suites[((i - 1) % 3) + 1];
+    v_suite := suites[((i - 1) % 3) + 1];
     run_id := uuid_generate_v5(ns, 'evrun:' || i::text);
     insert into eval_runs (id, tenant_id, suite, passed, failed, total_score, notes, created_at)
     values (
-      run_id, default_tenant, suite,
+      run_id, default_tenant, v_suite,
       18 - (i % 3), 2 + (i % 3), 0.9000 - (i % 4) * 0.005,
       'Seed eval run ' || i::text,
       now() - ((30 - i * 5) || ' days')::interval

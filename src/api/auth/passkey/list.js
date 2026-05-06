@@ -9,6 +9,7 @@
 import { applyCors, handlePreflight, json, sendError } from "../../_lib/cors.js";
 import { resolveContext } from "../../_lib/auth.js";
 import { serviceClient } from "../../_lib/supabase.js";
+import { safeAwait } from "../../_lib/safe-thenable.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -48,12 +49,12 @@ export default async function handler(req, res) {
         last_security_change_at: new Date().toISOString(),
       }, { onConflict: "user_id" });
 
-      await svc.from("user_security_audit").insert({
+      await safeAwait(svc.from("user_security_audit").insert({
         user_id: ctx.user.id,
         user_email: ctx.user.email,
         event: "passkey_removed",
         detail: { passkey_id: id },
-      }).catch(() => {});
+      }));
 
       return json(res, 200, { ok: true });
     }

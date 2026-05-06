@@ -22,6 +22,7 @@
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { createClient } from "@supabase/supabase-js";
+import { safeAwait } from "../_lib/safe-thenable.js";
 
 const MIN_PASSWORD = 10;
 
@@ -61,12 +62,12 @@ export default async function handler(req, res) {
     const upd = await svc.auth.admin.updateUserById(user.id, { password: newPassword });
     if (upd.error) {
       // Audit even on failure so an admin can spot a probing run.
-      await svc.from("user_security_audit").insert({
+      await safeAwait(svc.from("user_security_audit").insert({
         user_id: user.id,
         user_email: user.email,
         event: "password_reset_completed",
         detail: { ok: false, error: upd.error.message?.slice(0, 240) },
-      }).catch(() => {});
+      }));
       return json(res, 500, { error: { message: "Could not reset password: " + upd.error.message } });
     }
 
@@ -76,16 +77,16 @@ export default async function handler(req, res) {
     try { await anon.auth.signOut(); } catch (_) { /* ignore */ }
 
     // Audit success.
-    await svc.from("user_security_audit").insert({
+    await safeAwait(svc.from("user_security_audit").insert({
       user_id: user.id,
       user_email: user.email,
       event: "password_reset_completed",
       detail: { ok: true },
-    }).catch(() => {});
+    }));
 
     // Drop the rate-limit row so the user can request another reset
     // if they typo something next time, without waiting an hour.
-    await svc.from("password_reset_attempts").delete().eq("email", user.email).catch(() => {});
+    await safeAwait(svc.from("password_reset_attempts").delete().eq("email", user.email));
 
     return json(res, 200, {
       ok: true,

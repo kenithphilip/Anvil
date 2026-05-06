@@ -28,9 +28,18 @@ describe("Landing", () => {
     expect(html).toContain("Sign up");
     // Confirms the value-prop block rendered.
     expect(html.toLowerCase()).toContain("anvil");
-    // New marketing sections (problem / principles / CTA) must render.
-    expect(html).toContain("Re-keying");
-    expect(html).toContain("Receipts over reasons");
-    expect(html).toContain("Bring one PO");
+    // Stage A landing v2 sections must all render in grounded form.
+    expect(html).toContain("Re-keying");                  // problem block
+    expect(html).toContain("Receipts");                   // principles header
+    expect(html).toContain("Bring one PO");               // CTA
+    expect(html).toContain("Already speaks your stack");  // connector tabs
+    expect(html).toContain("on every order");             // pillars headline
+    expect(html).toContain("voucher at 10:42");           // flow timeline
+    expect(html).toContain("audit packets");              // proof block
+    expect(html).toContain("46 surfaces");                // coverage block
+    expect(html).toContain("Anti-pattern");               // principle anti-pattern callout
+    // Hero kinetic-pair part-number translation must render.
+    expect(html).toContain("Your customer wrote");
+    expect(html).toContain("Your ERP wants");
   });
 });

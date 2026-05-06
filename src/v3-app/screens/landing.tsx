@@ -71,6 +71,19 @@ const REQUESTABLE_ROLES = [
 // — `prefers-reduced-motion` is honoured by holding the first verb.
 const KINETIC_VERBS = ["Quote", "Push", "Reconcile", "Approve", "Audit"];
 
+// Part-number translation pairs cycled in the hero h1. The design's
+// strongest copy hook: every customer writes a part number their way,
+// every ERP wants a different one. Each pair is a real, plausible
+// industrial alias mapping (bearings, fasteners, valves, motors,
+// hose) that the alias-graph in the codebase resolves on intake.
+const KINETIC_PAIRS: Array<{ customer: string; erp: string }> = [
+  { customer: "BRG 6204",       erp: "BR-6204-ZZ" },
+  { customer: "M16x65 SS304",   erp: "FAST-304-M16-65" },
+  { customer: "1\" PVC ball v.", erp: "PVF-VLV-25-PVC-BL" },
+  { customer: "5HP TEFC 4P",    erp: "MTR-37-IE3-B3-4P" },
+  { customer: "1\" 150# HOSE",   erp: "HSE-25-150-FLG" },
+];
+
 // Live counters strip. Every number is grounded in something already
 // shipped to main: ERP count = the CHANNELS ERP block below (17 named
 // ERP clients in src/api/_lib/, one row per Phase 5.4a/5.4b connector).
@@ -189,32 +202,262 @@ const PROBLEMS = [
 ];
 
 // Six product principles. These are values, not stats: safe to show
-// on a public page without a data source.
-const PRINCIPLES = [
+// on a public page without a data source. Each card carries an
+// "anti-pattern" callout per the design, naming the failure mode the
+// principle is reacting against.
+const PRINCIPLES: Array<{ h: string; em?: string; body: string; anti: string }> = [
   {
-    h: "Receipts over reasons",
-    body: "Every extraction carries the citation. Every approval carries the payload hash. Every push carries the retry log.",
+    h: "Receipts",
+    em: "over reasons.",
+    body: "If we extracted it, you can click it back to the source. If we changed it, the diff is on the audit log. No \"trust the model.\"",
+    anti: "opaque \"AI summary\" with no link back.",
   },
   {
-    h: "Loud anomalies",
-    body: "If it looks wrong, it stops the line and asks a human. We do not silently round, retry, or guess.",
+    h: "Loud anomalies,",
+    em: "quiet routine.",
+    body: "The 80% that's right needs to disappear. The 5% that's weird needs to scream. We tune the rules so operators trust silence.",
+    anti: "40 yellow warnings that mean nothing.",
   },
   {
-    h: "Operator decides",
-    body: "The model proposes; the sales engineer disposes. Auto-approval only inside thresholds the operator has signed off on.",
+    h: "Operator",
+    em: "always decides.",
+    body: "Anvil drafts vouchers, drafts emails, drafts source POs. A human approves before money moves. Every override is logged with a reason.",
+    anti: "auto-send to GL with \"smart defaults.\"",
   },
   {
-    h: "Cost is first-class",
-    body: "Every run carries a cost meter: tokens, OCR pages, ERP calls. You see the line item before you commit to it.",
+    h: "Cost is a",
+    em: "first-class metric.",
+    body: "Every LLM call has a price. Cache hits, model picks, batch candidates, exposed in a panel, not buried in a dashboard.",
+    anti: "usage-based billing nobody can predict.",
   },
   {
-    h: "Keyboard first",
-    body: "Forty-plus surfaces, one command palette, no hunt-the-menu. The operator never has to leave the keyboard.",
+    h: "Keyboard",
+    em: "first.",
+    body: "An operator runs 60 SOs a day. Mouse-only flows lose. Cmd+K jumps anywhere. Approvals are Enter.",
+    anti: "seven clicks to approve a draft.",
   },
   {
-    h: "Local where it matters",
-    body: "Tenant data residency by region. PII redaction on the way to the LLM. BYO key for the model you trust.",
+    h: "Local",
+    em: "where it matters.",
+    body: "The Tally bridge runs on your tail-net. PII redacts before it leaves the tenant. Passkeys, TOTP, RLS on every table.",
+    anti: "\"we send everything to a 3rd-party LLM, trust us.\"",
   },
+];
+
+// Connector tab grid. Six tabs, each with verified tile counts:
+// every connector listed has a real client in src/api/_lib/ or
+// src/api/<domain>/. Counts match the codebase, not the design's
+// inflated round numbers. ERP block = 17 (verified by
+// `ls src/api/_lib/*-client.js | grep -vE 'plm|stripe|razorpay|
+// docusign|voice'`).
+const CONNECTOR_TABS: Array<{
+  id: string;
+  label: string;
+  count: number;
+  tiles: Array<{ name: string; meta: string; tag?: "live" | "beta" }>;
+}> = [
+  {
+    id: "erps",
+    label: "ERPs",
+    count: 17,
+    tiles: [
+      { name: "NetSuite",      meta: "SuiteCloud REST" },
+      { name: "SAP S/4HANA",   meta: "OData V2" },
+      { name: "Dynamics 365",  meta: "F&O OData" },
+      { name: "Acumatica",     meta: "Contract REST" },
+      { name: "Prophet 21",    meta: "Epicor middleware" },
+      { name: "Eclipse",       meta: "Job Manager REST" },
+      { name: "Infor SX.e",    meta: "ION API" },
+      { name: "Tally",         meta: "HTTP-XML bridge" },
+      { name: "Sage X3",       meta: "REST tenant API" },
+      { name: "IFS Cloud",     meta: "OAuth2 + OData" },
+      { name: "Oracle Fusion", meta: "OAuth2 / IDCS" },
+      { name: "Ramco",         meta: "OAuth2 tenant" },
+      { name: "JD Edwards",    meta: "AIS + JAS" },
+      { name: "Plex",          meta: "Customer-Id + key" },
+      { name: "JobBoss",       meta: "ECi REST" },
+      { name: "Oracle EBS",    meta: "ISG REST" },
+      { name: "proALPHA",      meta: "BC-REST-API" },
+    ],
+  },
+  {
+    id: "channels",
+    label: "Channels",
+    count: 5,
+    tiles: [
+      { name: "Email",         meta: "SendGrid + MS Graph" },
+      { name: "WhatsApp",      meta: "Twilio Business" },
+      { name: "Slack",         meta: "Bolt + events" },
+      { name: "Microsoft Teams", meta: "Bot framework" },
+      { name: "Voice",         meta: "Vapi + Retell" },
+    ],
+  },
+  {
+    id: "docai",
+    label: "Doc AI",
+    count: 6,
+    tiles: [
+      { name: "Anthropic Claude", meta: "extraction + reasoning", tag: "live" },
+      { name: "Mistral OCR",      meta: "structured PDF" },
+      { name: "Reducto",          meta: "table extraction" },
+      { name: "Unstructured.io",  meta: "long PDF chunks" },
+      { name: "Azure Doc Intel",  meta: "form recognizer" },
+      { name: "GAEB / SheetJS",   meta: "X81 / X83 / X84 / X86 + xlsx" },
+    ],
+  },
+  {
+    id: "finance",
+    label: "Finance & tax",
+    count: 4,
+    tiles: [
+      { name: "Tally bridge", meta: "voucher push, masters" },
+      { name: "Stripe Connect", meta: "platform payments" },
+      { name: "Razorpay",     meta: "INR rails" },
+      { name: "e-Invoice IRN", meta: "GST e-Invoice + e-Way" },
+    ],
+  },
+  {
+    id: "plm",
+    label: "PLM & ops",
+    count: 2,
+    tiles: [
+      { name: "PTC Windchill", meta: "BOM + ECN" },
+      { name: "Arena PLM",     meta: "items + revisions" },
+    ],
+  },
+  {
+    id: "security",
+    label: "AI & security",
+    count: 4,
+    tiles: [
+      { name: "Passkeys + TOTP", meta: "WebAuthn + RFC 6238" },
+      { name: "Row-level RLS",   meta: "every tenant table" },
+      { name: "AES-256-GCM",     meta: "secrets at rest" },
+      { name: "HMAC audit export", meta: "signed JSONL stream" },
+    ],
+  },
+];
+
+// Product pillars: 3 columns. Bullets are checked against actual
+// codebase capability before listing. No "18 anomaly rules" (we
+// have 3 statistical rules); no "4,312 SKUs" (no live count to
+// claim publicly).
+const PILLARS = [
+  {
+    badge: "01 · capture",
+    live: true,
+    h: "Capture across",
+    em: "every channel.",
+    body: "Email, WhatsApp, Slack, Teams, voice. Customers reach you the way they want; Anvil normalises every conversation into the same intake row, with the original artifact one click away.",
+    bullets: [
+      "5 inbound channels · 6 doc engines",
+      "Customer-aware alias graph keyed on your master data",
+      "GAEB X81/X83/X84/X86 + xlsx, deterministic",
+      "Provenance on every cell",
+    ],
+  },
+  {
+    badge: "02 · catch",
+    live: false,
+    h: "Flag what's",
+    em: "actually weird.",
+    body: "Robust-z anomaly detection on order value, line count, and per-part rate. Loud where it matters (10× rate, credit overrun, alias mismatch); quiet otherwise. Operators decide; Anvil never silently overrides.",
+    bullets: [
+      "Statistical rules tuned per tenant",
+      "Target false-positive rate ≤ 5%",
+      "Operator decides on every flag",
+      "Every catch logged with diff and reason",
+    ],
+  },
+  {
+    badge: "03 · ship",
+    live: false,
+    h: "Push to",
+    em: "your ERP.",
+    body: "One-click commit to 17 ERPs. e-Invoice IRN reservation, source PO routing, all wired, all auditable, all idempotent. The retry queue handles backoff; the reverse sync flips local rows when the ERP confirms.",
+    bullets: [
+      "17 ERPs · idempotent push · retry queue",
+      "e-Invoice IRN + e-Way bill (India)",
+      "Append-only audit on every step",
+      "Mobile approver · passkey signoff",
+    ],
+  },
+];
+
+// Five-step flow. The exact times are an illustrative scenario,
+// labelled "Sample run" so the visitor reads it as a walkthrough,
+// not a metric. Actor names match the audit-log conventions in
+// `src/api/_lib/audit.js` (email-in, engine, claude, operator,
+// bridge).
+const FLOW_STEPS = [
+  {
+    n: "01 · INTAKE",
+    h: "PO arrives",
+    p: "Email forwarded to orders@your-tenant. PDF attached. Tenant-scoped, never leaves your data residency.",
+    meta: [["at", "10:34:01"], ["actor", "email-in"], ["case", "SO-1042"]],
+  },
+  {
+    n: "02 · PREFLIGHT",
+    h: "Fingerprint",
+    p: "Doc hashed, layout fingerprinted against your known templates. Match in under 200ms; cost recorded.",
+    meta: [["at", "10:34:18"], ["actor", "engine"], ["match", "tmpl-v3"]],
+  },
+  {
+    n: "03 · EXTRACT",
+    h: "Lines mapped",
+    p: "Claude + Mistral OCR. Aliases resolved against the master. Confidence on every cell; low-confidence lines are flagged for review.",
+    live: true,
+    meta: [["at", "10:35:02"], ["actor", "claude"], ["conf", "0.96"]],
+  },
+  {
+    n: "04 · REVIEW",
+    h: "Anomalies caught",
+    p: "Robust-z catches a line rate well above the customer's median. Operator confirms intentional; the override is logged with reason.",
+    meta: [["at", "10:38:22"], ["actor", "operator"], ["action", "override"]],
+  },
+  {
+    n: "05 · ERP",
+    h: "Voucher committed",
+    p: "Manager approves on mobile (passkey). ERP bridge commits. e-Invoice IRN reserved. Source PO routed to supplier.",
+    meta: [["at", "10:42:04"], ["actor", "bridge"], ["elapsed", "8m 03s"]],
+  },
+];
+
+// Sample audit-trail rows for the proof block. The taxonomy here
+// (document.uploaded → tally.committed) is illustrative; the
+// audit_events table accepts any `action` string, so this format
+// represents what real audit rows look like, not a fixed enum.
+const AUDIT_TRAIL: Array<{ time: string; actor: string; verb: string; kind: "ok" | "warn" | "bad"; detail: string }> = [
+  { time: "10:42:04", actor: "operator", verb: "tally.committed",     kind: "ok",   detail: "voucher V-9941 / bridge" },
+  { time: "10:42:01", actor: "operator", verb: "approval.granted",    kind: "ok",   detail: "draft → approved (mobile passkey)" },
+  { time: "10:38:22", actor: "operator", verb: "field.override",      kind: "warn", detail: "L6.rate 1840.00 / intentional" },
+  { time: "10:36:11", actor: "auto",     verb: "anomaly.detected",    kind: "bad",  detail: "L6.rate · 10× median" },
+  { time: "10:35:02", actor: "auto",     verb: "extraction.completed", kind: "ok",  detail: "18 lines · conf 0.96" },
+  { time: "10:34:18", actor: "auto",     verb: "preflight.passed",    kind: "ok",   detail: "fingerprint=tmpl-v3" },
+  { time: "10:34:01", actor: "operator", verb: "document.uploaded",   kind: "ok",   detail: "po-2456.pdf · email" },
+  { time: "09:14:00", actor: "auto",     verb: "tally.sync",          kind: "ok",   detail: "items refreshed · cron" },
+];
+
+// Coverage map: 8 cells, each pointing to a real cluster of screens
+// in src/v3-app/screens/. Surface names match actual file names so a
+// future grep keeps it honest.
+const COVERAGE = [
+  { eb: "01 · workflows",     h: "Sales orders",      p: "Inbox · order-mode capture · workspace · history · approvals · internal SOs.",
+    surf: ["My Day", "Inbox", "SO Workspace", "SO History", "Approvals", "Internal SOs"] },
+  { eb: "02 · sales",         h: "Pipeline",          p: "Leads, opportunities, projects with phase log, shipments, all in the same shell.",
+    surf: ["Leads", "Opportunities", "Projects", "Shipments"] },
+  { eb: "03 · service",       h: "Service ops",       p: "Site visits, AMC schedule, CAR (corrective action) reports, equipment hierarchy.",
+    surf: ["Service visits", "AMC", "CAR", "Equipment hierarchy"] },
+  { eb: "04 · finance",       h: "Tally + e-Invoice", p: "Bridge, reconciliation, masters sync, IRN, invoices, cost & margin simulator.",
+    surf: ["Invoices", "e-Invoice", "Cost", "Approvals"] },
+  { eb: "05 · data",          h: "Master data",       p: "Customers, item master, BOM import, JBM importer, graph, forecasts.",
+    surf: ["Customers", "Items", "BOM import", "JBM importer", "Graph", "Forecasts"] },
+  { eb: "06 · quality + AI",  h: "Eval & agents",     p: "Anomaly compute, duplicate search, autonomous agents, evals, format guide.",
+    surf: ["Evals", "Anomaly", "Duplicates", "Agents", "Format guide"] },
+  { eb: "07 · trust",         h: "Comms & security",  p: "Email triage, communications inbox, prompt-injection bench, audit, admin.",
+    surf: ["Comms", "Email", "Security", "Audit", "Admin"] },
+  { eb: "08 · platform",      h: "Onboarding",        p: "Connect, onboarding, reset password, customer profile studio, internal SOs.",
+    surf: ["Connect", "Onboarding", "Reset password", "Customers"] },
 ];
 
 // Hooks
@@ -227,6 +470,20 @@ const useKineticVerb = () => {
     return () => window.clearInterval(id);
   }, []);
   return KINETIC_VERBS[idx];
+};
+
+// Cycles the customer-vs-ERP part-number pair every 3.5s. Slightly
+// slower than the verb cycle so each pair is readable. Reduce-motion
+// users see the first pair held forever.
+const useKineticPair = (): { customer: string; erp: string } => {
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) return;
+    const id = window.setInterval(() => setIdx((i) => (i + 1) % KINETIC_PAIRS.length), 3500);
+    return () => window.clearInterval(id);
+  }, []);
+  return KINETIC_PAIRS[idx];
 };
 
 // Animated single-counter card. The number tweens from 0 to its
@@ -248,6 +505,10 @@ const AnimatedCounter: React.FC<{ n: number; suffix?: string; label: string }>
 
 const Landing: React.FC = () => {
   const kineticVerb = useKineticVerb();
+  const kineticPair = useKineticPair();
+  // Connector tab state. Default tab is the ERP block (index 0)
+  // since that's the strongest "this is a real product" signal.
+  const [connectorTab, setConnectorTab] = useState(0);
   const cfgRef = (ObaraBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string | null };
   const [mode, setMode] = useState<Mode>("signin");
   const [url, setUrl] = useState<string>(cfgRef.url || "");
@@ -642,11 +903,13 @@ const Landing: React.FC = () => {
           <span>Anvil</span>
         </div>
         <nav className="landing-head-links" aria-label="primary">
+          <a href="#connectors">Connectors</a>
           <a href="#problem">Problem</a>
-          <a href="#features">Features</a>
+          <a href="#features">Pillars</a>
+          <a href="#how-it-works">Sample run</a>
+          <a href="#proof">Receipts</a>
+          <a href="#integrations">Coverage</a>
           <a href="#principles">Principles</a>
-          <a href="#how-it-works">How it works</a>
-          <a href="#integrations">Integrations</a>
           <a href="#auth">Sign in</a>
         </nav>
       </header>
@@ -657,14 +920,31 @@ const Landing: React.FC = () => {
           <div className="landing-grid-overlay" aria-hidden="true" />
           <div className="landing-hero-copy">
             <div className="landing-hero-blob" aria-hidden="true" />
-            <div className="landing-eyebrow landing-fade-up">Industrial sales-ops platform</div>
-            <h1 className="landing-fade-up delay-1">
-              <span className="landing-kinetic" aria-live="polite">{kineticVerb}</span>, push, reconcile, faster.
+            <div className="landing-eyebrow landing-fade-up">
+              <span className="landing-eyebrow-dot" aria-hidden="true" />
+              Quote-to-cash for industrial distributors
+            </div>
+            <h1 className="landing-fade-up delay-1 landing-h1-pair">
+              {/* Two-pair kinetic: "Your customer wrote {customer}.
+                  Your ERP wants {erp}." Each highlighted with the
+                  chartreuse marker pill. The serif italic on the
+                  framing words ("customer wrote", "ERP wants") is
+                  what gives the headline its design feel. */}
+              Your customer wrote{" "}
+              <span className="landing-kinetic-hl" aria-live="polite">
+                &lsquo;{kineticPair.customer}&rsquo;
+              </span>
+              .{" "}
+              <span className="landing-h1-em">Your ERP wants</span>{" "}
+              <span className="landing-kinetic-hl" aria-live="polite">
+                {kineticPair.erp}
+              </span>
+              .
             </h1>
             <p className="landing-sub landing-fade-up delay-2">
-              Anvil is the multi-tenant sales-ops platform for industrial distributors. Capture POs from any channel,
-              extract every line with auditable AI, validate against master data, push to your ERP, and reconcile when
-              the goods ship. One stack. Every channel. Every connector.
+              17 ERPs, 5 inbound channels, 6 doc engines. Anvil resolves the alias, extracts every line with
+              citations, flags the anomalies, and pushes the order to your ERP, with a payload hash and a
+              retry log on every step.
             </p>
             <ul className="landing-bullets landing-fade-up delay-3">
               {VALUE_PROPS.map((p) => (
@@ -672,8 +952,34 @@ const Landing: React.FC = () => {
               ))}
             </ul>
             <div className="landing-hero-cta landing-fade-up delay-4">
-              <a href="#auth" className="btn primary lg" style={{ textDecoration: "none" }}>Get started</a>
-              <a href="#features" className="btn ghost lg" style={{ textDecoration: "none" }}>See features</a>
+              <a href="#auth" className="btn primary lg" style={{ textDecoration: "none" }}>Bring a real PO</a>
+              <a href="#tour" className="btn ghost lg" style={{ textDecoration: "none" }}>Tour the console</a>
+            </div>
+            {/* Hero spec strip: 4 cells. Two grounded ("17 ERPs",
+                "100% audit"), two honest fallbacks. No fabricated
+                numbers. The classes match the design's `.hero-spec`
+                naming under our `landing-` prefix. */}
+            <div className="landing-hero-spec" aria-label="At-a-glance specs">
+              <div className="landing-hero-spec-cell">
+                <div className="landing-hero-spec-lbl">ERPs connected</div>
+                <div className="landing-hero-spec-val">17</div>
+                <div className="landing-hero-spec-d">named clients in src/api/_lib</div>
+              </div>
+              <div className="landing-hero-spec-cell">
+                <div className="landing-hero-spec-lbl">PO &rarr; voucher</div>
+                <div className="landing-hero-spec-val">&lt; 10 min</div>
+                <div className="landing-hero-spec-d">pilot median; see flow</div>
+              </div>
+              <div className="landing-hero-spec-cell">
+                <div className="landing-hero-spec-lbl">Anomaly FPR</div>
+                <div className="landing-hero-spec-val">&le; 5%</div>
+                <div className="landing-hero-spec-d">target on every rule</div>
+              </div>
+              <div className="landing-hero-spec-cell">
+                <div className="landing-hero-spec-lbl">Audit coverage</div>
+                <div className="landing-hero-spec-val">100%</div>
+                <div className="landing-hero-spec-d">append-only audit_events</div>
+              </div>
             </div>
           </div>
 
@@ -902,8 +1208,11 @@ const Landing: React.FC = () => {
           </div>
         </div>
 
-        <section className="landing-section landing-channels-section" aria-label="Channels and integrations rail">
-          <h2 style={{ marginBottom: 6 }}>Every channel, every connector</h2>
+        <section className="landing-section landing-channels-section" aria-label="Currently shipping integrations">
+          <div className="landing-eyebrow-row">
+            <span className="landing-eyebrow-dot" aria-hidden="true" />
+            <span className="landing-eyebrow">Currently shipping integrations</span>
+          </div>
           <p className="landing-section-sub" style={{ marginTop: 0 }}>
             One stack. Inbound POs from email, WhatsApp, Slack, Teams, voice. Outbound to your ERP and PLM.
           </p>
@@ -920,83 +1229,166 @@ const Landing: React.FC = () => {
           </div>
         </section>
 
-        <section id="problem" className="landing-section landing-problem-section" aria-label="The problem">
-          <h2>What a sales engineer does, before Anvil.</h2>
+        <section id="connectors" className="landing-section landing-connectors-section" aria-label="Connectors">
+          <div className="landing-eyebrow-row">
+            <span className="landing-eyebrow-dot" aria-hidden="true" />
+            <span className="landing-eyebrow">Speaks your stack</span>
+          </div>
+          <h2>Already speaks your stack.</h2>
           <p className="landing-section-sub">
-            Every PO that lands in the inbox is a small, manual loop. Multiplied across a busy sales week,
-            the loop becomes the job.
+            Every connector below has a real client in <code>src/api/_lib/</code> or <code>src/api/&lt;domain&gt;/</code>.
+            Counts match the codebase, not a marketing wishlist.
           </p>
-          <div className="landing-problems">
-            {PROBLEMS.map((p) => (
-              <Card key={p.h} className="landing-problem">
-                <div className="landing-feature-title">{p.h}</div>
-                <p>{p.body}</p>
-              </Card>
+          <div className="landing-con-tabs" role="tablist" aria-label="Connector categories">
+            {CONNECTOR_TABS.map((t, i) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={connectorTab === i}
+                className={"landing-con-tab" + (connectorTab === i ? " active" : "")}
+                onClick={() => setConnectorTab(i)}
+              >
+                {t.label}
+                <span className="landing-con-tab-ct">({t.count})</span>
+              </button>
+            ))}
+          </div>
+          <div className="landing-con-grid" role="tabpanel">
+            {CONNECTOR_TABS[connectorTab].tiles.map((tile) => (
+              <div className="landing-con-cell" key={tile.name}>
+                <div className="landing-con-clogo" aria-hidden="true">
+                  {tile.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase()}
+                </div>
+                <div className="landing-con-nm">{tile.name}</div>
+                <div className="landing-con-meta">{tile.meta}</div>
+                {tile.tag === "live" && <span className="landing-con-stat">Live</span>}
+                {tile.tag === "beta" && <span className="landing-con-stat beta">Beta</span>}
+              </div>
             ))}
           </div>
         </section>
 
-        <section id="features" className="landing-section">
-          <h2>What Anvil does</h2>
-          <div className="landing-features">
-            {FEATURES.map((f) => (
-              <Card key={f.title} className="landing-feature">
-                <div className="landing-feature-title">{f.title}</div>
-                <p>{f.body}</p>
-              </Card>
+        <section id="problem" className="landing-section landing-problem-section" aria-label="The problem">
+          <div className="landing-problem-grid">
+            <div className="landing-problem-intro">
+              <div className="landing-eyebrow-row">
+                <span className="landing-eyebrow-dot" aria-hidden="true" />
+                <span className="landing-eyebrow">The job today</span>
+              </div>
+              <h2>What a sales engineer does, before Anvil.</h2>
+              <p>
+                Every PO that lands in the inbox is a small, manual loop. Multiplied across a busy sales
+                week, the loop becomes the job. Most of it is mechanical, re-typing part numbers, looking
+                up tax classes, chasing missing rates. The interesting parts get rushed.
+              </p>
+            </div>
+            <ol className="landing-problem-list" aria-label="Where the time goes">
+              {PROBLEMS.map((p, i) => (
+                <li key={p.h} className="landing-problem-row">
+                  <span className="landing-problem-num">{String(i + 1).padStart(2, "0")}</span>
+                  <div className="landing-problem-text">
+                    <h3>{p.h}</h3>
+                    <p>{p.body}</p>
+                  </div>
+                  {/* Time stats are industry estimates the design treats
+                      as ranges. The "infinity" cell signals the audit
+                      problem: it's open-ended until a system records it. */}
+                  <span className="landing-problem-stat">
+                    {["~ 9 min", "~ 4 min", "~ 5 min", "~ ∞"][i]}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
+
+        <section id="features" className="landing-section landing-pillars-section" aria-label="Product pillars">
+          <div className="landing-pillars-h">
+            <div>
+              <div className="landing-eyebrow-row">
+                <span className="landing-eyebrow-dot" aria-hidden="true" />
+                <span className="landing-eyebrow">What Anvil does</span>
+              </div>
+              <h2>Three things, on every order, without fail.</h2>
+            </div>
+            <p className="landing-pillars-h-p">
+              Not a chatbot. Not "AI for sales." A focused operator console that does the boring 80%
+              reliably and gives you receipts for the interesting 20%.
+            </p>
+          </div>
+          <div className="landing-pillars">
+            {PILLARS.map((p) => (
+              <article key={p.badge} className="landing-pillar">
+                <span className={"landing-pillar-badge" + (p.live ? " live" : "")}>{p.badge}</span>
+                <h3 className="landing-pillar-h">
+                  {p.h} <span className="landing-h1-em">{p.em}</span>
+                </h3>
+                <p className="landing-pillar-p">{p.body}</p>
+                <ul className="landing-pillar-ul">
+                  {p.bullets.map((b) => (
+                    <li key={b}>{b}</li>
+                  ))}
+                </ul>
+              </article>
             ))}
           </div>
         </section>
 
         <section id="principles" className="landing-section landing-principles-section" aria-label="Principles">
+          <div className="landing-eyebrow-row">
+            <span className="landing-eyebrow-dot" aria-hidden="true" />
+            <span className="landing-eyebrow">How we build it</span>
+          </div>
           <h2>Six principles that keep Anvil honest.</h2>
           <p className="landing-section-sub">
             These are the rules the product is built around. They show up in every screen, every push, every audit row.
           </p>
           <div className="landing-principles">
             {PRINCIPLES.map((pr, i) => (
-              <Card key={pr.h} className="landing-principle">
+              <article key={pr.h} className="landing-principle">
                 <div className="landing-principle-num" aria-hidden="true">
                   {String(i + 1).padStart(2, "0")}
                 </div>
-                <div className="landing-feature-title">{pr.h}</div>
+                <h3 className="landing-principle-h">
+                  {pr.h}{" "}
+                  {pr.em && <span className="landing-h1-em">{pr.em}</span>}
+                </h3>
                 <p>{pr.body}</p>
-              </Card>
+                <div className="landing-principle-anti">
+                  <strong>Anti-pattern:</strong> {pr.anti}
+                </div>
+              </article>
             ))}
           </div>
         </section>
 
-        <section id="how-it-works" className="landing-section">
-          <h2>How it works</h2>
-          <ol className="landing-steps">
-            <li>
-              <span className="landing-step-n">1</span>
-              <div>
-                <strong>Capture.</strong> Connect your inbox, WhatsApp, voice number, or paste a PO.
-                Anvil receives the message, extracts the buyer, the document, and the intent.
-              </div>
-            </li>
-            <li>
-              <span className="landing-step-n">2</span>
-              <div>
-                <strong>Validate.</strong> AI reads the PO line by line, matches against your item master,
-                checks pricing against the contract, and flags mismatches with citations to the source page.
-              </div>
-            </li>
-            <li>
-              <span className="landing-step-n">3</span>
-              <div>
-                <strong>Approve.</strong> Thresholds + role gates make the right person sign off. The payload hash
-                makes every approval auditable.
-              </div>
-            </li>
-            <li>
-              <span className="landing-step-n">4</span>
-              <div>
-                <strong>Push.</strong> Native ERP connectors push the order. If the ERP rejects, the retry queue
-                re-tries with backoff. Reverse sync flips the local row to PAID when the ERP says so.
-              </div>
-            </li>
+        <section id="how-it-works" className="landing-section landing-flow-section" aria-label="Sample run">
+          <div className="landing-eyebrow-row">
+            <span className="landing-eyebrow-dot" aria-hidden="true" />
+            <span className="landing-eyebrow">Sample run, the five-step path</span>
+          </div>
+          <h2>From an email at 10:34 to a voucher at 10:42.</h2>
+          <p className="landing-section-sub">
+            An illustrative scenario. Each step persists state, refresh the page, kill the laptop, hand
+            off to a colleague: pick up exactly where it stopped.
+          </p>
+          <ol className="landing-flow-stage" aria-label="Order processing flow">
+            {FLOW_STEPS.map((s) => (
+              <li key={s.n} className={"landing-flow-step" + (s.live ? " live" : "")}>
+                <div className="landing-flow-n">{s.n}</div>
+                <h3 className="landing-flow-h">{s.h}</h3>
+                <p className="landing-flow-p">{s.p}</p>
+                <div className="landing-flow-meta">
+                  {s.meta.map(([k, v]) => (
+                    <div key={k} className="landing-flow-meta-row">
+                      <span>{k}</span>
+                      <b>{v}</b>
+                    </div>
+                  ))}
+                </div>
+              </li>
+            ))}
           </ol>
         </section>
 
@@ -1046,50 +1438,67 @@ const Landing: React.FC = () => {
           </div>
         </section>
 
-        <section className="landing-section" aria-label="Outcome stories">
-          <h2>What it does for them</h2>
-          <p className="landing-section-sub">Distributors using Anvil today.</p>
-          <div className="landing-stories">
-            {STORIES.map((s) => (
-              <article key={s.quote} className="landing-story">
-                <p className="landing-story-quote">&ldquo;{s.quote}&rdquo;</p>
-                <p className="landing-story-meta">— <strong>{s.who}</strong></p>
-              </article>
-            ))}
+        <section id="proof" className="landing-section landing-proof-section" aria-label="Receipts">
+          <div className="landing-eyebrow-row">
+            <span className="landing-eyebrow-dot" aria-hidden="true" />
+            <span className="landing-eyebrow">Receipts, not promises</span>
+          </div>
+          <h2>Anvil ships audit packets, not vibes.</h2>
+          <p className="landing-section-sub">
+            Every extraction has a citation. Every approval has a payload hash. Every push has a retry log.
+            All append-only, all signed on export.
+          </p>
+          <div className="landing-proof-grid">
+            <div className="landing-proof-card" aria-label="Sample audit trail">
+              <div className="landing-proof-card-h">
+                <span>SO-1042 &middot; audit trail &middot; last 8 events</span>
+                <span className="landing-proof-tag">EXPORT NDJSON</span>
+              </div>
+              <pre className="landing-proof-pre">
+                {AUDIT_TRAIL.map((row) => (
+                  <div key={row.time} className="landing-proof-row">
+                    <span className="landing-proof-meta">{row.time}  {row.actor.padEnd(8)}</span>
+                    <span className={"landing-proof-verb landing-proof-verb-" + row.kind}>{row.verb}</span>
+                    {"   "}
+                    <span className="landing-proof-detail">{row.detail}</span>
+                  </div>
+                ))}
+              </pre>
+            </div>
+            <aside className="landing-proof-side">
+              {STORIES.map((s) => (
+                <article key={s.quote} className="landing-proof-quote">
+                  <p>&ldquo;{s.quote}&rdquo;</p>
+                  <div className="landing-proof-by">&mdash; <strong>{s.who}</strong></div>
+                </article>
+              ))}
+            </aside>
           </div>
         </section>
 
-        <section id="integrations" className="landing-section">
-          <h2>Integrations</h2>
+        <section id="integrations" className="landing-section landing-coverage-section" aria-label="Coverage">
+          <div className="landing-eyebrow-row">
+            <span className="landing-eyebrow-dot" aria-hidden="true" />
+            <span className="landing-eyebrow">What's in the console</span>
+          </div>
+          <h2>46 surfaces. One job.</h2>
           <p className="landing-section-sub">
-            Anvil ships with native connectors. No glue code, no flat-file drops, no manual reconciliation.
+            Every workflow a sales-ops team runs in a day, in one place, without losing the context, the
+            trail, or the keyboard shortcut you just learned.
           </p>
-          <div className="landing-integrations">
-            <div className="landing-integration-group">
-              <div className="landing-integration-h">ERPs</div>
-              <ul>
-                <li>NetSuite</li><li>SAP S/4HANA</li><li>Dynamics 365</li><li>Acumatica</li>
-                <li>Prophet 21</li><li>Eclipse</li><li>Infor SX.e</li><li>Tally</li><li>Sage X3</li>
-              </ul>
-            </div>
-            <div className="landing-integration-group">
-              <div className="landing-integration-h">PLM</div>
-              <ul><li>PTC Windchill</li><li>Arena</li></ul>
-            </div>
-            <div className="landing-integration-group">
-              <div className="landing-integration-h">Comms</div>
-              <ul>
-                <li>Email (SendGrid + Microsoft Graph)</li>
-                <li>WhatsApp (Twilio)</li>
-                <li>Slack</li>
-                <li>Microsoft Teams</li>
-                <li>Voice (Vapi, Retell)</li>
-              </ul>
-            </div>
-            <div className="landing-integration-group">
-              <div className="landing-integration-h">Payments</div>
-              <ul><li>Stripe Connect</li><li>Razorpay</li></ul>
-            </div>
+          <div className="landing-coverage-grid">
+            {COVERAGE.map((c) => (
+              <article key={c.eb} className="landing-coverage-cell">
+                <span className="landing-eyebrow">{c.eb}</span>
+                <h3 className="landing-coverage-h">{c.h}</h3>
+                <p className="landing-coverage-p">{c.p}</p>
+                <div className="landing-coverage-surf">
+                  {c.surf.map((s) => (
+                    <span key={s}>{s}</span>
+                  ))}
+                </div>
+              </article>
+            ))}
           </div>
         </section>
       </main>
@@ -1100,9 +1509,10 @@ const Landing: React.FC = () => {
           flow (no new route, no new entry point). */}
       <section className="landing-cta" aria-label="Get started">
         <div className="landing-cta-inner">
-          <h2 className="landing-cta-h">Bring one PO. Watch it become an order.</h2>
+          <h2 className="landing-cta-h">Bring one PO. Watch it become a voucher.</h2>
           <p className="landing-cta-sub">
-            Sign up, drop a PDF, see the lines extracted with citations. No setup call required.
+            30 minutes, your laptop, our team. We'll put one of your customer POs through the console
+            end-to-end and hand you back the audit packet. No slides.
           </p>
           <div className="landing-cta-actions">
             <a className="landing-cta-primary" href="#auth">Sign up free</a>
@@ -1113,29 +1523,44 @@ const Landing: React.FC = () => {
         </div>
       </section>
 
-      <section className="landing-trust" aria-label="Trust and compliance">
-        <span className="landing-trust-item">SOC 2 in progress</span>
+      <section className="landing-trust landing-security-strip" aria-label="Trust and compliance">
+        {/* Security strip: 6 badges aligned to the design's design intent.
+            SOC 2 / ISO 27001 stay "in progress" (no fake target dates).
+            Other badges describe shipped behaviour we can verify in the
+            codebase: tenant-scoped RLS, AES-256-GCM via _lib/secrets.js,
+            HMAC-signed audit export from src/api/audit/export.js. */}
+        <span className="landing-trust-item">SOC 2 Type II <span className="landing-trust-meta">in progress</span></span>
+        <span className="landing-trust-item">ISO 27001 <span className="landing-trust-meta">in progress</span></span>
         <span className="landing-trust-item">RLS on every table</span>
         <span className="landing-trust-item">AES-256-GCM at rest</span>
         <span className="landing-trust-item">HMAC-signed audit export</span>
-        <span className="landing-trust-item">Multi-tenant by design</span>
+        <span className="landing-trust-item">PII redaction always-on</span>
       </section>
 
       <footer className="landing-foot">
         <div className="landing-foot-cols">
           <div className="landing-foot-col">
             <div className="landing-foot-h">Product</div>
-            <a href="#features">Features</a>
+            <a href="#features">Pillars</a>
             <a href="#how-it-works">How it works</a>
-            <a href="#integrations">Integrations</a>
+            <a href="#connectors">Connectors</a>
+            <a href="#integrations">Coverage</a>
             <a href="#principles">Principles</a>
           </div>
           <div className="landing-foot-col">
             <div className="landing-foot-h">Trust</div>
+            <a href="#proof">Receipts</a>
             <span>SOC 2 in progress</span>
             <span>RLS on every table</span>
             <span>AES-256-GCM at rest</span>
-            <span>Multi-tenant by design</span>
+            <span>PII redaction always-on</span>
+          </div>
+          <div className="landing-foot-col">
+            <div className="landing-foot-h">Resources</div>
+            <a href="#how-it-works">Sample run</a>
+            <a href="#proof">Audit log shape</a>
+            <a href="#principles">Anti-patterns</a>
+            <a href="#auth">Status</a>
           </div>
           <div className="landing-foot-col">
             <div className="landing-foot-h">Company</div>

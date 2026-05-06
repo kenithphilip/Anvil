@@ -174,6 +174,57 @@ begin
         return;
     end;
 
+    -- auth.identities row.  Required for signInWithPassword: Supabase
+    -- looks up the user by email via this table (provider='email'),
+    -- not by querying auth.users.email directly. Without this row,
+    -- password auth fails with 'Database error querying schema'.
+    --
+    -- The proper way to create a user is svc.auth.admin.createUser()
+    -- which writes both rows; we used a direct INSERT INTO auth.users
+    -- here for self-contained replayability, so we must mirror the
+    -- identity row by hand.
+    --
+    -- Schema (Supabase 2024+):
+    --   provider_id text       -- the user's id as text for 'email' provider
+    --   provider text          -- 'email' for password auth
+    --   user_id uuid           -- FK to auth.users(id)
+    --   identity_data jsonb    -- { sub, email, email_verified: true, phone_verified: false }
+    --   email text             -- GENERATED ALWAYS AS (lower(identity_data->>'email')) STORED
+    --   id uuid primary key
+    -- Composite unique: (provider_id, provider).
+    begin
+      insert into auth.identities (
+        id,
+        user_id,
+        provider_id,
+        provider,
+        identity_data,
+        last_sign_in_at,
+        created_at,
+        updated_at
+      ) values (
+        uuid_generate_v5('d7a7e5e4-0001-0001-0001-000000000001', 'identity:' || rec.email),
+        v_user_id,
+        v_user_id::text,
+        'email',
+        jsonb_build_object(
+          'sub', v_user_id::text,
+          'email', rec.email,
+          'email_verified', true,
+          'phone_verified', false
+        ),
+        null,
+        seed_now - interval '120 days',
+        seed_now - interval '120 days'
+      ) on conflict (provider_id, provider) do nothing;
+    exception
+      when insufficient_privilege then
+        raise notice 'Insufficient privilege to insert into auth.identities; skipping.';
+      when others then
+        -- If the schema differs (older Supabase versions), continue.
+        raise notice 'auth.identities insert failed: %; password auth may not work for seeded users.', sqlerrm;
+    end;
+
     -- tenant_members row.  status carries the access-request fields.
     insert into tenant_members (
       tenant_id, user_id, role, status, requested_role,

@@ -1,8 +1,35 @@
 import React, { useEffect, useState } from "react";
 import { ageLabel, useFetch } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
+import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
+
+// Rule library mirror of `src/api/anomaly/compute.js`. Kept in sync with
+// the server-side RULES array; the screen renders this when the user
+// clicks the "Rules" tab so they can see what the engine evaluates on
+// every order. Grouping matches the design's 5 buckets + hygiene.
+const RULE_CATALOG: Array<{ id: string; label: string; bucket: string; severity: string }> = [
+  { id: "grand_total",                   label: "Order value outlier",                  bucket: "Hygiene", severity: "high" },
+  { id: "line_count",                    label: "Line count outlier",                   bucket: "Hygiene", severity: "med" },
+  { id: "duplicate_line",                label: "Duplicate line",                        bucket: "Hygiene", severity: "med" },
+  { id: "qty_step_skip",                 label: "Qty doesn't match pack size",          bucket: "Hygiene", severity: "low" },
+  { id: "lead_time_spike",               label: "Lead time tighter than typical",       bucket: "Hygiene", severity: "med" },
+  { id: "line_rate",                     label: "Line rate outlier",                    bucket: "Rate",    severity: "high" },
+  { id: "rate_10x_jump",                 label: "Rate decimal-shift",                   bucket: "Rate",    severity: "high" },
+  { id: "cross_customer_rate_drift",     label: "Rate drifts from tenant band",         bucket: "Rate",    severity: "med" },
+  { id: "rate_below_landed_cost",        label: "Rate below landed cost",               bucket: "Rate",    severity: "high" },
+  { id: "round_number_rate",             label: "Suspiciously round rate",              bucket: "Rate",    severity: "low" },
+  { id: "margin_floor_breach",           label: "Margin below 8% floor",                bucket: "Margin",  severity: "high" },
+  { id: "margin_drop_vs_baseline",       label: "Margin drop vs customer baseline",     bucket: "Margin",  severity: "med" },
+  { id: "freight_share_outlier",         label: "Freight share outlier",                bucket: "Margin",  severity: "low" },
+  { id: "gst_class_mismatch",            label: "GST class vs state mismatch",          bucket: "GST",     severity: "med" },
+  { id: "gst_rate_inconsistent_for_hsn", label: "Inconsistent GST rate for HSN",        bucket: "GST",     severity: "med" },
+  { id: "missing_hsn_or_gst",            label: "Missing HSN or GST",                   bucket: "GST",     severity: "low" },
+  { id: "payment_terms_drift",           label: "Payment terms drift",                  bucket: "Credit",  severity: "med" },
+  { id: "credit_overrun",                label: "Credit limit overrun",                 bucket: "Credit",  severity: "high" },
+  { id: "alias_low_confidence",          label: "Alias low confidence",                 bucket: "Alias",   severity: "med" },
+  { id: "ambiguous_alias",               label: "Ambiguous alias",                      bucket: "Alias",   severity: "med" },
+];
 
 // ============================================================
 // ANVIL v3 — wired Findings (anomaly · quality)
@@ -91,6 +118,7 @@ const WiredAnomaly = () => {
     { id: "open",       label: "Open",       count: all.filter((r) => !(r.resolved || r.suppressed) && (r.status || "open").toLowerCase() === "open").length },
     { id: "resolved",   label: "Resolved",   count: all.filter((r) => r.resolved === true || (r.status || "").toLowerCase() === "resolved").length },
     { id: "suppressed", label: "Suppressed", count: all.filter((r) => r.suppressed === true || (r.status || "").toLowerCase() === "suppressed").length },
+    { id: "rules",      label: "Rules",      count: RULE_CATALOG.length },
   ];
 
   return (
@@ -112,7 +140,38 @@ const WiredAnomaly = () => {
           </Banner>
         )}
 
-        <Card flush>
+        {tab === "rules" ? (
+          <>
+            <KPIRow cols={5}>
+              <KPI lbl="Rate" v={String(RULE_CATALOG.filter((r) => r.bucket === "Rate").length)} />
+              <KPI lbl="Margin" v={String(RULE_CATALOG.filter((r) => r.bucket === "Margin").length)} />
+              <KPI lbl="GST" v={String(RULE_CATALOG.filter((r) => r.bucket === "GST").length)} />
+              <KPI lbl="Credit" v={String(RULE_CATALOG.filter((r) => r.bucket === "Credit").length)} />
+              <KPI lbl="Alias / Hygiene" v={String(RULE_CATALOG.filter((r) => r.bucket === "Alias" || r.bucket === "Hygiene").length)} />
+            </KPIRow>
+            <Card title="Rule library" eyebrow={RULE_CATALOG.length + " rules · 5 buckets"} flush>
+              <table className="tbl">
+                <thead><tr>
+                  <th>ID</th>
+                  <th>Label</th>
+                  <th>Bucket</th>
+                  <th>Default severity</th>
+                </tr></thead>
+                <tbody>
+                  {RULE_CATALOG.map((r) => (
+                    <tr key={r.id}>
+                      <td className="mono-sm"><span className="pri">{r.id}</span></td>
+                      <td>{r.label}</td>
+                      <td><Chip k="info">{r.bucket}</Chip></td>
+                      <td>{SEV_CHIP(r.severity)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+          </>
+        ) : null}
+        {tab !== "rules" && <Card flush>
           {filtered.length === 0 ? (
             <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
               {tab === "open" ? "All clear · no open findings." : `No ${tab} findings.`}
@@ -159,7 +218,7 @@ const WiredAnomaly = () => {
               </tbody>
             </table>
           )}
-        </Card>
+        </Card>}
       </div>
     </>
   );

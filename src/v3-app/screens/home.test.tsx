@@ -26,4 +26,17 @@ describe("Home", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(container.innerHTML.length).toBeGreaterThan(0);
   });
+
+  it("renders a non-trivial layout (WSTitle / KPIs / sections)", async () => {
+    const mod = await import("./home");
+    const Screen = mod.default;
+    const { container } = renderScreen(Screen);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    // The page should always at least render the page wrapper. We
+    // don't assert on copy because it depends on the role injected.
+    const wsTitle = container.querySelector(".ws-title");
+    const wsContent = container.querySelector(".ws-content");
+    expect(wsTitle || wsContent).toBeTruthy();
+  });
 });

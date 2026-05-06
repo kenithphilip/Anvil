@@ -604,8 +604,8 @@ const Landing: React.FC = () => {
                 <p className="lp-lead">
                   Anvil is the AI-native quote-to-cash console for manufacturers and industrial distributors. We
                   do the part-number translating, the rate-checking, the GST-classifying, the ERP-pushing, across{" "}
-                  <b>18 ERPs</b>, <b>5 inbound channels</b>, <b>6 doc engines</b>. So your sales engineer can do
-                  the part only humans can.
+                  <b>18&nbsp;ERPs</b>, <b>5&nbsp;inbound channels</b>, <b>6&nbsp;doc engines</b>. So your sales
+                  engineer can do the part only humans can.
                 </p>
                 <div className="lp-hero-ctas">
                   <a className="lp-btn lp-btn-live lp-btn-lg" href="#cta">
@@ -714,7 +714,7 @@ const Landing: React.FC = () => {
               <h2 id="bleed-h">42 surfaces. <span className="lp-em">One keyboard.</span></h2>
               <p className="lp-bleed-p">
                 The actual SO Workspace, where 8 of every 10 minutes of your sales-ops team's day actually
-                lives. No screenshot of a "vision deck", a screenshot of the thing that ships.
+                lives. No screenshot of a "vision deck"&mdash;a screenshot of the thing that ships.
               </p>
               <ul className="lp-bleed-list">
                 <li><span><b>Provenance always one click away.</b> Click a line; the source PDF cell highlights.</span></li>
@@ -843,14 +843,34 @@ const Landing: React.FC = () => {
           </div>
           <div className="lp-wrap">
             <div className="lp-pillars">
-              {PILLARS.map((p) => (
+              {PILLARS.map((p, i) => (
                 <div key={p.badge} className="lp-pillar">
                   <span className={"lp-pillar-badge" + (p.live ? " live" : "")}>{p.badge}</span>
                   <div className="lp-pillar-ic" aria-hidden="true">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#15171A" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                      <path d="M14 2v6h6" />
-                    </svg>
+                    {/* Distinct icon per pillar matching Landing.html SVGs:
+                        i=0 capture (document with lines), i=1 catch
+                        (alert triangle), i=2 ship (truck/box). */}
+                    {i === 0 && (
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#15171A" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <path d="M14 2v6h6" />
+                        <path d="M8 13h8" />
+                        <path d="M8 17h5" />
+                      </svg>
+                    )}
+                    {i === 1 && (
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#15171A" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 9v4" />
+                        <path d="M12 17h.01" />
+                        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+                      </svg>
+                    )}
+                    {i === 2 && (
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#15171A" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 5a2 2 0 0 1 2-2h12a4 4 0 0 1 4 4v14a2 2 0 0 0-2-2H7a4 4 0 0 0-4 4V5Z" />
+                        <path d="M8 7h6M8 11h6M8 15h4" />
+                      </svg>
+                    )}
                   </div>
                   <h3>{p.h} <span className="lp-em">{p.em}</span></h3>
                   <p>{p.p}</p>

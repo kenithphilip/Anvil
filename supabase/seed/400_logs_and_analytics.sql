@@ -237,7 +237,7 @@ declare
   suites         text[] := array['extraction','validation','classification'];
   i              int;
   j              int;
-  case_id        text;
+  v_case_id     text;
   v_suite        text;
   run_id         uuid;
   passed_total   int;
@@ -246,13 +246,13 @@ begin
   -- Cases.
   for i in 1..20 loop
     v_suite := suites[((i - 1) % 3) + 1];
-    case_id := v_suite || '-case-' || lpad(i::text,3,'0');
+    v_case_id := v_suite || '-case-' || lpad(i::text,3,'0');
     insert into eval_cases (id, tenant_id, suite, case_id, description, documents, expected, enabled, created_at)
     values (
-      uuid_generate_v5(ns, 'evcase:' || case_id),
-      default_tenant, v_suite, case_id,
+      uuid_generate_v5(ns, 'evcase:' || v_case_id),
+      default_tenant, v_suite, v_case_id,
       'Seed eval case ' || i::text || ' (' || v_suite || ')',
-      jsonb_build_array(jsonb_build_object('storage_path','documents/seed/eval/'||case_id||'.pdf','filename',case_id||'.pdf','seed_marker','anvil-test-seed-v1')),
+      jsonb_build_array(jsonb_build_object('storage_path','documents/seed/eval/'||v_case_id||'.pdf','filename',v_case_id||'.pdf','seed_marker','anvil-test-seed-v1')),
       jsonb_build_object('expected_lines', 5 + (i % 4), 'expected_total', 250000 + i * 5000, 'seed_marker','anvil-test-seed-v1'),
       true,
       now() - ((90 - i) || ' days')::interval
@@ -273,12 +273,12 @@ begin
 
     -- Score every one of the 20 cases against this run.
     for j in 1..20 loop
-      case_id := suites[((j - 1) % 3) + 1] || '-case-' || lpad(j::text,3,'0');
+      v_case_id := suites[((j - 1) % 3) + 1] || '-case-' || lpad(j::text,3,'0');
       case_passed := case when (i + j) % 7 = 0 then 0 else 1 end;
       insert into eval_case_results (id, tenant_id, run_id, case_id, passed, failed, score, checks, created_at)
       values (
         uuid_generate_v5(ns, 'evres:' || i::text || ':' || j::text),
-        default_tenant, run_id, case_id,
+        default_tenant, run_id, v_case_id,
         case_passed, 1 - case_passed,
         case when case_passed = 1 then 0.9500 else 0.4000 end,
         jsonb_build_array(jsonb_build_object('check','line_count','passed',case_passed = 1), jsonb_build_object('check','total_value','passed',case_passed = 1), jsonb_build_object('seed_marker','anvil-test-seed-v1')),

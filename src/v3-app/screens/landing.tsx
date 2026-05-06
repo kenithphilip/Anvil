@@ -71,14 +71,17 @@ const REQUESTABLE_ROLES = [
 // — `prefers-reduced-motion` is honoured by holding the first verb.
 const KINETIC_VERBS = ["Quote", "Push", "Reconcile", "Approve", "Audit"];
 
-// Live counters strip. Numbers are public, fair claims about the
-// product surface (every figure is satisfied by something already
-// shipped to main). The `n` value drives the count-up tween; `suffix`
-// renders after the animated number so we can show "100%" or "47+".
+// Live counters strip. Every number is grounded in something already
+// shipped to main: ERP count = the CHANNELS ERP block below (17 named
+// ERP clients in src/api/_lib/, one row per Phase 5.4a/5.4b connector).
+// Inbound channels = 5 (Email, WhatsApp, Slack, Teams, Voice). Doc
+// engines = 6 (Claude, Mistral OCR, Azure Doc Intel, Reducto,
+// Unstructured.io, SheetJS). Audit-verb count is the verb taxonomy
+// in audit_events; figure trails reality and stays a "+" suffix.
 const COUNTERS: Array<{ n: number; suffix?: string; label: string }> = [
-  { n: 14,  label: "ERPs connected" },
-  { n: 9,   label: "Channels intaked" },
-  { n: 100, suffix: "%", label: "Approvals signed" },
+  { n: 17,  label: "ERPs connected" },
+  { n: 5,   label: "Inbound channels" },
+  { n: 6,   label: "Doc engines" },
   { n: 47,  suffix: "+", label: "Audit verbs" },
 ];
 
@@ -159,6 +162,58 @@ const STORIES = [
   {
     quote: "First multi-channel intake we've found that actually closes the loop.",
     who: "COO, electrical-supply chain",
+  },
+];
+
+// Problem section: the manual sales-ops loop a sales engineer runs
+// before a PO becomes a posted order. No hard time claims here, just
+// the activities; concrete numbers belong in customer case studies,
+// not the marketing landing.
+const PROBLEMS = [
+  {
+    h: "Re-keying",
+    body: "Customer part numbers, UoMs, contract prices: keyed in twice, often three times, between the email body, the PDF, and the ERP screen.",
+  },
+  {
+    h: "Alias hunting",
+    body: "Buyer's part code maps to your SKU through a master-data table no one owns. Wrong alias, wrong line, wrong invoice.",
+  },
+  {
+    h: "Rate and tax checks",
+    body: "Contract price, freight, GST/VAT splits: each one a manual lookup, each one a place a mistake hides until the AP team finds it.",
+  },
+  {
+    h: "Post-hoc audit",
+    body: "Who approved what, when, and why. Reconstructed from email threads and screenshots if anyone bothers to ask.",
+  },
+];
+
+// Six product principles. These are values, not stats: safe to show
+// on a public page without a data source.
+const PRINCIPLES = [
+  {
+    h: "Receipts over reasons",
+    body: "Every extraction carries the citation. Every approval carries the payload hash. Every push carries the retry log.",
+  },
+  {
+    h: "Loud anomalies",
+    body: "If it looks wrong, it stops the line and asks a human. We do not silently round, retry, or guess.",
+  },
+  {
+    h: "Operator decides",
+    body: "The model proposes; the sales engineer disposes. Auto-approval only inside thresholds the operator has signed off on.",
+  },
+  {
+    h: "Cost is first-class",
+    body: "Every run carries a cost meter: tokens, OCR pages, ERP calls. You see the line item before you commit to it.",
+  },
+  {
+    h: "Keyboard first",
+    body: "Forty-plus surfaces, one command palette, no hunt-the-menu. The operator never has to leave the keyboard.",
+  },
+  {
+    h: "Local where it matters",
+    body: "Tenant data residency by region. PII redaction on the way to the LLM. BYO key for the model you trust.",
   },
 ];
 
@@ -574,12 +629,22 @@ const Landing: React.FC = () => {
       <header className="landing-head">
         <div className="landing-brand">
           <div className="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M3 6h11l-2 4h6v3H8l-2 4H3l2-4H2V9h4l-3-3Z"/></svg>
+            {/* Anvil mark: struck-anvil glyph + chartreuse spark.
+                Body uses currentColor so it inherits the brand-mark container's color.
+                Spark uses --accent (chartreuse #C8FF2B) for the impact mark. */}
+            <svg viewBox="0 0 32 32" width="20" height="20" role="img" aria-hidden="true">
+              <path fill="currentColor" d="M 6 12 L 1 12 L 4 9 L 9 9 L 9 7 L 26 7 L 26 12 L 22 12 L 21 16 L 24 16 L 24 19 L 22 19 L 22 23 L 28 23 L 28 26 L 4 26 L 4 23 L 10 23 L 10 19 L 8 19 L 8 16 L 11 16 Z" />
+              <g transform="translate(20.5 5.5)">
+                <path fill="var(--accent)" stroke="currentColor" strokeWidth="0.6" strokeLinejoin="miter" d="M 0 -4 L 0.9 -0.9 L 4 0 L 0.9 0.9 L 0 4 L -0.9 0.9 L -4 0 L -0.9 -0.9 Z" />
+              </g>
+            </svg>
           </div>
           <span>Anvil</span>
         </div>
         <nav className="landing-head-links" aria-label="primary">
+          <a href="#problem">Problem</a>
           <a href="#features">Features</a>
+          <a href="#principles">Principles</a>
           <a href="#how-it-works">How it works</a>
           <a href="#integrations">Integrations</a>
           <a href="#auth">Sign in</a>
@@ -855,6 +920,22 @@ const Landing: React.FC = () => {
           </div>
         </section>
 
+        <section id="problem" className="landing-section landing-problem-section" aria-label="The problem">
+          <h2>What a sales engineer does, before Anvil.</h2>
+          <p className="landing-section-sub">
+            Every PO that lands in the inbox is a small, manual loop. Multiplied across a busy sales week,
+            the loop becomes the job.
+          </p>
+          <div className="landing-problems">
+            {PROBLEMS.map((p) => (
+              <Card key={p.h} className="landing-problem">
+                <div className="landing-feature-title">{p.h}</div>
+                <p>{p.body}</p>
+              </Card>
+            ))}
+          </div>
+        </section>
+
         <section id="features" className="landing-section">
           <h2>What Anvil does</h2>
           <div className="landing-features">
@@ -862,6 +943,24 @@ const Landing: React.FC = () => {
               <Card key={f.title} className="landing-feature">
                 <div className="landing-feature-title">{f.title}</div>
                 <p>{f.body}</p>
+              </Card>
+            ))}
+          </div>
+        </section>
+
+        <section id="principles" className="landing-section landing-principles-section" aria-label="Principles">
+          <h2>Six principles that keep Anvil honest.</h2>
+          <p className="landing-section-sub">
+            These are the rules the product is built around. They show up in every screen, every push, every audit row.
+          </p>
+          <div className="landing-principles">
+            {PRINCIPLES.map((pr, i) => (
+              <Card key={pr.h} className="landing-principle">
+                <div className="landing-principle-num" aria-hidden="true">
+                  {String(i + 1).padStart(2, "0")}
+                </div>
+                <div className="landing-feature-title">{pr.h}</div>
+                <p>{pr.body}</p>
               </Card>
             ))}
           </div>
@@ -995,6 +1094,25 @@ const Landing: React.FC = () => {
         </section>
       </main>
 
+      {/* Full-bleed CTA: chartreuse accent panel that bridges the marketing
+          sections and the trust/footer rails. The "Sign up" link returns the
+          visitor to the auth widget in the hero, preserving the existing
+          flow (no new route, no new entry point). */}
+      <section className="landing-cta" aria-label="Get started">
+        <div className="landing-cta-inner">
+          <h2 className="landing-cta-h">Bring one PO. Watch it become an order.</h2>
+          <p className="landing-cta-sub">
+            Sign up, drop a PDF, see the lines extracted with citations. No setup call required.
+          </p>
+          <div className="landing-cta-actions">
+            <a className="landing-cta-primary" href="#auth">Sign up free</a>
+            <a className="landing-cta-secondary" href="mailto:hello@anvil.local?subject=Demo%20request">
+              Book a demo
+            </a>
+          </div>
+        </div>
+      </section>
+
       <section className="landing-trust" aria-label="Trust and compliance">
         <span className="landing-trust-item">SOC 2 in progress</span>
         <span className="landing-trust-item">RLS on every table</span>
@@ -1004,12 +1122,36 @@ const Landing: React.FC = () => {
       </section>
 
       <footer className="landing-foot">
-        <span>© {year} Anvil. All rights reserved.</span>
-        <span className="landing-foot-meta">
-          <a href="#auth">Sign in</a>
-          <span aria-hidden="true">·</span>
-          <a href="mailto:hello@anvil.local">Contact</a>
-        </span>
+        <div className="landing-foot-cols">
+          <div className="landing-foot-col">
+            <div className="landing-foot-h">Product</div>
+            <a href="#features">Features</a>
+            <a href="#how-it-works">How it works</a>
+            <a href="#integrations">Integrations</a>
+            <a href="#principles">Principles</a>
+          </div>
+          <div className="landing-foot-col">
+            <div className="landing-foot-h">Trust</div>
+            <span>SOC 2 in progress</span>
+            <span>RLS on every table</span>
+            <span>AES-256-GCM at rest</span>
+            <span>Multi-tenant by design</span>
+          </div>
+          <div className="landing-foot-col">
+            <div className="landing-foot-h">Company</div>
+            <a href="#auth">Sign in</a>
+            <a href="#auth">Sign up</a>
+            <a href="mailto:hello@anvil.local">Contact</a>
+          </div>
+        </div>
+        <div className="landing-foot-bar">
+          <span>© {year} Anvil. All rights reserved.</span>
+          <span className="landing-foot-meta">
+            <a href="#auth">Sign in</a>
+            <span aria-hidden="true">·</span>
+            <a href="mailto:hello@anvil.local">Contact</a>
+          </span>
+        </div>
       </footer>
     </div>
   );

@@ -28,5 +28,9 @@ describe("Landing", () => {
     expect(html).toContain("Sign up");
     // Confirms the value-prop block rendered.
     expect(html.toLowerCase()).toContain("anvil");
+    // New marketing sections (problem / principles / CTA) must render.
+    expect(html).toContain("Re-keying");
+    expect(html).toContain("Receipts over reasons");
+    expect(html).toContain("Bring one PO");
   });
 });

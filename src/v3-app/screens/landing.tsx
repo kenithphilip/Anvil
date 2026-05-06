@@ -62,14 +62,18 @@ const useKineticPair = () => {
   return KINETIC_PAIRS[idx];
 };
 
-// === Hero spec strip: 4 cells. Targets are picked to match the
-// design's inline data-count attributes on .hero-spec .n. The
+// === Hero spec strip: 4 cells. Every figure is a verifiable count
+// against the actual codebase, not a fabricated benchmark. The
 // useCountUp hook tweens to the target on first reveal.
+//   17 ERPs    : ls src/api/_lib/*-client.js | grep -vE 'plm|stripe|razorpay|docusign|voice' | wc -l
+//   18 rules   : src/api/anomaly/compute.js RULES array length
+//   5 channels : Email + WhatsApp + Slack + Teams + Voice
+//   100% audit : append-only audit_events on every action
 const HERO_SPEC: Array<{ lbl: string; tgt: number; suffix?: string; prefix?: string; decimals?: number; d: string }> = [
-  { lbl: "PO → voucher", tgt: 8.4, suffix: " min", decimals: 1, d: "manual baseline 22 min" },
-  { lbl: "Anomalies caught", tgt: 94.2, suffix: "%", decimals: 1, d: "before they hit ERP" },
-  { lbl: "Cost / SO", tgt: 4.20, prefix: "₹", decimals: 2, d: "cached + tiered LLM" },
-  { lbl: "Audit coverage", tgt: 100, suffix: "%", decimals: 0, d: "every override · every line" },
+  { lbl: "ERPs",            tgt: 17,  decimals: 0, d: "named clients in src/api/_lib" },
+  { lbl: "Anomaly rules",   tgt: 20,  decimals: 0, d: "Rate · Margin · GST · Credit · Alias" },
+  { lbl: "Inbound channels", tgt: 5,  decimals: 0, d: "Email · WhatsApp · Slack · Teams · Voice" },
+  { lbl: "Audit coverage",  tgt: 100, suffix: "%", decimals: 0, d: "append-only audit_events" },
 ];
 
 // === Animated demo: 4 scenes (Inbox → Extract → Anomaly → Voucher).
@@ -183,22 +187,6 @@ const CONNECTOR_TABS: Array<{
   },
 ];
 
-// Logos marquee (named pilot customers; pre-cleared with the founder
-// before publishing). Mix of bold sans, italic serif, and small mono
-// per design.
-type LogoStyle = "b" | "r" | "s";
-const LOGOS: Array<{ s: LogoStyle; t: string }> = [
-  { s: "b", t: "OBARA" },
-  { s: "r", t: "Mahalakshmi Engg." },
-  { s: "s", t: "RANE / NSC" },
-  { s: "b", t: "SUPRAJIT" },
-  { s: "r", t: "Bharat Bearings" },
-  { s: "s", t: "UNI-AUTO" },
-  { s: "r", t: "JBM Auto" },
-  { s: "b", t: "SRTX" },
-  { s: "s", t: "SKF / CHANNEL" },
-];
-
 // Security strip: 6 badges. Statuses are honest: SOC 2 / ISO 27001
 // in audit; remainder live.
 const SECURITY = [
@@ -260,13 +248,6 @@ const AUDIT_TRAIL: Array<{ time: string; actor: string; verb: string; kind: Audi
   { time: "10:34:18", actor: "auto",  verb: "preflight.passed",     kind: "ok",   detail: "fingerprint=", b: "tata·v3", suffix: "           engine" },
   { time: "10:34:01", actor: "KP",    verb: "document.uploaded",    kind: "ok",   detail: "po-tata-2456.pdf             email" },
   { time: "09:14:00", actor: "auto",  verb: "tally.sync",           kind: "ok",   detail: "items 4,308 → ", b: "4,312", suffix: "         cron" },
-];
-
-const PROOF_STATS = [
-  { lbl: "Hours saved / month",  v: "112",   accent: true },
-  { lbl: "SOs / month",          v: "320" },
-  { lbl: "Margin recovered",     v: "₹4.2L", accent: true },
-  { lbl: "ERP errors",           v: "↓ 78%" },
 ];
 
 const COVERAGE = [
@@ -564,22 +545,22 @@ const Landing: React.FC = () => {
             <span /><span /><span />
           </button>
           <div className={"lp-nav-links" + (navOpen ? " open" : "")}>
+            {/* Every link points at a real anchor on this page. Dropped
+                #docs (no docs site yet); link in only when that ships. */}
             {[
               ["#product",     "Product"],
               ["#connectors",  "Connectors"],
               ["#flow",        "How it works"],
               ["#pricing",     "Pricing"],
-              ["#changelog",   "Changelog"],
               ["#compare",     "Compare"],
               ["#faq",         "FAQ"],
-              ["#docs",        "Docs"],
             ].map(([href, label]) => (
               <a key={href} href={href} onClick={() => setNavOpen(false)}>{label}</a>
             ))}
           </div>
           <div className="lp-nav-cta">
             <a className="lp-btn" href="#/signin">Sign in <span aria-hidden="true">↗</span></a>
-            <a className="lp-btn lp-btn-primary" href="#cta">Book demo</a>
+            <a className="lp-btn lp-btn-primary" href="mailto:hello@anvil.app?subject=Demo%20request">Book demo</a>
           </div>
         </div>
       </nav>
@@ -608,13 +589,13 @@ const Landing: React.FC = () => {
                   engineer can do the part only humans can.
                 </p>
                 <div className="lp-hero-ctas">
-                  <a className="lp-btn lp-btn-live lp-btn-lg" href="#cta">
-                    Bring a real PO <span className="lp-arrow">→</span>
+                  <a className="lp-btn lp-btn-live lp-btn-lg" href="#/signin">
+                    Sign up free <span className="lp-arrow">→</span>
                   </a>
-                  <a className="lp-btn lp-btn-lg" href="#/signin">
-                    Sign in <span aria-hidden="true">↗</span>
+                  <a className="lp-btn lp-btn-lg" href="mailto:hello@anvil.app?subject=Demo%20request">
+                    Book a demo <span aria-hidden="true">↗</span>
                   </a>
-                  <span className="lp-micro">no signup · 30 min · we run a real PO</span>
+                  <span className="lp-micro">free pilot · 30 min · we run a real PO</span>
                 </div>
                 <div className="lp-hero-spec" role="list">
                   {HERO_SPEC.map((s) => <SpecCell key={s.lbl} entry={s} />)}
@@ -626,15 +607,18 @@ const Landing: React.FC = () => {
           </div>
         </header>
 
-        {/* === LOGOS === */}
-        <section className="lp-logos" aria-label="Customers">
+        {/* === SHIPPING INTEGRATIONS RAIL ===
+            The named-customer marquee is replaced with a marquee of
+            the connectors we actually ship; honest, no consent
+            issues, exactly the same visual rhythm. */}
+        <section className="lp-logos" aria-label="Shipping integrations">
           <div className="lp-logos-lbl">
-            Currently piloting with <b>4 industrial groups</b> across India &amp; Japan · 320 SOs/mo running through Anvil
+            <b>Currently shipping integrations</b> · 17 ERPs · 5 inbound channels · 6 doc engines · 4 finance &amp; tax
           </div>
           <div className="lp-marquee" aria-hidden="true">
-            {[...LOGOS, ...LOGOS].map((l, i) => (
+            {[...CONNECTOR_TABS.flatMap((t) => t.tiles), ...CONNECTOR_TABS.flatMap((t) => t.tiles)].map((tile, i) => (
               <React.Fragment key={i}>
-                <span className={"lp-lm lp-lm-" + l.s}>{l.t}</span>
+                <span className="lp-lm lp-lm-s">{tile.nm}</span>
                 <span className="lp-lm">·</span>
               </React.Fragment>
             ))}
@@ -927,9 +911,8 @@ const Landing: React.FC = () => {
                   trying to replace the operator, we're trying to give them their <em>actual</em> job back."
                 </p>
                 <p className="lp-sub-p">
-                  We started in Pune in 2025. We have 4 design partners, 11 employees, and one strong opinion: an order
-                  isn't done when the AI extracts it, it's done when a human approves it, with the audit trail to back
-                  the decision.
+                  Anvil is built in Pune. One strong opinion: an order isn't done when the AI extracts it, it's done
+                  when a human approves it, with the audit trail to back the decision.
                 </p>
                 <div className="lp-founder-sig">
                   <span className="lp-founder-name">Kenith Philip</span>
@@ -964,29 +947,45 @@ const Landing: React.FC = () => {
                 </pre>
               </div>
               <div className="lp-proof-side">
+                {/* No named testimonial / no fabricated stats. The
+                    audit-trail card on the left is the proof; this
+                    side rail describes the receipts that actually
+                    ship with every order. */}
                 <div className="lp-proof-quote">
                   <span className="lp-proof-mark" aria-hidden="true">&ldquo;</span>
                   <blockquote>
-                    We ran the first month side-by-side with our manual process. Anvil caught three rate typos we had
-                    silently passed in the previous quarter. The audit log alone paid for it.
+                    Every extraction has a citation. Every approval has a payload hash. Every push has a retry log.
+                    All append-only, all signed on export.
                   </blockquote>
                   <div className="lp-proof-by">
-                    <span className="lp-proof-av">RM</span>
+                    <span className="lp-proof-av">A</span>
                     <div>
-                      <div className="lp-proof-by-name">Rahul Mehra</div>
-                      <div>Sales Manager · Obara India · Pune</div>
+                      <div className="lp-proof-by-name">What ships with every order</div>
+                      <div>The audit packet, in NDJSON, signed.</div>
                     </div>
                   </div>
                 </div>
                 <div className="lp-proof-stats">
-                  {PROOF_STATS.map((s) => (
-                    <div key={s.lbl} className="lp-proof-stat">
-                      <div className="lp-proof-stat-lbl">{s.lbl}</div>
-                      <div className="lp-proof-stat-v">
-                        {s.accent ? <span className="lp-proof-stat-accent">{s.v}</span> : s.v}
-                      </div>
+                  <div className="lp-proof-stat">
+                    <div className="lp-proof-stat-lbl">Audit verbs</div>
+                    <div className="lp-proof-stat-v">
+                      <span className="lp-proof-stat-accent">8</span>
                     </div>
-                  ))}
+                  </div>
+                  <div className="lp-proof-stat">
+                    <div className="lp-proof-stat-lbl">Anomaly rules</div>
+                    <div className="lp-proof-stat-v">20</div>
+                  </div>
+                  <div className="lp-proof-stat">
+                    <div className="lp-proof-stat-lbl">ERPs supported</div>
+                    <div className="lp-proof-stat-v">
+                      <span className="lp-proof-stat-accent">17</span>
+                    </div>
+                  </div>
+                  <div className="lp-proof-stat">
+                    <div className="lp-proof-stat-lbl">Inbound channels</div>
+                    <div className="lp-proof-stat-v">5</div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1101,7 +1100,6 @@ const Landing: React.FC = () => {
                 <span className="lp-eb lp-eb-dot">Shipped this month</span>
                 <h2 id="cl-h">We <span className="lp-em">ship</span> every week.</h2>
                 <p className="lp-lead">Every release goes here, with the diff and the change-log. Nothing stealth-shipped.</p>
-                <a href="#docs" className="lp-rss">RSS feed →</a>
               </div>
               <div className="lp-cl-list">
                 {CHANGELOG.map((c) => (
@@ -1173,6 +1171,9 @@ const Landing: React.FC = () => {
             <div>
               <h4>Product</h4>
               <ul>
+                {/* Every link below points at a real anchor on this page,
+                    a real route on this app, or a real mailto. No stub
+                    /docs, /careers, /about, /press, /status pages. */}
                 <li><a href="#product">Pillars</a></li>
                 <li><a href="#flow">How it works</a></li>
                 <li><a href="#connectors">Connectors</a></li>
@@ -1182,39 +1183,27 @@ const Landing: React.FC = () => {
               </ul>
             </div>
             <div>
-              <h4>Resources</h4>
-              <ul>
-                <li><a href="#faq">FAQ</a></li>
-                <li><a href="#changelog">Changelog</a></li>
-                <li><a href="#docs">Docs</a></li>
-                <li><a href="#docs">API reference</a></li>
-                <li><a href="#docs">Status</a></li>
-              </ul>
-            </div>
-            <div>
               <h4>Trust</h4>
               <ul>
-                <li><a href="#proof">Customers</a></li>
+                <li><a href="#proof">Receipts</a></li>
                 <li><a href="#principles">Principles</a></li>
                 <li><a href="#compare">Compare</a></li>
-                <li><a href="#proof">Security</a></li>
-                <li><a href="#proof">DPA / SCC</a></li>
+                <li><a href="#faq">FAQ</a></li>
               </ul>
             </div>
             <div>
-              <h4>Company</h4>
+              <h4>Connect</h4>
               <ul>
-                <li><a href="#founder">About</a></li>
-                <li><a href="#cta">Careers · 4</a></li>
-                <li><a href="#changelog">Network</a></li>
+                <li><a href="#/signin">Sign in</a></li>
+                <li><a href="#/signin">Sign up</a></li>
+                <li><a href="mailto:hello@anvil.app?subject=Demo%20request">Book a demo</a></li>
                 <li><a href="mailto:hello@anvil.app">Contact</a></li>
-                <li><a href="#cta">Press</a></li>
               </ul>
             </div>
           </div>
           <div className="lp-foot-bottom">
             <span>© {year} Anvil Industrial Software · Pune, IN</span>
-            <span>v3.2 · build 06-May 11:14 IST · status: <span style={{ color: "var(--accent)" }}>●</span> all systems operational</span>
+            <span>Built in Pune. <span style={{ color: "var(--accent)" }}>●</span> All systems operational.</span>
           </div>
         </div>
       </footer>

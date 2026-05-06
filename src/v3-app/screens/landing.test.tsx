@@ -32,10 +32,11 @@ describe("Landing", () => {
     expect(html).toContain("Your customer wrote");
     expect(html).toContain("Your ERP wants");
     // Hero spec strip cells
-    expect(html).toContain("PO → voucher");
-    expect(html).toContain("Anomalies caught");
-    // Logos marquee
-    expect(html).toContain("Currently piloting with");
+    // Hero spec strip , grounded counts now (17 ERPs, 20 rules, 5 channels, 100% audit)
+    expect(html).toContain("ERPs");
+    expect(html).toContain("Anomaly rules");
+    // Shipping integrations marquee
+    expect(html).toContain("Currently shipping integrations");
     // Security strip
     expect(html).toContain("Built for finance teams");
     // Connector tab grid
@@ -69,7 +70,7 @@ describe("Landing", () => {
     // CTA
     expect(html).toContain("Bring one PO");
     // Footer
-    expect(html).toContain("all systems operational");
+    expect(html.toLowerCase()).toContain("all systems operational");
   });
 
   it("connector tab switching renders different categories", async () => {
@@ -115,7 +116,7 @@ describe("Landing", () => {
     const html = container.innerHTML;
     const headlines = [
       "Your customer wrote",
-      "Currently piloting with",
+      "Currently shipping integrations",
       "Built for finance teams",
       "Already speaks",
       "42 surfaces",

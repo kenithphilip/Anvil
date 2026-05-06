@@ -280,7 +280,11 @@ export default function App() {
   const navFiltered = useMemo(() => RBAC.filterNav(NAV), [RBAC.role()]);
 
   // Bounce to home if the current route is no longer accessible.
+  // Pre-auth routes (signin / reset / landing) bypass RBAC because
+  // they are accessible to unauthenticated visitors who have no role
+  // yet, so RBAC.canRead would otherwise force-redirect them.
   useEffect(() => {
+    if (route === "signin" || route === "reset" || route === "landing") return;
     if (!RBAC.canRead(route)) onRoute("home");
   }, [route, onRoute]);
 

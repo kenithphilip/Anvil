@@ -3294,7 +3294,38 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
    later.
    ======================================================================== */
 
-.lp { font-family: var(--sans); color: var(--ink); background: var(--paper); -webkit-font-smoothing: antialiased; }
+/* Landing page is always rendered in light theme regardless of the
+   global data-theme attribute. The operator console honours dark
+   mode, but the public marketing landing must match the design
+   spec, which is light cream + ink. We override the tokens locally
+   on .lp so all descendant selectors using var(--paper) / var(--ink)
+   etc. resolve to the light palette. */
+.lp,
+[data-theme="dark"] .lp {
+  --paper:     #FBFBF8;
+  --paper-2:   #F4F4F0;
+  --paper-3:   #ECECE6;
+  --paper-4:   #E0E0DA;
+  --ink:       #15171A;
+  --ink-2:     #2D3035;
+  --ink-3:     #5C6068;
+  --ink-4:     #8A8E96;
+  --ink-5:     #A8ACB3;
+  --hairline:   #D8D8D0;
+  --hairline-2: #E5E5DD;
+  --hairline-3: #F0F0E8;
+  --accent:    #C8FF2B;
+  --accent-2:  #6BBA00;
+  --accent-3:  #F1FFC2;
+  --rust:      #A23A1F;
+  --amber:     #B57810;
+  --lapis:     #1F4FA0;
+  --sage:      #355E3B;
+  color: var(--ink);
+  background: var(--paper);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
 .lp .lp-wrap { max-width: 1320px; margin: 0 auto; padding: 0 32px; }
 @media (max-width: 720px) { .lp .lp-wrap { padding: 0 20px; } }
 
@@ -3855,7 +3886,26 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 /* ========================================================================
    SIGN-IN SCREEN
    ======================================================================== */
-.signin-screen { min-height: 100vh; background: var(--paper); display: flex; flex-direction: column; }
+/* Sign-in screen is also always light, same reasoning as .lp. */
+.signin-screen,
+[data-theme="dark"] .signin-screen {
+  --paper:     #FBFBF8;
+  --paper-2:   #F4F4F0;
+  --paper-3:   #ECECE6;
+  --ink:       #15171A;
+  --ink-2:     #2D3035;
+  --ink-3:     #5C6068;
+  --ink-4:     #8A8E96;
+  --hairline:   #D8D8D0;
+  --hairline-2: #E5E5DD;
+  --accent:    #C8FF2B;
+  --accent-2:  #6BBA00;
+  min-height: 100vh;
+  background: var(--paper);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+}
 .signin-head { display: flex; justify-content: space-between; align-items: center; padding: 24px 32px; border-bottom: 1px solid var(--hairline-2, var(--hairline)); }
 .signin-brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); font-weight: 700; font-size: 17px; letter-spacing: -0.02em; }
 .signin-back { font-family: var(--mono); font-size: 12px; color: var(--ink-3); text-decoration: none; }

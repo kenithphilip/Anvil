@@ -81,6 +81,43 @@ end $guard$;
 -- cast strings to `obara_role` freely.
 alter type obara_role add value if not exists 'operator';
 
+-- ───────────────────────────────────────────────────────────────────
+-- 1b. AUTH USERS BACKFILL  --  must run OUTSIDE the explicit
+-- transaction below so the fix lands even if later phases roll back.
+-- Earlier seed versions inserted NULL for the GoTrue token columns
+-- which the Go struct decodes as `string` (NOT *string) -- causing
+-- "Database error querying schema" on every signin / magic-link
+-- attempt. The plain UPDATE auto-commits per psql's implicit
+-- per-statement transaction.
+-- ───────────────────────────────────────────────────────────────────
+do $backfill$
+begin
+  if not exists (select 1 from information_schema.schemata where schema_name = 'auth') then
+    raise notice 'auth schema not found; skipping GoTrue token backfill.';
+    return;
+  end if;
+  update auth.users set
+    confirmation_token         = coalesce(confirmation_token, ''),
+    recovery_token             = coalesce(recovery_token, ''),
+    email_change               = coalesce(email_change, ''),
+    email_change_token_new     = coalesce(email_change_token_new, ''),
+    email_change_token_current = coalesce(email_change_token_current, ''),
+    phone_change               = coalesce(phone_change, ''),
+    phone_change_token         = coalesce(phone_change_token, ''),
+    reauthentication_token     = coalesce(reauthentication_token, ''),
+    is_super_admin             = coalesce(is_super_admin, false)
+  where email like '%@anvil.test'
+    and (confirmation_token is null
+         or recovery_token is null
+         or email_change is null
+         or email_change_token_new is null
+         or email_change_token_current is null
+         or phone_change is null
+         or phone_change_token is null
+         or reauthentication_token is null
+         or is_super_admin is null);
+end $backfill$;
+
 begin;
 
 -- Best-effort: prefer the postgres role inside the transaction. Harmless if not permitted.
@@ -144,7 +181,10 @@ begin
       insert into auth.users (
         id, instance_id, aud, role, email, encrypted_password,
         email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
-        created_at, updated_at, is_sso_user, is_anonymous
+        created_at, updated_at, is_sso_user, is_anonymous,
+        confirmation_token, recovery_token, email_change,
+        email_change_token_new, email_change_token_current,
+        phone_change, phone_change_token, reauthentication_token
       ) values (
         v_user_id,
         '00000000-0000-0000-0000-000000000000'::uuid,
@@ -166,12 +206,70 @@ begin
         seed_now - interval '120 days',
         seed_now - interval '120 days',
         false,
-        false
+        false,
+        -- GoTrue token columns: must be empty string, not NULL.
+        -- The Go struct decodes these as `string` (not `*string`),
+        -- so a NULL triggers "Database error querying schema" on
+        -- every signin attempt.
+        '', '', '',
+        '', '',
+        '', '', ''
       ) on conflict (id) do nothing;
     exception
       when insufficient_privilege then
         raise notice 'Insufficient privilege to insert into auth.users; skipping.  Use service_role.';
         return;
+    end;
+
+    -- auth.identities row.  Required for signInWithPassword: Supabase
+    -- looks up the user by email via this table (provider='email'),
+    -- not by querying auth.users.email directly. Without this row,
+    -- password auth fails with 'Database error querying schema'.
+    --
+    -- The proper way to create a user is svc.auth.admin.createUser()
+    -- which writes both rows; we used a direct INSERT INTO auth.users
+    -- here for self-contained replayability, so we must mirror the
+    -- identity row by hand.
+    --
+    -- Schema (Supabase 2024+):
+    --   provider_id text       -- the user's id as text for 'email' provider
+    --   provider text          -- 'email' for password auth
+    --   user_id uuid           -- FK to auth.users(id)
+    --   identity_data jsonb    -- { sub, email, email_verified: true, phone_verified: false }
+    --   email text             -- GENERATED ALWAYS AS (lower(identity_data->>'email')) STORED
+    --   id uuid primary key
+    -- Composite unique: (provider_id, provider).
+    begin
+      insert into auth.identities (
+        id,
+        user_id,
+        provider_id,
+        provider,
+        identity_data,
+        last_sign_in_at,
+        created_at,
+        updated_at
+      ) values (
+        uuid_generate_v5('d7a7e5e4-0001-0001-0001-000000000001', 'identity:' || rec.email),
+        v_user_id,
+        v_user_id::text,
+        'email',
+        jsonb_build_object(
+          'sub', v_user_id::text,
+          'email', rec.email,
+          'email_verified', true,
+          'phone_verified', false
+        ),
+        null,
+        seed_now - interval '120 days',
+        seed_now - interval '120 days'
+      ) on conflict (provider_id, provider) do nothing;
+    exception
+      when insufficient_privilege then
+        raise notice 'Insufficient privilege to insert into auth.identities; skipping.';
+      when others then
+        -- If the schema differs (older Supabase versions), continue.
+        raise notice 'auth.identities insert failed: %; password auth may not work for seeded users.', sqlerrm;
     end;
 
     -- tenant_members row.  status carries the access-request fields.

@@ -8,6 +8,8 @@ import React, { ReactNode, useEffect, useRef, useState } from "react";
 import { Icon } from "../lib/icons";
 import { Dot } from "../lib/primitives";
 import { ObaraBackend } from "../lib/api";
+import { Prefs } from "../lib/preferences";
+import { signOutAndRedirect } from "../lib/session";
 import type { NavGroup, RoleEntry, NavBadge } from "../lib/nav";
 import type { ShellTelemetry, BadgeMap } from "../lib/telemetry";
 
@@ -192,6 +194,104 @@ const NotificationsBell: React.FC<{ onRoute?: (id: string) => void; isAdminLike:
               })}
             </ul>
           )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Settings popover anchored to the gear icon in the sidebar footer.
+// Replaces the previous floating ThemeBar that was always visible
+// bottom-right and obscured the bottom rows of every page. Click the
+// gear, the popover appears just above it, click outside (or any
+// row) to close.
+const SettingsMenu: React.FC<{ onRoute?: (id: string) => void }> = ({ onRoute }) => {
+  const [open, setOpen] = useState(false);
+  const [, force] = useState(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  // Re-render on prefs:change so the popover labels reflect the
+  // current theme / density / rail state without re-mounting.
+  useEffect(() => {
+    const fn = () => force((n) => n + 1);
+    window.addEventListener("prefs:change", fn);
+    return () => window.removeEventListener("prefs:change", fn);
+  }, []);
+
+  // Click-outside to close.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [open]);
+
+  const theme = Prefs.theme();
+  const density = Prefs.density();
+  const railState = Prefs.rail();
+
+  const cycleDensity = () => {
+    const order: Array<"compact" | "normal" | "comfortable"> = ["compact", "normal", "comfortable"];
+    Prefs.setDensity(order[(order.indexOf(density) + 1) % order.length]);
+  };
+
+  return (
+    <div ref={wrapRef} className="settings-menu-wrap">
+      <button
+        className="btn ghost icon sm"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Settings"
+        title="Settings"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {Icon.settings}
+      </button>
+      {open && (
+        <div className="settings-menu" role="menu">
+          <button className="settings-menu-row" role="menuitem" onClick={() => Prefs.toggleTheme()}>
+            <span className="settings-menu-ic">{Icon.eye}</span>
+            <span className="settings-menu-lbl">Theme</span>
+            <span className="settings-menu-val">{theme}</span>
+          </button>
+          <button className="settings-menu-row" role="menuitem" onClick={cycleDensity}>
+            <span className="settings-menu-ic">{Icon.layers}</span>
+            <span className="settings-menu-lbl">Density</span>
+            <span className="settings-menu-val">{density}</span>
+          </button>
+          <button className="settings-menu-row" role="menuitem" onClick={() => Prefs.toggleRail()}>
+            <span className="settings-menu-ic">{Icon.arrowL}</span>
+            <span className="settings-menu-lbl">Sidebar</span>
+            <span className="settings-menu-val">{railState === "collapsed" ? "collapsed" : "expanded"}</span>
+          </button>
+          <div className="settings-menu-sep" />
+          <button
+            className="settings-menu-row"
+            role="menuitem"
+            onClick={() => { setOpen(false); onRoute?.("admin"); }}
+          >
+            <span className="settings-menu-ic">{Icon.settings}</span>
+            <span className="settings-menu-lbl">Open settings</span>
+          </button>
+          <button
+            className="settings-menu-row settings-menu-danger"
+            role="menuitem"
+            onClick={() => {
+              if (typeof window !== "undefined" && window.confirm?.("Sign out of Anvil?") === false) return;
+              setOpen(false);
+              signOutAndRedirect();
+            }}
+          >
+            <span className="settings-menu-ic">{Icon.logout}</span>
+            <span className="settings-menu-lbl">Sign out</span>
+          </button>
         </div>
       )}
     </div>
@@ -440,7 +540,7 @@ export const Shell: React.FC<ShellProps> = ({
             {role?.label || "Sales Engineer"}
           </div>
         </div>
-        <button className="btn ghost icon sm" onClick={() => onRoute?.("admin")} title="Settings">{Icon.settings}</button>
+        <SettingsMenu onRoute={onRoute} />
       </div>
     </aside>
 

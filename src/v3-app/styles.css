@@ -203,11 +203,6 @@ button { cursor: pointer; }
   overflow: auto;
   position: relative;
   background: var(--bg);
-  /* Floating ThemeBar sits at bottom: 36px / height ~30px, so the
-     bottom-right of any page can be obscured by the toggles + sign-
-     out button. Pad the scroll area so content always has clearance
-     and never disappears under the floating buttons. */
-  padding-bottom: 64px;
 }
 .app-dock {
   grid-area: dock;
@@ -310,17 +305,49 @@ button { cursor: pointer; }
   white-space: nowrap;
 }
 
-/* Floating ThemeBar (theme / density / rail / sign-out). Always-on-top
-   bar pinned bottom-right of every authenticated screen. We give it a
-   solid backdrop with a subtle shadow so on any page (including
-   full-bleed canvases like the kanban) the buttons remain legible. */
-.theme-bar {
+/* Settings popover anchored to the gear icon in the sidebar footer.
+   The trigger is the existing gear button; the menu pops upward so it
+   doesn't get clipped by the sidebar's bottom edge. Subtle shadow +
+   solid backdrop keep it legible on any background. */
+.settings-menu-wrap { position: relative; display: inline-flex; }
+.settings-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  min-width: 220px;
   background: var(--paper);
-  padding: 4px;
   border: 1px solid var(--hairline);
   border-radius: calc(var(--r-2) + 2px);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
 }
+.settings-menu-row {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-1, 4px);
+  font-family: var(--sans);
+  font-size: 12.5px;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+}
+.settings-menu-row:hover { background: var(--paper-2); color: var(--ink); }
+.settings-menu-ic { display: inline-flex; align-items: center; color: var(--ink-3); }
+.settings-menu-row:hover .settings-menu-ic { color: var(--ink); }
+.settings-menu-lbl { font-weight: 500; }
+.settings-menu-val { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+.settings-menu-sep { height: 1px; background: var(--hairline); margin: 4px 0; }
+.settings-menu-danger { color: var(--rust, #A23A1F); }
+.settings-menu-danger .settings-menu-ic { color: var(--rust, #A23A1F); }
+.settings-menu-danger:hover { background: rgba(162, 58, 31, 0.06); color: var(--rust, #A23A1F); }
 .head-pill:hover { background: var(--paper-3); }
 .head-pill .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--accent-2); }
 .head-pill.role { font-weight: 600; }

@@ -5,6 +5,7 @@ import { ObaraBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 import { Prefs } from "../lib/preferences";
 import { lsGet, lsSet, lsRemove } from "../lib/storage-keys";
+import { signOutAndRedirect } from "../lib/session";
 
 // ============================================================
 // ANVIL v3 — Backend connect (sign-in / config)
@@ -158,14 +159,15 @@ const WiredBackendConnect = () => {
     }
   };
 
+  // Local UI state reset for in-page feedback. Heavy lifting (clearing
+  // session + storage + bouncing to landing) lives in the shared
+  // helper so the settings menu, the legacy banner here, and any
+  // future entry-point all behave identically.
   const signOut = () => {
-    try {
-      ObaraBackend?.setSession?.(null);
-      lsRemove("auth_profile");
-    } catch (_) {}
     setToken("");
     setSignedIn(false);
     setStatus({ kind: "good", text: "Signed out." });
+    signOutAndRedirect();
   };
 
   const profile = (() => { try { return JSON.parse(lsGet("auth_profile") || "null"); } catch { return null; } })();

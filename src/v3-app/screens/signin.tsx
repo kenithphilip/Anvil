@@ -16,7 +16,7 @@
 // success we persist the session via ObaraBackend.setSession and
 // the App's auth-gate effect routes the user onward.
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card } from "../lib/primitives";
 import { ObaraBackend } from "../lib/api";
 import { lsGet, lsSet, lsRemove } from "../lib/storage-keys";
@@ -33,8 +33,14 @@ const REQUESTABLE_ROLES = [
 
 const SignInScreen: React.FC = () => {
   const cfgRef = (ObaraBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string | null };
+  // Default the Backend URL to the page's own origin when nothing is
+  // configured. The deployed Vercel host serves both the static
+  // frontend and the /api/* endpoints, so this is correct ~99% of the
+  // time. Local dev (vite on :5180 talking to a separate API) can
+  // still override via the Advanced toggle.
+  const defaultUrl = cfgRef.url || (typeof window !== "undefined" ? window.location.origin : "");
   const [mode, setMode] = useState<Mode>("signin");
-  const [url, setUrl] = useState<string>(cfgRef.url || "");
+  const [url, setUrl] = useState<string>(defaultUrl);
   const [tenantId, setTenantId] = useState<string>(cfgRef.tenantId || "");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -56,6 +62,15 @@ const SignInScreen: React.FC = () => {
       });
     } catch (_) { /* swallow; setSession will surface a real error */ }
   };
+
+  // Persist the auto-defaulted Backend URL on mount so the very first
+  // submit (signup / signin / magic-link) doesn't fail with "Backend
+  // URL is required". Without this, defaultUrl populated state but the
+  // ObaraBackend client still reported no config.
+  useEffect(() => {
+    if (!cfgRef.url && url) persistConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const goAfterAuth = () => {
     let target = "#/home";

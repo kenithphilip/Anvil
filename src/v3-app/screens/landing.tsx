@@ -577,10 +577,20 @@ const Landing: React.FC = () => {
                   Quote-to-cash · industrial distributors
                 </span>
                 <h1 className="lp-h1">
-                  Your customer wrote{" "}
-                  <span className="lp-em" aria-live="polite">&ldquo;{kineticPair.customer}&rdquo;</span>.
+                  {/* Each line is a single inline-block segment so the
+                      kinetic span doesn't wrap independently of its
+                      lead-in text (which made "Your ERP wants" appear
+                      twice on phone screenshots when screen readers
+                      announced the aria-live update). */}
+                  <span className="lp-h1-segment">
+                    Your customer wrote{" "}
+                    <span className="lp-em" aria-live="polite">&ldquo;{kineticPair.customer}&rdquo;</span>.
+                  </span>
                   <br />
-                  Your ERP wants <span className="lp-hl" aria-live="polite">{kineticPair.erp}.</span>
+                  <span className="lp-h1-segment">
+                    Your ERP wants{" "}
+                    <span className="lp-hl" aria-live="polite">{kineticPair.erp}.</span>
+                  </span>
                 </h1>
                 <p className="lp-lead">
                   Anvil is the AI-native quote-to-cash console for manufacturers and industrial distributors. We

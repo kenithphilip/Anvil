@@ -17,7 +17,11 @@ const WiredBackendConnect = () => {
   const { useState: uS, useEffect: uE } = React;
   const cfg = (ObaraBackend && ObaraBackend.getConfig && ObaraBackend.getConfig()) || {};
   const session = (ObaraBackend && ObaraBackend.getSession && ObaraBackend.getSession()) || {};
-  const [url, setUrl] = uS(cfg.url || "");
+  // Default Backend URL to the page's own origin (Vercel hosts both
+  // frontend and /api/* on the same domain) so users don't see
+  // "Backend URL is required" the first time they hit the screen.
+  const defaultUrl = cfg.url || (typeof window !== "undefined" ? window.location.origin : "");
+  const [url, setUrl] = uS(defaultUrl);
   const [tenantId, setTenantId] = uS(cfg.tenantId || "");
   const [tab, setTab] = uS("signup");
   const [email, setEmail] = uS("");

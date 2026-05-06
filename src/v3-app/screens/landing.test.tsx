@@ -157,4 +157,29 @@ describe("Landing", () => {
     expect((details[0] as HTMLDetailsElement).open).toBe(true);
     expect((details[1] as HTMLDetailsElement).open).toBe(false);
   });
+
+  // Regression: the landing has 7 `.reveal` blocks (problem intro,
+  // problem list, product header, flow, proof, coverage,
+  // principles). CSS sets these to opacity:0 only when the .lp root
+  // has class `js-reveal-ready`. Without the reveal observer in
+  // landing.tsx, every section header rendered as a giant invisible
+  // rectangle. This test pins the contract: either `.in` is on every
+  // block (observer or reduced-motion path) or the `.lp` root never
+  // gains `js-reveal-ready` (so CSS leaves them visible).
+  it("every .reveal block is visible (no permanent invisible blocks)", async () => {
+    const mod = await import("./landing");
+    const Screen = mod.default;
+    const { container } = renderScreen(Screen);
+    // Wait a microtask for the reveal effect to run.
+    await new Promise((r) => setTimeout(r, 0));
+    const all = container.querySelectorAll(".lp .reveal");
+    expect(all.length).toBeGreaterThanOrEqual(7);
+    const root = container.querySelector(".lp");
+    const gated = !!root?.classList.contains("js-reveal-ready");
+    if (gated) {
+      all.forEach((el) => {
+        expect(el.classList.contains("in")).toBe(true);
+      });
+    }
+  });
 });

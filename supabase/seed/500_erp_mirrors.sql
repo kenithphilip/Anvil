@@ -329,7 +329,7 @@ declare
   ns             uuid := 'd7a7e5e4-0001-0005-0001-000000000001';
   ord_id         uuid := uuid_generate_v5('d7a7e5e4-0001-0003-0001-000000000001', 'order:APPROVED:SPARES');
   voucher_id     uuid;
-  company_id     uuid := uuid_generate_v5(ns,'tally:co:obara_india');
+  v_company_id  uuid := uuid_generate_v5(ns,'tally:co:obara_india');
   v_statuses     text[] := array['pending','validated','dry_run_ok','exported','imported','failed'];
   v_status       text;
   i              int;
@@ -339,7 +339,7 @@ begin
                                 default_voucher_series, default_sales_ledger, default_party_group, gstin, state_code,
                                 last_health_at, last_health_status, last_health_error, created_at, updated_at)
   values (
-    company_id, default_tenant, 'Obara India (default)', true,
+    v_company_id, default_tenant, 'Obara India (default)', true,
     'https://tally-bridge.example.com:9000/tally',
     'tally_token_seed_' || encode(digest('tally_token','sha256'),'hex'),
     'tally_prime_3.0', 'OB-VS-2026', 'Sales - Spares', 'Customers - OEM',
@@ -365,7 +365,7 @@ begin
       case v_status when 'imported' then now() - interval '4 hours' else null end,
       case v_status when 'failed' then 'tally_xml_validation_failed' else null end,
       now() - (i || ' days')::interval,
-      company_id, 'SalesOrder', (now() - (i || ' days')::interval)::date,
+      v_company_id, 'SalesOrder', (now() - (i || ' days')::interval)::date,
       case v_status when 'exported' then 'EXT-' || lpad(i::text,6,'0') when 'imported' then 'EXT-' || lpad(i::text,6,'0') else null end,
       case v_status when 'pending' then null else now() - interval '4 hours' end,
       case v_status when 'pending' then 0 when 'failed' then 3 else 1 end
@@ -377,7 +377,7 @@ begin
     insert into tally_payment_receipts (id, tenant_id, company_id, external_voucher_no, voucher_date, party_ledger,
                                           amount, currency, bank_ledger, reference_no, matched_invoice_id, raw, synced_at)
     values (
-      uuid_generate_v5(ns,'tally:pr:' || i::text), default_tenant, company_id,
+      uuid_generate_v5(ns,'tally:pr:' || i::text), default_tenant, v_company_id,
       'RCT-' || lpad((100 + i)::text,6,'0'),
       (now() - ((10 - i) || ' days')::interval)::date,
       'MG Motor India - Customer',
@@ -391,34 +391,34 @@ begin
 
   -- 3d. retry_queue: 4 rows covering pending / succeeded / gave_up + retry-heavy.
   insert into tally_retry_queue (id, tenant_id, company_id, order_id, voucher_record_id, voucher_type, payload_xml, payload_hash, attempt_count, max_attempts, last_attempt_at, next_attempt_at, last_error, status, created_at, updated_at) values
-    (uuid_generate_v5(ns,'tally:rq:1'), default_tenant, company_id, ord_id, uuid_generate_v5(ns,'tally:vr:pending'),
+    (uuid_generate_v5(ns,'tally:rq:1'), default_tenant, v_company_id, ord_id, uuid_generate_v5(ns,'tally:vr:pending'),
      'SalesOrder', '<ENVELOPE seed=true/>', encode(digest('tally:rq:1','sha256'),'hex'),
      0, 5, null, now() - interval '5 minutes', null, 'pending', now() - interval '10 minutes', now() - interval '10 minutes'),
-    (uuid_generate_v5(ns,'tally:rq:2'), default_tenant, company_id, ord_id, uuid_generate_v5(ns,'tally:vr:imported'),
+    (uuid_generate_v5(ns,'tally:rq:2'), default_tenant, v_company_id, ord_id, uuid_generate_v5(ns,'tally:vr:imported'),
      'SalesOrder', '<ENVELOPE seed=true/>', encode(digest('tally:rq:2','sha256'),'hex'),
      2, 5, now() - interval '1 hour', now() - interval '5 minutes', '503 from bridge', 'succeeded', now() - interval '8 hours', now() - interval '1 hour'),
-    (uuid_generate_v5(ns,'tally:rq:3'), default_tenant, company_id, ord_id, uuid_generate_v5(ns,'tally:vr:failed'),
+    (uuid_generate_v5(ns,'tally:rq:3'), default_tenant, v_company_id, ord_id, uuid_generate_v5(ns,'tally:vr:failed'),
      'SalesOrder', '<ENVELOPE seed=true/>', encode(digest('tally:rq:3','sha256'),'hex'),
      5, 5, now() - interval '1 day', now() - interval '1 day', 'permanent: ledger not found', 'gave_up', now() - interval '4 days', now() - interval '1 day'),
-    (uuid_generate_v5(ns,'tally:rq:4'), default_tenant, company_id, ord_id, uuid_generate_v5(ns,'tally:vr:pending'),
+    (uuid_generate_v5(ns,'tally:rq:4'), default_tenant, v_company_id, ord_id, uuid_generate_v5(ns,'tally:vr:pending'),
      'SalesOrder', '<ENVELOPE seed=true/>', encode(digest('tally:rq:4','sha256'),'hex'),
      6, 8, now() - interval '20 minutes', now() + interval '40 minutes', '429 rate limit', 'pending', now() - interval '6 hours', now() - interval '20 minutes')
   on conflict (id) do nothing;
 
   -- 3e. sync_runs: 5 rows covering every status.
   insert into tally_sync_runs (id, tenant_id, company_id, entity, run_started_at, run_finished_at, status, rows_pulled, rows_inserted, rows_updated, rows_errored, error, triggered_by) values
-    (uuid_generate_v5(ns,'tally:sr:1'), default_tenant, company_id, 'voucher_state',     now() - interval '7 days',     now() - interval '7 days' + interval '6 minutes',  'ok',      120, 90, 25, 5,  null,                       'cron'),
-    (uuid_generate_v5(ns,'tally:sr:2'), default_tenant, company_id, 'payment_receipts',  now() - interval '3 days',     now() - interval '3 days' + interval '4 minutes',  'partial', 35,  30, 2,  3,  'two_rows_skipped',         'cron'),
-    (uuid_generate_v5(ns,'tally:sr:3'), default_tenant, company_id, 'voucher_state',     now() - interval '4 hours',    now() - interval '4 hours' + interval '15 seconds','error',   0,   0,  0,  0,  'tally_bridge_unreachable', 'cron'),
-    (uuid_generate_v5(ns,'tally:sr:4'), default_tenant, company_id, 'payment_receipts',  now() - interval '2 minutes',  null,                                              'running', 0,   0,  0,  0,  null,                       'cron'),
-    (uuid_generate_v5(ns,'tally:sr:5'), default_tenant, company_id, 'voucher_state',     now() - interval '20 minutes', now() - interval '20 minutes' + interval '90 seconds','ok',  60,  50, 8,  2,  null,                       'manual')
+    (uuid_generate_v5(ns,'tally:sr:1'), default_tenant, v_company_id, 'voucher_state',     now() - interval '7 days',     now() - interval '7 days' + interval '6 minutes',  'ok',      120, 90, 25, 5,  null,                       'cron'),
+    (uuid_generate_v5(ns,'tally:sr:2'), default_tenant, v_company_id, 'payment_receipts',  now() - interval '3 days',     now() - interval '3 days' + interval '4 minutes',  'partial', 35,  30, 2,  3,  'two_rows_skipped',         'cron'),
+    (uuid_generate_v5(ns,'tally:sr:3'), default_tenant, v_company_id, 'voucher_state',     now() - interval '4 hours',    now() - interval '4 hours' + interval '15 seconds','error',   0,   0,  0,  0,  'tally_bridge_unreachable', 'cron'),
+    (uuid_generate_v5(ns,'tally:sr:4'), default_tenant, v_company_id, 'payment_receipts',  now() - interval '2 minutes',  null,                                              'running', 0,   0,  0,  0,  null,                       'cron'),
+    (uuid_generate_v5(ns,'tally:sr:5'), default_tenant, v_company_id, 'voucher_state',     now() - interval '20 minutes', now() - interval '20 minutes' + interval '90 seconds','ok',  60,  50, 8,  2,  null,                       'manual')
   on conflict (id) do nothing;
 
   -- 3f. voucher_state mirror: a few rows showing post-import edits + cancellations.
   for i in 1..4 loop
     insert into tally_voucher_state (id, tenant_id, company_id, external_voucher_no, voucher_type, status, total, altered, cancelled, raw, last_seen_at)
     values (
-      uuid_generate_v5(ns,'tally:vs:' || i::text), default_tenant, company_id,
+      uuid_generate_v5(ns,'tally:vs:' || i::text), default_tenant, v_company_id,
       'EXT-' || lpad(i::text,6,'0'), 'SalesOrder',
       case (i % 3) when 0 then 'imported' when 1 then 'edited_in_tally' else 'cancelled_in_tally' end,
       280000 + i * 12000,

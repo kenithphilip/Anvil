@@ -137,139 +137,217 @@ Reference data the rest of the seed pivots around.
 - `payment_milestones` (7), `blanket_release_drawdown` (12 = 3 per
   BLANKET_PO contract x 4), `engineering_specs` (4).
 
-### 300_workflow_data.sql -- status: **TODO**
+### 300_workflow_data.sql -- status: **DONE**
 
 The largest single file. Sales workflow + downstream artefacts.
 
-Planned tables and floor counts:
+- `leads` 18 (all 6 `lead_status` values x 3 sources). 3 CONVERTED
+  leads back-link to opportunities via `converted_opportunity_id`.
+- `opportunities` 22 (all 11 `opportunity_stage` values x 2).
+- `projects` 15 (one per `project_phase`). `project_phase_log` 60
+  (3 historical + 1 current per project).
+- `internal_sales_orders` 30 (all 5 `internal_so_type` x all 6
+  statuses) + `internal_so_lines` 60 (2 per ISO).
+- `orders` 50 (full 10 `order_status` x 5 `order_mode` grid).
+  Anchors a 1-parent + 5-children blanket-release chain on
+  MG_MOTOR_INDIA's `OIQTLC-240123` master quote (PO numbers
+  `5100002501..5100002506`). 6 of 50 link to the BLANKET_PO
+  contract from phase 200; periodic ARC and AMC links across the
+  rest.
+- Per-order fan-out (only for non-DRAFT): 3 documents per order,
+  3 evidence rows, OCR run, ZIP scan, extraction run. BLOCKED
+  orders carry 3 unresolved validation_findings + 3 amendments
+  spanning detected/approved/rejected statuses. RECONCILED orders
+  carry 1 amendment plus 1 order_reconciliation. APPROVED orders
+  emit 1 outbound communication. Every order emits 2
+  processing_events and 1-2 audit_events tracers.
+- `source_pos` 20 (all 10 statuses x 2) + `source_po_events` 80
+  (full DRAFT->PENDING->SENT->ACK chain per row).
+- `supplier_scorecards` 6 (one per active vendor); `supplier_rfqs`
+  5 covering draft/sent/quoting/awarded/closed; `supplier_rfq_lines`
+  15 (3 per RFQ); `supplier_rfq_invitations` 15 (3 per RFQ);
+  `supplier_quotes` 12 (2 quotes per invitation in non-draft RFQs).
+- `shipments` 16 (all 8 status values x 2; cross-links to order +
+  source_po + internal_so).
+- `quote_approvals` 8 (every status x 2; PENDING rows reference
+  PENDING_REVIEW orders).
+- `service_visits` 10 (all 5 statuses x 2 visit_types);
+  `amc_schedules` 10 (all 5 statuses x 2; 3 SCHEDULED rows link to
+  generated `service_visits.id`); `car_reports` 8 (all 4 statuses;
+  one carries populated `five_why_analysis`); `closure_reports` 5
+  (3 referencing real CARs, 2 standalone).
+- `spare_recommendations` 6 across customers; `obsolete_parts` 4
+  pointing at the legacy item_master rows from phase 200.
+- `einvoices` 5 (every `einvoice_status` x 1; GENERATED rows
+  carry IRN + QR + ack_no + ewb_no).
+- `invoices` 12 (mix of draft/sent/partial/paid/overdue/void) +
+  `invoice_number_sequences` 1 + `payment_records` 6 (1 per paid
+  invoice plus 1 razorpay variant).
+- `ap_invoices` 6 (2 matched, 2 mismatched, 1 pending, 1 disputed)
+  + `ap_invoice_lines` 12 + `ap_goods_receipts` 4.
+- `deduction_queue` 3 (open / recovered / written_off).
+- `razorpay_payments` 8 (all 5 statuses).
+- `esignature_envelopes` 4 (sent/delivered/signed/declined) +
+  `esignature_events` 5.
+- `portal_tokens` 6 (4 active, 1 revoked, 1 expired) +
+  `portal_access_log` 16 + `portal_quote_acceptances` 3 +
+  `portal_reorders` 5.
 
-- `leads` (18; all 6 `lead_status` values), `opportunities`
-  (22; all 11 `opportunity_stage` values), `projects` (15; one per
-  `project_phase`), `project_phase_log` (3-5 rows per project),
-  `internal_sales_orders` (covering all 5 `internal_so_type` and
-  all 6 statuses) + `internal_so_lines`.
-- `orders` (50 rows covering every `order_status` x `order_mode`
-  combination, parent/child blanket-release chain anchored on the
-  MG `OIQTLC-240123` master quote, BLOCKED orders with >=3
-  unresolved findings, RECONCILED ones with reconciliation rows,
-  customer-format-profile-driven `format_change_summary`).
-- Per-order fan-out: `order_documents`, `evidence` (>=3 fields per
-  non-DRAFT), `validation_findings` (mix resolved/unresolved),
-  `order_amendments` (3 different statuses for one order),
-  `order_reconciliations` (RECONCILED order has one),
-  `order_schedule_lines` (>=3 for `mode_hint='blanket'`),
-  `communications` (>=1 thread per APPROVED), `documents`,
-  `ocr_runs`, `zip_scans`, `extraction_*`, `processing_events`
-  (1-3 per workflow row), `audit_events` (1-4 per workflow row).
-- `source_pos` (22; all 10 `source_po_status`) + `source_po_events`
-  (full DRAFT->PENDING->SENT->ACK chain per row), `supplier_scorecards`
-  (one per supplier, 6 suppliers), `supplier_rfqs` (5; mix of
-  statuses) + `supplier_rfq_lines` + `supplier_rfq_invitations`
-  + `supplier_quotes`.
-- `shipments` (18; all 8 status values, every `shipment_mode`,
-  one row per (order_id, source_po_id, internal_so_id) combo).
-- `quote_approvals` (every status x 2; PENDING references orders
-  in `PENDING_REVIEW`).
-- `service_visits` (12; all 5 statuses x 2 visit_types),
-  `amc_schedules` (10; all 5 statuses + all 4 visit_types),
-  `car_reports` (8; all 4 statuses, one with `five_why_analysis`),
-  `closure_reports` (5; linked to >=2 CARs).
-- `spare_recommendations`, `obsolete_parts`.
-- `einvoices` (every `einvoice_status` x 1).
-- `invoices` (12; mix of paid / partial / overdue / voided),
-  `invoice_number_sequences`, `payment_records`, `ap_invoices` +
-  `ap_invoice_lines` + `ap_goods_receipts` (6 invoices, 3-way
-  match scenarios: 2 matched, 1 qty mismatch, 1 price mismatch),
-  `deduction_queue` (3: open / resolved / written-off),
-  `razorpay_payments`.
-- `esignature_envelopes` + `_events` (sent / viewed / signed /
-  declined), `portal_tokens` + `portal_access_log` +
-  `portal_quote_acceptances` + `portal_reorders`.
-
-### 400_logs_and_analytics.sql -- status: **TODO**
+### 400_logs_and_analytics.sql -- status: **DONE**
 
 Append-only logs, analytics rollups, and channel artefacts.
 
-Planned tables and floor counts:
+- `audit_events` +201 bulk rows (1 marker + 200 cycled across
+  10 action verbs) on top of phase 300's 65 tracers, total >=250.
+- `model_routing_log` 121 (1 marker + 120 covering 10 purposes;
+  every 5th row exercises a Claude->Mistral fallback path).
+- `processing_events` +31 extras (1 marker + 30 system events
+  covering classify / route / redact / rlhf / fallback) on top of
+  phase 300's 100, total ~131.
+- `mcp_call_log` 21 (1 marker + 20 across all 6 read scopes; every
+  6th row is `denied`, every 7th is `error`).
+- `eval_cases` 20 (3 suites x ~7 cases each); `eval_runs` 5;
+  `eval_case_results` 100 (full 5x20 grid).
+- `agent_goals` 8 (all 5 statuses + all 3 goal_types);
+  `agent_steps` 76 (4 to 12 per goal); `agent_eval_runs` 5.
+- `deploys` 8 (5 preview, 3 production); `backups` 6 (3 succeeded,
+  1 failed, 2 in_progress, encoded in `notes` since the schema
+  has no status column); `audit_export_runs` 4;
+  `injection_test_runs` 3.
+- Forecast + analytics: `forecast_snapshots` 120 (4 months x 2
+  dimensions x 15 segments); `analytics_customer_monthly` 24
+  (12 months x 2 customers); `analytics_winloss_daily` 30;
+  `rlhf_feedback` 25; `rlhf_reward_daily` 30.
+- Channel: `push_subscriptions` 4 (web + fcm + inactive);
+  `push_notifications` 8 (queued/sent/failed/expired x 2);
+  `inbound_email_threads` 40; `inbound_emails` 150 (3-5 per
+  thread; all 6 status values; 4 thread states);
+  `inbound_chat_configs` 2 (Slack + Teams); `inbound_messages`
+  24 (4 channels: WhatsApp/Slack/Teams/WeChat); `voice_configs`
+  1; `voice_calls` 5 (4 statuses); `voice_call_actions` 3.
+- Network + outbound: `network_listings` 30 (3 sources);
+  `network_sourcing_queries` 4; `prospecting_campaigns` 3;
+  `prospecting_targets` 30 (all 7 statuses);
+  `prospecting_suppressions` 8 (mix tenant + global).
+- EDI: `edi_partners` 4 (X12 + EDIFACT); `edi_envelopes` 12
+  (all 6 message types and 6 statuses).
+- PLM: `plm_systems` 2 (Windchill + Arena); `plm_boms` 5;
+  `plm_changes` 8; `plm_sync_state` 4 (all 3 statuses).
+- `vertical_pack_installs` 3 (welding-equipment, automotive-tier1,
+  auto-OEM).
+- `erp_chat_sessions` 4 + `erp_chat_messages` 54 (9, 12, 15, 18
+  messages per session, all 3 roles: user/assistant/tool).
+- `print_jobs` 8 (all 5 statuses + all 3 trigger types).
 
-- `audit_events` bulk fill to **>=250 rows** total (combined with
-  per-workflow events emitted in 300).
-- `processing_events` (100), `model_routing_log` (120; every Claude
-  call has a primary/fallback path; mix of fallback-fired and
-  primary-only).
-- `eval_cases` (20 across 3 suites: extraction / validation /
-  classification), `eval_runs` (5) + `eval_case_results` (full
-  5x20 grid).
-- `agent_goals` (8; mix of active / paused / completed),
-  `agent_steps` (4-12 per goal), `agent_eval_runs` (5).
-- `deploys` (8; mix of preview / production envs and git shas),
-  `backups` (6; 3 succeeded / 1 failed / 2 in_progress),
-  `audit_export_runs` (4), `injection_test_runs` (3).
-- Security audit extensions: more `user_security_audit` rows on
-  top of phase 100, `password_reset_attempts` extra rows,
-  `auth_magic_links` extra rows, `mcp_call_log` (20).
-- Forecast + analytics: `forecast_snapshots` (120; 4 months x 2
-  dimensions x ~15 segments), `analytics_customer_monthly` (24),
-  `analytics_winloss_daily` (30), `rlhf_feedback` (25),
-  `rlhf_reward_daily` (30).
-- Channel and integration: `push_subscriptions` + `push_notifications`
-  (4 / 8), `inbound_emails` + `inbound_email_threads` +
-  `inbound_messages` (40 threads / 150 messages), `inbound_chat_configs`
-  (2: Slack + Teams), `voice_calls` + `voice_call_actions` (5 /
-  3 with extracted actions), `voice_configs` (1).
-- Outbound + integrations: `network_listings` + `network_sourcing_queries`,
-  `prospecting_campaigns` + `_targets` + `_suppressions`,
-  `edi_partners` + `edi_envelopes`, `plm_systems` + `plm_boms` +
-  `plm_changes` + `plm_sync_state`, `vertical_pack_installs` (3),
-  `erp_chat_sessions` + `erp_chat_messages`, `print_jobs`.
+Re-run safety: `audit_events`, `model_routing_log`,
+`processing_events`, and `mcp_call_log` use sentinel marker rows
+to short-circuit the bulk loops, so re-applying phase 400 is a
+no-op.
 
-### 500_erp_mirrors.sql -- status: **TODO**
+### 500_erp_mirrors.sql -- status: **DONE**
 
-Three deep ERP seeds plus a templated function for the other 14
-connectors.
+Three deep ERP seeds plus a templated PL/pgSQL helper for the
+other 14 connectors.
 
-- **Deep:** NetSuite (014, 015), SAP (017), Tally v2 (016) per
-  locked decision B. Each gets `sync_state`, 5 `sync_runs` covering
-  every status, 4 `retry_queue` rows, and the per-connector entity
-  mirrors mirroring the seeded `customers` / `item_master`.
-- **Templated:** one PL/pgSQL function called once per connector
-  for D365, Acumatica, P21, Eclipse, SX.e, Sage X3, IFS, Oracle
-  Fusion, Ramco, JDE, Plex, JobBoss, Oracle EBS, proALPHA. Per
-  connector: 1 `sync_state`, 5 `sync_runs`, 4 `retry_queue`, 3
-  rows in each applicable entity-mirror table (customers / items /
-  sales_orders / purchase_orders / inventory_balances).
-- Razorpay (020): 8 `razorpay_payments` covering created /
-  authorized / captured / refunded / failed.
+**Deep seeds (per locked decision B):**
 
-### 900_teardown.sql -- status: **TODO**
+- **NetSuite (014, 015):** sync_state 6 (one per entity:
+  customer/item/inventory/sales_order/invoice/ar_aging),
+  sync_runs 5 (covers all 4 statuses + 1 historical), retry_queue
+  4, open_orders 6, vendors 6 (mirroring real suppliers),
+  purchase_orders 8, locations 4 (3 active + 1 inactive),
+  currencies 4 (INR/USD/EUR/JPY), inventory_balances 12 (4 items
+  x 3 locations).
+- **SAP (017):** sync_state 5, sync_runs 5, retry_queue 4,
+  business_partners 6, materials 8 (mirroring item_master),
+  plants 3 (IN-Halol/IN-Pune/DE-Hamburg), currencies 4,
+  sales_orders 6, purchase_orders 5, inventory_balances 12.
+- **Tally v2 (016):** companies 1 (default), voucher_records 6
+  (every voucher status), payment_receipts 4, retry_queue 4,
+  sync_runs 5, voucher_state 4 (imported / edited / cancelled).
 
-Reverses every seed in reverse FK order, gated on:
-- the `app.seed_env` env guard;
-- a hostname check that rejects `*.production.*` patterns;
-- the `seed_marker = 'anvil-test-seed-v1'` jsonb marker;
-- deterministic seed-namespace UUIDs.
+**Templated minimum** for D365, Acumatica, P21, Eclipse, SX.e,
+Sage X3, IFS, Oracle Fusion, Ramco, JDE, Plex, JobBoss, Oracle
+EBS, proALPHA. The `_seed_erp_templated(prefix)` helper handles
+each connector: 1 sync_state row, 5 sync_runs (every status + 1
+historical), 4 retry_queue (pending/succeeded/gave_up + 1
+retry-heavy), 3 customers, 3 items (the helper auto-detects the
+items table variant: `_items` / `_stock_items` /
+`_released_products` / `_products`), 3 sales_orders, plus 3
+purchase_orders + 3 inventory_balances + 3
+branches/warehouses/plants/locations rows where the connector
+exposes those mirror tables. Helper is dropped after `commit;`.
 
-Order: 500 -> 400 -> 300 -> 200 -> 100 (reverse of apply order).
-For tables without a jsonb marker column, the script deletes by
-formula: `id in (select uuid_generate_v5(seed_ns, '<entity>:<key>') ...)`.
+`status='processing'` rows are intentionally not seeded (added
+by migration 059 alongside the `claimed_at` / `claimed_by`
+columns; only meaningful when a real worker has claimed the row).
 
-### 999_verify.sql -- status: **TODO**
+Razorpay (020) was seeded in phase 300 (8 razorpay_payments
+covering all 5 statuses); phase 500 leaves it alone.
 
-Read-only verification queries:
-1. Row-count summary across all 259 tables.
-2. State-coverage check: one row per enum value, one per status,
-   asserting `count(*) >= 1`.
-3. Cross-module-link audit: one query per "CROSS-MODULE LINK
-   REQUIREMENTS" item from the prompt.
-4. RBAC fixture audit: 1 user per role, 1 user per status.
-5. "What would break the UI": SELECT statements that mirror what
-   each v3 screen's API endpoint runs, asserting non-zero results.
+### 900_teardown.sql -- status: **DONE**
 
-### 600_storage_uploads.sql -- status: **OPTIONAL, deferred**
+Two safety guards before any DELETE runs:
+1. `app.seed_env` must be `staging` / `local` / `ci`.
+2. Production hostname guard: refuses if `cluster_name` or
+   `application_name` contains `production` or `prod-`.
 
-Only emitted if `SEED_INCLUDE_STORAGE=true`. Either uses
-`pg_largeobject` or instructs the operator to manually upload
-5 sample PDFs from `tests/fixtures/`. Not required for v1 scope.
+Reverse-FK-order delete: 500 -> 400 -> 300 -> 200 -> 100. Selection
+strategy per table:
+- jsonb seed_marker on `raw` / `payload` / `metadata` columns
+  where the seed embedded one.
+- deterministic UUID formula via `uuid_generate_v5(seed_ns,
+  '<entity>:<key>')` for tables without a marker column (sync_state
+  rows, NetSuite open_orders, etc.).
+- field-value matches for log-shaped tables (`audit_events.detail
+  like 'phase400:%'`, `processing_events.case_id like 'case:%'`,
+  `model_routing_log.purpose = 'phase400_marker'`,
+  `mcp_call_log.tool = 'phase400_marker'`).
+
+Corpus seed (`supabase/seed.sql`) is preserved: its rows do not
+carry our `seed_marker` and its UUIDs are not derived from our
+namespace, so no WHERE clause here can match them.
+
+Idempotent: every delete returns 0 rows on the second run.
+
+`obara_role.operator` enum value (added by phase 100) is not
+removed: dropping enum values requires a full type rebuild and
+risks breaking unrelated code.
+
+### 999_verify.sql -- status: **DONE**
+
+Read-only. Six sections:
+1. **Row-count summary** across every public-schema table.
+2. **State coverage**, two parts:
+   a. **Enum coverage:** auto-discovers every column in the public
+      schema with one of the 14 known enum types, then asserts
+      `count(*) >= 1` for each enum value.
+   b. **Text-checked status coverage:** explicit (table, column,
+      expected_value) tuples for every text-checked status /
+      direction / type column (~120 rows).
+3. **Cross-module link audit:** 20 named checks asserting each
+   CROSS-MODULE LINK REQUIREMENT row count is `>= floor`.
+4. **RBAC fixture audit:** 1 user per role (7) and per status (4).
+5. **UI smoke probes:** 110+ named probes mirroring what each v3
+   screen's API endpoint runs.
+6. **Single-line summary:** sentinel re-check; emits `verify: PASS`
+   or `verify: FAIL (N below floor)` so output is greppable.
+
+### 600_storage_uploads.sql -- status: **OUT OF SCOPE**
+
+Per prompt section E, this file is emitted only when
+`SEED_INCLUDE_STORAGE=true`. That env var was not in scope; the
+seed pack ships without it. The `documents` rows seeded by
+phase 300 carry deterministic `path` strings only (option E.1);
+byte uploads remain a separate, out-of-band concern handled by
+the `documents.upload` API path. If real PDFs are ever needed
+for storage-bucket smoke tests, follow-up work would either:
+
+- Hand-author 5 minimal valid PDFs into `tests/fixtures/` and
+  emit a 600 file that uses `pg_largeobject` or a documented
+  `supabase storage` upload sequence, or
+- Skip storage seeding entirely and rely on the API path for
+  test-time uploads.
 
 ## Open scoping notes (decisions already locked but worth flagging)
 

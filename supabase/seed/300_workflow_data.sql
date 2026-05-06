@@ -578,6 +578,10 @@ declare
   primary_admin  uuid := uuid_generate_v5(uuid_ns_dns(), 'anvil-seed-user:admin.primary@anvil.test');
   prc_alpha      uuid := uuid_generate_v5(uuid_ns_dns(), 'anvil-seed-user:prc.alpha@anvil.test');
   statuses       text[] := array['DRAFT','PENDING_INTERNAL_APPROVAL','SENT_TO_SUPPLIER','SUPPLIER_ACK','PRICE_CHANGED','ETA_CONFIRMED','DELAYED','RECEIVED','CLOSED','CANCELLED'];
+  -- Real order_status values from the 50-order grid above. Used to
+  -- pick a real order_id for the source_pos.order_id FK; the
+  -- source_po_status (`statuses` above) is unrelated to this lookup.
+  ord_statuses   text[] := array['DRAFT','PENDING_REVIEW','APPROVED','BLOCKED','DUPLICATE','REUSED','EXPORTED_TO_TALLY','FAILED_TALLY_IMPORT','RECONCILED','CANCELLED'];
   s              text;
   k              int := 0;
   spo_id         uuid;
@@ -589,8 +593,9 @@ begin
   foreach s in array statuses loop
     for variant in 1..2 loop
       k := k + 1;
-      -- Attach to a non-DRAFT, non-INTERNAL order. Pick deterministically.
-      select uuid_generate_v5(ns, 'order:' || statuses[((k - 1) % array_length(statuses,1)) + 1] || ':SPARES') into ord_id;
+      -- Attach to a real order. Pick deterministically by rotating
+      -- through the 10 order_status values (NOT source_po_status).
+      select uuid_generate_v5(ns, 'order:' || ord_statuses[((k - 1) % array_length(ord_statuses,1)) + 1] || ':SPARES') into ord_id;
 
       spo_id := uuid_generate_v5(ns, 'spo:' || s || ':' || variant::text);
       insert into source_pos (id, tenant_id, order_id, reference, supplier, country, currency,
@@ -692,6 +697,11 @@ declare
   default_tenant uuid := '00000000-0000-0000-0000-000000000001';
   ns             uuid := 'd7a7e5e4-0001-0003-0001-000000000001';
   statuses       text[] := array['PLANNED','READY','IN_TRANSIT','AT_PORT','CLEARED','DELIVERED','POD_RECEIVED','EXCEPTION'];
+  -- order_status values (different enum from shipment status above).
+  -- Used to pick a real order_id for the FK; we cycle through 8
+  -- non-DRAFT order_status values so shipments only attach to
+  -- approved/in-flight orders.
+  ord_statuses   text[] := array['PENDING_REVIEW','APPROVED','BLOCKED','DUPLICATE','REUSED','EXPORTED_TO_TALLY','FAILED_TALLY_IMPORT','RECONCILED'];
   modes          text[] := array['SEA','AIR','ROAD','COURIER'];
   s              text;
   k              int := 0;
@@ -702,7 +712,7 @@ begin
   foreach s in array statuses loop
     for variant in 1..2 loop
       k := k + 1;
-      ord_id := uuid_generate_v5(ns, 'order:' || statuses[((k - 1) % 8) + 1] || ':' || modes[((k - 1) % 4) + 1]);
+      ord_id := uuid_generate_v5(ns, 'order:' || ord_statuses[((k - 1) % 8) + 1] || ':' || modes[((k - 1) % 4) + 1]);
       spo_id := case (k % 3) when 0 then uuid_generate_v5(ns, 'spo:SUPPLIER_ACK:1') else null end;
       iso_id := case (k % 5) when 0 then uuid_generate_v5(ns, 'iso:WARRANTY_REPLACEMENT:DISPATCHED') else null end;
 

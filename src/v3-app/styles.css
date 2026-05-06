@@ -3600,7 +3600,12 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .lp-bleed-kbd { font-family: var(--mono); font-size: 9px; color: var(--ink-4, var(--ink-3)); }
 
 .lp-ws { display: grid; grid-template-columns: 160px 1fr 220px; min-height: 420px; font-size: 11px; color: var(--ink-2); }
-@media (max-width: 720px) { .lp-ws { grid-template-columns: 1fr; } .lp-ws-side, .lp-ws-right { display: none; } }
+/* Mobile: drop side rails and stop forcing 420px min-height so the
+   bleed section doesn't trail a giant empty box on narrow viewports. */
+@media (max-width: 720px) {
+  .lp-ws { grid-template-columns: 1fr; min-height: 0; }
+  .lp-ws-side, .lp-ws-right { display: none; }
+}
 .lp-ws-side { background: var(--paper-2); border-right: 1px solid var(--hairline); padding: 14px 12px; font-family: var(--sans); }
 .lp-ws-grp { font-family: var(--mono); font-size: 9px; color: var(--ink-4, var(--ink-3)); letter-spacing: 0.08em; text-transform: uppercase; margin: 8px 0 4px; }
 .lp-ws-it { padding: 5px 8px; display: flex; align-items: center; gap: 7px; font-size: 11px; cursor: default; color: var(--ink-2); }
@@ -4034,3 +4039,51 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .ws-drop-icon svg { width: 36px; height: 36px; }
 .ws-drop-h { font-weight: 700; font-size: 16px; color: var(--ink); }
 .ws-drop-sub { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+
+/* ========================================================================
+   Mobile padding overrides (PR fix for "lots of empty space" report).
+   ----------------------------------------------------------------------
+   Default section padding is 96px / 80px which on a 380px-wide mobile
+   viewport leaves giant cream gaps between section content. Halve all
+   section paddings on narrow viewports; the design's full padding is
+   only meant for >=900px screens.
+   ======================================================================== */
+@media (max-width: 720px) {
+  .lp-connectors,
+  .lp-problem,
+  .lp-flow,
+  .lp-proof,
+  .lp-coverage,
+  .lp-principles,
+  .lp-pricing,
+  .lp-faq,
+  .lp-product { padding-top: 56px; padding-bottom: 56px; }
+  .lp-product { padding-bottom: 0; }
+  .lp-changelog,
+  .lp-compare,
+  .lp-founder { padding-top: 48px; padding-bottom: 48px; }
+  .lp-cta { padding-top: 64px; padding-bottom: 64px; }
+  .lp-sec { padding-top: 36px; padding-bottom: 36px; }
+  .lp-bleed-inner { padding-top: 48px; padding-bottom: 0; }
+  .lp-bleed-floor { height: 24px; }
+  /* Drop the demo aspect-ratio min on narrow widths so the hero
+     animated PO trace doesn't blow up vertically. */
+  .lp-demo-stage { aspect-ratio: 1.1 / 1; }
+  /* Tighten the h1 line-height and prevent the kinetic-pair text
+     from wrapping to look duplicated. */
+  .lp-h1 { line-height: 1.02; word-break: keep-all; overflow-wrap: break-word; }
+  .lp-h1 br { display: block; }
+  /* Make sure the hero-grid stacks with sensible spacing instead of
+     inheriting the 56px `gap` from the desktop grid. */
+  .lp-hero-grid { gap: 28px; padding: 36px 0 36px; }
+  /* Footer columns: 1 col on mobile is more readable than 2. */
+  .lp-foot-top { grid-template-columns: 1fr; gap: 20px; padding-bottom: 24px; }
+}
+
+/* The hero h1 spans an aria-live attribute on the kinetic pair.
+   Some screen readers + screenshot OCR have been seen to render the
+   announced text on a separate line, making "Your ERP wants" look
+   duplicated. Wrapping the static lead-in + the kinetic span in a
+   single non-breaking inline-block prevents the wrap from happening
+   between them. */
+.lp-h1-segment { display: inline-block; }

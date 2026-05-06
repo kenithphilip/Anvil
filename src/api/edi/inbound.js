@@ -11,6 +11,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { parseX12, parseEdifact, buildX12_997 } from "../_lib/edi.js";
+import { safeAwait } from "../_lib/safe-thenable.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -42,7 +43,7 @@ export default async function handler(req, res) {
     }).select("*").single();
     if (ins.error) throw new Error(ins.error.message);
     if (body.partner_id) {
-      await svc.rpc("noop").catch(() => {});
+      await safeAwait(svc.rpc("noop"));
       await svc.from("edi_partners").update({ envelopes_in: undefined }).eq("id", body.partner_id);
     }
     // Generate functional ack.

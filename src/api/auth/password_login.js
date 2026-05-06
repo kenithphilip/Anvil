@@ -15,6 +15,7 @@ import { decryptField } from "../_lib/secrets.js";
 import { verifyTotpAndConsume } from "../_lib/totp.js";
 import { checkRateLimit, recordRateLimitAttempt } from "../_lib/rate-limit.js";
 import { createClient } from "@supabase/supabase-js";
+import { safeAwait } from "../_lib/safe-thenable.js";
 
 const readActiveTotpSecret = (row) => {
   if (!row) return null;
@@ -89,12 +90,12 @@ export default async function handler(req, res) {
       if (!verifyRes.valid) {
         try { await anon.auth.signOut(); } catch (_) { /* ignore */ }
         await recordRateLimitAttempt(svc, "mfa_attempts", "login:" + user.id);
-        await svc.from("user_security_audit").insert({
+        await safeAwait(svc.from("user_security_audit").insert({
           user_id: user.id,
           user_email: user.email,
           event: "mfa_challenge_fail",
           detail: { phase: "login", replayed: !!verifyRes.replayed },
-        }).catch(() => {});
+        }));
         const message = verifyRes.replayed
           ? "This code has already been used. Wait for the next code from your authenticator."
           : "Two-factor code is incorrect. Try the current code from your authenticator.";
@@ -105,12 +106,12 @@ export default async function handler(req, res) {
           },
         });
       }
-      await svc.from("user_security_audit").insert({
+      await safeAwait(svc.from("user_security_audit").insert({
         user_id: user.id,
         user_email: user.email,
         event: "mfa_challenge_ok",
         detail: { phase: "login" },
-      }).catch(() => {});
+      }));
     }
 
     // APPROVAL GATE.

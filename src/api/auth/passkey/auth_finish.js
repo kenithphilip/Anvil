@@ -16,6 +16,7 @@ import { serviceClient } from "../../_lib/supabase.js";
 import { verifyAuthenticationResponse } from "@simplewebauthn/server";
 import { ensureMembership, getMemberStatus, defaultTenantId } from "../../_lib/tenancy.js";
 import { createClient } from "@supabase/supabase-js";
+import { safeAwait } from "../../_lib/safe-thenable.js";
 import crypto from "node:crypto";
 
 const rpIdFromOrigin = () => {
@@ -123,10 +124,10 @@ export default async function handler(req, res) {
     await svc.from("user_passkeys").delete().eq("credential_id", challengeId);
 
     if (!verification.verified) {
-      await svc.from("user_security_audit").insert({
+      await safeAwait(svc.from("user_security_audit").insert({
         user_id: user.id, user_email: email,
         event: "passkey_login_fail",
-      }).catch(() => {});
+      }));
       return json(res, 401, { error: { code: "PASSKEY_FAIL", message: "Could not verify passkey." } });
     }
 
@@ -152,10 +153,10 @@ export default async function handler(req, res) {
 
     // Mint a session for the user.
     const sess = await mintSessionForUser(svc, email);
-    await svc.from("user_security_audit").insert({
+    await safeAwait(svc.from("user_security_audit").insert({
       user_id: user.id, user_email: email,
       event: "passkey_login_ok",
-    }).catch(() => {});
+    }));
     return json(res, 200, {
       user: {
         id: user.id,

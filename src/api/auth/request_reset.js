@@ -22,6 +22,7 @@
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
+import { safeAwait } from "../_lib/safe-thenable.js";
 
 const RESET_RATE_LIMIT = Number(process.env.RESET_RATE_LIMIT || 5);
 const RESET_RATE_WINDOW_MIN = 60;
@@ -141,12 +142,12 @@ export default async function handler(req, res) {
     if (!rate.allowed) {
       // Audit the throttle hit but answer 200 to avoid revealing
       // anything to a stuffing attacker.
-      await svc.from("user_security_audit").insert({
+      await safeAwait(svc.from("user_security_audit").insert({
         user_email: email,
         event: "password_reset_requested",
         ip, user_agent: userAgent,
         detail: { throttled: true, count: rate.count },
-      }).catch(() => {});
+      }));
       return json(res, 200, {
         ok: true,
         throttled: true,
@@ -168,12 +169,12 @@ export default async function handler(req, res) {
 
     if (!user) {
       // Audit the failed lookup but DO NOT reveal it to the caller.
-      await svc.from("user_security_audit").insert({
+      await safeAwait(svc.from("user_security_audit").insert({
         user_email: email,
         event: "password_reset_requested",
         ip, user_agent: userAgent,
         detail: { unknown_account: true },
-      }).catch(() => {});
+      }));
       return json(res, 200, { ok: true, message: "If an account exists for that address, a reset email has been sent." });
     }
 
@@ -189,13 +190,13 @@ export default async function handler(req, res) {
       actionLink = link.data?.properties?.action_link || null;
     } catch (err) {
       // Don't surface; audit and respond generically.
-      await svc.from("user_security_audit").insert({
+      await safeAwait(svc.from("user_security_audit").insert({
         user_id: user.id,
         user_email: email,
         event: "password_reset_requested",
         ip, user_agent: userAgent,
         detail: { error: err.message?.slice(0, 240) },
-      }).catch(() => {});
+      }));
       return json(res, 200, { ok: true, message: "If an account exists for that address, a reset email has been sent." });
     }
 
@@ -203,13 +204,13 @@ export default async function handler(req, res) {
       ? await sendResetEmail({ to: email, name: user.user_metadata?.name, actionLink })
       : { provider: "manual", sent: false };
 
-    await svc.from("user_security_audit").insert({
+    await safeAwait(svc.from("user_security_audit").insert({
       user_id: user.id,
       user_email: email,
       event: "password_reset_requested",
       ip, user_agent: userAgent,
       detail: { provider: sendResult.provider, sent: sendResult.sent },
-    }).catch(() => {});
+    }));
 
     // Audit H2 (May 2026): never return the live recovery token in
     // the API response. Even in dev, exposing the action_link to the

@@ -10,6 +10,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../../_li
 import { resolveContext } from "../../_lib/auth.js";
 import { serviceClient } from "../../_lib/supabase.js";
 import { verifyRegistrationResponse } from "@simplewebauthn/server";
+import { safeAwait } from "../../_lib/safe-thenable.js";
 import crypto from "node:crypto";
 
 const rpIdFromOrigin = () => {
@@ -95,12 +96,12 @@ export default async function handler(req, res) {
       last_security_change_at: new Date().toISOString(),
     }, { onConflict: "user_id" });
 
-    await svc.from("user_security_audit").insert({
+    await safeAwait(svc.from("user_security_audit").insert({
       user_id: ctx.user.id,
       user_email: ctx.user.email,
       event: "passkey_registered",
       detail: { label: pending.label, device: info.credentialDeviceType },
-    }).catch(() => {});
+    }));
 
     return json(res, 200, { ok: true, credential_id: credentialIdB64 });
   } catch (err) {

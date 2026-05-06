@@ -101,6 +101,44 @@ end $diag2$;
 -- cast strings to `obara_role` freely.
 alter type obara_role add value if not exists 'operator';
 
+-- ───────────────────────────────────────────────────────────────────
+-- 1b. AUTH USERS BACKFILL  --  must run OUTSIDE the explicit
+-- transaction below so the fix lands even if later phases roll back.
+-- Earlier seed versions inserted NULL for the GoTrue token columns
+-- which the Go struct decodes as `string` (NOT *string) -- causing
+-- "Database error querying schema" on every signin / magic-link
+-- attempt. The plain UPDATE auto-commits per psql's implicit
+-- per-statement transaction.
+-- ───────────────────────────────────────────────────────────────────
+do $backfill$
+begin
+  if not exists (select 1 from information_schema.schemata where schema_name = 'auth') then
+    raise notice 'auth schema not found; skipping GoTrue token backfill.';
+    return;
+  end if;
+  update auth.users set
+    confirmation_token         = coalesce(confirmation_token, ''),
+    recovery_token             = coalesce(recovery_token, ''),
+    email_change               = coalesce(email_change, ''),
+    email_change_token_new     = coalesce(email_change_token_new, ''),
+    email_change_token_current = coalesce(email_change_token_current, ''),
+    phone_change               = coalesce(phone_change, ''),
+    phone_change_token         = coalesce(phone_change_token, ''),
+    reauthentication_token     = coalesce(reauthentication_token, ''),
+    is_super_admin             = coalesce(is_super_admin, false)
+  where email like '%@anvil.test'
+    and (confirmation_token is null
+         or recovery_token is null
+         or email_change is null
+         or email_change_token_new is null
+         or email_change_token_current is null
+         or phone_change is null
+         or phone_change_token is null
+         or reauthentication_token is null
+         or is_super_admin is null);
+  raise notice 'PROBE2: backfill UPDATE finished, rowcount=%', (select count(*) from auth.users where email like '%@anvil.test');
+end $backfill$;
+
 begin;
 
 -- Best-effort: prefer the postgres role inside the transaction. Harmless if not permitted.
@@ -135,33 +173,7 @@ begin
     return;
   end if;
 
-  -- Backfill empty-string tokens on previously-seeded rows. Earlier
-  -- versions of this seed inserted NULL into confirmation_token /
-  -- recovery_token / email_change which GoTrue rejects on signin
-  -- ('Database error querying schema'). Fix in place; no impact on
-  -- properly-seeded rows.
-  update auth.users set
-    confirmation_token         = coalesce(confirmation_token, ''),
-    recovery_token             = coalesce(recovery_token, ''),
-    email_change               = coalesce(email_change, ''),
-    email_change_token_new     = coalesce(email_change_token_new, ''),
-    email_change_token_current = coalesce(email_change_token_current, ''),
-    phone_change               = coalesce(phone_change, ''),
-    phone_change_token         = coalesce(phone_change_token, ''),
-    reauthentication_token     = coalesce(reauthentication_token, ''),
-    is_super_admin             = coalesce(is_super_admin, false)
-  where email like '%@anvil.test'
-    and (confirmation_token is null
-         or recovery_token is null
-         or email_change is null
-         or email_change_token_new is null
-         or email_change_token_current is null
-         or phone_change is null
-         or phone_change_token is null
-         or reauthentication_token is null
-         or is_super_admin is null);
-
-    -- bcrypt the shared password once. pgcrypto is enabled in 001.
+  -- bcrypt the shared password once. pgcrypto is enabled in 001.
   password_hash := crypt('Anvil!Seed#2026', gen_salt('bf', 10));
 
   for rec in select * from (values

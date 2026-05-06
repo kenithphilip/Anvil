@@ -17,9 +17,14 @@ create table if not exists push_subscriptions (
   user_agent text,
   is_active boolean not null default true,
   last_seen_at timestamptz not null default now(),
-  created_at timestamptz not null default now(),
-  unique (tenant_id, user_id, coalesce(endpoint, device_token))
+  created_at timestamptz not null default now()
 );
+
+-- Postgres rejects expression-valued constraints (`unique (..., coalesce(...))`)
+-- inside CREATE TABLE; the same uniqueness lives as a unique index instead.
+-- Identity column is endpoint when web-push, device_token when fcm/apns.
+create unique index if not exists push_subs_uniq_dedup
+  on push_subscriptions (tenant_id, user_id, coalesce(endpoint, device_token));
 
 create index if not exists push_subs_user_idx on push_subscriptions (tenant_id, user_id, is_active);
 

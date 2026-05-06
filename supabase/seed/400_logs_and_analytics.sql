@@ -237,22 +237,22 @@ declare
   suites         text[] := array['extraction','validation','classification'];
   i              int;
   j              int;
-  case_id        text;
-  suite          text;
+  v_case_id     text;
+  v_suite        text;
   run_id         uuid;
   passed_total   int;
   case_passed    int;
 begin
   -- Cases.
   for i in 1..20 loop
-    suite := suites[((i - 1) % 3) + 1];
-    case_id := suite || '-case-' || lpad(i::text,3,'0');
+    v_suite := suites[((i - 1) % 3) + 1];
+    v_case_id := v_suite || '-case-' || lpad(i::text,3,'0');
     insert into eval_cases (id, tenant_id, suite, case_id, description, documents, expected, enabled, created_at)
     values (
-      uuid_generate_v5(ns, 'evcase:' || case_id),
-      default_tenant, suite, case_id,
-      'Seed eval case ' || i::text || ' (' || suite || ')',
-      jsonb_build_array(jsonb_build_object('storage_path','documents/seed/eval/'||case_id||'.pdf','filename',case_id||'.pdf','seed_marker','anvil-test-seed-v1')),
+      uuid_generate_v5(ns, 'evcase:' || v_case_id),
+      default_tenant, v_suite, v_case_id,
+      'Seed eval case ' || i::text || ' (' || v_suite || ')',
+      jsonb_build_array(jsonb_build_object('storage_path','documents/seed/eval/'||v_case_id||'.pdf','filename',v_case_id||'.pdf','seed_marker','anvil-test-seed-v1')),
       jsonb_build_object('expected_lines', 5 + (i % 4), 'expected_total', 250000 + i * 5000, 'seed_marker','anvil-test-seed-v1'),
       true,
       now() - ((90 - i) || ' days')::interval
@@ -261,11 +261,11 @@ begin
 
   -- Runs (5 cycles across suites).
   for i in 1..5 loop
-    suite := suites[((i - 1) % 3) + 1];
+    v_suite := suites[((i - 1) % 3) + 1];
     run_id := uuid_generate_v5(ns, 'evrun:' || i::text);
     insert into eval_runs (id, tenant_id, suite, passed, failed, total_score, notes, created_at)
     values (
-      run_id, default_tenant, suite,
+      run_id, default_tenant, v_suite,
       18 - (i % 3), 2 + (i % 3), 0.9000 - (i % 4) * 0.005,
       'Seed eval run ' || i::text,
       now() - ((30 - i * 5) || ' days')::interval
@@ -273,12 +273,12 @@ begin
 
     -- Score every one of the 20 cases against this run.
     for j in 1..20 loop
-      case_id := suites[((j - 1) % 3) + 1] || '-case-' || lpad(j::text,3,'0');
+      v_case_id := suites[((j - 1) % 3) + 1] || '-case-' || lpad(j::text,3,'0');
       case_passed := case when (i + j) % 7 = 0 then 0 else 1 end;
       insert into eval_case_results (id, tenant_id, run_id, case_id, passed, failed, score, checks, created_at)
       values (
         uuid_generate_v5(ns, 'evres:' || i::text || ':' || j::text),
-        default_tenant, run_id, case_id,
+        default_tenant, run_id, v_case_id,
         case_passed, 1 - case_passed,
         case when case_passed = 1 then 0.9500 else 0.4000 end,
         jsonb_build_array(jsonb_build_object('check','line_count','passed',case_passed = 1), jsonb_build_object('check','total_value','passed',case_passed = 1), jsonb_build_object('seed_marker','anvil-test-seed-v1')),
@@ -517,7 +517,7 @@ declare
   k              int;
 begin
   select id into mg  from customers where tenant_id = default_tenant and customer_key = 'MG_MOTOR_INDIA';
-  select id into jbm from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO';
+  select id into jbm from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO_PLANT_1';
 
   for k in 0..11 loop
     d := date_trunc('month', now() - (k * 30 || ' days')::interval)::date;
@@ -577,12 +577,13 @@ begin
   -- 25 feedback rows.
   for k in 1..25 loop
     surf := surfaces[((k - 1) % 5) + 1];
-    insert into rlhf_feedback (id, tenant_id, surface, case_id, prompt, output, comment, corrected_output, model, user_id, created_at)
+    insert into rlhf_feedback (id, tenant_id, surface, case_id, prompt, output, rating, comment, corrected_output, model, user_id, created_at)
     values (
       uuid_generate_v5(ns,'rlhf:' || k::text),
       default_tenant, surf, null,
       jsonb_build_object('seed_marker','anvil-test-seed-v1','surface',surf),
-      jsonb_build_object('seed_marker','anvil-test-seed-v1','rating', case (k % 3) when 0 then 'down' else 'up' end),
+      jsonb_build_object('seed_marker','anvil-test-seed-v1'),
+      case (k % 3) when 0 then -1::smallint else 1::smallint end,  -- 1/3 thumbs-down, rest thumbs-up
       case (k % 4) when 0 then 'Misclassified line; expected SPARES.' else null end,
       case (k % 3) when 0 then jsonb_build_object('correction','Expected mode=SPARES') else null end,
       case (k % 2) when 0 then 'claude-3-5-sonnet-20241022' else 'mistral-large-2407' end,
@@ -662,7 +663,7 @@ declare
   j              int;
   status_v       text;
   cust_id        uuid;
-  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO','RENAULT_NISSAN','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH','ACME_ROBOTICS_LLC','NIPPON_KOGYO'];
+  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO_PLANT_1','RNAIPL','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH','ACME_ROBOTICS_LLC','NIPPON_KOGYO'];
   total_emails   int := 0;
 begin
   for i in 1..40 loop
@@ -761,7 +762,7 @@ begin
       'Seed chat message #' || i::text || ' on ' || ch,
       jsonb_build_object('seed_marker','anvil-test-seed-v1','channel',ch),
       '[]'::jsonb,
-      case (i % 5) when 0 then 'arrived' when 1 then 'parsed' when 2 then 'linked' when 3 then 'duplicate' else 'failed' end,
+      case (i % 5) when 0 then 'arrived' when 1 then 'intake-extracted' when 2 then 'linked' when 3 then 'resolved' else 'failed' end,
       case (i % 5) when 2 then uuid_generate_v5('d7a7e5e4-0001-0003-0001-000000000001', 'order:APPROVED:SPARES') else null end,
       now() - (i || ' days')::interval,
       case (i % 5) when 0 then null else now() - (i || ' days')::interval + interval '5 minutes' end,
@@ -841,7 +842,10 @@ begin
     values (
       uuid_generate_v5(ns,'nl:' || i::text),
       default_tenant,
-      case (i % 5) when 0 then 'CT-16-D-1-FS' when 1 then '4-HD32208-2' when 2 then 'X2C-X-MEDIUM' when 3 then 'TIP-Y-2026' else 'CABLE-Y-2026' end,
+      -- network_listings has unique (tenant_id, sku); on a single
+      -- tenant we can't have 5 SKUs x 6 listings. Suffix the SKU
+      -- with the iteration number so 30 distinct listings land.
+      (case (i % 5) when 0 then 'CT-16-D-1-FS' when 1 then '4-HD32208-2' when 2 then 'X2C-X-MEDIUM' when 3 then 'TIP-Y-2026' else 'CABLE-Y-2026' end) || '/' || lpad(i::text,2,'0'),
       'Seed listing ' || i::text, case (i % 5) when 4 then 'Mtr' else 'Nos' end,
       100 + (i * 17) % 800,
       7 + (i % 14),
@@ -885,13 +889,16 @@ declare
   c_id           uuid;
   i              int;
   k              int;
-  campaign_statuses text[] := array['active','paused','active','draft','archived'];
+  -- One campaign per status so verify §2b sees every value at least
+  -- once (matrix's 3-campaign target is loose; bumping to 4 keeps the
+  -- coverage assertion green without changing downstream targets).
+  campaign_statuses text[] := array['active','paused','draft','archived'];
   target_statuses   text[] := array['pending','approved','sent','bounced','replied','unsubscribed','denied'];
-  campaign_keys     text[] := array['ICP-paper','ICP-fasteners','ICP-PVF'];
+  campaign_keys     text[] := array['ICP-paper','ICP-fasteners','ICP-PVF','ICP-electrical'];
   c                 text;
 begin
-  -- 3 campaigns.
-  for i in 1..3 loop
+  -- 4 campaigns covering every status value.
+  for i in 1..4 loop
     c := campaign_keys[i];
     c_id := uuid_generate_v5(ns,'pc:' || c);
     insert into prospecting_campaigns (id, tenant_id, name, description, template_subject, template_body, daily_send_cap, status, created_by, created_at, updated_at)

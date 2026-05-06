@@ -483,9 +483,12 @@ begin
 
   -- 1. sync_state: a single row covering 'sales_order'. Some
   -- connectors require additional rows but per matrix one is enough.
+  -- The error/last_error column name varies per connector (older
+  -- connectors use 'error', newer ones 'last_error'). It's nullable
+  -- in every variant; omit it to keep the function generic.
   execute format($q$
-    insert into %I (id, tenant_id, entity, last_sync_at, status, rows_pulled, error)
-    values (uuid_generate_v5($1,'erp:%I:ss'), $2, 'sales_order', now() - interval '4 minutes', 'idle', 88, null)
+    insert into %I (id, tenant_id, entity, last_sync_at, status, rows_pulled)
+    values (uuid_generate_v5($1,'erp:%I:ss'), $2, 'sales_order', now() - interval '4 minutes', 'idle', 88)
     on conflict (tenant_id, entity) do nothing
   $q$, p_prefix || '_sync_state', p_prefix) using ns, default_tenant;
 

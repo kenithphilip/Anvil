@@ -889,13 +889,16 @@ declare
   c_id           uuid;
   i              int;
   k              int;
-  campaign_statuses text[] := array['active','paused','active','draft','archived'];
+  -- One campaign per status so verify §2b sees every value at least
+  -- once (matrix's 3-campaign target is loose; bumping to 4 keeps the
+  -- coverage assertion green without changing downstream targets).
+  campaign_statuses text[] := array['active','paused','draft','archived'];
   target_statuses   text[] := array['pending','approved','sent','bounced','replied','unsubscribed','denied'];
-  campaign_keys     text[] := array['ICP-paper','ICP-fasteners','ICP-PVF'];
+  campaign_keys     text[] := array['ICP-paper','ICP-fasteners','ICP-PVF','ICP-electrical'];
   c                 text;
 begin
-  -- 3 campaigns.
-  for i in 1..3 loop
+  -- 4 campaigns covering every status value.
+  for i in 1..4 loop
     c := campaign_keys[i];
     c_id := uuid_generate_v5(ns,'pc:' || c);
     insert into prospecting_campaigns (id, tenant_id, name, description, template_subject, template_body, daily_send_cap, status, created_by, created_at, updated_at)

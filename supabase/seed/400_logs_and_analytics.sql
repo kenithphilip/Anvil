@@ -762,7 +762,7 @@ begin
       'Seed chat message #' || i::text || ' on ' || ch,
       jsonb_build_object('seed_marker','anvil-test-seed-v1','channel',ch),
       '[]'::jsonb,
-      case (i % 5) when 0 then 'arrived' when 1 then 'parsed' when 2 then 'linked' when 3 then 'duplicate' else 'failed' end,
+      case (i % 5) when 0 then 'arrived' when 1 then 'intake-extracted' when 2 then 'linked' when 3 then 'resolved' else 'failed' end,
       case (i % 5) when 2 then uuid_generate_v5('d7a7e5e4-0001-0003-0001-000000000001', 'order:APPROVED:SPARES') else null end,
       now() - (i || ' days')::interval,
       case (i % 5) when 0 then null else now() - (i || ' days')::interval + interval '5 minutes' end,

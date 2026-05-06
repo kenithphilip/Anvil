@@ -577,12 +577,13 @@ begin
   -- 25 feedback rows.
   for k in 1..25 loop
     surf := surfaces[((k - 1) % 5) + 1];
-    insert into rlhf_feedback (id, tenant_id, surface, case_id, prompt, output, comment, corrected_output, model, user_id, created_at)
+    insert into rlhf_feedback (id, tenant_id, surface, case_id, prompt, output, rating, comment, corrected_output, model, user_id, created_at)
     values (
       uuid_generate_v5(ns,'rlhf:' || k::text),
       default_tenant, surf, null,
       jsonb_build_object('seed_marker','anvil-test-seed-v1','surface',surf),
-      jsonb_build_object('seed_marker','anvil-test-seed-v1','rating', case (k % 3) when 0 then 'down' else 'up' end),
+      jsonb_build_object('seed_marker','anvil-test-seed-v1'),
+      case (k % 3) when 0 then -1::smallint else 1::smallint end,  -- 1/3 thumbs-down, rest thumbs-up
       case (k % 4) when 0 then 'Misclassified line; expected SPARES.' else null end,
       case (k % 3) when 0 then jsonb_build_object('correction','Expected mode=SPARES') else null end,
       case (k % 2) when 0 then 'claude-3-5-sonnet-20241022' else 'mistral-large-2407' end,

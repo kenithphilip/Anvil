@@ -97,7 +97,7 @@ hits as (
   from enum_values ev
     join enum_columns ec on ec.type_name = ev.type_name
 )
-select 'enum:' || type_name || ':' || enum_value as check,
+select 'enum:' || type_name || ':' || enum_value as check_name,
        '>=1' as want,
        max(cnt) as got,
        (max(cnt) >= 1) as pass
@@ -253,7 +253,7 @@ counted as (
                              false, true, '')))[1]::text::bigint as cnt
   from checks c
 )
-select c.table_name || '.' || c.column_name || ' = ' || c.expected as check,
+select c.table_name || '.' || c.column_name || ' = ' || c.expected as check_name,
        '>=1' as want,
        c.cnt as got,
        (c.cnt >= 1) as pass
@@ -331,7 +331,7 @@ counted as (
          (xpath('/row/c/text()', query_to_xml(query, false, true, '')))[1]::text::bigint as got
   from checks
 )
-select name as check, ('>= ' || qty_min::text) as want, got, (got >= qty_min) as pass
+select name as check_name, ('>= ' || qty_min::text) as want, got, (got >= qty_min) as pass
 from counted
 order by case when got < qty_min then 0 else 1 end, name;
 
@@ -341,18 +341,18 @@ order by case when got < qty_min then 0 else 1 end, name;
 \echo '=== §4 RBAC fixture audit ==='
 
 with role_check as (
-  select 'role:' || r as check, '>= 1' as want,
+  select 'role:' || r as check_name, '>= 1' as want,
          (select count(*) from tenant_members tm where tm.role = r) as got
   from unnest(array['sales_engineer','sales_manager','procurement','finance','admin','operator','viewer']::obara_role[]) r
 ), status_check as (
-  select 'status:' || s as check, '>= 1' as want,
+  select 'status:' || s as check_name, '>= 1' as want,
          (select count(*) from tenant_members tm where tm.status = s) as got
   from unnest(array['pending','approved','denied','deactivated']::tenant_member_status[]) s
 )
-select check, want, got, (got >= 1) as pass from role_check
+select check_name, want, got, (got >= 1) as pass from role_check
 union all
-select check, want, got, (got >= 1) as pass from status_check
-order by check;
+select check_name, want, got, (got >= 1) as pass from status_check
+order by check_name;
 
 -- ───────────────────────────────────────────────────────────────────
 -- §5  UI smoke probes  --  mirror what each v3 screen reads
@@ -485,7 +485,7 @@ counted as (
          (xpath('/row/c/text()', query_to_xml(query, false, true, '')))[1]::text::bigint as got
   from probes
 )
-select screen as check,
+select screen as check_name,
        ('>= ' || qty_min::text) as want,
        got,
        (got >= qty_min) as pass

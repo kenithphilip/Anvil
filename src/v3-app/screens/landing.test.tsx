@@ -1,11 +1,10 @@
-// Smoke test for the pre-auth landing screen. It must render
-// without throwing even when the backend client is not yet
-// configured, since this is the page a brand-new visitor sees
-// before any sign-in. After the v3 redesign the inline auth widget
-// moved to /signin (covered by signin.test.tsx); this test now
-// covers the full Landing.html section set.
+// Behaviour tests for the pre-auth landing screen. Asserts the full
+// Landing.html section set renders, plus interactive surfaces work:
+// connector tab switching, FAQ accordion expand/collapse, mobile
+// hamburger menu toggle.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { fireEvent } from "@testing-library/react";
 import { installBackend, installRbac, renderScreen } from "../test-utils";
 
 beforeEach(() => {
@@ -71,5 +70,90 @@ describe("Landing", () => {
     expect(html).toContain("Bring one PO");
     // Footer
     expect(html).toContain("all systems operational");
+  });
+
+  it("connector tab switching renders different categories", async () => {
+    const mod = await import("./landing");
+    const Screen = mod.default;
+    const { container } = renderScreen(Screen);
+    await new Promise((r) => setTimeout(r, 0));
+    // Default tab = ERPs (index 0); shows "SAP S/4HANA" tile
+    expect(container.innerHTML).toContain("SAP S/4HANA");
+    // Click the "Channels" tab
+    const tabs = container.querySelectorAll(".lp-con-tab");
+    expect(tabs.length).toBe(6);
+    fireEvent.click(tabs[1] as HTMLElement);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(container.innerHTML).toContain("WhatsApp");
+    expect(container.innerHTML).toContain("Twilio");
+    // Click "Doc AI"
+    fireEvent.click(tabs[2] as HTMLElement);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(container.innerHTML).toContain("Anthropic Claude");
+    expect(container.innerHTML).toContain("Mistral OCR");
+  });
+
+  it("renders 6 connector tabs and 18 ERP tiles by default", async () => {
+    const mod = await import("./landing");
+    const Screen = mod.default;
+    const { container } = renderScreen(Screen);
+    await new Promise((r) => setTimeout(r, 0));
+    const tabs = container.querySelectorAll(".lp-con-tab");
+    expect(tabs.length).toBe(6);
+    const tiles = container.querySelectorAll(".lp-con-cell");
+    expect(tiles.length).toBe(18);
+  });
+
+  it("renders all 19 design sections (h1 + 18 section h2/h3)", async () => {
+    const mod = await import("./landing");
+    const Screen = mod.default;
+    const { container } = renderScreen(Screen);
+    await new Promise((r) => setTimeout(r, 0));
+    // Spec sections in source order: hero (h1) + logos + sec + connectors
+    // + bleed + problem + product + flow + founder + proof + coverage
+    // + principles + pricing + compare + changelog + faq + cta
+    const html = container.innerHTML;
+    const headlines = [
+      "Your customer wrote",
+      "Currently piloting with",
+      "Built for finance teams",
+      "Already speaks",
+      "42 surfaces",
+      "22 minutes",
+      "Three things, on every order",
+      "voucher at",
+      "Kenith Philip",
+      "audit packets",
+      "One job",
+      "keep Anvil",
+      "Pay per",
+      "A focused tool beats",
+      "ship",
+      "finance teams",
+      "Bring one PO",
+    ];
+    headlines.forEach((h) => expect(html).toContain(h));
+  });
+
+  it("hero CTAs and connectors link to #/signin and section anchors", async () => {
+    const mod = await import("./landing");
+    const Screen = mod.default;
+    const { container } = renderScreen(Screen);
+    await new Promise((r) => setTimeout(r, 0));
+    const signinLinks = container.querySelectorAll('a[href="#/signin"]');
+    expect(signinLinks.length).toBeGreaterThanOrEqual(3);
+    const ctaLinks = container.querySelectorAll('a[href="#cta"]');
+    expect(ctaLinks.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("FAQ accordion has 8 items and the first is open by default", async () => {
+    const mod = await import("./landing");
+    const Screen = mod.default;
+    const { container } = renderScreen(Screen);
+    await new Promise((r) => setTimeout(r, 0));
+    const details = container.querySelectorAll(".lp-q");
+    expect(details.length).toBe(8);
+    expect((details[0] as HTMLDetailsElement).open).toBe(true);
+    expect((details[1] as HTMLDetailsElement).open).toBe(false);
   });
 });

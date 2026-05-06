@@ -26,4 +26,19 @@ describe("Approvals", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(container.innerHTML.length).toBeGreaterThan(0);
   });
+
+  it("renders the WSTitle and gracefully degrades when backend is unset", async () => {
+    const mod = await import("./approvals");
+    const Screen = mod.default;
+    const { container } = renderScreen(Screen);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    const html = container.innerHTML.toLowerCase();
+    expect(html).toContain("approvals");
+    // Either the loaded state shows "Pending" KPIs, or the error
+    // banner offers a retry. Both are valid; assert at least one.
+    const hasPendingKpi = html.includes("pending");
+    const hasRetry = html.includes("retry");
+    expect(hasPendingKpi || hasRetry).toBe(true);
+  });
 });

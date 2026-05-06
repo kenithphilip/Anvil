@@ -27,6 +27,58 @@ const WiredSOIntake = () => {
   const [err, setErr] = u(null);
   const fileRef = r(null);
 
+  // Inline "create new customer" dialog. The user reported the
+  // intake flow needs a way to add a customer without leaving the
+  // page when the dropdown doesn't include the right one. The
+  // dialog persists via /api/customers (POST), then auto-selects
+  // the new customer in the dropdown above.
+  const [newCustomerOpen, setNewCustomerOpen] = u(false);
+  const [newCustomer, setNewCustomer] = u({
+    customer_name: "", gstin: "", state_code: "",
+    currency: "INR", payment_terms: "Net 30", margin_floor_pct: "10",
+    bill_to: "", ship_to: "",
+  });
+  const [newCustomerErr, setNewCustomerErr] = u(null);
+  const [newCustomerBusy, setNewCustomerBusy] = u(false);
+
+  const submitNewCustomer = async () => {
+    setNewCustomerErr(null);
+    if (!newCustomer.customer_name.trim()) { setNewCustomerErr({ message: "Customer name is required." }); return; }
+    setNewCustomerBusy(true);
+    try {
+      const payload: any = {
+        customer_name: newCustomer.customer_name.trim(),
+        gstin: newCustomer.gstin.trim() || null,
+        state_code: newCustomer.state_code.trim() || null,
+        currency: newCustomer.currency || "INR",
+        payment_terms: newCustomer.payment_terms || null,
+        margin_floor_pct: newCustomer.margin_floor_pct ? Number(newCustomer.margin_floor_pct) : null,
+        bill_to: newCustomer.bill_to || null,
+        ship_to: newCustomer.ship_to || null,
+      };
+      const res = await ObaraBackend?.customers?.upsert?.(payload);
+      const created = res?.customer || res?.row || res;
+      // Re-fetch the list so the new customer shows up in the
+      // dropdown, then auto-select it.
+      const fresh = await ObaraBackend?.customers?.list?.();
+      setCustomers({ data: fresh, loading: false, error: null });
+      const newId = created?.id || (fresh?.customers || []).find((c: any) => c.customer_name === payload.customer_name)?.id;
+      if (newId) setCustomerId(newId);
+      window.notifySuccess?.("Customer created", payload.customer_name);
+      setNewCustomerOpen(false);
+      setNewCustomer({
+        customer_name: "", gstin: "", state_code: "",
+        currency: "INR", payment_terms: "Net 30", margin_floor_pct: "10",
+        bill_to: "", ship_to: "",
+      });
+    } catch (err2: any) {
+      setNewCustomerErr(err2);
+      window.notifyError?.("Could not create customer", err2?.message || String(err2));
+    } finally {
+      setNewCustomerBusy(false);
+    }
+  };
+
   // Read shell health to decide which doc-pipeline guarantees are real
   // versus aspirational. Without it the pre-flight checklist below was
   // a hardcoded set of green dots regardless of actual integration state.
@@ -144,7 +196,12 @@ const WiredSOIntake = () => {
             </Card>
 
             <Card title="Documents" eyebrow="PO required · others optional">
-              <label htmlFor="so-intake-customer" className="label" style={{ marginBottom: 6 }}>Customer</label>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <label htmlFor="so-intake-customer" className="label" style={{ marginBottom: 0 }}>Customer</label>
+                <Btn sm kind="ghost" onClick={() => setNewCustomerOpen(true)} title="Create a new customer record">
+                  {Icon.plus} new customer
+                </Btn>
+              </div>
               <select
                 id="so-intake-customer"
                 className="select"
@@ -293,6 +350,99 @@ const WiredSOIntake = () => {
           </div>
         </div>
       </div>
+
+      {/* Inline create-customer dialog. Lightweight modal so the
+          operator never has to leave the intake flow. Persists via
+          /api/customers (which already exists for the list endpoint
+          and accepts upserts). */}
+      {newCustomerOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="new-customer-title"
+          onClick={(e) => { if (e.target === e.currentTarget) setNewCustomerOpen(false); }}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+            display: "grid", placeItems: "center", zIndex: 200,
+          }}
+        >
+          <div
+            style={{
+              background: "var(--paper)", border: "1px solid var(--hairline)",
+              borderRadius: 8, width: "min(560px, 92vw)", maxHeight: "92vh",
+              overflowY: "auto", padding: 18,
+              boxShadow: "0 12px 40px rgba(0,0,0,0.18)",
+            }}
+          >
+            <div className="row" style={{ marginBottom: 12 }}>
+              <h2 id="new-customer-title" style={{ margin: 0, fontSize: 16, fontWeight: 600, flex: 1 }}>New customer</h2>
+              <Btn sm kind="ghost" onClick={() => setNewCustomerOpen(false)} title="Close">{Icon.x}</Btn>
+            </div>
+            {newCustomerErr && (
+              <Banner kind="bad" icon={Icon.alert} title="Could not create customer">
+                <span className="mono-sm">{String(newCustomerErr?.message || newCustomerErr)}</span>
+              </Banner>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label htmlFor="nc-name" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Customer name *</label>
+                <input id="nc-name" className="input" value={newCustomer.customer_name}
+                       onChange={(e) => setNewCustomer((c) => ({ ...c, customer_name: e.target.value }))}
+                       autoFocus />
+              </div>
+              <div>
+                <label htmlFor="nc-gstin" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>GSTIN</label>
+                <input id="nc-gstin" className="input mono" placeholder="29ABCDE1234F1Z5"
+                       value={newCustomer.gstin}
+                       onChange={(e) => setNewCustomer((c) => ({ ...c, gstin: e.target.value.toUpperCase() }))} />
+              </div>
+              <div>
+                <label htmlFor="nc-state" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>State code</label>
+                <input id="nc-state" className="input mono" placeholder="MH / KA / 27"
+                       value={newCustomer.state_code}
+                       onChange={(e) => setNewCustomer((c) => ({ ...c, state_code: e.target.value.toUpperCase() }))} />
+              </div>
+              <div>
+                <label htmlFor="nc-ccy" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Currency</label>
+                <select id="nc-ccy" className="select" value={newCustomer.currency}
+                        onChange={(e) => setNewCustomer((c) => ({ ...c, currency: e.target.value }))}>
+                  {["INR", "USD", "EUR", "JPY", "GBP", "AUD", "SGD"].map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="nc-terms" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Payment terms</label>
+                <input id="nc-terms" className="input" placeholder="Net 30 / 50% advance / etc."
+                       value={newCustomer.payment_terms}
+                       onChange={(e) => setNewCustomer((c) => ({ ...c, payment_terms: e.target.value }))} />
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label htmlFor="nc-margin" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Margin floor (%)</label>
+                <input id="nc-margin" className="input mono r" type="number" step="0.1" min="0" max="100"
+                       value={newCustomer.margin_floor_pct}
+                       onChange={(e) => setNewCustomer((c) => ({ ...c, margin_floor_pct: e.target.value }))} />
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label htmlFor="nc-bill" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Bill-to address</label>
+                <textarea id="nc-bill" className="input" rows={2} style={{ width: "100%", padding: 6 }}
+                          value={newCustomer.bill_to}
+                          onChange={(e) => setNewCustomer((c) => ({ ...c, bill_to: e.target.value }))} />
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label htmlFor="nc-ship" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Ship-to address (defaults to bill-to if blank)</label>
+                <textarea id="nc-ship" className="input" rows={2} style={{ width: "100%", padding: 6 }}
+                          value={newCustomer.ship_to}
+                          onChange={(e) => setNewCustomer((c) => ({ ...c, ship_to: e.target.value }))} />
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+              <Btn sm kind="ghost" onClick={() => setNewCustomerOpen(false)} disabled={newCustomerBusy}>Cancel</Btn>
+              <Btn sm kind="primary" onClick={submitNewCustomer} disabled={newCustomerBusy}>
+                {newCustomerBusy ? "Saving…" : "Create customer"}
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };

@@ -28,3 +28,50 @@ export const withBucketFallback = async (run) => {
     return await run(legacyDocumentsBucket());
   }
 };
+
+// Idempotent ensure-bucket. Tries the canonical bucket first; on a
+// "not found" / "resource does not exist" error from Supabase storage
+// (the cause of the user-visible "Signed URL: The related resource
+// does not exist" failure on first upload), creates the bucket and
+// returns its name. Falls back to the legacy bucket name when the
+// canonical one cannot be created.
+//
+// Returns the bucket name actually available, or throws an error
+// with an actionable message naming the env var to set or the bucket
+// to create manually.
+export const ensureDocumentsBucket = async (svc) => {
+  const canonical = documentsBucket();
+  const legacy = legacyDocumentsBucket();
+  const tried = [];
+  // Probe by listing buckets; prefer whichever already exists.
+  try {
+    const { data: buckets, error } = await svc.storage.listBuckets();
+    if (!error && Array.isArray(buckets)) {
+      const have = new Set(buckets.map((b) => b.name));
+      if (have.has(canonical)) return canonical;
+      if (have.has(legacy)) return legacy;
+    }
+  } catch (_) { /* fall through to create attempt */ }
+  // Bucket missing. Try to create the canonical one.
+  try {
+    const { error: createErr } = await svc.storage.createBucket(canonical, { public: false });
+    if (!createErr) return canonical;
+    tried.push(canonical + ": " + createErr.message);
+  } catch (e) {
+    tried.push(canonical + ": " + (e.message || String(e)));
+  }
+  // Last-ditch: try the legacy bucket name.
+  try {
+    const { error: createErr } = await svc.storage.createBucket(legacy, { public: false });
+    if (!createErr) return legacy;
+    tried.push(legacy + ": " + createErr.message);
+  } catch (e) {
+    tried.push(legacy + ": " + (e.message || String(e)));
+  }
+  throw new Error(
+    "Documents storage bucket missing. Could not auto-create on Supabase. " +
+    "Create a private bucket named `" + canonical + "` in the Supabase dashboard " +
+    "(Storage, New bucket) or set ANVIL_DOCUMENTS_BUCKET to a bucket name " +
+    "your project already has. Attempted: " + tried.join("; "),
+  );
+};

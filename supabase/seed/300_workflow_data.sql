@@ -520,11 +520,14 @@ begin
     end if;
 
     -- 3 schedule lines for orders with SPARES_ASSEMBLY mode (mode_hint='blanket' surrogate).
+    -- DRAFT orders never had a doc_po inserted (gated above on `if rec.status <> 'DRAFT'`),
+    -- so we either skip the whole block or set source_document_id to null. We choose null
+    -- so DRAFT blanket-release children still get the schedule fan-out for verify probes.
     if rec.po_number like '5100002%' then
       insert into order_schedule_lines (id, tenant_id, order_id, line_index, part_no, scheduled_qty, scheduled_date, delivery_location, remark, source_document_id, created_at) values
-        (uuid_generate_v5(ns,'osl:' || rec.id::text || ':1'), default_tenant, rec.id, 0, 'CT-16-D-1-FS', 200, (now() + interval '7 days')::date,  'MG Halol', null, doc_po, rec.created_at),
-        (uuid_generate_v5(ns,'osl:' || rec.id::text || ':2'), default_tenant, rec.id, 1, 'CT-16-D-1-FS', 200, (now() + interval '14 days')::date, 'MG Halol', null, doc_po, rec.created_at),
-        (uuid_generate_v5(ns,'osl:' || rec.id::text || ':3'), default_tenant, rec.id, 2, 'CT-16-D-1-FS', 100, (now() + interval '21 days')::date, 'MG Halol', null, doc_po, rec.created_at)
+        (uuid_generate_v5(ns,'osl:' || rec.id::text || ':1'), default_tenant, rec.id, 0, 'CT-16-D-1-FS', 200, (now() + interval '7 days')::date,  'MG Halol', null, case when rec.status <> 'DRAFT' then doc_po else null end, rec.created_at),
+        (uuid_generate_v5(ns,'osl:' || rec.id::text || ':2'), default_tenant, rec.id, 1, 'CT-16-D-1-FS', 200, (now() + interval '14 days')::date, 'MG Halol', null, case when rec.status <> 'DRAFT' then doc_po else null end, rec.created_at),
+        (uuid_generate_v5(ns,'osl:' || rec.id::text || ':3'), default_tenant, rec.id, 2, 'CT-16-D-1-FS', 100, (now() + interval '21 days')::date, 'MG Halol', null, case when rec.status <> 'DRAFT' then doc_po else null end, rec.created_at)
       on conflict (id) do nothing;
     end if;
 

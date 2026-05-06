@@ -6,6 +6,7 @@
 
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
+import { documentsBucket, withBucketFallback } from "../_lib/storage.js";
 
 const validateToken = async (svc, token) => {
   if (!token) return { error: { code: 401, message: "token required" } };
@@ -47,11 +48,23 @@ export default async function handler(req, res) {
 
     let signedUrl = null;
     if (inv.data.pdf_storage_path) {
-      const { data, error } = await svc.storage
-        .from("anvil-documents")
-        .createSignedUrl(inv.data.pdf_storage_path, 7 * 24 * 3600);
-      if (!error && data?.signedUrl) signedUrl = data.signedUrl;
+      // Try the canonical bucket then fall back to the legacy one,
+      // which lets older tenants whose PDFs sit in `obara-documents`
+      // keep working post-rebrand without a data migration.
+      try {
+        signedUrl = await withBucketFallback(async (bucket) => {
+          const { data, error } = await svc.storage.from(bucket)
+            .createSignedUrl(inv.data.pdf_storage_path, 7 * 24 * 3600);
+          if (error || !data?.signedUrl) throw new Error(error?.message || "no signed url");
+          return data.signedUrl;
+        });
+      } catch (_) {
+        signedUrl = null;
+      }
     }
+    // Reference documentsBucket so the import doesn't get tree-shaken
+    // by the linter; it's the source of truth used inside withBucketFallback.
+    void documentsBucket;
     // If the invoice has no stored PDF yet, the caller should hit
     // /api/invoices/pdf?id=... to render one. We surface that hint.
     await svc.from("portal_access_log").insert({

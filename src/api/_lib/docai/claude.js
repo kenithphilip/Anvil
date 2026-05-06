@@ -7,6 +7,8 @@
 // We keep this thin because the existing /api/claude/messages
 // endpoint already wraps Anthropic with redaction + firewall.
 
+import { safeFetch } from "../safe-fetch.js";
+
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 const MODEL = process.env.ANTHROPIC_MODEL_DEFAULT || "claude-sonnet-4-20250514";
@@ -60,7 +62,7 @@ export const extract = async ({ url, bytes, filename, settings, hints, promptOve
   }
   userParts.push({ type: "text", text: "Return only the JSON object." });
 
-  const resp = await fetch(ANTHROPIC_URL, {
+  const resp = await safeFetch(ANTHROPIC_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

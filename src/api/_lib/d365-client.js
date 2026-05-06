@@ -9,6 +9,7 @@
 
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
 import { oauth2ClientCredentials, oauth2Evict } from "./oauth2.js";
+import { safeFetch } from "./safe-fetch.js";
 
 export const d365DecryptCreds = (s) => {
   if (!s) return s;
@@ -61,7 +62,7 @@ export const d365Fetch = async (s, { method, path, body, query, retryOn401 = tru
   const headers = { Authorization: "Bearer " + token, Accept: "application/json", "OData-Version": "4.0" };
   if (body) headers["Content-Type"] = "application/json";
   const t0 = Date.now();
-  const resp = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const resp = await safeFetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
   if (resp.status === 401 && retryOn401) {
     oauth2Evict(s.tenant_id || "shared", s.d365_token_url, s.d365_client_id);
     return d365Fetch(s, { method, path, body, query, retryOn401: false });

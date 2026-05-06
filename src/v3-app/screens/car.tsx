@@ -59,8 +59,57 @@ const WiredCAR = () => {
   const { useState: uC } = React;
   const [active, setActive] = uC("open");
 
+  // Inline create CAR (replaces dead-button bug per audit).
+  const [creating, setCreating] = uC(false);
+  const [draft, setDraft] = uC({
+    customer_id: "", original_po_no: "", original_so_no: "", part_no: "",
+    qty_rejected: "", root_cause: "", status: "OPEN",
+  });
+  const [submitErr, setSubmitErr] = uC(null);
+  const [submitBusy, setSubmitBusy] = uC(false);
+  const customers = useFetch(
+    () => creating ? (ObaraBackend?.customers?.list?.() || Promise.resolve({ customers: [] })) : Promise.resolve({ customers: [] }),
+    [creating],
+  );
+  const customerRows = (() => {
+    const d = customers.data;
+    return Array.isArray(d) ? d : (d?.customers || []);
+  })();
+
   const cars = useFetch(() => carFetchPath("/api/service/car_reports"), []);
   const closures = useFetch(() => carFetchPath("/api/service/closure_reports"), []);
+
+  const submitNewCar = async () => {
+    setSubmitErr(null);
+    if (!draft.customer_id && !draft.original_po_no.trim()) {
+      setSubmitErr({ message: "Customer or original PO required for traceability." });
+      return;
+    }
+    setSubmitBusy(true);
+    try {
+      await ObaraBackend?.service?.createCarReport?.({
+        customer_id: draft.customer_id || null,
+        original_po_no: draft.original_po_no.trim() || null,
+        original_so_no: draft.original_so_no.trim() || null,
+        part_no: draft.part_no.trim() || null,
+        qty_rejected: draft.qty_rejected ? Number(draft.qty_rejected) : null,
+        root_cause: draft.root_cause.trim() || null,
+        status: draft.status,
+      });
+      window.notifySuccess?.("CAR created", draft.original_po_no || draft.part_no || "draft");
+      setCreating(false);
+      setDraft({
+        customer_id: "", original_po_no: "", original_so_no: "", part_no: "",
+        qty_rejected: "", root_cause: "", status: "OPEN",
+      });
+      cars.reload();
+    } catch (err) {
+      setSubmitErr(err);
+      window.notifyError?.("Could not create CAR", err?.message || String(err));
+    } finally {
+      setSubmitBusy(false);
+    }
+  };
 
   const carRows = (() => {
     const d = cars.data;
@@ -116,7 +165,7 @@ const WiredCAR = () => {
         meta={`${carRows.length} total · ${counts.open || 0} open · ${closureRows.length} closures`}
         right={<>
           <Btn icon kind="ghost" sm onClick={cars.reload} title="Refresh">{Icon.cycle}</Btn>
-          <Btn sm kind="primary" onClick={() => window.location.hash = "#/car?new=1"}>{Icon.plus} New CAR</Btn>
+          <Btn sm kind="primary" onClick={() => setCreating((v) => !v)}>{Icon.plus} {creating ? "Cancel" : "New CAR"}</Btn>
         </>}
       />
       <WSTabs
@@ -130,6 +179,69 @@ const WiredCAR = () => {
           <Banner kind="warn" icon={Icon.alert} title="Closure reports failed to load">
             <span className="mono-sm">{String(closures.error.message || closures.error)}</span>
           </Banner>
+        )}
+
+        {creating && (
+          <Card title="New CAR" eyebrow="quick capture · expand later">
+            {submitErr && (
+              <Banner kind="bad" icon={Icon.alert} title="Could not create CAR">
+                <span className="mono-sm">{String(submitErr?.message || submitErr)}</span>
+              </Banner>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginTop: 8 }}>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span>Customer</span>
+                <select className="input" value={draft.customer_id}
+                        onChange={(ev) => setDraft({ ...draft, customer_id: ev.target.value })}>
+                  <option value="">{customers.loading ? "loading…" : "select a customer…"}</option>
+                  {customerRows.map((c: any) => (
+                    <option key={c.id} value={c.id}>{c.customer_name || c.id?.slice(0, 8)}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span>Original PO</span>
+                <input className="input mono" value={draft.original_po_no}
+                       onChange={(ev) => setDraft({ ...draft, original_po_no: ev.target.value })} />
+              </label>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span>Original SO</span>
+                <input className="input mono" value={draft.original_so_no}
+                       onChange={(ev) => setDraft({ ...draft, original_so_no: ev.target.value })} />
+              </label>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span>Part number</span>
+                <input className="input mono" value={draft.part_no}
+                       onChange={(ev) => setDraft({ ...draft, part_no: ev.target.value })} />
+              </label>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span>Qty rejected</span>
+                <input className="input mono r" type="number" value={draft.qty_rejected}
+                       onChange={(ev) => setDraft({ ...draft, qty_rejected: ev.target.value })} />
+              </label>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span>Status</span>
+                <select className="input" value={draft.status}
+                        onChange={(ev) => setDraft({ ...draft, status: ev.target.value })}>
+                  <option value="OPEN">OPEN</option>
+                  <option value="UNDER_INVESTIGATION">UNDER_INVESTIGATION</option>
+                  <option value="CLOSED">CLOSED</option>
+                </select>
+              </label>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4, gridColumn: "1 / -1" }}>
+                <span>Root cause (initial)</span>
+                <textarea className="input" rows={2} style={{ width: "100%", padding: 6 }}
+                          value={draft.root_cause}
+                          onChange={(ev) => setDraft({ ...draft, root_cause: ev.target.value })} />
+              </label>
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+              <Btn sm kind="ghost" onClick={() => setCreating(false)} disabled={submitBusy}>Cancel</Btn>
+              <Btn sm kind="primary" onClick={submitNewCar} disabled={submitBusy}>
+                {submitBusy ? "Creating…" : "Create CAR"}
+              </Btn>
+            </div>
+          </Card>
         )}
 
         <Card flush>

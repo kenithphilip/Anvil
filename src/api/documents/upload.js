@@ -22,7 +22,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { recordAudit } from "../_lib/audit.js";
 import { serviceClient } from "../_lib/supabase.js";
-import { documentsBucket, ensureDocumentsBucket } from "../_lib/storage.js";
+import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "../_lib/storage.js";
 
 const MAX_UPLOAD_BYTES = Number(process.env.DOCUMENTS_MAX_UPLOAD_BYTES || 50 * 1024 * 1024);
 
@@ -73,31 +73,16 @@ export default async function handler(req, res) {
     const svc = serviceClient();
     const filename = sanitizeName(body.filename);
     const path = ctx.tenantId + "/" + Date.now() + "_" + filename;
-    // Resolve a usable bucket. ensureDocumentsBucket() probes
-    // listBuckets first, creates the canonical bucket if missing,
-    // and falls back to the legacy name. This closes the very
-    // first-run "The related resource does not exist" failure.
     let bucket;
     try {
       bucket = await ensureDocumentsBucket(svc);
     } catch (e) {
       bucket = documentsBucket();
-      // We still attempt the signed URL below; if the bucket truly
-      // does not exist we surface the original Supabase error
-      // alongside the actionable message from ensureDocumentsBucket.
       // eslint-disable-next-line no-console
-      console.warn("[documents/upload] ensureDocumentsBucket failed: " + e.message);
+      console.warn("[documents/upload] ensureDocumentsBucket: " + e.message);
     }
     const { data: signed, error: signErr } = await svc.storage.from(bucket).createSignedUploadUrl(path);
-    if (signErr) {
-      const msg = String(signErr.message || "");
-      const friendly = /not.*exist|not.*found|404/i.test(msg)
-        ? "Documents storage bucket `" + bucket + "` not found. " +
-          "Create a private bucket with that name in Supabase Storage, " +
-          "or set ANVIL_DOCUMENTS_BUCKET to point at an existing bucket."
-        : "Signed URL error: " + msg;
-      throw new Error(friendly);
-    }
+    if (signErr) throw new Error(friendlyStorageError(signErr.message, bucket));
     const insert = await svc.from("documents").insert({
       tenant_id: ctx.tenantId,
       storage_bucket: bucket,

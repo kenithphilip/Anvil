@@ -50,10 +50,52 @@ const oppRows = (resp) => {
 };
 
 const WiredOpportunities = () => {
+  // Inline create-opp form, identical pattern to leads.tsx. Replaces
+  // the dead-button bug where `New opp` set `#/opps?new=1` but neither
+  // the resolver nor this screen ever read the param.
+  const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState({
+    opportunity_name: "", customer_id: "", stage: "QUALIFICATION", amount_inr: "",
+  });
+  const [submitErr, setSubmitErr] = useState(null);
+  const [submitBusy, setSubmitBusy] = useState(false);
+  const customers = useFetch(
+    () => creating ? (ObaraBackend?.customers?.list?.() || Promise.resolve({ customers: [] })) : Promise.resolve({ customers: [] }),
+    [creating],
+  );
+  const customerRows = (() => {
+    const d = customers.data;
+    return Array.isArray(d) ? d : (d?.customers || []);
+  })();
+
   const list = useFetch(
     () => ObaraBackend?.sales?.listOpportunities?.() || Promise.resolve({ opportunities: [] }),
     []
   );
+
+  const submitNewOpp = async () => {
+    setSubmitErr(null);
+    if (!draft.opportunity_name.trim()) { setSubmitErr({ message: "Opportunity name is required." }); return; }
+    if (!draft.customer_id)             { setSubmitErr({ message: "Customer is required." }); return; }
+    setSubmitBusy(true);
+    try {
+      await ObaraBackend?.sales?.createOpportunity?.({
+        opportunity_name: draft.opportunity_name.trim(),
+        customer_id: draft.customer_id,
+        stage: draft.stage,
+        amount_inr: draft.amount_inr ? Number(draft.amount_inr) : null,
+      });
+      window.notifySuccess?.("Opportunity created", draft.opportunity_name);
+      setCreating(false);
+      setDraft({ opportunity_name: "", customer_id: "", stage: "QUALIFICATION", amount_inr: "" });
+      list.reload();
+    } catch (err) {
+      setSubmitErr(err);
+      window.notifyError?.("Could not create opportunity", err?.message || String(err));
+    } finally {
+      setSubmitBusy(false);
+    }
+  };
 
   if (list.loading) {
     return (
@@ -120,8 +162,8 @@ const WiredOpportunities = () => {
         meta={`${total} active · weighted ${fmtINRShort(weighted)}`}
         right={<>
           <Btn icon kind="ghost" sm onClick={list.reload} title="Refresh">{Icon.cycle}</Btn>
-          <Btn sm kind="primary" onClick={() => window.location.hash = "#/opps?new=1"}>
-            {Icon.plus} New opp
+          <Btn sm kind="primary" onClick={() => setCreating((v) => !v)}>
+            {Icon.plus} {creating ? "Cancel" : "New opp"}
           </Btn>
         </>}
       />
@@ -134,6 +176,51 @@ const WiredOpportunities = () => {
           <KPI lbl="Negotiation" v={String(negotCount)} d="late stage" />
           <KPI lbl="Won · MTD" v={fmtINRShort(wonValueMtd)} d={`${wonMtd.length} closed`} dKind={wonMtd.length ? "up" : ""} />
         </KPIRow>
+
+        {creating && (
+          <Card title="New opportunity" eyebrow="quick capture">
+            {submitErr && (
+              <Banner kind="bad" icon={Icon.alert} title="Could not create opportunity">
+                <span className="mono-sm">{String(submitErr?.message || submitErr)}</span>
+              </Banner>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginTop: 8 }}>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span>Opportunity name *</span>
+                <input className="input" value={draft.opportunity_name}
+                       onChange={(ev) => setDraft({ ...draft, opportunity_name: ev.target.value })} />
+              </label>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span>Customer *</span>
+                <select className="input" value={draft.customer_id}
+                        onChange={(ev) => setDraft({ ...draft, customer_id: ev.target.value })}>
+                  <option value="">{customers.loading ? "loading…" : "select a customer…"}</option>
+                  {customerRows.map((c: any) => (
+                    <option key={c.id} value={c.id}>{c.customer_name || c.id?.slice(0, 8)}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span>Stage</span>
+                <select className="input" value={draft.stage}
+                        onChange={(ev) => setDraft({ ...draft, stage: ev.target.value })}>
+                  {OPP_STAGES.map((s) => <option key={s.id} value={s.id}>{s.t}</option>)}
+                </select>
+              </label>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span>Amount (INR)</span>
+                <input className="input mono r" type="number" value={draft.amount_inr}
+                       onChange={(ev) => setDraft({ ...draft, amount_inr: ev.target.value })} />
+              </label>
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+              <Btn sm kind="ghost" onClick={() => setCreating(false)} disabled={submitBusy}>Cancel</Btn>
+              <Btn sm kind="primary" onClick={submitNewOpp} disabled={submitBusy}>
+                {submitBusy ? "Creating…" : "Create opportunity"}
+              </Btn>
+            </div>
+          </Card>
+        )}
 
         {rows.length === 0 ? (
           <Card>

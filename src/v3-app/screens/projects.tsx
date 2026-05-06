@@ -73,10 +73,51 @@ const projectRows = (resp) => {
 };
 
 const WiredProjects = () => {
+  // Inline create-project state (replaces dead-button bug per audit).
+  const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState({
+    project_code: "", project_name: "", customer_id: "", current_phase: "INITIAL_INFO", total_value_inr: "",
+  });
+  const [submitErr, setSubmitErr] = useState(null);
+  const [submitBusy, setSubmitBusy] = useState(false);
+  const customers = useFetch(
+    () => creating ? (ObaraBackend?.customers?.list?.() || Promise.resolve({ customers: [] })) : Promise.resolve({ customers: [] }),
+    [creating],
+  );
+  const customerRows = (() => {
+    const d = customers.data;
+    return Array.isArray(d) ? d : (d?.customers || []);
+  })();
+
   const list = useFetch(
     () => ObaraBackend?.sales?.listProjects?.() || Promise.resolve({ projects: [] }),
     []
   );
+
+  const submitNewProject = async () => {
+    setSubmitErr(null);
+    if (!draft.project_code.trim()) { setSubmitErr({ message: "Project code is required." }); return; }
+    if (!draft.project_name.trim()) { setSubmitErr({ message: "Project name is required." }); return; }
+    setSubmitBusy(true);
+    try {
+      await ObaraBackend?.sales?.createProject?.({
+        project_code: draft.project_code.trim(),
+        project_name: draft.project_name.trim(),
+        customer_id: draft.customer_id || null,
+        current_phase: draft.current_phase,
+        total_value_inr: draft.total_value_inr ? Number(draft.total_value_inr) : null,
+      });
+      window.notifySuccess?.("Project created", draft.project_code);
+      setCreating(false);
+      setDraft({ project_code: "", project_name: "", customer_id: "", current_phase: "INITIAL_INFO", total_value_inr: "" });
+      list.reload();
+    } catch (err) {
+      setSubmitErr(err);
+      window.notifyError?.("Could not create project", err?.message || String(err));
+    } finally {
+      setSubmitBusy(false);
+    }
+  };
 
   if (list.loading) {
     return (
@@ -122,8 +163,8 @@ const WiredProjects = () => {
         meta={`${total} total · ${activeCount} active · ${PROJECT_PHASES.length}-phase lifecycle`}
         right={<>
           <Btn icon kind="ghost" sm onClick={list.reload} title="Refresh">{Icon.cycle}</Btn>
-          <Btn sm kind="primary" onClick={() => window.location.hash = "#/projects?new=1"}>
-            {Icon.plus} New project
+          <Btn sm kind="primary" onClick={() => setCreating((v) => !v)}>
+            {Icon.plus} {creating ? "Cancel" : "New project"}
           </Btn>
         </>}
       />
@@ -135,6 +176,56 @@ const WiredProjects = () => {
           <KPI lbl="In manufacturing" v={String(mfgCount)} d="PO → FAT" />
           <KPI lbl="Delivered" v={String(deliveredCount)} d="dispatched → commissioned" dKind={deliveredCount ? "up" : ""} />
         </KPIRow>
+
+        {creating && (
+          <Card title="New project" eyebrow="quick capture">
+            {submitErr && (
+              <Banner kind="bad" icon={Icon.alert} title="Could not create project">
+                <span className="mono-sm">{String(submitErr?.message || submitErr)}</span>
+              </Banner>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginTop: 8 }}>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span>Project code *</span>
+                <input className="input mono" value={draft.project_code}
+                       onChange={(ev) => setDraft({ ...draft, project_code: ev.target.value })} placeholder="PRJ-2026-0001" />
+              </label>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span>Project name *</span>
+                <input className="input" value={draft.project_name}
+                       onChange={(ev) => setDraft({ ...draft, project_name: ev.target.value })} />
+              </label>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span>Customer</span>
+                <select className="input" value={draft.customer_id}
+                        onChange={(ev) => setDraft({ ...draft, customer_id: ev.target.value })}>
+                  <option value="">{customers.loading ? "loading…" : "select a customer…"}</option>
+                  {customerRows.map((c: any) => (
+                    <option key={c.id} value={c.id}>{c.customer_name || c.id?.slice(0, 8)}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span>Phase</span>
+                <select className="input" value={draft.current_phase}
+                        onChange={(ev) => setDraft({ ...draft, current_phase: ev.target.value })}>
+                  {PROJECT_PHASES.map((p) => <option key={p} value={p}>{PROJECT_PHASE_LABEL_MAP[p] || p}</option>)}
+                </select>
+              </label>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4, gridColumn: "1 / -1" }}>
+                <span>Total value (INR)</span>
+                <input className="input mono r" type="number" value={draft.total_value_inr}
+                       onChange={(ev) => setDraft({ ...draft, total_value_inr: ev.target.value })} />
+              </label>
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+              <Btn sm kind="ghost" onClick={() => setCreating(false)} disabled={submitBusy}>Cancel</Btn>
+              <Btn sm kind="primary" onClick={submitNewProject} disabled={submitBusy}>
+                {submitBusy ? "Creating…" : "Create project"}
+              </Btn>
+            </div>
+          </Card>
+        )}
 
         <Card flush>
           {rows.length === 0 ? (

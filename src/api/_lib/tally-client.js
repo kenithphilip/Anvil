@@ -29,6 +29,7 @@
 // token at use time.
 
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { safeFetch } from "./safe-fetch.js";
 
 export const tallyDecryptToken = (company) => {
   if (!company) return null;
@@ -71,7 +72,7 @@ const ensureUrl = (company, suffix = "") => {
 export const tallyPush = async (company, xml, opts) => {
   const url = ensureUrl(company);
   const t0 = Date.now();
-  const resp = await fetch(url, {
+  const resp = await safeFetch(url, {
     method: "POST",
     headers: headers(company),
     body: xml,
@@ -89,7 +90,7 @@ export const tallyPush = async (company, xml, opts) => {
 export const tallyAmend = async (company, xml) => {
   const url = ensureUrl(company, "/amend");
   const t0 = Date.now();
-  const resp = await fetch(url, { method: "POST", headers: headers(company), body: xml });
+  const resp = await safeFetch(url, { method: "POST", headers: headers(company), body: xml });
   const text = await resp.text();
   return { ok: resp.ok, status: resp.status, body: text, latency_ms: Date.now() - t0 };
 };
@@ -98,7 +99,7 @@ export const tallyHealth = async (company) => {
   const url = ensureUrl(company, "/health");
   const t0 = Date.now();
   try {
-    const resp = await fetch(url, { method: "GET", headers: jsonHeaders(company) });
+    const resp = await safeFetch(url, { method: "GET", headers: jsonHeaders(company) });
     const text = await resp.text();
     let parsed = null;
     try { parsed = JSON.parse(text); } catch (_e) { parsed = { raw: text.slice(0, 400) }; }
@@ -110,7 +111,7 @@ export const tallyHealth = async (company) => {
 
 export const tallySyncVouchers = async (company, since) => {
   const url = ensureUrl(company, "/sync");
-  const resp = await fetch(url, {
+  const resp = await safeFetch(url, {
     method: "POST",
     headers: jsonHeaders(company),
     body: JSON.stringify({ since: since || null }),
@@ -123,7 +124,7 @@ export const tallySyncVouchers = async (company, since) => {
 
 export const tallySyncPayments = async (company, since) => {
   const url = ensureUrl(company, "/payments");
-  const resp = await fetch(url, {
+  const resp = await safeFetch(url, {
     method: "POST",
     headers: jsonHeaders(company),
     body: JSON.stringify({ since: since || null }),

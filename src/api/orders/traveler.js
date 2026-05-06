@@ -14,6 +14,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { renderPdf } from "../_lib/pdf-renderer.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
+import { documentsBucket, ensureDocumentsBucket } from "../_lib/storage.js";
 
 // Build the canonical PDF payload from an order. Mirrors the shape
 // in src/api/quotes/pdf.js so the renderer's kind switch picks up
@@ -124,10 +125,12 @@ export default async function handler(req, res) {
     const path = prefix + ctx.tenantId + "/" + orderQ.data.id + ".pdf";
     let signedUrl = null;
     try {
-      await svc.storage.from("anvil-documents").upload(path, pdfBuffer, {
+      let bucket;
+      try { bucket = await ensureDocumentsBucket(svc); } catch (_) { bucket = documentsBucket(); }
+      await svc.storage.from(bucket).upload(path, pdfBuffer, {
         contentType: "application/pdf", upsert: true,
       });
-      const sign = await svc.storage.from("anvil-documents").createSignedUrl(path, 7 * 24 * 3600);
+      const sign = await svc.storage.from(bucket).createSignedUrl(path, 7 * 24 * 3600);
       if (sign.data?.signedUrl) signedUrl = sign.data.signedUrl;
     } catch (_e) { /* uploads can be best-effort */ }
 

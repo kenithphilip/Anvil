@@ -16,12 +16,13 @@
     "verify": "npm run audit",
     "audit": "node src/scripts/audit-migration.mjs && node src/scripts/audit-screens-deep.mjs && node src/scripts/audit-cross-screen.mjs && node src/scripts/audit-ux.mjs && node src/scripts/audit-backend-calls.mjs && node src/scripts/audit-hardcoded-data.mjs && node src/scripts/audit-data-model.mjs && node src/scripts/audit-cross-module.mjs && node src/scripts/audit-dead-handlers.mjs && node src/scripts/audit-write-paths.mjs && node src/scripts/audit-rbac.mjs",
     "audit:write-paths": "node src/scripts/audit-write-paths.mjs",
+    "audit:systemic": "node scripts/audit/run-all.mjs",
     "smoke:write-paths": "node src/scripts/smoke-write-paths.mjs",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{js,mjs,jsx,json,md,sql}\"",
     "test": "vitest run",
     "test:watch": "vitest",
-    "predeploy": "npm run build && npm run check && npm run verify"
+    "predeploy": "npm run build && npm run check && npm run verify && npm run audit:systemic"
   },
   "dependencies": {
     "@react-pdf/renderer": "^4.5.1",

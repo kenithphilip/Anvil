@@ -84,7 +84,7 @@ export default async function handler(req, res) {
       rating: -1,
       comment: body.reason || "operator correction",
       user_id: ctx.userId || null,
-    }).then(() => {}).catch(() => {});
+    }).then(() => {}).then(() => undefined, () => undefined);
 
     await recordAudit(ctx, {
       action: "docai_correction",

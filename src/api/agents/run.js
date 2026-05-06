@@ -203,22 +203,41 @@ const reapQueuedCommsForTenant = async (svc, tenantId) => {
       continue;
     }
     let result = null;
-    try { result = await sendViaSendGrid({ to: row.to_addr, subject: row.subject, body: row.body, from: row.from_addr }); } catch (_) {}
-    if (!result) { try { result = await sendViaGenericWebhook({ to: row.to_addr, subject: row.subject, body: row.body, from: row.from_addr }); } catch (_) {} }
+    let lastError = null;
+    try { result = await sendViaSendGrid({ to: row.to_addr, subject: row.subject, body: row.body, from: row.from_addr }); }
+    catch (e) { lastError = e; }
+    if (!result) {
+      try { result = await sendViaGenericWebhook({ to: row.to_addr, subject: row.subject, body: row.body, from: row.from_addr }); }
+      catch (e) { lastError = e; }
+    }
 
+    // Audit fix (May 2026): when no provider is configured AND no
+    // attempt was made, do not flip the row to "sent". The previous
+    // code marked the comm sent regardless, so operators thought
+    // emails went out when nothing did. New semantics:
+    //   - provider returned ok=true       -> sent
+    //   - provider returned ok=false      -> failed
+    //   - no provider configured          -> queued (waiting for ops
+    //                                       to wire SendGrid or webhook)
+    //   - provider threw                  -> failed
     const configured = !!result;
-    const newStatus = !configured ? "sent" : (result.ok ? "sent" : "failed");
+    const newStatus = !configured
+      ? "queued"
+      : (result.ok ? "sent" : "failed");
     await svc.from("communications").update({
       status: newStatus,
-      sent_at: new Date().toISOString(),
+      sent_at: newStatus === "sent" ? new Date().toISOString() : row.sent_at || null,
       metadata: {
         ...(row.metadata || {}),
-        provider: result?.provider || "manual",
+        provider: result?.provider || (configured ? "manual" : "none"),
         provider_status: result?.status || null,
+        last_error: lastError ? String(lastError.message || lastError).slice(0, 240) : null,
         reaped_by: "agents/run",
       },
     }).eq("id", row.id);
-    if (newStatus === "sent") fired++; else errors++;
+    if (newStatus === "sent") fired++;
+    else if (newStatus === "failed") errors++;
+    // queued doesn't count as fired or errored, the next reap retries.
     // Audit so the meter sees it.
     await svc.from("audit_events").insert({
       tenant_id: tenantId,

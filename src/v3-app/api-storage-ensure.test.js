@@ -7,7 +7,15 @@
 // bucket if missing, so first-run uploads stop failing.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { ensureDocumentsBucket, documentsBucket, legacyDocumentsBucket } from "../api/_lib/storage.js";
+import {
+  ensureDocumentsBucket, documentsBucket, legacyDocumentsBucket, _resetEnsuredBucket,
+} from "../api/_lib/storage.js";
+
+beforeEach(() => {
+  // Cached resolution is a per-process optimisation; clear it so
+  // each test exercises the probe + create paths from scratch.
+  _resetEnsuredBucket();
+});
 
 const makeFakeStorage = (have, opts = {}) => {
   const created = [];

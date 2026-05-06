@@ -122,12 +122,24 @@ const WiredInvoices = () => {
     setBusy(row.id);
     try {
       const resp: any = await ObaraBackend?.invoices?.send?.({ id: row.id });
-      // Fire the queued comm immediately via the existing comms.send path
+      // Fire the queued comm immediately via the existing comms.send
+      // path. Audit fix (May 2026): the previous code swallowed
+      // errors silently; the operator saw "queued + sent" even when
+      // the immediate-send failed and the comm sat in the queue.
+      // Now we surface the queue status honestly.
+      let immediateOk = true;
+      let immediateErr = null;
       if (resp?.communication_id) {
-        try { await ObaraBackend?.communications?.send?.({ id: resp.communication_id }); } catch (_) {}
+        try { await ObaraBackend?.communications?.send?.({ id: resp.communication_id }); }
+        catch (e: any) { immediateOk = false; immediateErr = e; }
       }
-      setFlash({ kind: "good", msg: "Invoice " + row.invoice_number + " queued + sent" });
-      window.notifySuccess?.("Invoice sent", row.invoice_number);
+      if (immediateOk) {
+        setFlash({ kind: "good", msg: "Invoice " + row.invoice_number + " queued + sent" });
+        window.notifySuccess?.("Invoice sent", row.invoice_number);
+      } else {
+        setFlash({ kind: "warn", msg: "Invoice " + row.invoice_number + " queued. Immediate send failed: " + (immediateErr?.message || "unknown") + ". Comms reaper will retry." });
+        window.notifyWarn?.("Queued, immediate send failed", immediateErr?.message || "unknown");
+      }
       await load();
     } catch (err: any) {
       setFlash({ kind: "bad", msg: err.message || String(err) });

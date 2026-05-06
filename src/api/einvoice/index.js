@@ -12,6 +12,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { safeFetch } from "../_lib/safe-fetch.js";
 
 const STATUSES = new Set(["DRAFT", "PENDING_GSTN", "GENERATED", "CANCELLED", "REJECTED"]);
 const GSTN_API_URL = process.env.GSTN_API_URL || "";
@@ -145,7 +146,7 @@ export default async function handler(req, res) {
           return json(res, 202, { einvoice: { ...before.data, ...patch }, note: "GSTN_API_URL not configured. Status pending." });
         }
         try {
-          const resp = await fetch(GSTN_API_URL.replace(/\/$/, "") + "/eivital/v1.04/Invoice", {
+          const resp = await safeFetch(GSTN_API_URL.replace(/\/$/, "") + "/eivital/v1.04/Invoice", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",

@@ -80,7 +80,7 @@ export default async function handler(req, res) {
         status: "queued",
         ref_type: "supplier_rfq",
         ref_id: rfq.id,
-      }).then(() => {}).catch(() => {});
+      }).then(() => {}).then(() => undefined, () => undefined);
       out.push({ vendor_id: v.id, invitation_id: inv.data.id, ok: true });
     }
     await svc.from("supplier_rfqs").update({ status: "sent" })

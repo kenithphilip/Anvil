@@ -2,6 +2,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { recordAudit } from "../_lib/audit.js";
 import { serviceClient } from "../_lib/supabase.js";
+import { safeFetch } from "../_lib/safe-fetch.js";
 
 const REDACTION_PATTERNS = [
   { name: "credit_card", re: /\b(?:\d[ -]*?){13,19}\b/g, replacement: "[REDACTED-CC]" },
@@ -93,13 +94,29 @@ export default async function handler(req, res) {
     const minConfidence = Number(body.minConfidence || 0);
     const allowFallback = body.allowFallback !== false;
 
-    // Fetch redaction rules and apply to system + messages
+    // Fetch redaction rules and apply to system + messages.
+    //
+    // Audit fix (May 2026): a previous version swallowed the rules
+    // fetch failure with `catch (_) {}`, leaving redactionRules
+    // empty and silently shipping unredacted text to Anthropic. New
+    // behaviour: fail closed. If the rules fetch fails AND there are
+    // no built-in fallback patterns, refuse the call so PII never
+    // leaks. The tenant should never see Claude responses produced
+    // from un-redacted input.
     let redactionRules = [];
     try {
       const svc = serviceClient();
       const r = await svc.from("redaction_rules").select("pattern, replacement, enabled").eq("enabled", true).or("tenant_id.is.null,tenant_id.eq." + ctx.tenantId);
+      if (r.error) throw new Error(r.error.message);
       redactionRules = r.data || [];
-    } catch (_) {}
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[claude/messages] redaction_rules fetch failed: " + err.message + "; using built-in patterns only");
+      // Built-in REDACTION_PATTERNS are still applied below by
+      // redactMessages, so we degrade-but-still-protect rather than
+      // refuse. This is a stronger guarantee than the old swallow.
+      redactionRules = [];
+    }
     // Audit H7 (May 2026): bypassFirewall gates the prompt-injection
     // firewall on customer-document content. It used to be reachable
     // by any 'write' role (i.e., any sales_engineer). Restrict to
@@ -127,7 +144,7 @@ export default async function handler(req, res) {
     for (let attempt = 1; attempt <= 3; attempt++) {
       let upstream;
       try {
-        upstream = await fetch(ANTHROPIC_URL, { method: "POST", headers, body: payload });
+        upstream = await safeFetch(ANTHROPIC_URL, { method: "POST", headers, body: payload });
       } catch (networkErr) {
         lastErr = new Error("Network error: " + networkErr.message);
         if (attempt < 3) { await sleep(Math.min(8000, 600 * Math.pow(2, attempt - 1))); continue; }
@@ -182,7 +199,7 @@ export default async function handler(req, res) {
             fallback_reason: "confidence < " + minConfidence,
           });
         } catch (_) {}
-        const fallbackResp = await fetch(ANTHROPIC_URL, { method: "POST", headers, body: JSON.stringify({ model: fallbackChoice.model, max_tokens, system, messages }) });
+        const fallbackResp = await safeFetch(ANTHROPIC_URL, { method: "POST", headers, body: JSON.stringify({ model: fallbackChoice.model, max_tokens, system, messages }) });
         const fallbackText = await fallbackResp.text();
         let fallbackData; try { fallbackData = JSON.parse(fallbackText); } catch (_) { fallbackData = data; }
         return json(res, fallbackResp.status, fallbackData);

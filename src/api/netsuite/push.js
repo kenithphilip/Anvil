@@ -174,7 +174,7 @@ export default async function handler(req, res) {
       const { enqueueTravelerForOrder } = await import("../orders/traveler.js");
       enqueueTravelerForOrder(svc, {
         tenantId: ctx.tenantId, orderId: orderQ.data.id, triggeredBy: "erp_push",
-      }).catch(() => {});
+      }).then(() => undefined, () => undefined);
     }
 
     if (!ok && isRecoverable(resp.status)) {

@@ -9,7 +9,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { renderInvoice } from "../_lib/pdf-renderer.js";
-import { documentsBucket } from "../_lib/storage.js";
+import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "../_lib/storage.js";
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -73,12 +73,18 @@ export default async function handler(req, res) {
     const pdf = await renderInvoice(buildInvoicePdfData(tenant, invQ.data, customer));
 
     if (format === "share") {
-      const bucket = documentsBucket();
+      let bucket;
+      try { bucket = await ensureDocumentsBucket(svc); }
+      catch (e) {
+        bucket = documentsBucket();
+        // eslint-disable-next-line no-console
+        console.warn("[invoices/pdf] ensureDocumentsBucket: " + e.message);
+      }
       const path = ctx.tenantId + "/invoices/" + id + ".pdf";
       const up = await svc.storage.from(bucket).upload(path, pdf, { contentType: "application/pdf", upsert: true });
-      if (up.error) throw new Error("storage upload: " + up.error.message);
+      if (up.error) throw new Error("storage upload: " + friendlyStorageError(up.error.message, bucket));
       const signed = await svc.storage.from(bucket).createSignedUrl(path, SHARE_TTL_SECONDS);
-      if (signed.error) throw new Error("signed url: " + signed.error.message);
+      if (signed.error) throw new Error("signed url: " + friendlyStorageError(signed.error.message, bucket));
       // Persist the PDF path on the invoice for later reuse.
       await svc.from("invoices").update({ pdf_storage_path: path }).eq("tenant_id", ctx.tenantId).eq("id", id);
       await recordAudit(ctx, { action: "invoice_pdf_shared", objectType: "invoice", objectId: id });

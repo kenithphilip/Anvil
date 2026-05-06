@@ -188,7 +188,7 @@ export default async function handler(req, res) {
         object_type: "inbound_email",
         object_id: out.body?.id || null,
         detail: provider + (out.body?.duplicate ? "::duplicate" : ""),
-      }).then(() => {}).catch(() => {});
+      }).then(() => {}).then(() => undefined, () => undefined);
     }
     return json(res, out.status, out.body);
   } catch (err) { sendError(res, err); }

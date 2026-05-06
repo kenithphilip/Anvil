@@ -43,7 +43,13 @@ export default async function handler(req, res) {
       return json(res, 409, { error: { code: "DOCUMENT_NOT_SCANNED", message: "Document must be scanned before OCR. Run /api/documents/scan first." } });
     }
     const { data: signed, error: signErr } = await svc.storage.from(doc.storage_bucket).createSignedUrl(doc.storage_path, 60 * 5);
-    if (signErr) throw new Error("Signed URL error: " + signErr.message);
+    if (signErr) {
+      const msg = String(signErr.message || "");
+      const friendly = /not.*exist|not.*found|404/i.test(msg)
+        ? "Document storage bucket `" + doc.storage_bucket + "` not found. The document may have been moved; ask an admin to verify Supabase Storage."
+        : "Signed URL error: " + msg;
+      throw new Error(friendly);
+    }
     const { data: runRow, error: runErr } = await svc.from("ocr_runs").insert({
       tenant_id: ctx.tenantId,
       document_id: doc.id,
@@ -100,7 +106,20 @@ export default async function handler(req, res) {
     return json(res, 200, { runId, pageCount: ocrResult.pages.length, evidenceCount: evidenceTotal, pages: ocrResult.pages.map((p) => ({ index: p.index, width: p.width, height: p.height, blockCount: p.blocks.length })) });
   } catch (err) {
     if (runId && ctx) {
-      try { await serviceClient().from("ocr_runs").update({ status: "failed", error: String(err.message || err), completed_at: new Date().toISOString() }).eq("id", runId); } catch (_) {}
+      try {
+        const updateRes = await serviceClient().from("ocr_runs").update({
+          status: "failed",
+          error: String(err.message || err).slice(0, 1000),
+          completed_at: new Date().toISOString(),
+        }).eq("id", runId);
+        if (updateRes.error) {
+          // eslint-disable-next-line no-console
+          console.error("[documents/ocr] failed-status update failed for run " + runId + ": " + updateRes.error.message);
+        }
+      } catch (logErr) {
+        // eslint-disable-next-line no-console
+        console.error("[documents/ocr] failed-status update threw for run " + runId + ": " + (logErr.message || logErr));
+      }
     }
     sendError(res, err);
   }

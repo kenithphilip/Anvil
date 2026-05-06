@@ -29,49 +29,59 @@ export const withBucketFallback = async (run) => {
   }
 };
 
-// Idempotent ensure-bucket. Tries the canonical bucket first; on a
-// "not found" / "resource does not exist" error from Supabase storage
-// (the cause of the user-visible "Signed URL: The related resource
-// does not exist" failure on first upload), creates the bucket and
-// returns its name. Falls back to the legacy bucket name when the
-// canonical one cannot be created.
-//
-// Returns the bucket name actually available, or throws an error
-// with an actionable message naming the env var to set or the bucket
-// to create manually.
+// Idempotent ensure-bucket. Probes listBuckets, creates the canonical
+// bucket if missing, falls back to the legacy name. Throws an
+// actionable error only when both attempts fail. Closes the
+// "signed URL: related resource does not exist" failure on first-run
+// uploads. Cached per process so repeat callers don't re-probe.
+let _ensuredBucket = null;
+
+// Test-only: clear the cached bucket name so repeat unit tests can
+// exercise the probe + create paths cleanly. Production code never
+// needs this.
+export const _resetEnsuredBucket = () => { _ensuredBucket = null; };
+
 export const ensureDocumentsBucket = async (svc) => {
+  if (_ensuredBucket) return _ensuredBucket;
   const canonical = documentsBucket();
   const legacy = legacyDocumentsBucket();
   const tried = [];
-  // Probe by listing buckets; prefer whichever already exists.
   try {
     const { data: buckets, error } = await svc.storage.listBuckets();
     if (!error && Array.isArray(buckets)) {
       const have = new Set(buckets.map((b) => b.name));
-      if (have.has(canonical)) return canonical;
-      if (have.has(legacy)) return legacy;
+      if (have.has(canonical)) { _ensuredBucket = canonical; return canonical; }
+      if (have.has(legacy))    { _ensuredBucket = legacy;    return legacy; }
     }
-  } catch (_) { /* fall through to create attempt */ }
-  // Bucket missing. Try to create the canonical one.
+  } catch (_) { /* fall through */ }
   try {
     const { error: createErr } = await svc.storage.createBucket(canonical, { public: false });
-    if (!createErr) return canonical;
+    if (!createErr) { _ensuredBucket = canonical; return canonical; }
     tried.push(canonical + ": " + createErr.message);
-  } catch (e) {
-    tried.push(canonical + ": " + (e.message || String(e)));
-  }
-  // Last-ditch: try the legacy bucket name.
+  } catch (e) { tried.push(canonical + ": " + (e.message || String(e))); }
   try {
     const { error: createErr } = await svc.storage.createBucket(legacy, { public: false });
-    if (!createErr) return legacy;
+    if (!createErr) { _ensuredBucket = legacy; return legacy; }
     tried.push(legacy + ": " + createErr.message);
-  } catch (e) {
-    tried.push(legacy + ": " + (e.message || String(e)));
-  }
+  } catch (e) { tried.push(legacy + ": " + (e.message || String(e))); }
   throw new Error(
     "Documents storage bucket missing. Could not auto-create on Supabase. " +
-    "Create a private bucket named `" + canonical + "` in the Supabase dashboard " +
-    "(Storage, New bucket) or set ANVIL_DOCUMENTS_BUCKET to a bucket name " +
-    "your project already has. Attempted: " + tried.join("; "),
+    "Create a private bucket named `" + canonical + "` in the Supabase " +
+    "dashboard (Storage > New bucket) or set ANVIL_DOCUMENTS_BUCKET to " +
+    "an existing bucket. Attempted: " + tried.join("; "),
   );
+};
+
+// Wraps a Supabase storage error message that says "not found" / "404"
+// / "does not exist" into something the operator can act on. Use this
+// after every createSignedUrl / createSignedUploadUrl that goes through
+// withBucketFallback or against a hardcoded bucket name.
+export const friendlyStorageError = (rawMessage, bucket) => {
+  const msg = String(rawMessage || "");
+  if (/not.*exist|not.*found|404/i.test(msg)) {
+    return "Documents storage bucket `" + bucket + "` not found. " +
+      "Create a private bucket with that name in Supabase Storage, or " +
+      "set ANVIL_DOCUMENTS_BUCKET to point at an existing bucket.";
+  }
+  return msg;
 };

@@ -15,7 +15,13 @@ export default async function handler(req, res) {
       const { data, error } = await svc.from("documents").select("*").eq("tenant_id", ctx.tenantId).eq("id", id).single();
       if (error || !data) return json(res, 404, { error: { message: "Document not found" } });
       const { data: signed, error: signErr } = await svc.storage.from(data.storage_bucket).createSignedUrl(data.storage_path, 60 * 10);
-      if (signErr) return json(res, 500, { error: { message: signErr.message } });
+      if (signErr) {
+        const msg = String(signErr.message || "");
+        const friendly = /not.*exist|not.*found|404/i.test(msg)
+          ? "Document storage bucket `" + data.storage_bucket + "` not found in Supabase Storage. The bucket may have been renamed or deleted; ask an admin."
+          : signErr.message;
+        return json(res, 500, { error: { message: friendly } });
+      }
       return json(res, 200, { ...data, downloadUrl: signed.signedUrl, expiresInSeconds: 600 });
     }
     if (req.method === "DELETE") {

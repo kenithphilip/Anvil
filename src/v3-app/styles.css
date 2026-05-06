@@ -203,6 +203,11 @@ button { cursor: pointer; }
   overflow: auto;
   position: relative;
   background: var(--bg);
+  /* Floating ThemeBar sits at bottom: 36px / height ~30px, so the
+     bottom-right of any page can be obscured by the toggles + sign-
+     out button. Pad the scroll area so content always has clearance
+     and never disappears under the floating buttons. */
+  padding-bottom: 64px;
 }
 .app-dock {
   grid-area: dock;
@@ -303,6 +308,18 @@ button { cursor: pointer; }
   color: var(--ink-2);
   cursor: pointer;
   white-space: nowrap;
+}
+
+/* Floating ThemeBar (theme / density / rail / sign-out). Always-on-top
+   bar pinned bottom-right of every authenticated screen. We give it a
+   solid backdrop with a subtle shadow so on any page (including
+   full-bleed canvases like the kanban) the buttons remain legible. */
+.theme-bar {
+  background: var(--paper);
+  padding: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: calc(var(--r-2) + 2px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
 }
 .head-pill:hover { background: var(--paper-3); }
 .head-pill .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--accent-2); }

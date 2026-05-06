@@ -7,6 +7,7 @@
 
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
 import { oauth2ClientCredentials, oauth2Evict } from "./oauth2.js";
+import { safeFetch } from "./safe-fetch.js";
 
 export const sxeDecryptCreds = (s) => {
   if (!s) return s;
@@ -60,7 +61,7 @@ export const sxeFetch = async (s, { method, path, body, query, retryOn401 = true
   };
   if (body) headers["Content-Type"] = "application/json";
   const t0 = Date.now();
-  const resp = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const resp = await safeFetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
   if (resp.status === 401 && retryOn401) {
     oauth2Evict(s.tenant_id || "shared", s.sxe_token_url, s.sxe_client_id);
     return sxeFetch(s, { method, path, body, query, retryOn401: false });

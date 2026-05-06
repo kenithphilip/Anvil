@@ -2,6 +2,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { safeFetch } from "../_lib/safe-fetch.js";
 
 const cleanName = (s) => String(s || "").trim().toLowerCase();
 
@@ -59,7 +60,7 @@ const tryRemoteDryRun = async (xml) => {
   const headers = { "Content-Type": "text/xml" };
   if (process.env.TALLY_BRIDGE_TOKEN) headers["Authorization"] = "Bearer " + process.env.TALLY_BRIDGE_TOKEN;
   try {
-    const resp = await fetch(url, { method: "POST", headers, body: xml });
+    const resp = await safeFetch(url, { method: "POST", headers, body: xml });
     const text = await resp.text();
     return { status: resp.status, body: text.slice(0, 4000) };
   } catch (err) {

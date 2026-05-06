@@ -8,6 +8,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { ocrDocument } from "../_lib/mistral.js";
+import { safeFetch } from "../_lib/safe-fetch.js";
 
 const isPdfMime = (mime) => /pdf/i.test(mime || "");
 const isImageMime = (mime) => /^image\//i.test(mime || "");
@@ -58,7 +59,7 @@ export default async function handler(req, res) {
     }).select("id").single();
     if (runErr) throw new Error("OCR run insert: " + runErr.message);
     runId = runRow.id;
-    const upstream = await fetch(signed.signedUrl);
+    const upstream = await safeFetch(signed.signedUrl);
     if (!upstream.ok) throw new Error("Storage download failed: " + upstream.status);
     const buf = Buffer.from(await upstream.arrayBuffer());
     const ocrResult = await ocrDocument({ buffer: buf, filename: doc.filename, mimeType: doc.mime_type });

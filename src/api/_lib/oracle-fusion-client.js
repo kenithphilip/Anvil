@@ -21,6 +21,7 @@
 
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
 import { oauth2ClientCredentials, oauth2Evict } from "./oauth2.js";
+import { safeFetch } from "./safe-fetch.js";
 
 export const oracleFusionDecryptCreds = (s) => {
   if (!s) return s;
@@ -91,7 +92,7 @@ export const oracleFusionFetch = async (s, { method = "GET", resource, body, que
   };
   if (body) headers["Content-Type"] = "application/vnd.oracle.adf.resourceitem+json";
   const t0 = Date.now();
-  const resp = await fetch(url, {
+  const resp = await safeFetch(url, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,

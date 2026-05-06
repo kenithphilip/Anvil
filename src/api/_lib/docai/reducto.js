@@ -5,6 +5,7 @@
 // elements onto the canonical line-item schema.
 
 import { decryptField } from "../secrets.js";
+import { safeFetch } from "../safe-fetch.js";
 
 const BASE_URL = "https://api.reducto.ai/v1";
 
@@ -20,7 +21,7 @@ const apiKey = (settings) => {
 export const isConfigured = (settings) => !!apiKey(settings);
 
 const callReductoParse = async (key, fileUrl) => {
-  const resp = await fetch(BASE_URL + "/parse", {
+  const resp = await safeFetch(BASE_URL + "/parse", {
     method: "POST",
     headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
     body: JSON.stringify({ document_url: fileUrl, advanced_options: { table_summary: true } }),

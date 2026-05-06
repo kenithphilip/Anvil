@@ -23,6 +23,7 @@
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { safeAwait } from "../_lib/safe-thenable.js";
+import { safeFetch } from "../_lib/safe-fetch.js";
 
 const RESET_RATE_LIMIT = Number(process.env.RESET_RATE_LIMIT || 5);
 const RESET_RATE_WINDOW_MIN = 60;
@@ -99,7 +100,7 @@ const sendResetEmail = async ({ to, name, actionLink }) => {
     "If you didn't request this, ignore the email. Your password stays unchanged.\n\n" +
     "Anvil security team";
   try {
-    const resp = await fetch("https://api.sendgrid.com/v3/mail/send", {
+    const resp = await safeFetch("https://api.sendgrid.com/v3/mail/send", {
       method: "POST",
       headers: { Authorization: "Bearer " + SENDGRID_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({

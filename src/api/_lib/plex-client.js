@@ -13,6 +13,7 @@
 // don't use token-cache.js. We do encrypt the API key at rest.
 
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { safeFetch } from "./safe-fetch.js";
 
 export const plexDecryptCreds = (s) => {
   if (!s) return s;
@@ -68,7 +69,7 @@ export const plexFetch = async (s, { method = "GET", path, body, query } = {}) =
   if (s.plex_pcn) headers["X-Plex-PCN"] = String(s.plex_pcn);
   if (body) headers["Content-Type"] = "application/json";
   const t0 = Date.now();
-  const resp = await fetch(url, {
+  const resp = await safeFetch(url, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,

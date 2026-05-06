@@ -4,6 +4,7 @@
 // Layout-aware. Includes handwriting recognition for scanned faxes.
 
 import { decryptField } from "../secrets.js";
+import { safeFetch } from "../safe-fetch.js";
 
 const apiKey = (settings) => {
   if (settings?.docai_azure_di_key_enc && settings?.docai_creds_iv) {
@@ -21,7 +22,7 @@ export const isConfigured = (settings) => !!(apiKey(settings) && endpoint(settin
 const analyze = async ({ ep, key, modelId, fileUrl }) => {
   const url = ep.replace(/\/+$/, "")
     + `/formrecognizer/documentModels/${modelId}:analyze?api-version=2023-07-31`;
-  const start = await fetch(url, {
+  const start = await safeFetch(url, {
     method: "POST",
     headers: {
       "Ocp-Apim-Subscription-Key": key,
@@ -39,7 +40,7 @@ const analyze = async ({ ep, key, modelId, fileUrl }) => {
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 1500));
-    const poll = await fetch(opLoc, {
+    const poll = await safeFetch(opLoc, {
       headers: { "Ocp-Apim-Subscription-Key": key },
     });
     const body = await poll.json();

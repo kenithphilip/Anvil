@@ -24,6 +24,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { sha256, scanWithClamAV } from "./_lib/scan-runner.js";
+import { safeFetch } from "../_lib/safe-fetch.js";
 
 // SERVER-SIDE LIMITS. These are NOT overridable by the caller.
 const MAX_TOTAL_BYTES = Number(process.env.DOCUMENTS_MAX_UPLOAD_BYTES || 50 * 1024 * 1024);
@@ -94,7 +95,7 @@ export default async function handler(req, res) {
     const downloadDocument = async () => {
       const { data: signed, error: signErr } = await svc.storage.from(doc.storage_bucket).createSignedUrl(doc.storage_path, 60 * 5);
       if (signErr) throw new Error("Signed URL error: " + signErr.message);
-      const upstream = await fetch(signed.signedUrl);
+      const upstream = await safeFetch(signed.signedUrl);
       if (!upstream.ok) throw new Error("Storage download failed: " + upstream.status);
       // Cap the download stream at MAX_TOTAL_BYTES + 1 byte so a
       // server returning > MAX cannot exhaust memory.

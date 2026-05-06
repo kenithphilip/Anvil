@@ -8,6 +8,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { safeFetch } from "../_lib/safe-fetch.js";
 
 const PROVIDER_URL = process.env.FX_PROVIDER_URL || "https://api.frankfurter.app";
 const DEFAULT_TARGETS = ["INR", "CNY", "JPY", "KRW", "USD", "EUR"];
@@ -15,7 +16,7 @@ const DEFAULT_TARGETS = ["INR", "CNY", "JPY", "KRW", "USD", "EUR"];
 const fetchRates = async (asOf, fromCcy, targets) => {
   const params = new URLSearchParams({ from: fromCcy, to: targets.filter((t) => t !== fromCcy).join(",") });
   const url = PROVIDER_URL.replace(/\/$/, "") + "/" + asOf + "?" + params.toString();
-  const resp = await fetch(url, { headers: { Accept: "application/json" } });
+  const resp = await safeFetch(url, { headers: { Accept: "application/json" } });
   if (!resp.ok) throw new Error("Provider " + resp.status);
   const data = await resp.json();
   return { date: data.date || asOf, base: data.base || fromCcy, rates: data.rates || {} };

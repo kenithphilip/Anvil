@@ -10,6 +10,7 @@
 
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
 import { oauth2ClientCredentials, oauth2Evict } from "./oauth2.js";
+import { safeFetch } from "./safe-fetch.js";
 
 export const sapDecryptCreds = (settings) => {
   if (!settings) return settings;
@@ -67,7 +68,7 @@ export const sapFetch = async (settings, { method, path, body, query, retryOn401
   };
   if (body) headers["Content-Type"] = "application/json";
   const t0 = Date.now();
-  const resp = await fetch(url, {
+  const resp = await safeFetch(url, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,

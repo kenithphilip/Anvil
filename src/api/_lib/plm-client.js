@@ -14,6 +14,7 @@
 // for retry queueing (cron) and per-tenant audit.
 
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { safeFetch } from "./safe-fetch.js";
 
 // ── creds helpers ─────────────────────────────────────────────────
 export const plmDecryptCreds = (s) => {
@@ -80,7 +81,7 @@ const callJson = async (s, path, { method = "GET", body, query } = {}) => {
       if (v != null) url.searchParams.set(k, String(v));
     }
   }
-  const resp = await fetch(url, {
+  const resp = await safeFetch(url, {
     method,
     headers: { ...authHeaders(s), ...(body ? { "Content-Type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,

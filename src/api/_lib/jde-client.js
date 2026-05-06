@@ -23,6 +23,7 @@
 
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
 import { getOrMintToken, evictToken } from "./token-cache.js";
+import { safeFetch } from "./safe-fetch.js";
 
 export const jdeDecryptCreds = (s) => {
   if (!s) return s;
@@ -69,7 +70,7 @@ const acquireToken = async (s) => {
     tokenUrl,
     identity: s.jde_username,
     mintFn: async () => {
-      const resp = await fetch(tokenUrl, {
+      const resp = await safeFetch(tokenUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -124,7 +125,7 @@ export const jdeFetch = async (s, { method = "GET", path, body, query, retryOn40
   };
   if (body) headers["Content-Type"] = "application/json";
   const t0 = Date.now();
-  const resp = await fetch(url, {
+  const resp = await safeFetch(url, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,

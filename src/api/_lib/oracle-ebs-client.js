@@ -12,6 +12,7 @@
 // call.
 
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { safeFetch } from "./safe-fetch.js";
 
 export const oracleEbsDecryptCreds = (s) => {
   if (!s) return s;
@@ -72,7 +73,7 @@ export const oracleEbsFetch = async (s, { method = "GET", path, body, query } = 
   if (s.oracle_ebs_org_id) headers["RestOrgId"] = String(s.oracle_ebs_org_id);
   if (body) headers["Content-Type"] = "application/json";
   const t0 = Date.now();
-  const resp = await fetch(url, {
+  const resp = await safeFetch(url, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,

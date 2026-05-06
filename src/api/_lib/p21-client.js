@@ -9,6 +9,7 @@
 // Writes use /api/v2/data/<entity> (P21's REST mutation surface).
 
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { safeFetch } from "./safe-fetch.js";
 
 const tokenCache = new Map();
 const REFRESH_SLACK_MS = 30_000;
@@ -52,7 +53,7 @@ const acquireToken = async (s) => {
   const cached = tokenCache.get(key);
   if (cached && cached.expiresAt > Date.now() + REFRESH_SLACK_MS) return cached.token;
   const url = s.p21_base_url.replace(/\/+$/, "") + "/api/security/token";
-  const resp = await fetch(url, {
+  const resp = await safeFetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -87,7 +88,7 @@ export const p21Fetch = async (s, { method, path, body, query, retryOn401 = true
   };
   if (body) headers["Content-Type"] = "application/json";
   const t0 = Date.now();
-  const resp = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const resp = await safeFetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
   if (resp.status === 401 && retryOn401) {
     tokenCache.delete(cacheKey(s));
     return p21Fetch(s, { method, path, body, query, retryOn401: false });

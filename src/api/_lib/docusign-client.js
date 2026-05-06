@@ -9,6 +9,7 @@
 
 import crypto from "node:crypto";
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { safeFetch } from "./safe-fetch.js";
 
 const tokenCache = new Map();
 const REFRESH_SLACK_MS = 30_000;
@@ -75,7 +76,7 @@ const acquireToken = async (s) => {
   const jwt = data + "." + b64url(sig);
 
   const tokenUrl = "https://" + aud + "/oauth/token";
-  const resp = await fetch(tokenUrl, {
+  const resp = await safeFetch(tokenUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -103,7 +104,7 @@ export const docusignFetch = async (s, { method, path, body }) => {
   const url = s.docusign_base_path.replace(/\/+$/, "") + path;
   const headers = { Authorization: "Bearer " + token, Accept: "application/json" };
   if (body) headers["Content-Type"] = "application/json";
-  const resp = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const resp = await safeFetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const text = await resp.text();
   let parsed = null;
   try { parsed = text ? JSON.parse(text) : null; } catch (_e) { parsed = { raw: text.slice(0, 400) }; }

@@ -1184,10 +1184,12 @@ begin
 
     -- 1-2 events per envelope.
     insert into esignature_events (id, tenant_id, envelope_id, event, raw, received_at) values
-      (uuid_generate_v5(ns,'esige:' || s || ':1'), default_tenant, env_id, 'envelope-sent', jsonb_build_object('seed_marker','anvil-test-seed-v1'), now() - interval '5 days');
+      (uuid_generate_v5(ns,'esige:' || s || ':1'), default_tenant, env_id, 'envelope-sent', jsonb_build_object('seed_marker','anvil-test-seed-v1'), now() - interval '5 days')
+    on conflict (id) do nothing;
     if s = 'signed' then
       insert into esignature_events (id, tenant_id, envelope_id, event, raw, received_at) values
-        (uuid_generate_v5(ns,'esige:' || s || ':2'), default_tenant, env_id, 'recipient-signed', jsonb_build_object('seed_marker','anvil-test-seed-v1'), now() - interval '2 days');
+        (uuid_generate_v5(ns,'esige:' || s || ':2'), default_tenant, env_id, 'recipient-signed', jsonb_build_object('seed_marker','anvil-test-seed-v1'), now() - interval '2 days')
+      on conflict (id) do nothing;
     end if;
   end loop;
 end $esig$;

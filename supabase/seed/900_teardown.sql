@@ -239,7 +239,7 @@ begin
   delete from rlhf_feedback           where prompt->>'seed_marker'       = 'anvil-test-seed-v1';
   delete from analytics_winloss_daily where lost_reasons->>'seed_marker' = 'anvil-test-seed-v1';
   delete from analytics_customer_monthly where tenant_id = default_tenant
-    and customer_id in (select id from customers where customer_key in ('MG_MOTOR_INDIA','JBM_AUTO'));
+    and customer_id in (select id from customers where customer_key in ('MG_MOTOR_INDIA','JBM_AUTO_PLANT_1'));
   delete from forecast_snapshots      where tenant_id = default_tenant
     and segment_dimension in ('territory','customer_type');
   delete from injection_test_runs     where catalogue in ('owasp-llm-top-10-2024','anvil-internal-redteam-v1','agent-tool-misuse-v1');

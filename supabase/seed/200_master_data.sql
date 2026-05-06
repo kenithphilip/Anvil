@@ -285,7 +285,7 @@ declare
 begin
   select id into mg_id     from customers where tenant_id = default_tenant and customer_key = 'MG_MOTOR_INDIA';
   select id into tata_id   from customers where tenant_id = default_tenant and customer_key = 'TATA_MOTORS_PV_PUNE';
-  select id into jbm_id    from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO';
+  select id into jbm_id    from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO_PLANT_1';
   select id into ati_id    from customers where tenant_id = default_tenant and customer_key = 'ANVIL_TEST_INDUSTRIES';
   select id into nippon_id from customers where tenant_id = default_tenant and customer_key = 'NIPPON_KOGYO';
 
@@ -581,7 +581,7 @@ declare
   jbm_plant      uuid;  jbm_line uuid; jbm_zone  uuid; jbm_station  uuid; jbm_robot  uuid;
 begin
   select id into mg_id  from customers where tenant_id = default_tenant and customer_key = 'MG_MOTOR_INDIA';
-  select id into jbm_id from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO';
+  select id into jbm_id from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO_PLANT_1';
   select id into mg_halol_loc from customer_locations where tenant_id = default_tenant and customer_id = mg_id and location_code = 'HALOL';
 
   -- MG Motor Halol chain
@@ -688,8 +688,8 @@ declare
 begin
   select id into mg     from customers where tenant_id = default_tenant and customer_key = 'MG_MOTOR_INDIA';
   select id into tata   from customers where tenant_id = default_tenant and customer_key = 'TATA_MOTORS_PV_PUNE';
-  select id into jbm    from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO';
-  select id into rn     from customers where tenant_id = default_tenant and customer_key = 'RENAULT_NISSAN';
+  select id into jbm    from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO_PLANT_1';
+  select id into rn     from customers where tenant_id = default_tenant and customer_key = 'RNAIPL';
   select id into ati    from customers where tenant_id = default_tenant and customer_key = 'ANVIL_TEST_INDUSTRIES';
   select id into nippon from customers where tenant_id = default_tenant and customer_key = 'NIPPON_KOGYO';
   select id into globex from customers where tenant_id = default_tenant and customer_key = 'GLOBEX_MFG_GMBH';
@@ -718,7 +718,7 @@ declare
   cstatuses      text[] := array['ACTIVE','EXPIRED','TERMINATED','PENDING_RENEWAL'];
   ctype          text;
   cstatus        text;
-  customer_keys  text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO','ANVIL_TEST_INDUSTRIES'];
+  customer_keys  text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO_PLANT_1','ANVIL_TEST_INDUSTRIES'];
   ckey           text;
   i              int := 0;
   c_id           uuid;
@@ -793,19 +793,19 @@ begin
       (uuid_generate_v5(ns,'pm:arc-active:1'), default_tenant, c_arc_active, 1, 'Advance on PO',         50.00, null, 'po_received',   0,   'NEFT', 'Standard MG terms.',       now() - interval '120 days'),
       (uuid_generate_v5(ns,'pm:arc-active:2'), default_tenant, c_arc_active, 2, 'Before dispatch',       40.00, null, 'pre_dispatch',  0,   'NEFT', null,                       now() - interval '120 days'),
       (uuid_generate_v5(ns,'pm:arc-active:3'), default_tenant, c_arc_active, 3, '30 days post-delivery', 10.00, null, 'n_days',        30,  'NEFT', 'Retention.',               now() - interval '120 days')
-    on conflict (tenant_id, contract_id, sequence) do nothing;
+    on conflict (tenant_id, contract_id, sequence) where contract_id is not null do nothing;
   end if;
   if c_blanket_act is not null then
     insert into payment_milestones (id, tenant_id, contract_id, sequence, label, pct, fixed_inr, trigger, due_days, payment_method, notes, created_at) values
       (uuid_generate_v5(ns,'pm:bl-active:1'), default_tenant, c_blanket_act, 1, 'Net 30 per release', 100.00, null, 'n_days', 30, 'NEFT', 'Per-release blanket terms.', now() - interval '120 days')
-    on conflict (tenant_id, contract_id, sequence) do nothing;
+    on conflict (tenant_id, contract_id, sequence) where contract_id is not null do nothing;
   end if;
   if c_arc_pend is not null then
     insert into payment_milestones (id, tenant_id, contract_id, sequence, label, pct, fixed_inr, trigger, due_days, payment_method, notes, created_at) values
       (uuid_generate_v5(ns,'pm:arc-pend:1'), default_tenant, c_arc_pend, 1, 'Advance on PO renewal', 30.00, null, 'po_received',   0,  'NEFT', 'Renegotiated milestones.', now() - interval '90 days'),
       (uuid_generate_v5(ns,'pm:arc-pend:2'), default_tenant, c_arc_pend, 2, 'Per release',           60.00, null, 'pre_dispatch',  0,  'NEFT', null,                       now() - interval '90 days'),
       (uuid_generate_v5(ns,'pm:arc-pend:3'), default_tenant, c_arc_pend, 3, '60 days post-delivery', 10.00, null, 'n_days',        60, 'NEFT', 'Retention.',               now() - interval '90 days')
-    on conflict (tenant_id, contract_id, sequence) do nothing;
+    on conflict (tenant_id, contract_id, sequence) where contract_id is not null do nothing;
   end if;
 end $pm$;
 

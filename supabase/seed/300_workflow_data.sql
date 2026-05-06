@@ -83,7 +83,7 @@ declare
   status_i       int := 0;
   src_i          int := 0;
   cust_id        uuid;
-  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO','RENAULT_NISSAN','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH'];
+  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO_PLANT_1','RNAIPL','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH'];
 begin
   foreach s in array statuses loop
     status_i := status_i + 1;
@@ -150,7 +150,7 @@ declare
   s              text;
   k              int := 0;
   cust_id        uuid;
-  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO','RENAULT_NISSAN','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH','ACME_ROBOTICS_LLC'];
+  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO_PLANT_1','RNAIPL','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH','ACME_ROBOTICS_LLC'];
 begin
   foreach s in array stages loop
     -- two opportunities per stage (different customers).
@@ -227,7 +227,7 @@ declare
   p              text;
   k              int := 0;
   cust_id        uuid;
-  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO','RENAULT_NISSAN','ANVIL_TEST_INDUSTRIES'];
+  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO_PLANT_1','RNAIPL','ANVIL_TEST_INDUSTRIES'];
   proj_id        uuid;
   alpha          uuid := uuid_generate_v5(uuid_ns_dns(), 'anvil-seed-user:eng.alpha@anvil.test');
 begin
@@ -281,7 +281,7 @@ declare
   s              text;
   k              int := 0;
   cust_id        uuid;
-  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO','RENAULT_NISSAN'];
+  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO_PLANT_1','RNAIPL'];
   iso_id         uuid;
 begin
   foreach t in array types loop
@@ -353,7 +353,7 @@ declare
   mode_idx       int;
   cust_id        uuid;
   loc_id         uuid;
-  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO','RENAULT_NISSAN','ABC_MOTORS','SRTX','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH','ACME_ROBOTICS_LLC','NIPPON_KOGYO'];
+  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO_PLANT_1','RNAIPL','ABC_MOTORS','SRTX','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH','ACME_ROBOTICS_LLC','NIPPON_KOGYO'];
   ckey           text;
   k              int := 0;
   o_id           uuid;
@@ -520,11 +520,14 @@ begin
     end if;
 
     -- 3 schedule lines for orders with SPARES_ASSEMBLY mode (mode_hint='blanket' surrogate).
+    -- DRAFT orders never had a doc_po inserted (gated above on `if rec.status <> 'DRAFT'`),
+    -- so we either skip the whole block or set source_document_id to null. We choose null
+    -- so DRAFT blanket-release children still get the schedule fan-out for verify probes.
     if rec.po_number like '5100002%' then
       insert into order_schedule_lines (id, tenant_id, order_id, line_index, part_no, scheduled_qty, scheduled_date, delivery_location, remark, source_document_id, created_at) values
-        (uuid_generate_v5(ns,'osl:' || rec.id::text || ':1'), default_tenant, rec.id, 0, 'CT-16-D-1-FS', 200, (now() + interval '7 days')::date,  'MG Halol', null, doc_po, rec.created_at),
-        (uuid_generate_v5(ns,'osl:' || rec.id::text || ':2'), default_tenant, rec.id, 1, 'CT-16-D-1-FS', 200, (now() + interval '14 days')::date, 'MG Halol', null, doc_po, rec.created_at),
-        (uuid_generate_v5(ns,'osl:' || rec.id::text || ':3'), default_tenant, rec.id, 2, 'CT-16-D-1-FS', 100, (now() + interval '21 days')::date, 'MG Halol', null, doc_po, rec.created_at)
+        (uuid_generate_v5(ns,'osl:' || rec.id::text || ':1'), default_tenant, rec.id, 0, 'CT-16-D-1-FS', 200, (now() + interval '7 days')::date,  'MG Halol', null, case when rec.status <> 'DRAFT' then doc_po else null end, rec.created_at),
+        (uuid_generate_v5(ns,'osl:' || rec.id::text || ':2'), default_tenant, rec.id, 1, 'CT-16-D-1-FS', 200, (now() + interval '14 days')::date, 'MG Halol', null, case when rec.status <> 'DRAFT' then doc_po else null end, rec.created_at),
+        (uuid_generate_v5(ns,'osl:' || rec.id::text || ':3'), default_tenant, rec.id, 2, 'CT-16-D-1-FS', 100, (now() + interval '21 days')::date, 'MG Halol', null, case when rec.status <> 'DRAFT' then doc_po else null end, rec.created_at)
       on conflict (id) do nothing;
     end if;
 
@@ -575,6 +578,10 @@ declare
   primary_admin  uuid := uuid_generate_v5(uuid_ns_dns(), 'anvil-seed-user:admin.primary@anvil.test');
   prc_alpha      uuid := uuid_generate_v5(uuid_ns_dns(), 'anvil-seed-user:prc.alpha@anvil.test');
   statuses       text[] := array['DRAFT','PENDING_INTERNAL_APPROVAL','SENT_TO_SUPPLIER','SUPPLIER_ACK','PRICE_CHANGED','ETA_CONFIRMED','DELAYED','RECEIVED','CLOSED','CANCELLED'];
+  -- Real order_status values from the 50-order grid above. Used to
+  -- pick a real order_id for the source_pos.order_id FK; the
+  -- source_po_status (`statuses` above) is unrelated to this lookup.
+  ord_statuses   text[] := array['DRAFT','PENDING_REVIEW','APPROVED','BLOCKED','DUPLICATE','REUSED','EXPORTED_TO_TALLY','FAILED_TALLY_IMPORT','RECONCILED','CANCELLED'];
   s              text;
   k              int := 0;
   spo_id         uuid;
@@ -586,8 +593,9 @@ begin
   foreach s in array statuses loop
     for variant in 1..2 loop
       k := k + 1;
-      -- Attach to a non-DRAFT, non-INTERNAL order. Pick deterministically.
-      select uuid_generate_v5(ns, 'order:' || statuses[((k - 1) % array_length(statuses,1)) + 1] || ':SPARES') into ord_id;
+      -- Attach to a real order. Pick deterministically by rotating
+      -- through the 10 order_status values (NOT source_po_status).
+      select uuid_generate_v5(ns, 'order:' || ord_statuses[((k - 1) % array_length(ord_statuses,1)) + 1] || ':SPARES') into ord_id;
 
       spo_id := uuid_generate_v5(ns, 'spo:' || s || ':' || variant::text);
       insert into source_pos (id, tenant_id, order_id, reference, supplier, country, currency,
@@ -689,6 +697,15 @@ declare
   default_tenant uuid := '00000000-0000-0000-0000-000000000001';
   ns             uuid := 'd7a7e5e4-0001-0003-0001-000000000001';
   statuses       text[] := array['PLANNED','READY','IN_TRANSIT','AT_PORT','CLEARED','DELIVERED','POD_RECEIVED','EXCEPTION'];
+  -- order_status values (different enum from shipment status above).
+  -- Used to pick a real order_id for the FK; we cycle through 8
+  -- non-DRAFT order_status values so shipments only attach to
+  -- approved/in-flight orders.
+  ord_statuses   text[] := array['PENDING_REVIEW','APPROVED','BLOCKED','DUPLICATE','REUSED','EXPORTED_TO_TALLY','FAILED_TALLY_IMPORT','RECONCILED'];
+  -- order_mode values (NOT shipment_mode). shipments.order_id keys
+  -- come from the orders table's (status, mode) grid where mode is
+  -- one of these five.
+  ord_modes      text[] := array['SPARES','SPARES_ASSEMBLY','PROJECT_FOR','PROJECT_HSS','INTERNAL'];
   modes          text[] := array['SEA','AIR','ROAD','COURIER'];
   s              text;
   k              int := 0;
@@ -699,7 +716,7 @@ begin
   foreach s in array statuses loop
     for variant in 1..2 loop
       k := k + 1;
-      ord_id := uuid_generate_v5(ns, 'order:' || statuses[((k - 1) % 8) + 1] || ':' || modes[((k - 1) % 4) + 1]);
+      ord_id := uuid_generate_v5(ns, 'order:' || ord_statuses[((k - 1) % 8) + 1] || ':' || ord_modes[((k - 1) % 5) + 1]);
       spo_id := case (k % 3) when 0 then uuid_generate_v5(ns, 'spo:SUPPLIER_ACK:1') else null end;
       iso_id := case (k % 5) when 0 then uuid_generate_v5(ns, 'iso:WARRANTY_REPLACEMENT:DISPATCHED') else null end;
 
@@ -803,7 +820,7 @@ declare
 begin
   select id into mg_id   from customers where tenant_id = default_tenant and customer_key = 'MG_MOTOR_INDIA';
   select id into tata_id from customers where tenant_id = default_tenant and customer_key = 'TATA_MOTORS_PV_PUNE';
-  select id into jbm_id  from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO';
+  select id into jbm_id  from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO_PLANT_1';
   select id into mg_loc   from customer_locations where tenant_id = default_tenant and customer_id = mg_id   and location_code = 'HALOL';
   select id into tata_loc from customer_locations where tenant_id = default_tenant and customer_id = tata_id and location_code = 'PUNE';
   -- Pick an AMC contract attached to MG.
@@ -1167,10 +1184,12 @@ begin
 
     -- 1-2 events per envelope.
     insert into esignature_events (id, tenant_id, envelope_id, event, raw, received_at) values
-      (uuid_generate_v5(ns,'esige:' || s || ':1'), default_tenant, env_id, 'envelope-sent', jsonb_build_object('seed_marker','anvil-test-seed-v1'), now() - interval '5 days');
+      (uuid_generate_v5(ns,'esige:' || s || ':1'), default_tenant, env_id, 'envelope-sent', jsonb_build_object('seed_marker','anvil-test-seed-v1'), now() - interval '5 days')
+    on conflict (id) do nothing;
     if s = 'signed' then
       insert into esignature_events (id, tenant_id, envelope_id, event, raw, received_at) values
-        (uuid_generate_v5(ns,'esige:' || s || ':2'), default_tenant, env_id, 'recipient-signed', jsonb_build_object('seed_marker','anvil-test-seed-v1'), now() - interval '2 days');
+        (uuid_generate_v5(ns,'esige:' || s || ':2'), default_tenant, env_id, 'recipient-signed', jsonb_build_object('seed_marker','anvil-test-seed-v1'), now() - interval '2 days')
+      on conflict (id) do nothing;
     end if;
   end loop;
 end $esig$;

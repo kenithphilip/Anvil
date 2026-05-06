@@ -371,11 +371,67 @@ for storage-bucket smoke tests, follow-up work would either:
 ## Known gaps the seed pack repairs
 
 1. `obara_role` enum is missing `operator`. Phase 100 adds it via
-   `alter type ... add value if not exists`.
+   `alter type ... add value if not exists`, run OUTSIDE the explicit
+   transaction wrapper (Postgres rejects use of a newly-added enum
+   value in the same transaction that adds it).
 2. The migrations claim 058 makes `audit_events` append-only, but
-   the migration only drops the UPDATE/DELETE policies; service-
-   role inserts of historical rows continue to work, so phase 400
-   does not need to disable a trigger.
+   the migration only drops the UPDATE/DELETE policies; service-role
+   inserts of historical rows continue to work, so phase 400 does not
+   need to disable a trigger.
+3. Migration `021_push_notifications.sql` tried to declare
+   `unique (..., coalesce(endpoint, device_token))` inside CREATE
+   TABLE. Postgres rejects function expressions in inline UNIQUE
+   constraints; the migration was repaired to use a separate
+   `CREATE UNIQUE INDEX` statement. This migration had never
+   successfully applied to a fresh Postgres before this seed effort.
+
+## Smoke-test fixes captured during the May 2026 dry run
+
+Running the pack against a fresh Supabase project surfaced the
+following real bugs. Each is fixed in the file referenced; the seed
+ran clean end-to-end after the patches and `999_verify.sql` returned
+**375 of 375** checks green.
+
+| # | File | Bug | Fix |
+|---|---|---|---|
+| 1 | `migrations/021` | `unique (col, coalesce(...))` rejected inline | Moved to `CREATE UNIQUE INDEX` |
+| 2 | phase 100 | PL/pgSQL `user_id` shadowed `tenant_members.user_id` in `ON CONFLICT` | Renamed to `v_user_id` |
+| 3 | phase 100 | `alter type ... add value` inside explicit txn | Moved before `begin;` |
+| 4 | phases 100/200/300/400/900 | Wrong corpus customer keys (`JBM_AUTO`, `RENAULT_NISSAN`) | Renamed to `JBM_AUTO_PLANT_1`, `RNAIPL` |
+| 5 | phase 200 | `payment_milestones` ON CONFLICT missed partial-index predicate | Added `where contract_id is not null` |
+| 6 | phase 300 | `order_schedule_lines` referenced `doc_po` for DRAFT orders that never inserted one | Set `source_document_id = null` for DRAFT |
+| 7 | phase 300 | `source_pos.order_id` looked up orders by `source_po_status` instead of `order_status` | Added separate `ord_statuses` array |
+| 8 | phase 300 | `shipments.order_id` looked up orders by `shipment_mode` instead of `order_mode` | Added separate `ord_modes` array |
+| 9 | phase 300 | `esignature_events` insert missed `on conflict (id) do nothing` | Added |
+| 10 | phase 400 | PL/pgSQL `suite` shadowed `eval_cases.suite` / `eval_runs.suite` | Renamed to `v_suite` |
+| 11 | phase 400 | PL/pgSQL `case_id` shadowed `eval_cases.case_id` | Renamed to `v_case_id` |
+| 12 | phase 400 | `rlhf_feedback` requires NOT NULL `rating smallint` | Added column to INSERT |
+| 13 | phase 400 | `inbound_messages.status` allows `intake-extracted`/`resolved`, not `parsed`/`duplicate` | Updated cycle |
+| 14 | phase 400 | `network_listings unique (tenant_id, sku)` violated by 30-row reuse of 5 SKUs | Suffixed sku with iteration index |
+| 15 | phase 400 | `prospecting_campaigns` cycle hit only 2 distinct statuses out of 4 | Bumped loop to 4 with one campaign per status |
+| 16 | phase 500 | PL/pgSQL `company_id` shadowed `tally_*.company_id` | Renamed to `v_company_id` |
+| 17 | phase 500 | Templated `_sync_state` insert used `error` column; newer connectors use `last_error` | Dropped the column from the insert |
+| 18 | phase 999 | `check` (reserved word) used as column alias | Renamed to `check_name` |
+| 19 | phase 999 | Bulk regex on `count(*) ... from <table>` collapsed `from <table>` to `fromtable` | Restored space |
+
+The pattern that produced #2, #10, #11, #16: PL/pgSQL variables
+that share a name with a target table column become ambiguous in
+`ON CONFLICT (...)` and `INSERT (..., col, ...) ... values (...,
+col_var, ...)` contexts. **Convention going forward**: prefix
+PL/pgSQL locals with `v_` to make column-vs-variable disambiguation
+syntactic.
+
+The pattern that produced #7 and #8: enum domains that share a
+status name (e.g. shipment_mode and order_mode are different
+enums) but get confused at the call site. **Convention going
+forward**: when constructing keys that span two enum domains,
+declare a separate array variable per domain rather than reusing
+a single `statuses` / `modes` name.
+
+The round-trip test (teardown -> re-seed -> verify) was also
+exercised against the live Supabase project; teardown removes
+every seed row without touching the corpus + migrations, and the
+re-seed restores all 375 verify checks to green.
 
 ## What to read before extending the seed
 

@@ -811,6 +811,7 @@
       return apiFetch("/api/source_pos" + (qs ? "?" + qs : ""));
     },
     get: async (id) => apiFetch("/api/source_pos/" + encodeURIComponent(id)),
+    create: async (payload) => apiFetch("/api/source_pos", { method: "POST", body: payload }),
     update: async (id, patch) => apiFetch("/api/source_pos/" + encodeURIComponent(id), { method: "PATCH", body: patch }),
     ack: async (sourcePoId, ack) => apiFetch("/api/source_pos/ack", { method: "POST", body: { sourcePoId, ack } }),
     scorecard: async (params) => {

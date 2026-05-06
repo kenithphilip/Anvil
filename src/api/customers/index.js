@@ -24,10 +24,22 @@ export default async function handler(req, res) {
     if (req.method === "POST") {
       requirePermission(ctx, "write");
       const body = await readBody(req);
-      if (!body.customer_key) return json(res, 400, { error: { message: "customer_key required" } });
+      // Auto-derive customer_key from customer_name when the caller
+      // didn't supply one. The intake "new customer" dialog asks for
+      // a name only; forcing the operator to invent a slug was a
+      // dead-end UX. Slug = lowercase alphanumeric + dashes, capped.
+      const slugify = (s) => String(s || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 60);
+      const derivedKey = body.customer_key || slugify(body.customer_name);
+      if (!derivedKey) {
+        return json(res, 400, { error: { message: "customer_key or customer_name required" } });
+      }
       const upsert = await svc.from("customers").upsert({
         tenant_id: ctx.tenantId,
-        customer_key: body.customer_key,
+        customer_key: derivedKey,
         customer_name: body.customer_name || "",
         gstin: body.gstin || null,
         state_code: body.state_code || null,
@@ -35,8 +47,41 @@ export default async function handler(req, res) {
         default_incoterms: body.default_incoterms || null,
         default_quote_validity_days: body.default_quote_validity_days || null,
         notes: body.notes || null,
+        // Relational fields added in migration 061. The columns are
+        // nullable so older deployments that haven't run the migration
+        // simply ignore them (Supabase will reject unknown columns; we
+        // strip them out below if the response indicates the column is
+        // missing).
+        currency: body.currency || null,
+        payment_terms: body.payment_terms || null,
+        margin_floor_pct: body.margin_floor_pct != null ? Number(body.margin_floor_pct) : null,
+        bill_to: body.bill_to || null,
+        ship_to: body.ship_to || body.bill_to || null,
       }, { onConflict: "tenant_id,customer_key" }).select("*").single();
-      if (upsert.error) throw new Error(upsert.error.message);
+      if (upsert.error) {
+        // If migration 061 hasn't been applied yet on this deployment,
+        // Postgres rejects the unknown columns with code 42703. Retry
+        // once with only the legacy column set so signups still work
+        // until the operator runs the migration.
+        if (upsert.error.code === "42703" || /column .* does not exist/i.test(upsert.error.message)) {
+          const retry = await svc.from("customers").upsert({
+            tenant_id: ctx.tenantId,
+            customer_key: derivedKey,
+            customer_name: body.customer_name || "",
+            gstin: body.gstin || null,
+            state_code: body.state_code || null,
+            default_payment_terms: body.default_payment_terms || body.payment_terms || null,
+            default_incoterms: body.default_incoterms || null,
+            default_quote_validity_days: body.default_quote_validity_days || null,
+            notes: body.notes || null,
+          }, { onConflict: "tenant_id,customer_key" }).select("*").single();
+          if (retry.error) throw new Error(retry.error.message);
+          // eslint-disable-next-line no-console
+          console.warn("[customers] saved without relational fields; run migration 061_customers_relational_fields.sql to enable currency/payment_terms/margin_floor_pct/bill_to/ship_to columns");
+          return json(res, 200, { customer: retry.data, warning: "relational_fields_unavailable" });
+        }
+        throw new Error(upsert.error.message);
+      }
       const customer = upsert.data;
       if (body.profile) {
         const newVersion = (Number(body.profile.version || 0) || 0) + 1;

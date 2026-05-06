@@ -37,6 +37,7 @@ export const NAV: NavGroup[] = [
     items: [
       { id: "spo",       label: "Source POs",    icon: Icon.pkg },
       { id: "spares",    label: "Spares Matrix", icon: Icon.layers },
+      { id: "delays",    label: "Delays",        icon: Icon.alert },
     ],
   },
   {

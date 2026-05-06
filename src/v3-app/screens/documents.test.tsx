@@ -23,4 +23,22 @@ describe("Documents", () => {
     expect(html).toContain("OCR review");
     expect(html).toContain("Upload");
   });
+
+  it("OCR review tab renders an empty-state prompt when no doc is selected", async () => {
+    const mod = await import("./documents");
+    const Screen = mod.default;
+    const { container } = renderScreen(Screen);
+    await new Promise((r) => setTimeout(r, 0));
+    // The empty-state copy is on the OCR review tab; with no doc
+    // selected and the default tab being "library", click the
+    // OCR review tab via DOM.
+    const tabBtns = Array.from(container.querySelectorAll("[role='tab'], button"));
+    const ocrTab = tabBtns.find((b) => (b.textContent || "").trim().startsWith("OCR review"));
+    if (ocrTab) {
+      (ocrTab as HTMLElement).click();
+      await new Promise((r) => setTimeout(r, 0));
+      // The empty state mentions "Pick a document".
+      expect(container.innerHTML).toContain("Pick a document");
+    }
+  });
 });

@@ -79,6 +79,7 @@ const screens = {
   resetPassword:      lazy(() => import("./screens/reset-password")),
   documents:          lazy(() => import("./screens/documents")),
   pipelineKanban:     lazy(() => import("./screens/pipeline-kanban")),
+  delays:             lazy(() => import("./screens/delays")),
   formatGuide:        lazy(() => import("./screens/format-guide")),
 };
 
@@ -142,6 +143,7 @@ export const RESOLVERS = {
   reset:       () => screens.resetPassword,
   documents:   () => screens.documents,
   "pipeline-kanban": () => screens.pipelineKanban,
+  delays:      () => screens.delays,
   "format-guide": () => screens.formatGuide,
 };
 

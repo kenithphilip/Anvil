@@ -8,10 +8,11 @@ describe("NAV", () => {
       "Finance", "Data", "Quality", "Comms & Security", "Admin",
     ]);
   });
-  it("exposes 32 unique nav ids", () => {
+  it("exposes 33 unique nav ids", () => {
+    // Count goes up to 33 with the new Procurement > Delays entry.
     const ids = NAV.flatMap((g) => g.items.map((i) => i.id));
-    expect(ids.length).toBe(32);
-    expect(new Set(ids).size).toBe(32);
+    expect(ids.length).toBe(33);
+    expect(new Set(ids).size).toBe(33);
   });
   it("each item has id + label + icon", () => {
     for (const group of NAV) {

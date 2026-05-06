@@ -337,8 +337,11 @@ export const Shell: React.FC<ShellProps> = ({
     <header className="app-head">
       <div className="brand">
         <div className="brand-mark">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" stroke="none">
-            <path d="M3 6h11l-2 4h6v3H8l-2 4H3l2-4H2V9h4l-3-3Z"/>
+          {/* Anvil mark (compact 14px variant): struck-anvil + circle spark.
+              Body inherits color from .brand-mark container; spark uses --accent. */}
+          <svg viewBox="0 0 32 32" width="14" height="14" role="img" aria-hidden="true">
+            <path fill="currentColor" d="M 6 13 L 2 13 L 4 10 L 10 10 L 10 8 L 26 8 L 26 13 L 22 13 L 21 17 L 24 17 L 24 20 L 22 20 L 22 24 L 28 24 L 28 27 L 4 27 L 4 24 L 10 24 L 10 20 L 8 20 L 8 17 L 11 17 Z" />
+            <circle cx="20.5" cy="5" r="2.4" fill="var(--accent)" />
           </svg>
         </div>
         <span className="name">Anvil</span>

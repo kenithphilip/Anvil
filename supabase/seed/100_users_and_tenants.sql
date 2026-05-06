@@ -227,7 +227,14 @@ begin
         seed_now - interval '120 days',
         seed_now - interval '120 days',
         false,
-        false
+        false,
+        -- GoTrue token columns: must be empty string, not NULL.
+        -- The Go struct decodes these as `string` (not `*string`),
+        -- so a NULL triggers "Database error querying schema" on
+        -- every signin attempt.
+        '', '', '',
+        '', '',
+        '', '', ''
       ) on conflict (id) do nothing;
     exception
       when insufficient_privilege then

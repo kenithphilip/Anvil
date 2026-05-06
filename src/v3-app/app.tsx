@@ -139,12 +139,15 @@ const isSessionValid = (): boolean => {
 };
 
 const LandingScreen = React.lazy(() => import("./screens/landing"));
+const SignInScreen = React.lazy(() => import("./screens/signin"));
 const ResetPasswordScreen = React.lazy(() => import("./screens/reset-password"));
 
 // Route ids that the pre-auth surface must serve. Without this the
 // auth gate would clobber e.g. /reset (the password-recovery
-// landing) by always rendering Landing.
-const PRE_AUTH_ROUTES = new Set(["reset"]);
+// landing) by always rendering Landing. The `signin` route hosts
+// the sign-in / sign-up / magic-link form (extracted from the old
+// inline-auth landing into its own dedicated screen).
+const PRE_AUTH_ROUTES = new Set(["reset", "signin"]);
 
 export default function App() {
   useRerenderOnEvents(["rbac:change", "prefs:change", "popstate", "hashchange"]);
@@ -196,7 +199,7 @@ export default function App() {
   useEffect(() => {
     try {
       const here = window.location.hash || "";
-      if (here && here !== "#/landing" && here !== "#/connect" && here !== "#/" && here !== "#") {
+      if (here && here !== "#/landing" && here !== "#/signin" && here !== "#/connect" && here !== "#/" && here !== "#") {
         lsSet(INTENDED_ROUTE_KEY_SUFFIX, here);
       }
     } catch (_) { /* swallow */ }
@@ -309,6 +312,16 @@ export default function App() {
   // even when there's no session. We dispatch on the parsed
   // route id below.
   if (!authed) {
+    if (route === "signin") {
+      return (
+        <>
+          <Suspense fallback={<Loading label="signin" />}>
+            <SignInScreen />
+          </Suspense>
+          <ToastStack />
+        </>
+      );
+    }
     if (route === "reset" || PRE_AUTH_ROUTES.has(route)) {
       return (
         <>

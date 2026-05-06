@@ -70,30 +70,44 @@ export function useReveal<T extends Element = HTMLElement>(opts: { once?: boolea
   return [ref, visible] as const;
 }
 
-// Count-up tween. Pass the final number (or numeric prefix) and a
-// duration; returns the animated current value. Skips the tween
-// entirely under reduced-motion.
-export function useCountUp(target: number, opts: { durationMs?: number; start?: boolean } = {}): number {
+// Count-up tween. Pass the final number and a duration; returns the
+// animated current value. Skips the tween entirely under reduced-
+// motion. `decimals` controls how many fractional digits the
+// returned value carries (used for "8.4 min", "94.2%", "₹4.20"
+// counters on the landing page); when omitted, the value is rounded
+// to an integer (the historical behaviour).
+//
+// The hook returns a `number`. When `decimals > 0`, callers should
+// render with `.toFixed(decimals)` themselves. To make rendering
+// trivial for the landing-spec strip we expose a string alias via
+// `useCountUpFormatted` below.
+export function useCountUp(
+  target: number,
+  opts: { durationMs?: number; start?: boolean; decimals?: number } = {},
+): string {
   const start = opts.start !== false;
   const duration = opts.durationMs ?? 1200;
-  const [val, setVal] = useState(start ? 0 : target);
+  const decimals = Math.max(0, opts.decimals ?? 0);
+  const fmt = (v: number) => decimals === 0 ? String(Math.round(v)) : v.toFixed(decimals);
+  const [val, setVal] = useState(start ? fmt(0) : fmt(target));
   const rafRef = useRef<number>(0);
   const startedAtRef = useRef<number>(0);
   useEffect(() => {
-    if (!start) { setVal(target); return; }
-    if (isReduceMotion()) { setVal(target); return; }
-    if (typeof window === "undefined") { setVal(target); return; }
+    if (!start) { setVal(fmt(target)); return; }
+    if (isReduceMotion()) { setVal(fmt(target)); return; }
+    if (typeof window === "undefined") { setVal(fmt(target)); return; }
     startedAtRef.current = performance.now();
     const tick = (now: number) => {
       const t = Math.min(1, (now - startedAtRef.current) / duration);
       // ease-out-cubic, gives a satisfying "settle" near the end.
       const eased = 1 - Math.pow(1 - t, 3);
-      setVal(Math.round(target * eased));
+      setVal(fmt(target * eased));
       if (t < 1) rafRef.current = window.requestAnimationFrame(tick);
     };
     rafRef.current = window.requestAnimationFrame(tick);
     return () => { if (rafRef.current) window.cancelAnimationFrame(rafRef.current); };
-  }, [target, duration, start]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target, duration, start, decimals]);
   return val;
 }
 

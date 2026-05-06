@@ -75,7 +75,10 @@ const screens = {
   connect:            lazy(() => import("./screens/connect")),
   onboarding:         lazy(() => import("./screens/onboarding")),
   landing:            lazy(() => import("./screens/landing")),
+  signin:             lazy(() => import("./screens/signin")),
   resetPassword:      lazy(() => import("./screens/reset-password")),
+  documents:          lazy(() => import("./screens/documents")),
+  pipelineKanban:     lazy(() => import("./screens/pipeline-kanban")),
   formatGuide:        lazy(() => import("./screens/format-guide")),
 };
 
@@ -135,7 +138,10 @@ export const RESOLVERS = {
   connect:     () => screens.connect,
   onboarding:  () => screens.onboarding,
   landing:     () => screens.landing,
+  signin:      () => screens.signin,
   reset:       () => screens.resetPassword,
+  documents:   () => screens.documents,
+  "pipeline-kanban": () => screens.pipelineKanban,
   "format-guide": () => screens.formatGuide,
 };
 

@@ -50,6 +50,10 @@ const ACTIONS: Array<{ id: string; t: string; m: string; ic: keyof typeof Icon; 
   { id: "new-lead",     t: "Create Lead",                       m: "C L", ic: "plus", route: "#/leads?new=1" },
   { id: "new-visit",    t: "Log Service Visit",                 m: "C V", ic: "plus", route: "#/svc-visits?new=1" },
   { id: "new-customer", t: "Add Customer Format Profile",       m: "C P", ic: "plus", route: "#/customers?new=1" },
+  // Per Landing.html design package CmdK list: 5 actions, the 5th is
+  // "Send nudge" which routes to the comms inbox where the operator
+  // can pick a draft and fire it.
+  { id: "send-nudge",   t: "Send nudge",                        m: "C N", ic: "send", route: "#/comms?new=nudge" },
 ];
 
 const ordersOf = (resp: any): any[] => {

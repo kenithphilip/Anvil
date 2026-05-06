@@ -29,8 +29,14 @@ describe("brand-anim", () => {
   });
 
   it("useCountUp returns the target value when start is false", () => {
+    // useCountUp returns a formatted string (so the landing-page hero
+    // spec strip can render values like "8.4" and "94.2%" with one
+    // fractional digit). When start=false, the hook holds the target.
     const { result } = renderHook(() => useCountUp(42, { start: false }));
-    expect(result.current).toBe(42);
+    expect(result.current).toBe("42");
+    // Decimals option is honoured.
+    const { result: dec } = renderHook(() => useCountUp(8.4, { start: false, decimals: 1 }));
+    expect(dec.current).toBe("8.4");
   });
 
   it("useScrollSpy returns a non-negative integer", () => {

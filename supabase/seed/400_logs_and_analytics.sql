@@ -842,7 +842,10 @@ begin
     values (
       uuid_generate_v5(ns,'nl:' || i::text),
       default_tenant,
-      case (i % 5) when 0 then 'CT-16-D-1-FS' when 1 then '4-HD32208-2' when 2 then 'X2C-X-MEDIUM' when 3 then 'TIP-Y-2026' else 'CABLE-Y-2026' end,
+      -- network_listings has unique (tenant_id, sku); on a single
+      -- tenant we can't have 5 SKUs x 6 listings. Suffix the SKU
+      -- with the iteration number so 30 distinct listings land.
+      (case (i % 5) when 0 then 'CT-16-D-1-FS' when 1 then '4-HD32208-2' when 2 then 'X2C-X-MEDIUM' when 3 then 'TIP-Y-2026' else 'CABLE-Y-2026' end) || '/' || lpad(i::text,2,'0'),
       'Seed listing ' || i::text, case (i % 5) when 4 then 'Mtr' else 'Nos' end,
       100 + (i * 17) % 800,
       7 + (i % 14),

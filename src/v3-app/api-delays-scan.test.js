@@ -38,10 +38,13 @@ describe("delays helpers", () => {
 
 describe("rule: po_source_country", () => {
   it("fires when foreign supplier PO sent > 14d ago without ack", () => {
+    // 50 calendar days ≈ 36 business days, comfortably past 2x SLA
+    // (28 business days). Ensures the high-severity branch fires
+    // even with the new business-day elapsed counter.
     const out = scan({
       sourcePos: [{
         id: "p1", reference: "SPO-1", supplier: "SKF Germany", country: "DE",
-        status: "SENT_TO_SUPPLIER", updated_at: daysAgo(35), // > 2x SLA = high
+        status: "SENT_TO_SUPPLIER", updated_at: daysAgo(50),
       }],
       internalSos: [], shipments: [], slas: null,
     });
@@ -168,13 +171,14 @@ describe("rule: ready_date_orphan", () => {
 
 describe("scan summary", () => {
   it("returns total + per-kind counts and sorts by severity", () => {
+    // Calendar days padded so business-day elapsed crosses 2x SLA.
     const out = scan({
       sourcePos: [
-        { id: "p1", country: "DE", status: "SENT_TO_SUPPLIER", updated_at: daysAgo(35) },  // high
-        { id: "p2", country: "IN", status: "SENT_TO_SUPPLIER", updated_at: daysAgo(10) },  // medium
+        { id: "p1", country: "DE", status: "SENT_TO_SUPPLIER", updated_at: daysAgo(50) },  // high (≈36 biz)
+        { id: "p2", country: "IN", status: "SENT_TO_SUPPLIER", updated_at: daysAgo(14) },  // medium (≈10 biz, sla 7)
       ],
       internalSos: [
-        { id: "i1", iso_number: "ISO-1", status: "APPROVED", approved_at: daysAgo(11) },  // high (>2x sla 5)
+        { id: "i1", iso_number: "ISO-1", status: "APPROVED", approved_at: daysAgo(16) },  // high (≈12 biz, 2x sla 5)
       ],
       shipments: [], slas: null,
     });

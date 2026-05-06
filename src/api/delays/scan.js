@@ -29,6 +29,10 @@
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
+import {
+  learnSuppliersSlas, businessDaysBetween, delayProbability,
+  predictEta, criticalityFor, riskScore,
+} from "./predict.js";
 
 // SLA defaults (days). Tenants will eventually override via
 // tenant_settings.delay_slas; until that lands, these are the
@@ -64,9 +68,33 @@ const sevFor = (elapsed, sla) => {
 };
 
 // Build flag rows from the four data sources.
-const scan = ({ sourcePos, internalSos, shipments, slas }) => {
+//
+// Optional inputs (industry-standard enhancements):
+//   * sourcePosHistory: closed/acked POs from the past N months,
+//     used to LEARN per-supplier SLAs (median + 1.5*MAD over
+//     business-day sent->ack durations). When supplied, the static
+//     DEFAULT_SLAS values are used only as a fallback per supplier.
+//   * holidays: array of YYYY-MM-DD strings. Excluded from the
+//     business-day elapsed counter so a Friday-evening PO doesn't
+//     burn 2 calendar days over the weekend.
+//
+// New per-flag fields (additive, backward-compatible):
+//   * delay_probability: 0..1, logistic on (elapsed/sla,
+//     supplier_outlier_rate). At ratio=1 (at-SLA), p~0.5; at
+//     ratio=2, p~0.88.
+//   * eta_predicted: ISO date predicting when this item will
+//     likely complete (sent_at + median historical duration).
+//   * criticality: 1.0 standalone, 1.25 if a downstream dep is
+//     present, 1.5 if both downstream artifacts are present.
+//   * risk_score: 0..100, sortable scalar combining probability
+//     + criticality.
+//   * sla_source: "default" | "learned" so the operator knows
+//     whether the SLA came from history or the static fallback.
+const scan = ({ sourcePos, internalSos, shipments, slas, sourcePosHistory, holidays }) => {
   const delays = [];
   const sla = { ...DEFAULT_SLAS, ...(slas || {}) };
+  const holidaySet = Array.isArray(holidays) ? holidays : [];
+  const learnedSlas = learnSuppliersSlas(sourcePosHistory || [], holidaySet);
 
   // Track which source PO ids have a shipment with a ready_date,
   // for the ready_date_orphan rule below.
@@ -75,17 +103,32 @@ const scan = ({ sourcePos, internalSos, shipments, slas }) => {
     if (sh.source_po_id && sh.ready_date) sourceWithShipment.add(sh.source_po_id);
   });
 
+  // Workorder downstream deps (for criticality multiplier).
+  const downstream = { workOrders: internalSos || [], shipments: shipments || [] };
+
   (sourcePos || []).forEach((p) => {
     const foreign = isForeign(p.country);
-    const elapsed = daysSince(p.updated_at || p.created_at);
+    // Prefer business-day elapsed when sent_at is on the row;
+    // fall back to calendar-day elapsed on the broader timestamp.
+    const sentAt = p.sent_at || p.updated_at || p.created_at;
+    const bdElapsed = businessDaysBetween(sentAt, new Date().toISOString(), holidaySet);
+    const elapsed = bdElapsed != null ? bdElapsed : daysSince(p.updated_at || p.created_at);
     const ack = p.status === "SUPPLIER_ACK" || p.status === "ETA_CONFIRMED" || p.status === "RECEIVED" || p.status === "CLOSED";
     const sentNotAck = p.status === "SENT_TO_SUPPLIER" || p.status === "DELAYED";
+
+    // Per-supplier learned stats (or null if no history).
+    const supplierStats = (p.supplier && learnedSlas[p.supplier]) || null;
+    const criticality = criticalityFor(p.id, downstream);
 
     // Rule 1 / 2: PO sent but not acknowledged inside its SLA.
     if (sentNotAck && elapsed != null) {
       const kind = foreign ? "po_source_country" : "po_local_supplier";
-      const slaDays = sla[kind];
+      // Adaptive SLA: prefer the supplier's learned SLA when at
+      // least 5 historical samples are present; else default.
+      const slaDays = supplierStats ? supplierStats.sla : sla[kind];
+      const slaSource = supplierStats ? "learned" : "default";
       if (elapsed >= slaDays) {
+        const dp = delayProbability(elapsed, slaDays);
         delays.push({
           kind,
           severity: sevFor(elapsed, slaDays),
@@ -98,6 +141,12 @@ const scan = ({ sourcePos, internalSos, shipments, slas }) => {
           order_id: p.order_id || null,
           elapsed_days: elapsed,
           sla_days: slaDays,
+          sla_source: slaSource,
+          supplier_samples: supplierStats ? supplierStats.samples : 0,
+          delay_probability: dp,
+          eta_predicted: predictEta(sentAt, supplierStats, slaDays, holidaySet),
+          criticality,
+          risk_score: riskScore({ elapsed, sla: slaDays, criticality }),
           detail:
             (foreign ? "Foreign-supplier" : "Local-supplier")
             + " PO " + (p.reference || p.id)
@@ -123,6 +172,9 @@ const scan = ({ sourcePos, internalSos, shipments, slas }) => {
           order_id: p.order_id || null,
           elapsed_days: ackElapsed,
           sla_days: sla.ready_date_wait,
+          delay_probability: delayProbability(ackElapsed, sla.ready_date_wait),
+          criticality,
+          risk_score: riskScore({ elapsed: ackElapsed, sla: sla.ready_date_wait, criticality }),
           detail:
             "Supplier " + (p.supplier || "(unknown)")
             + " acknowledged " + ackElapsed + "d ago but no ready_date / ETA on file",
@@ -133,11 +185,13 @@ const scan = ({ sourcePos, internalSos, shipments, slas }) => {
     // Rule 5: ETA acknowledged but no shipment row references it.
     if (ack && p.acknowledged_eta && !sourceWithShipment.has(p.id)) {
       const etaElapsed = daysSince(p.updated_at);
-      // Always flag, low severity; the operator should at least add
-      // it to a shipment plan even if shipping is weeks out.
+      // Severity bumps to high when downstream criticality > 1
+      // (a work order or shipment is already lined up; the orphan
+      // ETA blocks them).
+      const sev = criticality > 1.25 ? "high" : criticality > 1 ? "medium" : "medium";
       delays.push({
         kind: "ready_date_orphan",
-        severity: "medium",
+        severity: sev,
         ref_type: "source_po",
         ref_id: p.id,
         ref_label: p.reference || ("SPO-" + String(p.id).slice(0, 8)),
@@ -147,6 +201,9 @@ const scan = ({ sourcePos, internalSos, shipments, slas }) => {
         order_id: p.order_id || null,
         elapsed_days: etaElapsed,
         sla_days: 0,
+        delay_probability: criticality > 1 ? 0.8 : 0.4,
+        criticality,
+        risk_score: Math.min(100, Math.round((criticality > 1 ? 60 : 35) * criticality)),
         detail:
           "Supplier ETA " + p.acknowledged_eta
           + " on file but no shipment plan references this source PO",
@@ -158,8 +215,14 @@ const scan = ({ sourcePos, internalSos, shipments, slas }) => {
   (internalSos || []).forEach((iso) => {
     if (iso.status !== "APPROVED") return;
     const ref = iso.approved_at || iso.created_at;
-    const elapsed = daysSince(ref);
+    const bdEl = businessDaysBetween(ref, new Date().toISOString(), holidaySet);
+    const elapsed = bdEl != null ? bdEl : daysSince(ref);
     if (elapsed == null || elapsed < sla.work_order_manufacturing) return;
+    // Internal work orders aren't supplier-keyed, so no learned SLA;
+    // criticality multiplier still applies if a shipment depends on
+    // the underlying source PO chain.
+    const wCrit = criticalityFor(iso.id, downstream);
+    const dp = delayProbability(elapsed, sla.work_order_manufacturing);
     delays.push({
       kind: "work_order_manufacturing",
       severity: sevFor(elapsed, sla.work_order_manufacturing),
@@ -172,6 +235,11 @@ const scan = ({ sourcePos, internalSos, shipments, slas }) => {
       order_id: null,
       elapsed_days: elapsed,
       sla_days: sla.work_order_manufacturing,
+      sla_source: "default",
+      delay_probability: dp,
+      eta_predicted: predictEta(ref, null, sla.work_order_manufacturing, holidaySet),
+      criticality: wCrit,
+      risk_score: riskScore({ elapsed, sla: sla.work_order_manufacturing, criticality: wCrit }),
       detail:
         "Work order " + (iso.iso_number || iso.id)
         + " approved " + elapsed + "d ago, still not dispatched to manufacturing"
@@ -204,9 +272,13 @@ export default async function handler(req, res) {
     requirePermission(ctx, "read");
     const svc = serviceClient();
 
-    const [poRes, isoRes, shRes] = await Promise.all([
+    // History window: 180 days back of CLOSED / RECEIVED source POs to
+    // learn per-supplier SLAs from the actual sent->ack durations.
+    const histSince = new Date(Date.now() - 180 * 86400000).toISOString();
+
+    const [poRes, isoRes, shRes, histRes, settingsRes] = await Promise.all([
       svc.from("source_pos")
-         .select("id, order_id, reference, supplier, country, status, acknowledged_eta, created_at, updated_at")
+         .select("id, order_id, reference, supplier, country, status, acknowledged_eta, sent_at, created_at, updated_at")
          .eq("tenant_id", ctx.tenantId)
          .in("status", ["SENT_TO_SUPPLIER", "SUPPLIER_ACK", "PRICE_CHANGED", "ETA_CONFIRMED", "DELAYED", "RECEIVED"])
          .order("updated_at", { ascending: true })
@@ -221,17 +293,34 @@ export default async function handler(req, res) {
          .select("id, source_po_id, ready_date, status")
          .eq("tenant_id", ctx.tenantId)
          .limit(1000),
+      svc.from("source_pos")
+         .select("id, supplier, status, sent_at, acked_at, created_at, updated_at")
+         .eq("tenant_id", ctx.tenantId)
+         .in("status", ["SUPPLIER_ACK", "ETA_CONFIRMED", "RECEIVED", "CLOSED"])
+         .gte("updated_at", histSince)
+         .limit(2000),
+      svc.from("tenant_settings")
+         .select("delay_slas, holidays")
+         .eq("tenant_id", ctx.tenantId)
+         .maybeSingle(),
     ]);
 
     if (poRes.error) throw new Error(poRes.error.message);
     if (isoRes.error) throw new Error(isoRes.error.message);
     if (shRes.error) throw new Error(shRes.error.message);
+    // History + settings are best-effort. Missing tenant_settings or
+    // an absent acked_at column shouldn't sink the live scan.
+    const sourcePosHistory = histRes && !histRes.error ? (histRes.data || []) : [];
+    const tenantSlas = settingsRes && settingsRes.data ? settingsRes.data.delay_slas || null : null;
+    const tenantHolidays = settingsRes && settingsRes.data ? settingsRes.data.holidays || [] : [];
 
     const out = scan({
       sourcePos: poRes.data || [],
       internalSos: isoRes.data || [],
       shipments: shRes.data || [],
-      slas: null,
+      slas: tenantSlas,
+      sourcePosHistory,
+      holidays: tenantHolidays,
     });
 
     return json(res, 200, out);
@@ -243,3 +332,4 @@ export default async function handler(req, res) {
 // Test-only export: lets unit tests exercise the rule logic with
 // in-memory fixtures, no Supabase round-trips.
 export const __test = { scan, isForeign, daysSince, sevFor, DEFAULT_SLAS };
+export { scan };

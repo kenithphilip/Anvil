@@ -48,6 +48,10 @@ const screens = {
   tallyReconcile:     lazy(() => import("./screens/tally-reconcile")),
   einvoice:           lazy(() => import("./screens/einvoice")),
   invoices:           lazy(() => import("./screens/invoices")),
+  // Audit P10 (May 2026): frontend for the quotes-as-first-class
+  // object backend that shipped in 068_quotes_object.sql + the
+  // /api/quotes/{index,convert,expire,pdf,send} endpoints.
+  quotes:             lazy(() => import("./screens/quotes")),
   cost:               lazy(() => import("./screens/cost")),
   // Audit P8.5: new screens for the P7.5 / P7.6 / P7.7 surfaces.
   creditNotes:        lazy(() => import("./screens/credit-notes")),
@@ -120,6 +124,7 @@ export const RESOLVERS = {
   },
   einvoice:    () => screens.einvoice,
   invoices:    () => screens.invoices,
+  quotes:      () => screens.quotes,
   cost:        () => screens.cost,
   // Audit P8.5: P7.5 / P7.6 / P7.7 surfaces.
   "credit-notes":      () => screens.creditNotes,

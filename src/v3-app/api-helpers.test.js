@@ -8,7 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { __test as canonTest } from "../api/_lib/customer-canonicalizer.js";
 import { substitutePayLink } from "../api/_lib/pay-link.js";
-import { itemEmbedText, voyageIsConfigured } from "../api/_lib/voyage.js";
+import { itemEmbedText, synonymEmbedText, voyageIsConfigured } from "../api/_lib/voyage.js";
 
 describe("canonicaliseName", () => {
   const f = canonTest.canonicaliseName;
@@ -85,6 +85,20 @@ describe("itemEmbedText", () => {
   it("caps at 2000 chars to keep the embedding window bounded", () => {
     const t = itemEmbedText({ part_no: "P", description: "x".repeat(5000) });
     expect(t.length).toBe(2000);
+  });
+});
+
+describe("synonymEmbedText", () => {
+  it("returns the synonym verbatim", () => {
+    expect(synonymEmbedText({ synonym: "4-pole motor 1.5 kW IE3" })).toBe("4-pole motor 1.5 kW IE3");
+  });
+  it("survives null / undefined / missing field", () => {
+    expect(synonymEmbedText(null)).toBe("");
+    expect(synonymEmbedText({})).toBe("");
+  });
+  it("caps at 500 chars", () => {
+    const t = synonymEmbedText({ synonym: "x".repeat(2000) });
+    expect(t.length).toBe(500);
   });
 });
 

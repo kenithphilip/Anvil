@@ -84,3 +84,11 @@ export const itemEmbedText = (item) => {
   if (item.sub_category) parts.push(item.sub_category);
   return parts.join(" :: ").slice(0, 2000);
 };
+
+// Audit P12. Build the canonical text we feed Voyage for each
+// catalog_synonyms row. Synonyms are short by definition (a
+// customer's part number alias, a colloquial product name) so
+// the prompt is just the synonym; we do NOT join the canonical
+// part_no because we want the embedding to reflect the synonym's
+// own semantic content, not the canonical row's. Capped at 500.
+export const synonymEmbedText = (syn) => String(syn?.synonym || "").slice(0, 500);

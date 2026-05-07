@@ -253,6 +253,7 @@ import inboundChatConfigure     from "./inbound/chat/configure.js";
 import voiceConfigure           from "./voice/configure.js";
 import voiceWebhook             from "./voice/webhook.js";
 import voiceHandoff             from "./voice/handoff.js";
+import voiceProcessActions      from "./voice/process_actions.js";
 
 import kbAsk                   from "./kb/ask.js";
 
@@ -446,6 +447,7 @@ const STATIC_ROUTES = {
   "/voice/configure":               voiceConfigure,
   "/voice/webhook":                 voiceWebhook,
   "/voice/handoff":                 voiceHandoff,
+  "/voice/process_actions":         voiceProcessActions,
   "/kb/ask":                        kbAsk,
   "/esign/connect":                 esignConnect,
   "/esign/envelopes":               esignEnvelopes,

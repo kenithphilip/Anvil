@@ -18,7 +18,38 @@ const STATUSES = new Set(["DRAFT", "PENDING_GSTN", "GENERATED", "CANCELLED", "RE
 const GSTN_API_URL = process.env.GSTN_API_URL || "";
 const GSTN_API_KEY = process.env.GSTN_API_KEY || "";
 
-const composePayload = (order, customer, sellerGstin) => {
+// Build the SellerDtls block from per-tenant einvoice_seller_*
+// columns on tenant_settings (migration 062). Audit P1.2 (May
+// 2026): this block was previously hardcoded to Obara India for
+// every tenant; the GSTN API rejected the payload because the
+// supplied GSTIN never matched the registered legal name + address.
+// Now, when the tenant has not configured the seller block, the
+// caller fails fast with a structured 409 instead of shipping a
+// payload that GSTN will reject.
+const buildSellerDtls = (tenantSettings, override) => {
+  const ts = tenantSettings || {};
+  const gstin = override?.gstin || ts.einvoice_seller_gstin || null;
+  const legalName = ts.einvoice_seller_legal_name || null;
+  const stateCode = ts.einvoice_seller_state_code || null;
+  if (!gstin || !legalName || !stateCode) return { error: "einvoice_seller_not_configured" };
+  const pinRaw = ts.einvoice_seller_pincode;
+  const pin = pinRaw == null ? null : Number(String(pinRaw).replace(/\D/g, "")) || null;
+  const block = {
+    Gstin: gstin,
+    LglNm: legalName,
+    Addr1: ts.einvoice_seller_address_line1 || "",
+    Loc: ts.einvoice_seller_locality || "",
+    Pin: pin,
+    Stcd: stateCode,
+  };
+  if (ts.einvoice_seller_trade_name) block.TrdNm = ts.einvoice_seller_trade_name;
+  if (ts.einvoice_seller_address_line2) block.Addr2 = ts.einvoice_seller_address_line2;
+  if (ts.einvoice_seller_phone) block.Ph = ts.einvoice_seller_phone;
+  if (ts.einvoice_seller_email) block.Em = ts.einvoice_seller_email;
+  return { block };
+};
+
+const composePayload = (order, customer, sellerDtls) => {
   const so = (order.result && order.result.salesOrder) || {};
   const lineItems = so.lineItems || [];
   return {
@@ -35,14 +66,7 @@ const composePayload = (order, customer, sellerGstin) => {
       No: order.po_number || ("ORD-" + String(order.id).slice(0, 8)),
       Dt: (order.created_at || new Date().toISOString()).slice(0, 10).split("-").reverse().join("/"),
     },
-    SellerDtls: {
-      Gstin: sellerGstin || "",
-      LglNm: "Obara India Pvt. Ltd.",
-      Addr1: "W-17 F2 Block MIDC PIMPRI",
-      Loc: "Pune",
-      Pin: 411018,
-      Stcd: "27",
-    },
+    SellerDtls: sellerDtls,
     BuyerDtls: {
       Gstin: customer ? (customer.gstin || "") : "",
       LglNm: customer ? (customer.customer_name || customer.customer_key) : "",
@@ -157,7 +181,25 @@ export default async function handler(req, res) {
         }
       }
       const so = (order.data.result && order.data.result.salesOrder) || {};
-      const payload = composePayload(order.data, customer, body.seller_gstin || null);
+      // Audit P1.2 (May 2026): pull seller details from per-tenant
+      // einvoice_seller_* columns on tenant_settings (migration 062).
+      // If the tenant has not configured them, refuse to compose
+      // a payload rather than ship Obara's address with someone
+      // else's GSTIN.
+      const tsQ = await svc.from("tenant_settings")
+        .select("einvoice_seller_gstin, einvoice_seller_legal_name, einvoice_seller_trade_name, einvoice_seller_address_line1, einvoice_seller_address_line2, einvoice_seller_locality, einvoice_seller_pincode, einvoice_seller_state_code, einvoice_seller_phone, einvoice_seller_email")
+        .eq("tenant_id", ctx.tenantId).maybeSingle();
+      const tenantSettingsRow = tsQ.data || {};
+      const sellerResult = buildSellerDtls(tenantSettingsRow, { gstin: body.seller_gstin });
+      if (sellerResult.error) {
+        return json(res, 409, {
+          error: {
+            code: "EINVOICE_SELLER_NOT_CONFIGURED",
+            message: "e-Invoice seller details (GSTIN, legal name, state code) are not configured for this tenant. Set them under Admin > e-Invoice before composing a payload.",
+          },
+        });
+      }
+      const payload = composePayload(order.data, customer, sellerResult.block);
       const row = {
         tenant_id: ctx.tenantId,
         order_id: body.order_id,
@@ -166,7 +208,7 @@ export default async function handler(req, res) {
         invoice_date: body.invoice_date,
         customer_id: order.data.customer_id || null,
         customer_gstin: customer ? customer.gstin : null,
-        seller_gstin: body.seller_gstin || null,
+        seller_gstin: sellerResult.block.Gstin,
         taxable_value: Number(so.subTotal) || null,
         total_value: Number(so.grandTotal) || null,
         currency: body.currency || "INR",

@@ -12,6 +12,7 @@
 // The helper takes the row in and returns a fetch wrapper.
 
 import crypto from "node:crypto";
+import { safeFetch } from "./safe-fetch.js";
 
 const percentEncode = (s) =>
   encodeURIComponent(String(s ?? ""))
@@ -111,7 +112,7 @@ export const netsuiteFetch = async (settings, { method, path, body, query }) => 
   });
   const headers = { Authorization: auth, Accept: "application/json" };
   if (body) headers["Content-Type"] = "application/json";
-  const resp = await fetch(url, {
+  const resp = await safeFetch(url, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,

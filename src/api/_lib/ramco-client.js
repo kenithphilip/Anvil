@@ -15,6 +15,7 @@
 
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
 import { oauth2ClientCredentials, oauth2Evict } from "./oauth2.js";
+import { safeFetch } from "./safe-fetch.js";
 
 export const ramcoDecryptCreds = (s) => {
   if (!s) return s;
@@ -82,7 +83,7 @@ export const ramcoFetch = async (s, { method = "GET", resource, body, query, ret
   if (s.ramco_company) headers["X-Ramco-Company"] = s.ramco_company;
   if (body) headers["Content-Type"] = "application/json";
   const t0 = Date.now();
-  const resp = await fetch(url, {
+  const resp = await safeFetch(url, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,

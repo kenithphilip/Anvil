@@ -9,6 +9,7 @@
 
 import crypto from "node:crypto";
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { safeFetch } from "./safe-fetch.js";
 
 const BASE_URL = "https://api.razorpay.com";
 
@@ -50,7 +51,7 @@ export const razorpayFetch = async (s, { method, path, body }) => {
   // Route via linked account if set; lets the platform charge with
   // an automatic split.
   if (s.razorpay_account_id) headers["X-Razorpay-Account"] = s.razorpay_account_id;
-  const resp = await fetch(BASE_URL + path, {
+  const resp = await safeFetch(BASE_URL + path, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,

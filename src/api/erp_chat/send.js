@@ -12,6 +12,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { erpChatTools, dispatchErpChatTool } from "../_lib/erp-chat-tools.js";
+import { safeFetch } from "../_lib/safe-fetch.js";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -40,7 +41,7 @@ const callClaude = async (apiKey, payload) => {
     "x-api-key": apiKey,
     "anthropic-version": ANTHROPIC_VERSION,
   };
-  const resp = await fetch(ANTHROPIC_URL, { method: "POST", headers, body: JSON.stringify(payload) });
+  const resp = await safeFetch(ANTHROPIC_URL, { method: "POST", headers, body: JSON.stringify(payload) });
   const text = await resp.text();
   let parsed = null;
   try { parsed = JSON.parse(text); } catch (_e) { parsed = { raw: text.slice(0, 800) }; }

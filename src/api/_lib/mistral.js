@@ -1,3 +1,4 @@
+import { safeFetch } from "./safe-fetch.js";
 // Mistral OCR client.
 // Wraps https://docs.mistral.ai/capabilities/document/ for Vercel functions.
 // Returns normalized pages with bounding boxes per text block.
@@ -58,7 +59,7 @@ export const ocrDocument = async ({ buffer, filename, mimeType, opts }) => {
   for (let attempt = 1; attempt <= 3; attempt++) {
     let resp;
     try {
-      resp = await fetch(MISTRAL_OCR_URL, { method: "POST", headers, body });
+      resp = await safeFetch(MISTRAL_OCR_URL, { method: "POST", headers, body });
     } catch (networkErr) {
       lastErr = new Error("Mistral network error: " + networkErr.message);
       if (attempt < 3) { await sleep(Math.min(8000, 600 * Math.pow(2, attempt - 1))); continue; }

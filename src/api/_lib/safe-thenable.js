@@ -13,16 +13,29 @@
 // wait for the operation (e.g. ordering matters) but a failure is
 // non-fatal.
 //
+// Optional `label` (string) routes failures to console.warn so the
+// operator gets a breadcrumb when an audit insert silently fails.
+// Without a label, behaviour matches the original silent swallow.
+//
 // Example:
 //   await safeAwait(svc.from("user_security_audit").insert({...}));
-export const safeAwait = async (thenable) => {
+//   await safeAwait(svc.from("audit_events").insert({...}), "audit_events");
+export const safeAwait = async (thenable, label) => {
   try {
     if (thenable && typeof thenable.then === "function") {
-      return await thenable;
+      const result = await thenable;
+      if (label && result && result.error) {
+        // eslint-disable-next-line no-console
+        console.warn("[" + label + "] supabase op returned error: " + (result.error.message || JSON.stringify(result.error)));
+      }
+      return result;
     }
     return thenable;
-  } catch (_) {
-    // Swallow. The caller asked for best-effort.
+  } catch (err) {
+    if (label) {
+      // eslint-disable-next-line no-console
+      console.warn("[" + label + "] supabase op threw: " + (err && err.message ? err.message : String(err)));
+    }
     return undefined;
   }
 };
@@ -31,14 +44,28 @@ export const safeAwait = async (thenable) => {
 // underlying PromiseLike are swallowed in the background. Use when
 // you do NOT want to block the response on the audit write.
 //
+// Same `label` semantics as safeAwait above.
+//
 // Example:
 //   safeFire(svc.from("user_security_audit").insert({...}));
-export const safeFire = (thenable) => {
+//   safeFire(svc.from("model_routing_log").insert({...}), "model_routing_log");
+export const safeFire = (thenable, label) => {
   try {
     if (thenable && typeof thenable.then === "function") {
-      // Two-argument .then handles rejection without needing .catch,
-      // which the Supabase builder doesn't expose.
-      thenable.then(() => undefined, () => undefined);
+      thenable.then(
+        (result) => {
+          if (label && result && result.error) {
+            // eslint-disable-next-line no-console
+            console.warn("[" + label + "] supabase op returned error: " + (result.error.message || JSON.stringify(result.error)));
+          }
+        },
+        (err) => {
+          if (label) {
+            // eslint-disable-next-line no-console
+            console.warn("[" + label + "] supabase op threw: " + (err && err.message ? err.message : String(err)));
+          }
+        },
+      );
     }
   } catch (_) {
     // Even the .then call could throw on a malformed builder; ignore.

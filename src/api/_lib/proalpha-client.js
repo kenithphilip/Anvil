@@ -11,6 +11,7 @@
 // to pin requests to a multi-company tenant.
 
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { safeFetch } from "./safe-fetch.js";
 
 export const proalphaDecryptCreds = (s) => {
   if (!s) return s;
@@ -70,7 +71,7 @@ export const proalphaFetch = async (s, { method = "GET", path, body, query } = {
   if (s.proalpha_company) headers["X-Proalpha-Company"] = s.proalpha_company;
   if (body) headers["Content-Type"] = "application/json";
   const t0 = Date.now();
-  const resp = await fetch(url, {
+  const resp = await safeFetch(url, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,

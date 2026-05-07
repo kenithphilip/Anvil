@@ -13,6 +13,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings, updateTenantSettings } from "../_lib/stripe-client.js";
+import { safeFire } from "../_lib/safe-thenable.js";
 
 const REBUILD_THRESHOLD = 50;
 const MAX_EXAMPLES_PER_FIELD = 5;
@@ -74,7 +75,8 @@ export default async function handler(req, res) {
     if (ins.error) throw new Error(ins.error.message);
 
     // RLHF feedback row so the existing aggregator picks this up.
-    await svc.from("rlhf_feedback").insert({
+    // safeFire: best-effort, labelled so a failure surfaces in stderr.
+    safeFire(svc.from("rlhf_feedback").insert({
       tenant_id: ctx.tenantId,
       surface: "intake",
       case_id: body.extraction_run_id,
@@ -84,7 +86,7 @@ export default async function handler(req, res) {
       rating: -1,
       comment: body.reason || "operator correction",
       user_id: ctx.userId || null,
-    }).then(() => {}).then(() => undefined, () => undefined);
+    }), "rlhf_feedback");
 
     await recordAudit(ctx, {
       action: "docai_correction",

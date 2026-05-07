@@ -16,6 +16,7 @@
 // Filtering uses OData $filter; cursoring on LastModifiedDateTime.
 
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { safeFetch } from "./safe-fetch.js";
 
 const sessionCache = new Map();
 const cacheKey = (tid, base, user) => `${tid}|${base}|${user}`;
@@ -54,7 +55,7 @@ export const acuIsConfigured = (s) => !!(
 
 const login = async (s) => {
   const url = s.acumatica_base_url.replace(/\/+$/, "") + "/entity/auth/login";
-  const resp = await fetch(url, {
+  const resp = await safeFetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({
@@ -101,7 +102,7 @@ export const acuFetch = async (s, { method, path, body, query, retryOn401 = true
   };
   if (body) headers["Content-Type"] = "application/json";
   const t0 = Date.now();
-  const resp = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const resp = await safeFetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
   if (resp.status === 401 && retryOn401) {
     evictSession(s);
     return acuFetch(s, { method, path, body, query, retryOn401: false });

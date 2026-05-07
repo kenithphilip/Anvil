@@ -16,6 +16,7 @@
 // scope for v1. The REST path is the supported surface here.
 
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { safeFetch } from "./safe-fetch.js";
 
 export const jobbossDecryptCreds = (s) => {
   if (!s) return s;
@@ -67,7 +68,7 @@ export const jobbossFetch = async (s, { method = "GET", path, body, query } = {}
   if (s.jobboss_company) headers["X-JobBoss-Company"] = s.jobboss_company;
   if (body) headers["Content-Type"] = "application/json";
   const t0 = Date.now();
-  const resp = await fetch(url, {
+  const resp = await safeFetch(url, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,

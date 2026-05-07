@@ -85,6 +85,9 @@ import costSimulator           from "./cost/simulator.js";
 
 import customersIndex          from "./customers/index.js";
 import customersProfileVersions from "./customers/profile_versions.js";
+import customersContacts        from "./customers/contacts.js";
+import customersDuplicates      from "./customers/duplicates.js";
+import customersMerge           from "./customers/merge.js";
 
 import deliveryPromise         from "./delivery/promise.js";
 
@@ -614,6 +617,9 @@ const STATIC_ROUTES = {
 
   "/customers":                     customersIndex,
   "/customers/profile_versions":    customersProfileVersions,
+  "/customers/contacts":            customersContacts,
+  "/customers/duplicates":          customersDuplicates,
+  "/customers/merge":               customersMerge,
 
   "/delivery/promise":              deliveryPromise,
 

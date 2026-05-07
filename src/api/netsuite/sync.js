@@ -32,6 +32,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { suiteql, netsuiteIsConfigured } from "../_lib/netsuite-client.js";
 import { decryptNetsuiteCreds } from "../_lib/secrets.js";
+import { canonicaliseCustomer } from "../_lib/customer-canonicalizer.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const PAGE_SIZE = 200;
@@ -57,22 +58,28 @@ const ENTITY_DEF = {
       ORDER BY lastmodifieddate
     `,
     syncer: async (svc, tenantId, items) => {
+      // Audit P4.7: canonicalise rather than blind-upsert. The
+      // helper looks up an existing customer by external-id
+      // first, then GSTIN, then canonical name; only inserts a
+      // new row when no match is found. Multi-ERP tenants no
+      // longer accumulate one row per vendor for the same
+      // physical customer.
       let inserted = 0, updated = 0;
       for (const c of items) {
-        const r = await svc.from("customers").upsert({
-          tenant_id: tenantId,
-          customer_key: "ns:" + c.id,
-          customer_name: c.companyname || c.entityid || ("Customer " + c.id),
-          contact_email: c.email || null,
-          external_ref: {
-            netsuite_id: c.id,
+        const out = await canonicaliseCustomer(svc, tenantId, {
+          vendor: "ns",
+          vendorIdField: "netsuite_id",
+          externalId: c.id,
+          name: c.companyname || c.entityid || ("Customer " + c.id),
+          email: c.email || null,
+          gstin: null,
+          ref: {
             datecreated: c.datecreated,
             lastmodifieddate: c.lastmodifieddate,
             is_inactive: c.isinactive === "T",
           },
-        }, { onConflict: "tenant_id,customer_key" });
-        if (r.error) throw new Error("customer upsert: " + r.error.message);
-        updated += 1;
+        });
+        if (out.signal === "new") inserted += 1; else updated += 1;
       }
       return { inserted, updated };
     },

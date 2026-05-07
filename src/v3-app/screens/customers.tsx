@@ -1,8 +1,19 @@
 import React, { useEffect, useState } from "react";
 import { ageLabel, useFetch } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
+import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
+
+// Read `id` from the hash so the customers screen can render a
+// detail panel inline when a row is clicked. Avoids needing a
+// separate route + screen file for the detail view.
+const customerIdFromHash = (): string | null => {
+  if (typeof window === "undefined") return null;
+  const hash = window.location.hash || "";
+  const q = hash.split("?")[1];
+  if (!q) return null;
+  return new URLSearchParams(q).get("id");
+};
 
 // ============================================================
 // ANVIL v3 — wired Customers
@@ -33,6 +44,16 @@ const WiredCustomers = () => {
     []
   );
   const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(customerIdFromHash());
+
+  // Sync the selected customer with hash changes so back/forward and
+  // direct links keep state coherent.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onHash = () => setSelectedId(customerIdFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   if (list.loading) {
     return (
@@ -66,6 +87,12 @@ const WiredCustomers = () => {
     const t = r.customer_type || r.type;
     return !t || (t !== "AUTO_OEM" && t !== "TIER_ONE");
   }).length;
+
+  const selectedCustomer = selectedId
+    ? rows.find((r) => r.id === selectedId || r.customer_key === selectedId) || null
+    : null;
+  const profilesById = (list.data && list.data.profiles) || {};
+  const selectedProfile = selectedCustomer ? profilesById[selectedCustomer.id] || null : null;
 
   const filtered = rows.filter((r) => {
     if (!query) return true;
@@ -103,6 +130,68 @@ const WiredCustomers = () => {
           <KPI lbl="Tier one" v={String(tierOne)} d="strategic accounts" />
           <KPI lbl="Other" v={String(otherCount)} d="long tail" />
         </KPIRow>
+
+        {selectedCustomer && (
+          <Card
+            title={selectedCustomer.customer_name || selectedCustomer.customer_key}
+            eyebrow={"customer detail · " + (selectedCustomer.customer_key || "")}
+            right={<Btn sm kind="ghost" onClick={() => { setSelectedId(null); window.location.hash = "#/customers"; }}>
+              {Icon.x} close
+            </Btn>}
+          >
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+              <KV rows={[
+                ["Customer name", selectedCustomer.customer_name || "—"],
+                ["Customer key",  selectedCustomer.customer_key || "—"],
+                ["GSTIN",         selectedCustomer.gstin || "—"],
+                ["State",         selectedCustomer.state_code || selectedCustomer.state || "—"],
+                ["Type",          selectedCustomer.customer_type || selectedCustomer.type || "—"],
+              ]} />
+              <KV rows={[
+                ["Currency",       selectedCustomer.currency || "INR"],
+                ["Payment terms",  selectedCustomer.payment_terms || selectedCustomer.default_payment_terms || "—"],
+                ["Margin floor",   selectedCustomer.margin_floor_pct != null ? selectedCustomer.margin_floor_pct + "%" : "10% (default)"],
+                ["Credit limit",   selectedCustomer.credit_limit != null ? "₹" + Number(selectedCustomer.credit_limit).toLocaleString("en-IN") : "—"],
+                ["Contact email",  selectedCustomer.contact_email || "—"],
+              ]} />
+            </div>
+            {(selectedCustomer.bill_to || selectedCustomer.ship_to) && (
+              <>
+                <div className="divider" />
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginTop: 10 }}>
+                  <div>
+                    <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 4 }}>Bill to</div>
+                    <pre style={{ font: "inherit", fontSize: 12.5, color: "var(--ink-2)", whiteSpace: "pre-wrap", margin: 0 }}>
+                      {selectedCustomer.bill_to || "—"}
+                    </pre>
+                  </div>
+                  <div>
+                    <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 4 }}>Ship to</div>
+                    <pre style={{ font: "inherit", fontSize: 12.5, color: "var(--ink-2)", whiteSpace: "pre-wrap", margin: 0 }}>
+                      {selectedCustomer.ship_to || selectedCustomer.bill_to || "—"}
+                    </pre>
+                  </div>
+                </div>
+              </>
+            )}
+            {selectedProfile && (
+              <>
+                <div className="divider" />
+                <div className="row gap-md" style={{ marginTop: 10 }}>
+                  <Chip k={selectedProfile.trusted ? "good" : "warn"}>
+                    {selectedProfile.trusted ? "trusted profile" : "profile pending review"}
+                  </Chip>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                    v{selectedProfile.version} · {selectedProfile.orders_processed || 0} orders processed
+                  </span>
+                  {selectedProfile.last_format_changed && (
+                    <Chip k="warn">format changed recently</Chip>
+                  )}
+                </div>
+              </>
+            )}
+          </Card>
+        )}
 
         <Card flush>
           {filtered.length === 0 ? (

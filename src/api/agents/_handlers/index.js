@@ -20,11 +20,19 @@
 import { quoteAccept } from "./quote_accept.js";
 import { arCollect } from "./ar_collect.js";
 import { missingDoc } from "./missing_doc.js";
+// Phase 6 (audit): three new handlers covering the most common
+// gaps the original 3-handler set missed.
+import { expiringQuoteNudge } from "./expiring_quote_nudge.js";
+import { failedPushRecovery } from "./failed_push_recovery.js";
+import { paidPartialFollowup } from "./paid_partial_followup.js";
 
 export const HANDLERS = {
-  quote_accept_within_14d: quoteAccept,
+  quote_accept_within_14d:  quoteAccept,
   ar_collect_by_due_plus_7: arCollect,
-  missing_doc_followup:    missingDoc,
+  missing_doc_followup:     missingDoc,
+  expiring_quote_nudge:     expiringQuoteNudge,
+  failed_push_recovery:     failedPushRecovery,
+  paid_partial_followup:    paidPartialFollowup,
 };
 
 export const KNOWN_GOAL_TYPES = Object.keys(HANDLERS);

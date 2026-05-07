@@ -1,35 +1,93 @@
 // quote_accept_within_14d
 //
 // Goal: nudge a draft / sent quote toward acceptance within 14 days
-// of the goal's start. The handler reads the target order, checks
+// of the goal's start. The handler reads the target row, checks
 // status, and decides:
 //
-// - status moved to APPROVED / EXPORTED_TO_TALLY -> mark_complete
-// - status still QUOTE_DRAFT and last contact > 3 days ago -> send_email
-// - status still QUOTE_SENT and last contact > 5 days ago -> send_email (escalating)
+// - terminal status reached -> mark_complete
 // - past due_at -> give_up + escalate to owner
-// - otherwise -> noop, push next_run_at to next checkpoint
+// - within cooldown -> noop
+// - otherwise -> send_email
+//
+// Audit P10 (May 2026). Accepts both shapes:
+//
+//   - object_type='quote' (new): goal.object_id is a quotes.id;
+//     status reads from the quote_status enum. Terminal:
+//     ACCEPTED, CONVERTED. Goal completes when the customer
+//     actually accepts the quote, not when an order is approved.
+//
+//   - object_type='order' (legacy): goal.object_id is an orders.id
+//     for orders carrying a quote_number; terminal is
+//     APPROVED / EXPORTED_TO_TALLY / PAID. Kept for goals
+//     created before migration 068 promoted quotes to a
+//     first-class object.
+//
+// Defaults to the quote shape when object_type is missing
+// because the autonomy work creates only quote-shaped goals
+// going forward.
 
 const HOURS = 60 * 60 * 1000;
 
-export const quoteAccept = async (goal, ctx) => {
-  const svc = ctx.svc;
-  const order = await svc
-    .from("orders")
+const TERMINAL_QUOTE = ["ACCEPTED", "CONVERTED"];
+const TERMINAL_ORDER = ["APPROVED", "EXPORTED_TO_TALLY", "PAID"];
+
+const readTargetQuote = async (svc, goal) => {
+  const r = await svc.from("quotes")
+    .select("id, status, quote_number, version, customer_id, customer:customer_id(customer_name, contact_email), customer_contact:customer_contact_id(email, name), updated_at")
+    .eq("tenant_id", goal.tenant_id)
+    .eq("id", goal.object_id)
+    .maybeSingle();
+  if (r.error) return { error: r.error.message };
+  if (!r.data) return { missing: true };
+  return {
+    row: {
+      id: r.data.id,
+      status: r.data.status,
+      reference: r.data.quote_number + (r.data.version > 1 ? " v" + r.data.version : ""),
+      customer_name: r.data.customer?.customer_name || null,
+      contact_email: r.data.customer_contact?.email || r.data.customer?.contact_email || null,
+      object_type: "quote",
+    },
+    terminal: TERMINAL_QUOTE,
+  };
+};
+
+const readTargetOrder = async (svc, goal) => {
+  const r = await svc.from("orders")
     .select("id, status, customer_id, customer:customer_id(customer_name, contact_email), updated_at, po_number, quote_number")
     .eq("tenant_id", goal.tenant_id)
     .eq("id", goal.object_id)
     .maybeSingle();
-  if (order.error) {
-    return { thought: "Order read failed: " + order.error.message, action: "noop", action_payload: {} };
+  if (r.error) return { error: r.error.message };
+  if (!r.data) return { missing: true };
+  return {
+    row: {
+      id: r.data.id,
+      status: r.data.status,
+      reference: r.data.quote_number || r.data.po_number || ("draft " + String(r.data.id || "").slice(0, 8)),
+      customer_name: r.data.customer?.customer_name || null,
+      contact_email: r.data.customer?.contact_email || null,
+      object_type: "order",
+    },
+    terminal: TERMINAL_ORDER,
+  };
+};
+
+export const quoteAccept = async (goal, ctx) => {
+  const svc = ctx.svc;
+  const isQuoteShaped = goal.object_type !== "order";
+  const reader = isQuoteShaped ? readTargetQuote : readTargetOrder;
+  const r = await reader(svc, goal);
+  if (r.error) {
+    return { thought: "Target read failed: " + r.error, action: "noop", action_payload: {} };
   }
-  if (!order.data) {
-    return { thought: "Target order missing", action: "give_up", action_payload: { reason: "order_not_found" } };
+  if (r.missing) {
+    return { thought: "Target missing", action: "give_up", action_payload: { reason: "target_not_found" } };
   }
-  const o = order.data;
-  if (["APPROVED", "EXPORTED_TO_TALLY", "PAID"].includes(o.status)) {
+  const o = r.row;
+  if (r.terminal.includes(o.status)) {
     return {
-      thought: "Order is " + o.status + ", goal succeeded.",
+      thought: o.object_type + " is " + o.status + ", goal succeeded.",
       action: "mark_complete",
       action_payload: { final_status: o.status },
     };
@@ -53,7 +111,7 @@ export const quoteAccept = async (goal, ctx) => {
     };
   }
 
-  const recipient = o.customer?.contact_email;
+  const recipient = o.contact_email;
   if (!recipient) {
     return {
       thought: "No customer contact email on file; escalating to owner.",
@@ -67,8 +125,8 @@ export const quoteAccept = async (goal, ctx) => {
   // which then shipped as the customer email body verbatim. Provide
   // a real templated body. The deeper "LLM-drafted bodies" work is
   // Phase 6 of the audit roadmap; this is the regression fix.
-  const ref = o.quote_number || o.po_number || ("draft " + String(o.id || "").slice(0, 8));
-  const greet = "Hello" + (o.customer?.customer_name ? " " + o.customer.customer_name : "") + ",";
+  const ref = o.reference;
+  const greet = "Hello" + (o.customer_name ? " " + o.customer_name : "") + ",";
   const body = [
     greet,
     "",
@@ -81,11 +139,14 @@ export const quoteAccept = async (goal, ctx) => {
     "The team",
   ].join("\n");
   return {
-    thought: "Drafting follow-up email for " + (o.customer?.customer_name || "customer"),
+    thought: "Drafting follow-up email for " + (o.customer_name || "customer"),
     action: "send_email",
     action_payload: {
       kind: "quote_followup",
-      order_id: o.id,
+      // Carry both ids so downstream wiring can attribute the
+      // communication correctly regardless of which shape the
+      // goal took.
+      ...(o.object_type === "quote" ? { quote_id: o.id } : { order_id: o.id }),
       to: recipient,
       subject: "Following up on " + ref,
       body,

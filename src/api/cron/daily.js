@@ -21,6 +21,8 @@ import rlhfAggregate    from "../rlhf/aggregate.js";
 import quotesExpire     from "../quotes/expire.js";
 // Audit P7.6: daily recurring-invoice generation.
 import recurringCron    from "../billing/recurring_cron.js";
+// Audit P7.7: daily e-Way bill expiry sweep.
+import ewayExpire       from "../eway_bills/expire.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -40,6 +42,7 @@ export default async function handler(req, res) {
       { name: "rlhf/aggregate",    fn: rlhfAggregate,    opts: { path: "/api/rlhf/aggregate" } },
       { name: "quotes/expire",     fn: quotesExpire,     opts: { path: "/api/quotes/expire" } },
       { name: "billing/recurring", fn: recurringCron,    opts: { path: "/api/billing/recurring_cron" } },
+      { name: "eway_bills/expire", fn: ewayExpire,       opts: { path: "/api/eway_bills/expire" } },
     ]);
     const okCount = results.filter((r) => r.ok).length;
     const errCount = results.filter((r) => !r.ok).length;

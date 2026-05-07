@@ -101,7 +101,11 @@ const RecurringInvoicesScreen: React.FC = () => {
       });
       setCreating(false);
       reload();
-    } catch (e) { setError((e as Error).message); }
+      window.notifySuccess?.("Recurring schedule created");
+    } catch (e) {
+      setError((e as Error).message);
+      window.notifyError?.("Could not create schedule: " + (e as Error).message);
+    }
     finally { setBusy(false); }
   };
 

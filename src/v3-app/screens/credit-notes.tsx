@@ -116,8 +116,10 @@ const CreditNotesScreen: React.FC = () => {
       });
       setCreating(false);
       reload();
+      window.notifySuccess?.((form.kind === "debit_note" ? "Debit note" : "Credit note") + " draft created");
     } catch (e) {
       setError((e as Error).message);
+      window.notifyError?.("Could not create draft: " + (e as Error).message);
     } finally {
       setBusy(false);
     }

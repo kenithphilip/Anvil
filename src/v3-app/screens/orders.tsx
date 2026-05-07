@@ -8,11 +8,33 @@ import { ObaraBackend } from "../lib/api";
 // ANVIL v3 — wired Sales Orders list
 // ============================================================
 
+// Read the current user's id for the "Mine" tab filter. Matches
+// the same pattern used in admin.tsx: localStorage profile cache
+// first, session fallback. Returns null when no user is signed in
+// so the Mine tab degrades gracefully (no rows match).
+const readCurrentUserId = (): string | null => {
+  try {
+    const cached = JSON.parse(localStorage.getItem("obara:auth_profile") || "null");
+    if (cached?.user?.id) return String(cached.user.id);
+  } catch (_) { /* ignore */ }
+  try {
+    const session = (ObaraBackend?.getSession?.() || null) as { user?: { id?: string } } | null;
+    if (session?.user?.id) return String(session.user.id);
+  } catch (_) { /* ignore */ }
+  return null;
+};
+
 const WiredSOList = () => {
   const { useState: u, useEffect: e } = React;
   const [orders, setOrders] = u({ rows: [], loading: true, error: null });
   const [active, setActive] = u("all");
   const [query, setQuery] = u("");
+  // Audit P13.B follow-up. The Mine tab was a TODO until now: it
+  // matched every row because the user id was not plumbed. The
+  // orders table has no `created_by` column (only `approved_by`),
+  // so "Mine" today means "orders this user approved." Once a
+  // `created_by` / `assigned_to` column lands, broaden the match.
+  const meId = readCurrentUserId();
 
   // Normalise the API response into a flat array. The /api/orders
   // endpoint returns { orders: [...] }; some callers expect
@@ -41,7 +63,7 @@ const WiredSOList = () => {
 
   const tabs = [
     { id: "all",      label: "All",        match: () => true },
-    { id: "mine",     label: "Mine",       match: (_o) => true /* TODO: when user id is plumbed, filter by owner */ },
+    { id: "mine",     label: "Mine",       match: (o) => !!meId && (o.approved_by === meId) },
     { id: "intake",   label: "Intake",     match: (o) => o.status === "DRAFT" },
     { id: "validate", label: "Validate",   match: (o) => o.status === "PENDING_REVIEW" },
     { id: "approval", label: "Approval",   match: (o) => o.status === "APPROVED" },

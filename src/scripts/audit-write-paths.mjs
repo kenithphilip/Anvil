@@ -39,7 +39,7 @@ const SUCCESS_TOKENS = ["flashOk", "notifySuccess", "notifyLive", '"good"', "kin
 // hopping to so-workspace after creating a draft); the screen the
 // user lands on shows the freshly-mutated state. `setFiles([])`
 // resets a one-shot uploader's queue post-import (bom-import).
-const RELOAD_TOKENS  = [".reload(", "reload()", "setList(", "setRows(", "setOrders(", "setBump(", "setScheduleBump(", "loadVersions(", "loadNetsuite(", "loadTally(", "loadSageX3(", "loadPlm(", "loadVoice(", "loadChat(", "loadIfs(", "loadOracleFusion(", "loadRamco(", "Fns.load()", "setIfsState(", "setOracleFusionState(", "setRamcoState(", "setJdeState(", "setPlexState(", "setJobbossState(", "setOracleEbsState(", "setProalphaState(", "window.location.hash", "setFiles([])"];
+const RELOAD_TOKENS  = [".reload(", "reload()", "setList(", "setRows(", "setOrders(", "setCustomers(", "setBump(", "setScheduleBump(", "loadVersions(", "loadNetsuite(", "loadTally(", "loadSageX3(", "loadPlm(", "loadVoice(", "loadChat(", "loadIfs(", "loadOracleFusion(", "loadRamco(", "Fns.load()", "setIfsState(", "setOracleFusionState(", "setRamcoState(", "setJdeState(", "setPlexState(", "setJobbossState(", "setOracleEbsState(", "setProalphaState(", "window.location.hash", "setFiles([])"];
 const ERROR_TOKENS   = ["flashErr", "notifyError", "setErr(", "kind: \"bad\""];
 
 const findings = [];
@@ -155,27 +155,49 @@ const apiFiles = () => {
 // the "source_pos/" directory.
 const camelToSnake = (s) => s.replace(/[A-Z]/g, (c, i) => (i ? "_" : "") + c.toLowerCase());
 
+// Split a camelCased identifier into a fallback path. `billingRecurring`
+// becomes `billing/recurring`, which lets the script find handlers
+// laid out as <topdir>/<file>.js when the client groups several
+// endpoints under one namespace (e.g. `ObaraBackend.billingRecurring.*`
+// hitting `/api/billing/recurring.js`).
+const camelToPath = (s) => {
+  const m = s.match(/^([a-z]+)([A-Z][a-zA-Z]*)$/);
+  if (!m) return null;
+  return m[1] + "/" + m[2].charAt(0).toLowerCase() + m[2].slice(1);
+};
+
 const findApiHandlers = (target) => {
   const parts = target.split(/[./]/).filter(Boolean);
   const segment = (parts[0] || "");
   const segmentSnake = camelToSnake(segment);
+  const segmentPath = camelToPath(segment);
   const verb = (parts[1] || "").toLowerCase();
   const verbSnake = camelToSnake(verb);
   const candidates = [];
   for (const f of apiFiles()) {
     const rel = path.relative(API_DIR, f);
     const top = rel.split(path.sep)[0];
-    if (segment && top !== segment && top !== segmentSnake) continue;
+    const matchesTop = segment && (top === segment || top === segmentSnake);
+    // 2-segment fallback: when the camelCase target maps to
+    // <a>/<b>.js (no top-level dir match), pick the exact file.
+    const matchesFile = segmentPath && rel === segmentPath + ".js";
+    if (!matchesTop && !matchesFile) continue;
     if (rel.includes("/cron.")) continue;
     candidates.push(f);
   }
-  if (verb) {
+  // Sort by relevance: prefer the file whose basename matches the
+  // verb, then fall back to index.js (the conventional REST root
+  // for create / upsert / list / update / delete actions).
+  if (candidates.length) {
     candidates.sort((a, b) => {
       const aName = path.basename(a).toLowerCase();
       const bName = path.basename(b).toLowerCase();
-      const aHit = aName.includes(verb) || aName.includes(verbSnake) ? 0 : 1;
-      const bHit = bName.includes(verb) || bName.includes(verbSnake) ? 0 : 1;
-      return aHit - bHit;
+      const aVerb = verb && (aName.includes(verb) || aName.includes(verbSnake)) ? 0 : 1;
+      const bVerb = verb && (bName.includes(verb) || bName.includes(verbSnake)) ? 0 : 1;
+      if (aVerb !== bVerb) return aVerb - bVerb;
+      const aIdx = aName === "index.js" ? 0 : 1;
+      const bIdx = bName === "index.js" ? 0 : 1;
+      return aIdx - bIdx;
     });
   }
   return candidates;

@@ -123,7 +123,11 @@ const EwayBillsScreen: React.FC = () => {
       });
       setCreating(false);
       reload();
-    } catch (e) { setError((e as Error).message); }
+      window.notifySuccess?.("e-Way bill draft created");
+    } catch (e) {
+      setError((e as Error).message);
+      window.notifyError?.("Could not create draft: " + (e as Error).message);
+    }
     finally { setBusy(false); }
   };
 

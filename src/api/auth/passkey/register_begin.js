@@ -38,8 +38,17 @@ export default async function handler(req, res) {
     const label = String(body?.label || "").trim().slice(0, 64) || null;
     const svc = serviceClient();
 
+    // Filter out the placeholder rows that register_begin writes to
+    // hold the challenge state. Their credential_id is "pending::..."
+    // which is NOT a valid base64url string, and feeding it to
+    // @simplewebauthn/server's excludeCredentials throws
+    // "is not a valid base64url string", breaking every subsequent
+    // passkey registration. Only real passkeys (whose credential_id
+    // came back from the authenticator as base64url) are excluded.
     const { data: existing } = await svc.from("user_passkeys")
-      .select("credential_id").eq("user_id", ctx.user.id);
+      .select("credential_id")
+      .eq("user_id", ctx.user.id)
+      .not("credential_id", "like", "pending::%");
     const excludeCredentials = (existing || []).map((p) => ({
       id: p.credential_id,                                 // base64url string
       type: "public-key",

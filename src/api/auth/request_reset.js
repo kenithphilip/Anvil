@@ -24,6 +24,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { serviceClient } from "../_lib/supabase.js";
 import { safeAwait } from "../_lib/safe-thenable.js";
 import { safeFetch } from "../_lib/safe-fetch.js";
+import { createClient } from "@supabase/supabase-js";
 
 const RESET_RATE_LIMIT = Number(process.env.RESET_RATE_LIMIT || 5);
 const RESET_RATE_WINDOW_MIN = 60;
@@ -179,50 +180,106 @@ export default async function handler(req, res) {
       return json(res, 200, { ok: true, message: "If an account exists for that address, a reset email has been sent." });
     }
 
-    // Generate the single-use recovery link via Supabase.
-    let actionLink = null;
-    try {
-      const link = await svc.auth.admin.generateLink({
-        type: "recovery",
-        email,
-        options: redirectTo ? { redirectTo } : undefined,
-      });
-      if (link.error) throw new Error(link.error.message);
-      actionLink = link.data?.properties?.action_link || null;
-    } catch (err) {
-      // Don't surface; audit and respond generically.
-      await safeAwait(svc.from("user_security_audit").insert({
-        user_id: user.id,
-        user_email: email,
-        event: "password_reset_requested",
-        ip, user_agent: userAgent,
-        detail: { error: err.message?.slice(0, 240) },
-      }));
-      return json(res, 200, { ok: true, message: "If an account exists for that address, a reset email has been sent." });
+    // Email delivery strategy.
+    //
+    // The original flow generated a recovery link via the service
+    // role (`auth.admin.generateLink`) which mints the link but does
+    // NOT send any email. We then attempted SendGrid as the only
+    // delivery channel. On a deployment without SENDGRID_API_KEY +
+    // SENDGRID_FROM_EMAIL, the function silently dropped the email
+    // and returned 200, so the user clicked "forgot password",
+    // never got an email, and had no way to know why.
+    //
+    // The robust path is to use Supabase's anon-client method
+    // `auth.resetPasswordForEmail()` which uses the Supabase
+    // project's configured SMTP (the default for new projects).
+    // We try that first; if it fails (or the anon key is missing),
+    // we fall back to the manual generateLink + SendGrid path.
+    // If both providers are missing we surface a clear server-side
+    // warning + audit row so the operator can spot the misconfig
+    // (the user-visible response stays generic to avoid leaking
+    // anything about the account existence).
+    let delivered = false;
+    let provider = "none";
+    let lastError = null;
+
+    const SUPABASE_URL = process.env.SUPABASE_URL;
+    const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+
+    if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+      try {
+        const anon = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+          auth: { autoRefreshToken: false, persistSession: false },
+        });
+        const opts = redirectTo ? { redirectTo } : undefined;
+        const r = await anon.auth.resetPasswordForEmail(email, opts);
+        if (!r.error) {
+          delivered = true;
+          provider = "supabase_smtp";
+        } else {
+          lastError = r.error.message;
+        }
+      } catch (err) {
+        lastError = err.message || String(err);
+      }
     }
 
-    const sendResult = actionLink
-      ? await sendResetEmail({ to: email, name: user.user_metadata?.name, actionLink })
-      : { provider: "manual", sent: false };
+    // Fallback: manual generate + SendGrid. We only walk this path
+    // if Supabase SMTP didn't deliver, because we don't want to send
+    // two emails for a single request.
+    let actionLink = null;
+    if (!delivered) {
+      try {
+        const link = await svc.auth.admin.generateLink({
+          type: "recovery",
+          email,
+          options: redirectTo ? { redirectTo } : undefined,
+        });
+        if (link.error) throw new Error(link.error.message);
+        actionLink = link.data?.properties?.action_link || null;
+      } catch (err) {
+        lastError = err.message || lastError;
+      }
+      if (actionLink && SENDGRID_KEY && SENDGRID_FROM) {
+        const sendResult = await sendResetEmail({ to: email, name: user.user_metadata?.name, actionLink });
+        if (sendResult.sent) {
+          delivered = true;
+          provider = "sendgrid";
+        } else {
+          lastError = sendResult.error || lastError;
+        }
+      }
+    }
 
     await safeAwait(svc.from("user_security_audit").insert({
       user_id: user.id,
       user_email: email,
       event: "password_reset_requested",
       ip, user_agent: userAgent,
-      detail: { provider: sendResult.provider, sent: sendResult.sent },
-    }));
+      detail: {
+        provider,
+        sent: delivered,
+        error: lastError ? String(lastError).slice(0, 240) : null,
+      },
+    }), "password_reset_audit");
 
     // Audit H2 (May 2026): never return the live recovery token in
     // the API response. Even in dev, exposing the action_link to the
-    // caller is account-takeover-as-a-service: any caller, any CDN
-    // log, any monitoring tool that captures bodies gets a working
-    // sign-in primitive. Instead we log the link to the server stderr
-    // so the dev workflow still has a copy-pasteable artifact.
-    if (!SENDGRID_KEY || !SENDGRID_FROM) {
+    // caller is account-takeover-as-a-service. Instead we log the
+    // link to server stderr in non-production so the dev workflow
+    // still has a copy-pasteable artifact.
+    if (!delivered) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[auth/request_reset] no email delivered for " + email +
+        " (provider=" + provider + ", error=" + (lastError || "no provider configured") + "). " +
+        "Configure Supabase SMTP in the project dashboard, or set " +
+        "SUPABASE_URL/SUPABASE_ANON_KEY (built-in SMTP) or " +
+        "SENDGRID_API_KEY/SENDGRID_FROM_EMAIL (manual fallback).",
+      );
       if (NODE_ENV !== "production" && actionLink) {
         // eslint-disable-next-line no-console
-        console.warn("[auth/request_reset] dev mode: action_link for", email, "->", actionLink);
+        console.warn("[auth/request_reset] dev action_link for " + email + " -> " + actionLink);
       }
     }
     return json(res, 200, {

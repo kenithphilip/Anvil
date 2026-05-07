@@ -5,14 +5,16 @@ screen handler that performs a mutation. Run `npm run audit:write-paths`
 to refresh.
 
 Summary:
-- OK:   35
+- OK:   36
 - INFO: 0
-- WARN: 0
+- WARN: 1
 - FAIL: 0
 
 | Severity | Screen | Handler | Mutation | API handler | Reason |
 |----------|--------|---------|----------|-------------|--------|
-| OK | src/v3-app/screens/studio.tsx | `saveProfile` | customers.upsert upsert | src/api/customers/index.js [ok] | ok |
+| WARN | src/v3-app/screens/so-intake.tsx | `submitNewCustomer` | customers.upsert upsert | src/api/customers/contacts.js [ok] | no list reload |
+| OK | src/v3-app/screens/studio.tsx | `saveProfile` | customers.upsert upsert | src/api/customers/contacts.js [ok] | ok |
+| OK | src/v3-app/screens/source-pos.tsx | `submitCreate` | sourcePos.create create | src/api/source_pos/[id].js [ok] | ok |
 | OK | src/v3-app/screens/source-pos.tsx | `submitAck` | sourcePos.ack ack | src/api/source_pos/ack.js [ok] | ok |
 | OK | src/v3-app/screens/so-workspace.tsx | `pushToTally` | tally.push push | src/api/tally/push.js [ok] | ok |
 | OK | src/v3-app/screens/so-workspace.tsx | `cancelOrder` | orders.update update | src/api/orders/[id].js [ok] | ok |

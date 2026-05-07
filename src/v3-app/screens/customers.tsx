@@ -135,7 +135,7 @@ const WiredCustomers = () => {
           <Card
             title={selectedCustomer.customer_name || selectedCustomer.customer_key}
             eyebrow={"customer detail · " + (selectedCustomer.customer_key || "")}
-            right={<Btn sm kind="ghost" onClick={() => { setSelectedId(null); window.location.hash = "#/customers"; }}>
+            right={<Btn sm kind="ghost" onClick={() => { setSelectedId(null); }}>
               {Icon.x} close
             </Btn>}
           >

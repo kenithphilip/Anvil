@@ -487,7 +487,7 @@ const WiredEvalsCRUD = () => {
                        onChange={(ev) => setForm({ ...form, description: ev.target.value })} />
               </label>
 
-              <label className="lbl mono-sm">Documents (JSON array)
+              <label className="lbl mono-sm">Doc list (JSON array)
                 <textarea rows={3} className="mono"
                           value={form.documents_text}
                           onChange={(ev) => setForm({ ...form, documents_text: ev.target.value })} />

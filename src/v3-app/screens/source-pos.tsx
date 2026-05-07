@@ -101,7 +101,6 @@ const WiredSourcePOs = () => {
   const closeCreate = () => {
     setCreating(false);
     setCreateErr(null);
-    if (typeof window !== "undefined") window.location.hash = "#/spo";
   };
 
   const submitCreate = async () => {

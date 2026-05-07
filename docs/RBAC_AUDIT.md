@@ -94,10 +94,11 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/admin/notifications.js | read, admin |
 | src/api/admin/quote_approvals.js | read, admin, write |
 | src/api/agents/goals.js | read, write |
+| src/api/agents/handle_replies.js | approve |
 | src/api/aliases/index.js | read, write |
 | src/api/analytics/refresh.js | approve |
 | src/api/analytics/winloss.js | read |
-| src/api/anomaly/compute.js | read |
+| src/api/anomaly/explain.js | read |
 | src/api/ap/deductions.js | approve |
 | src/api/ap/match.js | approve |
 | src/api/audit/export.js | admin |
@@ -105,6 +106,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/billing/razorpay/checkout.js | approve |
 | src/api/billing/razorpay/connect.js | admin |
 | src/api/billing/razorpay/status.js | read |
+| src/api/billing/recurring.js | read, write, approve |
 | src/api/billing/stripe/checkout.js | write |
 | src/api/billing/stripe/connect_onboard.js | admin |
 | src/api/billing/stripe/connect_status.js | read |
@@ -116,12 +118,19 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/catalog/synonyms.js | read, approve |
 | src/api/claude/messages.js | read, write, admin |
 | src/api/communications/draft.js | write |
+| src/api/communications/list.js | read |
 | src/api/communications/missing_doc.js | write |
 | src/api/communications/send.js | approve |
 | src/api/cost/breakdown.js | read |
 | src/api/cost/margin_history.js | read |
 | src/api/cost/simulator.js | read |
+| src/api/credit_notes/index.js | read, write, approve |
+| src/api/customer_locations/index.js | read |
+| src/api/customers/contacts.js | read, write, approve |
+| src/api/customers/duplicates.js | read |
+| src/api/customers/health_score.js | read, approve |
 | src/api/customers/index.js | read, write |
+| src/api/customers/merge.js | admin |
 | src/api/customers/profile_versions.js | read, approve |
 | src/api/d365/connect.js | admin |
 | src/api/d365/diagnostics.js | read |
@@ -130,12 +139,14 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/d365/push.js | approve |
 | src/api/d365/retry.js | admin |
 | src/api/d365/sync.js | admin |
+| src/api/delays/scan.js | read |
 | src/api/delivery/promise.js | read |
 | src/api/docai/correction.js | approve |
-| src/api/docai/extract.js | approve |
+| src/api/docai/extract.js | write |
 | src/api/docai/route.js | read |
 | src/api/docai/runs.js | read |
 | src/api/documents/[id].js | read, admin |
+| src/api/documents/index.js | read |
 | src/api/documents/ocr.js | write |
 | src/api/documents/scan.js | write |
 | src/api/documents/upload.js | write |
@@ -161,6 +172,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/eval/dashboard.js | read |
 | src/api/eval/run.js | write |
 | src/api/events/index.js | read, write |
+| src/api/eway_bills/index.js | read, write, admin |
 | src/api/findings/index.js | write |
 | src/api/forecast/index.js | read, admin |
 | src/api/fx/rates.js | read, write |
@@ -169,10 +181,13 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/ifs/push.js | approve |
 | src/api/ifs/retry.js | admin |
 | src/api/ifs/sync.js | admin |
+| src/api/inbound/auto_ocr.js | approve |
 | src/api/inbound/chat/configure.js | read, admin |
 | src/api/inbound/email/configure.js | read, admin |
+| src/api/inbound/email/draft_orders.js | approve |
 | src/api/inbound/email/parse.js | approve |
 | src/api/inbound/email/threads.js | read |
+| src/api/inbound/process_messages.js | approve |
 | src/api/inventory/availability.js | read |
 | src/api/inventory/sync.js | write |
 | src/api/invoices/[id].js | read, write |
@@ -242,7 +257,11 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/prospecting/targets.js | admin |
 | src/api/push/send.js | approve |
 | src/api/push/subscribe.js | read |
+| src/api/quotes/convert.js | approve |
+| src/api/quotes/expire.js | approve |
+| src/api/quotes/index.js | read, write, approve |
 | src/api/quotes/pdf.js | read |
+| src/api/quotes/send.js | approve |
 | src/api/ramco/connect.js | admin |
 | src/api/ramco/health.js | read |
 | src/api/ramco/push.js | approve |
@@ -260,7 +279,9 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/sales/internal_so.js | read, write, admin |
 | src/api/sales/leads.js | read, write, admin |
 | src/api/sales/opportunities.js | read, write, admin |
+| src/api/sales/predict_opportunity.js | write |
 | src/api/sales/projects.js | read, write, admin |
+| src/api/sales/score_lead.js | write |
 | src/api/sales/shipments.js | read, write, admin |
 | src/api/sap/connect.js | admin |
 | src/api/sap/diagnostics.js | read |
@@ -277,7 +298,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/service/visits.js | read, write, admin |
 | src/api/source_pos/[id].js | read, write |
 | src/api/source_pos/ack.js | write |
-| src/api/source_pos/index.js | read |
+| src/api/source_pos/index.js | write, read |
 | src/api/source_pos/scorecard.js | read |
 | src/api/sourcing/network/handoff.js | write |
 | src/api/sourcing/network/listings.js | read, write |
@@ -311,6 +332,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/tally/validate.js | read |
 | src/api/voice/configure.js | read, admin |
 | src/api/voice/handoff.js | approve |
+| src/api/voice/process_actions.js | approve |
 | src/api/whatsapp/send.js | write |
 
 ## Findings

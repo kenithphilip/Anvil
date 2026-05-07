@@ -29,6 +29,23 @@ const customerRows = (resp) => {
   return [];
 };
 
+// Audit P9.3: customer health chip. Maps the API's green / yellow /
+// red band into a Chip primitive kind. Score-only fallback when the
+// band is absent (older rows scored before P7.3 dropped the band
+// onto the row); otherwise the band wins.
+const CUSTOMER_HEALTH_CHIP = (band, score) => {
+  if (band === "green") return { k: "good", label: "green" + (Number.isFinite(Number(score)) ? " " + Math.round(Number(score)) : "") };
+  if (band === "yellow") return { k: "warn", label: "yellow" + (Number.isFinite(Number(score)) ? " " + Math.round(Number(score)) : "") };
+  if (band === "red") return { k: "bad", label: "red" + (Number.isFinite(Number(score)) ? " " + Math.round(Number(score)) : "") };
+  if (Number.isFinite(Number(score))) {
+    const n = Math.round(Number(score));
+    if (n >= 75) return { k: "good", label: "green " + n };
+    if (n >= 45) return { k: "warn", label: "yellow " + n };
+    return { k: "bad", label: "red " + n };
+  }
+  return { k: "ghost", label: "health?" };
+};
+
 const CUSTOMER_TYPE_CHIP = (t) => {
   const map = {
     AUTO_OEM: { k: "info", label: "auto oem" },
@@ -45,6 +62,8 @@ const WiredCustomers = () => {
   );
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(customerIdFromHash());
+  // Audit P9.3: per-customer refresh-health spinner.
+  const [refreshingHealthId, setRefreshingHealthId] = useState<string | null>(null);
 
   // Sync the selected customer with hash changes so back/forward and
   // direct links keep state coherent.
@@ -135,9 +154,18 @@ const WiredCustomers = () => {
           <Card
             title={selectedCustomer.customer_name || selectedCustomer.customer_key}
             eyebrow={"customer detail · " + (selectedCustomer.customer_key || "")}
-            right={<Btn sm kind="ghost" onClick={() => { setSelectedId(null); }}>
-              {Icon.x} close
-            </Btn>}
+            right={<>
+              <Btn sm kind={selectedCustomer.ai_health_score == null ? "live" : "ghost"} disabled={refreshingHealthId === selectedCustomer.id}
+                   onClick={async () => {
+                     setRefreshingHealthId(selectedCustomer.id);
+                     try { await ObaraBackend?.customers?.healthScore?.(selectedCustomer.id); list.reload(); }
+                     finally { setRefreshingHealthId(null); }
+                   }}
+                   title="Run /api/customers/health_score for this customer">
+                {refreshingHealthId === selectedCustomer.id ? "Scoring..." : (selectedCustomer.ai_health_score == null ? "Score health" : "Re-score health")}
+              </Btn>
+              <Btn sm kind="ghost" onClick={() => { setSelectedId(null); }}>{Icon.x} close</Btn>
+            </>}
           >
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
               <KV rows={[
@@ -153,6 +181,11 @@ const WiredCustomers = () => {
                 ["Margin floor",   selectedCustomer.margin_floor_pct != null ? selectedCustomer.margin_floor_pct + "%" : "10% (default)"],
                 ["Credit limit",   selectedCustomer.credit_limit != null ? "₹" + Number(selectedCustomer.credit_limit).toLocaleString("en-IN") : "—"],
                 ["Contact email",  selectedCustomer.contact_email || "—"],
+                ["Health",         (() => {
+                  const c = CUSTOMER_HEALTH_CHIP(selectedCustomer.ai_health_band, selectedCustomer.ai_health_score);
+                  return <Chip k={c.k}>{c.label}</Chip>;
+                })()],
+                ["Health reasoning", selectedCustomer.ai_health_reasoning || <span style={{ color: "var(--ink-3)" }}>—</span>],
               ]} />
             </div>
             {(selectedCustomer.bill_to || selectedCustomer.ship_to) && (
@@ -219,6 +252,7 @@ const WiredCustomers = () => {
             <table className="tbl">
               <thead><tr>
                 <th>Customer</th>
+                <th>Health</th>
                 <th>Key</th>
                 <th>GSTIN</th>
                 <th>State</th>
@@ -228,6 +262,7 @@ const WiredCustomers = () => {
               <tbody>
                 {filtered.slice(0, 200).map((r) => {
                   const tc = CUSTOMER_TYPE_CHIP(r.customer_type || r.type);
+                  const hc = CUSTOMER_HEALTH_CHIP(r.ai_health_band, r.ai_health_score);
                   const last = r.last_so_date || r.last_order_at || r.updated_at || r.created_at;
                   return (
                     <tr
@@ -243,6 +278,9 @@ const WiredCustomers = () => {
                       style={{ cursor: "pointer" }}
                     >
                       <td><span className="pri">{r.customer_name || "—"}</span></td>
+                      <td title={r.ai_health_reasoning || (r.ai_health_score == null ? "Run /api/customers/health_score to populate" : "")}>
+                        <Chip k={hc.k}>{hc.label}</Chip>
+                      </td>
                       <td className="mono-sm">{r.customer_key || "—"}</td>
                       <td className="mono-sm">{r.gstin || "—"}</td>
                       <td className="mono-sm">{r.state_code || r.state || "—"}</td>

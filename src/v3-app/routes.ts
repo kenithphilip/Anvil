@@ -67,6 +67,8 @@ const screens = {
   studio:             lazy(() => import("./screens/studio")),
   anomaly:            lazy(() => import("./screens/anomaly")),
   duplicates:         lazy(() => import("./screens/duplicates")),
+  // Audit P9.5: customer-level duplicate-merge screen.
+  customerDuplicates: lazy(() => import("./screens/customer-duplicates")),
   agents:             lazy(() => import("./screens/agents")),
   // Comms & Security
   comms:              lazy(() => import("./screens/comms")),
@@ -138,6 +140,7 @@ export const RESOLVERS = {
   studio:      () => screens.studio,
   anomaly:     () => screens.anomaly,
   duplicates:  () => screens.duplicates,
+  "customer-duplicates": () => screens.customerDuplicates,
   agents:      () => screens.agents,
   comms:       () => screens.comms,
   email:       () => screens.email,

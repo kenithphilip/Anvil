@@ -167,6 +167,57 @@ export const drainRetryQueue = async (svc, prefix, { tenantId, opts, replay, isR
 export const httpIsRecoverable = (status) =>
   status === 0 || status === 408 || status === 429 || (status >= 500 && status < 600);
 
+// Audit P1.6 (May 2026). Tally was the only ERP push handler that
+// gated on order.approval + payload_hash. NetSuite, SAP, D365,
+// Acumatica, P21, Eclipse, SX.e, Sage X3, IFS, Oracle Fusion,
+// Ramco, JDE, Plex, JobBoss, Oracle EBS, and proALPHA all skipped
+// the gate, so an APPROVER could push a DRAFT or PENDING_REVIEW
+// order to any of those ERPs with no payload-hash binding to a
+// recorded approval.
+//
+// Returns null when the order is approvable. Returns
+// { status, body } when it is not, so the caller can:
+//
+//   const guard = requireApprovedOrder(order, body.payloadHash);
+//   if (guard) return json(res, guard.status, guard.body);
+//
+// Two checks:
+//   1. order.approval must exist with a payloadHash.
+//   2. If body.payloadHash is supplied, it must match
+//      order.payload_hash || order.approval.payloadHash.
+//
+// The order.status enum allows EXPORTED_TO_TALLY etc., but a push
+// that re-exports an already-exported order is fine: this guard
+// only refuses when the order has never been approved.
+export const requireApprovedOrder = (order, callerPayloadHash) => {
+  if (!order || !order.approval || !order.approval.payloadHash) {
+    return {
+      status: 409,
+      body: {
+        error: {
+          code: "ORDER_NOT_APPROVED",
+          message: "Order has no approval bound to a payload hash; approve before pushing to any ERP.",
+        },
+      },
+    };
+  }
+  const expected = order.payload_hash || order.approval.payloadHash;
+  if (callerPayloadHash && expected && callerPayloadHash !== expected) {
+    return {
+      status: 409,
+      body: {
+        error: {
+          code: "PAYLOAD_HASH_MISMATCH",
+          message: "Provided payloadHash does not match the approved order's payload hash.",
+          expected,
+          provided: callerPayloadHash,
+        },
+      },
+    };
+  }
+  return null;
+};
+
 // Convenience: run an entity sync inside an audit row, capture
 // pulled/inserted/updated/errored counts, persist to sync_state and
 // sync_runs. The `runner` argument is a function that receives

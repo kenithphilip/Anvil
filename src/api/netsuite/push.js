@@ -21,6 +21,7 @@ import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { netsuiteIsConfigured, netsuiteFetch } from "../_lib/netsuite-client.js";
 import { decryptNetsuiteCreds } from "../_lib/secrets.js";
+import { requireApprovedOrder } from "../_lib/erp-runner.js";
 
 // Tiny dot-path get/set for field-map overrides. Map shape:
 // { "<source.path>": "<target.path>" } where source is read from the
@@ -112,6 +113,9 @@ export default async function handler(req, res) {
     const orderQ = await svc.from("orders").select("*").eq("tenant_id", ctx.tenantId).eq("id", body.orderId).maybeSingle();
     if (orderQ.error) throw new Error("orders read: " + orderQ.error.message);
     if (!orderQ.data) return json(res, 404, { error: { message: "Order not found" } });
+    // Audit P1.6: refuse to push unless approved + payload-hash bound.
+    const approvalGuard = requireApprovedOrder(orderQ.data, body.payloadHash);
+    if (approvalGuard) return json(res, approvalGuard.status, approvalGuard.body);
 
     let customer = null;
     if (orderQ.data.customer_id) {

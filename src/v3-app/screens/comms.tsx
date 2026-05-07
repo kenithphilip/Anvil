@@ -43,13 +43,40 @@ const commsRowsFromAudit = (resp) => {
   });
 };
 
+// Read `?new=<templateId>` from the hash. CmdK and other surfaces
+// deep-link via `#/comms?new=nudge` (etc.) to land on the composer
+// with the right template pre-selected. Without this handler the
+// link did nothing visible: the screen rendered the list view with
+// the composer's default template, and the operator had to dig.
+const newTemplateFromHash = (): string | null => {
+  if (typeof window === "undefined") return null;
+  const q = (window.location.hash || "").split("?")[1];
+  if (!q) return null;
+  const v = new URLSearchParams(q).get("new");
+  return v || null;
+};
+
+// Map legacy aliases to canonical template ids so CmdK's
+// "Send nudge" still resolves after the template was renamed.
+const TEMPLATE_ALIASES: Record<string, string> = {
+  nudge: "missing-doc",
+  confirm: "order-confirm",
+};
+
 const WiredComms = () => {
   const [active, setActive] = useState("all");
+  const initialTemplateId = (() => {
+    const raw = newTemplateFromHash();
+    if (!raw) return COMMS_TEMPLATES[0].id;
+    const id = TEMPLATE_ALIASES[raw] || raw;
+    return COMMS_TEMPLATES.find((t) => t.id === id) ? id : COMMS_TEMPLATES[0].id;
+  })();
+  const initialTemplate = COMMS_TEMPLATES.find((t) => t.id === initialTemplateId) || COMMS_TEMPLATES[0];
   const [composer, setComposer] = useState({
-    templateId: COMMS_TEMPLATES[0].id,
+    templateId: initialTemplateId,
     recipient: "",
-    subject: COMMS_TEMPLATES[0].subject,
-    body: COMMS_TEMPLATES[0].body,
+    subject: initialTemplate.subject,
+    body: initialTemplate.body,
     busy: false,
     flash: null,
   });

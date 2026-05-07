@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { ageLabel, fmtINRShort, useFetch } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
+import { ageLabel, fmtINRShort, useFetch, useHashParam } from "../lib/helpers";
+import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 
@@ -36,6 +36,12 @@ const WiredLeads = () => {
     () => ObaraBackend?.sales?.listLeads?.() || Promise.resolve({ leads: [] }),
     []
   );
+
+  // Hash-id reader must be called UNCONDITIONALLY at the top of the
+  // function so the hook count stays stable across loading / error /
+  // success renders. The `selected` lookup that depends on `rows`
+  // happens further down, after the rows are computed.
+  const selectedId = useHashParam("id");
 
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState({
@@ -73,6 +79,11 @@ const WiredLeads = () => {
 
   const rows = leadRows(list.data);
   const total = rows.length;
+
+  // Resolve the hash-id selection (declared above the early-return
+  // guards) against the rows we just loaded. Same detail-card
+  // pattern as customers.tsx and source-pos.tsx.
+  const selected = selectedId ? rows.find((r) => r.id === selectedId) || null : null;
   const byStatus = (s) => rows.filter((r) => r.status === s).length;
   const newCount = byStatus("NEW");
   const qualifiedCount = byStatus("QUALIFIED");
@@ -131,6 +142,35 @@ const WiredLeads = () => {
           <KPI lbl="Qualified" v={String(qualifiedCount)} d="ready to promote" />
           <KPI lbl="Converted" v={String(convertedCount)} d="became opportunities" dKind={convertedCount ? "up" : ""} />
         </KPIRow>
+
+        {selected && (
+          <Card
+            title={selected.name || selected.company || "Lead"}
+            eyebrow={"lead detail · " + (selected.id?.slice(0, 8) || "")}
+            right={<Btn sm kind="ghost" onClick={() => { window.location.hash = "#/leads"; }}>{Icon.x} close</Btn>}
+          >
+            <KV rows={[
+              ["Name",     selected.name || "—"],
+              ["Company",  selected.company || "—"],
+              ["Email",    selected.email || "—"],
+              ["Phone",    selected.phone || "—"],
+              ["Status",   selected.status || "—"],
+              ["Source",   selected.source || "—"],
+              ["Owner",    selected.owner || selected.assigned_to || "—"],
+              ["Value",    selected.estimated_value_inr ? fmtINRShort(Number(selected.estimated_value_inr)) : "—"],
+              ["Created",  selected.created_at ? ageLabel(selected.created_at) : "—"],
+            ]} />
+            {selected.notes && (
+              <>
+                <div className="divider" />
+                <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 4 }}>Notes</div>
+                <pre style={{ font: "inherit", fontSize: 12.5, color: "var(--ink-2)", whiteSpace: "pre-wrap", margin: 0 }}>
+                  {selected.notes}
+                </pre>
+              </>
+            )}
+          </Card>
+        )}
 
         {creating && (
           <Card title="New lead" eyebrow="quick capture">

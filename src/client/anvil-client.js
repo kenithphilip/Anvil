@@ -547,6 +547,14 @@
     scan: async (documentId) => apiFetch("/api/documents/scan", { method: "POST", body: { documentId } }),
     fetch: async (id) => apiFetch("/api/documents/" + id),
     remove: async (id) => apiFetch("/api/documents/" + id, { method: "DELETE" }),
+    // List documents for the tenant. Powers the Documents library
+    // screen. Was missing entirely; documents.tsx called list() and
+    // got `undefined` (optional chaining), which silently rendered
+    // an empty library on every load.
+    list: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/documents" + (qs ? "?" + qs : ""));
+    },
   };
 
   const orders = {
@@ -824,6 +832,14 @@
     draft: async (payload) => apiFetch("/api/communications/draft", { method: "POST", body: payload }),
     send: async (id) => apiFetch("/api/communications/send", { method: "POST", body: { id } }),
     missingDoc: async (orderId) => apiFetch("/api/communications/missing_doc", { method: "POST", body: { orderId } }),
+    // List communications for an order or source PO. ThreadDrawer
+    // populates its comms panel from this endpoint; was missing,
+    // so the comms timeline rendered empty regardless of how many
+    // emails the order had attached.
+    list: async (orderId) => {
+      const qs = orderId ? "?order_id=" + encodeURIComponent(orderId) : "";
+      return apiFetch("/api/communications" + qs);
+    },
   };
 
   const evalExt = {

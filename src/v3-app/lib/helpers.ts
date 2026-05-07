@@ -33,6 +33,32 @@ export const useFetch = <T = unknown>(thunk: () => Promise<T> | T, deps: Readonl
 };
 
 // Format a relative age like "14m" / "2h" / "1d 3h"
+// Read a single param off the current hash query string. The list /
+// detail screens use this so #/X?id=abc lands the user on the
+// detail card without needing a separate route file. Returns null
+// when the param is missing or the runtime is server-side.
+//
+// Pair with `useHashParam` below for the React-state version that
+// re-reads on hashchange.
+export const readHashParam = (key: string): string | null => {
+  if (typeof window === "undefined") return null;
+  const q = (window.location.hash || "").split("?")[1];
+  if (!q) return null;
+  const v = new URLSearchParams(q).get(key);
+  return v && v.length ? v : null;
+};
+
+export const useHashParam = (key: string): string | null => {
+  const [v, setV] = useState<string | null>(readHashParam(key));
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onHash = () => setV(readHashParam(key));
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [key]);
+  return v;
+};
+
 export const ageLabel = (iso: string | null | undefined): string => {
   if (!iso) return "—";
   const ms = Date.now() - new Date(iso).getTime();

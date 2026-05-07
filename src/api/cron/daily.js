@@ -11,7 +11,7 @@
 // failure does not block the rest.
 
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
-import { runCronGroup } from "../_lib/cron-mux.js";
+import { runCronGroup, recordCronHeartbeat } from "../_lib/cron-mux.js";
 
 import analyticsRefresh from "../analytics/refresh.js";
 import fxCron           from "../fx/cron.js";
@@ -37,13 +37,30 @@ export default async function handler(req, res) {
     ]);
     const okCount = results.filter((r) => r.ok).length;
     const errCount = results.filter((r) => !r.ok).length;
+    const durationMs = Date.now() - startedAt.getTime();
+    // Audit P5.1: heartbeat the daily aggregator + each sub-handler.
+    await recordCronHeartbeat("cron/daily", {
+      status: errCount === 0 ? "ok" : (okCount > 0 ? "partial" : "error"),
+      durationMs,
+      metadata: { total: results.length, ok: okCount, failed: errCount },
+    });
+    for (const r of results) {
+      await recordCronHeartbeat(r.name, {
+        status: r.ok ? "ok" : "error",
+        durationMs: r.duration_ms || 0,
+        metadata: r.error ? { error: String(r.error).slice(0, 200) } : { status: r.status },
+      });
+    }
     return json(res, 200, {
       ran_at: startedAt.toISOString(),
       total: results.length,
       ok: okCount,
       failed: errCount,
-      duration_ms: Date.now() - startedAt.getTime(),
+      duration_ms: durationMs,
       results,
     });
-  } catch (err) { sendError(res, err); }
+  } catch (err) {
+    await recordCronHeartbeat("cron/daily", { status: "error", metadata: { error: String(err.message || err).slice(0, 200) } });
+    sendError(res, err);
+  }
 }

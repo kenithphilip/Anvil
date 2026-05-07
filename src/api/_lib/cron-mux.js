@@ -111,3 +111,39 @@ export const shouldRunOnMinute = (minute, every) => {
   // every=60 means "on the hour".
   return Number.isFinite(every) && every > 0 && (minute % every === 0);
 };
+
+// Audit P5.1 (May 2026). Record a heartbeat on the cron_health
+// table so /api/health can probe last-tick freshness. The 5-min
+// /api/cron/tick is documented to live on cron-job.org because
+// Hobby tier limits Vercel cron to once per day; without this
+// heartbeat, a silent external-cron failure (account expired,
+// billing lapse) is invisible until orders pile up.
+//
+// Failures here log + swallow. Cron correctness must not depend
+// on the heartbeat write succeeding.
+import { serviceClient } from "./supabase.js";
+
+export const recordCronHeartbeat = async (worker, { status, durationMs, metadata } = {}) => {
+  try {
+    const svc = serviceClient();
+    const ok = status === "ok";
+    const row = {
+      worker,
+      last_run_at: new Date().toISOString(),
+      last_status: status || "ok",
+      last_duration_ms: durationMs || 0,
+      consecutive_failures: 0,
+      metadata: metadata || {},
+      updated_at: new Date().toISOString(),
+    };
+    if (!ok) {
+      // Bump consecutive_failures by reading the current value.
+      const cur = await svc.from("cron_health").select("consecutive_failures").eq("worker", worker).maybeSingle();
+      row.consecutive_failures = (cur.data?.consecutive_failures || 0) + 1;
+    }
+    await svc.from("cron_health").upsert(row, { onConflict: "worker" });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[cron] heartbeat write failed for " + worker + ": " + (err.message || err));
+  }
+};

@@ -80,9 +80,18 @@ export default async function handler(req, res) {
     await recordRateLimitAttempt(svc, "magic_link_attempts", "email:" + email);
     if (ip) await recordRateLimitAttempt(svc, "magic_link_attempts", "ip:" + ip);
 
+    // Audit P1.3 (May 2026): shouldCreateUser was true, which let
+    // anyone create accounts in auth.users by spraying magic-link
+    // requests across an email list. Combined with the per-email
+    // 5-per-15min limit (~480/day), an attacker could fill the
+    // auth.users table, inflate the listUsers count, force tenants
+    // out of seat plans, and break the signup duplicate check.
+    // Signup is a separate explicit path (/api/auth/signup); magic
+    // link is sign-in only, never user creation. The generic 200
+    // response above hides the "no such user" case from callers.
     const result = await svc.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: redirectTo, shouldCreateUser: true },
+      options: { emailRedirectTo: redirectTo, shouldCreateUser: false },
     });
     if (result.error) {
       await recordMagicLink(svc, email, "failed", ip, ua);

@@ -3,6 +3,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { recordAudit } from "../_lib/audit.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { safeFetch } from "../_lib/safe-fetch.js";
+import { safeAwait } from "../_lib/safe-thenable.js";
 
 const REDACTION_PATTERNS = [
   { name: "credit_card", re: /\b(?:\d[ -]*?){13,19}\b/g, replacement: "[REDACTED-CC]" },
@@ -186,38 +187,34 @@ export default async function handler(req, res) {
       if (allowFallback && upstream.ok && confidence < minConfidence && routedModel.tier !== "reasoning") {
         const fallbackTier = routedModel.tier === "preflight" ? "generation" : "reasoning";
         const fallbackChoice = pickModel({ purpose, tier: fallbackTier });
-        try {
-          const svc = serviceClient();
-          await svc.from("model_routing_log").insert({
-            tenant_id: ctx.tenantId,
-            order_id: body.orderId || null,
-            purpose,
-            primary_model: model,
-            primary_status: "low_confidence",
-            primary_confidence: confidence,
-            fallback_model: fallbackChoice.model,
-            fallback_reason: "confidence < " + minConfidence,
-          });
-        } catch (_) {}
+        const svc = serviceClient();
+        await safeAwait(svc.from("model_routing_log").insert({
+          tenant_id: ctx.tenantId,
+          order_id: body.orderId || null,
+          purpose,
+          primary_model: model,
+          primary_status: "low_confidence",
+          primary_confidence: confidence,
+          fallback_model: fallbackChoice.model,
+          fallback_reason: "confidence < " + minConfidence,
+        }), "model_routing_log");
         const fallbackResp = await safeFetch(ANTHROPIC_URL, { method: "POST", headers, body: JSON.stringify({ model: fallbackChoice.model, max_tokens, system, messages }) });
         const fallbackText = await fallbackResp.text();
         let fallbackData; try { fallbackData = JSON.parse(fallbackText); } catch (_) { fallbackData = data; }
         return json(res, fallbackResp.status, fallbackData);
       }
-      // Always log non-fallback runs as well
-      try {
-        const svc = serviceClient();
-        await svc.from("model_routing_log").insert({
-          tenant_id: ctx.tenantId,
-          order_id: body.orderId || null,
-          purpose,
-          primary_model: model,
-          primary_status: data && data.stop_reason || (upstream.ok ? "ok" : "error"),
-          primary_confidence: confidence,
-          total_input_tokens: data && data.usage && data.usage.input_tokens,
-          total_output_tokens: data && data.usage && data.usage.output_tokens,
-        });
-      } catch (_) {}
+      // Always log non-fallback runs as well.
+      const svcLog = serviceClient();
+      await safeAwait(svcLog.from("model_routing_log").insert({
+        tenant_id: ctx.tenantId,
+        order_id: body.orderId || null,
+        purpose,
+        primary_model: model,
+        primary_status: data && data.stop_reason || (upstream.ok ? "ok" : "error"),
+        primary_confidence: confidence,
+        total_input_tokens: data && data.usage && data.usage.input_tokens,
+        total_output_tokens: data && data.usage && data.usage.output_tokens,
+      }), "model_routing_log");
       return json(res, upstream.status, data);
     }
     throw lastErr || new Error("Anthropic call failed");

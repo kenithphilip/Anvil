@@ -28,7 +28,12 @@ export const decryptChatCreds = (config) => {
     try {
       const decoded = decryptField(config.creds_enc, config.creds_iv);
       return JSON.parse(decoded || "{}");
-    } catch (_e) {
+    } catch (err) {
+      // Decryption or JSON parse failed. Don't crash the request, but
+      // log so the operator can spot a bad creds row instead of
+      // silently using empty defaults.
+      // eslint-disable-next-line no-console
+      console.warn("[inbound-chat] decryptChatCreds failed, falling back to creds_plain: " + (err && err.message ? err.message : String(err)));
       return config.creds_plain || {};
     }
   }

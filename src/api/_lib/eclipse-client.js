@@ -10,6 +10,7 @@
 // no token caching needed.
 
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { safeFetch } from "./safe-fetch.js";
 
 export const eclipseDecryptCreds = (s) => {
   if (!s) return s;
@@ -75,7 +76,7 @@ export const eclipseFetch = async (s, { method, path, body, query } = {}) => {
   const url = s.eclipse_base_url.replace(/\/+$/, "") + path
     + (query ? "?" + new URLSearchParams(query).toString() : "");
   const t0 = Date.now();
-  const jsonResp = await fetch(url, {
+  const jsonResp = await safeFetch(url, {
     method,
     headers: {
       Authorization: basicAuth(s),
@@ -91,7 +92,7 @@ export const eclipseFetch = async (s, { method, path, body, query } = {}) => {
     return { ok: jsonResp.ok, status: jsonResp.status, body: parsed, latency_ms: Date.now() - t0, transport: "json" };
   }
   const soapBody = body ? buildSoapEnvelope(path, body) : null;
-  const soapResp = await fetch(url, {
+  const soapResp = await safeFetch(url, {
     method,
     headers: {
       Authorization: basicAuth(s),

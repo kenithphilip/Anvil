@@ -107,7 +107,21 @@ export default async function handler(req, res) {
       return json(res, 400, { error: { message: "?provider=vapi|retell required" } });
     }
     const raw = await readRaw(req);
-    const payload = JSON.parse(raw || "{}");
+    // Voice providers (Vapi, Retell) sometimes send malformed JSON
+    // during retries / replay. A SyntaxError here used to crash the
+    // request with a generic 500; instead, return a clear 400 so the
+    // provider can drop the bad message.
+    let payload;
+    try {
+      payload = JSON.parse(raw || "{}");
+    } catch (err) {
+      return json(res, 400, {
+        error: {
+          code: "INVALID_JSON",
+          message: "Webhook body is not valid JSON: " + (err.message || "parse error"),
+        },
+      });
+    }
 
     // Normalise first so we can resolve the tenant by phone number.
     const norm = normalisePayload(provider, payload);

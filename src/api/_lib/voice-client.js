@@ -11,6 +11,7 @@
 
 import crypto from "node:crypto";
 import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { safeFetch } from "./safe-fetch.js";
 
 export const voiceDecryptCreds = (s) => {
   if (!s) return s;
@@ -73,7 +74,7 @@ export const voicePlaceOutboundCall = async (config, { to, fromAssistantId, meta
   if (!voiceIsConfigured(config)) throw new Error("Voice provider not configured");
 
   if (config.provider === "vapi") {
-    const resp = await fetch("https://api.vapi.ai/call", {
+    const resp = await safeFetch("https://api.vapi.ai/call", {
       method: "POST",
       headers: {
         Authorization: "Bearer " + config.api_key,
@@ -92,7 +93,7 @@ export const voicePlaceOutboundCall = async (config, { to, fromAssistantId, meta
   }
 
   if (config.provider === "retell") {
-    const resp = await fetch("https://api.retellai.com/v2/create-phone-call", {
+    const resp = await safeFetch("https://api.retellai.com/v2/create-phone-call", {
       method: "POST",
       headers: {
         Authorization: "Bearer " + config.api_key,
@@ -116,7 +117,7 @@ export const voicePlaceOutboundCall = async (config, { to, fromAssistantId, meta
 // Forward an in-progress call to a human. Provider-specific.
 export const voiceForwardCall = async (config, { callId, toNumber }) => {
   if (config.provider === "vapi") {
-    const resp = await fetch(`https://api.vapi.ai/call/${callId}/forward`, {
+    const resp = await safeFetch(`https://api.vapi.ai/call/${callId}/forward`, {
       method: "POST",
       headers: {
         Authorization: "Bearer " + config.api_key,
@@ -131,7 +132,7 @@ export const voiceForwardCall = async (config, { callId, toNumber }) => {
     return { ok: true };
   }
   if (config.provider === "retell") {
-    const resp = await fetch(`https://api.retellai.com/v2/transfer-call/${callId}`, {
+    const resp = await safeFetch(`https://api.retellai.com/v2/transfer-call/${callId}`, {
       method: "POST",
       headers: {
         Authorization: "Bearer " + config.api_key,

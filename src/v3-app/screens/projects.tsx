@@ -238,6 +238,7 @@ const WiredProjects = () => {
                 <th>Project</th>
                 <th>Customer</th>
                 <th>Phase</th>
+                <th>Progress</th>
                 <th className="r">Value</th>
                 <th>Owner</th>
                 <th>Expected close</th>
@@ -247,6 +248,18 @@ const WiredProjects = () => {
                   const pc = PROJECT_PHASE_CHIP(r.phase);
                   const v = Number(r.value) || 0;
                   const expected = r.expected_close_date || r.expected_close;
+                  // Phase timeline: a 15-dot strip showing where in
+                  // the lifecycle this project sits. Active dot is
+                  // tinted accent; completed dots are ink; future
+                  // dots are hairline. Replaces the design's
+                  // standalone phase-timeline component without
+                  // adding a new file.
+                  const phase = r.current_phase || r.phase;
+                  const phaseIdx = PROJECT_PHASES.indexOf(phase);
+                  const closed = phase === "CLOSED";
+                  const pct = phaseIdx >= 0
+                    ? Math.round((phaseIdx + 1) / PROJECT_PHASES.length * 100)
+                    : 0;
                   return (
                     <tr
                       key={r.id}
@@ -263,6 +276,31 @@ const WiredProjects = () => {
                       <td className="mono"><span className="pri">{r.project_code || r.code || (r.id ? r.id.slice(0, 12) : "—")}</span></td>
                       <td>{r.customer_name || r.customer || "—"}</td>
                       <td><Chip k={pc.k}>{pc.label}</Chip></td>
+                      <td>
+                        <div
+                          aria-label={"phase " + (phaseIdx + 1) + " of " + PROJECT_PHASES.length}
+                          style={{ display: "inline-flex", alignItems: "center", gap: 2 }}
+                        >
+                          {PROJECT_PHASES.map((_, i) => {
+                            const state = i < phaseIdx ? "done"
+                                        : i === phaseIdx ? "active"
+                                        : "pending";
+                            const bg = state === "done"   ? "var(--ink)"
+                                     : state === "active" ? (closed ? "var(--ink-3)" : "var(--accent-2)")
+                                     : "var(--hairline)";
+                            return (
+                              <span key={i} style={{
+                                display: "inline-block",
+                                width: 6, height: 6, borderRadius: 999,
+                                background: bg,
+                              }} />
+                            );
+                          })}
+                          <span className="mono-sm" style={{ color: "var(--ink-3)", marginLeft: 6 }}>
+                            {pct}%
+                          </span>
+                        </div>
+                      </td>
                       <td className="r mono">{v ? fmtINRShort(v) : "—"}</td>
                       <td className="mono-sm">{r.owner || "—"}</td>
                       <td className="mono-sm">{expected || "—"}</td>

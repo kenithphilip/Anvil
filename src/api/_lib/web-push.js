@@ -13,6 +13,7 @@
 // without standing up a key pair.
 
 import crypto from "node:crypto";
+import { safeFetch } from "./safe-fetch.js";
 
 const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY || "";
 const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || "";
@@ -121,7 +122,7 @@ export const sendWebPush = async (subscription, payload, opts = {}) => {
   const jwt = vapidJwt(audience);
   const body = encryptPayload(subscription, JSON.stringify(payload));
   const ttl = String(opts.ttl ?? 60);
-  const resp = await fetch(subscription.endpoint, {
+  const resp = await safeFetch(subscription.endpoint, {
     method: "POST",
     headers: {
       Authorization: "vapid t=" + jwt + ", k=" + VAPID_PUBLIC,

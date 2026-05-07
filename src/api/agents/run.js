@@ -17,6 +17,7 @@
 import { applyCors, handlePreflight, json } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { dispatch, KNOWN_GOAL_TYPES } from "./_handlers/index.js";
+import { safeFetch } from "../_lib/safe-fetch.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const HOURS = 60 * 60 * 1000;
@@ -147,7 +148,7 @@ const sendViaSendGrid = async ({ to, subject, body, from }) => {
   if (!SENDGRID_KEY || !SENDGRID_FROM) return null;
   const fromAddress = from || SENDGRID_FROM;
   try {
-    const resp = await fetch("https://api.sendgrid.com/v3/mail/send", {
+    const resp = await safeFetch("https://api.sendgrid.com/v3/mail/send", {
       method: "POST",
       headers: { Authorization: "Bearer " + SENDGRID_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -171,7 +172,7 @@ const sendViaGenericWebhook = async ({ to, subject, body, from }) => {
   try {
     const headers = { "Content-Type": "application/json" };
     if (PROVIDER_TOKEN) headers["Authorization"] = "Bearer " + PROVIDER_TOKEN;
-    const resp = await fetch(PROVIDER_URL, {
+    const resp = await safeFetch(PROVIDER_URL, {
       method: "POST", headers, body: JSON.stringify({ to, subject, body, from }),
     });
     return { provider: "generic", status: resp.status, ok: resp.ok };

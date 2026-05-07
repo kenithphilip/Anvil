@@ -26,6 +26,7 @@ import { applyCors, handlePreflight, json } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { documentsBucket } from "../_lib/storage.js";
+import { safeFetch } from "../_lib/safe-fetch.js";
 
 const TENANT_DEFAULT = process.env.DEFAULT_TENANT_ID || "00000000-0000-0000-0000-000000000001";
 const TOKEN = process.env.WHATSAPP_INBOUND_TOKEN || "";
@@ -123,7 +124,7 @@ const persistMedia = async (svc, tenantId, m) => {
       headers["Authorization"] = "Basic " + creds;
     }
     try {
-      const resp = await fetch(m.url, { headers });
+      const resp = await safeFetch(m.url, { headers });
       if (resp.ok) {
         buffer = Buffer.from(await resp.arrayBuffer());
         const bucket = documentsBucket();

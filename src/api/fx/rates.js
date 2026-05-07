@@ -18,6 +18,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { safeFetch } from "../_lib/safe-fetch.js";
 
 // frankfurter.app redirects to frankfurter.dev; default direct to
 // .dev to avoid the redirect hop. FX_PROVIDER_URL env var still
@@ -35,7 +36,7 @@ const isoDate = (d) => {
 const callProvider = async (path, fromCcy, targets) => {
   const params = new URLSearchParams({ from: fromCcy, to: targets.filter((t) => t !== fromCcy).join(",") });
   const url = PROVIDER_URL.replace(/\/$/, "") + path + "?" + params.toString();
-  const resp = await fetch(url, { headers: { Accept: "application/json" }, redirect: "follow" });
+  const resp = await safeFetch(url, { headers: { Accept: "application/json" }, redirect: "follow" });
   return { ok: resp.ok, status: resp.status, url, body: resp.ok ? await resp.json() : null };
 };
 

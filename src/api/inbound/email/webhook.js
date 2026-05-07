@@ -30,6 +30,7 @@ import { applyCors, handlePreflight, json, sendError } from "../../_lib/cors.js"
 import { serviceClient } from "../../_lib/supabase.js";
 import { recordAudit } from "../../_lib/audit.js";
 import { buildInboundEmailRow, ingestInboundEmail } from "../../_lib/inbound-email.js";
+import { safeFire } from "../../_lib/safe-thenable.js";
 
 const readRaw = (req) => new Promise((resolve, reject) => {
   let data = "";
@@ -180,15 +181,17 @@ export default async function handler(req, res) {
       return;
     }
     if (out.tenantId) {
-      // Best-effort audit; service-role client.
-      await svc.from("audit_events").insert({
+      // Best-effort audit. safeFire so a failure is logged without
+      // breaking the webhook response, and labelled so the operator
+      // can spot it in stderr.
+      safeFire(svc.from("audit_events").insert({
         tenant_id: out.tenantId,
         actor_id: null,
         action: "inbound_email_received",
         object_type: "inbound_email",
         object_id: out.body?.id || null,
         detail: provider + (out.body?.duplicate ? "::duplicate" : ""),
-      }).then(() => {}).then(() => undefined, () => undefined);
+      }), "inbound_email_audit");
     }
     return json(res, out.status, out.body);
   } catch (err) { sendError(res, err); }

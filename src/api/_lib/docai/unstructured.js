@@ -4,6 +4,7 @@
 // pull tables out; everything else is metadata.
 
 import { decryptField } from "../secrets.js";
+import { safeFetch } from "../safe-fetch.js";
 
 const BASE_URL = "https://api.unstructured.io/general/v0/general";
 
@@ -22,7 +23,7 @@ const callUnstructured = async (key, fileBytes, filename) => {
   form.append("files", new Blob([fileBytes]), filename || "document.pdf");
   form.append("strategy", "hi_res");
   form.append("hi_res_model_name", "yolox");
-  const resp = await fetch(BASE_URL, {
+  const resp = await safeFetch(BASE_URL, {
     method: "POST",
     headers: { "unstructured-api-key": key, accept: "application/json" },
     body: form,

@@ -1,3 +1,4 @@
+import { safeFetch } from "./safe-fetch.js";
 // OAuth2 client_credentials helper used by SAP S/4HANA and
 // Dynamics 365 connectors. Both use the same flow:
 //   POST <token_url>
@@ -34,7 +35,7 @@ export const oauth2ClientCredentials = async ({
   if (extra) {
     for (const [k, v] of Object.entries(extra)) params.set(k, v);
   }
-  const resp = await fetch(tokenUrl, {
+  const resp = await safeFetch(tokenUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
     body: params.toString(),

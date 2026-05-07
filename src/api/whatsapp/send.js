@@ -13,6 +13,7 @@ import { applyCors, handlePreflight, json, readBody } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { safeFetch } from "../_lib/safe-fetch.js";
 
 const sanitizePhone = (s) => String(s || "").replace(/[^0-9+]/g, "");
 
@@ -27,7 +28,7 @@ const sendViaTwilio = async (to, body) => {
     To: to.startsWith("whatsapp:") ? to : "whatsapp:" + to,
     Body: body,
   });
-  const resp = await fetch(url, {
+  const resp = await safeFetch(url, {
     method: "POST",
     headers: {
       Authorization: "Basic " + Buffer.from(sid + ":" + token).toString("base64"),
@@ -44,7 +45,7 @@ const sendViaMeta = async (to, body) => {
   const phoneId = process.env.META_WHATSAPP_PHONE_ID;
   if (!token || !phoneId) return null;
   const url = "https://graph.facebook.com/v20.0/" + encodeURIComponent(phoneId) + "/messages";
-  const resp = await fetch(url, {
+  const resp = await safeFetch(url, {
     method: "POST",
     headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
     body: JSON.stringify({

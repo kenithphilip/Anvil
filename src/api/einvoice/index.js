@@ -106,6 +106,55 @@ export default async function handler(req, res) {
       if (order.data.customer_id) {
         const c = await svc.from("customers").select("*").eq("tenant_id", ctx.tenantId).eq("id", order.data.customer_id).single();
         if (c.data) customer = c.data;
+        // Audit fix (May 2026): einvoice handler used to read
+        // address_line1 / city / pincode directly from `customers`,
+        // but those columns live on `customer_locations`. Pull the
+        // default location (or the order's customer_location_id if
+        // set) and merge it onto the customer object so the existing
+        // BuyerDtls section keeps working.
+        if (customer) {
+          let location = null;
+          if (order.data.customer_location_id) {
+            const locQ = await svc.from("customer_locations").select("*")
+              .eq("tenant_id", ctx.tenantId)
+              .eq("id", order.data.customer_location_id)
+              .maybeSingle();
+            location = locQ.data || null;
+          }
+          if (!location) {
+            const defQ = await svc.from("customer_locations").select("*")
+              .eq("tenant_id", ctx.tenantId)
+              .eq("customer_id", customer.id)
+              .eq("is_default", true)
+              .maybeSingle();
+            location = defQ.data || null;
+          }
+          if (!location) {
+            // Fallback: any location for this customer (oldest first
+            // to keep the choice deterministic).
+            const anyQ = await svc.from("customer_locations").select("*")
+              .eq("tenant_id", ctx.tenantId)
+              .eq("customer_id", customer.id)
+              .order("created_at", { ascending: true })
+              .limit(1)
+              .maybeSingle();
+            location = anyQ.data || null;
+          }
+          if (location) {
+            customer = {
+              ...customer,
+              address_line1: customer.address_line1 || location.address_line1 || null,
+              address_line2: customer.address_line2 || location.address_line2 || null,
+              city: customer.city || location.city || null,
+              pincode: customer.pincode || location.pincode || null,
+              // Prefer the location's GSTIN/state when present (a
+              // multi-plant customer's e-invoice should use the
+              // shipping location's tax registration).
+              gstin: location.gstin || customer.gstin || null,
+              state_code: location.state_code || customer.state_code || null,
+            };
+          }
+        }
       }
       const so = (order.data.result && order.data.result.salesOrder) || {};
       const payload = composePayload(order.data, customer, body.seller_gstin || null);

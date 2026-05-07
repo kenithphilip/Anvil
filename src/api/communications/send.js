@@ -16,6 +16,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { decryptChatCreds } from "../_lib/inbound-chat.js";
+import { safeFetch } from "../_lib/safe-fetch.js";
 
 const PROVIDER_URL = process.env.COMMS_PROVIDER_URL;
 const PROVIDER_TOKEN = process.env.COMMS_PROVIDER_TOKEN;
@@ -39,7 +40,7 @@ const sendViaSendGrid = async ({ to, subject, body, from }) => {
     ],
   };
   try {
-    const resp = await fetch("https://api.sendgrid.com/v3/mail/send", {
+    const resp = await safeFetch("https://api.sendgrid.com/v3/mail/send", {
       method: "POST",
       headers: {
         Authorization: "Bearer " + SENDGRID_KEY,
@@ -90,7 +91,7 @@ const sendViaChat = async (svc, tenantId, channel, { to, subject, body }) => {
     }).toString();
     const auth = Buffer.from(`${creds.account_sid}:${creds.auth_token}`).toString("base64");
     try {
-      const resp = await fetch(url, {
+      const resp = await safeFetch(url, {
         method: "POST",
         headers: { Authorization: "Basic " + auth, "Content-Type": "application/x-www-form-urlencoded" },
         body: formBody,
@@ -106,7 +107,7 @@ const sendViaChat = async (svc, tenantId, channel, { to, subject, body }) => {
     if (!creds.bot_token) return null;
     // `to` is a Slack channel ID or user ID. We post via chat.postMessage.
     try {
-      const resp = await fetch("https://slack.com/api/chat.postMessage", {
+      const resp = await safeFetch("https://slack.com/api/chat.postMessage", {
         method: "POST",
         headers: { Authorization: "Bearer " + creds.bot_token, "Content-Type": "application/json" },
         body: JSON.stringify({ channel: to, text: [subject ? "*" + subject + "*" : "", body].filter(Boolean).join("\n") }),
@@ -135,7 +136,7 @@ const sendViaGenericWebhook = async ({ to, subject, body, from }) => {
   try {
     const headers = { "Content-Type": "application/json" };
     if (PROVIDER_TOKEN) headers["Authorization"] = "Bearer " + PROVIDER_TOKEN;
-    const upstream = await fetch(PROVIDER_URL, {
+    const upstream = await safeFetch(PROVIDER_URL, {
       method: "POST",
       headers,
       body: JSON.stringify({ to, subject, body, from }),

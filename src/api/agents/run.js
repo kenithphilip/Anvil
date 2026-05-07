@@ -113,6 +113,22 @@ const executeAction = async (svc, goal, step) => {
     // (SendGrid first, generic webhook second). Drafting in the
     // queued state is intentional: if the reaper crashes, the row
     // remains in the database for manual flush from the UI.
+    //
+    // Audit P1.4 (May 2026): the body field used to fall back to
+    // action_payload.hint, which was originally meant as a prompt
+    // hint for an LLM drafter that never landed. Customers were
+    // receiving emails whose body was literally a prompt directive
+    // ("Polite, concise quote nudge..."). Now: handlers MUST
+    // provide a real `body`. If absent, fail the step rather than
+    // ship a prompt hint to a customer.
+    const body = step.action_payload?.body;
+    if (typeof body !== "string" || body.trim().length === 0) {
+      return {
+        result: "skipped",
+        result_detail: "handler returned no body; action_payload.hint is not a fallback for body",
+        error: "missing_body",
+      };
+    }
     const draft = {
       tenant_id: goal.tenant_id,
       object_type: step.action_payload?.object_type || goal.object_type,
@@ -120,7 +136,7 @@ const executeAction = async (svc, goal, step) => {
       kind: step.action_payload?.kind || "agent_message",
       to_addr: step.action_payload?.to || null,
       subject: step.action_payload?.subject || "Follow-up",
-      body: step.action_payload?.body || step.action_payload?.hint || "(agent-generated)",
+      body,
       status: "queued",
       sent_by: null,
       metadata: { agent_goal_id: goal.id, payload: step.action_payload },

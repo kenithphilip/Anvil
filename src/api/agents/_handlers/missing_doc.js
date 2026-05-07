@@ -46,6 +46,27 @@ export const missingDoc = async (goal, ctx) => {
   if (!recipient) {
     return { thought: "No recipient on file.", action: "escalate", action_payload: { reason: "no_recipient", missing } };
   }
+  // Audit P1.4 (May 2026): the runner used to fall back to
+  // action_payload.hint for the email body, which meant the literal
+  // string "Polite request for the listed documents; keep short."
+  // arrived in the customer's inbox. Provide a real templated body.
+  // LLM-drafted variants land in Phase 6.
+  const customerName = order.data.customer?.customer_name || null;
+  const greet = "Hello" + (customerName ? " " + customerName : "") + ",";
+  const list = missing.map((r) => "  - " + String(r).replace(/_/g, " ")).join("\n");
+  const ref = order.data.po_number || ("order " + String(order.data.id || "").slice(0, 8));
+  const subject = "Documents needed for " + ref;
+  const body = [
+    greet,
+    "",
+    "To process " + ref + " we still need the following from you:",
+    list,
+    "",
+    "Please reply to this email with the documents attached, or let us know if any of these are no longer applicable.",
+    "",
+    "Thanks,",
+    "The team",
+  ].join("\n");
   return {
     thought: "Requesting missing documents from customer.",
     action: "send_email",
@@ -54,7 +75,8 @@ export const missingDoc = async (goal, ctx) => {
       order_id: order.data.id,
       to: recipient,
       missing_roles: missing,
-      hint: "Polite request for the listed documents; keep short.",
+      subject,
+      body,
     },
   };
 };

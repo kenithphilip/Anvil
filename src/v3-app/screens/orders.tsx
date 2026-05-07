@@ -69,10 +69,40 @@ const WiredSOList = () => {
   // Aggregate KPIs
   const total = (orders.rows || []).length;
   const inFlight = (orders.rows || []).filter((o) => !["RECONCILED", "CANCELLED"].includes(o.status)).length;
-  const sumValue = (orders.rows || [])
-    .filter((o) => o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED")
-    .reduce((s, o) => s + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
+  const completed = (orders.rows || []).filter((o) => o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED");
+  const sumValue = completed.reduce((s, o) => s + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
   const blocked = (orders.rows || []).filter((o) => o.status === "BLOCKED").length;
+
+  // Audit P13.B.2.1: cycle median (created_at -> updated_at on
+  // completed orders), and ₹ pushed MTD. The audit's plan called
+  // for 4 numeric KPIs (cycle median, first-pass rate, pushed
+  // MTD, avg margin); we ship the two we can compute from the
+  // /api/orders payload + skip first-pass-rate (no
+  // was_manually_edited flag in schema) and avg-margin (no
+  // margin_pct field). The plan explicitly says "do not
+  // fabricate" so leaving the slot honest is correct.
+  const cycleMins = completed
+    .map((o) => {
+      const c = o.created_at ? new Date(o.created_at).getTime() : 0;
+      const u = o.updated_at ? new Date(o.updated_at).getTime() : 0;
+      if (!c || !u || u < c) return null;
+      return Math.round((u - c) / 60000);
+    })
+    .filter((n): n is number => n != null && Number.isFinite(n))
+    .sort((a, b) => a - b);
+  const cycleMedian = cycleMins.length
+    ? (cycleMins.length % 2 === 0
+        ? Math.round((cycleMins[cycleMins.length / 2 - 1] + cycleMins[cycleMins.length / 2]) / 2)
+        : cycleMins[Math.floor(cycleMins.length / 2)])
+    : null;
+
+  const monthStart = new Date();
+  monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
+  const pushedMtd = completed.filter((o) => {
+    const t = o.updated_at || o.created_at;
+    return t && new Date(t).getTime() >= monthStart.getTime();
+  });
+  const pushedValueMtd = pushedMtd.reduce((s, o) => s + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
 
   return (
     <>
@@ -99,10 +129,15 @@ const WiredSOList = () => {
       />
 
       <div className="ws-content">
-        <KPIRow cols={4}>
+        <KPIRow cols={5}>
           <KPI lbl="Total" v={String(total)} d="all-time in scope" />
           <KPI lbl="In flight" v={String(inFlight)} d="not yet shipped" live={inFlight > 0} />
-          <KPI lbl="₹ pushed" v={fmtINRShort(sumValue)} d="completed orders" dKind="up" />
+          <KPI
+            lbl="Cycle median"
+            v={cycleMedian == null ? "—" : (cycleMedian < 60 ? cycleMedian + "m" : Math.round(cycleMedian / 60) + "h")}
+            d={cycleMedian == null ? "no completed orders" : `${completed.length} completed orders`}
+          />
+          <KPI lbl="₹ pushed MTD" v={fmtINRShort(pushedValueMtd)} d={`${pushedMtd.length} this month`} dKind={pushedMtd.length ? "up" : ""} />
           <KPI lbl="Blocked" v={String(blocked)} d="needs attention" dKind={blocked ? "down" : ""} />
         </KPIRow>
 

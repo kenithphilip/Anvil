@@ -105,6 +105,20 @@ const WiredAnomaly = () => {
   }
 
   const all = findingRowsOf(list.data);
+  // Audit P13.B.2.2: severity distribution panel. Counts every
+  // finding by severity, drawn as horizontal bars. Live data from
+  // the same /api/findings response, no fabrication. The panel
+  // sits on the Open tab (where the operator triages the queue).
+  const sevCounts = (() => {
+    const buckets: Record<string, number> = { high: 0, med: 0, low: 0, other: 0 };
+    for (const r of all) {
+      const k = String(r.severity || r.sev || "low").toLowerCase();
+      if (k === "high" || k === "med" || k === "low") buckets[k] += 1;
+      else buckets.other += 1;
+    }
+    const max = Math.max(buckets.high, buckets.med, buckets.low, buckets.other, 1);
+    return { buckets, max, total: all.length };
+  })();
   const matchTab = (r) => {
     const status = (r.status || (r.resolved ? "resolved" : r.suppressed ? "suppressed" : "open")).toLowerCase();
     if (tab === "open")       return status !== "resolved" && status !== "suppressed";
@@ -171,6 +185,26 @@ const WiredAnomaly = () => {
             </Card>
           </>
         ) : null}
+        {tab === "open" && all.length > 0 && (
+          <Card title="Severity distribution" eyebrow={`${sevCounts.total} finding${sevCounts.total === 1 ? "" : "s"}`}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {(["high", "med", "low", "other"] as const).map((k) => {
+                const n = sevCounts.buckets[k];
+                const pct = sevCounts.max > 0 ? Math.round((n / sevCounts.max) * 100) : 0;
+                const tone = k === "high" ? "var(--rust)" : k === "med" ? "var(--amber)" : k === "low" ? "var(--sage)" : "var(--ink-4)";
+                return (
+                  <div key={k} style={{ display: "grid", gridTemplateColumns: "60px 1fr 50px", alignItems: "center", gap: 10 }}>
+                    <span className="mono-sm" style={{ textTransform: "uppercase", color: "var(--ink-3)" }}>{k}</span>
+                    <div style={{ height: 14, background: "var(--paper-3)", borderRadius: 3, overflow: "hidden" }}>
+                      <div style={{ width: pct + "%", height: "100%", background: tone }} />
+                    </div>
+                    <span className="mono-sm r" style={{ textAlign: "right" }}>{n}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        )}
         {tab !== "rules" && <Card flush>
           {filtered.length === 0 ? (
             <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>

@@ -49,6 +49,10 @@ const screens = {
   einvoice:           lazy(() => import("./screens/einvoice")),
   invoices:           lazy(() => import("./screens/invoices")),
   cost:               lazy(() => import("./screens/cost")),
+  // Audit P8.5: new screens for the P7.5 / P7.6 / P7.7 surfaces.
+  creditNotes:        lazy(() => import("./screens/credit-notes")),
+  recurringInvoices:  lazy(() => import("./screens/recurring-invoices")),
+  ewayBills:          lazy(() => import("./screens/eway-bills")),
   // Data
   customers:          lazy(() => import("./screens/customers")),
   items:              lazy(() => import("./screens/items")),
@@ -115,6 +119,10 @@ export const RESOLVERS = {
   einvoice:    () => screens.einvoice,
   invoices:    () => screens.invoices,
   cost:        () => screens.cost,
+  // Audit P8.5: P7.5 / P7.6 / P7.7 surfaces.
+  "credit-notes":      () => screens.creditNotes,
+  "recurring-invoices":() => screens.recurringInvoices,
+  "eway-bills":        () => screens.ewayBills,
   customers:   () => screens.customers,
   items:       ({ params }) => {
     const view = params.get("view");

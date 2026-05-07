@@ -8,6 +8,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { jobbossDecryptCreds, jobbossList, jobbossIsConfigured, jobbossFetch } from "../_lib/jobboss-client.js";
 import { runSyncEntity } from "../_lib/erp-runner.js";
+import { canonicaliseCustomer } from "../_lib/customer-canonicalizer.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const PREFIX = "jobboss";
@@ -21,10 +22,24 @@ const ENTITY = {
     upsert: async (svc, tid, items) => {
       let updated = 0; let hw = null;
       for (const r of items) {
+        const externalId = String(r.customerId || r.id);
+        const name = r.name || r.customerName || null;
+        if (name) {
+          // Audit P8.2: promote to canonical customers table.
+          await canonicaliseCustomer(svc, tid, {
+            vendor: "jobboss",
+            vendorIdField: "jobboss_id",
+            externalId,
+            name,
+            email: r.email || null,
+            currency: r.currency || null,
+            ref: { status: r.status, modified: r.lastModifiedDate || r.modifiedOn },
+          });
+        }
         await svc.from("jobboss_customers").upsert({
           tenant_id: tid,
-          external_id: String(r.customerId || r.id),
-          name: r.name || r.customerName || null,
+          external_id: externalId,
+          name,
           email: r.email || null,
           currency: r.currency || null,
           is_inactive: r.status === "Inactive",

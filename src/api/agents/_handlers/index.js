@@ -25,14 +25,35 @@ import { missingDoc } from "./missing_doc.js";
 import { expiringQuoteNudge } from "./expiring_quote_nudge.js";
 import { failedPushRecovery } from "./failed_push_recovery.js";
 import { paidPartialFollowup } from "./paid_partial_followup.js";
+// Audit P8.3: nine more handlers covering the long tail of
+// quote-to-cash + post-sale touchpoints that previously required
+// an operator nudge.
+import { supplierAckFollowup } from "./supplier_ack_followup.js";
+import { deliveryEtaCheck } from "./delivery_eta_check.js";
+import { serviceVisitSchedule } from "./service_visit_schedule.js";
+import { amcRenewalChase } from "./amc_renewal_chase.js";
+import { creditReviewRequest } from "./credit_review_request.js";
+import { onboardingFollowup } from "./onboarding_followup.js";
+import { priceIncreaseAnnouncement } from "./price_increase_announcement.js";
+import { replenishmentSuggestion } from "./replenishment_suggestion.js";
+import { obsoleteProductWarning } from "./obsolete_product_warning.js";
 
 export const HANDLERS = {
-  quote_accept_within_14d:  quoteAccept,
-  ar_collect_by_due_plus_7: arCollect,
-  missing_doc_followup:     missingDoc,
-  expiring_quote_nudge:     expiringQuoteNudge,
-  failed_push_recovery:     failedPushRecovery,
-  paid_partial_followup:    paidPartialFollowup,
+  quote_accept_within_14d:    quoteAccept,
+  ar_collect_by_due_plus_7:   arCollect,
+  missing_doc_followup:       missingDoc,
+  expiring_quote_nudge:       expiringQuoteNudge,
+  failed_push_recovery:       failedPushRecovery,
+  paid_partial_followup:      paidPartialFollowup,
+  supplier_ack_followup:      supplierAckFollowup,
+  delivery_eta_check:         deliveryEtaCheck,
+  service_visit_schedule:     serviceVisitSchedule,
+  amc_renewal_chase:          amcRenewalChase,
+  credit_review_request:      creditReviewRequest,
+  onboarding_followup:        onboardingFollowup,
+  price_increase_announcement: priceIncreaseAnnouncement,
+  replenishment_suggestion:   replenishmentSuggestion,
+  obsolete_product_warning:   obsoleteProductWarning,
 };
 
 export const KNOWN_GOAL_TYPES = Object.keys(HANDLERS);

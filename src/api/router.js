@@ -258,6 +258,8 @@ import catalogSearch           from "./catalog/search.js";
 import catalogSynonyms         from "./catalog/synonyms.js";
 import catalogAlternatives     from "./catalog/alternatives.js";
 import catalogPrivateLabel     from "./catalog/private_label.js";
+// Audit P8.4: catalog embeddings (Voyage AI + pgvector).
+import catalogEmbed            from "./catalog/embed.js";
 
 // Phase 5.6: in-network back-to-back sourcing.
 import sourcingNetworkListings  from "./sourcing/network/listings.js";
@@ -458,6 +460,7 @@ const STATIC_ROUTES = {
   "/catalog/synonyms":              catalogSynonyms,
   "/catalog/alternatives":          catalogAlternatives,
   "/catalog/private_label":         catalogPrivateLabel,
+  "/catalog/embed":                 catalogEmbed,
 
   "/sourcing/network/listings":     sourcingNetworkListings,
   "/sourcing/network/search":       sourcingNetworkSearch,

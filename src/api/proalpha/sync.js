@@ -5,6 +5,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { proalphaDecryptCreds, proalphaList, proalphaIsConfigured, proalphaFetch } from "../_lib/proalpha-client.js";
 import { runSyncEntity } from "../_lib/erp-runner.js";
+import { canonicaliseCustomer } from "../_lib/customer-canonicalizer.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const PREFIX = "proalpha";
@@ -18,10 +19,24 @@ const ENTITY = {
     upsert: async (svc, tid, items) => {
       let updated = 0; let hw = null;
       for (const r of items) {
+        const externalId = String(r.customerNumber || r.id);
+        const name = r.name || r.companyName || null;
+        if (name) {
+          // Audit P8.2: promote to canonical customers table.
+          await canonicaliseCustomer(svc, tid, {
+            vendor: "proalpha",
+            vendorIdField: "proalpha_id",
+            externalId,
+            name,
+            email: r.email || null,
+            currency: r.currency || null,
+            ref: { status: r.status, modified: r.lastModifiedDate },
+          });
+        }
         await svc.from("proalpha_customers").upsert({
           tenant_id: tid,
-          external_id: String(r.customerNumber || r.id),
-          name: r.name || r.companyName || null,
+          external_id: externalId,
+          name,
           email: r.email || null,
           currency: r.currency || null,
           is_inactive: r.status === "inactive",

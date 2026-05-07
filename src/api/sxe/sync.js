@@ -5,6 +5,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { sxeDecryptCreds, sxeList, sxeIsConfigured, sxeFetch } from "../_lib/sxe-client.js";
 import { runSyncEntity } from "../_lib/erp-runner.js";
+import { canonicaliseCustomer } from "../_lib/customer-canonicalizer.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const PREFIX = "sxe";
@@ -18,16 +19,30 @@ const ENTITY = {
     upsert: async (svc, tid, items) => {
       let updated = 0; let hw = null;
       for (const r of items) {
+        const externalId = String(r.customerNumber || r.CustomerNumber || r.id);
+        const name = r.customerName || r.name || null;
         await svc.from("sxe_customers").upsert({
           tenant_id: tid,
-          external_id: String(r.customerNumber || r.CustomerNumber || r.id),
-          name: r.customerName || r.name || null,
+          external_id: externalId,
+          name,
           email: r.email || null,
           currency: r.currency || null,
           is_inactive: !!r.inactive,
           raw: r, synced_at: new Date().toISOString(),
         }, { onConflict: "tenant_id,external_id" });
         updated += 1;
+        if (name) {
+          // Audit P8.2: promote to canonical customers table.
+          await canonicaliseCustomer(svc, tid, {
+            vendor: "sxe",
+            vendorIdField: "sxe_id",
+            externalId,
+            name,
+            email: r.email || null,
+            currency: r.currency || null,
+            ref: { is_inactive: !!r.inactive, modified: r.lastModifiedDate },
+          });
+        }
         const t = r.lastModifiedDate;
         if (t && (!hw || t > hw)) hw = new Date(t).toISOString();
       }

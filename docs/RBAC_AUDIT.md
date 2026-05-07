@@ -113,6 +113,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/billing/usage.js | read |
 | src/api/bom/index.js | read, write |
 | src/api/catalog/alternatives.js | read, approve |
+| src/api/catalog/embed.js | read, write |
 | src/api/catalog/private_label.js | read, approve, admin |
 | src/api/catalog/search.js | read |
 | src/api/catalog/synonyms.js | read, approve |

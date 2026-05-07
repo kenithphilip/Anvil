@@ -2,8 +2,18 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { canonicaliseCustomer } from "../_lib/customer-canonicalizer.js";
 
 const ALLOWED_TYPES = new Set(["stock_item", "ledger", "gst_ledger", "uom", "voucher_type"]);
+
+// Audit P8.2. Tally treats customers as ledgers under the
+// "Sundry Debtors" parent group. When a ledger import covers
+// debtors, promote each row to the canonical customers table so
+// multi-ERP tenants stay deduped.
+const isCustomerLedger = (record) => {
+  const parent = String(record?.payload?.parent || "").toLowerCase();
+  return parent.includes("debtor") || parent === "sundry debtors";
+};
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -41,8 +51,30 @@ export default async function handler(req, res) {
       })).filter((r) => r.name);
       const upsert = await svc.from("tally_masters").upsert(rows, { onConflict: "tenant_id,master_type,name" });
       if (upsert.error) throw new Error(upsert.error.message);
-      await recordAudit(ctx, { action: "tally_masters_sync", objectType: "tally_masters", objectId: masterType, detail: "rows=" + rows.length + " replace=" + replace });
-      return json(res, 200, { ok: true, count: rows.length });
+      // Audit P8.2: canonicalise customer ledgers into the customers
+      // table so dunning + e-invoice + portal flows can address them
+      // by canonical id rather than by raw ledger name.
+      let canonicalised = 0;
+      if (masterType === "ledger") {
+        for (const r of records) {
+          if (!isCustomerLedger(r)) continue;
+          const name = String(r.name || "").trim();
+          if (!name) continue;
+          await canonicaliseCustomer(svc, ctx.tenantId, {
+            vendor: "tally",
+            vendorIdField: "tally_ledger_name",
+            externalId: name,
+            name,
+            email: r.payload?.email || null,
+            gstin: r.payload?.gstin || r.payload?.party_gstin || null,
+            currency: r.payload?.currency || null,
+            ref: { parent: r.payload?.parent || null, opening_balance: r.payload?.opening_balance },
+          });
+          canonicalised += 1;
+        }
+      }
+      await recordAudit(ctx, { action: "tally_masters_sync", objectType: "tally_masters", objectId: masterType, detail: "rows=" + rows.length + " replace=" + replace + " canonicalised=" + canonicalised });
+      return json(res, 200, { ok: true, count: rows.length, canonicalised });
     }
     return json(res, 405, { error: { message: "Method not allowed" } });
   } catch (err) {

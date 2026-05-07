@@ -5,6 +5,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { acuDecryptCreds, acuList, acuIsConfigured, acuFetch } from "../_lib/acumatica-client.js";
 import { runSyncEntity } from "../_lib/erp-runner.js";
+import { canonicaliseCustomer } from "../_lib/customer-canonicalizer.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const PREFIX = "acu";
@@ -18,10 +19,12 @@ const ENTITY = {
     upsert: async (svc, tid, items) => {
       let updated = 0; let hw = null;
       for (const r of items) {
+        const externalId = String(r.CustomerID?.value || r.CustomerID || "");
+        const name = r.CustomerName?.value || r.CustomerName || null;
         await svc.from("acu_customers").upsert({
           tenant_id: tid,
-          external_id: String(r.CustomerID?.value || r.CustomerID || ""),
-          name: r.CustomerName?.value || r.CustomerName || null,
+          external_id: externalId,
+          name,
           email: r.MainContact?.Email?.value || null,
           currency: r.CurrencyID?.value || null,
           is_blocked: r.Status?.value === "Hold",
@@ -29,6 +32,18 @@ const ENTITY = {
           synced_at: new Date().toISOString(),
         }, { onConflict: "tenant_id,external_id" });
         updated += 1;
+        // Audit P8.2: promote to canonical customers table.
+        if (name) {
+          await canonicaliseCustomer(svc, tid, {
+            vendor: "acu",
+            vendorIdField: "acumatica_id",
+            externalId,
+            name,
+            email: r.MainContact?.Email?.value || null,
+            currency: r.CurrencyID?.value || null,
+            ref: { status: r.Status?.value, modified: r.LastModifiedDateTime?.value },
+          });
+        }
         const t = r.LastModifiedDateTime?.value || r.LastModifiedDateTime;
         if (t && (!hw || t > hw)) hw = new Date(t).toISOString();
       }

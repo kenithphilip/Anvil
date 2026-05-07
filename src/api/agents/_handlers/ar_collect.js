@@ -20,9 +20,12 @@
 // failure.
 
 import { draftDunningEmail } from "../../_lib/dunning-drafter.js";
+import { issuePayLinkForInvoice, substitutePayLink } from "../../_lib/pay-link.js";
 
 const HOURS = 60 * 60 * 1000;
 const DAY = 24 * HOURS;
+// Audit P8.1. Kept for the templated-body fallback path so the
+// substitution helper has a consistent token to look for.
 const PAY_LINK_PLACEHOLDER = "[PAY_LINK]";
 
 const isPaid = (status) => {
@@ -161,8 +164,12 @@ const renderTemplatedBody = (tier, inv, customerName) => {
     : tier === "firm"
       ? "Following up on invoice " + (inv.invoice_number || inv.id) + ", " + (inv.currency || "INR") + " " + (Number(total) || 0).toFixed(2) + ", due " + dueDate + ". Please confirm payment or share an updated remit date."
       : "Quick reminder that invoice " + (inv.invoice_number || inv.id) + " (" + (inv.currency || "INR") + " " + (Number(total) || 0).toFixed(2) + ") is due " + dueDate + ".";
+  // Audit P8.1: include the [PAY_LINK] placeholder so the
+  // ar_collect substitution layer treats templated and LLM-drafted
+  // bodies identically.
   return [
     greet, "", middle, "",
+    "Pay now: " + PAY_LINK_PLACEHOLDER, "",
     "Reply to this email if anything is blocking payment; happy to help.",
   ].join("\n");
 };
@@ -235,12 +242,6 @@ export const arCollect = async (goal, ctx) => {
     });
     if (drafted.ok && drafted.body) {
       subject = drafted.subject || fallbackSubject;
-      // The drafter is told to include [PAY_LINK] verbatim. The
-      // actual portal/pay URL is a per-customer-token issue
-      // (P2.7). Until the AR thread carries a token, leave the
-      // placeholder visible so operators see the gap; downstream
-      // P8.1 substitutes when the goal armer has attached a
-      // portal_token to the invoice's communications.metadata.
       body = drafted.body;
       drafter_used = "llm:" + (drafted.model || "sonnet");
     }
@@ -249,8 +250,20 @@ export const arCollect = async (goal, ctx) => {
     console.warn("[ar_collect] dunning drafter failed; using templated body: " + (err.message || err));
   }
 
+  // Audit P8.1: issue a fresh per-invoice portal token and
+  // substitute [PAY_LINK]. The token has scope ['invoices', 'pay']
+  // and a 30-day TTL so the customer can pay through /api/portal/pay
+  // straight from the dunning email. Best-effort: when the insert
+  // fails or PORTAL_BASE_URL isn't configured, the substitution
+  // helper drops a "(payment link unavailable)" hint instead of
+  // a literal placeholder.
+  const payLink = await issuePayLinkForInvoice(svc, goal.tenant_id, inv, {
+    email: recipient.contact_email,
+  });
+  body = substitutePayLink(body, payLink?.url);
+
   return {
-    thought: "Sending " + tier + " AR reminder to " + recipient.contact_email + " (drafter=" + drafter_used + ")",
+    thought: "Sending " + tier + " AR reminder to " + recipient.contact_email + " (drafter=" + drafter_used + ", pay_link=" + (payLink?.url ? "issued" : "missing") + ")",
     action: "send_email",
     action_payload: {
       kind: "ar_reminder",
@@ -262,6 +275,8 @@ export const arCollect = async (goal, ctx) => {
       body,
       hint: tier,
       drafter: drafter_used,
+      portal_token_id: payLink?.id || null,
+      portal_url: payLink?.url || null,
     },
   };
 };

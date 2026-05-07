@@ -5,6 +5,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { d365DecryptCreds, d365List, d365IsConfigured, d365Fetch } from "../_lib/d365-client.js";
 import { runSyncEntity } from "../_lib/erp-runner.js";
+import { canonicaliseCustomer } from "../_lib/customer-canonicalizer.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const PREFIX = "d365";
@@ -18,9 +19,10 @@ const ENTITY = {
     upsert: async (svc, tid, items) => {
       let updated = 0; let hw = null;
       for (const r of items) {
+        const externalId = String(r.CustomerAccount || r.dataAreaId + ":" + r.CustomerAccount);
         await svc.from("d365_customers").upsert({
           tenant_id: tid,
-          external_id: String(r.CustomerAccount || r.dataAreaId + ":" + r.CustomerAccount),
+          external_id: externalId,
           name: r.OrganizationName || r.PersonName || null,
           email: r.PrimaryContactEmail || null,
           phone: r.PrimaryContactPhone || null,
@@ -30,6 +32,18 @@ const ENTITY = {
           synced_at: new Date().toISOString(),
         }, { onConflict: "tenant_id,external_id" });
         updated += 1;
+        // Audit P8.2: promote into the canonical customers table so
+        // multi-ERP tenants do not accumulate duplicate rows.
+        await canonicaliseCustomer(svc, tid, {
+          vendor: "d365",
+          vendorIdField: "d365_id",
+          externalId,
+          name: r.OrganizationName || r.PersonName || ("D365 " + externalId),
+          email: r.PrimaryContactEmail || null,
+          phone: r.PrimaryContactPhone || null,
+          currency: r.SalesCurrencyCode || null,
+          ref: { customer_account: r.CustomerAccount, modified: r.ModifiedDateTime },
+        });
         const t = r.ModifiedDateTime ? new Date(r.ModifiedDateTime).toISOString() : null;
         if (t && (!hw || t > hw)) hw = t;
       }

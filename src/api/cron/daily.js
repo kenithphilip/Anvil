@@ -23,6 +23,8 @@ import quotesExpire     from "../quotes/expire.js";
 import recurringCron    from "../billing/recurring_cron.js";
 // Audit P7.7: daily e-Way bill expiry sweep.
 import ewayExpire       from "../eway_bills/expire.js";
+// Audit P8.4: daily catalog embedding indexer.
+import catalogEmbed     from "../catalog/embed.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -43,6 +45,7 @@ export default async function handler(req, res) {
       { name: "quotes/expire",     fn: quotesExpire,     opts: { path: "/api/quotes/expire" } },
       { name: "billing/recurring", fn: recurringCron,    opts: { path: "/api/billing/recurring_cron" } },
       { name: "eway_bills/expire", fn: ewayExpire,       opts: { path: "/api/eway_bills/expire" } },
+      { name: "catalog/embed",     fn: catalogEmbed,     opts: { path: "/api/catalog/embed" } },
     ]);
     const okCount = results.filter((r) => r.ok).length;
     const errCount = results.filter((r) => !r.ok).length;

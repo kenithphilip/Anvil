@@ -314,6 +314,16 @@
       return await resp.blob();
     },
     share: async (orderId) => apiFetch("/api/quotes/pdf?orderId=" + encodeURIComponent(orderId) + "&format=share"),
+    // Audit P6.1-6.5: first-class quote object.
+    list: async (params) => apiFetch("/api/quotes" + (params ? "?" + new URLSearchParams(params).toString() : "")),
+    get: async (id) => apiFetch("/api/quotes?id=" + encodeURIComponent(id)),
+    create: async (payload) => apiFetch("/api/quotes", { method: "POST", body: payload }),
+    update: async (id, patch) => apiFetch("/api/quotes?id=" + encodeURIComponent(id), { method: "PATCH", body: patch }),
+    revise: async (id) => apiFetch("/api/quotes?id=" + encodeURIComponent(id), { method: "PATCH", body: { action: "revise" } }),
+    transition: async (id, status) => apiFetch("/api/quotes?id=" + encodeURIComponent(id), { method: "PATCH", body: { status } }),
+    cancel: async (id) => apiFetch("/api/quotes?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    sendQuote: async (id, payload) => apiFetch("/api/quotes/send", { method: "POST", body: { id, ...(payload || {}) } }),
+    convertToOrder: async (id) => apiFetch("/api/quotes/convert", { method: "POST", body: { id } }),
   };
 
   const agents = {
@@ -437,7 +447,15 @@
   };
 
   const catalog = {
-    search:           async (q, limit) => apiFetch("/api/catalog/search?q=" + encodeURIComponent(q) + (limit ? "&limit=" + limit : "")),
+    search:           async (q, opts) => {
+      const params = new URLSearchParams({ q });
+      if (opts?.limit) params.set("limit", String(opts.limit));
+      if (opts?.mode)  params.set("mode", String(opts.mode));
+      return apiFetch("/api/catalog/search?" + params.toString());
+    },
+    // Audit P8.4: catalog embeddings indexer.
+    embedStatus:      async () => apiFetch("/api/catalog/embed"),
+    embedDrain:       async (ids) => apiFetch("/api/catalog/embed", { method: "POST", body: ids ? { ids } : {} }),
     listSynonyms:     async (itemId) => apiFetch("/api/catalog/synonyms" + (itemId ? "?item_id=" + encodeURIComponent(itemId) : "")),
     addSynonym:       async (payload) => apiFetch("/api/catalog/synonyms", { method: "POST", body: payload }),
     removeSynonym:    async (id) => apiFetch("/api/catalog/synonyms?id=" + encodeURIComponent(id), { method: "DELETE" }),
@@ -622,6 +640,59 @@
       const qs = new URLSearchParams(params || {}).toString();
       return apiFetch("/api/customer_locations" + (qs ? "?" + qs : ""));
     },
+    // Audit P7.3: Haiku customer health score (single + batch drain).
+    healthScore: async (id) => apiFetch("/api/customers/health_score?id=" + encodeURIComponent(id)),
+    refreshHealthScores: async () => apiFetch("/api/customers/health_score", { method: "POST" }),
+    // Audit P4.1: contacts CRUD.
+    listContacts: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/customers/contacts" + (qs ? "?" + qs : ""));
+    },
+    upsertContact: async (payload) => apiFetch("/api/customers/contacts", { method: "POST", body: payload }),
+    updateContact: async (payload) => apiFetch("/api/customers/contacts", { method: "PATCH", body: payload }),
+    deleteContact: async (id) => apiFetch("/api/customers/contacts?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    // Audit P4.5 + P4.6: duplicate detection + merge.
+    findDuplicates: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/customers/duplicates" + (qs ? "?" + qs : ""));
+    },
+    merge: async (payload) => apiFetch("/api/customers/merge", { method: "POST", body: payload }),
+  };
+
+  // Audit P7.5: credit + debit notes.
+  const creditNotes = {
+    list: async (params) => apiFetch("/api/credit_notes" + (params ? "?" + new URLSearchParams(params).toString() : "")),
+    get: async (id) => apiFetch("/api/credit_notes?id=" + encodeURIComponent(id)),
+    create: async (payload) => apiFetch("/api/credit_notes", { method: "POST", body: payload }),
+    update: async (id, patch) => apiFetch("/api/credit_notes?id=" + encodeURIComponent(id), { method: "PATCH", body: patch }),
+    transition: async (id, status) => apiFetch("/api/credit_notes?id=" + encodeURIComponent(id), { method: "PATCH", body: { status } }),
+    cancel: async (id) => apiFetch("/api/credit_notes?id=" + encodeURIComponent(id), { method: "DELETE" }),
+  };
+
+  // Audit P7.6: recurring invoice schedules.
+  const billingRecurring = {
+    list: async (params) => apiFetch("/api/billing/recurring" + (params ? "?" + new URLSearchParams(params).toString() : "")),
+    get: async (id) => apiFetch("/api/billing/recurring?id=" + encodeURIComponent(id)),
+    create: async (payload) => apiFetch("/api/billing/recurring", { method: "POST", body: payload }),
+    update: async (id, patch) => apiFetch("/api/billing/recurring?id=" + encodeURIComponent(id), { method: "PATCH", body: patch }),
+    pause: async (id) => apiFetch("/api/billing/recurring?id=" + encodeURIComponent(id), { method: "PATCH", body: { status: "PAUSED" } }),
+    resume: async (id) => apiFetch("/api/billing/recurring?id=" + encodeURIComponent(id), { method: "PATCH", body: { status: "ACTIVE" } }),
+    cancel: async (id) => apiFetch("/api/billing/recurring?id=" + encodeURIComponent(id), { method: "DELETE" }),
+  };
+
+  // Audit P7.7: NIC e-Way bills.
+  const ewayBills = {
+    list: async (params) => apiFetch("/api/eway_bills" + (params ? "?" + new URLSearchParams(params).toString() : "")),
+    get: async (id) => apiFetch("/api/eway_bills?id=" + encodeURIComponent(id)),
+    create: async (payload) => apiFetch("/api/eway_bills", { method: "POST", body: payload }),
+    update: async (id, patch) => apiFetch("/api/eway_bills?id=" + encodeURIComponent(id), { method: "PATCH", body: patch }),
+    sendToNic: async (id) => apiFetch("/api/eway_bills?id=" + encodeURIComponent(id), { method: "PATCH", body: { action: "send_to_nic" } }),
+    markGeneratedManually: async (id, payload) => apiFetch("/api/eway_bills?id=" + encodeURIComponent(id), { method: "PATCH", body: { action: "mark_generated_manually", ...(payload || {}) } }),
+    updateVehicle: async (id, payload) => apiFetch("/api/eway_bills?id=" + encodeURIComponent(id), { method: "PATCH", body: { action: "update_vehicle", ...(payload || {}) } }),
+    extendValidity: async (id, payload) => apiFetch("/api/eway_bills?id=" + encodeURIComponent(id), { method: "PATCH", body: { action: "extend_validity", ...(payload || {}) } }),
+    cancel: async (id, payload) => apiFetch("/api/eway_bills?id=" + encodeURIComponent(id), { method: "PATCH", body: { action: "cancel", ...(payload || {}) } }),
+    revertToDraft: async (id) => apiFetch("/api/eway_bills?id=" + encodeURIComponent(id), { method: "PATCH", body: { action: "revert_to_draft" } }),
+    remove: async (id) => apiFetch("/api/eway_bills?id=" + encodeURIComponent(id), { method: "DELETE" }),
   };
 
   const aliases = {
@@ -658,6 +729,8 @@
 
   const anomaly = {
     compute: async (customerId, candidate) => apiFetch("/api/anomaly/compute", { method: "POST", body: { customerId, candidate } }),
+    // Audit P5.4: Haiku per-flag anomaly explainer.
+    explain: async (findingId) => apiFetch("/api/anomaly/explain?finding_id=" + encodeURIComponent(findingId)),
   };
 
   const evalSuite = {
@@ -937,10 +1010,17 @@
     createLead: async (payload) => apiFetch("/api/sales/leads", { method: "POST", body: payload }),
     updateLead: async (payload) => apiFetch("/api/sales/leads", { method: "PATCH", body: payload }),
     deleteLead: async (id) => apiFetch("/api/sales/leads?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    // Audit P7.1: Haiku lead scoring. id triggers single-lead score;
+    // omit id to trigger a batch drain (admin only).
+    scoreLead: async (id) => apiFetch("/api/sales/score_lead" + (id ? "?id=" + encodeURIComponent(id) : "")),
+    rescoreLeads: async () => apiFetch("/api/sales/score_lead", { method: "POST" }),
     listOpportunities: async (params) => apiFetch("/api/sales/opportunities" + (params ? "?" + new URLSearchParams(params).toString() : "")),
     createOpportunity: async (payload) => apiFetch("/api/sales/opportunities", { method: "POST", body: payload }),
     updateOpportunity: async (payload) => apiFetch("/api/sales/opportunities", { method: "PATCH", body: payload }),
     deleteOpportunity: async (id) => apiFetch("/api/sales/opportunities?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    // Audit P7.2: Haiku close-probability prediction.
+    predictOpportunity: async (id) => apiFetch("/api/sales/predict_opportunity" + (id ? "?id=" + encodeURIComponent(id) : "")),
+    repredictOpportunities: async () => apiFetch("/api/sales/predict_opportunity", { method: "POST" }),
     listInternalSos: async (params) => apiFetch("/api/sales/internal_so" + (params ? "?" + new URLSearchParams(params).toString() : "")),
     createInternalSo: async (payload) => apiFetch("/api/sales/internal_so", { method: "POST", body: payload }),
     updateInternalSo: async (payload) => apiFetch("/api/sales/internal_so", { method: "PATCH", body: payload }),
@@ -1277,6 +1357,10 @@
     einvoice,
     forecast,
     scheduleLines,
+    // Audit P7.5 / P7.6 / P7.7 client surfaces.
+    creditNotes,
+    billingRecurring,
+    ewayBills,
   };
 
   // Canonical name post-rebrand. The old name stays as a writable

@@ -36,7 +36,7 @@ const looksLikeRfq = (email) => {
 
 const parseRow = async (svc, email) => {
   try {
-    const { matched, customer } = await matchInboundToCustomer(svc, email);
+    const { matched, customer, contact } = await matchInboundToCustomer(svc, email);
     const tier = customer?.tier || "standard";
     const score = computePriorityScore({
       tier,
@@ -45,10 +45,15 @@ const parseRow = async (svc, email) => {
       body_text: email.body_text,
     });
 
+    // Audit P4.2: persist the resolved contact (if any) so the
+    // dunning agent + thread renderer can target the specific
+    // human who wrote in. customer_id stays for the inbox UI's
+    // existing denormalised queries.
     const patch = {
       parsed_at: new Date().toISOString(),
       priority_score: score,
       customer_id: matched ? customer.id : null,
+      customer_contact_id: matched && contact ? contact.id : null,
       customer_tier: matched ? tier : null,
     };
 

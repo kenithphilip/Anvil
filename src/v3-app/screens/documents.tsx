@@ -438,7 +438,10 @@ const Documents: React.FC = () => {
         <Card>
           {!rows && <p className="muted">Loading…</p>}
           {rows && rows.length === 0 && (
-            <p className="muted">No documents uploaded yet. Switch to the Upload tab to add one.</p>
+            <div className="body" style={{ padding: 28, textAlign: "center", color: "var(--ink-3)", display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}>
+              <div>No documents uploaded yet.</div>
+              <Btn sm kind="primary" onClick={() => setTab("upload")}>{Icon.upload} Upload a document</Btn>
+            </div>
           )}
           {rows && rows.length > 0 && (
             <table className="tab">

@@ -96,6 +96,64 @@ because the fix is bigger than a flow rewire:
    alignment, not flow-blocking. Tracked as part of the design-
    package follow-up.
 
+## Round 2 findings (parallel-agent + manual sweep)
+
+After PR #28 landed, I dispatched five parallel audit agents and ran
+my own scans for patterns the original audit missed. New findings:
+
+### Critical (silent data loss / broken-since-shipped flows)
+
+1. **`leads.tsx` sent `name` instead of `company_name`.** The leads
+   table's NOT NULL column is `company_name`; the API rejected with
+   400 every time. **Lead creation has been broken since the screen
+   shipped.** Fixed: payload now sends both `company_name` and a
+   legacy `name` alias plus `budget_estimate` (the actual numeric
+   column for value).
+
+2. **`comms.tsx` sent `recipient` and `template_id` instead of
+   `to_addr` and `templateCode`.** The endpoint silently ignored
+   both fields, so every saved draft had `to_addr=null` and
+   `template_code=undefined`. **Every draft saved since the screen
+   shipped had a null recipient.** Fixed: payload sends the
+   canonical names alongside the legacy aliases.
+
+3. **`einvoice.tsx` "Send to GSTN" button has been a silent no-op
+   since shipped.** The frontend posted `action: "submit_to_gstn"`
+   but the backend checks `action === "send_to_gstn"`. The PATCH
+   fell through to the plain-field-update branch and the row's
+   status never changed; the toast still said "Sent". Fixed:
+   action name aligned.
+
+4. **`projects.tsx` read `expected_close_date` / `expected_close`,
+   neither of which exists in the schema.** The actual column is
+   `expected_delivery_date`. Result: every project row's "Expected
+   close" cell rendered "—" regardless of the value. Fixed: read
+   `expected_delivery_date` first; legacy aliases as fallback.
+
+### Stuck-state recovery
+
+5. **`einvoice` PENDING_GSTN had no escape hatch.** When
+   `GSTN_API_URL` is missing the row stayed PENDING_GSTN forever
+   with no UI button to retry. Fixed:
+   - Backend: two new PATCH actions, `revert_to_draft` (flip
+     PENDING_GSTN/REJECTED back to DRAFT for editing) and
+     `mark_generated_manually` (paste an out-of-band IRN from the
+     GSTN portal).
+   - Frontend: `revert to draft` and `manual mark` buttons on
+     every PENDING_GSTN / REJECTED row.
+
+### UX polish
+
+6. **`documents.tsx` empty state was a text instruction with no
+   button.** Fixed: clickable "Upload a document" CTA that flips to
+   the upload tab.
+
+### Verified-clean (agent claims that didn't hold)
+
+- `scheduleLines.bulkCreate()` is NOT missing (agent false positive).
+- `delays` route DOES have a resolver (agent false positive in
+  round 1; verified again).
+
 ## Process changes (CI gates)
 
 Two scanners now run on every push as hard gates:

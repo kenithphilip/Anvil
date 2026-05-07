@@ -97,11 +97,23 @@ const WiredLeads = () => {
     setSubmitting(true);
     setSubmitError(null);
     try {
+      // Schema-drift fix: /api/sales/leads POST requires
+      // `company_name` (the leads table's NOT NULL column). The
+      // form labels its single text field "Name" which we treat as
+      // the company name; the screen used to send it as `name` and
+      // the endpoint rejected with "company_name required". Send
+      // both the canonical column AND a `name` alias so any older
+      // proxy that reads the legacy field still resolves it.
+      // `estimated_value_inr` is the column; we keep `estimated_value`
+      // too for the same reason.
       const payload = {
+        company_name: draft.name.trim(),
         name: draft.name.trim(),
         source: draft.source.trim() || null,
         status: draft.status,
+        allocated_to: draft.owner.trim() || null,
         owner: draft.owner.trim() || null,
+        budget_estimate: draft.estimated_value ? Number(draft.estimated_value) : null,
         estimated_value: draft.estimated_value ? Number(draft.estimated_value) : null,
       };
       await ObaraBackend?.sales?.createLead?.(payload);
@@ -157,7 +169,14 @@ const WiredLeads = () => {
               ["Status",   selected.status || "—"],
               ["Source",   selected.source || "—"],
               ["Owner",    selected.owner || selected.assigned_to || "—"],
-              ["Value",    selected.estimated_value_inr ? fmtINRShort(Number(selected.estimated_value_inr)) : "—"],
+              ["Value",    (() => {
+                // The schema column is `budget_estimate`; older
+                // payload paths exposed `estimated_value` /
+                // `estimated_value_inr`. Try each to be tolerant of
+                // either backend version.
+                const v = selected.budget_estimate ?? selected.estimated_value ?? selected.estimated_value_inr;
+                return v != null ? fmtINRShort(Number(v)) : "—";
+              })()],
               ["Created",  selected.created_at ? ageLabel(selected.created_at) : "—"],
             ]} />
             {selected.notes && (

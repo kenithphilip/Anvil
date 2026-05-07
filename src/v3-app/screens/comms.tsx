@@ -126,11 +126,21 @@ const WiredComms = () => {
     setComposer((c) => ({ ...c, busy: true, flash: null }));
     try {
       const tpl = COMMS_TEMPLATES.find((t) => t.id === composer.templateId);
+      // Schema-drift fix: /api/communications/draft reads
+      // `body.to_addr` and `body.templateCode`, NOT `recipient` or
+      // `template_id`. Old payload silently dropped both fields, so
+      // every saved draft had to_addr=null and template_code=undefined,
+      // which made the recipient column render "—" and broke the
+      // template-aware send path. Send the canonical names; keep the
+      // legacy aliases as a redundant copy in case another reader
+      // expects them.
       await ObaraBackend?.communications?.draft?.({
         channel: tpl?.channel || "email",
+        to_addr: composer.recipient,
         recipient: composer.recipient,
         subject: composer.subject,
         body: composer.body,
+        templateCode: composer.templateId,
         template_id: composer.templateId,
       });
       setComposer((c) => ({ ...c, busy: false, flash: { kind: "good", msg: "Draft saved" }, recipient: "" }));

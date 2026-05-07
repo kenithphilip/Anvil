@@ -205,7 +205,18 @@ const WiredProjects = () => {
                 ? fmtINRShort(Number(selected.total_value_inr || selected.value))
                 : "—"],
               ["Owner",    selected.owner || selected.assigned_to || "—"],
-              ["Expected close", selected.expected_close_date || selected.expected_close || "—"],
+              // Schema-drift fix: the projects table has
+              // `expected_delivery_date` (the canonical end-of-project
+              // date); older code used `expected_close_date` /
+              // `expected_close` which never existed in the schema.
+              // Read the canonical column first; fall back to the
+              // legacy aliases so a transitional API response with
+              // either name still renders.
+              ["Expected close",
+                selected.expected_delivery_date
+                || selected.expected_close_date
+                || selected.expected_close
+                || "—"],
               ["Last update",    selected.updated_at ? ageLabel(selected.updated_at) : "—"],
             ]} />
           </Card>
@@ -281,7 +292,7 @@ const WiredProjects = () => {
                 {rows.slice(0, 200).map((r) => {
                   const pc = PROJECT_PHASE_CHIP(r.phase);
                   const v = Number(r.value) || 0;
-                  const expected = r.expected_close_date || r.expected_close;
+                  const expected = r.expected_delivery_date || r.expected_close_date || r.expected_close;
                   // Phase timeline: a 15-dot strip showing where in
                   // the lifecycle this project sits. Active dot is
                   // tinted accent; completed dots are ink; future

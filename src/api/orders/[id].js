@@ -20,6 +20,36 @@ const buildPatch = (body) => {
   return patch;
 };
 
+// Audit P1.5 (May 2026). Order status transitions used to be
+// completely unguarded: any role with WRITE permission could PATCH
+// status from DRAFT directly to EXPORTED_TO_TALLY (skipping
+// PENDING_REVIEW + APPROVED) because the only guards were
+// conditioned on prev.approval being truthy. With this table the
+// PATCH refuses any transition not listed below.
+//
+// Same-state transitions ("DRAFT -> DRAFT") are allowed so a PATCH
+// that doesn't touch status is unaffected. The APPROVED transition
+// keeps the existing payload-hash + approve-permission gate.
+const ALLOWED_TRANSITIONS = {
+  DRAFT:               new Set(["DRAFT", "PENDING_REVIEW", "BLOCKED", "DUPLICATE", "REUSED", "CANCELLED"]),
+  PENDING_REVIEW:      new Set(["PENDING_REVIEW", "APPROVED", "BLOCKED", "CANCELLED", "DRAFT"]),
+  APPROVED:            new Set(["APPROVED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "CANCELLED", "DRAFT"]),
+  EXPORTED_TO_TALLY:   new Set(["EXPORTED_TO_TALLY", "RECONCILED", "FAILED_TALLY_IMPORT"]),
+  FAILED_TALLY_IMPORT: new Set(["FAILED_TALLY_IMPORT", "EXPORTED_TO_TALLY", "CANCELLED", "APPROVED"]),
+  RECONCILED:          new Set(["RECONCILED", "CANCELLED"]),
+  CANCELLED:           new Set(["CANCELLED"]),
+  BLOCKED:             new Set(["BLOCKED", "DRAFT", "PENDING_REVIEW", "CANCELLED"]),
+  DUPLICATE:           new Set(["DUPLICATE", "CANCELLED", "DRAFT"]),
+  REUSED:              new Set(["REUSED", "CANCELLED", "DRAFT"]),
+};
+
+const isTransitionAllowed = (from, to) => {
+  if (!from || !to) return true;
+  if (from === to) return true;
+  const allowed = ALLOWED_TRANSITIONS[from];
+  return !!(allowed && allowed.has(to));
+};
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);
@@ -50,6 +80,21 @@ export default async function handler(req, res) {
       const patch = buildPatch(body);
       const { data: prev, error: prevErr } = await svc.from("orders").select("*").eq("tenant_id", ctx.tenantId).eq("id", id).single();
       if (prevErr || !prev) return json(res, 404, { error: { message: "Order not found" } });
+
+      // Audit P1.5 (May 2026): block transitions that skip the
+      // approval flow. Without this, a DRAFT could PATCH directly
+      // to EXPORTED_TO_TALLY because the existing approval-
+      // expiry guard only fires when prev.approval already exists.
+      if (body.status && body.status !== prev.status && !isTransitionAllowed(prev.status, body.status)) {
+        return json(res, 409, {
+          error: {
+            code: "INVALID_STATUS_TRANSITION",
+            message: "Cannot move order from " + prev.status + " to " + body.status + " directly. See ALLOWED_TRANSITIONS in src/api/orders/[id].js.",
+            from: prev.status,
+            to: body.status,
+          },
+        });
+      }
 
       const intendedAction = body.intendedAction || (body.status === "APPROVED" ? "approve" : body.status === "EXPORTED_TO_TALLY" ? "export_tally" : null);
       if (prev.approval && prev.approval_expires_at && new Date(prev.approval_expires_at).getTime() < Date.now() && body.status && body.status !== prev.status && intendedAction !== "approve") {

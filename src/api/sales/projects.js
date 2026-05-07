@@ -12,6 +12,30 @@ import { recordAudit } from "../_lib/audit.js";
 const PHASES = new Set(["INITIAL_INFO","STRATEGY","PROMOTIONAL","RFQ_PREP","BUDGETARY_QUOTATION","PRICE_NEGOTIATION","LB_FINALIZATION","KICKOFF","DESIGN","APPROVAL_PROCESSING","MANUFACTURING","SHIPPING","INSTALLATION_COMMISSIONING","PAYMENT_FOLLOWUP","CLOSED"]);
 const STATUSES = new Set(["ACTIVE","ON_HOLD","COMPLETED","CANCELLED"]);
 
+// Audit P7.4. Project phases used to allow any-to-any
+// transitions including INITIAL_INFO -> CLOSED. Each phase is
+// real work; you can't ship installation before manufacturing.
+// Allow forward progression with one-step backward (operator
+// "we mis-phased this"). CLOSED is terminal.
+const PHASE_ORDER = [
+  "INITIAL_INFO", "STRATEGY", "PROMOTIONAL", "RFQ_PREP",
+  "BUDGETARY_QUOTATION", "PRICE_NEGOTIATION", "LB_FINALIZATION",
+  "KICKOFF", "DESIGN", "APPROVAL_PROCESSING", "MANUFACTURING",
+  "SHIPPING", "INSTALLATION_COMMISSIONING", "PAYMENT_FOLLOWUP",
+  "CLOSED",
+];
+const isPhaseTransitionAllowed = (from, to) => {
+  if (!from || !to) return true;
+  if (from === to) return true;
+  if (from === "CLOSED") return false;
+  const fromIdx = PHASE_ORDER.indexOf(from);
+  const toIdx = PHASE_ORDER.indexOf(to);
+  if (fromIdx === -1 || toIdx === -1) return false;
+  // Allow CLOSED from any phase (operator wraps a stalled project).
+  if (to === "CLOSED") return true;
+  return toIdx >= fromIdx - 1;
+};
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);
@@ -77,6 +101,19 @@ export default async function handler(req, res) {
       const allowed = ["current_phase","status","total_value_inr","budgeted_design_mandays","budgeted_install_mandays","budgeted_travel_mandays","budgeted_warranty_pct","shipping_mode","expected_po_release_date","expected_design_final_date","expected_ready_date","expected_shipping_etd","expected_delivery_date","expected_sop_date","customer_location_id","end_user"];
       for (const k of allowed) if (body[k] !== undefined) patch[k] = body[k];
       if (patch.current_phase && !PHASES.has(patch.current_phase)) return json(res, 400, { error: { message: "invalid phase" } });
+      // Audit P7.4: enforce phase transitions instead of letting
+      // a project skip from INITIAL_INFO to CLOSED in one PATCH.
+      if (patch.current_phase && before.data && patch.current_phase !== before.data.current_phase
+          && !isPhaseTransitionAllowed(before.data.current_phase, patch.current_phase)) {
+        return json(res, 409, {
+          error: {
+            code: "INVALID_PHASE_TRANSITION",
+            message: "Cannot move project from " + before.data.current_phase + " to " + patch.current_phase + " directly.",
+            from: before.data.current_phase,
+            to: patch.current_phase,
+          },
+        });
+      }
       const { data, error } = await svc.from("projects").update(patch).eq("tenant_id", ctx.tenantId).eq("id", body.id).select("*").single();
       if (error) throw new Error(error.message);
       if (patch.current_phase && before.data && patch.current_phase !== before.data.current_phase) {

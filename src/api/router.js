@@ -316,6 +316,7 @@ import inboundEmailParse       from "./inbound/email/parse.js";
 import inboundEmailThreads     from "./inbound/email/threads.js";
 import inboundEmailConfigure   from "./inbound/email/configure.js";
 import inboundEmailDraftOrders from "./inbound/email/draft_orders.js";
+import inboundEmailPersistAttachments from "./inbound/email/persist_attachments.js";
 
 import docaiExtract            from "./docai/extract.js";
 import docaiCorrection         from "./docai/correction.js";
@@ -505,6 +506,7 @@ const STATIC_ROUTES = {
   "/inbound/email/threads":         inboundEmailThreads,
   "/inbound/email/configure":       inboundEmailConfigure,
   "/inbound/email/draft_orders":    inboundEmailDraftOrders,
+  "/inbound/email/persist_attachments": inboundEmailPersistAttachments,
   "/docai/extract":                 docaiExtract,
   "/docai/correction":              docaiCorrection,
   "/docai/runs":                    docaiRuns,

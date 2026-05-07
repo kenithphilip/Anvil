@@ -97,9 +97,12 @@ const handlePostmark = async (svc, raw, body, req) => {
       filename: a.Name,
       content_type: a.ContentType,
       size_bytes: a.ContentLength,
-      // Postmark gives Content as base64; we don't store the bytes
-      // here, just the metadata. The parse step will pull bytes
-      // when running through Document AI v2.
+      // Postmark sends Content as inline base64. Stash it on the
+      // row so the persist_attachments worker can drain it into
+      // the documents bucket asynchronously. The worker clears
+      // content_b64 once the bytes are safely uploaded + scanned,
+      // so this field is only present in transit. Audit P5.4.
+      content_b64: typeof a.Content === "string" && a.Content.length > 0 ? a.Content : undefined,
     })),
   });
   return { status: 200, body: await ingestInboundEmail(svc, row), tenantId };

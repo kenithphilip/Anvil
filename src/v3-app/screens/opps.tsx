@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { ageLabel, fmtINRShort, useFetch } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
+import { ageLabel, fmtINRShort, useFetch, useHashParam } from "../lib/helpers";
+import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 
@@ -73,6 +73,11 @@ const WiredOpportunities = () => {
     []
   );
 
+  // Unconditional hook call so the count stays stable across
+  // loading / error / success renders. The selected-row lookup
+  // happens after `rows` is computed below.
+  const selectedId = useHashParam("id");
+
   const submitNewOpp = async () => {
     setSubmitErr(null);
     if (!draft.opportunity_name.trim()) { setSubmitErr({ message: "Opportunity name is required." }); return; }
@@ -123,6 +128,11 @@ const WiredOpportunities = () => {
   const rows = oppRows(list.data);
   const total = rows.length;
   const stageMap = OPP_STAGES.reduce((acc, s) => { acc[s.id] = s.w; return acc; }, {});
+
+  // Detail-card lookup. selectedId is read at the top of the
+  // function (above the early-return guards) so the hook count
+  // stays stable; we resolve `selected` here once rows are known.
+  const selected = selectedId ? rows.find((r) => r.id === selectedId) || null : null;
 
   const weighted = rows.reduce((sum, r) => {
     const v = Number(r.value) || 0;
@@ -176,6 +186,33 @@ const WiredOpportunities = () => {
           <KPI lbl="Negotiation" v={String(negotCount)} d="late stage" />
           <KPI lbl="Won · MTD" v={fmtINRShort(wonValueMtd)} d={`${wonMtd.length} closed`} dKind={wonMtd.length ? "up" : ""} />
         </KPIRow>
+
+        {selected && (
+          <Card
+            title={selected.name || selected.opportunity_name || "Opportunity"}
+            eyebrow={"opportunity detail · " + (selected.id?.slice(0, 8) || "")}
+            right={<Btn sm kind="ghost" onClick={() => { window.location.hash = "#/opps"; }}>{Icon.x} close</Btn>}
+          >
+            <KV rows={[
+              ["Name",       selected.name || selected.opportunity_name || "—"],
+              ["Customer",   selected.customer_name || selected.customer || "—"],
+              ["Stage",      selected.stage || "—"],
+              ["Owner",      selected.owner || selected.assigned_to || "—"],
+              ["Value",      selected.value ? fmtINRShort(Number(selected.value)) : "—"],
+              ["Probability", selected.probability != null ? Math.round(Number(selected.probability) * 100) + "%" : "—"],
+              ["Expected close", selected.expected_close_date || selected.expected_close || "—"],
+              ["Last update",   selected.updated_at ? ageLabel(selected.updated_at) : "—"],
+            ]} />
+            {selected.notes && (
+              <>
+                <div className="divider" />
+                <pre style={{ font: "inherit", fontSize: 12.5, color: "var(--ink-2)", whiteSpace: "pre-wrap", margin: 0 }}>
+                  {selected.notes}
+                </pre>
+              </>
+            )}
+          </Card>
+        )}
 
         {creating && (
           <Card title="New opportunity" eyebrow="quick capture">

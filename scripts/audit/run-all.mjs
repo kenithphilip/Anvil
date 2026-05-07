@@ -22,6 +22,8 @@ const AUDITS = [
   // Hard gates (block deploys):
   { id: "promiselike-catch", file: "promiselike-catch.mjs", gate: true,
     note: "Supabase .catch sites; the bug behind PR #20" },
+  { id: "dangling-client-calls", file: "dangling-client-calls.mjs", gate: true,
+    note: "ObaraBackend?.X?.Y?.() where Y is missing on the client (silent no-op clicks)" },
   { id: "route-deadlinks",   file: "route-deadlinks.mjs",   gate: false,
     note: "Hash params not handled by resolver or screen (heuristic; tracks new dead-end clicks)" },
   // Soft warnings (heuristic, false-positive prone):

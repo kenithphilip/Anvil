@@ -75,6 +75,7 @@ import bomIndex                from "./bom/index.js";
 import claudeMessages          from "./claude/messages.js";
 
 import commsDraft              from "./communications/draft.js";
+import commsList               from "./communications/list.js";
 import commsMissingDoc         from "./communications/missing_doc.js";
 import commsSend               from "./communications/send.js";
 
@@ -88,6 +89,7 @@ import customersProfileVersions from "./customers/profile_versions.js";
 import deliveryPromise         from "./delivery/promise.js";
 
 import documentsById           from "./documents/[id].js";
+import documentsIndex          from "./documents/index.js";
 import documentsOcr            from "./documents/ocr.js";
 import documentsScan           from "./documents/scan.js";
 import documentsUpload         from "./documents/upload.js";
@@ -601,6 +603,7 @@ const STATIC_ROUTES = {
   "/bom":                           bomIndex,
   "/claude/messages":               claudeMessages,
 
+  "/communications":                commsList,
   "/communications/draft":          commsDraft,
   "/communications/missing_doc":    commsMissingDoc,
   "/communications/send":           commsSend,
@@ -614,6 +617,7 @@ const STATIC_ROUTES = {
 
   "/delivery/promise":              deliveryPromise,
 
+  "/documents":                     documentsIndex,
   "/documents/ocr":                 documentsOcr,
   "/documents/scan":                documentsScan,
   "/documents/upload":              documentsUpload,

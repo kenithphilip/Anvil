@@ -132,15 +132,68 @@ const WiredEinvoiceCRUD = () => {
     }
     setBusy(true);
     try {
-      // The backend expects PATCH with action=submit per einvoice/index.js convention.
+      // Action-name mismatch fix (May 2026): the comment used to say
+      // "expects action=submit" but the backend at api/einvoice/index.js
+      // actually checks `action === "send_to_gstn"`. Sending the wrong
+      // name fell through to the plain-field-update branch and the
+      // status never changed, so every click of "Send to GSTN"
+      // silently no-op'd while the toast still said "Sent".
       const result = await eiFetch("/api/einvoice", {
         method: "PATCH",
-        body: JSON.stringify({ id, action: "submit_to_gstn" }),
+        body: JSON.stringify({ id, action: "send_to_gstn" }),
       });
       window.notifySuccess?.("Sent to GSTN", num + " · IRN " + (result?.irn || "pending"));
       reload();
     } catch (err) {
       window.notifyError?.("Send to GSTN failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Stuck-state escape: PENDING_GSTN rows had no UI button to recover
+  // when GSTN_API_URL wasn't configured (or a previous send hung).
+  // Two new actions:
+  //   - revertToDraft: flips PENDING_GSTN / REJECTED back to DRAFT so
+  //     the operator can edit and retry.
+  //   - markGeneratedManually: when the IRN was generated out-of-band
+  //     (operator hit GSTN's portal directly), they can paste the IRN
+  //     here so the row reflects reality.
+  const revertToDraft = async (id, num) => {
+    if (!confirm("Revert e-invoice " + num + " back to DRAFT? You'll be able to edit and re-send.")) return;
+    setBusy(true);
+    try {
+      await eiFetch("/api/einvoice", {
+        method: "PATCH",
+        body: JSON.stringify({ id, action: "revert_to_draft" }),
+      });
+      window.notifySuccess?.("Reverted to DRAFT", num);
+      reload();
+    } catch (err) {
+      window.notifyError?.("Revert failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const markGeneratedManually = async (id, num) => {
+    const irn = prompt("IRN from GSTN portal (paste here):");
+    if (!irn || !irn.trim()) return;
+    const ack = prompt("Ack date (YYYY-MM-DD), leave blank for today:");
+    setBusy(true);
+    try {
+      await eiFetch("/api/einvoice", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id,
+          action: "mark_generated_manually",
+          irn: irn.trim(),
+          ack_date: ack && ack.trim() ? ack.trim() : null,
+        }),
+      });
+      window.notifySuccess?.("Marked GENERATED", num + " · IRN " + irn.trim());
+      reload();
+    } catch (err) {
+      window.notifyError?.("Manual mark failed", err?.message || String(err));
     } finally {
       setBusy(false);
     }
@@ -310,6 +363,18 @@ const WiredEinvoiceCRUD = () => {
                           <Btn sm kind="ghost" onClick={() => window.location.hash = `#/einvoice?id=${r.id}`}>{Icon.eye}</Btn>
                           {r.status === "DRAFT" && (
                             <Btn sm kind="live" onClick={() => sendToGstn(r.id, r.invoice_number)} disabled={busy} title="Send to GSTN">{Icon.send}</Btn>
+                          )}
+                          {(r.status === "PENDING_GSTN" || r.status === "REJECTED") && (
+                            <>
+                              <Btn sm kind="ghost" onClick={() => revertToDraft(r.id, r.invoice_number)} disabled={busy} title="Revert to DRAFT (so you can edit and re-send)">
+                                {Icon.cycle} draft
+                              </Btn>
+                              {r.status === "PENDING_GSTN" && (
+                                <Btn sm kind="ghost" onClick={() => markGeneratedManually(r.id, r.invoice_number)} disabled={busy} title="Mark GENERATED with an IRN you got from the GSTN portal directly">
+                                  {Icon.check} manual
+                                </Btn>
+                              )}
+                            </>
                           )}
                           {inWindow && (
                             <Btn sm kind="ghost" onClick={() => cancel(r.id, r.invoice_number)} disabled={busy} title="Cancel within 24h">{Icon.x}</Btn>

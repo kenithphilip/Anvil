@@ -81,11 +81,28 @@ const NotificationsBell: React.FC<{ onRoute?: (id: string) => void; isAdminLike:
       // Mark read so the user-specific bell count goes down even if
       // someone else resolves the row later.
       try { await ObaraBackend?.notifications?.markRead?.(n.id); } catch (_) { /* ignore */ }
-      // Deep-link if the row carries a route hint.
+      // Deep-link if the row carries a route hint. Validate that
+      // the target route exists in RESOLVERS so a stale link_route
+      // (renamed screen, dropped feature) doesn't dump the user on
+      // a NotFound page silently.
       if (n.link_route) {
-        const params = n.link_params ? new URLSearchParams(n.link_params as Record<string, string>).toString() : "";
-        window.location.hash = "#/" + n.link_route + (params ? "?" + params : "");
-        if (onRoute) onRoute(n.link_route);
+        // Lazy-import to avoid pulling routes.ts into Shell's normal
+        // bundle path. We just need the keys.
+        let routeOk = true;
+        try {
+          const { ROUTE_IDS } = await import("../routes");
+          routeOk = (ROUTE_IDS as readonly string[]).includes(n.link_route);
+        } catch (_) { /* if the import fails, attempt the navigation anyway */ }
+        if (!routeOk) {
+          (window as any).notifyWarn?.(
+            "Cannot open this notification",
+            "The target screen `" + n.link_route + "` no longer exists.",
+          );
+        } else {
+          const params = n.link_params ? new URLSearchParams(n.link_params as Record<string, string>).toString() : "";
+          window.location.hash = "#/" + n.link_route + (params ? "?" + params : "");
+          if (onRoute) onRoute(n.link_route);
+        }
       }
       setOpen(false);
       // Refresh the count.

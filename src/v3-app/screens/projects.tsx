@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { fmtINRShort, useFetch } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
+import { ageLabel, fmtINRShort, useFetch, useHashParam } from "../lib/helpers";
+import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 
@@ -94,6 +94,11 @@ const WiredProjects = () => {
     []
   );
 
+  // Unconditional hook call so the count stays stable across
+  // loading / error / success renders. selected is resolved once
+  // rows are computed below.
+  const selectedId = useHashParam("id");
+
   const submitNewProject = async () => {
     setSubmitErr(null);
     if (!draft.project_code.trim()) { setSubmitErr({ message: "Project code is required." }); return; }
@@ -155,6 +160,12 @@ const WiredProjects = () => {
   const mfgCount = rows.filter((r) => inMfg(r.phase)).length;
   const deliveredCount = rows.filter((r) => delivered(r.phase)).length;
 
+  // Detail-card lookup. selectedId was read at the top of the
+  // function (rules-of-hooks); resolve `selected` here once rows
+  // are loaded.
+  const selected = selectedId ? rows.find((r) => r.id === selectedId) || null : null;
+  const selectedPhaseIdx = selected ? PROJECT_PHASES.indexOf(selected.current_phase || selected.phase) : -1;
+
   return (
     <>
       <WSTitle
@@ -176,6 +187,40 @@ const WiredProjects = () => {
           <KPI lbl="In manufacturing" v={String(mfgCount)} d="PO → FAT" />
           <KPI lbl="Delivered" v={String(deliveredCount)} d="dispatched → commissioned" dKind={deliveredCount ? "up" : ""} />
         </KPIRow>
+
+        {selected && (
+          <Card
+            title={selected.project_name || selected.code || selected.project_code || "Project"}
+            eyebrow={"project detail · " + (selected.id?.slice(0, 8) || "")}
+            right={<Btn sm kind="ghost" onClick={() => { window.location.hash = "#/projects"; }}>{Icon.x} close</Btn>}
+          >
+            <KV rows={[
+              ["Code",     selected.project_code || selected.code || "—"],
+              ["Customer", selected.customer_name || selected.customer || "—"],
+              ["Phase",    PROJECT_PHASE_LABEL(selected.current_phase || selected.phase)],
+              ["Progress", selectedPhaseIdx >= 0
+                ? Math.round((selectedPhaseIdx + 1) / PROJECT_PHASES.length * 100) + "% (" + (selectedPhaseIdx + 1) + " of " + PROJECT_PHASES.length + ")"
+                : "—"],
+              ["Value",    selected.total_value_inr || selected.value
+                ? fmtINRShort(Number(selected.total_value_inr || selected.value))
+                : "—"],
+              ["Owner",    selected.owner || selected.assigned_to || "—"],
+              // Schema-drift fix: the projects table has
+              // `expected_delivery_date` (the canonical end-of-project
+              // date); older code used `expected_close_date` /
+              // `expected_close` which never existed in the schema.
+              // Read the canonical column first; fall back to the
+              // legacy aliases so a transitional API response with
+              // either name still renders.
+              ["Expected close",
+                selected.expected_delivery_date
+                || selected.expected_close_date
+                || selected.expected_close
+                || "—"],
+              ["Last update",    selected.updated_at ? ageLabel(selected.updated_at) : "—"],
+            ]} />
+          </Card>
+        )}
 
         {creating && (
           <Card title="New project" eyebrow="quick capture">
@@ -247,7 +292,7 @@ const WiredProjects = () => {
                 {rows.slice(0, 200).map((r) => {
                   const pc = PROJECT_PHASE_CHIP(r.phase);
                   const v = Number(r.value) || 0;
-                  const expected = r.expected_close_date || r.expected_close;
+                  const expected = r.expected_delivery_date || r.expected_close_date || r.expected_close;
                   // Phase timeline: a 15-dot strip showing where in
                   // the lifecycle this project sits. Active dot is
                   // tinted accent; completed dots are ink; future

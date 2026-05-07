@@ -232,6 +232,48 @@ export default async function handler(req, res) {
           return json(res, 502, { error: { message: "GSTN call failed: " + err.message } });
         }
       }
+      if (body.action === "revert_to_draft") {
+        // Stuck-state escape hatch. When GSTN_API_URL isn't configured
+        // OR a transient send call hung, e-invoices stayed forever in
+        // PENDING_GSTN with no UI button to recover. This action flips
+        // PENDING_GSTN (and REJECTED) back to DRAFT so the operator
+        // can edit and retry. GENERATED rows must use cancel_action
+        // (24h window) instead.
+        if (!["PENDING_GSTN", "REJECTED"].includes(before.data.status)) {
+          return json(res, 409, { error: { message: "only PENDING_GSTN or REJECTED can revert to DRAFT" } });
+        }
+        const patch = {
+          status: "DRAFT",
+          response: null,
+          updated_at: new Date().toISOString(),
+        };
+        const out = await svc.from("einvoices").update(patch).eq("tenant_id", ctx.tenantId).eq("id", body.id).select("*").single();
+        if (out.error) throw new Error(out.error.message);
+        await recordAudit(ctx, { action: "einvoice_revert_to_draft", objectType: "einvoice", objectId: body.id, before: { status: before.data.status }, after: patch });
+        return json(res, 200, { einvoice: out.data });
+      }
+      if (body.action === "mark_generated_manually") {
+        // Manual escape hatch when the IRN was generated out-of-band
+        // (operator generated it via the GSTN portal directly because
+        // the API integration is down). The operator pastes the IRN
+        // and ack date so the row reflects reality.
+        if (before.data.status !== "PENDING_GSTN") {
+          return json(res, 409, { error: { message: "only PENDING_GSTN can be marked GENERATED manually" } });
+        }
+        if (!body.irn) return json(res, 400, { error: { message: "irn required" } });
+        const patch = {
+          status: "GENERATED",
+          irn: body.irn,
+          ack_no: body.ack_no || null,
+          ack_date: body.ack_date || new Date().toISOString(),
+          response: { manual: true, by: ctx.user?.id || null },
+          updated_at: new Date().toISOString(),
+        };
+        const out = await svc.from("einvoices").update(patch).eq("tenant_id", ctx.tenantId).eq("id", body.id).select("*").single();
+        if (out.error) throw new Error(out.error.message);
+        await recordAudit(ctx, { action: "einvoice_mark_generated_manually", objectType: "einvoice", objectId: body.id, after: patch });
+        return json(res, 200, { einvoice: out.data });
+      }
       if (body.action === "cancel") {
         if (before.data.status !== "GENERATED") return json(res, 409, { error: { message: "only GENERATED can be cancelled" } });
         const ageHours = (Date.now() - new Date(before.data.ack_date || before.data.created_at).getTime()) / 3600000;

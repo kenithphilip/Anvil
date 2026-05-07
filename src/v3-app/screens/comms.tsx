@@ -43,13 +43,40 @@ const commsRowsFromAudit = (resp) => {
   });
 };
 
+// Read `?new=<templateId>` from the hash. CmdK and other surfaces
+// deep-link via `#/comms?new=nudge` (etc.) to land on the composer
+// with the right template pre-selected. Without this handler the
+// link did nothing visible: the screen rendered the list view with
+// the composer's default template, and the operator had to dig.
+const newTemplateFromHash = (): string | null => {
+  if (typeof window === "undefined") return null;
+  const q = (window.location.hash || "").split("?")[1];
+  if (!q) return null;
+  const v = new URLSearchParams(q).get("new");
+  return v || null;
+};
+
+// Map legacy aliases to canonical template ids so CmdK's
+// "Send nudge" still resolves after the template was renamed.
+const TEMPLATE_ALIASES: Record<string, string> = {
+  nudge: "missing-doc",
+  confirm: "order-confirm",
+};
+
 const WiredComms = () => {
   const [active, setActive] = useState("all");
+  const initialTemplateId = (() => {
+    const raw = newTemplateFromHash();
+    if (!raw) return COMMS_TEMPLATES[0].id;
+    const id = TEMPLATE_ALIASES[raw] || raw;
+    return COMMS_TEMPLATES.find((t) => t.id === id) ? id : COMMS_TEMPLATES[0].id;
+  })();
+  const initialTemplate = COMMS_TEMPLATES.find((t) => t.id === initialTemplateId) || COMMS_TEMPLATES[0];
   const [composer, setComposer] = useState({
-    templateId: COMMS_TEMPLATES[0].id,
+    templateId: initialTemplateId,
     recipient: "",
-    subject: COMMS_TEMPLATES[0].subject,
-    body: COMMS_TEMPLATES[0].body,
+    subject: initialTemplate.subject,
+    body: initialTemplate.body,
     busy: false,
     flash: null,
   });
@@ -99,11 +126,21 @@ const WiredComms = () => {
     setComposer((c) => ({ ...c, busy: true, flash: null }));
     try {
       const tpl = COMMS_TEMPLATES.find((t) => t.id === composer.templateId);
+      // Schema-drift fix: /api/communications/draft reads
+      // `body.to_addr` and `body.templateCode`, NOT `recipient` or
+      // `template_id`. Old payload silently dropped both fields, so
+      // every saved draft had to_addr=null and template_code=undefined,
+      // which made the recipient column render "—" and broke the
+      // template-aware send path. Send the canonical names; keep the
+      // legacy aliases as a redundant copy in case another reader
+      // expects them.
       await ObaraBackend?.communications?.draft?.({
         channel: tpl?.channel || "email",
+        to_addr: composer.recipient,
         recipient: composer.recipient,
         subject: composer.subject,
         body: composer.body,
+        templateCode: composer.templateId,
         template_id: composer.templateId,
       });
       setComposer((c) => ({ ...c, busy: false, flash: { kind: "good", msg: "Draft saved" }, recipient: "" }));

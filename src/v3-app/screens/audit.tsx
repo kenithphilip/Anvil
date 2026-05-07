@@ -4,6 +4,37 @@ import { Banner, Btn, Card, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 
+// Map audit object_type -> hash route + param so an "open" button on
+// each row can navigate to the affected entity. The audit log is
+// useless without drill-through: a row tells you "field.override on
+// order X at 10:38" but the operator had no way to jump to that
+// order. The map below covers every object_type that the API's
+// recordAudit() actually emits today.
+const AUDIT_ROUTE_FOR_OBJECT: Record<string, (id: string) => string> = {
+  order:           (id) => "#/so?id=" + id,
+  source_po:       (id) => "#/spo?id=" + id,
+  internal_so:     (id) => "#/internal?id=" + id,
+  customer:        (id) => "#/customers?id=" + id,
+  document:        (id) => "#/documents?id=" + id,
+  extraction_run:  (id) => "#/documents?run=" + id,
+  shipment:        (id) => "#/shipments?id=" + id,
+  einvoice:        (id) => "#/einvoice?id=" + id,
+  invoice:         (id) => "#/invoices?id=" + id,
+  service_visit:   (id) => "#/svc-visits?id=" + id,
+  amc_contract:    (id) => "#/amc?id=" + id,
+  car_report:      (id) => "#/car?id=" + id,
+  project:         (id) => "#/projects?id=" + id,
+  lead:            (id) => "#/leads?id=" + id,
+  opportunity:     (id) => "#/opps?id=" + id,
+};
+
+const openAuditTarget = (object_type?: string, object_id?: string) => {
+  if (!object_type || !object_id) return null;
+  const builder = AUDIT_ROUTE_FOR_OBJECT[object_type];
+  if (!builder) return null;
+  return builder(object_id);
+};
+
 // ============================================================
 // ANVIL v3 — wired Audit Log
 // Wave F · System
@@ -173,20 +204,31 @@ const WiredAudit = () => {
                 <th scope="col">Object type</th>
                 <th scope="col">Object id</th>
                 <th scope="col">Detail</th>
+                <th scope="col" />
               </tr></thead>
               <tbody>
-                {filtered.slice(0, 200).map((r, i) => (
-                  <tr key={r.id || i}>
-                    <td className="mono-sm">{r.created_at ? new Date(r.created_at).toLocaleString("en-IN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" }) : "—"}</td>
-                    <td className="mono-sm">{r.actor_email || r.actor_id || r.user_id || "system"}</td>
-                    <td className="mono"><span className="pri">{r.action || "—"}</span></td>
-                    <td className="mono-sm">{r.object_type || "—"}</td>
-                    <td className="mono-sm">{truncId(r.object_id)}</td>
-                    <td className="mono-sm" title={typeof r.detail === "object" ? JSON.stringify(r.detail) : String(r.detail || "")}>
-                      {detailSummary(r.detail)}
-                    </td>
-                  </tr>
-                ))}
+                {filtered.slice(0, 200).map((r, i) => {
+                  const target = openAuditTarget(r.object_type, r.object_id);
+                  return (
+                    <tr key={r.id || i}>
+                      <td className="mono-sm">{r.created_at ? new Date(r.created_at).toLocaleString("en-IN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" }) : "—"}</td>
+                      <td className="mono-sm">{r.actor_email || r.actor_id || r.user_id || "system"}</td>
+                      <td className="mono"><span className="pri">{r.action || "—"}</span></td>
+                      <td className="mono-sm">{r.object_type || "—"}</td>
+                      <td className="mono-sm">{truncId(r.object_id)}</td>
+                      <td className="mono-sm" title={typeof r.detail === "object" ? JSON.stringify(r.detail) : String(r.detail || "")}>
+                        {detailSummary(r.detail)}
+                      </td>
+                      <td>
+                        {target ? (
+                          <Btn sm kind="ghost" onClick={() => { window.location.hash = target; }} title="Open the affected entity">
+                            open {Icon.arrowR}
+                          </Btn>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}

@@ -10,14 +10,26 @@ import { ObaraBackend } from "../lib/api";
 // Two-pane inbox + detail. Promote / attach / nudge actions.
 // ============================================================
 
+// Accepts either the legacy /api/email/inbound shape (rows with
+// `from`, `subject`, `classification`) or the
+// /api/inbound/email/threads shape (rows with `from_address`,
+// `customer_tier`, `priority_score`). Aliases the latter so the
+// existing renderers below keep working.
 const emailRowsFromResp = (resp) => {
-  if (!resp) return [];
-  if (Array.isArray(resp)) return resp;
-  if (Array.isArray(resp.emails)) return resp.emails;
-  if (Array.isArray(resp.messages)) return resp.messages;
-  if (Array.isArray(resp.rows)) return resp.rows;
-  if (Array.isArray(resp.events)) return resp.events;
-  return [];
+  let rows = [];
+  if (!resp) return rows;
+  if (Array.isArray(resp)) rows = resp;
+  else if (Array.isArray(resp.emails)) rows = resp.emails;
+  else if (Array.isArray(resp.messages)) rows = resp.messages;
+  else if (Array.isArray(resp.rows)) rows = resp.rows;
+  else if (Array.isArray(resp.events)) rows = resp.events;
+  return rows.map((r) => ({
+    ...r,
+    from: r.from || r.sender || r.from_address || "",
+    classification: r.classification || r.intent || (r.priority_score != null
+      ? "Customer PO"
+      : null),
+  }));
 };
 
 const intentChip = (intent) => {
@@ -37,10 +49,19 @@ const truncate = (s, n) => {
 };
 
 const WiredEmailTriage = () => {
+  // Audit P2.8 (May 2026). The screen used to fetch
+  // `/api/email/inbound` with `{ list: true }`, but that endpoint
+  // is a write-only POST inbound webhook gated by
+  // EMAIL_INBOUND_TOKEN. The frontend was never sending the
+  // token, so the call returned 403 and the .catch swallowed the
+  // error, silently rendering an empty inbox. Read the same data
+  // surface the inbox itself was meant to use:
+  // /api/inbound/email/threads (GET) via the
+  // ObaraBackend.inbound.listThreads helper, which authenticates
+  // via the user's session token.
   const inbox = useFetch(
-    () => fetch("/api/email/inbound?limit=50", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ list: true, limit: 50 }) })
-      .then((r) => r.ok ? r.json() : { emails: [] })
-      .catch(() => ({ emails: [] })),
+    () => ObaraBackend?.inbound?.listThreads?.({ limit: 50 })
+      || Promise.resolve({ messages: [] }),
     []
   );
   const orders = useFetch(

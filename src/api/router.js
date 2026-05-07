@@ -88,6 +88,7 @@ import customersProfileVersions from "./customers/profile_versions.js";
 import customersContacts        from "./customers/contacts.js";
 import customersDuplicates      from "./customers/duplicates.js";
 import customersMerge           from "./customers/merge.js";
+import customerLocationsIndex  from "./customer_locations/index.js";
 
 import deliveryPromise         from "./delivery/promise.js";
 
@@ -628,6 +629,7 @@ const STATIC_ROUTES = {
   "/customers/contacts":            customersContacts,
   "/customers/duplicates":          customersDuplicates,
   "/customers/merge":               customersMerge,
+  "/customer_locations":            customerLocationsIndex,
 
   "/delivery/promise":              deliveryPromise,
 

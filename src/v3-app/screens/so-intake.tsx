@@ -41,6 +41,33 @@ const WiredSOIntake = () => {
   const [newCustomerErr, setNewCustomerErr] = u(null);
   const [newCustomerBusy, setNewCustomerBusy] = u(false);
 
+  // Address picker. The user's spec says ship-to / bill-to should be
+  // a "relational object from other existing addresses of other
+  // customers in the database" -- i.e., the operator can pick an
+  // existing customer_locations row instead of re-typing it.
+  // Fetched once when the dialog opens.
+  const [locationsList, setLocationsList] = u<{ data: any; loading: boolean }>({ data: null, loading: false });
+  e(() => {
+    if (!newCustomerOpen) return;
+    let cancelled = false;
+    setLocationsList({ data: null, loading: true });
+    Promise.resolve(ObaraBackend?.customers?.listLocations?.() || Promise.resolve({ locations: [] }))
+      .then((data) => { if (!cancelled) setLocationsList({ data, loading: false }); })
+      .catch(() => { if (!cancelled) setLocationsList({ data: { locations: [] }, loading: false }); });
+    return () => { cancelled = true; };
+  }, [newCustomerOpen]);
+  const locationRows: any[] = (locationsList.data?.locations) || [];
+  const formatLocation = (l: any) => {
+    const tag = l.location_code === "default_ship" ? "ship-to"
+              : l.location_code === "default_bill" ? "bill-to"
+              : l.location_code || "loc";
+    const head = (l.customer_name || "?") + " (" + tag + ")";
+    const addr = [l.address_line1, l.city, l.pincode].filter(Boolean).join(", ");
+    return head + (addr ? " - " + addr : "");
+  };
+  const addressTextFromLocation = (l: any) =>
+    [l.address_line1, l.address_line2, l.city, l.pincode].filter(Boolean).join("\n");
+
   const submitNewCustomer = async () => {
     setNewCustomerErr(null);
     if (!newCustomer.customer_name.trim()) { setNewCustomerErr({ message: "Customer name is required." }); return; }
@@ -103,6 +130,96 @@ const WiredSOIntake = () => {
   const customerList = (customers.data?.customers) || (Array.isArray(customers.data) ? customers.data : []);
   const selectedCustomer = customerList.find((c) => c.id === customerId);
 
+  // Best-effort fuzzy matcher: prefer GSTIN exact match (highest
+  // confidence, can't false-positive across customers), then fall
+  // back to case-insensitive customer_name. Returns the matched row
+  // or null.
+  const matchCustomerFromExtraction = (extracted) => {
+    if (!extracted) return null;
+    const list = customerList || [];
+    const gstin = (extracted.gstin || "").trim().toUpperCase();
+    if (gstin && /^[0-9A-Z]{15}$/.test(gstin)) {
+      const byGstin = list.find((c) => (c.gstin || "").toUpperCase() === gstin);
+      if (byGstin) return byGstin;
+    }
+    const name = (extracted.name || "").trim().toLowerCase();
+    if (name) {
+      // Strip common prefixes / punctuation that ERP records may
+      // not include but the PO header does ("M/s.", trailing
+      // "Pvt. Ltd.", etc.).
+      const norm = (s) => String(s || "").toLowerCase()
+        .replace(/^m\/s\.?\s*/i, "")
+        .replace(/[.,]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      const target = norm(name);
+      const exact = list.find((c) => norm(c.customer_name) === target);
+      if (exact) return exact;
+      // Loose: one is a prefix of the other (3+ chars), used to
+      // catch "Tata Steel" vs "Tata Steel Ltd.".
+      const loose = list.find((c) => {
+        const cn = norm(c.customer_name);
+        if (cn.length < 3 || target.length < 3) return false;
+        return cn.startsWith(target) || target.startsWith(cn);
+      });
+      if (loose) return loose;
+    }
+    return null;
+  };
+
+  // Run docai extraction on the just-uploaded file. Best-effort: a
+  // failure here doesn't block the user; they can still pick the
+  // customer manually.
+  const runExtraction = async (file, documentId) => {
+    setBusy("extract");
+    try {
+      const out = await ObaraBackend?.documents?.extract?.(file, { source_id: documentId });
+      const customer = out?.normalized?.customer || null;
+      if (!customer) {
+        window.notifyWarn?.("Extraction returned no customer", "Pick a customer manually below.");
+        return;
+      }
+      const matched = matchCustomerFromExtraction(customer);
+      if (matched) {
+        setCustomerId(matched.id);
+        window.notifySuccess?.(
+          "Customer matched",
+          (matched.customer_name || matched.id?.slice(0, 8)) + " (from PO header)",
+        );
+        return;
+      }
+      // No match. Pre-fill the new-customer dialog with whatever the
+      // extractor gave us so the operator just has to confirm.
+      const billTo = customer.bill_to_address || customer.shipping_address || "";
+      const shipTo = customer.ship_to_address || customer.bill_to_address || "";
+      setNewCustomer({
+        customer_name: customer.name || "",
+        gstin: (customer.gstin || "").toUpperCase(),
+        state_code: (customer.state_code || "").toUpperCase(),
+        currency: customer.currency || "INR",
+        payment_terms: customer.payment_terms || "Net 30",
+        margin_floor_pct: "10",
+        bill_to: billTo,
+        ship_to: shipTo,
+      });
+      setNewCustomerOpen(true);
+      window.notifyLive?.(
+        "New customer detected",
+        (customer.name || "this PO") + " is not in the database. Confirm to add.",
+      );
+    } catch (err) {
+      // Don't surface a hard error; the operator can still proceed.
+      // eslint-disable-next-line no-console
+      console.warn("[so-intake] extract failed: " + (err?.message || err));
+      window.notifyWarn?.(
+        "Could not auto-extract customer",
+        "Pick a customer manually below.",
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const onPickFile = async (file) => {
     if (!file) return;
     setErr(null);
@@ -112,6 +229,10 @@ const WiredSOIntake = () => {
       if (!meta || !meta.documentId) throw new Error("Upload returned no document id");
       setDoc({ id: meta.documentId, filename: file.name, size: file.size, scan: meta.scan || null });
       setBusy(null);
+      // Kick off extraction on the still-in-memory File object. We
+      // pass the documentId as source_id so the extraction_run row
+      // is correlated with the document on the server.
+      await runExtraction(file, meta.documentId);
     } catch (e2) {
       setErr(String(e2.message || e2));
       setBusy(null);
@@ -195,7 +316,12 @@ const WiredSOIntake = () => {
               </div>
             </Card>
 
-            <Card title="Documents" eyebrow="PO required · others optional">
+            <Card title="Documents" eyebrow="PO required · customer auto-extracts on upload">
+              {busy === "extract" && (
+                <Banner kind="info" icon={Icon.cycle} title="Reading the PO…">
+                  <span className="mono-sm">Auto-extracting customer name, GSTIN, addresses, currency, and payment terms.</span>
+                </Banner>
+              )}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                 <label htmlFor="so-intake-customer" className="label" style={{ marginBottom: 0 }}>Customer</label>
                 <Btn sm kind="ghost" onClick={() => setNewCustomerOpen(true)} title="Create a new customer record">
@@ -422,15 +548,78 @@ const WiredSOIntake = () => {
                        onChange={(e) => setNewCustomer((c) => ({ ...c, margin_floor_pct: e.target.value }))} />
               </div>
               <div style={{ gridColumn: "1 / -1" }}>
-                <label htmlFor="nc-bill" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Bill-to address</label>
-                <textarea id="nc-bill" className="input" rows={2} style={{ width: "100%", padding: 6 }}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                  <label htmlFor="nc-bill" className="mono-sm" style={{ color: "var(--ink-3)" }}>Bill-to address</label>
+                  {locationRows.length > 0 && (
+                    <select
+                      className="select mono-sm"
+                      style={{ height: 24, fontSize: 11, padding: "0 6px" }}
+                      value=""
+                      aria-label="Pick existing bill-to address"
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        if (!id) return;
+                        const loc = locationRows.find((l) => l.id === id);
+                        if (!loc) return;
+                        setNewCustomer((c) => ({
+                          ...c,
+                          bill_to: addressTextFromLocation(loc),
+                          gstin: c.gstin || loc.gstin || "",
+                          state_code: c.state_code || loc.state_code || "",
+                        }));
+                      }}
+                    >
+                      <option value="">{locationsList.loading ? "loading addresses..." : "or pick existing..."}</option>
+                      {locationRows.map((l) => (
+                        <option key={l.id} value={l.id}>{formatLocation(l)}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                <textarea id="nc-bill" className="input" rows={3} style={{ width: "100%", padding: 6 }}
                           value={newCustomer.bill_to}
+                          placeholder="Plot 12, MIDC, Pune 411018"
                           onChange={(e) => setNewCustomer((c) => ({ ...c, bill_to: e.target.value }))} />
               </div>
               <div style={{ gridColumn: "1 / -1" }}>
-                <label htmlFor="nc-ship" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Ship-to address (defaults to bill-to if blank)</label>
-                <textarea id="nc-ship" className="input" rows={2} style={{ width: "100%", padding: 6 }}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                  <label htmlFor="nc-ship" className="mono-sm" style={{ color: "var(--ink-3)" }}>Ship-to address (defaults to bill-to if blank)</label>
+                  <div className="row gap-sm">
+                    {newCustomer.bill_to && newCustomer.bill_to !== newCustomer.ship_to && (
+                      <button
+                        type="button"
+                        className="link-btn"
+                        style={{ fontSize: 11, color: "var(--ink-3)" }}
+                        onClick={() => setNewCustomer((c) => ({ ...c, ship_to: c.bill_to }))}
+                      >
+                        same as bill-to
+                      </button>
+                    )}
+                    {locationRows.length > 0 && (
+                      <select
+                        className="select mono-sm"
+                        style={{ height: 24, fontSize: 11, padding: "0 6px" }}
+                        value=""
+                        aria-label="Pick existing ship-to address"
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          if (!id) return;
+                          const loc = locationRows.find((l) => l.id === id);
+                          if (!loc) return;
+                          setNewCustomer((c) => ({ ...c, ship_to: addressTextFromLocation(loc) }));
+                        }}
+                      >
+                        <option value="">{locationsList.loading ? "loading addresses..." : "or pick existing..."}</option>
+                        {locationRows.map((l) => (
+                          <option key={l.id} value={l.id}>{formatLocation(l)}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
+                <textarea id="nc-ship" className="input" rows={3} style={{ width: "100%", padding: 6 }}
                           value={newCustomer.ship_to}
+                          placeholder="leave blank to use bill-to"
                           onChange={(e) => setNewCustomer((c) => ({ ...c, ship_to: e.target.value }))} />
               </div>
             </div>

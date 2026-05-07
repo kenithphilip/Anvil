@@ -555,6 +555,48 @@
       const qs = new URLSearchParams(params || {}).toString();
       return apiFetch("/api/documents" + (qs ? "?" + qs : ""));
     },
+
+    // Run the docai extractor on a freshly-uploaded file. Reads the
+    // browser File into base64 and posts to /api/docai/extract so the
+    // adapter chain (Reducto / Azure DI / Claude fallback) can return
+    // structured customer + lines. Returns the extraction_run row's
+    // `normalized` payload + run_id + confidence.
+    //
+    // The caller (so-intake.tsx) uses this immediately after upload
+    // to pre-fill customer info and either auto-select an existing
+    // customer match or open the new-customer dialog with the
+    // extracted fields populated.
+    extract: async (file, opts) => {
+      const o = opts || {};
+      const buf = await file.arrayBuffer();
+      // Chunked base64. The naive
+      //   btoa(String.fromCharCode(...new Uint8Array(buf)))
+      // throws "Maximum call stack size exceeded" on files larger
+      // than ~65 KB because of the spread operator. Walk the bytes
+      // in 32 KB chunks instead. Works for the 50 MB upload cap
+      // without blowing the stack.
+      const u8 = new Uint8Array(buf);
+      const CHUNK = 32 * 1024;
+      let bin = "";
+      for (let i = 0; i < u8.length; i += CHUNK) {
+        bin += String.fromCharCode.apply(null, u8.subarray(i, i + CHUNK));
+      }
+      const bytesB64 = btoa(bin);
+      return apiFetch("/api/docai/extract", {
+        method: "POST",
+        body: {
+          source_type: o.source_type || (file.type === "application/pdf" ? "pdf"
+                                       : file.type?.startsWith("image/") ? "image"
+                                       : "pdf"),
+          source_filename: file.name,
+          mime: file.type,
+          size_bytes: file.size,
+          bytes_base64: bytesB64,
+          customer_id: o.customer_id || null,
+          source_id: o.source_id || null,
+        },
+      });
+    },
   };
 
   const orders = {
@@ -571,6 +613,15 @@
   const customers = {
     list: async () => apiFetch("/api/customers"),
     upsert: async (payload) => apiFetch("/api/customers", { method: "POST", body: payload }),
+    // Lists customer_locations across the tenant. Used by the
+    // so-intake "new customer" dialog's address picker so the
+    // operator can pick an existing address (any customer's) instead
+    // of re-typing one that's already in the database. Optional
+    // params: customer_id, q (substring search).
+    listLocations: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/customer_locations" + (qs ? "?" + qs : ""));
+    },
   };
 
   const aliases = {

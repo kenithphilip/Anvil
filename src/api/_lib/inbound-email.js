@@ -135,36 +135,103 @@ export const ingestInboundEmail = async (svc, row) => {
   return { id: ins.data?.id || null, thread_id: threadId };
 };
 
-// Match an inbound email to a customer by from-address domain or
-// from-address exact. Sets customer_id + customer_tier on the row,
-// computes priority_score, and (if a draft order should be created)
-// returns a hint to the caller.
+// Match an inbound email to a (customer, contact) pair.
+//
+// Audit P4.2 (May 2026). The previous matcher returned the first
+// customers row whose contact_email matched, or whose domain
+// matched. A 12-person account at one customer always resolved
+// to whichever row sat first, losing the actual sender's
+// identity. Threads landed under the wrong person and AR
+// escalations emailed the wrong human.
+//
+// New shape (migration 065 added customer_contacts):
+//
+//   1. Exact email match on customer_contacts. Lowercase compare
+//      (the unique index is on lower(email)).
+//   2. If no contact row matches, exact email match on the legacy
+//      customers.contact_email field. Backfill in 065 should make
+//      step 1 hit for all preexisting accounts; step 2 is a
+//      grace period until any unbackfilled tenant runs the
+//      migration.
+//   3. If still nothing, domain match on customer_contacts.email.
+//      We pick the is_primary contact when the domain has multiple
+//      hits, otherwise the most recently updated.
+//   4. Last resort: domain match on customers.contact_email.
+//
+// Returns { matched, customer, contact } where contact may be
+// null even when matched (a domain-match hit with no specific
+// contact row).
 export const matchInboundToCustomer = async (svc, email) => {
   if (!email.from_address) return { matched: false };
   const fromAddr = String(email.from_address).toLowerCase();
   const fromDomain = fromAddr.split("@").pop();
-  // Exact email match first.
-  let r = await svc.from("customers")
-    .select("id, customer_name, tier, contact_email")
+
+  const fetchCustomerById = async (id) => {
+    const r = await svc.from("customers")
+      .select("id, customer_name, tier, contact_email, gstin")
+      .eq("tenant_id", email.tenant_id)
+      .eq("id", id)
+      .maybeSingle();
+    return r.data || null;
+  };
+
+  // Step 1: contacts table by exact email.
+  const c1 = await svc.from("customer_contacts")
+    .select("id, customer_id, name, email, role, is_primary")
+    .eq("tenant_id", email.tenant_id)
+    .ilike("email", fromAddr)
+    .limit(1)
+    .maybeSingle();
+  if (c1.data) {
+    const customer = await fetchCustomerById(c1.data.customer_id);
+    if (customer) {
+      return { matched: true, customer, contact: c1.data };
+    }
+  }
+
+  // Step 2: legacy customers.contact_email exact match.
+  const r2 = await svc.from("customers")
+    .select("id, customer_name, tier, contact_email, gstin")
     .eq("tenant_id", email.tenant_id)
     .ilike("contact_email", fromAddr)
     .limit(1)
     .maybeSingle();
-  let customer = r.data || null;
-  if (!customer && fromDomain) {
-    // Domain match via contact_email like %@<domain>.
-    const r2 = await svc.from("customers")
-      .select("id, customer_name, tier, contact_email")
+  if (r2.data) {
+    return { matched: true, customer: r2.data, contact: null };
+  }
+
+  if (fromDomain) {
+    // Step 3: contacts table by domain. Prefer is_primary, then
+    // most-recently-updated, so the dunning agent threads to the
+    // operator's chosen lead contact when a domain has many.
+    const c3 = await svc.from("customer_contacts")
+      .select("id, customer_id, name, email, role, is_primary, updated_at")
+      .eq("tenant_id", email.tenant_id)
+      .ilike("email", "%@" + fromDomain)
+      .order("is_primary", { ascending: false })
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (c3.data) {
+      const customer = await fetchCustomerById(c3.data.customer_id);
+      if (customer) {
+        return { matched: true, customer, contact: c3.data };
+      }
+    }
+
+    // Step 4: legacy domain match on customers.contact_email.
+    const r4 = await svc.from("customers")
+      .select("id, customer_name, tier, contact_email, gstin")
       .eq("tenant_id", email.tenant_id)
       .ilike("contact_email", "%@" + fromDomain)
       .limit(1)
       .maybeSingle();
-    customer = r2.data || null;
+    if (r4.data) {
+      return { matched: true, customer: r4.data, contact: null };
+    }
   }
-  return {
-    matched: !!customer,
-    customer,
-  };
+
+  return { matched: false };
 };
 
 export const computePriorityScore = ({ tier, has_attachments, subject, body_text }) => {

@@ -33,6 +33,9 @@ const isSpoTransitionAllowed = (from, to) => {
   return !!(allowed && allowed.has(to));
 };
 
+// Audit P10. Test-only export for unit tests.
+export const __test = { isSpoTransitionAllowed, SPO_TRANSITIONS };
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);

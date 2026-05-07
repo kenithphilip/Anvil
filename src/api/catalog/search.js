@@ -20,29 +20,73 @@ import { serviceClient } from "../_lib/supabase.js";
 import { voyageEmbed, voyageIsConfigured } from "../_lib/voyage.js";
 
 const SEMANTIC_BOOST = 0.05; // small bias so a strong semantic match beats a substring near-match
+const SYNONYM_SEMANTIC_BOOST = 0.03; // a notch lower than direct-item semantic since the lookup is one indirection deep
 
-// Run the pgvector cosine-distance lookup via the SQL function
-// shipped in migration 075. Returns [{id, part_no, description,
-// list_price, similarity}] sorted by similarity desc.
+// Audit P8.4 + P12. Run the pgvector cosine-distance lookups via
+// the SQL functions shipped in migrations 075 (items) and 076
+// (synonyms). The synonym hits are followed back to the parent
+// item_master row so the merged ranking treats both as "this
+// part matches" rather than two separate hit kinds.
 const semanticLookup = async (svc, tenantId, q, limit) => {
   if (!voyageIsConfigured()) return [];
   const emb = await voyageEmbed([q], { input_type: "query" });
   if (!emb.ok || !emb.vectors[0]) return [];
-  const r = await svc.rpc("search_catalog_by_embedding", {
+
+  const itemHits = await svc.rpc("search_catalog_by_embedding", {
     p_tenant: tenantId,
     p_query: emb.vectors[0],
     p_limit: limit,
   });
-  if (r.error) {
+  if (itemHits.error) {
     // eslint-disable-next-line no-console
-    console.warn("[catalog/search] semantic rpc failed: " + r.error.message);
-    return [];
+    console.warn("[catalog/search] item semantic rpc failed: " + itemHits.error.message);
   }
-  return (r.data || []).map((row) => ({
-    ...row,
-    match: "semantic",
-    score: Math.min(1, (Number(row.similarity) || 0) + SEMANTIC_BOOST),
-  }));
+  const itemRows = itemHits.error ? [] : (itemHits.data || []);
+
+  const synHits = await svc.rpc("search_synonyms_by_embedding", {
+    p_tenant: tenantId,
+    p_query: emb.vectors[0],
+    p_limit: limit,
+  });
+  if (synHits.error) {
+    // eslint-disable-next-line no-console
+    console.warn("[catalog/search] synonym semantic rpc failed: " + synHits.error.message);
+  }
+  const synRows = synHits.error ? [] : (synHits.data || []);
+
+  // Hydrate synonym hits by following item_id back to
+  // item_master so each merged row has the same shape as the
+  // direct-item path.
+  const synItemIds = synRows.map((s) => s.item_id).filter(Boolean);
+  let synItems = [];
+  if (synItemIds.length) {
+    const itq = await svc.from("item_master")
+      .select("id, part_no, description, list_price")
+      .eq("tenant_id", tenantId)
+      .in("id", synItemIds);
+    if (!itq.error) synItems = itq.data || [];
+  }
+  const itemById = new Map(synItems.map((it) => [it.id, it]));
+
+  const out = [];
+  for (const row of itemRows) {
+    out.push({
+      ...row,
+      match: "semantic",
+      score: Math.min(1, (Number(row.similarity) || 0) + SEMANTIC_BOOST),
+    });
+  }
+  for (const sr of synRows) {
+    const it = itemById.get(sr.item_id);
+    if (!it) continue;
+    out.push({
+      ...it,
+      match: "synonym_semantic",
+      synonym: sr.synonym,
+      score: Math.min(1, (Number(sr.similarity) || 0) * (Number(sr.confidence) || 1) + SYNONYM_SEMANTIC_BOOST),
+    });
+  }
+  return out;
 };
 
 export default async function handler(req, res) {

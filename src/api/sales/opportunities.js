@@ -36,6 +36,12 @@ const isStageTransitionAllowed = (from, to) => {
   return toIdx >= fromIdx - 1;
 };
 
+// Audit P10. Test-only export for unit tests at
+// src/v3-app/api-state-machines.test.js. Public surface is the
+// PATCH 409 + INVALID_STAGE_TRANSITION error code; this lets us
+// lock the table without standing up Supabase.
+export const __test = { isStageTransitionAllowed, PIPELINE_ORDER, TERMINAL_STAGES };
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);

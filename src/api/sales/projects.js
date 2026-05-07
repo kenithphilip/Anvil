@@ -36,6 +36,9 @@ const isPhaseTransitionAllowed = (from, to) => {
   return toIdx >= fromIdx - 1;
 };
 
+// Audit P10. Test-only export for unit tests.
+export const __test = { isPhaseTransitionAllowed, PHASE_ORDER };
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);

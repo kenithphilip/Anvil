@@ -41,6 +41,20 @@ const OPP_STAGE_CHIP = (stage) => {
   return { k: "info", label: OPP_STAGE_LABEL(stage) };
 };
 
+// Audit P9.2: AI close-probability chip. Maps the 0-100 probability
+// the Haiku predictor stores in opportunities.ai_probability into
+// a discrete band: high (>=70), mid (40-69), low (<40). null
+// renders as "p?" so an unscored opp is visually distinct.
+const OPP_PROB_CHIP = (probability) => {
+  if (probability == null || !Number.isFinite(Number(probability))) {
+    return { k: "ghost", label: "p?" };
+  }
+  const n = Math.round(Number(probability));
+  if (n >= 70) return { k: "good", label: "p" + n };
+  if (n >= 40) return { k: "warn", label: "p" + n };
+  return { k: "info", label: "p" + n };
+};
+
 const oppRows = (resp) => {
   if (!resp) return [];
   if (Array.isArray(resp)) return resp;
@@ -54,6 +68,10 @@ const WiredOpportunities = () => {
   // the dead-button bug where `New opp` set `#/opps?new=1` but neither
   // the resolver nor this screen ever read the param.
   const [creating, setCreating] = useState(false);
+  // Audit P9.2: optional sort-by-AI-probability flag + per-row
+  // re-predict spinner.
+  const [sortByProb, setSortByProb] = useState(false);
+  const [predictingId, setPredictingId] = useState<string | null>(null);
   const [draft, setDraft] = useState({
     opportunity_name: "", customer_id: "", stage: "QUALIFICATION", amount_inr: "",
   });
@@ -171,6 +189,9 @@ const WiredOpportunities = () => {
         title="Opportunities · 11-stage pipeline"
         meta={`${total} active · weighted ${fmtINRShort(weighted)}`}
         right={<>
+          <Btn sm kind={sortByProb ? "live" : "ghost"} onClick={() => setSortByProb((v) => !v)} title="Sort by AI close probability (highest first)">
+            {sortByProb ? "Sorting by probability" : "Sort by probability"}
+          </Btn>
           <Btn icon kind="ghost" sm onClick={list.reload} title="Refresh">{Icon.cycle}</Btn>
           <Btn sm kind="primary" onClick={() => setCreating((v) => !v)}>
             {Icon.plus} {creating ? "Cancel" : "New opp"}
@@ -191,7 +212,18 @@ const WiredOpportunities = () => {
           <Card
             title={selected.name || selected.opportunity_name || "Opportunity"}
             eyebrow={"opportunity detail · " + (selected.id?.slice(0, 8) || "")}
-            right={<Btn sm kind="ghost" onClick={() => { window.location.hash = "#/opps"; }}>{Icon.x} close</Btn>}
+            right={<>
+              <Btn sm kind={selected.ai_probability == null ? "live" : "ghost"} disabled={predictingId === selected.id}
+                   onClick={async () => {
+                     setPredictingId(selected.id);
+                     try { await ObaraBackend?.sales?.predictOpportunity?.(selected.id); list.reload(); }
+                     finally { setPredictingId(null); }
+                   }}
+                   title="Run the AI close-probability predictor for this opportunity">
+                {predictingId === selected.id ? "Predicting..." : (selected.ai_probability == null ? "Predict probability" : "Re-predict")}
+              </Btn>
+              <Btn sm kind="ghost" onClick={() => { window.location.hash = "#/opps"; }}>{Icon.x} close</Btn>
+            </>}
           >
             <KV rows={[
               ["Name",       selected.name || selected.opportunity_name || "—"],
@@ -199,7 +231,13 @@ const WiredOpportunities = () => {
               ["Stage",      selected.stage || "—"],
               ["Owner",      selected.owner || selected.assigned_to || "—"],
               ["Value",      selected.value ? fmtINRShort(Number(selected.value)) : "—"],
-              ["Probability", selected.probability != null ? Math.round(Number(selected.probability) * 100) + "%" : "—"],
+              ["Probability (operator)", selected.probability != null ? Math.round(Number(selected.probability) * 100) + "%" : "—"],
+              ["AI probability", (() => {
+                if (selected.ai_probability == null) return <span style={{ color: "var(--ink-3)" }}>not predicted yet</span>;
+                const c = OPP_PROB_CHIP(selected.ai_probability);
+                return <Chip k={c.k}>{c.label}</Chip>;
+              })()],
+              ["AI reasoning", selected.ai_probability_reasoning || <span style={{ color: "var(--ink-3)" }}>—</span>],
               ["Expected close", selected.expected_close_date || selected.expected_close || "—"],
               ["Last update",   selected.updated_at ? ageLabel(selected.updated_at) : "—"],
             ]} />
@@ -268,7 +306,15 @@ const WiredOpportunities = () => {
         ) : (
           <div className="kanban" role="list" aria-label="Opportunity pipeline">
             {OPP_STAGES.map((s) => {
-              const cards = byStage[s.id] || [];
+              let cards = byStage[s.id] || [];
+              if (sortByProb) {
+                // Audit P9.2: re-sort each column by ai_probability desc.
+                cards = [...cards].sort((a, b) => {
+                  const av = Number.isFinite(Number(a.ai_probability)) ? Number(a.ai_probability) : -1;
+                  const bv = Number.isFinite(Number(b.ai_probability)) ? Number(b.ai_probability) : -1;
+                  return bv - av;
+                });
+              }
               const sc = OPP_STAGE_CHIP(s.id);
               return (
                 <div className="col" key={s.id} role="listitem">
@@ -289,6 +335,7 @@ const WiredOpportunities = () => {
                       const customer = kard.customer_name || kard.customer || "—";
                       const owner = kard.owner || "—";
                       const created = kard.created_at || kard.updated_at;
+                      const prob = OPP_PROB_CHIP(kard.ai_probability);
                       return (
                         <div
                           className="kard"
@@ -309,6 +356,9 @@ const WiredOpportunities = () => {
                           </div>
                           <div className="ft">
                             <Chip k={sc.k}>{sc.label}</Chip>
+                            <span title={kard.ai_probability_reasoning || (kard.ai_probability == null ? "Run /api/sales/predict_opportunity to populate" : "")} style={{ marginLeft: 6 }}>
+                              <Chip k={prob.k}>{prob.label}</Chip>
+                            </span>
                             <span className="mono-sm" style={{ marginLeft: "auto", color: "var(--ink-4)" }}>
                               {created ? ageLabel(created) : "—"}
                             </span>

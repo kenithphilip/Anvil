@@ -67,6 +67,11 @@ const WiredAnomaly = () => {
   const [tab, setTab] = useState("open");
   const [resolving, setResolving] = useState(null);
   const [resolveError, setResolveError] = useState(null);
+  // Audit P9.4: per-finding Haiku explanations. Keyed by finding
+  // id; each entry is { loading?, explanation?, error? }. Once
+  // populated the row's Explain expansion stays visible until
+  // closed.
+  const [explanations, setExplanations] = useState<Record<string, { loading?: boolean; explanation?: string; recommendation?: string; error?: string }>>({});
 
   const resolveOne = async (id) => {
     setResolving(id);
@@ -80,6 +85,28 @@ const WiredAnomaly = () => {
       setResolving(null);
     }
   };
+
+  const explainOne = async (id: string) => {
+    setExplanations((s) => ({ ...s, [id]: { loading: true } }));
+    try {
+      const r: any = await ObaraBackend?.anomaly?.explain?.(id);
+      const out = r?.explanation || r?.data || r;
+      setExplanations((s) => ({
+        ...s,
+        [id]: {
+          explanation: out?.explanation || out?.text || "(no explanation returned)",
+          recommendation: out?.recommendation || null,
+        },
+      }));
+    } catch (err: any) {
+      setExplanations((s) => ({ ...s, [id]: { error: String(err?.message || err) } }));
+    }
+  };
+  const closeExplanation = (id: string) => setExplanations((s) => {
+    const out = { ...s };
+    delete out[id];
+    return out;
+  });
 
   if (list.loading) {
     return (
@@ -193,26 +220,52 @@ const WiredAnomaly = () => {
                   const sev = (r.severity || r.sev || "low").toLowerCase();
                   const orderRef = r.order_ref || r.po_number || r.quote_number || (r.order_id ? r.order_id.slice(0, 8) : "—");
                   const created = r.created_at || r.detected_at;
+                  const exp = explanations[r.id];
                   return (
-                    <tr key={r.id}>
-                      <td className="mono"><span className="pri">{orderRef}</span></td>
-                      <td className="mono-sm">{r.field || r.field_name || "—"}</td>
-                      <td>{SEV_CHIP(sev)}</td>
-                      <td>{r.suggested_fix || r.suggestion || "—"}</td>
-                      <td><Chip k={status === "open" ? "warn" : status === "resolved" ? "good" : "ghost"}>{status}</Chip></td>
-                      <td className="r mono">{created ? ageLabel(created) : "—"}</td>
-                      <td>
-                        {tab === "open" && (
+                    <React.Fragment key={r.id}>
+                      <tr>
+                        <td className="mono"><span className="pri">{orderRef}</span></td>
+                        <td className="mono-sm">{r.field || r.field_name || "—"}</td>
+                        <td>{SEV_CHIP(sev)}</td>
+                        <td>{r.suggested_fix || r.suggestion || "—"}</td>
+                        <td><Chip k={status === "open" ? "warn" : status === "resolved" ? "good" : "ghost"}>{status}</Chip></td>
+                        <td className="r mono">{created ? ageLabel(created) : "—"}</td>
+                        <td style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
                           <Btn
                             sm
-                            disabled={resolving === r.id}
-                            onClick={() => resolveOne(r.id)}
+                            kind="ghost"
+                            disabled={!!exp?.loading}
+                            onClick={() => exp ? closeExplanation(r.id) : explainOne(r.id)}
+                            title="Ask Haiku to explain why this finding fired"
                           >
-                            {resolving === r.id ? "resolving…" : "resolve"}
+                            {exp?.loading ? "explaining..." : exp ? "hide" : "explain"}
                           </Btn>
-                        )}
-                      </td>
-                    </tr>
+                          {tab === "open" && (
+                            <Btn
+                              sm
+                              disabled={resolving === r.id}
+                              onClick={() => resolveOne(r.id)}
+                            >
+                              {resolving === r.id ? "resolving…" : "resolve"}
+                            </Btn>
+                          )}
+                        </td>
+                      </tr>
+                      {exp && !exp.loading && (
+                        <tr key={r.id + ":exp"}>
+                          <td colSpan={7} style={{ background: "var(--surface-2, #f7f7f7)", padding: 12 }}>
+                            {exp.error ? (
+                              <span className="mono-sm" style={{ color: "var(--bad, #a00)" }}>Explainer failed: {exp.error}</span>
+                            ) : (
+                              <div className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                <div><strong>Why:</strong> {exp.explanation}</div>
+                                {exp.recommendation && <div><strong>Suggested action:</strong> {exp.recommendation}</div>}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>

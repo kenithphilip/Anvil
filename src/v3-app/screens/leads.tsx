@@ -23,6 +23,21 @@ const LEAD_STATUS_CHIP = (s) => {
   return map[s] || { k: "ghost", label: (s || "—").toLowerCase() };
 };
 
+// Audit P9.1: lead-score chip. Maps the numeric ai_score (0-100)
+// to a visual band. Bands match the API's calibration tiers:
+// hot (>=75), warm (45-74), cool (<45). null score is rendered as
+// a faded "score?" so an unscored lead is visually distinct from
+// a cool one.
+const LEAD_SCORE_CHIP = (score) => {
+  if (score == null || !Number.isFinite(Number(score))) {
+    return { k: "ghost", label: "score?" };
+  }
+  const n = Math.round(Number(score));
+  if (n >= 75) return { k: "good", label: "hot " + n };
+  if (n >= 45) return { k: "warn", label: "warm " + n };
+  return { k: "info", label: "cool " + n };
+};
+
 const leadRows = (resp) => {
   if (!resp) return [];
   if (Array.isArray(resp)) return resp;
@@ -44,6 +59,8 @@ const WiredLeads = () => {
   const selectedId = useHashParam("id");
 
   const [creating, setCreating] = useState(false);
+  const [sortByScore, setSortByScore] = useState(false);
+  const [scoringId, setScoringId] = useState<string | null>(null);
   const [draft, setDraft] = useState({
     name: "",
     source: "",
@@ -79,6 +96,16 @@ const WiredLeads = () => {
 
   const rows = leadRows(list.data);
   const total = rows.length;
+  // Audit P9.1: optional sort-by-score. The default order is the
+  // server's (created_at desc); flipping the chip pulls the highest
+  // ai_score to the top with null scores at the bottom.
+  const sortedRows = sortByScore
+    ? [...rows].sort((a, b) => {
+        const av = Number.isFinite(Number(a.ai_score)) ? Number(a.ai_score) : -1;
+        const bv = Number.isFinite(Number(b.ai_score)) ? Number(b.ai_score) : -1;
+        return bv - av;
+      })
+    : rows;
 
   // Resolve the hash-id selection (declared above the early-return
   // guards) against the rows we just loaded. Same detail-card
@@ -140,6 +167,9 @@ const WiredLeads = () => {
         title="Leads"
         meta={`${total} total · ${newCount} new · ${qualifiedCount} qualified`}
         right={<>
+          <Btn sm kind={sortByScore ? "live" : "ghost"} onClick={() => setSortByScore((v) => !v)} title="Sort leads by AI score (highest first)">
+            {sortByScore ? "Sorting by score" : "Sort by score"}
+          </Btn>
           <Btn icon kind="ghost" sm onClick={list.reload} title="Refresh">{Icon.cycle}</Btn>
           <Btn sm kind="primary" onClick={() => setCreating((v) => !v)}>
             {Icon.plus} {creating ? "Cancel" : "New lead"}
@@ -159,7 +189,18 @@ const WiredLeads = () => {
           <Card
             title={selected.name || selected.company || "Lead"}
             eyebrow={"lead detail · " + (selected.id?.slice(0, 8) || "")}
-            right={<Btn sm kind="ghost" onClick={() => { window.location.hash = "#/leads"; }}>{Icon.x} close</Btn>}
+            right={<>
+              <Btn sm kind={selected.ai_score == null ? "live" : "ghost"} disabled={scoringId === selected.id}
+                   onClick={async () => {
+                     setScoringId(selected.id);
+                     try { await ObaraBackend?.sales?.scoreLead?.(selected.id); list.reload(); }
+                     finally { setScoringId(null); }
+                   }}
+                   title="Score this lead with the Haiku scorer">
+                {scoringId === selected.id ? "Scoring..." : (selected.ai_score == null ? "Score lead" : "Re-score")}
+              </Btn>
+              <Btn sm kind="ghost" onClick={() => { window.location.hash = "#/leads"; }}>{Icon.x} close</Btn>
+            </>}
           >
             <KV rows={[
               ["Name",     selected.name || "—"],
@@ -170,13 +211,15 @@ const WiredLeads = () => {
               ["Source",   selected.source || "—"],
               ["Owner",    selected.owner || selected.assigned_to || "—"],
               ["Value",    (() => {
-                // The schema column is `budget_estimate`; older
-                // payload paths exposed `estimated_value` /
-                // `estimated_value_inr`. Try each to be tolerant of
-                // either backend version.
                 const v = selected.budget_estimate ?? selected.estimated_value ?? selected.estimated_value_inr;
                 return v != null ? fmtINRShort(Number(v)) : "—";
               })()],
+              ["AI score", (() => {
+                if (selected.ai_score == null) return <span style={{ color: "var(--ink-3)" }}>not scored yet</span>;
+                const sc = LEAD_SCORE_CHIP(selected.ai_score);
+                return <Chip k={sc.k}>{sc.label}</Chip>;
+              })()],
+              ["Reasoning", selected.ai_score_reasoning || <span style={{ color: "var(--ink-3)" }}>—</span>],
               ["Created",  selected.created_at ? ageLabel(selected.created_at) : "—"],
             ]} />
             {selected.notes && (
@@ -276,6 +319,7 @@ const WiredLeads = () => {
             <table className="tbl">
               <thead><tr>
                 <th>Lead</th>
+                <th>Score</th>
                 <th>Source</th>
                 <th>Status</th>
                 <th>Owner</th>
@@ -283,8 +327,9 @@ const WiredLeads = () => {
                 <th className="r">Value</th>
               </tr></thead>
               <tbody>
-                {rows.slice(0, 200).map((r) => {
+                {sortedRows.slice(0, 200).map((r) => {
                   const sc = LEAD_STATUS_CHIP(r.status);
+                  const score = LEAD_SCORE_CHIP(r.ai_score);
                   const value = Number(r.estimated_value) || 0;
                   const last = r.last_touch_at || r.updated_at || r.created_at;
                   return (
@@ -301,6 +346,9 @@ const WiredLeads = () => {
                       style={{ cursor: "pointer" }}
                     >
                       <td><span className="pri">{r.name || r.customer_name || (r.id ? r.id.slice(0, 8) : "—")}</span></td>
+                      <td title={r.ai_score_reasoning || (r.ai_score == null ? "Run /api/sales/score_lead to populate" : "")}>
+                        <Chip k={score.k}>{score.label}</Chip>
+                      </td>
                       <td className="mono-sm">{r.source || "—"}</td>
                       <td><Chip k={sc.k}>{sc.label}</Chip></td>
                       <td className="mono-sm">{r.owner || "—"}</td>

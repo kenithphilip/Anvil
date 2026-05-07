@@ -565,6 +565,12 @@
     scan: async (documentId) => apiFetch("/api/documents/scan", { method: "POST", body: { documentId } }),
     fetch: async (id) => apiFetch("/api/documents/" + id),
     remove: async (id) => apiFetch("/api/documents/" + id, { method: "DELETE" }),
+    // OCR evidence rows for a document. Returns the per-token bboxes
+    // the documents-detail overlay paints on top of the source image.
+    // The Mistral OCR pipeline (/api/documents/ocr, exposed as
+    // ObaraBackend.ocr.run below) populates these; an empty `rows`
+    // array means OCR has not yet been run on this document.
+    evidence: async (id) => apiFetch("/api/documents/" + id + "/evidence"),
     // List documents for the tenant. Powers the Documents library
     // screen. Was missing entirely; documents.tsx called list() and
     // got `undefined` (optional chaining), which silently rendered
@@ -873,7 +879,15 @@
   };
 
   const ocr = {
-    run: async (documentId, orderId) => apiFetch("/api/documents/ocr", { method: "POST", body: { documentId, orderId } }),
+    // Trigger Mistral OCR on a document. orderId is optional: when
+    // omitted the evidence rows write back as document-scoped (no
+    // associated order yet). The documents-detail "Run OCR" button
+    // takes this path so an operator can review the bbox overlay
+    // without first creating an order.
+    run: async (documentId, orderId) => apiFetch("/api/documents/ocr", {
+      method: "POST",
+      body: { documentId, orderId: orderId || null },
+    }),
   };
 
   const scan = {

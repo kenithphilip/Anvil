@@ -12,6 +12,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { ObaraBackend } from "../lib/api";
 import { Icon } from "../lib/icons";
+import { BboxOverlay, OcrEvidenceRow } from "../components/BboxOverlay";
 
 type Tab = "library" | "review" | "upload";
 
@@ -134,11 +135,22 @@ const OCRReview: React.FC<{
   // adding a new dependency.
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  // Audit P13.B.3 follow-up. OCR bbox overlay. The Mistral OCR
+  // endpoint persists per-token bboxes into `evidence`; we fetch
+  // them on selection so the overlay paints on top of the source
+  // image. Empty array = OCR not yet run on this document; the
+  // "Run OCR" button kicks off /api/documents/ocr which then
+  // refreshes the evidence list. PDF docs do not get an overlay
+  // because <embed type=application/pdf> is opaque without PDF.js.
+  const [evidence, setEvidence] = useState<OcrEvidenceRow[]>([]);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [ocrRunning, setOcrRunning] = useState(false);
 
   useEffect(() => {
     setDraft(selected?.extraction ? JSON.parse(JSON.stringify(selected.extraction)) : null);
     setError(null);
     setPreviewUrl(null);
+    setEvidence([]);
     if (!selected?.id) return;
     let cancelled = false;
     setPreviewLoading(true);
@@ -152,6 +164,18 @@ const OCRReview: React.FC<{
         if (!cancelled) setError(String(e?.message || e));
       })
       .finally(() => { if (!cancelled) setPreviewLoading(false); });
+
+    // Fetch OCR bboxes in parallel. Failures are non-fatal: the
+    // preview still renders without an overlay.
+    setEvidenceLoading(true);
+    Promise.resolve((ObaraBackend as any)?.documents?.evidence?.(selected.id))
+      .then((resp: any) => {
+        if (cancelled) return;
+        setEvidence(Array.isArray(resp?.rows) ? resp.rows : []);
+      })
+      .catch(() => { /* silent: overlay just stays hidden */ })
+      .finally(() => { if (!cancelled) setEvidenceLoading(false); });
+
     // Refresh the signed URL one minute before the 10-minute TTL
     // hits so the operator never sees a stale link.
     const id = setInterval(() => {
@@ -165,6 +189,24 @@ const OCRReview: React.FC<{
     }, 9 * 60 * 1000);
     return () => { cancelled = true; clearInterval(id); };
   }, [selected?.id]);
+
+  // "Run OCR" button: kicks off /api/documents/ocr (no orderId,
+  // so the evidence rows write back as document-scoped) and
+  // refreshes the bbox list when it returns.
+  const onRunOcr = async () => {
+    if (!selected?.id) return;
+    setOcrRunning(true);
+    setError(null);
+    try {
+      await (ObaraBackend as any)?.ocr?.run?.(selected.id);
+      const resp = await (ObaraBackend as any)?.documents?.evidence?.(selected.id);
+      setEvidence(Array.isArray(resp?.rows) ? resp.rows : []);
+    } catch (e: any) {
+      setError(String(e?.message || e));
+    } finally {
+      setOcrRunning(false);
+    }
+  };
 
   if (!selected) {
     return (
@@ -266,6 +308,31 @@ const OCRReview: React.FC<{
               ))}
             </div>
           </Card>
+          {/* Audit P13.B.3 follow-up. OCR controls. The button
+              kicks off Mistral OCR (no orderId, document-scoped)
+              and refreshes the bbox list when it returns. The
+              chip shows how many bboxes are loaded so the
+              operator can tell at a glance if the overlay is
+              populated. Hidden for non-image documents because
+              the overlay only renders against <img>. */}
+          {(() => {
+            const isImg = previewUrl
+              ? (/\.(png|jpe?g|gif|webp|bmp|tiff?)(\?|$)/i.test(previewUrl) || /image\//i.test(selected.filename || ""))
+              : /^image\//i.test(selected.filename || "");
+            if (!isImg) return null;
+            return (
+              <Card title="OCR overlay" eyebrow={evidence.length + " bbox" + (evidence.length === 1 ? "" : "es")}
+                right={
+                  <Btn sm kind="ghost" onClick={onRunOcr} disabled={ocrRunning || evidenceLoading}>
+                    {ocrRunning ? "Running..." : (evidence.length ? "Re-run OCR" : "Run OCR")}
+                  </Btn>
+                }>
+                <p className="muted" style={{ margin: 0 }}>
+                  Hover any rectangle on the preview to see the recognized text and confidence.
+                </p>
+              </Card>
+            );
+          })()}
           <Card flush>
             {previewLoading && (
               <div className="ws-pdf-stub">Loading preview...</div>
@@ -280,12 +347,26 @@ const OCRReview: React.FC<{
               const isImage = /\.(png|jpe?g|gif|webp|bmp|tiff?)(\?|$)/i.test(previewUrl) || /image\//i.test(selected.filename || "");
               const isPdf = /\.pdf(\?|$)/i.test(previewUrl) || /pdf/i.test(selected.filename || "");
               if (isImage) {
-                return <img src={previewUrl} alt={selected.filename || "document"} style={{ width: "100%", display: "block" }} />;
+                // Audit P13.B.3 follow-up. When OCR evidence rows
+                // exist for the document we paint a per-token bbox
+                // overlay on top of the image. Empty evidence array
+                // collapses to a plain <img> via the overlay's own
+                // null-check.
+                return (
+                  <BboxOverlay
+                    src={previewUrl}
+                    alt={selected.filename || "document"}
+                    rows={evidence}
+                  />
+                );
               }
               if (isPdf) {
                 // Browser-native PDF rendering. Modern Chrome /
                 // Firefox / Safari render <embed type=application/
                 // pdf> via the built-in viewer; no external lib.
+                // The bbox overlay does not apply to PDFs because
+                // the embed is an opaque viewer; PDF.js would be
+                // required to overlay rectangles on PDF pages.
                 return <embed src={previewUrl} type="application/pdf" style={{ width: "100%", height: 600, display: "block" }} />;
               }
               // Fallback: link out for anything else (xlsx, zip).

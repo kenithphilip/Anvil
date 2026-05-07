@@ -103,6 +103,11 @@ export default async function handler(req, res) {
     if (body.orderId) {
       await recordEvent(ctx, { caseId: body.orderId, eventType: "ocr_completed", objectType: "document", objectId: doc.id, detail: { pages: ocrResult.pages.length, blocks: evidenceTotal } });
     }
+    // Standalone document-scoped OCR runs (no orderId) write
+    // evidence rows with order_id = null. Migration 077 relaxed the
+    // NOT NULL constraint so this works; previously these inserts
+    // would have raised a constraint violation. The documents-detail
+    // bbox-overlay screen drives this code path.
     await recordAudit(ctx, { action: "ocr_run", objectType: "document", objectId: doc.id, detail: "pages=" + ocrResult.pages.length + " blocks=" + evidenceTotal });
     return json(res, 200, { runId, pageCount: ocrResult.pages.length, evidenceCount: evidenceTotal, pages: ocrResult.pages.map((p) => ({ index: p.index, width: p.width, height: p.height, blockCount: p.blocks.length })) });
   } catch (err) {

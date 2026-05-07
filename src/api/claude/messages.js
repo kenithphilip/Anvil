@@ -95,6 +95,25 @@ export default async function handler(req, res) {
     const minConfidence = Number(body.minConfidence || 0);
     const allowFallback = body.allowFallback !== false;
 
+    // Audit P3.1 (May 2026). The wrapper used to send only
+    // { model, max_tokens, system, messages } to Anthropic.
+    // Tool-use callers (kb/ask, erp_chat/send) couldn't migrate
+    // to this surface because the wrapper would silently drop
+    // their `tools` + `tool_choice` payload, breaking the
+    // agentic loop. Pass-through every Anthropic-supported
+    // sampling and tool-use field. Tool definitions are NOT
+    // redacted (they're operator-authored schemas, not user
+    // content); only `messages` content blocks go through
+    // redactMessages below.
+    const tools = Array.isArray(body.tools) ? body.tools : null;
+    const toolChoice = body.tool_choice || null;
+    const temperature = body.temperature != null ? Number(body.temperature) : null;
+    const topP = body.top_p != null ? Number(body.top_p) : null;
+    const topK = body.top_k != null ? Number(body.top_k) : null;
+    const stopSequences = Array.isArray(body.stop_sequences) ? body.stop_sequences : null;
+    const stream = body.stream === true; // unused for now; pass-through
+    const metadata = body.metadata && typeof body.metadata === "object" ? body.metadata : null;
+
     // Fetch redaction rules and apply to system + messages.
     //
     // Audit fix (May 2026): a previous version swallowed the rules
@@ -140,7 +159,38 @@ export default async function handler(req, res) {
     if (cacheTtl === "1h") headers["anthropic-beta"] = "extended-cache-ttl-2025-04-11";
     else if (process.env.ANTHROPIC_BETA_HEADER) headers["anthropic-beta"] = process.env.ANTHROPIC_BETA_HEADER;
 
-    const payload = JSON.stringify({ model, max_tokens, system, messages });
+    // Build the upstream payload. Optional fields are only
+    // included when the caller supplied them so we don't pin
+    // Anthropic defaults we don't intend.
+    const upstreamPayload = { model, max_tokens, system, messages };
+    if (tools) upstreamPayload.tools = tools;
+    if (toolChoice) upstreamPayload.tool_choice = toolChoice;
+    if (temperature != null && Number.isFinite(temperature)) upstreamPayload.temperature = temperature;
+    if (topP != null && Number.isFinite(topP)) upstreamPayload.top_p = topP;
+    if (topK != null && Number.isFinite(topK)) upstreamPayload.top_k = topK;
+    if (stopSequences) upstreamPayload.stop_sequences = stopSequences;
+    if (stream) upstreamPayload.stream = true;
+    if (metadata) upstreamPayload.metadata = metadata;
+    const payload = JSON.stringify(upstreamPayload);
+
+    // Audit P3.6 telemetry: track whether this call carries any
+    // `cache_control` breakpoints so the cost dashboard can split
+    // cached-vs-uncached spend. Cheap detection: scan the system +
+    // messages for the literal cache_control key, no per-call deep
+    // walk required. Tools also accept cache_control breakpoints.
+    const detectCacheBreakpoint = () => {
+      try {
+        if (typeof system === "string") return false;
+        const sysHas = Array.isArray(system) && system.some((b) => b && b.cache_control);
+        if (sysHas) return true;
+        const msgHas = (messages || []).some((m) => Array.isArray(m.content)
+          && m.content.some((b) => b && b.cache_control));
+        if (msgHas) return true;
+        if (tools && tools.some((t) => t && t.cache_control)) return true;
+      } catch (_) { /* never throw from telemetry */ }
+      return false;
+    };
+    const hasCacheBreakpoint = detectCacheBreakpoint();
     let lastErr = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       let upstream;
@@ -197,8 +247,17 @@ export default async function handler(req, res) {
           primary_confidence: confidence,
           fallback_model: fallbackChoice.model,
           fallback_reason: "confidence < " + minConfidence,
+          firewall_bypassed: !!body.bypassFirewall,
+          tools_used: !!tools,
+          has_cache_breakpoint: hasCacheBreakpoint,
         }), "model_routing_log");
-        const fallbackResp = await safeFetch(ANTHROPIC_URL, { method: "POST", headers, body: JSON.stringify({ model: fallbackChoice.model, max_tokens, system, messages }) });
+        // P3.1: include the same sampling + tool fields on the
+        // fallback re-call so the bigger model has the same
+        // surface as the primary did.
+        const fallbackPayload = { ...upstreamPayload, model: fallbackChoice.model };
+        const fallbackResp = await safeFetch(ANTHROPIC_URL, {
+          method: "POST", headers, body: JSON.stringify(fallbackPayload),
+        });
         const fallbackText = await fallbackResp.text();
         let fallbackData; try { fallbackData = JSON.parse(fallbackText); } catch (_) { fallbackData = data; }
         return json(res, fallbackResp.status, fallbackData);
@@ -214,6 +273,9 @@ export default async function handler(req, res) {
         primary_confidence: confidence,
         total_input_tokens: data && data.usage && data.usage.input_tokens,
         total_output_tokens: data && data.usage && data.usage.output_tokens,
+        firewall_bypassed: !!body.bypassFirewall,
+        tools_used: !!tools,
+        has_cache_breakpoint: hasCacheBreakpoint,
       }), "model_routing_log");
       return json(res, upstream.status, data);
     }

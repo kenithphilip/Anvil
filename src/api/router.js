@@ -57,6 +57,7 @@ import adminQuoteApprovals     from "./admin/quote_approvals.js";
 
 import aliasesIndex            from "./aliases/index.js";
 import anomalyCompute          from "./anomaly/compute.js";
+import anomalyExplain          from "./anomaly/explain.js";
 import auditIndex              from "./audit/index.js";
 
 import authMagicLink           from "./auth/magic_link.js";
@@ -584,6 +585,7 @@ const STATIC_ROUTES = {
 
   "/aliases":                       aliasesIndex,
   "/anomaly/compute":               anomalyCompute,
+  "/anomaly/explain":               anomalyExplain,
   "/audit":                         auditIndex,
 
   "/auth/magic_link":               authMagicLink,

@@ -3233,6 +3233,28 @@ const WiredAdminCRUD = () => {
                 <span className="mono-sm">{String(holidays.error.message || holidays.error)}</span>
               </Banner>
             )}
+            {/* Audit P13.B.1.3: live banner showing the next upcoming
+                holiday so operators don't lose visibility of an
+                imminent close-day. Falls silent when no future
+                holiday is on file. */}
+            {(() => {
+              const today = new Date(); today.setHours(0, 0, 0, 0);
+              const upcoming = holidayRows
+                .map((h) => ({ ...h, _ms: new Date(h.date || h.holiday_date || 0).getTime() }))
+                .filter((h) => h._ms >= today.getTime())
+                .sort((a, b) => a._ms - b._ms);
+              const next = upcoming[0];
+              if (!next) return null;
+              const days = Math.round((next._ms - today.getTime()) / 86400000);
+              const sameDay = days === 0;
+              return (
+                <Banner kind={sameDay ? "warn" : "info"} icon={Icon.flag} title={sameDay ? "Today is a holiday" : `Next holiday in ${days} day${days === 1 ? "" : "s"}`}>
+                  <span className="mono-sm">
+                    {next.country || "—"} · {next.date || next.holiday_date || "—"} · {next.name || "—"}
+                  </span>
+                </Banner>
+              );
+            })()}
             <Card flush>
               {holidays.loading ? (
                 <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading holidays…</div>
@@ -3295,20 +3317,39 @@ const WiredAdminCRUD = () => {
                 <div className="body" style={{ color: "var(--ink-3)" }}>No lead times configured.</div>
               ) : (
                 <table className="tbl">
-                  <thead><tr><th>{leadTimeForm.type === "supplier" ? "Supplier" : "Customer"}</th><th className="r">Days</th><th>Notes</th><th></th></tr></thead>
+                  <thead><tr><th>{leadTimeForm.type === "supplier" ? "Supplier" : "Customer"}</th><th className="r">Days</th><th>Notes</th><th>Last reviewed</th><th></th></tr></thead>
                   <tbody>
-                    {leadTimeRows.map((r, i) => (
-                      <tr key={r.id || i}>
-                        <td>{r.customer_name || r.supplier_name || r.name || r.entity_name || customerName(r.customer_id) || "—"}</td>
-                        <td className="r mono">{r.days != null ? r.days : (r.lead_time_days != null ? r.lead_time_days : "—")}</td>
-                        <td className="mono-sm">{r.notes || r.description || "—"}</td>
-                        <td>
-                          {r.id && (
-                            <Btn sm kind="ghost" disabled={busy} onClick={() => onDeleteLeadTime(r.id)}>{Icon.trash}</Btn>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                    {leadTimeRows.map((r, i) => {
+                      // Audit P13.B.1.3: surface a "stale" chip when
+                      // a lead-time hasn't been reviewed in 6 months.
+                      // The schema's updated_at column gives us this
+                      // for free; the chip pushes operators to refresh
+                      // a value they may have copied from a long-gone
+                      // tariff.
+                      const reviewed = r.updated_at || r.created_at;
+                      const reviewedMs = reviewed ? new Date(reviewed).getTime() : 0;
+                      const stale = reviewedMs > 0 && (Date.now() - reviewedMs) > 6 * 30 * 86400 * 1000;
+                      return (
+                        <tr key={r.id || i}>
+                          <td>{r.customer_name || r.supplier_name || r.name || r.entity_name || customerName(r.customer_id) || "—"}</td>
+                          <td className="r mono">{r.days != null ? r.days : (r.lead_time_days != null ? r.lead_time_days : "—")}</td>
+                          <td className="mono-sm">{r.notes || r.description || "—"}</td>
+                          <td>
+                            {reviewed ? (
+                              <span title={new Date(reviewed).toLocaleDateString("en-IN")} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                <span className="mono-sm" style={{ color: "var(--ink-3)" }}>{ageLabel(reviewed)}</span>
+                                {stale && <Chip k="warn">stale</Chip>}
+                              </span>
+                            ) : <span className="mono-sm" style={{ color: "var(--ink-4)" }}>—</span>}
+                          </td>
+                          <td>
+                            {r.id && (
+                              <Btn sm kind="ghost" disabled={busy} onClick={() => onDeleteLeadTime(r.id)}>{Icon.trash}</Btn>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}

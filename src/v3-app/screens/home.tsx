@@ -38,12 +38,26 @@ const WiredHomeEngineer = () => {
 
   const drafts = list.filter((o) => o.status === "DRAFT").length;
   const inApproval = list.filter((o) => o.status === "PENDING_REVIEW").length;
+  const isPushed = (o: any) => o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED";
   const pushedToday = list.filter((o) => {
-    if (o.status !== "EXPORTED_TO_TALLY" && o.status !== "RECONCILED") return false;
+    if (!isPushed(o)) return false;
     const t = o.updated_at || o.created_at;
     return t && new Date(t).toDateString() === new Date().toDateString();
   });
   const pushedValueToday = pushedToday.reduce((sum, o) => sum + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
+
+  // Audit P13.B.1.1. Add the design's 5th KPI (₹ pushed MTD).
+  // Same backend payload, different cut so the operator can see
+  // monthly volume without leaving the home screen.
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const pushedMtd = list.filter((o) => {
+    if (!isPushed(o)) return false;
+    const t = o.updated_at || o.created_at;
+    return t && new Date(t).getTime() >= monthStart.getTime();
+  });
+  const pushedValueMtd = pushedMtd.reduce((sum, o) => sum + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
 
   const auditRows = (Array.isArray(audit.data) ? audit.data : (audit.data?.rows || [])).slice(0, 6);
 
@@ -90,11 +104,12 @@ const WiredHomeEngineer = () => {
           </Banner>
         )}
 
-        <KPIRow cols={4}>
+        <KPIRow cols={5}>
           <KPI lbl="My queue" v={String(myQueue.length)} d={myQueue.length ? `oldest ${ageLabel(myQueue[0]?.updated_at)}` : "all clear"} live={myQueue.length > 0} />
           <KPI lbl="Drafts" v={String(drafts)} d="autosaved locally" />
           <KPI lbl="In approval" v={String(inApproval)} d={inApproval ? "pending review" : "none pending"} />
           <KPI lbl="Pushed today" v={fmtINRShort(pushedValueToday)} d={`${pushedToday.length} SOs`} dKind={pushedToday.length ? "up" : ""} />
+          <KPI lbl="Pushed MTD" v={fmtINRShort(pushedValueMtd)} d={`${pushedMtd.length} SOs this month`} dKind={pushedMtd.length ? "up" : ""} />
         </KPIRow>
 
         <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 14 }}>

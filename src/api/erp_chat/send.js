@@ -12,10 +12,12 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { erpChatTools, dispatchErpChatTool } from "../_lib/erp-chat-tools.js";
-import { safeFetch } from "../_lib/safe-fetch.js";
+import { callAnthropic } from "../_lib/anthropic.js";
 
-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
-const ANTHROPIC_VERSION = "2023-06-01";
+// Audit P3.4: route the per-loop Anthropic call through
+// callAnthropic() so the firewall + redaction + telemetry +
+// retry come from the shared helper. The model + agentic-loop
+// shape is preserved.
 const MODEL = process.env.ANTHROPIC_MODEL_DEFAULT || "claude-sonnet-4-20250514";
 const MAX_LOOPS = 5;
 
@@ -35,18 +37,8 @@ Rules:
 - For inventory questions use search_inventory; combine across ERPs.
 - Never invent IDs.`;
 
-const callClaude = async (apiKey, payload) => {
-  const headers = {
-    "Content-Type": "application/json",
-    "x-api-key": apiKey,
-    "anthropic-version": ANTHROPIC_VERSION,
-  };
-  const resp = await safeFetch(ANTHROPIC_URL, { method: "POST", headers, body: JSON.stringify(payload) });
-  const text = await resp.text();
-  let parsed = null;
-  try { parsed = JSON.parse(text); } catch (_e) { parsed = { raw: text.slice(0, 800) }; }
-  return { ok: resp.ok, status: resp.status, body: parsed };
-};
+// callClaude removed: the per-loop Anthropic call now goes
+// through callAnthropic() from _lib/anthropic.js. See P3.4.
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -55,8 +47,6 @@ export default async function handler(req, res) {
   try {
     const ctx = await resolveContext(req);
     requirePermission(ctx, "read");
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) return json(res, 500, { error: { message: "ANTHROPIC_API_KEY not configured" } });
     const body = await readBody(req);
     if (!body?.content || typeof body.content !== "string") {
       return json(res, 400, { error: { message: "content required" } });
@@ -106,20 +96,28 @@ export default async function handler(req, res) {
     while (loop < MAX_LOOPS) {
       loop += 1;
       const t0 = Date.now();
-      const resp = await callClaude(apiKey, {
+      const result = await callAnthropic({
+        tenantId: ctx.tenantId,
+        userId: ctx.user?.id || null,
+        messages,
+        system: SYSTEM,
+        purpose: "extraction",
         model: MODEL,
         max_tokens: 2048,
-        system: SYSTEM,
         tools,
-        messages,
+        tool_choice: { type: "auto" },
       });
       totalLatency += Date.now() - t0;
-      if (!resp.ok) {
-        return json(res, 502, { ok: false, status: resp.status, error: resp.body?.error || resp.body?.raw });
+      if (!result.ok) {
+        return json(res, result.status || 502, {
+          ok: false,
+          status: result.status,
+          error: result.error || result.data?.error || result.data?.raw,
+        });
       }
-      totalTokensIn += resp.body?.usage?.input_tokens || 0;
-      totalTokensOut += resp.body?.usage?.output_tokens || 0;
-      const content = resp.body?.content || [];
+      totalTokensIn += result.data?.usage?.input_tokens || 0;
+      totalTokensOut += result.data?.usage?.output_tokens || 0;
+      const content = result.data?.content || [];
       const toolCalls = content.filter((b) => b.type === "tool_use");
       const textBlocks = content.filter((b) => b.type === "text");
       assistantText = textBlocks.map((b) => b.text).join("\n").trim();

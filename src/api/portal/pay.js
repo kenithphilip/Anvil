@@ -92,7 +92,20 @@ export default async function handler(req, res) {
         payment_intent_data: {
           application_fee_amount: platformFeeBps > 0 ? Math.floor((amount * platformFeeBps) / 10_000) : 0,
           transfer_data: { destination: settings.stripe_account_id },
-          metadata: { invoice_id: inv.id, tenant_id: t.tenant_id, portal_token_id: t.id },
+          // Audit P1.1 (May 2026): the Stripe webhook reads
+          // metadata.anvil_tenant_id / metadata.anvil_invoice_id when
+          // reconciling a payment back to the invoice. The portal
+          // path used un-prefixed keys, so the webhook lookup
+          // returned null, no payment_records row was written, the
+          // invoice stayed at status='sent', and the dunning agent
+          // kept emailing customers who had already paid. Use the
+          // same prefixed keys as billing/stripe/checkout.js.
+          metadata: {
+            anvil_tenant_id: t.tenant_id,
+            anvil_invoice_id: inv.id,
+            anvil_invoice_number: inv.invoice_number,
+            anvil_portal_token_id: t.id,
+          },
         },
         success_url: (body.success_url || "/portal/" + body.token + "?paid=1"),
         cancel_url: (body.cancel_url || "/portal/" + body.token + "?paid=0"),

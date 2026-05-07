@@ -65,6 +65,10 @@ import plmSync          from "../plm/sync.js";
 import pushSend         from "../push/send.js";
 import inboundParse     from "../inbound/email/parse.js";
 import agentsRun        from "../agents/run.js";
+// Audit P6.8: reply-handling worker drains inbound_emails with
+// actionable classified_intent (payment_acknowledge, etc.) and
+// updates the matching agent_goals.
+import agentsHandleReplies from "../agents/handle_replies.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -135,6 +139,10 @@ export default async function handler(req, res) {
       // + daily-cap checks gate which campaigns actually fire (C.6).
       { name: "prospecting/run",      fn: prospectingRun, opts: { path: "/api/prospecting/run", method: "POST" } },
       { name: "inbound/email/parse",  fn: inboundParse, opts: { path: "/api/inbound/email/parse" } },
+      // Audit P6.8: drain inbound_emails with actionable
+      // classified_intent values (payment_acknowledge etc.) and
+      // update the matching agent_goals.
+      { name: "agents/handle_replies", fn: agentsHandleReplies, opts: { path: "/api/agents/handle_replies" } },
       ...RETRIES,
     ];
     const groupAlways = await runCronGroup(alwaysGroup);

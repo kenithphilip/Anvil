@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { ageLabel, fmtINRShort, useFetch, useHashParam } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTitle } from "../lib/primitives";
+import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Steps, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 
@@ -219,6 +219,19 @@ const WiredProjects = () => {
                 || "—"],
               ["Last update",    selected.updated_at ? ageLabel(selected.updated_at) : "—"],
             ]} />
+            {/* Audit P13.B.1.2: phase timeline. Reuses the Steps
+                primitive with the project_phase enum, with the
+                current row's index supplied so dots before it read
+                as completed and dots after as upcoming. */}
+            {selectedPhaseIdx >= 0 && (
+              <div style={{ marginTop: 14 }}>
+                <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 8 }}>Phase timeline</div>
+                <Steps
+                  items={PROJECT_PHASES.map((p) => PROJECT_PHASE_LABEL(p))}
+                  current={selectedPhaseIdx}
+                />
+              </div>
+            )}
           </Card>
         )}
 

@@ -248,6 +248,7 @@ import inboundWhatsappWebhook   from "./inbound/whatsapp/webhook.js";
 import inboundSlackWebhook      from "./inbound/slack/webhook.js";
 import inboundTeamsWebhook      from "./inbound/teams/webhook.js";
 import inboundChatConfigure     from "./inbound/chat/configure.js";
+import inboundProcessMessages   from "./inbound/process_messages.js";
 
 // Phase 5.1: voice agent (Vapi / Retell).
 import voiceConfigure           from "./voice/configure.js";
@@ -443,6 +444,7 @@ const STATIC_ROUTES = {
   "/inbound/slack/webhook":         inboundSlackWebhook,
   "/inbound/teams/webhook":         inboundTeamsWebhook,
   "/inbound/chat/configure":        inboundChatConfigure,
+  "/inbound/process_messages":      inboundProcessMessages,
 
   "/voice/configure":               voiceConfigure,
   "/voice/webhook":                 voiceWebhook,

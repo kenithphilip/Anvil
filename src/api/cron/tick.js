@@ -65,6 +65,12 @@ import plmSync          from "../plm/sync.js";
 import pushSend         from "../push/send.js";
 import inboundParse     from "../inbound/email/parse.js";
 import agentsRun        from "../agents/run.js";
+// Phase 2 of the audit roadmap: queue consumers that turn the
+// previously-dead-letter producer queues into working flows.
+import inboundEmailDraftOrders from "../inbound/email/draft_orders.js";
+import voiceProcessActions     from "../voice/process_actions.js";
+import inboundProcessMessages  from "../inbound/process_messages.js";
+import inboundAutoOcr          from "../inbound/auto_ocr.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -135,6 +141,17 @@ export default async function handler(req, res) {
       // + daily-cap checks gate which campaigns actually fire (C.6).
       { name: "prospecting/run",      fn: prospectingRun, opts: { path: "/api/prospecting/run", method: "POST" } },
       { name: "inbound/email/parse",  fn: inboundParse, opts: { path: "/api/inbound/email/parse" } },
+      // Phase 2 (audit): drain the four producer-without-consumer
+      // queues every tick. Order matters: the linked-email worker
+      // creates orders that the inbound_messages consumer also
+      // touches, but they pick from disjoint tables so concurrent
+      // execution is safe. auto_ocr runs after the order-creating
+      // workers so newly-linked documents are picked up the same
+      // tick.
+      { name: "inbound/email/draft_orders", fn: inboundEmailDraftOrders, opts: { path: "/api/inbound/email/draft_orders" } },
+      { name: "voice/process_actions",      fn: voiceProcessActions,     opts: { path: "/api/voice/process_actions" } },
+      { name: "inbound/process_messages",   fn: inboundProcessMessages,  opts: { path: "/api/inbound/process_messages" } },
+      { name: "inbound/auto_ocr",           fn: inboundAutoOcr,          opts: { path: "/api/inbound/auto_ocr" } },
       ...RETRIES,
     ];
     const groupAlways = await runCronGroup(alwaysGroup);

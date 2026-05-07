@@ -8,6 +8,31 @@ import { recordAudit, recordEvent } from "../_lib/audit.js";
 
 const ALLOWED_STATUS = new Set(["DRAFT", "PENDING_INTERNAL_APPROVAL", "SENT_TO_SUPPLIER", "SUPPLIER_ACK", "PRICE_CHANGED", "ETA_CONFIRMED", "DELAYED", "RECEIVED", "CLOSED", "CANCELLED"]);
 
+// Audit P7.4. Source PO status used to allow any-to-any
+// transitions (e.g., DRAFT -> RECEIVED in one PATCH). Forward-
+// progression with a few sideways transitions (an ack arriving
+// after a price-change scenario) are the realistic paths.
+// CANCELLED is allowed from any open status; CLOSED / CANCELLED
+// are terminal.
+const SPO_TRANSITIONS = {
+  DRAFT:                     new Set(["DRAFT", "PENDING_INTERNAL_APPROVAL", "SENT_TO_SUPPLIER", "CANCELLED"]),
+  PENDING_INTERNAL_APPROVAL: new Set(["PENDING_INTERNAL_APPROVAL", "SENT_TO_SUPPLIER", "DRAFT", "CANCELLED"]),
+  SENT_TO_SUPPLIER:          new Set(["SENT_TO_SUPPLIER", "SUPPLIER_ACK", "PRICE_CHANGED", "DELAYED", "CANCELLED"]),
+  SUPPLIER_ACK:              new Set(["SUPPLIER_ACK", "ETA_CONFIRMED", "PRICE_CHANGED", "DELAYED", "RECEIVED", "CANCELLED"]),
+  PRICE_CHANGED:             new Set(["PRICE_CHANGED", "SUPPLIER_ACK", "ETA_CONFIRMED", "DELAYED", "RECEIVED", "CANCELLED"]),
+  ETA_CONFIRMED:             new Set(["ETA_CONFIRMED", "DELAYED", "RECEIVED", "CANCELLED"]),
+  DELAYED:                   new Set(["DELAYED", "ETA_CONFIRMED", "RECEIVED", "CANCELLED"]),
+  RECEIVED:                  new Set(["RECEIVED", "CLOSED", "CANCELLED"]),
+  CLOSED:                    new Set(["CLOSED"]),
+  CANCELLED:                 new Set(["CANCELLED"]),
+};
+const isSpoTransitionAllowed = (from, to) => {
+  if (!from || !to) return true;
+  if (from === to) return true;
+  const allowed = SPO_TRANSITIONS[from];
+  return !!(allowed && allowed.has(to));
+};
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);
@@ -30,6 +55,17 @@ export default async function handler(req, res) {
       const patch = {};
       if (body.status) {
         if (!ALLOWED_STATUS.has(body.status)) return json(res, 400, { error: { message: "Invalid status" } });
+        // Audit P7.4: forward-progression state machine.
+        if (body.status !== prev.data.status && !isSpoTransitionAllowed(prev.data.status, body.status)) {
+          return json(res, 409, {
+            error: {
+              code: "INVALID_SPO_TRANSITION",
+              message: "Cannot move source PO from " + prev.data.status + " to " + body.status + " directly.",
+              from: prev.data.status,
+              to: body.status,
+            },
+          });
+        }
         patch.status = body.status;
       }
       if (body.acknowledged_price != null) patch.acknowledged_price = Number(body.acknowledged_price);

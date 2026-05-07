@@ -11,6 +11,31 @@ import { recordAudit } from "../_lib/audit.js";
 
 const STAGES = new Set(["QUALIFICATION","STRATEGY_CHECK","NEEDS_ANALYSIS","FOLLOW_UP","RFQ","INTERNAL_PROPOSAL","PROPOSAL_PRICE_QUOTE","NEGOTIATION_REVIEW","CLOSE_WON","CLOSE_LOST","REGRETTED"]);
 
+// Audit P7.4. The audit flagged that opportunities.PATCH let an
+// operator move from any stage to any stage (e.g.,
+// QUALIFICATION -> CLOSE_WON in one PATCH). Forward-progression
+// is the typical funnel; close-state transitions are allowed
+// from any open stage; same-state is a no-op. CLOSE_WON /
+// CLOSE_LOST / REGRETTED are terminal.
+const PIPELINE_ORDER = [
+  "QUALIFICATION", "STRATEGY_CHECK", "NEEDS_ANALYSIS", "FOLLOW_UP",
+  "RFQ", "INTERNAL_PROPOSAL", "PROPOSAL_PRICE_QUOTE", "NEGOTIATION_REVIEW",
+];
+const TERMINAL_STAGES = new Set(["CLOSE_WON", "CLOSE_LOST", "REGRETTED"]);
+
+const isStageTransitionAllowed = (from, to) => {
+  if (!from || !to) return true;
+  if (from === to) return true;
+  if (TERMINAL_STAGES.has(from)) return false;
+  if (TERMINAL_STAGES.has(to)) return true;
+  // Otherwise forward progression only (within the pipeline).
+  const fromIdx = PIPELINE_ORDER.indexOf(from);
+  const toIdx = PIPELINE_ORDER.indexOf(to);
+  if (fromIdx === -1 || toIdx === -1) return false;
+  // Allow one-step backward (operator says "we mis-staged this").
+  return toIdx >= fromIdx - 1;
+};
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);
@@ -63,6 +88,20 @@ export default async function handler(req, res) {
       for (const k of allowed) if (body[k] !== undefined) patch[k] = body[k];
       if (patch.stage && !STAGES.has(patch.stage)) return json(res, 400, { error: { message: "invalid stage" } });
       const before = await svc.from("opportunities").select("stage").eq("tenant_id", ctx.tenantId).eq("id", body.id).single();
+      // Audit P7.4: enforce stage transitions instead of letting
+      // an operator jump from QUALIFICATION to CLOSE_WON in one
+      // PATCH.
+      if (patch.stage && before.data && patch.stage !== before.data.stage
+          && !isStageTransitionAllowed(before.data.stage, patch.stage)) {
+        return json(res, 409, {
+          error: {
+            code: "INVALID_STAGE_TRANSITION",
+            message: "Cannot move opportunity from " + before.data.stage + " to " + patch.stage + " directly.",
+            from: before.data.stage,
+            to: patch.stage,
+          },
+        });
+      }
       const { data, error } = await svc.from("opportunities").update(patch).eq("tenant_id", ctx.tenantId).eq("id", body.id).select("*").single();
       if (error) throw new Error(error.message);
       const stageChanged = before.data && patch.stage && patch.stage !== before.data.stage;

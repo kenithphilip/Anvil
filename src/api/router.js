@@ -107,6 +107,7 @@ import ewayBillsExpire          from "./eway_bills/expire.js";
 import deliveryPromise         from "./delivery/promise.js";
 
 import documentsById           from "./documents/[id].js";
+import documentsEvidence       from "./documents/[id]/evidence.js";
 import documentsIndex          from "./documents/index.js";
 import documentsOcr            from "./documents/ocr.js";
 import documentsScan           from "./documents/scan.js";
@@ -746,7 +747,20 @@ const STATIC_ROUTES = {
 
 // Dynamic routes: prefix match. The handler receives the segment via
 // req.query.id (legacy contract from the [id].js naming).
+//
+// Two shapes:
+//   - { prefix } only:         /<group>/<id>            (one segment)
+//   - { prefix, suffix }:      /<group>/<id>/<suffix>   (two segments)
+//
+// Suffix entries are tried in order BEFORE the corresponding
+// prefix-only entry so the more specific match wins. The legacy
+// router rejected anything with an extra "/", which is what the
+// "does not match a nested path under a dynamic prefix" test
+// asserts against /orders/abc/extra; that test still passes
+// because no SUFFIX entry exists for /orders.
 const DYNAMIC_ROUTES = [
+  // "/documents/<id>/evidence" -> per-document OCR bbox readback.
+  { prefix: "/documents/",   suffix: "/evidence", handler: documentsEvidence, param: "id" },
   // "/documents/<id>" -> documentsById, sets req.query.id
   { prefix: "/documents/",   handler: documentsById,  param: "id" },
   // "/orders/<id>"
@@ -765,13 +779,17 @@ const resolve = (pathname) => {
     return { handler: STATIC_ROUTES[pathname], params: {} };
   }
   for (const route of DYNAMIC_ROUTES) {
-    if (pathname.startsWith(route.prefix)) {
-      const tail = pathname.slice(route.prefix.length);
-      // Don't match deeper paths (e.g. /orders/abc/extra). The legacy
-      // [id].js handlers expect a single trailing segment.
-      if (!tail || tail.includes("/")) continue;
-      return { handler: route.handler, params: { [route.param]: tail } };
+    if (!pathname.startsWith(route.prefix)) continue;
+    let tail = pathname.slice(route.prefix.length);
+    if (route.suffix) {
+      if (!tail.endsWith(route.suffix)) continue;
+      tail = tail.slice(0, -route.suffix.length);
     }
+    // Don't match deeper paths than expected (e.g. /orders/abc/extra
+    // when no suffix is configured). The legacy [id].js handlers
+    // expect a single trailing segment.
+    if (!tail || tail.includes("/")) continue;
+    return { handler: route.handler, params: { [route.param]: tail } };
   }
   return null;
 };

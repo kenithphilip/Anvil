@@ -77,6 +77,18 @@ describe("router dispatch", () => {
     expect(req.query.id).toBe("doc-42");
   });
 
+  it("matches /api/documents/<id>/evidence as a 2-segment dynamic route", async () => {
+    // Audit P13.B.3 follow-up. The bbox-overlay endpoint nests
+    // under /documents/<id>/evidence; the resolver must extract
+    // the id and dispatch to the evidence handler. Verifies the
+    // suffix-aware DYNAMIC_ROUTES branch in router.resolve().
+    const { req, res } = mockReqRes("/api/documents/doc-77/evidence");
+    try { await dispatch(req, res); } catch (_) {}
+    expect(req.query.id).toBe("doc-77");
+    // 404 would mean we fell through to the unknown-route reply.
+    expect(res.statusCode).not.toBe(404);
+  });
+
   it("static /api/orders takes precedence over the dynamic /api/orders/ prefix", async () => {
     // /orders (no trailing /<id>) hits the static index handler.
     const { req, res } = mockReqRes("/api/orders");

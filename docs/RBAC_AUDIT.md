@@ -147,6 +147,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/docai/route.js | read |
 | src/api/docai/runs.js | read |
 | src/api/documents/[id].js | read, admin |
+| src/api/documents/[id]/evidence.js | read |
 | src/api/documents/index.js | read |
 | src/api/documents/ocr.js | write |
 | src/api/documents/scan.js | write |

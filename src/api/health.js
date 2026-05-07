@@ -69,6 +69,66 @@ const probeDb = async () => {
   }
 };
 
+// Audit P5.1 (May 2026). Surface cron freshness via the
+// cron_health table populated by recordCronHeartbeat. Each
+// worker has an expected cadence; we mark `stale` if last_run_at
+// is older than the cadence + a 50% grace period. The 5-min
+// /api/cron/tick lives on cron-job.org per docs/CRONS.md, so a
+// stale tick almost always means the external scheduler stopped
+// firing. health.cron.summary is the single boolean on-call
+// watches; .workers has per-worker detail.
+const CRON_EXPECTED_MAX_AGE_MS = {
+  "cron/tick":  10 * 60 * 1000,           // every 5 min, alert > 10 min stale
+  "cron/daily": 30 * 60 * 60 * 1000,      // once a day, alert > 30 h stale
+  // Per-sub-handler freshness inherits from the parent's cadence
+  // unless overridden. Sub-handlers that run only on certain
+  // minutes (ERP syncs every 30 min, agents every 60 min) get a
+  // looser bound.
+  "agents/run":         2 * 60 * 60 * 1000,
+  "eval/agent_eval":    2 * 60 * 60 * 1000,
+  "default":            10 * 60 * 1000,
+};
+
+const probeCron = async () => {
+  try {
+    const svc = serviceClient();
+    const r = await svc.from("cron_health").select("*").order("last_run_at", { ascending: false });
+    if (r.error) throw new Error(r.error.message);
+    const rows = r.data || [];
+    const now = Date.now();
+    const workers = rows.map((row) => {
+      const ageMs = now - new Date(row.last_run_at).getTime();
+      const maxAge = CRON_EXPECTED_MAX_AGE_MS[row.worker] || CRON_EXPECTED_MAX_AGE_MS.default;
+      const stale = ageMs > maxAge;
+      return {
+        worker: row.worker,
+        last_run_at: row.last_run_at,
+        last_status: row.last_status,
+        consecutive_failures: row.consecutive_failures || 0,
+        age_seconds: Math.round(ageMs / 1000),
+        stale,
+      };
+    });
+    const tick = workers.find((w) => w.worker === "cron/tick");
+    const daily = workers.find((w) => w.worker === "cron/daily");
+    return {
+      configured: true,
+      tick_known: !!tick,
+      daily_known: !!daily,
+      tick_stale: !!tick?.stale,
+      daily_stale: !!daily?.stale,
+      any_stale: workers.some((w) => w.stale),
+      workers,
+    };
+  } catch (err) {
+    return {
+      configured: false,
+      error: String(err?.message || err).slice(0, 200),
+      workers: [],
+    };
+  }
+};
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);
@@ -82,7 +142,7 @@ export default async function handler(req, res) {
     return json(res, 200, cached.payload);
   }
 
-  const dbOk = await probeDb();
+  const [dbOk, cron] = await Promise.all([probeDb(), probeCron()]);
   const integrations = INTEGRATIONS.map((spec) => ({
     id: spec.id,
     label: spec.label,
@@ -93,6 +153,7 @@ export default async function handler(req, res) {
   const payload = {
     db_ok: dbOk,
     integrations,
+    cron,
     runtime: {
       region: process.env.VERCEL_REGION || "local",
       commit: process.env.VERCEL_GIT_COMMIT_SHA || null,

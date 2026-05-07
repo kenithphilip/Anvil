@@ -613,6 +613,15 @@
   const customers = {
     list: async () => apiFetch("/api/customers"),
     upsert: async (payload) => apiFetch("/api/customers", { method: "POST", body: payload }),
+    // Lists customer_locations across the tenant. Used by the
+    // so-intake "new customer" dialog's address picker so the
+    // operator can pick an existing address (any customer's) instead
+    // of re-typing one that's already in the database. Optional
+    // params: customer_id, q (substring search).
+    listLocations: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/customer_locations" + (qs ? "?" + qs : ""));
+    },
   };
 
   const aliases = {

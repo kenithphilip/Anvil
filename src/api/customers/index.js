@@ -2,6 +2,66 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { safeAwait } from "../_lib/safe-thenable.js";
+
+// Best-effort parser that pulls structured fields out of a multi-line
+// address blob. The intake dialog gives us free-text; the
+// customer_locations table wants discrete columns. We don't try to
+// be clever, just split on newlines and pick the last non-empty line
+// as city + the first 6-digit token as pincode. Returns whatever we
+// can recover; the rest stay null.
+const parseAddressBlob = (text) => {
+  if (!text) return null;
+  const t = String(text).trim();
+  if (!t) return null;
+  const lines = t.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return null;
+  const pincode = (t.match(/\b\d{6}\b/) || [])[0] || null;
+  // Heuristic: city is usually the line BEFORE the pincode, or the
+  // last non-empty line if no pincode.
+  let city = null;
+  if (pincode) {
+    for (const line of lines) {
+      if (line.includes(pincode)) {
+        // The city is whatever's on the same line minus the pincode
+        // and any trailing punctuation.
+        const cleaned = line.replace(pincode, "").replace(/[,\-]+$/, "").trim();
+        if (cleaned) city = cleaned;
+        break;
+      }
+    }
+  }
+  if (!city) city = lines[lines.length - 1];
+  return {
+    address_line1: lines[0] || null,
+    address_line2: lines.length > 2 ? lines.slice(1, -1).join(", ") : null,
+    city,
+    pincode,
+  };
+};
+
+// Idempotent: insert a customer_locations row for the parsed
+// address. If a row with the same (tenant, customer, location_code)
+// already exists, the unique constraint upserts without duplicating.
+// Best-effort: a failure here doesn't fail the whole customer save.
+const upsertLocation = async (svc, tenantId, customer, kind, addressText, gstin, stateCode) => {
+  const parsed = parseAddressBlob(addressText);
+  if (!parsed) return;
+  const code = kind === "ship" ? "default_ship" : "default_bill";
+  await safeAwait(svc.from("customer_locations").upsert({
+    tenant_id: tenantId,
+    customer_id: customer.id,
+    location_code: code,
+    plant_name: customer.customer_name || null,
+    gstin: gstin || customer.gstin || null,
+    state_code: stateCode || customer.state_code || null,
+    address_line1: parsed.address_line1,
+    address_line2: parsed.address_line2,
+    city: parsed.city,
+    pincode: parsed.pincode,
+    is_default: true,
+  }, { onConflict: "tenant_id,customer_id,location_code" }), "customer_locations_upsert");
+};
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -83,6 +143,20 @@ export default async function handler(req, res) {
         throw new Error(upsert.error.message);
       }
       const customer = upsert.data;
+
+      // Mirror bill_to / ship_to into customer_locations so the
+      // e-invoice handler's JOIN finds the address fields. The text
+      // blob stays on customers (used by the so-intake summary
+      // panel); the structured row goes here so downstream consumers
+      // (e-invoice, GST validation, shipping label) have discrete
+      // address_line1/city/pincode columns to read. Idempotent.
+      if (body.bill_to) {
+        await upsertLocation(svc, ctx.tenantId, customer, "bill", body.bill_to, body.gstin, body.state_code);
+      }
+      if (body.ship_to && body.ship_to !== body.bill_to) {
+        await upsertLocation(svc, ctx.tenantId, customer, "ship", body.ship_to, body.gstin, body.state_code);
+      }
+
       if (body.profile) {
         const newVersion = (Number(body.profile.version || 0) || 0) + 1;
         await svc.from("customer_format_profiles").update({ is_current: false }).eq("tenant_id", ctx.tenantId).eq("customer_id", customer.id).eq("is_current", true);

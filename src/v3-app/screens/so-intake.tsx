@@ -41,6 +41,33 @@ const WiredSOIntake = () => {
   const [newCustomerErr, setNewCustomerErr] = u(null);
   const [newCustomerBusy, setNewCustomerBusy] = u(false);
 
+  // Address picker. The user's spec says ship-to / bill-to should be
+  // a "relational object from other existing addresses of other
+  // customers in the database" -- i.e., the operator can pick an
+  // existing customer_locations row instead of re-typing it.
+  // Fetched once when the dialog opens.
+  const [locationsList, setLocationsList] = u<{ data: any; loading: boolean }>({ data: null, loading: false });
+  e(() => {
+    if (!newCustomerOpen) return;
+    let cancelled = false;
+    setLocationsList({ data: null, loading: true });
+    Promise.resolve(ObaraBackend?.customers?.listLocations?.() || Promise.resolve({ locations: [] }))
+      .then((data) => { if (!cancelled) setLocationsList({ data, loading: false }); })
+      .catch(() => { if (!cancelled) setLocationsList({ data: { locations: [] }, loading: false }); });
+    return () => { cancelled = true; };
+  }, [newCustomerOpen]);
+  const locationRows: any[] = (locationsList.data?.locations) || [];
+  const formatLocation = (l: any) => {
+    const tag = l.location_code === "default_ship" ? "ship-to"
+              : l.location_code === "default_bill" ? "bill-to"
+              : l.location_code || "loc";
+    const head = (l.customer_name || "?") + " (" + tag + ")";
+    const addr = [l.address_line1, l.city, l.pincode].filter(Boolean).join(", ");
+    return head + (addr ? " - " + addr : "");
+  };
+  const addressTextFromLocation = (l: any) =>
+    [l.address_line1, l.address_line2, l.city, l.pincode].filter(Boolean).join("\n");
+
   const submitNewCustomer = async () => {
     setNewCustomerErr(null);
     if (!newCustomer.customer_name.trim()) { setNewCustomerErr({ message: "Customer name is required." }); return; }
@@ -521,15 +548,78 @@ const WiredSOIntake = () => {
                        onChange={(e) => setNewCustomer((c) => ({ ...c, margin_floor_pct: e.target.value }))} />
               </div>
               <div style={{ gridColumn: "1 / -1" }}>
-                <label htmlFor="nc-bill" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Bill-to address</label>
-                <textarea id="nc-bill" className="input" rows={2} style={{ width: "100%", padding: 6 }}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                  <label htmlFor="nc-bill" className="mono-sm" style={{ color: "var(--ink-3)" }}>Bill-to address</label>
+                  {locationRows.length > 0 && (
+                    <select
+                      className="select mono-sm"
+                      style={{ height: 24, fontSize: 11, padding: "0 6px" }}
+                      value=""
+                      aria-label="Pick existing bill-to address"
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        if (!id) return;
+                        const loc = locationRows.find((l) => l.id === id);
+                        if (!loc) return;
+                        setNewCustomer((c) => ({
+                          ...c,
+                          bill_to: addressTextFromLocation(loc),
+                          gstin: c.gstin || loc.gstin || "",
+                          state_code: c.state_code || loc.state_code || "",
+                        }));
+                      }}
+                    >
+                      <option value="">{locationsList.loading ? "loading addresses..." : "or pick existing..."}</option>
+                      {locationRows.map((l) => (
+                        <option key={l.id} value={l.id}>{formatLocation(l)}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                <textarea id="nc-bill" className="input" rows={3} style={{ width: "100%", padding: 6 }}
                           value={newCustomer.bill_to}
+                          placeholder="Plot 12, MIDC, Pune 411018"
                           onChange={(e) => setNewCustomer((c) => ({ ...c, bill_to: e.target.value }))} />
               </div>
               <div style={{ gridColumn: "1 / -1" }}>
-                <label htmlFor="nc-ship" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Ship-to address (defaults to bill-to if blank)</label>
-                <textarea id="nc-ship" className="input" rows={2} style={{ width: "100%", padding: 6 }}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                  <label htmlFor="nc-ship" className="mono-sm" style={{ color: "var(--ink-3)" }}>Ship-to address (defaults to bill-to if blank)</label>
+                  <div className="row gap-sm">
+                    {newCustomer.bill_to && newCustomer.bill_to !== newCustomer.ship_to && (
+                      <button
+                        type="button"
+                        className="link-btn"
+                        style={{ fontSize: 11, color: "var(--ink-3)" }}
+                        onClick={() => setNewCustomer((c) => ({ ...c, ship_to: c.bill_to }))}
+                      >
+                        same as bill-to
+                      </button>
+                    )}
+                    {locationRows.length > 0 && (
+                      <select
+                        className="select mono-sm"
+                        style={{ height: 24, fontSize: 11, padding: "0 6px" }}
+                        value=""
+                        aria-label="Pick existing ship-to address"
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          if (!id) return;
+                          const loc = locationRows.find((l) => l.id === id);
+                          if (!loc) return;
+                          setNewCustomer((c) => ({ ...c, ship_to: addressTextFromLocation(loc) }));
+                        }}
+                      >
+                        <option value="">{locationsList.loading ? "loading addresses..." : "or pick existing..."}</option>
+                        {locationRows.map((l) => (
+                          <option key={l.id} value={l.id}>{formatLocation(l)}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
+                <textarea id="nc-ship" className="input" rows={3} style={{ width: "100%", padding: 6 }}
                           value={newCustomer.ship_to}
+                          placeholder="leave blank to use bill-to"
                           onChange={(e) => setNewCustomer((c) => ({ ...c, ship_to: e.target.value }))} />
               </div>
             </div>

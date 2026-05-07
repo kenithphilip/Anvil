@@ -24,7 +24,13 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return json(res, 405, { error: { message: "Method not allowed" } });
   try {
     const ctx = await resolveContext(req);
-    requirePermission(ctx, "approve");
+    // Read-side operation in practice: the caller (so-intake's auto-
+    // extract on PO upload) just needs the structured extraction so
+    // they can match-or-prefill the customer dialog. Was "approve"
+    // which locked sales engineers out of the intake flow with an
+    // opaque 403. Falls back to "write" so anyone who can create a
+    // sales order can also auto-extract.
+    requirePermission(ctx, "write");
     const body = await readBody(req);
     const svc = serviceClient();
     const settings = await tenantSettings(svc, ctx.tenantId);

@@ -248,11 +248,14 @@ import inboundWhatsappWebhook   from "./inbound/whatsapp/webhook.js";
 import inboundSlackWebhook      from "./inbound/slack/webhook.js";
 import inboundTeamsWebhook      from "./inbound/teams/webhook.js";
 import inboundChatConfigure     from "./inbound/chat/configure.js";
+import inboundProcessMessages   from "./inbound/process_messages.js";
+import inboundAutoOcr           from "./inbound/auto_ocr.js";
 
 // Phase 5.1: voice agent (Vapi / Retell).
 import voiceConfigure           from "./voice/configure.js";
 import voiceWebhook             from "./voice/webhook.js";
 import voiceHandoff             from "./voice/handoff.js";
+import voiceProcessActions      from "./voice/process_actions.js";
 
 import kbAsk                   from "./kb/ask.js";
 
@@ -283,6 +286,7 @@ import inboundEmailWebhook     from "./inbound/email/webhook.js";
 import inboundEmailParse       from "./inbound/email/parse.js";
 import inboundEmailThreads     from "./inbound/email/threads.js";
 import inboundEmailConfigure   from "./inbound/email/configure.js";
+import inboundEmailDraftOrders from "./inbound/email/draft_orders.js";
 
 import docaiExtract            from "./docai/extract.js";
 import docaiCorrection         from "./docai/correction.js";
@@ -441,10 +445,13 @@ const STATIC_ROUTES = {
   "/inbound/slack/webhook":         inboundSlackWebhook,
   "/inbound/teams/webhook":         inboundTeamsWebhook,
   "/inbound/chat/configure":        inboundChatConfigure,
+  "/inbound/process_messages":      inboundProcessMessages,
+  "/inbound/auto_ocr":              inboundAutoOcr,
 
   "/voice/configure":               voiceConfigure,
   "/voice/webhook":                 voiceWebhook,
   "/voice/handoff":                 voiceHandoff,
+  "/voice/process_actions":         voiceProcessActions,
   "/kb/ask":                        kbAsk,
   "/esign/connect":                 esignConnect,
   "/esign/envelopes":               esignEnvelopes,
@@ -467,6 +474,7 @@ const STATIC_ROUTES = {
   "/inbound/email/parse":           inboundEmailParse,
   "/inbound/email/threads":         inboundEmailThreads,
   "/inbound/email/configure":       inboundEmailConfigure,
+  "/inbound/email/draft_orders":    inboundEmailDraftOrders,
   "/docai/extract":                 docaiExtract,
   "/docai/correction":              docaiCorrection,
   "/docai/runs":                    docaiRuns,

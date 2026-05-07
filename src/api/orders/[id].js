@@ -2,6 +2,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
+import { evaluateApprovalsForOrder } from "../_lib/approval-evaluator.js";
 
 const APPROVE_INPUTS = [
   "status", "approval", "payload_hash", "result",
@@ -128,7 +129,32 @@ export default async function handler(req, res) {
       if (error) throw new Error(error.message);
       await recordAudit(ctx, { action: body.status === "APPROVED" ? "approve_order" : "update_order", objectType: "order", objectId: id, before: prev, after: data, payloadHash: data.payload_hash, reason: body.reason });
       await recordEvent(ctx, { caseId: id, eventType: body.status === "APPROVED" ? "manager_approved" : "order_updated", objectType: "order", objectId: id, detail: { status: data.status, intendedAction } });
-      return json(res, 200, { order: data });
+
+      // Audit P2.6: when an order enters PENDING_REVIEW, evaluate
+      // the tenant's quote_approval_thresholds and create the
+      // matching pending quote_approvals rows. The thresholds had
+      // been a configuration table with no evaluator since
+      // migration 006; this closes the loop. Best-effort: failures
+      // here log but do not abort the user-visible PATCH.
+      let approvalsCreated = null;
+      if (body.status === "PENDING_REVIEW" && prev.status !== "PENDING_REVIEW") {
+        const ev = await evaluateApprovalsForOrder(svc, ctx.tenantId, data);
+        approvalsCreated = ev.created || [];
+        if (ev.error) {
+          // eslint-disable-next-line no-console
+          console.warn("[orders/[id]] approval evaluator failed: " + ev.error);
+        }
+        if (approvalsCreated.length) {
+          await recordAudit(ctx, {
+            action: "approval_thresholds_evaluated",
+            objectType: "order",
+            objectId: id,
+            detail: "created=" + approvalsCreated.length,
+          });
+        }
+      }
+
+      return json(res, 200, { order: data, approvals_created: approvalsCreated });
     }
 
     if (req.method === "DELETE") {

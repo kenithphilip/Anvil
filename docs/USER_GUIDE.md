@@ -571,3 +571,198 @@ connected. Errors point to a specific feature (e.g.,
 Filter orders to those waiting on the current user's role: sales engineer
 sees `BLOCKED` orders, sales manager sees `PENDING_REVIEW`, etc. Clicking
 through opens the order overview directly.
+
+## Lead scoring (Phase 7.1)
+
+Open `Sales -> Leads`. Every row carries a chip in the new
+**Score** column:
+
+- `hot 80` (green): the AI scorer rates the lead 75 or higher.
+  Recent activity, clear budget, fast reply cadence.
+- `warm 50` (amber): one or two warning signals (slow response,
+  vague requirements). Worth a follow-up.
+- `cool 20` (info): low-confidence lead. Park or re-qualify.
+- `score?` (faded): the lead was created before the scorer ran
+  or hasn't been re-scored in 7+ days.
+
+Click a row to open the detail card. The header has a
+**Score lead / Re-score** button that calls
+`/api/sales/score_lead` for that one row and updates the chip
+inline.
+
+The **Sort by score** toggle in the title bar pulls the highest
+score to the top with unsourced leads at the bottom.
+
+## Opportunity probability (Phase 7.2)
+
+Open `Sales -> Opportunities`. Each kanban card shows an extra
+chip after the stage chip:
+
+- `p82` (green): AI close-probability is 70% or higher.
+- `p55` (amber): mid-funnel signal.
+- `p25` (info): low likelihood of close.
+- `p?` (faded): not predicted yet.
+
+Click a card to open the detail. The header has
+**Predict probability / Re-predict** which calls
+`/api/sales/predict_opportunity`.
+
+The **Sort by probability** toggle re-sorts each kanban column
+desc by AI probability so the most-likely-to-close opps float
+to the top of every stage.
+
+## Customer health (Phase 7.3)
+
+Open `Master -> Customers`. The new **Health** column shows
+each customer's latest band:
+
+- `green 84`: paying on time, recent activity, no anomalies.
+- `yellow 56`: one or two warning signals (slow pay, AR aging,
+  declining order volume).
+- `red 30`: multiple warnings (missed payments, abandoned
+  orders, dormant 90+ days).
+- `health?`: not scored yet, or the cron hasn't run.
+
+Hovering shows the AI's reasoning summary. Click a row to open
+the detail card and use **Score health** in the header to
+re-run for that single customer.
+
+## Customer duplicate review (Phase 9.5)
+
+Open `#/customer-duplicates` (or the Quality nav once it's
+linked). The screen shows groups of probable-duplicate
+customer rows surfaced by three signals:
+
+- **GSTIN match** (green): two rows share the same registered
+  GST identifier. High-confidence duplicate.
+- **Name match** (amber): canonical-name match (case-
+  insensitive, alpha-num only, common suffixes stripped).
+- **Vendor-prefix mismatch** (info): customer keys like
+  `ns:1234` vs `sap_id:5678` with the same legal name.
+
+For each group:
+
+1. Pick a row with the **Primary** radio (defaults to the
+   row with the longest customer_name).
+2. Tick **Merge?** for each duplicate to fold into the
+   primary.
+3. Click **Merge N into primary**. Confirm the destructive
+   action.
+
+Every row pointing at the duplicates (orders, invoices,
+contacts, communications, audit events) repoints to the
+primary; the duplicate rows are deleted. Cannot be undone.
+
+## Anomaly explainer (Phase 5.4)
+
+Open `Quality -> Findings`. Each row in the open / resolved /
+suppressed tabs has an **explain** button. Click it to call
+`/api/anomaly/explain?finding_id=<id>` and surface the Haiku
+explanation inline below the row:
+
+- **Why**: one-sentence English explanation of why the rule
+  fired given this row's evidence.
+- **Suggested action**: the recommended operator response.
+
+Click **hide** to collapse. The explanation is cached for 24
+hours; a re-click surfaces the cached response without paying
+the model cost.
+
+## Credit + debit notes (Phase 7.5)
+
+Open `#/credit-notes`. Lifecycle:
+`DRAFT -> ISSUED -> ACKNOWLEDGED` with `CANCELLED` reachable
+from any non-terminal state.
+
+To draft a new note, click **New credit/debit note**:
+
+1. Pick **kind** (credit or debit) and **reason**.
+2. Link to a source `invoice_id` OR `einvoice_id`.
+3. Add line items as JSON. The note's totals compute on save.
+4. Click **Create draft**.
+
+Per-row buttons: **Issue** (DRAFT -> ISSUED), **Mark ack**
+(ISSUED -> ACKNOWLEDGED), **Cancel** (any -> CANCELLED).
+
+Note numbers auto-allocate: `CN-YYYYMM-####` for credits,
+`DN-YYYYMM-####` for debits, scoped per tenant.
+
+## Recurring invoices (Phase 7.6)
+
+Open `#/recurring-invoices`. Schedule a recurring billing
+cadence per contract:
+
+1. Click **New schedule**.
+2. Pick the customer, optional contract, and cadence
+   (`MONTHLY | QUARTERLY | BIANNUAL | ANNUAL`).
+3. Set the start date and (optionally) end date and max-
+   invoices cap.
+4. Click **Create schedule**.
+
+The daily cron at `/api/cron/daily` materialises one
+`invoices` row per cycle, advances `next_invoice_date` by the
+cadence, and auto-cancels on `end_date` / `max_invoices`. The
+**Last error** column surfaces stuck rows so an operator can
+intervene.
+
+Per-row controls: **Pause / Resume / Cancel**.
+
+## e-Way bills (Phase 7.7)
+
+Open `#/eway-bills`. NIC-issued transport authorisation
+lifecycle:
+`DRAFT -> PENDING_NIC -> GENERATED -> CANCELLED|EXPIRED` with
+`REJECTED` reachable from PENDING_NIC.
+
+To compose a new EWB:
+
+1. Click **New e-way bill**.
+2. Link to a source `invoice_id` OR `einvoice_id`.
+3. Fill the doc / vehicle / transporter / value sections.
+4. Click **Create draft**.
+
+To send to NIC, click **Send to NIC** on a DRAFT row. When
+`EWB_API_URL` is unset, the row stays at `PENDING_NIC` and an
+operator can mark generated manually with the IRN once the
+GSTN portal flow is complete.
+
+Per-row controls: **Vehicle** (update vehicle on a GENERATED
+row), **Cancel** (within 24h of generation, requires reason
+code 1-4), **Hide / Explain** (on findings).
+
+## Catalog semantic search (Phase 8.4)
+
+The catalog search box (used in BOM import, intake, and the
+SO workspace) now accepts free-text queries and returns
+semantic + lexical hits side by side. A query like
+`"4-pole motor 1.5 kW IE3"` matches a part whose description
+is `"Three-phase induction motor 1.5 kW, IE3 efficiency,
+4-pole"` even though no individual word overlaps.
+
+Each result row shows a **match** label:
+
+- `direct`: substring match on `part_no` or `description`.
+- `synonym`: matched a registered alias / synonym.
+- `semantic`: cosine-distance match against the embedding
+  index. Only available when `VOYAGE_API_KEY` is configured.
+
+When `VOYAGE_API_KEY` isn't set the semantic path falls back
+silently to lexical, so the search box always works.
+
+To populate embeddings for a tenant on first use, run
+`POST /api/catalog/embed` (admin) or wait for the daily cron;
+the indexer drains rows with `embedding IS NULL` in 64-row
+batches up to 16 batches per run.
+
+## PAY_LINK substitution in dunning (Phase 8.1)
+
+Every dunning email queued by `agents/ar_collect` now
+substitutes the `[PAY_LINK]` placeholder with a real per-
+invoice portal URL. The dunning agent issues a fresh portal
+token (scope `["invoices", "pay"]`, 30-day TTL) on each tier
+escalation; the customer can pay through `/portal/<token>`
+straight from the reminder.
+
+When `PORTAL_BASE_URL` is unset the substitution drops a
+"reply to this email and we will send one" fallback so the
+customer never sees a literal `[PAY_LINK]` token.

@@ -1130,3 +1130,213 @@ The matching mirror tables are
 `<prefix>_{customers, items, sales_orders, sync_state, sync_runs,
 retry_queue}` with RLS scoping by `tenant_id`. See migrations
 044 → 051 for the per-ERP DDL.
+
+## Phase 5 endpoints (operational hardening)
+
+Audit Phase 5. New surfaces around cron health, prompt-injection
+testing, inbound email classification, and anomaly explainability.
+
+### `GET /api/health` — read
+
+Returns the cron heartbeat snapshot. `{ workers: [{ worker,
+last_run_at, last_status, last_duration_ms, consecutive_failures,
+metadata, stale }] }`. A worker is `stale` when its
+`last_run_at` is older than the worker's expected cadence + a
+buffer. Used by uptime monitors to alarm on a halted cron.
+
+### `POST /api/security/inject_test` — admin
+
+Audit P5.2. Replaces the in-memory shadow firewall with a real
+HTTP call to `/api/claude/messages` so every published catalogue
+entry runs through the live Persona-style guard. Body:
+`{ subset?: ["override", "exfil", ...], limit? }`. Returns
+`{ summary, findings[] }` with each finding's `firewall_decision`,
+`bypassed`, and `tools_used` flags. Bypass attempts are logged
+to `model_routing_log.firewall_bypassed = true` so the post-hoc
+tail catches anything that slips past the live guard.
+
+### Inbound email classifier (Phase 5.3)
+
+Embedded in `/api/inbound/email/parse`: every received row is
+classified through Haiku on every parse pass. Schema columns
+`classified_intent`, `classification_confidence`,
+`classification_model`, `classified_at` populate. Intents:
+`rfq | purchase_order | po_revision | quote_accept |
+payment_acknowledge | delivery_query | complaint |
+support_question | out_of_office | marketing | phishing | other`.
+Confidence threshold for actionable routing is 0.55; below that
+the parse falls back to the regex `looksLikeRfq()` heuristic.
+Phishing / marketing / out_of_office route to `archived` so the
+operator's queue stays clean.
+
+### `GET /api/anomaly/explain?finding_id=<uuid>` — read
+
+Audit P5.4. Haiku-tier on-demand explainer for a single finding.
+Returns `{ explanation, recommendation }`. Cached on the
+finding row (`finding_id` -> Haiku response) for 24h so a
+second click is free.
+
+## Phase 6 endpoints (quotes + LLM dunning + reply intake)
+
+### `GET|POST|PATCH|DELETE /api/quotes`
+
+First-class quote object. Lifecycle:
+`DRAFT -> PENDING_INTERNAL_APPROVAL -> SENT -> ACCEPTED |
+DECLINED | EXPIRED | CONVERTED -> CANCELLED`.
+
+- `GET ?id=<uuid>` returns one quote; without `id` lists.
+- `POST` creates a draft (`{ customer_id, line_items, currency,
+  validity_days, ... }`).
+- `PATCH ?id=<uuid>` edits fields (`{ line_items, ... }`),
+  enforces transitions on `{ status }`, or `{ action: "revise" }`
+  produces a new version row.
+- `DELETE ?id=<uuid>` soft-cancels (status -> CANCELLED).
+
+### `POST /api/quotes/send`
+
+Body `{ id, to?, subject?, body?, share_link? }`. Renders the
+quote PDF, issues a portal token (scope `["quotes",
+"accept_quote"]`), drafts a `communications` row, and flips the
+quote to `SENT`.
+
+### `POST /api/quotes/convert`
+
+Body `{ id }`. ACCEPTED quote -> DRAFT order in one click.
+Idempotent: returns the existing order row when the quote
+already has one.
+
+### `POST /api/quotes/expire` (cron-only)
+
+Daily sweep that flips lapsed `SENT` quotes whose
+`expires_at < now()` to `EXPIRED`. Wired into `/api/cron/daily`.
+
+### `POST /api/portal/accept_quote`
+
+Customer-facing portal endpoint. Body
+`{ token, quote_id?, order_id? }`. Accepts the quote without
+needing an authenticated session; the portal token's scope
+gates which quote is accessible.
+
+### `POST /api/agents/handle_replies` (cron-only)
+
+Audit P6.8. Drains `inbound_emails` rows with
+`classified_intent = payment_acknowledge` and pauses the
+matching `ar_collect` agent goal for 14 days. Wired into
+`/api/cron/tick`.
+
+## Phase 7 endpoints (AI scoring + state machines + commercial docs)
+
+### `GET|POST /api/sales/score_lead`
+
+Audit P7.1. `?id=<uuid>` runs the Haiku lead scorer for one
+lead; without id, `POST` drains every lead lacking
+`ai_score`. Returns `{ score, band: hot|warm|cool, reasoning,
+positive_signals, negative_signals }` and persists to
+`leads.ai_score*` columns.
+
+### `GET|POST /api/sales/predict_opportunity`
+
+Audit P7.2. `?id=<uuid>` runs Haiku close-probability for one
+opportunity; pulls the customer's historical win-rate as a
+feature. Persists to `opportunities.ai_probability*`.
+
+### `GET|POST /api/customers/health_score`
+
+Audit P7.3. `?id=<uuid>` for a single tenant-customer; `POST`
+without id drains 50 rows per pass with a 7-day cooldown.
+Returns `{ score, band: green|yellow|red, reasoning,
+positive_signals, negative_signals }` and persists to
+`customers.ai_health_*`.
+
+### `GET|POST|PATCH|DELETE /api/credit_notes`
+
+Audit P7.5. Lifecycle:
+`DRAFT -> ISSUED -> ACKNOWLEDGED -> CANCELLED`. Auto-numbering
+`CN-YYYYMM-####` for credits, `DN-YYYYMM-####` for debits.
+Reasons: `price_correction | short_shipment | tax_correction |
+goods_returned | discount_applied | rebate | other`.
+
+### `GET|POST|PATCH|DELETE /api/billing/recurring`
+
+Audit P7.6. CRUD for recurring invoice schedules. Cadence:
+`MONTHLY | QUARTERLY | BIANNUAL | ANNUAL`. Body fields:
+`cadence, amount, currency, customer_id, contract_id?,
+start_date, end_date?, max_invoices?`. PATCH supports
+`status: PAUSED|ACTIVE|CANCELLED`.
+
+### `POST /api/billing/recurring_cron` (cron-only)
+
+Drains `recurring_invoice_schedules` where
+`status = ACTIVE AND next_invoice_date <= today`. For each row,
+allocates an invoice number via `next_invoice_number`, builds an
+`invoices` row, advances `next_invoice_date` by cadence,
+auto-cancels on `max_invoices` or `end_date`. Wired into
+`/api/cron/daily`.
+
+### `GET|POST|PATCH|DELETE /api/eway_bills`
+
+Audit P7.7. NIC e-Way bill lifecycle:
+`DRAFT -> PENDING_NIC -> GENERATED -> CANCELLED|EXPIRED` with
+`REJECTED` reachable from `PENDING_NIC`. PATCH actions:
+`send_to_nic | mark_generated_manually | update_vehicle |
+extend_validity | cancel | revert_to_draft`. Validity defaults
+to 1 day per 200 km per NIC's regular-vehicle rule. Outbound
+NIC call gated by `EWB_API_URL` so the module is usable
+pre-go-live for payload composition.
+
+### `POST /api/eway_bills/expire` (cron-only)
+
+Daily sweeper flipping lapsed GENERATED rows to EXPIRED so
+internal queries on `status = GENERATED` stay honest.
+
+## Phase 8 endpoints (PAY_LINK + canonicaliser + agents + catalog embeddings)
+
+### Auto-substitution of `[PAY_LINK]` (P8.1)
+
+Embedded in `/api/agents/run`. Every dunning email queues with a
+fresh per-invoice portal token (scope `["invoices", "pay"]`,
+30-day TTL). The substitution falls back to a "reply for a
+link" hint when `PORTAL_BASE_URL` isn't configured.
+
+### Canonicaliser wiring (P8.2)
+
+All 17 ERP `sync.js` files now call `canonicaliseCustomer` after
+their staging-table upsert: `netsuite, sap, d365, acumatica,
+p21, eclipse, sxe, sage_x3, ifs, oracle_fusion, ramco, jde,
+plex, jobboss, oracle_ebs, proalpha, tally`. The helper
+deduplicates by `external_ref->>{vendor}_id` first, then GSTIN,
+then canonical name. Multi-ERP tenants no longer accumulate one
+row per vendor for the same physical customer.
+
+### Agent goal types (P8.3)
+
+Nine new entries in `agents/_handlers/index.js`:
+`supplier_ack_followup, delivery_eta_check,
+service_visit_schedule, amc_renewal_chase,
+credit_review_request, onboarding_followup,
+price_increase_announcement, replenishment_suggestion,
+obsolete_product_warning`. Each accepts the same
+`{ goal, ctx }` contract and returns
+`{ thought, action, action_payload }`.
+
+### `GET|POST /api/catalog/embed` (P8.4)
+
+Voyage AI catalog indexer.
+
+- `GET` returns `{ pending_count, batch_size,
+  max_batches_per_run }` for the calling tenant.
+- `POST` (admin) drains `embedding is null` rows in 64-row
+  batches up to 16 batches per call (~1024 items per run).
+- Cron-callable with `Authorization: Bearer $CRON_SECRET` to
+  fan out across tenants. Wired into `/api/cron/daily`.
+
+### Hybrid catalog search (P8.4)
+
+`/api/catalog/search` now accepts
+`?mode=auto|hybrid|lexical|semantic`. `auto` resolves to
+`hybrid` when `VOYAGE_API_KEY` is configured. Hybrid runs
+lexical (ILIKE + synonyms) + semantic (cosine-distance against
+the HNSW index) in parallel and merges, with semantic hits
+boosted by 0.05 so a strong semantic match outranks a substring
+near-match. `semantic_available` flag on the response lets the
+UI surface a "semantic ON" chip.

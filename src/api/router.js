@@ -89,7 +89,20 @@ import customersProfileVersions from "./customers/profile_versions.js";
 import customersContacts        from "./customers/contacts.js";
 import customersDuplicates      from "./customers/duplicates.js";
 import customersMerge           from "./customers/merge.js";
-import customerLocationsIndex  from "./customer_locations/index.js";
+import customerLocationsIndex   from "./customer_locations/index.js";
+// Phase 7.3: customer health score (Haiku per-customer + cron drain).
+import customersHealthScore     from "./customers/health_score.js";
+
+// Phase 7.5: credit + debit notes CRUD.
+import creditNotesIndex         from "./credit_notes/index.js";
+
+// Phase 7.6: recurring invoice schedules + drain cron.
+import billingRecurring         from "./billing/recurring.js";
+import billingRecurringCron     from "./billing/recurring_cron.js";
+
+// Phase 7.7: e-Way bill module + daily expiry sweep.
+import ewayBillsIndex           from "./eway_bills/index.js";
+import ewayBillsExpire          from "./eway_bills/expire.js";
 
 import deliveryPromise         from "./delivery/promise.js";
 
@@ -128,6 +141,9 @@ import salesLeads              from "./sales/leads.js";
 import salesOpportunities      from "./sales/opportunities.js";
 import salesProjects           from "./sales/projects.js";
 import salesShipments          from "./sales/shipments.js";
+// Phase 7.1 + 7.2: lead scoring + opportunity probability.
+import salesScoreLead          from "./sales/score_lead.js";
+import salesPredictOpportunity from "./sales/predict_opportunity.js";
 
 import salesHistoryPriceBand   from "./sales_history/price_band.js";
 
@@ -642,6 +658,15 @@ const STATIC_ROUTES = {
   "/customers/duplicates":          customersDuplicates,
   "/customers/merge":               customersMerge,
   "/customer_locations":            customerLocationsIndex,
+  "/customers/health_score":        customersHealthScore,
+
+  "/credit_notes":                  creditNotesIndex,
+
+  "/billing/recurring":             billingRecurring,
+  "/billing/recurring_cron":        billingRecurringCron,
+
+  "/eway_bills":                    ewayBillsIndex,
+  "/eway_bills/expire":             ewayBillsExpire,
 
   "/delivery/promise":              deliveryPromise,
 
@@ -678,6 +703,8 @@ const STATIC_ROUTES = {
   "/sales/opportunities":           salesOpportunities,
   "/sales/projects":                salesProjects,
   "/sales/shipments":               salesShipments,
+  "/sales/score_lead":              salesScoreLead,
+  "/sales/predict_opportunity":     salesPredictOpportunity,
 
   "/sales_history/price_band":      salesHistoryPriceBand,
 

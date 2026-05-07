@@ -61,6 +61,25 @@ export const quoteAccept = async (goal, ctx) => {
       action_payload: { reason: "no_recipient" },
     };
   }
+  // Audit P1.4 (May 2026): the runner falls back to action_payload.hint
+  // when body is absent. Previously this handler returned only a hint
+  // ("Polite, concise quote nudge. Reference any open questions.")
+  // which then shipped as the customer email body verbatim. Provide
+  // a real templated body. The deeper "LLM-drafted bodies" work is
+  // Phase 6 of the audit roadmap; this is the regression fix.
+  const ref = o.quote_number || o.po_number || ("draft " + String(o.id || "").slice(0, 8));
+  const greet = "Hello" + (o.customer?.customer_name ? " " + o.customer.customer_name : "") + ",";
+  const body = [
+    greet,
+    "",
+    "We're following up on quote " + ref + ".",
+    "Let us know if you have any questions or if there's anything we can adjust to move this forward.",
+    "",
+    "Happy to set up a quick call if that's easier.",
+    "",
+    "Thanks,",
+    "The team",
+  ].join("\n");
   return {
     thought: "Drafting follow-up email for " + (o.customer?.customer_name || "customer"),
     action: "send_email",
@@ -68,10 +87,8 @@ export const quoteAccept = async (goal, ctx) => {
       kind: "quote_followup",
       order_id: o.id,
       to: recipient,
-      subject: "Following up on " + (o.quote_number || o.po_number || "your quote"),
-      // The runner will draft the body via communications.draft using
-      // this hint; we keep the payload small here.
-      hint: "Polite, concise quote nudge. Reference any open questions.",
+      subject: "Following up on " + ref,
+      body,
     },
   };
 };

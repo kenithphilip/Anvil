@@ -6,7 +6,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { eclipseDecryptCreds, eclipseFetch, eclipseIsConfigured } from "../_lib/eclipse-client.js";
-import { httpIsRecoverable } from "../_lib/erp-runner.js";
+import { httpIsRecoverable, requireApprovedOrder } from "../_lib/erp-runner.js";
 
 const dotGet = (obj, p) => p.split(".").reduce((a, k) => (a ? a[k] : undefined), obj);
 const dotSet = (obj, p, v) => { const parts = p.split("."); let cur = obj;
@@ -65,6 +65,9 @@ export default async function handler(req, res) {
     const orderQ = await svc.from("orders").select("*").eq("tenant_id", ctx.tenantId).eq("id", body.orderId).maybeSingle();
     if (orderQ.error) throw new Error(orderQ.error.message);
     if (!orderQ.data) return json(res, 404, { error: { message: "Order not found" } });
+    // Audit P1.6: refuse to push unless approved + payload-hash bound.
+    const approvalGuard = requireApprovedOrder(orderQ.data, body.payloadHash);
+    if (approvalGuard) return json(res, approvalGuard.status, approvalGuard.body);
     let customer = null;
     if (orderQ.data.customer_id) {
       const c = await svc.from("customers").select("*").eq("tenant_id", ctx.tenantId).eq("id", orderQ.data.customer_id).maybeSingle();

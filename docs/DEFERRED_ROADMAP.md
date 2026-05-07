@@ -20,22 +20,31 @@ acceptance criteria, and open a ticket.
 
 ## 1. Voice AI
 
-**Status**: not started.
+**Status**: scope approved (May 2026), not yet implemented.
 
-**Why deferred**: voice AI is two products glued together (a
-real-time speech provider, and a domain-tuned LLM). The product
-decisions we don't have:
+**Approved scope**:
 
-- Buyer or seller surface? Inbound calls from customers vs. outbound
-  call agent driving collections look completely different.
-- Live transcription only, or full conversational agent that can
-  *act* (e.g., "the agent took the customer's PO over the phone and
-  pushed it to NetSuite")? Compliance scope changes by 10x between
-  these.
-- Realtime provider: Vapi, Retell, OpenAI Realtime, or a stack on
-  Twilio Media Streams + a self-hosted Whisper-distil + Claude.
+- **Both** inbound and outbound calls.
+- **Full conversational agent**, not transcription-only. Same
+  action vocabulary the existing voice/process_actions worker
+  already drains (place_order, quote_request, check_delivery,
+  verify_customer, escalate, note); the realtime layer just
+  plugs into the same downstream.
+- **Provider**: Vapi or Retell (both are wired in
+  `voice/webhook.js`); pick the one whose Indian-network
+  latency tests cleanest in pilot.
 
-**What would land in Anvil if green-lit** (~3 weeks):
+**What still needs decision before code**:
+
+- Recording-disclosure copy per region (US single-party, EU
+  two-party, India two-party). Not blocking the realtime work,
+  blocking the launch.
+- Outbound dialler compliance: TRAI DND scrubbing for India,
+  TCPA prior consent for US numbers. Either we wire to a
+  compliance vendor's API, or we limit outbound to numbers the
+  customer has already messaged us from.
+
+**What would land in Anvil** (~3 weeks):
 
 - New `voice_calls` table (call_id, direction, started_at,
   duration_s, transcript, summary, action_extracted_jsonb).
@@ -56,22 +65,30 @@ to email/WhatsApp), redaction helpers in `/api/_lib/audit.js`.
 
 ## 2. Vertical packs
 
-**Status**: not started, blocked on product decisions.
+**Status**: scope approved (May 2026), not yet implemented.
 
-**Why deferred**: a "vertical pack" is a meaningful artifact only
-once we know *which* vertical and *what changes*. Every pack we'd
-ship is a tradeoff between two paths:
+**Approved scope**: ship every potential vertical, prioritised by
+TAM (largest first). The opening cut, with the rough Indian
+B2B-distribution TAM band each one anchors to:
 
-- **Configuration packs** (fast). A bundle of seed data: lead times,
-  approval thresholds, contract types, item-master examples, lost-
-  reason taxonomy tuned for the vertical.
-- **Code packs** (slow). New screens or workflows specific to the
-  vertical (e.g., HVAC equipment hierarchies, MRO spares matrix,
-  industrial machinery service contracts).
+1. **Industrial pumps + valves + flow control** (largest, ~₹35k cr
+   annual distribution spend; OBARA-shaped customers).
+2. **Bearings + power transmission** (~₹25k cr; SKF / FAG / NSK
+   distributor channel).
+3. **HVAC + refrigeration distribution** (~₹20k cr; chillers +
+   ducting + spares).
+4. **MRO + industrial fasteners + abrasives** (~₹18k cr; long
+   tail of catalogue items).
+5. **Machine tools + cutting tools + tooling spares** (~₹15k cr;
+   capital + consumable mix).
+6. **Process instrumentation + electrical control gear**
+   (~₹12k cr; Siemens / ABB / Schneider partner channel).
 
-The decision we don't have: which 2-3 verticals matter for the
-first wave (HVAC distribution, industrial pumps, bearings & power
-transmission, instrumentation, MRO) and how deep we'll go.
+Each pack ships as a **configuration pack** first (1 week per
+vertical: seed lead times, approval thresholds, contract types,
+lost-reason taxonomy, GAEB / item-master starter content). A
+follow-up **code pack** lands per-vertical only when a paying
+pilot proves a code-level workflow (~3 weeks each).
 
 **What would land in Anvil if green-lit** (~1 week per vertical
 for config-pack mode, ~3 weeks per vertical for code-pack mode):
@@ -92,51 +109,28 @@ items). The plumbing is here; we're missing the curated content.
 
 ## 3. Native iOS
 
-**Status**: not started; **partially redundant with the PWA mobile
-shell** that's already in `MobileShell.tsx` + `public/sw.js` +
-`/api/push/*` (web push).
+**Status**: **declined (May 2026)**. Will not build.
 
-**Why deferred**: the PWA covers the four flows that matter on the
-go (My Day, Inbox, Approvals, Sales Orders). iOS-native gives:
+The PWA mobile shell (`MobileShell.tsx` + `public/sw.js` +
+`/api/push/*` web push) covers the four operator flows that
+actually matter on the go: My Day, Inbox, Approvals, Sales
+Orders. The reliability and marketing gains from a native
+build do not justify a Capacitor or React Native track plus
+the maintenance cost of two app distributions.
 
-- App Store presence (mostly a marketing benefit).
-- Better push reliability + lock-screen badges (real benefit).
-- Native camera/biometric APIs (real benefit for intake document
-  capture and approve-by-Face-ID).
-
-The decision we don't have: does the marketing value plus the
-reliability gain justify a Capacitor (or React Native, or full
-Swift) build + maintaining two app distributions?
-
-**What would land in Anvil if green-lit** (~6 weeks):
-
-- Wrap the existing v3-app build in **Capacitor**. The Vite output
-  becomes the WebView; we add native plugins for Push (APNs),
-  Biometrics, Camera (for intake), and File System (for offline
-  approvals).
-- New `/api/push/subscribe` extension to accept APNs device tokens
-  (the `device_token` + `channel='apns'` columns are already on
-  `push_subscriptions`).
-- Native APNs sender added to `/api/push/send` alongside the web-
-  push branch.
-- TestFlight + App Store submission flow (out of code scope; that's
-  ops + marketing).
-
-**Already in place**:
-
-- `MobileShell.tsx` mobile shell.
-- `public/manifest.json` PWA manifest + icons.
-- `public/sw.js` service worker that handles push events.
-- `push_subscriptions` table already supports `channel='apns'` +
-  `device_token`.
-- `/api/push/send` is provider-agnostic; the APNs branch is one
-  concrete addition.
+If a customer requires App Store presence later, this can be
+re-opened: the `push_subscriptions` table already supports
+`channel='apns'` + `device_token`, so an APNs branch in
+`/api/push/send` is the only meaningful code addition. The PWA
+shell is fine until then.
 
 ---
 
 ## 4. SOC 2 / ISO 27001
 
-**Status**: programs, not features. Not "build this in code".
+**Status**: in progress (May 2026). GRC vendor selection +
+observation window kickoff under way; code-side controls
+listed below are mostly shipped.
 
 **Why deferred**: SOC 2 Type II and ISO 27001 are organisational
 certifications. They require:
@@ -210,9 +204,9 @@ the migration that landed them.
 
 ## Summary
 
-| Item            | Code work? | Decision blocker                              |
-|-----------------|------------|-----------------------------------------------|
-| Voice AI        | Yes (3w)   | Inbound vs. outbound; provider choice         |
-| Vertical packs  | Yes (1-3w) | Which 2-3 verticals first                     |
-| Native iOS      | Yes (6w)   | PWA already covers the flows; ROI question    |
-| SOC 2 / ISO     | Mostly no  | Pick a GRC vendor, start the observation clock |
+| Item            | Status (May 2026)        | Next step                                              |
+|-----------------|--------------------------|--------------------------------------------------------|
+| Voice AI        | Scope approved           | Pick Vapi vs Retell on Indian-network latency; 3w build |
+| Vertical packs  | Scope approved           | Ship config-pack #1 (industrial pumps); 1w each         |
+| Native iOS      | Declined                 | PWA shell stays as the mobile surface                  |
+| SOC 2 / ISO     | Program in progress      | Land the access-review + audit-export endpoints        |

@@ -229,10 +229,10 @@ const PILLARS = [
 
 const FLOW_STEPS: Array<{ n: string; h: string; p: string; meta: Array<[string, string]>; live?: boolean }> = [
   { n: "01 · INTAKE",     h: "PO arrives",      p: "Email forwarded to {orders@}, attached PDF.",                                  meta: [["at","10:34:01"],["actor","email-in"],["case","SO-1042"]] },
-  { n: "02 · PREFLIGHT",  h: "Fingerprint",     p: "Doc hashed, layout fingerprinted against 312 known templates. Tata Steel matched in 180ms.", meta: [["at","10:34:18"],["match","tata · v3"],["cost","₹0.32"]] },
+  { n: "02 · PREFLIGHT",  h: "Fingerprint",     p: "Doc hashed, layout fingerprinted against 312 known templates. Customer matched in 180ms.", meta: [["at","10:34:18"],["match","acme · v3"],["cost","₹0.32"]] },
   { n: "03 · EXTRACT",    h: "18 lines, mapped", p: "Claude + Mistral OCR. Aliases resolved. 17/18 at 0.95+ confidence; one needs review.",     meta: [["at","10:35:02"],["conf avg","0.96"],["cost","₹0.78"]], live: true },
-  { n: "04 · REVIEW",     h: "1 anomaly",       p: "Line 6 rate is 10× the customer's historical median. Operator confirms intentional.",       meta: [["at","10:38:22"],["actor","KP"],["action","override"]] },
-  { n: "05 · ERP",        h: "Voucher V-9941",  p: "Manager approves on mobile (passkey). Tally bridge commits. e-Invoice IRN reserved. Source PO routed to SKF.", meta: [["at","10:42:04"],["voucher","V-9941"],["elapsed","8m 03s"]] },
+  { n: "04 · REVIEW",     h: "1 anomaly",       p: "Line 6 rate is 10× the customer's historical median. Operator confirms intentional.",       meta: [["at","10:38:22"],["actor","operator"],["action","override"]] },
+  { n: "05 · ERP",        h: "Voucher V-9941",  p: "Manager approves on mobile (passkey). Tally bridge commits. e-Invoice IRN reserved. Source PO routed to supplier.", meta: [["at","10:42:04"],["voucher","V-9941"],["elapsed","8m 03s"]] },
 ];
 
 // Audit trail rows for proof block. The verb taxonomy matches what
@@ -240,13 +240,13 @@ const FLOW_STEPS: Array<{ n: string; h: string; p: string; meta: Array<[string, 
 // are illustrative of a real run.
 type AuditKind = "ok" | "warn" | "bad";
 const AUDIT_TRAIL: Array<{ time: string; actor: string; verb: string; kind: AuditKind; detail: string; b?: string; suffix?: string }> = [
-  { time: "10:42:04", actor: "KP",    verb: "tally.committed",      kind: "ok",   detail: "voucher=", b: "V-9941", suffix: "                bridge" },
-  { time: "10:42:01", actor: "KP",    verb: "approval.granted",     kind: "ok",   detail: "status: draft → ", b: "approved", suffix: "      mobile" },
-  { time: "10:38:22", actor: "KP",    verb: "field.override",       kind: "warn", detail: "L6.rate 1840.00 (intentional) ui" },
-  { time: "10:36:11", actor: "auto",  verb: "anomaly.detected",     kind: "bad",  detail: "L6.rate · ", b: "10× median", suffix: "          engine" },
-  { time: "10:35:02", actor: "auto",  verb: "extraction.completed", kind: "ok",   detail: "18 lines · conf 0.96         claude" },
-  { time: "10:34:18", actor: "auto",  verb: "preflight.passed",     kind: "ok",   detail: "fingerprint=", b: "tata·v3", suffix: "           engine" },
-  { time: "10:34:01", actor: "KP",    verb: "document.uploaded",    kind: "ok",   detail: "po-tata-2456.pdf             email" },
+  { time: "10:42:04", actor: "operator", verb: "tally.committed",      kind: "ok",   detail: "voucher=", b: "V-9941", suffix: "                bridge" },
+  { time: "10:42:01", actor: "operator", verb: "approval.granted",     kind: "ok",   detail: "status: draft → ", b: "approved", suffix: "      mobile" },
+  { time: "10:38:22", actor: "operator", verb: "field.override",       kind: "warn", detail: "L6.rate 1840.00 (intentional) ui" },
+  { time: "10:36:11", actor: "auto",     verb: "anomaly.detected",     kind: "bad",  detail: "L6.rate · ", b: "10× median", suffix: "          engine" },
+  { time: "10:35:02", actor: "auto",     verb: "extraction.completed", kind: "ok",   detail: "18 lines · conf 0.96         claude" },
+  { time: "10:34:18", actor: "auto",     verb: "preflight.passed",     kind: "ok",   detail: "fingerprint=", b: "acme·v3", suffix: "           engine" },
+  { time: "10:34:01", actor: "operator", verb: "document.uploaded",    kind: "ok",   detail: "po-acme-2456.pdf             email" },
   { time: "09:14:00", actor: "auto",  verb: "tally.sync",           kind: "ok",   detail: "items 4,308 → ", b: "4,312", suffix: "         cron" },
 ];
 
@@ -256,7 +256,7 @@ const COVERAGE = [
   { eb: "03 · procurement", h: "Source POs",        p: "Auto-routed supplier orders, scorecards, 412-mapping spare matrix, obsolete parts.", surf: ["Source POs","Scorecards","Spares Matrix","Obsolete"] },
   { eb: "04 · service",     h: "Service ops",       p: "Site visits, AMC schedule, CAR (corrective action) reports, closure reports.", surf: ["Visits","AMC","CAR","Closure"] },
   { eb: "05 · finance",     h: "Tally + e-Invoice", p: "Bridge, reconciliation, masters sync, IRN, invoices, cost & margin simulator.", surf: ["Tally Push","Reconcile","Masters","e-Invoice","Invoices","Cost"] },
-  { eb: "06 · data",        h: "Master data",       p: "Customer book, item master, BOM import, equipment hierarchy, JBM importer, graph, forecasts.", surf: ["Customers","Items","BOM","Equipment","Graph","Forecasts"] },
+  { eb: "06 · data",        h: "Master data",       p: "Customer book, item master, BOM import, equipment hierarchy, customer importers, graph, forecasts.", surf: ["Customers","Items","BOM","Equipment","Graph","Forecasts"] },
   { eb: "07 · quality & AI", h: "Eval & agents",    p: "Eval suites, profile studio, anomaly compute, duplicate search, autonomous agents, format guide.", surf: ["Evals","Studio","Anomaly","Duplicates","Agents","Format Guide"] },
   { eb: "08 · trust",       h: "Comms & security",  p: "Drafts inbox, missing-doc nudges, prompt-injection bench, PII redaction, audit, admin.", surf: ["Communications","Email Triage","Security","Audit","Admin Center"] },
 ];
@@ -382,8 +382,8 @@ const Demo: React.FC = () => {
           </div>
           <div className="lp-imail new" style={{ animationDelay: "0.1s" }}>
             <div className="lp-imail-dot" />
-            <div className="lp-imail-from">tata.steel</div>
-            <div className="lp-imail-sub"><b>PO-TS-2456</b> · 18 line items · attached</div>
+            <div className="lp-imail-from">acme.industrial</div>
+            <div className="lp-imail-sub"><b>PO-AC-2456</b> · 18 line items · attached</div>
             <div className="lp-imail-t">10:34</div>
           </div>
           <div className="lp-imail" style={{ animationDelay: "0.25s" }}>
@@ -406,7 +406,7 @@ const Demo: React.FC = () => {
         {/* Scene 2: doc + extract */}
         <div className={"lp-scene lp-s2" + (scene === 1 ? " on" : "")}>
           <div className="lp-doc">
-            <div className="lp-doc-title">PO-TS-2456 · Tata Steel</div>
+            <div className="lp-doc-title">PO-AC-2456 · Acme Industrial</div>
             <div className="lp-doc-row"><span><span className="lp-hl">BRG 6204 2RS</span></span><span>100</span><span>140.00</span></div>
             <div className="lp-doc-row"><span><span className="lp-hl">OIL-SEAL 25×42×7</span></span><span>250</span><span>17.20</span></div>
             <div className="lp-doc-row"><span>FAG 22214E1</span><span>20</span><span>3,800</span></div>
@@ -433,7 +433,7 @@ const Demo: React.FC = () => {
             <div className="lp-modal-h"><span>⚠</span><span>anomaly · L4 · rate</span><span style={{ marginLeft: "auto", fontWeight: 500 }}>SO-1042</span></div>
             <div className="lp-modal-body">
               <h4>Rate 10× the median</h4>
-              <p>Tata Steel paid <b>₹184</b> for BR-6205-2RS in the last 12 invoices. This PO has it at <b>₹1,840</b>. Likely a typo, please confirm.</p>
+              <p>Acme Industrial paid <b>₹184</b> for BR-6205-2RS in the last 12 invoices. This PO has it at <b>₹1,840</b>. Likely a typo, please confirm.</p>
               <div className="lp-cmp-mini">
                 <div className="lp-c"><div className="lp-c-l">90-day median</div><div className="lp-c-v">₹184</div></div>
                 <div className="lp-c lp-bad"><div className="lp-c-l">on this PO</div><div className="lp-c-v">₹1,840</div></div>
@@ -786,7 +786,7 @@ const Landing: React.FC = () => {
                 </div>
                 <div className="lp-ws-body">
                   <div className="lp-ws-h">
-                    <span className="lp-ws-so">SO-1042 · Tata Steel</span>
+                    <span className="lp-ws-so">SO-1042 · Acme Industrial</span>
                     <span className="lp-ws-pill">draft</span>
                     <span className="lp-ws-pill lp-ws-pill-accent">18 lines</span>
                     <span className="lp-ws-edit">last edit · 30s ago</span>
@@ -798,7 +798,7 @@ const Landing: React.FC = () => {
                     { ix: "L4", nm: "BR-6205-2RS · ⚠ rate", q: "100", r: "1,840", flag: true },
                     { ix: "L5", nm: "UCFL-204", q: "40", r: "520", flag: false },
                     { ix: "L6", nm: "6203-ZZ-NSK", q: "80", r: "96.50", flag: false },
-                    { ix: "L7", nm: "SKF 6004-RS", q: "200", r: "88", flag: false },
+                    { ix: "L7", nm: "BB 6004-RS", q: "200", r: "88", flag: false },
                     { ix: "L8", nm: "NJ-2206", q: "15", r: "760", flag: false },
                   ].map((l) => (
                     <div key={l.ix} className={"lp-ws-lr" + (l.flag ? " lp-ws-flag" : "")}>
@@ -958,7 +958,7 @@ const Landing: React.FC = () => {
               <div>
                 <span className="lp-eb lp-eb-dot">A note from the founder</span>
                 <p className="lp-quote" id="founder-h">
-                  "I spent eight years in industrial sales-ops at a Tata group company. The single most-soul-destroying
+                  "I spent eight years in industrial sales-ops at a large industrial conglomerate. The single most-soul-destroying
                   thing about the job was watching brilliant engineers re-type part numbers from PDFs into Tally because
                   the alias map only lived in their head. Anvil is the tool I wished existed back then. We're not
                   trying to replace the operator, we're trying to give them their <em>actual</em> job back."

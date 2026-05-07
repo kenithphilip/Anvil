@@ -7,6 +7,7 @@
 // /api/invoices/pdf?format=share so the customer always sees the
 // latest invoice bytes.
 
+import crypto from "node:crypto";
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
@@ -15,6 +16,42 @@ import { renderInvoice } from "../_lib/pdf-renderer.js";
 import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "../_lib/storage.js";
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+// Audit P2.7. portal/accept_quote.js + portal/pay.js + portal/tokens.js
+// shipped as full-fledged customer-side endpoints, but no flow
+// auto-issued a token when an invoice was sent. Customers received
+// the PDF link but had no clickable Pay-now URL. Issue a portal
+// token on every invoice send with the `pay` + `invoices` scopes
+// and append a portal URL into the email body.
+const PORTAL_TOKEN_TTL_DAYS = 30;
+const generatePortalToken = () => crypto.randomBytes(24).toString("hex");
+
+const portalBaseUrl = () => {
+  const base = process.env.PORTAL_BASE_URL || process.env.PUBLIC_APP_URL || "";
+  return base ? base.replace(/\/+$/, "") : "";
+};
+
+const issuePortalTokenForInvoice = async (svc, ctx, invoice, customer) => {
+  const token = generatePortalToken();
+  const expiresAt = new Date(Date.now() + PORTAL_TOKEN_TTL_DAYS * 24 * 3600 * 1000).toISOString();
+  const ins = await svc.from("portal_tokens").insert({
+    tenant_id: ctx.tenantId,
+    customer_id: invoice.customer_id || customer?.id || null,
+    email: customer?.contact_email || null,
+    token,
+    scopes: ["invoices", "pay"],
+    expires_at: expiresAt,
+    created_by: ctx.user?.id || null,
+  }).select("id, token, expires_at").single();
+  if (ins.error) {
+    // eslint-disable-next-line no-console
+    console.warn("[invoices/send] portal token insert failed: " + ins.error.message);
+    return null;
+  }
+  const base = portalBaseUrl();
+  const url = base ? base + "/portal/" + ins.data.token : null;
+  return { id: ins.data.id, token: ins.data.token, expires_at: ins.data.expires_at, url };
+};
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -76,6 +113,12 @@ export default async function handler(req, res) {
       await svc.from("invoices").update({ pdf_storage_path: path }).eq("tenant_id", ctx.tenantId).eq("id", invQ.data.id);
     }
 
+    // Audit P2.7: issue a portal token so the customer can pay
+    // through the embedded portal/pay surface. Best-effort: when
+    // PORTAL_BASE_URL/PUBLIC_APP_URL is not set we still create
+    // the token but skip the URL line in the email body.
+    const portal = await issuePortalTokenForInvoice(svc, ctx, invQ.data, customer);
+
     const subject = body.subject || ("Invoice " + invQ.data.invoice_number + " from your supplier");
     const lines = [
       "Hello" + (customer?.customer_name ? " " + customer.customer_name : "") + ",",
@@ -86,6 +129,10 @@ export default async function handler(req, res) {
     if (shareUrl) {
       lines.push("");
       lines.push("View invoice: " + shareUrl);
+    }
+    if (portal?.url) {
+      lines.push("");
+      lines.push("Pay now: " + portal.url);
     }
     if (invQ.data.payment_terms) {
       lines.push("");
@@ -107,7 +154,12 @@ export default async function handler(req, res) {
       body: text,
       status: "queued",
       sent_by: ctx.user?.id || null,
-      metadata: { invoice_id: invQ.data.id, share_url: shareUrl },
+      metadata: {
+        invoice_id: invQ.data.id,
+        share_url: shareUrl,
+        portal_token_id: portal?.id || null,
+        portal_url: portal?.url || null,
+      },
     }).select("*").single();
     if (draft.error) throw new Error("comm draft: " + draft.error.message);
 
@@ -129,6 +181,8 @@ export default async function handler(req, res) {
       ok: true,
       communication_id: draft.data.id,
       share_url: shareUrl,
+      portal_url: portal?.url || null,
+      portal_token_id: portal?.id || null,
       status: "queued",
     });
   } catch (err) {

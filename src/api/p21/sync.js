@@ -5,6 +5,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { p21DecryptCreds, p21List, p21IsConfigured, p21Fetch } from "../_lib/p21-client.js";
 import { runSyncEntity } from "../_lib/erp-runner.js";
+import { canonicaliseCustomer } from "../_lib/customer-canonicalizer.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const PREFIX = "p21";
@@ -18,10 +19,12 @@ const ENTITY = {
     upsert: async (svc, tid, items) => {
       let updated = 0; let hw = null;
       for (const r of items) {
+        const externalId = String(r.customer_id || r.CustomerId);
+        const name = r.customer_name || r.CustomerName || null;
         await svc.from("p21_customers").upsert({
           tenant_id: tid,
-          external_id: String(r.customer_id || r.CustomerId),
-          name: r.customer_name || r.CustomerName || null,
+          external_id: externalId,
+          name,
           email: r.email_address || null,
           phone: r.phone_number || null,
           currency: r.currency_id || null,
@@ -29,6 +32,19 @@ const ENTITY = {
           raw: r, synced_at: new Date().toISOString(),
         }, { onConflict: "tenant_id,external_id" });
         updated += 1;
+        // Audit P8.2: promote to canonical customers table.
+        if (name) {
+          await canonicaliseCustomer(svc, tid, {
+            vendor: "p21",
+            vendorIdField: "p21_id",
+            externalId,
+            name,
+            email: r.email_address || null,
+            phone: r.phone_number || null,
+            currency: r.currency_id || null,
+            ref: { is_inactive: r.delete_flag === "Y", modified: r.lastModifiedDate },
+          });
+        }
         const t = r.lastModifiedDate || r.date_last_modified;
         if (t && (!hw || t > hw)) hw = new Date(t).toISOString();
       }

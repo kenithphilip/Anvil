@@ -9,6 +9,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { oracleFusionDecryptCreds, oracleFusionList, oracleFusionIsConfigured, oracleFusionFetch } from "../_lib/oracle-fusion-client.js";
 import { runSyncEntity } from "../_lib/erp-runner.js";
+import { canonicaliseCustomer } from "../_lib/customer-canonicalizer.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const PREFIX = "oracle_fusion";
@@ -24,10 +25,24 @@ const ENTITY = {
     upsert: async (svc, tid, items) => {
       let updated = 0; let hw = null;
       for (const r of items) {
+        const externalId = String(r.PartyNumber || r.PartyId || r.id);
+        const name = r.OrganizationName || r.PartyName || r.PersonFirstName || null;
+        if (name) {
+          // Audit P8.2: promote to canonical customers table.
+          await canonicaliseCustomer(svc, tid, {
+            vendor: "oracle_fusion",
+            vendorIdField: "oracle_fusion_id",
+            externalId,
+            name,
+            email: r.EmailAddress || null,
+            currency: r.CurrencyCode || null,
+            ref: { party_status: r.PartyStatus, modified: r.LastUpdateDate },
+          });
+        }
         await svc.from("oracle_fusion_customers").upsert({
           tenant_id: tid,
-          external_id: String(r.PartyNumber || r.PartyId || r.id),
-          name: r.OrganizationName || r.PartyName || r.PersonFirstName || null,
+          external_id: externalId,
+          name,
           email: r.EmailAddress || null,
           currency: r.CurrencyCode || null,
           is_inactive: r.PartyStatus === "I",

@@ -8,6 +8,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { plexDecryptCreds, plexList, plexIsConfigured, plexFetch } from "../_lib/plex-client.js";
 import { runSyncEntity } from "../_lib/erp-runner.js";
+import { canonicaliseCustomer } from "../_lib/customer-canonicalizer.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const PREFIX = "plex";
@@ -21,10 +22,24 @@ const ENTITY = {
     upsert: async (svc, tid, items) => {
       let updated = 0; let hw = null;
       for (const r of items) {
+        const externalId = String(r.customerCode || r.customerKey || r.id);
+        const name = r.customerName || r.name || null;
+        if (name) {
+          // Audit P8.2: promote to canonical customers table.
+          await canonicaliseCustomer(svc, tid, {
+            vendor: "plex",
+            vendorIdField: "plex_id",
+            externalId,
+            name,
+            email: r.email || null,
+            currency: r.currency || null,
+            ref: { status: r.status, modified: r.lastModifiedDate || r.modifiedOn },
+          });
+        }
         await svc.from("plex_customers").upsert({
           tenant_id: tid,
-          external_id: String(r.customerCode || r.customerKey || r.id),
-          name: r.customerName || r.name || null,
+          external_id: externalId,
+          name,
           email: r.email || null,
           currency: r.currency || null,
           is_inactive: r.status === "Inactive" || r.activeFlag === false,

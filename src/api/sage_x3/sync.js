@@ -10,6 +10,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { sagex3DecryptCreds, sagex3List, sagex3IsConfigured, sagex3Fetch } from "../_lib/sage-x3-client.js";
 import { runSyncEntity } from "../_lib/erp-runner.js";
+import { canonicaliseCustomer } from "../_lib/customer-canonicalizer.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const PREFIX = "sagex3";
@@ -26,10 +27,24 @@ const ENTITY = {
     upsert: async (svc, tid, items) => {
       let updated = 0; let hw = null;
       for (const r of items) {
+        const externalId = String(r.BPCNUM || r.id);
+        const name = r.BPCNAM_0 || r.BPCNAM || null;
+        if (name) {
+          // Audit P8.2: promote to canonical customers table.
+          await canonicaliseCustomer(svc, tid, {
+            vendor: "sagex3",
+            vendorIdField: "sage_x3_id",
+            externalId,
+            name,
+            email: r.WEB || r.email || null,
+            currency: r.CUR || null,
+            ref: { is_inactive: r.ENAFLG === "1" || r.BPCSTA === "Closed", modified: r.LASTUPDDAT },
+          });
+        }
         await svc.from("sagex3_customers").upsert({
           tenant_id: tid,
-          external_id: String(r.BPCNUM || r.id),
-          name: r.BPCNAM_0 || r.BPCNAM || null,
+          external_id: externalId,
+          name,
           email: r.WEB || r.email || null,
           currency: r.CUR || null,
           is_inactive: r.ENAFLG === "1" || r.BPCSTA === "Closed",

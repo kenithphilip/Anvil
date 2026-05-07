@@ -10,6 +10,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { jdeDecryptCreds, jdeList, jdeIsConfigured, jdeFetch } from "../_lib/jde-client.js";
 import { runSyncEntity } from "../_lib/erp-runner.js";
+import { canonicaliseCustomer } from "../_lib/customer-canonicalizer.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const PREFIX = "jde";
@@ -24,10 +25,23 @@ const ENTITY = {
       let updated = 0; let hw = null;
       for (const r of items) {
         const ext = String(r.AN8 || r.id);
+        const name = r.ALPH || r.MLNM || null;
+        if (name) {
+          // Audit P8.2: promote to canonical customers table.
+          await canonicaliseCustomer(svc, tid, {
+            vendor: "jde",
+            vendorIdField: "jde_id",
+            externalId: ext,
+            name,
+            email: r.EMAL || null,
+            currency: r.CRCD || null,
+            ref: { search_type: r.AT1, julian_update: r.UPMJ },
+          });
+        }
         await svc.from("jde_customers").upsert({
           tenant_id: tid,
           external_id: ext,
-          name: r.ALPH || r.MLNM || null,
+          name,
           email: r.EMAL || null,
           currency: r.CRCD || null,
           is_inactive: r.AT1 === "Z",

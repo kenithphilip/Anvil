@@ -13,6 +13,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { sapDecryptCreds, sapList, sapIsConfigured, sapFetch } from "../_lib/sap-client.js";
 import { runSyncEntity } from "../_lib/erp-runner.js";
+import { canonicaliseCustomer } from "../_lib/customer-canonicalizer.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const PREFIX = "sap";
@@ -33,10 +34,12 @@ const ENTITY = {
     upsert: async (svc, tenantId, items) => {
       let updated = 0; let highWater = null;
       for (const r of items) {
+        const externalId = String(r.BusinessPartner);
+        const name = r.BusinessPartnerFullName || r.OrganizationBPName1 || r.LastName || null;
         await svc.from("sap_business_partners").upsert({
           tenant_id: tenantId,
-          external_id: String(r.BusinessPartner),
-          name: r.BusinessPartnerFullName || r.OrganizationBPName1 || r.LastName || null,
+          external_id: externalId,
+          name,
           email: null,
           phone: null,
           category: r.BusinessPartnerCategory || null,
@@ -45,6 +48,20 @@ const ENTITY = {
           synced_at: new Date().toISOString(),
         }, { onConflict: "tenant_id,external_id" });
         updated += 1;
+        // Audit P8.2: promote business partners that look like
+        // customers (FLCU01/FLCU00 categories) into the canonical
+        // customers table so multi-ERP tenants stay deduped.
+        const isCustomer = r.BusinessPartnerCategory === "1"
+          || (r.Customer && String(r.Customer).length > 0);
+        if (isCustomer && name) {
+          await canonicaliseCustomer(svc, tenantId, {
+            vendor: "sap",
+            vendorIdField: "sap_id",
+            externalId,
+            name,
+            ref: { category: r.BusinessPartnerCategory, modified: r.LastChangeDateTime },
+          });
+        }
         const t = isoFromSap(r.LastChangeDateTime);
         if (t && (!highWater || t > highWater)) highWater = t;
       }

@@ -9,6 +9,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { ramcoDecryptCreds, ramcoList, ramcoIsConfigured, ramcoFetch } from "../_lib/ramco-client.js";
 import { runSyncEntity } from "../_lib/erp-runner.js";
+import { canonicaliseCustomer } from "../_lib/customer-canonicalizer.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const PREFIX = "ramco";
@@ -22,10 +23,24 @@ const ENTITY = {
     upsert: async (svc, tid, items) => {
       let updated = 0; let hw = null;
       for (const r of items) {
+        const externalId = String(r.CustomerCode || r.customerId || r.id);
+        const name = r.CustomerName || r.name || null;
+        if (name) {
+          // Audit P8.2: promote to canonical customers table.
+          await canonicaliseCustomer(svc, tid, {
+            vendor: "ramco",
+            vendorIdField: "ramco_id",
+            externalId,
+            name,
+            email: r.EmailAddress || r.email || null,
+            currency: r.Currency || null,
+            ref: { status: r.Status, modified: r.lastModifiedDate || r.LastModifiedDate },
+          });
+        }
         await svc.from("ramco_customers").upsert({
           tenant_id: tid,
-          external_id: String(r.CustomerCode || r.customerId || r.id),
-          name: r.CustomerName || r.name || null,
+          external_id: externalId,
+          name,
           email: r.EmailAddress || r.email || null,
           currency: r.Currency || null,
           is_inactive: r.Status === "Inactive",

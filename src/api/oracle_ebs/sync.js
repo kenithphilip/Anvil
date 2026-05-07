@@ -5,6 +5,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { oracleEbsDecryptCreds, oracleEbsList, oracleEbsIsConfigured, oracleEbsFetch } from "../_lib/oracle-ebs-client.js";
 import { runSyncEntity } from "../_lib/erp-runner.js";
+import { canonicaliseCustomer } from "../_lib/customer-canonicalizer.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const PREFIX = "oracle_ebs";
@@ -15,10 +16,24 @@ const ENTITY = {
     upsert: async (svc, tid, items) => {
       let updated = 0; let hw = null;
       for (const r of items) {
+        const externalId = String(r.PARTY_ID || r.CUST_ACCOUNT_ID || r.id);
+        const name = r.PARTY_NAME || r.NAME || null;
+        if (name) {
+          // Audit P8.2: promote to canonical customers table.
+          await canonicaliseCustomer(svc, tid, {
+            vendor: "oracle_ebs",
+            vendorIdField: "oracle_ebs_id",
+            externalId,
+            name,
+            email: r.EMAIL_ADDRESS || null,
+            currency: r.CURRENCY_CODE || null,
+            ref: { status: r.STATUS, modified: r.LAST_UPDATE_DATE },
+          });
+        }
         await svc.from("oracle_ebs_customers").upsert({
           tenant_id: tid,
-          external_id: String(r.PARTY_ID || r.CUST_ACCOUNT_ID || r.id),
-          name: r.PARTY_NAME || r.NAME || null,
+          external_id: externalId,
+          name,
           email: r.EMAIL_ADDRESS || null,
           currency: r.CURRENCY_CODE || null,
           is_inactive: r.STATUS === "I",

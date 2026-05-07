@@ -10,6 +10,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { ifsDecryptCreds, ifsList, ifsIsConfigured, ifsFetch } from "../_lib/ifs-client.js";
 import { runSyncEntity } from "../_lib/erp-runner.js";
+import { canonicaliseCustomer } from "../_lib/customer-canonicalizer.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const PREFIX = "ifs";
@@ -25,10 +26,24 @@ const ENTITY = {
     upsert: async (svc, tid, items) => {
       let updated = 0; let hw = null;
       for (const r of items) {
+        const externalId = String(r.CustomerNo || r.CustomerId || r.id);
+        const name = r.Name || r.CustomerName || null;
+        if (name) {
+          // Audit P8.2: promote to canonical customers table.
+          await canonicaliseCustomer(svc, tid, {
+            vendor: "ifs",
+            vendorIdField: "ifs_id",
+            externalId,
+            name,
+            email: r.Email || null,
+            currency: r.CurrencyCode || null,
+            ref: { status: r.Status, party_type: r.PartyType, modified: r.lastUpdate },
+          });
+        }
         await svc.from("ifs_customers").upsert({
           tenant_id: tid,
-          external_id: String(r.CustomerNo || r.CustomerId || r.id),
-          name: r.Name || r.CustomerName || null,
+          external_id: externalId,
+          name,
           email: r.Email || null,
           currency: r.CurrencyCode || null,
           is_inactive: r.PartyType === "INACTIVE" || r.Status === "Inactive",

@@ -17,6 +17,8 @@ import analyticsRefresh from "../analytics/refresh.js";
 import fxCron           from "../fx/cron.js";
 import amcCron          from "../service/amc_cron.js";
 import rlhfAggregate    from "../rlhf/aggregate.js";
+// Audit P6.5: daily quote-expiry cron.
+import quotesExpire     from "../quotes/expire.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -34,6 +36,7 @@ export default async function handler(req, res) {
       { name: "fx/cron",           fn: fxCron,           opts: { path: "/api/fx/cron" } },
       { name: "service/amc_cron",  fn: amcCron,          opts: { path: "/api/service/amc_cron" } },
       { name: "rlhf/aggregate",    fn: rlhfAggregate,    opts: { path: "/api/rlhf/aggregate" } },
+      { name: "quotes/expire",     fn: quotesExpire,     opts: { path: "/api/quotes/expire" } },
     ]);
     const okCount = results.filter((r) => r.ok).length;
     const errCount = results.filter((r) => !r.ok).length;

@@ -165,6 +165,11 @@ import whatsappInbound         from "./whatsapp/inbound.js";
 import whatsappSend            from "./whatsapp/send.js";
 
 import quotesPdf               from "./quotes/pdf.js";
+import quotesIndex             from "./quotes/index.js";
+import quotesSend              from "./quotes/send.js";
+import quotesConvert           from "./quotes/convert.js";
+import quotesExpire            from "./quotes/expire.js";
+import agentsHandleReplies     from "./agents/handle_replies.js";
 
 import invoicesIndex           from "./invoices/index.js";
 import invoicesById            from "./invoices/[id].js";
@@ -609,6 +614,11 @@ const STATIC_ROUTES = {
   "/billing/stripe/webhook":        stripeWebhook,
 
   "/quotes/pdf":                    quotesPdf,
+  "/quotes":                        quotesIndex,
+  "/quotes/send":                   quotesSend,
+  "/quotes/convert":                quotesConvert,
+  "/quotes/expire":                 quotesExpire,
+  "/agents/handle_replies":         agentsHandleReplies,
 
   "/invoices":                      invoicesIndex,
   "/invoices/pdf":                  invoicesPdf,

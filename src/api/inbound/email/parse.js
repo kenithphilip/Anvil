@@ -16,6 +16,15 @@ import { serviceClient } from "../../_lib/supabase.js";
 import {
   matchInboundToCustomer, computePriorityScore,
 } from "../../_lib/inbound-email.js";
+import { classifyInboundEmail } from "../../_lib/email-classifier.js";
+
+// Audit P5.3: Haiku-tier classifier intents that the parser
+// treats as "this is order/quote work, route to the linked-email
+// worker." Anything else lands as 'parsed' (operator triages or
+// the dunning reply loop in Phase 6 picks it up by intent).
+const ACTIONABLE_INTENTS = new Set([
+  "rfq", "purchase_order", "po_revision", "quote_accept",
+]);
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const BATCH_SIZE = 25;
@@ -49,6 +58,13 @@ const parseRow = async (svc, email) => {
     // dunning agent + thread renderer can target the specific
     // human who wrote in. customer_id stays for the inbox UI's
     // existing denormalised queries.
+
+    // Audit P5.3: Haiku-tier classifier produces a discrete
+    // intent + confidence. Failure is non-fatal (regex fallback
+    // below).
+    const cls = await classifyInboundEmail(svc, email.tenant_id, email);
+
+
     const patch = {
       parsed_at: new Date().toISOString(),
       priority_score: score,
@@ -56,25 +72,41 @@ const parseRow = async (svc, email) => {
       customer_contact_id: matched && contact ? contact.id : null,
       customer_tier: matched ? tier : null,
     };
-
-    if (looksLikeRfq(email)) {
-      patch.status = "linked";
-      // Attach the thread to the customer too.
-      if (email.thread_id && matched) {
-        await svc.from("inbound_email_threads").update({
-          customer_id: customer.id,
-        }).eq("id", email.thread_id);
-      }
-      // The actual draft-order creation hand-off happens via the
-      // existing intake code; we just set the link state here so
-      // the Inbox screen surfaces the row. A separate worker (the
-      // intake module) reads `status=linked` rows and processes
-      // them through the layout-aware extractor (Phase 3.3).
-    } else {
-      patch.status = "parsed";
+    if (cls.ok) {
+      patch.classified_intent = cls.intent;
+      patch.classification_confidence = cls.confidence;
+      patch.classification_model = cls.model || null;
+      patch.classified_at = new Date().toISOString();
     }
+
+    // Routing rule: prefer the classifier's verdict when it
+    // returned a confident actionable intent; fall back to the
+    // regex looksLikeRfq() so a classifier outage doesn't sink
+    // the inbox. OOO / marketing / phishing route to 'archived'
+    // so the operator's queue stays clean.
+    let route = "parsed";
+    if (cls.ok && ACTIONABLE_INTENTS.has(cls.intent) && cls.confidence >= 0.55) {
+      route = "linked";
+    } else if (cls.ok && (cls.intent === "phishing" || cls.intent === "marketing" || cls.intent === "out_of_office")) {
+      route = "archived";
+    } else if (!cls.ok && looksLikeRfq(email)) {
+      route = "linked";
+    }
+    patch.status = route;
+
+    if (route === "linked" && email.thread_id && matched) {
+      await svc.from("inbound_email_threads").update({
+        customer_id: customer.id,
+      }).eq("id", email.thread_id);
+    }
+
     await svc.from("inbound_emails").update(patch).eq("id", email.id);
-    return { id: email.id, status: patch.status, priority: score, customer_id: patch.customer_id };
+    return {
+      id: email.id, status: patch.status, priority: score,
+      customer_id: patch.customer_id,
+      intent: cls.ok ? cls.intent : null,
+      confidence: cls.ok ? cls.confidence : null,
+    };
   } catch (err) {
     await svc.from("inbound_emails").update({
       status: "failed",

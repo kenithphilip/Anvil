@@ -7,12 +7,15 @@ to refresh.
 Summary:
 - OK:   36
 - INFO: 0
-- WARN: 1
+- WARN: 4
 - FAIL: 0
 
 | Severity | Screen | Handler | Mutation | API handler | Reason |
 |----------|--------|---------|----------|-------------|--------|
 | WARN | src/v3-app/screens/so-intake.tsx | `submitNewCustomer` | customers.upsert upsert | src/api/customers/contacts.js [ok] | no list reload |
+| WARN | src/v3-app/screens/recurring-invoices.tsx | `createSchedule` | billingRecurring.create create | (skipped) | no success feedback; no error catch; no matching api handler |
+| WARN | src/v3-app/screens/eway-bills.tsx | `createDraft` | ewayBills.create create | src/api/eway_bills/expire.js [no requirePermission] | no success feedback; no error catch |
+| WARN | src/v3-app/screens/credit-notes.tsx | `createDraft` | creditNotes.create create | src/api/credit_notes/index.js [ok] | no success feedback; no error catch |
 | OK | src/v3-app/screens/studio.tsx | `saveProfile` | customers.upsert upsert | src/api/customers/contacts.js [ok] | ok |
 | OK | src/v3-app/screens/source-pos.tsx | `submitCreate` | sourcePos.create create | src/api/source_pos/[id].js [ok] | ok |
 | OK | src/v3-app/screens/source-pos.tsx | `submitAck` | sourcePos.ack ack | src/api/source_pos/ack.js [ok] | ok |

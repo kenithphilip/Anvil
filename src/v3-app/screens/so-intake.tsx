@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Banner, Btn, Card, Chip, Dot, KV, Steps, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
+import { DocCropper } from "../components/DocCropper";
 
 // ============================================================
 // ANVIL v3 — wired SO Intake
@@ -26,6 +27,12 @@ const WiredSOIntake = () => {
   const [busy, setBusy] = u(null);
   const [err, setErr] = u(null);
   const fileRef = r(null);
+  // Audit P13.B.3 follow-up. The camera-capture path lands a raw
+  // photo (often skewed); we route it through the 4-corner
+  // perspective cropper before the upload so the OCR pipeline gets
+  // a clean rectangle. Files chosen via "browse" go straight to
+  // upload (no skew correction needed).
+  const [pendingCrop, setPendingCrop] = u<File | null>(null);
 
   // Inline "create new customer" dialog. The user reported the
   // intake flow needs a way to add a customer without leaving the
@@ -416,7 +423,18 @@ const WiredSOIntake = () => {
                       accept="image/*"
                       capture="environment"
                       style={{ display: "none" }}
-                      onChange={(ev) => onPickFile(ev.target.files?.[0])}
+                      onChange={(ev) => {
+                        // Audit P13.B.3 follow-up. Route the camera
+                        // capture through DocCropper for skew
+                        // correction before the upload. The browse
+                        // path (above) skips this since uploaded
+                        // files are already deskewed by definition.
+                        const f = ev.target.files?.[0];
+                        if (f) setPendingCrop(f);
+                        // Reset the input so re-taking the same
+                        // file fires onChange again.
+                        ev.target.value = "";
+                      }}
                       aria-label="Take a photo of the purchase order"
                     />
                     <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "center" }}>
@@ -654,6 +672,22 @@ const WiredSOIntake = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Audit P13.B.3 follow-up. 4-corner perspective cropper.
+          Mounted on the camera-capture path: the operator drags
+          the corner handles to mark the document edges and the
+          cropper warps the image to a clean rectangle before the
+          existing onPickFile pipeline (upload + extract) runs. */}
+      {pendingCrop && (
+        <DocCropper
+          file={pendingCrop}
+          onCancel={() => setPendingCrop(null)}
+          onCropped={(cropped) => {
+            setPendingCrop(null);
+            onPickFile(cropped);
+          }}
+        />
       )}
     </>
   );

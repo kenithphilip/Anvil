@@ -68,6 +68,7 @@ import agentsRun        from "../agents/run.js";
 // Phase 2 of the audit roadmap: queue consumers that turn the
 // previously-dead-letter producer queues into working flows.
 import inboundEmailDraftOrders from "../inbound/email/draft_orders.js";
+import inboundEmailPersistAttachments from "../inbound/email/persist_attachments.js";
 import voiceProcessActions     from "../voice/process_actions.js";
 import inboundProcessMessages  from "../inbound/process_messages.js";
 import inboundAutoOcr          from "../inbound/auto_ocr.js";
@@ -152,6 +153,12 @@ export default async function handler(req, res) {
       // execution is safe. auto_ocr runs after the order-creating
       // workers so newly-linked documents are picked up the same
       // tick.
+      // Audit P5.4: persist_attachments runs BEFORE draft_orders so
+      // any inline attachment bytes are uploaded to storage and a
+      // documents row is created; then draft_orders links the
+      // documents into the new order via order_documents and
+      // auto_ocr picks them up downstream.
+      { name: "inbound/email/persist_attachments", fn: inboundEmailPersistAttachments, opts: { path: "/api/inbound/email/persist_attachments" } },
       { name: "inbound/email/draft_orders", fn: inboundEmailDraftOrders, opts: { path: "/api/inbound/email/draft_orders" } },
       { name: "voice/process_actions",      fn: voiceProcessActions,     opts: { path: "/api/voice/process_actions" } },
       { name: "inbound/process_messages",   fn: inboundProcessMessages,  opts: { path: "/api/inbound/process_messages" } },

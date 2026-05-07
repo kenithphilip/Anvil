@@ -188,6 +188,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/inbound/email/configure.js | read, admin |
 | src/api/inbound/email/draft_orders.js | approve |
 | src/api/inbound/email/parse.js | approve |
+| src/api/inbound/email/persist_attachments.js | approve |
 | src/api/inbound/email/threads.js | read |
 | src/api/inbound/process_messages.js | approve |
 | src/api/inventory/availability.js | read |

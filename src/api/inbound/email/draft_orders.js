@@ -59,7 +59,7 @@ const drainOnce = async (svc) => {
   return drainQueue(svc, {
     table: "inbound_emails",
     selectColumns:
-      "id, tenant_id, thread_id, from_address, from_name, subject, body_text, attachments, received_at, priority_score, customer_id, linked_order_id, status",
+      "id, tenant_id, thread_id, from_address, from_name, subject, body_text, attachments, received_at, priority_score, customer_id, customer_contact_id, linked_order_id, status",
     statusColumn: "status",
     statusValue: "linked",
     batchOrder: { column: "received_at", ascending: true },
@@ -81,6 +81,26 @@ const drainOnce = async (svc) => {
         object_id: orderId,
         detail: "from inbound_email " + email.id,
       });
+      // Audit P5.4: link any documents that the persist_attachments
+      // worker already wrote out for this email so the auto_ocr
+      // worker can OCR them under the new order. Best-effort: if
+      // the bytes are still inline (worker hasn't drained yet),
+      // the next pass picks them up, since the ON CONFLICT skips
+      // existing pairs.
+      const attDocs = (Array.isArray(email.attachments) ? email.attachments : [])
+        .filter((a) => a && a.document_id);
+      if (attDocs.length) {
+        const links = attDocs.map((a) => ({
+          tenant_id: email.tenant_id,
+          order_id: orderId,
+          document_id: a.document_id,
+          role: "purchase_order",
+        }));
+        // Use upsert so reruns are idempotent. The composite primary
+        // key is (order_id, document_id) per migration 001.
+        await svc.from("order_documents")
+          .upsert(links, { onConflict: "order_id,document_id", ignoreDuplicates: true });
+      }
       // The thread now has a destination order; record on the
       // thread row too for the inbox UI.
       if (email.thread_id) {

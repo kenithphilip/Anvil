@@ -54,6 +54,10 @@ export const Icon = {
   filter:   <I d={<path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3Z"/>} />,
   download: <I d={<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></>} />,
   upload:   <I d={<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></>} />,
+  // Audit P13.B.3.3. Camera icon for the mobile-capture button on
+  // the SO intake screen. Renders a generic point-and-shoot
+  // outline + a centred lens circle.
+  camera:   <I d={<><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="4"/></>} />,
   send:     <I d={<><path d="m22 2-7 20-4-9-9-4Z"/><path d="m22 2-11 11"/></>} />,
   link:     <I d={<><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.72"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.72-1.72"/></>} />,
   bell:     <I d={<><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></>} />,

@@ -401,9 +401,32 @@ const WiredSOIntake = () => {
                       onChange={(ev) => onPickFile(ev.target.files?.[0])}
                       aria-label="Upload purchase order"
                     />
-                    <Btn sm kind="ghost" style={{ marginTop: 12 }} onClick={() => fileRef.current?.click()} disabled={busy === "upload"}>
-                      {busy === "upload" ? "uploading…" : <>{Icon.upload} browse</>}
-                    </Btn>
+                    {/* Audit P13.B.3.3. Camera-capable file input. The
+                        `capture="environment"` attribute makes mobile
+                        browsers (Chrome, Safari, Firefox) launch the
+                        rear camera directly so a salesperson on the
+                        floor can photo-capture a paper PO without
+                        going through the gallery picker. Desktops
+                        ignore the attribute and fall back to the
+                        normal file picker; on mobile the OS gives
+                        the user a "Camera | Files" choice. */}
+                    <input
+                      id="so-intake-camera"
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      style={{ display: "none" }}
+                      onChange={(ev) => onPickFile(ev.target.files?.[0])}
+                      aria-label="Take a photo of the purchase order"
+                    />
+                    <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "center" }}>
+                      <Btn sm kind="ghost" onClick={() => fileRef.current?.click()} disabled={busy === "upload"}>
+                        {busy === "upload" ? "uploading…" : <>{Icon.upload} browse</>}
+                      </Btn>
+                      <Btn sm kind="ghost" onClick={() => (document.getElementById("so-intake-camera") as HTMLInputElement | null)?.click()} disabled={busy === "upload"}>
+                        {Icon.camera || Icon.upload} photo
+                      </Btn>
+                    </div>
                   </>
                 )}
               </div>

@@ -126,10 +126,44 @@ const OCRReview: React.FC<{
   const [savingHeaders, setSavingHeaders] = useState(false);
   const [savingLine, setSavingLine] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Audit P13.B.3.2. Document preview URL. The backend returns a
+  // signed Supabase Storage URL on GET /api/documents/<id> with a
+  // 10-minute TTL. We fetch on selection and re-fetch when the URL
+  // is about to expire (every 9 minutes). Native browser PDF
+  // rendering replaces the previous "PDF.js mount stub" without
+  // adding a new dependency.
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   useEffect(() => {
     setDraft(selected?.extraction ? JSON.parse(JSON.stringify(selected.extraction)) : null);
     setError(null);
+    setPreviewUrl(null);
+    if (!selected?.id) return;
+    let cancelled = false;
+    setPreviewLoading(true);
+    Promise.resolve((ObaraBackend as any)?.documents?.fetch?.(selected.id))
+      .then((resp: any) => {
+        if (cancelled) return;
+        const url = resp?.downloadUrl || resp?.signedUrl || null;
+        setPreviewUrl(url);
+      })
+      .catch((e: any) => {
+        if (!cancelled) setError(String(e?.message || e));
+      })
+      .finally(() => { if (!cancelled) setPreviewLoading(false); });
+    // Refresh the signed URL one minute before the 10-minute TTL
+    // hits so the operator never sees a stale link.
+    const id = setInterval(() => {
+      if (cancelled) return;
+      Promise.resolve((ObaraBackend as any)?.documents?.fetch?.(selected.id))
+        .then((resp: any) => {
+          if (cancelled) return;
+          const url = resp?.downloadUrl || resp?.signedUrl || null;
+          if (url) setPreviewUrl(url);
+        }).catch(() => { /* silent */ });
+    }, 9 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(id); };
   }, [selected?.id]);
 
   if (!selected) {
@@ -233,11 +267,35 @@ const OCRReview: React.FC<{
             </div>
           </Card>
           <Card flush>
-            <div className="ws-pdf-stub">
-              PDF preview surface. The binary is at
-              <br /><code>{`/api/documents/${selected.id}/file`}</code>
-              <br />PDF.js mount renders here in the follow-up.
-            </div>
+            {previewLoading && (
+              <div className="ws-pdf-stub">Loading preview...</div>
+            )}
+            {!previewLoading && !previewUrl && (
+              <div className="ws-pdf-stub">
+                Preview unavailable. The signed-URL request returned no link.
+                The OCR extraction below still renders for review and editing.
+              </div>
+            )}
+            {previewUrl && (() => {
+              const isImage = /\.(png|jpe?g|gif|webp|bmp|tiff?)(\?|$)/i.test(previewUrl) || /image\//i.test(selected.filename || "");
+              const isPdf = /\.pdf(\?|$)/i.test(previewUrl) || /pdf/i.test(selected.filename || "");
+              if (isImage) {
+                return <img src={previewUrl} alt={selected.filename || "document"} style={{ width: "100%", display: "block" }} />;
+              }
+              if (isPdf) {
+                // Browser-native PDF rendering. Modern Chrome /
+                // Firefox / Safari render <embed type=application/
+                // pdf> via the built-in viewer; no external lib.
+                return <embed src={previewUrl} type="application/pdf" style={{ width: "100%", height: 600, display: "block" }} />;
+              }
+              // Fallback: link out for anything else (xlsx, zip).
+              return (
+                <div className="ws-pdf-stub">
+                  Preview not supported for this file type.{" "}
+                  <a href={previewUrl} target="_blank" rel="noreferrer" style={{ color: "var(--ink)", textDecoration: "underline" }}>Open in new tab</a>
+                </div>
+              );
+            })()}
           </Card>
           <Card title="Provenance">
             <table className="kv" style={{ marginTop: 0 }}>

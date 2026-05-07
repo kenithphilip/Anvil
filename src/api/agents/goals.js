@@ -12,7 +12,11 @@ import { recordAudit } from "../_lib/audit.js";
 import { KNOWN_GOAL_TYPES } from "./_handlers/index.js";
 
 const VALID_STATUS = new Set(["active", "paused", "completed", "cancelled", "failed"]);
-const VALID_OBJECT_TYPES = new Set(["order", "einvoice"]);
+// Audit P6.9-P6.11: object_type expanded to cover the new
+// agent goals introduced in Phase 6 (quote, invoice when
+// distinct from einvoice). The 'invoice' object_type covers
+// non-India billing; 'einvoice' stays for the GSTN flow.
+const VALID_OBJECT_TYPES = new Set(["order", "einvoice", "invoice", "quote"]);
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;

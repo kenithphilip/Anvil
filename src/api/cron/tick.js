@@ -19,7 +19,7 @@
 // + per-handler try/catch).
 
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
-import { runCronGroup, shouldRunOnMinute } from "../_lib/cron-mux.js";
+import { runCronGroup, shouldRunOnMinute, recordCronHeartbeat } from "../_lib/cron-mux.js";
 
 import netsuiteSync     from "../netsuite/sync.js";
 import netsuiteRetry    from "../netsuite/retry.js";
@@ -71,6 +71,10 @@ import inboundEmailDraftOrders from "../inbound/email/draft_orders.js";
 import voiceProcessActions     from "../voice/process_actions.js";
 import inboundProcessMessages  from "../inbound/process_messages.js";
 import inboundAutoOcr          from "../inbound/auto_ocr.js";
+// Audit P6.8: reply-handling worker drains inbound_emails with
+// actionable classified_intent (payment_acknowledge, etc.) and
+// updates the matching agent_goals.
+import agentsHandleReplies from "../agents/handle_replies.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -152,6 +156,10 @@ export default async function handler(req, res) {
       { name: "voice/process_actions",      fn: voiceProcessActions,     opts: { path: "/api/voice/process_actions" } },
       { name: "inbound/process_messages",   fn: inboundProcessMessages,  opts: { path: "/api/inbound/process_messages" } },
       { name: "inbound/auto_ocr",           fn: inboundAutoOcr,          opts: { path: "/api/inbound/auto_ocr" } },
+      // Audit P6.8: drain inbound_emails with actionable
+      // classified_intent values (payment_acknowledge etc.) and
+      // update the matching agent_goals.
+      { name: "agents/handle_replies", fn: agentsHandleReplies, opts: { path: "/api/agents/handle_replies" } },
       ...RETRIES,
     ];
     const groupAlways = await runCronGroup(alwaysGroup);
@@ -179,6 +187,30 @@ export default async function handler(req, res) {
     const results = [...groupAlways, ...groupSyncs, ...groupAgents, ...groupAgentEval];
     const okCount = results.filter((r) => r.ok).length;
     const errCount = results.filter((r) => !r.ok).length;
+    const durationMs = Date.now() - startedAt.getTime();
+
+    // Audit P5.1: heartbeat after the work, not before, so a tick
+    // that crashes mid-run does not falsely advertise the worker
+    // as healthy. We record per-sub-handler heartbeats too via the
+    // results array so on-call can see which specific drain went
+    // dark instead of just "tick stopped firing".
+    await recordCronHeartbeat("cron/tick", {
+      status: errCount === 0 ? "ok" : (okCount > 0 ? "partial" : "error"),
+      durationMs,
+      metadata: {
+        minute, ran_syncs: ranSyncs, ran_agents: ranAgents,
+        ran_agent_eval: ranAgentEval, total: results.length,
+        ok: okCount, failed: errCount,
+      },
+    });
+    for (const r of results) {
+      await recordCronHeartbeat(r.name, {
+        status: r.ok ? "ok" : "error",
+        durationMs: r.duration_ms || 0,
+        metadata: r.error ? { error: String(r.error).slice(0, 200) } : { status: r.status },
+      });
+    }
+
     return json(res, 200, {
       ran_at: startedAt.toISOString(),
       minute,
@@ -188,8 +220,12 @@ export default async function handler(req, res) {
       total: results.length,
       ok: okCount,
       failed: errCount,
-      duration_ms: Date.now() - startedAt.getTime(),
+      duration_ms: durationMs,
       results,
     });
-  } catch (err) { sendError(res, err); }
+  } catch (err) {
+    // Heartbeat the failure so the health probe reports it.
+    await recordCronHeartbeat("cron/tick", { status: "error", metadata: { error: String(err.message || err).slice(0, 200) } });
+    sendError(res, err);
+  }
 }

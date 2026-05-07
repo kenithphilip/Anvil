@@ -42,6 +42,11 @@ const slugify = (s) => String(s || "")
   .replace(/^-+|-+$/g, "")
   .slice(0, 60);
 
+// Audit P10. Test-only exports so the unit test at
+// src/v3-app/api-canonicaliser.test.js can lock the
+// canonical-name rule without standing up Supabase.
+export const __test = { canonicaliseName, slugify };
+
 // Find an existing customer by external_ref->>vendorIdField.
 const findByExternalId = async (svc, tenantId, vendorIdField, externalId) => {
   if (externalId == null) return null;

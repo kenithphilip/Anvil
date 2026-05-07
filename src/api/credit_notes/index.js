@@ -36,6 +36,9 @@ const isTransitionAllowed = (from, to) => {
   return !!(ALLOWED_TRANSITIONS[from] && ALLOWED_TRANSITIONS[from].has(to));
 };
 
+// Audit P10. Test-only exports for unit tests.
+export const __test = { isTransitionAllowed, ALLOWED_TRANSITIONS };
+
 const computeTotals = (lineItems) => {
   const items = Array.isArray(lineItems) ? lineItems : [];
   let subtotal = 0;

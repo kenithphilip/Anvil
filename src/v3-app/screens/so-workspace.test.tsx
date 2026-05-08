@@ -26,4 +26,93 @@ describe("SoWorkspace", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(container.innerHTML.length).toBeGreaterThan(0);
   });
+
+  it("renders run-extraction + send-for-review buttons for DRAFT orders", async () => {
+    // Regression May 2026: orders that arrived in DRAFT had no
+    // operator-facing trigger when post-create OCR silently failed.
+    // The workspace's action bar now exposes both actions so a stuck
+    // order can be unstuck without a backend round-trip.
+    const original = window.location.hash;
+    const orderId = "ord-fixture-1";
+    const sourceId = "doc-fixture-1";
+    const orderDraft = {
+      id: orderId,
+      status: "DRAFT",
+      po_number: "PO-9001",
+      customer_id: "cust-1",
+      customer_name: "Fixture Customer",
+      result: { salesOrder: { lineItems: [] } },
+      preflight_payload: { source_document_id: sourceId },
+      documents: [{ id: sourceId }],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    try {
+      window.location.hash = "#/so?id=" + orderId;
+      installBackend({
+        orders: {
+          get: vi.fn(async () => ({ order: orderDraft })),
+          update: vi.fn(async () => ({})),
+        },
+        audit: { list: vi.fn(async () => []) },
+        events: { list: vi.fn(async () => []) },
+        cost: { breakdown: vi.fn(async () => null) },
+      });
+      const mod = await import("./so-workspace");
+      const Screen = mod.default;
+      const { container } = renderScreen(Screen);
+      // Wait two ticks so the effects fetch + render with the order.
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      const html = container.innerHTML;
+      expect(html).toContain("run extraction");
+      expect(html).toContain("send for review");
+    } finally {
+      window.location.hash = original;
+    }
+  });
+
+  it("disables send-for-review on RECONCILED orders", async () => {
+    // The send-for-review action only makes sense for DRAFT. Once an
+    // order has been pushed and reconciled, the button must be
+    // disabled so a stale operator click cannot re-enter the review
+    // queue.
+    const original = window.location.hash;
+    const orderId = "ord-fixture-2";
+    const orderPushed = {
+      id: orderId,
+      status: "RECONCILED",
+      po_number: "PO-9002",
+      customer_id: "cust-2",
+      customer_name: "Fixture Customer 2",
+      result: { salesOrder: { lineItems: [] } },
+      preflight_payload: { source_document_id: "doc-fixture-2" },
+      documents: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    try {
+      window.location.hash = "#/so?id=" + orderId;
+      installBackend({
+        orders: {
+          get: vi.fn(async () => ({ order: orderPushed })),
+          update: vi.fn(async () => ({})),
+        },
+        audit: { list: vi.fn(async () => []) },
+        events: { list: vi.fn(async () => []) },
+        cost: { breakdown: vi.fn(async () => null) },
+      });
+      const mod = await import("./so-workspace");
+      const Screen = mod.default;
+      const { container } = renderScreen(Screen);
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      const sendForReview = Array.from(container.querySelectorAll("button"))
+        .find((b) => b.textContent && b.textContent.toLowerCase().includes("send for review"));
+      expect(sendForReview).toBeTruthy();
+      expect(sendForReview?.hasAttribute("disabled")).toBe(true);
+    } finally {
+      window.location.hash = original;
+    }
+  });
 });

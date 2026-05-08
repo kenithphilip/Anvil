@@ -1,0 +1,50 @@
+{
+  "id": "safety_ppe",
+  "label": "Safety & PPE",
+  "description": "Personal protective equipment + workplace safety: head + eye + face + hearing + respiratory + hand + body + foot + fall protection. High-velocity catalogue (3M / Honeywell / Ansell / MSA / DuPont) with strict EN / ANSI / IS standards, expiry-dated stock (respirator filters, hard hats), and managed-inventory programmes that vending machines on the customer floor.",
+  "version": 1,
+  "approval_thresholds": [
+    { "level": "rep",      "min_amount": 0,       "max_amount": 25000,    "currency": "INR" },
+    { "level": "manager",  "min_amount": 25000,   "max_amount": 200000,   "currency": "INR" },
+    { "level": "director", "min_amount": 200000,  "max_amount": 1500000,  "currency": "INR" },
+    { "level": "vp",       "min_amount": 1500000, "max_amount": null,     "currency": "INR" }
+  ],
+  "lead_time_defaults_days": {
+    "stocked_consumable":   1,
+    "branded_helmet":       7,
+    "respirator_filter":    14,
+    "fall_arrest_special":  21,
+    "hi_vis_custom_print":  10,
+    "boot_special_size":    14
+  },
+  "lost_reasons": [
+    "Price (competitor lower)",
+    "EN / ANSI / IS standard mismatch",
+    "Size out of range (boots / gloves)",
+    "Cut level rating insufficient (A4 / A8)",
+    "Filter rating mismatch (P1 / P2 / P3)",
+    "Fit-test certificate not provided",
+    "Custom branding lead time too long",
+    "Customer specified OEM only",
+    "Expiry date too close"
+  ],
+  "contract_types": ["spot", "annual", "managed_inventory", "vending_program", "site_program"],
+  "item_master_examples": [
+    { "code": "HELM-MSA-V-GARD-WHT", "description": "MSA V-Gard hard hat 4-pt suspension white EN 397",       "uom": "pcs" },
+    { "code": "GLV-CUT-A4-BLK-9",    "description": "Cut-resistant glove ANSI A4 nitrile-coated black size 9", "uom": "pair" },
+    { "code": "RESP-N95-1860-20PK",  "description": "3M 1860 N95 respirator 20-pack EN 149 FFP2",              "uom": "box" },
+    { "code": "GOG-3M-2890-CLR",     "description": "3M 2890 splash goggle clear EN 166",                       "uom": "pcs" },
+    { "code": "FALL-ARREST-FS809",   "description": "Full-body harness 5-point with shock-absorbing lanyard",   "uom": "set" },
+    { "code": "BOOT-PVC-S5-9",       "description": "PVC safety boot S5 steel toe + midsole size 9",            "uom": "pair" }
+  ],
+  "quote_template": {
+    "header_columns": ["customer_po", "standard", "rating", "size", "color", "qty", "uom", "price_per_unit", "extension"],
+    "footer_blocks": ["expiry_date", "fit_test_required", "custom_branding", "vending_program", "freight_terms", "validity_days"]
+  },
+  "kpis": [
+    { "id": "managed_inventory_arr", "label": "Managed-inventory ARR", "unit": "INR",     "window": "annual" },
+    { "id": "vending_program_count", "label": "Active vending programmes", "unit": "count", "window": "snapshot" },
+    { "id": "expiry_writeoff_pct",   "label": "Expiry write-off %",     "unit": "percent", "window": "quarter" },
+    { "id": "standards_audit_score", "label": "Standards audit score",  "unit": "percent", "window": "annual" }
+  ]
+}

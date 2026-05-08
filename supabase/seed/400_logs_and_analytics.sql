@@ -256,7 +256,7 @@ begin
       jsonb_build_object('expected_lines', 5 + (i % 4), 'expected_total', 250000 + i * 5000, 'seed_marker','anvil-test-seed-v1'),
       true,
       now() - ((90 - i) || ' days')::interval
-    ) on conflict (tenant_id, suite, case_id) do nothing;
+    ) on conflict do nothing;
   end loop;
 
   -- Runs (5 cycles across suites).
@@ -374,7 +374,7 @@ insert into deploys (id, commit_sha, environment, deployed_at, deployed_by, bran
   (uuid_generate_v5('d7a7e5e4-0001-0004-0001-000000000001','dep:6'), encode(digest('hotfix1','sha256'),'hex'), 'production', now() - interval '5 days',  'kenith.philip@fivetran.com', 'hotfix/csp-tighten',    'https://anvil.example/main',         jsonb_build_object('seed_marker','anvil-test-seed-v1','release','v1.5.1')),
   (uuid_generate_v5('d7a7e5e4-0001-0004-0001-000000000001','dep:7'), encode(digest('preview7','sha256'),'hex'),'preview',    now() - interval '3 days',  'kenith.philip@fivetran.com', 'feat/landing-v2',       'https://anvil-preview-004.example',  jsonb_build_object('seed_marker','anvil-test-seed-v1')),
   (uuid_generate_v5('d7a7e5e4-0001-0004-0001-000000000001','dep:8'), encode(digest('preview8','sha256'),'hex'),'preview',    now() - interval '1 day',   'kenith.philip@fivetran.com', 'feat/seed-pack-400',    'https://anvil-preview-005.example',  jsonb_build_object('seed_marker','anvil-test-seed-v1'))
-on conflict (commit_sha, environment) do nothing;
+on conflict do nothing;
 
 -- ───────────────────────────────────────────────────────────────────
 -- 7. BACKUPS  --  6 rows; status encoded in `notes` since the
@@ -498,7 +498,17 @@ begin
           4500000 + (j * 120000) % 3000000,
           12500000 + (j * 240000) % 6500000,
           (now() - (k * 30 || ' days')::interval)::timestamptz
-        ) on conflict (tenant_id, as_of, segment_dimension, segment_value) do nothing;
+        )
+        -- Bug fix May 2026: prior runs left rows whose v5-derived
+        -- id matches the current insert's id but whose business
+        -- key (tenant, as_of, dim, segment_value) differs because
+        -- the segment_value formula was tweaked between phases.
+        -- Targeting just the business-key unique constraint then
+        -- raised a PK violation on the id. Using the no-target
+        -- form catches any unique conflict (PK or business-key)
+        -- so the seed stays idempotent regardless of which one
+        -- the existing row collides on.
+        on conflict do nothing;
       end loop;
     end loop;
   end loop;

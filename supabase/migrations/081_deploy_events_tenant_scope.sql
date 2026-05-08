@@ -21,6 +21,13 @@
 
 drop policy if exists "deploy_events_authenticated_read" on deploy_events;
 
+-- Bug fix May 2026 (re-roll): the original migration didn't drop the
+-- target policy before creating it, so a partial run that succeeded
+-- past line 28 left "deploy_events_admin_read" on the table and the
+-- next attempt blew up with `policy already exists`. Idempotency
+-- guard added.
+drop policy if exists "deploy_events_admin_read" on deploy_events;
+
 -- Service role + supabase admin can always read (for the cron
 -- writer + the auditor's direct DB session). For app-side reads,
 -- only users whose JWT carries role='admin' or role='service' can

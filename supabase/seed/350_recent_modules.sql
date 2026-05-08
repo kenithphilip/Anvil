@@ -49,8 +49,14 @@ end $env_guard$;
 
 begin;
 
-do $role$
-begin set local role 'postgres'; exception when others then null; end;
+-- Bug fix May 2026: the original block was malformed. The other
+-- phase files (200, 300, 500, 900) use a single `do $role$ begin
+-- ... end $role$;` block with the set-role guard nested inside;
+-- this file had the begin on a separate line which made psql
+-- read `end $role$;` as a stray `end` keyword and bail out with
+-- `syntax error at or near "end"`. Match the canonical shape.
+do $role$ begin
+  begin set local role 'postgres'; exception when others then null; end;
 end $role$;
 
 -- ───────────────────────────────────────────────────────────────────
@@ -74,8 +80,15 @@ begin
   loop
     domain := coalesce(split_part(cust.contact_email, '@', 2), lower(replace(cust.customer_key, '_', '-')) || '.example');
     for contact_idx in 1..3 loop
+      -- Bug fix May 2026: customer_contacts has no `metadata`
+      -- column; the seed marker lands in `external_ref` (jsonb)
+      -- which is already on the table per migration 065. The
+      -- column was originally for ERP-side row pointers, but
+      -- nothing else writes to it on tenant-scoped seeded rows
+      -- and the schema accepts arbitrary jsonb so a seed_marker
+      -- key is harmless.
       insert into customer_contacts (
-        id, tenant_id, customer_id, name, email, phone, role, is_primary, metadata
+        id, tenant_id, customer_id, name, email, phone, role, is_primary, external_ref
       ) values (
         uuid_generate_v5(ns, 'contact:' || cust.customer_key || ':' || contact_idx),
         default_tenant,
@@ -190,8 +203,12 @@ declare
   ns             uuid := 'd7a7e5e4-0001-0035-0001-000000000001';
   inv_id         uuid;
   einv_id        uuid;
-  cn_kinds       text[] := array['credit_note', 'debit_note'];
-  cn_statuses    text[] := array['draft', 'issued', 'cancelled'];
+  -- Bug fix May 2026: kind + status are enum-typed
+  -- (credit_note_kind / credit_note_status, migration 072) with
+  -- uppercase values. Previous version used lowercase strings which
+  -- failed the implicit cast and bombed seed-apply.
+  cn_kinds       text[] := array['CREDIT', 'DEBIT'];
+  cn_statuses    text[] := array['DRAFT', 'ISSUED', 'CANCELLED'];
   k              text;
   st             text;
   reason         text;
@@ -210,25 +227,35 @@ begin
         when 2 then 'tax_revision'
         else 'goods_returned'
       end;
+      -- Bug fix May 2026: note_number is NOT NULL on credit_notes
+      -- (migration 072) and was missing from the previous insert.
+      -- Builds a deterministic CN-YYYY-NNNN style number from the
+      -- kind + status + index so re-runs are idempotent.
+      -- Explicit casts to credit_note_kind / credit_note_status
+      -- (migration 072): without them PG raises
+      -- `column "kind" is of type credit_note_kind but expression
+      -- is of type text`.
       insert into credit_notes (
-        id, tenant_id, kind, reason, reason_text, status,
+        id, tenant_id, note_number, kind, reason, reason_text, status,
         invoice_id, einvoice_id, currency, subtotal, tax_total, grand_total,
         line_items, created_by, created_at, issued_at, cancelled_at
       ) values (
         uuid_generate_v5(ns, 'cn:' || k || ':' || st),
-        default_tenant, k, reason,
-        case k when 'credit_note' then 'Customer requested CN for short delivery' else 'Operator-initiated DN for under-billed line' end,
-        st,
-        case when st <> 'draft' and inv_id is not null then inv_id end,
-        case when st <> 'draft' and einv_id is not null then einv_id end,
+        default_tenant,
+        case k when 'CREDIT' then 'CN' else 'DN' end || '-2026-' || lpad(i::text, 4, '0'),
+        k::credit_note_kind, reason,
+        case k when 'CREDIT' then 'Customer requested CN for short delivery' else 'Operator-initiated DN for under-billed line' end,
+        st::credit_note_status,
+        case when st <> 'DRAFT' and inv_id is not null then inv_id end,
+        case when st <> 'DRAFT' and einv_id is not null then einv_id end,
         'INR', 1500.00, 270.00, 1770.00,
         jsonb_build_array(
           jsonb_build_object('description', 'Adjustment line', 'qty', 1, 'rate', 1500.00, 'gst_pct', 18)
         ),
         uuid_generate_v5(uuid_ns_dns(), 'anvil-seed-user:fin.alpha@anvil.test'),
         now() - ((i * 3) || ' days')::interval,
-        case when st = 'issued' then now() - ((i * 3) || ' days')::interval + '4 hours'::interval end,
-        case when st = 'cancelled' then now() - ((i * 3) || ' days')::interval + '8 hours'::interval end
+        case when st = 'ISSUED' then now() - ((i * 3) || ' days')::interval + '4 hours'::interval end,
+        case when st = 'CANCELLED' then now() - ((i * 3) || ' days')::interval + '8 hours'::interval end
       )
       on conflict (id) do nothing;
     end loop;
@@ -243,8 +270,13 @@ declare
   default_tenant uuid := '00000000-0000-0000-0000-000000000001';
   ns             uuid := 'd7a7e5e4-0001-0035-0001-000000000001';
   cust_id        uuid;
-  cadences       text[] := array['monthly', 'quarterly', 'annual'];
-  statuses       text[] := array['active', 'paused', 'completed'];
+  -- Bug fix May 2026: cadence is a CHECK constraint with uppercase
+  -- values (MONTHLY/QUARTERLY/BIANNUAL/ANNUAL) and status is the
+  -- recurring_invoice_status enum (ACTIVE/PAUSED/CANCELLED).
+  -- 'completed' is NOT a valid status; use 'CANCELLED' so the
+  -- end_date branch keeps its meaning.
+  cadences       text[] := array['MONTHLY', 'QUARTERLY', 'ANNUAL'];
+  statuses       text[] := array['ACTIVE', 'PAUSED', 'CANCELLED'];
   cad            text;
   st             text;
   i              int := 0;
@@ -254,16 +286,26 @@ begin
   foreach cad in array cadences loop
     foreach st in array statuses loop
       i := i + 1;
+      -- Bug fix May 2026: column is `invoice_count` not
+      -- `generated_count`; `next_invoice_date` is NOT NULL and
+      -- was missing entirely from the prior insert. Default to 30
+      -- days out for ACTIVE rows, the start_date for CANCELLED
+      -- rows (the schedule is closed, the next-date stamp is
+      -- moot but the column requires a value).
+      -- recurring_invoice_status enum (migration 073) needs an
+      -- explicit cast for the same reason as credit_notes above.
       insert into recurring_invoice_schedules (
         id, tenant_id, customer_id, cadence, amount, currency,
-        start_date, end_date, status, max_invoices, generated_count,
+        start_date, next_invoice_date, end_date, status, max_invoices, invoice_count,
         description, net_days, created_by, created_at
       ) values (
         uuid_generate_v5(ns, 'recur:' || cad || ':' || st),
         default_tenant, cust_id, cad, 25000.00, 'INR',
         (now() - '180 days'::interval)::date,
-        case when st = 'completed' then (now() - '7 days'::interval)::date end,
-        st, 12, case st when 'completed' then 12 when 'paused' then 6 else 4 end,
+        case when st = 'ACTIVE' then (now() + '30 days'::interval)::date
+             else (now() - '180 days'::interval)::date end,
+        case when st = 'CANCELLED' then (now() - '7 days'::interval)::date end,
+        st::recurring_invoice_status, 12, case st when 'CANCELLED' then 12 when 'PAUSED' then 6 else 4 end,
         'Phase 350 fixture: ' || cad || ' AMC retainer',
         30,
         uuid_generate_v5(uuid_ns_dns(), 'anvil-seed-user:fin.alpha@anvil.test'),
@@ -283,8 +325,12 @@ declare
   ns             uuid := 'd7a7e5e4-0001-0035-0001-000000000001';
   inv_id         uuid;
   einv_id        uuid;
-  statuses       text[] := array['draft', 'generated', 'cancelled', 'expired'];
-  modes          text[] := array['road', 'rail'];
+  -- Bug fix May 2026: eway_bills.status is the eway_bill_status
+  -- enum (DRAFT / PENDING_NIC / GENERATED / CANCELLED / REJECTED /
+  -- EXPIRED) per migration 074. trans_mode has no CHECK so the
+  -- mode label can be free-text but we capitalize for symmetry.
+  statuses       text[] := array['DRAFT', 'GENERATED', 'CANCELLED', 'EXPIRED'];
+  modes          text[] := array['Road', 'Rail'];
   st             text;
   m              text;
   i              int := 0;
@@ -307,15 +353,16 @@ begin
         (now() - ((i * 2) || ' days')::interval)::date,
         m,
         180 + (i * 50),
-        case m when 'road' then 'MH04AB' || lpad((1000 + i)::text, 4, '0') else null end,
-        case m when 'road' then 'regular' else 'rail' end,
+        case m when 'Road' then 'MH04AB' || lpad((1000 + i)::text, 4, '0') else null end,
+        case m when 'Road' then 'regular' else 'rail' end,
         '27ABCDE1234F1Z' || (5 + i % 5)::text,
         'Continental Transport Pvt Ltd',
         88340.00, 104241.20,
-        st,
-        case when st in ('generated', 'cancelled', 'expired') then '321' || lpad((1000000 + i)::text, 10, '0') end,
-        case when st = 'generated' then now() + '7 days'::interval
-             when st = 'expired'   then now() - '1 day'::interval end,
+        -- eway_bill_status enum cast (migration 074).
+        st::eway_bill_status,
+        case when st in ('GENERATED', 'CANCELLED', 'EXPIRED') then '321' || lpad((1000000 + i)::text, 10, '0') end,
+        case when st = 'GENERATED' then now() + '7 days'::interval
+             when st = 'EXPIRED'   then now() - '1 day'::interval end,
         now() - ((i * 5) || ' days')::interval
       )
       on conflict (id) do nothing;
@@ -444,7 +491,13 @@ begin
       case when (r->>'tenant_scope')::boolean then alpha end,
       case when not (r->>'tenant_scope')::boolean then now() - '7 days'::interval end
     )
-    on conflict on constraint voice_dnd_list_unique do nothing;
+    -- Bug fix May 2026: voice_dnd_list_unique is a unique INDEX
+    -- (with a coalesce expression on tenant_id), not a named
+    -- constraint, so `on conflict on constraint <name>` raises
+    -- "constraint ... does not exist". Fall back to the primary
+    -- key. The id is derived via uuid_generate_v5 from the same
+    -- (source + phone) tuple, so re-runs converge to the same row.
+    on conflict (id) do nothing;
   end loop;
 end $voice_dnd$;
 
@@ -524,7 +577,10 @@ begin
       jsonb_build_object('cooldown_hours', 72, 'sent_at', q.sent_at, 'version', q.version, 'seed_marker', 'anvil-test-seed-v1'),
       'active', alpha, alpha, now() - '6 hours'::interval
     )
-    on conflict on constraint agent_goals_active_target_uniq do nothing;
+    -- agent_goals_active_target_uniq is a unique INDEX (migration
+    -- 082), not a named constraint, so we conflict on the primary
+    -- key. The id is uuid_generate_v5-derived and stable.
+    on conflict (id) do nothing;
     -- expiring_quote_nudge
     insert into agent_goals (
       id, tenant_id, goal_type, object_type, object_id,
@@ -536,7 +592,10 @@ begin
       jsonb_build_object('sent_at', q.sent_at, 'expires_at', q.expires_at, 'version', q.version, 'seed_marker', 'anvil-test-seed-v1'),
       'active', alpha, alpha, now() - '6 hours'::interval
     )
-    on conflict on constraint agent_goals_active_target_uniq do nothing;
+    -- agent_goals_active_target_uniq is a unique INDEX (migration
+    -- 082), not a named constraint, so we conflict on the primary
+    -- key. The id is uuid_generate_v5-derived and stable.
+    on conflict (id) do nothing;
   end loop;
 end $quote_goals$;
 

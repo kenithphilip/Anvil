@@ -176,18 +176,24 @@ codebase:
 - Idempotency keys on every external push (Tally, NetSuite, SAP,
   D365, Acumatica).
 
-**Code-side controls still owed when the program kicks off** (~2 weeks
-of work spread over the audit window):
+**Code-side controls (May 2026):**
 
-- An **access review** endpoint: monthly snapshot of every member's
-  role per tenant, persisted for evidence.
-- An **audit log export** endpoint: time-bounded JSONL dump of
-  `audit_events` for the auditor.
-- A **change log** for production deploys (Vercel deploy hook ->
-  Supabase row).
-- A **vulnerability scan** runbook (npm audit + Snyk / GitHub
-  Dependabot output collected weekly).
-- **Incident response playbook**: single doc, linked from this one.
+- ✓ **Access review** endpoint: `/api/admin/access_review.js`.
+  Monthly snapshot of every member's role per tenant; signed
+  acknowledgement persisted for evidence.
+- ✓ **Audit log export** endpoint: `/api/audit/export.js`.
+  Time-bounded HMAC-signed JSONL dump of `audit_events`.
+- ✓ **Change log** for production deploys: `/api/deploys` +
+  `deploy_events` table (migration 079). Vercel deploy hook
+  POSTs each event; auditors read GET. SOC 2 CC8.1 evidence.
+- ✓ **Vulnerability scan runbook**: `docs/VULN_SCAN_RUNBOOK.md`.
+  Weekly Dependabot + npm audit + Snyk triage workflow with
+  patch-now / patch-this-sprint / VEX-rejected / accept-risk
+  dispositions. SOC 2 CC7.1 + CC7.2.
+- ✓ **Incident response playbook**: `docs/INCIDENT_RESPONSE.md`.
+  Severity ladder, 7-step runbook (triage / classify / contain /
+  investigate / remediate / communicate / post-mortem),
+  drill cadence. SOC 2 CC7.4.
 
 **What's a program-level item**:
 

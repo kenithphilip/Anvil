@@ -106,6 +106,9 @@ import ewayBillsExpire          from "./eway_bills/expire.js";
 
 import deliveryPromise         from "./delivery/promise.js";
 
+// SOC 2 CC8.1 change log: production deploy events.
+import deploysIndex            from "./deploys/index.js";
+
 import documentsById           from "./documents/[id].js";
 import documentsEvidence       from "./documents/[id]/evidence.js";
 import documentsIndex          from "./documents/index.js";
@@ -675,6 +678,7 @@ const STATIC_ROUTES = {
   "/eway_bills/expire":             ewayBillsExpire,
 
   "/delivery/promise":              deliveryPromise,
+  "/deploys":                       deploysIndex,
 
   "/documents":                     documentsIndex,
   "/documents/ocr":                 documentsOcr,

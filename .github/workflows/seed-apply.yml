@@ -105,9 +105,15 @@ jobs:
           PGURL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
+          # 350 is the May 2026 follow-up phase covering modules
+          # added in PRs 50-63 (quotes, customer_contacts, credit
+          # notes, e-Way bills, recurring schedules, deploys, voice
+          # consent + DND). It runs after 300 because it FK-references
+          # 300's invoices + einvoices.
           for f in supabase/seed/100_users_and_tenants.sql \
                    supabase/seed/200_master_data.sql \
                    supabase/seed/300_workflow_data.sql \
+                   supabase/seed/350_recent_modules.sql \
                    supabase/seed/400_logs_and_analytics.sql \
                    supabase/seed/500_erp_mirrors.sql; do
             echo "::group::$f"

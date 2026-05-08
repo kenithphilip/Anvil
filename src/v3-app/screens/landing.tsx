@@ -66,8 +66,8 @@ const useKineticPair = () => {
 // against the actual codebase, not a fabricated benchmark. The
 // useCountUp hook tweens to the target on first reveal.
 //   17 ERPs    : ls src/api/_lib/*-client.js | grep -vE 'plm|stripe|razorpay|docusign|voice' | wc -l
-//   18 rules   : src/api/anomaly/compute.js RULES array length
-//   5 channels : Email + WhatsApp + Slack + Teams + Voice
+//   20 rules   : awk '/^const RULES = \[/,/^\];/' src/api/anomaly/compute.js | grep -cE '^\s+\{'
+//   5 channels : src/api/inbound/{email,whatsapp,slack,teams,chat}/ + src/api/voice/
 //   100% audit : append-only audit_events on every action
 const HERO_SPEC: Array<{ lbl: string; tgt: number; suffix?: string; prefix?: string; decimals?: number; d: string }> = [
   { lbl: "ERPs",            tgt: 17,  decimals: 0, d: "named clients in src/api/_lib" },
@@ -113,7 +113,7 @@ const CONNECTOR_TABS: Array<{
   tiles: Array<{ logo: string; bg: string; fg?: string; nm: string; meta: string; stat?: { text: string; beta?: boolean } }>;
 }> = [
   {
-    id: "erp", label: "ERPs", count: 18,
+    id: "erp", label: "ERPs", count: 17,
     tiles: [
       { logo: "SAP",  bg: "#FF7900", fg: "#fff", nm: "SAP S/4HANA",   meta: "OData · idoc" },
       { logo: "NS",   bg: "#0067C5", fg: "#fff", nm: "NetSuite",      meta: "SuiteQL · Record API" },
@@ -138,12 +138,11 @@ const CONNECTOR_TABS: Array<{
   {
     id: "chan", label: "Channels", count: 5,
     tiles: [
-      { logo: "@",    bg: "#EA4335", fg: "#fff", nm: "Email parse",      meta: "SendGrid · multipart", stat: { text: "always-on" } },
+      { logo: "@",    bg: "#EA4335", fg: "#fff", nm: "Email parse",      meta: "Postmark · multipart", stat: { text: "always-on" } },
       { logo: "WA",   bg: "#25D366", fg: "#fff", nm: "WhatsApp",         meta: "Twilio · Meta Cloud" },
       { logo: "S",    bg: "#4A154B", fg: "#fff", nm: "Slack",            meta: "Events API · v0" },
       { logo: "T",    bg: "#5059C9", fg: "#fff", nm: "MS Teams",         meta: "Bot Framework" },
       { logo: "VOX",  bg: "#15171A", fg: "#C8FF2B", nm: "Voice (Vapi · Retell)", meta: "webhook · transcript" },
-      { logo: "PDF",  bg: "#15171A", fg: "#C8FF2B", nm: "Drag & drop · scan",   meta: "PDF · image · ZIP" },
     ],
   },
   {
@@ -188,10 +187,11 @@ const CONNECTOR_TABS: Array<{
 ];
 
 // Security strip: 6 badges. Statuses are honest: SOC 2 / ISO 27001
-// in audit; remainder live.
+// programs are in progress (no fixed completion date until the
+// observation window closes); remainder live.
 const SECURITY = [
-  { ico: "SOC2", nm: "SOC 2 Type II", st: "in audit · Q3", kind: "prog" },
-  { ico: "ISO",  nm: "ISO 27001",     st: "in audit · Q4", kind: "prog" },
+  { ico: "SOC2", nm: "SOC 2 Type II", st: "in progress",    kind: "prog" },
+  { ico: "ISO",  nm: "ISO 27001",     st: "in progress",    kind: "prog" },
   { ico: "GDPR", nm: "GDPR / DPDP",   st: "compliant",     kind: "live" },
   { ico: "RES",  nm: "Data residency", st: "IN · EU · US", kind: "live" },
   { ico: "BYO",  nm: "BYO LLM key",   st: "supported",     kind: "live" },
@@ -211,19 +211,19 @@ const PILLARS = [
     badge: "01 · capture", live: true,
     h: "Capture across", em: "every channel.",
     p: "Email, WhatsApp, Slack, Teams, voice, all classified, deduped, threaded into a single inbox. RFQs & POs become drafts in seconds, with the original artifact one click away.",
-    bullets: ["5 inbound channels · 6 doc engines", "Customer-aware alias graph (4,312 SKUs)", "GAEB · X81/X83/X84/X86 deterministic", "Provenance on every cell"],
+    bullets: ["5 inbound channels · 6 doc engines", "Alias graph keyed on your master data", "GAEB · X81/X83/X84/X86 deterministic", "Provenance on every cell"],
   },
   {
     badge: "02 · catch",
     h: "Flag what's", em: "actually weird.",
-    p: "18 anomaly rules + a price-deviation model trained on your last 90 days. Loud where it matters (10× rate, credit overrun, GST mismatch); quiet otherwise.",
-    bullets: ["Rate · margin · GST · credit · alias confidence", "FPR 3.4% · target ≤ 5%", "Operator decides, Anvil never silently overrides", "Every catch logged with diff & reason"],
+    p: "20 anomaly rules + a price-deviation model trained on your last 90 days. Loud where it matters (10× rate, credit overrun, GST mismatch); quiet otherwise.",
+    bullets: ["Rate · margin · GST · credit · alias confidence", "Target false-positive rate ≤ 5%", "Operator decides, Anvil never silently overrides", "Every catch logged with diff & reason"],
   },
   {
     badge: "03 · ship",
     h: "Push to", em: "your ERP.",
-    p: "One-click commit to Tally, SAP, NetSuite, D365, Acumatica, P21, 18 ERPs supported. e-Invoice, e-Way bill, source PO routing, all wired, all auditable, all idempotent.",
-    bullets: ["18 ERPs · idempotent push · retry queue", "e-Invoice IRN + e-Way bill", "Append-only audit · 14k+ events / mo", "Mobile approver · passkey signoff"],
+    p: "One-click commit to Tally, SAP, NetSuite, D365, Acumatica, P21, 17 ERPs supported. e-Invoice, e-Way bill, source PO routing, all wired, all auditable, all idempotent.",
+    bullets: ["17 ERPs · idempotent push · retry queue", "e-Invoice IRN + e-Way bill", "Append-only audit · every state change", "Mobile approver · passkey signoff"],
   },
 ];
 
@@ -318,7 +318,7 @@ const TIERS: Array<{
 type CmpMark = "yes" | "no" | "mid";
 const CMP_ROWS: Array<{ feat: string; us: string; w: { mark: CmpMark; t: string }; o: { mark: CmpMark; t: string }; b: { mark: CmpMark; t: string } }> = [
   { feat: "Customer-aware part-number aliases", us: "built-in",        w: { mark: "no",  t: "none" },        o: { mark: "no",  t: "none" }, b: { mark: "mid", t: "6 mo build" } },
-  { feat: "Anomaly model (rate · margin · GST)", us: "18 rules + ML", w: { mark: "no",  t: "rules only" },   o: { mark: "no",  t: "none" }, b: { mark: "mid", t: "ongoing" } },
+  { feat: "Anomaly model (rate · margin · GST)", us: "20 rules + ML", w: { mark: "no",  t: "rules only" },   o: { mark: "no",  t: "none" }, b: { mark: "mid", t: "ongoing" } },
   { feat: "Append-only audit trail",            us: "NDJSON export",   w: { mark: "mid", t: "partial" },     o: { mark: "no",  t: "none" }, b: { mark: "mid", t: "custom" } },
   { feat: "e-Invoice IRN + e-Way bill",         us: "live",            w: { mark: "no",  t: "add-on" },      o: { mark: "no",  t: "none" }, b: { mark: "mid", t: "compliance work" } },
   { feat: "Tally bridge (idempotent · 12ms)",   us: "on-prem",         w: { mark: "no",  t: "cloud only" },  o: { mark: "no",  t: "none" }, b: { mark: "mid", t: "Tally XML pain" } },
@@ -703,10 +703,10 @@ const Landing: React.FC = () => {
         {/* === CONNECTORS === */}
         <section className="lp-connectors" id="connectors" aria-labelledby="con-h">
           <div className="lp-wrap">
-            <span className="lp-eb lp-eb-dot">Connectors · 32 systems · 1 console</span>
+            <span className="lp-eb lp-eb-dot">Connectors · one console</span>
             <h2 id="con-h">Already speaks <span className="lp-em">your stack.</span></h2>
             <p className="lp-lead">
-              Anvil is the layer in front of the systems your team already runs. Native connectors for 18 ERPs,
+              Anvil is the layer in front of the systems your team already runs. Native connectors for 17 ERPs,
               6 doc-extraction engines, 5 inbound channels, payments, e-Invoice, PLM. Every push idempotent.
               Every read cached. Every retry on the audit log.
             </p>
@@ -1219,7 +1219,7 @@ const Landing: React.FC = () => {
                 </svg>
                 <span className="lp-foot-name">Anvil</span>
               </div>
-              <p>AI-native quote-to-cash for industrial distributors. 18 ERPs, 5 inbound channels, 6 doc engines, full audit. Built in Pune.</p>
+              <p>AI-native quote-to-cash for industrial distributors. 17 ERPs, 5 inbound channels, 6 doc engines, full audit. Built in Pune.</p>
             </div>
             <div>
               <h4>Product</h4>

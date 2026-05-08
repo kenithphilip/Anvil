@@ -336,6 +336,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/tally/validate.js | read |
 | src/api/voice/configure.js | read, admin |
 | src/api/voice/consent.js | read, write |
+| src/api/voice/dnd.js | read, write |
 | src/api/voice/handoff.js | approve |
 | src/api/voice/outbound.js | approve |
 | src/api/voice/process_actions.js | approve |

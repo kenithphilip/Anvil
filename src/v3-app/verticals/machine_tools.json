@@ -1,0 +1,49 @@
+{
+  "id": "machine_tools",
+  "label": "Machine tools & cutting tools",
+  "description": "Capital machine tools (CNC + VMC + lathes) and the consumable cutting-tool tail (carbide inserts, end mills, drills, taps, coolant). Two distinct sales motions in one catalogue: capital equipment with multi-month lead times + spec sign-offs, and a high-velocity consumable channel with daily reorders.",
+  "version": 1,
+  "approval_thresholds": [
+    { "level": "rep",       "min_amount": 0,        "max_amount": 100000,    "currency": "INR" },
+    { "level": "manager",   "min_amount": 100000,   "max_amount": 1000000,   "currency": "INR" },
+    { "level": "director",  "min_amount": 1000000,  "max_amount": 7500000,   "currency": "INR" },
+    { "level": "vp",        "min_amount": 7500000,  "max_amount": null,      "currency": "INR" }
+  ],
+  "lead_time_defaults_days": {
+    "consumable_stocked":     1,
+    "consumable_indent":      14,
+    "tooling_holder":         21,
+    "machine_capital_indian": 90,
+    "machine_capital_import": 180,
+    "regrind_service":        7
+  },
+  "lost_reasons": [
+    "Price (competitor lower)",
+    "Spec mismatch (HSK / BT taper)",
+    "Coating mismatch (TiAlN vs AlCrN)",
+    "Substrate grade rejected",
+    "Lead time too long",
+    "Customer specified OEM tool only",
+    "Capital sign-off pending",
+    "Application engineer not available",
+    "Demo machining trial failed"
+  ],
+  "contract_types": ["spot", "annual_consumable", "managed_inventory", "capital_equipment"],
+  "item_master_examples": [
+    { "code": "INS-CNMG120408-P25", "description": "Carbide insert CNMG 12 04 08 P25 grade for steel",          "uom": "pcs" },
+    { "code": "EM-S4-12MM-TI",       "description": "Solid carbide end mill 4-flute 12 mm TiAlN coated",         "uom": "pcs" },
+    { "code": "DR-HSS-8MM-119",      "description": "HSS twist drill 8 mm 119-degree split point",                "uom": "pcs" },
+    { "code": "TAP-M10-1.5-HSS",     "description": "Hand tap M10 x 1.5 HSS three-piece set",                     "uom": "set" },
+    { "code": "MACH-VMC-850-3AX",    "description": "Vertical machining centre 850 mm X 3-axis Fanuc 0i-MF",      "uom": "ea"  }
+  ],
+  "quote_template": {
+    "header_columns": ["customer_po", "tool_geometry", "substrate", "coating", "qty", "uom", "price_per_unit", "extension"],
+    "footer_blocks": ["application_notes", "trial_required", "regrind_program", "freight_terms", "validity_days"]
+  },
+  "kpis": [
+    { "id": "consumable_reorder_rate", "label": "Consumable reorder rate",  "unit": "percent", "window": "month" },
+    { "id": "capital_pipeline_value",  "label": "Capital pipeline value",   "unit": "INR",     "window": "quarter" },
+    { "id": "regrind_attach_rate",     "label": "Regrind attach rate",      "unit": "percent", "window": "quarter" },
+    { "id": "trial_to_order_days",     "label": "Trial to first order",    "unit": "days",    "window": "rolling90" }
+  ]
+}

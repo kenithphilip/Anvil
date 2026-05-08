@@ -907,6 +907,13 @@
     listConsent: async (phone) => apiFetch("/api/voice/consent" + (phone ? "?phone=" + encodeURIComponent(phone) : "")),
     recordConsent: async (payload) => apiFetch("/api/voice/consent", { method: "POST", body: payload }),
     withdrawConsent: async (id) => apiFetch("/api/voice/consent?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    listDnd: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/voice/dnd" + (qs ? "?" + qs : ""));
+    },
+    addDnd: async (payload) => apiFetch("/api/voice/dnd", { method: "POST", body: payload }),
+    bulkAddDnd: async (rows, source) => apiFetch("/api/voice/dnd", { method: "POST", body: { rows, source: source || "tenant_manual" } }),
+    removeDnd: async (id) => apiFetch("/api/voice/dnd?id=" + encodeURIComponent(id), { method: "DELETE" }),
   };
 
   const fx = {

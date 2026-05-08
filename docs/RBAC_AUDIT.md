@@ -142,7 +142,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/d365/sync.js | admin |
 | src/api/delays/scan.js | read |
 | src/api/delivery/promise.js | read |
-| src/api/deploys/index.js | read |
+| src/api/deploys/index.js | admin |
 | src/api/docai/correction.js | approve |
 | src/api/docai/extract.js | write |
 | src/api/docai/route.js | read |

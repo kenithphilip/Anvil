@@ -27,7 +27,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { checkOutboundCompliance } from "../_lib/voice-compliance.js";
-import { voicePlaceOutboundCall } from "../_lib/voice-client.js";
+import { voiceDecryptCreds, voicePlaceOutboundCall } from "../_lib/voice-client.js";
 
 const pickConfig = async (svc, { tenantId, configId }) => {
   let q = svc.from("voice_configs")
@@ -54,10 +54,17 @@ export default async function handler(req, res) {
     if (!body?.to) return json(res, 400, { error: { message: "to (E.164 phone number) is required" } });
 
     const svc = serviceClient();
-    const config = await pickConfig(svc, { tenantId: ctx.tenantId, configId: body.config_id });
-    if (!config) {
+    const rawConfig = await pickConfig(svc, { tenantId: ctx.tenantId, configId: body.config_id });
+    if (!rawConfig) {
       return json(res, 400, { error: { code: "NO_VOICE_CONFIG", message: "No active voice_configs row for this tenant" } });
     }
+    // Decrypt the credentials so voicePlaceOutboundCall sees a populated
+    // api_key. The DB stores api_key_enc + creds_iv (AES-256-GCM) and
+    // voiceIsConfigured asserts on the plaintext field. Without this
+    // step every dial would fail with "Voice provider not configured."
+    // (P0 from the May 2026 critic audit; the prior fix on PR #58's
+    // branch did not survive the squash-merge.)
+    const config = voiceDecryptCreds(rawConfig);
 
     const verdict = await checkOutboundCompliance(svc, {
       tenantId: ctx.tenantId,

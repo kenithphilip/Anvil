@@ -19,6 +19,8 @@
 // follow-up" loop the design called out: when a real-time call
 // asks us to call back, we don't lose the thread.
 
+import { hasVoiceConsent } from "../../_lib/voice-compliance.js";
+
 const HOURS = 60 * 60 * 1000;
 
 export const voiceFollowup = async (goal, ctx) => {
@@ -42,6 +44,29 @@ export const voiceFollowup = async (goal, ctx) => {
   const target = call.direction === "outbound"
     ? call.callee_phone_number
     : call.caller_phone_number;
+
+  // P1 from May 2026 critic: the header comment promised a withdrawn-
+  // consent early-exit but the code went straight to the newer-call
+  // dedup. A customer who explicitly opted out would still get a dial
+  // attempt that the gate would bounce, and the goal would keep
+  // retrying + escalating. Now: if consent is withdrawn for the
+  // target number, complete the goal cleanly with the reason.
+  if (target) {
+    try {
+      const c = await hasVoiceConsent(svc, { tenantId: goal.tenant_id, phoneNumber: target });
+      if (!c.consented && c.reason === "withdrawn") {
+        return {
+          thought: "Customer withdrew voice consent for " + target + "; closing follow-up.",
+          action: "mark_complete",
+          action_payload: { reason: "consent_withdrawn", target },
+        };
+      }
+    } catch (_e) {
+      // Consent lookup failures are non-fatal here; fall through to
+      // the dedup + cooldown logic. The /api/voice/outbound gate
+      // re-checks consent before any actual dial.
+    }
+  }
   if (target) {
     const newer = await svc.from("voice_calls")
       .select("id, started_at, status")

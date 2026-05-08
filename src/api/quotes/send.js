@@ -74,7 +74,18 @@ export const armQuoteAgentGoals = async (svc, { tenantId, quote, expiresAt, owne
     },
   ];
   const ins = await svc.from("agent_goals").insert(rows).select("id, goal_type");
-  if (ins.error) return { error: "insert goals: " + ins.error.message };
+  if (ins.error) {
+    // P1 from May 2026 critic: a concurrent send (double-click,
+    // retry) racing with this one can interleave cancel + insert,
+    // and migration 082's partial unique index will refuse the
+    // duplicate insert with code 23505. That is the desired
+    // behaviour, treat as success: the sibling caller has already
+    // armed the goals we wanted.
+    if (/unique|duplicate|23505|agent_goals_active_target_uniq/i.test(ins.error.message)) {
+      return { goals: [], dedup: true };
+    }
+    return { error: "insert goals: " + ins.error.message };
+  }
   return { goals: ins.data || [] };
 };
 

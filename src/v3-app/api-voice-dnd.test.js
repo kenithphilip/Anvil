@@ -29,9 +29,16 @@ describe("dnd.buildRow", () => {
     expect(row.added_by).toBe("u-1");
   });
 
-  it("normalizes a digits-only phone before insert", () => {
-    const row = dnd.buildRow(baseInput({ phoneNumber: "9876543210" }));
-    expect(row.phone_number).toBe("+9876543210");
+  it("rejects a bare 10-digit phone with no country code prefix", () => {
+    // P2 from May 2026 critic: silently prefixing "+" to a bare
+    // local number produced a wrong-region E.164 that missed the
+    // DND lookup. Fail-closed instead.
+    expect(() => dnd.buildRow(baseInput({ phoneNumber: "9876543210" }))).toThrow(/E\.164/);
+  });
+
+  it("accepts the 00-prefix international trunk form", () => {
+    const row = dnd.buildRow(baseInput({ phoneNumber: "0091987654321" }));
+    expect(row.phone_number).toBe("+91987654321");
   });
 
   it("rejects garbage that cannot be parsed to E.164", () => {

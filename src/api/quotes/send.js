@@ -28,6 +28,57 @@ import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "..
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PORTAL_TOKEN_TTL_DAYS = 30;
+const QUOTE_NUDGE_DAYS = 14;
+const QUOTE_NUDGE_COOLDOWN_HOURS = 72;
+const QUOTE_GOAL_TYPES = ["quote_accept_within_14d", "expiring_quote_nudge"];
+
+// Arm the two quote-targeted autonomous-agent goals when a quote
+// is sent. Cancels any prior active/paused goals against the same
+// quote first so a resend produces fresh cooldowns + due_at.
+//
+// Exported for unit testing via the __test bundle below; the live
+// handler call sees identical behaviour.
+export const armQuoteAgentGoals = async (svc, { tenantId, quote, expiresAt, ownerUserId }) => {
+  const sentAt = quote.sent_at || new Date().toISOString();
+  const dueAt = new Date(new Date(sentAt).getTime() + QUOTE_NUDGE_DAYS * 86400 * 1000).toISOString();
+  const cancel = await svc.from("agent_goals")
+    .update({ status: "cancelled" })
+    .eq("tenant_id", tenantId)
+    .eq("object_type", "quote")
+    .eq("object_id", quote.id)
+    .in("goal_type", QUOTE_GOAL_TYPES)
+    .in("status", ["active", "paused"]);
+  if (cancel.error) {
+    return { error: "cancel prior goals: " + cancel.error.message };
+  }
+  const rows = [
+    {
+      tenant_id: tenantId,
+      goal_type: "quote_accept_within_14d",
+      object_type: "quote",
+      object_id: quote.id,
+      due_at: dueAt,
+      config: { cooldown_hours: QUOTE_NUDGE_COOLDOWN_HOURS, sent_at: sentAt, version: quote.version },
+      created_by: ownerUserId,
+      owner_user_id: ownerUserId,
+    },
+    {
+      tenant_id: tenantId,
+      goal_type: "expiring_quote_nudge",
+      object_type: "quote",
+      object_id: quote.id,
+      due_at: expiresAt,
+      config: { sent_at: sentAt, expires_at: expiresAt, version: quote.version },
+      created_by: ownerUserId,
+      owner_user_id: ownerUserId,
+    },
+  ];
+  const ins = await svc.from("agent_goals").insert(rows).select("id, goal_type");
+  if (ins.error) return { error: "insert goals: " + ins.error.message };
+  return { goals: ins.data || [] };
+};
+
+export const __test = { armQuoteAgentGoals, QUOTE_NUDGE_DAYS, QUOTE_NUDGE_COOLDOWN_HOURS, QUOTE_GOAL_TYPES };
 
 const portalBaseUrl = () => {
   const base = process.env.PORTAL_BASE_URL || process.env.PUBLIC_APP_URL || "";
@@ -233,6 +284,29 @@ export default async function handler(req, res) {
       payloadHash,
     });
 
+    // Audit P10 follow-up: arm the autonomous-agent goals that
+    // nudge this quote toward acceptance and warn before expiry.
+    // The handlers themselves shipped in Phase 6 (P6.x); the goals
+    // were never created because no caller upstream persisted an
+    // agent_goals row.
+    const armed = await armQuoteAgentGoals(svc, {
+      tenantId: ctx.tenantId,
+      quote: upd.data,
+      expiresAt,
+      ownerUserId: ctx.user?.id || null,
+    });
+    if (armed.error) {
+      // Non-fatal: the send already happened. Surface in audit so
+      // ops can see which arming path failed without blocking the
+      // operator's flow.
+      await recordAudit(ctx, {
+        action: "quote_goal_arm_failed",
+        objectType: "quote",
+        objectId: quote.id,
+        detail: armed.error,
+      });
+    }
+
     return json(res, 200, {
       ok: true,
       communication_id: draft.data.id,
@@ -240,6 +314,7 @@ export default async function handler(req, res) {
       portal_url: portal?.url || null,
       portal_token_id: portal?.id || null,
       quote: upd.data,
+      armed_goals: armed.error ? [] : armed.goals,
       status: "queued",
     });
   } catch (err) { sendError(res, err); }

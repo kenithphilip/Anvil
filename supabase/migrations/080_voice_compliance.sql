@@ -160,11 +160,14 @@ create policy "voice_dnd_list_tenant_modify" on voice_dnd_list
 -- ----------------------------------------------------------------
 -- agent_goals: add voice_followup to the goal_type CHECK list.
 -- ----------------------------------------------------------------
--- 078 expanded the CHECK to 15 handlers. voice_followup is the
--- 16th: when a voice call ends with an unfulfilled callback intent
--- (the customer asked us to call back later), the autonomy
--- runtime arms a goal here, and the handler attempts the callback
--- via /api/voice/outbound.
+-- The constraint is fully recreated below; this migration is
+-- merge-order-independent (it works whether or not 078 has
+-- already expanded the list, because we DROP the constraint
+-- first and add the full 16-entry list). voice_followup is the
+-- new entry: when a voice call ends with an unfulfilled callback
+-- intent (the customer asked us to call back later), the
+-- autonomy runtime arms a goal here, and the handler attempts
+-- the callback via /api/voice/outbound.
 alter table agent_goals
   drop constraint if exists agent_goals_goal_type_check;
 

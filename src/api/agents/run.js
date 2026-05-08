@@ -145,6 +145,82 @@ const executeAction = async (svc, goal, step) => {
     if (ins.error) return { result: "error", result_detail: ins.error.message, error: ins.error.message };
     return { result: "ok", result_detail: "queued comm " + (ins.data?.id || "") };
   }
+  if (step.action === "place_outbound_call") {
+    // Dispatched by the voice_followup handler. The handler is pure:
+    // it decides "we should call back" and emits a payload; the
+    // runner does the HTTP via the existing /api/voice/outbound
+    // endpoint, which carries the compliance gates (DND list, prior
+    // consent, recording disclosure attached to the metadata).
+    //
+    // We re-use the in-process serviceClient + the helper directly
+    // rather than HTTP to avoid an extra cold-start hop and to keep
+    // the runner deterministic. The same audit + voice_calls row
+    // shape lands either way because both call paths share
+    // checkOutboundCompliance + voicePlaceOutboundCall + the same
+    // voice_calls insert.
+    try {
+      const { checkOutboundCompliance } = await import("../_lib/voice-compliance.js");
+      const { voiceDecryptCreds, voicePlaceOutboundCall } = await import("../_lib/voice-client.js");
+      const cfgQ = await svc.from("voice_configs")
+        .select("id, tenant_id, provider, api_key, api_key_enc, creds_iv, phone_number, phone_number_id, assistant_id, region, recording_disclosure, recording_disclosure_locale, outbound_enabled, active")
+        .eq("tenant_id", goal.tenant_id)
+        .eq("active", true)
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (cfgQ.error || !cfgQ.data) {
+        return { result: "error", result_detail: "no voice_configs row", error: "no_voice_config" };
+      }
+      const cfg = voiceDecryptCreds(cfgQ.data);
+      const verdict = await checkOutboundCompliance(svc, {
+        tenantId: goal.tenant_id,
+        config: cfg,
+        toNumber: step.action_payload?.to,
+      });
+      if (!verdict.allowed) {
+        return {
+          result: "skipped",
+          result_detail: "outbound refused: " + verdict.reason + " (" + (verdict.detail || "") + ")",
+          error: verdict.reason,
+        };
+      }
+      const placement = await voicePlaceOutboundCall(cfg, {
+        to: step.action_payload.to,
+        fromAssistantId: cfg.assistant_id,
+        metadata: {
+          tenant_id: goal.tenant_id,
+          customer_id: step.action_payload?.customer_id || null,
+          reason: step.action_payload?.reason || "agent_followup",
+          recording_disclosure: verdict.disclosure,
+          consent_id: verdict.consent_id,
+          region: verdict.region,
+          original_call_id: step.action_payload?.original_call_id || null,
+          agent_goal_id: goal.id,
+        },
+      });
+      const insCall = await svc.from("voice_calls").insert({
+        tenant_id: goal.tenant_id,
+        config_id: cfg.id,
+        provider: cfg.provider,
+        external_id: placement.external_id,
+        direction: "outbound",
+        customer_id: step.action_payload?.customer_id || null,
+        caller_phone_number: cfg.phone_number || null,
+        callee_phone_number: step.action_payload.to,
+        status: "in_progress",
+        raw: { initiated_by: "agent_runner", placement: placement.raw, agent_goal_id: goal.id },
+      }).select("id").single();
+      if (insCall.error) {
+        return {
+          result: "ok",
+          result_detail: "call placed (" + placement.external_id + ") but voice_calls insert failed: " + insCall.error.message,
+        };
+      }
+      return { result: "ok", result_detail: "voice call " + insCall.data.id + " placed" };
+    } catch (err) {
+      return { result: "error", result_detail: err.message || String(err), error: "place_outbound_call_failed" };
+    }
+  }
   return { result: "skipped", result_detail: "unknown action " + step.action };
 };
 

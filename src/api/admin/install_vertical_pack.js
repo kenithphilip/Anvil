@@ -24,7 +24,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // Vertical JSON lives in src/v3-app/verticals/. Resolve relative to
 // this file: api/admin/install_vertical_pack.js → ../../v3-app/verticals.
 const VERTICALS_DIR = resolve(__dirname, "..", "..", "v3-app", "verticals");
-const ALLOWED = new Set(["paper_converting", "fasteners", "pvf", "electrical", "hvac"]);
+// Audit P11.B (May 2026): bearings + machine_tools added per
+// DEFERRED_ROADMAP §2's priority order. "pvf" already covers
+// industrial pumps + valves + flow control (the largest TAM
+// band) so that vertical does not need a separate id.
+const ALLOWED = new Set([
+  "paper_converting",
+  "fasteners",
+  "pvf",
+  "electrical",
+  "hvac",
+  "bearings",
+  "machine_tools",
+]);
 
 const sha256 = (s) => crypto.createHash("sha256").update(s).digest("hex");
 

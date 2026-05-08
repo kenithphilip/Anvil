@@ -291,6 +291,7 @@ import voiceProcessActions      from "./voice/process_actions.js";
 // DEFERRED_ROADMAP §1: voice AI build, May 2026.
 import voiceOutbound             from "./voice/outbound.js";
 import voiceConsent              from "./voice/consent.js";
+import voiceDnd                  from "./voice/dnd.js";
 
 import kbAsk                   from "./kb/ask.js";
 
@@ -491,6 +492,7 @@ const STATIC_ROUTES = {
   "/voice/process_actions":         voiceProcessActions,
   "/voice/outbound":                voiceOutbound,
   "/voice/consent":                 voiceConsent,
+  "/voice/dnd":                     voiceDnd,
   "/kb/ask":                        kbAsk,
   "/esign/connect":                 esignConnect,
   "/esign/envelopes":               esignEnvelopes,

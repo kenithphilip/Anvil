@@ -1,0 +1,47 @@
+{
+  "id": "bearings",
+  "label": "Bearings & power transmission",
+  "description": "Bearings, power transmission, and lubrication: deep-groove + tapered roller + spherical bearings, mounted units, gearboxes, couplings, V-belts and chain drives. Distributors typically carry SKF / FAG / NSK / NTN / Timken cross-references plus an alias graph dense with OEM part numbers.",
+  "version": 1,
+  "approval_thresholds": [
+    { "level": "rep",      "min_amount": 0,      "max_amount": 50000,    "currency": "INR" },
+    { "level": "manager",  "min_amount": 50000,  "max_amount": 250000,   "currency": "INR" },
+    { "level": "director", "min_amount": 250000, "max_amount": 1500000,  "currency": "INR" },
+    { "level": "vp",       "min_amount": 1500000,"max_amount": null,     "currency": "INR" }
+  ],
+  "lead_time_defaults_days": {
+    "stocked_standard":   1,
+    "stocked_special":    7,
+    "import_indent":      45,
+    "oem_replacement":    21,
+    "rebuild_service":    14
+  },
+  "lost_reasons": [
+    "Price (competitor lower)",
+    "Cross-reference rejected by customer",
+    "Bore / OD / clearance mismatch",
+    "Customer specified original OEM only",
+    "Lead time too long",
+    "Lubrication grade mismatch",
+    "Cage material not available",
+    "Tolerance class (P5 / P4) not stocked"
+  ],
+  "contract_types": ["spot", "annual", "consignment", "rebuild_program"],
+  "item_master_examples": [
+    { "code": "BR-6204-2RS-C3", "description": "Deep groove ball bearing 6204 2RS C3 clearance 20×47×14",       "uom": "pcs" },
+    { "code": "BR-22214-E1-XL", "description": "Spherical roller bearing 22214 E1 XL 70×125×31",                "uom": "pcs" },
+    { "code": "PB-UCFL-204",    "description": "Mounted bearing pillow block UCFL-204 with insert",              "uom": "pcs" },
+    { "code": "CPL-FLEX-112",   "description": "Flexible jaw coupling size 112 with sintered iron hubs",         "uom": "pcs" },
+    { "code": "BELT-A45-V",     "description": "V-belt classical A-section 45-inch (1143 mm) industrial",        "uom": "pcs" }
+  ],
+  "quote_template": {
+    "header_columns": ["customer_po", "manufacturer", "part_number", "cross_reference", "qty", "uom", "price_per_unit", "extension"],
+    "footer_blocks": ["lubrication_note", "mounting_instructions", "warranty_months", "freight_terms", "validity_days"]
+  },
+  "kpis": [
+    { "id": "cross_ref_hit_rate", "label": "Cross-reference hit rate", "unit": "percent", "window": "month" },
+    { "id": "import_indent_share", "label": "Import indent share",     "unit": "percent", "window": "month" },
+    { "id": "stockout_rate",       "label": "Stockout rate",           "unit": "percent", "window": "week"  },
+    { "id": "rebuild_program_arr", "label": "Rebuild-program ARR",     "unit": "INR",     "window": "annual" }
+  ]
+}

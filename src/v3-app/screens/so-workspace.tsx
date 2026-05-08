@@ -260,6 +260,98 @@ const WiredSOWorkspace = () => {
     }
   };
 
+  // Bug fix May 2026: orders that arrived in DRAFT had no path
+  // forward when the post-create OCR call from intake silently
+  // failed (ClamAV missing, scan_status=unverified, transient
+  // network). The pipeline rendered Capture forever with no
+  // operator-facing trigger.
+  //
+  // Two new actions on the workspace action bar fix this:
+  //
+  //   1. Run extraction: re-runs docai/extract against the
+  //      attached PO document, merges the normalized line items
+  //      into orders.result.salesOrder.lineItems, and (best-
+  //      effort) kicks off a Mistral OCR pass for the evidence
+  //      bbox overlay. The merge happens client-side via
+  //      orders.update so we don't need a new endpoint.
+  //
+  //   2. Send for review: explicit DRAFT to PENDING_REVIEW
+  //      transition. The state machine in api/orders/[id].js
+  //      already allows this; the workspace just had no UI for
+  //      it.
+  const sourceDocId = (() => {
+    if (!o) return null;
+    // Prefer the doc id stashed by the intake screen's preflight
+    // payload (May 2026 fix). Fall back to the first attached
+    // document on the order.
+    const fromPreflight = o.preflight_payload?.source_document_id;
+    if (fromPreflight) return fromPreflight;
+    const docs = Array.isArray(o.documents) ? o.documents : [];
+    return docs[0]?.id || null;
+  })();
+
+  const runExtraction = async () => {
+    if (!o?.id) return;
+    if (!sourceDocId) {
+      window.notifyWarn?.(
+        "No source document",
+        "This order has no PO attached. Re-run from intake or attach a document.",
+      );
+      return;
+    }
+    setBusy(true);
+    try {
+      // 1. Hit /api/docai/extract using the existing source_id
+      //    plumbing. The endpoint accepts source_id as a docai
+      //    correlation key and returns out.normalized.{customer,
+      //    lines}. We don't need to re-upload the file.
+      const out: any = await (ObaraBackend as any)?.docai?.extract?.({ source_id: sourceDocId });
+      const lines = Array.isArray(out?.normalized?.lines) ? out.normalized.lines : [];
+      const adapter = out?.adapter_used || null;
+      const conf = typeof out?.confidence_overall === "number" ? out.confidence_overall : null;
+      // 2. Merge the lines + run metadata into the order so the
+      //    workspace's reconciliation tab populates immediately.
+      const nextResult = { ...(o.result || {}) };
+      nextResult.salesOrder = { ...(nextResult.salesOrder || {}), lineItems: lines };
+      const nextPreflight = {
+        ...(o.preflight_payload || {}),
+        extraction_run_id: out?.run_id || null,
+        adapter_used: adapter,
+        confidence_overall: conf,
+        last_extracted_at: new Date().toISOString(),
+      };
+      await ObaraBackend?.orders?.update?.(o.id, {
+        result: nextResult,
+        preflight_payload: nextPreflight,
+      });
+      // 3. Best-effort OCR for the evidence bbox overlay.
+      try { await (ObaraBackend as any)?.ocr?.run?.(sourceDocId, o.id); } catch (_) { /* surface in audit */ }
+      window.notifySuccess?.(
+        "Extraction complete",
+        lines.length + " line" + (lines.length === 1 ? "" : "s") + (adapter ? " (" + adapter + ")" : ""),
+      );
+      setBump((n) => n + 1);
+    } catch (err: any) {
+      window.notifyError?.("Extraction failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendForReview = async () => {
+    if (!o?.id) return;
+    setBusy(true);
+    try {
+      await ObaraBackend?.orders?.update?.(o.id, { status: "PENDING_REVIEW" });
+      window.notifySuccess?.("Sent for review", o.po_number || o.id.slice(0, 8));
+      setBump((n) => n + 1);
+    } catch (err: any) {
+      window.notifyError?.("Could not advance status", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const pushToTally = async () => {
     if (!o?.id) return;
     setBusy(true);
@@ -615,6 +707,37 @@ const WiredSOWorkspace = () => {
                onClick={cancelOrder}
                title={canCancel ? "Set order status to CANCELLED" : "needs sales_manager / admin"}>
             {Icon.x} cancel
+          </Btn>
+          {/* Run extraction: rescues orders stuck in DRAFT when the
+              post-create OCR call from intake silently failed
+              (ClamAV missing, transient network, etc.). Re-runs
+              docai/extract against the attached PO and merges the
+              normalized lines into the order so the workspace's
+              reconciliation tab populates. */}
+          <Btn sm kind="ghost"
+               disabled={!canWrite || busy || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
+               onClick={runExtraction}
+               title={
+                 !sourceDocId
+                   ? "No PO attached to this order"
+                   : (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")
+                     ? "Extraction is only available before approval"
+                     : "Re-run docai/extract against the attached PO"
+               }>
+            {Icon.cycle} {busy ? "extracting…" : "run extraction"}
+          </Btn>
+          {/* Send for review: explicit DRAFT to PENDING_REVIEW
+              transition for orders that have lines but no operator
+              has flipped them out of DRAFT yet. */}
+          <Btn sm kind="ghost"
+               disabled={!canWrite || busy || o.status !== "DRAFT"}
+               onClick={sendForReview}
+               title={
+                 o.status !== "DRAFT"
+                   ? "Already advanced past DRAFT"
+                   : "Move from DRAFT to PENDING_REVIEW"
+               }>
+            {Icon.send} send for review
           </Btn>
           <Btn sm kind="ghost"
                disabled={!canApprove || busy || o.status === "APPROVED" || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED"}

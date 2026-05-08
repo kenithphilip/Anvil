@@ -69,8 +69,13 @@ describe("SO Intake auto-extract", () => {
         upload: async () => ({ documentId: "doc-1", scan: { status: "clean" } }),
         extract: async () => {
           extractCalled = true;
+          // Bug fix May 2026: previously the dialog dropped email
+          // and phone on the floor even though the docai schema
+          // returns both. Both are now pre-filled.
           return { normalized: { customer: {
             name: "Brand-new Customer Pvt. Ltd.",
+            email: "ops@brand-new.com",
+            phone: "+91 98765 43210",
             gstin: "29ABCDE1234F1Z5",
             state_code: "29",
             currency: "INR",
@@ -99,5 +104,11 @@ describe("SO Intake auto-extract", () => {
     expect(gstin?.value).toBe("29ABCDE1234F1Z5");
     const terms = container.querySelector('#nc-terms') as HTMLInputElement | null;
     expect(terms?.value).toBe("Net 45");
+    // Bug fix May 2026: contact email + phone pre-fill from the PO
+    // header so the operator doesn't retype them.
+    const email = container.querySelector('#nc-email') as HTMLInputElement | null;
+    expect(email?.value).toBe("ops@brand-new.com");
+    const phone = container.querySelector('#nc-phone') as HTMLInputElement | null;
+    expect(phone?.value).toBe("+91 98765 43210");
   });
 });

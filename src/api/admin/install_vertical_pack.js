@@ -28,6 +28,13 @@ const VERTICALS_DIR = resolve(__dirname, "..", "..", "v3-app", "verticals");
 // DEFERRED_ROADMAP §2's priority order. "pvf" already covers
 // industrial pumps + valves + flow control (the largest TAM
 // band) so that vertical does not need a separate id.
+//
+// P11.C (May 2026): four more verticals to broaden the addressable
+// surface beyond the original priority cut. welding +
+// pneumatics_hydraulics + safety_ppe + industrial_automation each
+// have distinct sales motions, distinct standards regimes, and
+// distinct catalog-shape needs that the existing seven packs did
+// not cover.
 const ALLOWED = new Set([
   "paper_converting",
   "fasteners",
@@ -36,6 +43,10 @@ const ALLOWED = new Set([
   "hvac",
   "bearings",
   "machine_tools",
+  "welding",
+  "pneumatics_hydraulics",
+  "safety_ppe",
+  "industrial_automation",
 ]);
 
 const sha256 = (s) => crypto.createHash("sha256").update(s).digest("hex");

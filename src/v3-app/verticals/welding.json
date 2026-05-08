@@ -1,0 +1,50 @@
+{
+  "id": "welding",
+  "label": "Welding & metal joining",
+  "description": "Welding consumables, equipment, and shielding gas: SMAW electrodes, MIG / TIG / SAW wire, fluxes, machines (Lincoln / ESAB / Hobart / Fronius / Miller), torches and guns, plus PPE and gas cylinders. Distributors typically run a mixed model: high-velocity consumable reorders + capital machine sales + gas cylinder programmes with deposit accounting.",
+  "version": 1,
+  "approval_thresholds": [
+    { "level": "rep",      "min_amount": 0,        "max_amount": 75000,    "currency": "INR" },
+    { "level": "manager",  "min_amount": 75000,    "max_amount": 500000,   "currency": "INR" },
+    { "level": "director", "min_amount": 500000,   "max_amount": 3000000,  "currency": "INR" },
+    { "level": "vp",       "min_amount": 3000000,  "max_amount": null,     "currency": "INR" }
+  ],
+  "lead_time_defaults_days": {
+    "stocked_consumable":  1,
+    "spool_indent":        14,
+    "machine_capital_in":  35,
+    "machine_capital_imp": 90,
+    "gas_cylinder_swap":   1,
+    "filler_metal_special": 28
+  },
+  "lost_reasons": [
+    "Price (competitor lower)",
+    "AWS / EN spec mismatch",
+    "Hydrogen class not available (H4 / H8)",
+    "Diameter not stocked",
+    "Lead time too long",
+    "Customer specified OEM filler only",
+    "Code-stamp paperwork missing (ASME)",
+    "Cylinder deposit dispute",
+    "Trial weld defect"
+  ],
+  "contract_types": ["spot", "annual_consumable", "managed_inventory", "capital_equipment", "gas_program"],
+  "item_master_examples": [
+    { "code": "SMAW-E7018-3.2",        "description": "SMAW electrode E7018 3.2 mm 5 kg pack",                 "uom": "pkt" },
+    { "code": "MIG-ER70S6-1.2-15KG",   "description": "MIG wire ER70S-6 1.2 mm 15 kg spool",                   "uom": "spool" },
+    { "code": "TIG-ER308L-2.4-5KG",    "description": "TIG rod ER308L 2.4 mm stainless 5 kg tube",              "uom": "tube" },
+    { "code": "FLUX-OK10.71-25KG",     "description": "Submerged-arc flux OK 10.71 25 kg sack",                 "uom": "sack" },
+    { "code": "MACH-INV-400A-MMA",     "description": "Inverter welding machine 400 A MMA 3-phase IGBT",        "uom": "ea" },
+    { "code": "GAS-AR-CO2-95-5-7.5M3", "description": "Argon-CO2 95-5 shielding gas cylinder 7.5 m3",            "uom": "cyl" }
+  ],
+  "quote_template": {
+    "header_columns": ["customer_po", "aws_class", "diameter_mm", "pack_size", "qty", "uom", "price_per_unit", "extension"],
+    "footer_blocks": ["aws_certificate", "hydrogen_class", "code_stamp_required", "gas_deposit_terms", "freight_terms", "validity_days"]
+  },
+  "kpis": [
+    { "id": "consumable_reorder_rate", "label": "Consumable reorder rate", "unit": "percent", "window": "month" },
+    { "id": "gas_program_arr",          "label": "Gas-cylinder programme ARR", "unit": "INR", "window": "annual" },
+    { "id": "capital_pipeline_value",   "label": "Capital pipeline value",  "unit": "INR",     "window": "quarter" },
+    { "id": "code_stamp_compliance_pct","label": "Code-stamp compliance %", "unit": "percent", "window": "month" }
+  ]
+}

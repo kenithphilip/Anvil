@@ -15,7 +15,33 @@
 -- Withdrawn rows are unconstrained so a customer can re-consent
 -- after a withdrawal cycle.
 --
+-- Bug fix May 2026 (re-roll): the first version of this migration
+-- failed in environments that already had duplicate active rows
+-- (multiple consents granted for the same phone before the matcher
+-- enforced the invariant in app code). The unique index can't be
+-- created while duplicates exist, so we withdraw all but the most
+-- recent active row per (tenant, phone, scope) before recreating
+-- the index. Withdrawing older dupes is the safe semantic: it
+-- preserves the audit row, the matcher never picked them anyway.
+--
 -- Idempotent.
+
+update voice_consent
+   set withdrawn_at = now(),
+       notes = coalesce(notes || E'\n', '') || 'auto-withdrawn by migration 084 (deduplicate active rows)'
+ where id in (
+   select id
+     from (
+       select id,
+              row_number() over (
+                partition by tenant_id, phone_number, scope
+                order by consented_at desc, id desc
+              ) as rn
+         from voice_consent
+        where withdrawn_at is null
+     ) ranked
+    where rn > 1
+ );
 
 -- The original constraint may not exist if the schema was
 -- created mid-migration; tolerate either case.

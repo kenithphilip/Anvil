@@ -478,7 +478,20 @@ with probes(screen, qty_min, query) as (values
   ('tally/companies',                1, 'select count(*) as c from tally_companies'),
   ('tally/voucher-records',          1, 'select count(*) as c from tally_voucher_records'),
   ('tally/payment-receipts',         1, 'select count(*) as c from tally_payment_receipts'),
-  ('tally/sync-runs',                1, 'select count(*) as c from tally_sync_runs')
+  ('tally/sync-runs',                1, 'select count(*) as c from tally_sync_runs'),
+  -- Inventory planning module (Phase 1: schema + fixtures only;
+  -- engine and UI ship in Phases 2 + 3).
+  ('inventory-planning/suppliers',          1, 'select count(*) as c from suppliers'),
+  ('inventory-planning/source-po-lines',    1, 'select count(*) as c from source_po_lines'),
+  ('inventory-planning/allocations',        1, 'select count(*) as c from inventory_allocations'),
+  ('inventory-planning/forecasts',          1, 'select count(*) as c from demand_forecasts'),
+  ('inventory-planning/positions',          1, 'select count(*) as c from inventory_positions'),
+  ('inventory-planning/plans',              1, 'select count(*) as c from procurement_plans'),
+  ('inventory-planning/exceptions',         1, 'select count(*) as c from inventory_exceptions'),
+  ('inventory-planning/forecast-runs',      1, 'select count(*) as c from forecast_runs'),
+  ('inventory-planning/opp-line-items',     1, 'select count(*) as c from opportunity_line_items'),
+  ('inventory-planning/items-enabled',      1,
+   'select count(*) as c from item_master where planning_enabled = true')
 ),
 counted as (
   select screen, qty_min,

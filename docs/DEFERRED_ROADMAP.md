@@ -20,46 +20,64 @@ acceptance criteria, and open a ticket.
 
 ## 1. Voice AI
 
-**Status**: scope approved (May 2026), not yet implemented.
+**Status**: shipped (May 2026). Pilot-ready pending the
+operational + legal items called out at the end.
 
-**Approved scope**:
+**Shipped (May 2026)**:
 
-- **Both** inbound and outbound calls.
-- **Full conversational agent**, not transcription-only. Same
-  action vocabulary the existing voice/process_actions worker
-  already drains (place_order, quote_request, check_delivery,
-  verify_customer, escalate, note); the realtime layer just
-  plugs into the same downstream.
-- **Provider**: Vapi or Retell (both are wired in
-  `voice/webhook.js`); pick the one whose Indian-network
-  latency tests cleanest in pilot.
+- ✓ `voice_configs`, `voice_calls`, `voice_call_actions` tables
+  (migration 041).
+- ✓ `voice_consent` + `voice_dnd_list` tables (migration 080).
+- ✓ `/api/voice/webhook` (Vapi + Retell adapters) with
+  signature verification.
+- ✓ `/api/voice/outbound`: compliance-gated dialler. Refuses
+  before placing the call when the destination is on a DND
+  list (TRAI NDNC, FCC DNC, tenant-manual, customer-request)
+  or when there is no active voice_consent row. Audits both
+  refusals and successful placements.
+- ✓ `/api/voice/consent`: GET / POST / DELETE consent records.
+  Withdraw is a soft-delete (`withdrawn_at`) so the trail is
+  preserved for audit.
+- ✓ `/api/voice/process_actions`: drains `voice_call_actions`
+  every 5 min via cron tick, creates DRAFT orders / processing
+  events.
+- ✓ `voice_followup` autonomous-agent handler (registered in
+  `_handlers/index.js`, expanded into the agent_goals
+  CHECK constraint by migration 080). When a call ends with a
+  pending callback intent, the runtime arms a goal here; the
+  handler emits a `place_outbound_call` action that the runner
+  posts to `/api/voice/outbound`.
+- ✓ `_lib/voice-compliance.js`: pure helpers for E.164
+  normalization, region detection, recording-disclosure
+  templates per region/locale (IN en + hi, US, EU, UK, AE, SG,
+  OTHER), DND lookup, consent lookup, and the full
+  pre-call gate.
+- ✓ `screens/voice.tsx` operator UI: Calls / Outbound / Consent
+  tabs, with consent capture + withdrawal, compliance posture
+  surfaced in a KPI row, and an outbound form that pre-checks
+  via the same gate before submitting.
 
-**What still needs decision before code**:
+**Operational items still needed before pilot launch** (not
+engineering work):
 
-- Recording-disclosure copy per region (US single-party, EU
-  two-party, India two-party). Not blocking the realtime work,
-  blocking the launch.
-- Outbound dialler compliance: TRAI DND scrubbing for India,
-  TCPA prior consent for US numbers. Either we wire to a
-  compliance vendor's API, or we limit outbound to numbers the
-  customer has already messaged us from.
-
-**What would land in Anvil** (~3 weeks):
-
-- New `voice_calls` table (call_id, direction, started_at,
-  duration_s, transcript, summary, action_extracted_jsonb).
-- `/api/voice/webhook` to receive transcripts from the realtime
-  provider, write to the table, audit `voice_call_received`.
-- New autonomous-agent goal type `voice_followup` that consumes
-  the extracted actions (intake from a phone PO, AR collection
-  callback, service-visit scheduling).
-- Consent + recording-disclosure UI per region (US single-party,
-  GDPR two-party, etc.). This is the feature we'd actually need
-  legal sign-off for.
-
-**Already in place**: `/api/agents/run.js` (the autonomous agent
-runtime), `/api/communications/send.js` (could route a call summary
-to email/WhatsApp), redaction helpers in `/api/_lib/audit.js`.
+- Pick **Vapi or Retell** based on Indian-network latency tests
+  with a real pilot tenant.
+- **Counsel review** of the per-region recording-disclosure
+  copy in `_lib/voice-compliance.js`. The shipped templates are
+  reasonable defaults; legal sign-off may revise the wording.
+- **TRAI NDNC / FCC DNC list integration**. The `voice_dnd_list`
+  table is in place with `source = 'trai_ndnc'` /
+  `'fcc_dnc'` rows reserved; a small cron worker pulls the
+  registry snapshot periodically. Out of scope for this PR
+  because the registry credentials are operator-side.
+- **Outbound enable**: `voice_configs.outbound_enabled` is
+  `false` by default. The tenant flips this to `true` after
+  their compliance review. The outbound endpoint refuses to
+  dial when it's off, regardless of per-number consent.
+- **Compliance review acknowledgement**: the
+  `voice_configs.compliance_reviewed_at` column captures the
+  most-recent operator attestation. Annual renewal expected
+  per DPDP / GDPR / TCPA.
 
 ---
 

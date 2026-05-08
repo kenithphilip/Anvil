@@ -57,9 +57,10 @@ describe("Landing", () => {
     expect(html).toContain("Sales Orders");
     // Principles
     expect(html).toContain("Anti-pattern");
-    // Pricing tiers
-    expect(html).toContain("For pilots");
-    expect(html).toContain("For real teams");
+    // Pricing tiers (May 2026 base + included + overage model;
+    // see docs/PRICING_STRATEGY.md).
+    expect(html).toContain("For single-shop");
+    expect(html).toContain("For 2-5 locations");
     expect(html).toContain("most pop");
     // Compare table
     expect(html).toContain("Workato");

@@ -275,41 +275,41 @@ const TIERS: Array<{
   bullets: Array<{ t: string; no?: boolean }>; cta: string; ribbon?: string; hi?: boolean;
 }> = [
   {
-    lab: "01 · Starter", h: "For pilots", price: "₹39", small: "/SO",
-    pmeta: "up to 100 SOs / month · ~1 user team",
+    lab: "01 · Starter", h: "For single-shop", price: "₹14,990", small: "/month",
+    pmeta: "200 SOs included · ₹39/SO over · 5 operator users",
     bullets: [
       { t: "Full console · 42 surfaces" },
-      { t: "2 ERP connectors" },
-      { t: "Email + WhatsApp inbound" },
-      { t: "Anvil-hosted LLM" },
-      { t: "SOC 2 report", no: true },
-      { t: "Custom rules", no: true },
+      { t: "Tally bridge · 1 ERP push" },
+      { t: "Email + 1 chat channel" },
+      { t: "Anomaly engine · audit log" },
+      { t: "99.0% uptime · 1 business day support" },
+      { t: "Multi-location", no: true },
     ],
-    cta: "Start free pilot",
+    cta: "Start free 30-day pilot",
   },
   {
-    lab: "02 · Operator", h: "For real teams", price: "₹19", small: "/SO",
-    pmeta: "100–1,000 SOs / month · unlimited seats", hi: true, ribbon: "most pop",
+    lab: "02 · Growth", h: "For 2-5 locations", price: "₹49,990", small: "/month",
+    pmeta: "1,000 SOs included · ₹19/SO over · 20 operator users", hi: true, ribbon: "most pop",
     bullets: [
       { t: "Everything in Starter" },
-      { t: "All 18 ERP connectors" },
-      { t: "All 5 inbound channels" },
-      { t: "Anomaly model · custom rules" },
-      { t: "Mobile approver app" },
-      { t: "SOC 2 report on request" },
+      { t: "Multi-location · multi-GSTIN" },
+      { t: "Tally + 1 of 17 ERPs" },
+      { t: "Email + WhatsApp + Slack + Teams" },
+      { t: "Customer health score · duplicates" },
+      { t: "99.5% uptime · 4-hour support · CSM at 250+/mo" },
     ],
     cta: "Book a demo",
   },
   {
-    lab: "03 · Group", h: "For multi-entity", price: "Let's talk",
-    pmeta: "1,000+ SOs · multi-tenant · BYO LLM",
+    lab: "03 · Enterprise", h: "For multi-state", price: "From ₹99,990", small: "/month",
+    pmeta: "5,000 SOs included · ₹9/SO over · unlimited users · BAA",
     bullets: [
-      { t: "Everything in Operator" },
-      { t: "Multi-entity · multi-currency" },
-      { t: "BYO LLM key (Bedrock · Vertex)" },
-      { t: "Dedicated data residency" },
-      { t: "SSO · SCIM · custom audit" },
-      { t: "Solutions engineer + SLA" },
+      { t: "Everything in Growth" },
+      { t: "All 17 ERP pushes" },
+      { t: "Voice AI (inbound + outbound)" },
+      { t: "BYO LLM key (Bedrock · Vertex · Azure) · -10% off" },
+      { t: "SOC 2 + ISO 27001 evidence + signed BAA / DPA" },
+      { t: "99.9% uptime · 1-hour support · dedicated CSM + QBR" },
     ],
     cta: "Talk to sales",
   },
@@ -323,7 +323,7 @@ const CMP_ROWS: Array<{ feat: string; us: string; w: { mark: CmpMark; t: string 
   { feat: "e-Invoice IRN + e-Way bill",         us: "live",            w: { mark: "no",  t: "add-on" },      o: { mark: "no",  t: "none" }, b: { mark: "mid", t: "compliance work" } },
   { feat: "Tally bridge (idempotent · 12ms)",   us: "on-prem",         w: { mark: "no",  t: "cloud only" },  o: { mark: "no",  t: "none" }, b: { mark: "mid", t: "Tally XML pain" } },
   { feat: "Time to first voucher",              us: "2 weeks",         w: { mark: "mid", t: "4–8 weeks" },   o: { mark: "mid", t: "never" }, b: { mark: "no",  t: "6–12 months" } },
-  { feat: "Cost per SO at 500/mo",              us: "~₹19",            w: { mark: "no",  t: "₹40–80 + dev hrs" }, o: { mark: "no", t: "₹3–8 (just OCR)" }, b: { mark: "no",  t: "₹150+ TCO" } },
+  { feat: "Monthly cost at 1,000 SOs",          us: "₹49,990 (Growth)", w: { mark: "no", t: "₹80k+ + dev hrs" }, o: { mark: "no", t: "OCR only" },     b: { mark: "no",  t: "₹1.5L+ TCO" } },
 ];
 
 const CHANGELOG = [
@@ -335,12 +335,12 @@ const CHANGELOG = [
 ];
 
 const FAQ = [
-  { num: "01", q: "Where does my data live? Does it leave India?", a: "By default your data stays in {ap-south-1} (Mumbai). EU and US residency available on Operator and Group plans. PII is redacted before any LLM call leaves your tenant, that's the redaction firewall, on by default. You can also bring your own LLM key (Bedrock or Vertex inside your VPC) on the Group plan, in which case we never see the document content at all." },
+  { num: "01", q: "Where does my data live? Does it leave India?", a: "By default your data stays in {ap-south-1} (Mumbai). EU and US residency available on Growth and Enterprise plans. PII is redacted before any LLM call leaves your tenant, that's the redaction firewall, on by default. You can also bring your own LLM key (Bedrock or Vertex inside your VPC) on the Enterprise plan, in which case we never see the document content at all." },
   { num: "02", q: "My ERP isn't on your list. Is that a dealbreaker?", a: "Probably not. Our connector framework is field-mapped, if your ERP has REST, OData, SOAP, or even SFTP CSV, we can usually have a working push live in 5–8 working days. We've built three \"custom\" connectors so far (a 30-yr-old Foxpro system being one of them). Send us the API doc; we'll quote a timeline before you sign anything." },
   { num: "03", q: "How fast is onboarding actually?", a: "Two weeks to first voucher is the bar we hold ourselves to: Week 1, connect your ERP, sync masters, train the alias graph on your last 90 days of POs. Week 2, pilot with 1 customer, tune anomaly rules, ship to production. Most teams hit production day 11. The longest pilot we've had was 19 days; the customer had a non-standard SAP ECC setup." },
   { num: "04", q: "Who owns the extracted data and the alias graph?", a: "You do. Always. We don't train cross-tenant models, we don't sell aggregated data, and your alias graph is exportable as JSON at any time. If you cancel, you take a full NDJSON export with you, every order, every event, every override reason. We keep zero copies after 30 days." },
-  { num: "05", q: "Can I use my own LLM key?", a: "Yes, on the Group plan. We support AWS Bedrock (Claude, Llama), Google Vertex (Gemini), and Azure OpenAI, pointed at your own VPC. In that mode, document content never crosses our boundary; we orchestrate, you pay your own usage to AWS/GCP/Azure directly. Useful for finance teams with strict third-party-AI governance." },
-  { num: "06", q: "What's the SLA? What happens if Anvil is down?", a: "99.9% on Operator (≤ 43 min/month downtime), 99.95% on Group (≤ 22 min). If we're down: the Tally bridge keeps running locally, the inbox keeps queueing, and committing resumes the moment we're back, nothing is lost. We post incidents on {status.anvil.app} with full RCAs within 72 hours." },
+  { num: "05", q: "Can I use my own LLM key?", a: "Yes, on the Enterprise plan. We support AWS Bedrock (Claude, Llama), Google Vertex (Gemini), and Azure OpenAI, pointed at your own VPC. In that mode, document content never crosses our boundary; we orchestrate, you pay your own usage to AWS/GCP/Azure directly. Useful for finance teams with strict third-party-AI governance. Bringing your own key earns a 10% discount on the Enterprise base." },
+  { num: "06", q: "What's the SLA? What happens if Anvil is down?", a: "99.0% on Starter, 99.5% on Growth (≤ 3.6h/month downtime), 99.9% on Enterprise (≤ 43 min/month). If we're down: the Tally bridge keeps running locally, the inbox keeps queueing, and committing resumes the moment we're back, nothing is lost. We post incidents on {status.anvil.app} with full RCAs within 72 hours." },
   { num: "07", q: "How do you handle e-Invoice cancellations / amendments?", a: "Both are first-class. Cancel within 24h via the e-Invoice surface, we hit GSTN's {/cancel} endpoint and reverse the voucher. Amendments outside the 24h window are filed as credit notes with full lineage to the original IRN. Every state transition is on the audit log; e-Way bills follow the same lifecycle." },
   { num: "08", q: "What if I want to leave?", a: "Month-to-month. No 12-month lock. Export everything as NDJSON or CSV, including the audit log and alias graph. We delete your tenant data within 30 days of cancellation (audit logs retained per your statutory requirement, then purged). You'll also get a free 60-day transition period on a read-only plan if you need it for a finance audit cycle." },
 ];

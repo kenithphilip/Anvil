@@ -24,21 +24,36 @@
 // the underlying tables (voice_consent, voice_dnd_list) and the
 // recording-disclosure columns on voice_configs.
 
-// E.164 normalization. Best-effort: strips non-digit + leading
-// "+", does not enforce a country code. The outbound dialer
-// rejects empty / too-short strings before consulting these
-// helpers, so the helper itself just passes through whatever it
-// gets. Returning null on bad input lets the caller decide
-// whether to fail open or closed.
+// E.164 normalization. Strict: input must either already carry a
+// "+" prefix with 8-15 digits, OR carry a recognisable country
+// code in the digits. Bare 8-digit local numbers are rejected,
+// because prefixing them with "+" produces a "probably wrong"
+// E.164 that silently misses the DND + consent lookups (the
+// caller would think the number was clean when it was actually
+// never queried correctly).
+//
+// P2 from the May 2026 critic: previous behaviour accepted any
+// 8-15 digit string and prefixed "+". A 10-digit Indian local
+// number (without the 91 country code) became "+9876543210" and
+// looked like an Egyptian / Russian number to regionFromE164.
+// Now we require a country code in front (either explicit "+"
+// or a leading "00" trunk prefix).
 export const normalizeE164 = (raw) => {
   if (!raw) return null;
   const trimmed = String(raw).trim();
   if (!trimmed) return null;
   // Already E.164-shaped: "+91987654321"
   if (/^\+\d{8,15}$/.test(trimmed)) return trimmed;
-  // Bare digits: prefix country code if region hint says IN.
-  const digits = trimmed.replace(/[^\d]/g, "");
-  if (digits.length >= 8 && digits.length <= 15) return "+" + digits;
+  // International dialling prefix "00": treat as E.164 root.
+  // "0091987654321" -> "+91987654321".
+  if (/^00\d{8,15}$/.test(trimmed)) return "+" + trimmed.slice(2);
+  // Strip whitespace + parens + dashes; recheck.
+  const cleaned = trimmed.replace(/[\s()\-.]/g, "");
+  if (/^\+\d{8,15}$/.test(cleaned)) return cleaned;
+  if (/^00\d{8,15}$/.test(cleaned)) return "+" + cleaned.slice(2);
+  // Reject anything else. The caller (DND lookup, consent lookup,
+  // outbound endpoint) explicitly handles a null return as
+  // "invalid_number" and refuses to dial; this is fail-closed.
   return null;
 };
 
@@ -46,10 +61,33 @@ export const normalizeE164 = (raw) => {
 // looks at the country code prefix. Falls back to OTHER. The
 // outbound dialer uses this to know which compliance regime
 // applies.
+//
+// P1 from May 2026 critic: distinguish Canada from the rest of
+// the NANP. Canada's CRTC + CASL regime differs from the FCC's
+// TCPA, and treating a Canadian number as US runs the wrong
+// disclosure. We pull the area-code list from the public
+// allocation; the major bands suffice for pilot. Bermuda /
+// Caribbean NANP numbers fall through to US, which is wrong but
+// closer than treating them as a separate uncovered region; the
+// disclosure templates are functionally identical for them.
 export const regionFromE164 = (e164) => {
   if (!e164 || typeof e164 !== "string" || !e164.startsWith("+")) return "OTHER";
   if (e164.startsWith("+91")) return "IN";
-  if (e164.startsWith("+1")) return "US";
+  if (e164.startsWith("+1")) {
+    // Canadian area codes (NPAs allocated to Canada). List
+    // sourced from CNAC. Truncated to the actively-used ones.
+    const npa = e164.slice(2, 5);
+    const CA_NPAS = new Set([
+      "204", "226", "236", "249", "250", "263", "289",
+      "306", "343", "354", "365", "367", "368", "382", "403", "416", "418", "428", "431", "437", "438", "450", "468", "474",
+      "506", "514", "519", "548", "579", "581", "584", "587",
+      "604", "613", "639", "647", "672", "683", "705", "709", "742",
+      "778", "780", "782", "807", "819", "825", "867", "873", "879",
+      "902", "905",
+    ]);
+    if (CA_NPAS.has(npa)) return "CA";
+    return "US";
+  }
   if (e164.startsWith("+44")) return "UK";
   if (e164.startsWith("+971")) return "AE";
   if (e164.startsWith("+65")) return "SG";
@@ -72,6 +110,10 @@ export const RECORDING_DISCLOSURE_TEMPLATES = {
   },
   US: {
     "en-US": "This call is being recorded for quality and training purposes.",
+  },
+  CA: {
+    "en-CA": "This call may be recorded for quality and training purposes. By staying on the line you consent to the recording per CRTC and CASL guidance; if you do not consent, please say so now.",
+    "fr-CA": "Cet appel peut être enregistré aux fins de qualité et de formation. En restant en ligne, vous consentez à l'enregistrement; si vous n'y consentez pas, veuillez nous en informer maintenant.",
   },
   EU: {
     "en-GB": "This call will be recorded for quality and training purposes. Your consent is required; if you do not consent, please say so now and we will end the recording. Recordings are retained per our privacy policy.",

@@ -96,7 +96,11 @@ export default async function handler(req, res) {
 
     if (req.method === "GET") {
       const ctx = await resolveContext(req);
-      requirePermission(ctx, "read");
+      // P1 from May 2026 critic: deploy_events is platform-operator
+      // private (a code event, not per-tenant). The original "read"
+      // gate let any tenant user enumerate every deployment. Tightened
+      // to "admin"; matching RLS in 081_deploy_events_tenant_scope.sql.
+      requirePermission(ctx, "admin");
       const env = req.query?.environment || "production";
       const branch = req.query?.branch || null;
       const since = req.query?.since || null;

@@ -40,18 +40,26 @@ const buildSvc = (handlers) => ({
 });
 
 describe("voice-compliance helpers (pure)", () => {
-  it("normalizes E.164 inputs and rejects garbage", () => {
+  it("normalizes E.164 inputs and rejects ambiguous bare-digit strings", () => {
     expect(compTest.normalizeE164("+919876543210")).toBe("+919876543210");
-    expect(compTest.normalizeE164("9876543210")).toBe("+9876543210");
+    // Punctuation cleanup is allowed when the "+" prefix is present.
     expect(compTest.normalizeE164("+1 (415) 555-0123")).toBe("+14155550123");
+    // "00" international trunk prefix is accepted.
+    expect(compTest.normalizeE164("0091987654321")).toBe("+91987654321");
+    // Bare 10-digit string (no country code) is now rejected: the
+    // old behaviour silently produced a wrong-region number.
+    expect(compTest.normalizeE164("9876543210")).toBeNull();
     expect(compTest.normalizeE164(null)).toBeNull();
-    expect(compTest.normalizeE164("123")).toBeNull();   // too short
+    expect(compTest.normalizeE164("123")).toBeNull();
     expect(compTest.normalizeE164("")).toBeNull();
   });
 
   it("maps E.164 country codes to regions", () => {
     expect(compTest.regionFromE164("+919876543210")).toBe("IN");
     expect(compTest.regionFromE164("+14155550123")).toBe("US");
+    // Canadian +1 NPAs no longer fall through to US.
+    expect(compTest.regionFromE164("+14165550123")).toBe("CA");
+    expect(compTest.regionFromE164("+16045550123")).toBe("CA");
     expect(compTest.regionFromE164("+442071234567")).toBe("UK");
     expect(compTest.regionFromE164("+971501234567")).toBe("AE");
     expect(compTest.regionFromE164("+6512345678")).toBe("SG");

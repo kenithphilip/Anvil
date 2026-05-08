@@ -36,18 +36,44 @@ const hasInlineBytes = (atts) =>
   Array.isArray(atts) && atts.some((a) => a && a.content_b64);
 
 const drainOnce = async (svc) => {
-  // Fetch the next batch of emails that still carry inline
-  // attachment bytes. We can't filter by JSON content in
-  // Supabase's PostgREST without a function, so we pull a wider
-  // window and filter in JS. Bound by BATCH_SIZE so we don't read
-  // an unbounded amount per tick.
+  // Fetch a wider window than BATCH_SIZE so we have material to
+  // round-robin across tenants. We can't filter by JSON content
+  // in Supabase's PostgREST without a function, so we pull and
+  // filter in JS.
+  //
+  // Bug fix May 2026: previously we sliced the first BATCH_SIZE
+  // candidates straight off the head of a global received_at
+  // ordering. A single noisy tenant with 40+ inline-bytes emails
+  // would starve every other tenant on every tick. Now we group
+  // by tenant_id and round-robin: each tenant gets up to
+  // ceil(BATCH_SIZE / n_active_tenants) slots, with the
+  // remainder going to the tenant with the most pending rows.
   const rows = await svc.from("inbound_emails")
     .select("id, tenant_id, attachments")
     .order("received_at", { ascending: true })
-    .limit(BATCH_SIZE * 4);
+    .limit(BATCH_SIZE * 8);
   if (rows.error) throw new Error(rows.error.message);
 
-  const candidates = (rows.data || []).filter((r) => hasInlineBytes(r.attachments)).slice(0, BATCH_SIZE);
+  const allCandidates = (rows.data || []).filter((r) => hasInlineBytes(r.attachments));
+  // Group by tenant_id, preserving received_at order within each
+  // group.
+  const byTenant = new Map();
+  for (const r of allCandidates) {
+    if (!byTenant.has(r.tenant_id)) byTenant.set(r.tenant_id, []);
+    byTenant.get(r.tenant_id).push(r);
+  }
+  const tenantQueues = [...byTenant.values()];
+  const candidates = [];
+  let cursor = 0;
+  // Round-robin: pop one row from each tenant queue, cycle. Stop
+  // when we hit BATCH_SIZE or every queue empties.
+  while (candidates.length < BATCH_SIZE && tenantQueues.some((q) => q.length > 0)) {
+    const queue = tenantQueues[cursor % tenantQueues.length];
+    if (queue.length > 0) candidates.push(queue.shift());
+    cursor += 1;
+    // If we've cycled through all queues without taking, break.
+    if (cursor > tenantQueues.length * BATCH_SIZE) break;
+  }
   let persisted = 0;
   let failed = 0;
   const results = [];

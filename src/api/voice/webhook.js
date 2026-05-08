@@ -32,10 +32,20 @@ const readRaw = (req) => new Promise((resolve, reject) => {
 const matchTenantConfig = async (svc, provider, payload) => {
   const calleeNumber = payload.callee_phone_number;
   if (!calleeNumber) return null;
-  const { data: configs } = await svc.from("voice_configs")
+  const { data: configs, error } = await svc.from("voice_configs")
     .select("*")
     .eq("provider", provider)
     .eq("active", true);
+  // Bug fix May 2026: previously the error was destructured but
+  // unused. A DB outage made matchTenantConfig return null which
+  // the webhook turned into a 404, prompting the provider to drop
+  // the event. Surface the error so the caller can return 5xx and
+  // the provider retries.
+  if (error) {
+    const wrapped = new Error("voice_configs lookup failed: " + error.message);
+    wrapped.status = 503;
+    throw wrapped;
+  }
   return (configs || []).find((c) => c.phone_number === calleeNumber) || null;
 };
 
@@ -84,12 +94,29 @@ const finaliseCall = async (svc, callRow, payload) => {
     const action = (a.name || a.action || "note").toLowerCase();
     const allowed = new Set(["place_order", "quote_request", "check_delivery", "verify_customer", "escalate", "note"]);
     if (!allowed.has(action)) continue;
-    await svc.from("voice_call_actions").insert({
+    const ins = await svc.from("voice_call_actions").insert({
       tenant_id: callRow.tenant_id,
       call_id: callRow.id,
       action,
       payload: a.arguments || a.payload || a.parameters || {},
     });
+    if (ins.error) {
+      // Bug fix May 2026: previously we silently dropped the
+      // action insert error. The call would land marked completed
+      // with no work queued, and the customer-visible "voice agent
+      // took my order" promise was lost. Surface as a
+      // processing_event so operators can recover the action from
+      // the call's action_extracted payload.
+      await svc.from("processing_events").insert({
+        tenant_id: callRow.tenant_id,
+        case_id: callRow.id,
+        event_type: "voice_action_enqueue_failed",
+        object_type: "voice_call",
+        object_id: callRow.id,
+        detail: { action, error: ins.error.message, raw_action: a },
+        severity: "warn",
+      });
+    }
   }
 };
 

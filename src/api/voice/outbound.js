@@ -99,7 +99,9 @@ export default async function handler(req, res) {
     let placement;
     try {
       placement = await voicePlaceOutboundCall(config, {
-        to: verdict.region === "OTHER" ? body.to : body.to, // pass through; the provider handles dial format
+        // The provider handles dial format per region; we pass the
+        // E.164 from the gate verdict (already region-checked).
+        to: body.to,
         fromAssistantId: config.assistant_id,
         metadata: {
           tenant_id: ctx.tenantId,
@@ -138,12 +140,39 @@ export default async function handler(req, res) {
       raw: { initiated: true, placement: placement.raw, disclosure: verdict.disclosure, region: verdict.region },
     }).select("id, external_id").single();
     if (ins.error) {
-      // The call is already placed; we can't undial it. Surface
-      // but don't 5xx, the webhook will reconcile.
+      // Bug fix May 2026: previously we returned 200 + a warning
+      // string and the call was invisible to the operator UI. Now
+      // we write a processing_event so ops sees an actionable item
+      // ("voice call placed but not tracked") with the provider's
+      // external_id available for recovery. Audit also captures it.
+      // The call is already placed; we can't undial it. The
+      // webhook may still reconcile when the provider sends the
+      // call-started event.
+      await svc.from("processing_events").insert({
+        tenant_id: ctx.tenantId,
+        case_id: null,
+        event_type: "voice_call_persist_failed",
+        object_type: "voice_call",
+        object_id: null,
+        detail: {
+          external_id: placement.external_id,
+          provider: config.provider,
+          callee: body.to,
+          db_error: ins.error.message,
+        },
+        severity: "warn",
+      });
+      await recordAudit(ctx, {
+        action: "voice_outbound_persist_failed",
+        objectType: "voice_call",
+        objectId: null,
+        detail: config.provider + "::" + placement.external_id + "::" + ins.error.message.slice(0, 200),
+      });
       return json(res, 200, {
         ok: true,
         warning: "voice_calls insert failed: " + ins.error.message + " (provider call id: " + placement.external_id + ")",
         external_id: placement.external_id,
+        processing_event_recorded: true,
       });
     }
 

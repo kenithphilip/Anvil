@@ -155,19 +155,30 @@ export const isOnDndList = async (svc, { tenantId, phoneNumber }) => {
   if (!phoneNumber) return { listed: false };
   // The voice_dnd_list table indexes on phone_number; we can't
   // filter by tenant_id inline because the global rows have
-  // tenant_id = null. Pull the candidates and pick whichever
-  // applies in JS.
-  const r = await svc.from("voice_dnd_list")
-    .select("source, tenant_id, region")
+  // tenant_id = null. Bug fix May 2026: previously this used
+  // .limit(5) and then picked-first in JS, which could miss a
+  // tenant-specific row when more than 5 entries existed for the
+  // same number. We now pull tenant + null rows in two scoped
+  // queries and prefer the tenant hit, which is also faster
+  // because each query hits its own index condition.
+  const tenantQ = await svc.from("voice_dnd_list")
+    .select("source, region")
     .eq("phone_number", phoneNumber)
-    .limit(5);
-  if (r.error) throw new Error("voice_dnd_list lookup: " + r.error.message);
-  const rows = r.data || [];
-  // Tenant-specific match first, then any global row.
-  const tenantHit = rows.find((row) => row.tenant_id === tenantId);
-  if (tenantHit) return { listed: true, source: tenantHit.source };
-  const globalHit = rows.find((row) => row.tenant_id === null);
-  if (globalHit) return { listed: true, source: globalHit.source };
+    .eq("tenant_id", tenantId)
+    .order("added_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (tenantQ.error) throw new Error("voice_dnd_list tenant lookup: " + tenantQ.error.message);
+  if (tenantQ.data) return { listed: true, source: tenantQ.data.source };
+  const globalQ = await svc.from("voice_dnd_list")
+    .select("source, region")
+    .eq("phone_number", phoneNumber)
+    .is("tenant_id", null)
+    .order("added_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (globalQ.error) throw new Error("voice_dnd_list global lookup: " + globalQ.error.message);
+  if (globalQ.data) return { listed: true, source: globalQ.data.source };
   return { listed: false };
 };
 

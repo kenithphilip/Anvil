@@ -22,6 +22,7 @@ const buildSvc = (handlers) => ({
     const builder = {
       select: () => builder,
       eq: (k, v) => { filters[k] = v; return builder; },
+      is: (k, v) => { filters["is:" + k] = v; return builder; },
       gt: (k, v) => { filters["gt:" + k] = v; return builder; },
       lt: (k, v) => { filters["lt:" + k] = v; return builder; },
       gte: (k, v) => { filters["gte:" + k] = v; return builder; },
@@ -83,23 +84,33 @@ describe("voice-compliance helpers (pure)", () => {
 });
 
 describe("isOnDndList", () => {
+  // Bug fix May 2026: lookup is now two scoped queries (tenant
+  // first, global second). The mock dispatches by inspecting
+  // which filter was set, so each test can return the right row
+  // for the right query.
+  const dndHandler = (rows) => ({ filters }) => {
+    const isGlobal = filters["is:tenant_id"] === null;
+    const isTenant = filters.tenant_id !== undefined;
+    const want = isGlobal
+      ? rows.find((r) => r.tenant_id === null)
+      : isTenant
+        ? rows.find((r) => r.tenant_id === filters.tenant_id)
+        : null;
+    return { data: want || null, error: null };
+  };
+
   it("returns listed=false when no rows match", async () => {
-    const svc = buildSvc({
-      voice_dnd_list: () => ({ data: [], error: null }),
-    });
+    const svc = buildSvc({ voice_dnd_list: dndHandler([]) });
     const out = await isOnDndList(svc, { tenantId: "t-1", phoneNumber: "+919876543210" });
     expect(out.listed).toBe(false);
   });
 
   it("prefers a tenant-specific row over a global one", async () => {
     const svc = buildSvc({
-      voice_dnd_list: () => ({
-        data: [
-          { source: "trai_ndnc",     tenant_id: null,  region: "IN" },
-          { source: "tenant_manual", tenant_id: "t-1", region: "IN" },
-        ],
-        error: null,
-      }),
+      voice_dnd_list: dndHandler([
+        { source: "trai_ndnc",     tenant_id: null,  region: "IN" },
+        { source: "tenant_manual", tenant_id: "t-1", region: "IN" },
+      ]),
     });
     const out = await isOnDndList(svc, { tenantId: "t-1", phoneNumber: "+919876543210" });
     expect(out.listed).toBe(true);
@@ -108,10 +119,7 @@ describe("isOnDndList", () => {
 
   it("falls back to the global TRAI / FCC row when no tenant row matches", async () => {
     const svc = buildSvc({
-      voice_dnd_list: () => ({
-        data: [{ source: "trai_ndnc", tenant_id: null, region: "IN" }],
-        error: null,
-      }),
+      voice_dnd_list: dndHandler([{ source: "trai_ndnc", tenant_id: null, region: "IN" }]),
     });
     const out = await isOnDndList(svc, { tenantId: "t-2", phoneNumber: "+919876543210" });
     expect(out.listed).toBe(true);
@@ -205,7 +213,11 @@ describe("checkOutboundCompliance (full gate)", () => {
 
   it("rejects when DND-listed", async () => {
     const svc = buildSvc({
-      voice_dnd_list: () => ({ data: [{ source: "trai_ndnc", tenant_id: null }], error: null }),
+      // Tenant query returns null (no tenant row); global query
+      // returns the trai_ndnc row.
+      voice_dnd_list: ({ filters }) => filters["is:tenant_id"] === null
+        ? { data: { source: "trai_ndnc" }, error: null }
+        : { data: null, error: null },
     });
     const out = await checkOutboundCompliance(svc, { tenantId: "t-1", config, toNumber: "+919876543210" });
     expect(out.allowed).toBe(false);
@@ -215,7 +227,7 @@ describe("checkOutboundCompliance (full gate)", () => {
 
   it("rejects when consent is missing (DND clean but no record)", async () => {
     const svc = buildSvc({
-      voice_dnd_list: () => ({ data: [], error: null }),
+      voice_dnd_list: () => ({ data: null, error: null }),
       voice_consent: () => ({ data: [], error: null }),
     });
     const out = await checkOutboundCompliance(svc, { tenantId: "t-1", config, toNumber: "+919876543210" });
@@ -226,7 +238,7 @@ describe("checkOutboundCompliance (full gate)", () => {
 
   it("returns allowed=true with the disclosure attached when both gates pass", async () => {
     const svc = buildSvc({
-      voice_dnd_list: () => ({ data: [], error: null }),
+      voice_dnd_list: () => ({ data: null, error: null }),
       voice_consent: () => ({
         data: [{ id: "c1", scope: "voice", consented_at: "2026-05-01T00:00:00Z", withdrawn_at: null, expires_at: null, source: "inbound_call" }],
         error: null,
@@ -241,7 +253,7 @@ describe("checkOutboundCompliance (full gate)", () => {
 
   it("uses the config-level disclosure override when present", async () => {
     const svc = buildSvc({
-      voice_dnd_list: () => ({ data: [], error: null }),
+      voice_dnd_list: () => ({ data: null, error: null }),
       voice_consent: () => ({
         data: [{ id: "c1", scope: "voice", consented_at: "2026-05-01T00:00:00Z", withdrawn_at: null, expires_at: null, source: "inbound_call" }],
         error: null,

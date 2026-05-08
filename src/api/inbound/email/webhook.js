@@ -74,7 +74,17 @@ const handlePostmark = async (svc, raw, body, req) => {
     return { status: 404, body: { error: { code: "NO_TENANT_MATCH", message: "no tenant for these recipients" } } };
   }
   const sig = req.headers["x-postmark-signature"] || req.headers["X-Postmark-Signature"];
-  if (postmarkSecret && !verifyPostmarkSignature(raw, sig, postmarkSecret)) {
+  // Bug fix May 2026: previously we only verified the signature
+  // when postmarkSecret was set. A tenant that hadn't configured
+  // a secret accepted unsigned inbound webhooks (i.e. the public
+  // URL became a poisonable inbox). Now we fail-closed: every
+  // Postmark inbound MUST carry a verified signature. Tenants
+  // without a configured secret have to set one before inbound
+  // works; the configure endpoint surfaces this requirement.
+  if (!postmarkSecret) {
+    return { status: 401, body: { error: { code: "POSTMARK_SECRET_NOT_CONFIGURED", message: "Tenant has no postmark_inbound_secret on tenant_settings; refusing to accept unsigned inbound." } } };
+  }
+  if (!verifyPostmarkSignature(raw, sig, postmarkSecret)) {
     return { status: 401, body: { error: { code: "BAD_SIGNATURE", message: "invalid postmark signature" } } };
   }
   const headers = headersAsMap(body.Headers);

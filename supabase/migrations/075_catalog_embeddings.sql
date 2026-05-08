@@ -40,6 +40,11 @@ end $$;
 -- returns the top-k nearest items for the calling tenant. The RPC
 -- is callable from the service role; the API layer enforces the
 -- tenant predicate so the function does not need RLS.
+-- Bug fix May 2026: previous version referenced i.list_price which
+-- does not exist on item_master (the column is purchase_price per
+-- migration 006). The column is renamed in the result set so
+-- callers that already speak the function's contract continue to
+-- work, but the underlying lookup uses the real column.
 create or replace function search_catalog_by_embedding(
   p_tenant uuid,
   p_query  vector(1024),
@@ -52,7 +57,7 @@ create or replace function search_catalog_by_embedding(
   similarity float
 ) language sql stable as $$
   select
-    i.id, i.part_no, i.description, i.list_price,
+    i.id, i.part_no, i.description, i.purchase_price as list_price,
     1 - (i.embedding <=> p_query) as similarity
   from item_master i
   where i.tenant_id = p_tenant

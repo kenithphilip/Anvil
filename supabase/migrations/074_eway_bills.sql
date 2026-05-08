@@ -94,7 +94,7 @@ create table if not exists eway_bills (
 
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  created_by uuid references users(id) on delete set null,
+  created_by uuid references auth.users(id) on delete set null,
 
   unique (tenant_id, ewb_no)
 );

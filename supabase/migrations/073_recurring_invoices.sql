@@ -45,7 +45,7 @@ create table if not exists recurring_invoice_schedules (
 
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  created_by uuid references users(id) on delete set null
+  created_by uuid references auth.users(id) on delete set null
 );
 
 create index if not exists ris_due_idx

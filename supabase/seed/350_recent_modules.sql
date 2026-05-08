@@ -49,8 +49,14 @@ end $env_guard$;
 
 begin;
 
-do $role$
-begin set local role 'postgres'; exception when others then null; end;
+-- Bug fix May 2026: the original block was malformed. The other
+-- phase files (200, 300, 500, 900) use a single `do $role$ begin
+-- ... end $role$;` block with the set-role guard nested inside;
+-- this file had the begin on a separate line which made psql
+-- read `end $role$;` as a stray `end` keyword and bail out with
+-- `syntax error at or near "end"`. Match the canonical shape.
+do $role$ begin
+  begin set local role 'postgres'; exception when others then null; end;
 end $role$;
 
 -- ───────────────────────────────────────────────────────────────────

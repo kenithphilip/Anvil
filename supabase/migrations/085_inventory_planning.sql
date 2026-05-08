@@ -421,13 +421,20 @@ create policy "forecast_runs_modify" on forecast_runs
 -- Walks a parent part's BOM down to leaves and accumulates the
 -- effective qty multiplier. The depth cap at 8 prevents infinite
 -- recursion if a malformed BOM has a cycle.
+-- Bug fix May 2026: bill_of_materials.qty is numeric(18,4) so the
+-- non-recursive term hands `walk` a typed numeric column, while the
+-- recursive term's `w.multiplier * b.qty` produces an unconstrained
+-- numeric, and PG refuses to UNION the two with
+--   "recursive query column has type numeric(18,4) in non-recursive
+--    term but type numeric overall".
+-- Force both sides to plain numeric so the column type agrees.
 create or replace view v_bom_walk_recursive as
 with recursive walk as (
   select
     parent_part_no as root_part_no,
     parent_part_no as ancestor_part_no,
     child_part_no,
-    qty as multiplier,
+    qty::numeric as multiplier,
     1 as depth
   from bill_of_materials
   union all
@@ -435,7 +442,7 @@ with recursive walk as (
     w.root_part_no,
     b.parent_part_no,
     b.child_part_no,
-    w.multiplier * b.qty,
+    (w.multiplier * b.qty)::numeric,
     w.depth + 1
   from walk w
   join bill_of_materials b on b.parent_part_no = w.child_part_no

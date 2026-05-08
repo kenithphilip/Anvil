@@ -78,6 +78,8 @@ const screens = {
   comms:              lazy(() => import("./screens/comms")),
   email:              lazy(() => import("./screens/email")),
   security:           lazy(() => import("./screens/security")),
+  // DEFERRED_ROADMAP §1: voice AI (May 2026).
+  voice:              lazy(() => import("./screens/voice")),
   // Admin
   audit:              lazy(() => import("./screens/audit")),
   admin:              lazy(() => import("./screens/admin")),
@@ -149,6 +151,7 @@ export const RESOLVERS = {
   agents:      () => screens.agents,
   comms:       () => screens.comms,
   email:       () => screens.email,
+  voice:       () => screens.voice,
   security:    () => screens.security,
   audit:       () => screens.audit,
   admin:       () => screens.admin,

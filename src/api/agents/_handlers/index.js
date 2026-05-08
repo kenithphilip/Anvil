@@ -37,6 +37,10 @@ import { onboardingFollowup } from "./onboarding_followup.js";
 import { priceIncreaseAnnouncement } from "./price_increase_announcement.js";
 import { replenishmentSuggestion } from "./replenishment_suggestion.js";
 import { obsoleteProductWarning } from "./obsolete_product_warning.js";
+// Audit: voice AI build (DEFERRED_ROADMAP §1). Handler that
+// re-dials a customer who asked for a callback during a previous
+// voice call.
+import { voiceFollowup } from "./voice_followup.js";
 
 export const HANDLERS = {
   quote_accept_within_14d:    quoteAccept,
@@ -54,6 +58,7 @@ export const HANDLERS = {
   price_increase_announcement: priceIncreaseAnnouncement,
   replenishment_suggestion:   replenishmentSuggestion,
   obsolete_product_warning:   obsoleteProductWarning,
+  voice_followup:             voiceFollowup,
 };
 
 export const KNOWN_GOAL_TYPES = Object.keys(HANDLERS);

@@ -894,6 +894,21 @@
     run: async (documentId, opts) => apiFetch("/api/documents/scan", { method: "POST", body: { documentId, ...opts } }),
   };
 
+  // Voice AI namespace. Wraps configure / outbound / consent +
+  // a list shim that reads voice_calls via the orders-style
+  // "/api/voice/calls" path (a follow-up); for now the screen
+  // can hit voice_calls directly via the supabase client where
+  // present. The config + consent + outbound endpoints are the
+  // operator-facing surface.
+  const voice = {
+    listConfigs: async () => apiFetch("/api/voice/configure"),
+    upsertConfig: async (cfg) => apiFetch("/api/voice/configure", { method: "POST", body: cfg }),
+    placeOutbound: async (payload) => apiFetch("/api/voice/outbound", { method: "POST", body: payload }),
+    listConsent: async (phone) => apiFetch("/api/voice/consent" + (phone ? "?phone=" + encodeURIComponent(phone) : "")),
+    recordConsent: async (payload) => apiFetch("/api/voice/consent", { method: "POST", body: payload }),
+    withdrawConsent: async (id) => apiFetch("/api/voice/consent?id=" + encodeURIComponent(id), { method: "DELETE" }),
+  };
+
   const fx = {
     lookup: async (params) => {
       const qs = new URLSearchParams(params || {}).toString();
@@ -1353,6 +1368,7 @@
     notifications,
     ocr,
     scan,
+    voice,
     fx,
     delivery,
     inventory,

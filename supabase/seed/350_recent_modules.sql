@@ -491,7 +491,13 @@ begin
       case when (r->>'tenant_scope')::boolean then alpha end,
       case when not (r->>'tenant_scope')::boolean then now() - '7 days'::interval end
     )
-    on conflict on constraint voice_dnd_list_unique do nothing;
+    -- Bug fix May 2026: voice_dnd_list_unique is a unique INDEX
+    -- (with a coalesce expression on tenant_id), not a named
+    -- constraint, so `on conflict on constraint <name>` raises
+    -- "constraint ... does not exist". Fall back to the primary
+    -- key. The id is derived via uuid_generate_v5 from the same
+    -- (source + phone) tuple, so re-runs converge to the same row.
+    on conflict (id) do nothing;
   end loop;
 end $voice_dnd$;
 
@@ -571,7 +577,10 @@ begin
       jsonb_build_object('cooldown_hours', 72, 'sent_at', q.sent_at, 'version', q.version, 'seed_marker', 'anvil-test-seed-v1'),
       'active', alpha, alpha, now() - '6 hours'::interval
     )
-    on conflict on constraint agent_goals_active_target_uniq do nothing;
+    -- agent_goals_active_target_uniq is a unique INDEX (migration
+    -- 082), not a named constraint, so we conflict on the primary
+    -- key. The id is uuid_generate_v5-derived and stable.
+    on conflict (id) do nothing;
     -- expiring_quote_nudge
     insert into agent_goals (
       id, tenant_id, goal_type, object_type, object_id,
@@ -583,7 +592,10 @@ begin
       jsonb_build_object('sent_at', q.sent_at, 'expires_at', q.expires_at, 'version', q.version, 'seed_marker', 'anvil-test-seed-v1'),
       'active', alpha, alpha, now() - '6 hours'::interval
     )
-    on conflict on constraint agent_goals_active_target_uniq do nothing;
+    -- agent_goals_active_target_uniq is a unique INDEX (migration
+    -- 082), not a named constraint, so we conflict on the primary
+    -- key. The id is uuid_generate_v5-derived and stable.
+    on conflict (id) do nothing;
   end loop;
 end $quote_goals$;
 

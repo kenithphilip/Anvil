@@ -167,7 +167,13 @@ export const normalisePayload = (provider, payload) => {
         ts: m.time || m.timestamp,
       })),
       summary: msg.summary || msg.analysis?.summary || null,
-      duration_seconds: msg.durationSeconds || msg.call?.endedReason ? msg.call?.duration : null,
+      // Bug fix May 2026: was `msg.durationSeconds || msg.call?.endedReason ? msg.call?.duration : null`
+      // which had operator-precedence wrong (|| binds tighter than ?:),
+      // so the canonical durationSeconds field was discarded and we
+      // always read the secondary call.duration field, returning null
+      // on clean-end calls. Now: prefer durationSeconds, then
+      // call.duration, then null.
+      duration_seconds: msg.durationSeconds ?? msg.call?.duration ?? null,
       ended_reason: msg.endedReason || null,
       structured_actions: msg.toolCalls || msg.analysis?.structuredData || null,
       raw: payload,

@@ -32,10 +32,14 @@ const recordStepAndAdvance = async (svc, goal, step, opts) => {
     action_payload: step.action_payload || {},
     result: opts.result || "ok",
     result_detail: opts.result_detail || null,
-    model_used: opts.model_used || null,
-    tokens_in: opts.tokens_in || null,
-    tokens_out: opts.tokens_out || null,
-    cost_usd_cents: opts.cost_usd_cents || null,
+    // Bug fix May 2026: || was promoting legitimate 0 values to
+    // null, so a step that genuinely consumed 0 tokens or had 0
+    // cost was rendered as "no metric available." Use ?? so only
+    // null/undefined collapse.
+    model_used: opts.model_used ?? null,
+    tokens_in: opts.tokens_in ?? null,
+    tokens_out: opts.tokens_out ?? null,
+    cost_usd_cents: opts.cost_usd_cents ?? null,
   };
   await svc.from("agent_steps").insert(stepRow);
 
@@ -210,9 +214,29 @@ const executeAction = async (svc, goal, step) => {
         raw: { initiated_by: "agent_runner", placement: placement.raw, agent_goal_id: goal.id },
       }).select("id").single();
       if (insCall.error) {
+        // Bug fix May 2026: previously we returned ok without a
+        // recoverable trail. Now write a processing_event so ops
+        // sees the orphan call and can reconcile via the provider's
+        // external_id. We do NOT bump result to "error" because the
+        // call IS placed; the customer is on the line.
+        await svc.from("processing_events").insert({
+          tenant_id: goal.tenant_id,
+          case_id: goal.id,
+          event_type: "voice_call_persist_failed",
+          object_type: "voice_call",
+          object_id: null,
+          detail: {
+            external_id: placement.external_id,
+            provider: cfg.provider,
+            callee: step.action_payload.to,
+            agent_goal_id: goal.id,
+            db_error: insCall.error.message,
+          },
+          severity: "warn",
+        });
         return {
           result: "ok",
-          result_detail: "call placed (" + placement.external_id + ") but voice_calls insert failed: " + insCall.error.message,
+          result_detail: "call placed (" + placement.external_id + ") but voice_calls insert failed; processing_event written: " + insCall.error.message,
         };
       }
       return { result: "ok", result_detail: "voice call " + insCall.data.id + " placed" };

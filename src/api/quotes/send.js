@@ -109,9 +109,14 @@ const issuePortalTokenForQuote = async (svc, ctx, quote, customer) => {
     created_by: ctx.user?.id || null,
   }).select("id, token, expires_at").single();
   if (ins.error) {
+    // Bug fix May 2026: previously a portal-token insert failure
+    // returned null and the quote-send proceeded with no Accept
+    // link in the email. Customer received a quote they could view
+    // but not click "Accept" on. Now we surface the failure to the
+    // caller so it can land on the response body + audit log.
     // eslint-disable-next-line no-console
     console.warn("[quotes/send] portal token insert failed: " + ins.error.message);
-    return null;
+    return { error: ins.error.message };
   }
   const base = portalBaseUrl();
   const url = base ? base + "/portal/" + ins.data.token + "?quote=" + quote.id : null;
@@ -173,6 +178,7 @@ export default async function handler(req, res) {
 
     // Render + upload PDF.
     let shareUrl = null;
+    let pdfError = null;
     if (body.share_link !== false) {
       const tQ = await svc.from("tenants").select("display_name").eq("id", ctx.tenantId).maybeSingle();
       const pdf = await renderQuote({
@@ -192,7 +198,17 @@ export default async function handler(req, res) {
         total: quote.grand_total,
         currency: quote.currency || "INR",
         notes: quote.notes,
-      }).catch(() => null);
+      }).catch((err) => {
+        // Bug fix May 2026: previously the render error was
+        // swallowed entirely (.catch(() => null)). The send
+        // proceeded with no PDF + no share_url and the customer
+        // received a bare email. Now we capture the error so it
+        // lands on the response + recordAudit so ops can debug.
+        pdfError = err?.message || String(err);
+        // eslint-disable-next-line no-console
+        console.warn("[quotes/send] renderQuote: " + pdfError);
+        return null;
+      });
       if (pdf) {
         let bucket;
         try { bucket = await ensureDocumentsBucket(svc); }
@@ -318,12 +334,34 @@ export default async function handler(req, res) {
       });
     }
 
+    // Bug fix May 2026: surface portal-token + pdf-render failures
+    // on the response so the operator UI can flag a degraded send
+    // (quote went out but accept link / attached PDF missing).
+    if (portal?.error) {
+      await recordAudit(ctx, {
+        action: "quote_send_portal_token_failed",
+        objectType: "quote",
+        objectId: quote.id,
+        detail: portal.error,
+      });
+    }
+    if (pdfError) {
+      await recordAudit(ctx, {
+        action: "quote_send_pdf_render_failed",
+        objectType: "quote",
+        objectId: quote.id,
+        detail: pdfError,
+      });
+    }
+
     return json(res, 200, {
       ok: true,
       communication_id: draft.data.id,
       share_url: shareUrl,
       portal_url: portal?.url || null,
       portal_token_id: portal?.id || null,
+      portal_token_error: portal?.error || null,
+      pdf_error: pdfError,
       quote: upd.data,
       armed_goals: armed.error ? [] : armed.goals,
       status: "queued",

@@ -120,17 +120,39 @@ export const persistOneAttachment = async (svc, { tenantId, emailId, attachment 
   // returning { invoked: false } which our scan_status policy
   // treats as "still pending"; the operator can retry via
   // /api/documents/scan if AV comes back online.
+  //
+  // Bug fix May 2026: an AV outage used to silently leave
+  // scan_status='pending', and the auto_ocr worker filters on
+  // scan_status='clean', so all inbound documents stopped
+  // extracting indefinitely. Now we write a processing_event
+  // for any non-clean outcome so ops sees the AV gap and can
+  // act before document throughput tanks.
   let scanStatus = "pending";
+  let scanReason = null;
   try {
     const v = await scanWithClamAV(buf, filename, {});
     if (v.invoked) {
       scanStatus = v.infected ? "quarantined" : "clean";
+      if (v.infected) scanReason = "infected:" + (v.virus || "unknown");
+    } else {
+      scanReason = "av_not_invoked:" + (v.reason || "unknown");
     }
-  } catch (_e) {
-    // AV outage is non-fatal; document stays pending.
+  } catch (e) {
     scanStatus = "pending";
+    scanReason = "av_threw:" + (e.message || String(e));
   }
   await svc.from("documents").update({ scan_status: scanStatus }).eq("id", documentId);
+  if (scanStatus !== "clean") {
+    await svc.from("processing_events").insert({
+      tenant_id: tenantId,
+      case_id: emailId,
+      event_type: "inbound_av_scan_unresolved",
+      object_type: "document",
+      object_id: documentId,
+      detail: { filename, scan_status: scanStatus, reason: scanReason },
+      severity: scanStatus === "quarantined" ? "warn" : "info",
+    });
+  }
 
   return {
     document_id: documentId,

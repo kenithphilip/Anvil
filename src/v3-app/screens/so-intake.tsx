@@ -40,10 +40,17 @@ const WiredSOIntake = () => {
   // dialog persists via /api/customers (POST), then auto-selects
   // the new customer in the dropdown above.
   const [newCustomerOpen, setNewCustomerOpen] = u(false);
+  // Bug fix May 2026: the dialog state used to drop the contact_email
+  // and contact_phone fields the docai extractor returns, so even
+  // when the extractor caught the customer block on the PO header
+  // the operator was forced to retype email/phone. Both columns
+  // exist on the customers table (migration 061) and the API now
+  // accepts them, so the dialog persists them straight through.
   const [newCustomer, setNewCustomer] = u({
     customer_name: "", gstin: "", state_code: "",
     currency: "INR", payment_terms: "Net 30", margin_floor_pct: "10",
     bill_to: "", ship_to: "",
+    contact_email: "", contact_phone: "",
   });
   const [newCustomerErr, setNewCustomerErr] = u(null);
   const [newCustomerBusy, setNewCustomerBusy] = u(false);
@@ -97,6 +104,8 @@ const WiredSOIntake = () => {
         margin_floor_pct: newCustomer.margin_floor_pct ? Number(newCustomer.margin_floor_pct) : null,
         bill_to: newCustomer.bill_to || null,
         ship_to: newCustomer.ship_to || null,
+        contact_email: newCustomer.contact_email?.trim() || null,
+        contact_phone: newCustomer.contact_phone?.trim() || null,
       };
       const res = await ObaraBackend?.customers?.upsert?.(payload);
       const created = res?.customer || res?.row || res;
@@ -112,6 +121,7 @@ const WiredSOIntake = () => {
         customer_name: "", gstin: "", state_code: "",
         currency: "INR", payment_terms: "Net 30", margin_floor_pct: "10",
         bill_to: "", ship_to: "",
+        contact_email: "", contact_phone: "",
       });
     } catch (err2: any) {
       setNewCustomerErr(err2);
@@ -214,14 +224,18 @@ const WiredSOIntake = () => {
 
       const customer = out?.normalized?.customer || null;
       if (!customer) {
-        // No customer extracted at all (docai missed the header,
-        // adapter wasn't configured, etc.). Open the new-customer
-        // dialog with empty fields so the operator can fill in
-        // from the PO they're looking at.
+        // No customer block extracted at all (docai missed the
+        // header, adapter wasn't configured, etc.). Open the new-
+        // customer dialog with empty fields. The operator can
+        // still see the PO they uploaded in the doc preview, so
+        // they have somewhere to copy from. We also keep any
+        // currency / payment_terms defaults the operator is most
+        // likely to need.
         setNewCustomer({
           customer_name: "", gstin: "", state_code: "",
           currency: "INR", payment_terms: "Net 30", margin_floor_pct: "10",
           bill_to: "", ship_to: "",
+          contact_email: "", contact_phone: "",
         });
         setNewCustomerOpen(true);
         window.notifyLive?.(
@@ -241,6 +255,11 @@ const WiredSOIntake = () => {
       }
       // No match. Pre-fill the new-customer dialog with whatever the
       // extractor gave us so the operator just has to confirm.
+      // Bug fix May 2026: previously dropped customer.email and
+      // customer.phone on the floor; the operator had to retype them
+      // even when the PO header carried both. Both columns exist on
+      // the customers table (migration 061) and the API now persists
+      // them via contact_email / contact_phone.
       const billTo = customer.bill_to_address || customer.shipping_address || "";
       const shipTo = customer.ship_to_address || customer.bill_to_address || "";
       setNewCustomer({
@@ -252,6 +271,8 @@ const WiredSOIntake = () => {
         margin_floor_pct: "10",
         bill_to: billTo,
         ship_to: shipTo,
+        contact_email: customer.email || "",
+        contact_phone: customer.phone || "",
       });
       setNewCustomerOpen(true);
       window.notifyLive?.(
@@ -269,6 +290,7 @@ const WiredSOIntake = () => {
         customer_name: "", gstin: "", state_code: "",
         currency: "INR", payment_terms: "Net 30", margin_floor_pct: "10",
         bill_to: "", ship_to: "",
+        contact_email: "", contact_phone: "",
       });
       setNewCustomerOpen(true);
       window.notifyWarn?.(
@@ -675,6 +697,18 @@ const WiredSOIntake = () => {
                 <input id="nc-terms" className="input" placeholder="Net 30 / 50% advance / etc."
                        value={newCustomer.payment_terms}
                        onChange={(e) => setNewCustomer((c) => ({ ...c, payment_terms: e.target.value }))} />
+              </div>
+              <div>
+                <label htmlFor="nc-email" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Contact email</label>
+                <input id="nc-email" type="email" className="input" placeholder="ops@customer.com"
+                       value={newCustomer.contact_email}
+                       onChange={(e) => setNewCustomer((c) => ({ ...c, contact_email: e.target.value }))} />
+              </div>
+              <div>
+                <label htmlFor="nc-phone" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Contact phone</label>
+                <input id="nc-phone" type="tel" className="input mono" placeholder="+91 98765 43210"
+                       value={newCustomer.contact_phone}
+                       onChange={(e) => setNewCustomer((c) => ({ ...c, contact_phone: e.target.value }))} />
               </div>
               <div style={{ gridColumn: "1 / -1" }}>
                 <label htmlFor="nc-margin" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Margin floor (%)</label>

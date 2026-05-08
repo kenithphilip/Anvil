@@ -1,0 +1,50 @@
+{
+  "id": "pneumatics_hydraulics",
+  "label": "Pneumatics & hydraulics",
+  "description": "Fluid power: pneumatic + hydraulic cylinders, directional valves, FRLs, hose-and-fitting assemblies, pumps, motors, gear pumps, and accumulators. Heavy partner channels for Festo / SMC / Parker / Bosch Rexroth / Eaton, with custom assemblies cut + crimped to order. Distinct from PVF (process pipe) because it is motion + power transmission, not transport.",
+  "version": 1,
+  "approval_thresholds": [
+    { "level": "rep",      "min_amount": 0,        "max_amount": 80000,    "currency": "INR" },
+    { "level": "manager",  "min_amount": 80000,    "max_amount": 600000,   "currency": "INR" },
+    { "level": "director", "min_amount": 600000,   "max_amount": 4000000,  "currency": "INR" },
+    { "level": "vp",       "min_amount": 4000000,  "max_amount": null,     "currency": "INR" }
+  ],
+  "lead_time_defaults_days": {
+    "stocked_pneumatic":      1,
+    "stocked_hydraulic":      2,
+    "custom_hose_assembly":   3,
+    "imported_valve":         28,
+    "servo_proportional":     45,
+    "rebuild_kit":            10
+  },
+  "lost_reasons": [
+    "Price (competitor lower)",
+    "Bore / stroke mismatch",
+    "ISO mounting code mismatch",
+    "Pressure rating insufficient",
+    "Seal compound (NBR vs FKM) mismatch",
+    "Lead time too long",
+    "Customer specified OEM-only",
+    "Hose crimp dimension wrong",
+    "Flow rating not certified"
+  ],
+  "contract_types": ["spot", "annual", "managed_assembly", "consignment", "rebuild_program"],
+  "item_master_examples": [
+    { "code": "CYL-PN-DSBC-50-100",     "description": "Pneumatic cylinder ISO 15552 bore 50 mm stroke 100 mm",   "uom": "pcs" },
+    { "code": "VLV-PN-5-2-G18",         "description": "5-2 way pneumatic valve G1-8 single solenoid 24V DC",      "uom": "pcs" },
+    { "code": "FRL-G14-05M",            "description": "Filter-regulator-lubricator G1-4 5 micron",                "uom": "pcs" },
+    { "code": "HYD-CYL-100-50-200",     "description": "Hydraulic cylinder 100 mm bore 50 mm rod 200 mm stroke",   "uom": "pcs" },
+    { "code": "PUMP-VANE-3520V-30",     "description": "Vane pump V20 series 30 cc-rev SAE-A flange",              "uom": "pcs" },
+    { "code": "HOSE-2SC-1IN-CRIMP",     "description": "Hydraulic hose 2SC 1-inch with custom crimped fittings",   "uom": "asm" }
+  ],
+  "quote_template": {
+    "header_columns": ["customer_po", "iso_mount", "bore_mm", "stroke_mm", "pressure_bar", "qty", "uom", "price_per_unit", "extension"],
+    "footer_blocks": ["seal_compound", "test_certificate", "assembly_drawing_no", "rebuild_kit_included", "freight_terms", "validity_days"]
+  },
+  "kpis": [
+    { "id": "custom_assembly_share",   "label": "Custom-assembly share",  "unit": "percent", "window": "month" },
+    { "id": "rebuild_attach_rate",     "label": "Rebuild-kit attach rate", "unit": "percent", "window": "quarter" },
+    { "id": "lead_time_median_days",   "label": "Median lead time",        "unit": "days",    "window": "rolling90" },
+    { "id": "test_certificate_pct",    "label": "Test cert delivered %",  "unit": "percent", "window": "month" }
+  ]
+}

@@ -23,6 +23,7 @@ import { RESOLVERS, ROUTE_IDS, DEFAULT_ROUTE, readHashParams } from "./routes";
 // localStorage keys live under the canonical `anvil:` prefix; the
 // helper falls back to `obara:` for users who signed in pre-rebrand.
 import { lsGet, lsSet, lsRemove, lsKey, lsLegacyKey } from "./lib/storage-keys";
+import { looksLikeRecoveryHash } from "./lib/recovery-hash";
 
 const ROUTE_KEY_SUFFIX = "v3_route";
 const TENANT_KEY_SUFFIX = "v3_tenant_code";
@@ -30,6 +31,7 @@ const INTENDED_ROUTE_KEY_SUFFIX = "v3_intended_route";
 
 const parseRoute = () => {
   const hash = (typeof window !== "undefined" && window.location.hash) || "";
+  if (looksLikeRecoveryHash(hash)) return "reset";
   const id = hash.replace(/^#\/?/, "").split("?")[0];
   if (id && RESOLVERS[id]) return id;
   try { return lsGet(ROUTE_KEY_SUFFIX) || DEFAULT_ROUTE; }
@@ -172,7 +174,16 @@ export default function App() {
   // Hash-change keeps the route in sync with deep links.
   useEffect(() => {
     const onHash = () => {
-      const id = (window.location.hash || "").replace(/^#\/?/, "").split("?")[0];
+      const hash = window.location.hash || "";
+      // Same Supabase-recovery-hash special case as parseRoute,
+      // mirrored here so hashchange events (e.g. provider redirect
+      // landing the access_token after the page is already mounted)
+      // route to the reset screen.
+      if (looksLikeRecoveryHash(hash) && route !== "reset") {
+        setRoute("reset");
+        return;
+      }
+      const id = hash.replace(/^#\/?/, "").split("?")[0];
       if (id && RESOLVERS[id] && id !== route) setRoute(id);
     };
     window.addEventListener("hashchange", onHash);

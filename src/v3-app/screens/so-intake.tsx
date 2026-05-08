@@ -47,6 +47,14 @@ const WiredSOIntake = () => {
   });
   const [newCustomerErr, setNewCustomerErr] = u(null);
   const [newCustomerBusy, setNewCustomerBusy] = u(false);
+  // May 2026 fix: stash the extracted line items + the partial
+  // customer fragments so onContinue can hand them to the order
+  // create call as orders.result.salesOrder.lineItems. Previously
+  // the workspace's reconciliation tab read empty because the
+  // intake dropped the extracted lines on the floor and only used
+  // out.normalized.customer.
+  const [extractedLines, setExtractedLines] = u<any[] | null>(null);
+  const [extractMeta, setExtractMeta] = u<{ runId?: string | null; adapter?: string | null; confidence?: number | null }>({});
 
   // Address picker. The user's spec says ship-to / bill-to should be
   // a "relational object from other existing addresses of other
@@ -177,13 +185,49 @@ const WiredSOIntake = () => {
   // Run docai extraction on the just-uploaded file. Best-effort: a
   // failure here doesn't block the user; they can still pick the
   // customer manually.
+  //
+  // May 2026 fixes (per Daisy's bug report):
+  //   1. Even when the extractor returns NO customer at all, open
+  //      the new-customer dialog (with whatever fragments we have,
+  //      plus a hint banner) so the operator has a clear next
+  //      action. Previously a notify-warn toast was the only
+  //      signal and there was no path forward.
+  //   2. Persist out.normalized.lines into local state so the
+  //      onContinue handoff can include them in the order's
+  //      result.salesOrder.lineItems. Without this the workspace
+  //      reconciliation tab stays empty even when extraction
+  //      succeeded server-side.
   const runExtraction = async (file, documentId) => {
     setBusy("extract");
     try {
       const out = await ObaraBackend?.documents?.extract?.(file, { source_id: documentId });
+      // Persist anything the extractor returned, even if customer
+      // resolution falls through. Lines + cost meta land in the
+      // order create payload.
+      const lines = Array.isArray(out?.normalized?.lines) ? out.normalized.lines : null;
+      if (lines && lines.length) setExtractedLines(lines);
+      setExtractMeta({
+        runId: out?.run_id || null,
+        adapter: out?.adapter_used || null,
+        confidence: typeof out?.confidence_overall === "number" ? out.confidence_overall : null,
+      });
+
       const customer = out?.normalized?.customer || null;
       if (!customer) {
-        window.notifyWarn?.("Extraction returned no customer", "Pick a customer manually below.");
+        // No customer extracted at all (docai missed the header,
+        // adapter wasn't configured, etc.). Open the new-customer
+        // dialog with empty fields so the operator can fill in
+        // from the PO they're looking at.
+        setNewCustomer({
+          customer_name: "", gstin: "", state_code: "",
+          currency: "INR", payment_terms: "Net 30", margin_floor_pct: "10",
+          bill_to: "", ship_to: "",
+        });
+        setNewCustomerOpen(true);
+        window.notifyLive?.(
+          "Customer not auto-detected",
+          "Fill in the customer details from the PO and confirm.",
+        );
         return;
       }
       const matched = matchCustomerFromExtraction(customer);
@@ -218,9 +262,18 @@ const WiredSOIntake = () => {
       // Don't surface a hard error; the operator can still proceed.
       // eslint-disable-next-line no-console
       console.warn("[so-intake] extract failed: " + (err?.message || err));
+      // Same UX as no-customer: open the dialog with empty fields
+      // so the operator has somewhere to type instead of being
+      // stranded.
+      setNewCustomer({
+        customer_name: "", gstin: "", state_code: "",
+        currency: "INR", payment_terms: "Net 30", margin_floor_pct: "10",
+        bill_to: "", ship_to: "",
+      });
+      setNewCustomerOpen(true);
       window.notifyWarn?.(
         "Could not auto-extract customer",
-        "Pick a customer manually below.",
+        "Fill in the customer details from the PO.",
       );
     } finally {
       setBusy(null);
@@ -258,10 +311,28 @@ const WiredSOIntake = () => {
     if (!customerId) { setErr("Pick a customer."); return; }
     setBusy("create");
     try {
+      // May 2026 fix: hand the extractor's line items to the order
+      // create call so the workspace's reconciliation tab shows
+      // populated rows immediately. The OCR + auto_ocr cron paths
+      // can still amend the order's evidence_by_field + result
+      // later, but the operator no longer stares at "0 lines"
+      // while the cron worker catches up.
+      const initialResult: Record<string, any> = {};
+      if (extractedLines && extractedLines.length) {
+        initialResult.salesOrder = { lineItems: extractedLines };
+      }
+      const initialPreflight: Record<string, any> = {};
+      if (doc?.id) initialPreflight.source_document_id = doc.id;
+      if (extractMeta.runId) initialPreflight.extraction_run_id = extractMeta.runId;
+      if (extractMeta.adapter) initialPreflight.adapter_used = extractMeta.adapter;
+      if (extractMeta.confidence != null) initialPreflight.confidence_overall = extractMeta.confidence;
+
       const res = await ObaraBackend?.orders?.create?.({
         order_mode: mode,
         customer_id: customerId,
         status: "DRAFT",
+        result: initialResult,
+        preflight_payload: initialPreflight,
       });
       const newId = res?.order?.id || res?.id;
       if (!newId) throw new Error("Order create returned no id");
@@ -269,7 +340,10 @@ const WiredSOIntake = () => {
       if (doc?.id) {
         try { await ObaraBackend?.ocr?.run?.(doc.id, newId); } catch (_) { /* surface in workspace */ }
       }
-      window.notifySuccess?.("Draft created", String(newId).slice(0, 8));
+      const linesMsg = extractedLines && extractedLines.length
+        ? " (" + extractedLines.length + " line" + (extractedLines.length === 1 ? "" : "s") + " from PO)"
+        : "";
+      window.notifySuccess?.("Draft created", String(newId).slice(0, 8) + linesMsg);
       window.location.hash = `#/so?id=${newId}`;
     } catch (e2: any) {
       setErr(String(e2?.message || e2));
@@ -542,9 +616,29 @@ const WiredSOIntake = () => {
             }}
           >
             <div className="row" style={{ marginBottom: 12 }}>
-              <h2 id="new-customer-title" style={{ margin: 0, fontSize: 16, fontWeight: 600, flex: 1 }}>New customer</h2>
+              <h2 id="new-customer-title" style={{ margin: 0, fontSize: 16, fontWeight: 600, flex: 1 }}>
+                {newCustomer.customer_name ? "New customer" : "Customer not detected"}
+              </h2>
               <Btn sm kind="ghost" onClick={() => setNewCustomerOpen(false)} title="Close">{Icon.x}</Btn>
             </div>
+            {/* May 2026 fix: when the dialog opens with empty fields
+                because extraction couldn't find a customer header,
+                surface a hint so the operator knows why they're
+                being asked to type instead of confirm. */}
+            {!newCustomer.customer_name && (
+              <Banner kind="info" title="Fill in the customer details from the PO">
+                <span className="mono-sm">
+                  We could not auto-detect the customer header on this document. Type the details below; we'll create the customer record after you confirm.
+                </span>
+              </Banner>
+            )}
+            {newCustomer.customer_name && doc?.id && (
+              <Banner kind="info" title="Confirm before creating">
+                <span className="mono-sm">
+                  We auto-filled these fields from the PO header. Review and confirm to add this customer to your database.
+                </span>
+              </Banner>
+            )}
             {newCustomerErr && (
               <Banner kind="bad" icon={Icon.alert} title="Could not create customer">
                 <span className="mono-sm">{String(newCustomerErr?.message || newCustomerErr)}</span>

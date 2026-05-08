@@ -1,0 +1,53 @@
+{
+  "id": "industrial_automation",
+  "label": "Industrial automation & motion control",
+  "description": "Process + factory automation: PLCs, HMIs, VFDs, servo drives, AC + DC motors, encoders, sensors, networking gear (Profinet / EtherCAT / EtherNet-IP). Distinct from electrical wholesale (cable + breakers + lighting) because the sale is engineered, partner-driven, and the customer often expects programming + commissioning support. Heavy partner channels for Siemens / Allen-Bradley / Schneider / ABB / Mitsubishi / Omron.",
+  "version": 1,
+  "approval_thresholds": [
+    { "level": "rep",      "min_amount": 0,        "max_amount": 100000,    "currency": "INR" },
+    { "level": "manager",  "min_amount": 100000,   "max_amount": 1000000,   "currency": "INR" },
+    { "level": "director", "min_amount": 1000000,  "max_amount": 8000000,   "currency": "INR" },
+    { "level": "vp",       "min_amount": 8000000,  "max_amount": null,      "currency": "INR" }
+  ],
+  "lead_time_defaults_days": {
+    "stocked_sensor":         1,
+    "stocked_drive":          3,
+    "imported_plc_module":    35,
+    "servo_motor_kit":        45,
+    "panel_build":            21,
+    "engineered_to_order":    60,
+    "commissioning_visit":    14
+  },
+  "lost_reasons": [
+    "Price (competitor lower)",
+    "Frame size mismatch (servo / motor)",
+    "Communication protocol incompatible",
+    "Firmware revision restriction",
+    "Lead time too long",
+    "Customer pre-engineered competitor BOM",
+    "Programming hours not budgeted",
+    "Panel-build slot unavailable",
+    "Site-acceptance test (SAT) failed",
+    "OEM-locked spare parts policy"
+  ],
+  "contract_types": ["spot", "engineered_project", "panel_build", "spares_program", "service_contract"],
+  "item_master_examples": [
+    { "code": "PLC-S7-1500-CPU1515", "description": "Siemens S7-1500 CPU 1515-2 PN with PROFINET",         "uom": "pcs" },
+    { "code": "HMI-COMFORT-15IN",    "description": "Siemens TP1500 Comfort 15-inch panel touchscreen",   "uom": "pcs" },
+    { "code": "VFD-G120-3KW-400V",   "description": "Variable frequency drive 3 kW 400 V 3-phase IP20",    "uom": "pcs" },
+    { "code": "SERVO-MOTOR-1FK7-04", "description": "Servo motor 1FK7 040 4 Nm with absolute encoder",     "uom": "pcs" },
+    { "code": "ENC-INC-1024PPR",     "description": "Incremental rotary encoder 1024 ppr push-pull HTL",   "uom": "pcs" },
+    { "code": "PROX-IND-M18-PNP",    "description": "Inductive proximity sensor M18 PNP NO 8 mm",          "uom": "pcs" },
+    { "code": "SVC-PLC-PROG-DAY",    "description": "PLC programming + commissioning service day on-site", "uom": "day" }
+  ],
+  "quote_template": {
+    "header_columns": ["customer_po", "manufacturer_part", "fw_revision", "protocol", "qty", "uom", "price_per_unit", "extension"],
+    "footer_blocks": ["panel_build_required", "programming_hours", "commissioning_days", "spares_recommendation", "warranty_months", "freight_terms", "validity_days"]
+  },
+  "kpis": [
+    { "id": "engineered_project_value", "label": "Engineered-project value", "unit": "INR",     "window": "quarter" },
+    { "id": "panel_build_utilization",  "label": "Panel-build utilization", "unit": "percent", "window": "month"   },
+    { "id": "service_attach_rate",      "label": "Service attach rate",     "unit": "percent", "window": "quarter" },
+    { "id": "spares_program_arr",       "label": "Spares-programme ARR",    "unit": "INR",     "window": "annual"  }
+  ]
+}

@@ -24,6 +24,10 @@ import { recordAudit } from "../_lib/audit.js";
 import { classifyDemand } from "../_lib/inventory/classify.js";
 import { pickForecaster, residualSigma, wape } from "../_lib/inventory/forecast.js";
 import { safetyStock } from "../_lib/inventory/safety-stock.js";
+import {
+  selectAndComputeCP, intervalForForecast, safetyStockFromInterval,
+  scaleIntervalToLTD,
+} from "../_lib/inventory/conformal.js";
 import { estimateLeadTime } from "../_lib/inventory/lead-time.js";
 import {
   computePipelineDemand, isoWeekStart, STAGE_PROBABILITY_DEFAULTS,
@@ -230,7 +234,7 @@ const planTenant = async (svc, tenantId) => {
   if (!cfg.inventory_planning_enabled) return { tenant_id: tenantId, skipped: true };
 
   const items = await svc.from("item_master")
-    .select("part_no, item_type, default_supplier_id, service_level, holding_cost_pct_override, coverage_period_weeks, default_lead_days, moq, pack_size, rounding_rule, purchase_price, demand_class, pinned_model")
+    .select("part_no, item_type, default_supplier_id, service_level, holding_cost_pct_override, coverage_period_weeks, default_lead_days, moq, pack_size, rounding_rule, purchase_price, demand_class, pinned_model, conformal_coverage, conformal_method_override")
     .eq("tenant_id", tenantId)
     .eq("planning_enabled", true);
   if (items.error) throw new Error("items: " + items.error.message);
@@ -285,12 +289,45 @@ const planTenant = async (svc, tenantId) => {
     opp, lines: linesByOppId.get(opp.id) || [],
   }));
 
+  // Bet 3: pull rolling residuals per part for CP. Done as one
+  // round trip outside the loop so we don't fire N queries when N
+  // is large. The residuals table is RLS-scoped to the tenant.
+  // Residuals come back oldest -> newest (NEXCP requires
+  // time-ordered input). We cap at 156 weeks (3 years) to keep
+  // weight decay meaningful.
+  const conformalOn = !!cfg.inventory_conformal_enabled;
+  const cohortResiduals = {};
+  const residualsByPart = new Map();
+  if (conformalOn) {
+    const r = await svc.from("conformal_calibration_residuals")
+      .select("part_no, week_start, residual")
+      .eq("tenant_id", tenantId)
+      .in("part_no", parts)
+      .order("week_start", { ascending: true })
+      .limit(parts.length * 156);
+    for (const row of (r.data || [])) {
+      const v = Number(row.residual);
+      if (!Number.isFinite(v)) continue;
+      const list = residualsByPart.get(row.part_no) || [];
+      list.push(v);
+      residualsByPart.set(row.part_no, list);
+    }
+    // Build cohort pools keyed by item_type for cold-start.
+    for (const it of items.data) {
+      const key = it.item_type || "OTHER";
+      cohortResiduals[key] = cohortResiduals[key] || [];
+      const own = residualsByPart.get(it.part_no) || [];
+      cohortResiduals[key].push(...own);
+    }
+  }
+
   // Per-item planning loop.
   const forecastRows = [];
   const planRows = [];
   let modelsEvaluated = {};
   let waperSum = 0;
   let waperCount = 0;
+  let conformalUsed = 0;
   for (const item of items.data) {
     // Convert history map to chronological array.
     const histMap = history.get(item.part_no) || new Map();
@@ -341,12 +378,76 @@ const planTenant = async (svc, tenantId) => {
       projectEquivalentQty,
     });
 
+    // Bet 3: conformal-prediction safety stock. Replaces the
+    // parametric value above when:
+    //
+    //   - tenant_settings.inventory_conformal_enabled = true
+    //   - the part has >= 12 nonzero residuals (else cold-start)
+    //
+    // Coverage target priority: item_master.conformal_coverage ->
+    // item_master.service_level (legacy synonym) ->
+    // tenant_settings.inventory_conformal_default_coverage.
+    //
+    // Hard floor: ss = max(CP_band, ssGamma) for SKUs with fewer
+    // than 26 residuals (math is less stable on short series).
+    // Project floor stays as outermost lower bound (preserves
+    // doc 2.3.3 invariant).
+    let cpInfo = null;
+    let cpSafetyStock = null;
+    if (conformalOn) {
+      const cpAlpha = Number(item.conformal_coverage)
+        || Number(item.service_level)
+        || Number(cfg.inventory_conformal_default_coverage)
+        || 0.95;
+      const cpMethod = item.conformal_method_override
+        || cfg.inventory_conformal_method
+        || "nexcp";
+      const ownResiduals = residualsByPart.get(item.part_no) || [];
+      cpInfo = selectAndComputeCP({
+        residuals: ownResiduals,
+        alpha: cpAlpha,
+        method: cpMethod,
+        cohortResiduals,
+        cohortKey: item.item_type || "OTHER",
+      });
+      // Scale per-period band to the lead-time window so the
+      // safety-stock add-on covers the full horizon between
+      // order-placed and order-received.
+      const ltdBand = scaleIntervalToLTD({
+        interval_lo: cpInfo.qLo + baselineMean,
+        interval_hi: cpInfo.qHi + baselineMean,
+        leadTimeWeeks,
+        leadTimeSigmaWeeks,
+      });
+      const cpBand = safetyStockFromInterval({
+        interval_hi: ltdBand.interval_hi_ltd,
+        ltdMean: leadTimeWeeks * baselineMean,
+      });
+      // Stability floor: SKUs with < 26 residuals use the larger of
+      // (CP band, parametric gamma) so a sparse calibration window
+      // can't under-stock a part we previously safe-stocked.
+      cpSafetyStock = cpInfo.calibration_residuals_count < 26
+        ? Math.max(cpBand, ss.breakdown.stat_ss)
+        : cpBand;
+      // Always retain the project floor as outermost lower bound.
+      cpSafetyStock = Math.max(cpSafetyStock, ss.breakdown.project_floor);
+      // Stamp the per-period interval on the forecast rows. The
+      // band on the forecast chart should be per-period, not
+      // LTD-cumulative.
+      cpInfo.coverage_target = cpAlpha;
+      cpInfo.interval_lo = Math.max(0, baselineMean + cpInfo.qLo);
+      cpInfo.interval_hi = Math.max(cpInfo.interval_lo, baselineMean + cpInfo.qHi);
+      conformalUsed += 1;
+    }
+
+    const effectiveSS = (cpSafetyStock != null) ? cpSafetyStock : ss.ss;
+
     // Persist computed columns back to item_master so the operator
     // can see and override them.
     await svc.from("item_master").update({
       demand_class: cls.class,
-      safety_stock: ss.ss,
-      reorder_point: ss.ss + leadTimeWeeks * baselineMean,
+      safety_stock: effectiveSS,
+      reorder_point: effectiveSS + leadTimeWeeks * baselineMean,
     }).eq("tenant_id", tenantId).eq("part_no", item.part_no);
 
     // Forecast decomposition by week.
@@ -372,6 +473,27 @@ const planTenant = async (svc, tenantId) => {
       const b = baselineMean;     // flat baseline; Phase 2.5 adds seasonality
       forecastByWeek.set(wk, c + p + b);
       forecastDecompByWeek.set(wk, { committed: c, pipeline: p, baseline: b });
+      // Bet 3: per-period CP band. The interval is centred on the
+      // baseline; committed + pipeline are deterministic additions
+      // so we add them to both bounds.
+      const cpRow = cpInfo
+        ? {
+            conformal_method: cpInfo.method,
+            coverage_target: cpInfo.coverage_target,
+            interval_lo: Math.max(0, (c + p) + cpInfo.interval_lo),
+            interval_hi: Math.max(
+              (c + p) + cpInfo.interval_lo,
+              (c + p) + cpInfo.interval_hi,
+            ),
+            calibration_residuals_count: cpInfo.calibration_residuals_count,
+          }
+        : {
+            conformal_method: conformalOn ? "parametric_legacy" : null,
+            coverage_target: null,
+            interval_lo: null,
+            interval_hi: null,
+            calibration_residuals_count: null,
+          };
       forecastRows.push({
         tenant_id: tenantId,
         part_no: item.part_no,
@@ -388,7 +510,34 @@ const planTenant = async (svc, tenantId) => {
         wape_4w: wape(histArr, forecaster, 4),
         wape_8w: wape(histArr, forecaster, 8),
         wape_12w: wape(histArr, forecaster, 12),
+        ...cpRow,
       });
+    }
+
+    // Bet 3: capture this run's most-recent (actual, forecast)
+    // pair into conformal_calibration_residuals so the NEXT run
+    // has a fresh residual to learn from. We use the latest
+    // history week as the "actual" and the engine's baseline as the
+    // "forecast" (this is the closed-loop walk-forward residual,
+    // which is what NEXCP / Split CP need). Idempotent on the
+    // (tenant, part, week_start) unique key.
+    if (conformalOn && histArr.length > 0) {
+      const lastWeekKey = histKeys[histKeys.length - 1];
+      const lastActual = histArr[histArr.length - 1];
+      if (lastWeekKey) {
+        await svc.from("conformal_calibration_residuals").upsert(
+          {
+            tenant_id: tenantId,
+            part_no: item.part_no,
+            forecast_run_id: runId,
+            week_start: lastWeekKey,
+            forecast_value: baselineMean,
+            actual_value: lastActual,
+            weight: 1.0,
+          },
+          { onConflict: "tenant_id,part_no,week_start" },
+        );
+      }
     }
 
     // Net-req + plan.
@@ -424,7 +573,7 @@ const planTenant = async (svc, tenantId) => {
       inTransitByWeek,
       allocatedByWeek,
       weeks,
-      safetyStockQty: ss.ss,
+      safetyStockQty: effectiveSS,
       leadTimeWeeks,
       weeklyForecastMean: baselineMean,
       coverageWeeks: item.coverage_period_weeks || 12,
@@ -448,10 +597,26 @@ const planTenant = async (svc, tenantId) => {
       const hyst = await hysteresisOK(svc, tenantId, item.part_no, requiredStreak);
       if (hyst.ok) {
         planResult.plan.tenant_id = tenantId;
+        // Bet 3: stamp CP fields directly + record the legacy
+        // parametric value on the rationale so the dashboard can
+        // A/B the two policies without losing audit info.
+        if (cpInfo) {
+          planResult.plan.conformal_method = cpInfo.method;
+          planResult.plan.coverage_target = cpInfo.coverage_target;
+          planResult.plan.interval_lo = cpInfo.interval_lo;
+          planResult.plan.interval_hi = cpInfo.interval_hi;
+          planResult.plan.calibration_residuals_count = cpInfo.calibration_residuals_count;
+        }
         planResult.plan.rationale = {
           ...(planResult.plan.rationale || {}),
           hysteresis_streak: hyst.streak,
           hysteresis_required: requiredStreak,
+          legacy_safety_stock: ss.ss,
+          legacy_formula: ss.breakdown.formula,
+          conformal_used: !!cpInfo,
+          conformal_method: cpInfo?.method || null,
+          coverage_target: cpInfo?.coverage_target || null,
+          calibration_residuals_count: cpInfo?.calibration_residuals_count || 0,
         };
         planRows.push(planResult.plan);
       } else {
@@ -499,8 +664,14 @@ const planTenant = async (svc, tenantId) => {
     finished_at: new Date().toISOString(),
     items_count: parts.length,
     models_evaluated: modelsEvaluated,
-    wape_summary: { mean_wape_4w: waperCount ? waperSum / waperCount : null },
-    notes: "Weekly cron run; plans_created=" + plansCreated,
+    wape_summary: {
+      mean_wape_4w: waperCount ? waperSum / waperCount : null,
+      conformal_enabled: conformalOn,
+      conformal_used_count: conformalUsed,
+      conformal_used_ratio: parts.length ? conformalUsed / parts.length : 0,
+    },
+    notes: "Weekly cron run; plans_created=" + plansCreated
+      + (conformalOn ? "; cp_used=" + conformalUsed : ""),
   }).eq("id", runId);
 
   await recordAudit({ tenantId, role: "service" }, {
@@ -510,7 +681,14 @@ const planTenant = async (svc, tenantId) => {
     detail: { items: parts.length, plans_created: plansCreated },
   });
 
-  return { tenant_id: tenantId, items_planned: parts.length, plans_created: plansCreated, run_id: runId };
+  return {
+    tenant_id: tenantId,
+    items_planned: parts.length,
+    plans_created: plansCreated,
+    run_id: runId,
+    conformal_enabled: conformalOn,
+    conformal_used: conformalUsed,
+  };
 };
 
 // -------------------------------------------------------------------

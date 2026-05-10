@@ -66,6 +66,14 @@ export const NAV: NavGroup[] = [
       { id: "cost",      label: "Cost & Margin", icon: Icon.cash },
     ],
   },
+  // Bet 7: BRSR value-chain reporting (SEBI BRSR Core).
+  {
+    label: "Sustainability",
+    items: [
+      { id: "brsr-supplier",        label: "BRSR Disclosure",   icon: Icon.flag },
+      { id: "brsr-buyer-dashboard", label: "BRSR Value Chain",  icon: Icon.graph },
+    ],
+  },
   {
     label: "Data",
     items: [

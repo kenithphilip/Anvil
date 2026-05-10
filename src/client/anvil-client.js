@@ -1018,6 +1018,30 @@
     },
   };
 
+  // Bet 7: BRSR value-chain reporting. Two surfaces: supplier-side
+  // disclosure CRUD + buyer-side rollup / export.
+  const brsr = {
+    periods: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/brsr/period" + (qs ? "?" + qs : ""));
+    },
+    createPeriod: async (payload) => apiFetch("/api/brsr/period", { method: "POST", body: payload }),
+    disclosure: async (periodId) => apiFetch("/api/brsr/disclosure?period_id=" + encodeURIComponent(periodId)),
+    saveDisclosure: async (payload) => apiFetch("/api/brsr/disclosure", { method: "POST", body: payload }),
+    submitDisclosure: async (payload) => apiFetch("/api/brsr/disclosure/submit", { method: "POST", body: payload }),
+    prefill: async (fromFy) => apiFetch("/api/brsr/prefill?from_fy=" + encodeURIComponent(fromFy)),
+    relationships: async () => apiFetch("/api/brsr/relationship"),
+    invite: async (payload) => apiFetch("/api/brsr/relationship/invite", { method: "POST", body: payload }),
+    acceptInvite: async (id) => apiFetch("/api/brsr/relationship/accept", { method: "POST", body: { id } }),
+    rejectInvite: async (id) => apiFetch("/api/brsr/relationship/reject", { method: "POST", body: { id } }),
+    revokeRelationship: async (id) => apiFetch("/api/brsr/relationship/revoke", { method: "POST", body: { id } }),
+    buyerDashboard: async (fy) => apiFetch("/api/brsr/buyer/dashboard" + (fy ? "?fy=" + encodeURIComponent(fy) : "")),
+    exportUrl: (fy, format) => {
+      const qs = new URLSearchParams({ fy: fy || "", format: format || "csv" }).toString();
+      return "/api/brsr/buyer/export?" + qs;
+    },
+  };
+
   const bom = {
     list: async (params) => {
       const qs = new URLSearchParams(params || {}).toString();
@@ -1482,6 +1506,7 @@
     delivery,
     inventory,
     masterData,
+    brsr,
     bom,
     profileVersions,
     sourcePos,

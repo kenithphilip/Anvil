@@ -149,6 +149,13 @@ import inventoryCalibration     from "./inventory/calibration.js";
 import inventorySuppliers       from "./inventory/suppliers.js";
 // Bet 3: conformal-prediction safety stock.
 import inventoryConformalDiag   from "./inventory/conformal_diagnostics.js";
+// Bet 7: BRSR value-chain reporting.
+import brsrPeriod               from "./brsr/period.js";
+import brsrDisclosure           from "./brsr/disclosure.js";
+import brsrPrefill              from "./brsr/prefill.js";
+import brsrRelationship         from "./brsr/relationship.js";
+import brsrBuyerDashboard       from "./brsr/buyer/dashboard.js";
+import brsrBuyerExport          from "./brsr/buyer/export.js";
 import inventoryCronPositions   from "./cron/inventory-positions.js";
 import inventoryCronWeekly      from "./cron/inventory-planning-weekly.js";
 import inventoryCronExceptions  from "./cron/inventory-exceptions-tick.js";
@@ -767,6 +774,18 @@ const STATIC_ROUTES = {
   "/inventory/suppliers":           inventorySuppliers,
   // Bet 3: conformal-prediction diagnostics + per-SKU override.
   "/inventory/conformal_diagnostics": inventoryConformalDiag,
+  // Bet 7: BRSR value-chain reporting.
+  "/brsr/period":                   brsrPeriod,
+  "/brsr/disclosure":               brsrDisclosure,
+  "/brsr/disclosure/submit":        brsrDisclosure,
+  "/brsr/prefill":                  brsrPrefill,
+  "/brsr/relationship":             brsrRelationship,
+  "/brsr/relationship/invite":      brsrRelationship,
+  "/brsr/relationship/accept":      brsrRelationship,
+  "/brsr/relationship/reject":      brsrRelationship,
+  "/brsr/relationship/revoke":      brsrRelationship,
+  "/brsr/buyer/dashboard":          brsrBuyerDashboard,
+  "/brsr/buyer/export":             brsrBuyerExport,
 
   "/master_data/graph":             masterDataGraph,
 

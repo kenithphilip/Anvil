@@ -193,6 +193,78 @@ describe("SO Intake auto-extract", () => {
     }, { timeout: 2000 });
   });
 
+  it("auto-selects Faith Automation when filename has unrelated OBARA (regression)", async () => {
+    // The actual user case from the OBARA file. The buyer is Faith
+    // Automation. The filename has "OBARA" (equipment brand). The
+    // earlier draft of this matcher refused auto-select because
+    // filename token "obara" did not intersect "faithautomation".
+    // Filename-hint refusal dropped; bill-to corroboration alone
+    // is the auto-select gate for name matches.
+    const FAITH = { id: "cust-faith", customer_name: "Faith Automation Pvt Ltd", gstin: "" };
+    installBackend({
+      health: async () => ({ integrations: [] }),
+      customers: { list: async () => ({ customers: [FAITH] }) },
+      documents: {
+        upload: async () => ({ documentId: "doc-faith", scan: { status: "clean" } }),
+        extract: async () => ({
+          confidence_overall: 0.92,
+          normalized: { customer: {
+            name: "Faith Automation Pvt Ltd",
+            country: "IN",
+            currency: "INR",
+            payment_terms: "Net 30",
+            bill_to_address: "Faith Automation Pvt Ltd, Plot 12, MIDC, Pune 411018",
+            ship_to_address: "Faith Automation Pvt Ltd, Plot 12, MIDC, Pune 411018",
+          } },
+        }),
+      },
+    });
+    const mod = await import("./so-intake");
+    const { container } = renderScreen(mod.default);
+    await new Promise((r) => setTimeout(r, 0));
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    Object.defineProperty(fileInput!, "files", { value: [fakeFile("25PO0008243-OBARA.pdf")] });
+    fireEvent.change(fileInput!);
+    await waitFor(() => {
+      const sel = container.querySelector('#so-intake-customer') as HTMLSelectElement | null;
+      expect(sel?.value).toBe("cust-faith");
+    }, { timeout: 2000 });
+  });
+
+  it("auto-selects with legal-suffix variation (extracted 'Faith Automation' matches stored 'Faith Automation Pvt Ltd')", async () => {
+    // The customer record carries the full legal name; the LLM
+    // sometimes drops the suffix when extracting from the bill-to
+    // header. norm() now strips Pvt/Ltd/Inc/etc. so the match
+    // succeeds either way.
+    const FAITH = { id: "cust-faith2", customer_name: "Faith Automation Pvt Ltd", gstin: "" };
+    installBackend({
+      health: async () => ({ integrations: [] }),
+      customers: { list: async () => ({ customers: [FAITH] }) },
+      documents: {
+        upload: async () => ({ documentId: "doc-faith-suffix", scan: { status: "clean" } }),
+        extract: async () => ({
+          confidence_overall: 0.9,
+          normalized: { customer: {
+            name: "Faith Automation",                       // suffix dropped by LLM
+            country: "IN",
+            currency: "INR",
+            bill_to_address: "Faith Automation Pvt Ltd, Pune 411018",
+          } },
+        }),
+      },
+    });
+    const mod = await import("./so-intake");
+    const { container } = renderScreen(mod.default);
+    await new Promise((r) => setTimeout(r, 0));
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    Object.defineProperty(fileInput!, "files", { value: [fakeFile("po.pdf")] });
+    fireEvent.change(fileInput!);
+    await waitFor(() => {
+      const sel = container.querySelector('#so-intake-customer') as HTMLSelectElement | null;
+      expect(sel?.value).toBe("cust-faith2");
+    }, { timeout: 2000 });
+  });
+
   it("does NOT auto-select on low extractor confidence", async () => {
     // Confidence gate: the matcher refuses auto-select when
     // confidence_overall < 0.85, even on an exact bill-to-corroborated

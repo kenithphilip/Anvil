@@ -197,33 +197,49 @@ const WiredSOIntake = () => {
   const customerList = (customers.data?.customers) || (Array.isArray(customers.data) ? customers.data : []);
   const selectedCustomer = customerList.find((c) => c.id === customerId);
 
-  // Customer matcher with three-layer corroboration. The bug we
-  // closed in May 2026 (post-Phase-F): an OBARA-Korea PO referencing
-  // a Hyundai Steel project auto-selected "Hyundai Steel" because:
-  //   1) the LLM picked Hyundai (project / end-customer reference)
-  //      as customer.name,
-  //   2) the matcher trusted name-only with no corroboration, and
-  //   3) confidence_overall was never threaded into the auto-select
-  //      decision.
+  // Customer matcher. Two regressions taught us how the LLM picks
+  // the wrong entity on a multi-party PO:
   //
-  // Three guards now apply before auto-select:
-  //   - confidence_overall must be >= 0.85 (or null = legacy back-compat).
-  //   - GSTIN exact match remains the highest-signal path; auto-select.
-  //   - Name match REQUIRES the canonical name to appear inside
-  //     bill_to_address. Without bill-to corroboration the matcher
-  //     refuses to auto-select; the dialog opens for operator confirm.
-  //   - Filename hint: if the upload filename contains a token >= 3
-  //     chars that's a substring of an existing customer's name, and
-  //     the extractor's match disagrees with the filename, refuse
-  //     auto-select.
+  //   Round 1 (post-Phase F): LLM picked Hyundai (project /
+  //   end-customer reference) as customer.name; matcher
+  //   auto-selected without corroboration.
+  //
+  //   Round 2 (this fix): on a PO whose buyer was Faith Automation
+  //   but whose document mentioned OBARA brand spares for a
+  //   Hyundai end-customer, the previous draft refused to
+  //   auto-select Faith Automation EVEN WHEN the LLM extracted it
+  //   correctly. Cause: a filename-hint guard insisted the
+  //   filename token "obara" intersect the matched customer's
+  //   name. Faith Automation's name does not contain "obara", so
+  //   the matcher refused. Filename hint dropped.
+  //
+  // Two guards apply before auto-select:
+  //   - confidence_overall >= 0.85 (or null = legacy back-compat).
+  //   - GSTIN exact match remains the highest-signal path.
+  //   - Name match REQUIRES bill-to corroboration. The bill-to
+  //     block is the buyer's ground truth; the LLM picking up
+  //     Hyundai or OBARA from line-item descriptions can never
+  //     satisfy this check.
+  //
+  // Corroboration uses the FIRST significant token of the canonical
+  // name (after suffix-stripping). Whole-name substring match was
+  // too strict for documents that print the company name in a
+  // header above the bill-to block but the address inside it.
+  //
+  // norm() now strips legal-suffix tokens (Pvt, Ltd, Pvt Ltd, Inc,
+  // GmbH, Co, KK, AG, BV, SA, LLP, Limited, Company) the way the
+  // backend canonicalizer does, so "Faith Automation" extracted
+  // from the PO matches "Faith Automation Pvt Ltd" stored in the
+  // customer record.
   const norm = (s) => String(s || "").toLowerCase()
     .replace(/^m\/s\.?\s*/i, "")
     .replace(/[.,]/g, " ")
+    .replace(/\b(pvt|ltd|llp|inc|corp|gmbh|kk|ag|bv|sa|company|limited|co)\b/g, "")
     .replace(/\s+/g, " ")
     .trim();
   const normTight = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 
-  const matchCustomerFromExtraction = (extracted, runConfidence, filename) => {
+  const matchCustomerFromExtraction = (extracted, runConfidence) => {
     if (!extracted) return null;
     // Confidence gate. Below 0.85 the operator confirms manually.
     if (typeof runConfidence === "number" && runConfidence < 0.85) return null;
@@ -237,48 +253,31 @@ const WiredSOIntake = () => {
       if (byGstin) return { customer: byGstin, confidence: "exact_gstin" };
     }
 
-    // Tier 2: name match REQUIRES bill-to corroboration. The
-    // extractor will sometimes pick up an end-customer / project
-    // name from line items; the bill-to block is the ground truth.
+    // Tier 2: name match REQUIRES bill-to corroboration via the
+    // first significant token of the canonical name. The extractor
+    // will sometimes pick up an end-customer / project / brand
+    // reference from line items; the bill-to block is the ground
+    // truth.
     const name = (extracted.name || "").trim();
     if (!name) return null;
     const target = norm(name);
     if (target.length < 3) return null;
 
     const billToTight = normTight(extracted.bill_to_address);
-    const nameTight = normTight(name);
-    if (!billToTight || nameTight.length < 4 || !billToTight.includes(nameTight)) {
-      // Bill-to does not contain the extracted name. Refuse to auto-
-      // match. The operator confirms via the dialog.
+    // First word of the canonical name, stripped to alphanumerics so
+    // hyphenated names (e.g. "Brand-new Customer") still corroborate
+    // against bill-to addresses that flatten the hyphen.
+    const firstToken = (target.split(/\s+/)[0] || "").replace(/[^a-z0-9]/g, "");
+    if (firstToken.length < 4 || !billToTight || !billToTight.includes(firstToken)) {
+      // Bill-to does not corroborate the extracted name. Refuse to
+      // auto-match. The operator confirms via the dialog.
       return null;
     }
 
     const exact = list.find((c) => norm(c.customer_name) === target);
     if (!exact) return null;
 
-    // Tier 3: filename sanity. If the filename has a token (>= 3
-    // chars, alpha) that doesn't match the matched customer's name,
-    // refuse to auto-select. e.g. filename "25PO0008243-OBARA.pdf"
-    // tokens = ["obara"]; matched customer "Hyundai Steel" has no
-    // overlap -> refuse.
-    const filenameTokens = filenameHintTokens(filename);
-    if (filenameTokens.length > 0) {
-      const matchedTight = normTight(exact.customer_name);
-      const intersects = filenameTokens.some((tok) => matchedTight.includes(tok) || tok.includes(matchedTight));
-      if (!intersects) return null;
-    }
-
     return { customer: exact, confidence: "exact_name" };
-  };
-
-  // Pull alpha tokens >= 3 chars from the upload filename. Used as a
-  // tie-breaker against the LLM-extracted name.
-  const filenameHintTokens = (filename) => {
-    if (!filename) return [];
-    const stem = String(filename).replace(/\.[a-z0-9]+$/i, "");
-    return stem.split(/[-_\s.]+/)
-      .map((s) => s.trim().toLowerCase())
-      .filter((s) => s.length >= 3 && /^[a-z]/.test(s) && !/^\d+$/.test(s));
   };
 
   // Bug fix May 2026 (customer-prefill report): the previous
@@ -450,7 +449,6 @@ const WiredSOIntake = () => {
       const matchResult = matchCustomerFromExtraction(
         customer,
         typeof out?.confidence_overall === "number" ? out.confidence_overall : null,
-        file?.name || null,
       );
       if (matchResult?.customer) {
         // High-confidence match (GSTIN exact OR normalized-name

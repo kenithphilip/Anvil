@@ -59,6 +59,16 @@ export const MATRIX: Record<string, MatrixRow> = {
   connect:     { sales_engineer: "rw",  sales_manager: "rw", procurement: "rw", finance: "rw",  admin: "rw", operator: "rw", viewer: "rw" },
   onboarding:  { sales_engineer: "rw",  sales_manager: "rw", procurement: "rw", finance: "rw",  admin: "rw", operator: "rw", viewer: "rw" },
   "format-guide": { sales_engineer: "r", sales_manager: "r", procurement: "r",  finance: "r",   admin: "r",  operator: "r",  viewer: "r" },
+  // Inventory-planning module (Phase 2 + 3). Procurement owns the
+  // POs, so they get full rwa across all surfaces. Sales sees read-
+  // only visibility into pipeline-driven shortages. Finance reads
+  // for cost reporting.
+  "inventory-planning":   { sales_engineer: "r",  sales_manager: "r",   procurement: "rwa", finance: "r",    admin: "rwa", operator: "r",  viewer: "r" },
+  "inventory-plans":      { sales_engineer: "",   sales_manager: "r",   procurement: "rwa", finance: "r",    admin: "rwa", operator: "",   viewer: "" },
+  "inventory-exceptions": { sales_engineer: "r",  sales_manager: "rw",  procurement: "rwa", finance: "r",    admin: "rwa", operator: "r",  viewer: "r" },
+  "inventory-item":       { sales_engineer: "r",  sales_manager: "r",   procurement: "rwa", finance: "r",    admin: "rwa", operator: "r",  viewer: "r" },
+  "inventory-allocations":{ sales_engineer: "r",  sales_manager: "rw",  procurement: "rwa", finance: "r",    admin: "rwa", operator: "r",  viewer: "r" },
+  "inventory-suppliers":  { sales_engineer: "r",  sales_manager: "r",   procurement: "rwa", finance: "r",    admin: "rwa", operator: "",   viewer: "r" },
 };
 
 export const ACTIONS: Record<string, Role[]> = {

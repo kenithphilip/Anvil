@@ -931,6 +931,46 @@
   const inventory = {
     availability: async (lineItems) => apiFetch("/api/inventory/availability", { method: "POST", body: { lineItems } }),
     sync: async (records, replace) => apiFetch("/api/inventory/sync", { method: "POST", body: { records, replace: !!replace } }),
+
+    // Inventory-planning module (Phase 2). All endpoints are tenant-
+    // scoped + RLS-guarded; the apiFetch helper attaches the caller's
+    // Authorization + tenant headers.
+    positions: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/inventory/positions" + (qs ? "?" + qs : ""));
+    },
+    forecasts: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/inventory/forecasts" + (qs ? "?" + qs : ""));
+    },
+    plans: {
+      list: async (params) => {
+        const qs = new URLSearchParams(params || {}).toString();
+        return apiFetch("/api/inventory/plans" + (qs ? "?" + qs : ""));
+      },
+      approve: async (id) => apiFetch("/api/inventory/plans/" + encodeURIComponent(id) + "/approve", { method: "POST" }),
+      release: async (id) => apiFetch("/api/inventory/plans/" + encodeURIComponent(id) + "/release", { method: "POST" }),
+      cancel: async (id, reason) => apiFetch("/api/inventory/plans/" + encodeURIComponent(id) + "/cancel", { method: "POST", body: { reason } }),
+      explain: async (planId) => apiFetch("/api/inventory/explain", { method: "POST", body: { plan_id: planId } }),
+    },
+    exceptions: {
+      list: async (params) => {
+        const qs = new URLSearchParams(params || {}).toString();
+        return apiFetch("/api/inventory/exceptions" + (qs ? "?" + qs : ""));
+      },
+      ack:      async (id) => apiFetch("/api/inventory/exceptions/" + encodeURIComponent(id) + "/ack", { method: "POST" }),
+      resolve:  async (id, note) => apiFetch("/api/inventory/exceptions/" + encodeURIComponent(id) + "/resolve", { method: "POST", body: { note } }),
+      suppress: async (id, note) => apiFetch("/api/inventory/exceptions/" + encodeURIComponent(id) + "/suppress", { method: "POST", body: { note } }),
+    },
+    allocations: {
+      list:   async (params) => {
+        const qs = new URLSearchParams(params || {}).toString();
+        return apiFetch("/api/inventory/allocations" + (qs ? "?" + qs : ""));
+      },
+      create: async (payload) => apiFetch("/api/inventory/allocations", { method: "POST", body: payload }),
+      update: async (id, payload) => apiFetch("/api/inventory/allocations/" + encodeURIComponent(id), { method: "PATCH", body: payload }),
+    },
+    replan: async () => apiFetch("/api/inventory/replan", { method: "POST" }),
   };
 
   const masterData = {

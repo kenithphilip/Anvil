@@ -292,6 +292,10 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     temperature: 0,
     max_tokens: 2000,
     response_schema: schema,
+    // Bet 1: Gemini 3 media_resolution knob. Per-tenant override
+    // via tenant_settings.docai_gemini_media_resolution (default
+    // "high"). Lower values reduce token cost on simple POs.
+    media_resolution: settings?.docai_gemini_media_resolution || "high",
   });
 
   if (!result.ok) {

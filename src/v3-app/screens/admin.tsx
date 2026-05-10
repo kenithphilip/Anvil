@@ -3770,9 +3770,14 @@ export default WiredAdminCRUD;
 // Self-contained so admin.tsx stays readable.
 // ============================================================
 
+// Bet 1: mistral_ocr is now a first-class adapter row in the chain
+// editor + cost panel. It runs as the OCR LAYER (image-only PDFs)
+// not in the structured-extraction provider chain itself, but
+// surfacing it here lets operators see usage + cost alongside the
+// other adapters.
 const DOCAI_ADAPTERS_LIST = [
   "gemini", "claude", "reducto", "azure_di", "unstructured",
-  "docling", "marker",
+  "docling", "marker", "mistral_ocr",
 ] as const;
 
 type CostStatus = {
@@ -3793,6 +3798,11 @@ type CostStatus = {
   provider_order_default: boolean;
   daily_limits: Record<string, number> | null;
   anthropic_model: string;
+  // Bet 1 additions.
+  gemini_model?: string;
+  fallback_confidence?: number;
+  mistral_ocr_batch?: boolean;
+  gemini_media_resolution?: string;
   adapter_health: Record<string, boolean>;
   tenant_has_key: Record<string, boolean>;
   recommendations: Array<{ id: string; severity: string; title: string; body: string; action?: string }>;
@@ -3810,6 +3820,8 @@ const COST_CHART_COLORS: Record<string, string> = {
   unstructured: "var(--amber)",
   docling:      "var(--accent-2)",
   marker:       "var(--rust)",
+  // Bet 1: Mistral OCR 3 OCR layer.
+  mistral_ocr:  "var(--lapis-2)",
 };
 const fallbackColor = (i: number) => {
   const fallback = ["var(--accent-3)", "var(--sage-3)", "var(--lapis-3)", "var(--plum-3)", "var(--amber-3)", "var(--rust-3)"];
@@ -3979,11 +3991,19 @@ const DocAICostPanel: React.FC = () => {
     docai_daily_limits: Record<string, number | "">;
     docai_anthropic_model: string;
     docai_gemini_model: string;
+    // Bet 1: confidence-fallback slider, Mistral OCR batch flag,
+    // Gemini media_resolution picker.
+    docai_fallback_confidence: number;
+    docai_mistral_ocr_batch: boolean;
+    docai_gemini_media_resolution: string;
   }>({
     docai_provider_order: [],
     docai_daily_limits: {},
     docai_anthropic_model: "",
     docai_gemini_model: "",
+    docai_fallback_confidence: 0.85,
+    docai_mistral_ocr_batch: true,
+    docai_gemini_media_resolution: "high",
   });
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState<string | null>(null);
@@ -3995,6 +4015,14 @@ const DocAICostPanel: React.FC = () => {
       const next = await (ObaraBackend as any)?.docai?.costStatus?.();
       setData(next);
       // Seed the editable form with the current values.
+      // Bet 1: drop the legacy claude-sonnet-4-20250514 default
+      // through to "" so the placeholder hint surfaces; same for
+      // claude-haiku-4-5-20251001 (deprecated as a docai default).
+      const legacyAnthropic = (m: string) =>
+        /sonnet-4-20250514/.test(m) || /haiku-4-5-20251001/.test(m);
+      // Bet 1: drop legacy gemini-2.5-flash through to "" so the
+      // placeholder surfaces.
+      const legacyGemini = (m: string) => /^gemini-2\.5/.test(m);
       setForm({
         docai_provider_order: Array.isArray(next?.provider_order) && !next?.provider_order_default
           ? next.provider_order
@@ -4002,10 +4030,17 @@ const DocAICostPanel: React.FC = () => {
         docai_daily_limits: Object.fromEntries(
           Object.entries(next?.daily_limits || {}).map(([k, v]) => [k, Number(v)])
         ),
-        docai_anthropic_model: next?.anthropic_model && !/sonnet-4-20250514/.test(next.anthropic_model)
+        docai_anthropic_model: next?.anthropic_model && !legacyAnthropic(next.anthropic_model)
           ? next.anthropic_model
           : "",
-        docai_gemini_model: "",
+        docai_gemini_model: next?.gemini_model && !legacyGemini(next.gemini_model)
+          ? next.gemini_model
+          : "",
+        docai_fallback_confidence: typeof next?.fallback_confidence === "number"
+          ? next.fallback_confidence
+          : 0.85,
+        docai_mistral_ocr_batch: next?.mistral_ocr_batch !== false,
+        docai_gemini_media_resolution: next?.gemini_media_resolution || "high",
       });
     } catch (e) {
       setError(e);
@@ -4030,6 +4065,16 @@ const DocAICostPanel: React.FC = () => {
       else patch.docai_anthropic_model = null;
       if (form.docai_gemini_model) patch.docai_gemini_model = form.docai_gemini_model;
       else patch.docai_gemini_model = null;
+      // Bet 1 fields. Send through unconditionally; backend
+      // tolerates the same values being re-sent.
+      const fc = Number(form.docai_fallback_confidence);
+      if (Number.isFinite(fc) && fc >= 0.5 && fc <= 0.99) {
+        patch.docai_fallback_confidence = Math.round(fc * 100) / 100;
+      }
+      patch.docai_mistral_ocr_batch = !!form.docai_mistral_ocr_batch;
+      if (["low", "medium", "high", "ultra_high"].includes(form.docai_gemini_media_resolution)) {
+        patch.docai_gemini_media_resolution = form.docai_gemini_media_resolution;
+      }
       await (ObaraBackend as any)?.docai?.updateSettings?.(patch);
       setEditing(false);
       await reload();
@@ -4222,22 +4267,60 @@ const DocAICostPanel: React.FC = () => {
               </div>
             </div>
 
-            <label className="lbl">Anthropic model (blank = ANTHROPIC_MODEL_DEFAULT env or Sonnet 4)
+            <label className="lbl">Anthropic model (blank = ANTHROPIC_MODEL_DEFAULT env or Sonnet 4.6)
               <input
                 type="text"
                 value={form.docai_anthropic_model}
-                placeholder="claude-haiku-4-5-20251001"
+                placeholder="claude-sonnet-4-6"
                 onChange={(ev) => setForm({ ...form, docai_anthropic_model: ev.target.value })}
               />
             </label>
 
-            <label className="lbl">Gemini model (blank = GEMINI_MODEL_DEFAULT env or gemini-2.5-flash)
+            <label className="lbl">Gemini model (blank = GEMINI_MODEL_DEFAULT env or gemini-3-flash-preview)
               <input
                 type="text"
                 value={form.docai_gemini_model}
-                placeholder="gemini-2.5-flash"
+                placeholder="gemini-3-flash-preview"
                 onChange={(ev) => setForm({ ...form, docai_gemini_model: ev.target.value })}
               />
+            </label>
+
+            {/* Bet 1 (May 2026): Sonnet fallback threshold +
+                Mistral OCR batch flag + Gemini media_resolution. */}
+            <label className="lbl">Confidence fallback threshold ({Number(form.docai_fallback_confidence).toFixed(2)})
+              <input
+                type="range"
+                min={0.5}
+                max={0.99}
+                step={0.01}
+                value={form.docai_fallback_confidence}
+                onChange={(ev) => setForm({ ...form, docai_fallback_confidence: Number(ev.target.value) })}
+              />
+              <div className="mono-sm" style={{ color: "var(--ink-3)", fontSize: 11 }}>
+                Below this confidence, Gemini 3 Flash extractions fall through to Sonnet 4.6 for a second pass. Default 0.85.
+              </div>
+            </label>
+
+            <label className="lbl">Mistral OCR endpoint
+              <select
+                value={form.docai_mistral_ocr_batch ? "batch" : "realtime"}
+                onChange={(ev) => setForm({ ...form, docai_mistral_ocr_batch: ev.target.value === "batch" })}
+              >
+                <option value="batch">Batch (50% cheaper, slight latency)</option>
+                <option value="realtime">Realtime (lower latency, full price)</option>
+              </select>
+            </label>
+
+            <label className="lbl">Gemini media resolution
+              <select
+                value={form.docai_gemini_media_resolution}
+                onChange={(ev) => setForm({ ...form, docai_gemini_media_resolution: ev.target.value })}
+              >
+                <option value="low">Low (~280 tokens/image; cheapest, fine-text legibility lost)</option>
+                <option value="medium">Medium (~560 tokens/image)</option>
+                <option value="high">High (~1120 tokens/image; default, dense PO PDFs)</option>
+                <option value="ultra_high">Ultra-high (most tokens; only when high fails)</option>
+              </select>
             </label>
 
             {saveErr && (

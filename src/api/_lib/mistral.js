@@ -3,7 +3,6 @@ import { safeFetch } from "./safe-fetch.js";
 // Wraps https://docs.mistral.ai/capabilities/document/ for Vercel functions.
 // Returns normalized pages with bounding boxes per text block.
 
-const MISTRAL_OCR_URL = "https://api.mistral.ai/v1/ocr";
 const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504, 529]);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -36,10 +35,26 @@ const normalizePage = (page, index) => {
   };
 };
 
+// Bet 1: default model bumped to mistral-ocr-3 (released Dec 2025).
+// Per https://mistral.ai/news/mistral-ocr-3 :
+//   - $2 / 1k pages standard, $1 / 1k pages batch (50% off)
+//   - 79.75 OmniDocBench, 88.9% handwriting, 96.6% tables
+//   - 35+ languages incl. Hindi/Chinese/Arabic/Cyrillic
+//
+// `opts.batch === true` switches the call to the /v1/ocr/batch
+// endpoint for the 50% discount on non-realtime traffic.
+const DEFAULT_OCR_MODEL = "mistral-ocr-3";
+const REALTIME_OCR_URL = "https://api.mistral.ai/v1/ocr";
+const BATCH_OCR_URL    = "https://api.mistral.ai/v1/ocr/batch";
+
 export const ocrDocument = async ({ buffer, filename, mimeType, opts }) => {
   const apiKey = process.env.MISTRAL_API_KEY;
   if (!apiKey) throw new Error("MISTRAL_API_KEY env var is not set");
-  const model = (opts && opts.model) || process.env.MISTRAL_OCR_MODEL || "mistral-ocr-latest";
+  const model = (opts && opts.model)
+    || process.env.MISTRAL_OCR_MODEL
+    || DEFAULT_OCR_MODEL;
+  const useBatch = opts?.batch === true;
+  const ocrUrl = useBatch ? BATCH_OCR_URL : REALTIME_OCR_URL;
   const headers = {
     "Content-Type": "application/json",
     "Authorization": "Bearer " + apiKey,
@@ -59,7 +74,7 @@ export const ocrDocument = async ({ buffer, filename, mimeType, opts }) => {
   for (let attempt = 1; attempt <= 3; attempt++) {
     let resp;
     try {
-      resp = await safeFetch(MISTRAL_OCR_URL, { method: "POST", headers, body });
+      resp = await safeFetch(ocrUrl, { method: "POST", headers, body });
     } catch (networkErr) {
       lastErr = new Error("Mistral network error: " + networkErr.message);
       if (attempt < 3) { await sleep(Math.min(8000, 600 * Math.pow(2, attempt - 1))); continue; }
@@ -76,7 +91,13 @@ export const ocrDocument = async ({ buffer, filename, mimeType, opts }) => {
     catch (_) { throw new Error("Mistral returned non-JSON (status " + resp.status + "): " + text.slice(0, 300)); }
     if (parsed && parsed.error) throw new Error("Mistral OCR error: " + (parsed.error.message || parsed.error));
     const pages = (parsed.pages || []).map((page, idx) => normalizePage(page, idx));
-    return { pages, raw: parsed, model: parsed.model || model, mimeType: mimeType || null };
+    return {
+      pages,
+      raw: parsed,
+      model: parsed.model || model,
+      mimeType: mimeType || null,
+      batch: useBatch,
+    };
   }
   throw lastErr || new Error("Mistral OCR failed after retries");
 };

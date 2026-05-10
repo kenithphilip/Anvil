@@ -45,7 +45,7 @@ const RULES = [
         id: "gemini_unconfigured",
         severity: "warn",
         title: "Gemini is not configured",
-        body: "Gemini 2.5 Flash has a free tier (1500 RPD, 1M TPM, no card required). With it configured, PoC traffic costs $0/month. Set GEMINI_API_KEY in Vercel env or store an encrypted key per tenant.",
+        body: "Gemini 3 Flash has a free tier on AI Studio (no card required) and lists at $0.50 in / $3 out per 1M for paid traffic. With it configured, PoC extraction costs ~$0/month. Set GEMINI_API_KEY in Vercel env or store an encrypted key per tenant.",
         action: "set_env_var:GEMINI_API_KEY",
       };
     }
@@ -66,23 +66,23 @@ const RULES = [
     }
     return null;
   },
-  // R3. Sonnet 4 in use. Recommend Haiku for PoC.
+  // R3 (Bet 1, May 2026 update): Sonnet 4.6 is now the
+  // confidence-fallback by design, not a "downgrade me" signal.
+  // Reframe the rule to flag *legacy* model strings (claude-sonnet-4-
+  // 20250514, claude-haiku-4-5-20251001) that still pin the
+  // pre-bet-1 chain.
   (s) => {
-    const model = s.anthropicModel || process.env.ANTHROPIC_MODEL_DEFAULT || "claude-sonnet-4-20250514";
-    if (/sonnet/i.test(model) && !s.todayUsage.find((u) => u.adapter === "claude")?.call_count) {
-      // Don't nag if Claude isn't actually being used.
-      return null;
-    }
-    if (/sonnet/i.test(model)) {
-      return {
-        id: "anthropic_sonnet_default",
-        severity: "info",
-        title: "Anthropic is on Sonnet (~4x more expensive than Haiku)",
-        body: "Sonnet 4 is ~$0.022/extraction; Haiku 4.5 is ~$0.006/extraction. For clean PDFs Haiku is plenty. Set docai_anthropic_model='claude-haiku-4-5-20251001' to flip per-tenant.",
-        action: "set_anthropic_model:claude-haiku-4-5-20251001",
-      };
-    }
-    return null;
+    const model = s.anthropicModel || process.env.ANTHROPIC_MODEL_DEFAULT || "claude-sonnet-4-6";
+    const isLegacy = /-2025\d{4}/.test(model);
+    if (!isLegacy) return null;
+    if (!s.todayUsage.find((u) => u.adapter === "claude")?.call_count) return null;
+    return {
+      id: "anthropic_legacy_model_pin",
+      severity: "info",
+      title: "Anthropic is pinned to a legacy model id",
+      body: "Tenant is on '" + model + "'. The May 2026 chain runs Sonnet 4.6 as confidence-fallback after Gemini 3 Flash. Set docai_anthropic_model='claude-sonnet-4-6' (or '-opus-4-7' for escalate) to align.",
+      action: "set_anthropic_model:claude-sonnet-4-6",
+    };
   },
   // R4. Adapter chain doesn't put a free adapter first.
   (s) => {
@@ -125,6 +125,41 @@ const RULES = [
       };
     }
     return null;
+  },
+  // R7 (Bet 1). Tenant pinned to Gemini 2.5 Flash; Gemini 3 Flash
+  // is ~3x faster + ~30% fewer tokens at the same input price.
+  // Recommend the upgrade when 2.5 actually appears in the model
+  // pin or env default (we don't nag tenants who never set anything;
+  // the codebase default is already 3 Flash).
+  (s) => {
+    const pin = s.geminiModel || process.env.GEMINI_MODEL_DEFAULT || "";
+    if (!/2\.5/.test(pin)) return null;
+    return {
+      id: "gemini_25_legacy_pin",
+      severity: "info",
+      title: "Gemini 2.5 Flash is pinned",
+      body: "Tenant model pin '" + pin + "' is the legacy Gemini 2.5 family. Gemini 3 Flash is ~3x faster at the same input price ($0.50/M) and ~30% fewer tokens per request; structured-output via JSON Schema is GA. Bump GEMINI_MODEL_DEFAULT or unset to use the platform default.",
+      action: "set_env_var:GEMINI_MODEL_DEFAULT=gemini-3-flash-preview",
+    };
+  },
+  // R8 (Bet 1). Confidence fallback threshold below 0.85 means
+  // low-confidence Gemini extractions land without a Sonnet review.
+  // The platform default in the dispatcher is now 0.85; this rule
+  // fires when the tenant explicitly overrode it lower and is on
+  // the Gemini 3 chain.
+  (s) => {
+    const threshold = s.fallbackConfidence;
+    if (threshold == null) return null;
+    const t = Number(threshold);
+    if (!Number.isFinite(t) || t >= 0.85) return null;
+    return {
+      id: "fallback_confidence_low",
+      severity: "warn",
+      title: "Confidence fallback threshold is below 0.85",
+      body: "tenant_settings.docai_fallback_confidence = " + t.toFixed(2)
+        + ". Low-confidence Gemini 3 Flash extractions land without a Sonnet 4.6 review. The platform default is 0.85. Raise unless you've measured a tenant-specific accuracy story that justifies the lower bar.",
+      action: "set_fallback_confidence:0.85",
+    };
   },
 ];
 
@@ -310,6 +345,11 @@ export default async function handler(req, res) {
       dailyLimits: settings?.docai_daily_limits || null,
       providerOrder: settings?.docai_provider_order || null,
       anthropicModel: settings?.docai_anthropic_model || null,
+      // Bet 1: surface the Gemini model pin + the confidence-
+      // fallback threshold so R7 + R8 can fire on tenants who
+      // pinned the legacy chain or lowered the threshold.
+      geminiModel: settings?.docai_gemini_model || null,
+      fallbackConfidence: settings?.docai_fallback_confidence ?? null,
       adapterHealth,
       tenantHasKey,
     };
@@ -338,7 +378,17 @@ export default async function handler(req, res) {
       daily_limits: settings?.docai_daily_limits || null,
       anthropic_model: settings?.docai_anthropic_model
         || process.env.ANTHROPIC_MODEL_DEFAULT
-        || "claude-sonnet-4-20250514",
+        || "claude-sonnet-4-6",
+      // Bet 1: surface the Gemini model pin + the fallback
+      // confidence threshold + the Mistral OCR batch flag + the
+      // Gemini media_resolution knob so the admin DocAI panel can
+      // render the new pickers.
+      gemini_model: settings?.docai_gemini_model
+        || process.env.GEMINI_MODEL_DEFAULT
+        || "gemini-3-flash-preview",
+      fallback_confidence: settings?.docai_fallback_confidence ?? 0.85,
+      mistral_ocr_batch: settings?.docai_mistral_ocr_batch !== false,
+      gemini_media_resolution: settings?.docai_gemini_media_resolution || "high",
       adapter_health: adapterHealth,
       tenant_has_key: tenantHasKey,
       recommendations,

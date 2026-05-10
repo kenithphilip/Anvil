@@ -102,7 +102,7 @@ const getOrExtractTextLayer = async ({ svc, tenantId, documentId, bytes, mime })
   return { layer, cached: false, hash };
 };
 
-const getOrExtractOcrLayer = async ({ svc, tenantId, documentId, bytes, mime, filename, hash }) => {
+const getOrExtractOcrLayer = async ({ svc, tenantId, documentId, bytes, mime, filename, hash, settings }) => {
   if (!bytes) return { layer: null, cached: false };
   try {
     if (documentId && isUuid(documentId)) {
@@ -117,7 +117,15 @@ const getOrExtractOcrLayer = async ({ svc, tenantId, documentId, bytes, mime, fi
       if (r?.data) return { layer: rowToLayer(r.data, "ocr"), cached: true };
     }
   } catch (_e) { /* fall through */ }
-  const layer = await extractOcrLayer({ buffer: bytes, filename, mimeType: mime });
+  // Bet 1: route through the Mistral OCR 3 batch endpoint when the
+  // tenant opted in (default true). 50% cheaper at the cost of
+  // batched (non-realtime) responses; for SO intake, the user is
+  // already waiting on multi-second extraction so the latency
+  // delta is invisible.
+  const ocrOpts = {
+    batch: settings?.docai_mistral_ocr_batch !== false,
+  };
+  const layer = await extractOcrLayer({ buffer: bytes, filename, mimeType: mime, opts: ocrOpts });
   try {
     const insert = {
       tenant_id: tenantId,
@@ -287,6 +295,7 @@ export const runExtractionPipeline = async (params) => {
   if (wantsOcr) {
     const got = await getOrExtractOcrLayer({
       svc, tenantId: ctx.tenantId, documentId, bytes, mime, filename, hash: contentSha,
+      settings,
     });
     ocrLayer = got.layer;
     if (ocrLayer?.ok && ocrLayer.body_text) {

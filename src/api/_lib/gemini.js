@@ -21,10 +21,21 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Bet 1 (May 2026): default Gemini bumped to 3 Flash. The 2.5
+// family is still env-pinnable for back-compat. Pricing per
+// https://ai.google.dev/gemini-api/docs/pricing :
+//   Gemini 3 Flash: $0.50 in / $3 out per 1M, 1M-token context,
+//                   native multimodal, structured outputs via
+//                   JSON Schema, media_resolution knob.
+//   Gemini 3.1 Pro: $2 in / $12 out below 200k; $4 / $18 above.
+// Per https://blog.google/products/gemini/gemini-3-flash/ :
+//   3x throughput vs 2.5 Pro, ~30% fewer tokens at the same input
+//   price, native PDF/image input, ranks 78% SWE-bench / 90.4%
+//   GPQA Diamond / 81.2% MMMU Pro.
 export const MODEL_BY_TIER = {
-  preflight:  process.env.GEMINI_MODEL_PREFLIGHT  || "gemini-2.5-flash",
-  generation: process.env.GEMINI_MODEL_DEFAULT    || "gemini-2.5-flash",
-  reasoning:  process.env.GEMINI_MODEL_REASONING  || "gemini-2.5-pro",
+  preflight:  process.env.GEMINI_MODEL_PREFLIGHT  || "gemini-3-flash-preview",
+  generation: process.env.GEMINI_MODEL_DEFAULT    || "gemini-3-flash-preview",
+  reasoning:  process.env.GEMINI_MODEL_REASONING  || "gemini-3.1-pro-preview",
 };
 
 export const pickGeminiModel = ({ tier, override }) => {
@@ -100,6 +111,11 @@ export const callGemini = async ({
   response_schema,
   response_mime_type,
   redactionRules,
+  // Bet 1: Gemini 3 media_resolution knob. low=280, medium=560,
+  // high=1120, ultra_high tokens per image. Default high for dense
+  // PO PDFs; lower values reduce token cost on simple POs but lose
+  // fine-text legibility.
+  media_resolution,
 }) => {
   if (!apiKey) {
     return { ok: false, error: "GEMINI_API_KEY missing", status: 0 };
@@ -124,6 +140,17 @@ export const callGemini = async ({
     body.generationConfig.responseSchema = response_schema;
   } else if (response_mime_type) {
     body.generationConfig.responseMimeType = response_mime_type;
+  }
+
+  // Bet 1: Gemini 3 media_resolution knob. Defaults inflate token
+  // count vs 2.5 Flash because 3 Flash treats every image at high
+  // resolution unless told otherwise; we pin to the env default
+  // ("high") to stay in the same cost band as 2.5 was.
+  const resolvedMediaRes = media_resolution
+    || process.env.GEMINI_MEDIA_RESOLUTION
+    || "high";
+  if (resolvedMediaRes && /3-/.test(model)) {
+    body.generationConfig.mediaResolution = resolvedMediaRes;
   }
 
   const url = GEMINI_BASE + "/" + encodeURIComponent(model) + ":generateContent";

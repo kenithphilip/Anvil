@@ -184,9 +184,19 @@ export const dispatchExtract = async ({ source, settings, customerId, hints }) =
     }
     const latency_ms = Date.now() - t0;
     const conf = overallConfidence(out.confidences);
+    // Bet 1 (May 2026): confidence threshold is now per-tenant
+    // (tenant_settings.docai_fallback_confidence, default 0.85).
+    // Was a hard-coded 0.7. Lifted because Gemini 3 Flash is now
+    // the primary; Sonnet 4.6 fallback should fire more
+    // aggressively to keep extraction quality high. Tenants on the
+    // legacy Gemini 2.5 chain stay on 0.70 by setting their
+    // docai_fallback_confidence to 0.70 explicitly.
+    const fallbackThreshold = Number.isFinite(Number(settings?.docai_fallback_confidence))
+      ? Number(settings.docai_fallback_confidence)
+      : 0.85;
     attempts.push({
       adapter: adapterName,
-      status: out.ok ? (conf != null && conf < 0.7 ? "low_confidence" : "ok") : "failed",
+      status: out.ok ? (conf != null && conf < fallbackThreshold ? "low_confidence" : "ok") : "failed",
       ms: latency_ms,
       confidence: conf,
     });
@@ -197,7 +207,7 @@ export const dispatchExtract = async ({ source, settings, customerId, hints }) =
     if (out.ok) {
       await recordCall(svc, { tenantId: settings?.tenant_id, adapter: adapterName });
     }
-    if (out.ok && (conf == null || conf >= 0.7)) {
+    if (out.ok && (conf == null || conf >= fallbackThreshold)) {
       return { adapter_used: adapterName, latency_ms, ...out, confidence_overall: conf, attempts };
     }
     last = { adapter_used: adapterName, latency_ms, ...out, confidence_overall: conf };

@@ -38,14 +38,40 @@ const ALWAYS_FREE = new Set(["docling", "marker", "excel", "gaeb"]);
 // midpoint estimates assuming ~5K input + ~500 output tokens per
 // extraction; the operator overrides via env if they want
 // different numbers.
+//
+// Bet 1 (May 2026): bumped to reflect the Gemini 3 Flash + Mistral
+// OCR 3 + Sonnet 4.6 / Opus 4.7 chain.
+//
+//   Gemini 3 Flash: $0.50 in / $3 out per 1M -> ~$0.0035 per
+//                   18-line PO at 5K in + 500 out (replaces
+//                   gemini-2.5-flash at ~$0.0006).
+//   Sonnet 4.6:     $3 in / $15 out per 1M -> ~$0.022 per same shape.
+//                   Same as the legacy Sonnet 4 list price; the
+//                   shift in the docai chain is that Sonnet now
+//                   fires only as the confidence-fallback (~10-15%
+//                   of traffic, prompt-cached at 0.1x reads), not
+//                   as the primary.
+//   Opus 4.7:       $5 in / $25 out, +35% from new tokenizer. Used
+//                   only for escalate / re-extract.
+//   Mistral OCR 3:  $1 / 1k pages batch -> ~$0.001 per PO at
+//                   ~1 page per PO.
 const DEFAULT_COST_USD = {
-  claude:        Number(process.env.COST_USD_CLAUDE        || 0.022),
-  gemini:        Number(process.env.COST_USD_GEMINI        || 0.0006),
-  reducto:       Number(process.env.COST_USD_REDUCTO       || 0.01),
-  azure_di:      Number(process.env.COST_USD_AZURE_DI      || 0.01),
-  unstructured:  Number(process.env.COST_USD_UNSTRUCTURED  || 0.01),
-  docling:       Number(process.env.COST_USD_DOCLING       || 0),
-  marker:        Number(process.env.COST_USD_MARKER        || 0),
+  claude:        Number(process.env.COST_USD_CLAUDE              || 0.022),
+  // Bet 1: Gemini 3 Flash. The cheaper 2.5 Flash entry stays
+  // env-pinnable via COST_USD_GEMINI_2_5_FLASH for tenants on the
+  // legacy chain.
+  gemini:        Number(process.env.COST_USD_GEMINI_3_FLASH
+                   || process.env.COST_USD_GEMINI                || 0.0035),
+  reducto:       Number(process.env.COST_USD_REDUCTO             || 0.01),
+  azure_di:      Number(process.env.COST_USD_AZURE_DI            || 0.01),
+  unstructured:  Number(process.env.COST_USD_UNSTRUCTURED        || 0.01),
+  docling:       Number(process.env.COST_USD_DOCLING             || 0),
+  marker:        Number(process.env.COST_USD_MARKER              || 0),
+  // Bet 1: Mistral OCR 3 batch endpoint. Tenants who flip
+  // docai_mistral_ocr_batch=false land on the realtime endpoint
+  // (~$0.002 per page); operator overrides via env.
+  mistral_ocr:   Number(process.env.COST_USD_MISTRAL_OCR_3
+                   || process.env.COST_USD_MISTRAL_OCR           || 0.001),
 };
 
 const today = () => new Date().toISOString().slice(0, 10);     // YYYY-MM-DD

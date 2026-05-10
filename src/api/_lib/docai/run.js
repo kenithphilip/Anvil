@@ -427,6 +427,12 @@ export const runExtractionPipeline = async (params) => {
   } else if (out.normalized?.classification === "non_po" && kind === "po") {
     status = "failed";
     statusReason = "non_po";
+  } else if (out.normalized?.classification === "non_ack" && kind === "supplier_ack") {
+    // Phase F.2: the supplier-ack classifier rejected the document
+    // (it was a marketing brochure, an unrelated PO, etc.). Surface
+    // it explicitly instead of silently recording status_reason='ok'.
+    status = "failed";
+    statusReason = "non_ack";
   } else if (lines.length === 0 && (kind === "po" || kind === "rfq")) {
     const conf = out.confidence_overall;
     if (textLayer?.status === "image_only" && !ocrLayerUsed) {

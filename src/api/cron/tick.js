@@ -26,6 +26,7 @@ import netsuiteRetry    from "../netsuite/retry.js";
 import tallySync        from "../tally/sync.js";
 import tallyRetry       from "../tally/retry.js";
 import tallyReconcileCron from "./tally-reconcile.js";
+import driftMeterCron     from "./drift-meter.js";
 import sapSync          from "../sap/sync.js";
 import sapRetry         from "../sap/retry.js";
 import d365Sync         from "../d365/sync.js";
@@ -180,11 +181,15 @@ export default async function handler(req, res) {
     let groupSyncs = [];
     if (ranSyncs) groupSyncs = await runCronGroup(SYNCS);
 
-    // ON HOUR: agents.
+    // ON HOUR: agents + drift-meter drain.
     let groupAgents = [];
     if (ranAgents) {
       groupAgents = await runCronGroup([
         { name: "agents/run", fn: agentsRun, opts: { path: "/api/agents/run" } },
+        // Bet 5: drain unreported tally_drift_billing_meter rows to
+        // Stripe meters / Razorpay add-ons. Idempotent; safe to run
+        // every hour even when there's nothing to drain.
+        { name: "drift-meter", fn: driftMeterCron, opts: { path: "/api/cron/drift-meter" } },
       ]);
     }
 

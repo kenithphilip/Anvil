@@ -18,14 +18,30 @@ const CRON_SECRET = process.env.CRON_SECRET;
 const PER_TENANT_LIMIT = 50;        // cap per tick per tenant; reconciler also caps internally
 
 const drainOnce = async (svc) => {
-  // Find tenants with at least one exported voucher in the last 7 days.
+  // Find tenants with at least one exported voucher in the last 7 days
+  // AND who have the Tally drift add-on enabled (Bet 5). The add-on
+  // is the gating mechanism for paid SKU. Tenants without the add-on
+  // can still hit the manual mark-status endpoint (the legacy v1
+  // path); they just don't get cron-driven drift detection.
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const tenantsResp = await svc.from("tally_voucher_records")
     .select("tenant_id")
     .eq("status", "exported")
     .gte("created_at", since);
   if (tenantsResp.error) throw new Error(tenantsResp.error.message);
-  const tenantIds = Array.from(new Set((tenantsResp.data || []).map((r) => r.tenant_id)));
+  const candidateIds = Array.from(new Set((tenantsResp.data || []).map((r) => r.tenant_id)));
+
+  // Filter the candidate list down to add-on-enabled tenants. Empty
+  // result short-circuits cleanly.
+  if (candidateIds.length === 0) return { tenants_processed: 0, runs: [], summary: {
+    total_drifted: 0, total_clean: 0, total_auto_fixes: 0,
+  } };
+  const enabledResp = await svc.from("tenant_settings")
+    .select("tenant_id")
+    .in("tenant_id", candidateIds)
+    .eq("tally_drift_addon_enabled", true);
+  if (enabledResp.error) throw new Error(enabledResp.error.message);
+  const tenantIds = (enabledResp.data || []).map((r) => r.tenant_id);
 
   const results = [];
   for (const tenantId of tenantIds) {

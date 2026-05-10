@@ -7,24 +7,37 @@ import { tallyOrderRows, shortHash } from "../lib/tally";
 import { useTallyBridgeStatus } from "../lib/tally-status";
 
 // ============================================================
-// ANVIL v3 — wired Tally · reconciliation
+// ANVIL v3 - wired Tally · reconciliation
 // Wave D · Finance
 // Lists EXPORTED_TO_TALLY orders, calls ObaraBackend.tally.reconcile.
 // Reuses tallyOrderRows + shortHash from wired-tally-masters-d.jsx.
 // ============================================================
+//
+// Bet 5 (May 2026): drift reconciliation is a paid SKU. The screen
+// fetches addon state via getReconState() and gates the drift-check
+// button + findings cards behind the flag. When off, an upsell card
+// renders. When the operator enables for the first time, the dialog
+// surfaces the synchronous 30-day first-run scan results.
 
 const WiredTallyReconcile = () => {
   const exported = useFetch(() => ObaraBackend?.orders?.list?.({ status: "EXPORTED_TO_TALLY", limit: 200 }) || Promise.resolve({ orders: [] }), []);
   const findings = useFetch(() => (ObaraBackend as any)?.tally?.listReconFindings?.(50) || Promise.resolve({ findings: [] }), []);
   const reconRuns = useFetch(() => (ObaraBackend as any)?.tally?.listReconRuns?.(20) || Promise.resolve({ runs: [] }), []);
+  const reconState = useFetch(() => (ObaraBackend as any)?.tally?.getReconState?.() || Promise.resolve({ addon_enabled: false }), []);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [flash, setFlash]   = useState<{ kind: string; msg: string } | null>(null);
   const [driftBusy, setDriftBusy] = useState(false);
+  const [enableBusy, setEnableBusy] = useState(false);
+  const [firstRunSummary, setFirstRunSummary] = useState<any | null>(null);
   const bridge = useTallyBridgeStatus();
+
+  const addonEnabled = !!(reconState.data as any)?.addon_enabled;
+  const addonStartedAt = (reconState.data as any)?.addon_started_at || null;
+  const addonPlan = (reconState.data as any)?.addon_billing_plan || null;
 
   const rows = tallyOrderRows(exported.data);
 
-  const handleReconcile = async (order) => {
+  const handleReconcile = async (order: any) => {
     setBusyId(order.id);
     setFlash(null);
     try {
@@ -40,8 +53,8 @@ const WiredTallyReconcile = () => {
       });
       setFlash({ kind: "good", msg: `Reconciled ${order.po_number || order.id.slice(0, 8)}` });
       exported.reload();
-    } catch (err) {
-      setFlash({ kind: "bad", msg: String(err.message || err) });
+    } catch (err: any) {
+      setFlash({ kind: "bad", msg: String(err?.message || err) });
     } finally {
       setBusyId(null);
     }
@@ -66,8 +79,35 @@ const WiredTallyReconcile = () => {
       });
       await Promise.all([exported.reload(), findings.reload(), reconRuns.reload()]);
     } catch (err: any) {
-      setFlash({ kind: "bad", msg: String(err?.message || err) });
+      // Bet 5: 402 Payment Required when the addon is off. Reload
+      // recon state so the upsell card renders if the flag flipped.
+      if (err?.status === 402 || /addon_required/i.test(String(err?.message || ""))) {
+        reconState.reload();
+        setFlash({ kind: "warn", msg: "Drift reconciliation is a paid add-on. Enable below." });
+      } else {
+        setFlash({ kind: "bad", msg: String(err?.message || err) });
+      }
     } finally { setDriftBusy(false); }
+  };
+
+  const enableAddon = async (plan: string) => {
+    setEnableBusy(true); setFlash(null);
+    try {
+      const out = await (ObaraBackend as any)?.tally?.enableDriftAddon?.(plan);
+      const fr = out?.first_run;
+      if (fr) {
+        setFirstRunSummary(fr);
+      }
+      setFlash({
+        kind: "good",
+        msg: fr
+          ? `Drift reconciliation enabled. First-run scan: ${fr.vouchers_considered || 0} voucher(s); ${fr.vouchers_drifted || 0} drift, ${fr.vouchers_clean || 0} clean.`
+          : "Drift reconciliation enabled.",
+      });
+      await Promise.all([reconState.reload(), findings.reload(), reconRuns.reload()]);
+    } catch (err: any) {
+      setFlash({ kind: "bad", msg: String(err?.message || err) });
+    } finally { setEnableBusy(false); }
   };
 
   const resolveOne = async (id: string) => {
@@ -82,12 +122,18 @@ const WiredTallyReconcile = () => {
       <WSTitle
         eyebrow="Finance · Tally"
         title="Reconciliation"
-        meta={`${rows.length} pushed · ${findingRows.length} unresolved drift`}
+        meta={`${rows.length} pushed · ${addonEnabled ? findingRows.length + " unresolved drift" : "drift add-on off"}`}
         right={<>
-          <Btn sm kind="primary" disabled={driftBusy} onClick={runDriftCheck}>
-            {driftBusy ? "Reconciling…" : "Run drift check"}
-          </Btn>
-          <Btn icon kind="ghost" sm onClick={() => { exported.reload(); findings.reload(); reconRuns.reload(); }} title="Refresh">{Icon.cycle}</Btn>
+          {addonEnabled ? (
+            <Btn sm kind="primary" disabled={driftBusy} onClick={runDriftCheck}>
+              {driftBusy ? "Reconciling…" : "Run drift check"}
+            </Btn>
+          ) : (
+            <Btn sm kind="primary" disabled={enableBusy} onClick={() => enableAddon("trial")}>
+              {enableBusy ? "Enabling…" : "Enable drift reconciliation"}
+            </Btn>
+          )}
+          <Btn icon kind="ghost" sm onClick={() => { exported.reload(); findings.reload(); reconRuns.reload(); reconState.reload(); }} title="Refresh">{Icon.cycle}</Btn>
         </>}
       />
 
@@ -102,30 +148,77 @@ const WiredTallyReconcile = () => {
           </Banner>
         )}
         {flash && (
-          <Banner kind={flash.kind} icon={flash.kind === "bad" ? Icon.alert : Icon.check} title={flash.kind === "bad" ? "Reconcile failed" : "Reconcile complete"}>
+          <Banner kind={flash.kind as any} icon={flash.kind === "bad" ? Icon.alert : Icon.check} title={flash.kind === "bad" ? "Reconcile failed" : flash.kind === "warn" ? "Heads up" : "Reconcile complete"}>
             <span className="mono-sm">{flash.msg}</span>
+          </Banner>
+        )}
+
+        {/* Bet 5: when the add-on is OFF, render the upsell card.
+            Findings + runs cards are hidden because they would all be
+            empty for a tenant that has never run drift reconciliation
+            and would just confuse the operator. */}
+        {!reconState.loading && !addonEnabled && (
+          <Card title="Drift reconciliation" eyebrow="paid add-on · Phase F.6">
+            <div className="body" style={{ padding: 14 }}>
+              <p style={{ marginTop: 0 }}>
+                <strong>Find drift before your auditor does.</strong>{" "}
+                Every voucher we push to Tally, we check 30 minutes later, and 30 minutes after that.
+                Totals, line counts, GSTIN, cancelled status. If anything moved, you know. With receipts.
+              </p>
+              <ul className="mono-sm" style={{ marginBottom: 12, paddingLeft: 18 }}>
+                <li>Catches vouchers that were cancelled or altered after Anvil pushed them.</li>
+                <li>Flags total mismatches above your tolerance (default 0.5%).</li>
+                <li>Auto-fixes the safe cases (cancelled in Tally -&gt; mark order failed, missing -&gt; re-push).</li>
+                <li>Monthly drift report you can forward to your auditor.</li>
+              </ul>
+              <div className="row gap-sm">
+                <Btn sm kind="primary" disabled={enableBusy} onClick={() => enableAddon("trial")}>
+                  {enableBusy ? "Enabling…" : "Start free trial"}
+                </Btn>
+                <Btn sm kind="ghost" onClick={() => { window.location.hash = "#/admin?tab=subscription&addon=drift"; }}>
+                  See pricing
+                </Btn>
+              </div>
+              <div className="mono-sm" style={{ marginTop: 8, color: "var(--ink-3)" }}>
+                Free for Growth-tier tenants through 2026-12-31. Rs 2,000/mo for Starter. Bundled at Enterprise.
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {firstRunSummary && (
+          <Banner kind={firstRunSummary.vouchers_drifted ? "warn" : "good"} icon={Icon.check} title="First-run drift scan complete">
+            <span className="mono-sm">
+              We scanned the last 30 days of pushed vouchers.{" "}
+              {firstRunSummary.vouchers_considered || 0} considered,{" "}
+              {firstRunSummary.vouchers_drifted || 0} drift,{" "}
+              {firstRunSummary.vouchers_clean || 0} clean.
+              {firstRunSummary.vouchers_drifted ? " Walk through the findings below." : " You are all clear."}
+            </span>
           </Banner>
         )}
 
         {exported.error ? (
           <Banner kind="bad" icon={Icon.alert} title="Failed to load Tally exports" action={<Btn sm onClick={exported.reload}>Retry</Btn>}>
-            <span className="mono-sm">{String(exported.error.message || exported.error)}</span>
+            <span className="mono-sm">{String((exported.error as any).message || exported.error)}</span>
           </Banner>
         ) : null}
 
         <KPIRow cols={4}>
           <KPI lbl="Awaiting" v={String(rows.length)} d={rows.length ? `oldest ${oldest}` : "all clear"} live={rows.length > 0} />
           <KPI lbl="Total ₹"  v={fmtINRShort(totalValue)} d="value pending" />
-          <KPI lbl="Today"    v={String(rows.filter((o) => { const t = o.updated_at || o.created_at; return t && new Date(t).toDateString() === new Date().toDateString(); }).length)} d="pushed today" />
-          <KPI lbl="Stale"    v={String(rows.filter((o) => {
+          <KPI lbl="Today"    v={String(rows.filter((o: any) => { const t = o.updated_at || o.created_at; return t && new Date(t).toDateString() === new Date().toDateString(); }).length)} d="pushed today" />
+          <KPI lbl="Stale"    v={String(rows.filter((o: any) => {
             const t = o.updated_at || o.created_at;
             if (!t) return false;
             return (Date.now() - new Date(t).getTime()) > 24 * 3600_000;
           }).length)} d=">24h waiting" dKind="down" />
         </KPIRow>
 
-        {/* Phase F.6: drift findings panel + run history */}
-        {findingRows.length > 0 && (
+        {/* Phase F.6 + Bet 5: drift findings panel + run history.
+            Hidden when the add-on is off; the upsell card above
+            covers the empty state. */}
+        {addonEnabled && findingRows.length > 0 && (
           <Card title="Drift findings" eyebrow={`${findingRows.length} unresolved`} flush>
             <table className="tbl">
               <thead><tr>
@@ -154,8 +247,8 @@ const WiredTallyReconcile = () => {
           </Card>
         )}
 
-        {runRows.length > 0 && (
-          <Card title="Recent reconciliation runs" eyebrow="last 20" flush>
+        {addonEnabled && runRows.length > 0 && (
+          <Card title="Recent reconciliation runs" eyebrow={addonPlan ? `last 20 · plan: ${addonPlan}` : "last 20"} flush>
             <table className="tbl">
               <thead><tr>
                 <th>Started</th>
@@ -204,7 +297,7 @@ const WiredTallyReconcile = () => {
                 <th scope="col" style={{ width: 160 }}></th>
               </tr></thead>
               <tbody>
-                {rows.map((o) => {
+                {rows.map((o: any) => {
                   const st = stageOf(o.status);
                   const pushedAt = o.updated_at || o.created_at;
                   const voucher =
@@ -232,6 +325,27 @@ const WiredTallyReconcile = () => {
             </table>
           )}
         </Card>
+
+        {addonEnabled && addonStartedAt && (
+          <div className="mono-sm" style={{ marginTop: 14, color: "var(--ink-3)" }}>
+            Drift add-on active since {new Date(addonStartedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}.
+            {" "}
+            <button
+              type="button"
+              className="link-btn"
+              style={{ color: "var(--ink-3)", textDecoration: "underline" }}
+              onClick={async () => {
+                if (!window.confirm("Disable drift reconciliation? Findings + runs are preserved.")) return;
+                try {
+                  await (ObaraBackend as any)?.tally?.disableDriftAddon?.();
+                  reconState.reload();
+                } catch (_e) { /* no-op */ }
+              }}
+            >
+              Manage subscription
+            </button>
+          </div>
+        )}
       </div>
     </>
   );

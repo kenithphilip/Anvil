@@ -54,3 +54,24 @@ export const updateTenantSettings = async (svc, tenantId, patch) => {
   if (upd.error) throw new Error("tenant_settings update: " + upd.error.message);
   return upd.data;
 };
+
+// Bet 5: record a Stripe Meter event for the drift add-on usage.
+// Stripe deprecated `usage_records` on API 2025-03-31 in favour of
+// Meters; this helper uses the Meters API. Idempotent: identifier
+// (UUID) deduplicates server-side.
+//
+// Returns { identifier, raw } on success. Throws on Stripe error.
+export const recordStripeMeterEvent = async ({ meter, stripeCustomerId, value, identifier }) => {
+  if (!meter) throw new Error("meter name required");
+  if (!stripeCustomerId) throw new Error("stripeCustomerId required");
+  const stripe = stripeClient();
+  const event = await stripe.billing.meterEvents.create({
+    event_name: meter,
+    payload: {
+      stripe_customer_id: stripeCustomerId,
+      value: String(Math.max(0, Math.floor(Number(value) || 0))),
+    },
+    identifier: identifier || undefined,
+  });
+  return { identifier: event.identifier, raw: event };
+};

@@ -121,7 +121,18 @@ const checkStateCode = (value, gstin) => {
   return null;
 };
 
-const checkCurrency = (value) => {
+// Country -> expected currency (used to flag obvious mismatches like
+// "country=JP, currency=INR"). NULL country is treated as IN.
+const COUNTRY_DEFAULT_CURRENCY = {
+  IN: "INR", US: "USD", GB: "GBP", JP: "JPY", KR: "KRW", CN: "CNY",
+  SG: "SGD", AU: "AUD", DE: "EUR", FR: "EUR", IT: "EUR", ES: "EUR",
+  NL: "EUR", AT: "EUR", BE: "EUR", FI: "EUR", IE: "EUR", PT: "EUR",
+};
+
+// Known set widened to include KRW + CNY (international PO support).
+const KNOWN_CURRENCIES = new Set([...COMMON_CURRENCIES, "KRW", "CNY"]);
+
+const checkCurrency = (value, country) => {
   if (value == null || value === "") return null;
   if (typeof value !== "string") {
     return { code: "currency_not_string", severity: "error", message: "currency must be a string" };
@@ -130,11 +141,56 @@ const checkCurrency = (value) => {
   if (!/^[A-Z]{3}$/.test(upper)) {
     return { code: "currency_malformed", severity: "error", message: "currency must be 3 uppercase letters (ISO 4217)" };
   }
-  if (!COMMON_CURRENCIES.has(upper)) {
+  // Tier 1: unknown currency code is `currency_uncommon` regardless
+  // of country (preserves the pre-096 contract for ZAR / NGN / etc.).
+  if (!KNOWN_CURRENCIES.has(upper)) {
     return {
       code: "currency_uncommon",
       severity: "warn",
-      message: `currency '${upper}' is outside the common India-export set; verify`,
+      message: `currency '${upper}' is outside the common set; verify`,
+    };
+  }
+  // Tier 2: known currency that disagrees with the buyer's country.
+  // A Japanese PO billed in USD is fine; a Japanese PO billed in INR
+  // is suspicious. NULL country defaults to IN for back-compat.
+  const c = (country || "IN").toUpperCase();
+  const expected = COUNTRY_DEFAULT_CURRENCY[c];
+  if (expected && upper !== expected && upper !== "USD" && upper !== "EUR") {
+    return {
+      code: "currency_country_mismatch",
+      severity: "warn",
+      message: `currency '${upper}' is unexpected for country '${c}' (expected ${expected}, USD, or EUR); verify`,
+    };
+  }
+  return null;
+};
+
+// Country code: ISO 3166-1 alpha-2. NULL is OK (treated as IN for
+// back-compat); anything else must be exactly two upper-case letters.
+const checkCountry = (value) => {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string") {
+    return { code: "country_not_string", severity: "error", message: "country must be a string" };
+  }
+  if (!/^[A-Z]{2}$/.test(value)) {
+    return {
+      code: "country_malformed",
+      severity: "warn",
+      message: `country '${value}' should be ISO 3166-1 alpha-2 (2 upper-case letters)`,
+    };
+  }
+  return null;
+};
+
+// tax_id_type: must be one of the enum values when present.
+const TAX_ID_TYPES = new Set(["pan", "brn", "jp_corp", "eu_vat", "us_ein", "de_steuernummer", "other"]);
+const checkTaxIdType = (value) => {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string" || !TAX_ID_TYPES.has(value)) {
+    return {
+      code: "tax_id_type_unknown",
+      severity: "warn",
+      message: `tax_id_type '${value}' is not in the enum (pan|brn|jp_corp|eu_vat|us_ein|de_steuernummer|other)`,
     };
   }
   return null;
@@ -210,12 +266,55 @@ const buildIssue = (field, info, value) => ({
 const validateCustomer = (customer) => {
   if (!customer || typeof customer !== "object") return [];
   const issues = [];
-  const gstinIssue = checkGstin(customer.gstin);
-  if (gstinIssue) issues.push(buildIssue("customer.gstin", gstinIssue, customer.gstin));
-  const stateIssue = checkStateCode(customer.state_code, customer.gstin);
-  if (stateIssue) issues.push(buildIssue("customer.state_code", stateIssue, customer.state_code));
-  const currIssue = checkCurrency(customer.currency);
+  // NULL country = treat as IN for back-compat with old extractor
+  // outputs that didn't carry the field.
+  const country = (customer.country || "IN").toUpperCase();
+
+  const countryIssue = checkCountry(customer.country);
+  if (countryIssue) issues.push(buildIssue("customer.country", countryIssue, customer.country));
+
+  if (country === "IN") {
+    // Indian PO: GSTIN + state_code apply.
+    const gstinIssue = checkGstin(customer.gstin);
+    if (gstinIssue) issues.push(buildIssue("customer.gstin", gstinIssue, customer.gstin));
+    const stateIssue = checkStateCode(customer.state_code, customer.gstin);
+    if (stateIssue) issues.push(buildIssue("customer.state_code", stateIssue, customer.state_code));
+  } else {
+    // Non-Indian PO: GSTIN must be NULL (extractor sometimes
+    // hallucinates one when the buyer is foreign).
+    if (customer.gstin) {
+      issues.push(buildIssue("customer.gstin", {
+        code: "gstin_unexpected",
+        severity: "warn",
+        message: `GSTIN should be null when country='${country}' != IN (Indian GST does not apply)`,
+      }, customer.gstin));
+    }
+    // tax_id_type is the canonical id-type field for foreign POs.
+    const taxIdTypeIssue = checkTaxIdType(customer.tax_id_type);
+    if (taxIdTypeIssue) issues.push(buildIssue("customer.tax_id_type", taxIdTypeIssue, customer.tax_id_type));
+  }
+
+  // Currency check is country-aware.
+  const currIssue = checkCurrency(customer.currency, country);
   if (currIssue) issues.push(buildIssue("customer.currency", currIssue, customer.currency));
+
+  // Bill-to corroboration: if name is set and bill_to_address is set,
+  // the name should appear (case-insensitive, alpha-num normalized)
+  // inside the bill-to. When it doesn't, the extractor probably
+  // picked up the project / end-customer name.
+  if (customer.name && customer.bill_to_address) {
+    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const n = norm(customer.name);
+    const b = norm(customer.bill_to_address);
+    if (n.length >= 4 && !b.includes(n)) {
+      issues.push(buildIssue("customer.name", {
+        code: "name_not_in_bill_to",
+        severity: "warn",
+        message: `customer.name '${customer.name}' does not appear inside bill_to_address; the extractor may have picked an end-customer or project reference`,
+      }, customer.name));
+    }
+  }
+
   return issues;
 };
 
@@ -281,6 +380,15 @@ const adjustConfidence = (currentConf, summary) => {
   if (summary.error > 0) return Math.min(0.69, c);
   if (summary.warn >= 3) return Math.min(0.79, c);
   return c;
+};
+
+// Test-only exports so unit tests can lock the country-conditional
+// rules without standing up the whole validator pipeline.
+export const __test = {
+  validateCustomer,
+  checkCountry,
+  checkCurrency,
+  checkTaxIdType,
 };
 
 // Public API. Pass a normalized extraction result; we return the

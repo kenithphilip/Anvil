@@ -90,6 +90,7 @@ export default async function handler(req, res) {
                  validator_issues, validator_summary,
                  text_layer_used, ocr_layer_used, template_used,
                  overrides_applied, field_provenance, voter_lines, voter_used,
+                 selected_model, model_selection_reason,
                  extraction_kind,
                  started_at, finished_at`)
         .eq("tenant_id", ctx.tenantId)
@@ -216,6 +217,8 @@ export default async function handler(req, res) {
         voter_used: extractionRuns[0].voter_used || false,
         overrides_applied_count: Array.isArray(extractionRuns[0].overrides_applied) ? extractionRuns[0].overrides_applied.length : 0,
         extraction_kind: extractionRuns[0].extraction_kind || "po",
+        selected_model: extractionRuns[0].selected_model || null,
+        model_selection_reason: extractionRuns[0].model_selection_reason || null,
       } : null,
     });
   } catch (err) { sendError(res, err); }

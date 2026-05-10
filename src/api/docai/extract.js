@@ -104,6 +104,8 @@ export default async function handler(req, res) {
       overrides_applied: result.overridesApplied,
       field_provenance: result.fieldProvenance,
       voter_used: result.voterUsed,
+      selected_model: result.selectedModel,
+      model_selection_reason: result.modelSelectionReason,
       validator_issues: result.validatorIssues,
       validator_summary: result.validatorSummary,
       error: result.error,

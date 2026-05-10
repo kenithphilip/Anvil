@@ -75,6 +75,10 @@ describe("Pipeline Diagnostics tab (S4 of audit-close)", () => {
           voter_lines: [],
           voter_used: false,
           extraction_kind: "po",
+          // Phase Cost-Opt: deterministic model selector picked
+          // Sonnet because the L2 OCR layer fed the prompt.
+          selected_model: "claude-sonnet-4-20250514",
+          model_selection_reason: "ocr_derived_text",
         },
       ],
       processing_events: [
@@ -101,6 +105,8 @@ describe("Pipeline Diagnostics tab (S4 of audit-close)", () => {
         voter_used: false,
         overrides_applied_count: 0,
         extraction_kind: "po",
+        selected_model: "claude-sonnet-4-20250514",
+        model_selection_reason: "ocr_derived_text",
       },
       text_layer: {
         text_status: "image_only",
@@ -167,6 +173,10 @@ describe("Pipeline Diagnostics tab (S4 of audit-close)", () => {
       expect(html).toContain("L2 OCR layer");
       expect(html).toContain("Layers");
       expect(html).toContain("Validator");
+      // Phase Cost-Opt: the diagnostics tab surfaces which LLM
+      // model the deterministic selector picked + why.
+      expect(html).toContain("LLM model used");
+      expect(html).toContain("ocr_derived_text");
     } finally { window.location.hash = original; }
   });
 });

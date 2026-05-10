@@ -15,6 +15,7 @@
 
 import { decryptField } from "../secrets.js";
 import { callGemini, extractTextFromGemini, parseStructuredGemini, stopReasonFromGemini } from "../gemini.js";
+import { selectGeminiModel } from "./model_selector.js";
 
 const apiKey = (settings) => {
   if (settings?.docai_gemini_api_key_enc && settings?.docai_creds_iv) {
@@ -23,11 +24,6 @@ const apiKey = (settings) => {
   }
   return process.env.GEMINI_API_KEY || null;
 };
-
-const modelFor = (settings) =>
-  settings?.docai_gemini_model
-    || process.env.GEMINI_MODEL_DEFAULT
-    || "gemini-2.5-flash";
 
 export const isConfigured = (settings) => !!apiKey(settings);
 
@@ -227,6 +223,22 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   }
   const { mode, block } = built;
 
+  // Deterministic model pick. Same selector as claude.js but
+  // returns Gemini tier names; Flash covers free tier, Pro fires
+  // only on real quality-needing signals (long doc, OCR-derived
+  // text, escalate flag).
+  const selection = selectGeminiModel({
+    kind: expectedKind,
+    textLayer: hints?.textLayer || null,
+    ocrLayer: hints?.ocrLayer || null,
+    lineCount: Array.isArray(hints?.expectedLines)
+      ? hints.expectedLines.length
+      : (Number(hints?.expectedLineCount) || 0),
+    knownFields: hints?.knownFields || null,
+    escalate: !!hints?.escalate,
+    settings,
+  });
+
   // Build the user message + optional template hint block.
   const userContent = [block, { type: "text", text: "Return the structured JSON object now." }];
   const systemBlocks = [{ type: "text", text: systemPrompt }];
@@ -243,7 +255,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     apiKey: key,
     messages: [{ role: "user", content: userContent }],
     system: systemBlocks,
-    model: modelFor(settings),
+    model: selection.model,
     temperature: 0,
     max_tokens: 2000,
     response_schema: schema,
@@ -257,6 +269,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       reason: "upstream_error",
       error: result.error || "gemini failed",
       raw: result.data,
+      selected_model: selection.model,
+      model_selection_reason: selection.reason,
     };
   }
   const parsed = parseStructuredGemini(result.data);
@@ -269,6 +283,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       reason: stop === "SAFETY" ? "model_refused" : "parse_failed",
       error: parsed.error + " (stop=" + stop + ")",
       raw: result.data,
+      selected_model: selection.model,
+      model_selection_reason: selection.reason,
     };
   }
   const out = parsed.value;
@@ -282,6 +298,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
         reason: "non_ack",
         normalized: { classification: "non_ack", customer: null, lines: [], supplier_ack: null },
         confidences: { overall: Number(out.confidence) || 0.4 },
+        selected_model: selection.model,
+        model_selection_reason: selection.reason,
       };
     }
     const normalized = normalizeSupplierAck(out);
@@ -296,6 +314,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       reason: normalized.lines.length === 0 ? "empty_lines" : "ok",
       normalized,
       confidences,
+      selected_model: selection.model,
+      model_selection_reason: selection.reason,
     };
   }
 
@@ -307,6 +327,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       reason: "non_po",
       normalized: { classification: "non_po", customer: null, lines: [] },
       confidences: { overall: Number(out.confidence) || 0.4 },
+      selected_model: selection.model,
+      model_selection_reason: selection.reason,
     };
   }
 
@@ -326,5 +348,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       lines,
     },
     confidences,
+    selected_model: selection.model,
+    model_selection_reason: selection.reason,
   };
 };

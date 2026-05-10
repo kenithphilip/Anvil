@@ -1448,6 +1448,11 @@ const PipelineDiagnostics: React.FC<{
                   : "no issues")
               : "(no validator run yet)"],
             ["Extraction kind", latest?.extraction_kind || "po"],
+            ["LLM model used", latest?.selected_model
+              ? latest.selected_model + (latest.model_selection_reason
+                  ? " (reason: " + latest.model_selection_reason + ")"
+                  : "")
+              : "—"],
           ]} />
         </Card>
       )}
@@ -1472,6 +1477,7 @@ const PipelineDiagnostics: React.FC<{
               <th>Status</th>
               <th>Reason</th>
               <th>Adapter</th>
+              <th>Model</th>
               <th className="r">Conf</th>
               <th>Layers</th>
               <th>Validator</th>
@@ -1505,6 +1511,9 @@ const PipelineDiagnostics: React.FC<{
                       </Chip>
                     </td>
                     <td className="mono-sm">{r.adapter_used || "—"}</td>
+                    <td className="mono-sm" title={r.model_selection_reason || ""}>
+                      {r.selected_model || "—"}
+                    </td>
                     <td className="r mono">{r.confidence_overall != null ? Number(r.confidence_overall).toFixed(2) : "—"}</td>
                     <td className="mono-sm">{layerBadges || "L4"}</td>
                     <td className="mono-sm">{vText}</td>

@@ -26,17 +26,16 @@
 //      low_confidence (audit 5.3.6).
 
 import { callAnthropic } from "../anthropic.js";
+import { selectClaudeModel } from "./model_selector.js";
 
-// Cost-optimised model selection. Tenants set
-// `docai_anthropic_model` to flip between Sonnet (default,
-// highest quality) and Haiku (~4x cheaper, sufficient for clean
-// PDFs). Falls back to ANTHROPIC_MODEL_DEFAULT env var, then to
-// Sonnet 4 as the last-resort default. Resolved per-call so a
-// settings flip takes effect on the next extraction.
-const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL_DEFAULT || "claude-sonnet-4-20250514";
-const modelFor = (settings) =>
-  settings?.docai_anthropic_model
-    || DEFAULT_MODEL;
+// Per-call model selection delegates to the deterministic
+// model_selector. Selection priority (highest first):
+//   1. tenant pin (settings.docai_anthropic_model)
+//   2. escalate flag (retry / quality bump)
+//   3. document context rules (kind, OCR-derived text, long doc)
+//   4. default: cheapest model that handles a clean PO (Haiku).
+// Returned reason is persisted on extraction_runs.
+// model_selection_reason for diagnostics.
 
 export const isConfigured = (_settings) => !!process.env.ANTHROPIC_API_KEY;
 
@@ -324,6 +323,22 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   const activeTool = isSupplierAck ? SUPPLIER_ACK_TOOL : TOOL_DEFINITION;
   const activeToolName = isSupplierAck ? "extract_supplier_ack" : "extract_purchase_order";
 
+  // Deterministic model pick based on extraction context. The
+  // selector's reason gets persisted on extraction_runs so the
+  // diagnostics tab can render "we used Sonnet because L2 OCR
+  // fed the prompt".
+  const selection = selectClaudeModel({
+    kind: expectedKind,
+    textLayer: hints?.textLayer || null,
+    ocrLayer: hints?.ocrLayer || null,
+    lineCount: Array.isArray(hints?.expectedLines)
+      ? hints.expectedLines.length
+      : (Number(hints?.expectedLineCount) || 0),
+    knownFields: hints?.knownFields || null,
+    escalate: !!hints?.escalate,
+    settings,
+  });
+
   // Bug fix May 2026 (operator-credit-burn report): PDF and image
   // bytes were being coerced to utf-8 and sent as a text block.
   // PDFs are binary (PDF spec: binary stream after %PDF- header);
@@ -410,7 +425,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     messages: [{ role: "user", content: userParts }],
     system: systemBlocks,
     purpose: "extraction",
-    model: modelFor(settings),
+    model: selection.model,
     max_tokens: 2000,
     tools: [activeTool],
     tool_choice: { type: "tool", name: activeToolName },
@@ -425,6 +440,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       mode,
       reason: "upstream_error",
       error: result.error || result.data?.error?.message || "claude failed",
+      selected_model: selection.model,
+      model_selection_reason: selection.reason,
     };
   }
   const tool = findToolUse(result.data, activeToolName);
@@ -440,6 +457,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       reason: stopReason === "refusal" ? "model_refused" : "parse_failed",
       error: "model did not return " + activeToolName + " tool call (stop=" + stopReason + ")",
       raw: result.data,
+      selected_model: selection.model,
+      model_selection_reason: selection.reason,
     };
   }
   const out = tool.input;
@@ -458,6 +477,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
           supplier_ack: null,
         },
         confidences: { overall: Number(out.confidence) || 0.4 },
+        selected_model: selection.model,
+        model_selection_reason: selection.reason,
       };
     }
     const normalized = normalizeSupplierAck(out);
@@ -474,6 +495,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       reason: normalized.lines.length === 0 ? "empty_lines" : "ok",
       normalized,
       confidences,
+      selected_model: selection.model,
+      model_selection_reason: selection.reason,
     };
   }
 
@@ -486,6 +509,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       reason: "non_po",
       normalized: { classification: "non_po", customer: null, lines: [] },
       confidences: { overall: Number(out.confidence) || 0.4 },
+      selected_model: selection.model,
+      model_selection_reason: selection.reason,
     };
   }
 
@@ -512,6 +537,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     raw: result.data,
     mode,
     reason,
+    selected_model: selection.model,
+    model_selection_reason: selection.reason,
     normalized: {
       classification: out.classification || null,
       customer: out.customer || null,

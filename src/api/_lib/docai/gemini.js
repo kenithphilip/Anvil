@@ -15,6 +15,7 @@
 
 import { decryptField } from "../secrets.js";
 import { callGemini, extractTextFromGemini, parseStructuredGemini, stopReasonFromGemini } from "../gemini.js";
+import { parseSchemaAligned } from "./parse.js";
 import { selectGeminiModel } from "./model_selector.js";
 
 const apiKey = (settings) => {
@@ -310,21 +311,36 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       model_selection_reason: selection.reason,
     };
   }
-  const parsed = parseStructuredGemini(result.data);
-  if (!parsed.ok) {
+  // Bet 4 (May 2026): route through parseSchemaAligned so the
+  // common LLM-output failure modes (markdown fences, prose
+  // prefix/suffix, trailing commas, truncated arrays) get
+  // repaired before we declare parse_failed. The Gemini response
+  // schema is already enforced server-side via responseSchema, so
+  // most calls take the bare-JSON.parse fast path; the SAP repair
+  // only kicks in when the model returned text instead of
+  // structured (rare; happens on hard safety stops).
+  const text = extractTextFromGemini(result.data);
+  const sap = await parseSchemaAligned(text);
+  if (!sap.ok) {
     const stop = stopReasonFromGemini(result.data);
     return {
       ok: false,
       status: result.status,
       mode,
       reason: stop === "SAFETY" ? "model_refused" : "parse_failed",
-      error: parsed.error + " (stop=" + stop + ")",
+      error: (sap.error || "parse_failed") + " (stop=" + stop + ")",
       raw: result.data,
       selected_model: selection.model,
       model_selection_reason: selection.reason,
+      parse_method: sap.parse_method,
+      parse_repairs: sap.repairs,
+      parse_retries: sap.retries,
     };
   }
-  const out = parsed.value;
+  const out = sap.value;
+  const parseMethod = sap.parse_method;
+  const parseRepairs = sap.repairs;
+  const parseRetries = sap.retries;
 
   if (isSupplierAck) {
     if (out.classification === "non_ack") {
@@ -337,6 +353,9 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
         confidences: { overall: Number(out.confidence) || 0.4 },
         selected_model: selection.model,
         model_selection_reason: selection.reason,
+        parse_method: parseMethod,
+        parse_repairs: parseRepairs,
+        parse_retries: parseRetries,
       };
     }
     const normalized = normalizeSupplierAck(out);
@@ -353,6 +372,9 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       confidences,
       selected_model: selection.model,
       model_selection_reason: selection.reason,
+      parse_method: parseMethod,
+      parse_repairs: parseRepairs,
+      parse_retries: parseRetries,
     };
   }
 
@@ -366,6 +388,9 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       confidences: { overall: Number(out.confidence) || 0.4 },
       selected_model: selection.model,
       model_selection_reason: selection.reason,
+      parse_method: parseMethod,
+      parse_repairs: parseRepairs,
+      parse_retries: parseRetries,
     };
   }
 
@@ -387,5 +412,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     confidences,
     selected_model: selection.model,
     model_selection_reason: selection.reason,
+    parse_method: parseMethod,
+    parse_repairs: parseRepairs,
+    parse_retries: parseRetries,
   };
 };

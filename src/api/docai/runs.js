@@ -36,6 +36,7 @@ export default async function handler(req, res) {
       .select(`id, customer_id, source_type, source_filename, adapter_used,
                confidence_overall, status, status_reason, extraction_kind,
                text_layer_used, ocr_layer_used, template_used, voter_used,
+               parse_method, parse_retries, parse_repairs,
                started_at, finished_at`)
       .eq("tenant_id", ctx.tenantId)
       .order("started_at", { ascending: false })

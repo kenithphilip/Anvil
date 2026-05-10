@@ -161,6 +161,24 @@ const RULES = [
       action: "set_fallback_confidence:0.85",
     };
   },
+  // R9 (Bet 4). parse_failed rate above 1% in the window. Means an
+  // adapter is regularly emitting unparseable JSON, AND the SAP
+  // repair pass is failing to recover it. Likely a model/prompt
+  // regression worth investigating.
+  (s) => {
+    const m = s.parseMethods;
+    if (!m || m.total < 25) return null;
+    if (m.failed_rate_window > 0.01) {
+      return {
+        id: "parse_failed_rate_high",
+        severity: "warn",
+        title: "Parse-failed rate above 1%",
+        body: "Across the last " + m.window_days + " days, " + (m.failed_rate_window * 100).toFixed(1) + "% of extractions could not be parsed even after the SAP repair pass. This usually means a model or prompt regression. Check extraction_runs.status_reason='parse_failed' rows in the diagnostics tab for the failing adapter, and consider escalating to a stronger model for that document class.",
+        action: "review_parse_failures",
+      };
+    }
+    return null;
+  },
 ];
 
 export default async function handler(req, res) {
@@ -340,6 +358,41 @@ export default async function handler(req, res) {
       mistral_ocr:   false,
     };
 
+    // Bet 4: roll up which parse_method each extraction took so the
+    // diagnostics tab can chart parse-method trends. `failed` is the
+    // signal Bet 4 is trying to drive to 0. Wrapped in try/catch so
+    // a missing column (e.g. before migration 099 has run) or a
+    // restricted mock client degrades to an empty rollup rather than
+    // 500-ing the whole endpoint.
+    let parseRows = [];
+    try {
+      const parseResp = await svc.from("extraction_runs")
+        .select("parse_method, finished_at")
+        .eq("tenant_id", ctx.tenantId)
+        .gte("finished_at", daysAgo(days) + "T00:00:00Z");
+      parseRows = (parseResp?.data || []).filter((r) => r.parse_method != null);
+    } catch (_e) { parseRows = []; }
+    const parseMethodsToday = parseRows.filter(
+      (r) => (r.finished_at || "").slice(0, 10) === today(),
+    );
+    const parseMethodRollup = (rows) => rows.reduce((acc, r) => {
+      const k = r.parse_method || "unknown";
+      acc[k] = (acc[k] || 0) + 1;
+      return acc;
+    }, {});
+    const parseMethods = {
+      window_days: days,
+      total: parseRows.length,
+      today: parseMethodRollup(parseMethodsToday),
+      window: parseMethodRollup(parseRows),
+      failed_rate_window: parseRows.length
+        ? Number((parseRows.filter((r) => r.parse_method === "failed").length / parseRows.length).toFixed(4))
+        : 0,
+      sap_repair_rate_window: parseRows.length
+        ? Number((parseRows.filter((r) => r.parse_method === "sap_repaired" || r.parse_method === "sap_zod_retry").length / parseRows.length).toFixed(4))
+        : 0,
+    };
+
     const ruleState = {
       todayUsage,
       dailyLimits: settings?.docai_daily_limits || null,
@@ -352,6 +405,7 @@ export default async function handler(req, res) {
       fallbackConfidence: settings?.docai_fallback_confidence ?? null,
       adapterHealth,
       tenantHasKey,
+      parseMethods,
     };
     const recommendations = RULES.map((r) => r(ruleState)).filter(Boolean);
 
@@ -391,6 +445,7 @@ export default async function handler(req, res) {
       gemini_media_resolution: settings?.docai_gemini_media_resolution || "high",
       adapter_health: adapterHealth,
       tenant_has_key: tenantHasKey,
+      parse_methods: parseMethods,
       recommendations,
       summary: {
         calls_today: todayUsage.reduce((acc, u) => acc + Number(u.call_count || 0), 0),

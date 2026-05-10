@@ -27,6 +27,7 @@
 
 import { callAnthropic } from "../anthropic.js";
 import { selectClaudeModel } from "./model_selector.js";
+import { parseSchemaAligned } from "./parse.js";
 
 // Per-call model selection delegates to the deterministic
 // model_selector. Selection priority (highest first):
@@ -487,7 +488,35 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     };
   }
   const tool = findToolUse(result.data, activeToolName);
-  if (!tool || !tool.input) {
+  // Bet 4 (May 2026): if the tool_use call is missing, try to
+  // recover via parseSchemaAligned over the model's text output.
+  // The Anthropic prompt instructs the model to always call the
+  // tool, but ~0.5-1% of runs land in text mode (refusal / bad
+  // stop reason / model bug). When the text contains a JSON-shaped
+  // object after fence stripping + comma fixing, we use that.
+  let out = null;
+  let parseMethod = "tool_use";
+  let parseRepairs = [];
+  let parseRetries = 0;
+  if (tool && tool.input) {
+    out = tool.input;
+  } else {
+    const text = (result.data?.content || [])
+      .filter((b) => b && b.type === "text")
+      .map((b) => b.text || "")
+      .join("\n")
+      .trim();
+    if (text) {
+      const sap = await parseSchemaAligned(text);
+      if (sap.ok && sap.value && typeof sap.value === "object") {
+        out = sap.value;
+        parseMethod = sap.parse_method;
+        parseRepairs = sap.repairs;
+        parseRetries = sap.retries;
+      }
+    }
+  }
+  if (!out) {
     // Stop reasons we care about: end_turn (model refused / talked
     // instead of calling the tool), max_tokens, etc. Surface so the
     // diagnostics tab can render "model refused" vs "parse failed".
@@ -501,9 +530,11 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       raw: result.data,
       selected_model: selection.model,
       model_selection_reason: selection.reason,
+      parse_method: "failed",
+      parse_repairs: [],
+      parse_retries: 0,
     };
   }
-  const out = tool.input;
 
   if (isSupplierAck) {
     if (out.classification === "non_ack") {
@@ -521,6 +552,9 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
         confidences: { overall: Number(out.confidence) || 0.4 },
         selected_model: selection.model,
         model_selection_reason: selection.reason,
+        parse_method: parseMethod,
+        parse_repairs: parseRepairs,
+        parse_retries: parseRetries,
       };
     }
     const normalized = normalizeSupplierAck(out);
@@ -539,6 +573,9 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       confidences,
       selected_model: selection.model,
       model_selection_reason: selection.reason,
+      parse_method: parseMethod,
+      parse_repairs: parseRepairs,
+      parse_retries: parseRetries,
     };
   }
 
@@ -553,6 +590,9 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       confidences: { overall: Number(out.confidence) || 0.4 },
       selected_model: selection.model,
       model_selection_reason: selection.reason,
+      parse_method: parseMethod,
+      parse_repairs: parseRepairs,
+      parse_retries: parseRetries,
     };
   }
 
@@ -587,5 +627,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       lines,
     },
     confidences,
+    parse_method: parseMethod,
+    parse_repairs: parseRepairs,
+    parse_retries: parseRetries,
   };
 };

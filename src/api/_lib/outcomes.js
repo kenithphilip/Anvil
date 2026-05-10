@@ -29,6 +29,14 @@ export const ACTION_TO_OUTCOME = {
   tally_amend:            "order_pushed",
   tally_reconcile:        "order_pushed",
   netsuite_push:          "order_pushed",
+  // Bet 5: drift reconciliation paid SKU. drift_check_run is the
+  // billable outcome on every successful driftCheck (cron or manual).
+  // tally_drift_detected and tally_drift_resolved are the audit
+  // verbs the engine writes; map both to the same outcome so the
+  // /api/billing/usage meter shows reconciliation activity.
+  tally_recon_run:        "drift_check_run",
+  tally_drift_detected:   "drift_check_run",
+  tally_drift_resolved:   "drift_check_run",
 
   // Quotes + communications
   comm_draft:             "quote_drafted",
@@ -90,6 +98,7 @@ export const OUTCOME_LABELS = {
   service_visit_closed: "Service visits closed",
   agent_action:         "Autonomous agent actions",
   anomaly_resolved:     "Anomalies resolved",
+  drift_check_run:      "Drift checks (Tally)",
 };
 
 // All known outcome ids in display order.
@@ -105,6 +114,7 @@ export const OUTCOME_ORDER = [
   "service_visit_closed",
   "agent_action",
   "anomaly_resolved",
+  "drift_check_run",
 ];
 
 // Default per-outcome unit prices in USD cents. Sourced from the pricing
@@ -123,6 +133,14 @@ export const OUTCOME_UNIT_PRICE_CENTS = {
   service_visit_closed: 50,
   agent_action:         5,
   anomaly_resolved:     25,
+  // Bet 5: Tally drift reconciliation. Pricing per
+  // docs/STRATEGIC_BET_05_tally_drift_paid_sku.md is hybrid
+  // (flat + Rs 1.50 / SO over the included volume). The 1.8
+  // cents per drift_check_run shown here is the marginal
+  // overage rate for the meter at Starter tier; flat tier fees
+  // are billed via Stripe / Razorpay subscription, not this
+  // outcome meter.
+  drift_check_run:      2,
 };
 
 // Convenience: classify a raw audit row.

@@ -139,8 +139,12 @@ describe("POST /api/tally/reconcile :: mode dispatch", () => {
   });
 
   it("drift_check mode delegates to driftCheck with the right shape", async () => {
+    // Bet 5: drift_check is gated on the paid add-on. Seed
+    // tenant_settings with the flag enabled.
     const { __setSvc } = await import("../api/_lib/supabase.js");
-    __setSvc(buildSvc({}));
+    __setSvc(buildSvc({
+      tenant_settings: [{ tenant_id: "t1", tally_drift_addon_enabled: true }],
+    }));
     const { driftCheck } = await import("../api/_lib/tally-reconciler.js");
     const res = await callHandler("POST", "/api/tally/reconcile", { mode: "drift_check", scope: "tenant_recent" });
     expect(res.statusCode).toBe(200);
@@ -151,6 +155,16 @@ describe("POST /api/tally/reconcile :: mode dispatch", () => {
     expect(args.tenantId).toBe("t1");
     expect(args.scope).toBe("tenant_recent");
     expect(args.trigger).toBe("manual");
+  });
+
+  it("Bet 5: drift_check returns 402 when add-on is disabled", async () => {
+    const { __setSvc } = await import("../api/_lib/supabase.js");
+    __setSvc(buildSvc({
+      tenant_settings: [{ tenant_id: "t1", tally_drift_addon_enabled: false }],
+    }));
+    const res = await callHandler("POST", "/api/tally/reconcile", { mode: "drift_check", scope: "tenant_recent" });
+    expect(res.statusCode).toBe(402);
+    expect(res._json.error.code).toBe("addon_required");
   });
 
   it("rejects unknown mode", async () => {

@@ -69,6 +69,38 @@ export const razorpayCreateOrder = async (s, { amount, currency, receipt, notes 
     body: { amount, currency: currency || "INR", receipt, notes: notes || {}, payment_capture: 1 },
   });
 
+// Bet 5: record metered usage on a Razorpay Subscription via the
+// Add-on API. Razorpay deprecated the legacy "usage_records"
+// pattern; the supported flow is a per-cycle Add-on attached to
+// the active subscription. One add-on per drift run is reasonable
+// at expected volume (cron is hourly, batched). Idempotency at the
+// caller layer (we stamp razorpay_addon_id on success and the
+// partial index drops the row out of the unreported set).
+//
+// Returns { addon_id, raw } on success. Throws on non-2xx.
+export const recordRazorpayUsage = async (s, { subscriptionId, quantity, identifier, unitAmountInr = 150 }) => {
+  if (!subscriptionId) throw new Error("subscriptionId required");
+  const qty = Math.max(0, Math.floor(Number(quantity) || 0));
+  if (qty === 0) return { addon_id: null, raw: null };
+  const result = await razorpayFetch(s, {
+    method: "POST",
+    path: "/v1/subscriptions/" + encodeURIComponent(subscriptionId) + "/addons",
+    body: {
+      item: {
+        name: "Tally drift overage (per voucher)",
+        amount: Math.round(unitAmountInr * 100),     // paise
+        currency: "INR",
+        description: identifier || "drift overage",
+      },
+      quantity: qty,
+    },
+  });
+  if (!result.ok) {
+    throw new Error("razorpay addon create: " + result.status + " " + JSON.stringify(result.body));
+  }
+  return { addon_id: result.body?.id || null, raw: result.body };
+};
+
 export const razorpayVerifyPaymentSignature = ({ order_id, payment_id, signature, key_secret }) => {
   if (!signature || !order_id || !payment_id || !key_secret) return false;
   const expected = crypto.createHmac("sha256", key_secret)

@@ -151,6 +151,8 @@ import inventoryCronPositions   from "./cron/inventory-positions.js";
 import inventoryCronWeekly      from "./cron/inventory-planning-weekly.js";
 import inventoryCronExceptions  from "./cron/inventory-exceptions-tick.js";
 import tallyReconcileCron       from "./cron/tally-reconcile.js";
+import driftMeterCron           from "./cron/drift-meter.js";
+import driftReportCron          from "./cron/drift-report.js";
 
 import masterDataGraph         from "./master_data/graph.js";
 
@@ -197,6 +199,7 @@ import tallyAmend              from "./tally/amend.js";
 import tallyMasters            from "./tally/masters.js";
 import tallyPush               from "./tally/push.js";
 import tallyReconcile          from "./tally/reconcile.js";
+import tallyDriftAddon         from "./tally/drift_addon.js";
 import tallyValidate           from "./tally/validate.js";
 import tallyCompanies          from "./tally/companies.js";
 import tallyHealth             from "./tally/health.js";
@@ -529,6 +532,8 @@ const STATIC_ROUTES = {
   "/cron/inventory-planning-weekly": inventoryCronWeekly,
   "/cron/inventory-exceptions-tick": inventoryCronExceptions,
   "/cron/tally-reconcile":           tallyReconcileCron,
+  "/cron/drift-meter":               driftMeterCron,
+  "/cron/drift-report":              driftReportCron,
   "/edi/inbound":                   ediInbound,
   "/edi/outbound":                  ediOutbound,
   "/edi/partners":                  ediPartners,
@@ -796,6 +801,7 @@ const STATIC_ROUTES = {
   "/tally/masters":                 tallyMasters,
   "/tally/push":                    tallyPush,
   "/tally/reconcile":               tallyReconcile,
+  "/tally/drift_addon":             tallyDriftAddon,
   "/tally/validate":                tallyValidate,
   "/tally/companies":               tallyCompanies,
   "/tally/health":                  tallyHealth,

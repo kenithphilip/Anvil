@@ -1046,6 +1046,11 @@
     getReconRun: async (runId) => apiFetch("/api/tally/reconcile?run_id=" + encodeURIComponent(runId)),
     getOrderRecon: async (orderId) => apiFetch("/api/tally/reconcile?order_id=" + encodeURIComponent(orderId)),
     resolveFinding: async (findingId) => apiFetch("/api/tally/reconcile?finding_id=" + encodeURIComponent(findingId), { method: "PATCH" }),
+    // Bet 5: state lookup (latest run + addon flag + tolerance + auto-fix).
+    // Drives the upsell card / first-run experience on tally-reconcile.tsx.
+    getReconState: async () => apiFetch("/api/tally/reconcile"),
+    enableDriftAddon: async (plan) => apiFetch("/api/tally/drift_addon", { method: "POST", body: { plan: plan || "trial" } }),
+    disableDriftAddon: async () => apiFetch("/api/tally/drift_addon", { method: "DELETE" }),
     amend: async (payload) => apiFetch("/api/tally/amend", { method: "POST", body: payload }),
     health: async () => apiFetch("/api/tally/health"),
     diagnostics: async (companyId) => apiFetch("/api/tally/diagnostics" + (companyId ? "?companyId=" + encodeURIComponent(companyId) : "")),

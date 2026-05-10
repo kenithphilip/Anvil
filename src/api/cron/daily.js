@@ -25,6 +25,9 @@ import recurringCron    from "../billing/recurring_cron.js";
 import ewayExpire       from "../eway_bills/expire.js";
 // Audit P8.4: daily catalog embedding indexer.
 import catalogEmbed     from "../catalog/embed.js";
+// Bet 5: monthly drift report. Runs every day; the handler
+// short-circuits on days other than the 1st of the month.
+import driftReportCron  from "./drift-report.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -46,6 +49,9 @@ export default async function handler(req, res) {
       { name: "billing/recurring", fn: recurringCron,    opts: { path: "/api/billing/recurring_cron" } },
       { name: "eway_bills/expire", fn: ewayExpire,       opts: { path: "/api/eway_bills/expire" } },
       { name: "catalog/embed",     fn: catalogEmbed,     opts: { path: "/api/catalog/embed" } },
+      // Bet 5: monthly drift-reconciliation report. Idempotent;
+      // self-skips on non-month-start days.
+      { name: "drift-report",      fn: driftReportCron,  opts: { path: "/api/cron/drift-report" } },
     ]);
     const okCount = results.filter((r) => r.ok).length;
     const errCount = results.filter((r) => !r.ok).length;

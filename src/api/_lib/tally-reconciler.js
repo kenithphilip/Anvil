@@ -396,6 +396,28 @@ export const driftCheck = async (svc, params) => {
     finished_at: new Date().toISOString(),
   }).eq("id", runId);
 
+  // Bet 5: write a tally_drift_billing_meter row when this run did
+  // any work (vouchers_considered > 0). The drift-meter cron drains
+  // unreported rows to Stripe + Razorpay. We meter on every
+  // reconciled voucher (matches the value: we did the work), not
+  // only on drifted ones (which would create a perverse "I want
+  // more drift" incentive).
+  // Best-effort: a meter-insert failure does not fail the
+  // reconciliation run.
+  if (candidates.length > 0) {
+    const driftValueInr = await loadDriftCaughtValueInr(svc, tenantId, runId);
+    const meterIns = await svc.from("tally_drift_billing_meter").insert({
+      tenant_id: tenantId,
+      reconciliation_run_id: runId,
+      vouchers_reconciled: candidates.length,
+      drift_caught_value_inr: driftValueInr,
+    });
+    if (meterIns.error) {
+      // eslint-disable-next-line no-console
+      console.warn("[tally-reconciler] billing meter insert failed: " + meterIns.error.message);
+    }
+  }
+
   return {
     run_id: runId,
     status,
@@ -407,6 +429,30 @@ export const driftCheck = async (svc, params) => {
     latency_ms: Date.now() - t0,
     error: runErr,
   };
+};
+
+// Sum the marketing/sales-loaded "drift caught" INR value from the
+// findings that were persisted for this run. For total_mismatch,
+// that's abs(diff). For voucher_cancelled_in_tally, the full
+// expected total. Other kinds contribute 0 by default. Pure DB
+// read; no external calls.
+const loadDriftCaughtValueInr = async (svc, tenantId, runId) => {
+  const r = await svc.from("tally_reconciliation_findings")
+    .select("finding_kind, expected, actual, diff_pct")
+    .eq("tenant_id", tenantId)
+    .eq("reconciliation_run_id", runId);
+  if (r.error || !Array.isArray(r.data)) return 0;
+  let total = 0;
+  for (const f of r.data) {
+    if (f.finding_kind === "total_mismatch") {
+      const e = Number(f.expected?.total || 0);
+      const a = Number(f.actual?.total || 0);
+      total += Math.abs(a - e);
+    } else if (f.finding_kind === "voucher_cancelled_in_tally") {
+      total += Number(f.expected?.total || f.actual?.total || 0);
+    }
+  }
+  return Number(total.toFixed(2));
 };
 
 // ---------- legacy: markStatus ------------------------------------

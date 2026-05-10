@@ -256,6 +256,11 @@ const COVERAGE = [
   { eb: "03 · procurement", h: "Source POs",        p: "Auto-routed supplier orders, scorecards, 412-mapping spare matrix, obsolete parts.", surf: ["Source POs","Scorecards","Spares Matrix","Obsolete"] },
   { eb: "04 · service",     h: "Service ops",       p: "Site visits, AMC schedule, CAR (corrective action) reports, closure reports.", surf: ["Visits","AMC","CAR","Closure"] },
   { eb: "05 · finance",     h: "Tally + e-Invoice", p: "Bridge, reconciliation, masters sync, IRN, invoices, cost & margin simulator.", surf: ["Tally Push","Reconcile","Masters","e-Invoice","Invoices","Cost"] },
+  // Bet 5 (May 2026): drift reconciliation is a paid SKU. Surface
+  // it as its own card so prospects see "we check what's actually
+  // in Tally, not just what we sent" before they even read the
+  // pricing block.
+  { eb: "05.5 · finance",   h: "Drift reconciliation", p: "Tally bridge is great. But what happens after you push? We check, every 30 minutes, that the voucher in Tally still matches the source PO. Cancelled? Altered? Total drift? You see it before your auditor does.", surf: ["Drift findings","Auto-fix","Run history","Monthly report"] },
   { eb: "06 · data",        h: "Master data",       p: "Customer book, item master, BOM import, equipment hierarchy, customer importers, graph, forecasts.", surf: ["Customers","Items","BOM","Equipment","Graph","Forecasts"] },
   { eb: "07 · quality & AI", h: "Eval & agents",    p: "Eval suites, profile studio, anomaly compute, duplicate search, autonomous agents, format guide.", surf: ["Evals","Studio","Anomaly","Duplicates","Agents","Format Guide"] },
   { eb: "08 · trust",       h: "Comms & security",  p: "Drafts inbox, missing-doc nudges, prompt-injection bench, PII redaction, audit, admin.", surf: ["Communications","Email Triage","Security","Audit","Admin Center"] },

@@ -64,6 +64,21 @@ const handlePost = async (req, res, ctx, svc, body) => {
 
   if (mode === "drift_check") {
     requirePermission(ctx, "write");
+    // Bet 5: gate the drift-check endpoint on the paid add-on flag.
+    // The legacy 'mark' mode (manual status flip) stays ungated;
+    // it's part of base Tally functionality.
+    const settingsResp = await svc.from("tenant_settings")
+      .select("tally_drift_addon_enabled")
+      .eq("tenant_id", ctx.tenantId)
+      .maybeSingle();
+    const addonEnabled = !!settingsResp?.data?.tally_drift_addon_enabled;
+    if (!addonEnabled) {
+      return json(res, 402, { error: {
+        code: "addon_required",
+        message: "Tally drift reconciliation requires the Drift add-on. Enable it from Admin > Subscription.",
+        upgrade_url: "/admin?tab=subscription&addon=drift",
+      } });
+    }
     const scope = body?.scope || "tenant_recent";
     const scopeValue = body?.scopeValue || body?.orderId || null;
     const autoFix = body?.autoFix;
@@ -154,13 +169,29 @@ const handleGet = async (req, res, ctx, svc) => {
     return json(res, 200, { findings: findings.data || [] });
   }
 
-  const latest = await svc.from("tally_reconciliation_runs")
-    .select("*")
-    .eq("tenant_id", ctx.tenantId)
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return json(res, 200, { latest_run: latest.data || null });
+  // Default GET (no params): latest run + add-on enablement state
+  // so the frontend can render the upsell card or the live data.
+  // Bet 5.
+  const [latest, settings] = await Promise.all([
+    svc.from("tally_reconciliation_runs")
+      .select("*")
+      .eq("tenant_id", ctx.tenantId)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    svc.from("tenant_settings")
+      .select("tally_drift_addon_enabled, tally_drift_addon_started_at, tally_drift_addon_billing_plan, tally_recon_total_tolerance_pct, tally_recon_auto_fix_enabled")
+      .eq("tenant_id", ctx.tenantId)
+      .maybeSingle(),
+  ]);
+  return json(res, 200, {
+    latest_run: latest.data || null,
+    addon_enabled: !!settings?.data?.tally_drift_addon_enabled,
+    addon_started_at: settings?.data?.tally_drift_addon_started_at || null,
+    addon_billing_plan: settings?.data?.tally_drift_addon_billing_plan || null,
+    tolerance_pct: settings?.data?.tally_recon_total_tolerance_pct ?? null,
+    auto_fix_enabled: !!settings?.data?.tally_recon_auto_fix_enabled,
+  });
 };
 
 const handlePatch = async (req, res, ctx, svc, body) => {

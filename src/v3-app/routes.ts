@@ -38,6 +38,13 @@ const screens = {
   // Procurement
   spo:                lazy(() => import("./screens/source-pos")),
   spares:             lazy(() => import("./screens/spares")),
+  // Inventory-planning module (Phase 3).
+  inventoryPlanning:    lazy(() => import("./screens/inventory-planning")),
+  inventoryPlans:       lazy(() => import("./screens/inventory-plans")),
+  inventoryExceptions:  lazy(() => import("./screens/inventory-exceptions")),
+  inventoryItem:        lazy(() => import("./screens/inventory-item")),
+  inventoryAllocations: lazy(() => import("./screens/inventory-allocations")),
+  inventorySuppliers:   lazy(() => import("./screens/inventory-suppliers")),
   // Service
   svcVisits:          lazy(() => import("./screens/service-visits")),
   amc:                lazy(() => import("./screens/amc")),
@@ -115,6 +122,13 @@ export const RESOLVERS = {
   shipments:   () => screens.shipments,
   spo:         () => screens.spo,
   spares:      () => screens.spares,
+  // Inventory-planning module (Phase 3).
+  "inventory-planning":   () => screens.inventoryPlanning,
+  "inventory-plans":      () => screens.inventoryPlans,
+  "inventory-exceptions": () => screens.inventoryExceptions,
+  "inventory-item":       () => screens.inventoryItem,
+  "inventory-allocations":() => screens.inventoryAllocations,
+  "inventory-suppliers":  () => screens.inventorySuppliers,
   "svc-visits":() => screens.svcVisits,
   amc:         () => screens.amc,
   car:         () => screens.car,

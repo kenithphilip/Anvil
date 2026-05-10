@@ -39,16 +39,14 @@ const InventorySuppliersScreen: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    // No /api/suppliers endpoint in this PR; we read directly via
-    // the apiFetch helper to avoid widening the client surface
-    // before the dedicated endpoints land.
-    fetch("/api/inventory/positions?as_of=" + new Date().toISOString().slice(0, 10))
-      .catch(() => null)
-      .then(() => {
+    Promise.resolve((ObaraBackend as any)?.inventory?.suppliers?.list?.())
+      .then((r: any) => {
         if (cancelled) return;
-        // Phase 3.5 will land /api/suppliers; for now we surface
-        // an empty table with the explanation.
-        setSuppliers({ data: [], loading: false, error: null });
+        setSuppliers({ data: r?.suppliers || [], loading: false, error: null });
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setSuppliers({ data: [], loading: false, error: err });
       });
     return () => { cancelled = true; };
   }, []);
@@ -77,11 +75,12 @@ const InventorySuppliersScreen: React.FC = () => {
         {suppliers.loading ? (
           <Card><div className="body">Loading suppliers…</div></Card>
         ) : suppliers.data.length === 0 ? (
-          <Banner kind="info" icon={Icon.info} title="No suppliers loaded">
-            Phase 3.5 ships <span className="mono">/api/suppliers</span>.
-            Until then, the suppliers table is populated via Phase 1's
-            seed (see <span className="mono">supabase/seed/360_inventory_planning.sql</span>) and
-            backfilled from existing <span className="mono">source_pos.supplier</span> text.
+          <Banner kind="info" icon={Icon.info} title="No suppliers yet">
+            Suppliers populate via the seed pack
+            (<span className="mono">supabase/seed/360_inventory_planning.sql</span>),
+            via the migration 087 backfill from
+            <span className="mono"> source_pos.supplier</span> text, or
+            via this screen's create form (Phase 3.5).
           </Banner>
         ) : (
           <Card flush>

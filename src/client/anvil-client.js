@@ -971,6 +971,13 @@
       update: async (id, payload) => apiFetch("/api/inventory/allocations/" + encodeURIComponent(id), { method: "PATCH", body: payload }),
     },
     replan: async () => apiFetch("/api/inventory/replan", { method: "POST" }),
+    // Phase 3.5: calibration + suppliers.
+    calibration: async () => apiFetch("/api/inventory/calibration"),
+    suppliers: {
+      list: async () => apiFetch("/api/inventory/suppliers"),
+      upsert: async (payload) => apiFetch("/api/inventory/suppliers", { method: "POST", body: payload }),
+      update: async (id, payload) => apiFetch("/api/inventory/suppliers/" + encodeURIComponent(id), { method: "PATCH", body: payload }),
+    },
   };
 
   const masterData = {

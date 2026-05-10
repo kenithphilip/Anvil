@@ -27,8 +27,78 @@ import { safetyStock } from "../_lib/inventory/safety-stock.js";
 import { estimateLeadTime } from "../_lib/inventory/lead-time.js";
 import {
   computePipelineDemand, isoWeekStart, STAGE_PROBABILITY_DEFAULTS,
+  calibrateStageProbabilities,
 } from "../_lib/inventory/pipeline-demand.js";
 import { planForItem, addWeeks } from "../_lib/inventory/net-req.js";
+
+// Phase 3.5: per-class default service level when item.service_level
+// is null. Mirrors docs/INVENTORY_PLANNING_DESIGN.md section 2.9.
+const SL_BY_TYPE = {
+  ATD: 0.99, TIMER: 0.99,                   // critical bundled
+  GUN: 0.95, GUN_COMPONENT: 0.95,           // standard
+  SPARE: 0.85, CONSUMABLE: 0.85,            // long tail
+  OTHER: 0.95,
+};
+const defaultServiceLevel = (itemType, tenantDefault) =>
+  (itemType && SL_BY_TYPE[itemType]) || tenantDefault || 0.95;
+
+// Phase 3.5: project-equivalent floor (doc 2.3.3). Read from
+// equipment_installed_parts.recommended_qty_180d for the modal gun
+// model, falling back to BOM walk for an item type that ships
+// bundled with a parent (ATD / TIMER ride along with a Gun).
+//
+// We pick the median of recommended_qty_180d across installed
+// instances; if the item isn't tracked in equipment_installed_parts
+// we fall back to BOM walk via v_bom_walk_recursive.
+const projectEquivalentForPart = async (svc, tenantId, partNo) => {
+  const eip = await svc.from("equipment_installed_parts")
+    .select("recommended_qty_180d")
+    .eq("tenant_id", tenantId)
+    .eq("part_no", partNo)
+    .not("recommended_qty_180d", "is", null);
+  const values = (eip.data || []).map((r) => Number(r.recommended_qty_180d)).filter((v) => v > 0);
+  if (values.length) {
+    values.sort((a, b) => a - b);
+    return values[Math.floor(values.length / 2)];
+  }
+  // BOM-walk fallback: how many of `partNo` does the modal gun
+  // consume? Read v_bom_walk_recursive for any root that pulls in
+  // this child and take the max as the project-equivalent.
+  const walk = await svc.from("v_bom_walk_recursive")
+    .select("total_qty")
+    .eq("child_part_no", partNo)
+    .order("total_qty", { ascending: false })
+    .limit(1);
+  const walkRow = walk.data?.[0];
+  if (walkRow?.total_qty) return Number(walkRow.total_qty);
+  return 1;     // safest non-zero fallback
+};
+
+// Phase 3.5: hysteresis. The plan-emit signal must be stable across
+// N consecutive weekly runs (default 2 per tenant_settings) before
+// we draft a new procurement_plans row. We read the most recent N
+// forecast_runs and check whether each contained the part among
+// its plans (via models_evaluated.shortages or wape_summary; the
+// latter rolls up only WAPE so we use a small lookup table on
+// procurement_plans for the "did this part show a shortage in the
+// previous run" signal).
+const hysteresisOK = async (svc, tenantId, partNo, requiredStreak) => {
+  if (requiredStreak <= 1) return { ok: true, streak: 1 };
+  // We use the existence of any DRAFT/APPROVED plan for this part
+  // in the last (requiredStreak * 7) days as evidence of a prior
+  // shortage detection. This is approximate (a part could have
+  // had a plan for a different week) but is good enough for
+  // hysteresis: persistent shortages produce persistent plans.
+  const sinceISO = new Date(Date.now() - requiredStreak * 7 * 86400_000).toISOString();
+  const r = await svc.from("procurement_plans")
+    .select("id, created_at")
+    .eq("tenant_id", tenantId)
+    .eq("part_no", partNo)
+    .in("status", ["draft", "approved", "released"])
+    .gte("created_at", sinceISO);
+  const streak = (r.data || []).length + 1;
+  return { ok: streak >= requiredStreak, streak };
+};
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const HISTORY_WEEKS = 104;
@@ -59,8 +129,32 @@ const buildHistory = async (svc, tenantId, parts) => {
 };
 
 // -------------------------------------------------------------------
+// Phase 3.5: stage-probability calibration. Walks closed opps from
+// the last 365 days, computes win-rate per max_stage, and returns
+// the calibration map for `computePipelineDemand`.
+const buildStageCalibration = async (svc, tenantId) => {
+  const sinceISO = new Date(Date.now() - 365 * 86400_000).toISOString();
+  const closed = await svc.from("opportunities")
+    .select("stage")
+    .eq("tenant_id", tenantId)
+    .in("stage", ["CLOSE_WON", "CLOSE_LOST", "REGRETTED"])
+    .gte("updated_at", sinceISO);
+  if (closed.error) return null;
+  // The opportunities schema doesn't track max_stage history, so we
+  // use the final stage as the max stage proxy (close_won/_lost) and
+  // the calibrator's defaults for everything else. The full stage
+  // history calibration is a Phase 4 follow-up that requires either
+  // an opp_stage_history table or a CDC stream.
+  const history = (closed.data || []).map((o) => ({
+    final_stage: o.stage,
+    max_stage: o.stage,
+  }));
+  return calibrateStageProbabilities(history);
+};
+
+// -------------------------------------------------------------------
 // Pipeline demand: read opportunities + opportunity_line_items.
-const buildPipeline = async (svc, tenantId, weeks) => {
+const buildPipeline = async (svc, tenantId, weeks, calibration) => {
   const opps = await svc.from("opportunities")
     .select("id, stage, probability, close_date")
     .eq("tenant_id", tenantId)
@@ -79,7 +173,7 @@ const buildPipeline = async (svc, tenantId, weeks) => {
     linesByOpp.get(ln.opportunity_id).push(ln);
   }
   const pairs = opps.data.map((opp) => ({ opp, lines: linesByOpp.get(opp.id) || [] }));
-  return computePipelineDemand({ pairs });
+  return computePipelineDemand({ pairs, calibration });
 };
 
 // -------------------------------------------------------------------
@@ -166,12 +260,13 @@ const planTenant = async (svc, tenantId) => {
     if (!positionByPart.has(p.part_no)) positionByPart.set(p.part_no, p);
   }
 
-  // History + pipeline.
+  // History + pipeline (with calibrated stage probabilities).
   const horizonWeeks = cfg.inventory_forecast_horizon_weeks || DEFAULT_HORIZON;
   const today = isoWeekStart(new Date());
   const weeks = Array.from({ length: horizonWeeks }, (_, i) => addWeeks(today, i));
   const history = await buildHistory(svc, tenantId, parts);
-  const pipeline = await buildPipeline(svc, tenantId, weeks);
+  const calibration = await buildStageCalibration(svc, tenantId);
+  const pipeline = await buildPipeline(svc, tenantId, weeks, calibration);
 
   // Pre-fetch the opportunity pairs for top-opp attribution.
   const oppsForAttribution = await svc.from("opportunities")
@@ -226,7 +321,15 @@ const planTenant = async (svc, tenantId) => {
     const leadTimeSigmaWeeks = (lt.lead_time_stddev_days || 0) / 7;
 
     // Safety stock + reorder point.
-    const alpha = item.service_level || cfg.inventory_default_service_level || 0.95;
+    // Phase 3.5: per-class default service level (doc 2.9).
+    // item.service_level overrides everything; otherwise we route
+    // through SL_BY_TYPE based on item_type and fall back to the
+    // tenant default.
+    const alpha = item.service_level
+      || defaultServiceLevel(item.item_type, cfg.inventory_default_service_level);
+    // Phase 3.5: project-equivalent floor reads from
+    // equipment_installed_parts.recommended_qty_180d (doc 2.3.3).
+    const projectEquivalentQty = await projectEquivalentForPart(svc, tenantId, item.part_no);
     const ss = safetyStock({
       alpha,
       demandMean: baselineMean,
@@ -235,7 +338,7 @@ const planTenant = async (svc, tenantId) => {
       leadTimeSigma: leadTimeSigmaWeeks,
       demandClass: cls.class,
       avg4w: histArr.slice(-4).reduce((s, v) => s + v, 0) / 4,
-      projectEquivalentQty: 1,    // TODO: read from equipment_installed_parts
+      projectEquivalentQty,
     });
 
     // Persist computed columns back to item_master so the operator
@@ -336,8 +439,38 @@ const planTenant = async (svc, tenantId) => {
       hysteresisStreak: 1,
     });
     if (planResult.plan) {
-      planResult.plan.tenant_id = tenantId;
-      planRows.push(planResult.plan);
+      // Phase 3.5: hysteresis check (doc R4 + 11.3). Only emit a
+      // new draft plan if the shortage signal has persisted across
+      // the configured number of consecutive runs. The `streak`
+      // value is recorded on the plan's rationale so the operator
+      // can see the engine waited.
+      const requiredStreak = cfg.inventory_hysteresis_runs || 2;
+      const hyst = await hysteresisOK(svc, tenantId, item.part_no, requiredStreak);
+      if (hyst.ok) {
+        planResult.plan.tenant_id = tenantId;
+        planResult.plan.rationale = {
+          ...(planResult.plan.rationale || {}),
+          hysteresis_streak: hyst.streak,
+          hysteresis_required: requiredStreak,
+        };
+        planRows.push(planResult.plan);
+      } else {
+        // Hysteresis short-circuit: still flag a low-severity
+        // exception so the operator knows the engine is watching
+        // this part but not yet committing.
+        await svc.from("inventory_exceptions").insert({
+          tenant_id: tenantId,
+          part_no: item.part_no,
+          exception_kind: "below_reorder_point",
+          severity: "info",
+          detail: {
+            fingerprint: "hyst:" + item.part_no + ":" + today,
+            note: "Shortage detected; hysteresis " + hyst.streak + "/" + requiredStreak,
+            net_requirement: planResult.plan.net_requirement,
+          },
+          status: "open",
+        });
+      }
     }
   }
 

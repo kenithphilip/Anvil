@@ -555,4 +555,56 @@ begin
   -- could break unrelated code. Leaving `operator` in place is safe.
 end $p100$;
 
+-- ───────────────────────────────────────────────────────────────────
+-- Phase 360 (inventory-planning): clean up the rows the seed phase
+-- 360_inventory_planning.sql + the planning engine cron itself
+-- inserted. Tagged either by the explicit `seed_marker` payload or
+-- (for engine-emitted rows) by the seed_marker-tagged item_master
+-- entries; we delete by tenant_id for those engine outputs since
+-- they all hang off planning_enabled = true.
+-- ───────────────────────────────────────────────────────────────────
+do $p360$
+declare
+  default_tenant uuid := '00000000-0000-0000-0000-000000000001';
+begin
+  -- Engine outputs (per-tenant; safe to drop wholesale on teardown).
+  delete from procurement_plans      where tenant_id = default_tenant;
+  delete from inventory_exceptions   where tenant_id = default_tenant;
+  delete from forecast_runs          where tenant_id = default_tenant;
+  delete from demand_forecasts       where tenant_id = default_tenant;
+  delete from inventory_positions    where tenant_id = default_tenant;
+  delete from inventory_allocations  where tenant_id = default_tenant;
+
+  -- Backfill rows from migration 087 + seed phase 360.
+  delete from source_po_lines        where tenant_id = default_tenant;
+  delete from suppliers              where tenant_id = default_tenant
+    and notes in ('Backfilled by migration 087.',
+                  'Primary ATD supplier; phase 360 fixture.',
+                  'Primary timer-board supplier; phase 360 fixture.',
+                  'Backup-tier supplier for cables and minor parts.');
+
+  -- Opportunity line items from phase 360.
+  delete from opportunity_line_items where tenant_id = default_tenant
+    and notes = 'Phase 360 seed line.';
+
+  -- Seed-only item_master rows from phase 360.
+  delete from item_master where tenant_id = default_tenant
+    and part_no in ('ATD-STD-1','ATD-STD-2','TIMER-A1','TIMER-B1');
+
+  -- Reset the per-item planning columns we set at run-time on
+  -- master items that survive teardown. Leaves the operator's
+  -- pre-existing item_master rows in a clean "not planning" state.
+  update item_master set
+    planning_enabled = false,
+    safety_stock = null,
+    reorder_point = null,
+    demand_class = null,
+    pinned_model = null
+   where tenant_id = default_tenant;
+
+  -- Tenant-level inventory-planning settings.
+  update tenant_settings set inventory_planning_enabled = false
+   where tenant_id = default_tenant;
+end $p360$;
+
 commit;

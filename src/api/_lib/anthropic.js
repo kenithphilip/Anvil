@@ -69,10 +69,22 @@ const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Bet 1 (May 2026): with Gemini 3 Flash now the docai hot path,
+// Sonnet 4.6 fires only as the confidence-fallback. Per Anthropic
+// pricing https://platform.claude.com/docs/en/about-claude/pricing :
+//   Haiku 4.5:  $1 in / $5 out (200k context)
+//   Sonnet 4.6: $3 in / $15 out (1M context, 90% prompt-cache discount)
+//   Opus 4.7:   $5 in / $25 out (1M context; new tokenizer ~+35%)
+//
+// Preflight + generation both default to Sonnet 4.6 because the
+// docai chain reaches Anthropic only after Gemini 3 Flash failed
+// the confidence gate; we want quality at that point, not the
+// cheapest possible model. Haiku stays env-pinnable for narrow
+// tenants that explicitly want it.
 export const MODEL_BY_TIER = {
-  preflight: process.env.ANTHROPIC_MODEL_PREFLIGHT || "claude-haiku-4-5-20251001",
-  generation: process.env.ANTHROPIC_MODEL_DEFAULT || "claude-sonnet-4-20250514",
-  reasoning: process.env.ANTHROPIC_MODEL_REASONING || "claude-opus-4-7",
+  preflight:  process.env.ANTHROPIC_MODEL_PREFLIGHT  || "claude-sonnet-4-6",
+  generation: process.env.ANTHROPIC_MODEL_DEFAULT    || "claude-sonnet-4-6",
+  reasoning:  process.env.ANTHROPIC_MODEL_REASONING  || "claude-opus-4-7",
 };
 
 export const pickModel = ({ purpose, tier, override }) => {

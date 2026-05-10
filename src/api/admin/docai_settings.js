@@ -19,7 +19,16 @@ import { tenantSettings, updateTenantSettings } from "../_lib/stripe-client.js";
 const KNOWN_ADAPTERS = new Set([
   "gemini", "claude", "reducto", "azure_di", "unstructured",
   "docling", "marker", "excel", "gaeb",
+  // Bet 1: Mistral OCR runs as the OCR layer, not in the structured-
+  // extraction provider chain, but operators can list it in the
+  // chain editor and it gets a daily-limit row in the cost panel.
+  "mistral_ocr",
 ]);
+
+// Bet 1: Gemini media_resolution + Mistral OCR batch flag valid
+// values (whitelist; tighter than just "boolean" so the admin UI
+// can't send a typo).
+const GEMINI_MEDIA_RESOLUTIONS = new Set(["low", "medium", "high", "ultra_high"]);
 
 // Anthropic model names we let the UI pick. The list isn't a
 // hard whitelist on the env-var path (an operator can set any
@@ -78,11 +87,38 @@ const validateGeminiModel = (value) => {
   return null;
 };
 
+// Bet 1: validate the new tunables.
+const validateFallbackConfidence = (value) => {
+  if (value == null) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "docai_fallback_confidence must be a number";
+  if (n < 0.5 || n > 0.99) return "docai_fallback_confidence must be in [0.50, 0.99]";
+  return null;
+};
+
+const validateMistralOcrBatch = (value) => {
+  if (value == null) return null;
+  if (typeof value !== "boolean") return "docai_mistral_ocr_batch must be a boolean";
+  return null;
+};
+
+const validateGeminiMediaResolution = (value) => {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string" || !GEMINI_MEDIA_RESOLUTIONS.has(value)) {
+    return "docai_gemini_media_resolution must be one of: low, medium, high, ultra_high";
+  }
+  return null;
+};
+
 const SAFE_KEYS = [
   "docai_provider_order",
   "docai_daily_limits",
   "docai_anthropic_model",
   "docai_gemini_model",
+  // Bet 1.
+  "docai_fallback_confidence",
+  "docai_mistral_ocr_batch",
+  "docai_gemini_media_resolution",
 ];
 
 export default async function handler(req, res) {
@@ -100,6 +136,10 @@ export default async function handler(req, res) {
         docai_daily_limits: settings?.docai_daily_limits || null,
         docai_anthropic_model: settings?.docai_anthropic_model || null,
         docai_gemini_model: settings?.docai_gemini_model || null,
+        // Bet 1.
+        docai_fallback_confidence: settings?.docai_fallback_confidence ?? null,
+        docai_mistral_ocr_batch: settings?.docai_mistral_ocr_batch !== false,
+        docai_gemini_media_resolution: settings?.docai_gemini_media_resolution || null,
       });
     }
 
@@ -132,6 +172,24 @@ export default async function handler(req, res) {
         const err = validateGeminiModel(body.docai_gemini_model);
         if (err) errors.push(err);
         else updates.docai_gemini_model = body.docai_gemini_model || null;
+      }
+      // Bet 1.
+      if (Object.prototype.hasOwnProperty.call(body, "docai_fallback_confidence")) {
+        const err = validateFallbackConfidence(body.docai_fallback_confidence);
+        if (err) errors.push(err);
+        else updates.docai_fallback_confidence = body.docai_fallback_confidence == null
+          ? null
+          : Number(body.docai_fallback_confidence);
+      }
+      if (Object.prototype.hasOwnProperty.call(body, "docai_mistral_ocr_batch")) {
+        const err = validateMistralOcrBatch(body.docai_mistral_ocr_batch);
+        if (err) errors.push(err);
+        else updates.docai_mistral_ocr_batch = !!body.docai_mistral_ocr_batch;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, "docai_gemini_media_resolution")) {
+        const err = validateGeminiMediaResolution(body.docai_gemini_media_resolution);
+        if (err) errors.push(err);
+        else updates.docai_gemini_media_resolution = body.docai_gemini_media_resolution || null;
       }
 
       if (errors.length) {

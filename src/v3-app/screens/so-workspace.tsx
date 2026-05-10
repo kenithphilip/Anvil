@@ -307,27 +307,41 @@ const WiredSOWorkspace = () => {
       //    lines}. We don't need to re-upload the file.
       const out: any = await (ObaraBackend as any)?.docai?.extract?.({ source_id: sourceDocId });
       const lines = Array.isArray(out?.normalized?.lines) ? out.normalized.lines : [];
+      const customer = out?.normalized?.customer || null;
       const adapter = out?.adapter_used || null;
       const conf = typeof out?.confidence_overall === "number" ? out.confidence_overall : null;
-      // 2. Merge the lines + run metadata into the order so the
-      //    workspace's reconciliation tab populates immediately.
+      // 2. Merge the lines + customer + run metadata into the order
+      //    so the workspace's reconciliation tab AND the "From PO"
+      //    customer panel populate immediately.
       const nextResult = { ...(o.result || {}) };
-      nextResult.salesOrder = { ...(nextResult.salesOrder || {}), lineItems: lines };
+      nextResult.salesOrder = {
+        ...(nextResult.salesOrder || {}),
+        lineItems: lines,
+        customer: customer || nextResult.salesOrder?.customer || null,
+      };
+      // Bug fix May 2026 (stepper-lies report): only stamp
+      // extraction_run_id when extraction actually produced lines
+      // so the stepper does not green-light Extract on an empty
+      // result. The previous run is preserved on the order's
+      // audit_events history regardless.
       const nextPreflight = {
         ...(o.preflight_payload || {}),
-        extraction_run_id: out?.run_id || null,
         adapter_used: adapter,
         confidence_overall: conf,
         last_extracted_at: new Date().toISOString(),
       };
+      if (lines.length > 0 && out?.run_id) {
+        nextPreflight.extraction_run_id = out.run_id;
+      }
       await ObaraBackend?.orders?.update?.(o.id, {
         result: nextResult,
         preflight_payload: nextPreflight,
       });
       // 3. Best-effort OCR for the evidence bbox overlay.
       try { await (ObaraBackend as any)?.ocr?.run?.(sourceDocId, o.id); } catch (_) { /* surface in audit */ }
-      window.notifySuccess?.(
-        "Extraction complete",
+      const tone = lines.length === 0 ? "notifyWarn" : "notifySuccess";
+      window[tone]?.(
+        lines.length === 0 ? "Extraction returned no lines" : "Extraction complete",
         lines.length + " line" + (lines.length === 1 ? "" : "s") + (adapter ? " (" + adapter + ")" : ""),
       );
       setBump((n) => n + 1);
@@ -856,7 +870,20 @@ const WiredSOWorkspace = () => {
           // items.length so all six render as completed.
           if (!o) return 0;
           const hasSourceDoc = !!sourceDocId;
-          const hasExtraction = !!(o.preflight_payload?.extraction_run_id) || lines.length > 0;
+          // Bug fix May 2026 (stepper-lies report): Extract is "done"
+          // ONLY when line items are actually populated. Stamping
+          // `extraction_run_id` was previously enough to mark Extract
+          // green even on a failed extraction (Claude returned 0
+          // lines but the API still emitted a run_id). The result
+          // was a workspace stepper that lied: Capture/Preflight/
+          // Extract all green, "0 lines · 0 issues" in the table.
+          const hasExtraction = lines.length > 0;
+          // Preflight is done when we have a source doc + at least
+          // an attempt at extraction (the run_id stamp is the
+          // attempt signal). If Preflight is done but Extract is
+          // not, the operator can re-run extraction from the action
+          // bar (see `runExtraction` button below).
+          const extractionAttempted = !!(o.preflight_payload?.extraction_run_id);
           const hasValidation = !!(o.preflight_payload?.last_validated_at)
             || o.status === "PENDING_REVIEW"
             || (Array.isArray(o.rule_findings) && o.rule_findings.length > 0);
@@ -874,6 +901,54 @@ const WiredSOWorkspace = () => {
           return step;
         })()} items={["Capture", "Preflight", "Extract", "Validate", "Approve", "Push to Tally"]} />
 
+        {/* Bug fix May 2026 (stepper-lies report): if extraction was
+            attempted but produced 0 lines, surface an explicit
+            warning so the operator can retry instead of staring at
+            an empty reconciliation table behind a green-stepper
+            UI. The "run extraction" button on the action bar
+            re-runs `docai/extract` against the attached PO. */}
+        {!!(o.preflight_payload?.extraction_run_id) && lines.length === 0 && o.status !== "CANCELLED" && (
+          <Banner
+            kind="warn"
+            icon={Icon.alert}
+            title="Extraction returned no line items"
+            action={
+              <Btn sm kind="primary" disabled={!sourceDocId || busy} onClick={runExtraction}>
+                {Icon.cycle} retry extraction
+              </Btn>
+            }
+          >
+            <span className="mono-sm">
+              The PO was attached and an extraction run was logged
+              {o.preflight_payload?.adapter_used ? " (adapter: " + o.preflight_payload.adapter_used + ")" : ""}
+              {typeof o.preflight_payload?.confidence_overall === "number" ? " at confidence " + o.preflight_payload.confidence_overall.toFixed(2) : ""},
+              but no lines came back. Re-run from this banner or attach a higher-quality PO.
+            </span>
+          </Banner>
+        )}
+
+        {/* Bug fix May 2026 (customer-prefill report): render the
+            extracted customer block from the PO header on the
+            workspace so the operator sees what docai pulled out
+            without bouncing back to the intake screen. The intake
+            now carries this block onto orders.result.salesOrder.customer
+            so it survives the round trip. */}
+        {tab === "recon" && o.result?.salesOrder?.customer && (
+          <Card title="Customer · from PO header" eyebrow="extracted by docai">
+            <KV rows={[
+              ["Name",        o.result.salesOrder.customer.name || "—"],
+              ["GSTIN",       (o.result.salesOrder.customer.gstin || "").toUpperCase() || "—"],
+              ["State",       (o.result.salesOrder.customer.state_code || "").toUpperCase() || "—"],
+              ["Currency",    o.result.salesOrder.customer.currency || "—"],
+              ["Pay terms",   o.result.salesOrder.customer.payment_terms || "—"],
+              ["Email",       o.result.salesOrder.customer.email || "—"],
+              ["Phone",       o.result.salesOrder.customer.phone || "—"],
+              ["Bill to",     o.result.salesOrder.customer.bill_to_address || "—"],
+              ["Ship to",     o.result.salesOrder.customer.ship_to_address
+                              || o.result.salesOrder.customer.bill_to_address || "—"],
+            ]} />
+          </Card>
+        )}
         {tab === "recon" && (
           <Card flush>
             <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--hairline-2)", display: "flex", gap: 10, alignItems: "center" }}>
@@ -882,7 +957,9 @@ const WiredSOWorkspace = () => {
             </div>
             {lines.length === 0 ? (
               <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-                No line items extracted yet. Extraction completes after OCR finishes.
+                No line items extracted yet. Use the "run extraction"
+                button on the action bar to re-run docai/extract
+                against the attached PO, or attach a higher-quality PO.
               </div>
             ) : (
               <table className="tbl">

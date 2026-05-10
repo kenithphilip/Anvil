@@ -225,4 +225,154 @@ describe("SoWorkspace", () => {
       window.location.hash = original;
     }
   });
+
+  it("stepper does NOT mark Extract done when run_id stamped but 0 lines", async () => {
+    // Bug fix May 2026 (stepper-lies report): the previous logic
+    // marked Extract green if extraction_run_id was stamped, even
+    // when extraction returned 0 lines. Truthful stepper now
+    // requires lines.length > 0 for Extract to be done; a banner
+    // explains the empty extraction.
+    const original = window.location.hash;
+    const orderId = "ord-fixture-stepper-truth";
+    const orderEmptyExtract = {
+      id: orderId,
+      status: "DRAFT",
+      po_number: "PO-EMPTY-1",
+      customer_id: "cust-1",
+      customer_name: "Fixture Customer",
+      result: { salesOrder: { lineItems: [] } },
+      preflight_payload: {
+        source_document_id: "doc-1",
+        extraction_run_id: "run-empty-1",
+        adapter_used: "claude",
+        confidence_overall: 0.42,
+      },
+      documents: [{ id: "doc-1" }],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    try {
+      window.location.hash = "#/so?id=" + orderId;
+      installBackend({
+        orders: { get: vi.fn(async () => ({ order: orderEmptyExtract })), update: vi.fn(async () => ({})) },
+        audit: { list: vi.fn(async () => []) },
+        events: { list: vi.fn(async () => []) },
+        cost: { breakdown: vi.fn(async () => null) },
+      });
+      const mod = await import("./so-workspace");
+      const Screen = mod.default;
+      const { container } = renderScreen(Screen);
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      const steps = container.querySelectorAll(".step");
+      expect(steps.length).toBe(6);
+      // Capture done, Preflight done, Extract = current (not done).
+      expect(steps[0].className).toContain("done");
+      expect(steps[1].className).toContain("done");
+      expect(steps[2].className).toContain("cur");
+      expect(steps[2].className).not.toContain("done");
+      // Empty-extraction banner shows.
+      expect(container.innerHTML).toContain("Extraction returned no line items");
+    } finally {
+      window.location.hash = original;
+    }
+  });
+
+  it("stepper marks Extract done once lines populate (truthful)", async () => {
+    const original = window.location.hash;
+    const orderId = "ord-fixture-stepper-lines";
+    const orderWithLines = {
+      id: orderId,
+      status: "DRAFT",
+      po_number: "PO-WITH-LINES",
+      customer_id: "cust-1",
+      result: {
+        salesOrder: {
+          lineItems: [
+            { partNumber: "X", qty: 1, rate: 10, lineTotal: 10 },
+            { partNumber: "Y", qty: 2, rate: 5, lineTotal: 10 },
+          ],
+        },
+      },
+      preflight_payload: { source_document_id: "doc-1", extraction_run_id: "run-good" },
+      documents: [{ id: "doc-1" }],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    try {
+      window.location.hash = "#/so?id=" + orderId;
+      installBackend({
+        orders: { get: vi.fn(async () => ({ order: orderWithLines })), update: vi.fn(async () => ({})) },
+        audit: { list: vi.fn(async () => []) },
+        events: { list: vi.fn(async () => []) },
+        cost: { breakdown: vi.fn(async () => null) },
+      });
+      const mod = await import("./so-workspace");
+      const Screen = mod.default;
+      const { container } = renderScreen(Screen);
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      const steps = container.querySelectorAll(".step");
+      expect(steps[2].className).toContain("done");
+      expect(steps[3].className).toContain("cur");
+      expect(container.innerHTML).not.toContain("Extraction returned no line items");
+    } finally {
+      window.location.hash = original;
+    }
+  });
+
+  it("renders the From-PO customer panel when result.salesOrder.customer is set", async () => {
+    // Bug fix May 2026 (customer-prefill report): workspace surfaces
+    // the extracted customer block so the operator sees the PO
+    // header values without bouncing to the intake screen.
+    const original = window.location.hash;
+    const orderId = "ord-fixture-cust-panel";
+    const order = {
+      id: orderId,
+      status: "DRAFT",
+      po_number: "PO-PANEL-1",
+      customer_id: "cust-1",
+      customer_name: "Existing Customer",
+      result: {
+        salesOrder: {
+          lineItems: [],
+          customer: {
+            name: "Brand New Customer Pvt Ltd",
+            gstin: "29ABCDE1234F1Z5",
+            state_code: "29",
+            currency: "INR",
+            payment_terms: "Net 45",
+            email: "po@customer.example",
+            phone: "+91 99999 88888",
+            bill_to_address: "Plot 12, MIDC, Pune 411018",
+          },
+        },
+      },
+      preflight_payload: { source_document_id: "doc-1" },
+      documents: [{ id: "doc-1" }],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    try {
+      window.location.hash = "#/so?id=" + orderId;
+      installBackend({
+        orders: { get: vi.fn(async () => ({ order })), update: vi.fn(async () => ({})) },
+        audit: { list: vi.fn(async () => []) },
+        events: { list: vi.fn(async () => []) },
+        cost: { breakdown: vi.fn(async () => null) },
+      });
+      const mod = await import("./so-workspace");
+      const Screen = mod.default;
+      const { container } = renderScreen(Screen);
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      const html = container.innerHTML;
+      expect(html).toContain("Customer · from PO header");
+      expect(html).toContain("29ABCDE1234F1Z5");
+      expect(html).toContain("Brand New Customer Pvt Ltd");
+      expect(html).toContain("po@customer.example");
+    } finally {
+      window.location.hash = original;
+    }
+  });
 });

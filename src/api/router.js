@@ -133,6 +133,20 @@ import fxRates                 from "./fx/rates.js";
 
 import inventoryAvailability   from "./inventory/availability.js";
 import inventorySync           from "./inventory/sync.js";
+// Inventory-planning module (Phase 2). Endpoints + crons.
+import inventoryPositions       from "./inventory/positions.js";
+import inventoryForecasts       from "./inventory/forecasts.js";
+import inventoryPlans           from "./inventory/plans.js";
+import inventoryExceptions      from "./inventory/exceptions.js";
+import inventoryAllocations     from "./inventory/allocations.js";
+import inventoryExplain         from "./inventory/explain.js";
+import inventoryReplan          from "./inventory/replan.js";
+// Phase 3.5 additions: calibration, suppliers, exception-tick cron.
+import inventoryCalibration     from "./inventory/calibration.js";
+import inventorySuppliers       from "./inventory/suppliers.js";
+import inventoryCronPositions   from "./cron/inventory-positions.js";
+import inventoryCronWeekly      from "./cron/inventory-planning-weekly.js";
+import inventoryCronExceptions  from "./cron/inventory-exceptions-tick.js";
 
 import masterDataGraph         from "./master_data/graph.js";
 
@@ -499,6 +513,9 @@ const STATIC_ROUTES = {
   "/esign/webhook":                 esignWebhook,
   "/cron/tick":                     cronTick,
   "/cron/daily":                    cronDaily,
+  "/cron/inventory-positions":       inventoryCronPositions,
+  "/cron/inventory-planning-weekly": inventoryCronWeekly,
+  "/cron/inventory-exceptions-tick": inventoryCronExceptions,
   "/edi/inbound":                   ediInbound,
   "/edi/outbound":                  ediOutbound,
   "/edi/partners":                  ediPartners,
@@ -709,6 +726,17 @@ const STATIC_ROUTES = {
 
   "/inventory/availability":        inventoryAvailability,
   "/inventory/sync":                inventorySync,
+  // Inventory-planning module endpoints (Phase 2).
+  "/inventory/positions":           inventoryPositions,
+  "/inventory/forecasts":           inventoryForecasts,
+  "/inventory/plans":               inventoryPlans,
+  "/inventory/exceptions":          inventoryExceptions,
+  "/inventory/allocations":         inventoryAllocations,
+  "/inventory/explain":             inventoryExplain,
+  "/inventory/replan":              inventoryReplan,
+  // Phase 3.5 endpoints.
+  "/inventory/calibration":         inventoryCalibration,
+  "/inventory/suppliers":           inventorySuppliers,
 
   "/master_data/graph":             masterDataGraph,
 
@@ -784,6 +812,19 @@ const DYNAMIC_ROUTES = [
   // + "/invoices/send" entries above take precedence; the dynamic
   // path only resolves when none of those match.
   { prefix: "/invoices/",    handler: invoicesById,   param: "id" },
+  // Inventory-planning action endpoints (Phase 2). Each handler
+  // parses its own (id, action) from req.url so we just dispatch to
+  // it on the right prefix+suffix combo.
+  { prefix: "/inventory/plans/",      suffix: "/approve",  handler: inventoryPlans,      param: "id" },
+  { prefix: "/inventory/plans/",      suffix: "/release",  handler: inventoryPlans,      param: "id" },
+  { prefix: "/inventory/plans/",      suffix: "/cancel",   handler: inventoryPlans,      param: "id" },
+  { prefix: "/inventory/exceptions/", suffix: "/ack",      handler: inventoryExceptions, param: "id" },
+  { prefix: "/inventory/exceptions/", suffix: "/resolve",  handler: inventoryExceptions, param: "id" },
+  { prefix: "/inventory/exceptions/", suffix: "/suppress", handler: inventoryExceptions, param: "id" },
+  // PATCH /inventory/allocations/<id>.
+  { prefix: "/inventory/allocations/", handler: inventoryAllocations, param: "id" },
+  // PATCH /inventory/suppliers/<id>.
+  { prefix: "/inventory/suppliers/",   handler: inventorySuppliers,   param: "id" },
 ];
 
 // Resolve a request URL to a handler. Returns null if not matched.

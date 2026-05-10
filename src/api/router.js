@@ -156,6 +156,14 @@ import brsrPrefill              from "./brsr/prefill.js";
 import brsrRelationship         from "./brsr/relationship.js";
 import brsrBuyerDashboard       from "./brsr/buyer/dashboard.js";
 import brsrBuyerExport          from "./brsr/buyer/export.js";
+// Bet 6: AA + TReDS receivables loop (sandbox scaffolding).
+import aaConsent                from "./aa/consent.js";
+import aaCallback               from "./aa/callback.js";
+import aaWebhook                from "./aa/webhook.js";
+import tredsOffer               from "./treds/offer.js";
+import tredsAccept              from "./treds/accept.js";
+import tredsList                from "./treds/list.js";
+import tredsEligibleBuyers      from "./treds/eligible_buyers.js";
 import inventoryCronPositions   from "./cron/inventory-positions.js";
 import inventoryCronWeekly      from "./cron/inventory-planning-weekly.js";
 import inventoryCronExceptions  from "./cron/inventory-exceptions-tick.js";
@@ -786,6 +794,15 @@ const STATIC_ROUTES = {
   "/brsr/relationship/revoke":      brsrRelationship,
   "/brsr/buyer/dashboard":          brsrBuyerDashboard,
   "/brsr/buyer/export":             brsrBuyerExport,
+  // Bet 6: AA + TReDS receivables loop (sandbox).
+  "/aa/consent":                    aaConsent,
+  "/aa/callback":                   aaCallback,
+  "/aa/webhook":                    aaWebhook,
+  "/treds/offer":                   tredsOffer,
+  "/treds/accept":                  tredsAccept,
+  "/treds/list":                    tredsList,
+  "/treds/eligible_buyers":         tredsEligibleBuyers,
+  "/treds/eligible_buyers/refresh": tredsEligibleBuyers,
 
   "/master_data/graph":             masterDataGraph,
 

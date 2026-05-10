@@ -11,11 +11,12 @@ describe("NAV", () => {
       "Data", "Quality", "Comms & Security", "Admin",
     ]);
   });
-  it("exposes 40 unique nav ids", () => {
-    // 38 from before Bet 7, plus brsr-supplier + brsr-buyer-dashboard.
+  it("exposes 41 unique nav ids", () => {
+    // 38 base + 2 from Bet 7 (brsr-supplier, brsr-buyer-dashboard)
+    // + 1 from Bet 6 (treds).
     const ids = NAV.flatMap((g) => g.items.map((i) => i.id));
-    expect(ids.length).toBe(40);
-    expect(new Set(ids).size).toBe(40);
+    expect(ids.length).toBe(41);
+    expect(new Set(ids).size).toBe(41);
   });
   it("each item has id + label + icon", () => {
     for (const group of NAV) {

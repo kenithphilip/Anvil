@@ -77,6 +77,10 @@ export const MATRIX: Record<string, MatrixRow> = {
   "brsr-supplier":          { sales_engineer: "",   sales_manager: "r",   procurement: "r",   finance: "rw",   admin: "rwa", operator: "",   viewer: "r" },
   "brsr-buyer-dashboard":   { sales_engineer: "",   sales_manager: "r",   procurement: "r",   finance: "rwa",  admin: "rwa", operator: "",   viewer: "r" },
   "brsr-disclosure-detail": { sales_engineer: "",   sales_manager: "r",   procurement: "r",   finance: "r",    admin: "rwa", operator: "",   viewer: "r" },
+  // Bet 6: TReDS receivables loop. Finance owns the factoring decision
+  // (which invoice to discount, accepting a bid). Admin can configure
+  // partners. Sales manager reads to track AR aging.
+  treds:       { sales_engineer: "",   sales_manager: "r",  procurement: "",   finance: "rwa", admin: "rwa",operator: "",   viewer: "r" },
 };
 
 export const ACTIONS: Record<string, Role[]> = {

@@ -17,6 +17,77 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { dispatchExtract } from "../_lib/docai/index.js";
+import { extractTextLayer, contentHash } from "../_lib/docai/text_layer.js";
+import { validateExtraction } from "../_lib/docai/validators.js";
+
+// Phase A: L1 text-layer cache helpers. Pure local helpers; the
+// dispatcher stays DB-free so it remains test-friendly.
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (s) => typeof s === "string" && UUID_REGEX.test(s);
+
+// Look up + on-miss insert + return the text layer for a (tenant,
+// document_id || content_hash). Best-effort: if any DB call fails,
+// we still return the freshly-extracted result so extraction
+// proceeds. Cache misses are silent.
+const getOrExtractTextLayer = async ({ svc, tenantId, documentId, bytes, mime }) => {
+  // The hash is the cross-shape cache key (works for both
+  // document-bound and inline-attachment paths).
+  const hash = await contentHash(bytes).catch(() => null);
+  // 1) Lookup
+  try {
+    if (documentId && isUuid(documentId)) {
+      const r = await svc.from("extraction_text_layer")
+        .select("*").eq("tenant_id", tenantId).eq("document_id", documentId)
+        .maybeSingle();
+      if (r?.data) return { layer: rowToLayer(r.data), cached: true, hash };
+    }
+    if (hash) {
+      const r = await svc.from("extraction_text_layer")
+        .select("*").eq("tenant_id", tenantId).eq("content_hash", hash)
+        .is("document_id", null).maybeSingle();
+      if (r?.data) return { layer: rowToLayer(r.data), cached: true, hash };
+    }
+  } catch (_e) { /* fall through to fresh extract */ }
+  // 2) Extract
+  const layer = await extractTextLayer({ bytes, mime });
+  // 3) Persist (best-effort; ignore failures)
+  try {
+    const insert = {
+      tenant_id: tenantId,
+      document_id: documentId && isUuid(documentId) ? documentId : null,
+      content_hash: hash,
+      text_status: layer.status,
+      page_count: layer.page_count,
+      char_count: layer.char_count,
+      body_text: layer.body_text,
+      page_breakdown: layer.page_breakdown,
+      extractor: layer.extractor,
+      extractor_version: layer.extractor_version,
+      latency_ms: layer.latency_ms,
+    };
+    // Use upsert with the appropriate constraint depending on the
+    // shape we're persisting.
+    if (insert.document_id) {
+      await svc.from("extraction_text_layer").upsert(insert, { onConflict: "tenant_id,document_id" });
+    } else if (insert.content_hash) {
+      await svc.from("extraction_text_layer").upsert(insert, { onConflict: "tenant_id,content_hash" });
+    }
+  } catch (_e) { /* swallow */ }
+  return { layer, cached: false, hash };
+};
+
+const rowToLayer = (row) => ({
+  ok: row.text_status !== "image_only" && row.text_status !== "extract_failed",
+  status: row.text_status,
+  page_count: row.page_count,
+  char_count: row.char_count,
+  body_text: row.body_text,
+  page_breakdown: row.page_breakdown || [],
+  extractor: row.extractor,
+  extractor_version: row.extractor_version,
+  latency_ms: row.latency_ms,
+  error: null,
+});
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -81,6 +152,50 @@ export default async function handler(req, res) {
       },
     });
 
+    // Phase A (EXTRACTION_PIPELINE_PLAN.md): L1 deterministic text
+    // extraction. Runs before the LLM dispatcher; if the PDF has a
+    // text layer with >= 200 chars we feed it to the adapters as
+    // hints.bodyText so claude.js sends pre_extracted_text instead of
+    // a base64 PDF. Cuts cost ~50% and eliminates the
+    // image_pdf_no_text failure mode for any PDF that has any
+    // usable text layer.
+    let textLayer = null;
+    let textLayerUsed = false;
+    if (sourceBytes && (sourceType === "pdf" || body?.mime === "application/pdf")) {
+      const documentId = body?.document_id || body?.source_id || null;
+      try {
+        const got = await getOrExtractTextLayer({
+          svc, tenantId: ctx.tenantId, documentId, bytes: sourceBytes, mime: body?.mime,
+        });
+        textLayer = got.layer;
+        await recordEvent(ctx, {
+          eventType: "docai_text_layer_extracted",
+          objectType: "extraction_run",
+          objectId: runId,
+          caseId,
+          detail: {
+            status: textLayer.status,
+            page_count: textLayer.page_count,
+            char_count: textLayer.char_count,
+            cached: got.cached,
+            extractor: textLayer.extractor,
+            latency_ms: textLayer.latency_ms,
+          },
+        });
+      } catch (_e) {
+        // Fail-soft: missing unpdf or unexpected PDF should not break
+        // the LLM dispatch path.
+        textLayer = null;
+      }
+    }
+
+    const incomingHints = body?.hints || {};
+    let dispatchHints = incomingHints;
+    if (textLayer?.ok && textLayer.body_text && !incomingHints.bodyText) {
+      dispatchHints = { ...incomingHints, bodyText: textLayer.body_text };
+      textLayerUsed = true;
+    }
+
     const out = await dispatchExtract({
       source: {
         url: body?.source_url || null,
@@ -91,8 +206,19 @@ export default async function handler(req, res) {
       },
       settings: { ...settings, tenant_id: ctx.tenantId },
       customerId: body?.customer_id,
-      hints: body?.hints || {},
+      hints: dispatchHints,
     });
+
+    // Phase A: L5 validators. Run domain rules over the normalized
+    // result; downgrade confidence on errors / 3+ warnings so the
+    // dispatcher's 0.7 threshold catches malformed extractions
+    // before they reach reconciliation. Pure: no I/O.
+    const v = validateExtraction(out?.normalized || null, {
+      currentConfidence: out?.confidence_overall,
+    });
+    if (v.adjustedConfidence != null && v.adjustedConfidence !== out.confidence_overall) {
+      out.confidence_overall = v.adjustedConfidence;
+    }
 
     // Phase 3.6: derive a structured status_reason. The dispatcher /
     // adapters now return `reason` so we don't have to guess.
@@ -114,12 +240,18 @@ export default async function handler(req, res) {
       status = "failed";
       statusReason = "non_po";
     } else if (lines.length === 0) {
-      // Distinguish the three "ok-shaped, no lines" causes:
+      // Distinguish the four "ok-shaped, no lines" causes:
+      //   - L1 detected an image-only PDF -> image_pdf_no_text
+      //     (pre-empts the utf-8 fallback path; surfaces before the
+      //     LLM ever runs).
       //   - the adapter ran in utf-8 fallback on a PDF -> image_pdf_no_text
       //   - the model returned ok with empty lines -> empty_lines
       //   - low confidence -> low_confidence
       const conf = out.confidence_overall;
-      if (out.mode === "utf8_text_fallback" && sourceType === "pdf") {
+      if (textLayer?.status === "image_only" && sourceType === "pdf") {
+        status = "failed";
+        statusReason = "image_pdf_no_text";
+      } else if (out.mode === "utf8_text_fallback" && sourceType === "pdf") {
         status = "failed";
         statusReason = "image_pdf_no_text";
       } else if (conf != null && conf < 0.7) {
@@ -146,6 +278,9 @@ export default async function handler(req, res) {
       confidence_overall: out.confidence_overall ?? null,
       status,
       status_reason: statusReason,
+      validator_issues: v.issues || [],
+      validator_summary: v.summary || {},
+      text_layer_used: textLayerUsed,
       error: out.error || null,
       finished_at: new Date().toISOString(),
     }).eq("id", runId);
@@ -177,6 +312,9 @@ export default async function handler(req, res) {
         status_reason: statusReason,
         lines_count: lines.length,
         attempts: out.attempts || [],
+        text_layer_used: textLayerUsed,
+        text_layer_status: textLayer?.status || null,
+        validator_summary: v.summary || null,
         error: out.error || null,
       },
     });
@@ -190,6 +328,16 @@ export default async function handler(req, res) {
       confidence_overall: out.confidence_overall ?? null,
       normalized: out.normalized || null,
       attempts: out.attempts || [],
+      text_layer: textLayer
+        ? {
+            status: textLayer.status,
+            char_count: textLayer.char_count,
+            page_count: textLayer.page_count,
+            used: textLayerUsed,
+          }
+        : null,
+      validator_issues: v.issues || [],
+      validator_summary: v.summary || null,
       error: out.error || null,
     });
   } catch (err) { sendError(res, err); }

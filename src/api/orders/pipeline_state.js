@@ -79,7 +79,7 @@ export default async function handler(req, res) {
     let extractionRuns = [];
     if (sourceDocId) {
       const runsResp = await svc.from("extraction_runs")
-        .select("id, source_id, source_type, source_filename, status, status_reason, adapter_used, adapter_attempts, confidence_overall, error, raw_extract, normalized_extract, started_at, finished_at")
+        .select("id, source_id, source_type, source_filename, status, status_reason, adapter_used, adapter_attempts, confidence_overall, error, raw_extract, normalized_extract, validator_issues, validator_summary, text_layer_used, started_at, finished_at")
         .eq("tenant_id", ctx.tenantId)
         .eq("source_id", sourceDocId)
         .order("started_at", { ascending: false })
@@ -89,6 +89,19 @@ export default async function handler(req, res) {
         raw_extract: previewJson(r.raw_extract),
         normalized_extract: previewJson(r.normalized_extract),
       }));
+    }
+
+    // 3b. L1 text-layer cache for this document. Phase A: lets the
+    // diagnostics tab show "L1 has_text · 4,231 chars · 3 pages" so
+    // the operator can see whether the deterministic path ran.
+    let textLayer = null;
+    if (sourceDocId) {
+      const tlResp = await svc.from("extraction_text_layer")
+        .select("text_status, page_count, char_count, page_breakdown, extractor, latency_ms, created_at")
+        .eq("tenant_id", ctx.tenantId)
+        .eq("document_id", sourceDocId)
+        .maybeSingle();
+      textLayer = tlResp.data || null;
     }
 
     // 4. Processing events (keyed by EITHER order_id OR source_id).
@@ -157,6 +170,7 @@ export default async function handler(req, res) {
       extraction_runs: extractionRuns,
       processing_events: events,
       ocr_runs: ocrRuns,
+      text_layer: textLayer,
       adapter_chain: adapterHealth,
       // Convenience: surface the most-recent-run summary so the UI
       // can render "Latest run: empty_lines · adapter=claude · mode=
@@ -169,6 +183,8 @@ export default async function handler(req, res) {
         confidence_overall: extractionRuns[0].confidence_overall,
         finished_at: extractionRuns[0].finished_at,
         attempts: extractionRuns[0].adapter_attempts,
+        validator_summary: extractionRuns[0].validator_summary || null,
+        text_layer_used: extractionRuns[0].text_layer_used || false,
       } : null,
     });
   } catch (err) { sendError(res, err); }

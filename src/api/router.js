@@ -164,6 +164,13 @@ import tredsOffer               from "./treds/offer.js";
 import tredsAccept              from "./treds/accept.js";
 import tredsList                from "./treds/list.js";
 import tredsEligibleBuyers      from "./treds/eligible_buyers.js";
+// Bet 2: format-template marketplace.
+import marketplacePublish       from "./marketplace/publish.js";
+import marketplaceRevoke        from "./marketplace/revoke.js";
+import marketplaceImports       from "./marketplace/imports.js";
+import marketplaceReport        from "./marketplace/report.js";
+import marketplaceList          from "./marketplace/list.js";
+import marketplaceReview        from "./marketplace/review.js";
 import inventoryCronPositions   from "./cron/inventory-positions.js";
 import inventoryCronWeekly      from "./cron/inventory-planning-weekly.js";
 import inventoryCronExceptions  from "./cron/inventory-exceptions-tick.js";
@@ -803,6 +810,16 @@ const STATIC_ROUTES = {
   "/treds/list":                    tredsList,
   "/treds/eligible_buyers":         tredsEligibleBuyers,
   "/treds/eligible_buyers/refresh": tredsEligibleBuyers,
+  // Bet 2: format-template marketplace.
+  "/marketplace/publish":           marketplacePublish,
+  "/marketplace/revoke":            marketplaceRevoke,
+  "/marketplace/imports":           marketplaceImports,
+  "/marketplace/imports/confirm":   marketplaceImports,
+  "/marketplace/imports/revert":    marketplaceImports,
+  "/marketplace/report":            marketplaceReport,
+  "/marketplace/list":              marketplaceList,
+  "/marketplace/review":            marketplaceReview,
+  "/marketplace/review/revoke":     marketplaceReview,
 
   "/master_data/graph":             masterDataGraph,
 

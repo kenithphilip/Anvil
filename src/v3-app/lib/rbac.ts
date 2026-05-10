@@ -81,6 +81,9 @@ export const MATRIX: Record<string, MatrixRow> = {
   // (which invoice to discount, accepting a bid). Admin can configure
   // partners. Sales manager reads to track AR aging.
   treds:       { sales_engineer: "",   sales_manager: "r",  procurement: "",   finance: "rwa", admin: "rwa",operator: "",   viewer: "r" },
+  // Bet 2: format-template marketplace. Operator reads (sees imports
+  // in the extraction pipeline). Admin publishes + reverts + reports.
+  marketplace: { sales_engineer: "r",  sales_manager: "r",   procurement: "r",   finance: "r",    admin: "rwa", operator: "r",  viewer: "r" },
 };
 
 export const ACTIONS: Record<string, Role[]> = {

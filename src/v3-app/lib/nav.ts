@@ -90,6 +90,8 @@ export const NAV: NavGroup[] = [
     items: [
       { id: "evals",     label: "Eval Suites",   icon: Icon.brain },
       { id: "studio",    label: "Profile Studio",icon: Icon.diff },
+      // Bet 2: format-template marketplace (consumer-side surface).
+      { id: "marketplace", label: "Template Marketplace", icon: Icon.layers },
       { id: "anomaly",   label: "Anomaly Compute", icon: Icon.alert },
       { id: "duplicates",label: "Duplicates",    icon: Icon.layers },
       { id: "agents",    label: "Agents",        icon: Icon.bolt },

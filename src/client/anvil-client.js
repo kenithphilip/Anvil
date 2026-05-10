@@ -525,6 +525,17 @@
     correction: async (payload) => apiFetch("/api/docai/correction", { method: "POST", body: payload }),
     listRuns:   async (q) => apiFetch("/api/docai/runs" + (q ? "?" + new URLSearchParams(q).toString() : "")),
     getRun:     async (id) => apiFetch("/api/docai/runs?id=" + encodeURIComponent(id)),
+    // Phase Cost-Opt: today's per-adapter call counters + per-adapter
+    // budget so the admin UI can render "Claude: 12/50 used today".
+    usage:      async (date) => apiFetch("/api/docai/usage" + (date ? "?date=" + encodeURIComponent(date) : "")),
+    // Aggregate cost-optimisation status: usage + 7d trend + caps +
+    // adapter health + actionable recommendations. Drives the
+    // admin "DocAI cost" tab.
+    costStatus: async () => apiFetch("/api/docai/cost_status"),
+    // Tenant docai settings (admin only). GET returns current
+    // values; updateSettings PATCHes a partial.
+    getSettings:    async () => apiFetch("/api/admin/docai_settings"),
+    updateSettings: async (patch) => apiFetch("/api/admin/docai_settings", { method: "PATCH", body: patch }),
   };
 
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });

@@ -58,6 +58,7 @@ const ADMIN_CRUD_TABS = [
   { id: "locations", label: "Customer locations" },
   { id: "contracts", label: "Contracts" },
   { id: "items",     label: "Item master" },
+  { id: "docai_cost", label: "DocAI cost" },
   { id: "diag",      label: "Diagnostics" },
 ];
 
@@ -3541,6 +3542,10 @@ const WiredAdminCRUD = () => {
           </Card>
         )}
 
+        {active === "docai_cost" && (
+          <DocAICostPanel />
+        )}
+
         {active === "diag" && (
           <>
             {diagnostics.error && (
@@ -3752,3 +3757,324 @@ const WiredAdminCRUD = () => {
 
 
 export default WiredAdminCRUD;
+
+// ============================================================
+// DocAI cost panel.
+//
+// Reads /api/docai/cost_status (today's per-adapter usage + 7-day
+// trend + adapter health + per-tenant caps + recommended actions),
+// and lets an admin PATCH /api/admin/docai_settings to update the
+// cost levers (provider order, daily limits, anthropic + gemini
+// model selectors) without writing SQL.
+//
+// Self-contained so admin.tsx stays readable.
+// ============================================================
+
+const DOCAI_ADAPTERS_LIST = [
+  "gemini", "claude", "reducto", "azure_di", "unstructured",
+  "docling", "marker",
+] as const;
+
+type CostStatus = {
+  date: string;
+  today_usage: Array<{ adapter: string; call_count: number; estimated_cost_usd: number; last_called_at?: string | null }>;
+  trend_7d: { calls: number; cost: number };
+  provider_order: string[];
+  provider_order_default: boolean;
+  daily_limits: Record<string, number> | null;
+  anthropic_model: string;
+  adapter_health: Record<string, boolean>;
+  tenant_has_key: Record<string, boolean>;
+  recommendations: Array<{ id: string; severity: string; title: string; body: string; action?: string }>;
+  summary: { calls_today: number; cost_today_usd: number; free_friendly_calls_today: number; paid_calls_today: number; warnings: number };
+};
+
+const DocAICostPanel: React.FC = () => {
+  const [data, setData] = useState<CostStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<{
+    docai_provider_order: string[];
+    docai_daily_limits: Record<string, number | "">;
+    docai_anthropic_model: string;
+    docai_gemini_model: string;
+  }>({
+    docai_provider_order: [],
+    docai_daily_limits: {},
+    docai_anthropic_model: "",
+    docai_gemini_model: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+
+  const reload = React.useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      const next = await (ObaraBackend as any)?.docai?.costStatus?.();
+      setData(next);
+      // Seed the editable form with the current values.
+      setForm({
+        docai_provider_order: Array.isArray(next?.provider_order) && !next?.provider_order_default
+          ? next.provider_order
+          : (next?.provider_order || []),
+        docai_daily_limits: Object.fromEntries(
+          Object.entries(next?.daily_limits || {}).map(([k, v]) => [k, Number(v)])
+        ),
+        docai_anthropic_model: next?.anthropic_model && !/sonnet-4-20250514/.test(next.anthropic_model)
+          ? next.anthropic_model
+          : "",
+        docai_gemini_model: "",
+      });
+    } catch (e) {
+      setError(e);
+    } finally { setLoading(false); }
+  }, []);
+
+  React.useEffect(() => { reload(); }, [reload]);
+
+  const submit = async () => {
+    setSaving(true); setSaveErr(null);
+    try {
+      const patch: Record<string, any> = {};
+      patch.docai_provider_order = form.docai_provider_order;
+      // Convert "" / 0 / negative to absent; only forward positive ints.
+      const limits: Record<string, number> = {};
+      for (const [k, v] of Object.entries(form.docai_daily_limits)) {
+        const n = Number(v);
+        if (Number.isFinite(n) && n > 0) limits[k] = Math.floor(n);
+      }
+      patch.docai_daily_limits = Object.keys(limits).length ? limits : null;
+      if (form.docai_anthropic_model) patch.docai_anthropic_model = form.docai_anthropic_model;
+      else patch.docai_anthropic_model = null;
+      if (form.docai_gemini_model) patch.docai_gemini_model = form.docai_gemini_model;
+      else patch.docai_gemini_model = null;
+      await (ObaraBackend as any)?.docai?.updateSettings?.(patch);
+      setEditing(false);
+      await reload();
+    } catch (e: any) {
+      setSaveErr(String(e?.message || e));
+    } finally { setSaving(false); }
+  };
+
+  if (loading) return <Card><div className="body">Loading docai cost status…</div></Card>;
+  if (error) return (
+    <Banner kind="bad" icon={Icon.alert} title="DocAI cost status unreachable" action={<Btn sm onClick={reload}>Retry</Btn>}>
+      <span className="mono-sm">{String((error as any)?.message || error)}</span>
+    </Banner>
+  );
+  if (!data) return <Card><div className="body">No data.</div></Card>;
+
+  const sevTone = (s: string): "good" | "warn" | "bad" | "info" =>
+    s === "bad" ? "bad" : s === "warn" ? "warn" : "info";
+
+  const moveOrder = (idx: number, dir: -1 | 1) => {
+    const next = [...form.docai_provider_order];
+    const j = idx + dir;
+    if (j < 0 || j >= next.length) return;
+    [next[idx], next[j]] = [next[j], next[idx]];
+    setForm({ ...form, docai_provider_order: next });
+  };
+  const toggleAdapter = (name: string) => {
+    const cur = form.docai_provider_order;
+    if (cur.includes(name)) {
+      setForm({ ...form, docai_provider_order: cur.filter((a) => a !== name) });
+    } else {
+      setForm({ ...form, docai_provider_order: [...cur, name] });
+    }
+  };
+
+  return (
+    <>
+      {/* Top-line cost summary */}
+      <Card title="Today's docai usage" eyebrow={"date " + data.date}>
+        <KV rows={[
+          ["Total calls",        String(data.summary.calls_today)],
+          ["Estimated cost",     "$" + data.summary.cost_today_usd.toFixed(4)],
+          ["Free-friendly calls", String(data.summary.free_friendly_calls_today)],
+          ["Paid calls",         String(data.summary.paid_calls_today)],
+          ["Warnings",           String(data.summary.warnings)],
+        ]} />
+      </Card>
+
+      {/* Recommendations */}
+      {data.recommendations.length > 0 && (
+        <Card title="Recommendations" eyebrow={"actionable cost-saving steps (" + data.recommendations.length + ")"}>
+          <div style={{ display: "grid", gap: 10 }}>
+            {data.recommendations.map((r) => (
+              <Banner key={r.id} kind={sevTone(r.severity)} icon={Icon.info} title={r.title}>
+                <span className="mono-sm">{r.body}</span>
+              </Banner>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Today's per-adapter table */}
+      <Card flush>
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--hairline-2)" }}>
+          <span className="h2">Per-adapter usage today</span>
+        </div>
+        {data.today_usage.length === 0 ? (
+          <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+            No extractions today.
+          </div>
+        ) : (
+          <table className="tbl">
+            <thead><tr>
+              <th>Adapter</th>
+              <th className="r">Calls</th>
+              <th className="r">Cap</th>
+              <th className="r">Remaining</th>
+              <th className="r">$ today</th>
+              <th>Last called</th>
+            </tr></thead>
+            <tbody>
+              {data.today_usage.map((row) => {
+                const cap = data.daily_limits?.[row.adapter];
+                const remaining = (cap != null) ? Math.max(0, cap - row.call_count) : null;
+                return (
+                  <tr key={row.adapter}>
+                    <td className="mono">{row.adapter}</td>
+                    <td className="r mono">{row.call_count}</td>
+                    <td className="r mono">{cap != null ? cap : "—"}</td>
+                    <td className="r mono">{remaining != null ? remaining : "—"}</td>
+                    <td className="r mono">${Number(row.estimated_cost_usd || 0).toFixed(4)}</td>
+                    <td className="mono-sm">
+                      {row.last_called_at
+                        ? new Date(row.last_called_at).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+                        : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </Card>
+
+      {/* Adapter health */}
+      <Card title="Adapter health" eyebrow="env vars + per-tenant keys">
+        <table className="tbl">
+          <thead><tr><th>Adapter</th><th>Env</th><th>Tenant key</th></tr></thead>
+          <tbody>
+            {DOCAI_ADAPTERS_LIST.map((a) => (
+              <tr key={a}>
+                <td className="mono">{a}</td>
+                <td><Chip k={data.adapter_health[a] ? "good" : "bad"}>{data.adapter_health[a] ? "yes" : "no"}</Chip></td>
+                <td><Chip k={data.tenant_has_key[a] ? "good" : "bad"}>{data.tenant_has_key[a] ? "yes" : "no"}</Chip></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+
+      {/* Configuration editor */}
+      <Card
+        title="Cost levers"
+        eyebrow="adapter chain · daily limits · model selectors"
+        right={
+          <>
+            {!editing && <Btn sm onClick={() => setEditing(true)}>Edit</Btn>}
+            {editing && (
+              <>
+                <Btn sm kind="ghost" onClick={() => { setEditing(false); reload(); }}>Cancel</Btn>
+                <Btn sm kind="primary" disabled={saving} onClick={submit}>{saving ? "Saving…" : "Save"}</Btn>
+              </>
+            )}
+          </>
+        }
+      >
+        {!editing && (
+          <KV rows={[
+            ["Provider order",   data.provider_order.join(" -> ") + (data.provider_order_default ? " (default)" : "")],
+            ["Daily limits",     data.daily_limits
+              ? Object.entries(data.daily_limits).map(([k, v]) => k + ":" + v).join(", ")
+              : "(none — uncapped)"],
+            ["Anthropic model",  data.anthropic_model],
+          ]} />
+        )}
+        {editing && (
+          <div style={{ display: "grid", gap: 14 }}>
+            <div>
+              <div className="lbl" style={{ marginBottom: 6 }}>Provider order (drag-equivalent: move up/down or toggle)</div>
+              <div style={{ display: "grid", gap: 6 }}>
+                {form.docai_provider_order.map((a, i) => (
+                  <div key={a} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <span className="mono-sm" style={{ width: 24, color: "var(--ink-3)" }}>{i + 1}</span>
+                    <span className="mono" style={{ flex: 1 }}>{a}</span>
+                    <Btn sm kind="ghost" disabled={i === 0} onClick={() => moveOrder(i, -1)}>Up</Btn>
+                    <Btn sm kind="ghost" disabled={i === form.docai_provider_order.length - 1} onClick={() => moveOrder(i, 1)}>Down</Btn>
+                    <Btn sm kind="ghost" onClick={() => toggleAdapter(a)}>Remove</Btn>
+                  </div>
+                ))}
+                <div className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 4 }}>Add:</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {DOCAI_ADAPTERS_LIST.filter((a) => !form.docai_provider_order.includes(a)).map((a) => (
+                    <Btn key={a} sm kind="ghost" onClick={() => toggleAdapter(a)}>+ {a}</Btn>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div className="lbl" style={{ marginBottom: 6 }}>Daily caps per adapter (blank or 0 = uncapped)</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", columnGap: 10, rowGap: 6, alignItems: "center" }}>
+                {DOCAI_ADAPTERS_LIST.map((a) => (
+                  <React.Fragment key={a}>
+                    <span className="mono">{a}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={form.docai_daily_limits[a] ?? ""}
+                      onChange={(ev) => setForm({
+                        ...form,
+                        docai_daily_limits: {
+                          ...form.docai_daily_limits,
+                          [a]: ev.target.value === "" ? "" : Number(ev.target.value),
+                        },
+                      })}
+                    />
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+
+            <label className="lbl">Anthropic model (blank = ANTHROPIC_MODEL_DEFAULT env or Sonnet 4)
+              <input
+                type="text"
+                value={form.docai_anthropic_model}
+                placeholder="claude-haiku-4-5-20251001"
+                onChange={(ev) => setForm({ ...form, docai_anthropic_model: ev.target.value })}
+              />
+            </label>
+
+            <label className="lbl">Gemini model (blank = GEMINI_MODEL_DEFAULT env or gemini-2.5-flash)
+              <input
+                type="text"
+                value={form.docai_gemini_model}
+                placeholder="gemini-2.5-flash"
+                onChange={(ev) => setForm({ ...form, docai_gemini_model: ev.target.value })}
+              />
+            </label>
+
+            {saveErr && (
+              <Banner kind="bad" icon={Icon.alert} title="Could not save">
+                <span className="mono-sm">{saveErr}</span>
+              </Banner>
+            )}
+          </div>
+        )}
+      </Card>
+
+      {/* 7-day rollup */}
+      <Card title="7-day usage trend" eyebrow="cumulative across all adapters">
+        <KV rows={[
+          ["Calls (last 7 days)",  String(data.trend_7d.calls)],
+          ["Estimated cost (7d)", "$" + data.trend_7d.cost.toFixed(4)],
+        ]} />
+      </Card>
+    </>
+  );
+};

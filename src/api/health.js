@@ -19,6 +19,20 @@ import { serviceClient } from "./_lib/supabase.js";
 
 const INTEGRATIONS = [
   { id: "anthropic",   env: ["ANTHROPIC_API_KEY"],                          label: "Anthropic Claude API" },
+  // Phase A-F: docai adapter chain. Each adapter has an env-var
+  // fallback that the dispatcher's isConfigured() check honours when
+  // tenant_settings doesn't carry a per-tenant key. We expose them on
+  // /api/health so the SO intake's pre-flight banner ("no docai
+  // adapter configured") fires accurately. Tenants who set per-tenant
+  // keys via tenant_settings will still see "no env" here; that's
+  // expected, the intake also checks the tenant's docai_provider_order.
+  { id: "claude",      env: ["ANTHROPIC_API_KEY"],                          label: "DocAI: Claude (LLM fallback)" },
+  { id: "gemini",      env: ["GEMINI_API_KEY"],                             label: "DocAI: Google Gemini (cost-optimised primary)" },
+  { id: "reducto",     env: ["REDUCTO_API_KEY"],                            label: "DocAI: Reducto" },
+  { id: "azure_di",    env: ["AZURE_DI_KEY", "AZURE_DI_ENDPOINT"],          label: "DocAI: Azure Document Intelligence" },
+  { id: "unstructured", env: ["UNSTRUCTURED_API_KEY"],                      label: "DocAI: Unstructured.io (hosted)" },
+  { id: "docling",     env: ["DOCLING_ENDPOINT"],                           label: "DocAI: Docling (self-hosted HTTP)" },
+  { id: "marker",      env: ["MARKER_ENDPOINT"],                            label: "DocAI: Marker (self-hosted HTTP)" },
   { id: "mistral_ocr", env: ["MISTRAL_API_KEY"],                            label: "Mistral OCR" },
   { id: "clamav",      env: ["CLAMAV_URL", "CLAMAV_TOKEN"],                 label: "ClamAV scanner" },
   { id: "tally",       env: ["TALLY_BRIDGE_URL", "TALLY_BRIDGE_TOKEN"],     label: "Tally bridge" },

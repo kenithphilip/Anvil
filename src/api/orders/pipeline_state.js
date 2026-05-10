@@ -76,10 +76,22 @@ export default async function handler(req, res) {
     }
 
     // 3. Extraction runs (most recent first; up to 10 retries).
+    // Phase B-F: surface the full set of per-run signals the
+    // diagnostics tab renders (text_layer_used, ocr_layer_used,
+    // template_used, voter_used, overrides_applied, field_provenance,
+    // extraction_kind). validator_issues + validator_summary already
+    // came in with Phase A.
     let extractionRuns = [];
     if (sourceDocId) {
       const runsResp = await svc.from("extraction_runs")
-        .select("id, source_id, source_type, source_filename, status, status_reason, adapter_used, adapter_attempts, confidence_overall, error, raw_extract, normalized_extract, validator_issues, validator_summary, text_layer_used, started_at, finished_at")
+        .select(`id, source_id, source_type, source_filename, status, status_reason,
+                 adapter_used, adapter_attempts, confidence_overall, error,
+                 raw_extract, normalized_extract,
+                 validator_issues, validator_summary,
+                 text_layer_used, ocr_layer_used, template_used,
+                 overrides_applied, field_provenance, voter_lines, voter_used,
+                 extraction_kind,
+                 started_at, finished_at`)
         .eq("tenant_id", ctx.tenantId)
         .eq("source_id", sourceDocId)
         .order("started_at", { ascending: false })
@@ -102,6 +114,19 @@ export default async function handler(req, res) {
         .eq("document_id", sourceDocId)
         .maybeSingle();
       textLayer = tlResp.data || null;
+    }
+
+    // 3c. L2 OCR-layer cache. Phase B: image-only PDFs that fed
+    // the LLM via OCR show up here so the operator can confirm
+    // the OCR fallback ran (and reused cache on retries).
+    let ocrLayer = null;
+    if (sourceDocId) {
+      const ocrLayerResp = await svc.from("extraction_ocr_layer")
+        .select("ocr_status, page_count, char_count, page_breakdown, bbox_count, provider, provider_model, latency_ms, created_at")
+        .eq("tenant_id", ctx.tenantId)
+        .eq("document_id", sourceDocId)
+        .maybeSingle();
+      ocrLayer = ocrLayerResp.data || null;
     }
 
     // 4. Processing events (keyed by EITHER order_id OR source_id).
@@ -171,6 +196,7 @@ export default async function handler(req, res) {
       processing_events: events,
       ocr_runs: ocrRuns,
       text_layer: textLayer,
+      ocr_layer: ocrLayer,
       adapter_chain: adapterHealth,
       // Convenience: surface the most-recent-run summary so the UI
       // can render "Latest run: empty_lines · adapter=claude · mode=
@@ -185,6 +211,11 @@ export default async function handler(req, res) {
         attempts: extractionRuns[0].adapter_attempts,
         validator_summary: extractionRuns[0].validator_summary || null,
         text_layer_used: extractionRuns[0].text_layer_used || false,
+        ocr_layer_used: extractionRuns[0].ocr_layer_used || false,
+        template_used: extractionRuns[0].template_used || null,
+        voter_used: extractionRuns[0].voter_used || false,
+        overrides_applied_count: Array.isArray(extractionRuns[0].overrides_applied) ? extractionRuns[0].overrides_applied.length : 0,
+        extraction_kind: extractionRuns[0].extraction_kind || "po",
       } : null,
     });
   } catch (err) { sendError(res, err); }

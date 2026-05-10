@@ -160,8 +160,13 @@ const WiredSOIntake = () => {
   // pre-flight warning if every adapter says "not configured" so
   // the operator doesn't burn upload time + Anthropic credits on a
   // run that's structurally guaranteed to return 0 lines.
+  // Phases A-C cover seven adapters (gemini / claude / reducto /
+  // azure_di / unstructured / docling / marker); plus the legacy
+  // "anthropic" alias kept for back-compat. Per-tenant settings can
+  // flip an adapter on without an env var, so this is a "platform
+  // has *some* adapter" check, not "this tenant is fully wired."
   const docaiConfigured = !!health?.integrations?.some?.((i: any) =>
-    ["claude", "anthropic", "reducto", "azure_di", "unstructured", "docai"].includes(i.id) && i.configured
+    ["gemini", "claude", "anthropic", "reducto", "azure_di", "unstructured", "docling", "marker", "docai"].includes(i.id) && i.configured
   );
 
   e(() => {

@@ -63,6 +63,18 @@ describe("Pipeline Diagnostics tab (S4 of audit-close)", () => {
           finished_at: new Date().toISOString(),
           normalized_extract: { classification: "non_po", customer: null, lines: [] },
           raw_extract: { stop_reason: "end_turn" },
+          // Phase B-F: full per-run signal set the diagnostics tab now
+          // renders. Mirrors what /api/orders/<id>/pipeline-state returns.
+          validator_issues: [],
+          validator_summary: { error: 0, warn: 0, info: 0, total: 0 },
+          text_layer_used: false,
+          ocr_layer_used: true,
+          template_used: null,
+          overrides_applied: [],
+          field_provenance: [],
+          voter_lines: [],
+          voter_used: false,
+          extraction_kind: "po",
         },
       ],
       processing_events: [
@@ -82,6 +94,33 @@ describe("Pipeline Diagnostics tab (S4 of audit-close)", () => {
         adapter_used: "claude",
         confidence_overall: 0.42,
         finished_at: new Date().toISOString(),
+        validator_summary: { error: 0, warn: 0, info: 0, total: 0 },
+        text_layer_used: false,
+        ocr_layer_used: true,
+        template_used: null,
+        voter_used: false,
+        overrides_applied_count: 0,
+        extraction_kind: "po",
+      },
+      text_layer: {
+        text_status: "image_only",
+        page_count: 3,
+        char_count: 12,
+        page_breakdown: [],
+        extractor: "unpdf",
+        latency_ms: 14,
+        created_at: new Date().toISOString(),
+      },
+      ocr_layer: {
+        ocr_status: "ok",
+        page_count: 3,
+        char_count: 4231,
+        page_breakdown: [],
+        bbox_count: 87,
+        provider: "mistral",
+        provider_model: "mistral-ocr-latest",
+        latency_ms: 1200,
+        created_at: new Date().toISOString(),
       },
     };
     const original = window.location.hash;
@@ -120,6 +159,14 @@ describe("Pipeline Diagnostics tab (S4 of audit-close)", () => {
       // Events table shows the started + failed events.
       expect(html).toContain("docai_extract_started");
       expect(html).toContain("docai_extract_failed");
+      // Phase B-F: the diagnostics tab renders the new "Pipeline
+      // layers" card with L1 / L2 / L3 / L6 / E status, plus per-run
+      // Layers + Validator columns. The fixture above sets
+      // ocr_layer_used=true on the run so the layers cell shows L2.
+      expect(html).toContain("Pipeline layers");
+      expect(html).toContain("L2 OCR layer");
+      expect(html).toContain("Layers");
+      expect(html).toContain("Validator");
     } finally { window.location.hash = original; }
   });
 });

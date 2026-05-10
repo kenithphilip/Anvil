@@ -45,6 +45,10 @@ const screens = {
   inventoryItem:        lazy(() => import("./screens/inventory-item")),
   inventoryAllocations: lazy(() => import("./screens/inventory-allocations")),
   inventorySuppliers:   lazy(() => import("./screens/inventory-suppliers")),
+  // Bet 7: BRSR value-chain reporting.
+  brsrSupplier:         lazy(() => import("./screens/brsr-supplier")),
+  brsrBuyerDashboard:   lazy(() => import("./screens/brsr-buyer-dashboard")),
+  brsrDisclosureDetail: lazy(() => import("./screens/brsr-disclosure-detail")),
   // Service
   svcVisits:          lazy(() => import("./screens/service-visits")),
   amc:                lazy(() => import("./screens/amc")),
@@ -129,6 +133,10 @@ export const RESOLVERS = {
   "inventory-item":       () => screens.inventoryItem,
   "inventory-allocations":() => screens.inventoryAllocations,
   "inventory-suppliers":  () => screens.inventorySuppliers,
+  // Bet 7: BRSR value-chain reporting.
+  "brsr-supplier":          () => screens.brsrSupplier,
+  "brsr-buyer-dashboard":   () => screens.brsrBuyerDashboard,
+  "brsr-disclosure-detail": () => screens.brsrDisclosureDetail,
   "svc-visits":() => screens.svcVisits,
   amc:         () => screens.amc,
   car:         () => screens.car,

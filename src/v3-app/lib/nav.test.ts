@@ -2,19 +2,20 @@ import { describe, it, expect } from "vitest";
 import { NAV, ROLES, crumbFor } from "./nav";
 
 describe("NAV", () => {
-  it("has the canonical 9 sidebar groups", () => {
+  it("has the canonical 10 sidebar groups", () => {
+    // Bet 7 (May 2026) added a Sustainability group between Finance
+    // and Data for BRSR Core value-chain reporting.
     expect(NAV.map((g) => g.label)).toEqual([
       "Workflows", "Sales", "Procurement", "Service",
-      "Finance", "Data", "Quality", "Comms & Security", "Admin",
+      "Finance", "Sustainability",
+      "Data", "Quality", "Comms & Security", "Admin",
     ]);
   });
-  it("exposes 38 unique nav ids", () => {
-    // Count goes up to 38 with the inventory-planning module's
-    // five Procurement entries (planning / plans / exceptions /
-    // allocations / suppliers).
+  it("exposes 40 unique nav ids", () => {
+    // 38 from before Bet 7, plus brsr-supplier + brsr-buyer-dashboard.
     const ids = NAV.flatMap((g) => g.items.map((i) => i.id));
-    expect(ids.length).toBe(38);
-    expect(new Set(ids).size).toBe(38);
+    expect(ids.length).toBe(40);
+    expect(new Set(ids).size).toBe(40);
   });
   it("each item has id + label + icon", () => {
     for (const group of NAV) {

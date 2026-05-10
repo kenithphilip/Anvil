@@ -111,4 +111,47 @@ describe("SO Intake auto-extract", () => {
     const phone = container.querySelector('#nc-phone') as HTMLInputElement | null;
     expect(phone?.value).toBe("+91 98765 43210");
   });
+
+  it("loose name match suggests but does NOT auto-select; dialog opens with prefill", async () => {
+    // Bug fix May 2026 (customer-prefill report): the previous
+    // matcher loose-prefix-matched "Tata Steel" (extracted) against
+    // "Tata Steel Ltd" (existing) and silently auto-selected. The
+    // operator then saw "—" for every field on the existing
+    // customer's record (because that record happened to be missing
+    // GSTIN/terms/etc.) and concluded "fields not auto-populating".
+    // The matcher now suggests via toast but always opens the new-
+    // customer dialog so the operator can confirm or replace.
+    const EXISTING = { id: "cust-tata", customer_name: "Tata Steel Ltd", gstin: "27AABCT1234E1Z5" };
+    installBackend({
+      health: async () => ({ integrations: [] }),
+      customers: { list: async () => ({ customers: [EXISTING] }) },
+      documents: {
+        upload: async () => ({ documentId: "doc-2", scan: { status: "clean" } }),
+        extract: async () => ({ normalized: { customer: {
+          name: "Tata Steel",   // prefix of "Tata Steel Ltd"
+          gstin: "29DIFFRENT1234F1",   // different GSTIN, so no high-confidence match
+          state_code: "27",
+          currency: "INR",
+          payment_terms: "Net 30",
+          bill_to_address: "From PO",
+        } } }),
+      },
+    });
+    const mod = await import("./so-intake");
+    const { container } = renderScreen(mod.default);
+    await new Promise((r) => setTimeout(r, 0));
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    Object.defineProperty(fileInput!, "files", { value: [fakeFile()] });
+    fireEvent.change(fileInput!);
+    // Dialog should open even though "Tata Steel" is a name-prefix
+    // of the existing "Tata Steel Ltd" record.
+    await waitFor(() => {
+      const input = container.querySelector('#nc-name') as HTMLInputElement | null;
+      expect(input).not.toBeNull();
+      expect(input!.value).toBe("Tata Steel");
+    }, { timeout: 2000 });
+    // The existing customer should NOT have been auto-selected.
+    const sel = container.querySelector('#so-intake-customer') as HTMLSelectElement | null;
+    expect(sel?.value).not.toBe("cust-tata");
+  });
 });

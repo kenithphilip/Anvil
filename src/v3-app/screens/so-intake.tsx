@@ -62,6 +62,12 @@ const WiredSOIntake = () => {
   // out.normalized.customer.
   const [extractedLines, setExtractedLines] = u<any[] | null>(null);
   const [extractMeta, setExtractMeta] = u<{ runId?: string | null; adapter?: string | null; confidence?: number | null }>({});
+  // Bug fix May 2026 (customer-prefill report): keep the raw
+  // extracted customer block around so the right-hand intake card
+  // can render a "From PO" panel side-by-side with the existing-
+  // customer record. Lets the operator spot e.g. a missing GSTIN
+  // that the PO supplied even after auto-match.
+  const [extractedCustomer, setExtractedCustomer] = u<any | null>(null);
 
   // Address picker. The user's spec says ship-to / bill-to should be
   // a "relational object from other existing addresses of other
@@ -165,7 +171,7 @@ const WiredSOIntake = () => {
     const gstin = (extracted.gstin || "").trim().toUpperCase();
     if (gstin && /^[0-9A-Z]{15}$/.test(gstin)) {
       const byGstin = list.find((c) => (c.gstin || "").toUpperCase() === gstin);
-      if (byGstin) return byGstin;
+      if (byGstin) return { customer: byGstin, confidence: "exact_gstin" };
     }
     const name = (extracted.name || "").trim().toLowerCase();
     if (name) {
@@ -179,17 +185,36 @@ const WiredSOIntake = () => {
         .trim();
       const target = norm(name);
       const exact = list.find((c) => norm(c.customer_name) === target);
-      if (exact) return exact;
-      // Loose: one is a prefix of the other (3+ chars), used to
-      // catch "Tata Steel" vs "Tata Steel Ltd.".
-      const loose = list.find((c) => {
-        const cn = norm(c.customer_name);
-        if (cn.length < 3 || target.length < 3) return false;
-        return cn.startsWith(target) || target.startsWith(cn);
-      });
-      if (loose) return loose;
+      if (exact) return { customer: exact, confidence: "exact_name" };
     }
     return null;
+  };
+
+  // Bug fix May 2026 (customer-prefill report): the previous
+  // matcher silently auto-selected on a loose name-prefix match
+  // ("Tata" -> "Tata Steel Ltd"), suppressed the new-customer
+  // dialog, and left the operator with a matched customer whose
+  // record had no GSTIN / payment_terms / bill_to. The screen then
+  // showed "—" for every field and the user thought
+  // "fields not auto-populating". Loose matches now surface as a
+  // *suggestion* but always open the new-customer dialog so the
+  // operator can confirm or replace.
+  const suggestLooseMatch = (extracted) => {
+    if (!extracted?.name) return null;
+    const list = customerList || [];
+    const norm = (s) => String(s || "").toLowerCase()
+      .replace(/^m\/s\.?\s*/i, "")
+      .replace(/[.,]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const target = norm(extracted.name);
+    if (target.length < 3) return null;
+    const candidate = list.find((c) => {
+      const cn = norm(c.customer_name);
+      if (cn.length < 3) return false;
+      return cn.startsWith(target) || target.startsWith(cn);
+    });
+    return candidate || null;
   };
 
   // Run docai extraction on the just-uploaded file. Best-effort: a
@@ -223,14 +248,21 @@ const WiredSOIntake = () => {
       });
 
       const customer = out?.normalized?.customer || null;
+      // Bug fix May 2026 (customer-prefill report): always stash
+      // the extracted customer block so the right-hand intake card
+      // can show it side-by-side with whatever existing-customer
+      // record gets matched. This is the "From PO" panel the
+      // operator wants to see EVEN when an existing customer is
+      // selected, so they can spot e.g. a missing GSTIN that the
+      // PO supplied.
+      setExtractedCustomer(customer);
+
       if (!customer) {
         // No customer block extracted at all (docai missed the
         // header, adapter wasn't configured, etc.). Open the new-
         // customer dialog with empty fields. The operator can
         // still see the PO they uploaded in the doc preview, so
-        // they have somewhere to copy from. We also keep any
-        // currency / payment_terms defaults the operator is most
-        // likely to need.
+        // they have somewhere to copy from.
         setNewCustomer({
           customer_name: "", gstin: "", state_code: "",
           currency: "INR", payment_terms: "Net 30", margin_floor_pct: "10",
@@ -244,25 +276,11 @@ const WiredSOIntake = () => {
         );
         return;
       }
-      const matched = matchCustomerFromExtraction(customer);
-      if (matched) {
-        setCustomerId(matched.id);
-        window.notifySuccess?.(
-          "Customer matched",
-          (matched.customer_name || matched.id?.slice(0, 8)) + " (from PO header)",
-        );
-        return;
-      }
-      // No match. Pre-fill the new-customer dialog with whatever the
-      // extractor gave us so the operator just has to confirm.
-      // Bug fix May 2026: previously dropped customer.email and
-      // customer.phone on the floor; the operator had to retype them
-      // even when the PO header carried both. Both columns exist on
-      // the customers table (migration 061) and the API now persists
-      // them via contact_email / contact_phone.
+
+      // Build the prefill payload once; both branches below use it.
       const billTo = customer.bill_to_address || customer.shipping_address || "";
       const shipTo = customer.ship_to_address || customer.bill_to_address || "";
-      setNewCustomer({
+      const prefill = {
         customer_name: customer.name || "",
         gstin: (customer.gstin || "").toUpperCase(),
         state_code: (customer.state_code || "").toUpperCase(),
@@ -273,12 +291,41 @@ const WiredSOIntake = () => {
         ship_to: shipTo,
         contact_email: customer.email || "",
         contact_phone: customer.phone || "",
-      });
+      };
+
+      const matchResult = matchCustomerFromExtraction(customer);
+      if (matchResult?.customer) {
+        // High-confidence match (GSTIN exact OR normalized-name
+        // exact). Auto-select. The right-hand card will still
+        // render the "From PO" panel so the operator sees the
+        // extracted fields next to the existing-customer record.
+        setCustomerId(matchResult.customer.id);
+        window.notifySuccess?.(
+          "Customer matched",
+          (matchResult.customer.customer_name || matchResult.customer.id?.slice(0, 8))
+            + " (" + matchResult.confidence.replace(/_/g, " ") + ")",
+        );
+        return;
+      }
+
+      // Loose name-prefix candidate: SUGGEST but do not auto-select.
+      // The new-customer dialog opens with the extracted prefill so
+      // the operator can confirm "create new" or pick the existing
+      // record from the dropdown.
+      const loose = suggestLooseMatch(customer);
+      setNewCustomer(prefill);
       setNewCustomerOpen(true);
-      window.notifyLive?.(
-        "New customer detected",
-        (customer.name || "this PO") + " is not in the database. Confirm to add.",
-      );
+      if (loose) {
+        window.notifyLive?.(
+          "Possible existing customer: " + loose.customer_name,
+          "Pick from the list or confirm to add a new record from the PO.",
+        );
+      } else {
+        window.notifyLive?.(
+          "New customer detected",
+          (customer.name || "this PO") + " is not in the database. Confirm to add.",
+        );
+      }
     } catch (err) {
       // Don't surface a hard error; the operator can still proceed.
       // eslint-disable-next-line no-console
@@ -339,13 +386,32 @@ const WiredSOIntake = () => {
       // can still amend the order's evidence_by_field + result
       // later, but the operator no longer stares at "0 lines"
       // while the cron worker catches up.
+      // Bug fix May 2026 (customer-prefill report): carry the raw
+      // extracted customer block onto the order's
+      // result.salesOrder.customer so the workspace's right-hand
+      // panel can render the PO header values regardless of which
+      // customer record was matched.
       const initialResult: Record<string, any> = {};
       if (extractedLines && extractedLines.length) {
-        initialResult.salesOrder = { lineItems: extractedLines };
+        initialResult.salesOrder = {
+          lineItems: extractedLines,
+          customer: extractedCustomer || null,
+        };
+      } else if (extractedCustomer) {
+        initialResult.salesOrder = { customer: extractedCustomer };
       }
+
       const initialPreflight: Record<string, any> = {};
       if (doc?.id) initialPreflight.source_document_id = doc.id;
-      if (extractMeta.runId) initialPreflight.extraction_run_id = extractMeta.runId;
+      // Bug fix May 2026 (stepper-lies report): only stamp
+      // `extraction_run_id` when extraction actually produced
+      // lines. A run_id without lines previously caused the
+      // workspace stepper to mark Extract green even though the
+      // reconciliation table was empty. The retry signal stays
+      // available because the source_document_id is still stamped.
+      if (extractMeta.runId && extractedLines && extractedLines.length) {
+        initialPreflight.extraction_run_id = extractMeta.runId;
+      }
       if (extractMeta.adapter) initialPreflight.adapter_used = extractMeta.adapter;
       if (extractMeta.confidence != null) initialPreflight.confidence_overall = extractMeta.confidence;
 
@@ -580,10 +646,42 @@ const WiredSOIntake = () => {
                 </>
               ) : (
                 <div className="mono-sm" style={{ color: "var(--ink-3)" }}>
-                  Select a customer to see GSTIN, state, currency, and margin floor.
+                  Select a customer, or upload a PO and the customer
+                  + GSTIN + currency + payment terms auto-populate
+                  here from the PO header.
                 </div>
               )}
             </Card>
+
+            {/* Bug fix May 2026 (customer-prefill report): render
+                the extracted customer block from the PO whenever
+                docai returned one. Renders side-by-side with the
+                "selected" card above so the operator sees both the
+                existing-customer record and what the PO actually
+                said. Mismatches (e.g. PO has a GSTIN the existing
+                customer record doesn't) become visible. */}
+            {extractedCustomer && (
+              <Card title="From PO header" eyebrow="extracted by docai">
+                <KV rows={[
+                  ["Name",        extractedCustomer.name || "—"],
+                  ["GSTIN",       (extractedCustomer.gstin || "").toUpperCase() || "—"],
+                  ["State",       (extractedCustomer.state_code || "").toUpperCase() || "—"],
+                  ["Currency",    extractedCustomer.currency || "—"],
+                  ["Pay terms",   extractedCustomer.payment_terms || "—"],
+                  ["Email",       extractedCustomer.email || "—"],
+                  ["Phone",       extractedCustomer.phone || "—"],
+                  ["Bill to",     extractedCustomer.bill_to_address || "—"],
+                  ["Ship to",     extractedCustomer.ship_to_address || extractedCustomer.bill_to_address || "—"],
+                ]} />
+                {selectedCustomer && (
+                  <div className="mono-sm" style={{ marginTop: 6, color: "var(--ink-3)" }}>
+                    Selected customer's record will be used. Update
+                    the customer record from the Customers screen if
+                    the PO supplied newer info.
+                  </div>
+                )}
+              </Card>
+            )}
 
             <Card title="Profile match" eyebrow="prediction · cached">
               <div className="mono-sm" style={{ color: "var(--ink-3)" }}>

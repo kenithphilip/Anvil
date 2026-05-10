@@ -618,6 +618,11 @@
           bytes_base64: bytesB64,
           customer_id: o.customer_id || null,
           source_id: o.source_id || null,
+          // Phase 3.6 observability: pass order_id so the
+          // extract handler can key processing_events by case
+          // for the workspace's Activity timeline + Pipeline
+          // Diagnostics tab. Optional; falls back to source_id.
+          order_id: o.order_id || null,
         },
       });
     },
@@ -632,6 +637,11 @@
     get: async (id) => apiFetch("/api/orders/" + id),
     update: async (id, patch) => apiFetch("/api/orders/" + id, { method: "PATCH", body: patch }),
     remove: async (id) => apiFetch("/api/orders/" + id, { method: "DELETE" }),
+    // Phase 3.6 observability: full pipeline-diagnostics blob for
+    // an order. Used by the workspace's Pipeline Diagnostics tab
+    // to render extraction_runs + processing_events + adapter
+    // health in one place.
+    pipelineState: async (id) => apiFetch("/api/orders/" + encodeURIComponent(id) + "/pipeline-state"),
   };
 
   const customers = {

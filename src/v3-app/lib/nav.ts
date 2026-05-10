@@ -64,6 +64,8 @@ export const NAV: NavGroup[] = [
       { id: "einvoice",  label: "e-Invoice",     icon: Icon.doc },
       { id: "invoices",  label: "Invoices",      icon: Icon.doc },
       { id: "cost",      label: "Cost & Margin", icon: Icon.cash },
+      // Bet 6: TReDS receivables loop (sandbox).
+      { id: "treds",     label: "TReDS",         icon: Icon.cash },
     ],
   },
   // Bet 7: BRSR value-chain reporting (SEBI BRSR Core).

@@ -1042,6 +1042,29 @@
     },
   };
 
+  // Bet 6: AA (Account Aggregator) + TReDS (Trade Receivables
+  // Discounting System) receivables loop. Sandbox-mode methods
+  // talk to mocked Setu / M1xchange backends when the tenant has
+  // not configured a real partner yet.
+  const aa = {
+    list: async () => apiFetch("/api/aa/consent"),
+    get: async (id) => apiFetch("/api/aa/consent?id=" + encodeURIComponent(id)),
+    request: async (payload) => apiFetch("/api/aa/consent", { method: "POST", body: payload }),
+    poll: async (id) => apiFetch("/api/aa/consent", { method: "PATCH", body: { id } }),
+  };
+  const treds = {
+    list: async () => apiFetch("/api/treds/list"),
+    offers: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/treds/offer" + (qs ? "?" + qs : ""));
+    },
+    submitOffer: async (payload) => apiFetch("/api/treds/offer", { method: "POST", body: payload }),
+    refreshOffer: async (id) => apiFetch("/api/treds/offer", { method: "PATCH", body: { id } }),
+    acceptOffer: async (offerId) => apiFetch("/api/treds/accept", { method: "POST", body: { offer_id: offerId } }),
+    eligibleBuyers: async () => apiFetch("/api/treds/eligible_buyers"),
+    refreshEligibleBuyers: async () => apiFetch("/api/treds/eligible_buyers/refresh", { method: "POST" }),
+  };
+
   const bom = {
     list: async (params) => {
       const qs = new URLSearchParams(params || {}).toString();
@@ -1507,6 +1530,8 @@
     inventory,
     masterData,
     brsr,
+    aa,
+    treds,
     bom,
     profileVersions,
     sourcePos,

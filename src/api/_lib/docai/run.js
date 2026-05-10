@@ -326,6 +326,24 @@ export const runExtractionPipeline = async (params) => {
     dispatchHints.knownFields = templateApplied.normalized.customer;
   }
   if (kind && kind !== "po") dispatchHints.expectedKind = kind;
+  // Phase Cost-Opt: pass extraction-context summaries so the
+  // model selector inside claude.js / gemini.js can pick the
+  // right tier deterministically (long doc -> Sonnet, OCR-fed
+  // text -> Sonnet, short clean PO -> Haiku/Flash).
+  if (textLayer) {
+    dispatchHints.textLayer = {
+      status: textLayer.status,
+      char_count: Number(textLayer.char_count || 0),
+      page_count: Number(textLayer.page_count || 0),
+    };
+  }
+  if (ocrLayer) {
+    dispatchHints.ocrLayer = {
+      status: ocrLayer.status,
+      char_count: Number(ocrLayer.char_count || 0),
+      page_count: Number(ocrLayer.page_count || 0),
+    };
+  }
 
   const dispatchSource = {
     url, bytes, filename, mime, sourceType,
@@ -450,7 +468,11 @@ export const runExtractionPipeline = async (params) => {
     status = "ok"; statusReason = "ok";
   }
 
-  // 9. Persist the run.
+  // 9. Persist the run. selected_model + model_selection_reason
+  // come from claude.js / gemini.js's deterministic selector
+  // (Phase Cost-Opt). When the voter mode reduced multiple
+  // adapters, the per-adapter selection is on raw.per_adapter so
+  // we record the voter's "voter" string here.
   await svc.from("extraction_runs").update({
     adapter_used: out?.adapter_used || null,
     adapter_attempts: out?.attempts || [],
@@ -469,6 +491,8 @@ export const runExtractionPipeline = async (params) => {
     field_provenance: voted?.field_provenance || [],
     voter_lines: voted?.voter_lines || [],
     voter_used: !!voted,
+    selected_model: out?.selected_model || (voted ? "voter" : null),
+    model_selection_reason: out?.model_selection_reason || (voted ? "voter_aggregate" : null),
     error: out?.error || null,
     finished_at: new Date().toISOString(),
   }).eq("id", runId);
@@ -520,6 +544,8 @@ export const runExtractionPipeline = async (params) => {
     validatorSummary: v.summary || null,
     fieldProvenance: voted?.field_provenance || [],
     voterUsed: !!voted,
+    selectedModel: out?.selected_model || (voted ? "voter" : null),
+    modelSelectionReason: out?.model_selection_reason || (voted ? "voter_aggregate" : null),
     error: out?.error || null,
   };
 };

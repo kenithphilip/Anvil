@@ -368,6 +368,20 @@ export const runExtractionPipeline = async (params) => {
     });
     voted = voteAcrossAdapters(all);
     if (voted) {
+      // Bet 4: roll up parse_method/parse_repairs/parse_retries
+      // from the per-adapter results. parse_method is the worst
+      // of the winning ones (so a single sap_zod_retry across a
+      // 3-adapter vote surfaces), parse_repairs is the union, and
+      // parse_retries is the max.
+      const okEntries = all.filter((r) => r && r.ok);
+      const methodOrder = ["native_structured", "tool_use", "sap_repaired", "sap_zod_retry", "failed"];
+      const worstMethod = okEntries.length
+        ? methodOrder.find((m) => okEntries.some((r) => r.parse_method === m)) || "native_structured"
+        : "failed";
+      const unionRepairs = Array.from(new Set(
+        okEntries.flatMap((r) => Array.isArray(r.parse_repairs) ? r.parse_repairs : []),
+      ));
+      const maxRetries = okEntries.reduce((m, r) => Math.max(m, Number(r.parse_retries) || 0), 0);
       out = {
         ok: true,
         adapter_used: "voter",
@@ -377,8 +391,12 @@ export const runExtractionPipeline = async (params) => {
         attempts: voted.attempts,
         raw: { voter_used: true, per_adapter: all.map((r) => ({
           adapter: r.adapter_used, ok: r.ok, conf: r.confidence_overall,
+          parse_method: r.parse_method || null,
         })) },
         mode: "voter",
+        parse_method: worstMethod,
+        parse_repairs: unionRepairs,
+        parse_retries: maxRetries,
       };
     } else if (all.length === 1) {
       out = all[0];
@@ -482,6 +500,16 @@ export const runExtractionPipeline = async (params) => {
   // (Phase Cost-Opt). When the voter mode reduced multiple
   // adapters, the per-adapter selection is on raw.per_adapter so
   // we record the voter's "voter" string here.
+  // Bet 4: parse_method/parse_repairs/parse_retries describe
+  // which JSON-decode path the adapter took. When the run failed
+  // outright we still record parse_method='failed' so the
+  // diagnostics tab can chart the parse_failed rate over time.
+  const parseMethod = status === "failed" && (statusReason === "parse_failed" || statusReason === "fail_unknown")
+    ? "failed"
+    : (out?.parse_method || null);
+  const parseRepairs = Array.isArray(out?.parse_repairs) ? out.parse_repairs : [];
+  const parseRetries = Number(out?.parse_retries) || 0;
+
   await svc.from("extraction_runs").update({
     adapter_used: out?.adapter_used || null,
     adapter_attempts: out?.attempts || [],
@@ -502,6 +530,9 @@ export const runExtractionPipeline = async (params) => {
     voter_used: !!voted,
     selected_model: out?.selected_model || (voted ? "voter" : null),
     model_selection_reason: out?.model_selection_reason || (voted ? "voter_aggregate" : null),
+    parse_method: parseMethod,
+    parse_repairs: parseRepairs,
+    parse_retries: parseRetries,
     error: out?.error || null,
     finished_at: new Date().toISOString(),
   }).eq("id", runId);
@@ -523,6 +554,9 @@ export const runExtractionPipeline = async (params) => {
       voter_used: !!voted,
       validator_summary: v.summary || null,
       overrides_applied_count: overridesApplied.length,
+      parse_method: parseMethod,
+      parse_retries: parseRetries,
+      parse_repairs: parseRepairs,
       error: out?.error || null,
     },
   );
@@ -555,6 +589,9 @@ export const runExtractionPipeline = async (params) => {
     voterUsed: !!voted,
     selectedModel: out?.selected_model || (voted ? "voter" : null),
     modelSelectionReason: out?.model_selection_reason || (voted ? "voter_aggregate" : null),
+    parseMethod,
+    parseRepairs,
+    parseRetries,
     error: out?.error || null,
   };
 };

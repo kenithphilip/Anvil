@@ -17,6 +17,41 @@ const InventoryAllocationsScreen: React.FC = () => {
   const [tab, setTab] = useState("reserved");
   const [allocs, setAllocs] = useState<{ data: any[]; loading: boolean }>({ data: [], loading: true });
   const [bump, setBump] = useState(0);
+  const [showCreate, setShowCreate] = useState(false);
+  const [createForm, setCreateForm] = useState<{
+    part_no: string;
+    qty: string;
+    required_by: string;
+    project_id: string;
+    order_id: string;
+    opportunity_id: string;
+  }>({ part_no: "", qty: "", required_by: "", project_id: "", order_id: "", opportunity_id: "" });
+  const [createBusy, setCreateBusy] = useState(false);
+  const [createErr, setCreateErr] = useState<string | null>(null);
+
+  const submitCreate = async () => {
+    setCreateBusy(true); setCreateErr(null);
+    try {
+      const payload: any = {
+        part_no: createForm.part_no,
+        qty: Number(createForm.qty),
+        required_by: createForm.required_by || null,
+        project_id: createForm.project_id || null,
+        order_id: createForm.order_id || null,
+        opportunity_id: createForm.opportunity_id || null,
+      };
+      if (!payload.part_no || !Number.isFinite(payload.qty) || payload.qty <= 0) {
+        throw new Error("part_no and qty (>0) required");
+      }
+      await (ObaraBackend as any)?.inventory?.allocations?.create?.(payload);
+      window.notifySuccess?.("Allocation created", payload.part_no + " x " + payload.qty);
+      setShowCreate(false);
+      setCreateForm({ part_no: "", qty: "", required_by: "", project_id: "", order_id: "", opportunity_id: "" });
+      setBump((n) => n + 1);
+    } catch (err: any) {
+      setCreateErr(String(err?.message || err));
+    } finally { setCreateBusy(false); }
+  };
 
   const partFilter = (() => {
     const hash = window.location.hash || "";
@@ -53,7 +88,14 @@ const InventoryAllocationsScreen: React.FC = () => {
 
   return (
     <>
-      <WSTitle eyebrow="Procurement" title="Allocations" meta={partFilter ? "filtered: " + partFilter : (allocs.data.length + " in view")} />
+      <WSTitle
+        eyebrow="Procurement"
+        title="Allocations"
+        meta={partFilter ? "filtered: " + partFilter : (allocs.data.length + " in view")}
+        right={<>
+          <Btn sm kind="primary" onClick={() => setShowCreate(true)}>New allocation</Btn>
+        </>}
+      />
       <div className="ws-content">
         <KPIRow>
           <KPI lbl="Reserved" v={String(counts.reserved || 0)} d="active" />
@@ -117,6 +159,54 @@ const InventoryAllocationsScreen: React.FC = () => {
           </Card>
         )}
       </div>
+
+      {showCreate && (
+        <div className="modal-backdrop" onClick={() => setShowCreate(false)}>
+          <div className="modal" role="dialog" aria-modal="true" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: 520 }}>
+            <div className="modal-h">
+              <span className="ti">New allocation</span>
+              <Btn icon kind="ghost" sm onClick={() => setShowCreate(false)} aria-label="Close" title="Close (Esc)">{Icon.close}</Btn>
+            </div>
+            <div className="modal-body" style={{ display: "grid", gap: 10 }}>
+              <label className="lbl">Part number
+                <input type="text" value={createForm.part_no}
+                  onChange={(ev) => setCreateForm({ ...createForm, part_no: ev.target.value })} />
+              </label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <label className="lbl">Qty
+                  <input type="number" min={1} value={createForm.qty}
+                    onChange={(ev) => setCreateForm({ ...createForm, qty: ev.target.value })} />
+                </label>
+                <label className="lbl">Required by
+                  <input type="date" value={createForm.required_by}
+                    onChange={(ev) => setCreateForm({ ...createForm, required_by: ev.target.value })} />
+                </label>
+              </div>
+              <label className="lbl">Project ID (optional)
+                <input type="text" value={createForm.project_id}
+                  onChange={(ev) => setCreateForm({ ...createForm, project_id: ev.target.value })} />
+              </label>
+              <label className="lbl">Order ID (optional)
+                <input type="text" value={createForm.order_id}
+                  onChange={(ev) => setCreateForm({ ...createForm, order_id: ev.target.value })} />
+              </label>
+              <label className="lbl">Opportunity ID (optional)
+                <input type="text" value={createForm.opportunity_id}
+                  onChange={(ev) => setCreateForm({ ...createForm, opportunity_id: ev.target.value })} />
+              </label>
+              {createErr && (
+                <Banner kind="bad" icon={Icon.alert} title="Could not create">
+                  <span className="mono-sm">{createErr}</span>
+                </Banner>
+              )}
+            </div>
+            <div className="modal-f">
+              <Btn kind="ghost" onClick={() => setShowCreate(false)}>Cancel</Btn>
+              <Btn kind="primary" disabled={createBusy} onClick={submitCreate}>{createBusy ? "Creating…" : "Create"}</Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };

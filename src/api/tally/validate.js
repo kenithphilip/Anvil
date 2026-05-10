@@ -3,6 +3,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { safeFetch } from "../_lib/safe-fetch.js";
+import { tallyResolveCompany, tallyDecryptToken } from "../_lib/tally-client.js";
 
 const cleanName = (s) => String(s || "").trim().toLowerCase();
 
@@ -54,13 +55,27 @@ const validateMasters = async (svc, tenantId, so) => {
   return findings;
 };
 
-const tryRemoteDryRun = async (xml) => {
-  const url = process.env.TALLY_BRIDGE_URL;
-  if (!url || !xml) return { skipped: true, reason: "not_configured" };
-  const headers = { "Content-Type": "text/xml" };
-  if (process.env.TALLY_BRIDGE_TOKEN) headers["Authorization"] = "Bearer " + process.env.TALLY_BRIDGE_TOKEN;
+// Phase F.6 fix: route the dry-run XML through the same per-tenant
+// company resolver the push path uses, so multi-company tenants
+// don't get pinned to whatever TALLY_BRIDGE_URL points at. Falls
+// back to env when no company resolves (single-company dev).
+const tryRemoteDryRun = async (svc, tenantId, xml, companyId) => {
+  if (!xml) return { skipped: true, reason: "no_xml" };
+  let bridgeUrl = null;
+  let bridgeHeaders = { "Content-Type": "text/xml" };
   try {
-    const resp = await safeFetch(url, { method: "POST", headers, body: xml });
+    const company = await tallyResolveCompany(svc, tenantId, companyId);
+    bridgeUrl = company?.bridge_url || process.env.TALLY_BRIDGE_URL || null;
+    const tok = tallyDecryptToken(company);
+    if (tok) bridgeHeaders.Authorization = "Bearer " + tok;
+    else if (process.env.TALLY_BRIDGE_TOKEN) bridgeHeaders.Authorization = "Bearer " + process.env.TALLY_BRIDGE_TOKEN;
+  } catch (_e) {
+    bridgeUrl = process.env.TALLY_BRIDGE_URL || null;
+    if (process.env.TALLY_BRIDGE_TOKEN) bridgeHeaders.Authorization = "Bearer " + process.env.TALLY_BRIDGE_TOKEN;
+  }
+  if (!bridgeUrl) return { skipped: true, reason: "not_configured" };
+  try {
+    const resp = await safeFetch(bridgeUrl, { method: "POST", headers: bridgeHeaders, body: xml });
     const text = await resp.text();
     return { status: resp.status, body: text.slice(0, 4000) };
   } catch (err) {
@@ -80,7 +95,9 @@ export default async function handler(req, res) {
     if (!so) return json(res, 400, { error: { message: "salesOrder payload required" } });
     const svc = serviceClient();
     const findings = await validateMasters(svc, ctx.tenantId, so);
-    const remote = body.attemptDryRun ? await tryRemoteDryRun(body.tallyXml) : null;
+    const remote = body.attemptDryRun
+      ? await tryRemoteDryRun(svc, ctx.tenantId, body.tallyXml, body.companyId || null)
+      : null;
     const status = findings.some((f) => f.severity === "CRITICAL") ? "BLOCKED" : "OK";
     await recordAudit(ctx, { action: "tally_validate", objectType: "tally_voucher", objectId: so.voucherNo || null, detail: status + " findings=" + findings.length });
     return json(res, 200, { status, findings, remote });

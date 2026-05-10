@@ -25,6 +25,7 @@ import netsuiteSync     from "../netsuite/sync.js";
 import netsuiteRetry    from "../netsuite/retry.js";
 import tallySync        from "../tally/sync.js";
 import tallyRetry       from "../tally/retry.js";
+import tallyReconcileCron from "./tally-reconcile.js";
 import sapSync          from "../sap/sync.js";
 import sapRetry         from "../sap/retry.js";
 import d365Sync         from "../d365/sync.js";
@@ -102,6 +103,10 @@ const RETRIES = [
 const SYNCS = [
   { name: "netsuite/sync",  fn: netsuiteSync,  opts: { path: "/api/netsuite/sync"  } },
   { name: "tally/sync",     fn: tallySync,     opts: { path: "/api/tally/sync"     } },
+  // Phase F.6: drift-check the previously-pushed Tally vouchers
+  // against the just-synced mirror state. Runs after tally/sync so
+  // tally_voucher_state has the freshest data to compare against.
+  { name: "tally/reconcile", fn: tallyReconcileCron, opts: { path: "/api/cron/tally-reconcile" } },
   { name: "sap/sync",       fn: sapSync,       opts: { path: "/api/sap/sync"       } },
   { name: "d365/sync",      fn: d365Sync,      opts: { path: "/api/d365/sync"      } },
   { name: "acumatica/sync", fn: acuSync,       opts: { path: "/api/acumatica/sync" } },

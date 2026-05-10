@@ -181,6 +181,44 @@ Per-call costs are estimates from `process.env.COST_USD_*` (see
 `src/api/_lib/cost_guard.js` for defaults). Override via env var
 to match your actual contract pricing.
 
+### `GET /api/docai/cost_status?days=N`
+
+Drives the **DocAI cost** panel on the admin screen. Aggregates
+today's usage plus a configurable trend window (default 7 days,
+clamped 1..90):
+
+```json
+{
+  "date": "2026-05-10",
+  "window_days": 7,
+  "today_usage": [{ "adapter": "gemini", "call_count": 42, "estimated_cost_usd": 0.025, "last_called_at": "2026-05-10T15:42:01Z" }],
+  "trend_window": { "calls": 312, "cost": 0.184 },
+  "trend_series": {
+    "dates": ["2026-05-04", "...", "2026-05-10"],
+    "adapters": ["claude", "gemini"],
+    "series": {
+      "gemini": { "calls": [40, 38, 47, ...], "cost": [0.024, 0.023, 0.028, ...] },
+      "claude": { "calls": [3,  4,  5,  ...], "cost": [0.066, 0.088, 0.110, ...] }
+    }
+  },
+  "burn":    { "gemini": { "today_calls": 42, "median_n_calls": 40, "ratio": 1.05, "window_days": 7 } },
+  "anomalies": [{ "adapter": "claude", "date": "2026-05-08", "calls": 24, "median": 4, "multiplier": 6.0 }],
+  "forecast": { "claude": { "cap": 100, "used": 50, "remaining": 50, "rate_per_hour": 4.2, "hours_to_cap": 11.9, "will_hit_cap_today": true } },
+  "recommendations": [/* … */],
+  "summary": { "anomalies_count": 1, "forecast_caps_at_risk_today": 1 }
+}
+```
+
+`trend_series` is the dense per-day per-adapter buckets the admin
+panel uses to draw the stacked-area chart (with a CSV export of
+the same data). `burn` ratios `today / window-median` per
+adapter; ratios `>= 2.0` are highlighted in the UI. `anomalies`
+flags days where calls hit `>= 2x` median **and** `>= 5` calls
+(the 5-call floor suppresses noise on low-volume tenants).
+`forecast` projects per-cap exhaust hours from today's rate;
+`will_hit_cap_today` is the boolean the UI binds on for the "at
+risk" badge.
+
 ---
 
 ## What this saves you vs. naive deployment

@@ -115,6 +115,23 @@ shows the timeline for the currently active order (read from
 - **Tally Sync** (`#/tally`). Default view: TallyPush queue. Sub-routes:
   `#/tally?sub=masters` (Tally master sync, 5-tab), `#/tally?sub=reconcile`
   (reconcile push to received voucher).
+  - **Reconcile sub-route** has two surfaces:
+    - **Drift findings** (Phase F.6). Clicking **Run drift check**
+      walks recently pushed vouchers, compares each against the
+      Tally-side mirror, and lists `total_mismatch` /
+      `line_count_mismatch` / `voucher_cancelled_in_tally` /
+      `voucher_altered_in_tally` / `missing_in_tally` /
+      `gstin_mismatch` rows with severity chips and a per-row
+      **Resolve** button that marks the finding cleared.
+    - **Recent reconciliation runs**. Last 20 runs (cron + manual)
+      with vouchers considered, drifted, auto-fixes applied, and
+      run status. The cron runs every 30 min after `tally/sync`
+      mirrors state, so a clean tenant should see steadily
+      growing run counts and zero open findings.
+  - **SO Workspace -> Tally tab**. Per-order drift surface: shows
+    voucher number + `last_drift_at` timestamp, a "Reconcile now"
+    button that runs `mode='drift_check'` scoped to the single
+    order, and the open findings table with resolve actions.
 - **e-Invoice** (`#/einvoice`). 4-tab GSTN queue (Pending, Generated,
   Cancelled, Rejected). 24h cancel countdown on Generated rows.
 - **Cost & Margin** (`#/cost`). 3-tab: cost breakdown, simulator,
@@ -482,6 +499,24 @@ Three tabs:
   template_dry_run, cached_duplicate, opus_complex) and project savings.
 - **Margin history**: per-customer median / low / high margin pct.
 
+### Admin -> DocAI cost panel (usage-trend chart)
+
+Lives on the Admin screen alongside the cost-guard recommendations.
+Three blocks:
+
+- **Usage trend**. Inline SVG stacked-area chart of per-day per-adapter
+  call volume (or cost when toggled), spanning the configured window
+  (default 7 days, configurable up to 90). The dashed rust line shows
+  any per-adapter daily cap. CSV download exports the same dense
+  matrix the chart renders.
+- **Burn + forecast**. Per-adapter `today_calls / window-median` ratio
+  flags > 2x as a warning chip. The forecast column projects
+  `hours_to_cap` from the morning's burn rate and badges adapters
+  that will hit their cap before midnight UTC.
+- **Anomalies**. Days where calls hit `>= 2x` median **and** `>= 5`
+  calls. The 5-call floor suppresses noise on low-volume tenants so
+  the panel doesn't cry wolf during PoC weeks.
+
 ## Profile Studio
 
 Open from the palette or from a customer profile card. Four feature
@@ -523,6 +558,35 @@ toggle **Real-time** to skip the cached snapshot. Buckets show open
 count, weighted amount (probability-adjusted), next 30/90 days, and
 won/lost counts. **Persist nightly snapshot** writes the rollup to
 `forecast_snapshots`.
+
+## Inventory Planning
+
+`#/inventory-planning` is the procurement workbench. KPI row +
+multi-tab body covering Positions / Plans / Reorder / Allocations /
+Suppliers / Calibration / Forecast history.
+
+- **Staleness banner**. When the most recent positions snapshot is
+  older than 60 minutes, a warn banner appears above the KPIs with
+  the age and a refresh nudge.
+- **Positions** lists `inventory_positions` with available, reserved,
+  on-order, ATP, days-of-cover.
+- **Plans / Reorder** drive `inventory_reorder_plans`. The **Replan
+  now** button opens a confirmation modal that previews
+  `items_at_risk`, `exceptions`, and `WAPE` from the latest forecast
+  run before triggering the replan.
+- **Allocations** -> see `#/inventory-allocations`. The **New
+  allocation** button (header) opens a modal to create a reservation
+  with part, qty, required-by date, optional project / order /
+  opportunity link.
+- **Suppliers** -> see `#/inventory-suppliers`. The **New supplier**
+  button opens a modal for code / name / country / currency /
+  lead-time / contact email upsert.
+- **Calibration** tab shows the win-probability calibration table
+  (stage-by-stage probability vs realised win rate) sourced from
+  `/api/inventory/calibration`.
+- **Forecast history** tab lists `forecast_runs` with start / finish /
+  status / items-count / models-evaluated / WAPE summary / notes.
+  Sourced from `GET /api/inventory/forecast_runs`.
 
 ## AMC Schedule
 

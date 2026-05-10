@@ -265,6 +265,42 @@ FK to contracts and customers. `visit_type in (PREVENTIVE, EMERGENCY, TRAINING, 
 ### Policy fix
 `redaction_rules_write` is widened so admins can manage global rules where `tenant_id is null`.
 
+## Migration 095: Tally voucher reconciliation (Phase F.6)
+
+Closes the Tally bridge loop. Today's `/api/tally/reconcile` is a
+manual status flip; this migration adds the structures the
+reconciler engine compares pushed payloads against
+`tally_voucher_state` and persists findings.
+
+### tally_reconciliation_runs
+One row per reconciliation tick (cron) or operator click. Tracks
+trigger (`cron|manual|workspace|retry`), scope (`all|order|tenant_recent|order_id`), counts of vouchers considered / drifted / clean, findings persisted, auto-fixes applied, and run status (`running|ok|partial_failure|failed`).
+
+Indexes:
+- `(tenant_id, started_at desc)` — history list.
+- `(tenant_id, status, vouchers_drifted desc) where vouchers_drifted > 0` — partial index for "runs with drift".
+
+### tally_reconciliation_findings
+One row per drifted field on a single voucher. `finding_kind` is
+constrained to: `voucher_cancelled_in_tally`, `voucher_altered_in_tally`, `total_mismatch`, `line_count_mismatch`, `voucher_no_mismatch`, `gstin_mismatch`, `party_mismatch`, `missing_in_tally`, `missing_locally`, `date_mismatch`. `severity` is `info|warn|error|critical`. `expected`/`actual` jsonb hold the diff; `diff_pct` carries the percent for `total_mismatch`. `auto_fix_applied` records the remediation taken (`re_pushed`, `amended`, `order_failed`, `none`). `resolved_at`/`resolved_by` track operator acks.
+
+Indexes:
+- `(tenant_id, created_at desc)` — main feed.
+- `(tenant_id, order_id, created_at desc) where order_id is not null` — SO workspace drill-in.
+- `(tenant_id, finding_kind, severity, created_at desc) where resolved_at is null` — open-findings queue.
+
+### tally_voucher_records (additive columns)
+- `last_reconciled_at timestamptz` — most recent run that touched the voucher.
+- `last_drift_at timestamptz` — most recent finding (NULL when always clean).
+- `drift_summary jsonb default '{}'` — rollup `{ kind: count }` of unresolved findings, e.g. `{"total_mismatch": 1, "voucher_altered_in_tally": 1}`. Empty when clean.
+- Partial index `tally_voucher_records_drift_idx (tenant_id, last_drift_at desc) where last_drift_at is not null` for the "vouchers with active drift" query.
+
+### tenant_settings (additive columns)
+- `tally_recon_total_tolerance_pct numeric(5,2) default 0.50` — percent diff between expected and Tally total under which the reconciler treats as "no drift". Covers rounding noise.
+- `tally_recon_auto_fix_enabled boolean default false` — opt-in flag. When TRUE the reconciler runs the auto-remediation paths (re-push for missing vouchers; flip the order to FAILED_TALLY_IMPORT for cancelled-in-Tally findings).
+
+All new tables RLS-scoped on `tenant_id` against the JWT claim.
+
 ## Verifying after applying
 
 In the SQL editor:

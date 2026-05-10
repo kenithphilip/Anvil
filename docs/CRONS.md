@@ -28,7 +28,15 @@ ALWAYS:
 
 WHEN minute % 30 === 0 (on the hour and half-hour):
 
-- 8 ERP syncs (parallel)
+- 8 ERP syncs (parallel) — including Tally state mirror.
+- **Tally voucher reconciliation** (Phase F.6). Runs immediately
+  after `tally/sync` so the mirror table is fresh. Walks tenants
+  with exported vouchers in the last 7 days, calls
+  `driftCheck({ scope: 'tenant_recent' })` per tenant (cap of 50
+  vouchers per tenant per tick), persists findings, optionally
+  auto-remediates. Endpoint: `/api/cron/tally-reconcile`. Audit
+  `tally_recon_run` (or `tally_drift_detected` when findings
+  surface).
 
 WHEN minute === 0 (on the hour):
 

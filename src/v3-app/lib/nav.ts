@@ -35,9 +35,18 @@ export const NAV: NavGroup[] = [
   {
     label: "Procurement",
     items: [
-      { id: "spo",       label: "Source POs",    icon: Icon.pkg },
-      { id: "spares",    label: "Spares Matrix", icon: Icon.layers },
-      { id: "delays",    label: "Delays",        icon: Icon.alert },
+      { id: "spo",                  label: "Source POs",         icon: Icon.pkg },
+      { id: "spares",               label: "Spares Matrix",      icon: Icon.layers },
+      { id: "delays",               label: "Delays",             icon: Icon.alert },
+      // Inventory-planning module (Phase 3). Dashboard surfaces
+      // 12-week shortage timeline + KPIs; the other inventory
+      // screens hang off it. The route ids match the rbac MATRIX
+      // rows landed in Phase 2.
+      { id: "inventory-planning",   label: "Inventory Planning", icon: Icon.cycle },
+      { id: "inventory-plans",      label: "Planned POs",        icon: Icon.cal },
+      { id: "inventory-exceptions", label: "Stock Exceptions",   icon: Icon.alert },
+      { id: "inventory-allocations",label: "Allocations",        icon: Icon.lock },
+      { id: "inventory-suppliers",  label: "Suppliers",          icon: Icon.briefcase },
     ],
   },
   {

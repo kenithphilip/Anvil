@@ -27,7 +27,16 @@
 
 import { callAnthropic } from "../anthropic.js";
 
-const MODEL = process.env.ANTHROPIC_MODEL_DEFAULT || "claude-sonnet-4-20250514";
+// Cost-optimised model selection. Tenants set
+// `docai_anthropic_model` to flip between Sonnet (default,
+// highest quality) and Haiku (~4x cheaper, sufficient for clean
+// PDFs). Falls back to ANTHROPIC_MODEL_DEFAULT env var, then to
+// Sonnet 4 as the last-resort default. Resolved per-call so a
+// settings flip takes effect on the next extraction.
+const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL_DEFAULT || "claude-sonnet-4-20250514";
+const modelFor = (settings) =>
+  settings?.docai_anthropic_model
+    || DEFAULT_MODEL;
 
 export const isConfigured = (_settings) => !!process.env.ANTHROPIC_API_KEY;
 
@@ -401,7 +410,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     messages: [{ role: "user", content: userParts }],
     system: systemBlocks,
     purpose: "extraction",
-    model: MODEL,
+    model: modelFor(settings),
     max_tokens: 2000,
     tools: [activeTool],
     tool_choice: { type: "tool", name: activeToolName },

@@ -347,6 +347,7 @@ import inboundEmailPersistAttachments from "./inbound/email/persist_attachments.
 
 import docaiExtract            from "./docai/extract.js";
 import docaiCorrection         from "./docai/correction.js";
+import docaiUsage               from "./docai/usage.js";
 import docaiRuns               from "./docai/runs.js";
 
 import p21Connect              from "./p21/connect.js";
@@ -542,6 +543,7 @@ const STATIC_ROUTES = {
   "/inbound/email/persist_attachments": inboundEmailPersistAttachments,
   "/docai/extract":                 docaiExtract,
   "/docai/correction":              docaiCorrection,
+  "/docai/usage":                   docaiUsage,
   "/docai/runs":                    docaiRuns,
   "/p21/connect":                   p21Connect,
   "/p21/health":                    p21Health,

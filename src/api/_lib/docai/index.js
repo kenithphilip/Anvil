@@ -20,6 +20,9 @@ import * as claudeAdapter from "./claude.js";
 import * as gaeb from "./gaeb.js";
 import * as docling from "./docling.js";
 import * as marker from "./marker.js";
+import * as gemini from "./gemini.js";
+import { allowedToCall, recordCall } from "../cost_guard.js";
+import { serviceClient } from "../supabase.js";
 
 const ADAPTERS = {
   reducto,
@@ -30,6 +33,7 @@ const ADAPTERS = {
   gaeb,
   docling,
   marker,
+  gemini,
 };
 
 const guessSourceType = ({ filename, mime, bytes }) => {
@@ -88,8 +92,10 @@ export const dispatchExtract = async ({ source, settings, customerId, hints }) =
     // Fall through to the LLM order on parse failure, recording the
     // GAEB attempt so the caller can see what happened.
     const gaebAttempt = { adapter: "gaeb", status: "failed", ms: Date.now() - t0, error: out.error };
+    // Cost-optimised default for the GAEB-fallback path: gemini
+    // (free tier) and self-hostable adapters first, then paid LLM.
     const order = settings?.docai_provider_order
-      || ["docling", "marker", "claude", "reducto", "azure_di", "unstructured"];
+      || ["gemini", "docling", "marker", "unstructured", "azure_di", "reducto", "claude"];
     const attempts = [gaebAttempt];
     let last = { ok: false, error: out.error };
     for (const adapterName of order) {
@@ -116,21 +122,49 @@ export const dispatchExtract = async ({ source, settings, customerId, hints }) =
     }
     return { ...last, attempts };
   }
-  // Default order favours self-hostable / deterministic adapters
-  // first (zero per-page cost when configured), then the hosted
-  // doc-AI options, then Claude as the LLM fallback. The dispatcher
-  // skips any adapter whose isConfigured(settings) returns false,
-  // so an operator who configures only Claude still gets the
-  // single-adapter path with no extra latency.
+  // Cost-optimised default order:
+  //   - gemini first (Gemini 2.5 Flash free tier covers most PoC
+  //     traffic at $0/month: 1500 RPD, 1M TPM, no card).
+  //   - self-hostable adapters next: zero per-page cost when the
+  //     operator runs them (docling, marker, unstructured-OSS).
+  //   - hosted doc-AI options after that: azure_di F0 free 500
+  //     pages/mo, then paid reducto/unstructured.
+  //   - claude last: paid LLM, our most expensive option.
+  // The dispatcher skips any adapter whose isConfigured() returns
+  // false, so an operator with only Claude still gets the single-
+  // adapter path; the cost-guard then enforces docai_daily_limits
+  // so a runaway Claude bill is impossible.
   const order = settings?.docai_provider_order
-    || ["docling", "marker", "unstructured", "reducto", "azure_di", "claude"];
+    || ["gemini", "docling", "marker", "unstructured", "azure_di", "reducto", "claude"];
   const attempts = [];
   let last = null;
+  // Materialise an svc reference once so per-iteration cost-guard
+  // checks don't re-spawn the client. Best-effort: a missing
+  // SUPABASE_URL leaves svc null and the guard treats that as
+  // "no limits" (legacy behaviour).
+  let svc = null;
+  try { svc = serviceClient(); } catch (_e) { svc = null; }
   for (const adapterName of order) {
     const adapter = ADAPTERS[adapterName];
     if (!adapter) continue;
     if (!adapter.isConfigured(settings)) {
       attempts.push({ adapter: adapterName, status: "skipped_not_configured" });
+      continue;
+    }
+    // Cost-guard: short-circuit when the operator's daily cap for
+    // this adapter is exhausted. Free / self-hosted adapters
+    // (docling/marker/excel/gaeb) bypass this check; paid adapters
+    // (claude/reducto/unstructured/azure_di) honour the
+    // tenant_settings.docai_daily_limits map.
+    const guard = await allowedToCall(svc, settings, adapterName);
+    if (!guard.allowed) {
+      attempts.push({
+        adapter: adapterName,
+        status: "skipped_over_budget",
+        count: guard.count,
+        limit: guard.limit,
+        reason: guard.reason,
+      });
       continue;
     }
     const t0 = Date.now();
@@ -156,6 +190,13 @@ export const dispatchExtract = async ({ source, settings, customerId, hints }) =
       ms: latency_ms,
       confidence: conf,
     });
+    // Telemetry: record the call against today's counter so
+    // /api/docai/usage shows live usage and the guard locks the
+    // adapter out once the cap is hit. Best-effort: failures are
+    // logged inside recordCall.
+    if (out.ok) {
+      await recordCall(svc, { tenantId: settings?.tenant_id, adapter: adapterName });
+    }
     if (out.ok && (conf == null || conf >= 0.7)) {
       return { adapter_used: adapterName, latency_ms, ...out, confidence_overall: conf, attempts };
     }

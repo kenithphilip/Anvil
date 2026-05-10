@@ -525,6 +525,9 @@
     correction: async (payload) => apiFetch("/api/docai/correction", { method: "POST", body: payload }),
     listRuns:   async (q) => apiFetch("/api/docai/runs" + (q ? "?" + new URLSearchParams(q).toString() : "")),
     getRun:     async (id) => apiFetch("/api/docai/runs?id=" + encodeURIComponent(id)),
+    // Phase Cost-Opt: today's per-adapter call counters + per-adapter
+    // budget so the admin UI can render "Claude: 12/50 used today".
+    usage:      async (date) => apiFetch("/api/docai/usage" + (date ? "?date=" + encodeURIComponent(date) : "")),
   };
 
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });

@@ -1,8 +1,16 @@
 # Inventory Planning, Design Document
 
-Status: Draft v1, May 2026
+Status: v2, May 2026 (Q1-Q7 resolved, Phase 1 in flight)
 Owner: Anvil engineering, in collaboration with Obara India operations.
 Predecessor: gap-analysis report attached to PR #70 stack discussion.
+
+Change log:
+- v2: Q1-Q7 resolved (see section 11.2). Service level / holding cost /
+  ordering cost are now tenant-adjustable with documented defaults.
+  ERP integration order: Tally first, no priority among the rest.
+  Voice escalation policy made tenant-adjustable. Opportunities now
+  carry structured line items (`opportunity_line_items` table).
+- v1: initial design doc (PR #71).
 
 Scope: a demand-driven, forecast-led inventory-planning module for
 long-lead-time bundled items (Auto Tip Dresser, Timer, plus the
@@ -639,17 +647,50 @@ alter table item_master
   add column if not exists safety_stock numeric(14,2),
   add column if not exists reorder_point numeric(14,2),
   add column if not exists default_supplier_id uuid,
-  add column if not exists service_level numeric(4,3) default 0.95
-    check (service_level > 0 and service_level < 1),
+  add column if not exists service_level numeric(4,3)
+    check (service_level is null or (service_level > 0 and service_level < 1)),
   add column if not exists planning_cadence text default 'weekly'
     check (planning_cadence in ('daily','weekly','biweekly','monthly')),
   add column if not exists demand_class text
     check (demand_class is null or demand_class in
-      ('smooth','erratic','intermittent','lumpy','new'));
+      ('smooth','erratic','intermittent','lumpy','new')),
+  add column if not exists planning_enabled boolean not null default false,
+  add column if not exists holding_cost_pct_override numeric(5,4)
+    check (holding_cost_pct_override is null
+           or (holding_cost_pct_override > 0 and holding_cost_pct_override < 1)),
+  add column if not exists coverage_period_weeks int default 12
+    check (coverage_period_weeks > 0 and coverage_period_weeks <= 52),
+  add column if not exists pinned_model text;
 ```
 
-The new fields are nullable so existing rows are unaffected; the
-engine populates them on first run.
+The new fields are nullable (or have safe defaults) so existing rows
+are unaffected. `service_level=null` means "use the tenant default".
+`holding_cost_pct_override=null` means "use the tenant default". The
+engine populates `safety_stock`, `reorder_point`, and `demand_class`
+on first run.
+
+### 5.1.1 Extensions to `tenant_settings`
+
+```sql
+alter table tenant_settings
+  add column if not exists inventory_planning_enabled boolean not null default false,
+  add column if not exists inventory_default_service_level numeric(4,3) not null default 0.95
+    check (inventory_default_service_level > 0 and inventory_default_service_level < 1),
+  add column if not exists inventory_holding_cost_pct numeric(5,4) not null default 0.22
+    check (inventory_holding_cost_pct > 0 and inventory_holding_cost_pct < 1),
+  add column if not exists inventory_ordering_cost_inr numeric(14,2) not null default 5000
+    check (inventory_ordering_cost_inr > 0),
+  add column if not exists inventory_forecast_horizon_weeks int not null default 12
+    check (inventory_forecast_horizon_weeks between 4 and 52),
+  add column if not exists inventory_hysteresis_runs int not null default 2
+    check (inventory_hysteresis_runs between 1 and 5),
+  add column if not exists inventory_voice_severity_threshold text not null default 'critical'
+    check (inventory_voice_severity_threshold in ('info','warn','bad','critical')),
+  add column if not exists inventory_voice_max_per_day int not null default 3
+    check (inventory_voice_max_per_day >= 0),
+  add column if not exists inventory_voice_window_start time not null default '08:00',
+  add column if not exists inventory_voice_window_end time not null default '20:00';
+```
 
 ### 5.2 New `suppliers` table
 
@@ -912,11 +953,73 @@ create table forecast_runs (
 );
 ```
 
-### 5.11 RLS policies
+### 5.11 Suppliers + ERP integration order (Q5)
 
-All eight new tables are tenant-scoped. RLS policies follow the
-existing pattern in the codebase: write requires
-`tenant_id = jwt.tenant_id`, read same. Service role bypasses.
+All 17 ERPs the product supports today ship via their existing
+mirror tables; the planning engine reads the union view in 5.7.
+There is no priority among them: each ERP is authoritative for
+its own scope. When two ERPs report different on-hand for the same
+(tenant, part_no, as_of), the engine writes both rows to
+`inventory_positions` (with their `source` enum) and emits an
+`inventory_exceptions(kind='erp_mismatch')` row. The operator picks
+which source is canonical via a per-item `inventory_authoritative_source`
+override (lives on `item_master`, populated lazily on first
+mismatch).
+
+Implementation order:
+1. Tally first (Phase 2), since the corpus customer base is on Tally.
+2. NetSuite, SAP, D365, Acumatica, IFS, Oracle EBS, Oracle Fusion,
+   Plex, JobBoss, P21, Eclipse, SX.e, proALPHA, Ramco, JD Edwards,
+   Sage X3 land in Phase 2.5 in any order.
+
+### 5.12 Opportunity line items (Q7)
+
+The pipeline-demand calculation needs structured per-opportunity
+line items in the operator's vocabulary: product family + category
++ qty. Joel's example: "x2c Gun, 1 qty; JC ATD, 1 qty; adaptive_dc
+Timer, 1 qty".
+
+```sql
+create table opportunity_line_items (
+  id uuid primary key default uuid_generate_v4(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  opportunity_id uuid not null references opportunities(id) on delete cascade,
+  line_index int not null,
+  product_family text not null,         -- 'Gun', 'ATD', 'Timer', 'Spare', 'Service'
+  product_category text,                -- 'x2c', 'JC', 'adaptive_dc', 'std', etc.
+  part_no text,                          -- nullable; populated when matched against item_master
+  description text,
+  qty numeric(14,4) not null,
+  uom text not null default 'pcs',
+  expected_unit_price numeric(18,4),     -- nullable: opps are pre-negotiation
+  expected_currency text default 'INR',
+  expected_close_date date,              -- per-line; falls back to opportunity.close_date
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (opportunity_id, line_index)
+);
+
+create index opportunity_line_items_part_idx on opportunity_line_items
+  (tenant_id, part_no, expected_close_date) where part_no is not null;
+create index opportunity_line_items_family_idx on opportunity_line_items
+  (tenant_id, product_family, product_category);
+```
+
+The pipeline-demand engine (2.7) reads this table directly. When
+`part_no` is null (the operator hasn't matched the line to a master
+item), the engine falls back to a (product_family, product_category)
+to part_no map maintained in a small lookup table or in
+`item_master.product_category_aliases jsonb`.
+
+### 5.13 RLS policies
+
+All nine new tables (suppliers, source_po_lines, inventory_allocations,
+demand_forecasts, inventory_positions, procurement_plans,
+inventory_exceptions, forecast_runs, opportunity_line_items) are
+tenant-scoped. RLS policies follow the existing pattern in the
+codebase: write requires `tenant_id = jwt.tenant_id`, read same.
+Service role bypasses.
 
 ---
 
@@ -1319,17 +1422,38 @@ behind the existing redaction rail.
   per `procurement_plan.id + version`; only re-call when the plan
   changes.
 
-### 11.2 Open questions for Joel / operations
+### 11.2 Resolved decisions (v2)
 
-| # | Question | Need by |
-|---|----------|---------|
-| Q1 | Confirm the exact ATD/Timer SKUs that should be planning-enabled in v1 (initial set) | Phase 1 |
-| Q2 | Confirm service-level targets per class (default 0.99 critical, 0.95 standard, 0.85 long-tail) | Phase 1 |
-| Q3 | Confirm holding-cost rate (used in EOQ). Industry default 20-25% per year. | Phase 2 |
-| Q4 | Confirm ordering-cost-per-PO (used in EOQ). Default 5,000 INR. | Phase 2 |
-| Q5 | Confirm the ERP-source priority (default tally-on-prem > netsuite > sap) | Phase 2 |
-| Q6 | Confirm voice-escalation opt-in policy (only critical? cap per day?) | Phase 3 |
-| Q7 | Confirm whether opportunities need structured line items now or whether we infer from gun-model on the opportunity header | Phase 1 |
+| # | Question | Decision |
+|---|----------|----------|
+| Q1 | Initial v1 SKU list | Open: per-item `planning_enabled` flag on `item_master` + tenant default that auto-enables `item_type IN ('ATD','TIMER')`. Operator pins the v1 list from S1 dashboard at first run. |
+| Q2 | Service-level targets per class | Defaults baked in (0.99 critical, 0.95 standard, 0.85 long-tail), per-item overridable, with `tenant_settings.inventory_default_service_level` as the tenant fallback (default 0.95). |
+| Q3 | Holding-cost rate | Default 22% / year. Tenant-adjustable via `tenant_settings.inventory_holding_cost_pct`. Per-item override on `item_master.holding_cost_pct_override`. |
+| Q4 | Ordering-cost-per-PO | Default 5,000 INR. Tenant-adjustable via `tenant_settings.inventory_ordering_cost_inr`. Per-supplier override on `suppliers.ordering_cost_override`. |
+| Q5 | ERP-source priority | No priority. Every supported ERP (Tally / NetSuite / SAP / D365 / Acumatica / IFS / Oracle EBS / Oracle Fusion / SX.e / P21 / Eclipse / Plex / JobBoss / proALPHA / Ramco / JD Edwards / Sage X3) ingests stock via the existing mirror tables. Conflicts surface as `inventory_exceptions(kind='erp_mismatch')` for operator triage. Implementation order: Tally first (Phase 2), the rest in Phase 2.5. |
+| Q6 | Voice-escalation policy | Default: critical-only, max 3 calls per tenant per day, window 08:00-20:00 IST. Tenant-adjustable on `tenant_settings.inventory_voice_*` columns. |
+| Q7 | Opportunity line items | Structured. New `opportunity_line_items` table (5.12). Shape: `(product_family, product_category, qty)` matching the operator's example "x2c Gun: 1, JC ATD: 1, adaptive_dc Timer: 1". Per-line `expected_unit_price` and `expected_close_date` are nullable. |
+
+### 11.3 Default constants summary
+
+These ship as the seed values; operators can adjust each from the
+admin UI without a code release:
+
+| Setting | Default | Adjustable at | Range / units |
+|---------|---------|---------------|---------------|
+| Service level (critical) | 0.99 | Per-item | (0.50, 0.999) |
+| Service level (standard) | 0.95 | Per-item | (0.50, 0.999) |
+| Service level (long-tail) | 0.85 | Per-item | (0.50, 0.999) |
+| Tenant default service level | 0.95 | Tenant | (0.50, 0.999) |
+| Holding cost rate | 0.22 (22% / yr) | Tenant + per-item | (0.05, 0.50) |
+| Ordering cost per PO | 5000 INR | Tenant + per-supplier | (>0, currency) |
+| Voice escalation severity threshold | 'critical' | Tenant | enum |
+| Voice escalation max-per-day | 3 | Tenant | (0, 100) |
+| Voice escalation window start | 08:00 IST | Tenant | time |
+| Voice escalation window end | 20:00 IST | Tenant | time |
+| Forecast horizon | 12 weeks | Tenant | (4, 52) |
+| Coverage period (long-lead items) | 12 weeks | Per-item | (1, 52) |
+| Hysteresis runs (planned-PO trigger) | 2 consecutive | Tenant | (1, 5) |
 
 ---
 

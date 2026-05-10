@@ -110,10 +110,15 @@ jobs:
           # notes, e-Way bills, recurring schedules, deploys, voice
           # consent + DND). It runs after 300 because it FK-references
           # 300's invoices + einvoices.
+          # 360 is the inventory-planning phase (PR follow-up to
+          # migrations 085 + 086). Runs after 350 because it
+          # references customers + opportunities + orders +
+          # source_pos that earlier phases populate.
           for f in supabase/seed/100_users_and_tenants.sql \
                    supabase/seed/200_master_data.sql \
                    supabase/seed/300_workflow_data.sql \
                    supabase/seed/350_recent_modules.sql \
+                   supabase/seed/360_inventory_planning.sql \
                    supabase/seed/400_logs_and_analytics.sql \
                    supabase/seed/500_erp_mirrors.sql; do
             echo "::group::$f"

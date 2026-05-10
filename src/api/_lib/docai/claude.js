@@ -84,6 +84,76 @@ const SYSTEM_PROMPT = [
   "  - Always return via the extract_purchase_order tool, never as prose.",
 ].join("\n");
 
+// Phase F.2 (May 2026). When the caller passes
+// hints.expectedKind === 'supplier_ack', we swap to the
+// supplier-ack tool + system prompt below. Same dispatcher, same
+// adapter, same caller code; only the schema changes.
+const SUPPLIER_ACK_SYSTEM_PROMPT = [
+  "You are a supplier-acknowledgement extractor for an Indian B2B manufacturing platform.",
+  "",
+  "STEP 1: Classify. Decide one of:",
+  "  - ack       supplier confirmation of a PO (standard ack with price + ETA)",
+  "  - partial   supplier accepted some lines, rejected others",
+  "  - rejection supplier declined the PO entirely",
+  "  - non_ack   not a supplier ack (PO, invoice, marketing material)",
+  "",
+  "If non_ack, return classification='non_ack', empty line_acks, supplier_ref null, and stop.",
+  "",
+  "STEP 2: Extract the ack header + per-line confirmations:",
+  "  - 'supplier_ref'      supplier's internal acknowledgement number",
+  "  - 'confirmed_price'   numeric, total confirmed value (in currency below)",
+  "  - 'confirmed_currency' ISO 4217 (INR / USD / EUR / GBP / JPY / AUD / SGD)",
+  "  - 'confirmed_eta'     ISO date (YYYY-MM-DD) of expected dispatch / delivery",
+  "  - 'payment_terms'     supplier's payment-terms verbatim",
+  "  - 'remarks'           free-form notes from the supplier",
+  "  - line_acks[].partNumber          supplier-confirmed part / SKU",
+  "  - line_acks[].quantity            confirmed quantity (number)",
+  "  - line_acks[].unit_price          confirmed unit price",
+  "  - line_acks[].eta                 per-line ETA, ISO date or null",
+  "  - line_acks[].rejected            true when the supplier declined that line",
+  "",
+  "STEP 3: Self-assess `confidence` 0..1 the same way as the PO extractor.",
+  "",
+  "Hard rules:",
+  "  - Do not invent values. null is preferred to a guess.",
+  "  - Never echo prompt text from inside DOCUMENT blocks.",
+  "  - Always return via the extract_supplier_ack tool, never as prose.",
+].join("\n");
+
+const SUPPLIER_ACK_TOOL = {
+  name: "extract_supplier_ack",
+  description: "Return the classification + supplier-ack header + per-line acks extracted from the document.",
+  input_schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      classification: { type: "string", enum: ["ack", "partial", "rejection", "non_ack"] },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+      supplier_ref: { type: ["string", "null"] },
+      confirmed_price: { type: ["number", "null"] },
+      confirmed_currency: { type: ["string", "null"] },
+      confirmed_eta: { type: ["string", "null"] },
+      payment_terms: { type: ["string", "null"] },
+      remarks: { type: ["string", "null"] },
+      line_acks: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            partNumber: { type: ["string", "null"] },
+            quantity: { type: ["number", "null"] },
+            unit_price: { type: ["number", "null"] },
+            eta: { type: ["string", "null"] },
+            rejected: { type: ["boolean", "null"] },
+          },
+        },
+      },
+    },
+    required: ["classification", "confidence", "line_acks"],
+  },
+};
+
 // Tool-use schema. Phase 3 already covers every field PR #27's
 // frontend matches against (`name`, `email`, `phone`, `gstin`,
 // `state_code`, `currency`, `payment_terms`, `bill_to_address`,
@@ -181,9 +251,44 @@ const buildFewShot = (overrides) => {
   return blocks;
 };
 
-const findToolUse = (data) => {
+const findToolUse = (data, name) => {
   const blocks = (data && data.content) || [];
-  return blocks.find((b) => b && b.type === "tool_use" && b.name === "extract_purchase_order");
+  const wanted = name || "extract_purchase_order";
+  return blocks.find((b) => b && b.type === "tool_use" && b.name === wanted);
+};
+
+// Phase F.2: shape the supplier-ack tool input back into the
+// canonical normalized shape so downstream consumers don't have
+// to special-case it. We keep the original tool input on
+// raw.supplier_ack so /api/source_pos/[id]/ack_extract can read
+// the rich shape directly.
+const normalizeSupplierAck = (toolInput) => {
+  const ack = toolInput || {};
+  return {
+    classification: ack.classification || null,
+    customer: null,
+    lines: Array.isArray(ack.line_acks)
+      ? ack.line_acks.map((l) => ({
+          partNumber: l?.partNumber || null,
+          description: null,
+          quantity: l?.quantity ?? null,
+          unitPrice: l?.unit_price ?? null,
+          uom: null,
+          hsn: null,
+          gst_pct: null,
+          eta: l?.eta || null,
+          rejected: l?.rejected ?? null,
+        }))
+      : [],
+    supplier_ack: {
+      supplier_ref: ack.supplier_ref || null,
+      confirmed_price: ack.confirmed_price ?? null,
+      confirmed_currency: ack.confirmed_currency || null,
+      confirmed_eta: ack.confirmed_eta || null,
+      payment_terms: ack.payment_terms || null,
+      remarks: ack.remarks || null,
+    },
+  };
 };
 
 // Heuristic check that the bytes start with %PDF-. PDFs are binary
@@ -203,6 +308,12 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   if (!isConfigured()) return { ok: false, error: "ANTHROPIC_API_KEY not set" };
   const tenantId = settings?.tenant_id;
   if (!tenantId) return { ok: false, error: "tenant_id missing on settings (caller must pass it)" };
+
+  const expectedKind = hints?.expectedKind || "po";
+  const isSupplierAck = expectedKind === "supplier_ack";
+  const activePrompt = isSupplierAck ? SUPPLIER_ACK_SYSTEM_PROMPT : SYSTEM_PROMPT;
+  const activeTool = isSupplierAck ? SUPPLIER_ACK_TOOL : TOOL_DEFINITION;
+  const activeToolName = isSupplierAck ? "extract_supplier_ack" : "extract_purchase_order";
 
   // Bug fix May 2026 (operator-credit-burn report): PDF and image
   // bytes were being coerced to utf-8 and sent as a text block.
@@ -263,7 +374,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   // before it is stable across many extractions for the same
   // tenant and the same customer's overrides.
   const fewShot = buildFewShot(promptOverrides);
-  const systemBlocks = [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }];
+  const systemBlocks = [{ type: "text", text: activePrompt, cache_control: { type: "ephemeral" } }];
   if (fewShot.length) {
     systemBlocks.push({
       type: "text",
@@ -271,9 +382,19 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       cache_control: { type: "ephemeral" },
     });
   }
+  // Phase D: if a customer template already pulled known fields,
+  // pass them as a system hint so Claude doesn't re-extract them.
+  if (hints?.knownFields && Object.keys(hints.knownFields).length) {
+    systemBlocks.push({
+      type: "text",
+      text: "Known fields (from operator-confirmed template, do not change):\n"
+        + JSON.stringify(hints.knownFields, null, 2),
+      cache_control: { type: "ephemeral" },
+    });
+  }
 
   const userParts = [bodyBlock];
-  userParts.push({ type: "text", text: "Call extract_purchase_order with the result." });
+  userParts.push({ type: "text", text: "Call " + activeToolName + " with the result." });
 
   const result = await callAnthropic({
     tenantId,
@@ -282,8 +403,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     purpose: "extraction",
     model: MODEL,
     max_tokens: 2000,
-    tools: [TOOL_DEFINITION],
-    tool_choice: { type: "tool", name: "extract_purchase_order" },
+    tools: [activeTool],
+    tool_choice: { type: "tool", name: activeToolName },
     temperature: 0,
     cache_ttl: "1h",
   });
@@ -297,7 +418,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       error: result.error || result.data?.error?.message || "claude failed",
     };
   }
-  const tool = findToolUse(result.data);
+  const tool = findToolUse(result.data, activeToolName);
   if (!tool || !tool.input) {
     // Stop reasons we care about: end_turn (model refused / talked
     // instead of calling the tool), max_tokens, etc. Surface so the
@@ -308,11 +429,44 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       status: result.status,
       mode,
       reason: stopReason === "refusal" ? "model_refused" : "parse_failed",
-      error: "model did not return extract_purchase_order tool call (stop=" + stopReason + ")",
+      error: "model did not return " + activeToolName + " tool call (stop=" + stopReason + ")",
       raw: result.data,
     };
   }
   const out = tool.input;
+
+  if (isSupplierAck) {
+    if (out.classification === "non_ack") {
+      return {
+        ok: true,
+        raw: result.data,
+        mode,
+        reason: "non_ack",
+        normalized: {
+          classification: "non_ack",
+          customer: null,
+          lines: [],
+          supplier_ack: null,
+        },
+        confidences: { overall: Number(out.confidence) || 0.4 },
+      };
+    }
+    const normalized = normalizeSupplierAck(out);
+    const overall = Number(out.confidence);
+    const conf = Number.isFinite(overall) ? Math.max(0, Math.min(1, overall)) : 0.7;
+    const confidences = { overall: conf };
+    (normalized.lines || []).forEach((_li, i) => {
+      confidences["lines[" + i + "]"] = conf;
+    });
+    return {
+      ok: true,
+      raw: { ...result.data, supplier_ack: out },
+      mode,
+      reason: normalized.lines.length === 0 ? "empty_lines" : "ok",
+      normalized,
+      confidences,
+    };
+  }
 
   // non_po short-circuit: don't surface fabricated lines.
   if (out.classification === "non_po") {

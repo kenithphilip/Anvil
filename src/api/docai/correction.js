@@ -14,6 +14,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings, updateTenantSettings } from "../_lib/stripe-client.js";
 import { safeFire } from "../_lib/safe-thenable.js";
+import { promoteCorrectionIfStable } from "../_lib/docai/overrides.js";
 
 const REBUILD_THRESHOLD = 50;
 const MAX_EXAMPLES_PER_FIELD = 5;
@@ -95,7 +96,8 @@ export default async function handler(req, res) {
       detail: body.field_path,
     });
 
-    // Rebuild the per-customer overrides if we crossed the threshold.
+    // Rebuild the per-customer Claude few-shot overrides if we
+    // crossed the threshold.
     if (customerId) {
       const cnt = await svc.from("extraction_corrections")
         .select("id", { count: "exact", head: true })
@@ -107,6 +109,22 @@ export default async function handler(req, res) {
       }
     }
 
-    return json(res, 200, { ok: true, id: ins.data.id });
+    // Phase E: promote a stable correction to a customer-field
+    // override the moment we see two matching corrections in a
+    // row. This means the operator's fix takes effect on the NEXT
+    // upload, not after 50 corrections of waiting. ALL adapters
+    // benefit, not just Claude few-shot.
+    let promoted = null;
+    if (customerId) {
+      try {
+        promoted = await promoteCorrectionIfStable(svc, {
+          tenantId: ctx.tenantId,
+          customerId,
+          fieldPath: body.field_path,
+        });
+      } catch (_e) { promoted = null; }
+    }
+
+    return json(res, 200, { ok: true, id: ins.data.id, override_promoted: promoted });
   } catch (err) { sendError(res, err); }
 }

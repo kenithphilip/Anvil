@@ -27,7 +27,8 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
-import { dispatchExtract } from "../_lib/docai/index.js";
+import { runExtractionPipeline } from "../_lib/docai/run.js";
+import { safeFetch } from "../_lib/safe-fetch.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const BATCH_SIZE = 10;
@@ -78,18 +79,26 @@ const inferSourceType = (mime, filename) => {
   return "pdf";
 };
 
-const runOne = async (svc, doc) => {
-  if (await alreadyExtracted(svc, doc)) return { skipped: "already_extracted" };
-  // Sign a short-lived URL; the dispatcher's adapters (Reducto,
-  // Azure DI, Unstructured, Claude fallback) all accept a URL.
+// Download document bytes via a signed URL. The unified pipeline
+// needs bytes to run L1 (deterministic text) + L2 (OCR). We pull
+// once and keep the signed URL too so adapters that work
+// URL-only (Reducto / Azure DI) still have it.
+const downloadBytes = async (svc, doc) => {
   const signed = await svc.storage
     .from(doc.storage_bucket)
     .createSignedUrl(doc.storage_path, SIGNED_TTL_SECONDS);
   if (signed.error) return { error: "signed url: " + signed.error.message };
-  const sourceUrl = signed.data?.signedUrl || null;
+  const url = signed.data?.signedUrl || null;
+  if (!url) return { error: "signed url: no URL returned" };
+  const resp = await safeFetch(url, { timeoutMs: 30_000 });
+  if (!resp.ok) return { url, error: "download: " + resp.status };
+  const bytes = Buffer.from(await resp.arrayBuffer());
+  return { url, bytes };
+};
 
-  // Pull customer_id from the linked order (best-effort) so the
-  // dispatcher can fold in per-customer prompt overrides.
+const runOne = async (svc, doc) => {
+  if (await alreadyExtracted(svc, doc)) return { skipped: "already_extracted" };
+
   const orderId = (doc.order_documents || [])[0]?.order_id || null;
   let customerId = null;
   if (orderId) {
@@ -98,79 +107,62 @@ const runOne = async (svc, doc) => {
   }
 
   const settings = await tenantSettings(svc, doc.tenant_id);
-
-  // Open the run row first so we have a stable id to attach.
   const sourceType = inferSourceType(doc.mime_type, doc.filename);
-  const ins = await svc.from("extraction_runs").insert({
-    tenant_id: doc.tenant_id,
-    customer_id: customerId,
-    source_type: sourceType,
-    source_id: doc.id,
-    source_url: sourceUrl,
-    source_filename: doc.filename || null,
-    source_size_bytes: null,
-    status: "running",
-    triggered_by: null,
-  }).select("id").single();
-  if (ins.error) return { error: "extraction_runs insert: " + ins.error.message };
-  const runId = ins.data.id;
+  const dl = await downloadBytes(svc, doc);
+  if (dl.error && !dl.url) return { error: dl.error };
 
-  let out;
+  // The cron path uses a synthesised ctx because the unified
+  // pipeline records audit + processing events. recordEvent reads
+  // ctx.tenantId; we pass triggeredBy=null so the audit row marks
+  // the cron actor.
+  const cronCtx = { tenantId: doc.tenant_id, userId: null };
+  let result;
   try {
-    out = await dispatchExtract({
-      source: {
-        url: sourceUrl,
-        bytes: null,
-        filename: doc.filename || null,
-        mime: doc.mime_type || null,
-        sourceType,
-      },
-      settings: { ...settings, tenant_id: doc.tenant_id },
+    result = await runExtractionPipeline({
+      ctx: cronCtx, svc, settings,
+      bytes: dl.bytes || null,
+      url: dl.url || null,
+      filename: doc.filename || null,
+      mime: doc.mime_type || null,
+      sourceType,
       customerId,
-      hints: { auto_ocr: true, document_id: doc.id, order_id: orderId },
+      documentId: doc.id,
+      sourceId: doc.id,
+      caseId: orderId || doc.id,
+      kind: "po",
+      triggeredBy: null,
+      hints: { auto_ocr: true, order_id: orderId },
     });
   } catch (err) {
-    await svc.from("extraction_runs").update({
-      status: "failed",
-      error: (err.message || String(err)).slice(0, 500),
-      finished_at: new Date().toISOString(),
-    }).eq("id", runId);
-    return { error: err.message || String(err), run_id: runId };
+    return { error: err.message || String(err) };
   }
-
-  const status = !out.ok
-    ? "failed"
-    : (out.confidence_overall != null && out.confidence_overall < 0.7 ? "low_confidence" : "ok");
-
-  await svc.from("extraction_runs").update({
-    adapter_used: out.adapter_used || null,
-    adapter_attempts: out.attempts || [],
-    raw_extract: out.raw || null,
-    normalized_extract: out.normalized || null,
-    field_confidences: out.confidences || {},
-    confidence_overall: out.confidence_overall ?? null,
-    status,
-    error: out.error || null,
-    finished_at: new Date().toISOString(),
-  }).eq("id", runId);
 
   await svc.from("audit_events").insert({
     tenant_id: doc.tenant_id,
-    action: status === "ok" ? "auto_ocr_ok"
-      : status === "low_confidence" ? "auto_ocr_low_confidence"
+    action: result.status === "ok" ? "auto_ocr_ok"
+      : result.status === "low_confidence" ? "auto_ocr_low_confidence"
       : "auto_ocr_failed",
     object_type: "extraction_run",
-    object_id: runId,
-    detail: (out.adapter_used || "none") + "::" + (out.confidence_overall ?? "n/a") + "::doc=" + doc.id,
+    object_id: result.runId,
+    detail: (result.adapterUsed || "none")
+      + "::" + (result.confidenceOverall ?? "n/a")
+      + "::doc=" + doc.id
+      + "::reason=" + result.statusReason,
   });
 
   return {
-    run_id: runId,
+    run_id: result.runId,
     document_id: doc.id,
     order_id: orderId,
-    adapter_used: out.adapter_used || null,
-    status,
-    confidence_overall: out.confidence_overall ?? null,
+    adapter_used: result.adapterUsed || null,
+    status: result.status,
+    status_reason: result.statusReason,
+    confidence_overall: result.confidenceOverall,
+    text_layer_used: result.textLayerUsed,
+    ocr_layer_used: result.ocrLayerUsed,
+    template_used: !!result.templateUsed,
+    voter_used: result.voterUsed,
+    validator_summary: result.validatorSummary,
   };
 };
 
@@ -190,6 +182,9 @@ const drainOnce = async (svc) => {
     succeeded: results.filter((r) => r.status === "ok" || r.status === "low_confidence").length,
     failed: results.filter((r) => r.error).length,
     skipped: results.filter((r) => r.skipped).length,
+    text_layer_hits: results.filter((r) => r.text_layer_used).length,
+    ocr_layer_hits: results.filter((r) => r.ocr_layer_used).length,
+    template_hits: results.filter((r) => r.template_used).length,
     results,
   };
 };

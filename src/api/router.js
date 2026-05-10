@@ -20,6 +20,7 @@ import agentsRun               from "./agents/run.js";
 import adminContracts          from "./admin/contracts.js";
 import adminCustomerLocations  from "./admin/customer_locations.js";
 import adminDiagnostics        from "./admin/diagnostics.js";
+import adminDocaiSettings      from "./admin/docai_settings.js";
 import adminEquipment          from "./admin/equipment.js";
 import adminFxRates            from "./admin/fx_rates.js";
 import adminHolidays           from "./admin/holidays.js";
@@ -348,6 +349,7 @@ import inboundEmailPersistAttachments from "./inbound/email/persist_attachments.
 import docaiExtract            from "./docai/extract.js";
 import docaiCorrection         from "./docai/correction.js";
 import docaiUsage               from "./docai/usage.js";
+import docaiCostStatus          from "./docai/cost_status.js";
 import docaiRuns               from "./docai/runs.js";
 
 import p21Connect              from "./p21/connect.js";
@@ -544,6 +546,7 @@ const STATIC_ROUTES = {
   "/docai/extract":                 docaiExtract,
   "/docai/correction":              docaiCorrection,
   "/docai/usage":                   docaiUsage,
+  "/docai/cost_status":             docaiCostStatus,
   "/docai/runs":                    docaiRuns,
   "/p21/connect":                   p21Connect,
   "/p21/health":                    p21Health,
@@ -623,6 +626,7 @@ const STATIC_ROUTES = {
   "/admin/contracts":               adminContracts,
   "/admin/customer_locations":      adminCustomerLocations,
   "/admin/diagnostics":             adminDiagnostics,
+  "/admin/docai_settings":          adminDocaiSettings,
   "/admin/equipment":               adminEquipment,
   "/admin/fx_rates":                adminFxRates,
   "/admin/holidays":                adminHolidays,

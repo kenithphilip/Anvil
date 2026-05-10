@@ -146,7 +146,19 @@ export const dispatchExtract = async ({ source, settings, customerId, hints }) =
     }
     last = { adapter_used: adapterName, latency_ms, ...out, confidence_overall: conf };
   }
-  return last
-    ? { ...last, attempts }
-    : { ok: false, error: "no docai adapter configured", attempts };
+  // Phase 3.6 observability (audit close): surface a structured
+  // failure-reason so the operator can see why no adapter
+  // contributed. Without this, the only signal was a 200 with
+  // empty normalized + a notify-warn toast.
+  if (!last) {
+    const allSkipped = attempts.length > 0
+      && attempts.every((a) => a.status === "skipped_not_configured");
+    return {
+      ok: false,
+      reason: allSkipped ? "all_adapters_skipped" : "no_adapter_configured",
+      error: "no docai adapter configured",
+      attempts,
+    };
+  }
+  return { ...last, attempts };
 };

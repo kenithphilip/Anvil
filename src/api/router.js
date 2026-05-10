@@ -152,6 +152,8 @@ import masterDataGraph         from "./master_data/graph.js";
 
 import ordersById              from "./orders/[id].js";
 import ordersIndex             from "./orders/index.js";
+// Phase 3.6 observability: per-order pipeline diagnostics.
+import ordersPipelineState     from "./orders/pipeline_state.js";
 import ordersScheduleLines     from "./orders/schedule_lines.js";
 
 import salesInternalSo         from "./sales/internal_so.js";
@@ -805,6 +807,9 @@ const DYNAMIC_ROUTES = [
   // "/documents/<id>" -> documentsById, sets req.query.id
   { prefix: "/documents/",   handler: documentsById,  param: "id" },
   // "/orders/<id>"
+  // /orders/<id>/pipeline-state takes precedence over the bare
+  // /orders/<id> route below thanks to suffix-aware matching.
+  { prefix: "/orders/",      suffix: "/pipeline-state", handler: ordersPipelineState, param: "id" },
   { prefix: "/orders/",      handler: ordersById,     param: "id" },
   // "/source_pos/<id>"
   { prefix: "/source_pos/",  handler: sourcePosById,  param: "id" },

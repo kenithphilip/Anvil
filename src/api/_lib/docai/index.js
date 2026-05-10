@@ -18,9 +18,18 @@ import * as unstructured from "./unstructured.js";
 import * as excel from "./excel.js";
 import * as claudeAdapter from "./claude.js";
 import * as gaeb from "./gaeb.js";
+import * as docling from "./docling.js";
+import * as marker from "./marker.js";
 
 const ADAPTERS = {
-  reducto, azure_di: azureDI, unstructured, excel, claude: claudeAdapter, gaeb,
+  reducto,
+  azure_di: azureDI,
+  unstructured,
+  excel,
+  claude: claudeAdapter,
+  gaeb,
+  docling,
+  marker,
 };
 
 const guessSourceType = ({ filename, mime, bytes }) => {
@@ -80,7 +89,7 @@ export const dispatchExtract = async ({ source, settings, customerId, hints }) =
     // GAEB attempt so the caller can see what happened.
     const gaebAttempt = { adapter: "gaeb", status: "failed", ms: Date.now() - t0, error: out.error };
     const order = settings?.docai_provider_order
-      || ["claude", "reducto", "azure_di", "unstructured"];
+      || ["docling", "marker", "claude", "reducto", "azure_di", "unstructured"];
     const attempts = [gaebAttempt];
     let last = { ok: false, error: out.error };
     for (const adapterName of order) {
@@ -107,8 +116,14 @@ export const dispatchExtract = async ({ source, settings, customerId, hints }) =
     }
     return { ...last, attempts };
   }
+  // Default order favours self-hostable / deterministic adapters
+  // first (zero per-page cost when configured), then the hosted
+  // doc-AI options, then Claude as the LLM fallback. The dispatcher
+  // skips any adapter whose isConfigured(settings) returns false,
+  // so an operator who configures only Claude still gets the
+  // single-adapter path with no extra latency.
   const order = settings?.docai_provider_order
-    || ["reducto", "azure_di", "unstructured", "claude"];
+    || ["docling", "marker", "unstructured", "reducto", "azure_di", "claude"];
   const attempts = [];
   let last = null;
   for (const adapterName of order) {

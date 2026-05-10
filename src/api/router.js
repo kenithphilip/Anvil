@@ -138,6 +138,7 @@ import inventorySync           from "./inventory/sync.js";
 // Inventory-planning module (Phase 2). Endpoints + crons.
 import inventoryPositions       from "./inventory/positions.js";
 import inventoryForecasts       from "./inventory/forecasts.js";
+import inventoryForecastRuns    from "./inventory/forecast_runs.js";
 import inventoryPlans           from "./inventory/plans.js";
 import inventoryExceptions      from "./inventory/exceptions.js";
 import inventoryAllocations     from "./inventory/allocations.js";
@@ -149,6 +150,7 @@ import inventorySuppliers       from "./inventory/suppliers.js";
 import inventoryCronPositions   from "./cron/inventory-positions.js";
 import inventoryCronWeekly      from "./cron/inventory-planning-weekly.js";
 import inventoryCronExceptions  from "./cron/inventory-exceptions-tick.js";
+import tallyReconcileCron       from "./cron/tally-reconcile.js";
 
 import masterDataGraph         from "./master_data/graph.js";
 
@@ -161,6 +163,7 @@ import ordersScheduleLines     from "./orders/schedule_lines.js";
 import salesInternalSo         from "./sales/internal_so.js";
 import salesLeads              from "./sales/leads.js";
 import salesOpportunities      from "./sales/opportunities.js";
+import opportunityLineItems    from "./opportunities/line_items.js";
 import salesProjects           from "./sales/projects.js";
 import salesShipments          from "./sales/shipments.js";
 // Phase 7.1 + 7.2: lead scoring + opportunity probability.
@@ -525,6 +528,7 @@ const STATIC_ROUTES = {
   "/cron/inventory-positions":       inventoryCronPositions,
   "/cron/inventory-planning-weekly": inventoryCronWeekly,
   "/cron/inventory-exceptions-tick": inventoryCronExceptions,
+  "/cron/tally-reconcile":           tallyReconcileCron,
   "/edi/inbound":                   ediInbound,
   "/edi/outbound":                  ediOutbound,
   "/edi/partners":                  ediPartners,
@@ -743,6 +747,7 @@ const STATIC_ROUTES = {
   // Inventory-planning module endpoints (Phase 2).
   "/inventory/positions":           inventoryPositions,
   "/inventory/forecasts":           inventoryForecasts,
+  "/inventory/forecast_runs":       inventoryForecastRuns,
   "/inventory/plans":               inventoryPlans,
   "/inventory/exceptions":          inventoryExceptions,
   "/inventory/allocations":         inventoryAllocations,
@@ -760,6 +765,7 @@ const STATIC_ROUTES = {
   "/sales/internal_so":             salesInternalSo,
   "/sales/leads":                   salesLeads,
   "/sales/opportunities":           salesOpportunities,
+  "/opportunities/line_items":      opportunityLineItems,
   "/sales/projects":                salesProjects,
   "/sales/shipments":               salesShipments,
   "/sales/score_lead":              salesScoreLead,

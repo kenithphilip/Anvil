@@ -1111,14 +1111,7 @@ const WiredSOWorkspace = () => {
         )}
 
         {tab === "tally" && (
-          <Card title="Tally" eyebrow={o.status === "EXPORTED_TO_TALLY" ? "exported" : o.status === "FAILED_TALLY_IMPORT" ? "failed" : "queued"}>
-            <KV rows={[
-              ["Voucher", o.payload_hash ? `SO/${o.order_mode || "GEN"}/${(o.po_number || o.id || "").slice(0, 12)}` : "—"],
-              ["Hash", o.payload_hash || "—"],
-              ["Status", o.status],
-              ["Pushed", o.status === "EXPORTED_TO_TALLY" ? "yes" : "no"],
-            ]} />
-          </Card>
+          <TallyTab orderId={o.id} order={o} onRefresh={() => setBump((n: number) => n + 1)} />
         )}
 
         {tab === "schedule" && (
@@ -1606,3 +1599,157 @@ const PipelineDiagnostics: React.FC<{
 
 
 export default WiredSOWorkspace;
+
+// ============================================================
+// Phase F.6 Tally tab. Renders voucher record + Tally-side state,
+// drift findings, run history, and a "Reconcile now" button that
+// fires /api/tally/reconcile?mode=drift_check scoped to this order.
+// ============================================================
+
+const TallyTab: React.FC<{
+  orderId: string;
+  order: any;
+  onRefresh: () => void;
+}> = ({ orderId, order, onRefresh }) => {
+  const [recon, setRecon] = useState<{ data: any; loading: boolean; error: any }>({ data: null, loading: true, error: null });
+  const [busy, setBusy] = useState(false);
+  const [busyMsg, setBusyMsg] = useState<string | null>(null);
+
+  const reload = React.useCallback(async () => {
+    setRecon({ data: null, loading: true, error: null });
+    try {
+      const next = await (ObaraBackend as any)?.tally?.getOrderRecon?.(orderId);
+      setRecon({ data: next, loading: false, error: null });
+    } catch (err) {
+      setRecon({ data: null, loading: false, error: err });
+    }
+  }, [orderId]);
+
+  React.useEffect(() => { reload(); }, [reload]);
+
+  const reconcileNow = async () => {
+    setBusy(true); setBusyMsg(null);
+    try {
+      const out = await (ObaraBackend as any)?.tally?.driftCheck?.({
+        scope: "order",
+        scopeValue: orderId,
+        trigger: "workspace",
+      });
+      setBusyMsg(
+        out?.vouchers_drifted
+          ? `Drift detected: ${out.vouchers_drifted} finding(s)`
+          : "Clean: no drift detected"
+      );
+      await reload();
+      onRefresh();
+    } catch (e: any) {
+      setBusyMsg("Error: " + String(e?.message || e));
+    } finally { setBusy(false); }
+  };
+
+  const resolveFinding = async (findingId: string) => {
+    try {
+      await (ObaraBackend as any)?.tally?.resolveFinding?.(findingId);
+      await reload();
+    } catch (_e) { /* no-op */ }
+  };
+
+  const vrec = recon.data?.voucher_record || null;
+  const findings: any[] = recon.data?.findings || [];
+  const unresolved = findings.filter((f) => !f.resolved_at);
+  const drift_summary = vrec?.drift_summary || {};
+  const driftKeys = Object.keys(drift_summary);
+
+  const tally_status = order.tally_status;
+  const eyebrow = order.status === "EXPORTED_TO_TALLY" ? "exported"
+    : order.status === "FAILED_TALLY_IMPORT" ? "failed"
+    : order.status === "TALLY_RECONCILED" ? "reconciled"
+    : "queued";
+
+  return (
+    <>
+      {vrec?.last_drift_at && unresolved.length > 0 && (
+        <Banner kind="bad" icon={Icon.alert} title={`Drift detected ${driftKeys.length === 0 ? "" : "(" + driftKeys.join(", ") + ")"}`}>
+          <span className="mono-sm">
+            {unresolved.length} unresolved finding{unresolved.length === 1 ? "" : "s"} since {new Date(vrec.last_drift_at).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" })}.
+          </span>
+        </Banner>
+      )}
+
+      <Card
+        title="Tally"
+        eyebrow={eyebrow}
+        right={
+          <Btn sm kind="primary" disabled={busy} onClick={reconcileNow}>
+            {busy ? "Reconciling…" : "Reconcile now"}
+          </Btn>
+        }
+      >
+        <KV rows={[
+          ["Voucher no", vrec?.voucher_no || "—"],
+          ["Voucher status", vrec?.status || tally_status || "—"],
+          ["Last reconciled", vrec?.last_reconciled_at ? new Date(vrec.last_reconciled_at).toLocaleString("en-IN") : "never"],
+          ["Last drift", vrec?.last_drift_at ? new Date(vrec.last_drift_at).toLocaleString("en-IN") : "(no drift)"],
+          ["Hash", order.payload_hash || "—"],
+          ["Pushed", order.status === "EXPORTED_TO_TALLY" || order.status === "TALLY_RECONCILED" ? "yes" : "no"],
+        ]} />
+        {busyMsg && (
+          <div className="mono-sm" style={{ marginTop: 8, color: "var(--ink-3)" }}>{busyMsg}</div>
+        )}
+      </Card>
+
+      <Card title="Reconciliation findings" eyebrow={`${findings.length} total · ${unresolved.length} unresolved`} flush>
+        {findings.length === 0 ? (
+          <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+            No reconciliation findings for this order. Run "Reconcile now" to check.
+          </div>
+        ) : (
+          <table className="tbl">
+            <thead><tr>
+              <th>When</th>
+              <th>Kind</th>
+              <th>Severity</th>
+              <th>Diff %</th>
+              <th>Expected</th>
+              <th>Actual</th>
+              <th>Auto-fix</th>
+              <th>Status</th>
+              <th></th>
+            </tr></thead>
+            <tbody>
+              {findings.map((f) => (
+                <tr key={f.id}>
+                  <td className="mono-sm">{f.created_at ? new Date(f.created_at).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                  <td className="mono-sm">{f.finding_kind}</td>
+                  <td>
+                    <Chip k={f.severity === "critical" || f.severity === "error" ? "bad" : f.severity === "warn" ? "warn" : "info"}>
+                      {f.severity}
+                    </Chip>
+                  </td>
+                  <td className="r mono">{f.diff_pct != null ? Number(f.diff_pct).toFixed(2) + "%" : "—"}</td>
+                  <td className="mono-sm" style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {f.expected ? JSON.stringify(f.expected) : "—"}
+                  </td>
+                  <td className="mono-sm" style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {f.actual ? JSON.stringify(f.actual) : "—"}
+                  </td>
+                  <td className="mono-sm">{f.auto_fix_applied || "—"}</td>
+                  <td>
+                    <Chip k={f.resolved_at ? "good" : "warn"}>
+                      {f.resolved_at ? "resolved" : "open"}
+                    </Chip>
+                  </td>
+                  <td>
+                    {!f.resolved_at && (
+                      <Btn sm kind="ghost" onClick={() => resolveFinding(f.id)}>Mark resolved</Btn>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+    </>
+  );
+};

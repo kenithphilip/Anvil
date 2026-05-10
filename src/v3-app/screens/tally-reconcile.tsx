@@ -15,8 +15,11 @@ import { useTallyBridgeStatus } from "../lib/tally-status";
 
 const WiredTallyReconcile = () => {
   const exported = useFetch(() => ObaraBackend?.orders?.list?.({ status: "EXPORTED_TO_TALLY", limit: 200 }) || Promise.resolve({ orders: [] }), []);
-  const [busyId, setBusyId] = useState(null);
-  const [flash, setFlash]   = useState(null);
+  const findings = useFetch(() => (ObaraBackend as any)?.tally?.listReconFindings?.(50) || Promise.resolve({ findings: [] }), []);
+  const reconRuns = useFetch(() => (ObaraBackend as any)?.tally?.listReconRuns?.(20) || Promise.resolve({ runs: [] }), []);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [flash, setFlash]   = useState<{ kind: string; msg: string } | null>(null);
+  const [driftBusy, setDriftBusy] = useState(false);
   const bridge = useTallyBridgeStatus();
 
   const rows = tallyOrderRows(exported.data);
@@ -44,17 +47,47 @@ const WiredTallyReconcile = () => {
     }
   };
 
-  const totalValue = rows.reduce((s, o) => s + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
+  const totalValue = rows.reduce((s: number, o: any) => s + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
   const oldest = rows.length ? ageLabel(rows[rows.length - 1].updated_at || rows[rows.length - 1].created_at) : "—";
+
+  const findingRows: any[] = (findings.data as any)?.findings || [];
+  const runRows: any[] = (reconRuns.data as any)?.runs || [];
+
+  const runDriftCheck = async () => {
+    setDriftBusy(true); setFlash(null);
+    try {
+      const out = await (ObaraBackend as any)?.tally?.driftCheck?.({
+        scope: "tenant_recent",
+        trigger: "manual",
+      });
+      setFlash({
+        kind: out?.vouchers_drifted ? "warn" : "good",
+        msg: `Reconciled ${out?.vouchers_considered || 0} voucher(s); ${out?.vouchers_drifted || 0} drift, ${out?.vouchers_clean || 0} clean, ${out?.auto_fixes_applied || 0} auto-fixed`,
+      });
+      await Promise.all([exported.reload(), findings.reload(), reconRuns.reload()]);
+    } catch (err: any) {
+      setFlash({ kind: "bad", msg: String(err?.message || err) });
+    } finally { setDriftBusy(false); }
+  };
+
+  const resolveOne = async (id: string) => {
+    try {
+      await (ObaraBackend as any)?.tally?.resolveFinding?.(id);
+      findings.reload();
+    } catch (_e) { /* no-op */ }
+  };
 
   return (
     <>
       <WSTitle
         eyebrow="Finance · Tally"
         title="Reconciliation"
-        meta={`${rows.length} pushed · awaiting reconciliation`}
+        meta={`${rows.length} pushed · ${findingRows.length} unresolved drift`}
         right={<>
-          <Btn icon kind="ghost" sm onClick={exported.reload} title="Refresh">{Icon.cycle}</Btn>
+          <Btn sm kind="primary" disabled={driftBusy} onClick={runDriftCheck}>
+            {driftBusy ? "Reconciling…" : "Run drift check"}
+          </Btn>
+          <Btn icon kind="ghost" sm onClick={() => { exported.reload(); findings.reload(); reconRuns.reload(); }} title="Refresh">{Icon.cycle}</Btn>
         </>}
       />
 
@@ -90,6 +123,69 @@ const WiredTallyReconcile = () => {
             return (Date.now() - new Date(t).getTime()) > 24 * 3600_000;
           }).length)} d=">24h waiting" dKind="down" />
         </KPIRow>
+
+        {/* Phase F.6: drift findings panel + run history */}
+        {findingRows.length > 0 && (
+          <Card title="Drift findings" eyebrow={`${findingRows.length} unresolved`} flush>
+            <table className="tbl">
+              <thead><tr>
+                <th>When</th>
+                <th>Voucher</th>
+                <th>Kind</th>
+                <th>Severity</th>
+                <th className="r">Diff %</th>
+                <th>Auto-fix</th>
+                <th></th>
+              </tr></thead>
+              <tbody>
+                {findingRows.map((f: any) => (
+                  <tr key={f.id}>
+                    <td className="mono-sm">{f.created_at ? new Date(f.created_at).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                    <td className="mono-sm">{f.voucher_no || "—"}</td>
+                    <td className="mono-sm">{f.finding_kind}</td>
+                    <td><Chip k={f.severity === "critical" || f.severity === "error" ? "bad" : f.severity === "warn" ? "warn" : "info"}>{f.severity}</Chip></td>
+                    <td className="r mono">{f.diff_pct != null ? Number(f.diff_pct).toFixed(2) + "%" : "—"}</td>
+                    <td className="mono-sm">{f.auto_fix_applied || "—"}</td>
+                    <td><Btn sm kind="ghost" onClick={() => resolveOne(f.id)}>Resolve</Btn></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        )}
+
+        {runRows.length > 0 && (
+          <Card title="Recent reconciliation runs" eyebrow="last 20" flush>
+            <table className="tbl">
+              <thead><tr>
+                <th>Started</th>
+                <th>Trigger</th>
+                <th>Scope</th>
+                <th className="r">Considered</th>
+                <th className="r">Drifted</th>
+                <th className="r">Clean</th>
+                <th className="r">Auto-fixed</th>
+                <th>Status</th>
+                <th className="r">Latency</th>
+              </tr></thead>
+              <tbody>
+                {runRows.map((r: any) => (
+                  <tr key={r.id}>
+                    <td className="mono-sm">{r.started_at ? new Date(r.started_at).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                    <td className="mono-sm">{r.trigger}</td>
+                    <td className="mono-sm">{r.scope}{r.scope_value ? ":" + String(r.scope_value).slice(0, 8) : ""}</td>
+                    <td className="r mono">{r.vouchers_considered}</td>
+                    <td className="r mono">{r.vouchers_drifted}</td>
+                    <td className="r mono">{r.vouchers_clean}</td>
+                    <td className="r mono">{r.auto_fixes_applied}</td>
+                    <td><Chip k={r.status === "ok" ? "good" : r.status === "partial_failure" ? "warn" : "bad"}>{r.status}</Chip></td>
+                    <td className="r mono">{r.latency_ms != null ? r.latency_ms + "ms" : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        )}
 
         <Card title="Pushed · awaiting Tally confirmation" eyebrow="mark reconciled when the voucher is confirmed in Tally" flush>
           {exported.loading ? (

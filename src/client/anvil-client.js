@@ -531,7 +531,7 @@
     // Aggregate cost-optimisation status: usage + 7d trend + caps +
     // adapter health + actionable recommendations. Drives the
     // admin "DocAI cost" tab.
-    costStatus: async () => apiFetch("/api/docai/cost_status"),
+    costStatus: async (days) => apiFetch("/api/docai/cost_status" + (days ? "?days=" + encodeURIComponent(days) : "")),
     // Tenant docai settings (admin only). GET returns current
     // values; updateSettings PATCHes a partial.
     getSettings:    async () => apiFetch("/api/admin/docai_settings"),
@@ -964,6 +964,8 @@
       const qs = new URLSearchParams(params || {}).toString();
       return apiFetch("/api/inventory/forecasts" + (qs ? "?" + qs : ""));
     },
+    forecastRuns: async (limit) => apiFetch("/api/inventory/forecast_runs" + (limit ? "?limit=" + limit : "")),
+    forecastRun: async (id) => apiFetch("/api/inventory/forecast_runs?id=" + encodeURIComponent(id)),
     plans: {
       list: async (params) => {
         const qs = new URLSearchParams(params || {}).toString();
@@ -1030,6 +1032,20 @@
     push: async (payload) => apiFetch("/api/tally/push", { method: "POST", body: payload }),
     pushPreview: async (payload) => apiFetch("/api/tally/push", { method: "POST", body: { ...(payload || {}), dry_run: true } }),
     reconcile: async (payload) => apiFetch("/api/tally/reconcile", { method: "POST", body: payload }),
+    // Phase F.6: drift-check mode + GET helpers + finding resolve.
+    driftCheck: async (payload) => apiFetch("/api/tally/reconcile", {
+      method: "POST",
+      body: { mode: "drift_check", ...(payload || {}) },
+    }),
+    reconcileMark: async (payload) => apiFetch("/api/tally/reconcile", {
+      method: "POST",
+      body: { mode: "mark", ...(payload || {}) },
+    }),
+    listReconRuns: async (limit) => apiFetch("/api/tally/reconcile?scope=runs" + (limit ? "&limit=" + limit : "")),
+    listReconFindings: async (limit) => apiFetch("/api/tally/reconcile?scope=findings" + (limit ? "&limit=" + limit : "")),
+    getReconRun: async (runId) => apiFetch("/api/tally/reconcile?run_id=" + encodeURIComponent(runId)),
+    getOrderRecon: async (orderId) => apiFetch("/api/tally/reconcile?order_id=" + encodeURIComponent(orderId)),
+    resolveFinding: async (findingId) => apiFetch("/api/tally/reconcile?finding_id=" + encodeURIComponent(findingId), { method: "PATCH" }),
     amend: async (payload) => apiFetch("/api/tally/amend", { method: "POST", body: payload }),
     health: async () => apiFetch("/api/tally/health"),
     diagnostics: async (companyId) => apiFetch("/api/tally/diagnostics" + (companyId ? "?companyId=" + encodeURIComponent(companyId) : "")),
@@ -1122,6 +1138,11 @@
     createOpportunity: async (payload) => apiFetch("/api/sales/opportunities", { method: "POST", body: payload }),
     updateOpportunity: async (payload) => apiFetch("/api/sales/opportunities", { method: "PATCH", body: payload }),
     deleteOpportunity: async (id) => apiFetch("/api/sales/opportunities?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    // Migration 086 line items: feeds inventory pipeline-demand calculation.
+    listOpportunityLines: async (opportunity_id) => apiFetch("/api/opportunities/line_items?opportunity_id=" + encodeURIComponent(opportunity_id)),
+    createOpportunityLine: async (payload) => apiFetch("/api/opportunities/line_items", { method: "POST", body: payload }),
+    updateOpportunityLine: async (id, payload) => apiFetch("/api/opportunities/line_items?id=" + encodeURIComponent(id), { method: "PATCH", body: payload }),
+    deleteOpportunityLine: async (id) => apiFetch("/api/opportunities/line_items?id=" + encodeURIComponent(id), { method: "DELETE" }),
     // Audit P7.2: Haiku close-probability prediction.
     predictOpportunity: async (id) => apiFetch("/api/sales/predict_opportunity" + (id ? "?id=" + encodeURIComponent(id) : "")),
     repredictOpportunities: async () => apiFetch("/api/sales/predict_opportunity", { method: "POST" }),

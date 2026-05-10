@@ -141,6 +141,13 @@ export default async function handler(req, res) {
     const svc = serviceClient();
     const settings = await tenantSettings(svc, ctx.tenantId);
 
+    // Configurable trend window (clamped 1..90).
+    const url = new URL(req.url || "", "http://x");
+    const requestedDays = Number(url.searchParams.get("days"));
+    const days = Number.isFinite(requestedDays) && requestedDays >= 1
+      ? Math.min(90, Math.floor(requestedDays))
+      : 7;
+
     // Today's usage.
     const todayResp = await svc.from("docai_daily_usage")
       .select("adapter, call_count, estimated_cost_usd, last_called_at")
@@ -149,18 +156,130 @@ export default async function handler(req, res) {
       .order("call_count", { ascending: false });
     const todayUsage = todayResp.data || [];
 
-    // 7-day trend.
+    // N-day trend, raw rows so the frontend can build a per-day
+    // per-adapter chart. We still emit a rollup for callers that
+    // only want totals.
     const trendResp = await svc.from("docai_daily_usage")
       .select("usage_date, adapter, call_count, estimated_cost_usd")
       .eq("tenant_id", ctx.tenantId)
-      .gte("usage_date", daysAgo(7))
+      .gte("usage_date", daysAgo(days))
       .order("usage_date", { ascending: true });
     const trendRows = trendResp.data || [];
-    const trend7d = trendRows.reduce((acc, r) => {
+    const trendRollup = trendRows.reduce((acc, r) => {
       acc.calls += Number(r.call_count || 0);
       acc.cost  += Number(r.estimated_cost_usd || 0);
       return acc;
     }, { calls: 0, cost: 0 });
+    // Keep the legacy 7-day rollup name for back-compat with
+    // existing UI bindings.
+    const trend7d = trendRollup;
+
+    // Per-day per-adapter buckets for the chart.
+    // shape: { dates: [...], adapters: [...], series: { [adapter]: { calls: [...], cost: [...] } } }
+    const trendSeries = (() => {
+      const dateSet = new Set();
+      const adapterSet = new Set();
+      const byKey = new Map();          // `${date}__${adapter}` -> { calls, cost }
+      for (const r of trendRows) {
+        const date = r.usage_date.slice(0, 10);
+        const adapter = r.adapter;
+        dateSet.add(date);
+        adapterSet.add(adapter);
+        byKey.set(date + "__" + adapter, {
+          calls: Number(r.call_count || 0),
+          cost: Number(r.estimated_cost_usd || 0),
+        });
+      }
+      // Fill every date in the window so the x-axis is dense.
+      const allDates = [];
+      for (let i = days - 1; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        allDates.push(d.toISOString().slice(0, 10));
+      }
+      const adapters = Array.from(adapterSet).sort();
+      const series = {};
+      for (const a of adapters) {
+        series[a] = {
+          calls: allDates.map((d) => byKey.get(d + "__" + a)?.calls || 0),
+          cost: allDates.map((d) => byKey.get(d + "__" + a)?.cost || 0),
+        };
+      }
+      return { dates: allDates, adapters, series };
+    })();
+
+    // Burn rate: today vs N-day median (excluding today). Per-adapter.
+    const burn = (() => {
+      const out = {};
+      for (const adapter of trendSeries.adapters) {
+        const allCalls = trendSeries.series[adapter].calls;
+        // Median of the historical days (everything except the
+        // last entry, which is today).
+        const historical = allCalls.slice(0, -1).filter((n) => n > 0).sort((a, b) => a - b);
+        const median = historical.length
+          ? historical[Math.floor(historical.length / 2)]
+          : 0;
+        const todayCount = allCalls[allCalls.length - 1] || 0;
+        const ratio = median > 0 ? todayCount / median : (todayCount > 0 ? Infinity : 0);
+        out[adapter] = {
+          today_calls: todayCount,
+          median_n_calls: median,
+          ratio: Number.isFinite(ratio) ? Number(ratio.toFixed(2)) : null,
+          window_days: days,
+        };
+      }
+      return out;
+    })();
+
+    // Anomalies: days where calls > 2x median for that adapter.
+    const anomalies = [];
+    for (const adapter of trendSeries.adapters) {
+      const allCalls = trendSeries.series[adapter].calls;
+      const sorted = [...allCalls].filter((n) => n > 0).sort((a, b) => a - b);
+      if (!sorted.length) continue;
+      const median = sorted[Math.floor(sorted.length / 2)];
+      if (median <= 0) continue;
+      allCalls.forEach((n, i) => {
+        if (n >= 2 * median && n >= 5) {
+          anomalies.push({
+            adapter,
+            date: trendSeries.dates[i],
+            calls: n,
+            median,
+            multiplier: Number((n / median).toFixed(2)),
+          });
+        }
+      });
+    }
+
+    // Forecast: at today's burn rate, when does each adapter's cap
+    // exhaust this calendar day? Returns hours-remaining estimate.
+    const forecast = (() => {
+      const limits = settings?.docai_daily_limits || {};
+      const out = {};
+      const todayMap = Object.fromEntries(todayUsage.map((u) => [u.adapter, Number(u.call_count || 0)]));
+      for (const adapter of Object.keys(limits)) {
+        const cap = Number(limits[adapter]);
+        if (!Number.isFinite(cap) || cap <= 0) continue;
+        const used = todayMap[adapter] || 0;
+        const remaining = Math.max(0, cap - used);
+        // Hours into today (UTC).
+        const now = new Date();
+        const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+        const hoursElapsed = Math.max(0.1, (now - startOfDay) / 3_600_000);
+        const ratePerHour = used / hoursElapsed;
+        const hoursToCap = ratePerHour > 0 ? remaining / ratePerHour : null;
+        out[adapter] = {
+          cap,
+          used,
+          remaining,
+          rate_per_hour: Number(ratePerHour.toFixed(2)),
+          hours_to_cap: hoursToCap == null ? null : Math.max(0, Number(hoursToCap.toFixed(1))),
+          will_hit_cap_today: hoursToCap != null && hoursToCap < (24 - hoursElapsed),
+        };
+      }
+      return out;
+    })();
 
     // Adapter health (env-var presence). Mirrors the dispatcher's
     // isConfigured precedence: env beats tenant-encrypted key.
@@ -206,8 +325,14 @@ export default async function handler(req, res) {
 
     return json(res, 200, {
       date: today(),
+      window_days: days,
       today_usage: todayUsage,
       trend_7d: trend7d,
+      trend_window: trendRollup,
+      trend_series: trendSeries,
+      burn,
+      anomalies,
+      forecast,
       provider_order: settings?.docai_provider_order || DEFAULT_ORDER,
       provider_order_default: !settings?.docai_provider_order,
       daily_limits: settings?.docai_daily_limits || null,
@@ -225,6 +350,8 @@ export default async function handler(req, res) {
         free_friendly_calls_today: freeFriendlyCalls,
         paid_calls_today: paidCalls,
         warnings: recommendations.filter((r) => r.severity === "warn" || r.severity === "bad").length,
+        anomalies_count: anomalies.length,
+        forecast_caps_at_risk_today: Object.values(forecast).filter((f) => f.will_hit_cap_today).length,
       },
     });
   } catch (err) { sendError(res, err); }

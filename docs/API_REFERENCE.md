@@ -364,7 +364,24 @@ Side effects: posts to `TALLY_BRIDGE_URL` if set; upserts `tally_voucher_records
 
 ### POST /api/tally/reconcile
 
-Permission: approve. Body: `{ orderId, status, tally_voucher_id? }`. Flips order to RECONCILED / EXPORTED_TO_TALLY / FAILED_TALLY_IMPORT.
+Two modes selected via `body.mode`:
+
+- `mode: "mark"` (default when `orderId + status` are present, kept for back-compat). Permission: approve. Body: `{ orderId, status, tally_voucher_id? }`. Flips order to RECONCILED / EXPORTED_TO_TALLY / FAILED_TALLY_IMPORT.
+- `mode: "drift_check"` (Phase F.6). Permission: write. Body: `{ scope?, scopeValue?, autoFix?, trigger? }`. `scope` is one of `all` | `tenant_recent` (default) | `order`. Walks pushed `tally_voucher_records` for the scope, compares each against `tally_voucher_state`, persists per-voucher findings (`total_mismatch`, `line_count_mismatch`, `voucher_cancelled_in_tally`, `voucher_altered_in_tally`, `missing_in_tally`, `gstin_mismatch`, etc.), optionally auto-fixes (`cancelled` -> `order_failed`, `missing` -> `re_pushed`), and updates `last_reconciled_at` / `last_drift_at` / `drift_summary` rollups. Audit `tally_drift_detected` / `tally_recon_run`. Records process event `tally_drift_detected` / `tally_recon_run`. Returns `{ run_id, status, vouchers_considered, vouchers_drifted, findings_persisted, auto_fixes_applied, findings }`.
+
+### GET /api/tally/reconcile
+
+Permission: read. Read modes:
+
+- `?run_id=<uuid>` -> `{ run, findings }`.
+- `?order_id=<uuid>` -> `{ voucher_record, findings }` (latest findings for the order, plus rollup state on `tally_voucher_records`).
+- `?scope=runs&limit=N` -> `{ runs }` (recent reconciliation runs, default 50).
+- `?scope=findings&limit=N` -> `{ findings }` (open / unresolved findings).
+- (no query) -> `{ latest_run }`.
+
+### PATCH /api/tally/reconcile?finding_id=<uuid>
+
+Permission: approve. Marks a finding resolved (`resolved_at`, `resolved_by`). Audit `tally_drift_resolved`.
 
 ### POST /api/tally/amend
 
@@ -708,6 +725,31 @@ Permission: write. Body `{ records: [{stockItemName, available_qty?, reserved_qt
 ### POST /api/inventory/availability
 
 Permission: read. Body `{ lineItems: [{partNo, qty}] }`. ATP = available - reserved - openSoReserved + inboundFromSourcePos.
+
+### GET /api/inventory/forecast_runs
+
+Permission: read. Two modes:
+
+- `?limit=N` (default 50, max 200) -> `{ runs: [{ id, started_at, finished_at, status, items_count, models_evaluated, wape_summary, notes }] }`. Ordered by `started_at desc`.
+- `?id=<uuid>` -> `{ run, forecasts_sample }`. The sample is the first 50 rows of `demand_forecasts` linked by `forecast_run_id` (best-effort; legacy schemas without the column return an empty array).
+
+## opportunities
+
+### GET /api/opportunities/line_items?opportunity_id=<uuid>
+
+Permission: read. Returns `{ line_items }` ordered by `line_index`. Drives the inventory-planning pipeline-demand calculation.
+
+### POST /api/opportunities/line_items
+
+Permission: write. Body `{ opportunity_id, product_family, qty, line_index?, product_category?, part_no?, description?, uom?, expected_unit_price?, expected_currency?, expected_close_date?, win_probability_pct? }`. Validates `qty > 0` and `win_probability_pct` in `0..100`. Auto-assigns `line_index = max + 1` when omitted. Audit `opportunity_line_item_created`.
+
+### PATCH /api/opportunities/line_items?id=<uuid>
+
+Permission: write. Whitelisted fields only: `product_family, product_category, part_no, description, qty, uom, expected_unit_price, expected_currency, expected_close_date, win_probability_pct`. Audit `opportunity_line_item_updated`.
+
+### DELETE /api/opportunities/line_items?id=<uuid>
+
+Permission: write. Audit `opportunity_line_item_deleted`.
 
 ## master_data
 

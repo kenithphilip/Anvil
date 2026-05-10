@@ -27,6 +27,7 @@ const INTEGRATIONS = [
   // keys via tenant_settings will still see "no env" here; that's
   // expected, the intake also checks the tenant's docai_provider_order.
   { id: "claude",      env: ["ANTHROPIC_API_KEY"],                          label: "DocAI: Claude (LLM fallback)" },
+  { id: "gemini",      env: ["GEMINI_API_KEY"],                             label: "DocAI: Google Gemini (cost-optimised primary)" },
   { id: "reducto",     env: ["REDUCTO_API_KEY"],                            label: "DocAI: Reducto" },
   { id: "azure_di",    env: ["AZURE_DI_KEY", "AZURE_DI_ENDPOINT"],          label: "DocAI: Azure Document Intelligence" },
   { id: "unstructured", env: ["UNSTRUCTURED_API_KEY"],                      label: "DocAI: Unstructured.io (hosted)" },

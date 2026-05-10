@@ -14,7 +14,7 @@
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
-import { recordAudit } from "../_lib/audit.js";
+import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { dispatchExtract } from "../_lib/docai/index.js";
 
@@ -96,6 +96,28 @@ export default async function handler(req, res) {
       objectId: runId,
       detail: (out.adapter_used || "none") + "::" + (out.confidence_overall ?? "n/a"),
     });
+
+    // Bug fix May 2026: extract failures (and low-confidence runs)
+    // were silent in the workspace activity timeline because nothing
+    // wrote a processing_event. Operators saw orders sit in DRAFT
+    // forever with no breadcrumb of why. We surface failures and
+    // low-confidence runs here so the merged Activity stream picks
+    // them up keyed by source_id (which the workspace passes as
+    // case_id when querying events.list).
+    if (status !== "ok") {
+      await recordEvent(ctx, {
+        eventType: status === "failed" ? "docai_extract_failed" : "docai_extract_low_confidence",
+        objectType: "extraction_run",
+        objectId: runId,
+        caseId: body?.source_id || null,
+        detail: {
+          adapter_used: out.adapter_used || null,
+          confidence_overall: out.confidence_overall ?? null,
+          attempts: (out.attempts || []).length,
+          error: out.error || null,
+        },
+      });
+    }
 
     return json(res, 200, {
       run_id: runId,

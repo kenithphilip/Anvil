@@ -352,6 +352,59 @@ const WiredSOWorkspace = () => {
     }
   };
 
+  // Bug fix May 2026: the Validate step in the workspace stepper had
+  // no operator-facing trigger. The /api/anomaly/compute endpoint
+  // existed but was read-only: it returned flags without persisting
+  // them, and nothing in the UI called it. Orders sat in DRAFT with
+  // an empty rule_findings array forever. The new "run validation"
+  // action calls compute with the order's lineItems + grandTotal as
+  // the candidate, persists the returned flags into
+  // orders.rule_findings (already an allow-listed update column), and
+  // stamps the validation timestamp into preflight_payload so the
+  // stepper can light step 3 (Validate) when findings exist.
+  const runValidation = async () => {
+    if (!o?.id) return;
+    if (!o.customer_id) {
+      window.notifyWarn?.(
+        "No customer on order",
+        "Anomaly rules need a customer to compare against. Set a customer first.",
+      );
+      return;
+    }
+    if (!lines.length) {
+      window.notifyWarn?.(
+        "No lines to validate",
+        "Run extraction first; the rule library scores line items.",
+      );
+      return;
+    }
+    setBusy(true);
+    try {
+      const candidate = o.result?.salesOrder || {};
+      const out: any = await (ObaraBackend as any)?.anomaly?.compute?.(o.customer_id, candidate);
+      const flags = Array.isArray(out?.flags) ? out.flags : [];
+      const nextPreflight = {
+        ...(o.preflight_payload || {}),
+        last_validated_at: new Date().toISOString(),
+        rules_evaluated: out?.rulesEvaluated || null,
+      };
+      await ObaraBackend?.orders?.update?.(o.id, {
+        rule_findings: flags,
+        preflight_payload: nextPreflight,
+      });
+      const sev = flags.length === 0 ? "Success" : "Warning";
+      const msg = flags.length === 0
+        ? "All rules passed"
+        : flags.length + " finding" + (flags.length === 1 ? "" : "s") + " logged";
+      (sev === "Success" ? window.notifySuccess : window.notifyWarn)?.("Validation complete", msg);
+      setBump((n) => n + 1);
+    } catch (err: any) {
+      window.notifyError?.("Validation failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const pushToTally = async () => {
     if (!o?.id) return;
     setBusy(true);
@@ -726,6 +779,22 @@ const WiredSOWorkspace = () => {
                }>
             {Icon.cycle} {busy ? "extracting…" : "run extraction"}
           </Btn>
+          {/* Run validation: scores the extracted lines against the
+              anomaly rule library and persists findings into
+              orders.rule_findings. The Validate step in the stepper
+              lights as done once last_validated_at is stamped. */}
+          <Btn sm kind="ghost"
+               disabled={!canWrite || busy || !o.customer_id || lines.length === 0 || o.status === "CANCELLED"}
+               onClick={runValidation}
+               title={
+                 !o.customer_id
+                   ? "Set a customer first; rules need a tenant peer-set"
+                   : lines.length === 0
+                     ? "Run extraction first; the rules score line items"
+                     : "Score the order against the anomaly rule library"
+               }>
+            {Icon.shield} {busy ? "validating…" : "run validation"}
+          </Btn>
           {/* Send for review: explicit DRAFT to PENDING_REVIEW
               transition for orders that have lines but no operator
               has flipped them out of DRAFT yet. */}
@@ -765,13 +834,45 @@ const WiredSOWorkspace = () => {
       <WSTabs tabs={tabs} active={tab} onChange={setTab} />
 
       <div className="ws-content">
-        <Steps current={
-          o.status === "DRAFT" ? 0
-          : o.status === "PENDING_REVIEW" ? 3
-          : o.status === "APPROVED" ? 4
-          : o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED" ? 5
-          : 2
-        } items={["Capture", "Preflight", "Extract", "Validate", "Approve", "Push to Tally"]} />
+        {/* Bug fix May 2026: the previous stepper drove the entire
+            6-step pipeline off `o.status` alone. That left step 1
+            (Preflight) and step 2 (Extract) effectively blank for
+            most orders because no status maps to them, so the
+            operator could never tell whether OCR had completed or
+            extraction was actually populated. The new derivation
+            uses the same evidence the rest of the workspace already
+            reads: source doc presence (Capture done), extraction
+            run id (Preflight done after the file was accepted +
+            scanned), populated lineItems (Extract done), recorded
+            rule_findings or PENDING_REVIEW (Validate done), APPROVED
+            status (Approve done), and EXPORTED_TO_TALLY / RECONCILED
+            (Push done). We light the first un-done step so the
+            operator sees what's currently in progress. */}
+        <Steps current={(() => {
+          // The Steps primitive renders "current" as the in-progress
+          // step (i === current : "cur") and earlier steps as done
+          // (i < current : "done"). So we return the index of the
+          // first NOT-DONE step. If everything is done we return
+          // items.length so all six render as completed.
+          if (!o) return 0;
+          const hasSourceDoc = !!sourceDocId;
+          const hasExtraction = !!(o.preflight_payload?.extraction_run_id) || lines.length > 0;
+          const hasValidation = !!(o.preflight_payload?.last_validated_at)
+            || o.status === "PENDING_REVIEW"
+            || (Array.isArray(o.rule_findings) && o.rule_findings.length > 0);
+          const isApproved = o.status === "APPROVED" || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED";
+          const isPushed = o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED";
+          // The order row in the workspace implies Capture is already
+          // done (intake created it). So we start at 1 and walk
+          // forward as each subsequent stage's evidence shows up.
+          let step = 1;                    // Capture done. Preflight in progress.
+          if (hasSourceDoc) step = 2;      // Preflight done. Extract in progress.
+          if (hasExtraction) step = 3;     // Extract done. Validate in progress.
+          if (hasValidation) step = 4;     // Validate done. Approve in progress.
+          if (isApproved) step = 5;        // Approve done. Push in progress.
+          if (isPushed) step = 6;          // Push done. Pipeline complete (no "cur").
+          return step;
+        })()} items={["Capture", "Preflight", "Extract", "Validate", "Approve", "Push to Tally"]} />
 
         {tab === "recon" && (
           <Card flush>

@@ -127,6 +127,36 @@ export default async function handler(req, res) {
         console.error("[documents/ocr] failed-status update threw for run " + runId + ": " + (logErr.message || logErr));
       }
     }
+    // Bug fix May 2026: OCR failures only updated ocr_runs.status and
+    // returned the error to the caller. Nothing wrote a
+    // processing_event keyed to the order, so the workspace's
+    // Activity stream had no breadcrumb of the failure and orders
+    // sat in DRAFT looking healthy. Surface the failure so the
+    // operator sees it in the timeline.
+    if (ctx) {
+      try {
+        // We need the body again for orderId; re-parse defensively.
+        // If body parsing fails or the caller didn't send orderId,
+        // we still write a tenant-scoped event without case_id so
+        // the failure is at least visible in the global processing-
+        // events feed.
+        let orderId = null;
+        try {
+          const reparsed = await readBody(req);
+          orderId = reparsed?.orderId || null;
+        } catch (_) { /* ignore */ }
+        await recordEvent(ctx, {
+          eventType: "ocr_failed",
+          objectType: "ocr_run",
+          objectId: runId,
+          caseId: orderId,
+          detail: { error: String(err.message || err).slice(0, 500) },
+        });
+      } catch (logErr) {
+        // eslint-disable-next-line no-console
+        console.error("[documents/ocr] failure event write failed: " + (logErr.message || logErr));
+      }
+    }
     sendError(res, err);
   }
 }

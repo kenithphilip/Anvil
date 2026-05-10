@@ -117,6 +117,14 @@ export default async function handler(req, res) {
         margin_floor_pct: body.margin_floor_pct != null ? Number(body.margin_floor_pct) : null,
         bill_to: body.bill_to || null,
         ship_to: body.ship_to || body.bill_to || null,
+        // Bug fix May 2026: contact_email + contact_phone (also added
+        // by migration 061) were silently dropped by the create
+        // handler, so the so-intake new-customer dialog could collect
+        // them and they vanished. Both columns are read by
+        // api/agents/_handlers/ar_collect.js and the inbound-chat
+        // path; persisting them here closes the loop.
+        contact_email: body.contact_email || null,
+        contact_phone: body.contact_phone || null,
       }, { onConflict: "tenant_id,customer_key" }).select("*").single();
       if (upsert.error) {
         // If migration 061 hasn't been applied yet on this deployment,

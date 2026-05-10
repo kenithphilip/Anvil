@@ -186,13 +186,77 @@ const findToolUse = (data) => {
   return blocks.find((b) => b && b.type === "tool_use" && b.name === "extract_purchase_order");
 };
 
-export const extract = async ({ url, bytes, filename: _filename, settings, hints, promptOverrides }) => {
+// Heuristic check that the bytes start with %PDF-. PDFs are binary
+// and reading them as utf8 produces gibberish for the model: the
+// previous code did `Buffer.from(bytes).toString("utf8")`, which
+// for any image-based PDF (no text layer) sent ~50KB of noise to
+// Claude. The model usually returned classification="non_po" and
+// the operator saw "credits burned, no lines, stepper green".
+const isPdfBytes = (b) => {
+  if (!b || !b.length) return false;
+  // %PDF-<version>. The "%" is 0x25, "P" is 0x50, "D" is 0x44, "F" is 0x46.
+  return b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46;
+};
+const isImageMime = (m) => /^image\//i.test(String(m || ""));
+
+export const extract = async ({ url, bytes, filename: _filename, mime, settings, hints, promptOverrides }) => {
   if (!isConfigured()) return { ok: false, error: "ANTHROPIC_API_KEY not set" };
   const tenantId = settings?.tenant_id;
   if (!tenantId) return { ok: false, error: "tenant_id missing on settings (caller must pass it)" };
 
-  const text = hints?.bodyText || (bytes ? Buffer.from(bytes).toString("utf8").slice(0, 50_000) : null);
-  if (!text && !url) return { ok: false, error: "claude adapter needs hints.bodyText, bytes, or url" };
+  // Bug fix May 2026 (operator-credit-burn report): PDF and image
+  // bytes were being coerced to utf-8 and sent as a text block.
+  // PDFs are binary (PDF spec: binary stream after %PDF- header);
+  // images are even less text-like. The model received gibberish
+  // and produced classification="non_po" or empty lines while
+  // burning Anthropic credits with no operator-visible signal.
+  //
+  // We now route by content type:
+  //   - hints.bodyText                  -> text block (caller pre-extracted)
+  //   - PDF bytes                       -> document block (Anthropic PDF support)
+  //   - image bytes                     -> image block
+  //   - other text-like bytes (xlsx is
+  //     handled by a different adapter) -> utf-8 text fallback (legacy)
+  //   - url                             -> URL text fallback
+  // The chosen mode is reported back via `mode` for diagnostics.
+  let mode = "none";
+  let bodyBlock = null;
+  if (hints?.bodyText) {
+    mode = "pre_extracted_text";
+    bodyBlock = { type: "text", text: "DOCUMENT:\n" + String(hints.bodyText).slice(0, 50_000) };
+  } else if (bytes && isPdfBytes(bytes)) {
+    mode = "pdf_document";
+    bodyBlock = {
+      type: "document",
+      source: {
+        type: "base64",
+        media_type: "application/pdf",
+        data: bytes.toString("base64"),
+      },
+    };
+  } else if (bytes && isImageMime(mime)) {
+    mode = "image";
+    bodyBlock = {
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: String(mime),
+        data: bytes.toString("base64"),
+      },
+    };
+  } else if (bytes) {
+    // Last-resort utf-8 read. This branch covers e.g. plain-text
+    // .eml or .csv extractions; binary files will produce noise
+    // but we surface that via a status_reason='image_pdf_no_text'
+    // upstream. Better to ship the bytes than to fail closed.
+    mode = "utf8_text_fallback";
+    bodyBlock = { type: "text", text: "DOCUMENT:\n" + Buffer.from(bytes).toString("utf8").slice(0, 50_000) };
+  } else if (url) {
+    mode = "url_only";
+    bodyBlock = { type: "text", text: "DOCUMENT URL: " + url };
+  } else {
+    return { ok: false, error: "claude adapter needs hints.bodyText, bytes (PDF/image/text), or url", mode: "none" };
+  }
 
   // Cache the static system prompt + the per-customer few-shot
   // bundle. The document body is the variable part; everything
@@ -208,12 +272,7 @@ export const extract = async ({ url, bytes, filename: _filename, settings, hints
     });
   }
 
-  const userParts = [];
-  if (text) {
-    userParts.push({ type: "text", text: "DOCUMENT:\n" + text });
-  } else if (url) {
-    userParts.push({ type: "text", text: "DOCUMENT URL: " + url });
-  }
+  const userParts = [bodyBlock];
   userParts.push({ type: "text", text: "Call extract_purchase_order with the result." });
 
   const result = await callAnthropic({
@@ -233,12 +292,25 @@ export const extract = async ({ url, bytes, filename: _filename, settings, hints
     return {
       ok: false,
       status: result.status,
+      mode,
+      reason: "upstream_error",
       error: result.error || result.data?.error?.message || "claude failed",
     };
   }
   const tool = findToolUse(result.data);
   if (!tool || !tool.input) {
-    return { ok: false, status: result.status, error: "model did not return extract_purchase_order tool call" };
+    // Stop reasons we care about: end_turn (model refused / talked
+    // instead of calling the tool), max_tokens, etc. Surface so the
+    // diagnostics tab can render "model refused" vs "parse failed".
+    const stopReason = result.data?.stop_reason || "unknown";
+    return {
+      ok: false,
+      status: result.status,
+      mode,
+      reason: stopReason === "refusal" ? "model_refused" : "parse_failed",
+      error: "model did not return extract_purchase_order tool call (stop=" + stopReason + ")",
+      raw: result.data,
+    };
   }
   const out = tool.input;
 
@@ -247,6 +319,8 @@ export const extract = async ({ url, bytes, filename: _filename, settings, hints
     return {
       ok: true,
       raw: result.data,
+      mode,
+      reason: "non_po",
       normalized: { classification: "non_po", customer: null, lines: [] },
       confidences: { overall: Number(out.confidence) || 0.4 },
     };
@@ -267,9 +341,14 @@ export const extract = async ({ url, bytes, filename: _filename, settings, hints
   // Translate the schema's customer.name -> classic name shape so
   // the existing UI (which still reads parsed.customer.name + lines[].
   // partNumber / quantity / unitPrice / etc.) keeps working.
+  // ok-shaped result. The `reason` column lets the dispatcher /
+  // extract handler categorise empty-but-ok results vs. truly OK.
+  const reason = lines.length === 0 ? "empty_lines" : "ok";
   return {
     ok: true,
     raw: result.data,
+    mode,
+    reason,
     normalized: {
       classification: out.classification || null,
       customer: out.customer || null,

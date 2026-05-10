@@ -60,6 +60,27 @@ export default async function handler(req, res) {
       ? Buffer.from(body.bytes_base64, "base64")
       : null;
 
+    // Phase 3.6 observability (audit close): emit "started" event so
+    // operators see the run begin even if the dispatcher hangs. Keyed
+    // by BOTH order_id (when supplied) and source_id so the workspace
+    // Activity stream picks it up regardless of which the workspace
+    // queries by. The previous code keyed only by source_id which the
+    // workspace never read.
+    const caseId = body?.order_id || body?.source_id || null;
+    await recordEvent(ctx, {
+      eventType: "docai_extract_started",
+      objectType: "extraction_run",
+      objectId: runId,
+      caseId,
+      detail: {
+        source_type: sourceType,
+        source_id: body?.source_id || null,
+        order_id: body?.order_id || null,
+        size_bytes: body?.size_bytes || null,
+        mime: body?.mime || null,
+      },
+    });
+
     const out = await dispatchExtract({
       source: {
         url: body?.source_url || null,
@@ -73,8 +94,48 @@ export default async function handler(req, res) {
       hints: body?.hints || {},
     });
 
-    const status = !out.ok ? "failed"
-      : (out.confidence_overall != null && out.confidence_overall < 0.7 ? "low_confidence" : "ok");
+    // Phase 3.6: derive a structured status_reason. The dispatcher /
+    // adapters now return `reason` so we don't have to guess.
+    //   ok           ok with lines + confidence >= 0.7
+    //   low_confidence  ok-shaped but conf < 0.7
+    //   empty_lines  ok with 0 lines (model couldn't pull lines)
+    //   non_po       classifier said "this isn't a PO"
+    //   image_pdf_no_text  utf-8 fallback on a binary PDF
+    //   no_adapter_configured / all_adapters_skipped
+    //   parse_failed / model_refused / upstream_error
+    //   fail_unknown for catch-all
+    const lines = Array.isArray(out?.normalized?.lines) ? out.normalized.lines : [];
+    let statusReason;
+    let status;
+    if (!out.ok) {
+      status = "failed";
+      statusReason = out.reason || "fail_unknown";
+    } else if (out.normalized?.classification === "non_po") {
+      status = "failed";
+      statusReason = "non_po";
+    } else if (lines.length === 0) {
+      // Distinguish the three "ok-shaped, no lines" causes:
+      //   - the adapter ran in utf-8 fallback on a PDF -> image_pdf_no_text
+      //   - the model returned ok with empty lines -> empty_lines
+      //   - low confidence -> low_confidence
+      const conf = out.confidence_overall;
+      if (out.mode === "utf8_text_fallback" && sourceType === "pdf") {
+        status = "failed";
+        statusReason = "image_pdf_no_text";
+      } else if (conf != null && conf < 0.7) {
+        status = "low_confidence";
+        statusReason = "low_confidence";
+      } else {
+        status = "failed";
+        statusReason = "empty_lines";
+      }
+    } else if (out.confidence_overall != null && out.confidence_overall < 0.7) {
+      status = "low_confidence";
+      statusReason = "low_confidence";
+    } else {
+      status = "ok";
+      statusReason = "ok";
+    }
 
     await svc.from("extraction_runs").update({
       adapter_used: out.adapter_used || null,
@@ -84,6 +145,7 @@ export default async function handler(req, res) {
       field_confidences: out.confidences || {},
       confidence_overall: out.confidence_overall ?? null,
       status,
+      status_reason: statusReason,
       error: out.error || null,
       finished_at: new Date().toISOString(),
     }).eq("id", runId);
@@ -94,35 +156,37 @@ export default async function handler(req, res) {
         : "docai_extract_failed",
       objectType: "extraction_run",
       objectId: runId,
-      detail: (out.adapter_used || "none") + "::" + (out.confidence_overall ?? "n/a"),
+      detail: (out.adapter_used || "none") + "::" + (out.confidence_overall ?? "n/a") + "::" + statusReason,
     });
 
-    // Bug fix May 2026: extract failures (and low-confidence runs)
-    // were silent in the workspace activity timeline because nothing
-    // wrote a processing_event. Operators saw orders sit in DRAFT
-    // forever with no breadcrumb of why. We surface failures and
-    // low-confidence runs here so the merged Activity stream picks
-    // them up keyed by source_id (which the workspace passes as
-    // case_id when querying events.list).
-    if (status !== "ok") {
-      await recordEvent(ctx, {
-        eventType: status === "failed" ? "docai_extract_failed" : "docai_extract_low_confidence",
-        objectType: "extraction_run",
-        objectId: runId,
-        caseId: body?.source_id || null,
-        detail: {
-          adapter_used: out.adapter_used || null,
-          confidence_overall: out.confidence_overall ?? null,
-          attempts: (out.attempts || []).length,
-          error: out.error || null,
-        },
-      });
-    }
+    // Phase 3.6: emit a step-boundary event for EVERY outcome (not
+    // just failures), with the structured reason. The workspace's
+    // Pipeline Diagnostics tab reads these via `events.list(orderId)`
+    // and renders the chain.
+    await recordEvent(ctx, {
+      eventType: status === "ok" ? "docai_extract_succeeded"
+        : status === "low_confidence" ? "docai_extract_low_confidence"
+        : "docai_extract_failed",
+      objectType: "extraction_run",
+      objectId: runId,
+      caseId,
+      detail: {
+        adapter_used: out.adapter_used || null,
+        adapter_mode: out.mode || null,
+        confidence_overall: out.confidence_overall ?? null,
+        status_reason: statusReason,
+        lines_count: lines.length,
+        attempts: out.attempts || [],
+        error: out.error || null,
+      },
+    });
 
     return json(res, 200, {
       run_id: runId,
       status,
+      status_reason: statusReason,
       adapter_used: out.adapter_used || null,
+      adapter_mode: out.mode || null,
       confidence_overall: out.confidence_overall ?? null,
       normalized: out.normalized || null,
       attempts: out.attempts || [],

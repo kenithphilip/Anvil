@@ -63,6 +63,15 @@ const WiredSOIntake = () => {
   });
   const [newCustomerErr, setNewCustomerErr] = u(null);
   const [newCustomerBusy, setNewCustomerBusy] = u(false);
+  // Mismatch flag: when an existing customer auto-matches but the PO
+  // surfaces details that differ from the stored record (new GSTIN,
+  // updated bill-to, contact email change, etc.), we render a banner
+  // listing the diffs and let the operator open the same dialog in
+  // "edit" mode. Edit mode preserves customer_key so the upsert
+  // updates the row instead of creating a new one.
+  const [dialogMode, setDialogMode] = u<"create" | "edit">("create");
+  const [editingCustomerKey, setEditingCustomerKey] = u<string | null>(null);
+  const [editingCustomerId, setEditingCustomerId] = u<string | null>(null);
   // May 2026 fix: stash the extracted line items + the partial
   // customer fragments so onContinue can hand them to the order
   // create call as orders.result.salesOrder.lineItems. Previously
@@ -120,6 +129,14 @@ const WiredSOIntake = () => {
       const isIndia = country === "IN";
       const payload: any = {
         customer_name: newCustomer.customer_name.trim(),
+        // Edit mode: pass the existing customer_key so the upsert
+        // updates the matched row instead of creating a new one.
+        // The /api/customers POST handler upserts on
+        // (tenant_id, customer_key); without this, a renamed
+        // customer would split into two records.
+        ...(dialogMode === "edit" && editingCustomerKey
+          ? { customer_key: editingCustomerKey }
+          : {}),
         country,
         // Indian rows keep the legacy gstin + state_code; foreign rows
         // populate tax_id + tax_id_type and leave gstin null.
@@ -137,14 +154,24 @@ const WiredSOIntake = () => {
       };
       const res = await ObaraBackend?.customers?.upsert?.(payload);
       const created = res?.customer || res?.row || res;
-      // Re-fetch the list so the new customer shows up in the
-      // dropdown, then auto-select it.
+      // Re-fetch the list so the new customer (or freshly-edited
+      // record) shows up with current values, then keep the right
+      // row selected.
       const fresh = await ObaraBackend?.customers?.list?.();
       setCustomers({ data: fresh, loading: false, error: null });
-      const newId = created?.id || (fresh?.customers || []).find((c: any) => c.customer_name === payload.customer_name)?.id;
-      if (newId) setCustomerId(newId);
-      window.notifySuccess?.("Customer created", payload.customer_name);
+      const isEdit = dialogMode === "edit";
+      const resolvedId = created?.id
+        || editingCustomerId
+        || (fresh?.customers || []).find((c: any) => c.customer_name === payload.customer_name)?.id;
+      if (resolvedId) setCustomerId(resolvedId);
+      window.notifySuccess?.(
+        isEdit ? "Customer updated" : "Customer created",
+        payload.customer_name,
+      );
       setNewCustomerOpen(false);
+      setDialogMode("create");
+      setEditingCustomerKey(null);
+      setEditingCustomerId(null);
       setNewCustomer({
         customer_name: "", country: "", gstin: "", state_code: "",
         tax_id: "", tax_id_type: "",
@@ -154,7 +181,10 @@ const WiredSOIntake = () => {
       });
     } catch (err2: any) {
       setNewCustomerErr(err2);
-      window.notifyError?.("Could not create customer", err2?.message || String(err2));
+      window.notifyError?.(
+        dialogMode === "edit" ? "Could not update customer" : "Could not create customer",
+        err2?.message || String(err2),
+      );
     } finally {
       setNewCustomerBusy(false);
     }
@@ -278,6 +308,100 @@ const WiredSOIntake = () => {
     if (!exact) return null;
 
     return { customer: exact, confidence: "exact_name" };
+  };
+
+  // Field-by-field mismatch detector. Compares a PO-extracted
+  // customer block against the matched DB customer record. Returns
+  // a list of { field, label, dbValue, poValue, kind } where kind
+  // is 'changed' (both non-empty, normalized text differs) or
+  // 'new' (DB empty, PO non-empty). Skipped: fields where the PO
+  // value is empty (PO didn't say) or both sides match after light
+  // normalisation.
+  //
+  // The list drives the "details have changed" banner and the
+  // edit-customer dialog prefill.
+  const FIELD_LABEL = {
+    gstin:           "GSTIN",
+    state_code:      "State code",
+    country:         "Country",
+    tax_id:          "Tax id",
+    tax_id_type:     "Tax id type",
+    currency:        "Currency",
+    payment_terms:   "Payment terms",
+    bill_to:         "Bill-to address",
+    ship_to:         "Ship-to address",
+    contact_email:   "Contact email",
+    contact_phone:   "Contact phone",
+  };
+  // Light text normalisation for comparison (case-insensitive,
+  // collapsed whitespace + punctuation). Avoids false positives on
+  // pure-formatting differences. We DO keep digits/hyphens because
+  // they're significant in tax ids and pin codes.
+  const cmpNorm = (s) => String(s || "").toLowerCase().replace(/[\s.,]+/g, " ").trim();
+
+  const findCustomerMismatches = (extracted, db) => {
+    if (!extracted || !db) return [];
+    const pairs = [
+      ["gstin",         extracted.gstin,            db.gstin],
+      ["state_code",    extracted.state_code,       db.state_code],
+      ["country",       extracted.country,          db.country],
+      ["tax_id",        extracted.tax_id,           db.tax_id],
+      ["tax_id_type",   extracted.tax_id_type,      db.tax_id_type],
+      ["currency",      extracted.currency,         db.currency],
+      ["payment_terms", extracted.payment_terms,    db.payment_terms],
+      ["bill_to",       extracted.bill_to_address,  db.bill_to],
+      ["ship_to",       extracted.ship_to_address,  db.ship_to],
+      ["contact_email", extracted.email,            db.contact_email],
+      ["contact_phone", extracted.phone,            db.contact_phone],
+    ];
+    const out: { field: string; label: string; dbValue: any; poValue: any; kind: "changed" | "new" }[] = [];
+    for (const [field, poRaw, dbRaw] of pairs) {
+      const poVal = poRaw == null ? "" : String(poRaw).trim();
+      const dbVal = dbRaw == null ? "" : String(dbRaw).trim();
+      if (!poVal) continue;                                  // PO didn't say
+      if (cmpNorm(poVal) === cmpNorm(dbVal)) continue;       // already matches
+      out.push({
+        field,
+        label: FIELD_LABEL[field] || field,
+        dbValue: dbVal,
+        poValue: poVal,
+        kind: dbVal ? "changed" : "new",
+      });
+    }
+    return out;
+  };
+
+  // Convert PO-extracted customer block + matched DB customer into
+  // the dialog form shape. Used by the "Edit customer" button so
+  // the dialog opens with the PO values prefilled (operator review,
+  // then click to upsert).
+  const customerFormFromExtracted = (extracted, db) => {
+    const country = (extracted?.country || db?.country || "IN").toUpperCase();
+    const isIndia = country === "IN";
+    return {
+      customer_name: extracted?.name || db?.customer_name || "",
+      country,
+      gstin: isIndia ? (extracted?.gstin || db?.gstin || "").toUpperCase() : "",
+      state_code: isIndia ? (extracted?.state_code || db?.state_code || "").toUpperCase() : "",
+      tax_id: !isIndia ? (extracted?.tax_id || db?.tax_id || "") : "",
+      tax_id_type: !isIndia ? (extracted?.tax_id_type || db?.tax_id_type || "") : "",
+      currency: extracted?.currency || db?.currency || (isIndia ? "INR" : ""),
+      payment_terms: extracted?.payment_terms || db?.payment_terms || "",
+      margin_floor_pct: db?.margin_floor_pct != null ? String(db.margin_floor_pct) : "10",
+      bill_to: extracted?.bill_to_address || db?.bill_to || "",
+      ship_to: extracted?.ship_to_address || db?.ship_to || "",
+      contact_email: extracted?.email || db?.contact_email || "",
+      contact_phone: extracted?.phone || db?.contact_phone || "",
+    };
+  };
+
+  const openEditCustomerDialog = () => {
+    if (!selectedCustomer) return;
+    setNewCustomer(customerFormFromExtracted(extractedCustomer, selectedCustomer));
+    setDialogMode("edit");
+    setEditingCustomerKey(selectedCustomer.customer_key || null);
+    setEditingCustomerId(selectedCustomer.id || null);
+    setNewCustomerOpen(true);
   };
 
   // Bug fix May 2026 (customer-prefill report): the previous
@@ -666,7 +790,14 @@ const WiredSOIntake = () => {
               )}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                 <label htmlFor="so-intake-customer" className="label" style={{ marginBottom: 0 }}>Customer</label>
-                <Btn sm kind="ghost" onClick={() => setNewCustomerOpen(true)} title="Create a new customer record">
+                <Btn sm kind="ghost"
+                     onClick={() => {
+                       setDialogMode("create");
+                       setEditingCustomerKey(null);
+                       setEditingCustomerId(null);
+                       setNewCustomerOpen(true);
+                     }}
+                     title="Create a new customer record">
                   {Icon.plus} new customer
                 </Btn>
               </div>
@@ -849,15 +980,38 @@ const WiredSOIntake = () => {
                   ["Bill to",     extractedCustomer.bill_to_address || "—"],
                   ["Ship to",     extractedCustomer.ship_to_address || extractedCustomer.bill_to_address || "—"],
                 ]} />
-                {selectedCustomer && (
-                  <div className="mono-sm" style={{ marginTop: 6, color: "var(--ink-3)" }}>
-                    Selected customer's record will be used. Update
-                    the customer record from the Customers screen if
-                    the PO supplied newer info.
-                  </div>
-                )}
               </Card>
             )}
+
+            {/* Mismatch banner: rendered when an existing customer
+                is auto-matched AND the PO surfaced details that
+                differ from the stored record. Lists each diff and
+                offers an Update-customer action that opens the
+                same dialog in edit mode with PO values prefilled. */}
+            {extractedCustomer && selectedCustomer && (() => {
+              const diffs = findCustomerMismatches(extractedCustomer, selectedCustomer);
+              if (diffs.length === 0) return null;
+              return (
+                <Banner kind="warn" icon={Icon.alert} title="Some customer details have changed on this PO">
+                  <div className="mono-sm" style={{ marginBottom: 8 }}>
+                    The PO header for <b>{selectedCustomer.customer_name}</b> shows
+                    {" "}{diffs.length} field{diffs.length === 1 ? "" : "s"} that differ from the stored record.
+                    Review and update if the PO supplied newer info.
+                  </div>
+                  <ul style={{ margin: "4px 0 8px 18px", padding: 0, fontSize: 12, color: "var(--ink-2)" }}>
+                    {diffs.map((d) => (
+                      <li key={d.field} style={{ marginBottom: 2 }}>
+                        <b>{d.label}</b>
+                        {d.kind === "new"
+                          ? <span> · <span className="mono-sm" style={{ color: "var(--ink-3)" }}>(empty)</span> {"→"} <span className="mono-sm">{d.poValue}</span></span>
+                          : <span> · <span className="mono-sm" style={{ color: "var(--ink-3)" }}>{String(d.dbValue).slice(0, 60)}</span> {"→"} <span className="mono-sm">{String(d.poValue).slice(0, 60)}</span></span>}
+                      </li>
+                    ))}
+                  </ul>
+                  <Btn sm kind="primary" onClick={openEditCustomerDialog}>Update customer</Btn>
+                </Banner>
+              );
+            })()}
 
             <Card title="Profile match" eyebrow="prediction · cached">
               <div className="mono-sm" style={{ color: "var(--ink-3)" }}>
@@ -897,7 +1051,14 @@ const WiredSOIntake = () => {
           role="dialog"
           aria-modal="true"
           aria-labelledby="new-customer-title"
-          onClick={(e) => { if (e.target === e.currentTarget) setNewCustomerOpen(false); }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setNewCustomerOpen(false);
+              setDialogMode("create");
+              setEditingCustomerKey(null);
+              setEditingCustomerId(null);
+            }
+          }}
           style={{
             position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
             display: "grid", placeItems: "center", zIndex: 200,
@@ -913,22 +1074,38 @@ const WiredSOIntake = () => {
           >
             <div className="row" style={{ marginBottom: 12 }}>
               <h2 id="new-customer-title" style={{ margin: 0, fontSize: 16, fontWeight: 600, flex: 1 }}>
-                {newCustomer.customer_name ? "New customer" : "Customer not detected"}
+                {dialogMode === "edit"
+                  ? "Edit customer"
+                  : (newCustomer.customer_name ? "New customer" : "Customer not detected")}
               </h2>
-              <Btn sm kind="ghost" onClick={() => setNewCustomerOpen(false)} title="Close">{Icon.x}</Btn>
+              <Btn sm kind="ghost"
+                   onClick={() => {
+                     setNewCustomerOpen(false);
+                     setDialogMode("create");
+                     setEditingCustomerKey(null);
+                     setEditingCustomerId(null);
+                   }}
+                   title="Close">{Icon.x}</Btn>
             </div>
             {/* May 2026 fix: when the dialog opens with empty fields
                 because extraction couldn't find a customer header,
                 surface a hint so the operator knows why they're
                 being asked to type instead of confirm. */}
-            {!newCustomer.customer_name && (
+            {dialogMode === "edit" && (
+              <Banner kind="info" title="Editing existing customer record">
+                <span className="mono-sm">
+                  Fields below are pre-filled with the latest PO values. Review and click Update customer to save the changes against the existing record.
+                </span>
+              </Banner>
+            )}
+            {dialogMode !== "edit" && !newCustomer.customer_name && (
               <Banner kind="info" title="Fill in the customer details from the PO">
                 <span className="mono-sm">
                   We could not auto-detect the customer header on this document. Type the details below; we'll create the customer record after you confirm.
                 </span>
               </Banner>
             )}
-            {newCustomer.customer_name && doc?.id && (
+            {dialogMode !== "edit" && newCustomer.customer_name && doc?.id && (
               <Banner kind="info" title="Confirm before creating">
                 <span className="mono-sm">
                   We auto-filled these fields from the PO header. Review and confirm to add this customer to your database.
@@ -936,7 +1113,7 @@ const WiredSOIntake = () => {
               </Banner>
             )}
             {newCustomerErr && (
-              <Banner kind="bad" icon={Icon.alert} title="Could not create customer">
+              <Banner kind="bad" icon={Icon.alert} title={dialogMode === "edit" ? "Could not update customer" : "Could not create customer"}>
                 <span className="mono-sm">{String(newCustomerErr?.message || newCustomerErr)}</span>
               </Banner>
             )}
@@ -1146,9 +1323,18 @@ const WiredSOIntake = () => {
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
-              <Btn sm kind="ghost" onClick={() => setNewCustomerOpen(false)} disabled={newCustomerBusy}>Cancel</Btn>
+              <Btn sm kind="ghost"
+                   onClick={() => {
+                     setNewCustomerOpen(false);
+                     setDialogMode("create");
+                     setEditingCustomerKey(null);
+                     setEditingCustomerId(null);
+                   }}
+                   disabled={newCustomerBusy}>Cancel</Btn>
               <Btn sm kind="primary" onClick={submitNewCustomer} disabled={newCustomerBusy}>
-                {newCustomerBusy ? "Saving…" : "Create customer"}
+                {newCustomerBusy
+                  ? "Saving…"
+                  : (dialogMode === "edit" ? "Update customer" : "Create customer")}
               </Btn>
             </div>
           </div>

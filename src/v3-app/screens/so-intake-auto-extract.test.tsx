@@ -354,6 +354,146 @@ describe("SO Intake auto-extract", () => {
     expect(terms?.value).toBe("T/T 30 days from BL");
   });
 
+  it("flags mismatched fields and offers Update customer when PO disagrees with stored record", async () => {
+    // Existing customer has stale GSTIN + missing email + different
+    // bill-to. Auto-match still fires (bill-to corroborates the
+    // first token of the canonical name) but a warn banner lists
+    // the diffs and an Update customer button opens the dialog in
+    // edit mode with PO values pre-filled.
+    const FAITH = {
+      id: "cust-faith3",
+      customer_key: "faith-automation",
+      customer_name: "Faith Automation Pvt Ltd",
+      gstin: "27OLDGS1234E1Z5",                            // stale
+      country: "IN",
+      currency: "INR",
+      payment_terms: "Net 45",                             // older value
+      bill_to: "Faith Automation Pvt Ltd, Plot 12, MIDC, Pune 411018",
+      contact_email: null,                                 // never recorded
+    };
+    let upsertPayload: any = null;
+    installBackend({
+      health: async () => ({ integrations: [] }),
+      customers: {
+        list: async () => ({ customers: [FAITH] }),
+        upsert: async (payload: any) => { upsertPayload = payload; return { customer: { ...FAITH, ...payload } }; },
+      },
+      documents: {
+        upload: async () => ({ documentId: "doc-faith-mismatch", scan: { status: "clean" } }),
+        extract: async () => ({
+          confidence_overall: 0.92,
+          normalized: { customer: {
+            name: "Faith Automation Pvt Ltd",
+            country: "IN",
+            gstin: "27NEWGS9999F1Z5",                      // changed
+            state_code: "27",
+            currency: "INR",
+            payment_terms: "Net 30",                        // changed
+            email: "ops@faith.in",                         // new (was empty)
+            phone: "+91 98765 43210",                      // new
+            bill_to_address: "Faith Automation Pvt Ltd, Plot 14, MIDC, Pune 411019",   // changed
+          } },
+        }),
+      },
+    });
+    const mod = await import("./so-intake");
+    const { container, findByText } = renderScreen(mod.default);
+    await new Promise((r) => setTimeout(r, 0));
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    Object.defineProperty(fileInput!, "files", { value: [fakeFile("po.pdf")] });
+    fireEvent.change(fileInput!);
+
+    // Auto-select fires (bill-to corroborates).
+    await waitFor(() => {
+      const sel = container.querySelector('#so-intake-customer') as HTMLSelectElement | null;
+      expect(sel?.value).toBe("cust-faith3");
+    }, { timeout: 2000 });
+
+    // Mismatch banner renders with the diff list.
+    await findByText(/Some customer details have changed/i);
+
+    // Click Update customer -> dialog opens in edit mode.
+    const updateBtn = Array.from(container.querySelectorAll("button"))
+      .find((b) => b.textContent?.trim() === "Update customer");
+    expect(updateBtn).toBeTruthy();
+    fireEvent.click(updateBtn!);
+
+    // Dialog title now says Edit customer.
+    await findByText("Edit customer");
+
+    // PO values are pre-filled into the form.
+    const gstinIn = container.querySelector('#nc-gstin') as HTMLInputElement | null;
+    expect(gstinIn?.value).toBe("27NEWGS9999F1Z5");
+    const termsIn = container.querySelector('#nc-terms') as HTMLInputElement | null;
+    expect(termsIn?.value).toBe("Net 30");
+    const emailIn = container.querySelector('#nc-email') as HTMLInputElement | null;
+    expect(emailIn?.value).toBe("ops@faith.in");
+
+    // Submit (footer button now reads Update customer).
+    const submit = Array.from(container.querySelectorAll("button"))
+      .find((b) => b.textContent?.trim() === "Update customer" && b.getAttribute("type") !== "button");
+    // Some Btn primitives don't set type; fall back to the last "Update customer" button.
+    const submitBtn = submit
+      || Array.from(container.querySelectorAll("button")).filter((b) => b.textContent?.trim() === "Update customer").slice(-1)[0];
+    fireEvent.click(submitBtn!);
+
+    // Upsert is called with the existing customer_key so the row
+    // updates instead of duplicating.
+    await waitFor(() => {
+      expect(upsertPayload).not.toBeNull();
+      expect(upsertPayload.customer_key).toBe("faith-automation");
+      expect(upsertPayload.gstin).toBe("27NEWGS9999F1Z5");
+      expect(upsertPayload.payment_terms).toBe("Net 30");
+      expect(upsertPayload.contact_email).toBe("ops@faith.in");
+    }, { timeout: 2000 });
+  });
+
+  it("does NOT show the mismatch banner when PO matches stored record", async () => {
+    // Same customer, same details. Banner should not render.
+    const FAITH = {
+      id: "cust-faith4",
+      customer_key: "faith-automation-2",
+      customer_name: "Faith Automation Pvt Ltd",
+      gstin: "27ABCDE1234F1Z5",
+      state_code: "27",
+      country: "IN",
+      currency: "INR",
+      payment_terms: "Net 30",
+      bill_to: "Faith Automation Pvt Ltd, Plot 12, MIDC, Pune 411018",
+    };
+    installBackend({
+      health: async () => ({ integrations: [] }),
+      customers: { list: async () => ({ customers: [FAITH] }) },
+      documents: {
+        upload: async () => ({ documentId: "doc-clean", scan: { status: "clean" } }),
+        extract: async () => ({
+          confidence_overall: 0.95,
+          normalized: { customer: {
+            name: "Faith Automation Pvt Ltd",
+            country: "IN",
+            gstin: "27ABCDE1234F1Z5",
+            state_code: "27",
+            currency: "INR",
+            payment_terms: "Net 30",
+            bill_to_address: "Faith Automation Pvt Ltd, Plot 12, MIDC, Pune 411018",
+          } },
+        }),
+      },
+    });
+    const mod = await import("./so-intake");
+    const { container } = renderScreen(mod.default);
+    await new Promise((r) => setTimeout(r, 0));
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    Object.defineProperty(fileInput!, "files", { value: [fakeFile("po.pdf")] });
+    fireEvent.change(fileInput!);
+    await waitFor(() => {
+      const sel = container.querySelector('#so-intake-customer') as HTMLSelectElement | null;
+      expect(sel?.value).toBe("cust-faith4");
+    }, { timeout: 2000 });
+    // No mismatch banner.
+    expect(container.textContent).not.toMatch(/Some customer details have changed/i);
+  });
+
   it("loose name match suggests but does NOT auto-select; dialog opens with prefill", async () => {
     // Bug fix May 2026 (customer-prefill report): the previous
     // matcher loose-prefix-matched "Tata Steel" (extracted) against

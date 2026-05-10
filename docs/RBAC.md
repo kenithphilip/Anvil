@@ -196,6 +196,29 @@ later compute "who approved what under which role" without joining
    INTERNAL). Enforced both client-side (filter) and server-side (RLS via
    internal_sales_orders join).
 
+## DocAI extraction endpoints (Phases A-F)
+
+| Endpoint | Method | Permission |
+| --- | --- | --- |
+| `/api/docai/extract` | POST | write |
+| `/api/docai/runs` | GET | read |
+| `/api/docai/correction` | POST | approve |
+| `/api/docai/usage` | GET | read |
+| `/api/docai/cost_status` | GET | read |
+| `/api/admin/docai_settings` | GET | read |
+| `/api/admin/docai_settings` | PATCH | approve |
+| `/api/source_pos/<id>/ack_extract` | POST | write |
+| `/api/source_pos/<id>/ack_accept` | POST | approve |
+| `/api/invoices/extract` | POST | write |
+| `/api/eway_bills/extract` | POST | write |
+| `/api/orders/<id>/pipeline-state` | GET | read |
+
+Operators (write tier: ENG, MGR, PRC, FIN, ADM) can run extractions and
+file corrections. Approval-tier users (MGR, FIN, ADM) can promote
+corrections, edit cost levers, and accept supplier acknowledgements.
+Read-tier users (incl. VWR) can inspect cost status, usage counters,
+and pipeline diagnostics for any order they can see.
+
 ## Future
 
 See `docs/ROADMAP.md` for the policy-as-data evolution: replace the

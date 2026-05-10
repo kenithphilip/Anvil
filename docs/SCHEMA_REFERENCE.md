@@ -287,3 +287,139 @@ order by c.relname;
 If any business table has `relrowsecurity=false`, re-run the migration that
 created it; the RLS dynamic-policy block at the bottom of every migration
 should cover everything.
+
+---
+
+## Note on later migrations (011 onwards)
+
+This reference originally covered migrations 001-010. The repo now ships
+94 migrations. Rather than freeze a stale snapshot here, the canonical
+table-by-table reference lives in two places:
+
+1. The migration files themselves: `supabase/migrations/0NN_*.sql`. Every
+   file has a header comment block explaining what it adds and why.
+2. The `supabase/README.md` summary which groups migrations by phase.
+
+The sections below cover the docai unified extraction pipeline migrations
+(088-094) since those are net-new tables most ops engineers will need.
+For the rest (ERP connectors 011-040, security hardening 041-060, quotes /
+invoicing / Tally 061-080), read the migration files directly.
+
+## Migration 088: extraction_runs.status_reason
+
+Adds the `status_reason` enum column on `extraction_runs` with a CHECK
+constraint covering: `ok`, `low_confidence`, `empty_lines`, `non_po`,
+`non_ack`, `no_adapter_configured`, `all_adapters_skipped`,
+`image_pdf_no_text`, `parse_failed`, `model_refused`, `upstream_error`,
+`fail_unknown`. (Migration 092 adds `non_ack`.)
+
+Plus partial indexes for diagnostics queries:
+`extraction_runs_status_reason_idx`, `extraction_runs_source_id_idx`.
+
+## Migration 089: extraction_text_layer (Phase A)
+
+```
+extraction_text_layer
+  id uuid pk
+  tenant_id uuid -> tenants(id)
+  document_id uuid -> documents(id)         (nullable; partial unique)
+  content_hash text                          (sha256, partial unique)
+  text_status text  check ('has_text','image_only','mixed','extract_failed')
+  page_count int
+  char_count int
+  body_text text                             (omitted on image_only / extract_failed)
+  page_breakdown jsonb                       ([{page, char_count, has_text}])
+  extractor text default 'unpdf'
+  extractor_version text
+  latency_ms int
+  created_at timestamptz default now()
+```
+
+Partial unique indexes: `(tenant_id, document_id) where document_id is not null`,
+`(tenant_id, content_hash) where document_id is null and content_hash is not null`.
+
+Plus columns added to `extraction_runs`:
+`validator_issues jsonb`, `validator_summary jsonb`, `text_layer_used boolean`.
+
+## Migration 090: docai OSS adapters
+
+Adds tenant_settings columns for self-hostable HTTP adapters:
+`docai_docling_endpoint text`, `docai_docling_api_key_enc bytea`,
+`docai_marker_endpoint text`, `docai_marker_api_key_enc bytea`,
+`docai_marker_mode text` (CHECK: `'self_hosted'|'datalab'`),
+`docai_unstructured_endpoint text`.
+
+## Migration 091: Phases B-F
+
+Five new tables + nine new columns on `extraction_runs`.
+
+```
+extraction_ocr_layer (Phase B - L2 OCR cache)
+  same shape as extraction_text_layer with ocr_status, bbox_count,
+  provider, provider_model.
+
+customer_format_templates (Phase D - per-customer anchors)
+  id uuid pk
+  tenant_id, customer_id, kind                   (po/quote/invoice/supplier_ack/eway_bill; rfq added in 092)
+  anchors jsonb                                  ([{field, pattern, capture_group}])
+  line_anchors jsonb                             (deferred; empty array)
+  sample_doc_hashes text[]
+  hit_count int, miss_count int
+  status text                                    (active/archived/draft)
+  source_run_ids uuid[]
+  last_hit_at, last_miss_at, archived_at
+
+customer_field_overrides (Phase E - cross-adapter ground truth)
+  id uuid pk
+  tenant_id, customer_id, field_path
+  match_pattern text                             (nullable regex)
+  replacement text
+  reason text
+  applied_count int, last_applied_at
+  confidence_floor numeric(4,3)
+  source_correction_ids uuid[]
+  unique (tenant_id, customer_id, field_path, coalesce(match_pattern, ''))
+
+supplier_ack_extractions (Phase F.2 - review row before commit)
+  id uuid pk
+  tenant_id, source_po_id, extraction_run_id, document_id
+  supplier_ref, confirmed_price, confirmed_currency, confirmed_eta
+  payment_terms, remarks, line_acks jsonb
+  status text                                    (extracted/accepted/rejected)
+  reviewed_by, reviewed_at
+  forwarded_at, forwarded_by, ack_payload (added 092)
+```
+
+Plus on `extraction_runs`:
+- `field_provenance jsonb` (Phase C voter output, per-field)
+- `voter_lines jsonb` (Phase C voter output, per-line)
+- `voter_used boolean`
+- `ocr_layer_used boolean`
+- `template_used uuid` (FK to customer_format_templates)
+- `overrides_applied jsonb` (Phase E applied list)
+- `extraction_kind text` (CHECK: po/rfq/supplier_ack/invoice/eway_bill/generic)
+
+## Migration 092: pipeline audit fixes
+
+- Adds `'rfq'` to `customer_format_templates.kind` CHECK.
+- Adds `'non_ack'` to `extraction_runs.status_reason` CHECK.
+- Adds `forwarded_at`, `forwarded_by`, `ack_payload` to
+  `supplier_ack_extractions` for the Phase F.2 follow-through.
+
+## Migration 093: cost-optimised adapters
+
+- Adds tenant_settings columns: `docai_gemini_api_key_enc bytea`,
+  `docai_gemini_model text`, `docai_anthropic_model text`,
+  `docai_daily_limits jsonb` (per-adapter caps).
+- Adds `docai_daily_usage` table:
+  `(tenant_id, usage_date, adapter)` PK with `call_count int`,
+  `estimated_cost_usd numeric(8,4)`, `last_called_at`.
+
+## Migration 094: deterministic model selector
+
+- Adds `extraction_runs.selected_model text`,
+  `extraction_runs.model_selection_reason text` so the diagnostics tab
+  can render "we used Sonnet because L2 OCR fed the prompt" without
+  re-running selection logic.
+- Plus `extraction_runs_model_reason_idx` partial index for fast
+  "which runs escalated to generation tier today?" queries.

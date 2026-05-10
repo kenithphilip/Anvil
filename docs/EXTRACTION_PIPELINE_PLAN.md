@@ -397,10 +397,52 @@ because it solves the "0 lines, no signal" complaint at source.
 
 ---
 
-End of plan v1. Pending operator decisions: (a) priority of Phase
-A vs Phase D; (b) whether to budget for Reducto/Azure DI tier-1
-keys to give Phase C something to vote against; (c) module-rollout
-order in Phase F.
+End of plan v1.
+
+## 13. Status (May 2026, updated post-PR #88)
+
+Every phase in the table below is **SHIPPED** as of PR #88. The
+"pending operator decisions" originally listed at the bottom of v1
+have all been answered:
+
+- (a) Phase A vs Phase D priority: shipped together. Phase A's L1
+  text-layer is the input Phase D templates match against.
+- (b) Reducto / Azure DI budget: not required for the cost-optimised
+  default. The Phase Cost-Opt pass added Gemini 2.5 Flash as the
+  primary free-tier extractor (1500 RPD, 1M TPM, no card). Reducto /
+  Azure DI / Marker / Docling / Unstructured remain available as
+  opt-in adapters through `tenant_settings.docai_provider_order`.
+- (c) Phase F module rollout: SO intake (existing), source PO ack
+  (`/api/source_pos/<id>/ack_extract` + `ack_accept`), inbound email
+  auto-OCR (`/api/inbound/auto_ocr` cron, refactored through the
+  unified pipeline), invoice match (`/api/invoices/extract` with
+  `create_ap_invoice` flag for AP three-way), e-Way bill
+  (`/api/eway_bills/extract`).
+
+| Phase | Status | Implementation reference |
+|-------|--------|-------------------------|
+| A: L1 text + L5 validators | shipped | `text_layer.js`, `validators.js`, migration 089 |
+| B: L2 OCR fed into dispatcher | shipped | `ocr_layer.js`, migration 091, wired in `run.js` |
+| C: L6 cross-adapter voter + provenance | shipped | `voter.js`, parallel mode in `run.js` |
+| D: L3 customer format templates | shipped | `templates.js`, `customer_format_templates` table (091/092) |
+| E: customer field overrides | shipped | `overrides.js`, `customer_field_overrides`, promotion in `correction.js` |
+| F.2: source PO ack extraction | shipped | `extract_supplier_ack` Claude/Gemini tools, ack endpoints, `supplier_ack_extractions` table |
+| F.3: auto_ocr through unified pipeline | shipped | `run.js` shared helper, `auto_ocr.js` refactored |
+| F.4: invoice extract + AP materialise | shipped | `/api/invoices/extract`, `ap_invoices` + `ap_invoice_lines` materialisation |
+| F.5: e-Way bill extraction | shipped | `/api/eway_bills/extract` |
+| F.6: Tally voucher reconciliation | partial | AP match consumes materialised lines; full reconciliation deferred |
+| Cost-Opt: Gemini adapter + cost guard + admin panel | shipped | `gemini.js`, `cost_guard.js`, `cost_status.js`, `admin/docai_settings.js`, migration 093 |
+| Cost-Opt: deterministic model selector | shipped | `model_selector.js`, migration 094 |
+
+Open follow-ups (Year-2 territory):
+
+- LayoutLM / Donut self-hosted: still gated on Python infra; Phase C
+  OSS adapters now serve this need via HTTP-mode adapters that the
+  operator deploys outside Vercel.
+- Field-level human-in-the-loop UI with bbox overlay per field. The
+  L7 banner is enough for v1; bbox overlay is a follow-up.
+- Multi-tenant cost analytics dashboard. Per-tenant cost panel
+  exists; cross-tenant rollup does not.
 
 ## Sources
 

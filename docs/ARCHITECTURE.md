@@ -187,3 +187,76 @@ Apply with `supabase db push` or paste into the SQL editor.
 | 004_seed_static_data.sql | 2026 holidays for IN/CN/JP/KR/US, default lead times |
 | 005_close_remaining_gaps.sql | Tally status, approval expiry, comms, scorecards, amendments, installed base, spare recommendations, model routing log, redaction rules, injection tests, eval cases, backups |
 | 006_corpus_alignment.sql | Order modes, customer types, multi-GSTIN locations, item master, contracts, leads, opportunities, internal SOs, equipment hierarchy, shipments, projects, service visits, CAR reports, schedule lines, approval thresholds, lost reasons |
+
+## DocAI extraction pipeline (L0 to L7)
+
+The unified extraction pipeline (migrations 088-094, code in
+`src/api/_lib/docai/`) replaces the legacy "send-the-file-to-Claude
+and-hope" path. Every consumer (SO intake, inbound auto_ocr cron,
+source PO ack, invoice match, e-Way bill) calls the shared
+`runExtractionPipeline()` helper, which orchestrates this ladder:
+
+```
+Upload bytes
+    |
+    v
+[L0 file gate]                            (existing: ClamAV scan, ZIP guard, mime detect)
+    |
+    v
+[L1 deterministic text]                   text_layer.js + extraction_text_layer cache
+    |  has_text or mixed -> hints.bodyText  (Phase A)
+    |  image_only or extract_failed -> fall to L2
+    v
+[L2 OCR-augmented text]                   ocr_layer.js + extraction_ocr_layer cache
+    |  ok / partial -> hints.bodyText      (Phase B; Mistral OCR)
+    v
+[L3 customer template]                    templates.js + customer_format_templates
+    |  hits >= 1 -> fills hints.knownFields (Phase D; auto-built after 3+ ok runs)
+    v
+[L4 LLM dispatch]                         index.js dispatcher + adapters
+    |  serial first-wins, OR vote=true -> all-in-parallel
+    |  cost guard blocks paid adapters over their daily cap (Phase Cost-Opt)
+    |  deterministic model selector picks Haiku/Sonnet/Flash/Pro per call
+    v                                     (Phase Cost-Opt; model_selector.js)
+[E customer field overrides]              overrides.js + customer_field_overrides
+    |  applies before validators           (Phase E; promotes from corrections)
+    v
+[L5 validators]                           validators.js
+    |  GSTIN, currency, state code, HSN/SAC, line math
+    |  errors downgrade confidence to <0.7 (Phase A)
+    v
+[L6 cross-adapter voter]                  voter.js
+    |  only when 2+ adapters ran           (Phase C)
+    |  emits per-field provenance + per-line provenance
+    v
+[L7 operator review banner]               so-workspace.tsx Pipeline Diagnostics
+    |  shows status_reason, validator issues, layer flags,
+    |  voter provenance, selected model + selection reason
+```
+
+The dispatcher's default order is cost-optimised:
+
+```
+gemini -> docling -> marker -> unstructured -> azure_di -> reducto -> claude
+```
+
+Tenants override via `tenant_settings.docai_provider_order`.
+
+Every run persists the full signal set on `extraction_runs`:
+`status_reason`, `validator_issues`, `validator_summary`,
+`text_layer_used`, `ocr_layer_used`, `template_used`,
+`overrides_applied`, `field_provenance`, `voter_lines`, `voter_used`,
+`extraction_kind`, `selected_model`, `model_selection_reason`. The
+pipeline's full state for one order is exposed via
+`/api/orders/<id>/pipeline-state` for the workspace's Pipeline
+Diagnostics tab.
+
+Cost telemetry: every successful adapter call increments
+`docai_daily_usage(tenant_id, usage_date, adapter)`. Tenants set
+hard daily caps via `tenant_settings.docai_daily_limits`. The
+admin "DocAI cost" tab (`/admin#docai_cost`) aggregates today's
+usage + 7-day trend + recommended actions; under the hood it reads
+`/api/docai/cost_status`.
+
+For the full plan see `docs/EXTRACTION_PIPELINE_PLAN.md`. For
+zero-budget deployment see `docs/COST_OPTIMIZED_DEPLOYMENT.md`.

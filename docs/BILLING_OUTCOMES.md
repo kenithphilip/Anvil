@@ -38,9 +38,24 @@ and are not metered. Adding a new metered action is two edits:
 2. Add a row to the table above so the customer-facing meter and the
    engineering source agree.
 
-There is no Stripe Connect or invoice generator wired yet: the meter
-is the read side. Outbound billing will land when the Stripe + the
-non-India invoicing modules ship.
+Outbound billing is wired:
+
+- **Stripe Connect**: shipped. `/api/billing/stripe/connect_onboard`,
+  `connect_status`, `checkout`, `webhook` cover platform-fee onboarding,
+  hosted-checkout sessions, and the Stripe webhook that flips invoices
+  to paid. See `src/api/billing/stripe/`.
+- **Non-India invoicing**: shipped (migration 012). The
+  `/api/invoices` endpoints generate AR invoices independent of GSTN
+  e-Invoice, with hosted PDFs via `/api/invoices/pdf` and email send
+  via `/api/invoices/send`.
+- **Recurring invoices**: shipped (migration 073).
+  `/api/billing/recurring` lets operators set up monthly schedules;
+  `/api/billing/recurring_cron` generates the per-period invoices.
+- **Credit / debit notes**: shipped (migration 072).
+  `/api/credit_notes` covers the full lifecycle.
+
+The meter table above is now both the read side (what we measure) and
+the input to the outbound flows.
 
 ## Tenant overrides
 

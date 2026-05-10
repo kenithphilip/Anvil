@@ -1,9 +1,24 @@
 # Supabase
 
-10 migrations + a consolidated standalone seed file. Every file is fully
+94 migrations + a consolidated standalone seed file. Every file is fully
 idempotent, so re-running any of them on an already-applied project is a
 no-op. Verified by running each migration three times in a row against a
 fresh Postgres 16 database with zero errors and no row-count drift.
+
+The migrations group by phase / feature:
+
+- **001-010**: foundational schema + corpus seeds.
+- **011-040**: ERP connectors, integrations, AP/AR shape.
+- **041-060**: passkeys, voice, security hardening, agent runtime.
+- **061-080**: quotes, invoicing, recurring billing, e-Way bills,
+  tally bridge, inbound email auto-OCR.
+- **081-094**: docai pipeline (text-layer 089, OSS adapters 090,
+  voter / templates / overrides / supplier-ack 091, audit fixes 092,
+  cost-optimised adapters with Gemini + cost guard 093, deterministic
+  model selector 094).
+
+See `docs/SCHEMA_REFERENCE.md` for the table-by-table reference and
+`docs/EXTRACTION_PIPELINE_PLAN.md` for the docai migration story.
 
 ## Apply order
 

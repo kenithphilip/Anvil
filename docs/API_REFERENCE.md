@@ -390,6 +390,18 @@ Permission: write.
 Body: `{ sourcePoId, ack: { confirmedPrice?, confirmedEta?, supplierRef?, raw? } }`.
 Effects: computes `priceVariancePct` and `etaVarianceDays`. Updates source PO status (PRICE_CHANGED if >1%, DELAYED if eta off >7d, else SUPPLIER_ACK). Updates `supplier_scorecards` running averages.
 
+### POST /api/source_pos/[id]/ack_extract
+
+Permission: write. Phase F.2.
+Body: `{ document_id?: uuid, bytes_base64?, source_url?, mime?, filename?, vote?: bool, hints?: object }`.
+Runs the unified extraction pipeline with `extraction_kind="supplier_ack"`. The Claude / Gemini adapters switch to the `extract_supplier_ack` tool which emits `supplier_ref`, `confirmed_price`, `confirmed_currency`, `confirmed_eta`, `payment_terms`, `remarks`, and `line_acks[]`. Persists a `supplier_ack_extractions` review row with `status='extracted'`. Returns `{ supplier_ack_extraction, run_id, status, status_reason, adapter_used, confidence_overall, voter_used, validator_summary, validator_issues }`.
+
+### POST /api/source_pos/[id]/ack_accept
+
+Permission: approve. Phase F.2 follow-through.
+Body: `{ supplier_ack_extraction_id: uuid, overrides?: { confirmed_price?, confirmed_eta?, supplier_ref?, ... } }`.
+Reads the review row, applies operator overrides, composes the canonical ack payload, updates source_pos with confirmed price + ETA + status (PRICE_CHANGED / DELAYED / SUPPLIER_ACK), marks the review row `accepted` with `forwarded_at`, writes audit + processing events. Mirror of `/api/source_pos/ack`'s logic but inline so the audit trail is one transaction.
+
 ### GET /api/source_pos/scorecard?supplier=&country=
 
 Permission: read.
@@ -1340,3 +1352,153 @@ the HNSW index) in parallel and merges, with semantic hits
 boosted by 0.05 so a strong semantic match outranks a substring
 near-match. `semantic_available` flag on the response lets the
 UI surface a "semantic ON" chip.
+
+## Phase A-F endpoints (DocAI unified extraction pipeline)
+
+The unified extraction pipeline (migrations 088-094) is exposed
+through these endpoints. All call into a shared
+`runExtractionPipeline()` helper in `src/api/_lib/docai/run.js`
+that runs:
+
+```
+L0 file gate -> L1 deterministic text -> L2 OCR fallback ->
+L3 customer template -> L4 LLM dispatch (with cost guard +
+deterministic model selector) -> L5 validators -> L6 cross-
+adapter voter -> E customer field overrides
+```
+
+See `docs/EXTRACTION_PIPELINE_PLAN.md` for the architecture +
+`docs/COST_OPTIMIZED_DEPLOYMENT.md` for the zero-cost
+configuration.
+
+### POST /api/docai/extract
+
+Permission: write. The primary intake-side extraction call.
+Body: `{ source_type?, source_id?, source_url?, source_filename?,
+bytes_base64?, mime?, document_id?, customer_id?, hints?,
+inbound_email_id?, order_id?, kind?, vote?: bool }`.
+- `kind`: `'po' | 'rfq' | 'supplier_ack' | 'invoice' |
+  'eway_bill'`. Defaults to `po`.
+- `vote: true` runs every configured adapter in parallel, then
+  the L6 voter reduces them to a single normalized output with
+  per-field provenance.
+
+Response: `{ run_id, status, status_reason, adapter_used,
+adapter_mode, confidence_overall, normalized, attempts,
+text_layer, ocr_layer, template_used, overrides_applied,
+field_provenance, voter_used, selected_model,
+model_selection_reason, validator_issues, validator_summary,
+error }`.
+
+### POST /api/invoices/extract
+
+Permission: write. Phase F.4 + F.6.
+Body: `{ document_id?, bytes_base64?, source_url?, mime?,
+filename?, order_id?, customer_id?, source_po_id?,
+ap_invoice_id?, create_ap_invoice?: bool, vendor_invoice_number?,
+vote?, hints? }`.
+Runs the unified pipeline with `extraction_kind="invoice"`. When
+`create_ap_invoice: true`, also materialises an `ap_invoices`
+row + `ap_invoice_lines` rows from the extraction so
+`/api/ap/match` can run 3-way matching. When `ap_invoice_id` is
+supplied, deletes existing lines and replaces them with the
+fresh extraction.
+Response: extends `/api/docai/extract` with
+`{ ap_invoice_id, ap_lines_materialised }`.
+
+### POST /api/eway_bills/extract
+
+Permission: write. Phase F.5.
+Body: `{ document_id?, bytes_base64?, source_url?, mime?,
+filename?, invoice_id?, vote?, hints? }`.
+Runs the unified pipeline with `extraction_kind="eway_bill"`.
+Response: same shape as `/api/docai/extract`.
+
+### GET /api/docai/runs?status=&customer_id=&kind=&limit=
+
+Permission: read.
+Lists recent `extraction_runs` rows with the cost-relevant
+columns (`status_reason`, `extraction_kind`, `text_layer_used`,
+`ocr_layer_used`, `template_used`, `voter_used`, plus
+adapter / confidence / timing).
+
+### GET /api/docai/runs?id=<uuid>
+
+Permission: read. Detail view for a single run including
+`extraction_corrections` history.
+
+### POST /api/docai/correction
+
+Permission: approve.
+Body: `{ extraction_run_id, field_path, original_value,
+corrected_value, reason?, customer_id? }`.
+Records an operator correction. After 50 corrections accumulate
+for a (tenant, customer, field), rebuilds the per-customer
+prompt-overrides bundle for the Claude few-shot path. After two
+matching corrections, promotes to a `customer_field_overrides`
+row so the next extraction (any adapter) applies the fix
+deterministically.
+
+### GET /api/docai/usage?date=YYYY-MM-DD
+
+Permission: read.
+Returns today's per-adapter call counters from
+`docai_daily_usage` plus the configured caps from
+`tenant_settings.docai_daily_limits`. Response:
+`{ date, limits, usage: [{ adapter, call_count, limit,
+remaining, estimated_cost_usd, last_called_at }] }`.
+
+### GET /api/docai/cost_status
+
+Permission: read.
+Aggregates today's usage + 7-day trend + adapter health (env
+vars + tenant-encrypted keys) + per-tenant caps + a deterministic
+recommendations engine. Drives the admin "DocAI cost" tab.
+Response:
+```
+{
+  date,
+  today_usage: [...],
+  trend_7d: { calls, cost },
+  provider_order: string[],
+  provider_order_default: bool,
+  daily_limits: { adapter -> int } | null,
+  anthropic_model: string,
+  adapter_health: { adapter -> bool },
+  tenant_has_key: { adapter -> bool },
+  recommendations: [{ id, severity, title, body, action }],
+  summary: { calls_today, cost_today_usd,
+             free_friendly_calls_today, paid_calls_today,
+             warnings }
+}
+```
+
+### GET /api/admin/docai_settings
+
+Permission: read.
+Returns `{ docai_provider_order, docai_daily_limits,
+docai_anthropic_model, docai_gemini_model }` from
+tenant_settings.
+
+### PATCH /api/admin/docai_settings
+
+Permission: approve.
+Body: any subset of the four cost-relevant fields.
+Server-side validation rejects unknown adapters in
+`provider_order`, duplicate adapters, non-positive daily
+limits, malformed Anthropic model strings (must match
+`/^claude-(haiku|sonnet|opus)-/`), and malformed Gemini model
+strings (must start with `gemini-`). Audit row written on every
+successful patch.
+
+### GET /api/orders/[id]/pipeline-state
+
+Permission: read. Phase 3.6 observability.
+Aggregates everything the workspace's Pipeline Diagnostics tab
+needs for one order: the order row, its source document,
+every `extraction_runs` row tied to that document (with the
+full Phase A-F signal set: validator issues + summary + layer
+flags + voter provenance + selected model + reason), every
+`processing_events` keyed to `case_id = orderId`, OCR runs,
+adapter chain health, the L1 text-layer cache, the L2 OCR-layer
+cache, plus a `latest_run_summary` for the diagnostic banner.

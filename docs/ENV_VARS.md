@@ -82,15 +82,70 @@ gracefully degrade when unset.
 
 ## Document AI v2 (per-adapter)
 
-The Document AI dispatcher (`_lib/docai/index.js`) tries each adapter
-in order; the first one configured wins. GAEB XML routes
-deterministically before any LLM and needs no env.
+The DocAI dispatcher (`src/api/_lib/docai/index.js`) tries each adapter
+in order; the first one that's both configured and not over its daily
+cap wins. GAEB XML and Excel route deterministically before any LLM
+and need no env. Default chain (cost-optimised, free-tier first):
+
+```
+gemini -> docling -> marker -> unstructured -> azure_di -> reducto -> claude
+```
 
 | Variable | Activates |
 | --- | --- |
-| `REDUCTO_API_KEY` | layout-aware extraction via Reducto |
-| `AZURE_DI_ENDPOINT`, `AZURE_DI_KEY` | Azure Document Intelligence |
-| `UNSTRUCTURED_API_KEY`, `UNSTRUCTURED_API_URL` | Unstructured.io |
+| `GEMINI_API_KEY` | Gemini 2.5 Flash extractor (free tier: 1500 RPD, 1M TPM, no card). Cost-optimised default. |
+| `GEMINI_MODEL_DEFAULT` | Override the default Gemini model (default `gemini-2.5-flash`) |
+| `GEMINI_MODEL_PREFLIGHT` | Cheapest tier model name (default `gemini-2.5-flash`) |
+| `GEMINI_MODEL_REASONING` | Reasoning tier for long / complex docs (default `gemini-2.5-pro`) |
+| `REDUCTO_API_KEY` | Layout-aware extraction via Reducto |
+| `AZURE_DI_ENDPOINT`, `AZURE_DI_KEY` | Azure Document Intelligence (F0 free tier: 500 pages/mo) |
+| `UNSTRUCTURED_API_KEY` | Unstructured.io hosted API |
+| `UNSTRUCTURED_ENDPOINT` | Override to point at a self-hosted Unstructured Docker (no key needed) |
+| `DOCLING_ENDPOINT` | HTTP base URL of a self-hosted `docling-serve` instance |
+| `DOCLING_API_KEY` | Optional X-Api-Key for docling-serve when its `DOCLING_SERVE_API_KEY` is set |
+| `MARKER_ENDPOINT` | HTTP base URL of self-hosted Marker FastAPI |
+| `MARKER_API_KEY` | API key for Marker (required when `MARKER_MODE=datalab`) |
+| `MARKER_MODE` | `self_hosted` (default) or `datalab` (paid hosted) |
+| `MISTRAL_API_KEY` | Mistral OCR (Phase B L2 layer for image-only PDFs). Free Experiment tier. |
+
+## Anthropic model selection (deterministic selector)
+
+The selector (`src/api/_lib/docai/model_selector.js`) picks Claude
+models per call based on document context. Tenants can override via
+`tenant_settings.docai_anthropic_model`; otherwise these env vars
+control the tier mapping.
+
+| Variable | Default |
+| --- | --- |
+| `ANTHROPIC_MODEL_PREFLIGHT` | `claude-haiku-4-5-20251001` (cheapest, default for clean POs) |
+| `ANTHROPIC_MODEL_DEFAULT` | `claude-sonnet-4-20250514` (escalation tier: long docs, OCR-derived text, heavy invoices) |
+| `ANTHROPIC_MODEL_REASONING` | `claude-opus-4-7` (reserved for explicit `escalate=true` paths) |
+| `MODEL_SELECTOR_LONG_DOC_CHARS` | `30000` chars; threshold to bump Claude to generation tier |
+| `MODEL_SELECTOR_VERY_LONG_DOC_CHARS` | `100000` chars; threshold to bump Gemini to reasoning tier |
+| `MODEL_SELECTOR_HEAVY_INVOICE_LINES` | `20` lines; bumps invoice extractions to generation tier |
+
+## DocAI cost guard
+
+The cost guard (`src/api/_lib/cost_guard.js`) tracks per-tenant
+per-adapter daily call counts in `docai_daily_usage` and blocks paid
+adapters once `tenant_settings.docai_daily_limits.<adapter>` is hit.
+The estimated $ per call is configurable per adapter:
+
+| Variable | Default |
+| --- | --- |
+| `COST_USD_CLAUDE` | `0.022` (Sonnet 4 estimate for a typical PO extraction) |
+| `COST_USD_GEMINI` | `0.0006` |
+| `COST_USD_REDUCTO` | `0.01` |
+| `COST_USD_AZURE_DI` | `0.01` |
+| `COST_USD_UNSTRUCTURED` | `0.01` |
+| `COST_USD_DOCLING` | `0` (self-hosted) |
+| `COST_USD_MARKER` | `0` (self-hosted) |
+
+## Network / fetch tuning
+
+| Variable | Default |
+| --- | --- |
+| `SAFE_FETCH_TIMEOUT_MS` | `15000`; abort upstream calls (Anthropic / Mistral / Tally / GSTN / FX / etc.) that don't respond within this window |
 
 ## How to generate secrets
 
@@ -156,9 +211,14 @@ SENDGRID_FROM_EMAIL            # verified sender
 RESET_RATE_LIMIT=5             # per-email password-reset cap
 ```
 
-Optional but typically wanted: `MISTRAL_API_KEY`,
-`EMAIL_INBOUND_TOKEN`, `GSTN_API_URL`, `GSTN_API_KEY`, the
-Document AI keys.
+Optional but typically wanted: `GEMINI_API_KEY` (free tier, primary
+extractor), `MISTRAL_API_KEY` (free Experiment tier, OCR fallback),
+`EMAIL_INBOUND_TOKEN`, `GSTN_API_URL`, `GSTN_API_KEY`, the rest of
+the Document AI keys (Reducto, Azure DI, Unstructured, Docling,
+Marker; see the per-adapter table above).
+
+For a zero-cost PoC deployment see `docs/COST_OPTIMIZED_DEPLOYMENT.md`,
+which walks through the smallest viable env-var set.
 
 ## Where each var is read
 

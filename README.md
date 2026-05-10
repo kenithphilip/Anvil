@@ -55,7 +55,7 @@ Read in this order:
 8. **[docs/API_REFERENCE.md](docs/API_REFERENCE.md)**: every Vercel
    endpoint with method, body, response, side effects.
 9. **[docs/SCHEMA_REFERENCE.md](docs/SCHEMA_REFERENCE.md)**: every table,
-   column, enum, RLS policy across the 10 migrations.
+   column, enum, RLS policy across the 94 migrations.
 10. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: high-level system
     design and request flow.
 11. **[docs/CORPUS_MAPPING.md](docs/CORPUS_MAPPING.md)**: how the data
@@ -116,8 +116,8 @@ src/
     index.html.tpl         build template
 
 supabase/
-  migrations/              10 SQL files (001 init through 010 corpus round-2 seeds)
-  seed.sql                 Standalone consolidated 007+010 for SQL editor
+  migrations/              94 SQL files (001 init through 094 model selector)
+  seed.sql                 Standalone consolidated seeds for the SQL editor
   README.md                Migration overview
 
 docs/                      All documentation listed above
@@ -169,9 +169,10 @@ vercel dev
 
 ## Status
 
-- 80 api files, all syntax-clean.
-- 10 migrations: 72 tables, 13 enums, 177 indexes, RLS on every business
-  table.
+- 80+ api files, all syntax-clean.
+- 94 migrations, RLS on every business table. Run
+  `node src/scripts/audit-migration.mjs` for a live count of tables /
+  enums / indexes.
 - Two shells: legacy 35-modal app from `src/legacy/`, and v3 operator
   console (30 routes, RBAC-gated, dark by default, Cmd+K palette,
   thread drawer) from `src/v3/` reached via `/?v3=1`. v3 has 35 wired

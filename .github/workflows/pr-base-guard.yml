@@ -1,0 +1,61 @@
+# PR base guard.
+#
+# Fails any pull request whose base branch is not `main`. Anvil
+# has been bitten twice by the stacked-squash gotcha (PRs #79-#81
+# recovered as #82; PRs #84-#87 recovered as #88), where stacked
+# PRs squash-merge into each other's head branches instead of
+# main. GitHub reports them as MERGED but the diffs never land.
+#
+# This workflow makes that mistake structurally impossible: a PR
+# stacked on a non-main branch fails CI and cannot merge.
+#
+# If you genuinely need to share state between PRs, the right
+# pattern is:
+#
+#   1. Open PR A with base=main.
+#   2. Wait for #1 to merge.
+#   3. Rebase your branch onto the now-updated main.
+#   4. Open PR B with base=main.
+#
+# This is slower than stacking but guarantees main contains
+# everything you opened a PR for.
+
+name: PR base guard
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+jobs:
+  enforce-main-base:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false || github.event.action == 'edited'
+    steps:
+      - name: Verify base is main
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -e
+          echo "PR #${PR_NUMBER}: base=${BASE_REF}"
+          if [ "${BASE_REF}" != "main" ]; then
+            echo ""
+            echo "::error::PR base is '${BASE_REF}', not 'main'."
+            echo ""
+            echo "Anvil's contributing rules require every PR to target main."
+            echo "Stacked PRs have caused two production-recovery incidents"
+            echo "because GitHub's squash-merge semantics fold the squash"
+            echo "commit into the base branch, not into main."
+            echo ""
+            echo "How to fix this PR:"
+            echo "  1. Wait for the base PR to merge into main."
+            echo "  2. Rebase this branch onto main:"
+            echo "       git fetch origin main"
+            echo "       git rebase origin/main"
+            echo "       git push --force-with-lease"
+            echo "  3. Edit this PR's base to 'main' in the GitHub UI."
+            echo ""
+            echo "See docs/CONTRIBUTING.md for the full rationale."
+            exit 1
+          fi
+          echo "OK: base is main."

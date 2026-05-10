@@ -766,3 +766,51 @@ straight from the reminder.
 When `PORTAL_BASE_URL` is unset the substitution drops a
 "reply to this email and we will send one" fallback so the
 customer never sees a literal `[PAY_LINK]` token.
+
+## DocAI cost panel (Admin Center)
+
+Open **Admin Center > DocAI cost**. Five cards:
+
+1. **Today's usage**. Total calls, estimated $ today, free-friendly
+   calls, paid calls, warnings.
+2. **Recommendations**. Actionable banners ordered by $ impact:
+   - `gemini_unconfigured` (warn) - biggest free-tier opportunity.
+   - `claude_uncapped` (bad) - runaway-cost guard missing.
+   - `anthropic_sonnet_default` (info) - flip to Haiku for 4x savings.
+   - `paid_first_in_chain` (warn) - reorder so free adapters run first.
+   - `heavy_claude_no_gemini` (warn) - configure free fallback.
+   - `no_ocr_adapter` (info) - image-only PDFs need OCR.
+3. **Per-adapter usage table**. Calls, cap, remaining, $ today, last
+   called, per adapter.
+4. **Adapter health**. Two columns per adapter: env var present? and
+   tenant key present? No secrets revealed.
+5. **Cost levers** (admin-edit). Reorder `docai_provider_order` with
+   Up/Down/Remove + adapter picker. Set per-adapter daily caps. Pick
+   Anthropic and Gemini models. Save patches `tenant_settings`. Server
+   validates: rejects unknown adapters, duplicates, negative caps,
+   malformed model strings.
+
+For zero-cost configuration, see `docs/COST_OPTIMIZED_DEPLOYMENT.md`.
+
+## Pipeline Diagnostics tab (SO Workspace)
+
+Open any order, click the **Diagnostics** tab. The tab reads
+`/api/orders/<id>/pipeline-state` and renders:
+
+- **Latest extraction banner**: status reason in plain English, adapter
+  used, confidence, finished-at timestamp.
+- **Adapter chain card**: which adapters are configured for the tenant.
+- **Source document card**: filename, mime, size, scan status, threats.
+- **Pipeline layers card**: L1 text-layer status + char count + page
+  count + extractor; L2 OCR-layer status + char count + bbox count +
+  provider; per-run flags (which layers actually fired); validator
+  summary; extraction kind; LLM model used + selection reason.
+- **Extraction runs table**: every run for this order's source
+  document with started, kind, status, reason, adapter, model, conf,
+  layers (L1/L2/L3/L6/E badges), validator counts, attempts.
+- **OCR runs table**: per Mistral OCR call.
+- **Processing events timeline**: every `processing_events` row keyed
+  to the order_id or source_id.
+
+The diagnostics tab is read-only. Re-running an extraction is via the
+**Re-extract** button on the SO Workspace's main reconciliation panel.

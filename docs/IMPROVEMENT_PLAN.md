@@ -77,6 +77,15 @@ Phase 1 and 2 are in `main`. Concretely, the following are live:
 | Auth gate hardening + Landing page     | `9b06aec`    | Internal (security gap close)                     |
 | Approval-gated signup + admin notifications | `a788943` | Internal (production-readiness)                  |
 | Password reset + TOTP MFA + passkeys + broader notifications | `4efa804` | Internal (security flows)               |
+| Phase 6 ERP sweep (14 connectors total) | `d44cb7f`    | Strategic doc Phase 5 ERP completion              |
+| Inventory planning (Phase 1 + 2 + 3 + 3.5) | PR #82  | Strategic doc Phase 4 inventory                   |
+| Truthful intake stepper + auto-populate customer | PR #83 | Internal (workspace audit close)                  |
+| DocAI observability + PDF binary fix + Pipeline Diagnostics | PR #88 (#84) | Internal (audit close)                |
+| DocAI Phase A: deterministic text + validators | PR #88 (#85) | EXTRACTION_PIPELINE_PLAN.md Phase A      |
+| DocAI Phase C: OSS adapters (Docling, Marker, Unstructured-OSS) | PR #88 (#86) | EXTRACTION_PIPELINE_PLAN.md Phase C |
+| DocAI Phases B-F: OCR, voter, templates, overrides, F.2-F.5 | PR #88 (#87) | EXTRACTION_PIPELINE_PLAN.md Phases B-F |
+| DocAI cost-opt: Gemini adapter + cost guard + admin panel | PR #88 | docs/COST_OPTIMIZED_DEPLOYMENT.md       |
+| DocAI deterministic model selector | PR #88 | EXTRACTION_PIPELINE_PLAN.md Cost-Opt section          |
 
 ### What's partial
 

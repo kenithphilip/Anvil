@@ -1,8 +1,8 @@
 # Setup Tutorial
 
 Goal: a working Anvil deployment on Vercel + Supabase that you can sign in
-to with magic-link auth, with all 10 migrations applied and the corpus
-customer and item master rows in place. Time required: 30 to 45 minutes the
+to with magic-link auth, with all 94 migrations applied and the corpus
+customer and item master rows in place. Time required: 45 to 60 minutes the
 first time, 5 minutes for subsequent environments.
 
 This guide assumes Node 20 (`nvm use` after cloning), a free Supabase
@@ -48,22 +48,27 @@ warn "Backend not connected" until the next steps are done.
      password)
 
 Now go to **SQL Editor → New query** and apply each migration in order.
-The migrations live in `supabase/migrations/`. Open them in the order below,
-paste each into the SQL editor, click **Run**. Wait for "Success. No rows
-returned" before moving to the next.
+The migrations live in `supabase/migrations/` and are numbered
+`001_*.sql` through `094_model_selector.sql`. Apply them in numeric
+order, paste each into the SQL editor, click **Run**, and wait for
+"Success. No rows returned" before moving to the next.
 
+For a quick start, you can list every file with:
+
+```sh
+ls -1 supabase/migrations/*.sql
 ```
-001_init.sql
-002_eval_and_email.sql
-003_studio_ocr_fx_inventory_lead.sql
-004_seed_static_data.sql
-005_close_remaining_gaps.sql
-006_corpus_alignment.sql
-007_seed_real_corpus_data.sql
-008_einvoice_forecast_amc.sql
-009_corpus_round2_schema.sql
-010_seed_corpus_round2_data.sql
+
+The fastest path is the Supabase CLI:
+
+```sh
+supabase link --project-ref <your-ref>
+supabase db push
 ```
+
+That applies every migration in order. The migrations are split by
+phase / feature; see `supabase/README.md` for the canonical list and
+`docs/SCHEMA_REFERENCE.md` for the table-by-table reference.
 
 Every migration is fully idempotent: `create type` is wrapped in
 `if not exists` checks, every `add constraint` checks `pg_constraint`
@@ -71,12 +76,13 @@ first, all inserts use `on conflict do nothing` against real unique
 constraints, and the RLS macros only target tables with a `tenant_id`
 column. You can re-run any file safely.
 
-If your only access is the SQL Editor and you would rather paste once,
-`supabase/seed.sql` is the inlined concatenation of 007 + 010 with a
-row-count summary at the bottom. Run the schema-only files (001 through
-006, 008, 009) first, then paste `seed.sql`.
+If your only access is the SQL Editor and you would rather paste the
+seeds once, `supabase/seed.sql` is the inlined concatenation of the
+seed migrations with a row-count summary at the bottom. Apply every
+schema-only migration first via the SQL editor, then paste `seed.sql`.
 
-After all ten, run this verification query in the SQL editor:
+After all 94 migrations apply, run this verification query in the SQL
+editor:
 
 ```sql
 select count(*) as customers from customers;
@@ -87,7 +93,7 @@ select count(*) as lost_reasons from lost_reason_taxonomy;
 
 Expected: at least 6 customers (MG Motor, SRTX, Tata Motors, ABC Motors,
 JBM Auto Plant 1, RNAIPL), at least 131 item master rows, at least 58 holiday
-rows (IN/CN/JP/KR/US 2026), 9 lost reasons. If any returns 0, re-run the
+rows, 9 lost reasons. If any returns 0, re-run the
 migration that should have seeded it (the seed migrations are 004, 007,
 009, 010).
 

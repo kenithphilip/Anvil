@@ -33,7 +33,7 @@ goes only into Vercel environment variables, never into the browser bundle.
 
 ## 3. Apply the schema
 
-There are 43+ idempotent migrations under `supabase/migrations/`.
+There are 94 idempotent migrations under `supabase/migrations/`.
 Apply them in numeric order. **Always apply the full chain** (don't
 cherry-pick): later migrations assume earlier columns exist. Three
 options:

@@ -162,3 +162,20 @@ You can scan for `"ok":false` to find broken sub-handlers.
 The per-handler audit tables (`netsuite_sync_runs`, etc.) also show
 Vercel-side state for every sync and retry attempt. Use those for
 deeper diagnostics.
+
+## Inventory planning crons
+
+Three cron handlers introduced with the inventory-planning module
+(migrations 085 + 087):
+
+| Handler | Endpoint | Cadence (recommended) | What |
+| --- | --- | --- | --- |
+| Inventory positions sweep | `POST /api/cron/inventory-positions` | every 30 min | Refreshes per-tenant inventory position snapshots from ERP staging tables. |
+| Inventory exceptions tick | `POST /api/cron/inventory-exceptions-tick` | every 15 min | Flags items whose on-hand drift exceeds tolerance and writes `inventory_exceptions` rows for the operator queue. |
+| Inventory planning weekly | `POST /api/cron/inventory-planning-weekly` | Mondays 02:00 IST | Rolls the forecast forward by one week and lays down planned replenishments. |
+
+All three honour the `Bearer CRON_SECRET` auth pattern used by the
+parent tick handlers. They're listed in the cron-job.org schedule
+alongside the existing `/api/cron/tick` (5 min) and `/api/cron/daily`
+(once / day at 02:30 IST UTC). See `docs/RUNBOOK.md` for the full
+expected schedule + alert thresholds.

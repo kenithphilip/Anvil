@@ -46,9 +46,18 @@ const WiredSOIntake = () => {
   // the operator was forced to retype email/phone. Both columns
   // exist on the customers table (migration 061) and the API now
   // accepts them, so the dialog persists them straight through.
+  // International-ready: country + tax_id + tax_id_type carried alongside
+  // the legacy gstin/state_code so non-Indian POs (OBARA Korea, Hyundai
+  // Steel Japan, Voestalpine AT) can populate the dialog correctly.
+  // Defaults: country "" so the country dropdown forces an explicit pick.
+  // Bug fix: payment_terms default no longer "Net 30" -- the previous
+  // default papered over an empty extraction by silently inserting a
+  // value the PO did not say. Operator now sees an empty field they
+  // can fill from the PO.
   const [newCustomer, setNewCustomer] = u({
-    customer_name: "", gstin: "", state_code: "",
-    currency: "INR", payment_terms: "Net 30", margin_floor_pct: "10",
+    customer_name: "", country: "", gstin: "", state_code: "",
+    tax_id: "", tax_id_type: "",
+    currency: "", payment_terms: "", margin_floor_pct: "10",
     bill_to: "", ship_to: "",
     contact_email: "", contact_phone: "",
   });
@@ -107,11 +116,18 @@ const WiredSOIntake = () => {
     if (!newCustomer.customer_name.trim()) { setNewCustomerErr({ message: "Customer name is required." }); return; }
     setNewCustomerBusy(true);
     try {
+      const country = (newCustomer.country || "IN").toUpperCase();
+      const isIndia = country === "IN";
       const payload: any = {
         customer_name: newCustomer.customer_name.trim(),
-        gstin: newCustomer.gstin.trim() || null,
-        state_code: newCustomer.state_code.trim() || null,
-        currency: newCustomer.currency || "INR",
+        country,
+        // Indian rows keep the legacy gstin + state_code; foreign rows
+        // populate tax_id + tax_id_type and leave gstin null.
+        gstin: isIndia ? (newCustomer.gstin.trim() || null) : null,
+        state_code: isIndia ? (newCustomer.state_code.trim() || null) : null,
+        tax_id: !isIndia ? (newCustomer.tax_id.trim() || null) : null,
+        tax_id_type: !isIndia ? (newCustomer.tax_id_type || null) : null,
+        currency: newCustomer.currency || (isIndia ? "INR" : null),
         payment_terms: newCustomer.payment_terms || null,
         margin_floor_pct: newCustomer.margin_floor_pct ? Number(newCustomer.margin_floor_pct) : null,
         bill_to: newCustomer.bill_to || null,
@@ -130,8 +146,9 @@ const WiredSOIntake = () => {
       window.notifySuccess?.("Customer created", payload.customer_name);
       setNewCustomerOpen(false);
       setNewCustomer({
-        customer_name: "", gstin: "", state_code: "",
-        currency: "INR", payment_terms: "Net 30", margin_floor_pct: "10",
+        customer_name: "", country: "", gstin: "", state_code: "",
+        tax_id: "", tax_id_type: "",
+        currency: "", payment_terms: "", margin_floor_pct: "10",
         bill_to: "", ship_to: "",
         contact_email: "", contact_phone: "",
       });
@@ -180,33 +197,88 @@ const WiredSOIntake = () => {
   const customerList = (customers.data?.customers) || (Array.isArray(customers.data) ? customers.data : []);
   const selectedCustomer = customerList.find((c) => c.id === customerId);
 
-  // Best-effort fuzzy matcher: prefer GSTIN exact match (highest
-  // confidence, can't false-positive across customers), then fall
-  // back to case-insensitive customer_name. Returns the matched row
-  // or null.
-  const matchCustomerFromExtraction = (extracted) => {
+  // Customer matcher with three-layer corroboration. The bug we
+  // closed in May 2026 (post-Phase-F): an OBARA-Korea PO referencing
+  // a Hyundai Steel project auto-selected "Hyundai Steel" because:
+  //   1) the LLM picked Hyundai (project / end-customer reference)
+  //      as customer.name,
+  //   2) the matcher trusted name-only with no corroboration, and
+  //   3) confidence_overall was never threaded into the auto-select
+  //      decision.
+  //
+  // Three guards now apply before auto-select:
+  //   - confidence_overall must be >= 0.85 (or null = legacy back-compat).
+  //   - GSTIN exact match remains the highest-signal path; auto-select.
+  //   - Name match REQUIRES the canonical name to appear inside
+  //     bill_to_address. Without bill-to corroboration the matcher
+  //     refuses to auto-select; the dialog opens for operator confirm.
+  //   - Filename hint: if the upload filename contains a token >= 3
+  //     chars that's a substring of an existing customer's name, and
+  //     the extractor's match disagrees with the filename, refuse
+  //     auto-select.
+  const norm = (s) => String(s || "").toLowerCase()
+    .replace(/^m\/s\.?\s*/i, "")
+    .replace(/[.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const normTight = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+  const matchCustomerFromExtraction = (extracted, runConfidence, filename) => {
     if (!extracted) return null;
+    // Confidence gate. Below 0.85 the operator confirms manually.
+    if (typeof runConfidence === "number" && runConfidence < 0.85) return null;
+
     const list = customerList || [];
+
+    // Tier 1: GSTIN exact match. Highest signal, can't false-positive.
     const gstin = (extracted.gstin || "").trim().toUpperCase();
     if (gstin && /^[0-9A-Z]{15}$/.test(gstin)) {
       const byGstin = list.find((c) => (c.gstin || "").toUpperCase() === gstin);
       if (byGstin) return { customer: byGstin, confidence: "exact_gstin" };
     }
-    const name = (extracted.name || "").trim().toLowerCase();
-    if (name) {
-      // Strip common prefixes / punctuation that ERP records may
-      // not include but the PO header does ("M/s.", trailing
-      // "Pvt. Ltd.", etc.).
-      const norm = (s) => String(s || "").toLowerCase()
-        .replace(/^m\/s\.?\s*/i, "")
-        .replace(/[.,]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-      const target = norm(name);
-      const exact = list.find((c) => norm(c.customer_name) === target);
-      if (exact) return { customer: exact, confidence: "exact_name" };
+
+    // Tier 2: name match REQUIRES bill-to corroboration. The
+    // extractor will sometimes pick up an end-customer / project
+    // name from line items; the bill-to block is the ground truth.
+    const name = (extracted.name || "").trim();
+    if (!name) return null;
+    const target = norm(name);
+    if (target.length < 3) return null;
+
+    const billToTight = normTight(extracted.bill_to_address);
+    const nameTight = normTight(name);
+    if (!billToTight || nameTight.length < 4 || !billToTight.includes(nameTight)) {
+      // Bill-to does not contain the extracted name. Refuse to auto-
+      // match. The operator confirms via the dialog.
+      return null;
     }
-    return null;
+
+    const exact = list.find((c) => norm(c.customer_name) === target);
+    if (!exact) return null;
+
+    // Tier 3: filename sanity. If the filename has a token (>= 3
+    // chars, alpha) that doesn't match the matched customer's name,
+    // refuse to auto-select. e.g. filename "25PO0008243-OBARA.pdf"
+    // tokens = ["obara"]; matched customer "Hyundai Steel" has no
+    // overlap -> refuse.
+    const filenameTokens = filenameHintTokens(filename);
+    if (filenameTokens.length > 0) {
+      const matchedTight = normTight(exact.customer_name);
+      const intersects = filenameTokens.some((tok) => matchedTight.includes(tok) || tok.includes(matchedTight));
+      if (!intersects) return null;
+    }
+
+    return { customer: exact, confidence: "exact_name" };
+  };
+
+  // Pull alpha tokens >= 3 chars from the upload filename. Used as a
+  // tie-breaker against the LLM-extracted name.
+  const filenameHintTokens = (filename) => {
+    if (!filename) return [];
+    const stem = String(filename).replace(/\.[a-z0-9]+$/i, "");
+    return stem.split(/[-_\s.]+/)
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => s.length >= 3 && /^[a-z]/.test(s) && !/^\d+$/.test(s));
   };
 
   // Bug fix May 2026 (customer-prefill report): the previous
@@ -331,8 +403,9 @@ const WiredSOIntake = () => {
         // still see the PO they uploaded in the doc preview, so
         // they have somewhere to copy from.
         setNewCustomer({
-          customer_name: "", gstin: "", state_code: "",
-          currency: "INR", payment_terms: "Net 30", margin_floor_pct: "10",
+          customer_name: "", country: "", gstin: "", state_code: "",
+          tax_id: "", tax_id_type: "",
+          currency: "", payment_terms: "", margin_floor_pct: "10",
           bill_to: "", ship_to: "",
           contact_email: "", contact_phone: "",
         });
@@ -345,14 +418,28 @@ const WiredSOIntake = () => {
       }
 
       // Build the prefill payload once; both branches below use it.
+      // Country defaults to the value the extractor picked; if
+      // missing, fall back to "IN" only when GSTIN looks Indian.
+      const extractedCountry = (customer.country || "").toUpperCase();
+      const looksIndian = !!(customer.gstin && /^\d{2}[A-Z]{5}\d{4}/.test(customer.gstin));
+      const country = extractedCountry || (looksIndian ? "IN" : "");
       const billTo = customer.bill_to_address || customer.shipping_address || "";
       const shipTo = customer.ship_to_address || customer.bill_to_address || "";
+      // Currency default is country-conditional. INR for IN, otherwise
+      // whatever the extractor returned (no silent default).
+      const currencyDefault = country === "IN" ? "INR" : (customer.currency || "");
       const prefill = {
         customer_name: customer.name || "",
-        gstin: (customer.gstin || "").toUpperCase(),
-        state_code: (customer.state_code || "").toUpperCase(),
-        currency: customer.currency || "INR",
-        payment_terms: customer.payment_terms || "Net 30",
+        country,
+        // Indian fields populate only when country=IN.
+        gstin: country === "IN" ? (customer.gstin || "").toUpperCase() : "",
+        state_code: country === "IN" ? (customer.state_code || "").toUpperCase() : "",
+        // Foreign tax id populates only when country!=IN.
+        tax_id: country && country !== "IN" ? (customer.tax_id || "") : "",
+        tax_id_type: country && country !== "IN" ? (customer.tax_id_type || "") : "",
+        currency: customer.currency || currencyDefault,
+        // No silent "Net 30" default. Empty when the PO did not say.
+        payment_terms: customer.payment_terms || "",
         margin_floor_pct: "10",
         bill_to: billTo,
         ship_to: shipTo,
@@ -360,7 +447,11 @@ const WiredSOIntake = () => {
         contact_phone: customer.phone || "",
       };
 
-      const matchResult = matchCustomerFromExtraction(customer);
+      const matchResult = matchCustomerFromExtraction(
+        customer,
+        typeof out?.confidence_overall === "number" ? out.confidence_overall : null,
+        file?.name || null,
+      );
       if (matchResult?.customer) {
         // High-confidence match (GSTIN exact OR normalized-name
         // exact). Auto-select. The right-hand card will still
@@ -401,8 +492,9 @@ const WiredSOIntake = () => {
       // so the operator has somewhere to type instead of being
       // stranded.
       setNewCustomer({
-        customer_name: "", gstin: "", state_code: "",
-        currency: "INR", payment_terms: "Net 30", margin_floor_pct: "10",
+        customer_name: "", country: "", gstin: "", state_code: "",
+        tax_id: "", tax_id_type: "",
+        currency: "", payment_terms: "", margin_floor_pct: "10",
         bill_to: "", ship_to: "",
         contact_email: "", contact_phone: "",
       });
@@ -747,8 +839,11 @@ const WiredSOIntake = () => {
               <Card title="From PO header" eyebrow="extracted by docai">
                 <KV rows={[
                   ["Name",        extractedCustomer.name || "—"],
+                  ["Country",     (extractedCustomer.country || "").toUpperCase() || "—"],
                   ["GSTIN",       (extractedCustomer.gstin || "").toUpperCase() || "—"],
                   ["State",       (extractedCustomer.state_code || "").toUpperCase() || "—"],
+                  ["Tax id",      extractedCustomer.tax_id || "—"],
+                  ["Tax id type", extractedCustomer.tax_id_type || "—"],
                   ["Currency",    extractedCustomer.currency || "—"],
                   ["Pay terms",   extractedCustomer.payment_terms || "—"],
                   ["Email",       extractedCustomer.email || "—"],
@@ -847,6 +942,29 @@ const WiredSOIntake = () => {
                 <span className="mono-sm">{String(newCustomerErr?.message || newCustomerErr)}</span>
               </Banner>
             )}
+            {/* Provenance hint: surface what the extractor found vs.
+                what's missing so the operator knows where to fill in.
+                Renders only when at least one field came from the PO. */}
+            {extractedCustomer && (() => {
+              const missing: string[] = [];
+              if (!extractedCustomer.bill_to_address) missing.push("bill-to address");
+              if (!extractedCustomer.ship_to_address) missing.push("ship-to address");
+              if (!extractedCustomer.payment_terms) missing.push("payment terms");
+              if (!extractedCustomer.email) missing.push("email");
+              if (!extractedCustomer.phone) missing.push("phone");
+              const country = (extractedCustomer.country || newCustomer.country || "").toUpperCase();
+              if (country === "IN" && !extractedCustomer.gstin) missing.push("GSTIN");
+              if (country && country !== "IN" && !extractedCustomer.tax_id) missing.push("tax id");
+              if (!country) missing.push("country");
+              if (missing.length === 0) return null;
+              return (
+                <Banner kind="info" title="Auto-extracted from PO">
+                  <span className="mono-sm">
+                    Empty fields below were not found on the document: {missing.join(", ")}. Confirm or edit before saving.
+                  </span>
+                </Banner>
+              );
+            })()}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
               <div style={{ gridColumn: "1 / -1" }}>
                 <label htmlFor="nc-name" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Customer name *</label>
@@ -855,22 +973,78 @@ const WiredSOIntake = () => {
                        autoFocus />
               </div>
               <div>
-                <label htmlFor="nc-gstin" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>GSTIN</label>
-                <input id="nc-gstin" className="input mono" placeholder="29ABCDE1234F1Z5"
-                       value={newCustomer.gstin}
-                       onChange={(e) => setNewCustomer((c) => ({ ...c, gstin: e.target.value.toUpperCase() }))} />
+                <label htmlFor="nc-country" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Country</label>
+                <select id="nc-country" className="select"
+                        value={newCustomer.country}
+                        onChange={(e) => setNewCustomer((c) => ({
+                          ...c,
+                          country: e.target.value,
+                          // Clear country-specific fields when switching.
+                          gstin: e.target.value === "IN" ? c.gstin : "",
+                          state_code: e.target.value === "IN" ? c.state_code : "",
+                          tax_id: e.target.value !== "IN" ? c.tax_id : "",
+                          tax_id_type: e.target.value !== "IN" ? c.tax_id_type : "",
+                        }))}>
+                  <option value="">— pick country —</option>
+                  {[
+                    ["IN", "India"], ["US", "United States"], ["GB", "United Kingdom"],
+                    ["JP", "Japan"], ["KR", "South Korea"], ["CN", "China"],
+                    ["SG", "Singapore"], ["AU", "Australia"],
+                    ["DE", "Germany"], ["FR", "France"], ["IT", "Italy"], ["ES", "Spain"],
+                    ["NL", "Netherlands"], ["AT", "Austria"], ["BE", "Belgium"],
+                    ["CH", "Switzerland"], ["AE", "UAE"], ["SA", "Saudi Arabia"],
+                    ["other", "Other (free-form below)"],
+                  ].map(([code, label]) => (
+                    <option key={code} value={code}>{code === "other" ? label : code + " - " + label}</option>
+                  ))}
+                </select>
               </div>
-              <div>
-                <label htmlFor="nc-state" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>State code</label>
-                <input id="nc-state" className="input mono" placeholder="MH / KA / 27"
-                       value={newCustomer.state_code}
-                       onChange={(e) => setNewCustomer((c) => ({ ...c, state_code: e.target.value.toUpperCase() }))} />
-              </div>
+              {newCustomer.country === "IN" && (
+                <div>
+                  <label htmlFor="nc-gstin" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>GSTIN</label>
+                  <input id="nc-gstin" className="input mono" placeholder="29ABCDE1234F1Z5"
+                         value={newCustomer.gstin}
+                         onChange={(e) => setNewCustomer((c) => ({ ...c, gstin: e.target.value.toUpperCase() }))} />
+                </div>
+              )}
+              {newCustomer.country === "IN" && (
+                <div>
+                  <label htmlFor="nc-state" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>State code</label>
+                  <input id="nc-state" className="input mono" placeholder="MH / KA / 27"
+                         value={newCustomer.state_code}
+                         onChange={(e) => setNewCustomer((c) => ({ ...c, state_code: e.target.value.toUpperCase() }))} />
+                </div>
+              )}
+              {newCustomer.country && newCustomer.country !== "IN" && (
+                <div>
+                  <label htmlFor="nc-taxid" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Tax id</label>
+                  <input id="nc-taxid" className="input mono" placeholder="BRN / T-number / VAT / EIN"
+                         value={newCustomer.tax_id}
+                         onChange={(e) => setNewCustomer((c) => ({ ...c, tax_id: e.target.value }))} />
+                </div>
+              )}
+              {newCustomer.country && newCustomer.country !== "IN" && (
+                <div>
+                  <label htmlFor="nc-taxidtype" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Tax id type</label>
+                  <select id="nc-taxidtype" className="select"
+                          value={newCustomer.tax_id_type}
+                          onChange={(e) => setNewCustomer((c) => ({ ...c, tax_id_type: e.target.value }))}>
+                    <option value="">— pick type —</option>
+                    <option value="brn">Korean BRN</option>
+                    <option value="jp_corp">Japanese T-number</option>
+                    <option value="eu_vat">EU VAT</option>
+                    <option value="us_ein">US EIN</option>
+                    <option value="de_steuernummer">German Steuernummer</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+              )}
               <div>
                 <label htmlFor="nc-ccy" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Currency</label>
                 <select id="nc-ccy" className="select" value={newCustomer.currency}
                         onChange={(e) => setNewCustomer((c) => ({ ...c, currency: e.target.value }))}>
-                  {["INR", "USD", "EUR", "JPY", "GBP", "AUD", "SGD"].map((c) => <option key={c} value={c}>{c}</option>)}
+                  <option value="">— pick currency —</option>
+                  {["INR", "USD", "EUR", "JPY", "GBP", "AUD", "SGD", "KRW", "CNY"].map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               <div>

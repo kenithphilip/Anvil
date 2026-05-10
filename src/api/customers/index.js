@@ -97,12 +97,29 @@ export default async function handler(req, res) {
       if (!derivedKey) {
         return json(res, 400, { error: { message: "customer_key or customer_name required" } });
       }
+      // Normalise country: NULL when caller passes an empty string;
+      // upper-case otherwise. Migration 096 has no constraint other
+      // than nullable text, but we want consistent storage.
+      const country = body.country ? String(body.country).toUpperCase() : null;
+      const taxIdType = body.tax_id_type
+        ? (["pan", "brn", "jp_corp", "eu_vat", "us_ein", "de_steuernummer", "other"].includes(body.tax_id_type)
+            ? body.tax_id_type
+            : "other")
+        : null;
       const upsert = await svc.from("customers").upsert({
         tenant_id: ctx.tenantId,
         customer_key: derivedKey,
         customer_name: body.customer_name || "",
         gstin: body.gstin || null,
         state_code: body.state_code || null,
+        // Migration 096: country + tax_id + tax_id_type for non-Indian
+        // customers (OBARA Korea, Hyundai Steel Japan, Voestalpine AT).
+        // Indian customers leave these NULL and use gstin / state_code
+        // as before. The retry-without-new-columns block below catches
+        // pre-096 deployments.
+        country,
+        tax_id: body.tax_id || null,
+        tax_id_type: taxIdType,
         default_payment_terms: body.default_payment_terms || null,
         default_incoterms: body.default_incoterms || null,
         default_quote_validity_days: body.default_quote_validity_days || null,
@@ -130,7 +147,8 @@ export default async function handler(req, res) {
         // If migration 061 hasn't been applied yet on this deployment,
         // Postgres rejects the unknown columns with code 42703. Retry
         // once with only the legacy column set so signups still work
-        // until the operator runs the migration.
+        // until the operator runs the migration. Also catches pre-096
+        // (country / tax_id) deployments.
         if (upsert.error.code === "42703" || /column .* does not exist/i.test(upsert.error.message)) {
           const retry = await svc.from("customers").upsert({
             tenant_id: ctx.tenantId,
@@ -145,8 +163,8 @@ export default async function handler(req, res) {
           }, { onConflict: "tenant_id,customer_key" }).select("*").single();
           if (retry.error) throw new Error(retry.error.message);
           // eslint-disable-next-line no-console
-          console.warn("[customers] saved without relational fields; run migration 061_customers_relational_fields.sql to enable currency/payment_terms/margin_floor_pct/bill_to/ship_to columns");
-          return json(res, 200, { customer: retry.data, warning: "relational_fields_unavailable" });
+          console.warn("[customers] saved without optional fields; run migrations 061 + 096 to enable currency/payment_terms/margin_floor_pct/bill_to/ship_to/country/tax_id columns");
+          return json(res, 200, { customer: retry.data, warning: "optional_fields_unavailable" });
         }
         throw new Error(upsert.error.message);
       }

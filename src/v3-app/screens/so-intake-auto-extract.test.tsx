@@ -112,6 +112,176 @@ describe("SO Intake auto-extract", () => {
     expect(phone?.value).toBe("+91 98765 43210");
   });
 
+  it("does NOT auto-select when extracted name is the project / end-customer (OBARA -> Hyundai regression)", async () => {
+    // Bug fix May 2026 (post-Phase-F): an OBARA Korea PO referencing
+    // a Hyundai Steel project auto-selected the existing "Hyundai
+    // Steel" customer record because:
+    //   1. the LLM picked "Hyundai Steel" as customer.name (it was
+    //      in the project name + line item descriptions),
+    //   2. the matcher trusted the name without bill-to corroboration.
+    // The matcher now requires the canonical name to appear inside
+    // bill_to_address. With bill_to = OBARA, name = Hyundai, the
+    // matcher refuses to auto-select.
+    const HYUNDAI = { id: "cust-hyundai", customer_name: "Hyundai Steel", gstin: "" };
+    installBackend({
+      health: async () => ({ integrations: [] }),
+      customers: { list: async () => ({ customers: [HYUNDAI] }) },
+      documents: {
+        upload: async () => ({ documentId: "doc-obara", scan: { status: "clean" } }),
+        extract: async () => ({
+          confidence_overall: 0.92,
+          normalized: { customer: {
+            name: "Hyundai Steel",                                    // wrong, picked from project ref
+            country: "KR",
+            tax_id: "123-45-67890",
+            tax_id_type: "brn",
+            currency: "USD",
+            payment_terms: "T/T 90 days from BL",
+            bill_to_address: "OBARA Korea Co Ltd, 1-2 Industrial Park, Seoul, South Korea",
+            ship_to_address: "Hyundai Steel Dangjin Works, Dangjin, South Korea",
+          } },
+        }),
+      },
+    });
+    const mod = await import("./so-intake");
+    const { container } = renderScreen(mod.default);
+    await new Promise((r) => setTimeout(r, 0));
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    Object.defineProperty(fileInput!, "files", { value: [fakeFile("25PO0008243-OBARA.pdf")] });
+    fireEvent.change(fileInput!);
+    // Dialog should open. The matcher refused to auto-select Hyundai.
+    await waitFor(() => {
+      const input = container.querySelector('#nc-name') as HTMLInputElement | null;
+      expect(input).not.toBeNull();
+    }, { timeout: 2000 });
+    const sel = container.querySelector('#so-intake-customer') as HTMLSelectElement | null;
+    expect(sel?.value).not.toBe("cust-hyundai");
+  });
+
+  it("auto-selects when name corroborates with bill-to (OBARA positive case)", async () => {
+    // Inverse of the OBARA -> Hyundai test: when the extractor name
+    // appears inside bill_to_address AND there's an existing
+    // customer with that name, auto-select still fires.
+    const OBARA = { id: "cust-obara", customer_name: "OBARA Korea Co Ltd", gstin: "" };
+    installBackend({
+      health: async () => ({ integrations: [] }),
+      customers: { list: async () => ({ customers: [OBARA] }) },
+      documents: {
+        upload: async () => ({ documentId: "doc-obara-ok", scan: { status: "clean" } }),
+        extract: async () => ({
+          confidence_overall: 0.92,
+          normalized: { customer: {
+            name: "OBARA Korea Co Ltd",
+            country: "KR",
+            tax_id: "123-45-67890",
+            tax_id_type: "brn",
+            currency: "USD",
+            bill_to_address: "OBARA Korea Co Ltd, Seoul, South Korea",
+          } },
+        }),
+      },
+    });
+    const mod = await import("./so-intake");
+    const { container } = renderScreen(mod.default);
+    await new Promise((r) => setTimeout(r, 0));
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    Object.defineProperty(fileInput!, "files", { value: [fakeFile("25PO0008243-OBARA.pdf")] });
+    fireEvent.change(fileInput!);
+    await waitFor(() => {
+      const sel = container.querySelector('#so-intake-customer') as HTMLSelectElement | null;
+      expect(sel?.value).toBe("cust-obara");
+    }, { timeout: 2000 });
+  });
+
+  it("does NOT auto-select on low extractor confidence", async () => {
+    // Confidence gate: the matcher refuses auto-select when
+    // confidence_overall < 0.85, even on an exact bill-to-corroborated
+    // name match. Operator confirms via dialog.
+    const TARGET = { id: "cust-tata", customer_name: "Tata Steel Ltd", gstin: "27AABCT1234E1Z5" };
+    installBackend({
+      health: async () => ({ integrations: [] }),
+      customers: { list: async () => ({ customers: [TARGET] }) },
+      documents: {
+        upload: async () => ({ documentId: "doc-low", scan: { status: "clean" } }),
+        extract: async () => ({
+          confidence_overall: 0.6,
+          normalized: { customer: {
+            name: "Tata Steel Ltd",
+            country: "IN",
+            gstin: "29DIFFRENT1234F1",   // doesn't match TARGET's GSTIN
+            state_code: "29",
+            bill_to_address: "Tata Steel Ltd, Mumbai 400001",
+          } },
+        }),
+      },
+    });
+    const mod = await import("./so-intake");
+    const { container } = renderScreen(mod.default);
+    await new Promise((r) => setTimeout(r, 0));
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    Object.defineProperty(fileInput!, "files", { value: [fakeFile("po.pdf")] });
+    fireEvent.change(fileInput!);
+    await waitFor(() => {
+      const input = container.querySelector('#nc-name') as HTMLInputElement | null;
+      expect(input).not.toBeNull();
+    }, { timeout: 2000 });
+    const sel = container.querySelector('#so-intake-customer') as HTMLSelectElement | null;
+    expect(sel?.value).not.toBe("cust-tata");
+  });
+
+  it("non-Indian extraction prefills tax_id + tax_id_type and shows country dropdown", async () => {
+    // International PO with country=KR and a Korean BRN tax_id. The
+    // dialog should pre-fill country, tax_id, tax_id_type, and the
+    // GSTIN/state_code fields should not render.
+    installBackend({
+      health: async () => ({ integrations: [] }),
+      customers: { list: async () => ({ customers: [] }) },
+      documents: {
+        upload: async () => ({ documentId: "doc-kr", scan: { status: "clean" } }),
+        extract: async () => ({
+          confidence_overall: 0.9,
+          normalized: { customer: {
+            name: "OBARA Korea Co Ltd",
+            country: "KR",
+            tax_id: "123-45-67890",
+            tax_id_type: "brn",
+            currency: "USD",
+            payment_terms: "T/T 30 days from BL",
+            email: "ops@obara.kr",
+            phone: "+82 2 1234 5678",
+            bill_to_address: "OBARA Korea Co Ltd, Seoul",
+            ship_to_address: "Hyundai Dangjin Works, Dangjin",
+          } },
+        }),
+      },
+    });
+    const mod = await import("./so-intake");
+    const { container } = renderScreen(mod.default);
+    await new Promise((r) => setTimeout(r, 0));
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    Object.defineProperty(fileInput!, "files", { value: [fakeFile("25PO0008243-OBARA.pdf")] });
+    fireEvent.change(fileInput!);
+    await waitFor(() => {
+      const input = container.querySelector('#nc-name') as HTMLInputElement | null;
+      expect(input?.value).toBe("OBARA Korea Co Ltd");
+    }, { timeout: 2000 });
+    // Country dropdown should be set to KR.
+    const country = container.querySelector('#nc-country') as HTMLSelectElement | null;
+    expect(country?.value).toBe("KR");
+    // GSTIN field should not render for non-IN.
+    expect(container.querySelector('#nc-gstin')).toBeNull();
+    // tax_id + tax_id_type fields render and pre-fill.
+    const taxId = container.querySelector('#nc-taxid') as HTMLInputElement | null;
+    expect(taxId?.value).toBe("123-45-67890");
+    const taxIdType = container.querySelector('#nc-taxidtype') as HTMLSelectElement | null;
+    expect(taxIdType?.value).toBe("brn");
+    // Currency from PO (USD), payment_terms from PO (T/T 30 days from BL).
+    const ccy = container.querySelector('#nc-ccy') as HTMLSelectElement | null;
+    expect(ccy?.value).toBe("USD");
+    const terms = container.querySelector('#nc-terms') as HTMLInputElement | null;
+    expect(terms?.value).toBe("T/T 30 days from BL");
+  });
+
   it("loose name match suggests but does NOT auto-select; dialog opens with prefill", async () => {
     // Bug fix May 2026 (customer-prefill report): the previous
     // matcher loose-prefix-matched "Tata Steel" (extracted) against

@@ -147,9 +147,12 @@ import inventoryReplan          from "./inventory/replan.js";
 // Phase 3.5 additions: calibration, suppliers, exception-tick cron.
 import inventoryCalibration     from "./inventory/calibration.js";
 import inventorySuppliers       from "./inventory/suppliers.js";
+// Bet 3: conformal-prediction safety stock.
+import inventoryConformalDiag   from "./inventory/conformal_diagnostics.js";
 import inventoryCronPositions   from "./cron/inventory-positions.js";
 import inventoryCronWeekly      from "./cron/inventory-planning-weekly.js";
 import inventoryCronExceptions  from "./cron/inventory-exceptions-tick.js";
+import inventoryCronConformal   from "./cron/conformal-calibration-weekly.js";
 import tallyReconcileCron       from "./cron/tally-reconcile.js";
 import driftMeterCron           from "./cron/drift-meter.js";
 import driftReportCron          from "./cron/drift-report.js";
@@ -531,6 +534,7 @@ const STATIC_ROUTES = {
   "/cron/inventory-positions":       inventoryCronPositions,
   "/cron/inventory-planning-weekly": inventoryCronWeekly,
   "/cron/inventory-exceptions-tick": inventoryCronExceptions,
+  "/cron/conformal-calibration-weekly": inventoryCronConformal,
   "/cron/tally-reconcile":           tallyReconcileCron,
   "/cron/drift-meter":               driftMeterCron,
   "/cron/drift-report":              driftReportCron,
@@ -761,6 +765,8 @@ const STATIC_ROUTES = {
   // Phase 3.5 endpoints.
   "/inventory/calibration":         inventoryCalibration,
   "/inventory/suppliers":           inventorySuppliers,
+  // Bet 3: conformal-prediction diagnostics + per-SKU override.
+  "/inventory/conformal_diagnostics": inventoryConformalDiag,
 
   "/master_data/graph":             masterDataGraph,
 

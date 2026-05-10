@@ -22,6 +22,11 @@ const ItemDrilldown: React.FC = () => {
   const [forecasts, setForecasts] = useState<{ data: any[]; loading: boolean }>({ data: [], loading: true });
   const [plans, setPlans] = useState<{ data: any[]; loading: boolean }>({ data: [], loading: true });
   const [exceptions, setExceptions] = useState<{ data: any[]; loading: boolean }>({ data: [], loading: true });
+  // Bet 3: per-SKU conformal-diagnostics payload (residuals, latest
+  // interval, empirical coverage). Loaded lazily; null until the
+  // user opens the Coverage tab so the page-load cost stays small.
+  const [conformal, setConformal] = useState<{ data: any; loading: boolean }>({ data: null, loading: false });
+  const [savingCoverage, setSavingCoverage] = useState(false);
 
   useEffect(() => {
     if (!partNo) return;
@@ -41,6 +46,36 @@ const ItemDrilldown: React.FC = () => {
     });
     return () => { cancelled = true; };
   }, [partNo]);
+
+  // Load conformal diagnostics when the Coverage tab opens.
+  useEffect(() => {
+    if (tab !== "coverage" || !partNo) return;
+    let cancelled = false;
+    setConformal({ data: null, loading: true });
+    Promise.resolve((ObaraBackend as any)?.inventory?.conformalDiagnostics?.(partNo))
+      .then((d: any) => { if (!cancelled) setConformal({ data: d, loading: false }); })
+      .catch(() => { if (!cancelled) setConformal({ data: null, loading: false }); });
+    return () => { cancelled = true; };
+  }, [tab, partNo]);
+
+  const saveCoverage = async (coverage: number | null, methodOverride: string | null) => {
+    if (!partNo) return;
+    setSavingCoverage(true);
+    try {
+      await (ObaraBackend as any)?.inventory?.setConformalOverride?.(partNo, {
+        conformal_coverage: coverage,
+        conformal_method_override: methodOverride,
+      });
+      window.notifySuccess?.("Coverage saved", "Takes effect on the next planning cron run.");
+      // Refresh.
+      const d = await (ObaraBackend as any)?.inventory?.conformalDiagnostics?.(partNo);
+      setConformal({ data: d, loading: false });
+    } catch (err: any) {
+      window.notifyError?.("Save failed", err?.message || String(err));
+    } finally {
+      setSavingCoverage(false);
+    }
+  };
 
   const latest = useMemo(() => positions.data.find((p) => p.source === "union") || positions.data[0] || null, [positions.data]);
 
@@ -80,6 +115,7 @@ const ItemDrilldown: React.FC = () => {
             { id: "forecast",   label: "Forecast",   count: forecasts.data.length },
             { id: "plans",      label: "Plans",      count: plans.data.length },
             { id: "exceptions", label: "Exceptions", count: exceptions.data.length },
+            { id: "coverage",   label: "Coverage" },
           ]}
           active={tab}
           onChange={setTab}
@@ -126,9 +162,27 @@ const ItemDrilldown: React.FC = () => {
               const max = Math.max(
                 1,
                 ...rows.map((r) =>
-                  Math.max(Number(r.forecast_total) || 0, Number(r.quantile_90) || 0)
+                  Math.max(
+                    Number(r.forecast_total) || 0,
+                    Number(r.quantile_90) || 0,
+                    Number(r.interval_hi) || 0,
+                  )
                 )
               );
+              // Bet 3: CP interval band, drawn behind the stacked
+              // areas. Only renders when interval_lo/hi are present
+              // on every row (i.e. the cron has run with CP on).
+              const cpVisible = rows.every((r) => r.interval_lo != null && r.interval_hi != null);
+              const cpHiLine = rows.map((r, i) => x(i) + "," + y(Number(r.interval_hi) || 0)).join(" ");
+              const cpLoLine = rows.map((r, i) => x(i) + "," + y(Number(r.interval_lo) || 0)).join(" ");
+              const cpBand = cpVisible
+                ? rows.map((r, i) => x(i) + "," + y(Number(r.interval_hi) || 0)).join(" ")
+                  + " "
+                  + rows.slice().reverse().map((r, idx) => {
+                      const realIdx = rows.length - 1 - idx;
+                      return x(realIdx) + "," + y(Number(r.interval_lo) || 0);
+                    }).join(" ")
+                : null;
               const x = (i: number) => PAD_L + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW);
               const y = (v: number) => PAD_T + innerH - (Math.max(0, v) / max) * innerH;
               // Cumulative stacks: committed -> +pipeline -> +baseline.
@@ -152,6 +206,7 @@ const ItemDrilldown: React.FC = () => {
                   <div className="h2" style={{ marginBottom: 6 }}>12-week forecast</div>
                   <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 6 }}>
                     Solid: committed · Hatched: pipeline · Light: baseline · Dashed: q90
+                    {cpVisible ? " · Shaded band: CP interval (Bet 3)" : ""}
                   </div>
                   <svg width="100%" viewBox={"0 0 " + W + " " + H} role="img" aria-label="Forecast stacked-area chart">
                     <defs>
@@ -168,6 +223,10 @@ const ItemDrilldown: React.FC = () => {
                         strokeWidth="1"
                       />
                     ))}
+                    {/* Bet 3: CP band drawn first so it sits behind everything else. */}
+                    {cpBand && (
+                      <polygon points={cpBand} fill="var(--ink-3, #888)" fillOpacity="0.12" stroke="none" />
+                    )}
                     {/* Baseline area = full total */}
                     <polygon points={polyArea(stackTotal)} fill="var(--accent-2, #c8ff2b)" fillOpacity="0.18" />
                     {/* Pipeline area = committed + pipeline */}
@@ -176,6 +235,12 @@ const ItemDrilldown: React.FC = () => {
                     <polygon points={polyArea(stackC)} fill="var(--accent-2, #c8ff2b)" fillOpacity="0.85" />
                     {/* q90 dashed line */}
                     <polyline points={q90Line} fill="none" stroke="var(--ink-3, #888)" strokeWidth="1.5" strokeDasharray="4 3" />
+                    {cpVisible && (
+                      <>
+                        <polyline points={cpHiLine} fill="none" stroke="var(--ink-3, #888)" strokeWidth="1" strokeDasharray="2 4" />
+                        <polyline points={cpLoLine} fill="none" stroke="var(--ink-3, #888)" strokeWidth="1" strokeDasharray="2 4" />
+                      </>
+                    )}
                     {/* X-axis week labels (every 2 weeks) */}
                     {rows.map((r, i) => (i % 2 === 0) && (
                       <text key={r.id} x={x(i)} y={H - 6}
@@ -244,6 +309,126 @@ const ItemDrilldown: React.FC = () => {
                 </tbody>
               </table>
             </Card>
+          )
+        )}
+        {tab === "coverage" && (
+          conformal.loading ? (
+            <Card><div className="body">Loading conformal diagnostics…</div></Card>
+          ) : !conformal.data?.conformal_enabled ? (
+            <Banner kind="info" icon={Icon.info} title="Conformal-prediction safety stock is off">
+              <span className="mono-sm">
+                Enable it tenant-wide in settings to start writing per-SKU CP intervals. The
+                weekly planning cron will fill in residuals and the band over the next 12 weeks.
+              </span>
+            </Banner>
+          ) : (
+            <>
+              <Card>
+                <div className="h2" style={{ marginBottom: 8 }}>Coverage target</div>
+                <KV rows={[
+                  ["Effective coverage", (Number(conformal.data.effective_coverage_target || 0) * 100).toFixed(0) + "%"],
+                  ["Tenant default", (Number(conformal.data.tenant_default_coverage || 0) * 100).toFixed(0) + "%"],
+                  ["Per-SKU override", conformal.data.item?.conformal_coverage != null
+                    ? (Number(conformal.data.item.conformal_coverage) * 100).toFixed(0) + "%"
+                    : "—"],
+                  ["Method override", conformal.data.item?.conformal_method_override || "—"],
+                  ["Residuals (own)", String((conformal.data.residuals || []).length)],
+                ]} />
+                <div className="row gap-sm" style={{ marginTop: 8 }}>
+                  <select
+                    className="mono"
+                    aria-label="Per-SKU coverage target"
+                    value={conformal.data.item?.conformal_coverage != null
+                      ? String(conformal.data.item.conformal_coverage)
+                      : "tenant"}
+                    onChange={async (ev) => {
+                      const val = ev.target.value;
+                      if (val === "tenant") {
+                        await saveCoverage(null, conformal.data.item?.conformal_method_override || null);
+                      } else {
+                        await saveCoverage(Number(val), conformal.data.item?.conformal_method_override || null);
+                      }
+                    }}
+                    disabled={savingCoverage}
+                  >
+                    <option value="tenant">Tenant default</option>
+                    <option value="0.85">85%</option>
+                    <option value="0.9">90%</option>
+                    <option value="0.95">95%</option>
+                    <option value="0.99">99%</option>
+                  </select>
+                  <select
+                    className="mono"
+                    aria-label="Method override"
+                    value={conformal.data.item?.conformal_method_override || "auto"}
+                    onChange={async (ev) => {
+                      const val = ev.target.value;
+                      await saveCoverage(
+                        conformal.data.item?.conformal_coverage != null
+                          ? Number(conformal.data.item.conformal_coverage) : null,
+                        val === "auto" ? null : val,
+                      );
+                    }}
+                    disabled={savingCoverage}
+                  >
+                    <option value="auto">Auto (by residual count)</option>
+                    <option value="nexcp">Force NEXCP</option>
+                    <option value="split_cp">Force Split CP</option>
+                  </select>
+                  {savingCoverage && <Chip k="info">saving…</Chip>}
+                </div>
+              </Card>
+              <Card title="Latest forecasts with intervals">
+                {(conformal.data.latest_forecast || []).length === 0 ? (
+                  <div className="body" style={{ color: "var(--ink-3)" }}>
+                    No forecast rows with CP fields yet. Run a planning cron with conformal enabled.
+                  </div>
+                ) : (
+                  <table className="tbl">
+                    <thead><tr>
+                      <th>Week</th>
+                      <th>Method</th>
+                      <th className="r">Residuals</th>
+                      <th className="r">Coverage</th>
+                      <th className="r">Lo</th>
+                      <th className="r">q50</th>
+                      <th className="r">Hi</th>
+                    </tr></thead>
+                    <tbody>
+                      {(conformal.data.latest_forecast || []).map((r: any) => (
+                        <tr key={r.week_start}>
+                          <td className="mono-sm">{r.week_start}</td>
+                          <td className="mono-sm">
+                            <Chip k={r.conformal_method === "nexcp" ? "good"
+                              : r.conformal_method === "split_cp" ? "info"
+                              : r.conformal_method === "pooled_cold_start" ? "warn"
+                              : "info"}>
+                              {r.conformal_method || "—"}
+                            </Chip>
+                          </td>
+                          <td className="r mono">{r.calibration_residuals_count ?? "—"}</td>
+                          <td className="r mono">{r.coverage_target != null
+                            ? (Number(r.coverage_target) * 100).toFixed(0) + "%" : "—"}</td>
+                          <td className="r mono">{r.interval_lo != null ? Number(r.interval_lo).toFixed(1) : "—"}</td>
+                          <td className="r mono">{r.quantile_50 != null ? Number(r.quantile_50).toFixed(1) : "—"}</td>
+                          <td className="r mono">{r.interval_hi != null ? Number(r.interval_hi).toFixed(1) : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </Card>
+              {conformal.data.empirical_coverage?.coverage != null && (
+                <Card title="Empirical coverage" eyebrow="last 13 weeks">
+                  <KPIRow>
+                    <KPI lbl="Realised" v={((conformal.data.empirical_coverage.coverage || 0) * 100).toFixed(1) + "%"}
+                         d={"n=" + conformal.data.empirical_coverage.n} />
+                    <KPI lbl="Target" v={((conformal.data.effective_coverage_target || 0) * 100).toFixed(0) + "%"}
+                         d="this SKU" />
+                  </KPIRow>
+                </Card>
+              )}
+            </>
           )
         )}
         {tab === "exceptions" && (

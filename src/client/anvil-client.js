@@ -1001,6 +1001,14 @@
       upsert: async (payload) => apiFetch("/api/inventory/suppliers", { method: "POST", body: payload }),
       update: async (id, payload) => apiFetch("/api/inventory/suppliers/" + encodeURIComponent(id), { method: "PATCH", body: payload }),
     },
+    // Bet 3: conformal-prediction diagnostics + per-SKU override.
+    conformalDiagnostics: async (partNo) => apiFetch(
+      "/api/inventory/conformal_diagnostics" + (partNo ? "?part_no=" + encodeURIComponent(partNo) : ""),
+    ),
+    setConformalOverride: async (partNo, patch) => apiFetch(
+      "/api/inventory/conformal_diagnostics?part_no=" + encodeURIComponent(partNo),
+      { method: "PATCH", body: patch },
+    ),
   };
 
   const masterData = {

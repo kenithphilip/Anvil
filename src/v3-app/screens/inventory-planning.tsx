@@ -71,12 +71,22 @@ const InventoryPlanningScreen: React.FC = () => {
   const [calibration, setCalibration] = useState<{ data: any; loading: boolean }>({ data: null, loading: true });
   const [forecastRuns, setForecastRuns] = useState<{ data: any[]; loading: boolean }>({ data: [], loading: true });
   const [replanConfirm, setReplanConfirm] = useState(false);
+  // Bet 3: conformal diagnostics rollup.
+  const [conformal, setConformal] = useState<{ data: any; loading: boolean }>({ data: null, loading: true });
 
   useEffect(() => {
     let cancelled = false;
     Promise.resolve((ObaraBackend as any)?.inventory?.calibration?.())
       .then((d: any) => { if (!cancelled) setCalibration({ data: d, loading: false }); })
       .catch(() => { if (!cancelled) setCalibration({ data: null, loading: false }); });
+    return () => { cancelled = true; };
+  }, [bump]);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve((ObaraBackend as any)?.inventory?.conformalDiagnostics?.())
+      .then((d: any) => { if (!cancelled) setConformal({ data: d, loading: false }); })
+      .catch(() => { if (!cancelled) setConformal({ data: null, loading: false }); });
     return () => { cancelled = true; };
   }, [bump]);
 
@@ -146,6 +156,7 @@ const InventoryPlanningScreen: React.FC = () => {
             { id: "by-item", label: "By item" },
             { id: "exceptions", label: "Exceptions" },
             { id: "calibration", label: "Calibration" },
+            { id: "conformal", label: "Coverage" },
             { id: "forecast-history", label: "Forecast history" },
           ]}
           active={tab}
@@ -275,6 +286,111 @@ const InventoryPlanningScreen: React.FC = () => {
                   </tbody>
                 </table>
               )}
+            </Card>
+          </>
+        )}
+        {tab === "conformal" && (
+          <>
+            {!conformal.data?.tenant_settings?.enabled && (
+              <Banner kind="info" icon={Icon.info} title="Conformal-prediction safety stock is off">
+                <span className="mono-sm">
+                  Engine is using the legacy parametric (gamma / normal-z) safety stock. To enable CP,
+                  set <b>tenant_settings.inventory_conformal_enabled = true</b>. The cron will start writing
+                  per-SKU prediction intervals on the next weekly run; you'll see the method buckets and
+                  empirical coverage rollup populate here.
+                </span>
+              </Banner>
+            )}
+            <Card>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <span className="h2">Coverage policy</span>
+                <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                  Tenant default: <b>{fmtPct(conformal.data?.tenant_settings?.default_coverage)}</b>
+                  &nbsp;·&nbsp; Method: <b className="mono">{conformal.data?.tenant_settings?.method || "nexcp"}</b>
+                </span>
+              </div>
+              <div className="body" style={{ color: "var(--ink-3)" }}>
+                Each SKU's prediction interval is calibrated weekly against the last <b>156 weeks</b> of
+                forecast residuals. SKUs with &lt; 12 own residuals pool from their item_type cohort
+                (cold-start); 12-25 use Split CP; &ge; 26 use NEXCP with exponential-decay weights.
+                Hard floor: <span className="mono">max(CP_band, ssGamma)</span> for the first 26 weeks of calibration.
+              </div>
+            </Card>
+            <Card title="Methods in use" eyebrow="latest run per SKU">
+              {conformal.loading ? (
+                <div className="body" style={{ color: "var(--ink-3)" }}>Loading conformal rollup…</div>
+              ) : !conformal.data ? (
+                <div className="body" style={{ color: "var(--ink-3)" }}>No conformal data yet.</div>
+              ) : (
+                <table className="tbl">
+                  <thead><tr>
+                    <th>Method</th>
+                    <th className="r">SKUs</th>
+                    <th>What it means</th>
+                  </tr></thead>
+                  <tbody>
+                    {Object.entries(conformal.data.method_buckets || {}).map(([m, n]: any) => (
+                      <tr key={m}>
+                        <td className="mono">
+                          <Chip k={m === "nexcp" ? "good" : m === "split_cp" ? "info" : m === "pooled_cold_start" ? "warn" : "info"}>
+                            {m}
+                          </Chip>
+                        </td>
+                        <td className="r mono">{n}</td>
+                        <td className="body">
+                          {m === "nexcp" ? "Non-exchangeable, recent-history weighted" :
+                           m === "split_cp" ? "Standard exchangeable Split CP, 12-25 residuals" :
+                           m === "pooled_cold_start" ? "New SKU, residuals pooled from item_type cohort" :
+                           m === "parametric_legacy" ? "Engine fell back to gamma / normal-z" :
+                           m === "unknown" ? "Older row pre-Bet-3" : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </Card>
+            <Card title="Empirical coverage" eyebrow="last 13 weeks">
+              {conformal.data?.empirical_coverage?.coverage == null ? (
+                <div className="body" style={{ color: "var(--ink-3)" }}>
+                  Not enough data yet. We need at least one (forecast, actual) pair per week per SKU
+                  before we can chart realised coverage. The calibration cron writes these as
+                  shipped order_schedule_lines accumulate.
+                </div>
+              ) : (
+                <>
+                  <KPIRow>
+                    <KPI lbl="Realised" v={fmtPct(conformal.data.empirical_coverage.coverage)} d={"n=" + conformal.data.empirical_coverage.n} />
+                    <KPI lbl="Target" v={fmtPct(conformal.data.tenant_settings.default_coverage)} d="tenant default" />
+                    <KPI lbl="Drift" v={conformal.data.drift != null ? fmtPct(conformal.data.drift) : "—"}
+                         d={conformal.data.drift_alert ? "above 5% threshold" : "within tolerance"}
+                         dKind={conformal.data.drift_alert ? "down" : ""} />
+                  </KPIRow>
+                  {conformal.data.drift_alert && (
+                    <Banner kind="warn" icon={Icon.alert} title="Realised coverage below target by more than 5%">
+                      <span className="mono-sm">
+                        The CP intervals are under-covering. Possible causes: a model regression
+                        (forecaster picked is wrong for the demand class), a change-point in the
+                        series, or insufficient residuals. Check the per-SKU diagnostics from the
+                        By item tab.
+                      </span>
+                    </Banner>
+                  )}
+                </>
+              )}
+            </Card>
+            <Card title="Cohort residual counts" eyebrow="for pooled cold-start">
+              <table className="tbl">
+                <thead><tr>
+                  <th>Item type</th>
+                  <th className="r">SKUs</th>
+                </tr></thead>
+                <tbody>
+                  {Object.entries(conformal.data?.cohort_counts || {}).map(([k, n]: any) => (
+                    <tr key={k}><td className="mono">{k}</td><td className="r mono">{n}</td></tr>
+                  ))}
+                </tbody>
+              </table>
             </Card>
           </>
         )}

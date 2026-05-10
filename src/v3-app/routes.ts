@@ -49,6 +49,8 @@ const screens = {
   brsrSupplier:         lazy(() => import("./screens/brsr-supplier")),
   brsrBuyerDashboard:   lazy(() => import("./screens/brsr-buyer-dashboard")),
   brsrDisclosureDetail: lazy(() => import("./screens/brsr-disclosure-detail")),
+  // Bet 2: format-template marketplace.
+  marketplace:          lazy(() => import("./screens/marketplace")),
   // Service
   svcVisits:          lazy(() => import("./screens/service-visits")),
   amc:                lazy(() => import("./screens/amc")),
@@ -139,6 +141,8 @@ export const RESOLVERS = {
   "brsr-supplier":          () => screens.brsrSupplier,
   "brsr-buyer-dashboard":   () => screens.brsrBuyerDashboard,
   "brsr-disclosure-detail": () => screens.brsrDisclosureDetail,
+  // Bet 2: format-template marketplace.
+  marketplace:            () => screens.marketplace,
   "svc-visits":() => screens.svcVisits,
   amc:         () => screens.amc,
   car:         () => screens.car,

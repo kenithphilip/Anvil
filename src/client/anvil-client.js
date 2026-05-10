@@ -1065,6 +1065,35 @@
     refreshEligibleBuyers: async () => apiFetch("/api/treds/eligible_buyers/refresh", { method: "POST" }),
   };
 
+  // Bet 2: format-template marketplace.
+  const marketplace = {
+    list: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/marketplace/list" + (qs ? "?" + qs : ""));
+    },
+    publish: async (payload) => apiFetch("/api/marketplace/publish", { method: "POST", body: payload }),
+    revoke: async (globalId, reason) => apiFetch("/api/marketplace/revoke", {
+      method: "POST", body: { global_id: globalId, reason },
+    }),
+    imports: async () => apiFetch("/api/marketplace/imports"),
+    confirmImport: async (importId) => apiFetch("/api/marketplace/imports/confirm", {
+      method: "POST", body: { import_id: importId },
+    }),
+    revertImport: async (importId, reason) => apiFetch("/api/marketplace/imports/revert", {
+      method: "POST", body: { import_id: importId, reason },
+    }),
+    report: async (globalId, reason, evidence) => apiFetch("/api/marketplace/report", {
+      method: "POST", body: { global_id: globalId, reason, evidence },
+    }),
+    reviewQueue: async () => apiFetch("/api/marketplace/review"),
+    reviewDecide: async (globalId, decision, reason) => apiFetch("/api/marketplace/review", {
+      method: "POST", body: { global_id: globalId, decision, reason },
+    }),
+    superAdminRevoke: async (globalId, reason) => apiFetch("/api/marketplace/review/revoke", {
+      method: "POST", body: { global_id: globalId, reason },
+    }),
+  };
+
   const bom = {
     list: async (params) => {
       const qs = new URLSearchParams(params || {}).toString();
@@ -1532,6 +1561,7 @@
     brsr,
     aa,
     treds,
+    marketplace,
     bom,
     profileVersions,
     sourcePos,

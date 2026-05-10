@@ -46,6 +46,11 @@ import { dispatchExtract } from "./index.js";
 import { extractTextLayer, contentHash } from "./text_layer.js";
 import { extractOcrLayer } from "./ocr_layer.js";
 import { applyTemplate, buildTemplate } from "./templates.js";
+// Bet 2: format-template marketplace L3.5 hook.
+import {
+  findGlobalCandidates, applyGlobalTemplate, shouldPromoteToSkipLlm,
+  __consts as marketplaceConsts,
+} from "./marketplace.js";
 import { applyOverrides, loadOverrides, recordOverrideUsage } from "./overrides.js";
 import { voteAcrossAdapters } from "./voter.js";
 import { validateExtraction } from "./validators.js";
@@ -328,11 +333,72 @@ export const runExtractionPipeline = async (params) => {
     }
   }
 
+  // 4.5. L3.5: global format-template marketplace (Bet 2).
+  // Only fires when L3 missed (tenant doesn't have a local template
+  // for this customer yet) AND consumer opt-in is true. Defaults
+  // to HINT MODE; promotion to skip_llm requires N operator-
+  // confirmed imports.
+  let globalApplied = null;
+  if (
+    !templateApplied?.used
+    && bodyText
+    && settings?.template_marketplace_consumer_optin !== false
+  ) {
+    try {
+      const localFp = hints?.fingerprint || {};
+      const candidates = await findGlobalCandidates(svc, {
+        kind, localFingerprint: localFp, bodyText,
+      });
+      const best = candidates[0];
+      if (best && best.score >= marketplaceConsts.HINT_SILENT_THRESHOLD) {
+        const promote = best.score >= marketplaceConsts.HINT_THRESHOLD
+          && await shouldPromoteToSkipLlm(svc, {
+              tenantId: ctx.tenantId,
+              globalId: best.global_id,
+              threshold: settings?.template_marketplace_skip_llm_after_n_imports,
+            });
+        const useMode = promote ? "skip_llm" : "hint";
+        const applied = await applyGlobalTemplate(svc, ctx, {
+          globalId: best.global_id,
+          customerId,
+          bodyText,
+          score: best.score,
+          fingerprint_score: best.fingerprint_score,
+          anchor_hit_rate: best.anchor_hit_rate,
+          useMode,
+        });
+        if (applied.used) {
+          globalApplied = applied;
+          await recordRunEvent("docai_global_template_applied", {
+            global_id: best.global_id,
+            use_mode: useMode,
+            score: best.score,
+            fingerprint_score: best.fingerprint_score,
+            anchor_hit_rate: best.anchor_hit_rate,
+          });
+        }
+      }
+    } catch (err) {
+      /* eslint-disable no-console */
+      console.error("[docai/run] global template apply: " + (err?.message || err));
+    }
+  }
+
   // 5. L4 dispatch.
   const dispatchHints = { ...hints };
   if (bodyText) dispatchHints.bodyText = bodyText;
   if (templateApplied?.used && templateApplied?.normalized?.customer) {
     dispatchHints.knownFields = templateApplied.normalized.customer;
+  } else if (globalApplied?.used && globalApplied?.normalized?.customer) {
+    // L3.5 hint-mode injection: pass the global template's
+    // known-fields to L4 as hints. The LLM still runs unless
+    // the use_mode is skip_llm (operator already promoted this
+    // global template).
+    dispatchHints.knownFields = globalApplied.normalized.customer;
+    dispatchHints.globalTemplate = {
+      id: globalApplied.global_id,
+      use_mode: globalApplied.use_mode,
+    };
   }
   if (kind && kind !== "po") dispatchHints.expectedKind = kind;
   // Phase Cost-Opt: pass extraction-context summaries so the
@@ -524,6 +590,8 @@ export const runExtractionPipeline = async (params) => {
     text_layer_used: textLayerUsed,
     ocr_layer_used: ocrLayerUsed,
     template_used: templateApplied?.used ? templateApplied.template_id : null,
+    global_template_used: globalApplied?.used ? globalApplied.global_id : null,
+    global_template_use_mode: globalApplied?.used ? globalApplied.use_mode : null,
     overrides_applied: overridesApplied,
     field_provenance: voted?.field_provenance || [],
     voter_lines: voted?.voter_lines || [],
@@ -551,6 +619,8 @@ export const runExtractionPipeline = async (params) => {
       text_layer_used: textLayerUsed,
       ocr_layer_used: ocrLayerUsed,
       template_used: !!templateApplied?.used,
+      global_template_used: globalApplied?.global_id || null,
+      global_template_use_mode: globalApplied?.use_mode || null,
       voter_used: !!voted,
       validator_summary: v.summary || null,
       overrides_applied_count: overridesApplied.length,

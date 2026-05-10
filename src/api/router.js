@@ -20,6 +20,7 @@ import agentsRun               from "./agents/run.js";
 import adminContracts          from "./admin/contracts.js";
 import adminCustomerLocations  from "./admin/customer_locations.js";
 import adminDiagnostics        from "./admin/diagnostics.js";
+import adminDocaiSettings      from "./admin/docai_settings.js";
 import adminEquipment          from "./admin/equipment.js";
 import adminFxRates            from "./admin/fx_rates.js";
 import adminHolidays           from "./admin/holidays.js";
@@ -102,6 +103,7 @@ import billingRecurringCron     from "./billing/recurring_cron.js";
 
 // Phase 7.7: e-Way bill module + daily expiry sweep.
 import ewayBillsIndex           from "./eway_bills/index.js";
+import ewayBillsExtract         from "./eway_bills/extract.js";
 import ewayBillsExpire          from "./eway_bills/expire.js";
 
 import deliveryPromise         from "./delivery/promise.js";
@@ -152,6 +154,8 @@ import masterDataGraph         from "./master_data/graph.js";
 
 import ordersById              from "./orders/[id].js";
 import ordersIndex             from "./orders/index.js";
+// Phase 3.6 observability: per-order pipeline diagnostics.
+import ordersPipelineState     from "./orders/pipeline_state.js";
 import ordersScheduleLines     from "./orders/schedule_lines.js";
 
 import salesInternalSo         from "./sales/internal_so.js";
@@ -176,6 +180,8 @@ import serviceVisits           from "./service/visits.js";
 
 import sourcePosById           from "./source_pos/[id].js";
 import sourcePosAck            from "./source_pos/ack.js";
+import sourcePosAckExtract     from "./source_pos/ack_extract.js";
+import sourcePosAckAccept      from "./source_pos/ack_accept.js";
 import sourcePosIndex          from "./source_pos/index.js";
 import sourcePosScorecard      from "./source_pos/scorecard.js";
 
@@ -209,6 +215,7 @@ import invoicesIndex           from "./invoices/index.js";
 import invoicesById            from "./invoices/[id].js";
 import invoicesPdf             from "./invoices/pdf.js";
 import invoicesSend            from "./invoices/send.js";
+import invoicesExtract         from "./invoices/extract.js";
 
 import netsuiteConnect         from "./netsuite/connect.js";
 import netsuiteHealth          from "./netsuite/health.js";
@@ -341,6 +348,8 @@ import inboundEmailPersistAttachments from "./inbound/email/persist_attachments.
 
 import docaiExtract            from "./docai/extract.js";
 import docaiCorrection         from "./docai/correction.js";
+import docaiUsage               from "./docai/usage.js";
+import docaiCostStatus          from "./docai/cost_status.js";
 import docaiRuns               from "./docai/runs.js";
 
 import p21Connect              from "./p21/connect.js";
@@ -536,6 +545,8 @@ const STATIC_ROUTES = {
   "/inbound/email/persist_attachments": inboundEmailPersistAttachments,
   "/docai/extract":                 docaiExtract,
   "/docai/correction":              docaiCorrection,
+  "/docai/usage":                   docaiUsage,
+  "/docai/cost_status":             docaiCostStatus,
   "/docai/runs":                    docaiRuns,
   "/p21/connect":                   p21Connect,
   "/p21/health":                    p21Health,
@@ -615,6 +626,7 @@ const STATIC_ROUTES = {
   "/admin/contracts":               adminContracts,
   "/admin/customer_locations":      adminCustomerLocations,
   "/admin/diagnostics":             adminDiagnostics,
+  "/admin/docai_settings":          adminDocaiSettings,
   "/admin/equipment":               adminEquipment,
   "/admin/fx_rates":                adminFxRates,
   "/admin/holidays":                adminHolidays,
@@ -672,6 +684,7 @@ const STATIC_ROUTES = {
   "/invoices":                      invoicesIndex,
   "/invoices/pdf":                  invoicesPdf,
   "/invoices/send":                 invoicesSend,
+  "/invoices/extract":              invoicesExtract,
 
   "/bom":                           bomIndex,
   "/claude/messages":               claudeMessages,
@@ -699,6 +712,7 @@ const STATIC_ROUTES = {
   "/billing/recurring_cron":        billingRecurringCron,
 
   "/eway_bills":                    ewayBillsIndex,
+  "/eway_bills/extract":            ewayBillsExtract,
   "/eway_bills/expire":             ewayBillsExpire,
 
   "/delivery/promise":              deliveryPromise,
@@ -765,6 +779,7 @@ const STATIC_ROUTES = {
   "/source_pos":                    sourcePosIndex,
   "/source_pos/ack":                sourcePosAck,
   "/source_pos/scorecard":          sourcePosScorecard,
+  // Phase F.2 dynamic /source_pos/<id>/ack_extract is wired in DYNAMIC_ROUTES.
 
   "/spare_matrix/kit":              spareMatrixKit,
   "/spare_matrix/obsolete":         spareMatrixObsolete,
@@ -805,7 +820,16 @@ const DYNAMIC_ROUTES = [
   // "/documents/<id>" -> documentsById, sets req.query.id
   { prefix: "/documents/",   handler: documentsById,  param: "id" },
   // "/orders/<id>"
+  // /orders/<id>/pipeline-state takes precedence over the bare
+  // /orders/<id> route below thanks to suffix-aware matching.
+  { prefix: "/orders/",      suffix: "/pipeline-state", handler: ordersPipelineState, param: "id" },
   { prefix: "/orders/",      handler: ordersById,     param: "id" },
+  // "/source_pos/<id>/ack_extract" -> Phase F.2 supplier-ack PDF extractor.
+  // "/source_pos/<id>/ack_accept" -> Phase F.2 commit reviewed extraction.
+  // Listed BEFORE the bare /source_pos/<id> entry so the suffix-aware
+  // matcher catches them first.
+  { prefix: "/source_pos/",  suffix: "/ack_extract", handler: sourcePosAckExtract, param: "id" },
+  { prefix: "/source_pos/",  suffix: "/ack_accept",  handler: sourcePosAckAccept,  param: "id" },
   // "/source_pos/<id>"
   { prefix: "/source_pos/",  handler: sourcePosById,  param: "id" },
   // Invoices: /invoices/<id>. The static "/invoices" + "/invoices/pdf"

@@ -30,14 +30,19 @@ export default async function handler(req, res) {
     }
     const status = url.searchParams.get("status");
     const customerId = url.searchParams.get("customer_id");
+    const kind = url.searchParams.get("kind");
     const limit = Math.min(200, Number(url.searchParams.get("limit") || 50));
     let q = svc.from("extraction_runs")
-      .select("id, customer_id, source_type, source_filename, adapter_used, confidence_overall, status, started_at, finished_at")
+      .select(`id, customer_id, source_type, source_filename, adapter_used,
+               confidence_overall, status, status_reason, extraction_kind,
+               text_layer_used, ocr_layer_used, template_used, voter_used,
+               started_at, finished_at`)
       .eq("tenant_id", ctx.tenantId)
       .order("started_at", { ascending: false })
       .limit(limit);
     if (status) q = q.eq("status", status);
     if (customerId) q = q.eq("customer_id", customerId);
+    if (kind) q = q.eq("extraction_kind", kind);
     const r = await q;
     if (r.error) throw new Error(r.error.message);
     return json(res, 200, { runs: r.data || [] });

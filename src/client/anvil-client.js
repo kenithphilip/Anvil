@@ -525,6 +525,17 @@
     correction: async (payload) => apiFetch("/api/docai/correction", { method: "POST", body: payload }),
     listRuns:   async (q) => apiFetch("/api/docai/runs" + (q ? "?" + new URLSearchParams(q).toString() : "")),
     getRun:     async (id) => apiFetch("/api/docai/runs?id=" + encodeURIComponent(id)),
+    // Phase Cost-Opt: today's per-adapter call counters + per-adapter
+    // budget so the admin UI can render "Claude: 12/50 used today".
+    usage:      async (date) => apiFetch("/api/docai/usage" + (date ? "?date=" + encodeURIComponent(date) : "")),
+    // Aggregate cost-optimisation status: usage + 7d trend + caps +
+    // adapter health + actionable recommendations. Drives the
+    // admin "DocAI cost" tab.
+    costStatus: async () => apiFetch("/api/docai/cost_status"),
+    // Tenant docai settings (admin only). GET returns current
+    // values; updateSettings PATCHes a partial.
+    getSettings:    async () => apiFetch("/api/admin/docai_settings"),
+    updateSettings: async (patch) => apiFetch("/api/admin/docai_settings", { method: "PATCH", body: patch }),
   };
 
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });
@@ -618,6 +629,11 @@
           bytes_base64: bytesB64,
           customer_id: o.customer_id || null,
           source_id: o.source_id || null,
+          // Phase 3.6 observability: pass order_id so the
+          // extract handler can key processing_events by case
+          // for the workspace's Activity timeline + Pipeline
+          // Diagnostics tab. Optional; falls back to source_id.
+          order_id: o.order_id || null,
         },
       });
     },
@@ -632,6 +648,11 @@
     get: async (id) => apiFetch("/api/orders/" + id),
     update: async (id, patch) => apiFetch("/api/orders/" + id, { method: "PATCH", body: patch }),
     remove: async (id) => apiFetch("/api/orders/" + id, { method: "DELETE" }),
+    // Phase 3.6 observability: full pipeline-diagnostics blob for
+    // an order. Used by the workspace's Pipeline Diagnostics tab
+    // to render extraction_runs + processing_events + adapter
+    // health in one place.
+    pipelineState: async (id) => apiFetch("/api/orders/" + encodeURIComponent(id) + "/pipeline-state"),
   };
 
   const customers = {

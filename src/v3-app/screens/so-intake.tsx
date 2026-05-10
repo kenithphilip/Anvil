@@ -61,7 +61,13 @@ const WiredSOIntake = () => {
   // intake dropped the extracted lines on the floor and only used
   // out.normalized.customer.
   const [extractedLines, setExtractedLines] = u<any[] | null>(null);
-  const [extractMeta, setExtractMeta] = u<{ runId?: string | null; adapter?: string | null; confidence?: number | null }>({});
+  const [extractMeta, setExtractMeta] = u<{
+    runId?: string | null;
+    adapter?: string | null;
+    confidence?: number | null;
+    statusReason?: string | null;
+    adapterMode?: string | null;
+  }>({});
   // Bug fix May 2026 (customer-prefill report): keep the raw
   // extracted customer block around so the right-hand intake card
   // can render a "From PO" panel side-by-side with the existing-
@@ -149,6 +155,19 @@ const WiredSOIntake = () => {
     return () => { cancelled = true; };
   }, []);
   const clamavConfigured = !!health?.integrations?.find((i: any) => i.id === "clamav")?.configured;
+  // Phase 3.6 observability: at least one docai adapter must be
+  // configured before extraction will produce anything. Surface a
+  // pre-flight warning if every adapter says "not configured" so
+  // the operator doesn't burn upload time + Anthropic credits on a
+  // run that's structurally guaranteed to return 0 lines.
+  // Phases A-C cover seven adapters (gemini / claude / reducto /
+  // azure_di / unstructured / docling / marker); plus the legacy
+  // "anthropic" alias kept for back-compat. Per-tenant settings can
+  // flip an adapter on without an env var, so this is a "platform
+  // has *some* adapter" check, not "this tenant is fully wired."
+  const docaiConfigured = !!health?.integrations?.some?.((i: any) =>
+    ["gemini", "claude", "anthropic", "reducto", "azure_di", "unstructured", "docling", "marker", "docai"].includes(i.id) && i.configured
+  );
 
   e(() => {
     let cancelled = false;
@@ -245,7 +264,55 @@ const WiredSOIntake = () => {
         runId: out?.run_id || null,
         adapter: out?.adapter_used || null,
         confidence: typeof out?.confidence_overall === "number" ? out.confidence_overall : null,
+        statusReason: out?.status_reason || null,
+        adapterMode: out?.adapter_mode || null,
       });
+      // Phase 3.6 observability: if the extract API returned a
+      // structured status_reason that means "extraction did not
+      // produce usable lines", surface a specific operator-facing
+      // toast rather than the generic "couldn't auto-extract
+      // customer" one. The operator now knows whether the issue
+      // was an image-only PDF, a missing adapter, an empty model
+      // response, etc.
+      const reason = out?.status_reason;
+      const REASON_TOAST: Record<string, [string, string]> = {
+        image_pdf_no_text: [
+          "PDF appears image-only · no text layer",
+          "Claude received binary noise. Run OCR first or upload a text-PDF.",
+        ],
+        empty_lines: [
+          "Extraction returned 0 lines",
+          "Model parsed the document but couldn't pull line items.",
+        ],
+        non_po: [
+          "Document classified as non-PO",
+          "Upload a customer purchase order, not a quote / invoice / spec sheet.",
+        ],
+        no_adapter_configured: [
+          "No docai adapter configured",
+          "Ask an admin to set ANTHROPIC_API_KEY before re-uploading.",
+        ],
+        all_adapters_skipped: [
+          "All docai adapters skipped",
+          "Every configured adapter said 'not ready'. Check tenant settings.",
+        ],
+        parse_failed: [
+          "Model didn't call extract_purchase_order",
+          "The LLM returned text instead of a tool call. Re-try the upload.",
+        ],
+        model_refused: [
+          "Model refused the request",
+          "Safety stop. The document may have triggered a content filter.",
+        ],
+        upstream_error: [
+          "Upstream LLM error",
+          "Provider returned a 5xx. Re-try in a moment.",
+        ],
+      };
+      if (reason && REASON_TOAST[reason]) {
+        const [title, body] = REASON_TOAST[reason];
+        window.notifyWarn?.(title, body);
+      }
 
       const customer = out?.normalized?.customer || null;
       // Bug fix May 2026 (customer-prefill report): always stash
@@ -486,6 +553,22 @@ const WiredSOIntake = () => {
             </Card>
 
             <Card title="Documents" eyebrow="PO required · customer auto-extracts on upload">
+              {/* Phase 3.6 observability: pre-flight warning when
+                  no docai adapter is configured. Without this, the
+                  operator would upload, watch the extract API
+                  return 0 lines, and have no idea that the issue
+                  was a missing key, not the file itself. */}
+              {health && !docaiConfigured && (
+                <Banner kind="warn" icon={Icon.alert} title="No docai adapter configured">
+                  <span className="mono-sm">
+                    Anthropic / Reducto / Azure DI / Unstructured all show as
+                    not-configured in <span className="mono">/api/health</span>. Uploading
+                    a PO will burn upload bandwidth but produce no extracted
+                    lines. Ask an admin to set ANTHROPIC_API_KEY (or another
+                    adapter's keys) on the deployment before continuing.
+                  </span>
+                </Banner>
+              )}
               {busy === "extract" && (
                 <Banner kind="info" icon={Icon.cycle} title="Reading the PO…">
                   <span className="mono-sm">Auto-extracting customer name, GSTIN, addresses, currency, and payment terms.</span>

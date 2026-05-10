@@ -111,32 +111,110 @@ const ItemDrilldown: React.FC = () => {
           </Card>
         )}
         {tab === "forecast" && (
-          <Card flush>
-            <table className="tbl">
-              <thead><tr>
-                <th>Week</th>
-                <th className="r">Committed</th>
-                <th className="r">Pipeline</th>
-                <th className="r">Baseline</th>
-                <th className="r">Total</th>
-                <th className="r">q90</th>
-                <th>Model</th>
-              </tr></thead>
-              <tbody>
-                {forecasts.data.map((f) => (
-                  <tr key={f.id}>
-                    <td className="mono-sm">{f.week_start}</td>
-                    <td className="r mono">{Number(f.forecast_committed)}</td>
-                    <td className="r mono">{Number(f.forecast_pipeline)}</td>
-                    <td className="r mono">{Number(f.forecast_baseline)}</td>
-                    <td className="r mono"><b>{Number(f.forecast_total)}</b></td>
-                    <td className="r mono">{f.quantile_90 != null ? Number(f.quantile_90).toFixed(1) : "—"}</td>
-                    <td className="mono-sm">{f.model_name}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
+          <>
+            {forecasts.data.length > 0 && (() => {
+              // Phase 3.5: simple stacked-area SVG chart, doc 7.5.
+              // Solid (committed) + hatched (pipeline) + light
+              // (baseline) areas; q90 dashed line on top.
+              const W = 720, H = 200, PAD_L = 36, PAD_R = 12, PAD_T = 16, PAD_B = 22;
+              const innerW = W - PAD_L - PAD_R;
+              const innerH = H - PAD_T - PAD_B;
+              const rows = forecasts.data.slice().sort((a, b) =>
+                a.week_start < b.week_start ? -1 : 1
+              );
+              const n = rows.length;
+              const max = Math.max(
+                1,
+                ...rows.map((r) =>
+                  Math.max(Number(r.forecast_total) || 0, Number(r.quantile_90) || 0)
+                )
+              );
+              const x = (i: number) => PAD_L + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW);
+              const y = (v: number) => PAD_T + innerH - (Math.max(0, v) / max) * innerH;
+              // Cumulative stacks: committed -> +pipeline -> +baseline.
+              const stackC = rows.map((r) => Number(r.forecast_committed) || 0);
+              const stackCP = rows.map((r, i) =>
+                stackC[i] + (Number(r.forecast_pipeline) || 0)
+              );
+              const stackTotal = rows.map((r) => Number(r.forecast_total) || 0);
+              const polyArea = (heights: number[]) => {
+                const top = heights.map((v, i) => x(i) + "," + y(v)).join(" ");
+                const bottom = heights.slice().reverse().map(
+                  (_, idx) => x(heights.length - 1 - idx) + "," + y(0)
+                ).join(" ");
+                return top + " " + bottom;
+              };
+              const q90Line = rows.map((r, i) =>
+                x(i) + "," + y(Number(r.quantile_90) || 0)
+              ).join(" ");
+              return (
+                <Card>
+                  <div className="h2" style={{ marginBottom: 6 }}>12-week forecast</div>
+                  <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 6 }}>
+                    Solid: committed · Hatched: pipeline · Light: baseline · Dashed: q90
+                  </div>
+                  <svg width="100%" viewBox={"0 0 " + W + " " + H} role="img" aria-label="Forecast stacked-area chart">
+                    <defs>
+                      <pattern id="f-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                        <line x1="0" y1="0" x2="0" y2="6" stroke="var(--accent-2, #c8ff2b)" strokeWidth="2" />
+                      </pattern>
+                    </defs>
+                    {/* Y-axis grid (5 lines). */}
+                    {[0, 0.25, 0.5, 0.75, 1].map((f) => (
+                      <line key={f}
+                        x1={PAD_L} x2={W - PAD_R}
+                        y1={y(f * max)} y2={y(f * max)}
+                        stroke="var(--hairline-2, rgba(255,255,255,0.06))"
+                        strokeWidth="1"
+                      />
+                    ))}
+                    {/* Baseline area = full total */}
+                    <polygon points={polyArea(stackTotal)} fill="var(--accent-2, #c8ff2b)" fillOpacity="0.18" />
+                    {/* Pipeline area = committed + pipeline */}
+                    <polygon points={polyArea(stackCP)} fill="url(#f-hatch)" />
+                    {/* Committed area solid on top */}
+                    <polygon points={polyArea(stackC)} fill="var(--accent-2, #c8ff2b)" fillOpacity="0.85" />
+                    {/* q90 dashed line */}
+                    <polyline points={q90Line} fill="none" stroke="var(--ink-3, #888)" strokeWidth="1.5" strokeDasharray="4 3" />
+                    {/* X-axis week labels (every 2 weeks) */}
+                    {rows.map((r, i) => (i % 2 === 0) && (
+                      <text key={r.id} x={x(i)} y={H - 6}
+                        fontSize="9" textAnchor="middle"
+                        fill="var(--ink-3, #888)">
+                        {String(r.week_start).slice(5)}
+                      </text>
+                    ))}
+                  </svg>
+                </Card>
+              );
+            })()}
+            <Card flush>
+              <table className="tbl">
+                <thead><tr>
+                  <th>Week</th>
+                  <th className="r">Committed</th>
+                  <th className="r">Pipeline</th>
+                  <th className="r">Baseline</th>
+                  <th className="r">Total</th>
+                  <th className="r">q90</th>
+                  <th>Model</th>
+                </tr></thead>
+                <tbody>
+                  {forecasts.data.map((f) => (
+                    <tr key={f.id}>
+                      <td className="mono-sm">{f.week_start}</td>
+                      <td className="r mono">{Number(f.forecast_committed)}</td>
+                      <td className="r mono">{Number(f.forecast_pipeline)}</td>
+                      <td className="r mono">{Number(f.forecast_baseline)}</td>
+                      <td className="r mono"><b>{Number(f.forecast_total)}</b></td>
+                      <td className="r mono">{f.quantile_90 != null ? Number(f.quantile_90).toFixed(1) : "—"}</td>
+                      <td className="mono-sm">{f.model_name}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+          </>
         )}
         {tab === "plans" && (
           plans.data.length === 0 ? (

@@ -16,13 +16,21 @@ import { recordAudit } from "../_lib/audit.js";
 const isoToday = () => new Date().toISOString().slice(0, 10);
 
 const releaseToSourcePO = async (svc, ctx, plan, supplier) => {
-  // Build a source_pos row mirroring the plan's recommended quantity
-  // and ETA. The supplier is resolved from item_master.default_supplier
-  // -> suppliers.supplier_name; the operator can swap before commit.
+  // Build a source_pos row mirroring the plan's recommended qty + ETA.
+  // The plan-release path creates a stocking PO that is not tied to a
+  // specific customer order: order_id is null thanks to migration 087.
+  // The supplier is resolved from item_master.default_supplier_id ->
+  // suppliers; supplier_id (FK) was added by migration 087, supplier
+  // (text) is kept populated for legacy readers. The doc_no /
+  // created_by columns also landed in 087.
   const doc_no = "PLAN-" + plan.id.slice(0, 8) + "-" + isoToday();
+  const reference = doc_no;
   const ins = await svc.from("source_pos").insert({
     tenant_id: ctx.tenantId,
+    order_id: null,
+    reference,
     supplier: supplier?.supplier_name || "TBD",
+    supplier_id: supplier?.id || null,
     doc_no,
     status: "DRAFT",
     acknowledged_eta: plan.expected_arrival_date,

@@ -26,6 +26,18 @@ const InventoryPlansScreen: React.FC = () => {
   const [explanation, setExplanation] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [bump, setBump] = useState(0);
+  // Phase 3.5: bulk-approve / bulk-release state.
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const toggleAll = (rows: any[], on: boolean) => {
+    setChecked(on ? new Set(rows.map((p) => p.id)) : new Set());
+  };
+  const toggleOne = (id: string) => {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -77,6 +89,41 @@ const InventoryPlansScreen: React.FC = () => {
     } finally { setBusy(null); }
   };
 
+  const onBulkApprove = async () => {
+    if (!checked.size) return;
+    setBusy("bulk-approve");
+    let ok = 0; let fail = 0;
+    for (const id of checked) {
+      try { await (ObaraBackend as any)?.inventory?.plans?.approve?.(id); ok += 1; }
+      catch (_) { fail += 1; }
+    }
+    window[ok && !fail ? "notifySuccess" : "notifyWarn"]?.(
+      "Bulk approve complete",
+      ok + " approved" + (fail ? " · " + fail + " failed" : ""),
+    );
+    setChecked(new Set());
+    setBump((n) => n + 1);
+    setBusy(null);
+  };
+
+  const onBulkRelease = async () => {
+    if (!checked.size) return;
+    if (!confirm("Release " + checked.size + " plans? Each creates a draft source PO.")) return;
+    setBusy("bulk-release");
+    let ok = 0; let fail = 0;
+    for (const id of checked) {
+      try { await (ObaraBackend as any)?.inventory?.plans?.release?.(id); ok += 1; }
+      catch (_) { fail += 1; }
+    }
+    window[ok && !fail ? "notifySuccess" : "notifyWarn"]?.(
+      "Bulk release complete",
+      ok + " released" + (fail ? " · " + fail + " failed" : ""),
+    );
+    setChecked(new Set());
+    setBump((n) => n + 1);
+    setBusy(null);
+  };
+
   const onExplain = async (id: string) => {
     setExplanation("loading…");
     try {
@@ -120,6 +167,14 @@ const InventoryPlansScreen: React.FC = () => {
             <Card flush>
               <table className="tbl">
                 <thead><tr>
+                  <th style={{ width: 30 }}>
+                    <input
+                      type="checkbox"
+                      aria-label="Select all"
+                      checked={checked.size > 0 && checked.size === plans.data.length}
+                      onChange={(e) => toggleAll(plans.data, e.target.checked)}
+                    />
+                  </th>
                   <th>#</th>
                   <th>Item</th>
                   <th className="r">Qty</th>
@@ -133,6 +188,14 @@ const InventoryPlansScreen: React.FC = () => {
                 <tbody>
                   {plans.data.map((p, i) => (
                     <tr key={p.id} className={selected?.id === p.id ? "row-active" : ""}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          aria-label={"Select plan " + p.part_no}
+                          checked={checked.has(p.id)}
+                          onChange={() => toggleOne(p.id)}
+                        />
+                      </td>
                       <td className="mono-sm" style={{ color: "var(--ink-3)" }}>{i + 1}</td>
                       <td>
                         <a className="link" href={"#/inventory-item?part_no=" + encodeURIComponent(p.part_no)}>
@@ -215,6 +278,31 @@ const InventoryPlansScreen: React.FC = () => {
                 </div>
               </RailPanel>
             )}
+          </div>
+        )}
+        {/* Phase 3.5: bulk action bar; sticky footer-style row that
+            shows when any rows are selected. Doc 7.2 calls for a
+            "[Btn primary] Approve N · Release N · x" cluster. */}
+        {checked.size > 0 && (
+          <div
+            className="row gap-sm"
+            style={{
+              position: "sticky", bottom: 0,
+              padding: "10px 12px",
+              background: "var(--ink-bg-2)",
+              borderTop: "1px solid var(--hairline-2)",
+              marginTop: 12,
+            }}
+          >
+            <span className="mono-sm">{checked.size} selected</span>
+            <span style={{ flex: 1 }} />
+            <Btn sm kind="primary" disabled={busy === "bulk-approve"} onClick={onBulkApprove}>
+              approve {checked.size}
+            </Btn>
+            <Btn sm kind="primary" disabled={busy === "bulk-release"} onClick={onBulkRelease}>
+              release {checked.size}
+            </Btn>
+            <Btn sm kind="ghost" onClick={() => setChecked(new Set())}>{Icon.x}</Btn>
           </div>
         )}
       </div>

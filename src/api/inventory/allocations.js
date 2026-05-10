@@ -81,8 +81,16 @@ export default async function handler(req, res) {
         .eq("id", id)
         .select("*").single();
       if (upd.error) throw new Error(upd.error.message);
+      // Phase 3.5: distinguish "released back to free pool" from a
+      // generic update so the audit-event taxonomy in doc 7.10 is
+      // honoured.
+      const action = patch.status === "released"
+        ? "inventory.allocation.released"
+        : patch.status === "consumed"
+          ? "inventory.allocation.consumed"
+          : "inventory.allocation.updated";
       await recordAudit(ctx, {
-        action: "inventory.allocation.updated",
+        action,
         objectType: "inventory_allocation",
         objectId: id,
         detail: patch,

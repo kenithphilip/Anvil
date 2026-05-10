@@ -141,8 +141,12 @@ import inventoryExceptions      from "./inventory/exceptions.js";
 import inventoryAllocations     from "./inventory/allocations.js";
 import inventoryExplain         from "./inventory/explain.js";
 import inventoryReplan          from "./inventory/replan.js";
+// Phase 3.5 additions: calibration, suppliers, exception-tick cron.
+import inventoryCalibration     from "./inventory/calibration.js";
+import inventorySuppliers       from "./inventory/suppliers.js";
 import inventoryCronPositions   from "./cron/inventory-positions.js";
 import inventoryCronWeekly      from "./cron/inventory-planning-weekly.js";
+import inventoryCronExceptions  from "./cron/inventory-exceptions-tick.js";
 
 import masterDataGraph         from "./master_data/graph.js";
 
@@ -511,6 +515,7 @@ const STATIC_ROUTES = {
   "/cron/daily":                    cronDaily,
   "/cron/inventory-positions":       inventoryCronPositions,
   "/cron/inventory-planning-weekly": inventoryCronWeekly,
+  "/cron/inventory-exceptions-tick": inventoryCronExceptions,
   "/edi/inbound":                   ediInbound,
   "/edi/outbound":                  ediOutbound,
   "/edi/partners":                  ediPartners,
@@ -729,6 +734,9 @@ const STATIC_ROUTES = {
   "/inventory/allocations":         inventoryAllocations,
   "/inventory/explain":             inventoryExplain,
   "/inventory/replan":              inventoryReplan,
+  // Phase 3.5 endpoints.
+  "/inventory/calibration":         inventoryCalibration,
+  "/inventory/suppliers":           inventorySuppliers,
 
   "/master_data/graph":             masterDataGraph,
 
@@ -815,6 +823,8 @@ const DYNAMIC_ROUTES = [
   { prefix: "/inventory/exceptions/", suffix: "/suppress", handler: inventoryExceptions, param: "id" },
   // PATCH /inventory/allocations/<id>.
   { prefix: "/inventory/allocations/", handler: inventoryAllocations, param: "id" },
+  // PATCH /inventory/suppliers/<id>.
+  { prefix: "/inventory/suppliers/",   handler: inventorySuppliers,   param: "id" },
 ];
 
 // Resolve a request URL to a handler. Returns null if not matched.

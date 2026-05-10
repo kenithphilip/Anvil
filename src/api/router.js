@@ -180,6 +180,7 @@ import serviceVisits           from "./service/visits.js";
 import sourcePosById           from "./source_pos/[id].js";
 import sourcePosAck            from "./source_pos/ack.js";
 import sourcePosAckExtract     from "./source_pos/ack_extract.js";
+import sourcePosAckAccept      from "./source_pos/ack_accept.js";
 import sourcePosIndex          from "./source_pos/index.js";
 import sourcePosScorecard      from "./source_pos/scorecard.js";
 
@@ -818,9 +819,11 @@ const DYNAMIC_ROUTES = [
   { prefix: "/orders/",      suffix: "/pipeline-state", handler: ordersPipelineState, param: "id" },
   { prefix: "/orders/",      handler: ordersById,     param: "id" },
   // "/source_pos/<id>/ack_extract" -> Phase F.2 supplier-ack PDF extractor.
+  // "/source_pos/<id>/ack_accept" -> Phase F.2 commit reviewed extraction.
   // Listed BEFORE the bare /source_pos/<id> entry so the suffix-aware
-  // matcher catches it first.
+  // matcher catches them first.
   { prefix: "/source_pos/",  suffix: "/ack_extract", handler: sourcePosAckExtract, param: "id" },
+  { prefix: "/source_pos/",  suffix: "/ack_accept",  handler: sourcePosAckAccept,  param: "id" },
   // "/source_pos/<id>"
   { prefix: "/source_pos/",  handler: sourcePosById,  param: "id" },
   // Invoices: /invoices/<id>. The static "/invoices" + "/invoices/pdf"

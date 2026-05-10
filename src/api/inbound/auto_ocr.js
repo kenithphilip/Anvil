@@ -110,6 +110,14 @@ const runOne = async (svc, doc) => {
   const sourceType = inferSourceType(doc.mime_type, doc.filename);
   const dl = await downloadBytes(svc, doc);
   if (dl.error && !dl.url) return { error: dl.error };
+  // If we got a URL but bytes-fetch failed, log it so the L1/L2
+  // skip is visible. Adapters that accept URL-only (Reducto / Azure
+  // DI) still work; everything else falls back to whatever the
+  // dispatcher's default order finds first.
+  if (dl.error && dl.url) {
+    /* eslint-disable no-console */
+    console.warn("[auto_ocr] bytes fetch failed for doc " + doc.id + " (" + dl.error + "); proceeding URL-only, L1/L2 skipped");
+  }
 
   // The cron path uses a synthesised ctx because the unified
   // pipeline records audit + processing events. recordEvent reads

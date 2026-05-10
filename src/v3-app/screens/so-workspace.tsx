@@ -1325,6 +1325,7 @@ const PipelineDiagnostics: React.FC<{
     low_confidence: "Low confidence · review",
     empty_lines: "Empty lines · model returned no rows",
     non_po: "Non-PO · classifier rejected",
+    non_ack: "Non-ack · classifier rejected the supplier-ack PDF",
     no_adapter_configured: "No adapter configured · check tenant settings",
     all_adapters_skipped: "All adapters skipped · keys missing",
     image_pdf_no_text: "Image-only PDF · no text layer · needs OCR",
@@ -1405,6 +1406,52 @@ const PipelineDiagnostics: React.FC<{
         </Card>
       )}
 
+      {/* Phase A-E pipeline layers. Surface L1 text-layer cache,
+          L2 OCR cache, and the latest run's layer/voter/template
+          flags so the operator can see at a glance whether the
+          deterministic stages ran. */}
+      {(data.text_layer || data.ocr_layer || latest) && (
+        <Card title="Pipeline layers" eyebrow="L1 · L2 · L3 · L6 · E">
+          <KV rows={[
+            ["L1 text layer", data.text_layer
+              ? (data.text_layer.text_status + " · "
+                  + (data.text_layer.char_count ?? 0) + " chars · "
+                  + (data.text_layer.page_count ?? 0) + " pages "
+                  + (data.text_layer.extractor ? "(" + data.text_layer.extractor + ")" : ""))
+              : "(no cache)"],
+            ["L2 OCR layer", data.ocr_layer
+              ? (data.ocr_layer.ocr_status + " · "
+                  + (data.ocr_layer.char_count ?? 0) + " chars · "
+                  + (data.ocr_layer.page_count ?? 0) + " pages · "
+                  + (data.ocr_layer.bbox_count ?? 0) + " bboxes "
+                  + (data.ocr_layer.provider ? "(" + data.ocr_layer.provider + ")" : ""))
+              : "(no cache)"],
+            ["Latest run used", latest ? [
+                latest.text_layer_used ? "L1 text" : null,
+                latest.ocr_layer_used ? "L2 OCR" : null,
+                latest.template_used ? "L3 template" : null,
+                latest.voter_used ? "L6 voter" : null,
+                latest.overrides_applied_count > 0
+                  ? "E overrides (" + latest.overrides_applied_count + ")"
+                  : null,
+              ].filter(Boolean).join(" · ") || "L4 LLM only"
+              : "—"],
+            ["Validator summary", latest?.validator_summary
+              ? (latest.validator_summary.error
+                  ? latest.validator_summary.error + " errors · "
+                  : "")
+                + (latest.validator_summary.warn
+                  ? latest.validator_summary.warn + " warnings · "
+                  : "")
+                + (latest.validator_summary.total
+                  ? latest.validator_summary.total + " total"
+                  : "no issues")
+              : "(no validator run yet)"],
+            ["Extraction kind", latest?.extraction_kind || "po"],
+          ]} />
+        </Card>
+      )}
+
       {/* Extraction runs */}
       <Card flush>
         <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--hairline-2)" }}>
@@ -1421,35 +1468,54 @@ const PipelineDiagnostics: React.FC<{
           <table className="tbl">
             <thead><tr>
               <th>Started</th>
+              <th>Kind</th>
               <th>Status</th>
               <th>Reason</th>
               <th>Adapter</th>
               <th className="r">Conf</th>
+              <th>Layers</th>
+              <th>Validator</th>
               <th>Attempts</th>
             </tr></thead>
             <tbody>
-              {runs.map((r: any) => (
-                <tr key={r.id}>
-                  <td className="mono-sm">
-                    {r.finished_at
-                      ? new Date(r.finished_at).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" })
-                      : "(running)"}
-                  </td>
-                  <td><Chip k={r.status === "ok" ? "good" : r.status === "low_confidence" ? "warn" : "bad"}>{r.status}</Chip></td>
-                  <td>
-                    <Chip k={reasonTone(r.status_reason || "")}>
-                      {REASON_LABELS[r.status_reason] || r.status_reason || "—"}
-                    </Chip>
-                  </td>
-                  <td className="mono-sm">{r.adapter_used || "—"}</td>
-                  <td className="r mono">{r.confidence_overall != null ? Number(r.confidence_overall).toFixed(2) : "—"}</td>
-                  <td className="mono-sm">
-                    {Array.isArray(r.adapter_attempts)
-                      ? r.adapter_attempts.map((a: any) => a.adapter + ":" + a.status).join(" · ")
-                      : "—"}
-                  </td>
-                </tr>
-              ))}
+              {runs.map((r: any) => {
+                const layerBadges = [
+                  r.text_layer_used ? "L1" : null,
+                  r.ocr_layer_used ? "L2" : null,
+                  r.template_used ? "L3" : null,
+                  r.voter_used ? "L6" : null,
+                  Array.isArray(r.overrides_applied) && r.overrides_applied.length ? "E" : null,
+                ].filter(Boolean).join("·");
+                const vSum = r.validator_summary || {};
+                const vText = (vSum.error || vSum.warn)
+                  ? (vSum.error ? vSum.error + "e " : "") + (vSum.warn ? vSum.warn + "w" : "")
+                  : (vSum.total === 0 ? "ok" : "—");
+                return (
+                  <tr key={r.id}>
+                    <td className="mono-sm">
+                      {r.finished_at
+                        ? new Date(r.finished_at).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+                        : "(running)"}
+                    </td>
+                    <td className="mono-sm">{r.extraction_kind || "po"}</td>
+                    <td><Chip k={r.status === "ok" ? "good" : r.status === "low_confidence" ? "warn" : "bad"}>{r.status}</Chip></td>
+                    <td>
+                      <Chip k={reasonTone(r.status_reason || "")}>
+                        {REASON_LABELS[r.status_reason] || r.status_reason || "—"}
+                      </Chip>
+                    </td>
+                    <td className="mono-sm">{r.adapter_used || "—"}</td>
+                    <td className="r mono">{r.confidence_overall != null ? Number(r.confidence_overall).toFixed(2) : "—"}</td>
+                    <td className="mono-sm">{layerBadges || "L4"}</td>
+                    <td className="mono-sm">{vText}</td>
+                    <td className="mono-sm">
+                      {Array.isArray(r.adapter_attempts)
+                        ? r.adapter_attempts.map((a: any) => a.adapter + ":" + a.status).join(" · ")
+                        : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

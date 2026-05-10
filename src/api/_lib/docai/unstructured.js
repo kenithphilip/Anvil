@@ -2,11 +2,24 @@
 // scanned faxes and PDFs that defeated Reducto/Azure. Returns
 // labeled elements (Title, NarrativeText, Table, ListItem). We
 // pull tables out; everything else is metadata.
+//
+// Two modes (Phase C, May 2026):
+//   1. Hosted (api.unstructured.io). Needs an API key; the plain
+//      free tier is small but sufficient for evaluation.
+//   2. Self-hosted Docker (downloads.unstructured.io/.../unstructured-api).
+//      No per-page cost. Operator runs the container reachable at
+//      DOCAI_UNSTRUCTURED_ENDPOINT and either disables auth or
+//      sets a key via UNSTRUCTURED_API_KEY (the OSS server passes
+//      it through unchanged).
+//
+// We pick the endpoint by precedence: explicit settings field >
+// env var > default hosted URL. Hosted requires a key; self-hosted
+// runs without one.
 
 import { decryptField } from "../secrets.js";
 import { safeFetch } from "../safe-fetch.js";
 
-const BASE_URL = "https://api.unstructured.io/general/v0/general";
+const HOSTED_URL = "https://api.unstructured.io/general/v0/general";
 
 const apiKey = (settings) => {
   if (settings?.docai_unstructured_api_key_enc && settings?.docai_creds_iv) {
@@ -16,17 +29,34 @@ const apiKey = (settings) => {
   return process.env.UNSTRUCTURED_API_KEY || null;
 };
 
-export const isConfigured = (settings) => !!apiKey(settings);
+const endpoint = (settings) =>
+  settings?.docai_unstructured_endpoint
+    || process.env.UNSTRUCTURED_ENDPOINT
+    || HOSTED_URL;
 
-const callUnstructured = async (key, fileBytes, filename) => {
+const isHosted = (ep) => /api\.unstructured\.io/i.test(ep);
+
+// Configured = either we hit a self-hosted URL (no key required)
+// or we hit the hosted URL with a key. The hosted-without-key case
+// returns false so the dispatcher skips us cleanly.
+export const isConfigured = (settings) => {
+  const ep = endpoint(settings);
+  if (!isHosted(ep)) return true;
+  return !!apiKey(settings);
+};
+
+const callUnstructured = async ({ ep, key, fileBytes, filename }) => {
   const form = new FormData();
   form.append("files", new Blob([fileBytes]), filename || "document.pdf");
   form.append("strategy", "hi_res");
   form.append("hi_res_model_name", "yolox");
-  const resp = await safeFetch(BASE_URL, {
+  const headers = { accept: "application/json" };
+  if (key) headers["unstructured-api-key"] = key;
+  const resp = await safeFetch(ep, {
     method: "POST",
-    headers: { "unstructured-api-key": key, accept: "application/json" },
+    headers,
     body: form,
+    timeoutMs: 120_000,
   });
   const text = await resp.text();
   let parsed = null;
@@ -73,14 +103,24 @@ const normalizeFromUnstructured = (elements) => {
 };
 
 export const extract = async ({ bytes, filename, settings }) => {
+  const ep = endpoint(settings);
   const key = apiKey(settings);
-  if (!key) return { ok: false, error: "Unstructured.io not configured" };
+  if (isHosted(ep) && !key) return { ok: false, error: "Unstructured.io hosted needs an API key" };
   if (!bytes) return { ok: false, error: "Unstructured adapter requires file bytes" };
-  const r = await callUnstructured(key, bytes, filename);
-  if (!r.ok) return { ok: false, status: r.status, error: JSON.stringify(r.body).slice(0, 400) };
+  const r = await callUnstructured({ ep, key, fileBytes: bytes, filename });
+  if (!r.ok) return { ok: false, status: r.status, error: JSON.stringify(r.body).slice(0, 400), raw: r.body };
   const normalized = normalizeFromUnstructured(r.body);
   const confidences = {};
   normalized.lines.forEach((_li, i) => { confidences["lines[" + i + "]"] = 0.7; });
   confidences["overall"] = normalized.lines.length ? 0.7 : 0.3;
-  return { ok: true, raw: r.body, normalized, confidences };
+  return {
+    ok: true,
+    raw: r.body,
+    normalized,
+    confidences,
+    mode: isHosted(ep) ? "hosted" : "self_hosted",
+  };
 };
+
+// Exported for tests.
+export const __test__ = { endpoint, isHosted };

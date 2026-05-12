@@ -117,3 +117,100 @@ describe("__mapLinesPure", () => {
     expect(out[0]._mapped_item).not.toBeNull();
   });
 });
+
+describe("__mapLinesPure: Hyundai PO scenarios", () => {
+  const guideAssy = {
+    id: "im-guide", part_no: "THB-L1-70B-2-GA",
+    alias: "GUIDE ASSY",
+    print_name: "Guide Assembly THB-L1-70B-2",
+    description: "Guide assembly for the Hyundai welding line",
+    hsn_sac: "84669390", uom: "NOS",
+    specification_code: "4-ET31062",
+  };
+  const pointHolder = {
+    id: "im-point", part_no: "THB-L1-70B-2-PH",
+    alias: "POINT HOLDER",
+    print_name: "Point Holder THB-L1-70B-2",
+    description: "Tip holder for spot-welding gun",
+    hsn_sac: "85159000", uom: "NOS",
+    specification_code: "403A7K1172",
+  };
+
+  it("specification_code tier maps Hyundai's spec to OBARA item (4-ET31062 -> Guide Assy)", () => {
+    const out = __mapLinesPure([
+      {
+        partNumber: "GD544202603190008",
+        description: "GUIDE ASSY",
+        specification: "4-ET31062",
+        qty: 2, rate: 46991,
+      },
+    ], {
+      imBySpec: new Map([["4-ET31062", guideAssy]]),
+      imById: new Map([[guideAssy.id, guideAssy]]),
+    });
+    expect(out[0]._mapped_item.match_via).toBe("item_master.specification_code");
+    expect(out[0]._mapped_item.part_no).toBe("THB-L1-70B-2-GA");
+    expect(out[0].hsn).toBe("84669390");
+  });
+
+  it("description fuzzy match maps GUIDE ASSY to the matching item_master row", () => {
+    const out = __mapLinesPure([
+      {
+        partNumber: "GD544202603190008",
+        description: "GUIDE ASSY",
+        qty: 2, rate: 46991,
+      },
+    ], {
+      imAll: [guideAssy, pointHolder],
+    });
+    expect(out[0]._mapped_item).not.toBeNull();
+    expect(out[0]._mapped_item.match_via).toBe("item_master.description_fuzzy");
+    expect(out[0]._mapped_item.part_no).toBe("THB-L1-70B-2-GA");
+  });
+
+  it("description fuzzy match maps POINT HOLDER -> point holder item", () => {
+    const out = __mapLinesPure([
+      {
+        partNumber: "GD544202503260069",
+        description: "POINT HOLDER",
+        qty: 2, rate: 68110,
+      },
+    ], {
+      imAll: [guideAssy, pointHolder],
+    });
+    expect(out[0]._mapped_item.match_via).toBe("item_master.description_fuzzy");
+    expect(out[0]._mapped_item.part_no).toBe("THB-L1-70B-2-PH");
+  });
+
+  it("does not fuzzy-match a single ambiguous word like BOLT", () => {
+    const im = { ...guideAssy, description: "M8 bolt", print_name: "Bolt M8", alias: null };
+    const out = __mapLinesPure([
+      { partNumber: "X", description: "BOLT" },
+    ], { imAll: [im] });
+    expect(out[0]._mapped_item).toBeNull();
+  });
+
+  it("falls through to null when neither code nor description matches", () => {
+    const out = __mapLinesPure([
+      { partNumber: "GD544202603190008", description: "UNKNOWN WIDGET" },
+    ], {
+      imAll: [guideAssy, pointHolder],
+    });
+    expect(out[0]._mapped_item).toBeNull();
+  });
+
+  it("customer_part still wins over description fuzzy match", () => {
+    // The operator has a translation table; trust it over the
+    // description text on the PO.
+    const ph = { ...pointHolder, alias: "GUIDE ASSY", print_name: "Guide ass (mis-named)" };
+    const out = __mapLinesPure([
+      { partNumber: "GD544202603190008", description: "GUIDE ASSY" },
+    ], {
+      cpMap: new Map([["GD544202603190008", { item_id: guideAssy.id, customer_part_description: "Hyundai code" }]]),
+      imById: new Map([[guideAssy.id, guideAssy], [ph.id, ph]]),
+      imAll: [ph, guideAssy],
+    });
+    expect(out[0]._mapped_item.match_via).toBe("customer_part");
+    expect(out[0]._mapped_item.part_no).toBe("THB-L1-70B-2-GA");
+  });
+});

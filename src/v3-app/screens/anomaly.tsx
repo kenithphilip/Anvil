@@ -222,6 +222,51 @@ const WiredAnomaly = () => {
                 </KPIRow>
               );
             })()}
+            {/* Rule-frequency histogram. The design package's
+                screens-quality.jsx showed a continuous-score
+                histogram next to the rule library. validation_findings
+                has no `score` column today (a literal score
+                histogram would need a schema migration), so we
+                surface the closest honest analog: per-rule firing
+                rate. Same chart shape, same operator question
+                answered ("where is the engine spending its
+                attention"). Caps at the 10 most-fired rules so
+                the strip stays scannable on a wide spread. */}
+            {(() => {
+              const byRule = new Map<string, number>();
+              for (const r of all) {
+                const id = String(r.rule_id || r.code || r.rule || "unknown");
+                byRule.set(id, (byRule.get(id) || 0) + 1);
+              }
+              const ranked = Array.from(byRule.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10);
+              if (!ranked.length) return null;
+              const max = ranked[0][1];
+              return (
+                <Card title="Rule frequency" eyebrow={`top ${ranked.length} of ${byRule.size} active rules · lifetime`}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {ranked.map(([rid, n]) => {
+                      const pct = max > 0 ? Math.round((n / max) * 100) : 0;
+                      const cat = RULE_CATALOG.find((rc) => rc.id === rid);
+                      const tone = cat?.severity === "high" ? "var(--rust)"
+                        : cat?.severity === "med" ? "var(--amber)"
+                        : cat?.severity === "low" ? "var(--sage)"
+                        : "var(--ink-4)";
+                      return (
+                        <div key={rid} style={{ display: "grid", gridTemplateColumns: "160px 1fr 60px", alignItems: "center", gap: 10 }}>
+                          <span className="mono-sm" title={cat?.label || rid} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {rid}
+                          </span>
+                          <div style={{ height: 12, background: "var(--paper-3)", borderRadius: 3, overflow: "hidden" }}>
+                            <div style={{ width: pct + "%", height: "100%", background: tone }} />
+                          </div>
+                          <span className="mono-sm r" style={{ textAlign: "right" }}>{n}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </Card>
+              );
+            })()}
             <Card title="Rule library" eyebrow={RULE_CATALOG.length + " rules · 5 buckets"} flush>
               <table className="tbl">
                 <thead><tr>

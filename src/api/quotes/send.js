@@ -176,6 +176,20 @@ export default async function handler(req, res) {
       customer = c.data || null;
     }
 
+    // Audit fix May 2026: read line rows from quote_lines (the
+    // canonical post-108 source) so a quote edited via the
+    // drawer is sent / hashed with the right data. Falls back to
+    // the legacy JSONB when no rows exist (pre-108 quote that
+    // missed the 109 backfill).
+    const linesRes = await svc.from("quote_lines")
+      .select("*")
+      .eq("tenant_id", ctx.tenantId)
+      .eq("quote_id", quote.id)
+      .order("line_index", { ascending: true });
+    const canonicalLines = (linesRes && !linesRes.error && Array.isArray(linesRes.data) && linesRes.data.length)
+      ? linesRes.data
+      : (Array.isArray(quote.line_items) ? quote.line_items : []);
+
     // Render + upload PDF.
     let shareUrl = null;
     let pdfError = null;
@@ -192,7 +206,7 @@ export default async function handler(req, res) {
           email: recipient.email,
           gstin: customer?.gstin,
         },
-        items: quote.line_items || [],
+        items: canonicalLines,
         subtotal: quote.subtotal,
         tax: quote.tax_total,
         total: quote.grand_total,
@@ -256,11 +270,14 @@ export default async function handler(req, res) {
 
     // Compute payload_hash for the audit trail. The customer's
     // accept-click can verify they accepted exactly this version.
+    // Audit fix May 2026: hash the canonical quote_lines source
+    // (or the JSONB fallback) so a drawer-edited quote produces
+    // a hash that matches what was actually rendered and sent.
     const payloadHash = crypto.createHash("sha256")
       .update(JSON.stringify({
         id: quote.id,
         version: quote.version,
-        line_items: quote.line_items,
+        line_items: canonicalLines,
         currency: quote.currency,
         grand_total: quote.grand_total,
       }))

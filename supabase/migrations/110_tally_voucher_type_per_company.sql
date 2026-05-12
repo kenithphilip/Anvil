@@ -31,9 +31,20 @@ do $$ begin
   end if;
 end $$;
 
+-- Audit fix May 2026: the original constraint allowed only
+-- ('Sales', 'SalesOrder'), but src/api/_lib/tally-voucher-type.js
+-- maps ten canonical types (Sales, SalesOrder, Purchase, Receipt,
+-- Payment, Contra, Journal, DebitNote, CreditNote, StockJournal).
+-- A multi-company tenant who set Purchase / Receipt as their
+-- default would hit a CHECK violation at the DB layer while the
+-- runtime resolver treated the value as valid. Constraint now
+-- matches the resolver's enum.
 alter table tally_companies
   add constraint tally_companies_default_sales_voucher_type_check
-  check (default_sales_voucher_type in ('Sales', 'SalesOrder'));
+  check (default_sales_voucher_type in (
+    'Sales', 'SalesOrder', 'Purchase', 'Receipt', 'Payment',
+    'Contra', 'Journal', 'DebitNote', 'CreditNote', 'StockJournal'
+  ));
 
 comment on column tally_companies.default_sales_voucher_type is
   'Tally voucher type used when emitting a sales-order voucher. Sales: accounting voucher that books revenue + GST output (default). SalesOrder: non-accounting tracker; use only when the sale is booked separately at delivery via a Sales voucher.';

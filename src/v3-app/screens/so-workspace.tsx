@@ -257,8 +257,12 @@ const WiredSOWorkspace = () => {
   const canPushTally = RBAC?.canDo?.("so.push_tally");
   const canApprove = RBAC?.canDo?.("so.approve");
   const canCancel = RBAC?.canDo?.("so.cancel");
-  const canWrite = RBAC?.canDo?.("so.write") !== false;
-  const canAdmin = RBAC?.canDo?.("so.admin") !== false;
+  // Audit fix May 2026: !== false silently granted permission
+  // when RBAC was undefined (cold boot, stub test env). Tighten
+  // to === true so a missing RBAC means denied, matching the
+  // pattern already used for canApprove / canPushTally below.
+  const canWrite = RBAC?.canDo?.("so.write") === true;
+  const canAdmin = RBAC?.canDo?.("so.admin") === true;
 
   const cancelOrder = async () => {
     if (!o?.id) return;
@@ -488,7 +492,14 @@ const WiredSOWorkspace = () => {
     }
     setBusy(true);
     try {
-      const candidate = o.result?.salesOrder || {};
+      // Audit fix May 2026: was using o.result.salesOrder which
+      // is the persisted lines, ignoring any unsaved operator
+      // edits in the recon table. Score what the operator is
+      // looking at so the findings reflect current state, not
+      // pre-edit state. linesDraft falls back to lines when
+      // there is no diff, so this is correct in both modes.
+      const candidateLines = linesDraft ?? (o.result?.salesOrder?.lineItems || []);
+      const candidate = { ...(o.result?.salesOrder || {}), lineItems: candidateLines };
       const out: any = await (ObaraBackend as any)?.anomaly?.compute?.(o.customer_id, candidate);
       const flags = Array.isArray(out?.flags) ? out.flags : [];
       const nextPreflight = {
@@ -1267,18 +1278,24 @@ const WiredSOWorkspace = () => {
                 // Tax totals across the draft so the footer can
                 // reconcile against what the Tally voucher will
                 // emit. Same formula as reconRow uses per line.
+                // Audit fix May 2026: round per-line in the same
+                // shape reconRow uses, then sum the rounded values.
+                // Without this the footer drifts by paise from the
+                // sum of displayed line totals, and the operator
+                // gets a mismatch they cannot explain.
+                const round2 = (n: number) => Math.round(n * 100) / 100;
                 const taxableTotal = draftLines.reduce((s: number, ln: any) => {
                   const q = Number(ln.qty || ln.quantity || 0);
                   const r = Number(ln.rate || ln.unitPrice || 0);
-                  return s + q * r;
+                  return s + round2(q * r);
                 }, 0);
                 const taxTotal = draftLines.reduce((s: number, ln: any) => {
                   const q = Number(ln.qty || ln.quantity || 0);
                   const r = Number(ln.rate || ln.unitPrice || 0);
                   const p = Number(ln.gst_pct ?? ln.gstRate ?? ln.rate_of_duty_pct ?? 0);
-                  return s + (q * r * p) / 100;
+                  return s + round2((q * r * p) / 100);
                 }, 0);
-                const grandWithTax = taxableTotal + taxTotal;
+                const grandWithTax = round2(taxableTotal + taxTotal);
                 return (
                   <table className="tbl">
                     <thead><tr>

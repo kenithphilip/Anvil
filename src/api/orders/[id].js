@@ -3,6 +3,8 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { evaluateApprovalsForOrder } from "../_lib/approval-evaluator.js";
+import { lineCandidates } from "../_lib/item-mapper.js";
+import { upsertCustomerPart } from "../_lib/item-customer-parts.js";
 
 const APPROVE_INPUTS = [
   "status", "approval", "payload_hash", "result",
@@ -148,6 +150,74 @@ export default async function handler(req, res) {
 
       const { data, error } = await svc.from("orders").update(patch).eq("tenant_id", ctx.tenantId).eq("id", id).select("*").single();
       if (error) throw new Error(error.message);
+
+      // Layer A + Layer C learning loop. When the recon-table
+      // manual map stamps _mapped_item.match_via on a line as
+      // "manual" or "llm_suggest", persist the (customer,
+      // customer_part_number) -> item_master.id mapping into
+      // item_customer_parts so future POs from the same customer
+      // resolve via the customer_part tier without operator
+      // intervention. Best-effort: per-line failures log but do
+      // not abort the PATCH. The upsert helper's preserve-manual
+      // rule means re-saving the same order is idempotent and
+      // cheap.
+      try {
+        const customerId = data.customer_id;
+        const newLines = (data && data.result && data.result.salesOrder && Array.isArray(data.result.salesOrder.lineItems))
+          ? data.result.salesOrder.lineItems : [];
+        const actor = ctx.user && ctx.user.id ? ctx.user.id : null;
+        const nowIso = new Date().toISOString();
+        if (customerId && newLines.length) {
+          let writes = 0;
+          for (const line of newLines) {
+            const mi = line && line._mapped_item;
+            if (!mi || !mi.id) continue;
+            if (mi.match_via !== "manual" && mi.match_via !== "llm_suggest") continue;
+            const cands = lineCandidates(line);
+            const customerPart = cands.find((c) => c && c.length);
+            if (!customerPart) continue;
+            try {
+              await upsertCustomerPart(svc, {
+                tenantId: ctx.tenantId,
+                itemId: mi.id,
+                customerId,
+                customerPartNumber: customerPart,
+                customerPartDescription: line.description || line.name || null,
+                createdVia: mi.match_via,
+                createdBy: actor,
+                confidencePct: mi.confidence_pct != null
+                  ? Number(mi.confidence_pct)
+                  : (mi.match_via === "manual" ? 100 : null),
+                confirmedAt: nowIso,
+                confirmedBy: actor,
+              });
+              writes++;
+            } catch (e) {
+              // eslint-disable-next-line no-console
+              console.warn("[orders/[id] item-map write-back] line failed: " + (e && e.message));
+            }
+          }
+          if (writes > 0) {
+            await recordAudit(ctx, {
+              action: "item_customer_part_confirmed",
+              objectType: "order",
+              objectId: id,
+              detail: { writes, customer_id: customerId },
+            });
+            await recordEvent(ctx, {
+              caseId: id,
+              eventType: "item_customer_part_confirmed",
+              objectType: "order",
+              objectId: id,
+              detail: { writes, customer_id: customerId },
+            });
+          }
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn("[orders/[id] item-map write-back] failed: " + (e && e.message));
+      }
+
       // Return-for-correction audit shape (migration 104). When the
       // manager flips status to DRAFT with a correction_reason, log a
       // distinct action so the Activity tab + ThreadDrawer can render

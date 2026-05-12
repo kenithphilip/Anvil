@@ -6,6 +6,7 @@ import { ObaraBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 import { amountInWords } from "../lib/amount-words";
 import { getFieldSource, markFieldEdited, FieldSource } from "../lib/field-sources";
+import { ItemMasterPicker, PickedItem } from "../components/ItemMasterPicker";
 
 // ============================================================
 // ANVIL v3 — wired SO Workspace
@@ -32,6 +33,13 @@ const WiredSOWorkspace = () => {
   // Discard (clears the draft).
   const [linesDraft, setLinesDraft] = u<any[] | null>(null);
   const [savingLines, setSavingLines] = u(false);
+  // Layer A: manual-map picker for un-mapped recon-table lines.
+  // pickerLineIdx === null means closed; otherwise it's the index
+  // of the line being mapped. onPick stamps _mapped_item with
+  // match_via:"manual" and the server hook in orders/[id].js PATCH
+  // writes an item_customer_parts row so future POs from the same
+  // customer auto-resolve via the customer_part tier.
+  const [pickerLineIdx, setPickerLineIdx] = u<number | null>(null);
   // Phase 3.6 observability: pipeline-diagnostics state (lazy-
   // loaded the first time the operator opens the Diagnostics tab).
   const [pipelineState, setPipelineState] = u<{ data: any; loading: boolean; error: any }>({ data: null, loading: false, error: null });
@@ -662,6 +670,48 @@ const WiredSOWorkspace = () => {
   // The Rate prev / Δ columns were dropped too; they relied on a
   // previous-rate stamp that no production caller writes. If
   // those return they should be opt-in behind a Settings flag.
+  // Render the mapping affordance for a recon line. Three states:
+  //  - mapped via "manual" / "llm_suggest" : show a `good` chip with
+  //    the canonical part_no and a small "change" link
+  //  - mapped via any resolver tier (customer_part / item_master.*
+  //    / fuzzy)            : show an `info` chip with part_no
+  //  - unmapped                            : show a "Map..." link
+  //    that opens the picker
+  const mapAffordance = (ln: any, i: number) => {
+    const mi = ln._mapped_item;
+    if (mi && (mi.match_via === "manual" || mi.match_via === "llm_suggest")) {
+      return (
+        <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 2 }}>
+          <Chip k="good">{mi.match_via.replace(/_/g, " ")}: {mi.part_no || "-"}</Chip>
+          {canEditLines && (
+            <button
+              type="button"
+              onClick={() => setPickerLineIdx(i)}
+              style={{ background: "none", border: "none", padding: 0, color: "var(--ink-3)", cursor: "pointer", fontSize: 11, textDecoration: "underline" }}
+            >change</button>
+          )}
+        </div>
+      );
+    }
+    if (mi && mi.part_no) {
+      return (
+        <div style={{ marginTop: 2 }}>
+          <Chip k="info">{(mi.match_via || "auto").replace(/_/g, " ")}: {mi.part_no}</Chip>
+        </div>
+      );
+    }
+    if (!canEditLines) return null;
+    return (
+      <div style={{ marginTop: 2 }}>
+        <button
+          type="button"
+          onClick={() => setPickerLineIdx(i)}
+          style={{ background: "none", border: "1px dashed var(--hairline-2)", borderRadius: 3, padding: "1px 6px", color: "var(--ink-3)", cursor: "pointer", fontSize: 11 }}
+        >Map to canonical...</button>
+      </div>
+    );
+  };
+
   const reconRow = (ln: any, i: number) => {
     const qty = Number(ln.qty || ln.quantity || 0);
     const rate = Number(ln.rate || ln.unitPrice || 0);
@@ -685,6 +735,7 @@ const WiredSOWorkspace = () => {
           <div style={{ marginTop: 2 }}>
             <EditableCell line={ln} i={i} canonicalKey="itemCode" type="text" placeholder="part / SKU" />
           </div>
+          {mapAffordance(ln, i)}
         </td>
         <td><EditableCell line={ln} i={i} canonicalKey="uom" type="text" placeholder="Nos" /></td>
         <td className="r mono"><EditableCell line={ln} i={i} canonicalKey="qty" type="number" align="right" /></td>
@@ -860,6 +911,45 @@ const WiredSOWorkspace = () => {
       line[k] = value;
     }
     next[i] = markFieldEdited(line, canonicalKey);
+    setLinesDraft(next);
+  };
+
+  // Layer A: stamp _mapped_item on the line with match_via:"manual"
+  // (or "llm_suggest" when the operator accepts an AI suggestion).
+  // Mirrors the resolver's _mapped_item shape so downstream
+  // (recon table, Tally emit, PDF) sees the canonical fields. Also
+  // fills line.itemCode when blank so re-uploads of the same PO
+  // resolve via the item_master.part_no tier without going through
+  // item_customer_parts.
+  const applyManualMap = (i: number, item: PickedItem, matchVia: "manual" | "llm_suggest" = "manual", confidencePct: number | null = null) => {
+    const base = linesDraft ?? lines;
+    const next = base.slice();
+    const line: any = { ...next[i] };
+    line._mapped_item = {
+      id: item.id,
+      part_no: item.part_no,
+      alias: item.alias || null,
+      print_name: item.print_name || null,
+      description: item.description || null,
+      customer_part_description: line._mapped_item?.customer_part_description || null,
+      hsn_sac: item.hsn_sac || null,
+      uom: item.uom || null,
+      source_country: item.source_country || null,
+      gst_applicable: item.gst_applicable || null,
+      taxability_type: item.taxability_type || null,
+      type_of_supply: item.type_of_supply || null,
+      rate_of_duty_pct: item.rate_of_duty_pct != null ? Number(item.rate_of_duty_pct) : null,
+      stock_group: item.stock_group || null,
+      specification_code: item.specification_code || null,
+      match_via: matchVia,
+      confidence_pct: confidencePct,
+    };
+    // Backfill hsn / uom only when the line is blank; never
+    // overwrite operator-visible numbers (same rule the resolver
+    // applies in src/api/_lib/item-mapper.js).
+    if (!line.hsn && !line.hsn_sac && item.hsn_sac) line.hsn = item.hsn_sac;
+    if (!line.uom && !line.unit && item.uom) line.uom = item.uom;
+    next[i] = markFieldEdited(line, "_mapped_item");
     setLinesDraft(next);
   };
 
@@ -1625,6 +1715,19 @@ const WiredSOWorkspace = () => {
           />
         )}
       </div>
+      {/* Layer A: item_master picker. Renders only when the operator
+          clicks "Map to canonical..." on an unmapped recon line. */}
+      <ItemMasterPicker
+        open={pickerLineIdx !== null}
+        onClose={() => setPickerLineIdx(null)}
+        onPick={(item) => {
+          if (pickerLineIdx !== null) applyManualMap(pickerLineIdx, item, "manual", 100);
+          setPickerLineIdx(null);
+        }}
+        initialQuery={pickerLineIdx !== null
+          ? String((draftLines[pickerLineIdx]?.itemCode || draftLines[pickerLineIdx]?.partNumber || draftLines[pickerLineIdx]?.description || "")).slice(0, 60)
+          : ""}
+      />
     </div>
   );
 };

@@ -32,11 +32,18 @@
 // in-place overwrite of the operator-visible value so the
 // human-in-the-loop can still inspect the original.
 
-const norm = (s) => String(s == null ? "" : s).trim().toUpperCase();
+// Exported so the orders PATCH server hook (Layer A) and the
+// quote-SENT hook (Layer B) can extract the same customer-part
+// candidate the resolver matches on, keeping the read and write
+// sides of the loop symmetric.
+export const norm = (s) => String(s == null ? "" : s).trim().toUpperCase();
 
 // Extract every plausible part-number-like value from a line.
 // Order matters: the most authoritative alias is tried first.
-const lineCandidates = (line) => {
+// Exported alongside `norm` so callers (server hooks, batch
+// learners) can pick the first candidate to use as
+// item_customer_parts.customer_part_number.
+export const lineCandidates = (line) => {
   if (!line) return [];
   const out = [];
   for (const v of [

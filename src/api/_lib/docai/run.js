@@ -57,6 +57,7 @@ import { detectHandwriting, planHandwritingRoute } from "./handwriting.js";
 import { detectAnomalies } from "./anomaly.js";
 import { computeLayoutFingerprint, findRunByLayoutFingerprint, adapterBiasFromPriorLayout } from "./layout-fingerprint.js";
 import { enqueueReview } from "./review-queue.js";
+import { stampEvidenceOnLines } from "./bbox-evidence.js";
 import { callAnthropic as callAnthropicForTranslate } from "../anthropic.js";
 // Bet 2: format-template marketplace L3.5 hook.
 import {
@@ -917,6 +918,21 @@ export const runExtractionPipeline = async (params) => {
         }
       }
     } catch (_e) { /* scrub is best-effort */ }
+  }
+
+  // 6d. Wave 4.3: stamp bbox evidence per line. When the OCR
+  // layer carried per-block bboxes, match each extracted line to
+  // the OCR block it most likely came from and stamp
+  // line._evidence = { page, bbox, score }. Pure mutation; the
+  // UI uses this for click-to-highlight on the document preview.
+  let evidenceCount = 0;
+  if (ocrLayer && out?.normalized) {
+    try {
+      evidenceCount = stampEvidenceOnLines(out.normalized, ocrLayer);
+      if (evidenceCount > 0) {
+        await recordRunEvent("docai_bbox_evidence_stamped", { count: evidenceCount });
+      }
+    } catch (_e) { /* best-effort */ }
   }
 
   // 6c. Wave 2.4: detect non-Latin scripts per line so the UI can

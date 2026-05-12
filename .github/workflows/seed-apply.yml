@@ -83,12 +83,20 @@ jobs:
           PGURL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
-          for f in $(ls supabase/migrations/0*.sql | sort); do
+          # Glob fix May 2026: was `0*.sql` which only matched
+          # 001..099 and silently skipped migrations 100..113.
+          # `[0-9]*.sql` matches every numbered migration file.
+          for f in $(ls supabase/migrations/[0-9]*.sql | sort); do
             echo "::group::$f"
             psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"
             echo "::endgroup::"
           done
-          echo "==> migrations applied"
+          # Force PostgREST to refresh its schema cache so newly-
+          # added columns are visible to the REST API immediately.
+          # Without this nudge, the previous run could leave the
+          # cache stale until the next PostgREST restart (hours).
+          psql "$PGURL" -v ON_ERROR_STOP=1 -c "notify pgrst, 'reload schema';"
+          echo "==> migrations applied + schema cache reloaded"
 
       - name: Apply corpus seed
         if: ${{ inputs.phase == 'corpus' || inputs.phase == 'all' }}

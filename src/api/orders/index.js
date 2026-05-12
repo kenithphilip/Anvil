@@ -7,53 +7,70 @@ const STATUS_VALUES = new Set(["DRAFT", "PENDING_REVIEW", "APPROVED", "BLOCKED",
 
 const ORDER_MODES = new Set(["SPARES", "SPARES_ASSEMBLY", "PROJECT_FOR", "PROJECT_HSS", "INTERNAL"]);
 
-const orderRow = (ctx, body) => ({
-  tenant_id: ctx.tenantId,
-  customer_id: body.customer_id || null,
-  status: STATUS_VALUES.has(body.status) ? body.status : "DRAFT",
-  po_number: body.po_number || null,
-  po_date: body.po_date || null,
-  quote_number: body.quote_number || null,
-  quote_date: body.quote_date || null,
-  doc_fingerprint: body.doc_fingerprint || null,
-  result: body.result || {},
-  preflight_payload: body.preflight_payload || {},
-  api_usage: body.api_usage || {},
-  cost_policy_snapshot: body.cost_policy_snapshot || {},
-  token_estimate: body.token_estimate || {},
-  rule_findings: body.rule_findings || [],
-  anomaly_flags: body.anomaly_flags || [],
-  evidence_by_field: body.evidence_by_field || {},
-  line_edits: body.line_edits || [],
-  approval: body.approval || null,
-  payload_hash: body.payload_hash || null,
-  blocker_summary: body.blocker_summary || null,
-  format_change_summary: body.format_change_summary || null,
-  cost_avoided_reason: body.cost_avoided_reason || null,
-  // Corpus-derived columns (migration 006).
-  order_mode: ORDER_MODES.has(body.order_mode) ? body.order_mode : null,
-  parent_order_id: body.parent_order_id || null,
-  contract_id: body.contract_id || null,
-  customer_location_id: body.customer_location_id || null,
-  forward_fx_rate: body.forward_fx_rate != null ? Number(body.forward_fx_rate) : null,
-  forward_contract_ref: body.forward_contract_ref || null,
-  internal_so_type: body.internal_so_type || null,
-  project_phase: body.project_phase || null,
-  lost_reason: body.lost_reason || null,
-  competitor_name: body.competitor_name || null,
-  // Migration 106 header columns. Allowed on create so the
-  // OCR-detected vendor_code from so-intake lands on the order at
-  // creation time, rather than being dropped silently and forcing
-  // the operator to retype it in the Header fields tab. The PATCH
-  // handler already allows these via APPROVE_INPUTS.
-  vendor_code: body.vendor_code || null,
-  dispatch_mode: body.dispatch_mode || null,
-  registration_serial_no: body.registration_serial_no || null,
-  incoterm_code: body.incoterm_code || null,
-  delivery_terms: body.delivery_terms || null,
-  delivery_point_contact_id: body.delivery_point_contact_id || null,
-  template_id: body.template_id || null,
-});
+// Migration 106 header columns. Only included in the INSERT row
+// when the caller actually supplies a value, so a tenant whose
+// PostgREST schema cache has not yet picked up the migration
+// does not get a "column not found in schema cache" error on
+// every order create. When body.vendor_code is undefined the row
+// omits the key entirely; PostgREST skips columns that are not
+// in the payload.
+const MIG_106_HEADER_KEYS = [
+  "vendor_code",
+  "dispatch_mode",
+  "registration_serial_no",
+  "incoterm_code",
+  "delivery_terms",
+  "delivery_point_contact_id",
+  "template_id",
+];
+
+const orderRow = (ctx, body) => {
+  const row = {
+    tenant_id: ctx.tenantId,
+    customer_id: body.customer_id || null,
+    status: STATUS_VALUES.has(body.status) ? body.status : "DRAFT",
+    po_number: body.po_number || null,
+    po_date: body.po_date || null,
+    quote_number: body.quote_number || null,
+    quote_date: body.quote_date || null,
+    doc_fingerprint: body.doc_fingerprint || null,
+    result: body.result || {},
+    preflight_payload: body.preflight_payload || {},
+    api_usage: body.api_usage || {},
+    cost_policy_snapshot: body.cost_policy_snapshot || {},
+    token_estimate: body.token_estimate || {},
+    rule_findings: body.rule_findings || [],
+    anomaly_flags: body.anomaly_flags || [],
+    evidence_by_field: body.evidence_by_field || {},
+    line_edits: body.line_edits || [],
+    approval: body.approval || null,
+    payload_hash: body.payload_hash || null,
+    blocker_summary: body.blocker_summary || null,
+    format_change_summary: body.format_change_summary || null,
+    cost_avoided_reason: body.cost_avoided_reason || null,
+    // Corpus-derived columns (migration 006).
+    order_mode: ORDER_MODES.has(body.order_mode) ? body.order_mode : null,
+    parent_order_id: body.parent_order_id || null,
+    contract_id: body.contract_id || null,
+    customer_location_id: body.customer_location_id || null,
+    forward_fx_rate: body.forward_fx_rate != null ? Number(body.forward_fx_rate) : null,
+    forward_contract_ref: body.forward_contract_ref || null,
+    internal_so_type: body.internal_so_type || null,
+    project_phase: body.project_phase || null,
+    lost_reason: body.lost_reason || null,
+    competitor_name: body.competitor_name || null,
+  };
+  // Migration 106 columns: only include keys the caller provided.
+  // Same logic as orders/[id].js PATCH (`if (key in body)`); kept
+  // out of the base row so the INSERT never references a column
+  // that PostgREST has not yet cached.
+  for (const key of MIG_106_HEADER_KEYS) {
+    if (key in body && body[key] !== undefined) {
+      row[key] = body[key] || null;
+    }
+  }
+  return row;
+};
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -77,7 +94,28 @@ export default async function handler(req, res) {
       requirePermission(ctx, "write");
       const body = await readBody(req);
       const svc = serviceClient();
-      const { data, error } = await svc.from("orders").insert(orderRow(ctx, body)).select("*").single();
+      let { data, error } = await svc.from("orders").insert(orderRow(ctx, body)).select("*").single();
+      // PostgREST schema-cache miss (PGRST204) or Postgres
+      // column-not-found (42703) on a migration 106 column.
+      // Retry once with those columns stripped so the SO intake
+      // does not block on a stale schema cache. The vendor_code
+      // auto-detect lands on the next PATCH via the Header tab.
+      if (error && (
+        error.code === "PGRST204"
+        || error.code === "42703"
+        || /Could not find the .* column .* schema cache/i.test(error.message || "")
+        || /column .* does not exist/i.test(error.message || "")
+      )) {
+        const cleanRow = orderRow(ctx, body);
+        for (const k of MIG_106_HEADER_KEYS) delete cleanRow[k];
+        const retry = await svc.from("orders").insert(cleanRow).select("*").single();
+        if (!retry.error) {
+          data = retry.data;
+          error = null;
+          // eslint-disable-next-line no-console
+          console.warn("[orders/POST] retried without migration 106 columns. Reload Supabase schema cache (NOTIFY pgrst, 'reload schema') to enable them.");
+        }
+      }
       if (error) throw new Error(error.message);
       await recordAudit(ctx, { action: "create_order", objectType: "order", objectId: data.id, after: data });
       await recordEvent(ctx, { caseId: data.id, eventType: "order_created", objectType: "order", objectId: data.id });

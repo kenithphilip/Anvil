@@ -62,6 +62,9 @@ alter table eval_runs
   add column if not exists tokens_in_total bigint,
   add column if not exists tokens_out_total bigint;
 
+-- Bug fix May 2026: eval_runs uses created_at, not started_at. The
+-- prior reference to started_at blocked the migration chain on any
+-- DB where the previous column rename never ran.
 create index if not exists eval_runs_model_chain_idx
-  on eval_runs (tenant_id, model_chain, started_at desc)
+  on eval_runs (tenant_id, model_chain, created_at desc)
   where model_chain is not null;

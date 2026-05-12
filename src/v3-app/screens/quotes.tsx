@@ -24,6 +24,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { ageLabel, fmtINRShort } from "../lib/helpers";
 import { ObaraBackend } from "../lib/api";
+import { QuoteDetailDrawer } from "../components/QuoteDetailDrawer";
 
 interface Quote {
   id: string;
@@ -78,6 +79,11 @@ const Quotes: React.FC = () => {
   const [active, setActive] = useState("all");
   const [query, setQuery] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  // Quote detail drawer: opens on row click. Surfaces header partials
+  // (your_ref, attention_contact, template picker, validity, FX
+  // snapshot, conversion factor) and the first-class line editor
+  // backed by the `quote_lines` table introduced in migration 108.
+  const [editing, setEditing] = useState<Quote | null>(null);
 
   const reload = () => {
     setRows(null);
@@ -176,7 +182,7 @@ const Quotes: React.FC = () => {
                     : "No quotes match the current filter."}
                 </td></tr>
               ) : filtered.map((q) => (
-                <tr key={q.id}>
+                <tr key={q.id} style={{ cursor: "pointer" }} onClick={() => setEditing(q)}>
                   <td>
                     <span className="mono-sm">{q.quote_number}</span>
                     {q.version > 1 && <Chip k="ghost">v{q.version}</Chip>}
@@ -192,6 +198,17 @@ const Quotes: React.FC = () => {
           </table>
         </Card>
       </div>
+      {editing && (
+        <QuoteDetailDrawer
+          quote={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            // After a save in the drawer the row in the list may be
+            // stale. Reload by clearing rows; the effect re-fetches.
+            setRows(null);
+          }}
+        />
+      )}
     </>
   );
 };

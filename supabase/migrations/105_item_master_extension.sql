@@ -473,6 +473,12 @@ create trigger item_field_values_updated_at
 --     into one row for the UI. RLS inherits from underlying tables.
 -- ---------------------------------------------------------------------------
 
+-- DROP first so re-applies tolerate item_master column additions in
+-- later migrations (e.g. 107 adds specification_details on
+-- item_master). `m.*` expansion would otherwise rename a positional
+-- column and CREATE OR REPLACE VIEW rejects renames.
+drop view if exists items_full_v;
+
 create or replace view items_full_v as
   select
     m.*,

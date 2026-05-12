@@ -58,6 +58,7 @@ const ADMIN_CRUD_TABS = [
   { id: "locations", label: "Customer locations" },
   { id: "contracts", label: "Contracts" },
   { id: "items",     label: "Item master" },
+  { id: "item_fields", label: "Item fields" },
   { id: "docai_cost", label: "DocAI cost" },
   { id: "diag",      label: "Diagnostics" },
 ];
@@ -3542,6 +3543,10 @@ const WiredAdminCRUD = () => {
           </Card>
         )}
 
+        {active === "item_fields" && (
+          <ItemFieldsPanel />
+        )}
+
         {active === "docai_cost" && (
           <DocAICostPanel />
         )}
@@ -3979,6 +3984,183 @@ const downloadCsv = (filename: string, content: string) => {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+};
+
+// Item-master custom-field schema editor. Lets a tenant admin
+// define their own extension fields for the Item Master without a
+// code migration. Each field has a key, label, type, group, and
+// visibility flags (invoice vs PO vs master) so the same field can
+// be opted in/out of customer-facing or supplier-facing documents.
+const ItemFieldsPanel: React.FC = () => {
+  const [defs, setDefs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<any>(null);
+  const [draft, setDraft] = useState<any>({
+    field_label: "",
+    field_type: "text",
+    field_group: "engineering",
+    field_required: false,
+    is_visible_invoice: false,
+    is_visible_po: false,
+    is_visible_master: true,
+  });
+
+  const reload = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await adminCrudFetch("/api/admin/item_field_definitions");
+      setDefs(r.definitions || []);
+    } catch (e) {
+      setError(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { reload(); }, []);
+
+  const save = async () => {
+    if (!draft.field_label?.trim()) {
+      window.notifyWarn?.("Field label required", "Give the field a human-readable label first.");
+      return;
+    }
+    try {
+      await adminCrudFetch("/api/admin/item_field_definitions", { method: "POST", body: draft });
+      window.notifySuccess?.("Field saved", draft.field_label);
+      setDraft({
+        field_label: "",
+        field_type: "text",
+        field_group: "engineering",
+        field_required: false,
+        is_visible_invoice: false,
+        is_visible_po: false,
+        is_visible_master: true,
+      });
+      await reload();
+    } catch (e: any) {
+      window.notifyError?.("Could not save field", e?.message || String(e));
+    }
+  };
+
+  const disableField = async (id: string) => {
+    if (!window.confirm("Disable this field? Historical values are preserved. Use ?hard=1 for a destructive delete.")) return;
+    try {
+      await adminCrudFetch("/api/admin/item_field_definitions?id=" + encodeURIComponent(id), { method: "DELETE" });
+      await reload();
+    } catch (e: any) {
+      window.notifyError?.("Could not disable field", e?.message || String(e));
+    }
+  };
+
+  if (loading) return <Card><div className="body">Loading custom item fields...</div></Card>;
+  if (error) return (
+    <Banner kind="bad" icon={Icon.alert} title="Could not load item fields" action={<Btn sm onClick={reload}>Retry</Btn>}>
+      <span className="mono-sm">{String((error as any)?.message || error)}</span>
+    </Banner>
+  );
+
+  return (
+    <>
+      <Card title="Add or update a custom field" eyebrow="per-tenant Item Master extension">
+        <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div>
+            <label className="mono-sm" style={{ color: "var(--ink-3)", display: "block", marginBottom: 4 }}>Label</label>
+            <input className="input" value={draft.field_label} onChange={(e) => setDraft({ ...draft, field_label: e.target.value })} placeholder="e.g., Gun Number" />
+          </div>
+          <div>
+            <label className="mono-sm" style={{ color: "var(--ink-3)", display: "block", marginBottom: 4 }}>Type</label>
+            <select className="select" value={draft.field_type} onChange={(e) => setDraft({ ...draft, field_type: e.target.value })}>
+              <option value="text">Text</option>
+              <option value="number">Number</option>
+              <option value="boolean">Yes / No</option>
+              <option value="select">Select (dropdown)</option>
+              <option value="date">Date</option>
+              <option value="url">URL</option>
+              <option value="file">File</option>
+            </select>
+          </div>
+          <div>
+            <label className="mono-sm" style={{ color: "var(--ink-3)", display: "block", marginBottom: 4 }}>Group</label>
+            <select className="select" value={draft.field_group} onChange={(e) => setDraft({ ...draft, field_group: e.target.value })}>
+              <option value="identification">Identification</option>
+              <option value="classification">Classification</option>
+              <option value="tax">Tax</option>
+              <option value="inventory">Inventory</option>
+              <option value="engineering">Engineering</option>
+              <option value="logistics">Logistics</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+          <label className="mono-sm row" style={{ gap: 6 }}>
+            <input type="checkbox" checked={!!draft.field_required} onChange={(e) => setDraft({ ...draft, field_required: e.target.checked })} /> required
+          </label>
+          <label className="mono-sm row" style={{ gap: 6 }}>
+            <input type="checkbox" checked={!!draft.is_visible_master} onChange={(e) => setDraft({ ...draft, is_visible_master: e.target.checked })} /> show on master
+          </label>
+          <label className="mono-sm row" style={{ gap: 6 }}>
+            <input type="checkbox" checked={!!draft.is_visible_invoice} onChange={(e) => setDraft({ ...draft, is_visible_invoice: e.target.checked })} /> show on invoice
+          </label>
+          <label className="mono-sm row" style={{ gap: 6 }}>
+            <input type="checkbox" checked={!!draft.is_visible_po} onChange={(e) => setDraft({ ...draft, is_visible_po: e.target.checked })} /> show on PO
+          </label>
+          <Btn sm kind="primary" onClick={save}>{Icon.plus} save field</Btn>
+        </div>
+        {draft.field_type === "select" && (
+          <div style={{ marginTop: 8 }}>
+            <label className="mono-sm" style={{ color: "var(--ink-3)" }}>Select options (one per line, format: value or value=label)</label>
+            <textarea
+              className="input"
+              rows={4}
+              style={{ width: "100%" }}
+              value={(draft.field_options || []).map((o: any) => o.value === o.label ? o.value : `${o.value}=${o.label}`).join("\n")}
+              onChange={(e) => {
+                const lines = e.target.value.split("\n").map((s) => s.trim()).filter(Boolean);
+                const options = lines.map((line) => {
+                  const [v, l] = line.split("=");
+                  return { value: v.trim(), label: (l || v).trim() };
+                });
+                setDraft({ ...draft, field_options: options });
+              }}
+            />
+          </div>
+        )}
+      </Card>
+
+      <Card flush>
+        {defs.length === 0 ? (
+          <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+            No custom item fields defined yet. Add one above to extend the item master schema for your tenant.
+          </div>
+        ) : (
+          <table className="tbl">
+            <thead><tr>
+              <th>Key</th><th>Label</th><th>Type</th><th>Group</th>
+              <th className="r">Required</th><th className="r">Master</th><th className="r">Invoice</th><th className="r">PO</th>
+              <th className="r">Status</th><th></th>
+            </tr></thead>
+            <tbody>
+              {defs.map((d) => (
+                <tr key={d.id}>
+                  <td className="mono"><span className="pri">{d.field_key}</span></td>
+                  <td>{d.field_label}</td>
+                  <td className="mono-sm">{d.field_type}</td>
+                  <td className="mono-sm">{d.field_group}</td>
+                  <td className="r">{d.field_required ? "yes" : "-"}</td>
+                  <td className="r">{d.is_visible_master ? "yes" : "-"}</td>
+                  <td className="r">{d.is_visible_invoice ? "yes" : "-"}</td>
+                  <td className="r">{d.is_visible_po ? "yes" : "-"}</td>
+                  <td className="r"><Chip k={d.is_active ? "good" : "ghost"}>{d.is_active ? "active" : "disabled"}</Chip></td>
+                  <td className="r">
+                    {d.is_active && <Btn sm kind="ghost" onClick={() => disableField(d.id)}>disable</Btn>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+    </>
+  );
 };
 
 const DocAICostPanel: React.FC = () => {

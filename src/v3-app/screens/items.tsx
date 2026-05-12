@@ -3,6 +3,7 @@ import { useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
+import { ItemDetailDrawer } from "../components/ItemDetailDrawer";
 
 // ============================================================
 // ANVIL v3 — wired Items
@@ -66,6 +67,10 @@ const ItemMasterTab = () => {
     () => ObaraBackend?.admin?.listItemMaster?.() || itemFetch("/api/admin/item_master"),
     []
   );
+  // Item-detail drawer state. null = closed, {} = create-new,
+  // any other object = edit-existing. The drawer is responsible for
+  // hydrating per-item satellites (spec, customer parts, custom fields).
+  const [editing, setEditing] = useState<any | null>(null);
 
   if (list.loading) return <Card><div className="body">Loading item master…</div></Card>;
   if (list.error) {
@@ -78,42 +83,61 @@ const ItemMasterTab = () => {
   }
 
   const rows = itemRowsOf(list.data, "items");
-  if (rows.length === 0) {
-    return <Card><div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>No items yet.</div></Card>;
-  }
 
   return (
-    <Card flush>
-      <table className="tbl">
-        <thead><tr>
-          <th>Part #</th>
-          <th>Description</th>
-          <th>Source</th>
-          <th>Currency</th>
-          <th className="r">Purchase price</th>
-          <th>HSN</th>
-          <th>Lifecycle</th>
-        </tr></thead>
-        <tbody>
-          {rows.slice(0, 200).map((r) => (
-            <tr key={r.id || r.part_no}>
-              <td className="mono"><span className="pri">{r.part_no || "—"}</span></td>
-              <td>{r.description || "—"}</td>
-              <td className="mono-sm">{r.source_country || "—"}</td>
-              <td className="mono-sm">{r.currency || "INR"}</td>
-              <td className="r mono">{r.purchase_price != null ? Number(r.purchase_price).toLocaleString("en-IN") : "—"}</td>
-              <td className="mono-sm">{r.hsn || r.hsn_code || "—"}</td>
-              <td><Chip k={r.lifecycle === "ACTIVE" ? "good" : r.lifecycle === "EOL" ? "bad" : "ghost"}>{(r.lifecycle || "—").toLowerCase()}</Chip></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {rows.length > 200 && (
-        <div className="mono-sm" style={{ padding: 12, textAlign: "center", color: "var(--ink-3)", borderTop: "1px solid var(--hairline-2)" }}>
-          Showing 200 of {rows.length} items.
-        </div>
+    <>
+      <div className="row" style={{ justifyContent: "flex-end", marginBottom: 8 }}>
+        <Btn sm kind="primary" onClick={() => setEditing({})}>{Icon.plus} New item</Btn>
+      </div>
+      <Card flush>
+        {rows.length === 0 ? (
+          <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+            No items yet. Click <b>New item</b> above to add one.
+          </div>
+        ) : (
+          <table className="tbl">
+            <thead><tr>
+              <th>Part #</th>
+              <th>Description</th>
+              <th>Alias</th>
+              <th>UoM</th>
+              <th>Source</th>
+              <th>HSN</th>
+              <th>Lifecycle</th>
+              <th></th>
+            </tr></thead>
+            <tbody>
+              {rows.slice(0, 200).map((r: any) => (
+                <tr key={r.id || r.part_no} style={{ cursor: "pointer" }} onClick={() => setEditing(r)}>
+                  <td className="mono"><span className="pri">{r.part_no || "—"}</span></td>
+                  <td>{r.description || "—"}</td>
+                  <td className="mono-sm">{r.alias || "—"}</td>
+                  <td className="mono-sm">{r.uom || "—"}</td>
+                  <td className="mono-sm">{r.source_country || "—"}</td>
+                  <td className="mono-sm">{r.hsn_sac || r.hsn || r.hsn_code || "—"}</td>
+                  <td><Chip k={r.lifecycle === "ACTIVE" ? "good" : r.lifecycle === "OBSOLETE" || r.lifecycle === "DISCONTINUED" ? "bad" : "ghost"}>{(r.lifecycle || "—").toLowerCase()}</Chip></td>
+                  <td className="r">
+                    <Btn sm kind="ghost" onClick={(e) => { e.stopPropagation(); setEditing(r); }}>edit</Btn>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {rows.length > 200 && (
+          <div className="mono-sm" style={{ padding: 12, textAlign: "center", color: "var(--ink-3)", borderTop: "1px solid var(--hairline-2)" }}>
+            Showing 200 of {rows.length} items.
+          </div>
+        )}
+      </Card>
+      {editing != null && (
+        <ItemDetailDrawer
+          item={editing && editing.id ? editing : null}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); list.reload?.(); }}
+        />
       )}
-    </Card>
+    </>
   );
 };
 

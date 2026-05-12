@@ -26,6 +26,11 @@ import adminFxRates            from "./admin/fx_rates.js";
 import adminHolidays           from "./admin/holidays.js";
 import adminInventory          from "./admin/inventory.js";
 import adminItemMaster         from "./admin/item_master.js";
+import adminItemSpecifications from "./admin/item_specifications.js";
+import adminItemCustomerParts  from "./admin/item_customer_parts.js";
+import adminItemFieldDefinitions from "./admin/item_field_definitions.js";
+import adminItemFieldValues    from "./admin/item_field_values.js";
+import adminItemReference      from "./admin/item_reference.js";
 import adminLeadTimes          from "./admin/lead_times.js";
 import adminLostReasons        from "./admin/lost_reasons.js";
 import adminMembers            from "./admin/members.js";
@@ -667,6 +672,11 @@ const STATIC_ROUTES = {
   "/admin/holidays":                adminHolidays,
   "/admin/inventory":               adminInventory,
   "/admin/item_master":             adminItemMaster,
+  "/admin/item_specifications":     adminItemSpecifications,
+  "/admin/item_customer_parts":     adminItemCustomerParts,
+  "/admin/item_field_definitions":  adminItemFieldDefinitions,
+  "/admin/item_field_values":       adminItemFieldValues,
+  "/admin/item_reference":          adminItemReference,
   "/admin/lead_times":              adminLeadTimes,
   "/admin/lost_reasons":            adminLostReasons,
   "/admin/members":                 adminMembers,

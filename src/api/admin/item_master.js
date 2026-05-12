@@ -10,6 +10,54 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 
 const LIFECYCLE = new Set(["ACTIVE","OBSOLETE","DISCONTINUED","NEW","TRIAL"]);
+const SUPPLY_TYPES = new Set(["GOODS", "SERVICES"]);
+const TAXABILITY = new Set(["TAXABLE", "EXEMPT", "NIL_RATED", "NON_GST", "ZERO_RATED"]);
+const DATA_SOURCES = new Set(["manual", "imported", "api", "marketplace_template"]);
+
+// Pull the migration-105 extension columns off the body and coerce
+// types where needed. Returns the partial object to merge into the
+// base item_master row. All new columns are nullable so omitting any
+// of them is safe; the patch only sets keys the caller supplied.
+const buildExtensionPatch = (body) => {
+  const patch = {};
+  const setStr = (k) => { if (k in body) patch[k] = body[k] || null; };
+  const setBool = (k) => { if (k in body) patch[k] = body[k] == null ? null : !!body[k]; };
+  const setNum = (k) => { if (k in body) patch[k] = body[k] == null || body[k] === "" ? null : Number(body[k]); };
+  setStr("alias");
+  setStr("print_name");
+  setStr("specification_code");
+  setStr("stock_group");
+  setBool("gst_applicable");
+  if ("taxability_type" in body) {
+    const v = (body.taxability_type || "").toUpperCase();
+    patch.taxability_type = TAXABILITY.has(v) ? v : null;
+  }
+  if ("type_of_supply" in body) {
+    const v = (body.type_of_supply || "").toUpperCase();
+    patch.type_of_supply = SUPPLY_TYPES.has(v) ? v : "GOODS";
+  }
+  setNum("rate_of_duty_pct");
+  setBool("maintain_batches");
+  setBool("track_mfg_date");
+  setBool("capture_documents");
+  setBool("enable_cost_tracking");
+  setBool("disable_negative_stock");
+  setNum("order_level");
+  setNum("min_inventory");
+  setNum("opening_qty");
+  setNum("opening_rate");
+  setStr("opening_per");
+  setNum("opening_value");
+  setBool("verify_item");
+  setBool("approve_item");
+  if ("effective_date" in body) patch.effective_date = body.effective_date || null;
+  if ("data_source" in body) {
+    const v = String(body.data_source || "manual");
+    patch.data_source = DATA_SOURCES.has(v) ? v : "manual";
+  }
+  setBool("alteration_locked");
+  return patch;
+};
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -98,9 +146,28 @@ export default async function handler(req, res) {
         lifecycle: LIFECYCLE.has(body.lifecycle) ? body.lifecycle : "ACTIVE",
         is_assembly: !!body.is_assembly,
         notes: body.notes || null,
+        // Migration 105 extension fields (alias, print_name,
+        // taxability_type, batches, opening balance, ...). Pulled
+        // from the body when supplied; left null otherwise.
+        ...buildExtensionPatch(body),
         updated_at: new Date().toISOString(),
       };
-      const { data, error } = await svc.from("item_master").upsert(row, { onConflict: "tenant_id,part_no" }).select("*").single();
+      // Pre-105 deployments will reject the unknown columns with
+      // Postgres code 42703. Catch that case and retry with only the
+      // legacy columns so signups still work until the operator runs
+      // the migration. The retry log line tells them which migration
+      // is missing.
+      let { data, error } = await svc.from("item_master").upsert(row, { onConflict: "tenant_id,part_no" }).select("*").single();
+      if (error && (error.code === "42703" || /column .* does not exist/i.test(error.message))) {
+        const legacyOnly = { ...row };
+        for (const k of Object.keys(buildExtensionPatch(body))) delete legacyOnly[k];
+        const retry = await svc.from("item_master").upsert(legacyOnly, { onConflict: "tenant_id,part_no" }).select("*").single();
+        if (retry.error) throw new Error(retry.error.message);
+        // eslint-disable-next-line no-console
+        console.warn("[item_master] saved without extension columns; run migration 105 to enable alias/print_name/taxability_type/batches/opening-balance");
+        data = retry.data;
+        error = null;
+      }
       if (error) throw new Error(error.message);
       await recordAudit(ctx, { action: "item_master_upsert", objectType: "item_master", objectId: data.id, after: data });
       return json(res, 200, { item: data });

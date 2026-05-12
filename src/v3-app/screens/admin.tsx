@@ -63,6 +63,7 @@ const ADMIN_CRUD_TABS = [
   { id: "freight", label: "Freight rates" },
   { id: "pricing", label: "Pricing settings" },
   { id: "vendor_codes", label: "Vendor codes" },
+  { id: "customer_parts", label: "Customer parts" },
   { id: "terms_packs", label: "Customer terms" },
   { id: "docai_cost", label: "DocAI cost" },
   { id: "diag",      label: "Diagnostics" },
@@ -3607,6 +3608,10 @@ const WiredAdminCRUD = () => {
           <VendorCodesPanel />
         )}
 
+        {active === "customer_parts" && (
+          <CustomerPartsPanel />
+        )}
+
         {active === "terms_packs" && (
           <CustomerTermsPanel />
         )}
@@ -4700,6 +4705,319 @@ const VendorCodesPanel: React.FC = () => {
                     <td>{r.is_primary ? <Chip k="good">primary</Chip> : "-"}</td>
                     <td className="mono-sm">{r.notes || "-"}</td>
                     <td className="r"><Btn sm kind="ghost" onClick={() => remove(r.customer_id, r.vendor_code)}>delete</Btn></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </Card>
+    </>
+  );
+};
+
+// Layer D: bulk + per-row CSV/XLSX import for item_customer_parts.
+// Mirrors the VendorCodesPanel shape (load lists, add-row form,
+// table) plus a hidden file input that parses CSV via the inline
+// parseCSV at the top of this file or XLSX via the lazy-loaded
+// SheetJS CDN bundle from bom-import.tsx. The endpoint at
+// /api/admin/item_customer_parts already accepts both single and
+// { rows: [...] } batch shapes per stage 2 of the plan; this
+// panel calls the batch shape with parsedRows.
+//
+// CSV / XLSX columns recognised (any subset, case-insensitive):
+//   customer_id | customer_name
+//   item_master_id | item_master_part_no | part_no
+//   customer_part_number   (required)
+//   customer_part_description
+//   customer_project
+//   valid_from, valid_to     (YYYY-MM-DD)
+//   is_primary               (truthy: "1", "true", "yes", "y")
+//
+// Errors are returned per-row by the server; the UI renders them
+// inline below the import button without aborting the rest of the
+// batch.
+let __xlsxPanelPromise: Promise<any> | null = null;
+const loadXLSXForCustomerParts = () => {
+  if (typeof window === "undefined") return Promise.reject(new Error("no window"));
+  if ((window as any).XLSX) return Promise.resolve((window as any).XLSX);
+  if (__xlsxPanelPromise) return __xlsxPanelPromise;
+  __xlsxPanelPromise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+    s.onload = () => resolve((window as any).XLSX);
+    s.onerror = () => reject(new Error("Failed to load XLSX from CDN"));
+    document.head.appendChild(s);
+  });
+  return __xlsxPanelPromise;
+};
+
+const PARTS_TRUTHY = new Set(["1", "true", "yes", "y", "t"]);
+const normalizePartsRow = (raw: Record<string, any>) => {
+  const obj: Record<string, any> = {};
+  for (const k of Object.keys(raw || {})) {
+    const v = raw[k];
+    const key = String(k || "").trim().toLowerCase().replace(/\s+/g, "_");
+    obj[key] = typeof v === "string" ? v.trim() : v;
+  }
+  return {
+    customer_id: obj.customer_id || null,
+    customer_name: obj.customer_name || obj.customer || null,
+    item_master_id: obj.item_master_id || obj.item_id || null,
+    item_master_part_no: obj.item_master_part_no || obj.part_no || obj.tally_item_name || null,
+    customer_part_number: obj.customer_part_number || obj.customer_part || obj.part_number || obj.code || null,
+    customer_part_description: obj.customer_part_description || obj.description || null,
+    customer_project: obj.customer_project || obj.project || null,
+    valid_from: obj.valid_from || null,
+    valid_to: obj.valid_to || null,
+    is_primary: obj.is_primary == null ? false : PARTS_TRUTHY.has(String(obj.is_primary).toLowerCase()),
+  };
+};
+
+// Parse a CSV string into an array of normalised row objects,
+// using the first row as the header. Reuses parseCSV defined at
+// the top of admin.tsx.
+const csvToPartsRows = (text: string): Array<Record<string, any>> => {
+  const grid = parseCSV(text);
+  if (!grid.length) return [];
+  const header = grid[0].map((h: any) => String(h).trim());
+  return grid.slice(1).map((cells: any[]) => {
+    const obj: Record<string, any> = {};
+    for (let i = 0; i < header.length; i++) obj[header[i]] = cells[i] != null ? cells[i] : "";
+    return normalizePartsRow(obj);
+  }).filter((r: any) => r.customer_part_number);
+};
+
+const xlsxToPartsRows = async (file: File): Promise<Array<Record<string, any>>> => {
+  const XLSX = await loadXLSXForCustomerParts();
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: "array", raw: false, cellDates: false });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const json: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
+  return json.map(normalizePartsRow).filter((r: any) => r.customer_part_number);
+};
+
+interface PartsImportResult {
+  ok: number;
+  errors: Array<{ row_index: number; reason: string }>;
+  total: number;
+}
+
+const CustomerPartsPanel: React.FC = () => {
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [items, setItems] = useState<any[]>([]);
+  const [rows, setRows] = useState<any[]>([]);
+  const [filterCustomerId, setFilterCustomerId] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<any>(null);
+  const [draft, setDraft] = useState<any>({ customer_id: "", item_master_id: "", customer_part_number: "", customer_part_description: "", is_primary: false });
+  const [busy, setBusy] = useState(false);
+  const [importResult, setImportResult] = useState<PartsImportResult | null>(null);
+
+  const reload = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [cs, im] = await Promise.all([
+        adminCrudFetch("/api/customers"),
+        adminCrudFetch("/api/admin/item_master?limit=2000"),
+      ]);
+      setCustomers((cs as any).customers || []);
+      setItems((im as any).items || []);
+      // Pull mappings filtered by current customer (or none, which
+      // returns all up to the server's 1000 cap).
+      const mp = await adminCrudFetch(filterCustomerId
+        ? `/api/admin/item_customer_parts?customer_id=${encodeURIComponent(filterCustomerId)}`
+        : "/api/admin/item_customer_parts");
+      setRows((mp as any).mappings || []);
+    } catch (e) { setError(e); } finally { setLoading(false); }
+  };
+  useEffect(() => { reload(); }, [filterCustomerId]);
+
+  const save = async () => {
+    if (!draft.customer_id || !draft.item_master_id || !draft.customer_part_number) {
+      window.notifyWarn?.("All three fields required", "Pick a customer, pick a canonical item, and enter the customer's part number.");
+      return;
+    }
+    try {
+      await adminCrudFetch("/api/admin/item_customer_parts", {
+        method: "POST",
+        body: {
+          item_id: draft.item_master_id,
+          customer_id: draft.customer_id,
+          customer_part_number: String(draft.customer_part_number).trim(),
+          customer_part_description: draft.customer_part_description || null,
+          is_primary: !!draft.is_primary,
+        },
+      });
+      window.notifySuccess?.("Mapping saved", draft.customer_part_number);
+      setDraft({ customer_id: draft.customer_id, item_master_id: "", customer_part_number: "", customer_part_description: "", is_primary: false });
+      await reload();
+    } catch (e: any) { window.notifyError?.("Could not save", e?.message || String(e)); }
+  };
+
+  const remove = async (m: any) => {
+    if (!window.confirm(`Delete mapping ${m.customer_part_number}?`)) return;
+    try {
+      await adminCrudFetch(`/api/admin/item_customer_parts?item_id=${m.item_id}&customer_id=${m.customer_id}&customer_part_number=${encodeURIComponent(m.customer_part_number)}`, { method: "DELETE" });
+      await reload();
+    } catch (e: any) { window.notifyError?.("Could not delete", e?.message || String(e)); }
+  };
+
+  const onImport = async (file: File | undefined) => {
+    if (!file) return;
+    setBusy(true);
+    setImportResult(null);
+    try {
+      const isXlsx = /\.(xlsx|xls)$/i.test(file.name);
+      const parsed = isXlsx ? await xlsxToPartsRows(file) : csvToPartsRows(await file.text());
+      if (!parsed.length) {
+        window.notifyWarn?.("No rows parsed", "The file had no rows with a customer_part_number. Check the header row.");
+        return;
+      }
+      const resp = await adminCrudFetch("/api/admin/item_customer_parts", {
+        method: "POST",
+        body: { rows: parsed },
+      });
+      const out: PartsImportResult = {
+        ok: (resp as any).ok || 0,
+        errors: (resp as any).errors || [],
+        total: parsed.length,
+      };
+      setImportResult(out);
+      if (out.ok > 0) window.notifySuccess?.("Imported " + out.ok + " mapping" + (out.ok === 1 ? "" : "s"), out.errors.length ? out.errors.length + " row" + (out.errors.length === 1 ? "" : "s") + " skipped" : undefined);
+      else window.notifyError?.("No rows imported", "All rows failed. See the result table below.");
+      await reload();
+    } catch (e: any) {
+      window.notifyError?.("Import failed", e?.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading) return <Card><div className="body">Loading customer parts...</div></Card>;
+  if (error) return <Banner kind="bad" icon={Icon.alert} title="Could not load" action={<Btn sm onClick={reload}>Retry</Btn>}><span className="mono-sm">{String((error as any)?.message || error)}</span></Banner>;
+
+  const filteredRows = rows;
+
+  return (
+    <>
+      <Card title="Add customer part" eyebrow="customer-specific code that maps to your canonical item">
+        <div className="row" style={{ gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <label className="mono-sm">Customer</label>
+            <select className="select" value={draft.customer_id} onChange={(e) => setDraft({ ...draft, customer_id: e.target.value })}>
+              <option value="">Select...</option>
+              {customers.map((c: any) => <option key={c.id} value={c.id}>{c.customer_name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="mono-sm">Canonical item</label>
+            <select className="select" value={draft.item_master_id} onChange={(e) => setDraft({ ...draft, item_master_id: e.target.value })}>
+              <option value="">Select...</option>
+              {items.slice(0, 500).map((it: any) => (
+                <option key={it.id} value={it.id}>{it.part_no}{it.alias ? " (" + it.alias + ")" : ""}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mono-sm">Customer part #</label>
+            <input className="input mono" value={draft.customer_part_number} onChange={(e) => setDraft({ ...draft, customer_part_number: e.target.value })} placeholder="e.g., GD544202603190008" />
+          </div>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <label className="mono-sm">Description (optional)</label>
+            <input className="input" value={draft.customer_part_description} onChange={(e) => setDraft({ ...draft, customer_part_description: e.target.value })} />
+          </div>
+          <label className="mono-sm row" style={{ gap: 6, alignItems: "center" }}>
+            <input type="checkbox" checked={!!draft.is_primary} onChange={(e) => setDraft({ ...draft, is_primary: e.target.checked })} /> primary
+          </label>
+          <Btn sm kind="primary" onClick={save}>{Icon.plus} Add</Btn>
+        </div>
+      </Card>
+
+      <Card title="Bulk import" eyebrow="CSV or XLSX with one mapping per row" right={
+        <label className="btn btn-sm" style={{ cursor: busy ? "wait" : "pointer" }}>
+          {busy ? "importing…" : <>{Icon.upload || "↑"} Upload CSV / XLSX</>}
+          <input type="file" accept=".csv,text/csv,.xlsx,.xls" disabled={busy} style={{ display: "none" }}
+                 onChange={(ev) => { const f = ev.target.files?.[0]; ev.target.value = ""; onImport(f); }} />
+        </label>
+      }>
+        <div className="mono-sm" style={{ color: "var(--ink-3)", lineHeight: 1.5 }}>
+          Required column: <span className="mono">customer_part_number</span>. Plus one of:{" "}
+          <span className="mono">customer_id</span> or <span className="mono">customer_name</span>,
+          and one of <span className="mono">item_master_id</span> or <span className="mono">item_master_part_no</span>.{" "}
+          Optional: <span className="mono">customer_part_description</span>, <span className="mono">customer_project</span>,
+          <span className="mono">valid_from</span>, <span className="mono">valid_to</span>, <span className="mono">is_primary</span>.
+        </div>
+        {importResult && (
+          <div style={{ marginTop: 12 }}>
+            <Banner
+              kind={importResult.errors.length === 0 ? "good" : "warn"}
+              title={`Imported ${importResult.ok} of ${importResult.total} row${importResult.total === 1 ? "" : "s"}`}
+            >
+              {importResult.errors.length > 0 && (
+                <table className="tbl" style={{ marginTop: 8 }}>
+                  <thead><tr><th>Row</th><th>Reason</th></tr></thead>
+                  <tbody>
+                    {importResult.errors.slice(0, 50).map((er, j) => (
+                      <tr key={j}>
+                        <td className="mono-sm">{er.row_index + 2}</td>
+                        <td className="mono-sm">{er.reason}</td>
+                      </tr>
+                    ))}
+                    {importResult.errors.length > 50 && (
+                      <tr><td colSpan={2} className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                        ...and {importResult.errors.length - 50} more.
+                      </td></tr>
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </Banner>
+          </div>
+        )}
+      </Card>
+
+      <Card title="Existing mappings" eyebrow={`${rows.length} row${rows.length === 1 ? "" : "s"}`} right={
+        <select className="select" value={filterCustomerId} onChange={(e) => setFilterCustomerId(e.target.value)}>
+          <option value="">All customers</option>
+          {customers.map((c: any) => <option key={c.id} value={c.id}>{c.customer_name}</option>)}
+        </select>
+      }>
+        {filteredRows.length === 0 ? (
+          <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+            No mappings to show.
+          </div>
+        ) : (
+          <table className="tbl">
+            <thead><tr>
+              <th>Customer</th>
+              <th>Their part #</th>
+              <th>Canonical item</th>
+              <th>Source</th>
+              <th>Confidence</th>
+              <th>Confirmed</th>
+              <th>Primary</th>
+              <th></th>
+            </tr></thead>
+            <tbody>
+              {filteredRows.map((m: any, i: number) => {
+                const c = customers.find((cc: any) => cc.id === m.customer_id);
+                const it = items.find((ii: any) => ii.id === m.item_id);
+                const cv = m.created_via || "legacy";
+                const tone: any = (cv === "manual" || cv === "bulk_import") ? "good"
+                  : (cv === "quote_sent" || cv === "llm_suggest" || cv === "quote_accepted") ? "info"
+                  : "ghost";
+                return (
+                  <tr key={i}>
+                    <td>{c?.customer_name || m.customer_id.slice(0, 8)}</td>
+                    <td className="mono"><span className="pri">{m.customer_part_number}</span></td>
+                    <td className="mono-sm">{it?.part_no || m.item_id.slice(0, 8)}</td>
+                    <td><Chip k={tone}>{cv.replace(/_/g, " ")}</Chip></td>
+                    <td className="mono-sm">{m.confidence_pct != null ? Math.round(Number(m.confidence_pct)) + "%" : "—"}</td>
+                    <td className="mono-sm">{m.confirmed_at ? new Date(m.confirmed_at).toISOString().slice(0, 10) : "—"}</td>
+                    <td>{m.is_primary ? <Chip k="good">primary</Chip> : "—"}</td>
+                    <td className="r"><Btn sm kind="ghost" onClick={() => remove(m)}>delete</Btn></td>
                   </tr>
                 );
               })}

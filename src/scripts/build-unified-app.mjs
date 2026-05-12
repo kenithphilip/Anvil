@@ -1360,7 +1360,15 @@ const stateFromGstin = (gstin) => {
   return STATE_BY_GSTIN_PREFIX[prefix] || "";
 };
 
-const OBARA_STATE = "Maharashtra";
+// OBARA_STATE removed May 2026. The hardcoded "Maharashtra" assumed
+// a single-tenant deployment. Multi-tenant deployments derive the
+// seller's state at runtime from `tenant_settings.default_state_code`
+// (or the tenant's GSTIN prefix via stateFromGstin) so the
+// interstate-vs-intrastate GST routing works per tenant. The legacy
+// build script kept this constant for backwards compat with the
+// old single-tenant unified build; the production v3-app reads the
+// tenant value via the auth context.
+const OBARA_STATE = (typeof process !== "undefined" && process.env && process.env.TENANT_DEFAULT_STATE) || "";
 
 const sha256OfText = async (text) => {
   if (!text) return "empty";
@@ -4409,7 +4417,7 @@ patchSo(
                       if (action.id === "switch_tax_type" && activeOrder.result && activeOrder.result.salesOrder) {
                         const so = activeOrder.result.salesOrder;
                         const ship = so.shipTo && so.shipTo.gstin;
-                        const interstate = ship && stateFromGstin(ship) && stateFromGstin(ship) !== "Maharashtra";
+                        const interstate = ship && stateFromGstin(ship) && OBARA_STATE && stateFromGstin(ship) !== OBARA_STATE;
                         const next = { ...so, lineItems: (so.lineItems || []).map((li) => {
                           if (interstate) return { ...li, igst: Number(li.igst) || (Number(li.cgst) || 0) + (Number(li.sgst) || 0), cgst: 0, sgst: 0 };
                           return { ...li, cgst: Number(li.cgst) || (Number(li.igst) || 0) / 2, sgst: Number(li.sgst) || (Number(li.igst) || 0) / 2, igst: 0 };

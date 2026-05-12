@@ -4,6 +4,7 @@ import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Prov, Steps, Stream, WSTabs, 
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
+import { amountInWords } from "../lib/amount-words";
 
 // ============================================================
 // ANVIL v3 — wired SO Workspace
@@ -754,6 +755,7 @@ const WiredSOWorkspace = () => {
 
   const tabs = [
     { id: "recon", label: "Reconciliation", count: findings.length || null },
+    { id: "header", label: "Header fields" },
     { id: "margin", label: "Margin cockpit" },
     { id: "why", label: "Why" },
     { id: "evidence", label: "Evidence" },
@@ -1081,10 +1083,26 @@ const WiredSOWorkspace = () => {
                     <td className="r mono"><b style={{ fontSize: 13 }}>{fmtINR(subtotal)}</b></td>
                     <td colSpan={2}></td>
                   </tr>
+                  {/* Amount in words renders the subtotal in the
+                      Tally / SO convention. Replaces the prior gap
+                      where the SO PDF could not show the words line
+                      because no helper existed. */}
+                  {subtotal > 0 && (
+                    <tr style={{ background: "var(--paper-2)" }}>
+                      <td colSpan={11} className="mono-sm" style={{ paddingTop: 2, paddingBottom: 10, color: "var(--ink-3)" }}>
+                        <span style={{ color: "var(--ink-3)" }}>amount chargeable (in words):</span>{" "}
+                        <i>{amountInWords(subtotal, { currency: o.currency || "INR" })}</i>
+                      </td>
+                    </tr>
+                  )}
                 </tfoot>
               </table>
             )}
           </Card>
+        )}
+
+        {tab === "header" && (
+          <OrderHeaderEditor order={o} onSaved={() => setBump((n) => n + 1)} />
         )}
 
         {tab === "margin" && (
@@ -1680,6 +1698,247 @@ const PipelineDiagnostics: React.FC<{
 
 
 export default WiredSOWorkspace;
+
+// Order header-fields editor. Mounted inside the SO workspace as the
+// `Header fields` tab. Carries the six new columns added by migration
+// 106: dispatch_mode, registration_serial_no, incoterm_code,
+// delivery_terms, vendor_code, delivery_point_contact_id. Each save
+// flows through the existing /api/orders/[id] PATCH endpoint with
+// APPROVE_INPUTS already extended to accept them.
+const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = ({ order, onSaved }) => {
+  const [draft, setDraft] = React.useState<any>({
+    dispatch_mode: order.dispatch_mode || "",
+    registration_serial_no: order.registration_serial_no || "",
+    incoterm_code: order.incoterm_code || order.incoterms || "",
+    delivery_terms: order.delivery_terms || "",
+    vendor_code: order.vendor_code || "",
+    delivery_point_contact_id: order.delivery_point_contact_id || "",
+    requisition_no: "",
+  });
+  const [reference, setReference] = React.useState<any>({ incoterms: [], contacts: [] });
+  const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
+        const session: any = (ObaraBackend as any)?.getSession?.() || null;
+        const headers: any = { "Content-Type": "application/json" };
+        if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+        if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+        const base = cfg.url.replace(/\/+$/, "");
+        const [refResp, contactsResp] = await Promise.all([
+          fetch(base + "/api/admin/item_reference", { headers }).then((r) => r.ok ? r.json() : { incoterms: [] }),
+          order.customer_id
+            ? fetch(base + "/api/customer_contacts?customer_id=" + order.customer_id, { headers }).then((r) => r.ok ? r.json() : { contacts: [] })
+            : Promise.resolve({ contacts: [] }),
+        ]);
+        if (cancelled) return;
+        setReference({
+          incoterms: refResp.incoterms || [],
+          contacts: contactsResp.contacts || contactsResp.rows || [],
+        });
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
+  }, [order.customer_id]);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const patch: any = {
+        dispatch_mode: draft.dispatch_mode || null,
+        registration_serial_no: draft.registration_serial_no || null,
+        incoterm_code: draft.incoterm_code || null,
+        delivery_terms: draft.delivery_terms || null,
+        vendor_code: draft.vendor_code || null,
+        delivery_point_contact_id: draft.delivery_point_contact_id || null,
+      };
+      await ObaraBackend?.orders?.update?.(order.id, patch);
+      window.notifySuccess?.("Header fields saved", order.po_number || order.id.slice(0, 8));
+      onSaved();
+    } catch (err: any) {
+      window.notifyError?.("Could not save header fields", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card title="Order header fields" eyebrow="dispatch . terms . vendor mapping . delivery contact">
+      <div className="row" style={{ gap: 14, flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 220px" }}>
+          <label className="mono-sm" style={{ color: "var(--ink-3)", display: "block", marginBottom: 4 }}>Dispatch mode</label>
+          <select className="select" value={draft.dispatch_mode} onChange={(e) => setDraft({ ...draft, dispatch_mode: e.target.value })}>
+            <option value="">Not set</option>
+            <option value="By Ocean">By Ocean</option>
+            <option value="By Air">By Air</option>
+            <option value="By Road">By Road</option>
+            <option value="By Rail">By Rail</option>
+            <option value="By Courier">By Courier</option>
+            <option value="Self Pickup">Self Pickup</option>
+          </select>
+        </div>
+        <div style={{ flex: "1 1 220px" }}>
+          <label className="mono-sm" style={{ color: "var(--ink-3)", display: "block", marginBottom: 4 }}>Incoterm</label>
+          <select className="select" value={draft.incoterm_code} onChange={(e) => setDraft({ ...draft, incoterm_code: e.target.value })}>
+            <option value="">Not set</option>
+            {(reference.incoterms || []).map((c: any) => (
+              <option key={c.code} value={c.code}>{c.code} . {c.label}</option>
+            ))}
+          </select>
+        </div>
+        <div style={{ flex: "1 1 220px" }}>
+          <label className="mono-sm" style={{ color: "var(--ink-3)", display: "block", marginBottom: 4 }}>Registration serial no</label>
+          <input className="input mono" value={draft.registration_serial_no} onChange={(e) => setDraft({ ...draft, registration_serial_no: e.target.value })} />
+        </div>
+        <div style={{ flex: "1 1 220px" }}>
+          <label className="mono-sm" style={{ color: "var(--ink-3)", display: "block", marginBottom: 4 }}>Vendor code (as buyer refers to us)</label>
+          <input className="input mono" value={draft.vendor_code} onChange={(e) => setDraft({ ...draft, vendor_code: e.target.value })} placeholder="e.g., TH1M" />
+        </div>
+        <div style={{ flex: "1 1 220px" }}>
+          <label className="mono-sm" style={{ color: "var(--ink-3)", display: "block", marginBottom: 4 }}>Delivery point contact</label>
+          <select className="select" value={draft.delivery_point_contact_id || ""} onChange={(e) => setDraft({ ...draft, delivery_point_contact_id: e.target.value })}>
+            <option value="">Not set</option>
+            {(reference.contacts || []).map((c: any) => (
+              <option key={c.id} value={c.id}>{c.full_name || c.email || c.id?.slice(0, 8)}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <label className="mono-sm" style={{ color: "var(--ink-3)", display: "block", marginBottom: 4 }}>Terms of delivery (free text)</label>
+        <textarea className="input" rows={3} style={{ width: "100%" }} value={draft.delivery_terms} onChange={(e) => setDraft({ ...draft, delivery_terms: e.target.value })} placeholder="e.g., Door delivery during business hours. Wooden box must remain dry." />
+      </div>
+      <div className="row" style={{ justifyContent: "flex-end", marginTop: 14 }}>
+        <Btn sm kind="primary" disabled={busy} onClick={save}>{busy ? "Saving..." : "Save header"}</Btn>
+      </div>
+
+      <div style={{ marginTop: 18, borderTop: "1px solid var(--hairline-2)", paddingTop: 14 }}>
+        <OrderLineTaxComponents orderId={order.id} lines={order.result?.salesOrder?.lineItems || []} />
+      </div>
+    </Card>
+  );
+};
+
+// Per-line tax + charge decomposition panel. Reads / writes
+// /api/admin/order_line_tax_components. The 15 component codes
+// (SGST, CGST, IGST, UTGST, Cess, Excise, Ed. Cess, S-VAT, C-VAT,
+// Tooling, P&F, Freight, Insurance, Handling, Others) are loaded
+// from the global reference table via /api/admin/item_reference.
+const OrderLineTaxComponents: React.FC<{ orderId: string; lines: any[] }> = ({ orderId, lines }) => {
+  const [components, setComponents] = React.useState<any[]>([]);
+  const [codes, setCodes] = React.useState<any[]>([]);
+  const [draft, setDraft] = React.useState<any>({ line_index: 0, component_code: "sgst", amount: 0 });
+
+  const headers = () => {
+    const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
+    const session: any = (ObaraBackend as any)?.getSession?.() || null;
+    const h: any = { "Content-Type": "application/json" };
+    if (session?.access_token) h["Authorization"] = "Bearer " + session.access_token;
+    if (cfg.tenantId) h["x-obara-tenant"] = cfg.tenantId;
+    return { h, base: cfg.url.replace(/\/+$/, "") };
+  };
+
+  const reload = React.useCallback(async () => {
+    try {
+      const { h, base } = headers();
+      const [tc, ref] = await Promise.all([
+        fetch(base + "/api/admin/order_line_tax_components?order_id=" + orderId, { headers: h }).then((r) => r.ok ? r.json() : { components: [] }),
+        fetch(base + "/api/admin/item_reference", { headers: h }).then((r) => r.ok ? r.json() : { tax_component_codes: [] }),
+      ]);
+      setComponents(tc.components || []);
+      setCodes(ref.tax_component_codes || []);
+    } catch (_) {}
+  }, [orderId]);
+
+  React.useEffect(() => { reload(); }, [reload]);
+
+  const save = async () => {
+    if (!draft.component_code || draft.line_index == null) return;
+    const { h, base } = headers();
+    const body = JSON.stringify({ order_id: orderId, components: [draft] });
+    try {
+      const r = await fetch(base + "/api/admin/order_line_tax_components", { method: "POST", headers: h, body });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      window.notifySuccess?.("Tax component saved", draft.component_code);
+      setDraft({ line_index: 0, component_code: "sgst", amount: 0 });
+      reload();
+    } catch (e: any) {
+      window.notifyError?.("Could not save tax component", e?.message || String(e));
+    }
+  };
+
+  const remove = async (id: string) => {
+    if (!window.confirm("Remove this tax component?")) return;
+    const { h, base } = headers();
+    try {
+      const r = await fetch(base + "/api/admin/order_line_tax_components?id=" + id, { method: "DELETE", headers: h });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      reload();
+    } catch (e: any) {
+      window.notifyError?.("Could not delete", e?.message || String(e));
+    }
+  };
+
+  return (
+    <>
+      <div className="row" style={{ alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
+        <div>
+          <div className="mono-sm" style={{ color: "var(--ink-3)" }}>Per-line tax + charge decomposition</div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>{components.length} component{components.length === 1 ? "" : "s"}</div>
+        </div>
+      </div>
+      <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 10 }}>
+        <div>
+          <label className="mono-sm">Line</label>
+          <select className="select" value={draft.line_index} onChange={(e) => setDraft({ ...draft, line_index: Number(e.target.value) })}>
+            {lines.length === 0 && <option value={0}>0</option>}
+            {lines.map((_, i) => <option key={i} value={i}>Line {i + 1}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="mono-sm">Component</label>
+          <select className="select" value={draft.component_code} onChange={(e) => setDraft({ ...draft, component_code: e.target.value })}>
+            {(codes.length > 0 ? codes : [{ code: "sgst", label: "SGST" }, { code: "cgst", label: "CGST" }, { code: "igst", label: "IGST" }]).map((c: any) => (
+              <option key={c.code} value={c.code}>{c.label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mono-sm">Amount</label>
+          <input className="input mono r" type="number" step="0.01" value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: Number(e.target.value) })} />
+        </div>
+        <div>
+          <label className="mono-sm">Rate %</label>
+          <input className="input mono r" type="number" step="0.01" value={draft.rate_pct ?? ""} onChange={(e) => setDraft({ ...draft, rate_pct: e.target.value === "" ? null : Number(e.target.value) })} />
+        </div>
+        <Btn sm kind="primary" onClick={save}>Add</Btn>
+      </div>
+      {components.length === 0 ? (
+        <div className="mono-sm" style={{ color: "var(--ink-3)" }}>No tax components on file. Add SGST / CGST / IGST / Tooling / P&F etc above.</div>
+      ) : (
+        <table className="tbl">
+          <thead><tr>
+            <th>Line</th><th>Component</th><th className="r">Rate %</th><th className="r">Amount</th><th></th>
+          </tr></thead>
+          <tbody>
+            {components.map((c) => (
+              <tr key={c.id}>
+                <td className="mono-sm">{c.line_index + 1}</td>
+                <td><span className="pri">{c.component_label || c.component_code.toUpperCase()}</span></td>
+                <td className="r mono">{c.rate_pct != null ? Number(c.rate_pct).toFixed(2) + "%" : "-"}</td>
+                <td className="r mono">{fmtINR(Number(c.amount))}</td>
+                <td className="r"><Btn sm kind="ghost" onClick={() => remove(c.id)}>remove</Btn></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </>
+  );
+};
 
 // ============================================================
 // Phase F.6 Tally tab. Renders voucher record + Tally-side state,

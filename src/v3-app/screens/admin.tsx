@@ -62,6 +62,8 @@ const ADMIN_CRUD_TABS = [
   { id: "doc_templates", label: "Document templates" },
   { id: "freight", label: "Freight rates" },
   { id: "pricing", label: "Pricing settings" },
+  { id: "vendor_codes", label: "Vendor codes" },
+  { id: "terms_packs", label: "Customer terms" },
   { id: "docai_cost", label: "DocAI cost" },
   { id: "diag",      label: "Diagnostics" },
 ];
@@ -3562,6 +3564,14 @@ const WiredAdminCRUD = () => {
           <PricingSettingsPanel />
         )}
 
+        {active === "vendor_codes" && (
+          <VendorCodesPanel />
+        )}
+
+        {active === "terms_packs" && (
+          <CustomerTermsPanel />
+        )}
+
         {active === "docai_cost" && (
           <DocAICostPanel />
         )}
@@ -4557,6 +4567,251 @@ const PricingSettingsPanel: React.FC = () => {
         <Btn sm kind="primary" onClick={save}>Save</Btn>
       </div>
     </Card>
+  );
+};
+
+// Vendor codes editor (migration 106). Records how each customer
+// refers to the tenant. Inbound POs can be matched on this code so
+// the intake flow can auto-resolve the customer.
+const VendorCodesPanel: React.FC = () => {
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<any>(null);
+  const [draft, setDraft] = useState<any>({ customer_id: "", vendor_code: "", is_primary: true, notes: "" });
+
+  const reload = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [cs, vc] = await Promise.all([
+        adminCrudFetch("/api/customers"),
+        adminCrudFetch("/api/admin/customer_vendor_codes"),
+      ]);
+      setCustomers(cs.customers || []);
+      setRows(vc.mappings || []);
+    } catch (e) { setError(e); } finally { setLoading(false); }
+  };
+  useEffect(() => { reload(); }, []);
+
+  const save = async () => {
+    if (!draft.customer_id || !draft.vendor_code) {
+      window.notifyWarn?.("Customer + vendor code required", "Pick a customer and enter the code they use for this tenant.");
+      return;
+    }
+    try {
+      await adminCrudFetch("/api/admin/customer_vendor_codes", { method: "POST", body: draft });
+      window.notifySuccess?.("Vendor code saved", draft.vendor_code);
+      setDraft({ customer_id: "", vendor_code: "", is_primary: true, notes: "" });
+      await reload();
+    } catch (e: any) { window.notifyError?.("Could not save", e?.message || String(e)); }
+  };
+
+  const remove = async (customer_id: string, vendor_code: string) => {
+    if (!window.confirm(`Delete vendor code "${vendor_code}"?`)) return;
+    try {
+      await adminCrudFetch(`/api/admin/customer_vendor_codes?customer_id=${customer_id}&vendor_code=${encodeURIComponent(vendor_code)}`, { method: "DELETE" });
+      await reload();
+    } catch (e: any) { window.notifyError?.("Could not delete", e?.message || String(e)); }
+  };
+
+  if (loading) return <Card><div className="body">Loading vendor codes...</div></Card>;
+  if (error) return <Banner kind="bad" icon={Icon.alert} title="Could not load" action={<Btn sm onClick={reload}>Retry</Btn>}><span className="mono-sm">{String((error as any)?.message || error)}</span></Banner>;
+
+  return (
+    <>
+      <Card title="Add vendor code" eyebrow="how each customer refers to this tenant as their supplier">
+        <div className="row" style={{ gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <label className="mono-sm">Customer</label>
+            <select className="select" value={draft.customer_id} onChange={(e) => setDraft({ ...draft, customer_id: e.target.value })}>
+              <option value="">Select...</option>
+              {customers.map((c: any) => <option key={c.id} value={c.id}>{c.customer_name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="mono-sm">Vendor code</label>
+            <input className="input mono" value={draft.vendor_code} onChange={(e) => setDraft({ ...draft, vendor_code: e.target.value })} placeholder="e.g., TH1M" />
+          </div>
+          <label className="mono-sm row" style={{ gap: 6, alignItems: "center" }}>
+            <input type="checkbox" checked={!!draft.is_primary} onChange={(e) => setDraft({ ...draft, is_primary: e.target.checked })} /> primary
+          </label>
+          <div style={{ flex: 1 }}>
+            <label className="mono-sm">Notes</label>
+            <input className="input" value={draft.notes} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} />
+          </div>
+          <Btn sm kind="primary" onClick={save}>{Icon.plus} Add</Btn>
+        </div>
+      </Card>
+      <Card flush>
+        {rows.length === 0 ? (
+          <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+            No vendor codes mapped yet. Add the supplier code each customer uses for your tenant.
+          </div>
+        ) : (
+          <table className="tbl">
+            <thead><tr><th>Customer</th><th>Vendor code</th><th>Primary</th><th>Notes</th><th></th></tr></thead>
+            <tbody>
+              {rows.map((r) => {
+                const c = customers.find((cc: any) => cc.id === r.customer_id);
+                return (
+                  <tr key={`${r.customer_id}:${r.vendor_code}`}>
+                    <td>{c?.customer_name || r.customer_id.slice(0, 8)}</td>
+                    <td className="mono"><span className="pri">{r.vendor_code}</span></td>
+                    <td>{r.is_primary ? <Chip k="good">primary</Chip> : "-"}</td>
+                    <td className="mono-sm">{r.notes || "-"}</td>
+                    <td className="r"><Btn sm kind="ghost" onClick={() => remove(r.customer_id, r.vendor_code)}>delete</Btn></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </Card>
+    </>
+  );
+};
+
+// Customer terms pack editor (migration 106). Per-customer T&C
+// library: HMIL's 15-clause boilerplate becomes a pack with 15
+// clauses. Surfaces on the order PDF and on the operator review
+// screen when an order is opened for that customer.
+const CustomerTermsPanel: React.FC = () => {
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [customerId, setCustomerId] = useState("");
+  const [packs, setPacks] = useState<any[]>([]);
+  const [clauses, setClauses] = useState<any[]>([]);
+  const [packDraft, setPackDraft] = useState<any>({ pack_name: "", version: 1, is_active: true });
+  const [clauseDraft, setClauseDraft] = useState<any>({ pack_id: "", clause_index: 1, heading: "", body: "", is_blocking: false });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<any>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const cs = await adminCrudFetch("/api/customers");
+        setCustomers(cs.customers || []);
+      } catch (e) { setError(e); } finally { setLoading(false); }
+    })();
+  }, []);
+
+  const reloadForCustomer = async (cid: string) => {
+    if (!cid) return;
+    try {
+      const r = await adminCrudFetch(`/api/admin/customer_terms?customer_id=${cid}`);
+      setPacks(r.packs || []);
+      setClauses(r.clauses || []);
+    } catch (e) { setError(e); }
+  };
+
+  useEffect(() => { if (customerId) reloadForCustomer(customerId); }, [customerId]);
+
+  const savePack = async () => {
+    if (!packDraft.pack_name.trim()) { window.notifyWarn?.("Pack name required", "Give the pack a label."); return; }
+    try {
+      await adminCrudFetch("/api/admin/customer_terms/pack", { method: "POST", body: { ...packDraft, customer_id: customerId } });
+      window.notifySuccess?.("Pack saved", packDraft.pack_name);
+      setPackDraft({ pack_name: "", version: 1, is_active: true });
+      await reloadForCustomer(customerId);
+    } catch (e: any) { window.notifyError?.("Could not save", e?.message || String(e)); }
+  };
+
+  const saveClause = async () => {
+    if (!clauseDraft.pack_id || !clauseDraft.body.trim()) { window.notifyWarn?.("Pack and body required", "Pick a pack and enter the clause text."); return; }
+    try {
+      await adminCrudFetch("/api/admin/customer_terms/clause", { method: "POST", body: clauseDraft });
+      window.notifySuccess?.("Clause saved", `#${clauseDraft.clause_index}`);
+      setClauseDraft({ pack_id: clauseDraft.pack_id, clause_index: (clauseDraft.clause_index || 0) + 1, heading: "", body: "", is_blocking: false });
+      await reloadForCustomer(customerId);
+    } catch (e: any) { window.notifyError?.("Could not save", e?.message || String(e)); }
+  };
+
+  if (loading) return <Card><div className="body">Loading customers...</div></Card>;
+  if (error) return <Banner kind="bad" icon={Icon.alert} title="Could not load"><span className="mono-sm">{String((error as any)?.message || error)}</span></Banner>;
+
+  return (
+    <>
+      <Card title="Customer terms packs" eyebrow="HMIL-style T&C boilerplate, per customer">
+        <div className="row" style={{ gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <label className="mono-sm">Customer</label>
+            <select className="select" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+              <option value="">Select customer...</option>
+              {customers.map((c: any) => <option key={c.id} value={c.id}>{c.customer_name}</option>)}
+            </select>
+          </div>
+        </div>
+      </Card>
+      {customerId && (
+        <>
+          <Card title="Add pack" eyebrow="group clauses under a named version">
+            <div className="row" style={{ gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+              <div><label className="mono-sm">Pack name</label><input className="input" value={packDraft.pack_name} onChange={(e) => setPackDraft({ ...packDraft, pack_name: e.target.value })} placeholder="e.g., HMIL Standard T&C" /></div>
+              <div><label className="mono-sm">Version</label><input className="input mono r" type="number" value={packDraft.version} onChange={(e) => setPackDraft({ ...packDraft, version: Number(e.target.value) })} /></div>
+              <Btn sm kind="primary" onClick={savePack}>Add pack</Btn>
+            </div>
+          </Card>
+          {packs.length > 0 && (
+            <Card flush>
+              <table className="tbl">
+                <thead><tr><th>Pack</th><th className="r">Version</th><th className="r">Active</th><th className="r">Clauses</th></tr></thead>
+                <tbody>
+                  {packs.map((p) => (
+                    <tr key={p.id}>
+                      <td><span className="pri">{p.pack_name}</span></td>
+                      <td className="r mono">{p.version}</td>
+                      <td className="r">{p.is_active ? "yes" : "-"}</td>
+                      <td className="r">{clauses.filter((c) => c.pack_id === p.id).length}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+          )}
+          {packs.length > 0 && (
+            <Card title="Add clause" eyebrow="one row per numbered paragraph in the customer's T&C">
+              <div className="row" style={{ gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+                <div><label className="mono-sm">Pack</label>
+                  <select className="select" value={clauseDraft.pack_id} onChange={(e) => setClauseDraft({ ...clauseDraft, pack_id: e.target.value })}>
+                    <option value="">Select...</option>
+                    {packs.map((p) => <option key={p.id} value={p.id}>{p.pack_name} v{p.version}</option>)}
+                  </select>
+                </div>
+                <div><label className="mono-sm">Clause #</label><input className="input mono r" type="number" value={clauseDraft.clause_index} onChange={(e) => setClauseDraft({ ...clauseDraft, clause_index: Number(e.target.value) })} /></div>
+                <div style={{ flex: 1 }}><label className="mono-sm">Heading</label><input className="input" value={clauseDraft.heading} onChange={(e) => setClauseDraft({ ...clauseDraft, heading: e.target.value })} placeholder="e.g., GST input credit endorsement" /></div>
+                <label className="mono-sm row" style={{ gap: 6, alignItems: "center" }}>
+                  <input type="checkbox" checked={!!clauseDraft.is_blocking} onChange={(e) => setClauseDraft({ ...clauseDraft, is_blocking: e.target.checked })} /> blocking
+                </label>
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <label className="mono-sm">Body</label>
+                <textarea className="input" rows={3} style={{ width: "100%" }} value={clauseDraft.body} onChange={(e) => setClauseDraft({ ...clauseDraft, body: e.target.value })} />
+              </div>
+              <div className="row" style={{ justifyContent: "flex-end", marginTop: 8 }}>
+                <Btn sm kind="primary" onClick={saveClause}>Add clause</Btn>
+              </div>
+            </Card>
+          )}
+          {clauses.length > 0 && (
+            <Card flush>
+              <table className="tbl">
+                <thead><tr><th className="r">#</th><th>Heading</th><th>Body</th><th className="r">Blocking</th></tr></thead>
+                <tbody>
+                  {clauses.map((c) => (
+                    <tr key={c.id}>
+                      <td className="r mono">{c.clause_index}</td>
+                      <td className="mono-sm"><span className="pri">{c.heading || "-"}</span></td>
+                      <td style={{ maxWidth: 480, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.body}</td>
+                      <td className="r">{c.is_blocking ? <Chip k="warn">blocking</Chip> : "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+          )}
+        </>
+      )}
+    </>
   );
 };
 

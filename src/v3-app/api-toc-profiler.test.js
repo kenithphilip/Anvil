@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../api/_lib/anthropic.js", () => ({
   callAnthropic: vi.fn(),
+  cacheableSystem: (s) => s == null ? null : [{ type: "text", text: String(s) }],
+  cacheableTools: (t) => t,
 }));
 
 import { callAnthropic } from "../api/_lib/anthropic.js";

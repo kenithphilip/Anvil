@@ -39,6 +39,47 @@ export const applyFirewall = (system) => {
   return PROMPT_FIREWALL_HEADER + "\n\n" + String(system);
 };
 
+// Phase F #24: prompt caching.
+//
+// Anthropic Sonnet 4.6 supports prompt caching with a 5-minute
+// ephemeral TTL. The system prompt and the tool schema are
+// stable; the per-document content is the only varying piece.
+// Caching the stable parts cuts input-token cost by ~90% on
+// consecutive extractions inside the cache window (e.g., when an
+// operator runs extraction twice on the same PO or batches
+// several customer POs back-to-back).
+//
+// Use these helpers in adapter modules so the caching pattern
+// stays in one place:
+//
+//   const system = cacheableSystem(SYSTEM_PROMPT);
+//   const tools  = cacheableTools([EXTRACT_TOOL]);
+//   await callAnthropic({ ..., system, tools });
+//
+// The applyFirewall step preserves arrays, so a cached system
+// block survives the firewall prefix injection. detectCacheBreakpoint
+// notices the cache_control marker and trips the
+// extended-cache-ttl-2025-04-11 beta header on the request.
+export const cacheableSystem = (text) => {
+  if (text == null) return null;
+  if (Array.isArray(text)) return text;
+  return [{ type: "text", text: String(text), cache_control: { type: "ephemeral" } }];
+};
+
+export const cacheableTools = (tools) => {
+  if (!Array.isArray(tools) || !tools.length) return tools;
+  // Cache marker on the LAST tool covers the entire tool array
+  // per Anthropic's spec. Don't add it to every tool: only the
+  // last entry's marker matters; markers on earlier tools are
+  // ignored.
+  const last = tools[tools.length - 1];
+  if (last && last.cache_control) return tools;
+  return [
+    ...tools.slice(0, -1),
+    { ...last, cache_control: { type: "ephemeral" } },
+  ];
+};
+
 const redactText = (text, rules) => {
   let out = String(text || "");
   REDACTION_PATTERNS.forEach((rule) => { out = out.replace(rule.re, rule.replacement); });

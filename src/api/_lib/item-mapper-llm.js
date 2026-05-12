@@ -21,7 +21,7 @@
 // trip with ~8 candidates as context (small prompt, fast model).
 // Total per call: ~10 round-trips, well under 30k tokens.
 
-import { callAnthropic } from "./anthropic.js";
+import { callAnthropic, cacheableSystem, cacheableTools } from "./anthropic.js";
 
 const SIGNIFICANT_WORD = /[a-z0-9]{3,}/g;
 const STOP_WORDS = new Set([
@@ -148,17 +148,20 @@ const askLlmForLine = async (tenantId, line, candidates) => {
   if (!candidates.length) return [];
   const candidateIds = new Set(candidates.map((c) => c.id));
   const userPrompt = buildPrompt(line, candidates);
+  // Phase F #24: cache the system prompt + tool schema. With 10
+  // lines per batch, cache hits 9 times out of 10 calls so the
+  // input-token discount compounds.
   const resp = await callAnthropic({
     tenantId,
     purpose: "extraction",
     tier: "preflight",
     max_tokens: 1500,
     temperature: 0,
-    system: SYSTEM_PROMPT,
+    system: cacheableSystem(SYSTEM_PROMPT),
     messages: [
       { role: "user", content: [{ type: "text", text: userPrompt }] },
     ],
-    tools: [SUGGEST_TOOL],
+    tools: cacheableTools([SUGGEST_TOOL]),
     tool_choice: { type: "tool", name: SUGGEST_TOOL.name },
   });
   if (!resp || !resp.ok) return [];

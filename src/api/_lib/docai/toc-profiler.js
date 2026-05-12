@@ -22,7 +22,7 @@
 // every page" so a profiler failure can't block extraction. The
 // budget cost is the only thing lost.
 
-import { callAnthropic } from "../anthropic.js";
+import { callAnthropic, cacheableSystem, cacheableTools } from "../anthropic.js";
 
 const PROFILER_SYSTEM_PROMPT = [
   "You are a document triage classifier for a B2B sales-ops platform.",
@@ -174,15 +174,20 @@ export const profileDocument = async ({ source, tenantId, minConfidence = 0.6, s
   }
 
   const messages = buildProfilerMessage(source);
+  // Phase F #24: cache the system prompt + tool schema. Both
+  // are static across every profiler call, so the cache hits on
+  // the 2nd-Nth call within the 5-minute TTL and the input-token
+  // cost drops ~90%. The PDF block is per-call and stays
+  // uncached.
   const resp = await callAnthropic({
     tenantId,
     purpose: "extraction",
     tier: "preflight",
     max_tokens: 4000,
     temperature: 0,
-    system: PROFILER_SYSTEM_PROMPT,
+    system: cacheableSystem(PROFILER_SYSTEM_PROMPT),
     messages,
-    tools: [PROFILER_TOOL],
+    tools: cacheableTools([PROFILER_TOOL]),
     tool_choice: { type: "tool", name: PROFILER_TOOL.name },
     svc,
   });

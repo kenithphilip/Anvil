@@ -24,6 +24,7 @@ import * as gemini from "./gemini.js";
 import { allowedToCall, recordCall } from "../cost_guard.js";
 import { serviceClient } from "../supabase.js";
 import { rankAdaptersForCustomer } from "./adapter-learning.js";
+import { readPdfBias, composeOrderWithBias } from "./pdf-metadata.js";
 
 const ADAPTERS = {
   reducto,
@@ -146,6 +147,27 @@ export const dispatchExtract = async ({ source, settings, customerId, hints }) =
   // most one Postgres select per cache window.
   const defaultStaticOrder = ["gemini", "docling", "marker", "unstructured", "azure_di", "reducto", "claude"];
   let order = settings?.docai_provider_order || defaultStaticOrder;
+  // Phase F #2: PDF metadata-driven adapter bias. Read /Producer
+  // and /Creator from the input PDF; if they match a known
+  // pattern (SAP, Tally, Microsoft Word, Adobe Acrobat, etc.),
+  // bias the adapter order toward the engines that consistently
+  // win on that layout family. Layered with #6 below: tenant
+  // override > customer learning > PDF bias > static default.
+  let pdfBias = null;
+  if (!settings?.docai_provider_order && source && source.bytes) {
+    const mimeStr = String(source.mime || source.contentType || "").toLowerCase();
+    const looksPdf = mimeStr === "application/pdf" || mimeStr.endsWith("/pdf")
+      || (typeof source.filename === "string" && /\.pdf$/i.test(source.filename));
+    if (looksPdf) {
+      try { pdfBias = await readPdfBias(source.bytes); } catch (_e) { pdfBias = null; }
+      if (pdfBias?.bias_adapters?.length) {
+        order = composeOrderWithBias(order, pdfBias.bias_adapters);
+      }
+    }
+  }
+  // Per-customer adapter learning (Phase E1) reorders on top of
+  // the metadata bias when we have enough observations. Skipped
+  // if tenant pinned an explicit order or no customerId.
   if (!settings?.docai_provider_order && customerId && settings?.tenant_id) {
     try {
       let learnSvc = null;
@@ -155,10 +177,10 @@ export const dispatchExtract = async ({ source, settings, customerId, hints }) =
           svc: learnSvc,
           tenantId: settings.tenant_id,
           customerId,
-          defaultOrder: defaultStaticOrder,
+          defaultOrder: order, // start from the bias-adjusted order
         });
       }
-    } catch (_e) { /* fall back to static order on any error */ }
+    } catch (_e) { /* fall back to bias-adjusted or static order on any error */ }
   }
   const attempts = [];
   let last = null;

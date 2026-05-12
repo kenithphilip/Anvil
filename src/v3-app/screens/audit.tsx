@@ -66,6 +66,25 @@ const detailSummary = (detail) => {
   }
 };
 
+// Compact preview for before_payload / after_payload columns.
+// audit_events.{before,after}_payload are JSONB blobs that can run
+// hundreds of characters; clipping to 40 keeps the row scannable.
+// The full value rides on the cell's title attribute so hover
+// reveals the rest, matching the existing detail column pattern.
+// Empty objects + null both render as the no-change em-dash so the
+// operator does not mistake a benign empty insert for missing data.
+const payloadPreview = (p) => {
+  if (p == null) return { short: "—", full: "" };
+  if (typeof p === "string") return { short: p.length > 40 ? p.slice(0, 40) + "…" : p, full: p };
+  try {
+    const json = JSON.stringify(p);
+    if (!json || json === "{}" || json === "[]" || json === "null") return { short: "—", full: json };
+    return { short: json.length > 40 ? json.slice(0, 40) + "…" : json, full: json };
+  } catch (_) {
+    return { short: String(p), full: String(p) };
+  }
+};
+
 const downloadBlob = (filename, contents, mime) => {
   const blob = new Blob([contents], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -203,12 +222,23 @@ const WiredAudit = () => {
                 <th scope="col">Action</th>
                 <th scope="col">Object type</th>
                 <th scope="col">Object id</th>
+                {/* Before / After columns surface the JSONB payloads
+                    that recordAudit() has been writing into
+                    audit_events since migration 001. Operators
+                    investigating "who changed this and to what"
+                    previously had to open the Detail field's tooltip
+                    and squint. Both cells truncate to ~40 chars with
+                    full JSON on hover via the title attribute. */}
+                <th scope="col">Before</th>
+                <th scope="col">After</th>
                 <th scope="col">Detail</th>
                 <th scope="col" />
               </tr></thead>
               <tbody>
                 {filtered.slice(0, 200).map((r, i) => {
                   const target = openAuditTarget(r.object_type, r.object_id);
+                  const beforeP = payloadPreview(r.before_payload);
+                  const afterP = payloadPreview(r.after_payload);
                   return (
                     <tr key={r.id || i}>
                       <td className="mono-sm">{r.created_at ? new Date(r.created_at).toLocaleString("en-IN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" }) : "—"}</td>
@@ -216,6 +246,8 @@ const WiredAudit = () => {
                       <td className="mono"><span className="pri">{r.action || "—"}</span></td>
                       <td className="mono-sm">{r.object_type || "—"}</td>
                       <td className="mono-sm">{truncId(r.object_id)}</td>
+                      <td className="mono-sm" title={beforeP.full}>{beforeP.short}</td>
+                      <td className="mono-sm" title={afterP.full}>{afterP.short}</td>
                       <td className="mono-sm" title={typeof r.detail === "object" ? JSON.stringify(r.detail) : String(r.detail || "")}>
                         {detailSummary(r.detail)}
                       </td>

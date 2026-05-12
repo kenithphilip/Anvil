@@ -34,13 +34,10 @@ alter table eval_runs
   add column if not exists server_verified boolean not null default false;
 
 comment on column eval_runs.attestation_hmac is
-  'HMAC-SHA-256 of the canonical receipt for this run. Null on rows ' ||
-  'created before migration 113 or on caller-asserted runs that did not ' ||
-  'go through runExtractionPipeline server-side.';
+  'HMAC-SHA-256 of the canonical receipt for this run. Null on rows created before migration 113 or on caller-asserted runs that did not go through runExtractionPipeline server-side.';
 
 comment on column eval_runs.server_verified is
-  'TRUE when the eval invoked runExtractionPipeline server-side and ' ||
-  'signed the row attestation_hmac. FALSE for legacy caller-asserted runs.';
+  'TRUE when the eval invoked runExtractionPipeline server-side and signed the row attestation_hmac. FALSE for legacy caller-asserted runs.';
 
 create index if not exists eval_runs_verified_idx
   on eval_runs (server_verified, created_at desc);

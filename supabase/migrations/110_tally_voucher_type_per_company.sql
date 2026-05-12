@@ -36,10 +36,7 @@ alter table tally_companies
   check (default_sales_voucher_type in ('Sales', 'SalesOrder'));
 
 comment on column tally_companies.default_sales_voucher_type is
-  'Tally voucher type used when emitting a sales-order voucher. ' ||
-  'Sales: accounting voucher that books revenue + GST output (default). ' ||
-  'SalesOrder: non-accounting tracker; use only when the sale is booked ' ||
-  'separately at delivery via a Sales voucher.';
+  'Tally voucher type used when emitting a sales-order voucher. Sales: accounting voucher that books revenue + GST output (default). SalesOrder: non-accounting tracker; use only when the sale is booked separately at delivery via a Sales voucher.';
 
 -- Backfill: existing rows that pre-date this column get the safe
 -- default. The column has a default but a no-op upgrade on a row

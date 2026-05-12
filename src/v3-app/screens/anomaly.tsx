@@ -190,6 +190,38 @@ const WiredAnomaly = () => {
               <KPI lbl="Credit" v={String(RULE_CATALOG.filter((r) => r.bucket === "Credit").length)} />
               <KPI lbl="Alias / Hygiene" v={String(RULE_CATALOG.filter((r) => r.bucket === "Alias" || r.bucket === "Hygiene").length)} />
             </KPIRow>
+            {/* Model calibration strip from the design package's
+                "model card." Strict precision/recall would need a
+                labelled ground-truth set we do not have today, so
+                we surface operator-confirmed rate (resolved /
+                (resolved + suppressed)) as the closest honest
+                proxy. Suppression rate proxies false-positive
+                rate; the target = 5% bound is the same one the
+                landing's product pillar quotes. */}
+            {(() => {
+              const resolved = all.filter((r) => r.resolved === true || (r.status || "").toLowerCase() === "resolved").length;
+              const suppressed = all.filter((r) => r.suppressed === true || (r.status || "").toLowerCase() === "suppressed").length;
+              const actioned = resolved + suppressed;
+              const opPrecision = actioned > 0 ? Math.round((resolved / actioned) * 100) : null;
+              const supRate = all.length > 0 ? Math.round((suppressed / all.length) * 100) : null;
+              return (
+                <KPIRow cols={3}>
+                  <KPI
+                    lbl="Operator-confirmed"
+                    v={opPrecision == null ? "—" : opPrecision + "%"}
+                    d={opPrecision == null ? "no operator actions yet" : `${resolved} resolved of ${actioned} actioned`}
+                    dKind={opPrecision == null ? "" : (opPrecision >= 90 ? "up" : opPrecision < 70 ? "down" : "")}
+                  />
+                  <KPI
+                    lbl="Suppression rate"
+                    v={supRate == null ? "—" : supRate + "%"}
+                    d={supRate == null ? "no findings yet" : `target ≤ 5% · ${suppressed} suppressed of ${all.length}`}
+                    dKind={supRate == null ? "" : (supRate > 5 ? "down" : "up")}
+                  />
+                  <KPI lbl="Findings (lifetime)" v={String(all.length)} d={`${resolved} resolved · ${suppressed} suppressed`} />
+                </KPIRow>
+              );
+            })()}
             <Card title="Rule library" eyebrow={RULE_CATALOG.length + " rules · 5 buckets"} flush>
               <table className="tbl">
                 <thead><tr>

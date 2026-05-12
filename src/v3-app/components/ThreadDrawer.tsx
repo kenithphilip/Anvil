@@ -28,7 +28,12 @@ export interface ThreadDrawerProps {
 
 interface ThreadEvent {
   ts: string | null;
-  kind: "PO" | "QU" | "AU" | "AP" | "TA" | "SH" | "CM" | "EI" | "PR" | "OT";
+  // Two-letter timeline codes from the design package. The 8
+  // canonical ones (PO / QU / VA / AP / TA / SP / SH / EI) flow
+  // left-to-right in the strip. AU / CM / PR / OT are catch-all
+  // bins for audit / communication / processing / other events
+  // that don't map cleanly to a numbered stage.
+  kind: "PO" | "QU" | "VA" | "AP" | "TA" | "SP" | "SH" | "EI" | "AU" | "CM" | "PR" | "OT";
   title: string;
   detail?: string;
 }
@@ -47,7 +52,13 @@ const classify = (action: string): ThreadEvent["kind"] => {
   if (a.includes("tally"))                                  return "TA";
   if (a.includes("shipment"))                               return "SH";
   if (a.includes("einvoice") || a.includes("e_invoice"))    return "EI";
-  if (a.includes("source_po") || a.includes("source-po"))   return "PR";
+  // SP - the upstream purchase order to the supplier (a separate
+  // doc from the customer PO that opened the case). The audit
+  // verbs landed in src/api/source_pos/.
+  if (a.includes("source_po") || a.includes("source-po"))   return "SP";
+  // VA - validation. Covers pre-push rule findings + the
+  // re-validation step that runs after operator edits.
+  if (a.includes("validat") || a.includes("finding") || a.includes("rule_fire")) return "VA";
   if (a.includes("po"))                                     return "PO";
   if (a.includes("quote"))                                  return "QU";
   return "AU";

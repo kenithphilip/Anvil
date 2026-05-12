@@ -210,7 +210,7 @@ const WiredCustomers = () => {
             {selectedProfile && (
               <>
                 <div className="divider" />
-                <div className="row gap-md" style={{ marginTop: 10 }}>
+                <div className="row gap-md" style={{ marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
                   <Chip k={selectedProfile.trusted ? "good" : "warn"}>
                     {selectedProfile.trusted ? "trusted profile" : "profile pending review"}
                   </Chip>
@@ -220,6 +220,43 @@ const WiredCustomers = () => {
                   {selectedProfile.last_format_changed && (
                     <Chip k="warn">format changed recently</Chip>
                   )}
+                </div>
+                {/* Design-package "Format profile · v4" card surfaced
+                    layout fingerprint + extractor / backend path so
+                    operators can see at a glance which recipe is
+                    handling this customer's POs. Both come straight
+                    out of customer_format_profiles.{fingerprint,
+                    recipe} (migration 001). The fingerprint preview
+                    is the first 8 hex chars of a sha-style digest;
+                    full JSON is one click away via the version
+                    drawer on the profile_versions endpoint. */}
+                <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+                  <KV rows={[
+                    ["Layout fingerprint", (() => {
+                      const fp = selectedProfile.fingerprint || {};
+                      const keys = Object.keys(fp);
+                      if (!keys.length) return <span style={{ color: "var(--ink-3)" }}>—</span>;
+                      const stamp = (fp.sha || fp.hash || fp.digest || "");
+                      const preview = stamp ? String(stamp).slice(0, 12) : `${keys.length} field${keys.length === 1 ? "" : "s"}`;
+                      return <span className="mono-sm" title={JSON.stringify(fp)}>{preview}</span>;
+                    })()],
+                    ["Extractor / backend", (() => {
+                      const r = selectedProfile.recipe || {};
+                      const backend = r.extractor || r.backend || r.pipeline || r.adapter;
+                      if (!backend) return <span style={{ color: "var(--ink-3)" }}>—</span>;
+                      return <span className="mono-sm">{String(backend)}</span>;
+                    })()],
+                  ]} />
+                  <KV rows={[
+                    ["Learned rules", (() => {
+                      const lr = selectedProfile.learned_rules || {};
+                      const n = Array.isArray(lr) ? lr.length : Object.keys(lr).length;
+                      return <span className="mono-sm">{n} rule{n === 1 ? "" : "s"}</span>;
+                    })()],
+                    ["Last updated", selectedProfile.updated_at
+                      ? <span className="mono-sm">{new Date(selectedProfile.updated_at).toISOString().slice(0, 10)}</span>
+                      : <span style={{ color: "var(--ink-3)" }}>—</span>],
+                  ]} />
                 </div>
               </>
             )}

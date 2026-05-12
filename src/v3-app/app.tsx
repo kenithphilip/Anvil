@@ -146,7 +146,19 @@ const ResetPasswordScreen = React.lazy(() => import("./screens/reset-password"))
 const PRE_AUTH_ROUTES = new Set(["reset", "signin"]);
 
 export default function App() {
-  useRerenderOnEvents(["rbac:change", "prefs:change", "popstate", "hashchange"]);
+  // Bug fix May 2026 (audit, "signin sometimes redirects to
+  // landing"): hashchange + popstate used to trigger a generic
+  // force-rerender here AND a route-syncing setRoute in the
+  // dedicated useEffect below. Some browsers (older Safari,
+  // Firefox in certain configs) fire popstate ahead of
+  // hashchange on hash-only navigation. The force-rerender ran
+  // with stale `route` state, the auth gate fell through to
+  // LandingScreen, then the setRoute caught up and the screen
+  // flipped to SignInScreen. Result: a perceptible "redirect
+  // back to landing" flash. Drop hashchange/popstate from the
+  // force list; the route-syncing useEffect (now bound to BOTH
+  // events) is the single source of truth.
+  useRerenderOnEvents(["rbac:change", "prefs:change"]);
 
   const [route, setRoute] = useState(parseRoute);
   const [cmdkOpen, setCmdk] = useState(false);
@@ -179,6 +191,12 @@ export default function App() {
   }, []);
 
   // Hash-change keeps the route in sync with deep links.
+  // Binds to BOTH hashchange and popstate. Some browsers fire
+  // popstate (in addition to or instead of hashchange) on hash-
+  // only navigation. Binding both ensures route state stays in
+  // sync regardless of which event the browser dispatches, and
+  // avoids the stale-state flash described in the
+  // useRerenderOnEvents comment above.
   useEffect(() => {
     const onHash = () => {
       const hash = window.location.hash || "";
@@ -197,7 +215,11 @@ export default function App() {
       if (id && RESOLVERS[id] && id !== route) setRoute(id);
     };
     window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+    window.addEventListener("popstate", onHash);
+    return () => {
+      window.removeEventListener("hashchange", onHash);
+      window.removeEventListener("popstate", onHash);
+    };
   }, [route]);
 
   // Snapshot the intended route on first load so the post-auth

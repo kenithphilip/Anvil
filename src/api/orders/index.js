@@ -2,6 +2,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
+import { parsePoDate } from "../_lib/parse-date.js";
 
 const STATUS_VALUES = new Set(["DRAFT", "PENDING_REVIEW", "APPROVED", "BLOCKED", "DUPLICATE", "REUSED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED", "CANCELLED"]);
 
@@ -30,9 +31,13 @@ const orderRow = (ctx, body) => {
     customer_id: body.customer_id || null,
     status: STATUS_VALUES.has(body.status) ? body.status : "DRAFT",
     po_number: body.po_number || null,
-    po_date: body.po_date || null,
+    // Audit fix May 2026: callers (so-intake auto-detect, ERP
+     // adapters) may supply DD/MM/YYYY or DD-MM-YYYY date strings.
+     // Postgres `date` columns reject those; normalise here so
+     // the order create never 500s on a locale-formatted value.
+     po_date: parsePoDate(body.po_date),
     quote_number: body.quote_number || null,
-    quote_date: body.quote_date || null,
+    quote_date: parsePoDate(body.quote_date),
     doc_fingerprint: body.doc_fingerprint || null,
     result: body.result || {},
     preflight_payload: body.preflight_payload || {},

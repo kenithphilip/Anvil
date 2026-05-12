@@ -4,6 +4,7 @@ import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { DocCropper } from "../components/DocCropper";
 import { stampOcrSources } from "../lib/field-sources";
+import { parsePoDate } from "../lib/parse-date";
 
 // ============================================================
 // ANVIL v3 — wired SO Intake
@@ -821,7 +822,13 @@ const WiredSOIntake = () => {
        const headerColumnDefaults: Record<string, any> = {};
        if (vendorCodeFromOcr) headerColumnDefaults.vendor_code = vendorCodeFromOcr;
        const poNumberFromOcr = (extractedCustomer?.po_number || "").toString().trim();
-       const poDateFromOcr = (extractedCustomer?.po_date || "").toString().trim();
+       // Audit fix May 2026: the extractor returns po_date "as
+       // written" on the PO, which for Indian customers is
+       // DD/MM/YYYY. Postgres `date` columns only accept ISO
+       // YYYY-MM-DD, so the unnormalised value crashed the order
+       // create with "date/time field value out of range". parsePoDate
+       // returns null for anything it cannot confidently coerce.
+       const poDateFromOcr = parsePoDate(extractedCustomer?.po_date);
        if (poNumberFromOcr) headerColumnDefaults.po_number = poNumberFromOcr;
        if (poDateFromOcr) headerColumnDefaults.po_date = poDateFromOcr;
 

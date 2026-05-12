@@ -94,15 +94,24 @@ const WiredSOList = () => {
   const completed = (orders.rows || []).filter((o) => o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED");
   const sumValue = completed.reduce((s, o) => s + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
   const blocked = (orders.rows || []).filter((o) => o.status === "BLOCKED").length;
+  // Push success rate: of every order that has been pushed (or
+  // failed to push), what share succeeded. RECONCILED counts as
+  // success because it only reaches that status post-push.
+  const pushedRows = (orders.rows || []).filter((o) => ["EXPORTED_TO_TALLY", "RECONCILED", "FAILED_TALLY_IMPORT"].includes(o.status));
+  const pushedSuccess = pushedRows.filter((o) => o.status !== "FAILED_TALLY_IMPORT").length;
+  const pushSuccessPct = pushedRows.length > 0 ? Math.round((pushedSuccess / pushedRows.length) * 100) : null;
 
-  // Audit P13.B.2.1: cycle median (created_at -> updated_at on
-  // completed orders), and ₹ pushed MTD. The audit's plan called
-  // for 4 numeric KPIs (cycle median, first-pass rate, pushed
-  // MTD, avg margin); we ship the two we can compute from the
-  // /api/orders payload + skip first-pass-rate (no
-  // was_manually_edited flag in schema) and avg-margin (no
-  // margin_pct field). The plan explicitly says "do not
-  // fabricate" so leaving the slot honest is correct.
+  // Audit P13.B.2.1 follow-up (May 2026): the design package
+  // calls for 5 KPIs (Cycle median, First-pass rate, Push success,
+  // Pushed MTD, Avg margin). First-pass rate needs a
+  // `was_manually_edited` line-item flag the schema does not
+  // carry; avg margin needs a `margin_pct` column we don't
+  // populate. The plan explicitly says "do not fabricate", so we
+  // ship the 3 metrics we can compute honestly (cycle median,
+  // push success, pushed MTD) plus the operationally useful
+  // Blocked count, in cols={4}. Total + In flight were dropped
+  // because they're already in the WSTitle meta strip
+  // ("N total · N active").
   const cycleMins = completed
     .map((o) => {
       const c = o.created_at ? new Date(o.created_at).getTime() : 0;
@@ -151,13 +160,17 @@ const WiredSOList = () => {
       />
 
       <div className="ws-content">
-        <KPIRow cols={5}>
-          <KPI lbl="Total" v={String(total)} d="all-time in scope" />
-          <KPI lbl="In flight" v={String(inFlight)} d="not yet shipped" live={inFlight > 0} />
+        <KPIRow cols={4}>
           <KPI
             lbl="Cycle median"
             v={cycleMedian == null ? "—" : (cycleMedian < 60 ? cycleMedian + "m" : Math.round(cycleMedian / 60) + "h")}
             d={cycleMedian == null ? "no completed orders" : `${completed.length} completed orders`}
+          />
+          <KPI
+            lbl="Push success"
+            v={pushSuccessPct == null ? "—" : pushSuccessPct + "%"}
+            d={pushSuccessPct == null ? "no pushes yet" : `${pushedSuccess} of ${pushedRows.length} pushes`}
+            dKind={pushSuccessPct == null ? "" : (pushSuccessPct >= 95 ? "up" : pushSuccessPct < 80 ? "down" : "")}
           />
           <KPI lbl="₹ pushed MTD" v={fmtINRShort(pushedValueMtd)} d={`${pushedMtd.length} this month`} dKind={pushedMtd.length ? "up" : ""} />
           <KPI lbl="Blocked" v={String(blocked)} d="needs attention" dKind={blocked ? "down" : ""} />

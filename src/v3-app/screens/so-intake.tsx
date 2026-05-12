@@ -3,6 +3,7 @@ import { Banner, Btn, Card, Chip, Dot, KV, Steps, WSTitle } from "../lib/primiti
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { DocCropper } from "../components/DocCropper";
+import { stampOcrSources } from "../lib/field-sources";
 
 // ============================================================
 // ANVIL v3 — wired SO Intake
@@ -744,14 +745,32 @@ const WiredSOIntake = () => {
       // result.salesOrder.customer so the workspace's right-hand
       // panel can render the PO header values regardless of which
       // customer record was matched.
+      // Per-line provenance: stamp every populated field on each
+      // extracted line as `ocr`. The recon table reads this map and
+      // renders an "OCR" pill next to fields the operator has not
+      // yet edited; flipping a value to `human` happens at save
+      // time in the workspace.
+      const stampedLines = (extractedLines || []).map((l: any) => stampOcrSources(l));
+      const headerFieldSources: Record<string, "ocr" | "human"> = {};
+      const vendorCodeFromOcr = (extractedCustomer && (extractedCustomer.vendor_code || "").trim()) || "";
+      if (vendorCodeFromOcr) headerFieldSources.vendor_code = "ocr";
+
       const initialResult: Record<string, any> = {};
-      if (extractedLines && extractedLines.length) {
+      if (stampedLines.length) {
         initialResult.salesOrder = {
-          lineItems: extractedLines,
+          lineItems: stampedLines,
           customer: extractedCustomer || null,
+          ...(Object.keys(headerFieldSources).length
+            ? { _header_field_sources: headerFieldSources }
+            : {}),
         };
       } else if (extractedCustomer) {
-        initialResult.salesOrder = { customer: extractedCustomer };
+        initialResult.salesOrder = {
+          customer: extractedCustomer,
+          ...(Object.keys(headerFieldSources).length
+            ? { _header_field_sources: headerFieldSources }
+            : {}),
+        };
       }
 
       const initialPreflight: Record<string, any> = {};
@@ -768,13 +787,21 @@ const WiredSOIntake = () => {
       if (extractMeta.adapter) initialPreflight.adapter_used = extractMeta.adapter;
       if (extractMeta.confidence != null) initialPreflight.confidence_overall = extractMeta.confidence;
 
-      const res = await ObaraBackend?.orders?.create?.({
-        order_mode: mode,
-        customer_id: customerId,
-        status: "DRAFT",
-        result: initialResult,
-        preflight_payload: initialPreflight,
-      });
+      // Auto-populate first-class header columns the extractor
+       // returned. Lets the Header fields tab in the workspace open
+       // with the operator-visible values already filled rather than
+       // sitting empty while the same info sits inside `result`.
+       const headerColumnDefaults: Record<string, any> = {};
+       if (vendorCodeFromOcr) headerColumnDefaults.vendor_code = vendorCodeFromOcr;
+
+       const res = await ObaraBackend?.orders?.create?.({
+         order_mode: mode,
+         customer_id: customerId,
+         status: "DRAFT",
+         result: initialResult,
+         preflight_payload: initialPreflight,
+         ...headerColumnDefaults,
+       });
       const newId = res?.order?.id || res?.id;
       if (!newId) throw new Error("Order create returned no id");
       // Best-effort OCR kickoff if a doc was uploaded; don't block navigation on it.

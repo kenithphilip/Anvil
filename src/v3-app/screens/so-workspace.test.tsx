@@ -375,4 +375,68 @@ describe("SoWorkspace", () => {
       window.location.hash = original;
     }
   });
+
+  it("renders OCR provenance pills on reconciliation rows whose lines carry _field_sources", async () => {
+    // Regression May 2026: after the recon table became editable
+    // the operator wanted visibility into which fields came from
+    // the docai extractor vs which they had already overridden.
+    // Lines stamped with _field_sources from so-intake render a
+    // ghost-tone "OCR" pill next to each populated cell.
+    const original = window.location.hash;
+    const orderId = "ord-fixture-recon-pills";
+    const order = {
+      id: orderId,
+      status: "DRAFT",
+      po_number: "PO-RECON-1",
+      customer_id: "cust-1",
+      customer_name: "Fixture Customer",
+      result: {
+        salesOrder: {
+          lineItems: [
+            {
+              partNumber: "BR-6204-ZZ",
+              description: "Deep groove ball bearing",
+              quantity: 5,
+              unitPrice: 145,
+              uom: "Nos",
+              _field_sources: {
+                itemCode: "ocr",
+                description: "ocr",
+                qty: "ocr",
+                rate: "ocr",
+                uom: "ocr",
+              },
+            },
+          ],
+        },
+      },
+      preflight_payload: { source_document_id: "doc-1" },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    try {
+      window.location.hash = "#/so?id=" + orderId;
+      installBackend({
+        orders: { get: vi.fn(async () => ({ order })), update: vi.fn(async () => ({})) },
+        audit: { list: vi.fn(async () => []) },
+        events: { list: vi.fn(async () => []) },
+        cost: { breakdown: vi.fn(async () => null) },
+      });
+      const mod = await import("./so-workspace");
+      const Screen = mod.default;
+      const { container } = renderScreen(Screen);
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      const html = container.innerHTML;
+      // The legend at the top of the table explains the pills.
+      expect(html).toContain("= from PO");
+      expect(html).toContain("= operator override");
+      // Reconciliation row text remains visible inside the
+      // editable input.
+      expect(html).toContain("Deep groove ball bearing");
+      expect(html).toContain("BR-6204-ZZ");
+    } finally {
+      window.location.hash = original;
+    }
+  });
 });

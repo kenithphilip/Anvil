@@ -41,6 +41,18 @@ const orderRow = (ctx, body) => ({
   project_phase: body.project_phase || null,
   lost_reason: body.lost_reason || null,
   competitor_name: body.competitor_name || null,
+  // Migration 106 header columns. Allowed on create so the
+  // OCR-detected vendor_code from so-intake lands on the order at
+  // creation time, rather than being dropped silently and forcing
+  // the operator to retype it in the Header fields tab. The PATCH
+  // handler already allows these via APPROVE_INPUTS.
+  vendor_code: body.vendor_code || null,
+  dispatch_mode: body.dispatch_mode || null,
+  registration_serial_no: body.registration_serial_no || null,
+  incoterm_code: body.incoterm_code || null,
+  delivery_terms: body.delivery_terms || null,
+  delivery_point_contact_id: body.delivery_point_contact_id || null,
+  template_id: body.template_id || null,
 });
 
 export default async function handler(req, res) {

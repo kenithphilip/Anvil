@@ -5,6 +5,7 @@ import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 import { amountInWords } from "../lib/amount-words";
+import { getFieldSource, markFieldEdited, FieldSource } from "../lib/field-sources";
 
 // ============================================================
 // ANVIL v3 — wired SO Workspace
@@ -24,6 +25,13 @@ const WiredSOWorkspace = () => {
   const [scheduleBump, setScheduleBump] = u(0);
   const [tsv, setTsv] = u("");
   const [busy, setBusy] = u(false);
+  // Inline line-item editor state. Driven from the persisted lines
+  // on the order; when null, the table renders the persisted values
+  // directly. Once the operator changes a field, a draft is forked
+  // and stays in state until Save (PATCHes /api/orders/[id]) or
+  // Discard (clears the draft).
+  const [linesDraft, setLinesDraft] = u<any[] | null>(null);
+  const [savingLines, setSavingLines] = u(false);
   // Phase 3.6 observability: pipeline-diagnostics state (lazy-
   // loaded the first time the operator opens the Diagnostics tab).
   const [pipelineState, setPipelineState] = u<{ data: any; loading: boolean; error: any }>({ data: null, loading: false, error: null });
@@ -147,6 +155,17 @@ const WiredSOWorkspace = () => {
     return { totalQty, lineCount: scheduleRows.length, next: upcoming || dates[0] || null, last: dates[dates.length - 1] || null };
   }, [scheduleRows]);
 
+  // Reset the line-edit draft whenever the persisted lines change.
+  // Lives in the above-early-returns block so the hook count stays
+  // stable when the loading branch returns early. Stringify is the
+  // cheap cache key; lineItems rarely exceeds a few hundred rows.
+  const persistedLinesKey = JSON.stringify(
+    order.data?.result?.salesOrder?.lineItems || []
+  );
+  e(() => {
+    setLinesDraft(null);
+  }, [persistedLinesKey]);
+
   // ─────────────────────────────────────────────────────────────
   // Activity timeline merge (Surface B). Same hook-rule constraint:
   // must run on every render, including the loading and error
@@ -225,8 +244,14 @@ const WiredSOWorkspace = () => {
 
   const o = order.data;
   const lines = o.result?.salesOrder?.lineItems || [];
+  // draftLines is the source of truth for everything the operator
+  // sees in the recon table + footer (subtotal, amount in words):
+  // before any edit it equals the persisted lines, after an edit it
+  // diverges, after Save the server reload clears the draft back to
+  // null and the persisted lines take over again.
+  const draftLines: any[] = linesDraft ?? lines;
   const grandTotal = Number(o.result?.salesOrder?.grandTotal) || 0;
-  const subtotal = lines.reduce((s, ln) => s + (Number(ln.lineTotal) || (Number(ln.qty) * Number(ln.rate)) || 0), 0);
+  const subtotal = draftLines.reduce((s, ln) => s + (Number(ln.lineTotal) || (Number(ln.qty || ln.quantity) * Number(ln.rate || ln.unitPrice)) || 0), 0);
   const findings = Array.isArray(o.rule_findings) ? o.rule_findings : [];
 
   const canPushTally = RBAC?.canDo?.("so.push_tally");
@@ -599,12 +624,13 @@ const WiredSOWorkspace = () => {
   const st = stageOf(o.status);
 
   // Reconciliation columns: number, item, UoM, qty, rate, prev, delta, line ₹, evidence, issues
-  const reconRow = (ln, i) => {
-    const sku = ln.itemCode || ln.sku || ln.code || "";
-    const desc = ln.description || ln.name || ln.item || "";
-    const uom = ln.uom || ln.unit || "—";
+  // Editable columns (since May 2026): description, UoM, qty, rate.
+  // Each cell shows an "OCR" or "edited" pill based on the line's
+  // `_field_sources` map: extracted values land as "ocr", operator
+  // overrides flip to "human". The map is initialised at intake
+  // time by lib/field-sources.ts.
+  const reconRow = (ln: any, i: number) => {
     const qty = ln.qty != null ? ln.qty : ln.quantity;
-    const qtyQuoted = ln.qtyQuoted != null ? ln.qtyQuoted : qty;
     const rate = Number(ln.rate || ln.unitPrice || 0);
     const ratePrev = Number(ln.ratePrev || ln.previousRate || 0);
     const drift = ratePrev > 0 ? (rate - ratePrev) / ratePrev : null;
@@ -621,13 +647,15 @@ const WiredSOWorkspace = () => {
       <tr key={i}>
         <td className="mono">{i + 1}</td>
         <td>
-          <div style={{ fontWeight: 600 }}>{desc || "—"}</div>
-          {sku && <div className="mono-sm">SKU {sku}</div>}
+          <EditableCell line={ln} i={i} canonicalKey="description" type="text" placeholder="description" />
+          <div style={{ marginTop: 2 }}>
+            <EditableCell line={ln} i={i} canonicalKey="itemCode" type="text" placeholder="part / SKU" />
+          </div>
         </td>
-        <td>{uom}</td>
-        <td className="r mono">{qty != null ? qty : "—"}</td>
-        <td className="r mono">{qtyQuoted != null ? qtyQuoted : "—"}</td>
-        <td className="r mono">{rate ? fmtINR(rate) : "—"}</td>
+        <td><EditableCell line={ln} i={i} canonicalKey="uom" type="text" placeholder="Nos / Kg / m" /></td>
+        <td className="r mono"><EditableCell line={ln} i={i} canonicalKey="qty" type="number" align="right" /></td>
+        <td className="r mono">{ln.qtyQuoted != null ? ln.qtyQuoted : (qty != null ? qty : "—")}</td>
+        <td className="r mono"><EditableCell line={ln} i={i} canonicalKey="rate" type="number" align="right" /></td>
         <td className="r mono">{ratePrev ? fmtINR(ratePrev) : "—"}</td>
         <td className="r mono" style={{ color: drift == null ? "var(--ink-4)" : drift > 0.10 ? "var(--rust)" : drift > 0 ? "var(--amber-2)" : "var(--sage)" }}>
           {drift == null ? "·" : (drift >= 0 ? "+" : "") + (drift * 100).toFixed(1) + "%"}
@@ -752,6 +780,111 @@ const WiredSOWorkspace = () => {
   };
 
   const tagChipKind = (src) => src === "CM" ? "plum" : src === "PR" ? "info" : "ghost";
+
+  // Line-edit handlers. The draft is forked from the persisted
+  // lines on first edit; subsequent edits mutate the draft. The
+  // reset useEffect lives above the early-return block (search the
+  // file for "MUST stay above the early returns") so the hook count
+  // stays stable across loading-state transitions.
+
+  // Alias maps so the canonical key writes propagate to whichever
+  // alias downstream consumers (Tally emit, anomaly compute, PDF
+  // render) read. Without this, editing qty would only update
+  // `line.qty` while the Tally amend still emitted `line.quantity`.
+  const LINE_ALIAS: Record<string, string[]> = {
+    itemCode: ["itemCode", "partNumber", "sku", "code"],
+    description: ["description"],
+    qty: ["qty", "quantity"],
+    rate: ["rate", "unitPrice"],
+    uom: ["uom"],
+    hsn: ["hsn", "hsn_sac"],
+  };
+
+  const linesDirty = linesDraft !== null
+    && JSON.stringify(linesDraft) !== JSON.stringify(lines);
+  const canEditLines = !!(RBAC && RBAC.canDo && RBAC.canDo("orders.write"))
+    && o.status !== "CANCELLED"
+    && o.status !== "EXPORTED_TO_TALLY"
+    && o.status !== "RECONCILED";
+
+  const onEditLine = (i: number, canonicalKey: string, value: any) => {
+    const base = linesDraft ?? lines;
+    const next = base.slice();
+    const line: any = { ...next[i] };
+    for (const k of (LINE_ALIAS[canonicalKey] || [canonicalKey])) {
+      line[k] = value;
+    }
+    next[i] = markFieldEdited(line, canonicalKey);
+    setLinesDraft(next);
+  };
+
+  const onDiscardLineEdits = () => setLinesDraft(null);
+
+  const onSaveLineEdits = async () => {
+    if (!linesDirty || savingLines) return;
+    setSavingLines(true);
+    try {
+      const nextResult = {
+        ...(o.result || {}),
+        salesOrder: {
+          ...(o.result?.salesOrder || {}),
+          lineItems: draftLines,
+        },
+      };
+      await ObaraBackend?.orders?.update?.(o.id, { result: nextResult });
+      window.notifySuccess?.("Line edits saved", `${draftLines.length} line${draftLines.length === 1 ? "" : "s"} on ${o.po_number || o.id.slice(0, 8)}`);
+      setBump((n: number) => n + 1);
+    } catch (err: any) {
+      window.notifyError?.("Could not save line edits", err?.message || String(err));
+    } finally {
+      setSavingLines(false);
+    }
+  };
+
+  const FieldPill: React.FC<{ src: FieldSource | null }> = ({ src }) => {
+    if (src === "ocr") return <Chip k="ghost">OCR</Chip>;
+    if (src === "human") return <Chip k="info">edited</Chip>;
+    return null;
+  };
+
+  const EditableCell: React.FC<{
+    line: any; i: number; canonicalKey: string;
+    type: "text" | "number"; align?: "left" | "right";
+    placeholder?: string;
+  }> = ({ line, i, canonicalKey, type, align, placeholder }) => {
+    const src = getFieldSource(line, canonicalKey);
+    const raw = LINE_ALIAS[canonicalKey]
+      .map((k) => line[k])
+      .find((v) => v != null && v !== "");
+    const value = raw == null ? "" : String(raw);
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: align === "right" ? "flex-end" : "flex-start" }}>
+        <input
+          className={align === "right" ? "input mono-sm r" : "input mono-sm"}
+          style={{
+            background: "transparent",
+            border: "1px solid transparent",
+            padding: "2px 4px",
+            textAlign: align === "right" ? "right" : "left",
+            width: "100%",
+            minWidth: type === "number" ? 60 : 80,
+          }}
+          value={value}
+          placeholder={placeholder || ""}
+          disabled={!canEditLines}
+          onFocus={(e) => { e.currentTarget.style.border = "1px solid var(--hairline-2)"; e.currentTarget.style.background = "var(--paper)"; }}
+          onBlur={(e) => { e.currentTarget.style.border = "1px solid transparent"; e.currentTarget.style.background = "transparent"; }}
+          onChange={(e) => {
+            const v = type === "number"
+              ? (e.target.value === "" ? null : Number(e.target.value))
+              : e.target.value;
+            onEditLine(i, canonicalKey, v);
+          }}
+        />
+        {src && <FieldPill src={src} />}
+      </div>
+    );
+  };
 
   const tabs = [
     { id: "recon", label: "Reconciliation", count: findings.length || null },
@@ -1049,11 +1182,37 @@ const WiredSOWorkspace = () => {
         )}
         {tab === "recon" && (
           <Card flush>
-            <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--hairline-2)", display: "flex", gap: 10, alignItems: "center" }}>
+            <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--hairline-2)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               <span className="h2">Line reconciliation</span>
-              <span className="mono-sm">{lines.length} line{lines.length === 1 ? "" : "s"} · {findings.length} issue{findings.length === 1 ? "" : "s"}</span>
+              <span className="mono-sm">{draftLines.length} line{draftLines.length === 1 ? "" : "s"} · {findings.length} issue{findings.length === 1 ? "" : "s"}</span>
+              <span className="mono-sm" style={{ color: "var(--ink-3)", marginLeft: 4 }}>
+                <Chip k="ghost">OCR</Chip> = from PO &nbsp;·&nbsp;
+                <Chip k="info">edited</Chip> = operator override
+              </span>
+              <span style={{ flex: 1 }} />
+              {linesDirty && (
+                <>
+                  <Btn sm kind="ghost" onClick={onDiscardLineEdits} disabled={savingLines}>
+                    Discard
+                  </Btn>
+                  <Btn sm kind="primary" onClick={onSaveLineEdits} disabled={savingLines || !canEditLines}
+                       title={canEditLines ? "Persist edited line items to the order" : "Order is not in an editable state"}>
+                    {savingLines ? "Saving…" : "Save line edits"}
+                  </Btn>
+                </>
+              )}
             </div>
-            {lines.length === 0 ? (
+            {!canEditLines && draftLines.length > 0 && (
+              <div className="mono-sm" style={{ padding: "8px 16px", color: "var(--ink-3)", background: "var(--paper-2)" }}>
+                Lines are read-only because the order is {o.status}. Reopen it (return for correction) to edit.
+              </div>
+            )}
+            {linesDirty && o.approval && (
+              <div className="mono-sm" style={{ padding: "8px 16px", color: "var(--rust)", background: "var(--paper-2)" }}>
+                Editing line items will invalidate the existing approval. The order will need to be re-approved before push.
+              </div>
+            )}
+            {draftLines.length === 0 ? (
               <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
                 No line items extracted yet. Use the "run extraction"
                 button on the action bar to re-run docai/extract
@@ -1074,7 +1233,7 @@ const WiredSOWorkspace = () => {
                   <th>Evidence</th>
                   <th>Issues</th>
                 </tr></thead>
-                <tbody>{lines.map(reconRow)}</tbody>
+                <tbody>{draftLines.map(reconRow)}</tbody>
                 <tfoot>
                   <tr style={{ background: "var(--paper-2)" }}>
                     <td colSpan={8} className="r mono" style={{ paddingTop: 10, paddingBottom: 10 }}>
@@ -1765,11 +1924,37 @@ const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = ({ orde
     }
   };
 
+  // Per-field provenance map populated by so-intake when the
+  // extractor returned the value. We render "from PO" next to a
+  // field whose label is still equal to the persisted column value;
+  // once the operator types, the pill drops and the field reads as
+  // operator-set. Stored under result.salesOrder._header_field_sources
+  // so no schema migration is required.
+  const headerSources: Record<string, string> = (order.result?.salesOrder?._header_field_sources) || {};
+  const fieldOcr = (key: string, persistedValue: any, draftValue: any) =>
+    headerSources[key] === "ocr" && (persistedValue || "") === (draftValue || "")
+      ? <Chip k="ghost">OCR</Chip>
+      : null;
+
+  const labelWithPill = (text: string, key: string, persistedValue: any, draftValue: any) => (
+    <label className="mono-sm" style={{ color: "var(--ink-3)", display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+      <span>{text}</span>
+      {fieldOcr(key, persistedValue, draftValue)}
+    </label>
+  );
+
   return (
     <Card title="Order header fields" eyebrow="dispatch . terms . vendor mapping . delivery contact">
-      <div className="row" style={{ gap: 14, flexWrap: "wrap" }}>
+      <Banner kind="info">
+        These fields apply to the whole order: the SO PDF, the Tally
+        voucher, and the customer ack copy them verbatim. Values with
+        an <Chip k="ghost">OCR</Chip> pill were auto-detected from
+        the PO at intake. Edit any field to override; saving clears
+        the OCR pill so the next reviewer can see the override.
+      </Banner>
+      <div className="row" style={{ gap: 14, flexWrap: "wrap", marginTop: 12 }}>
         <div style={{ flex: "1 1 220px" }}>
-          <label className="mono-sm" style={{ color: "var(--ink-3)", display: "block", marginBottom: 4 }}>Dispatch mode</label>
+          {labelWithPill("Dispatch mode", "dispatch_mode", order.dispatch_mode, draft.dispatch_mode)}
           <select className="select" value={draft.dispatch_mode} onChange={(e) => setDraft({ ...draft, dispatch_mode: e.target.value })}>
             <option value="">Not set</option>
             <option value="By Ocean">By Ocean</option>
@@ -1781,7 +1966,7 @@ const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = ({ orde
           </select>
         </div>
         <div style={{ flex: "1 1 220px" }}>
-          <label className="mono-sm" style={{ color: "var(--ink-3)", display: "block", marginBottom: 4 }}>Incoterm</label>
+          {labelWithPill("Incoterm", "incoterm_code", order.incoterm_code, draft.incoterm_code)}
           <select className="select" value={draft.incoterm_code} onChange={(e) => setDraft({ ...draft, incoterm_code: e.target.value })}>
             <option value="">Not set</option>
             {(reference.incoterms || []).map((c: any) => (
@@ -1790,15 +1975,15 @@ const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = ({ orde
           </select>
         </div>
         <div style={{ flex: "1 1 220px" }}>
-          <label className="mono-sm" style={{ color: "var(--ink-3)", display: "block", marginBottom: 4 }}>Registration serial no</label>
+          {labelWithPill("Registration serial no", "registration_serial_no", order.registration_serial_no, draft.registration_serial_no)}
           <input className="input mono" value={draft.registration_serial_no} onChange={(e) => setDraft({ ...draft, registration_serial_no: e.target.value })} />
         </div>
         <div style={{ flex: "1 1 220px" }}>
-          <label className="mono-sm" style={{ color: "var(--ink-3)", display: "block", marginBottom: 4 }}>Vendor code (as buyer refers to us)</label>
+          {labelWithPill("Vendor code (as buyer refers to us)", "vendor_code", order.vendor_code, draft.vendor_code)}
           <input className="input mono" value={draft.vendor_code} onChange={(e) => setDraft({ ...draft, vendor_code: e.target.value })} placeholder="e.g., TH1M" />
         </div>
         <div style={{ flex: "1 1 220px" }}>
-          <label className="mono-sm" style={{ color: "var(--ink-3)", display: "block", marginBottom: 4 }}>Delivery point contact</label>
+          {labelWithPill("Delivery point contact", "delivery_point_contact_id", order.delivery_point_contact_id, draft.delivery_point_contact_id)}
           <select className="select" value={draft.delivery_point_contact_id || ""} onChange={(e) => setDraft({ ...draft, delivery_point_contact_id: e.target.value })}>
             <option value="">Not set</option>
             {(reference.contacts || []).map((c: any) => (
@@ -1808,7 +1993,7 @@ const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = ({ orde
         </div>
       </div>
       <div style={{ marginTop: 12 }}>
-        <label className="mono-sm" style={{ color: "var(--ink-3)", display: "block", marginBottom: 4 }}>Terms of delivery (free text)</label>
+        {labelWithPill("Terms of delivery (free text)", "delivery_terms", order.delivery_terms, draft.delivery_terms)}
         <textarea className="input" rows={3} style={{ width: "100%" }} value={draft.delivery_terms} onChange={(e) => setDraft({ ...draft, delivery_terms: e.target.value })} placeholder="e.g., Door delivery during business hours. Wooden box must remain dry." />
       </div>
       <div className="row" style={{ justifyContent: "flex-end", marginTop: 14 }}>

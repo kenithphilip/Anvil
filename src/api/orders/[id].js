@@ -16,6 +16,13 @@ const APPROVE_INPUTS = [
   // Return-for-correction columns (migration 104). Manager-initiated
   // exit path that flips status to DRAFT with a free-text note.
   "correction_reason", "correction_requested_by", "correction_requested_at",
+  // Header columns added by migration 106. Without these in the
+  // allowlist the Header fields tab's PATCH silently dropped
+  // dispatch_mode / vendor_code / etc.: the operator saw a green
+  // success toast but the value never persisted.
+  "vendor_code", "dispatch_mode", "registration_serial_no",
+  "incoterm_code", "delivery_terms", "delivery_point_contact_id",
+  "template_id",
 ];
 
 const buildPatch = (body) => {

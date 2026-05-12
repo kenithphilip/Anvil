@@ -236,6 +236,8 @@ const voteLines = (entries) => {
   return { lines, lineProvenance };
 };
 
+import { augmentVoterOutput } from "./field-voter.js";
+
 // Reduce N adapter results into a single voted output. Returns the
 // canonical { ok, normalized, confidences, field_provenance,
 // voter_lines, voter_used: true, attempts }.
@@ -285,6 +287,31 @@ export const voteAcrossAdapters = (adapterResults) => {
     ? winnerConfs.reduce((a, b) => a + b, 0) / winnerConfs.length
     : 0;
 
+  // Wave 3.2: field-level numeric voter. Augments the merged
+  // output by re-voting on numeric line / totals fields with
+  // tolerance + median + agreement-confidence-boost. The string-
+  // vote above stays authoritative for customer block fields
+  // (name, GSTIN, address); numeric fields benefit from the
+  // tolerance grouping. Mutates the merged normalized in place
+  // and returns its own per-field provenance.
+  const augmented = augmentVoterOutput(
+    { classification, customer: Object.keys(customer).length ? customer : null, lines },
+    adapterResults,
+  );
+  const numericProvenance = augmented.fieldProvenance || [];
+  // Recompute confidence_overall to fold in the boosted figures.
+  if (numericProvenance.length) {
+    for (const fp of numericProvenance) {
+      confidences[fp.field] = fp.confidence;
+    }
+    const allConfs = Object.entries(confidences)
+      .filter(([k, v]) => k !== "overall" && v > 0)
+      .map(([, v]) => v);
+    if (allConfs.length) {
+      confidences.overall = allConfs.reduce((a, b) => a + b, 0) / allConfs.length;
+    }
+  }
+
   return {
     ok: true,
     voter_used: true,
@@ -299,6 +326,7 @@ export const voteAcrossAdapters = (adapterResults) => {
     field_provenance: [
       ...fieldProvenance,
       { ...classProvenance, field: "classification" },
+      ...numericProvenance,
     ],
     voter_lines: lineProvenance,
     attempts: adapterResults.map((r) => ({

@@ -106,23 +106,26 @@ describe("Landing", () => {
     expect(tiles.length).toBe(18);
   });
 
-  it("renders all 19 design sections (h1 + 18 section h2/h3)", async () => {
+  it("renders all 22 design sections (h1 + 21 section h2/h3)", async () => {
     const mod = await import("./landing");
     const Screen = mod.default;
     const { container } = renderScreen(Screen);
     await new Promise((r) => setTimeout(r, 0));
     // Spec sections in source order: hero (h1) + logos + sec + connectors
-    // + bleed + problem + product + flow + founder + proof + coverage
-    // + principles + pricing + compare + changelog + faq + cta
+    // + arch + bleed + problem + product + whatsnew + flow + founder
+    // + proof + coverage + principles + pricing + compare + roi
+    // + changelog + faq + cta.
     const html = container.innerHTML;
     const headlines = [
       "Your customer wrote",
       "Currently shipping integrations",
       "Built for finance teams",
       "Already speaks",
+      "No mystery boxes",           // arch (new)
       "42 surfaces",
       "22 minutes",
       "Three things, on every order",
+      "big swings",                  // whatsnew (new)
       "voucher at",
       "Kenith Philip",
       "audit packets",
@@ -130,6 +133,7 @@ describe("Landing", () => {
       "keep Anvil",
       "Pay per",
       "A focused tool beats",
+      "year on the line",            // roi (new)
       "ship",
       "finance teams",
       "Bring one PO",

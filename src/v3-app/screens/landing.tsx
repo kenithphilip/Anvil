@@ -186,6 +186,93 @@ const CONNECTOR_TABS: Array<{
   },
 ];
 
+// Architecture pipeline: 6 stages every PO traverses. Each stage
+// maps to a real codebase surface so the copy stays defensible:
+//   ingestion -> src/api/comms + src/api/voice + src/api/portal
+//   firewall  -> src/api/_lib/redaction.js
+//   extraction-> src/api/_lib/docai/* (Reducto, Azure DI, etc.)
+//   reasoning -> src/api/_lib/anthropic.js model_selector
+//   gate      -> src/v3-app/screens/so-workspace.tsx (operator review)
+//   push      -> src/api/_lib/*-client.js (17 ERP adapters)
+const ARCH_STAGES: Array<{ n: string; nm: string; d: string; chips: string[]; gated?: boolean }> = [
+  { n: "01 · ingestion",  nm: "Multi-channel intake", d: "5 inbound channels. Customer-tier priority, dedup, thread state. Same canonical schema downstream.", chips: ["email", "whatsapp", "slack", "teams", "voice"] },
+  { n: "02 · firewall",   nm: "PII redaction",        d: "Always-on. PAN, GSTIN, Aadhaar, phone, email tokens replaced with deterministic hashes before any LLM call.", chips: ["pre-LLM", "tenant-scoped", "audited"], gated: true },
+  { n: "03 · extraction", nm: "Doc AI router",        d: "5 engines layered. Native parsers (GAEB, SheetJS) beat LLM where structure exists. Confidence scores propagate.", chips: ["Reducto", "Azure DI", "Unstructured", "Mistral", "Claude"] },
+  { n: "04 · reasoning",  nm: "Model routing",        d: "Haiku for trivia, Sonnet for line-items, Opus for anomalies. Per-call price is shown, not buried. Cache hit-rate exposed.", chips: ["Haiku", "Sonnet", "Opus", "BYO LLM"] },
+  { n: "05 · gate",       nm: "Operator review",      d: "Drafts only. A human presses ↵ before anything posts. Override reason is required, logged, indexed.", chips: ["⌘K", "↵", "passkey"], gated: true },
+  { n: "06 · push",       nm: "17 ERPs · idempotent", d: "SAP, NetSuite, D365, Acumatica, Tally, P21, Eclipse, SX.e, Sage X3, IFS, Fusion, EBS, JDE, Plex, JobBoss², Ramco, proALPHA. Retry queue. Two-way reconcile.", chips: ["idempotent", "retry", "e-Invoice"] },
+];
+
+// Three cross-cutting observability rails attached to the pipeline:
+// the audit log, the cost meter, and the MCP surface. Each rail
+// maps to a concrete table or endpoint shipped today.
+const ARCH_RAIL: Array<{ k: string; v: string; d: string }> = [
+  { k: "A · audit log",  v: "Append-only, signed, NDJSON-exportable",     d: "Every state transition, every override, every model call, every ERP push. Cryptographically chained via the audit-events table. Replayable." },
+  { k: "B · cost meter", v: "Per-call price exposed to operators",        d: "Live cost panel reads tokens in, tokens out, model picked, cache hit, retry count. Cost is a first-class metric, not a billing surprise." },
+  { k: "C · MCP surface", v: "External AI clients can read with scoped tokens", d: "11-tool registry. Claude desktop, ChatGPT, Copilot can query Anvil with role-bound scopes. Every call writes mcp_call_log." },
+];
+
+const ARCH_FOOTER: Array<[string, string]> = [
+  ["Data residency",   "ap-south-1 default · EU · US on Group"],
+  ["Auth",             "Passkeys · TOTP · WebAuthn · SCIM"],
+  ["Tenant isolation", "RLS on every table · per-tenant LLM key"],
+  ["SLA",              "99.9% Operator · 99.95% Group"],
+];
+
+// "Shipped this quarter" cards. Each card maps 1:1 to a shipped
+// API module so the claim is defensible:
+//   voice  -> src/api/voice/ (configure, consent, dnd, handoff,
+//             outbound) wired against Vapi / Retell
+//   rfq    -> src/api/supplier_rfq/ (index, send, quote, matrix,
+//             award)
+//   portal -> src/api/portal/ (accept_quote, invoice_pdf, pay,
+//             reorder, tokens)
+//   packs  -> src/api/marketplace/ (publish, review, imports,
+//             list) - per-vertical template + threshold packs
+// We deliberately ship the cards without the design package's
+// visual mocks (synthetic phone bar, fake comparison table,
+// fake portal shell, fake vertical list); the brief is "without
+// the fluff" and the mocks are visual filler. Module name + tag
+// + terse copy + chip list carries the signal.
+const WHATSNEW: Array<{
+  tag: string;
+  title: string;
+  em: string;
+  copy: string;
+  chips: string[];
+  live?: boolean;
+}> = [
+  {
+    tag: "Voice agent",
+    title: "Customers call.",
+    em: "Anvil answers.",
+    copy: "An AI agent on your inbound line authenticates the caller, places orders, generates quotes, checks delivery, and hands off to a human when it should. Vapi and Retell adapters with HMAC-verified webhooks and a four-tool action loop.",
+    chips: ["vapi", "retell", "hmac webhook", "consent + DND"],
+    live: true,
+  },
+  {
+    tag: "Supplier RFQ",
+    title: "BOM in.",
+    em: "Best quote out.",
+    copy: "Drop a BOM, pick vendors, send. Anvil drafts the emails, parses replies, normalises into a comparison matrix with delta-to-target and a winner flag. Order-confirmation reconciliation catches qty / price / lead-time mismatches before the PO ships.",
+    chips: ["matrix view", "auto-award", "ack reconcile"],
+  },
+  {
+    tag: "Customer portal v2",
+    title: "Your customer,",
+    em: "self-serve.",
+    copy: "A branded surface where your customers reorder past POs, accept quotes with a defensible signature audit, download invoices, and pay-now via Stripe or Razorpay. Token-scoped, no Anvil chrome visible, single-origin.",
+    chips: ["accept quote", "pay-now", "reorder", "scoped tokens"],
+  },
+  {
+    tag: "Vertical packs",
+    title: "5 verticals,",
+    em: "pre-tuned.",
+    copy: "One-click installs that seed approval thresholds, lost-reason taxonomies, lead-time defaults, item-master examples, quote templates, and vertical KPIs. Drop a pack on day one; production-ready by day five.",
+    chips: ["fasteners", "PVF", "electrical", "HVAC", "paper"],
+  },
+];
+
 // Security strip: 6 badges. Statuses are honest: SOC 2 / ISO 27001
 // programs are in progress (no fixed completion date until the
 // observation window closes); remainder live.
@@ -527,11 +614,55 @@ const CmpCell: React.FC<{ mark: CmpMark; t: string }> = ({ mark, t }) => (
 );
 
 // === The page
+// ROI calculator pricing ladder. Mirrors the TIERS array above
+// (Starter / Growth / Enterprise) so the calculator quotes the
+// same numbers we charge. The design package's flat ₹19/SO was
+// marketing-optimised; the ladder gives an honest answer at any
+// volume.
+const ANVIL_TIER = (so: number): { name: string; baseFee: number; included: number; overage: number } => {
+  if (so <= 200)  return { name: "Starter",    baseFee: 14990, included: 200,  overage: 39 };
+  if (so <= 1000) return { name: "Growth",     baseFee: 49990, included: 1000, overage: 19 };
+  return                  { name: "Enterprise", baseFee: 99990, included: 5000, overage: 9  };
+};
+
+// Format an INR figure as `1.32 L` / `4.7 Cr` / `48,200`. Lakhs +
+// Crores read more naturally for the South Asian operator
+// audience than scientific notation or a long comma string.
+const fmtINRish = (n: number): string => {
+  if (!Number.isFinite(n)) return "—";
+  if (n >= 10000000) return (n / 10000000).toFixed(2) + " Cr";
+  if (n >= 100000)   return (n / 100000).toFixed(2) + " L";
+  return Math.round(n).toLocaleString("en-IN");
+};
+
 const Landing: React.FC = () => {
   const kineticPair = useKineticPair();
   const [connectorTab, setConnectorTab] = useState(0);
   const [navOpen, setNavOpen] = useState(false);
+  // ROI calculator state. Defaults match the design package's
+  // illustrative scenario (320 SOs/mo, 14 min hand-time, ₹500/hr).
+  // Sliders are bounded to the realistic ops range.
+  const [roiSO, setRoiSO] = useState(320);
+  const [roiMin, setRoiMin] = useState(14);
+  const [roiRate, setRoiRate] = useState(500);
   const year = new Date().getFullYear();
+
+  // Live ROI derivation. 90 sec/SO is the observed keyboard-first
+  // review time the design package quotes; we keep it inline here
+  // because all the inputs the operator can tune are visible to
+  // them via the sliders, so nothing's hidden.
+  const ANVIL_SEC_PER_SO = 90;
+  const hrsToday   = (roiSO * roiMin) / 60;
+  const hrsAnvil   = (roiSO * (ANVIL_SEC_PER_SO / 60)) / 60;
+  const opsToday   = hrsToday * roiRate;
+  const opsAnvil   = hrsAnvil * roiRate;
+  const anvilTier  = ANVIL_TIER(roiSO);
+  const anvilFee   = anvilTier.baseFee + Math.max(0, roiSO - anvilTier.included) * anvilTier.overage;
+  const netMonthly = opsToday - (opsAnvil + anvilFee);
+  const annualNet  = netMonthly * 12;
+  const costPerSoToday = roiSO > 0 ? opsToday / roiSO : 0;
+  const costPerSoAnvil = roiSO > 0 ? (opsAnvil + anvilFee) / roiSO : 0;
+  const hoursReclaimed = hrsToday - hrsAnvil;
 
   // Reveal-on-scroll for every `.lp .reveal` block. The CSS sets these
   // to opacity:0 by default and switches to opacity:1 only when the
@@ -748,6 +879,50 @@ const Landing: React.FC = () => {
           </div>
         </section>
 
+        {/* === ARCHITECTURE === */}
+        <section className="lp-arch" id="architecture" aria-labelledby="arch-h">
+          <div className="lp-wrap reveal">
+            <span className="lp-eb lp-eb-dot">Under the hood</span>
+            <h2 id="arch-h">Six stages. <span className="lp-em">No mystery boxes.</span></h2>
+            <p className="lp-lead">
+              An incoming PO traverses six labelled stages, each one observable, auditable, swappable.
+              Failures are loud. Costs are exposed. PII never leaves the tenant. The same pipeline runs
+              whether the input is an email, a WhatsApp PDF, a voice call, or a drag-and-drop scan. Every
+              model call, every tool invocation, every cent of cost lands on the audit log.
+            </p>
+            <div className="lp-arch-flow">
+              {ARCH_STAGES.map((s, i) => (
+                <div key={s.n} className={"lp-arch-stage" + (s.gated ? " gated" : "")}>
+                  <span className="lp-arch-stnum">{s.n}</span>
+                  <span className="lp-arch-stname">{s.nm}</span>
+                  <span className="lp-arch-stdesc">{s.d}</span>
+                  <div className="lp-arch-stchips">
+                    {s.chips.map((c) => <span key={c}>{c}</span>)}
+                  </div>
+                  {i < ARCH_STAGES.length - 1 && <span className="lp-arch-arrow" aria-hidden="true" />}
+                </div>
+              ))}
+            </div>
+            <div className="lp-arch-rail">
+              {ARCH_RAIL.map((r) => (
+                <div key={r.k} className="lp-arch-rl">
+                  <span className="lp-arch-rk">{r.k}</span>
+                  <span className="lp-arch-rv">{r.v}</span>
+                  <span className="lp-arch-rd">{r.d}</span>
+                </div>
+              ))}
+            </div>
+            <div className="lp-arch-foot">
+              {ARCH_FOOTER.map(([lab, val]) => (
+                <div key={lab} className="lp-arch-ft">
+                  <span className="lp-arch-lab">{lab}</span>
+                  <span className="lp-arch-val">{val}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
         {/* === FULL-BLEED CONSOLE === */}
         <section className="lp-bleed" aria-labelledby="bleed-h">
           <div className="lp-bleed-inner">
@@ -918,6 +1093,37 @@ const Landing: React.FC = () => {
                   <p>{p.p}</p>
                   <ul>{p.bullets.map((b) => <li key={b}>{b}</li>)}</ul>
                 </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* === WHAT'S NEW (shipped this quarter) === */}
+        <section className="lp-whatsnew" id="whatsnew" aria-labelledby="wn-h">
+          <div className="lp-wrap reveal">
+            <span className="lp-eb lp-eb-dot">Shipped this quarter</span>
+            <h2 id="wn-h">Four <span className="lp-em">big swings</span> the platform now does end-to-end.</h2>
+            <p className="lp-lead">
+              Each expansion is a full module, not a beta. All four ship today against the matching
+              backend module: voice via the Vapi and Retell adapters, supplier RFQ as a first-class
+              workflow, the customer portal as a branded single-origin surface, and per-vertical
+              packs that bootstrap thresholds and templates on day one.
+            </p>
+            <div className="lp-wn-grid">
+              {WHATSNEW.map((w) => (
+                <article key={w.tag} className="lp-wn-card">
+                  <div className="lp-wn-tag">
+                    {w.live && <span className="lp-wn-livedot" aria-hidden="true" />}
+                    <span>{w.live ? "NEW · " : ""}{w.tag}</span>
+                  </div>
+                  <h3 className="lp-wn-title">
+                    {w.title} <span className="lp-em">{w.em}</span>
+                  </h3>
+                  <p className="lp-wn-copy">{w.copy}</p>
+                  <div className="lp-wn-chips">
+                    {w.chips.map((c) => <span key={c}>{c}</span>)}
+                  </div>
+                </article>
               ))}
             </div>
           </div>
@@ -1145,6 +1351,116 @@ const Landing: React.FC = () => {
                     <CmpCell mark={r.b.mark} t={r.b.t} />
                   </div>
                 ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* === ROI · YOUR NUMBERS === */}
+        <section className="lp-roi" id="roi" aria-labelledby="roi-h">
+          <div className="lp-wrap reveal lp-roi-grid">
+            <div className="lp-roi-lside">
+              <span className="lp-eb lp-eb-dot">ROI · your numbers</span>
+              <h2 id="roi-h">Tune the inputs. <span className="lp-em">See the year on the line.</span></h2>
+              <p className="lp-lead">
+                No "schedule a custom ROI workshop" theatre. The math is right here: three knobs,
+                five outputs, formulas printed below. Everything updates live. Move the sliders to
+                your shop, screenshot the result, take it to your CFO. The Anvil fee comes off our
+                published tier ladder, not a flat rate.
+              </p>
+              <div className="lp-roi-formula" aria-label="ROI formula">
+                <span className="lp-roi-fh">Formula · transparent on purpose</span>
+                <b>hrs_today</b> = SOs/mo × min/SO ÷ 60<br />
+                <b>hrs_anvil</b> = SOs/mo × 1.5 ÷ 60 <span className="lp-roi-note">(90 sec/SO, keyboard-first review)</span><br />
+                <b>ops_today</b> = hrs_today × ₹/hr<br />
+                <b>ops_anvil</b> = hrs_anvil × ₹/hr<br />
+                <b>anvil_fee</b> = tier base + over_included × tier rate <span className="lp-roi-note">(Starter / Growth / Enterprise)</span><br />
+                <b>net</b> = ops_today − (ops_anvil + anvil_fee)<br />
+                <b>annual</b> = net × 12<br />
+                <b>payback</b> = month one <span className="lp-roi-note">(no setup fee, month-to-month)</span>
+              </div>
+            </div>
+            <div className="lp-roi-card">
+              <div className="lp-roi-inputs">
+                <div className="lp-roi-input">
+                  <div className="row">
+                    <span className="lbl">Sales orders / month</span>
+                    <span className="v">{roiSO.toLocaleString("en-IN")}<span className="u">SOs</span></span>
+                  </div>
+                  <input
+                    type="range" min={20} max={2000} step={10}
+                    value={roiSO}
+                    onChange={(e) => setRoiSO(Number(e.target.value))}
+                    aria-label="Sales orders per month"
+                  />
+                  <div className="hint">slide to your monthly SO volume · current tier: <b>{anvilTier.name}</b></div>
+                </div>
+                <div className="lp-roi-input">
+                  <div className="row">
+                    <span className="lbl">Avg minutes / SO today</span>
+                    <span className="v">{roiMin}<span className="u">min</span></span>
+                  </div>
+                  <input
+                    type="range" min={3} max={60} step={1}
+                    value={roiMin}
+                    onChange={(e) => setRoiMin(Number(e.target.value))}
+                    aria-label="Minutes per sales order today"
+                  />
+                  <div className="hint">manual extract + alias + check + commit</div>
+                </div>
+                <div className="lp-roi-input">
+                  <div className="row">
+                    <span className="lbl">Fully-loaded ops cost / hour</span>
+                    <span className="v">₹{roiRate}<span className="u">/hr</span></span>
+                  </div>
+                  <input
+                    type="range" min={200} max={2000} step={25}
+                    value={roiRate}
+                    onChange={(e) => setRoiRate(Number(e.target.value))}
+                    aria-label="Fully loaded ops cost per hour"
+                  />
+                  <div className="hint">salary + overhead + benefits, hourly</div>
+                </div>
+              </div>
+              <div className="lp-roi-results">
+                <div className="lp-roi-row1">
+                  <div className="lp-roi-res lp-roi-hero">
+                    <span className="rl">Annual net savings</span>
+                    <span className="rn">
+                      {annualNet < 0 ? "−" : ""}<span className="cur">₹</span>
+                      <span>{fmtINRish(Math.abs(annualNet))}</span>
+                    </span>
+                    <span className="rd">{annualNet >= 0 ? "cash back on your P&L, year 1" : "Anvil costs more than the labour it replaces at this volume"}</span>
+                  </div>
+                  <div className="lp-roi-res">
+                    <span className="rl">Hours reclaimed / mo</span>
+                    <span className="rn"><span>{hoursReclaimed.toFixed(1)}</span><span className="small"> hr</span></span>
+                    <span className="rd">{(hoursReclaimed / 40).toFixed(1)} FTE-weeks</span>
+                  </div>
+                  <div className="lp-roi-res">
+                    <span className="rl">Anvil tier</span>
+                    <span className="rn"><span>{anvilTier.name}</span></span>
+                    <span className="rd">₹{anvilFee.toLocaleString("en-IN")}/mo all-in</span>
+                  </div>
+                </div>
+                <div className="lp-roi-row2">
+                  <div className="lp-roi-res">
+                    <span className="rl">Cost / SO today</span>
+                    <span className="rn"><span className="cur">₹</span><span>{Math.round(costPerSoToday)}</span></span>
+                    <span className="rd">handle-time × hourly rate</span>
+                  </div>
+                  <div className="lp-roi-res">
+                    <span className="rl">Cost / SO with Anvil</span>
+                    <span className="rn"><span className="cur">₹</span><span>{Math.round(costPerSoAnvil)}</span></span>
+                    <span className="rd">handle-time × rate + Anvil fee</span>
+                  </div>
+                </div>
+              </div>
+              <div className="lp-roi-cta">
+                <span className="lp-roi-nt">All numbers update live. Nothing leaves the page.</span>
+                <a className="lp-btn lp-btn-primary" href="mailto:hello@anvil.app?subject=Demo%20request">
+                  Book a 30-min pilot <span aria-hidden="true">→</span>
+                </a>
               </div>
             </div>
           </div>

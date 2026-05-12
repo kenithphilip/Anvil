@@ -119,7 +119,12 @@ end;
 $$;
 
 -- 2. Install path-scoped policies on the two managed buckets.
+-- Audit fix May 2026: drop-if-exists before each create so a
+-- re-run after a partial apply does not collide on existing
+-- policy names. Idempotent both on fresh DBs and on DBs that
+-- were partially patched by a prior failed apply.
 
+drop policy if exists "documents read tenant scoped" on storage.objects;
 create policy "documents read tenant scoped" on storage.objects
   for select
   using (
@@ -127,6 +132,7 @@ create policy "documents read tenant scoped" on storage.objects
     and storage_path_tenant_ok(name, bucket_id)
   );
 
+drop policy if exists "documents insert tenant scoped" on storage.objects;
 create policy "documents insert tenant scoped" on storage.objects
   for insert
   with check (
@@ -134,6 +140,7 @@ create policy "documents insert tenant scoped" on storage.objects
     and storage_path_tenant_ok(name, bucket_id)
   );
 
+drop policy if exists "documents update tenant scoped" on storage.objects;
 create policy "documents update tenant scoped" on storage.objects
   for update
   using (
@@ -141,6 +148,7 @@ create policy "documents update tenant scoped" on storage.objects
     and storage_path_tenant_ok(name, bucket_id)
   );
 
+drop policy if exists "documents delete tenant scoped" on storage.objects;
 create policy "documents delete tenant scoped" on storage.objects
   for delete
   using (

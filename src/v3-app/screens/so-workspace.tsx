@@ -8,6 +8,7 @@ import { amountInWords } from "../lib/amount-words";
 import { getFieldSource, markFieldEdited, FieldSource } from "../lib/field-sources";
 import { ItemMasterPicker, PickedItem } from "../components/ItemMasterPicker";
 import { computeLineTotals, TAX_AMOUNT_KEYS, AUX_AMOUNT_KEYS, COMPONENT_LABEL } from "../lib/line-totals";
+import { ExtractionProgress } from "../components/ExtractionProgress";
 
 // ============================================================
 // ANVIL v3 — wired SO Workspace
@@ -1428,6 +1429,18 @@ const WiredSOWorkspace = () => {
       </div>
 
       <WSTabs tabs={tabs} active={tab} onChange={setTab} />
+
+      {/* Phase B2: live extraction progress strip. Renders only
+          while busy is true (an extraction or related job is in
+          flight). Polls /api/orders/extraction_status every 2s
+          and stops on the first terminal event. Sits between
+          the tab strip and the tab content so it's visible
+          regardless of which tab the operator is on. */}
+      {busy && o?.id && (
+        <div style={{ padding: "8px 16px 0" }}>
+          <ExtractionProgress orderId={o.id} active={busy === true} />
+        </div>
+      )}
 
       <div className="ws-content">
         {/* Bug fix May 2026: the previous stepper drove the entire

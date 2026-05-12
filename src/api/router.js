@@ -313,6 +313,7 @@ import ordersTraveler          from "./orders/traveler.js";
 import ordersPrintJobs         from "./orders/print_jobs.js";
 import ordersReconcile         from "./orders/reconcile.js";
 import ordersSuggestMappings   from "./orders/suggest_mappings.js";
+import ordersExtractionStatus from "./orders/extraction_status.js";
 
 import supplierRfqIndex        from "./supplier_rfq/index.js";
 import supplierRfqSend         from "./supplier_rfq/send.js";
@@ -530,6 +531,7 @@ const STATIC_ROUTES = {
   "/orders/print_jobs":             ordersPrintJobs,
   "/orders/reconcile":              ordersReconcile,
   "/orders/suggest_mappings":       ordersSuggestMappings,
+  "/orders/extraction_status":      ordersExtractionStatus,
   "/supplier_rfq":                  supplierRfqIndex,
   "/supplier_rfq/send":             supplierRfqSend,
   "/supplier_rfq/quote":            supplierRfqQuote,

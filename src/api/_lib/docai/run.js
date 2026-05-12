@@ -69,6 +69,55 @@ const safeFire = (p, label) => {
   });
 };
 
+// Wave 1.3 / Improvement #12. Default 30 minute window before a
+// re-upload triggers a fresh extraction. Operators sometimes re-
+// upload a PO twice within a few seconds while debugging an intake
+// flow, and the batch importer retries failed cron iterations; both
+// land here. Tenants can tune the window via
+// settings.docai_content_dedupe_minutes (0 = disabled, max 1440).
+const DEFAULT_DEDUPE_MINUTES = 30;
+
+const resolveDedupeMinutes = (settings) => {
+  const raw = settings?.docai_content_dedupe_minutes;
+  if (raw === 0 || raw === "0") return 0;             // explicit opt-out
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return DEFAULT_DEDUPE_MINUTES;
+  if (n < 0) return 0;
+  if (n > 1440) return 1440;                          // 24h hard cap
+  return n;
+};
+
+// Look up the most-recent successful extraction_runs row with the
+// same content_hash + tenant + customer + extraction_kind within
+// the dedupe window. Returns null when nothing qualifies (the
+// dispatcher then runs the full pipeline). The query is keyed on
+// the partial index added by migration 118.
+const findRecentRunByContentHash = async ({
+  svc, tenantId, customerId, kind, hash, minutes,
+}) => {
+  if (!svc || !tenantId || !hash || !minutes) return null;
+  try {
+    const cutoff = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    let q = svc.from("extraction_runs")
+      .select("id,normalized_extract,raw_extract,field_confidences,confidence_overall,status,status_reason,adapter_used,adapter_attempts,validator_issues,validator_summary,text_layer_used,ocr_layer_used,template_used,global_template_used,global_template_use_mode,overrides_applied,field_provenance,voter_used,selected_model,model_selection_reason,parse_method,parse_repairs,parse_retries,created_at")
+      .eq("tenant_id", tenantId)
+      .eq("content_hash", hash)
+      .eq("extraction_kind", kind)
+      .eq("status", "ok")
+      .gte("created_at", cutoff)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    // customer scope: an SO with a known customer must NOT dedupe
+    // against a run that had no customer (the overrides + template
+    // path differs). The reverse also holds.
+    q = customerId ? q.eq("customer_id", customerId) : q.is("customer_id", null);
+    const r = await q.maybeSingle();
+    return r?.data || null;
+  } catch (_e) {
+    return null;
+  }
+};
+
 // Cache miss + insert for the L1 text layer. Mirrors the helper
 // the legacy extract.js had; moved here so all callers share it.
 const getOrExtractTextLayer = async ({ svc, tenantId, documentId, bytes, mime }) => {
@@ -245,6 +294,22 @@ export const runExtractionPipeline = async (params) => {
     });
   };
 
+  // Wave 1.3: hash the input bytes early so we can short-circuit
+  // a re-upload before paying for the LLM call. Falls through to
+  // the full pipeline on any failure (missing bytes, hash error,
+  // dedupe disabled by tenant, no prior run within the window).
+  let preHash = null;
+  if (bytes && bytes.length) {
+    try { preHash = await contentHash(bytes); } catch (_e) { preHash = null; }
+  }
+  const dedupeMinutes = resolveDedupeMinutes(settings);
+  let dedupeSource = null;
+  if (preHash && dedupeMinutes > 0) {
+    dedupeSource = await findRecentRunByContentHash({
+      svc, tenantId: ctx.tenantId, customerId, kind, hash: preHash, minutes: dedupeMinutes,
+    });
+  }
+
   // 1. Open the extraction_runs row.
   const ins = await svc.from("extraction_runs").insert({
     tenant_id: ctx.tenantId,
@@ -254,6 +319,7 @@ export const runExtractionPipeline = async (params) => {
     source_url: url || null,
     source_filename: filename,
     source_size_bytes: bytes ? bytes.length : null,
+    content_hash: preHash,
     status: "running",
     triggered_by: triggeredBy,
     inbound_email_id: inboundEmailId,
@@ -261,6 +327,77 @@ export const runExtractionPipeline = async (params) => {
   }).select("id").single();
   if (ins.error) throw new Error(ins.error.message);
   const runId = ins.data.id;
+
+  // Dedupe short-circuit. Stamp the run row with the prior result
+  // and return BEFORE we open the text layer / OCR / LLM chain.
+  // The caller still gets a fresh runId so downstream wiring
+  // (extraction_run_id on orders, audit trail) continues to work.
+  if (dedupeSource) {
+    const prior = dedupeSource;
+    const finishedAt = new Date().toISOString();
+    await svc.from("extraction_runs").update({
+      adapter_used: prior.adapter_used || null,
+      adapter_attempts: prior.adapter_attempts || [],
+      raw_extract: prior.raw_extract || null,
+      normalized_extract: prior.normalized_extract || null,
+      field_confidences: prior.field_confidences || {},
+      confidence_overall: prior.confidence_overall ?? null,
+      status: "ok",
+      status_reason: "dedupe_hit",
+      validator_issues: prior.validator_issues || [],
+      validator_summary: prior.validator_summary || {},
+      text_layer_used: !!prior.text_layer_used,
+      ocr_layer_used: !!prior.ocr_layer_used,
+      template_used: prior.template_used || null,
+      global_template_used: prior.global_template_used || null,
+      global_template_use_mode: prior.global_template_use_mode || null,
+      overrides_applied: prior.overrides_applied || [],
+      field_provenance: prior.field_provenance || [],
+      voter_used: !!prior.voter_used,
+      selected_model: prior.selected_model || null,
+      model_selection_reason: prior.model_selection_reason || "dedupe_hit",
+      parse_method: prior.parse_method || null,
+      parse_repairs: prior.parse_repairs || [],
+      parse_retries: prior.parse_retries || 0,
+      error: null,
+      finished_at: finishedAt,
+    }).eq("id", runId);
+    await recordRunEvent("docai_extract_deduped", {
+      prior_run_id: prior.id,
+      content_hash: preHash,
+      window_minutes: dedupeMinutes,
+      adapter_used: prior.adapter_used || null,
+      confidence_overall: prior.confidence_overall ?? null,
+    });
+    return {
+      runId,
+      status: "ok",
+      statusReason: "dedupe_hit",
+      normalized: prior.normalized_extract || null,
+      confidenceOverall: prior.confidence_overall ?? null,
+      adapterUsed: prior.adapter_used || null,
+      adapterMode: "dedupe_hit",
+      attempts: prior.adapter_attempts || [],
+      textLayer: null,
+      textLayerUsed: !!prior.text_layer_used,
+      ocrLayer: null,
+      ocrLayerUsed: !!prior.ocr_layer_used,
+      templateUsed: prior.template_used || null,
+      templateHits: 0,
+      overridesApplied: prior.overrides_applied || [],
+      validatorIssues: prior.validator_issues || [],
+      validatorSummary: prior.validator_summary || null,
+      fieldProvenance: prior.field_provenance || [],
+      voterUsed: !!prior.voter_used,
+      selectedModel: prior.selected_model || null,
+      modelSelectionReason: prior.model_selection_reason || "dedupe_hit",
+      parseMethod: prior.parse_method || null,
+      parseRepairs: prior.parse_repairs || [],
+      parseRetries: prior.parse_retries || 0,
+      dedupeOf: prior.id,
+      error: null,
+    };
+  }
 
   await recordRunEvent("docai_extract_started", {
     source_type: sourceType,
@@ -275,11 +412,11 @@ export const runExtractionPipeline = async (params) => {
   let textLayer = null;
   let textLayerUsed = false;
   let bodyText = hints.bodyText || null;
-  let contentSha = null;
+  let contentSha = preHash;
   if (bytes && (sourceType === "pdf" || mime === "application/pdf")) {
     const got = await getOrExtractTextLayer({ svc, tenantId: ctx.tenantId, documentId, bytes, mime });
     textLayer = got.layer;
-    contentSha = got.hash;
+    contentSha = got.hash || preHash;
     if (!bodyText && textLayer?.ok && textLayer.body_text) {
       bodyText = textLayer.body_text;
       textLayerUsed = true;
@@ -290,7 +427,7 @@ export const runExtractionPipeline = async (params) => {
       page_count: textLayer?.page_count,
       cached: got.cached,
     });
-  } else if (bytes) {
+  } else if (bytes && !contentSha) {
     contentSha = await contentHash(bytes).catch(() => null);
   }
 

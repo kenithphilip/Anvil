@@ -77,6 +77,8 @@ const buildSvc = (storage) => ({
       eq(c, v) { ctx.filters.push({ c, op: "eq", v }); return api; },
       in(c, v) { ctx.filters.push({ c, op: "in", v }); return api; },
       is(c, v) { ctx.filters.push({ c, op: "is", v }); return api; },
+      gte(c, v) { ctx.filters.push({ c, op: "gte", v }); return api; },
+      lte(c, v) { ctx.filters.push({ c, op: "lte", v }); return api; },
       order(c) { ctx.order = c; return api; },
       limit(n) { ctx.limit = n; return api; },
       maybeSingle() {
@@ -183,6 +185,92 @@ describe("runExtractionPipeline / happy path", () => {
     expect(storage.tables.has("extraction_runs")).toBe(true);
     const txtRows = storage.tables.get("extraction_text_layer") || [];
     expect(txtRows.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("Wave 1.3: short-circuits when a recent run shares the content_hash + customer + kind", async () => {
+    // Seed an extraction_runs row that the dedupe gate will find.
+    // The text_layer mock returns contentHash="fixture_hash", so we
+    // pre-stamp the prior run with the same hash.
+    const storage = makeStorage();
+    const prior = {
+      id: "run-prior",
+      tenant_id: "t1",
+      customer_id: "c1",
+      content_hash: "fixture_hash",
+      extraction_kind: "po",
+      status: "ok",
+      adapter_used: "gemini",
+      normalized_extract: { classification: "po", lines: [{ partNumber: "PRIOR", quantity: 1, unitPrice: 10 }] },
+      field_confidences: { overall: 0.91 },
+      confidence_overall: 0.91,
+      created_at: new Date().toISOString(),
+      validator_issues: [],
+      validator_summary: {},
+      adapter_attempts: [],
+      raw_extract: { from_prior: true },
+      text_layer_used: true,
+      ocr_layer_used: false,
+      template_used: null,
+      global_template_used: null,
+      global_template_use_mode: null,
+      overrides_applied: [],
+      field_provenance: [],
+      voter_used: false,
+      selected_model: "gemini-2.5-flash",
+      model_selection_reason: "prior",
+      parse_method: "native_structured",
+      parse_repairs: [],
+      parse_retries: 0,
+    };
+    storage.tables.set("extraction_runs", [prior]);
+
+    const dispatcher = await import("../api/_lib/docai/index.js");
+    const svc = buildSvc(storage);
+    const result = await runExtractionPipeline({
+      ctx: { tenantId: "t1", userId: "u1" },
+      svc, settings: {},
+      bytes: Buffer.from("%PDF-1.4 fake"),
+      filename: "po.pdf", mime: "application/pdf",
+      sourceType: "pdf", customerId: "c1",
+      kind: "po",
+    });
+
+    expect(result.status).toBe("ok");
+    expect(result.statusReason).toBe("dedupe_hit");
+    expect(result.dedupeOf).toBe("run-prior");
+    expect(result.adapterUsed).toBe("gemini");
+    expect(result.normalized.lines[0].partNumber).toBe("PRIOR");
+    expect(result.confidenceOverall).toBe(0.91);
+    // L4 dispatch must NOT have been called.
+    expect(dispatcher.dispatchExtract).not.toHaveBeenCalled();
+  });
+
+  it("Wave 1.3: dedupe respects docai_content_dedupe_minutes=0 opt-out", async () => {
+    const storage = makeStorage();
+    storage.tables.set("extraction_runs", [{
+      id: "run-prior",
+      tenant_id: "t1",
+      customer_id: "c1",
+      content_hash: "fixture_hash",
+      extraction_kind: "po",
+      status: "ok",
+      created_at: new Date().toISOString(),
+      normalized_extract: { lines: [] },
+      confidence_overall: 0.9,
+    }]);
+    const dispatcher = await import("../api/_lib/docai/index.js");
+    const svc = buildSvc(storage);
+    const result = await runExtractionPipeline({
+      ctx: { tenantId: "t1", userId: "u1" },
+      svc,
+      settings: { docai_content_dedupe_minutes: 0 },          // disabled
+      bytes: Buffer.from("%PDF-1.4 fake"),
+      filename: "po.pdf", mime: "application/pdf",
+      sourceType: "pdf", customerId: "c1",
+      kind: "po",
+    });
+    expect(result.statusReason).not.toBe("dedupe_hit");
+    expect(dispatcher.dispatchExtract).toHaveBeenCalled();
   });
 
   it("derives status_reason='low_confidence' when adjusted confidence drops below 0.7", async () => {

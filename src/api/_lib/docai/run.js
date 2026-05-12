@@ -44,6 +44,8 @@
 
 import { dispatchExtract } from "./index.js";
 import { chunkedExtract } from "./chunked-extract.js";
+import { profileDocument } from "./toc-profiler.js";
+import { probePdfPageCount } from "./pdf-chunker.js";
 import { extractTextLayer, contentHash } from "./text_layer.js";
 import { extractOcrLayer } from "./ocr_layer.js";
 import { applyTemplate, buildTemplate } from "./templates.js";
@@ -474,16 +476,54 @@ export const runExtractionPipeline = async (params) => {
       out = all[0];
     }
   } else {
-    // Phase A2: route through chunkedExtract so a multi-page PDF
-    // gets split before the LLM call. Short PDFs (<= 6 pages) and
-    // non-PDFs are a straight passthrough to dispatchExtract; the
-    // chunking only kicks in when it's actually needed. Per-chunk
-    // progress lands on processing_events via the same
-    // recordRunEvent path used for the rest of the pipeline, so
-    // the upcoming progress UI (Phase B1) gets a live feed.
+    // Phase A2 + A4: route through chunkedExtract so a multi-page
+    // PDF gets split before the LLM call. When the document is
+    // large enough to benefit (~> profilerThreshold pages) we
+    // first run the TOC profiler (cheap preflight-tier Claude
+    // call) to identify the line-item pages so the extractor
+    // skips T&C boilerplate. Short PDFs and non-PDFs stay on the
+    // single-shot path.
     const chunkEventSink = (e) => {
       recordRunEvent("docai_chunk_" + e.stage, e);
     };
+    // Profiler kicks in above this page count. Below it, the
+    // extractor reads every page; the cost of one bonus LLM
+    // round-trip to triage isn't worth it on a 5-page PO.
+    const PROFILER_PAGE_THRESHOLD = 10;
+    let keepPages = hints.keepPages || null;
+    let profileResult = null;
+    const isPdf = (sourceType === "pdf" || mime === "application/pdf");
+    if (isPdf && bytes && !keepPages) {
+      let totalPages = 0;
+      try { totalPages = await probePdfPageCount(bytes); } catch (_e) { /* probe failed; skip profiling */ }
+      if (totalPages >= PROFILER_PAGE_THRESHOLD) {
+        await recordRunEvent("docai_profiler_started", { page_count: totalPages });
+        profileResult = await profileDocument({
+          source: { bytes, mime: mime || "application/pdf" },
+          tenantId: ctx.tenantId,
+          svc,
+        }).catch((err) => {
+          /* eslint-disable no-console */
+          console.warn("[docai/run] profiler threw: " + (err?.message || err));
+          return { ok: false, error: err?.message || String(err), line_item_pages: [], confidence: 0 };
+        });
+        await recordRunEvent("docai_profiler_done", {
+          ok: !!profileResult?.ok,
+          classification: profileResult?.classification || null,
+          confidence: profileResult?.confidence || 0,
+          page_count: profileResult?.page_count || totalPages,
+          line_item_pages: profileResult?.line_item_pages || [],
+          reason: profileResult?.reason || null,
+        });
+        // Adopt the page-keep list only when the profiler is
+        // confident and found at least one line-item page. A
+        // failed or low-confidence profile means: just extract
+        // every page and pay the cost.
+        if (profileResult?.ok && profileResult.line_item_pages?.length) {
+          keepPages = profileResult.line_item_pages;
+        }
+      }
+    }
     out = await chunkedExtract({
       source: dispatchSource,
       settings: { ...settings, tenant_id: ctx.tenantId },
@@ -491,9 +531,22 @@ export const runExtractionPipeline = async (params) => {
       hints: dispatchHints,
       opts: {
         eventSink: chunkEventSink,
-        keepPages: hints.keepPages || null,
+        keepPages,
       },
     });
+    // Stash the profiler outcome on the extraction result so
+    // downstream consumers (UI, audit) can see what was kept and
+    // what was skipped.
+    if (profileResult) {
+      out.toc_profile = {
+        classification: profileResult.classification,
+        confidence: profileResult.confidence,
+        line_item_pages: profileResult.line_item_pages,
+        page_count: profileResult.page_count,
+        reason: profileResult.reason,
+        used: !!keepPages,
+      };
+    }
   }
 
   // Merge template-extracted fields into the dispatcher result if

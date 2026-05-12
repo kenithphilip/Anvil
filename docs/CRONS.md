@@ -1,17 +1,22 @@
 # Cron jobs
 
-Anvil's scheduled work runs in two places, with redundant
-triggers so a single-vendor outage does not stall everything.
+Anvil's scheduled work runs in two places:
 
-1. **Vercel cron** (primary) runs both `/api/cron/daily` (02:30 UTC)
-   and `/api/cron/tick` (every 5 min, Phase 1 F4). Pro plan tier
-   is required for the 5-minute cadence. Vercel injects
-   `Authorization: Bearer ${CRON_SECRET}` automatically.
-2. **External cron** (fallback) keeps `/api/cron/tick` on
-   cron-job.org as a redundant trigger. The handler is idempotent
-   so a double-fire is safe but wasteful; production may keep both
-   for the first 14 days after a deploy, then disable the external
-   job once the Vercel cron has 14 days of green data.
+1. **Vercel cron** runs `/api/cron/daily` once per day at 02:30 UTC.
+   Hobby plan accepts only one cron path at daily cadence; that
+   is the only Vercel-side schedule.
+2. **External cron** (cron-job.org) runs `/api/cron/tick` every 5
+   minutes. Hobby's once-per-day frequency limit means we cannot
+   schedule sub-daily crons on Vercel: a `*/5 * * * *` expression
+   in `vercel.json` causes the deployment to fail with "Hobby
+   accounts are limited to daily cron jobs." cron-job.org is free
+   at any frequency and hits Anvil's HTTPS endpoint with the same
+   `Authorization: Bearer ${CRON_SECRET}` header Vercel uses.
+
+If a deployment is later upgraded to Pro, the `/api/cron/tick`
+entry can be re-added to `vercel.json` and the external cron kept
+as a fallback. Until then, do NOT add a sub-daily cron entry to
+`vercel.json`: it will break the build.
 
 A heartbeat-staleness sweep runs at the end of every `/api/cron/daily`
 invocation. It reads `cron_health.last_run_at` per worker via

@@ -277,12 +277,27 @@ const WiredSOWorkspace = () => {
 
   const approveOrder = async () => {
     if (!o?.id) return;
+    // Bug fix May 2026 (audit P0): every approval used to fail
+    // with 400 "Approval requires payload hash" because we sent
+    // only { status: "APPROVED" } and the server requires
+    // body.approval.payloadHash. The hash bound to the order
+    // (computed at send-for-review time) IS the right hash to
+    // anchor approval to: editing result.lineItems / line_edits
+    // afterward clears the approval, which is the documented
+    // invalidation contract.
+    if (!o.payload_hash) {
+      window.notifyError?.("Approve failed", "Order has no payload hash. Run 'send for review' first.");
+      return;
+    }
     setBusy(true);
     try {
-      await ObaraBackend?.orders?.update?.(o.id, { status: "APPROVED" });
+      await ObaraBackend?.orders?.update?.(o.id, {
+        status: "APPROVED",
+        approval: { payloadHash: o.payload_hash },
+      });
       window.notifySuccess?.("Order approved", o.po_number || o.id.slice(0, 8));
       setBump((n) => n + 1);
-    } catch (err) {
+    } catch (err: any) {
       window.notifyError?.("Approve failed", err?.message || String(err));
     } finally {
       setBusy(false);
@@ -811,7 +826,12 @@ const WiredSOWorkspace = () => {
 
   const linesDirty = linesDraft !== null
     && JSON.stringify(linesDraft) !== JSON.stringify(lines);
-  const canEditLines = !!(RBAC && RBAC.canDo && RBAC.canDo("orders.write"))
+  // Bug fix May 2026 (audit P0): namespace was "orders.write" but
+  // every other permission on this screen uses "so.*" (so.write,
+  // so.admin, so.push_tally). The RBAC rules only define the
+  // so.* namespace, so canEditLines was always false and every
+  // line was read-only.
+  const canEditLines = !!(RBAC && RBAC.canDo && RBAC.canDo("so.write"))
     && o.status !== "CANCELLED"
     && o.status !== "EXPORTED_TO_TALLY"
     && o.status !== "RECONCILED";

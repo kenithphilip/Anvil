@@ -105,6 +105,12 @@ comment on column orders.discount_amount is
 --    duplicating the calc in the renderer.
 -- ---------------------------------------------------------------------------
 
+-- DROP before CREATE OR REPLACE so future migrations that add
+-- columns to quote_lines do not trip Postgres's "cannot change
+-- name of view column" rule (same trap that 105's items_full_v
+-- hit when 107 added item_master.specification_details).
+drop view if exists quote_lines_with_totals;
+
 create or replace view quote_lines_with_totals as
   select
     ql.*,

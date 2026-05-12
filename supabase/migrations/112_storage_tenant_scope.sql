@@ -89,7 +89,7 @@ as $$
       nullif((parts.p)[1], '')::uuid
   end
   from parts;
-$$ language sql immutable;
+$$;
 
 -- Wrap in exception block: storage.objects path values that do
 -- not parse as UUID raise on insert; the policy short-circuits

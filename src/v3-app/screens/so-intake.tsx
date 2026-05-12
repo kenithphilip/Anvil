@@ -791,8 +791,14 @@ const WiredSOIntake = () => {
        // returned. Lets the Header fields tab in the workspace open
        // with the operator-visible values already filled rather than
        // sitting empty while the same info sits inside `result`.
+       // po_number + po_date come from the customer block on the
+       // extractor's normalized output (claude.js TOOL_DEFINITION).
        const headerColumnDefaults: Record<string, any> = {};
        if (vendorCodeFromOcr) headerColumnDefaults.vendor_code = vendorCodeFromOcr;
+       const poNumberFromOcr = (extractedCustomer?.po_number || "").toString().trim();
+       const poDateFromOcr = (extractedCustomer?.po_date || "").toString().trim();
+       if (poNumberFromOcr) headerColumnDefaults.po_number = poNumberFromOcr;
+       if (poDateFromOcr) headerColumnDefaults.po_date = poDateFromOcr;
 
        const res = await ObaraBackend?.orders?.create?.({
          order_mode: mode,

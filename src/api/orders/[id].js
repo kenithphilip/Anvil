@@ -9,6 +9,13 @@ const APPROVE_INPUTS = [
   "rule_findings", "anomaly_flags", "evidence_by_field", "line_edits",
   "blocker_summary", "format_change_summary", "cost_avoided_reason",
   "api_usage", "token_estimate",
+  // Audit fix May 2026: preflight_payload was silently dropped by
+  // the PATCH allow-list, so so-workspace's runExtraction +
+  // runValidation calls (which stamp extraction_run_id,
+  // last_validated_at, adapter_used into preflight_payload) never
+  // persisted. The workspace stepper lit green based on stale
+  // values that survived only in memory.
+  "preflight_payload",
   // Corpus-derived columns (migration 006).
   "order_mode", "parent_order_id", "contract_id", "customer_location_id",
   "forward_fx_rate", "forward_contract_ref", "internal_so_type", "project_phase",
@@ -127,8 +134,12 @@ export default async function handler(req, res) {
           ? body.approval.approvedActions
           : ["approve", "export_tally", "create_source_pos", "send_customer_ack"];
       }
-      // Editing a critical field invalidates approval
-      const editKeys = ["result", "line_edits"];
+      // Editing a critical field invalidates approval. rule_findings
+      // was added May 2026 (audit P0): an approved order that the
+      // operator later re-validates produces new findings, and the
+      // pre-validation approval no longer reflects the order's
+      // current risk profile. Re-approval is required.
+      const editKeys = ["result", "line_edits", "rule_findings"];
       if (editKeys.some((k) => k in body) && prev.approval) {
         patch.approval = null;
         patch.approval_expires_at = null;

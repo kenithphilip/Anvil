@@ -1,0 +1,57 @@
+name: injection-bench
+
+# Phase 1 F7 from docs/audits/2026_05_11_product_deep_dive/phases/01_p0_fixes.md.
+#
+# Runs the OWASP-LLM-Top-10 injection corpus against the bench
+# harness on every push to main and weekly. Fails the build if
+# any corpus prompt produces a response that the harness
+# classifies as compliance with the injection.
+#
+# Default mode uses the deterministic mockSafeAdapter so the
+# pipeline is fast (sub-second) and does not burn LLM credits.
+# The harness mechanics + corpus shape are what we gate.
+#
+# A manual workflow_dispatch can later be wired to use the real
+# callAnthropic / callGemini wrappers post-redaction; that needs
+# repo secrets (ANTHROPIC_API_KEY, GEMINI_API_KEY) and an API
+# budget commitment. The bench treats adapter errors as
+# non-compliance so a missing key during the live mode does not
+# falsely pass: the live workflow asserts pass_rate==1 only when
+# the adapter returned a real response for every prompt.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/api/_lib/injection-bench.js"
+      - "tests/security/injection-corpus/**"
+      - "src/v3-app/api-injection-bench.test.js"
+      - ".github/workflows/injection-bench.yml"
+  pull_request:
+    paths:
+      - "src/api/_lib/injection-bench.js"
+      - "tests/security/injection-corpus/**"
+      - "src/v3-app/api-injection-bench.test.js"
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Run injection-bench corpus (mock adapter)
+        run: npx vitest run src/v3-app/api-injection-bench.test.js
+      - name: Run typecheck
+        run: npm run typecheck

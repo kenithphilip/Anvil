@@ -53,6 +53,7 @@ import { createRunCostAccumulator } from "./run-cost.js";
 import { buildCustomerHints } from "./customer-hints.js";
 import { prepareEmailBody } from "./email-body.js";
 import { annotateLineLanguages, translateBatch } from "./multi-language.js";
+import { detectHandwriting, planHandwritingRoute } from "./handwriting.js";
 import { callAnthropic as callAnthropicForTranslate } from "../anthropic.js";
 // Bet 2: format-template marketplace L3.5 hook.
 import {
@@ -519,6 +520,25 @@ export const runExtractionPipeline = async (params) => {
       low_confidence_page_count: lowConfPages.length,
       low_confidence_pages: lowConfPages.slice(0, 30), // cap to keep payload small
     });
+  }
+
+  // Wave 2.5: handwriting detection. Runs after L2 OCR; reads
+  // confidence stats + garbled-token ratio off the OCR layer. The
+  // signal is recorded for the audit trail; routing (re-OCR with
+  // a handwriting-specialised provider OR escalate-to-human)
+  // happens later in the pipeline.
+  let handwritingDetection = null;
+  let handwritingRoute = null;
+  if (ocrLayer) {
+    handwritingDetection = detectHandwriting(ocrLayer);
+    handwritingRoute = planHandwritingRoute(handwritingDetection, settings);
+    if (handwritingDetection.suspected) {
+      await recordRunEvent("docai_handwriting_suspected", {
+        score: handwritingDetection.score,
+        signals: handwritingDetection.signals,
+        route: handwritingRoute,
+      });
+    }
   }
 
   // 4. L3 template apply (only when we know the customer + have body text).
@@ -1019,6 +1039,8 @@ export const runExtractionPipeline = async (params) => {
       parse_repairs: parseRepairs,
       cost_summary: costSummary,
       languages: languageSummary,
+      handwriting_detection: handwritingDetection,
+      handwriting_route: handwritingRoute,
       error: out?.error || null,
     },
   );

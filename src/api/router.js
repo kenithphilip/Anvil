@@ -314,6 +314,8 @@ import ordersPrintJobs         from "./orders/print_jobs.js";
 import ordersReconcile         from "./orders/reconcile.js";
 import ordersSuggestMappings   from "./orders/suggest_mappings.js";
 import ordersExtractionStatus from "./orders/extraction_status.js";
+import ordersExtractionJobs   from "./orders/extraction_jobs.js";
+import ordersExtractionJobsId from "./orders/extraction_jobs_id.js";
 
 import supplierRfqIndex        from "./supplier_rfq/index.js";
 import supplierRfqSend         from "./supplier_rfq/send.js";
@@ -368,6 +370,7 @@ import esignWebhook            from "./esign/webhook.js";
 
 import cronTick                from "./cron/tick.js";
 import cronDaily               from "./cron/daily.js";
+import cronExtractionJobs      from "./cron/extraction_jobs.js";
 
 import ediInbound              from "./edi/inbound.js";
 import ediOutbound             from "./edi/outbound.js";
@@ -532,6 +535,7 @@ const STATIC_ROUTES = {
   "/orders/reconcile":              ordersReconcile,
   "/orders/suggest_mappings":       ordersSuggestMappings,
   "/orders/extraction_status":      ordersExtractionStatus,
+  "/orders/extraction_jobs":        ordersExtractionJobs,
   "/supplier_rfq":                  supplierRfqIndex,
   "/supplier_rfq/send":             supplierRfqSend,
   "/supplier_rfq/quote":            supplierRfqQuote,
@@ -574,6 +578,7 @@ const STATIC_ROUTES = {
   "/esign/webhook":                 esignWebhook,
   "/cron/tick":                     cronTick,
   "/cron/daily":                    cronDaily,
+  "/cron/extraction_jobs":          cronExtractionJobs,
   "/cron/inventory-positions":       inventoryCronPositions,
   "/cron/inventory-planning-weekly": inventoryCronWeekly,
   "/cron/inventory-exceptions-tick": inventoryCronExceptions,
@@ -930,6 +935,10 @@ const DYNAMIC_ROUTES = [
   // /orders/<id>/pipeline-state takes precedence over the bare
   // /orders/<id> route below thanks to suffix-aware matching.
   { prefix: "/orders/",      suffix: "/pipeline-state", handler: ordersPipelineState, param: "id" },
+  // /orders/extraction_jobs/<id> is the Phase C job-status read
+  // path. Must precede the bare /orders/<id> handler so its
+  // more-specific prefix wins the match order.
+  { prefix: "/orders/extraction_jobs/", handler: ordersExtractionJobsId, param: "id" },
   { prefix: "/orders/",      handler: ordersById,     param: "id" },
   // "/source_pos/<id>/ack_extract" -> Phase F.2 supplier-ack PDF extractor.
   // "/source_pos/<id>/ack_accept" -> Phase F.2 commit reviewed extraction.

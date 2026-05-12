@@ -26,6 +26,7 @@ import netsuiteRetry    from "../netsuite/retry.js";
 import tallySync        from "../tally/sync.js";
 import tallyRetry       from "../tally/retry.js";
 import tallyReconcileCron from "./tally-reconcile.js";
+import extractionJobsCron from "./extraction_jobs.js";
 import driftMeterCron     from "./drift-meter.js";
 import sapSync          from "../sap/sync.js";
 import sapRetry         from "../sap/retry.js";
@@ -148,6 +149,12 @@ export default async function handler(req, res) {
     // ALWAYS: every-5-min items.
     const alwaysGroup = [
       { name: "push/send",            fn: pushSend,     opts: { path: "/api/push/send" } },
+      // Phase C: drain the extraction_jobs queue. Runs every
+      // tick so a large-PDF background extraction makes
+      // progress promptly. The worker bounds itself to ~18s
+      // per tick (inside the cron-mux 20s budget) and processes
+      // up to MAX_JOBS_PER_TICK jobs per invocation.
+      { name: "extraction/jobs",      fn: extractionJobsCron, opts: { path: "/api/cron/extraction_jobs" } },
       // Prospecting dispatch runs every tick; the inner send-window
       // + daily-cap checks gate which campaigns actually fire (C.6).
       { name: "prospecting/run",      fn: prospectingRun, opts: { path: "/api/prospecting/run", method: "POST" } },

@@ -5,22 +5,31 @@ import { amountInWords } from "./amount-words";
 // "Amount Chargeable (in words)". Keep the test pinned to that input
 // so a regression on the helper is caught immediately.
 describe("amountInWords", () => {
-  it("renders the Obara SO sample (intl)", () => {
-    expect(amountInWords(230_202)).toBe("Two Hundred Thirty Thousand Two Hundred Two INR Only");
-  });
-  it("renders the same value in Indian numbering", () => {
-    expect(amountInWords(230_202, { style: "indian" }))
+  it("defaults to Indian numbering for INR (the Obara SO sample)", () => {
+    expect(amountInWords(230_202))
       .toBe("Two Lakh Thirty Thousand Two Hundred Two INR Only");
   });
-  it("renders the Hyundai PO grand total (intl)", () => {
+  it("renders the same Obara value in international numbering when style:intl is forced", () => {
+    expect(amountInWords(230_202, { style: "intl" }))
+      .toBe("Two Hundred Thirty Thousand Two Hundred Two INR Only");
+  });
+  it("renders the Hyundai PO grand total in Indian numbering by default for INR", () => {
     expect(amountInWords(271_638.36))
+      .toBe("Two Lakh Seventy One Thousand Six Hundred Thirty Eight and Thirty Six Paise INR Only");
+  });
+  it("renders the Hyundai PO grand total in international numbering when style:intl is forced", () => {
+    expect(amountInWords(271_638.36, { style: "intl" }))
       .toBe("Two Hundred Seventy One Thousand Six Hundred Thirty Eight and Thirty Six Paise INR Only");
   });
   it("handles zero", () => {
     expect(amountInWords(0)).toBe("Zero INR Only");
   });
-  it("handles non-INR currencies", () => {
+  it("defaults to international numbering for non-INR currencies", () => {
     expect(amountInWords(1500, { currency: "USD" })).toBe("One Thousand Five Hundred USD Only");
+  });
+  it("respects an explicit style:indian even for non-INR currencies", () => {
+    expect(amountInWords(230_202, { currency: "USD", style: "indian" }))
+      .toBe("Two Lakh Thirty Thousand Two Hundred Two USD Only");
   });
   it("handles negatives", () => {
     expect(amountInWords(-100)).toBe("Minus One Hundred INR Only");

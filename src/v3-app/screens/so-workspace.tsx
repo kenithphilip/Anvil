@@ -7,6 +7,7 @@ import { RBAC } from "../lib/rbac";
 import { amountInWords } from "../lib/amount-words";
 import { getFieldSource, markFieldEdited, FieldSource } from "../lib/field-sources";
 import { ItemMasterPicker, PickedItem } from "../components/ItemMasterPicker";
+import { computeLineTotals, TAX_AMOUNT_KEYS, AUX_AMOUNT_KEYS, COMPONENT_LABEL } from "../lib/line-totals";
 
 // ============================================================
 // ANVIL v3 — wired SO Workspace
@@ -48,6 +49,12 @@ const WiredSOWorkspace = () => {
   const [suggestionsByLine, setSuggestionsByLine] = u<Record<number, any[]>>({});
   const [suggesting, setSuggesting] = u(false);
   const [suggestError, setSuggestError] = u<string | null>(null);
+  // Per-line tax-breakdown expander: an entry { [i]: true } means
+  // row i's sub-row (CGST / SGST / IGST / UTGST / Cess / Excise /
+  // Ed.cess / Tooling / P&F / Others) is currently visible and
+  // editable. Operators with a Hyundai-style PO use this to fix
+  // up extractor output that landed under the wrong tax cell.
+  const [breakdownOpen, setBreakdownOpen] = u<Record<number, boolean>>({});
   // Phase 3.6 observability: pipeline-diagnostics state (lazy-
   // loaded the first time the operator opens the Diagnostics tab).
   const [pipelineState, setPipelineState] = u<{ data: any; loading: boolean; error: any }>({ data: null, loading: false, error: null });
@@ -757,12 +764,13 @@ const WiredSOWorkspace = () => {
   };
 
   const reconRow = (ln: any, i: number) => {
-    const qty = Number(ln.qty || ln.quantity || 0);
-    const rate = Number(ln.rate || ln.unitPrice || 0);
-    const taxable = qty * rate;
-    const gstPct = Number(ln.gst_pct ?? ln.gstRate ?? ln.rate_of_duty_pct ?? 0);
-    const tax = Math.round((taxable * gstPct) / 100 * 100) / 100;
-    const lineTotal = Number(ln.lineTotal) || (taxable + tax) || 0;
+    // Single source of truth for taxable / tax / line total. The
+    // helper picks one of three paths depending on what the line
+    // carries (explicit per-component amounts, gst_pct legacy
+    // fast-path, or extractor-provided lineTotal). See
+    // src/v3-app/lib/line-totals.ts for the priority order.
+    const totals = computeLineTotals(ln);
+    const { taxable, tax, aux, lineTotal, source } = totals;
     const lineFindings = findings.filter((f) => Number(f.line_index) === i || Number(f.lineIndex) === i);
     const issueChip = lineFindings.length === 0
       ? "—"
@@ -771,8 +779,20 @@ const WiredSOWorkspace = () => {
             {(f.code || f.rule_id || "issue").toLowerCase()}
           </Chip>
         ));
-    return (
-      <tr key={i}>
+    const isOpen = !!breakdownOpen[i];
+    // Tax-source chip: tells the operator which math path is
+    // driving the displayed numbers. "explicit" wins; "pct"
+    // means we are falling back to a single GST percentage; "—"
+    // means no tax info at all.
+    const taxSourceChip = source === "explicit"
+      ? <Chip k="good">explicit</Chip>
+      : source === "gst_pct"
+        ? <Chip k="info">pct</Chip>
+        : source === "lineTotal"
+          ? <Chip k="ghost">total</Chip>
+          : null;
+    const mainRow = (
+      <tr key={"row-" + i}>
         <td className="mono">{i + 1}</td>
         <td>
           <EditableCell line={ln} i={i} canonicalKey="description" type="text" placeholder="description" />
@@ -785,15 +805,74 @@ const WiredSOWorkspace = () => {
         <td className="r mono"><EditableCell line={ln} i={i} canonicalKey="qty" type="number" align="right" /></td>
         <td className="r mono"><EditableCell line={ln} i={i} canonicalKey="rate" type="number" align="right" /></td>
         <td><EditableCell line={ln} i={i} canonicalKey="hsn" type="text" placeholder="8482" /></td>
-        <td className="r mono"><EditableCell line={ln} i={i} canonicalKey="gst_pct" type="number" align="right" placeholder="18" /></td>
+        <td className="r mono">
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "flex-end" }}>
+            <EditableCell line={ln} i={i} canonicalKey="gst_pct" type="number" align="right" placeholder="18" />
+            {taxSourceChip}
+          </div>
+        </td>
         <td className="r mono">{taxable ? fmtINR(taxable) : "—"}</td>
         <td className="r mono" style={{ color: "var(--ink-3)" }}>
           {tax ? fmtINR(tax) : "—"}
         </td>
         <td className="r mono"><span className="pri">{lineTotal ? fmtINR(lineTotal) : "—"}</span></td>
-        <td>{issueChip}</td>
+        <td>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "flex-start" }}>
+            {issueChip}
+            {canEditLines && (
+              <button
+                type="button"
+                onClick={() => setBreakdownOpen((m) => ({ ...m, [i]: !m[i] }))}
+                aria-expanded={isOpen}
+                aria-label={isOpen ? "Hide tax breakdown for line " + (i + 1) : "Show tax breakdown for line " + (i + 1)}
+                style={{ background: "none", border: "none", padding: 0, color: "var(--ink-3)", cursor: "pointer", fontSize: 11, textDecoration: "underline" }}
+              >{isOpen ? "▾ hide tax" : "▸ tax detail"}</button>
+            )}
+          </div>
+        </td>
       </tr>
     );
+    if (!isOpen) return mainRow;
+    // Sub-row: 10 editable per-unit cells in two rows of 5
+    // (tax components, then auxiliary costs) plus a recap of
+    // the helper's derived totals. The recap stays read-only;
+    // operators change the source values, not the result.
+    const editCell = (key: keyof typeof COMPONENT_LABEL, placeholder = "") => (
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <span className="mono-sm" style={{ color: "var(--ink-3)", fontSize: 10, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+          {COMPONENT_LABEL[key]}
+        </span>
+        <EditableCell line={ln} i={i} canonicalKey={key} type="number" align="right" placeholder={placeholder} />
+      </div>
+    );
+    const breakdownRow = (
+      <tr key={"brk-" + i} style={{ background: "var(--paper-2)" }}>
+        <td></td>
+        <td colSpan={10} style={{ padding: "10px 6px" }}>
+          <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 8, fontSize: 11 }}>
+            Per-unit tax and auxiliary amounts. Set the ones the PO carries; the row above recomputes the line total from them. The "Rate" cell is the tax-exclusive ex-price.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(80px, 1fr))", gap: 8, marginBottom: 6 }}>
+            {TAX_AMOUNT_KEYS.slice(0, 5).map((k) => (
+              <div key={k}>{editCell(k as any, "0")}</div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(80px, 1fr))", gap: 8, marginBottom: 6 }}>
+            {[...TAX_AMOUNT_KEYS.slice(5), ...AUX_AMOUNT_KEYS].map((k) => (
+              <div key={k}>{editCell(k as any, "0")}</div>
+            ))}
+          </div>
+          <div className="mono-sm" style={{ display: "flex", gap: 16, paddingTop: 6, borderTop: "1px dashed var(--hairline)", color: "var(--ink-2)", flexWrap: "wrap" }}>
+            <span>taxable: <b>{taxable ? fmtINR(taxable) : "—"}</b></span>
+            <span>tax: <b>{tax ? fmtINR(tax) : "—"}</b></span>
+            {aux > 0 && <span>aux: <b>{fmtINR(aux)}</b></span>}
+            <span>line: <b>{lineTotal ? fmtINR(lineTotal) : "—"}</b></span>
+            <span style={{ color: "var(--ink-3)" }}>source: {source}</span>
+          </div>
+        </td>
+      </tr>
+    );
+    return <React.Fragment key={"f-" + i}>{mainRow}{breakdownRow}</React.Fragment>;
   };
 
   // Margin cockpit data
@@ -933,6 +1012,19 @@ const WiredSOWorkspace = () => {
     uom: ["uom", "unit"],
     hsn: ["hsn", "hsn_sac", "hsnCode"],
     gst_pct: ["gst_pct", "gstRate", "rate_of_duty_pct"],
+    // Per-line tax-component aliases. Each one is the per-unit
+    // amount (matching the Hyundai PO column layout). Identity
+    // maps because the extractor and the DB use the same key.
+    cgst_amount:    ["cgst_amount"],
+    sgst_amount:    ["sgst_amount"],
+    igst_amount:    ["igst_amount"],
+    utgst_amount:   ["utgst_amount"],
+    cess_amount:    ["cess_amount"],
+    excise_amount:  ["excise_amount"],
+    ed_cess_amount: ["ed_cess_amount"],
+    tooling_amount: ["tooling_amount"],
+    p_and_f_amount: ["p_and_f_amount"],
+    others_amount:  ["others_amount"],
   };
 
   const linesDirty = linesDraft !== null
@@ -1519,25 +1611,18 @@ const WiredSOWorkspace = () => {
               (() => {
                 // Tax totals across the draft so the footer can
                 // reconcile against what the Tally voucher will
-                // emit. Same formula as reconRow uses per line.
-                // Audit fix May 2026: round per-line in the same
-                // shape reconRow uses, then sum the rounded values.
-                // Without this the footer drifts by paise from the
-                // sum of displayed line totals, and the operator
-                // gets a mismatch they cannot explain.
+                // emit. Sum is computed from the same
+                // computeLineTotals() helper reconRow uses so the
+                // displayed footer always matches the sum of
+                // displayed line totals (no paise drift). Auxiliary
+                // costs (tooling / P&F / others) appear in the
+                // grand total too because the buyer is paying them.
                 const round2 = (n: number) => Math.round(n * 100) / 100;
-                const taxableTotal = draftLines.reduce((s: number, ln: any) => {
-                  const q = Number(ln.qty || ln.quantity || 0);
-                  const r = Number(ln.rate || ln.unitPrice || 0);
-                  return s + round2(q * r);
-                }, 0);
-                const taxTotal = draftLines.reduce((s: number, ln: any) => {
-                  const q = Number(ln.qty || ln.quantity || 0);
-                  const r = Number(ln.rate || ln.unitPrice || 0);
-                  const p = Number(ln.gst_pct ?? ln.gstRate ?? ln.rate_of_duty_pct ?? 0);
-                  return s + round2((q * r * p) / 100);
-                }, 0);
-                const grandWithTax = round2(taxableTotal + taxTotal);
+                const perLine = draftLines.map((ln: any) => computeLineTotals(ln));
+                const taxableTotal = perLine.reduce((s, t) => s + t.taxable, 0);
+                const taxTotal = perLine.reduce((s, t) => s + t.tax, 0);
+                const auxTotal = perLine.reduce((s, t) => s + t.aux, 0);
+                const grandWithTax = round2(taxableTotal + taxTotal + auxTotal);
                 return (
                   <table className="tbl">
                     <thead><tr>
@@ -1564,9 +1649,20 @@ const WiredSOWorkspace = () => {
                         <td className="r mono"></td>
                         <td></td>
                       </tr>
+                      {auxTotal > 0 && (
+                        <tr style={{ background: "var(--paper-2)" }}>
+                          <td colSpan={9} className="r mono">
+                            <span style={{ color: "var(--ink-3)" }}>auxiliary · tooling / P&amp;F / others</span>
+                          </td>
+                          <td className="r mono">{fmtINR(auxTotal)}</td>
+                          <td></td>
+                        </tr>
+                      )}
                       <tr style={{ background: "var(--paper-2)" }}>
                         <td colSpan={7} className="r mono" style={{ paddingBottom: 8 }}>
-                          <span style={{ color: "var(--ink-3)" }}>grand total · taxable + tax</span>
+                          <span style={{ color: "var(--ink-3)" }}>
+                            grand total · taxable + tax{auxTotal > 0 ? " + aux" : ""}
+                          </span>
                         </td>
                         <td className="r mono"></td>
                         <td className="r mono"></td>

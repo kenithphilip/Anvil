@@ -82,8 +82,14 @@ export const amountInWords = (amount: number | string | null | undefined, opts: 
   if (amount == null) return "";
   const raw = typeof amount === "number" ? amount : Number(String(amount).replace(/[,_\s]/g, ""));
   if (!Number.isFinite(raw)) return "";
-  const style = opts.style || "intl";
   const currency = opts.currency || "INR";
+  // Default to Indian numbering (Lakh / Crore) when the currency
+  // is INR. Operators printing a Hyundai-style PO total of
+  // ₹ 2,71,638 expect "Two Lakh Seventy One Thousand..." not
+  // "Two Hundred Seventy One Thousand...". Non-INR currencies
+  // (USD / EUR) keep the international default. An explicit
+  // `style` arg always wins.
+  const style = opts.style || (currency === "INR" ? "indian" : "intl");
   const sign = raw < 0 ? "Minus " : "";
   const abs = Math.abs(raw);
   const rupees = Math.floor(abs);

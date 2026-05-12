@@ -472,10 +472,14 @@ import proalphaPush            from "./proalpha/push.js";
 import proalphaRetry           from "./proalpha/retry.js";
 
 import healthCheck             from "./health.js";
+import healthz                 from "./healthz.js";
 
 // Static routes resolved by exact match. Order does not matter.
 const STATIC_ROUTES = {
   "/health":                        healthCheck,
+  // F9 minimal probe for external uptime monitors. Returns 503
+  // when DB is unreachable or any cron is stale.
+  "/_healthz":                      healthz,
 
   "/agents/goals":                  agentsGoals,
   "/agents/run":                    agentsRun,

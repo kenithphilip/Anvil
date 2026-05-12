@@ -1,15 +1,31 @@
 # Cron jobs
 
-Anvil's scheduled work runs in two places:
+Anvil's scheduled work runs in two places, with redundant
+triggers so a single-vendor outage does not stall everything.
 
-1. **Vercel-built cron** runs `/api/cron/daily` once per day. Hobby
-   plan allows once-per-day cron only; this is the only Vercel-side
-   schedule.
-2. **External cron** (cron-job.org) runs `/api/cron/tick` every 5
-   minutes. Hobby's once-per-day frequency limit means we can't
-   schedule sub-daily crons on Vercel. cron-job.org is free at any
-   frequency and hits Anvil's HTTPS endpoint with the same
-   `Authorization: Bearer ${CRON_SECRET}` header Vercel uses.
+1. **Vercel cron** (primary) runs both `/api/cron/daily` (02:30 UTC)
+   and `/api/cron/tick` (every 5 min, Phase 1 F4). Pro plan tier
+   is required for the 5-minute cadence. Vercel injects
+   `Authorization: Bearer ${CRON_SECRET}` automatically.
+2. **External cron** (fallback) keeps `/api/cron/tick` on
+   cron-job.org as a redundant trigger. The handler is idempotent
+   so a double-fire is safe but wasteful; production may keep both
+   for the first 14 days after a deploy, then disable the external
+   job once the Vercel cron has 14 days of green data.
+
+A heartbeat-staleness sweep runs at the end of every `/api/cron/daily`
+invocation. It reads `cron_health.last_run_at` per worker via
+`src/api/_lib/heartbeat-check.js` and logs `[heartbeat-check]`
+warnings for any worker past its expected age. The same sweep is
+exposed by `/api/_healthz` (F9) for external uptime monitors:
+the endpoint returns 503 when any cron is stale or the DB probe
+fails, so a stalled tick pages the on-call within 60 seconds of
+the next monitor poll.
+
+`CRON_EXPECTED_MAX_AGE_MS` in `_lib/heartbeat-check.js` is the
+single source of truth for staleness bounds. Edit the per-worker
+key (not the `default`) if a worker's cadence changes
+intentionally; never bump `default` to silence a noisy alert.
 
 Both endpoints are multiplexers that fan out to every per-handler
 cron path internally. See `src/api/cron/tick.js` and

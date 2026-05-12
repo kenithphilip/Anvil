@@ -12,6 +12,7 @@
 
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { runCronGroup, recordCronHeartbeat } from "../_lib/cron-mux.js";
+import { probeCronFreshness, emitStaleCronAlert } from "../_lib/heartbeat-check.js";
 
 import analyticsRefresh from "../analytics/refresh.js";
 import fxCron           from "../fx/cron.js";
@@ -69,6 +70,15 @@ export default async function handler(req, res) {
         metadata: r.error ? { error: String(r.error).slice(0, 200) } : { status: r.status },
       });
     }
+    // F4: heartbeat-staleness sweep. Runs after the daily fan-out
+    // because by then every same-day cron should have refreshed
+    // its row. If the 5-minute tick is stale here (>10 minutes)
+    // the external cron-job.org trigger has lapsed and the on-call
+    // rotation needs to know. The alert emits to console.warn
+    // today; Sentry / Pagerduty pipe these in production via the
+    // Vercel log drain.
+    const staleness = await probeCronFreshness().catch(() => null);
+    const alert = staleness ? emitStaleCronAlert(staleness) : null;
     return json(res, 200, {
       ran_at: startedAt.toISOString(),
       total: results.length,
@@ -76,6 +86,10 @@ export default async function handler(req, res) {
       failed: errCount,
       duration_ms: durationMs,
       results,
+      staleness_check: staleness
+        ? { any_stale: staleness.any_stale, stale_workers: staleness.stale_workers }
+        : null,
+      staleness_alert: alert,
     });
   } catch (err) {
     await recordCronHeartbeat("cron/daily", { status: "error", metadata: { error: String(err.message || err).slice(0, 200) } });

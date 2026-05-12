@@ -1360,15 +1360,18 @@ const stateFromGstin = (gstin) => {
   return STATE_BY_GSTIN_PREFIX[prefix] || "";
 };
 
-// OBARA_STATE removed May 2026. The hardcoded "Maharashtra" assumed
-// a single-tenant deployment. Multi-tenant deployments derive the
-// seller's state at runtime from `tenant_settings.default_state_code`
-// (or the tenant's GSTIN prefix via stateFromGstin) so the
-// interstate-vs-intrastate GST routing works per tenant. The legacy
-// build script kept this constant for backwards compat with the
-// old single-tenant unified build; the production v3-app reads the
-// tenant value via the auth context.
-const OBARA_STATE = (typeof process !== "undefined" && process.env && process.env.TENANT_DEFAULT_STATE) || "";
+// F6 (Phase 1 P0). Originally the hardcoded constant OBARA_STATE =
+// "Maharashtra"; assumed a single-tenant deployment and silently
+// produced incorrect interstate-vs-intrastate GST classification
+// for every non-Maharashtra tenant. Renamed and converted to a
+// runtime env read in May 2026; live multi-tenant code reads
+// `tally_companies.state_code` + `tenant_settings.einvoice_seller_state_code`
+// directly per request and never touches this script. The script
+// itself is a v2 archive: no caller in package.json, no caller in
+// any deploy workflow. The constant survives as an empty string so
+// the two rule hooks below short-circuit safely if the script is
+// ever resurrected for a side build.
+const SELLER_STATE = (typeof process !== "undefined" && process.env && process.env.TENANT_DEFAULT_STATE) || "";
 
 const sha256OfText = async (text) => {
   if (!text) return "empty";
@@ -1442,17 +1445,22 @@ const VALIDATION_RULES = [
     code: "TAX_TYPE_MISMATCH",
     label: "CGST/SGST/IGST does not match ship-to state",
     test: (ctx) => {
+      // F6 P0: short-circuit when the seller state is unknown.
+      // Previously the rule defaulted to Maharashtra and produced
+      // false positives on every Karnataka/Tamil-Nadu/Gujarat
+      // tenant; now it refuses to score rather than mis-score.
+      if (!SELLER_STATE) return [];
       const shipGstin = (ctx.so && ctx.so.shipTo && ctx.so.shipTo.gstin) || "";
       if (!shipGstin) return [];
       const customerState = stateFromGstin(shipGstin);
       if (!customerState) return [];
-      const interstate = customerState !== OBARA_STATE;
+      const interstate = customerState !== SELLER_STATE;
       const findings = [];
       ((ctx.so && ctx.so.lineItems) || []).forEach((li, idx) => {
         const hasIgst = Number(li.igstAmt) > 0 || Number(li.igst) > 0;
         const hasCgst = Number(li.cgstAmt) > 0 || Number(li.cgst) > 0;
-        if (interstate && hasCgst) findings.push({ lineIndex: idx, sno: li.sno, detail: "Interstate (Maharashtra to " + customerState + ") but CGST applied" });
-        if (!interstate && hasIgst) findings.push({ lineIndex: idx, sno: li.sno, detail: "Intrastate Maharashtra but IGST applied" });
+        if (interstate && hasCgst) findings.push({ lineIndex: idx, sno: li.sno, detail: "Interstate (" + SELLER_STATE + " to " + customerState + ") but CGST applied" });
+        if (!interstate && hasIgst) findings.push({ lineIndex: idx, sno: li.sno, detail: "Intrastate " + SELLER_STATE + " but IGST applied" });
       });
       return findings;
     },
@@ -4417,7 +4425,7 @@ patchSo(
                       if (action.id === "switch_tax_type" && activeOrder.result && activeOrder.result.salesOrder) {
                         const so = activeOrder.result.salesOrder;
                         const ship = so.shipTo && so.shipTo.gstin;
-                        const interstate = ship && stateFromGstin(ship) && OBARA_STATE && stateFromGstin(ship) !== OBARA_STATE;
+                        const interstate = ship && stateFromGstin(ship) && SELLER_STATE && stateFromGstin(ship) !== SELLER_STATE;
                         const next = { ...so, lineItems: (so.lineItems || []).map((li) => {
                           if (interstate) return { ...li, igst: Number(li.igst) || (Number(li.cgst) || 0) + (Number(li.sgst) || 0), cgst: 0, sgst: 0 };
                           return { ...li, cgst: Number(li.cgst) || (Number(li.igst) || 0) / 2, sgst: Number(li.sgst) || (Number(li.igst) || 0) / 2, igst: 0 };

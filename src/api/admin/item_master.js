@@ -13,6 +13,7 @@ const LIFECYCLE = new Set(["ACTIVE","OBSOLETE","DISCONTINUED","NEW","TRIAL"]);
 const SUPPLY_TYPES = new Set(["GOODS", "SERVICES"]);
 const TAXABILITY = new Set(["TAXABLE", "EXEMPT", "NIL_RATED", "NON_GST", "ZERO_RATED"]);
 const DATA_SOURCES = new Set(["manual", "imported", "api", "marketplace_template"]);
+const SOURCE_FALLBACK = new Set(["specify", "as_per_company", "not_available"]);
 
 // Pull the migration-105 extension columns off the body and coerce
 // types where needed. Returns the partial object to merge into the
@@ -56,6 +57,19 @@ const buildExtensionPatch = (body) => {
     patch.data_source = DATA_SOURCES.has(v) ? v : "manual";
   }
   setBool("alteration_locked");
+  // Migration 107: residual Tally + Hyundai PO columns.
+  setBool("specification_details");
+  setBool("other_details");
+  if ("hsn_source" in body) {
+    const v = (body.hsn_source || "").toLowerCase();
+    patch.hsn_source = SOURCE_FALLBACK.has(v) ? v : null;
+  }
+  if ("gst_rate_source" in body) {
+    const v = (body.gst_rate_source || "").toLowerCase();
+    patch.gst_rate_source = SOURCE_FALLBACK.has(v) ? v : null;
+  }
+  setBool("inspection_required");
+  setStr("maker");
   return patch;
 };
 

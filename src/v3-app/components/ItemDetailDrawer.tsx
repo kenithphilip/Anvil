@@ -282,7 +282,7 @@ export const ItemDetailDrawer: React.FC<{
               <Field label="Specification code" hint="Per-tenant spec identifier (e.g., OIPN036906)">
                 <input className="input mono" value={draft.specification_code || ""} onChange={(e) => setField("specification_code", e.target.value)} />
               </Field>
-              <div className="row" style={{ gap: 16 }}>
+              <div className="row" style={{ gap: 16, flexWrap: "wrap" }}>
                 <Field label="Verify item">
                   <input type="checkbox" checked={!!draft.verify_item} onChange={(e) => setField("verify_item", e.target.checked)} />
                 </Field>
@@ -291,6 +291,15 @@ export const ItemDetailDrawer: React.FC<{
                 </Field>
                 <Field label="Alteration locked" hint="Block future edits to identification fields">
                   <input type="checkbox" checked={!!draft.alteration_locked} onChange={(e) => setField("alteration_locked", e.target.checked)} />
+                </Field>
+                {/* Tally Yes/No flags (migration 107). Visible-tab
+                    drivers: when true, the Specifications and
+                    Custom-fields tabs render; when false, they hide. */}
+                <Field label="Specification details" hint="Tally Yes/No. Show engineering tab.">
+                  <input type="checkbox" checked={!!draft.specification_details} onChange={(e) => setField("specification_details", e.target.checked)} />
+                </Field>
+                <Field label="Other details" hint="Tally Yes/No. Show custom fields tab.">
+                  <input type="checkbox" checked={!!draft.other_details} onChange={(e) => setField("other_details", e.target.checked)} />
                 </Field>
               </div>
               <Field label="Effective date">
@@ -336,6 +345,17 @@ export const ItemDetailDrawer: React.FC<{
                   <option value="DISCONTINUED">Discontinued</option>
                 </select>
               </Field>
+              {/* Hyundai-PO style per-line attributes (migration 107).
+                  Defaults that flow onto order line items unless the
+                  inbound PO overrides them. */}
+              <div className="row" style={{ gap: 16, flexWrap: "wrap" }}>
+                <Field label="Inspection required (default)" hint="Default for inbound PO line items">
+                  <input type="checkbox" checked={!!draft.inspection_required} onChange={(e) => setField("inspection_required", e.target.checked)} />
+                </Field>
+                <Field label="Maker (default)" hint="Brand / supplier name shown on the PO line">
+                  <input className="input" value={draft.maker || ""} onChange={(e) => setField("maker", e.target.value)} placeholder="e.g., OBARA" />
+                </Field>
+              </div>
             </>
           )}
 
@@ -347,11 +367,31 @@ export const ItemDetailDrawer: React.FC<{
                   <option value="no">Not applicable</option>
                 </select>
               </Field>
+              {/* Tally HSN/SAC source enum (migration 107). Mirrors
+                  the Tally form's three-state fallback so operators
+                  can express "use the company-level default" without
+                  duplicating the HSN code on every item. */}
+              <Field label="HSN / SAC details source" hint="Tally three-state fallback">
+                <select className="select" value={draft.hsn_source || ""} onChange={(e) => setField("hsn_source", e.target.value || null)}>
+                  <option value="">Not set</option>
+                  <option value="specify">Specify (use HSN below)</option>
+                  <option value="as_per_company">As per company default</option>
+                  <option value="not_available">Not available</option>
+                </select>
+              </Field>
               <Field label="HSN / SAC code" hint="Type to search the global reference table">
                 <input className="input mono" list="anvil-hsn-codes" value={draft.hsn_sac || ""} onChange={(e) => setField("hsn_sac", e.target.value)} />
                 <datalist id="anvil-hsn-codes">
                   {(ref?.hsn_codes || []).map((h) => <option key={h.code} value={h.code}>{h.description}</option>)}
                 </datalist>
+              </Field>
+              <Field label="GST rate details source" hint="Tally three-state fallback">
+                <select className="select" value={draft.gst_rate_source || ""} onChange={(e) => setField("gst_rate_source", e.target.value || null)}>
+                  <option value="">Not set</option>
+                  <option value="specify">Specify (use rates below)</option>
+                  <option value="as_per_company">As per company default</option>
+                  <option value="not_available">Not available</option>
+                </select>
               </Field>
               <Field label="Taxability type">
                 <select className="select" value={draft.taxability_type || ""} onChange={(e) => setField("taxability_type", e.target.value || null)}>

@@ -819,8 +819,15 @@ begin
     (uuid_generate_v5('d7a7e5e4-0001-0001-0001-000000000001','ml:2'),  default_tenant, 'eng.alpha@anvil.test',       now() - interval '21 days', '203.0.113.50', 'Mozilla/5.0',          'verified'),
     (uuid_generate_v5('d7a7e5e4-0001-0001-0001-000000000001','ml:3'),  default_tenant, 'mgr.beta@anvil.test',        now() - interval '14 days', '203.0.113.21', 'Mozilla/5.0',          'sent'),
     (uuid_generate_v5('d7a7e5e4-0001-0001-0001-000000000001','ml:4'),  default_tenant, 'fin.beta@anvil.test',        now() - interval '7 days',  '203.0.113.31', 'Mozilla/5.0',          'verified'),
-    (uuid_generate_v5('d7a7e5e4-0001-0001-0001-000000000001','ml:5'),  null,           'unknown1@anvil.test',        now() - interval '5 days',  '198.51.100.20','python-requests/2.32', 'failed'),
-    (uuid_generate_v5('d7a7e5e4-0001-0001-0001-000000000001','ml:6'),  null,           'unknown2@anvil.test',        now() - interval '5 days',  '198.51.100.20','python-requests/2.32', 'failed'),
+    -- ml:5 + ml:6 originally seeded two `tenant_id = null` rows to
+    -- simulate "failed magic-link attempts from unknown senders that
+    -- never resolved a tenant." Phase 1 F2 (migration 111) added the
+    -- `auth_magic_links_check_tenant()` trigger that rejects any
+    -- insert with a null tenant_id, so those rows now abort the seed
+    -- with `auth_magic_links.tenant_id is required (Phase 1 F2)`.
+    -- Dropped here in 2026-05; the demo "unknown sender" scenario is
+    -- covered by the password_reset_attempts seed below (line 835,
+    -- the 'unknown@anvil.test' row with count 5).
     (uuid_generate_v5('d7a7e5e4-0001-0001-0001-000000000001','ml:7'),  default_tenant, 'prc.alpha@anvil.test',       now() - interval '2 days',  '203.0.113.41', 'Mozilla/5.0',          'sent'),
     (uuid_generate_v5('d7a7e5e4-0001-0001-0001-000000000001','ml:8'),  default_tenant, 'eng.beta@anvil.test',        now() - interval '12 hours','203.0.113.40', 'Mozilla/5.0',          'verified')
   on conflict (id) do nothing;

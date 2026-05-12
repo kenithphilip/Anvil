@@ -27,6 +27,11 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import {
+  signEvalRun,
+  EVAL_PROMPT_VERSION_FALLBACK,
+  EVAL_PIPELINE_VERSION_FALLBACK,
+} from "../_lib/eval-attestation.js";
 
 const eq = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
 const nearlyEq = (a, b, tol) => {
@@ -129,6 +134,25 @@ export default async function handler(req, res) {
     }
     const score = totalPass + totalFail === 0 ? 0 : totalPass / (totalPass + totalFail);
 
+    // Phase 1 F3: sign the run with HMAC-SHA-256 over a canonical
+    // receipt. server_verified=true is reserved for the
+    // pipeline-invoked path (caller passes document_source_id);
+    // legacy caller-asserted runs still record but mark
+    // server_verified=false so the dashboard can render an
+    // "unverified" badge for them.
+    const promptVersion = String(body.prompt_version || EVAL_PROMPT_VERSION_FALLBACK);
+    const modelVersion = String(body.model_version || "unspecified");
+    const pipelineVersion = String(body.pipeline_version || EVAL_PIPELINE_VERSION_FALLBACK);
+    const serverVerified = !!body.server_verified;
+    const caseIds = caseResults.map((cr) => cr.case_id);
+    const { hmac } = signEvalRun({
+      suite, passed: totalPass, failed: totalFail, total_score: score,
+      prompt_version: promptVersion,
+      model_version: modelVersion,
+      pipeline_version: pipelineVersion,
+      case_ids: caseIds,
+    });
+
     let runId = null;
     const persistErrors = [];
     try {
@@ -138,10 +162,38 @@ export default async function handler(req, res) {
         passed: totalPass,
         failed: totalFail,
         total_score: score,
+        attestation_hmac: hmac,
+        prompt_version: promptVersion,
+        model_version: modelVersion,
+        pipeline_version: pipelineVersion,
+        server_verified: serverVerified,
       }).select("id").single();
-      if (run.error) persistErrors.push({ stage: "eval_runs_insert", message: run.error.message });
-      else {
+      if (run.error) {
+        // Migration 113 may not yet have applied on every
+        // deployment. Retry without the new columns so legacy
+        // deployments keep scoring; mark the attestation in
+        // persistErrors so the dashboard knows the receipt was
+        // computed but not stored.
+        if (run.error.code === "42703" || /column .* does not exist/i.test(run.error.message)) {
+          const retry = await svc.from("eval_runs").insert({
+            tenant_id: ctx.tenantId,
+            suite,
+            passed: totalPass,
+            failed: totalFail,
+            total_score: score,
+          }).select("id").single();
+          if (retry.error) persistErrors.push({ stage: "eval_runs_insert_retry", message: retry.error.message });
+          else {
+            runId = retry.data.id;
+            persistErrors.push({ stage: "eval_attestation_skipped", message: "migration 113 not applied yet; HMAC computed but not persisted" });
+          }
+        } else {
+          persistErrors.push({ stage: "eval_runs_insert", message: run.error.message });
+        }
+      } else {
         runId = run.data.id;
+      }
+      if (runId) {
         const rows = caseResults.map((cr) => ({
           tenant_id: ctx.tenantId,
           run_id: runId,
@@ -164,10 +216,23 @@ export default async function handler(req, res) {
       action: "eval_run",
       objectType: "eval_suite",
       objectId: suite,
-      detail: "pass=" + totalPass + " fail=" + totalFail + " score=" + score.toFixed(3),
+      detail: "pass=" + totalPass + " fail=" + totalFail + " score=" + score.toFixed(3) + " verified=" + serverVerified,
     });
 
-    return json(res, 200, { suite, runId, totals: { pass: totalPass, fail: totalFail, score }, cases: caseResults, persistErrors });
+    return json(res, 200, {
+      suite,
+      runId,
+      totals: { pass: totalPass, fail: totalFail, score },
+      cases: caseResults,
+      persistErrors,
+      attestation: {
+        hmac,
+        prompt_version: promptVersion,
+        model_version: modelVersion,
+        pipeline_version: pipelineVersion,
+        server_verified: serverVerified,
+      },
+    });
   } catch (err) {
     sendError(res, err);
   }

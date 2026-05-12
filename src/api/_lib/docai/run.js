@@ -56,6 +56,7 @@ import { annotateLineLanguages, translateBatch } from "./multi-language.js";
 import { detectHandwriting, planHandwritingRoute } from "./handwriting.js";
 import { detectAnomalies } from "./anomaly.js";
 import { computeLayoutFingerprint, findRunByLayoutFingerprint, adapterBiasFromPriorLayout } from "./layout-fingerprint.js";
+import { enqueueReview } from "./review-queue.js";
 import { callAnthropic as callAnthropicForTranslate } from "../anthropic.js";
 // Bet 2: format-template marketplace L3.5 hook.
 import {
@@ -1127,6 +1128,30 @@ export const runExtractionPipeline = async (params) => {
   if (status === "ok" && customerId) {
     safeFire(buildTemplate(svc, { tenantId: ctx.tenantId, customerId, kind }), "buildTemplate");
   }
+
+  // 11. Wave 4.1: enqueue for operator review when the run needs
+  // human eyes (low confidence, anomalies, parse failure, etc.).
+  // Best-effort: persisting the queue row is fire-and-forget;
+  // the run result returns regardless.
+  safeFire(
+    enqueueReview(svc, {
+      tenantId: ctx.tenantId,
+      customerId,
+      caseId,
+      triggeredBy: triggeredBy ? "operator" : "cron",
+    }, {
+      runId, status, statusReason,
+      normalized: out?.normalized || null,
+      confidenceOverall: out?.confidence_overall ?? null,
+      adapterUsed: out?.adapter_used || null,
+      voterUsed: !!voted,
+      anomaliesHasBlockers: anomalyReport.has_blockers,
+      anomaliesSummary: anomalyReport.summary,
+      languages: languageSummary,
+      handwritingDetection,
+    }),
+    "enqueueReview",
+  );
 
   return {
     runId,

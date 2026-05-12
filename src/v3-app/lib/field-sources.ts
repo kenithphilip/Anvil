@@ -44,7 +44,12 @@ const ALIASES: Record<string, ReadonlyArray<string>> = {
   qty: ["qty", "quantity"],
   rate: ["rate", "unitPrice"],
   uom: ["uom", "unit"],
-  hsn: ["hsn", "hsn_sac"],
+  hsn: ["hsn", "hsn_sac", "hsnCode"],
+  // GST per-line: the extractor reports a single rate as gst_pct;
+  // downstream item_master holds it as rate_of_duty_pct. The recon
+  // table renders + edits this directly so the operator can see
+  // exactly what tax basis the line is on before Tally push.
+  gst_pct: ["gst_pct", "gstRate", "rate_of_duty_pct"],
 };
 
 // Canonical keys for the recon table; exported so tests + UI agree.

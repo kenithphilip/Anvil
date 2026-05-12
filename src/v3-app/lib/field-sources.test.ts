@@ -54,6 +54,7 @@ describe("stampOcrSources", () => {
       rate: 2,
       uom: "Nos",
       hsn: "8482",
+      gst_pct: 18,
     };
     const stamped = stampOcrSources(all);
     for (const k of CANONICAL_LINE_FIELDS) {

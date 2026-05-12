@@ -623,18 +623,26 @@ const WiredSOWorkspace = () => {
 
   const st = stageOf(o.status);
 
-  // Reconciliation columns: number, item, UoM, qty, rate, prev, delta, line ₹, evidence, issues
-  // Editable columns (since May 2026): description, UoM, qty, rate.
+  // Reconciliation columns: number, item, UoM, qty, rate, HSN,
+  // GST%, taxable, tax, line total, issues.
+  // Editable: description, SKU, UoM, qty, rate, HSN, GST%.
   // Each cell shows an "OCR" or "edited" pill based on the line's
   // `_field_sources` map: extracted values land as "ocr", operator
-  // overrides flip to "human". The map is initialised at intake
-  // time by lib/field-sources.ts.
+  // overrides flip to "human". Stamped at intake by
+  // lib/field-sources.ts.
+  // The Evidence column was dropped in May 2026: the extractor
+  // does not populate ln.evidence today, so every row fell through
+  // to "—" and the empty flex container looked like a stray box.
+  // The Rate prev / Δ columns were dropped too; they relied on a
+  // previous-rate stamp that no production caller writes. If
+  // those return they should be opt-in behind a Settings flag.
   const reconRow = (ln: any, i: number) => {
-    const qty = ln.qty != null ? ln.qty : ln.quantity;
+    const qty = Number(ln.qty || ln.quantity || 0);
     const rate = Number(ln.rate || ln.unitPrice || 0);
-    const ratePrev = Number(ln.ratePrev || ln.previousRate || 0);
-    const drift = ratePrev > 0 ? (rate - ratePrev) / ratePrev : null;
-    const lineTotal = Number(ln.lineTotal) || (Number(qty) * rate) || 0;
+    const taxable = qty * rate;
+    const gstPct = Number(ln.gst_pct ?? ln.gstRate ?? ln.rate_of_duty_pct ?? 0);
+    const tax = Math.round((taxable * gstPct) / 100 * 100) / 100;
+    const lineTotal = Number(ln.lineTotal) || (taxable + tax) || 0;
     const lineFindings = findings.filter((f) => Number(f.line_index) === i || Number(f.lineIndex) === i);
     const issueChip = lineFindings.length === 0
       ? "—"
@@ -652,16 +660,16 @@ const WiredSOWorkspace = () => {
             <EditableCell line={ln} i={i} canonicalKey="itemCode" type="text" placeholder="part / SKU" />
           </div>
         </td>
-        <td><EditableCell line={ln} i={i} canonicalKey="uom" type="text" placeholder="Nos / Kg / m" /></td>
+        <td><EditableCell line={ln} i={i} canonicalKey="uom" type="text" placeholder="Nos" /></td>
         <td className="r mono"><EditableCell line={ln} i={i} canonicalKey="qty" type="number" align="right" /></td>
-        <td className="r mono">{ln.qtyQuoted != null ? ln.qtyQuoted : (qty != null ? qty : "—")}</td>
         <td className="r mono"><EditableCell line={ln} i={i} canonicalKey="rate" type="number" align="right" /></td>
-        <td className="r mono">{ratePrev ? fmtINR(ratePrev) : "—"}</td>
-        <td className="r mono" style={{ color: drift == null ? "var(--ink-4)" : drift > 0.10 ? "var(--rust)" : drift > 0 ? "var(--amber-2)" : "var(--sage)" }}>
-          {drift == null ? "·" : (drift >= 0 ? "+" : "") + (drift * 100).toFixed(1) + "%"}
+        <td><EditableCell line={ln} i={i} canonicalKey="hsn" type="text" placeholder="8482" /></td>
+        <td className="r mono"><EditableCell line={ln} i={i} canonicalKey="gst_pct" type="number" align="right" placeholder="18" /></td>
+        <td className="r mono">{taxable ? fmtINR(taxable) : "—"}</td>
+        <td className="r mono" style={{ color: "var(--ink-3)" }}>
+          {tax ? fmtINR(tax) : "—"}
         </td>
         <td className="r mono"><span className="pri">{lineTotal ? fmtINR(lineTotal) : "—"}</span></td>
-        <td className="row gap-sm">{ln.evidence?.page ? <Prov>p{ln.evidence.page}{ln.evidence.line ? `·l${ln.evidence.line}` : ""}</Prov> : "—"}</td>
         <td>{issueChip}</td>
       </tr>
     );
@@ -797,7 +805,8 @@ const WiredSOWorkspace = () => {
     qty: ["qty", "quantity"],
     rate: ["rate", "unitPrice"],
     uom: ["uom"],
-    hsn: ["hsn", "hsn_sac"],
+    hsn: ["hsn", "hsn_sac", "hsnCode"],
+    gst_pct: ["gst_pct", "gstRate", "rate_of_duty_pct"],
   };
 
   const linesDirty = linesDraft !== null
@@ -857,6 +866,10 @@ const WiredSOWorkspace = () => {
       .map((k) => line[k])
       .find((v) => v != null && v !== "");
     const value = raw == null ? "" : String(raw);
+    // Tighter input styling: no implicit browser styling, no
+    // outline ring, no min-width that would render an empty box
+    // for short / blank values. The cell shows the value as plain
+    // text until clicked; the hairline appears on focus.
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: align === "right" ? "flex-end" : "flex-start" }}>
         <input
@@ -864,10 +877,15 @@ const WiredSOWorkspace = () => {
           style={{
             background: "transparent",
             border: "1px solid transparent",
+            outline: "none",
+            WebkitAppearance: "none",
+            MozAppearance: "none",
+            appearance: "none" as any,
             padding: "2px 4px",
             textAlign: align === "right" ? "right" : "left",
             width: "100%",
-            minWidth: type === "number" ? 60 : 80,
+            minWidth: 0,
+            boxShadow: "none",
           }}
           value={value}
           placeholder={placeholder || ""}
@@ -1219,43 +1237,69 @@ const WiredSOWorkspace = () => {
                 against the attached PO, or attach a higher-quality PO.
               </div>
             ) : (
-              <table className="tbl">
-                <thead><tr>
-                  <th style={{ width: 28 }}>#</th>
-                  <th>Item</th>
-                  <th>UoM</th>
-                  <th className="r">Qty · PO</th>
-                  <th className="r">Qty · Q</th>
-                  <th className="r">Rate · PO</th>
-                  <th className="r">Rate · prev</th>
-                  <th className="r">Δ</th>
-                  <th className="r">Line ₹</th>
-                  <th>Evidence</th>
-                  <th>Issues</th>
-                </tr></thead>
-                <tbody>{draftLines.map(reconRow)}</tbody>
-                <tfoot>
-                  <tr style={{ background: "var(--paper-2)" }}>
-                    <td colSpan={8} className="r mono" style={{ paddingTop: 10, paddingBottom: 10 }}>
-                      <span style={{ color: "var(--ink-3)" }}>subtotal · before tax & freight</span>
-                    </td>
-                    <td className="r mono"><b style={{ fontSize: 13 }}>{fmtINR(subtotal)}</b></td>
-                    <td colSpan={2}></td>
-                  </tr>
-                  {/* Amount in words renders the subtotal in the
-                      Tally / SO convention. Replaces the prior gap
-                      where the SO PDF could not show the words line
-                      because no helper existed. */}
-                  {subtotal > 0 && (
-                    <tr style={{ background: "var(--paper-2)" }}>
-                      <td colSpan={11} className="mono-sm" style={{ paddingTop: 2, paddingBottom: 10, color: "var(--ink-3)" }}>
-                        <span style={{ color: "var(--ink-3)" }}>amount chargeable (in words):</span>{" "}
-                        <i>{amountInWords(subtotal, { currency: o.currency || "INR" })}</i>
-                      </td>
-                    </tr>
-                  )}
-                </tfoot>
-              </table>
+              (() => {
+                // Tax totals across the draft so the footer can
+                // reconcile against what the Tally voucher will
+                // emit. Same formula as reconRow uses per line.
+                const taxableTotal = draftLines.reduce((s: number, ln: any) => {
+                  const q = Number(ln.qty || ln.quantity || 0);
+                  const r = Number(ln.rate || ln.unitPrice || 0);
+                  return s + q * r;
+                }, 0);
+                const taxTotal = draftLines.reduce((s: number, ln: any) => {
+                  const q = Number(ln.qty || ln.quantity || 0);
+                  const r = Number(ln.rate || ln.unitPrice || 0);
+                  const p = Number(ln.gst_pct ?? ln.gstRate ?? ln.rate_of_duty_pct ?? 0);
+                  return s + (q * r * p) / 100;
+                }, 0);
+                const grandWithTax = taxableTotal + taxTotal;
+                return (
+                  <table className="tbl">
+                    <thead><tr>
+                      <th style={{ width: 28 }}>#</th>
+                      <th>Item</th>
+                      <th>UoM</th>
+                      <th className="r">Qty</th>
+                      <th className="r">Rate</th>
+                      <th>HSN / SAC</th>
+                      <th className="r">GST %</th>
+                      <th className="r">Taxable ₹</th>
+                      <th className="r">Tax ₹</th>
+                      <th className="r">Line ₹</th>
+                      <th>Issues</th>
+                    </tr></thead>
+                    <tbody>{draftLines.map(reconRow)}</tbody>
+                    <tfoot>
+                      <tr style={{ background: "var(--paper-2)" }}>
+                        <td colSpan={7} className="r mono" style={{ paddingTop: 8 }}>
+                          <span style={{ color: "var(--ink-3)" }}>subtotal · taxable</span>
+                        </td>
+                        <td className="r mono"><b>{fmtINR(taxableTotal)}</b></td>
+                        <td className="r mono">{taxTotal ? fmtINR(taxTotal) : "—"}</td>
+                        <td className="r mono"></td>
+                        <td></td>
+                      </tr>
+                      <tr style={{ background: "var(--paper-2)" }}>
+                        <td colSpan={7} className="r mono" style={{ paddingBottom: 8 }}>
+                          <span style={{ color: "var(--ink-3)" }}>grand total · taxable + tax</span>
+                        </td>
+                        <td className="r mono"></td>
+                        <td className="r mono"></td>
+                        <td className="r mono"><b style={{ fontSize: 13 }}>{fmtINR(grandWithTax)}</b></td>
+                        <td></td>
+                      </tr>
+                      {grandWithTax > 0 && (
+                        <tr style={{ background: "var(--paper-2)" }}>
+                          <td colSpan={11} className="mono-sm" style={{ paddingTop: 2, paddingBottom: 10, color: "var(--ink-3)" }}>
+                            <span style={{ color: "var(--ink-3)" }}>amount chargeable (in words):</span>{" "}
+                            <i>{amountInWords(grandWithTax, { currency: o.currency || "INR" })}</i>
+                          </td>
+                        </tr>
+                      )}
+                    </tfoot>
+                  </table>
+                );
+              })()
             )}
           </Card>
         )}

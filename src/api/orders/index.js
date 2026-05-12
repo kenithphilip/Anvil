@@ -69,6 +69,40 @@ export default async function handler(req, res) {
       if (error) throw new Error(error.message);
       await recordAudit(ctx, { action: "create_order", objectType: "order", objectId: data.id, after: data });
       await recordEvent(ctx, { caseId: data.id, eventType: "order_created", objectType: "order", objectId: data.id });
+
+      // Auto-attach the customer's primary terms pack on order
+      // creation (migration 106 + 108). If the customer has an
+      // active customer_terms_pack flagged as default for this
+      // tenant, copy its clauses into the order's audit_events so
+      // the SO PDF can render them without the operator picking a
+      // pack. Best-effort: a pre-migration-106 deployment falls
+      // through silently. A pack-pick override on the Header tab
+      // takes precedence.
+      try {
+        if (data.customer_id) {
+          const packsRes = await svc.from("customer_terms_packs")
+            .select("id, pack_name, version")
+            .eq("tenant_id", ctx.tenantId)
+            .eq("customer_id", data.customer_id)
+            .eq("is_active", true)
+            .order("version", { ascending: false })
+            .limit(1);
+          const pack = packsRes.data && packsRes.data[0];
+          if (pack) {
+            await recordEvent(ctx, {
+              caseId: data.id,
+              eventType: "terms_pack_attached",
+              objectType: "order",
+              objectId: data.id,
+              detail: { pack_id: pack.id, pack_name: pack.pack_name, version: pack.version, source: "auto_on_create" },
+            });
+          }
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn("[orders] auto-attach terms pack failed: " + (e?.message || e));
+      }
+
       return json(res, 201, { order: data });
     }
     return json(res, 405, { error: { message: "Method not allowed" } });

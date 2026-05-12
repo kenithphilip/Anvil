@@ -22,6 +22,11 @@ const WiredSOIntake = () => {
   const { useState: u, useEffect: e, useRef: r } = React;
   const [mode, setMode] = u("SPARES");
   const [customers, setCustomers] = u({ data: null, loading: true, error: null });
+  // Per-tenant vendor-code index (migration 106). Preloaded so the
+  // matchCustomerFromExtraction tier 1b can resolve inbound PO
+  // vendor_code (e.g., HMIL "TH1M") to the right customer without
+  // an extra network hop per upload.
+  const [vendorCodeIndex, setVendorCodeIndex] = u<any[]>([]);
   const [customerId, setCustomerId] = u("");
   const [doc, setDoc] = u(null);
   const [busy, setBusy] = u(null);
@@ -255,6 +260,24 @@ const WiredSOIntake = () => {
     Promise.resolve(ObaraBackend?.customers?.list?.() || Promise.resolve({ customers: [] }))
       .then((data) => { if (!cancelled) setCustomers({ data, loading: false, error: null }); })
       .catch((error) => { if (!cancelled) setCustomers({ data: null, loading: false, error }); });
+    // Preload the vendor-code index for tier 1b auto-match.
+    // Best-effort: a 404 (pre-migration-106 deployment) or RLS reject
+    // leaves the index empty and the matcher falls through to GSTIN
+    // + name tiers.
+    (async () => {
+      try {
+        const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
+        const session: any = (ObaraBackend as any)?.getSession?.() || null;
+        if (!cfg.url) return;
+        const headers: any = { "Content-Type": "application/json" };
+        if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+        if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+        const r = await fetch(cfg.url.replace(/\/+$/, "") + "/api/admin/customer_vendor_codes", { headers });
+        if (!r.ok || cancelled) return;
+        const j = await r.json();
+        setVendorCodeIndex(j.mappings || []);
+      } catch (_) {}
+    })();
     return () => { cancelled = true; };
   }, []);
 
@@ -315,6 +338,21 @@ const WiredSOIntake = () => {
     if (gstin && /^[0-9A-Z]{15}$/.test(gstin)) {
       const byGstin = list.find((c) => (c.gstin || "").toUpperCase() === gstin);
       if (byGstin) return { customer: byGstin, confidence: "exact_gstin" };
+    }
+
+    // Tier 1b: vendor_code lookup (migration 106 + extractor 108).
+    // HMIL prints `VENDOR_CODE TH1M` on every PO. When the extractor
+    // picks it up we resolve by matching the code against the
+    // customer_vendor_codes table preloaded into vendorCodeIndex.
+    // Tightest signal after GSTIN since the code is unique per
+    // (tenant, customer) and only one customer assigns it to us.
+    const vendorCode = (extracted.vendor_code || "").trim();
+    if (vendorCode && (vendorCodeIndex || []).length > 0) {
+      const hit = (vendorCodeIndex || []).find((v: any) => v.vendor_code === vendorCode);
+      if (hit) {
+        const c = list.find((cust: any) => cust.id === hit.customer_id);
+        if (c) return { customer: c, confidence: "exact_vendor_code" };
+      }
     }
 
     // Tier 2: name match REQUIRES bill-to corroboration via the

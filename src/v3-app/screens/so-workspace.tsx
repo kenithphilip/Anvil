@@ -40,6 +40,14 @@ const WiredSOWorkspace = () => {
   // writes an item_customer_parts row so future POs from the same
   // customer auto-resolve via the customer_part tier.
   const [pickerLineIdx, setPickerLineIdx] = u<number | null>(null);
+  // Layer C: AI-assisted suggestions. Keyed by line index; each
+  // value is the top-3 (or fewer) suggestions for that line.
+  // Loaded lazily on "Suggest mappings" click; persists in
+  // component state until the operator accepts/rejects or the
+  // order's line items change.
+  const [suggestionsByLine, setSuggestionsByLine] = u<Record<number, any[]>>({});
+  const [suggesting, setSuggesting] = u(false);
+  const [suggestError, setSuggestError] = u<string | null>(null);
   // Phase 3.6 observability: pipeline-diagnostics state (lazy-
   // loaded the first time the operator opens the Diagnostics tab).
   const [pipelineState, setPipelineState] = u<{ data: any; loading: boolean; error: any }>({ data: null, loading: false, error: null });
@@ -670,19 +678,24 @@ const WiredSOWorkspace = () => {
   // The Rate prev / Δ columns were dropped too; they relied on a
   // previous-rate stamp that no production caller writes. If
   // those return they should be opt-in behind a Settings flag.
-  // Render the mapping affordance for a recon line. Three states:
-  //  - mapped via "manual" / "llm_suggest" : show a `good` chip with
-  //    the canonical part_no and a small "change" link
-  //  - mapped via any resolver tier (customer_part / item_master.*
-  //    / fuzzy)            : show an `info` chip with part_no
-  //  - unmapped                            : show a "Map..." link
-  //    that opens the picker
+  // Render the mapping affordance for a recon line. States:
+  //  - mapped via "manual" / "llm_suggest" : `good` chip with
+  //    part_no plus a small "change" link
+  //  - mapped via any resolver tier        : `info` chip
+  //  - unmapped with suggestions loaded    : list each suggestion
+  //    with Accept / Reject buttons
+  //  - unmapped, no suggestions            : "Map to canonical..."
+  //    link that opens the picker
   const mapAffordance = (ln: any, i: number) => {
     const mi = ln._mapped_item;
     if (mi && (mi.match_via === "manual" || mi.match_via === "llm_suggest")) {
+      const tone = mi.match_via === "llm_suggest" ? "info" : "good";
+      const label = mi.match_via === "llm_suggest"
+        ? "AI map" + (mi.confidence_pct != null ? " (" + Math.round(Number(mi.confidence_pct)) + "%)" : "")
+        : "manual map";
       return (
         <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 2 }}>
-          <Chip k="good">{mi.match_via.replace(/_/g, " ")}: {mi.part_no || "-"}</Chip>
+          <Chip k={tone}>{label}: {mi.part_no || "-"}</Chip>
           {canEditLines && (
             <button
               type="button"
@@ -701,6 +714,37 @@ const WiredSOWorkspace = () => {
       );
     }
     if (!canEditLines) return null;
+    const sugg = suggestionsByLine[i] || [];
+    if (sugg.length) {
+      return (
+        <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3 }}>
+          {sugg.map((s: any, j: number) => (
+            <div key={j} style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+              <Chip k="info">{s.part_no || "—"}</Chip>
+              <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                {Math.round(Number(s.confidence_pct) || 0)}%
+              </span>
+              {s.alias && <span style={{ color: "var(--ink-3)", fontSize: 11 }}>{s.alias}</span>}
+              <button
+                type="button"
+                onClick={() => acceptSuggestion(i, s)}
+                style={{ background: "var(--brand)", color: "var(--ink-on-brand)", border: "none", borderRadius: 3, padding: "1px 6px", cursor: "pointer", fontSize: 11 }}
+              >accept</button>
+              <button
+                type="button"
+                onClick={() => rejectSuggestion(i, s)}
+                style={{ background: "none", border: "1px solid var(--hairline-2)", borderRadius: 3, padding: "1px 6px", color: "var(--ink-3)", cursor: "pointer", fontSize: 11 }}
+              >reject</button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => setPickerLineIdx(i)}
+            style={{ background: "none", border: "none", padding: 0, color: "var(--ink-3)", cursor: "pointer", fontSize: 11, textAlign: "left", textDecoration: "underline" }}
+          >or map manually...</button>
+        </div>
+      );
+    }
     return (
       <div style={{ marginTop: 2 }}>
         <button
@@ -951,6 +995,93 @@ const WiredSOWorkspace = () => {
     if (!line.uom && !line.unit && item.uom) line.uom = item.uom;
     next[i] = markFieldEdited(line, "_mapped_item");
     setLinesDraft(next);
+  };
+
+  // Layer C: pull AI suggestions for every unmapped line on the
+  // order. Lazy: fires on operator click, not inline on screen
+  // load. The response is keyed by line index so the suggestion
+  // chips render next to the right row without an extra fetch.
+  const onSuggestMappings = async () => {
+    if (suggesting || !o?.id) return;
+    setSuggesting(true);
+    setSuggestError(null);
+    try {
+      const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
+      const session: any = (ObaraBackend as any)?.getSession?.() || null;
+      if (!cfg.url) throw new Error("Backend URL not configured");
+      const headers: any = { "Content-Type": "application/json" };
+      if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+      if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+      const url = cfg.url.replace(/\/+$/, "") + "/api/orders/suggest_mappings?order_id=" + encodeURIComponent(o.id) + "&max=10";
+      const resp = await fetch(url, { headers });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      const data = await resp.json();
+      const byLine: Record<number, any[]> = {};
+      for (const row of data.suggestions || []) {
+        if (Array.isArray(row.suggestions) && row.suggestions.length) {
+          byLine[row.line_index] = row.suggestions;
+        }
+      }
+      setSuggestionsByLine(byLine);
+      const total = Object.values(byLine).reduce((acc, arr) => acc + arr.length, 0);
+      if (total === 0) {
+        window.notifyWarn?.("No AI suggestions", "The model could not match any unmapped line against your item master.");
+      } else {
+        window.notifySuccess?.("Suggestions ready", `${total} candidate${total === 1 ? "" : "s"} across ${Object.keys(byLine).length} line${Object.keys(byLine).length === 1 ? "" : "s"}.`);
+      }
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      setSuggestError(msg);
+      window.notifyError?.("Suggestion failed", msg);
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
+  // Accept a single suggestion from the per-line list. Routes
+  // through applyManualMap (same code path as the manual picker)
+  // but stamps match_via:"llm_suggest" so the server hook writes
+  // an item_customer_parts row with created_via:"llm_suggest"
+  // and the suggestion's confidence_pct.
+  const acceptSuggestion = (i: number, suggestion: any) => {
+    applyManualMap(i, {
+      id: suggestion.item_id,
+      part_no: suggestion.part_no,
+      alias: suggestion.alias,
+      print_name: suggestion.print_name,
+      description: suggestion.description,
+      hsn_sac: suggestion.hsn_sac,
+      uom: suggestion.uom,
+      source_country: suggestion.source_country,
+      gst_applicable: suggestion.gst_applicable,
+      taxability_type: suggestion.taxability_type,
+      type_of_supply: suggestion.type_of_supply,
+      rate_of_duty_pct: suggestion.rate_of_duty_pct,
+      stock_group: suggestion.stock_group,
+      specification_code: suggestion.specification_code,
+    }, "llm_suggest", Number(suggestion.confidence_pct) || null);
+    // Clear suggestions for this line so the UI collapses to the
+    // accepted chip.
+    setSuggestionsByLine((prev) => {
+      const next = { ...prev };
+      delete next[i];
+      return next;
+    });
+  };
+
+  // Reject a single suggestion. Removes it from the per-line list
+  // and (best-effort) lets the operator type-find a different one
+  // via the manual picker. The rejection is not persisted server-
+  // side in this iteration; if it becomes useful telemetry we can
+  // POST to /api/orders/[id] with a small event payload.
+  const rejectSuggestion = (i: number, suggestion: any) => {
+    setSuggestionsByLine((prev) => {
+      const remaining = (prev[i] || []).filter((s) => s.item_id !== suggestion.item_id);
+      const next = { ...prev };
+      if (remaining.length) next[i] = remaining;
+      else delete next[i];
+      return next;
+    });
   };
 
   const onDiscardLineEdits = () => setLinesDraft(null);
@@ -1340,6 +1471,17 @@ const WiredSOWorkspace = () => {
                 <Chip k="info">edited</Chip> = operator override
               </span>
               <span style={{ flex: 1 }} />
+              {canEditLines && draftLines.some((ln) => !ln._mapped_item || !ln._mapped_item.id) && (
+                <Btn
+                  sm
+                  kind="ghost"
+                  onClick={onSuggestMappings}
+                  disabled={suggesting}
+                  title="Use Claude to surface up to 3 candidate item_master rows per unmapped line."
+                >
+                  {suggesting ? "Suggesting…" : "Suggest mappings"}
+                </Btn>
+              )}
               {linesDirty && (
                 <>
                   <Btn sm kind="ghost" onClick={onDiscardLineEdits} disabled={savingLines}>
@@ -1352,6 +1494,11 @@ const WiredSOWorkspace = () => {
                 </>
               )}
             </div>
+            {suggestError && (
+              <div className="mono-sm" style={{ padding: "8px 16px", color: "var(--rust)", background: "var(--paper-2)" }}>
+                Suggestion request failed: {suggestError}
+              </div>
+            )}
             {!canEditLines && draftLines.length > 0 && (
               <div className="mono-sm" style={{ padding: "8px 16px", color: "var(--ink-3)", background: "var(--paper-2)" }}>
                 Lines are read-only because the order is {o.status}. Reopen it (return for correction) to edit.

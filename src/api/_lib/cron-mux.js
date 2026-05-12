@@ -61,11 +61,71 @@ export const makeMockRes = () => {
   return { res, _outcome: out };
 };
 
+// Phase 1 F10: per-handler timeout budgets. Without these, one
+// slow ERP retry (a Tally bridge with a TCP socket leak, a
+// NetSuite tenant stuck on OAuth1 rotation) starves every other
+// handler in the same runCronGroup tick. Vercel's 60-second
+// dispatch ceiling kills the whole tick before later handlers
+// run. Per-handler budgets enforce a fair slice; the group cap
+// (sum) sits inside dispatch headroom.
+//
+// Budgets are matched by handler-name prefix ("sap/retry" -> 25s
+// because the SAP OAuth chain is the slowest). Anything not in
+// the map gets DEFAULT_BUDGET_MS.
+const CRON_HANDLER_BUDGETS = {
+  "sap/":           25000,
+  "netsuite/":      20000,
+  "d365/":          20000,
+  "acumatica/":     20000,
+  "p21/":           15000,
+  "eclipse/":       15000,
+  "sxe/":           15000,
+  "sage_x3/":       15000,
+  "oracle_ebs/":    25000,
+  "oracle_fusion/": 20000,
+  "jde/":           25000,
+  "plex/":          20000,
+  "jobboss/":       20000,
+  "ifs/":           25000,
+  "ramco/":         20000,
+  "proalpha/":      20000,
+  "tally/":         30000,
+};
+const DEFAULT_BUDGET_MS = 20000;
+export const cronHandlerBudgetMs = (name) => {
+  if (!name) return DEFAULT_BUDGET_MS;
+  for (const prefix of Object.keys(CRON_HANDLER_BUDGETS)) {
+    if (name.startsWith(prefix)) return CRON_HANDLER_BUDGETS[prefix];
+  }
+  return DEFAULT_BUDGET_MS;
+};
+
+// timeoutPromise rejects with a tagged Error after `ms`. The
+// caller races it against the handler with Promise.race. When
+// the timeout wins, the handler keeps running in the background
+// until the Vercel function exits; that's fine because cron
+// work is idempotent and we'd rather abandon a slow handler than
+// starve the rest.
+const timeoutPromise = (ms, name) => new Promise((_, reject) => {
+  setTimeout(() => {
+    const err = new Error("timeout after " + ms + "ms");
+    err.code = "CRON_HANDLER_TIMEOUT";
+    err.name = "CronHandlerTimeout";
+    err.handlerName = name;
+    reject(err);
+  }, ms);
+});
+
 // Call a handler with a synthetic cron-authed request. Captures
 // status + body + duration + thrown errors. Never throws to the
-// caller.
+// caller. Phase 1 F10 adds per-handler Promise.race timeout
+// using cronHandlerBudgetMs() and writes an inline heartbeat so
+// even when the dispatch function gets killed at the Vercel
+// ceiling, the heartbeat for every handler that started lands
+// in cron_health.
 export const runCronHandler = async (name, handler, opts = {}) => {
   const t0 = Date.now();
+  const budgetMs = opts.timeoutMs != null ? opts.timeoutMs : cronHandlerBudgetMs(name);
   const req = makeMockReq({
     path: opts.path || "/",
     method: opts.method || "GET",
@@ -73,25 +133,55 @@ export const runCronHandler = async (name, handler, opts = {}) => {
     body: opts.body || null,
   });
   const { res, _outcome } = makeMockRes();
+  let result;
   try {
-    await handler(req, res);
+    await Promise.race([
+      handler(req, res),
+      timeoutPromise(budgetMs, name),
+    ]);
     const ok = _outcome.statusCode >= 200 && _outcome.statusCode < 300;
-    return {
+    result = {
       name, ok,
       status: _outcome.statusCode,
       duration_ms: Date.now() - t0,
+      budget_ms: budgetMs,
       body_preview: typeof _outcome.body === "string"
         ? _outcome.body.slice(0, 240)
         : null,
     };
   } catch (err) {
-    return {
+    const isTimeout = err && err.code === "CRON_HANDLER_TIMEOUT";
+    if (isTimeout) {
+      // eslint-disable-next-line no-console
+      console.warn("[cron] handler '" + name + "' timed out after " + budgetMs + "ms");
+    }
+    result = {
       name, ok: false,
-      status: err?.status || 500,
+      status: isTimeout ? 504 : (err?.status || 500),
       duration_ms: Date.now() - t0,
-      error: (err?.message || String(err)).slice(0, 400),
+      budget_ms: budgetMs,
+      error: isTimeout ? "timeout" : (err?.message || String(err)).slice(0, 400),
+      timed_out: !!isTimeout,
     };
   }
+  // Inline heartbeat. Per the audit's "write per-handler
+  // heartbeats inline (in the result loop) rather than after
+  // the group" recommendation: if Vercel kills the dispatch
+  // function at 60s, every handler that started still leaves a
+  // trail in cron_health. Suppressed under vitest so unit-test
+  // runs don't hit the (missing) service-role credentials.
+  if (opts.writeHeartbeat !== false && !process.env.VITEST) {
+    recordCronHeartbeat(name, {
+      status: result.ok ? "ok" : (result.timed_out ? "timeout" : "error"),
+      durationMs: result.duration_ms,
+      metadata: {
+        budget_ms: result.budget_ms,
+        timed_out: !!result.timed_out,
+        last_error: result.error || null,
+      },
+    }).catch(() => { /* heartbeat write failures already log */ });
+  }
+  return result;
 };
 
 // Run a list of handlers in parallel. Each item is { name, fn, opts? }.

@@ -12,6 +12,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   makeMockReq, makeMockRes, runCronHandler, runCronGroup, shouldRunOnMinute,
+  cronHandlerBudgetMs,
 } from "../api/_lib/cron-mux.js";
 
 beforeAll(() => { process.env.CRON_SECRET = "test-secret-1234"; });
@@ -107,6 +108,34 @@ describe("cron-mux / runCronHandler", () => {
     const r = await runCronHandler("fake/reject", fakeHandler);
     expect(r.ok).toBe(false);
     expect(r.error).toContain("async-boom");
+  });
+});
+
+describe("cron-mux / per-handler timeout (Phase 1 F10)", () => {
+  it("times out a hanging handler within the budget", async () => {
+    const stuck = () => new Promise(() => { /* never resolves */ });
+    const r = await runCronHandler("fake/hang", stuck, { timeoutMs: 30, writeHeartbeat: false });
+    expect(r.ok).toBe(false);
+    expect(r.timed_out).toBe(true);
+    expect(r.error).toBe("timeout");
+    expect(r.status).toBe(504);
+    expect(r.budget_ms).toBe(30);
+    expect(r.duration_ms).toBeGreaterThanOrEqual(30);
+  });
+
+  it("does not time out a fast handler", async () => {
+    const fast = async (_req, res) => { res.status(200).json({ ok: true }); };
+    const r = await runCronHandler("fake/fast", fast, { timeoutMs: 500, writeHeartbeat: false });
+    expect(r.ok).toBe(true);
+    expect(r.timed_out).toBeFalsy();
+    expect(r.budget_ms).toBe(500);
+  });
+
+  it("picks the budget by handler-name prefix when timeoutMs is unset", () => {
+    expect(cronHandlerBudgetMs("sap/sync")).toBe(25000);
+    expect(cronHandlerBudgetMs("tally/retry")).toBe(30000);
+    expect(cronHandlerBudgetMs("p21/retry")).toBe(15000);
+    expect(cronHandlerBudgetMs("nonexistent/whatever")).toBe(20000); // default
   });
 });
 

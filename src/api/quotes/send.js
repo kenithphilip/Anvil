@@ -22,9 +22,10 @@ import crypto from "node:crypto";
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
-import { recordAudit } from "../_lib/audit.js";
+import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { renderQuote } from "../_lib/pdf-renderer.js";
 import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "../_lib/storage.js";
+import { upsertCustomerPart } from "../_lib/item-customer-parts.js";
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PORTAL_TOKEN_TTL_DAYS = 30;
@@ -333,6 +334,96 @@ export default async function handler(req, res) {
       updated_at: new Date().toISOString(),
     }).eq("tenant_id", ctx.tenantId).eq("id", quote.id).select("*").single();
     if (upd.error) throw new Error("quote SENT update: " + upd.error.message);
+
+    // Layer B (item-mapping automation): learn from quote SENT.
+    // The operator has vetted every line in the recon-table step
+    // before sending, so the (customer_part_number, item_id) pair
+    // on each line is a confidence-95 signal we want to remember.
+    // Future POs from the same customer carrying the same
+    // customer code will resolve via the customer_part tier in
+    // src/api/_lib/item-mapper.js without any operator action.
+    //
+    // Best-effort: per-line failures log but never abort the
+    // send. The shared upsert helper's preserve-manual rule means
+    // we never downgrade a manual / bulk_import row, so this hook
+    // is safe to fire on every send even after the same line was
+    // hand-confirmed by an operator on the SO recon table.
+    try {
+      if (quote.customer_id && Array.isArray(canonicalLines) && canonicalLines.length) {
+        // Distinct part_no -> item_master.id lookup. One query
+        // across all lines so a 30-line quote runs at most one
+        // round-trip.
+        const partNos = [...new Set(
+          canonicalLines
+            .map((l) => l && l.part_no)
+            .filter((s) => s && String(s).trim().length)
+            .map((s) => String(s).trim())
+        )];
+        const partIdByPartNo = new Map();
+        if (partNos.length) {
+          const imRes = await svc.from("item_master")
+            .select("id, part_no")
+            .eq("tenant_id", ctx.tenantId)
+            .in("part_no", partNos);
+          if (imRes && !imRes.error && Array.isArray(imRes.data)) {
+            for (const row of imRes.data) {
+              if (row.part_no) partIdByPartNo.set(String(row.part_no), row.id);
+            }
+          }
+        }
+        const nowIso = new Date().toISOString();
+        const actor = ctx.user && ctx.user.id ? ctx.user.id : null;
+        let writes = 0;
+        for (const line of canonicalLines) {
+          if (!line || !line.customer_part_number) continue;
+          // Two ways to resolve item_id: either the JSONB fallback
+          // line carries _mapped_item.id from the originating
+          // order, or we look up item_master by part_no for the
+          // canonical quote_lines path.
+          let itemId = null;
+          if (line._mapped_item && line._mapped_item.id) itemId = line._mapped_item.id;
+          if (!itemId && line.part_no) itemId = partIdByPartNo.get(String(line.part_no).trim()) || null;
+          if (!itemId) continue;
+          // Skip uncertain LLM suggestions; we never want to
+          // launder a low-confidence guess through quote send.
+          const mi = line._mapped_item;
+          if (mi && mi.match_via === "llm_suggest" && mi.confidence_pct != null
+              && Number(mi.confidence_pct) < 80) {
+            continue;
+          }
+          try {
+            await upsertCustomerPart(svc, {
+              tenantId: ctx.tenantId,
+              itemId,
+              customerId: quote.customer_id,
+              customerPartNumber: String(line.customer_part_number).trim(),
+              customerPartDescription: line.description || null,
+              createdVia: "quote_sent",
+              createdBy: actor,
+              confidencePct: 95,
+              confirmedAt: nowIso,
+              confirmedBy: actor,
+            });
+            writes++;
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.warn("[quotes/send Layer B] line write-back failed: " + (e && e.message));
+          }
+        }
+        if (writes > 0) {
+          await recordEvent(ctx, {
+            caseId: quote.id,
+            eventType: "item_customer_part_confirmed",
+            objectType: "quote",
+            objectId: quote.id,
+            detail: { writes, source: "quote_sent", customer_id: quote.customer_id },
+          });
+        }
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn("[quotes/send Layer B] write-back batch failed: " + (e && e.message));
+    }
 
     // Queue the email.
     const draft = await svc.from("communications").insert({

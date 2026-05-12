@@ -576,6 +576,20 @@ const WiredSOIntake = () => {
           "Upstream LLM error",
           "Provider returned a 5xx. Re-try in a moment.",
         ],
+        // Audit fix May 2026: low_confidence used to fall through
+        // silently. The operator saw lines + a green stepper but
+        // no warning that the model's overall confidence was below
+        // the threshold. Surface the warning so they review the
+        // lines carefully before continuing.
+        low_confidence: [
+          "Low extraction confidence",
+          "Review the line items carefully. The model was uncertain.",
+        ],
+        // Adapter cost-guard fell through to fail_unknown too.
+        over_budget: [
+          "Extraction over budget",
+          "All adapters skipped the run because the tenant's docai cost cap was hit. Adjust the cap or wait for the budget window to roll.",
+        ],
       };
       if (reason && REASON_TOAST[reason]) {
         const [title, body] = REASON_TOAST[reason];
@@ -705,6 +719,17 @@ const WiredSOIntake = () => {
 
   const onPickFile = async (file) => {
     if (!file) return;
+    // Audit fix May 2026: a second drop while the first
+    // upload+extract was in-flight raced two extraction state
+    // writes (setExtractedLines / setExtractedCustomer). Whichever
+    // resolved last overwrote the other, so the order create could
+    // pick up lines from one PO and the customer from another.
+    // Guard against re-entry: ignore drops while busy is upload
+    // or extract.
+    if (busy === "upload" || busy === "extract") {
+      window.notifyWarn?.("Already processing a file", "Wait for the current upload + extraction to finish, then drop again.");
+      return;
+    }
     setErr(null);
     setBusy("upload");
     try {

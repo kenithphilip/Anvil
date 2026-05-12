@@ -825,12 +825,17 @@ const WiredSOWorkspace = () => {
   // alias downstream consumers (Tally emit, anomaly compute, PDF
   // render) read. Without this, editing qty would only update
   // `line.qty` while the Tally amend still emitted `line.quantity`.
+  // Keep in lock-step with src/v3-app/lib/field-sources.ts ALIASES.
+  // When an extractor emits a line via "name" / "item" / "unit",
+  // the recon table needs to find AND write back to the same
+  // aliases or the Tally emit + anomaly compute will see a
+  // stale value at the original key. Audit fix May 2026.
   const LINE_ALIAS: Record<string, string[]> = {
     itemCode: ["itemCode", "partNumber", "sku", "code"],
-    description: ["description"],
+    description: ["description", "name", "item"],
     qty: ["qty", "quantity"],
     rate: ["rate", "unitPrice"],
-    uom: ["uom"],
+    uom: ["uom", "unit"],
     hsn: ["hsn", "hsn_sac", "hsnCode"],
     gst_pct: ["gst_pct", "gstRate", "rate_of_duty_pct"],
   };

@@ -57,7 +57,11 @@ export default async function handler(req, res) {
       sourceId: body?.source_id || null,
       caseId: body?.order_id || body?.source_id || null,
       kind: body?.kind || "po",
-      triggeredBy: ctx.userId || null,
+      // Audit fix May 2026: resolveContext returns `user` not
+      // `userId`; the original `ctx.userId` was always undefined,
+      // so extraction_runs.triggered_by was never populated and the
+      // Pipeline Diagnostics tab could not show who ran a job.
+      triggeredBy: ctx.user?.id || null,
       inboundEmailId: body?.inbound_email_id || null,
       vote: !!body?.vote,
       hints: body?.hints || {},

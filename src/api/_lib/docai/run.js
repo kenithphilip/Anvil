@@ -43,6 +43,7 @@
 //     fieldProvenance, voterUsed, error }
 
 import { dispatchExtract } from "./index.js";
+import { chunkedExtract } from "./chunked-extract.js";
 import { extractTextLayer, contentHash } from "./text_layer.js";
 import { extractOcrLayer } from "./ocr_layer.js";
 import { applyTemplate, buildTemplate } from "./templates.js";
@@ -473,11 +474,25 @@ export const runExtractionPipeline = async (params) => {
       out = all[0];
     }
   } else {
-    out = await dispatchExtract({
+    // Phase A2: route through chunkedExtract so a multi-page PDF
+    // gets split before the LLM call. Short PDFs (<= 6 pages) and
+    // non-PDFs are a straight passthrough to dispatchExtract; the
+    // chunking only kicks in when it's actually needed. Per-chunk
+    // progress lands on processing_events via the same
+    // recordRunEvent path used for the rest of the pipeline, so
+    // the upcoming progress UI (Phase B1) gets a live feed.
+    const chunkEventSink = (e) => {
+      recordRunEvent("docai_chunk_" + e.stage, e);
+    };
+    out = await chunkedExtract({
       source: dispatchSource,
       settings: { ...settings, tenant_id: ctx.tenantId },
       customerId,
       hints: dispatchHints,
+      opts: {
+        eventSink: chunkEventSink,
+        keepPages: hints.keepPages || null,
+      },
     });
   }
 

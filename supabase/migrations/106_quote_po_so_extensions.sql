@@ -85,24 +85,36 @@ create table if not exists incoterms_v2 (
 );
 
 -- Defensive rotate when a prior failed apply left the old shape.
+-- Same shape as the uom_options block in 105: drop the implicit
+-- NOT NULL on tenant_id that the old composite PK leaves behind.
 do $$
+declare
+  pk_cols text;
 begin
   if not exists (
     select 1 from information_schema.columns
-    where table_name = 'incoterms_v2' and column_name = 'id'
+    where table_schema = 'public' and table_name = 'incoterms_v2' and column_name = 'id'
   ) then
-    alter table incoterms_v2 add column id uuid default uuid_generate_v4();
-    update incoterms_v2 set id = uuid_generate_v4() where id is null;
-    alter table incoterms_v2 alter column id set not null;
-    if exists (
-      select 1 from information_schema.table_constraints
-      where table_name = 'incoterms_v2'
-        and constraint_type = 'PRIMARY KEY'
-    ) then
-      alter table incoterms_v2 drop constraint incoterms_v2_pkey;
-    end if;
-    alter table incoterms_v2 add primary key (id);
+    alter table public.incoterms_v2 add column id uuid default uuid_generate_v4();
+    update public.incoterms_v2 set id = uuid_generate_v4() where id is null;
+    alter table public.incoterms_v2 alter column id set not null;
   end if;
+
+  select string_agg(a.attname, ',' order by array_position(i.indkey::int[], a.attnum))
+    into pk_cols
+  from pg_index i
+  join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
+  where i.indrelid = 'public.incoterms_v2'::regclass
+    and i.indisprimary;
+
+  if pk_cols is null or pk_cols <> 'id' then
+    if pk_cols is not null then
+      alter table public.incoterms_v2 drop constraint if exists incoterms_v2_pkey;
+    end if;
+    alter table public.incoterms_v2 add primary key (id);
+  end if;
+
+  alter table public.incoterms_v2 alter column tenant_id drop not null;
 end $$;
 
 create unique index if not exists incoterms_v2_tenant_code

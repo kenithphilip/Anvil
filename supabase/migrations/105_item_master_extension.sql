@@ -88,26 +88,43 @@ create table if not exists uom_options (
 );
 
 -- Defensive: if a previous (failed) apply created the table with
--- the old (tenant_id, code) PK and no id column, surgically rotate
--- it to the new shape so the seed below succeeds.
+-- the old (tenant_id, code) PK, surgically rotate it. Three steps
+-- because Postgres does not auto-drop the NOT NULL that a
+-- multi-column PRIMARY KEY implies on each column when the PK is
+-- later dropped: those NOT NULLs must be removed explicitly.
 do $$
+declare
+  pk_cols text;
 begin
+  -- 1. Ensure id column exists with a default + values.
   if not exists (
     select 1 from information_schema.columns
-    where table_name = 'uom_options' and column_name = 'id'
+    where table_schema = 'public' and table_name = 'uom_options' and column_name = 'id'
   ) then
-    alter table uom_options add column id uuid default uuid_generate_v4();
-    update uom_options set id = uuid_generate_v4() where id is null;
-    alter table uom_options alter column id set not null;
-    if exists (
-      select 1 from information_schema.table_constraints
-      where table_name = 'uom_options'
-        and constraint_type = 'PRIMARY KEY'
-    ) then
-      alter table uom_options drop constraint uom_options_pkey;
-    end if;
-    alter table uom_options add primary key (id);
+    alter table public.uom_options add column id uuid default uuid_generate_v4();
+    update public.uom_options set id = uuid_generate_v4() where id is null;
+    alter table public.uom_options alter column id set not null;
   end if;
+
+  -- 2. If the current PK is anything other than (id), drop it and
+  -- recreate on id alone.
+  select string_agg(a.attname, ',' order by array_position(i.indkey::int[], a.attnum))
+    into pk_cols
+  from pg_index i
+  join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
+  where i.indrelid = 'public.uom_options'::regclass
+    and i.indisprimary;
+
+  if pk_cols is null or pk_cols <> 'id' then
+    if pk_cols is not null then
+      alter table public.uom_options drop constraint if exists uom_options_pkey;
+    end if;
+    alter table public.uom_options add primary key (id);
+  end if;
+
+  -- 3. Drop the implicit NOT NULL the old composite PK left behind
+  -- on tenant_id. Required so the global seed rows below can land.
+  alter table public.uom_options alter column tenant_id drop not null;
 end $$;
 
 create unique index if not exists uom_options_tenant_code

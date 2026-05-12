@@ -69,20 +69,49 @@ comment on column item_master.alteration_locked is 'When true, the UI refuses to
 -- 2. uom_options: per-tenant unit-of-measure list with global seed
 -- ---------------------------------------------------------------------------
 
+-- Bug fix May 2026: the original primary key was (tenant_id, code)
+-- which Postgres enforces as NOT NULL on every PK column, so the
+-- global seed rows below (tenant_id null) violated the constraint
+-- and aborted the whole migration before 106 onward could run.
+-- A surrogate id PK plus two partial unique indexes preserves the
+-- intent: global rows are unique by code, per-tenant rows are
+-- unique by (tenant_id, code).
 create table if not exists uom_options (
+  id uuid primary key default uuid_generate_v4(),
   tenant_id uuid references tenants(id) on delete cascade,
   code text not null,
   label text not null,
   is_system_default boolean not null default false,
   is_active boolean not null default true,
   sort_order int not null default 100,
-  created_at timestamptz not null default now(),
-  primary key (tenant_id, code)
+  created_at timestamptz not null default now()
 );
 
--- Allow global seed rows (tenant_id null) that every tenant inherits.
--- The unique constraint above scopes per-tenant codes; the partial
--- index below enforces uniqueness of global rows.
+-- Defensive: if a previous (failed) apply created the table with
+-- the old (tenant_id, code) PK and no id column, surgically rotate
+-- it to the new shape so the seed below succeeds.
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_name = 'uom_options' and column_name = 'id'
+  ) then
+    alter table uom_options add column id uuid default uuid_generate_v4();
+    update uom_options set id = uuid_generate_v4() where id is null;
+    alter table uom_options alter column id set not null;
+    if exists (
+      select 1 from information_schema.table_constraints
+      where table_name = 'uom_options'
+        and constraint_type = 'PRIMARY KEY'
+    ) then
+      alter table uom_options drop constraint uom_options_pkey;
+    end if;
+    alter table uom_options add primary key (id);
+  end if;
+end $$;
+
+create unique index if not exists uom_options_tenant_code
+  on uom_options (tenant_id, code) where tenant_id is not null;
 create unique index if not exists uom_options_global_code
   on uom_options (code) where tenant_id is null;
 

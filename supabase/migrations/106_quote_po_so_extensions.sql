@@ -70,16 +70,43 @@ create policy document_templates_write on document_templates
 --    list canonical and per-customer overridable.
 -- ---------------------------------------------------------------------------
 
+-- Bug fix May 2026 (same shape as uom_options in 105): the
+-- composite (tenant_id, code) PK forbids null tenant_id, so the
+-- global seed rows below could never insert. Surrogate id PK +
+-- partial unique indexes preserve the global / per-tenant scope.
 create table if not exists incoterms_v2 (
+  id uuid primary key default uuid_generate_v4(),
   tenant_id uuid references tenants(id) on delete cascade,
   code text not null,
   label text not null,
   description text,
   is_active boolean not null default true,
-  sort_order int not null default 100,
-  primary key (tenant_id, code)
+  sort_order int not null default 100
 );
 
+-- Defensive rotate when a prior failed apply left the old shape.
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_name = 'incoterms_v2' and column_name = 'id'
+  ) then
+    alter table incoterms_v2 add column id uuid default uuid_generate_v4();
+    update incoterms_v2 set id = uuid_generate_v4() where id is null;
+    alter table incoterms_v2 alter column id set not null;
+    if exists (
+      select 1 from information_schema.table_constraints
+      where table_name = 'incoterms_v2'
+        and constraint_type = 'PRIMARY KEY'
+    ) then
+      alter table incoterms_v2 drop constraint incoterms_v2_pkey;
+    end if;
+    alter table incoterms_v2 add primary key (id);
+  end if;
+end $$;
+
+create unique index if not exists incoterms_v2_tenant_code
+  on incoterms_v2 (tenant_id, code) where tenant_id is not null;
 create unique index if not exists incoterms_v2_global_code
   on incoterms_v2 (code) where tenant_id is null;
 

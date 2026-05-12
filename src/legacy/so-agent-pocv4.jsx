@@ -17,8 +17,8 @@ const PREFLIGHT_PROMPT = [
   "P2 MATERIAL: Do PO line items match Obara products (electrode tips, cap tips,",
   "   back tips, welding consumables, resistance welding parts)?",
   "   Completely unrelated products -> WRONG_MATERIAL.",
-  "P3 DATE: Is PO date within 12 months of today March 2026?",
-  "   Before March 2025 -> OUTDATED_PO. No date -> MISSING_DATE.",
+  "P3 DATE: Is PO date within 12 months of today __TODAY__?",
+  "   Before __YEAR_AGO__ -> OUTDATED_PO. No date -> MISSING_DATE.",
   "P4 DUPLICATE: Extract PO number for app-level duplicate checking.",
   "P5 COMPLETENESS: PO must have number, date, at least 1 line item with qty and price,",
   "   and a delivery address. Missing any -> INCOMPLETE_PO.",
@@ -74,6 +74,29 @@ const PREFLIGHT_PROMPT = [
   '  "suggestedAction": ""',
   "}",
 ].join("\n");
+
+// Phase 1 F12: PREFLIGHT_PROMPT carried a stale "today March 2026"
+// literal at the P3 DATE check, plus a paired "Before March 2025"
+// cutoff. Both were frozen at the time the prompt was first
+// authored. We now template __TODAY__ + __YEAR_AGO__ placeholders
+// in the prompt above and substitute them at request time so the
+// 12-month window keeps pace with the wall clock. UTC is used to
+// avoid the IST vs UTC drift the audit register flagged.
+const PREFLIGHT_MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+const renderPreflightPrompt = () => {
+  const d = new Date();
+  const m = d.getUTCMonth();
+  const y = d.getUTCFullYear();
+  const today = PREFLIGHT_MONTH_NAMES[m] + " " + y;
+  const past = new Date(Date.UTC(y, m - 12, 1));
+  const yearAgo = PREFLIGHT_MONTH_NAMES[past.getUTCMonth()] + " " + past.getUTCFullYear();
+  return PREFLIGHT_PROMPT
+    .replace(/__TODAY__/g, today)
+    .replace(/__YEAR_AGO__/g, yearAgo);
+};
 
 // ─── SO + SOURCE PO PROMPT ────────────────────────────────────────────────────
 const SO_PROMPT = [
@@ -1368,7 +1391,7 @@ export default function App() {
         { type:"text", text:"DOCUMENT 2 — Price Quotation:" },
         { type:"document", source:{ type:"base64", media_type: qMime.current, data: bases[1] } },
       ];
-      const result = await callClaude(PREFLIGHT_PROMPT, docs);
+      const result = await callClaude(renderPreflightPrompt(), docs);
       const stored = await loadOrders();
       const dup = stored.find((o) =>
         o.preflightPONumber && result.poNumber &&

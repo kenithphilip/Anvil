@@ -4043,7 +4043,7 @@ patchSo(
       forceReprocess.current = false;
 
       const docs = [...poDoc.blocks, ...quoteDoc.blocks];
-      const result = await callClaude(PREFLIGHT_PROMPT, docs, { purpose:"preflight" });
+      const result = await callClaude(renderPreflightPrompt(), docs, { purpose:"preflight" });
       const stored = await loadOrders();
       const dup = stored.find((o) =>
         o.preflightPONumber && result.poNumber &&

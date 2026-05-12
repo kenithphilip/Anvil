@@ -87,11 +87,11 @@ export const findRunByLayoutFingerprint = async (svc, { tenantId, customerId, la
   if (!svc || !tenantId || !layoutFingerprint) return null;
   try {
     let q = svc.from("extraction_runs")
-      .select("id, adapter_used, confidence_overall, normalized_extract, status, template_used, global_template_used, created_at")
+      .select("id, adapter_used, confidence_overall, normalized_extract, status, template_used, global_template_used, started_at")
       .eq("tenant_id", tenantId)
       .eq("layout_fingerprint", layoutFingerprint)
       .eq("status", "ok")
-      .order("created_at", { ascending: false })
+      .order("started_at", { ascending: false })
       .limit(1);
     q = customerId ? q.eq("customer_id", customerId) : q.is("customer_id", null);
     const r = await q.maybeSingle();

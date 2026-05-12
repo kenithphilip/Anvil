@@ -38,5 +38,5 @@ comment on column extraction_runs.cost_summary is
 -- Optional partial index for the "show me runs that hit the cap"
 -- diagnostics query. We index on the jsonb `breached` boolean.
 create index if not exists extraction_runs_cost_breached_idx
-  on extraction_runs (tenant_id, created_at desc)
+  on extraction_runs (tenant_id, started_at desc)
   where (cost_summary ->> 'breached')::boolean is true;

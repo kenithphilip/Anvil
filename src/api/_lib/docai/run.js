@@ -109,13 +109,13 @@ const findRecentRunByContentHash = async ({
   try {
     const cutoff = new Date(Date.now() - minutes * 60 * 1000).toISOString();
     let q = svc.from("extraction_runs")
-      .select("id,normalized_extract,raw_extract,field_confidences,confidence_overall,status,status_reason,adapter_used,adapter_attempts,validator_issues,validator_summary,text_layer_used,ocr_layer_used,template_used,global_template_used,global_template_use_mode,overrides_applied,field_provenance,voter_used,selected_model,model_selection_reason,parse_method,parse_repairs,parse_retries,created_at")
+      .select("id,normalized_extract,raw_extract,field_confidences,confidence_overall,status,status_reason,adapter_used,adapter_attempts,validator_issues,validator_summary,text_layer_used,ocr_layer_used,template_used,global_template_used,global_template_use_mode,overrides_applied,field_provenance,voter_used,selected_model,model_selection_reason,parse_method,parse_repairs,parse_retries,started_at")
       .eq("tenant_id", tenantId)
       .eq("content_hash", hash)
       .eq("extraction_kind", kind)
       .eq("status", "ok")
-      .gte("created_at", cutoff)
-      .order("created_at", { ascending: false })
+      .gte("started_at", cutoff)
+      .order("started_at", { ascending: false })
       .limit(1);
     // customer scope: an SO with a known customer must NOT dedupe
     // against a run that had no customer (the overrides + template

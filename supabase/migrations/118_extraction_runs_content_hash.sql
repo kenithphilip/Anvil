@@ -15,7 +15,7 @@
 -- budget on every retry.
 --
 -- This migration adds the hash column to extraction_runs and an
--- index on (tenant_id, customer_id, content_hash, created_at desc)
+-- index on (tenant_id, customer_id, content_hash, started_at desc)
 -- so the dedupe lookup is a single index scan. The dispatcher hits
 -- it BEFORE inserting the new run row, copies the prior
 -- normalized_extract + field_confidences + status across, marks
@@ -49,7 +49,7 @@ comment on column extraction_runs.content_hash is
 -- ok, hash present). nulls last on customer_id so a run created
 -- without a customer can match other no-customer runs.
 create index if not exists extraction_runs_dedupe_lookup
-  on extraction_runs (tenant_id, content_hash, customer_id, extraction_kind, created_at desc)
+  on extraction_runs (tenant_id, content_hash, customer_id, extraction_kind, started_at desc)
   where status = 'ok' and content_hash is not null;
 
 -- Extend the status_reason CHECK to include the new 'dedupe_hit'

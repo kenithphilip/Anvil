@@ -26,5 +26,5 @@ comment on column extraction_runs.layout_fingerprint_match is
 
 -- Lookup index for the dispatcher's fingerprint query.
 create index if not exists extraction_runs_layout_fingerprint_lookup
-  on extraction_runs (tenant_id, layout_fingerprint, customer_id, created_at desc)
+  on extraction_runs (tenant_id, layout_fingerprint, customer_id, started_at desc)
   where status = 'ok' and layout_fingerprint is not null;

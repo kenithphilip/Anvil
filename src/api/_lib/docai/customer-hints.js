@@ -193,11 +193,11 @@ export const buildCustomerHints = async (svc, { tenantId, customerId, opts = {} 
   let linePatterns = null;
   try {
     const r = await svc.from("extraction_runs")
-      .select("normalized_extract, created_at")
+      .select("normalized_extract, started_at")
       .eq("tenant_id", tenantId)
       .eq("customer_id", customerId)
       .eq("status", "ok")
-      .order("created_at", { ascending: false })
+      .order("started_at", { ascending: false })
       .limit(LINE_HISTORY_LIMIT);
     linePatterns = summariseLinePatterns(r?.data || []);
   } catch (_e) { linePatterns = null; }

@@ -39,5 +39,5 @@ comment on column extraction_runs.anomalies_has_blockers is
 
 -- Telemetry index for "show me runs with anomaly blockers".
 create index if not exists extraction_runs_anomalies_blockers_idx
-  on extraction_runs (tenant_id, created_at desc)
+  on extraction_runs (tenant_id, started_at desc)
   where anomalies_has_blockers is true;

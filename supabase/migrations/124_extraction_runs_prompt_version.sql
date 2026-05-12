@@ -15,5 +15,5 @@ comment on column extraction_runs.prompt_version is
 
 -- Telemetry index for "show me runs by prompt_version".
 create index if not exists extraction_runs_prompt_version_idx
-  on extraction_runs (tenant_id, (prompt_version ->> 'version'), created_at desc)
+  on extraction_runs (tenant_id, (prompt_version ->> 'version'), started_at desc)
   where prompt_version is not null;

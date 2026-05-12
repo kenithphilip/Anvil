@@ -10,7 +10,35 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 
-const ALLOWED_ROLES = new Set(["sales_engineer", "sales_manager", "approver", "viewer", "admin", "operator", "finance"]);
+// Phase 1 F11: role enum drift fix.
+//
+// Canonical role set lives in src/v3-app/lib/rbac.ts:19 as
+//   sales_engineer, sales_manager, procurement, finance, admin,
+//   operator, viewer.
+// This file previously carried a 7-role set that swapped
+// `procurement` for `approver`. The DB enum obara_role (migration
+// 001 + 116) carries the canonical 7. CI script
+// scripts/audit-rbac.mjs enforces drift-zero.
+//
+// LEGACY_ROLE_REMAP backfills any caller still posting the
+// deprecated `approver` value to the closest semantic match per
+// the audit's recommendation (sales_manager): an inviter who
+// asks for an approver almost always means the manager who
+// owns the approvals queue. A console.warn surfaces the remap
+// so we can sweep call sites before retiring the alias.
+const ALLOWED_ROLES = new Set(["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer"]);
+const LEGACY_ROLE_REMAP = { approver: "sales_manager" };
+const normaliseRole = (rawRole, fallback) => {
+  const role = rawRole == null ? null : String(rawRole);
+  if (role && Object.prototype.hasOwnProperty.call(LEGACY_ROLE_REMAP, role)) {
+    const target = LEGACY_ROLE_REMAP[role];
+    // eslint-disable-next-line no-console
+    console.warn("[members] legacy role '" + role + "' remapped to '" + target + "' (Phase 1 F11).");
+    return target;
+  }
+  if (role && ALLOWED_ROLES.has(role)) return role;
+  return fallback;
+};
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -66,7 +94,7 @@ export default async function handler(req, res) {
         return json(res, 200, { resent: true, action_link: action_link || null });
       }
 
-      const role = ALLOWED_ROLES.has(body.role) ? body.role : "sales_engineer";
+      const role = normaliseRole(body.role, "sales_engineer");
       const invite = await svc.auth.admin.inviteUserByEmail(body.email);
       if (invite.error) throw new Error(invite.error.message);
       const userId = invite.data && invite.data.user && invite.data.user.id;
@@ -87,10 +115,11 @@ export default async function handler(req, res) {
     if (req.method === "PATCH") {
       requirePermission(ctx, "admin");
       const body = await readBody(req);
-      if (!body.user_id || !ALLOWED_ROLES.has(body.role)) return json(res, 400, { error: { message: "user_id and valid role required" } });
-      const { data, error } = await svc.from("tenant_members").update({ role: body.role }).eq("tenant_id", ctx.tenantId).eq("user_id", body.user_id).select("*").single();
+      const patchRole = normaliseRole(body.role, null);
+      if (!body.user_id || !patchRole) return json(res, 400, { error: { message: "user_id and valid role required" } });
+      const { data, error } = await svc.from("tenant_members").update({ role: patchRole }).eq("tenant_id", ctx.tenantId).eq("user_id", body.user_id).select("*").single();
       if (error) throw new Error(error.message);
-      await recordAudit(ctx, { action: "member_role_change", objectType: "tenant_members", objectId: body.user_id, after: { role: body.role } });
+      await recordAudit(ctx, { action: "member_role_change", objectType: "tenant_members", objectId: body.user_id, after: { role: patchRole } });
       return json(res, 200, { member: data });
     }
     if (req.method === "DELETE") {

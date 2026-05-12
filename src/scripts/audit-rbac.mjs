@@ -19,8 +19,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const RBAC_TS = path.join(ROOT, "src", "v3-app", "lib", "rbac.ts");
-const AUTH_JS = path.join(ROOT, "src", "api", "_lib", "auth.js");
+const RBAC_TS  = path.join(ROOT, "src", "v3-app", "lib", "rbac.ts");
+const AUTH_JS  = path.join(ROOT, "src", "api", "_lib", "auth.js");
+const MEMBERS_JS = path.join(ROOT, "src", "api", "admin", "members.js");
+const MIGRATIONS_DIR = path.join(ROOT, "supabase", "migrations");
 const REPORT  = path.join(ROOT, "docs", "RBAC_AUDIT.md");
 
 const readFile = (p) => fs.readFileSync(p, "utf8");
@@ -53,6 +55,43 @@ const parseMatrix = () => {
     rows[navId] = cells;
   }
   return rows;
+};
+
+// Parse ALLOWED_ROLES from src/api/admin/members.js. Phase 1 F11
+// guards against the file going out of sync with rbac.ts ROLES.
+const parseMembersAllowedRoles = () => {
+  const src = readFile(MEMBERS_JS);
+  const m = src.match(/const ALLOWED_ROLES\s*=\s*new Set\(\[([^\]]+)\]\)/);
+  if (!m) return null;
+  return m[1].split(",").map((s) => s.replace(/["'\s]/g, "")).filter(Boolean);
+};
+
+// Parse obara_role enum values from the migration chain. Each
+// migration either CREATE TYPE ... AS ENUM (...) or
+// ALTER TYPE obara_role ADD VALUE 'x'. We walk every numbered
+// migration file in order and apply both forms, then return the
+// resulting union. Phase 1 F11 surfaces drift between this set
+// and rbac.ts / members.js.
+const parseObaraRoleEnum = () => {
+  if (!fs.existsSync(MIGRATIONS_DIR)) return null;
+  const files = fs.readdirSync(MIGRATIONS_DIR)
+    .filter((f) => /^[0-9]+_.*\.sql$/.test(f))
+    .sort();
+  const values = new Set();
+  for (const f of files) {
+    const src = readFile(path.join(MIGRATIONS_DIR, f));
+    const createMatch = src.match(/create type obara_role as enum \(([^)]+)\)/i);
+    if (createMatch) {
+      for (const v of createMatch[1].split(",")) {
+        const cleaned = v.replace(/['"\s]/g, "");
+        if (cleaned) values.add(cleaned);
+      }
+    }
+    for (const m of src.matchAll(/alter type obara_role add value\s+(?:if not exists\s+)?'([^']+)'/gi)) {
+      values.add(m[1]);
+    }
+  }
+  return [...values];
 };
 
 // Parse role sets from auth.js.
@@ -92,8 +131,42 @@ const main = () => {
   const matrix = parseMatrix();
   const sets = parseAuthSets();
   const handlers = scanApiHandlers();
+  const allowedRoles = parseMembersAllowedRoles();
+  const enumValues = parseObaraRoleEnum();
 
   const findings = [];
+
+  // Phase 1 F11 hard gate: ALLOWED_ROLES in members.js must equal
+  // ROLES in rbac.ts (the canonical 7-role set). LEGACY_ROLE_REMAP
+  // is the soft path for callers still posting "approver"; the
+  // SET itself must be drift-free.
+  if (allowedRoles) {
+    const a = new Set(allowedRoles), b = new Set(roles);
+    const onlyAllow = [...a].filter((x) => !b.has(x));
+    const onlyRbac  = [...b].filter((x) => !a.has(x));
+    for (const r of onlyAllow) findings.push({ severity: "FAIL", kind: "members-extra-role",
+      detail: r + " is in members.js ALLOWED_ROLES but not in rbac.ts ROLES" });
+    for (const r of onlyRbac)  findings.push({ severity: "FAIL", kind: "members-missing-role",
+      detail: r + " is in rbac.ts ROLES but not in members.js ALLOWED_ROLES" });
+  } else {
+    findings.push({ severity: "FAIL", kind: "members-allowed-roles-missing",
+      detail: "could not parse ALLOWED_ROLES from src/api/admin/members.js" });
+  }
+
+  // Phase 1 F11 hard gate: obara_role enum (resulting from the
+  // migration chain) must contain every rbac.ts role. Extras are
+  // allowed for the future-flag case but missing values would
+  // mean the DB cannot store a valid member role.
+  if (enumValues && enumValues.length) {
+    const enumSet = new Set(enumValues);
+    for (const r of roles) {
+      if (!enumSet.has(r)) findings.push({ severity: "FAIL", kind: "enum-missing-role",
+        detail: r + " is in rbac.ts ROLES but not in the obara_role enum (run the migrations)" });
+    }
+  } else {
+    findings.push({ severity: "WARN", kind: "enum-not-parsed",
+      detail: "could not parse obara_role enum from supabase/migrations/ (the enum check is informational)" });
+  }
 
   // Check role-list consistency. The backend role sets pull from a
   // hardcoded list; we want every role in rbac.ts to appear in at
@@ -180,6 +253,13 @@ const main = () => {
     for (const f of findings) {
       process.stdout.write("  [" + f.severity + "] " + f.kind + ": " + f.detail + "\n");
     }
+  }
+  // Phase 1 F11: hard-fail CI on a FAIL-severity finding. WARN is
+  // still informational. Drift between rbac.ts / members.js /
+  // obara_role enum is the only way to land a FAIL today.
+  if (counts.FAIL) {
+    process.stdout.write("RBAC drift detected. Failing the build.\n");
+    process.exit(1);
   }
 };
 

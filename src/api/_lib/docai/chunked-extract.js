@@ -187,7 +187,7 @@ export const mergeChunkResults = (chunkResults, chunks) => {
 //   keepPages         optional, from upstream TOC profiler
 //   maxTotalPages     sync ceiling (default SYNC_MAX_TOTAL_PAGES)
 export const chunkedExtract = async (args) => {
-  const { source, settings, customerId, hints } = args;
+  const { source, settings, customerId, hints, runCost = null } = args;
   const opts = args.opts || {};
   const eventSink = opts.eventSink || null;
   const t0 = Date.now();
@@ -196,13 +196,13 @@ export const chunkedExtract = async (args) => {
     // Not a PDF -> straight dispatch. The chunker only handles
     // PDFs; other formats route to their dedicated parsers.
     emit(eventSink, { stage: "passthrough", reason: "not_pdf", duration_ms: 0 });
-    return dispatchExtract({ source, settings, customerId, hints });
+    return dispatchExtract({ source, settings, customerId, hints, runCost });
   }
 
   const bytes = toBytes(source);
   if (!bytes) {
     emit(eventSink, { stage: "passthrough", reason: "no_bytes", duration_ms: 0 });
-    return dispatchExtract({ source, settings, customerId, hints });
+    return dispatchExtract({ source, settings, customerId, hints, runCost });
   }
 
   let totalPages = 0;
@@ -212,13 +212,13 @@ export const chunkedExtract = async (args) => {
     // Not a parseable PDF; let the dispatcher handle it (it may
     // route to OCR or fail with a clearer message).
     emit(eventSink, { stage: "passthrough", reason: "probe_failed", error: e?.message || String(e) });
-    return dispatchExtract({ source, settings, customerId, hints });
+    return dispatchExtract({ source, settings, customerId, hints, runCost });
   }
 
   const threshold = Number(opts.pageThreshold || CHUNK_PAGE_THRESHOLD);
   if (totalPages <= threshold && !opts.keepPages) {
     emit(eventSink, { stage: "passthrough", reason: "short_pdf", page_count: totalPages });
-    return dispatchExtract({ source, settings, customerId, hints });
+    return dispatchExtract({ source, settings, customerId, hints, runCost });
   }
 
   emit(eventSink, { stage: "chunking_started", page_count: totalPages });
@@ -235,7 +235,30 @@ export const chunkedExtract = async (args) => {
   });
 
   const chunkResults = [];
+  let budgetBreachedAt = null;
   for (const ch of chunkResult.chunks) {
+    // Wave 1.4: if the per-extraction cost cap was already breached
+    // by a prior chunk, the remaining chunks are skipped entirely.
+    // This is the chunk-level circuit breaker; the dispatcher's
+    // wouldExceed() handles the per-adapter case inside a chunk.
+    if (runCost && runCost.hasExceeded()) {
+      budgetBreachedAt = ch.index;
+      chunkResults.push({
+        ok: false,
+        reason: "over_run_budget",
+        error: "per-extraction cost cap reached",
+        accumulated_cost_usd: runCost.totalUsd,
+        cap_usd: runCost.cap,
+        lines: [], customer: null, confidences: {}, attempts: [],
+      });
+      emit(eventSink, {
+        stage: "chunk_skipped_over_budget",
+        chunk_index: ch.index,
+        accumulated_cost_usd: runCost.totalUsd,
+        cap_usd: runCost.cap,
+      });
+      continue;
+    }
     emit(eventSink, {
       stage: "chunk_started",
       chunk_index: ch.index,
@@ -251,6 +274,7 @@ export const chunkedExtract = async (args) => {
         settings,
         customerId,
         hints: { ...hints, chunk_index: ch.index, chunk_count: chunkResult.chunks.length, page_start: ch.pageStart, page_end: ch.pageEnd },
+        runCost,
       });
       chunkResults.push(out);
       emit(eventSink, {
@@ -282,12 +306,17 @@ export const chunkedExtract = async (args) => {
 
   emit(eventSink, { stage: "merging_results", chunk_count: chunkResult.chunks.length });
   const merged = mergeChunkResults(chunkResults, chunkResult.chunks);
+  if (budgetBreachedAt != null) {
+    merged.over_run_budget = true;
+    merged.budget_breached_at_chunk = budgetBreachedAt;
+  }
   emit(eventSink, {
     stage: "done",
     chunk_count: chunkResult.chunks.length,
     duration_ms: Date.now() - t0,
     ok: !!merged.ok,
     line_count: merged.lines?.length || 0,
+    budget_breached_at_chunk: budgetBreachedAt,
   });
   return merged;
 };

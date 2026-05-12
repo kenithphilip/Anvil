@@ -273,6 +273,42 @@ describe("runExtractionPipeline / happy path", () => {
     expect(dispatcher.dispatchExtract).toHaveBeenCalled();
   });
 
+  it("Wave 1.4: surfaces cost_summary with cap + total_usd on every ok run", async () => {
+    const dispatcher = await import("../api/_lib/docai/index.js");
+    dispatcher.dispatchExtract.mockResolvedValueOnce({
+      ok: true,
+      adapter_used: "claude",
+      confidence_overall: 0.92,
+      confidences: { overall: 0.92 },
+      normalized: {
+        classification: "po",
+        customer: { name: "Acme" },
+        lines: [{ partNumber: "X", quantity: 1, unitPrice: 10 }],
+      },
+      raw: {},
+      attempts: [{ adapter: "claude", status: "ok" }],
+      mode: "pre_extracted_text",
+    });
+    const storage = makeStorage();
+    const svc = buildSvc(storage);
+    const result = await runExtractionPipeline({
+      ctx: { tenantId: "t1", userId: "u1" },
+      svc,
+      settings: { docai_per_extraction_cost_cap_usd: 0.5 },
+      bytes: Buffer.from("%PDF-1.4 fake"),
+      filename: "po.pdf",
+      mime: "application/pdf",
+      sourceType: "pdf",
+      customerId: null,
+      kind: "po",
+    });
+    expect(result.status).toBe("ok");
+    expect(result.costSummary).toBeDefined();
+    expect(result.costSummary.cap_usd).toBe(0.5);
+    expect(typeof result.costSummary.total_usd).toBe("number");
+    expect(Array.isArray(result.costSummary.calls)).toBe(true);
+  });
+
   it("derives status_reason='low_confidence' when adjusted confidence drops below 0.7", async () => {
     // Configure the dispatcher mock to return malformed GSTIN so
     // validators downgrade to <0.7.

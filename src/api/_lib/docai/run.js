@@ -49,6 +49,7 @@ import { probePdfPageCount } from "./pdf-chunker.js";
 import { extractTextLayer, contentHash } from "./text_layer.js";
 import { extractOcrLayer } from "./ocr_layer.js";
 import { applyTemplate, buildTemplate } from "./templates.js";
+import { createRunCostAccumulator } from "./run-cost.js";
 // Bet 2: format-template marketplace L3.5 hook.
 import {
   findGlobalCandidates, applyGlobalTemplate, shouldPromoteToSkipLlm,
@@ -231,18 +232,24 @@ const rowToLayer = (row, kind) => ({
 // single-adapter orders and stitching the results together. This
 // keeps the per-adapter retry, cache-control, and prompt-overrides
 // logic in one place.
-const runAllAdaptersInParallel = async ({ source, settings, customerId, hints }) => {
+const runAllAdaptersInParallel = async ({ source, settings, customerId, hints, runCost = null }) => {
   const order = settings?.docai_provider_order
     || ["docling", "marker", "unstructured", "reducto", "azure_di", "claude"];
   // Run each candidate as its own dispatch with a single-adapter
   // order. The dispatcher's isConfigured() loop still skips
   // anything missing credentials.
+  // Note: voter mode races every adapter at once, so the per-run
+  // cost accumulator does NOT short-circuit in-flight calls; it
+  // only adjusts the running total as each parallel call lands.
+  // Voter mode is opt-in and rare; the per-day cost guard plus
+  // the cap on overall extractions per tenant is the safety net.
   const promises = order.map(async (adapterName, idx) => {
     const out = await dispatchExtract({
       source,
       settings: { ...settings, docai_provider_order: [adapterName] },
       customerId,
       hints,
+      runCost,
     });
     if (!out.adapter_used) return null;     // skipped (not configured)
     return { ...out, _rank: idx };
@@ -542,6 +549,16 @@ export const runExtractionPipeline = async (params) => {
   }
 
   // 5. L4 dispatch.
+  // Wave 1.4: one cost accumulator per pipeline run, threaded down
+  // through chunkedExtract -> dispatchExtract -> per-adapter loop.
+  // The hard cap is per-tenant via
+  // settings.docai_per_extraction_cost_cap_usd (default $1.00,
+  // ceiling $50). When the next adapter call would breach the cap,
+  // the dispatcher skips it with status='skipped_over_run_budget'
+  // and the chunker breaks circuit on the remaining chunks.
+  const runCost = createRunCostAccumulator(settings?.docai_per_extraction_cost_cap_usd);
+  await recordRunEvent("docai_run_cost_started", { cap_usd: runCost.cap });
+
   const dispatchHints = { ...hints };
   if (bodyText) dispatchHints.bodyText = bodyText;
   if (templateApplied?.used && templateApplied?.normalized?.customer) {
@@ -588,6 +605,7 @@ export const runExtractionPipeline = async (params) => {
       settings: { ...settings, tenant_id: ctx.tenantId },
       customerId,
       hints: dispatchHints,
+      runCost,
     });
     voted = voteAcrossAdapters(all);
     if (voted) {
@@ -682,6 +700,7 @@ export const runExtractionPipeline = async (params) => {
       settings: { ...settings, tenant_id: ctx.tenantId },
       customerId,
       hints: dispatchHints,
+      runCost,
       opts: {
         eventSink: chunkEventSink,
         keepPages,
@@ -825,6 +844,11 @@ export const runExtractionPipeline = async (params) => {
   const parseRepairs = Array.isArray(out?.parse_repairs) ? out.parse_repairs : [];
   const parseRetries = Number(out?.parse_retries) || 0;
 
+  // Wave 1.4: persist the per-run cost ledger for the audit trail
+  // and the diagnostics tab. Captured even on failure (operator
+  // can see which adapters consumed budget before the run gave up).
+  const costSummary = runCost.summary();
+
   await svc.from("extraction_runs").update({
     adapter_used: out?.adapter_used || null,
     adapter_attempts: out?.attempts || [],
@@ -832,6 +856,7 @@ export const runExtractionPipeline = async (params) => {
     normalized_extract: out?.normalized || null,
     field_confidences: out?.confidences || {},
     confidence_overall: out?.confidence_overall ?? null,
+    cost_summary: costSummary,
     status,
     status_reason: statusReason,
     validator_issues: v.issues || [],
@@ -876,9 +901,19 @@ export const runExtractionPipeline = async (params) => {
       parse_method: parseMethod,
       parse_retries: parseRetries,
       parse_repairs: parseRepairs,
+      cost_summary: costSummary,
       error: out?.error || null,
     },
   );
+
+  if (costSummary.breached) {
+    await recordRunEvent("docai_run_cost_breached", {
+      cap_usd: costSummary.cap_usd,
+      total_usd: costSummary.total_usd,
+      call_count: costSummary.call_count,
+      skipped_count: costSummary.skipped_count,
+    });
+  }
 
   // 10. Best-effort: rebuild the customer template after a clean
   // run so the next upload benefits.
@@ -911,6 +946,7 @@ export const runExtractionPipeline = async (params) => {
     parseMethod,
     parseRepairs,
     parseRetries,
+    costSummary,
     error: out?.error || null,
   };
 };

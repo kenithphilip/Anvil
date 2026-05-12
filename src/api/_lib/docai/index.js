@@ -62,7 +62,7 @@ export const buildPromptOverrides = (settings, customerId) => {
   return all[customerId] || null;
 };
 
-export const dispatchExtract = async ({ source, settings, customerId, hints }) => {
+export const dispatchExtract = async ({ source, settings, customerId, hints, runCost = null }) => {
   const sourceType = source.sourceType || guessSourceType(source);
   // Excel always routes to the in-process parser; LLMs are bad at
   // multi-tab tenders.
@@ -213,6 +213,22 @@ export const dispatchExtract = async ({ source, settings, customerId, hints }) =
       });
       continue;
     }
+    // Wave 1.4: per-extraction cost cap. The runCost accumulator
+    // is shared across every adapter call in this run (including
+    // every chunk of a chunked PDF). When the next call would
+    // breach the cap, skip the adapter with a structured attempt
+    // entry so the audit trail explicitly records the budget cut.
+    if (runCost && runCost.wouldExceed(adapterName)) {
+      runCost.skip(adapterName, "over_run_budget");
+      attempts.push({
+        adapter: adapterName,
+        status: "skipped_over_run_budget",
+        accumulated_cost_usd: runCost.totalUsd,
+        estimated_cost_usd: runCost.estimatedCostFor(adapterName),
+        cap_usd: runCost.cap,
+      });
+      continue;
+    }
     const t0 = Date.now();
     let out;
     try {
@@ -252,6 +268,10 @@ export const dispatchExtract = async ({ source, settings, customerId, hints }) =
     // logged inside recordCall.
     if (out.ok) {
       await recordCall(svc, { tenantId: settings?.tenant_id, adapter: adapterName });
+      // Wave 1.4: also bump the per-run accumulator so the next
+      // adapter call (or the next chunk) sees the accumulated
+      // cost and can break-circuit if needed.
+      if (runCost) runCost.add(adapterName);
     }
     if (out.ok && (conf == null || conf >= fallbackThreshold)) {
       return { adapter_used: adapterName, latency_ms, ...out, confidence_overall: conf, attempts };

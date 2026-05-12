@@ -29,6 +29,14 @@ const WiredSOList = () => {
   const [orders, setOrders] = u({ rows: [], loading: true, error: null });
   const [active, setActive] = u("all");
   const [query, setQuery] = u("");
+  // Filter chip state. Design package's strip has mode / customer /
+  // currency / approver. Approver is omitted here because the audit
+  // row carries a UUID rather than a name and showing UUIDs to
+  // operators is bad UX; reinstate once the API joins
+  // approved_by -> auth_users.email. "" = unfiltered ("any").
+  const [modeFilter, setModeFilter] = u("");
+  const [customerFilter, setCustomerFilter] = u("");
+  const [currencyFilter, setCurrencyFilter] = u("");
   // Audit P13.B follow-up. The Mine tab was a TODO until now: it
   // matched every row because the user id was not plumbed. The
   // orders table has no `created_by` column (only `approved_by`),
@@ -73,8 +81,23 @@ const WiredSOList = () => {
     { id: "closed",   label: "Closed",     match: (o) => o.status === "CANCELLED" },
   ];
 
+  const orderCurrency = (o: any) => o.result?.salesOrder?.currency || o.currency || "INR";
+  const orderMode = (o: any) => o.order_mode || "";
+  const orderCustomerName = (o: any) => o.customer?.customer_name || "";
+
+  // Distinct value pools for the filter chip dropdowns. Deduped +
+  // sorted alphabetically so the dropdown reads consistently.
+  const distinctSorted = (vals: string[]) => Array.from(new Set(vals.filter(Boolean))).sort();
+  const modeOptions = distinctSorted((orders.rows || []).map(orderMode));
+  const customerOptions = distinctSorted((orders.rows || []).map(orderCustomerName));
+  const currencyOptions = distinctSorted((orders.rows || []).map(orderCurrency));
+  const anyFilterActive = !!(modeFilter || customerFilter || currencyFilter);
+
   const filtered = (orders.rows || [])
     .filter(tabs.find((t) => t.id === active)?.match || (() => true))
+    .filter((o) => !modeFilter || orderMode(o) === modeFilter)
+    .filter((o) => !customerFilter || orderCustomerName(o) === customerFilter)
+    .filter((o) => !currencyFilter || orderCurrency(o) === currencyFilter)
     .filter((o) => {
       if (!query) return true;
       const q = query.toLowerCase();
@@ -158,6 +181,70 @@ const WiredSOList = () => {
         active={active}
         onChange={setActive}
       />
+
+      {/* Filter chip strip per the design package. Each control is
+          a small select styled to read as a chip; the value reads
+          "mode: any" / "mode: PROJECT_HSS" / etc. Tabs still drive
+          the status axis, so we don't duplicate it here. Clear
+          button only renders when something is active. */}
+      <div className="row gap-sm" style={{
+        padding: "8px 16px",
+        borderTop: "1px solid var(--hairline)",
+        borderBottom: "1px solid var(--hairline)",
+        alignItems: "center", flexWrap: "wrap",
+        background: "var(--paper)",
+      }}>
+        <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+          {Icon.filter} filter
+        </span>
+        <Chip k={modeFilter ? "fill" : undefined}>
+          mode:&nbsp;
+          <select
+            value={modeFilter}
+            onChange={(e) => setModeFilter(e.target.value)}
+            aria-label="Filter orders by order mode"
+            style={{ background: "transparent", border: "none", color: "inherit", font: "inherit", outline: "none", cursor: "pointer", padding: 0 }}
+          >
+            <option value="">any</option>
+            {modeOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </Chip>
+        <Chip k={customerFilter ? "fill" : undefined}>
+          customer:&nbsp;
+          <select
+            value={customerFilter}
+            onChange={(e) => setCustomerFilter(e.target.value)}
+            aria-label="Filter orders by customer"
+            style={{ background: "transparent", border: "none", color: "inherit", font: "inherit", outline: "none", cursor: "pointer", padding: 0, maxWidth: 200 }}
+          >
+            <option value="">any</option>
+            {customerOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </Chip>
+        <Chip k={currencyFilter ? "fill" : undefined}>
+          currency:&nbsp;
+          <select
+            value={currencyFilter}
+            onChange={(e) => setCurrencyFilter(e.target.value)}
+            aria-label="Filter orders by currency"
+            style={{ background: "transparent", border: "none", color: "inherit", font: "inherit", outline: "none", cursor: "pointer", padding: 0 }}
+          >
+            <option value="">any</option>
+            {currencyOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </Chip>
+        {anyFilterActive && (
+          <button
+            type="button"
+            onClick={() => { setModeFilter(""); setCustomerFilter(""); setCurrencyFilter(""); }}
+            style={{ background: "none", border: "none", color: "var(--ink-3)", cursor: "pointer", fontSize: 12, textDecoration: "underline" }}
+          >clear filters</button>
+        )}
+        <span style={{ flex: 1 }} />
+        <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+          {filtered.length} match{filtered.length === 1 ? "" : "es"}
+        </span>
+      </div>
 
       <div className="ws-content">
         <KPIRow cols={4}>

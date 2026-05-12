@@ -51,6 +51,7 @@ import { extractOcrLayer } from "./ocr_layer.js";
 import { applyTemplate, buildTemplate } from "./templates.js";
 import { createRunCostAccumulator } from "./run-cost.js";
 import { buildCustomerHints } from "./customer-hints.js";
+import { prepareEmailBody } from "./email-body.js";
 // Bet 2: format-template marketplace L3.5 hook.
 import {
   findGlobalCandidates, applyGlobalTemplate, shouldPromoteToSkipLlm,
@@ -282,11 +283,17 @@ export const runExtractionPipeline = async (params) => {
   const {
     ctx, svc, settings,
     bytes = null, url = null, filename = null, mime = null,
-    sourceType = "pdf", customerId = null, documentId = null,
+    sourceType: sourceTypeParam = "pdf", customerId = null, documentId = null,
     sourceId = null, caseId = null, kind = "po",
     triggeredBy = null, inboundEmailId = null,
     vote = false, hints = {}, recordEvents = true,
+    // Wave 2.3: email body inputs. When the caller has an inbound
+    // email with no PDF attachment but a PO-shaped body, pass
+    // emailBody={body_text, body_html} and the pipeline skips L1/L2
+    // and routes the cleaned text directly to L4.
+    emailBody = null,
   } = params;
+  let sourceType = sourceTypeParam;
 
   const recordRunEvent = (eventType, detail) => {
     if (!recordEvents) return Promise.resolve();
@@ -421,6 +428,37 @@ export const runExtractionPipeline = async (params) => {
   let textLayerUsed = false;
   let bodyText = hints.bodyText || null;
   let contentSha = preHash;
+  // Wave 2.3: email-body short-circuit. When the caller provides
+  // emailBody (no PDF attachment, body itself is the PO), the
+  // prepared body becomes bodyText and L1/L2 are skipped entirely
+  // because there is no PDF / image to extract. sourceType flips
+  // to "email" so the downstream chunker's PDF-only path doesn't
+  // fire.
+  let emailBodyPrepared = null;
+  if (!bodyText && emailBody && (emailBody.body_text || emailBody.body_html)) {
+    emailBodyPrepared = prepareEmailBody({
+      body_text: emailBody.body_text,
+      body_html: emailBody.body_html,
+      opts: emailBody.opts || {},
+    });
+    if (emailBodyPrepared.ok && emailBodyPrepared.body_text) {
+      bodyText = emailBodyPrepared.body_text;
+      sourceType = "email";
+      await recordRunEvent("docai_email_body_extracted", {
+        source: emailBodyPrepared.source,
+        original_chars: emailBodyPrepared.original_chars,
+        cleaned_chars: emailBodyPrepared.cleaned_chars,
+        po_likeness: emailBodyPrepared.po_likeness,
+        trimmed_signature: emailBodyPrepared.trimmed_signature,
+      });
+    } else {
+      await recordRunEvent("docai_email_body_rejected", {
+        source: emailBodyPrepared.source,
+        po_likeness: emailBodyPrepared.po_likeness,
+        reason: emailBodyPrepared.reason,
+      });
+    }
+  }
   if (bytes && (sourceType === "pdf" || mime === "application/pdf")) {
     const got = await getOrExtractTextLayer({ svc, tenantId: ctx.tenantId, documentId, bytes, mime });
     textLayer = got.layer;

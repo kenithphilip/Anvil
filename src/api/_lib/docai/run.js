@@ -54,6 +54,7 @@ import { buildCustomerHints } from "./customer-hints.js";
 import { prepareEmailBody } from "./email-body.js";
 import { annotateLineLanguages, translateBatch } from "./multi-language.js";
 import { detectHandwriting, planHandwritingRoute } from "./handwriting.js";
+import { detectAnomalies } from "./anomaly.js";
 import { callAnthropic as callAnthropicForTranslate } from "../anthropic.js";
 // Bet 2: format-template marketplace L3.5 hook.
 import {
@@ -932,6 +933,25 @@ export const runExtractionPipeline = async (params) => {
     if (out) out.confidence_overall = v.adjustedConfidence;
   }
 
+  // 7b. Wave 3.1: anomaly-on-extraction. Cross-field accounting
+  // sanity checks (qty*unitPrice ≈ amount, sum(lines) ≈ subtotal,
+  // currency consistency, PO date plausibility, HSN format).
+  // Distinct from the shape validators above: those check per-
+  // field syntax; this checks that the numbers add up. Does NOT
+  // downgrade confidence; surfaces anomalies for the review queue.
+  const anomalyOpts = {
+    maxUnitPrice: settings?.docai_anomaly_max_unit_price_inr,
+    minUnitPrice: settings?.docai_anomaly_min_unit_price_inr,
+  };
+  const anomalyReport = detectAnomalies(out?.normalized || null, anomalyOpts);
+  if (anomalyReport.summary.total > 0) {
+    await recordRunEvent("docai_anomalies_detected", {
+      summary: anomalyReport.summary,
+      has_blockers: anomalyReport.has_blockers,
+      sample: anomalyReport.anomalies.slice(0, 10),
+    });
+  }
+
   // 8. Derive status_reason.
   const lines = Array.isArray(out?.normalized?.lines) ? out.normalized.lines : [];
   let status;
@@ -997,6 +1017,9 @@ export const runExtractionPipeline = async (params) => {
     status_reason: statusReason,
     validator_issues: v.issues || [],
     validator_summary: v.summary || {},
+    anomalies: anomalyReport.anomalies,
+    anomalies_summary: anomalyReport.summary,
+    anomalies_has_blockers: anomalyReport.has_blockers,
     text_layer_used: textLayerUsed,
     ocr_layer_used: ocrLayerUsed,
     template_used: templateApplied?.used ? templateApplied.template_id : null,
@@ -1078,6 +1101,9 @@ export const runExtractionPipeline = async (params) => {
     overridesApplied,
     validatorIssues: v.issues || [],
     validatorSummary: v.summary || null,
+    anomalies: anomalyReport.anomalies,
+    anomaliesSummary: anomalyReport.summary,
+    anomaliesHasBlockers: anomalyReport.has_blockers,
     fieldProvenance: voted?.field_provenance || [],
     voterUsed: !!voted,
     selectedModel: out?.selected_model || (voted ? "voter" : null),

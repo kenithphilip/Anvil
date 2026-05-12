@@ -31,6 +31,9 @@ import adminItemCustomerParts  from "./admin/item_customer_parts.js";
 import adminItemFieldDefinitions from "./admin/item_field_definitions.js";
 import adminItemFieldValues    from "./admin/item_field_values.js";
 import adminItemReference      from "./admin/item_reference.js";
+import adminDocumentTemplates  from "./admin/document_templates.js";
+import adminFreightRates       from "./admin/freight_rates.js";
+import adminTenantPricingSettings from "./admin/tenant_pricing_settings.js";
 import adminLeadTimes          from "./admin/lead_times.js";
 import adminLostReasons        from "./admin/lost_reasons.js";
 import adminMembers            from "./admin/members.js";
@@ -677,6 +680,9 @@ const STATIC_ROUTES = {
   "/admin/item_field_definitions":  adminItemFieldDefinitions,
   "/admin/item_field_values":       adminItemFieldValues,
   "/admin/item_reference":          adminItemReference,
+  "/admin/document_templates":      adminDocumentTemplates,
+  "/admin/freight_rates":           adminFreightRates,
+  "/admin/tenant_pricing_settings": adminTenantPricingSettings,
   "/admin/lead_times":              adminLeadTimes,
   "/admin/lost_reasons":            adminLostReasons,
   "/admin/members":                 adminMembers,

@@ -59,6 +59,9 @@ const ADMIN_CRUD_TABS = [
   { id: "contracts", label: "Contracts" },
   { id: "items",     label: "Item master" },
   { id: "item_fields", label: "Item fields" },
+  { id: "doc_templates", label: "Document templates" },
+  { id: "freight", label: "Freight rates" },
+  { id: "pricing", label: "Pricing settings" },
   { id: "docai_cost", label: "DocAI cost" },
   { id: "diag",      label: "Diagnostics" },
 ];
@@ -3547,6 +3550,18 @@ const WiredAdminCRUD = () => {
           <ItemFieldsPanel />
         )}
 
+        {active === "doc_templates" && (
+          <DocumentTemplatesPanel />
+        )}
+
+        {active === "freight" && (
+          <FreightRatesPanel />
+        )}
+
+        {active === "pricing" && (
+          <PricingSettingsPanel />
+        )}
+
         {active === "docai_cost" && (
           <DocAICostPanel />
         )}
@@ -4160,6 +4175,388 @@ const ItemFieldsPanel: React.FC = () => {
         )}
       </Card>
     </>
+  );
+};
+
+// Per-tenant document templates editor (migration 106). Lets the
+// tenant carry their own quotation / SO / PO / invoice / e-way bill
+// boilerplate without code edits. Each doc type can have many
+// templates with at most one default.
+const DocumentTemplatesPanel: React.FC = () => {
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<any>(null);
+  const [editing, setEditing] = useState<any | null>(null);
+
+  const reload = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await adminCrudFetch("/api/admin/document_templates");
+      setTemplates(r.templates || []);
+    } catch (e) {
+      setError(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { reload(); }, []);
+
+  const save = async () => {
+    if (!editing?.template_name?.trim()) {
+      window.notifyWarn?.("Template name required", "Give the template a label first.");
+      return;
+    }
+    if (!editing?.doc_type) {
+      window.notifyWarn?.("Document type required", "Pick a doc type (quotation, sales_order, etc.)");
+      return;
+    }
+    try {
+      await adminCrudFetch("/api/admin/document_templates", { method: "POST", body: editing });
+      window.notifySuccess?.("Template saved", editing.template_name);
+      setEditing(null);
+      await reload();
+    } catch (e: any) {
+      window.notifyError?.("Could not save template", e?.message || String(e));
+    }
+  };
+
+  if (loading) return <Card><div className="body">Loading templates...</div></Card>;
+  if (error) return (
+    <Banner kind="bad" icon={Icon.alert} title="Could not load document templates" action={<Btn sm onClick={reload}>Retry</Btn>}>
+      <span className="mono-sm">{String((error as any)?.message || error)}</span>
+    </Banner>
+  );
+
+  return (
+    <>
+      <div className="row" style={{ justifyContent: "flex-end", marginBottom: 8 }}>
+        <Btn sm kind="primary" onClick={() => setEditing({ doc_type: "quotation", template_name: "", version: 1, is_active: true, is_default: false })}>
+          {Icon.plus} New template
+        </Btn>
+      </div>
+      <Card flush>
+        {templates.length === 0 ? (
+          <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+            No document templates yet. Click <b>New template</b> to add one.
+          </div>
+        ) : (
+          <table className="tbl">
+            <thead><tr>
+              <th>Doc type</th><th>Name</th><th>Form code</th><th className="r">Version</th>
+              <th className="r">Active</th><th className="r">Default</th><th></th>
+            </tr></thead>
+            <tbody>
+              {templates.map((t) => (
+                <tr key={t.id} style={{ cursor: "pointer" }} onClick={() => setEditing({ ...t })}>
+                  <td className="mono-sm">{t.doc_type}</td>
+                  <td><span className="pri">{t.template_name}</span></td>
+                  <td className="mono-sm">{t.form_code || "-"}</td>
+                  <td className="r mono">{t.version}</td>
+                  <td className="r">{t.is_active ? "yes" : "-"}</td>
+                  <td className="r">{t.is_default ? <Chip k="good">default</Chip> : "-"}</td>
+                  <td className="r"><Btn sm kind="ghost" onClick={(e) => { e.stopPropagation(); setEditing({ ...t }); }}>edit</Btn></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+      {editing && (
+        <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(8,10,12,0.55)", display: "flex", justifyContent: "flex-end", zIndex: 200 }} onClick={() => setEditing(null)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "min(800px, 100vw)", height: "100vh", background: "var(--bg)", borderLeft: "1px solid var(--line)", padding: 18, overflowY: "auto" }}>
+            <div className="row" style={{ alignItems: "center", marginBottom: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div className="mono-sm" style={{ color: "var(--ink-3)" }}>Admin . Document template</div>
+                <div style={{ fontSize: 16, fontWeight: 600 }}>{editing.id ? editing.template_name : "New template"}</div>
+              </div>
+              <Btn sm kind="ghost" onClick={() => setEditing(null)}>close</Btn>
+            </div>
+            <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <label className="mono-sm">Doc type</label>
+                <select className="select" value={editing.doc_type} onChange={(e) => setEditing({ ...editing, doc_type: e.target.value })}>
+                  <option value="quotation">Quotation</option>
+                  <option value="sales_order">Sales order</option>
+                  <option value="purchase_order">Purchase order</option>
+                  <option value="tax_invoice">Tax invoice</option>
+                  <option value="proforma_invoice">Proforma invoice</option>
+                  <option value="credit_note">Credit note</option>
+                  <option value="eway_bill">E-way bill</option>
+                  <option value="delivery_note">Delivery note</option>
+                </select>
+              </div>
+              <div>
+                <label className="mono-sm">Template name</label>
+                <input className="input" value={editing.template_name || ""} onChange={(e) => setEditing({ ...editing, template_name: e.target.value })} />
+              </div>
+              <div>
+                <label className="mono-sm">Form code</label>
+                <input className="input mono" value={editing.form_code || ""} onChange={(e) => setEditing({ ...editing, form_code: e.target.value })} placeholder="e.g., OI/F/SP/19/R-00/020226" />
+              </div>
+              <div>
+                <label className="mono-sm">Version</label>
+                <input className="input mono r" type="number" value={editing.version || 1} onChange={(e) => setEditing({ ...editing, version: Number(e.target.value) })} />
+              </div>
+              <label className="mono-sm row" style={{ gap: 6, alignItems: "center" }}>
+                <input type="checkbox" checked={!!editing.is_active} onChange={(e) => setEditing({ ...editing, is_active: e.target.checked })} /> active
+              </label>
+              <label className="mono-sm row" style={{ gap: 6, alignItems: "center" }}>
+                <input type="checkbox" checked={!!editing.is_default} onChange={(e) => setEditing({ ...editing, is_default: e.target.checked })} /> default
+              </label>
+            </div>
+            {[
+              ["header_block", "Header block"],
+              ["footer_block", "Footer block"],
+              ["signatory_block", "Authorised signatory block"],
+              ["standard_message", "Standard message (e.g., 7-day discrepancy notice)"],
+              ["warranty_clause", "Warranty clause"],
+              ["penalty_clause", "Penalty clause"],
+              ["cancellation_clause", "Cancellation clause"],
+              ["force_majeure_clause", "Force majeure clause"],
+              ["payment_terms_clause", "Payment terms clause"],
+              ["delivery_terms_clause", "Delivery terms clause"],
+            ].map(([k, label]) => (
+              <div key={k} style={{ marginTop: 10 }}>
+                <label className="mono-sm" style={{ color: "var(--ink-3)" }}>{label}</label>
+                <textarea className="input" rows={3} style={{ width: "100%" }} value={editing[k] || ""} onChange={(e) => setEditing({ ...editing, [k]: e.target.value })} />
+              </div>
+            ))}
+            <div className="row" style={{ gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+              <Btn sm kind="ghost" onClick={() => setEditing(null)}>Cancel</Btn>
+              <Btn sm kind="primary" onClick={save}>Save template</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+// Freight rate table editor (migration 106). Simple CRUD over the
+// freight_rates table; rows feed the price-composition cockpit.
+const FreightRatesPanel: React.FC = () => {
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<any>(null);
+  const [draft, setDraft] = useState<any>({ mode: "ocean", unit: "cbm", currency: "INR", rate_per_unit: 0, is_active: true });
+
+  const reload = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await adminCrudFetch("/api/admin/freight_rates");
+      setRows(r.rates || []);
+    } catch (e) {
+      setError(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { reload(); }, []);
+
+  const save = async () => {
+    try {
+      await adminCrudFetch("/api/admin/freight_rates", { method: "POST", body: draft });
+      window.notifySuccess?.("Freight rate saved", `${draft.mode} . ${draft.unit}`);
+      setDraft({ mode: "ocean", unit: "cbm", currency: "INR", rate_per_unit: 0, is_active: true });
+      await reload();
+    } catch (e: any) {
+      window.notifyError?.("Could not save freight rate", e?.message || String(e));
+    }
+  };
+
+  const remove = async (id: string) => {
+    if (!window.confirm("Delete this freight rate row?")) return;
+    try {
+      await adminCrudFetch("/api/admin/freight_rates?id=" + encodeURIComponent(id), { method: "DELETE" });
+      await reload();
+    } catch (e: any) {
+      window.notifyError?.("Could not delete", e?.message || String(e));
+    }
+  };
+
+  if (loading) return <Card><div className="body">Loading freight rates...</div></Card>;
+  if (error) return (
+    <Banner kind="bad" icon={Icon.alert} title="Could not load freight rates" action={<Btn sm onClick={reload}>Retry</Btn>}>
+      <span className="mono-sm">{String((error as any)?.message || error)}</span>
+    </Banner>
+  );
+
+  return (
+    <>
+      <Card title="Add freight rate" eyebrow="per-tenant air / ocean / road / courier rate table">
+        <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div>
+            <label className="mono-sm">Mode</label>
+            <select className="select" value={draft.mode} onChange={(e) => setDraft({ ...draft, mode: e.target.value })}>
+              <option value="ocean">Ocean</option>
+              <option value="air">Air</option>
+              <option value="road">Road</option>
+              <option value="courier">Courier</option>
+            </select>
+          </div>
+          <div>
+            <label className="mono-sm">Origin</label>
+            <input className="input mono" maxLength={2} value={draft.origin || ""} onChange={(e) => setDraft({ ...draft, origin: e.target.value.toUpperCase() })} placeholder="KR, JP, IN, ..." />
+          </div>
+          <div>
+            <label className="mono-sm">Destination</label>
+            <input className="input mono" maxLength={2} value={draft.destination || ""} onChange={(e) => setDraft({ ...draft, destination: e.target.value.toUpperCase() })} placeholder="IN" />
+          </div>
+          <div>
+            <label className="mono-sm">Unit</label>
+            <select className="select" value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })}>
+              <option value="kg">per kg</option>
+              <option value="cbm">per CBM</option>
+              <option value="container_20ft">per 20ft container</option>
+              <option value="container_40ft">per 40ft container</option>
+              <option value="set">per set</option>
+            </select>
+          </div>
+          <div>
+            <label className="mono-sm">Rate per unit</label>
+            <input className="input mono r" type="number" step="0.01" value={draft.rate_per_unit ?? 0} onChange={(e) => setDraft({ ...draft, rate_per_unit: Number(e.target.value) })} />
+          </div>
+          <div>
+            <label className="mono-sm">Packing fee</label>
+            <input className="input mono r" type="number" step="0.01" value={draft.packing_fee ?? ""} onChange={(e) => setDraft({ ...draft, packing_fee: e.target.value === "" ? null : Number(e.target.value) })} />
+          </div>
+          <div>
+            <label className="mono-sm">Currency</label>
+            <input className="input mono" maxLength={3} value={draft.currency || "INR"} onChange={(e) => setDraft({ ...draft, currency: e.target.value.toUpperCase() })} />
+          </div>
+          <Btn sm kind="primary" onClick={save}>{Icon.plus} Add</Btn>
+        </div>
+      </Card>
+      <Card flush>
+        {rows.length === 0 ? (
+          <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>No freight rates yet.</div>
+        ) : (
+          <table className="tbl">
+            <thead><tr>
+              <th>Mode</th><th>Origin</th><th>Destination</th><th>Unit</th>
+              <th className="r">Rate</th><th className="r">Packing</th><th>Currency</th><th className="r">Active</th><th></th>
+            </tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id}>
+                  <td className="mono-sm">{r.mode}</td>
+                  <td className="mono-sm">{r.origin || "-"}</td>
+                  <td className="mono-sm">{r.destination || "-"}</td>
+                  <td className="mono-sm">{r.unit}</td>
+                  <td className="r mono"><span className="pri">{r.rate_per_unit}</span></td>
+                  <td className="r mono">{r.packing_fee || "-"}</td>
+                  <td className="mono-sm">{r.currency}</td>
+                  <td className="r">{r.is_active ? "yes" : "-"}</td>
+                  <td className="r"><Btn sm kind="ghost" onClick={() => remove(r.id)}>delete</Btn></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+    </>
+  );
+};
+
+// Tenant-wide pricing settings (migration 106). Backs the price
+// composition cockpit defaults. Single row per tenant.
+const PricingSettingsPanel: React.FC = () => {
+  const [settings, setSettings] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<any>(null);
+  const [factorEdit, setFactorEdit] = useState("");
+
+  const reload = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await adminCrudFetch("/api/admin/tenant_pricing_settings");
+      const s = r.settings || {
+        target_margin_pct: 0.35,
+        default_conversion_factor: 1.0,
+        multiplication_factors: {},
+        default_freight_mode: "ocean",
+        enable_landed_cost: true,
+        rounding_rule: "NEAREST_1",
+        show_supplier_price_in_quote: false,
+        show_reference_price_in_quote: false,
+      };
+      setSettings(s);
+      setFactorEdit(JSON.stringify(s.multiplication_factors || {}, null, 2));
+    } catch (e) {
+      setError(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { reload(); }, []);
+
+  const save = async () => {
+    let factors = {};
+    try { factors = JSON.parse(factorEdit || "{}"); } catch (e: any) {
+      window.notifyError?.("Multiplication factors not valid JSON", e?.message || String(e));
+      return;
+    }
+    try {
+      await adminCrudFetch("/api/admin/tenant_pricing_settings", { method: "POST", body: { ...settings, multiplication_factors: factors } });
+      window.notifySuccess?.("Pricing settings saved", "tenant-wide defaults updated");
+      await reload();
+    } catch (e: any) {
+      window.notifyError?.("Could not save pricing settings", e?.message || String(e));
+    }
+  };
+
+  if (loading) return <Card><div className="body">Loading pricing settings...</div></Card>;
+  if (error) return (
+    <Banner kind="bad" icon={Icon.alert} title="Could not load pricing settings" action={<Btn sm onClick={reload}>Retry</Btn>}>
+      <span className="mono-sm">{String((error as any)?.message || error)}</span>
+    </Banner>
+  );
+  if (!settings) return null;
+
+  return (
+    <Card title="Pricing defaults" eyebrow="tenant-wide. Price-composition cockpit uses these unless overridden per quote.">
+      <div className="row" style={{ gap: 14, flexWrap: "wrap" }}>
+        <div>
+          <label className="mono-sm">Target margin %</label>
+          <input className="input mono r" type="number" step="0.01" value={settings.target_margin_pct ?? 0} onChange={(e) => setSettings({ ...settings, target_margin_pct: Number(e.target.value) })} />
+        </div>
+        <div>
+          <label className="mono-sm">Default conversion factor</label>
+          <input className="input mono r" type="number" step="0.001" value={settings.default_conversion_factor ?? 1} onChange={(e) => setSettings({ ...settings, default_conversion_factor: Number(e.target.value) })} />
+        </div>
+        <div>
+          <label className="mono-sm">Default freight mode</label>
+          <select className="select" value={settings.default_freight_mode || "ocean"} onChange={(e) => setSettings({ ...settings, default_freight_mode: e.target.value })}>
+            <option value="ocean">Ocean</option><option value="air">Air</option><option value="road">Road</option><option value="courier">Courier</option>
+          </select>
+        </div>
+        <div>
+          <label className="mono-sm">Rounding rule</label>
+          <select className="select" value={settings.rounding_rule || "NEAREST_1"} onChange={(e) => setSettings({ ...settings, rounding_rule: e.target.value })}>
+            <option value="NONE">None</option><option value="NEAREST_1">Nearest 1</option><option value="NEAREST_10">Nearest 10</option><option value="NEAREST_100">Nearest 100</option>
+          </select>
+        </div>
+        <label className="mono-sm row" style={{ gap: 6, alignItems: "center" }}>
+          <input type="checkbox" checked={!!settings.enable_landed_cost} onChange={(e) => setSettings({ ...settings, enable_landed_cost: e.target.checked })} /> enable landed cost
+        </label>
+        <label className="mono-sm row" style={{ gap: 6, alignItems: "center" }}>
+          <input type="checkbox" checked={!!settings.show_supplier_price_in_quote} onChange={(e) => setSettings({ ...settings, show_supplier_price_in_quote: e.target.checked })} /> show supplier price
+        </label>
+        <label className="mono-sm row" style={{ gap: 6, alignItems: "center" }}>
+          <input type="checkbox" checked={!!settings.show_reference_price_in_quote} onChange={(e) => setSettings({ ...settings, show_reference_price_in_quote: e.target.checked })} /> show reference price
+        </label>
+      </div>
+      <div style={{ marginTop: 14 }}>
+        <label className="mono-sm" style={{ color: "var(--ink-3)" }}>Multiplication factors per currency (JSON object, e.g., {"{ \"USD\": 126.6, \"CNY\": 18.5, \"JPY\": 0.86 }"})</label>
+        <textarea className="input mono" rows={6} style={{ width: "100%" }} value={factorEdit} onChange={(e) => setFactorEdit(e.target.value)} />
+      </div>
+      <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
+        <Btn sm kind="primary" onClick={save}>Save</Btn>
+      </div>
+    </Card>
   );
 };
 

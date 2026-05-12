@@ -52,6 +52,8 @@ import { applyTemplate, buildTemplate } from "./templates.js";
 import { createRunCostAccumulator } from "./run-cost.js";
 import { buildCustomerHints } from "./customer-hints.js";
 import { prepareEmailBody } from "./email-body.js";
+import { annotateLineLanguages, translateBatch } from "./multi-language.js";
+import { callAnthropic as callAnthropicForTranslate } from "../anthropic.js";
 // Bet 2: format-template marketplace L3.5 hook.
 import {
   findGlobalCandidates, applyGlobalTemplate, shouldPromoteToSkipLlm,
@@ -852,6 +854,56 @@ export const runExtractionPipeline = async (params) => {
     } catch (_e) { /* scrub is best-effort */ }
   }
 
+  // 6c. Wave 2.4: detect non-Latin scripts per line so the UI can
+  // surface "needs translation" affordances, and optionally
+  // translate via a cheap LLM batch call.
+  let languageSummary = null;
+  if (out?.normalized) {
+    languageSummary = annotateLineLanguages(out.normalized);
+    if (languageSummary.lines_needing_translation > 0) {
+      await recordRunEvent("docai_languages_detected", {
+        scripts_seen: languageSummary.scripts_seen,
+        lines_needing_translation: languageSummary.lines_needing_translation,
+        lines_annotated: languageSummary.lines_annotated,
+      });
+      if (settings?.docai_auto_translate && Array.isArray(out.normalized.lines)) {
+        const targets = [];
+        for (let i = 0; i < out.normalized.lines.length; i++) {
+          const ln = out.normalized.lines[i];
+          if (!ln?.needs_translation) continue;
+          if (ln.description && typeof ln.description === "string") {
+            targets.push({ id: i + ":description", text: ln.description, lineIdx: i, field: "description" });
+          }
+        }
+        if (targets.length) {
+          try {
+            const trans = await translateBatch(targets, {
+              tenantId: ctx.tenantId,
+              callAnthropic: callAnthropicForTranslate,
+              targetLang: settings?.docai_translate_target_lang || "English",
+              model: settings?.docai_translate_model || "claude-3-5-haiku-latest",
+            });
+            if (trans) {
+              for (const t of targets) {
+                const k = t.id;
+                if (trans[k]) {
+                  const ln = out.normalized.lines[t.lineIdx];
+                  if (!ln[t.field + "_original"]) ln[t.field + "_original"] = ln[t.field];
+                  ln[t.field] = trans[k];
+                  ln.translated = true;
+                }
+              }
+              await recordRunEvent("docai_lines_translated", {
+                count: Object.keys(trans).length,
+                target_lang: settings?.docai_translate_target_lang || "English",
+              });
+            }
+          } catch (_e) { /* translation is best-effort */ }
+        }
+      }
+    }
+  }
+
   // 7. L5 validators.
   const v = validateExtraction(out?.normalized || null, {
     currentConfidence: out?.confidence_overall,
@@ -966,6 +1018,7 @@ export const runExtractionPipeline = async (params) => {
       parse_retries: parseRetries,
       parse_repairs: parseRepairs,
       cost_summary: costSummary,
+      languages: languageSummary,
       error: out?.error || null,
     },
   );

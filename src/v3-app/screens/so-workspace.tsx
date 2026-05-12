@@ -468,7 +468,48 @@ const WiredSOWorkspace = () => {
       );
       setBump((n) => n + 1);
     } catch (err: any) {
-      window.notifyError?.("Extraction failed", err?.message || String(err));
+      // Phase C3: if the sync extractor refused the document
+      // because it exceeds SYNC_MAX_TOTAL_PAGES, fall back to
+      // creating a background extraction_jobs row. The cron
+      // worker drains it chunk-by-chunk and writes the same
+      // processing_events the sync flow does, so the
+      // ExtractionProgress component above renders the same bar
+      // regardless of which mode landed the work. We detect the
+      // server-side PDF_TOO_LARGE error code; everything else is
+      // a real failure and surfaces to the operator.
+      const message = err?.message || String(err);
+      const looksTooLarge = /PDF_TOO_LARGE|exceeds max \d+ pages|background-job mode/i.test(message);
+      if (looksTooLarge && o?.id) {
+        try {
+          const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
+          const session: any = (ObaraBackend as any)?.getSession?.() || null;
+          const headers: any = { "Content-Type": "application/json" };
+          if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+          if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+          const url = cfg.url.replace(/\/+$/, "") + "/api/orders/extraction_jobs";
+          const resp = await fetch(url, {
+            method: "POST", headers,
+            body: JSON.stringify({
+              order_id: o.id,
+              document_id: sourceDocId,
+              source_filename: "po.pdf",
+            }),
+          });
+          if (resp.ok) {
+            window.notifySuccess?.(
+              "Large PDF queued for background extraction",
+              "The progress bar above will keep you posted; this can take several minutes for documents over 60 pages.",
+            );
+            return;
+          }
+          const txt = await resp.text().catch(() => "");
+          window.notifyError?.("Could not queue background job", txt || resp.statusText);
+        } catch (e: any) {
+          window.notifyError?.("Background job creation failed", e?.message || String(e));
+        }
+      } else {
+        window.notifyError?.("Extraction failed", message);
+      }
     } finally {
       setBusy(false);
     }

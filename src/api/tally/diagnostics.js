@@ -71,13 +71,18 @@ export default async function handler(req, res) {
       receipts_returned: (p.body?.receipts || []).length,
     });
 
-    // Update health snapshot on the row.
+    // Update health snapshot on the row. Phase 1 F13: explicit
+    // tenant filter for defense-in-depth even though
+    // tallyResolveCompany above already scopes by ctx.tenantId
+    // and RLS would catch any cross-tenant id leak. Belt and
+    // braces because Tally bridge URLs are the highest-value
+    // attack surface in the schema.
     const allOk = probes.every((x) => x.ok);
     await svc.from("tally_companies").update({
       last_health_at: new Date().toISOString(),
       last_health_status: allOk ? "ok" : (probes[0].ok ? "degraded" : "down"),
       last_health_error: allOk ? null : JSON.stringify(probes.filter((x) => !x.ok)).slice(0, 800),
-    }).eq("id", company.id);
+    }).eq("tenant_id", ctx.tenantId).eq("id", company.id);
 
     return json(res, 200, {
       configured: true,

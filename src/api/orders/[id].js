@@ -13,6 +13,9 @@ const APPROVE_INPUTS = [
   "order_mode", "parent_order_id", "contract_id", "customer_location_id",
   "forward_fx_rate", "forward_contract_ref", "internal_so_type", "project_phase",
   "lost_reason", "competitor_name",
+  // Return-for-correction columns (migration 104). Manager-initiated
+  // exit path that flips status to DRAFT with a free-text note.
+  "correction_reason", "correction_requested_by", "correction_requested_at",
 ];
 
 const buildPatch = (body) => {
@@ -127,8 +130,20 @@ export default async function handler(req, res) {
 
       const { data, error } = await svc.from("orders").update(patch).eq("tenant_id", ctx.tenantId).eq("id", id).select("*").single();
       if (error) throw new Error(error.message);
-      await recordAudit(ctx, { action: body.status === "APPROVED" ? "approve_order" : "update_order", objectType: "order", objectId: id, before: prev, after: data, payloadHash: data.payload_hash, reason: body.reason });
-      await recordEvent(ctx, { caseId: id, eventType: body.status === "APPROVED" ? "manager_approved" : "order_updated", objectType: "order", objectId: id, detail: { status: data.status, intendedAction } });
+      // Return-for-correction audit shape (migration 104). When the
+      // manager flips status to DRAFT with a correction_reason, log a
+      // distinct action so the Activity tab + ThreadDrawer can render
+      // the manager's note next to the operator's edits.
+      const isReturnForCorrection =
+        body.status === "DRAFT" &&
+        prev.status !== "DRAFT" &&
+        typeof body.correction_reason === "string" &&
+        body.correction_reason.trim().length > 0;
+      const auditAction = isReturnForCorrection
+        ? "manager_requested_correction"
+        : (body.status === "APPROVED" ? "approve_order" : "update_order");
+      await recordAudit(ctx, { action: auditAction, objectType: "order", objectId: id, before: prev, after: data, payloadHash: data.payload_hash, reason: body.reason || (isReturnForCorrection ? body.correction_reason : undefined) });
+      await recordEvent(ctx, { caseId: id, eventType: isReturnForCorrection ? "correction_requested" : (body.status === "APPROVED" ? "manager_approved" : "order_updated"), objectType: "order", objectId: id, detail: { status: data.status, intendedAction, correctionReason: isReturnForCorrection ? body.correction_reason : undefined } });
 
       // Audit P2.6: when an order enters PENDING_REVIEW, evaluate
       // the tenant's quote_approval_thresholds and create the

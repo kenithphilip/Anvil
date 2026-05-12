@@ -152,6 +152,14 @@ const WiredSOIntake = () => {
         contact_email: newCustomer.contact_email?.trim() || null,
         contact_phone: newCustomer.contact_phone?.trim() || null,
       };
+      // Snapshot the pre-upsert customer so we can tell the operator
+      // exactly which fields the update touched. Without this the
+      // success toast was a generic "Customer updated" with no proof
+      // the address actually persisted, which made the operator
+      // suspect the button silently dropped bill_to / ship_to.
+      const beforeRow = dialogMode === "edit"
+        ? (customerList || []).find((c: any) => c.id === editingCustomerId) || null
+        : null;
       const res = await ObaraBackend?.customers?.upsert?.(payload);
       const created = res?.customer || res?.row || res;
       // Re-fetch the list so the new customer (or freshly-edited
@@ -164,9 +172,35 @@ const WiredSOIntake = () => {
         || editingCustomerId
         || (fresh?.customers || []).find((c: any) => c.customer_name === payload.customer_name)?.id;
       if (resolvedId) setCustomerId(resolvedId);
+      // Build an explicit diff line so the operator sees the
+      // address change reflected immediately. cmpNorm collapses
+      // whitespace + punctuation so trivial formatting differences
+      // do not show up as edits.
+      let changedSummary = payload.customer_name;
+      if (isEdit && beforeRow && created) {
+        const cmp = (s: any) => String(s || "").toLowerCase().replace(/[\s.,]+/g, " ").trim();
+        const watched: { key: string; label: string }[] = [
+          { key: "bill_to", label: "Bill-to" },
+          { key: "ship_to", label: "Ship-to" },
+          { key: "gstin", label: "GSTIN" },
+          { key: "state_code", label: "State" },
+          { key: "currency", label: "Currency" },
+          { key: "payment_terms", label: "Pay terms" },
+          { key: "contact_email", label: "Email" },
+          { key: "contact_phone", label: "Phone" },
+        ];
+        const changed = watched
+          .filter(({ key }) => cmp(beforeRow[key]) !== cmp(created[key]))
+          .map(({ label }) => label);
+        if (changed.length > 0) {
+          changedSummary = payload.customer_name + " . changed: " + changed.join(", ");
+        } else {
+          changedSummary = payload.customer_name + " . no field changes detected";
+        }
+      }
       window.notifySuccess?.(
         isEdit ? "Customer updated" : "Customer created",
-        payload.customer_name,
+        changedSummary,
       );
       setNewCustomerOpen(false);
       setDialogMode("create");
@@ -946,6 +980,14 @@ const WiredSOIntake = () => {
                     ["Currency", selectedCustomer.currency || "INR"],
                     ["Pay terms", selectedCustomer.payment_terms || "—"],
                     ["Margin floor", selectedCustomer.margin_floor_pct != null ? `${selectedCustomer.margin_floor_pct}%` : "10% (default)"],
+                    // Bug fix May 2026 (customer-update-detail report):
+                    // bill_to + ship_to were saved by the upsert but
+                    // not displayed on this card, so the operator
+                    // could not verify the "Update customer" button
+                    // had any effect on the stored address. Showing
+                    // them here closes the loop visually.
+                    ["Bill to", selectedCustomer.bill_to || "—"],
+                    ["Ship to", selectedCustomer.ship_to || selectedCustomer.bill_to || "—"],
                   ]} />
                 </>
               ) : (

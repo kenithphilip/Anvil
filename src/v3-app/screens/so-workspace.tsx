@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ageLabel, fmtINRShort, stageOf } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Prov, Steps, Stream, WSTabs, WSTitle, fmtUSD } from "../lib/primitives";
+import { ageLabel, stageOf } from "../lib/helpers";
+import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Prov, Steps, Stream, WSTabs, WSTitle, fmtINR, fmtUSD } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
@@ -258,6 +258,50 @@ const WiredSOWorkspace = () => {
       setBump((n) => n + 1);
     } catch (err) {
       window.notifyError?.("Approve failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Bug fix May 2026 (manager-correction report): managers
+  // reviewing an SO previously had only approve and cancel as
+  // exits. When the operator entered a wrong ship-to address or
+  // misread a rate, the manager had to phone the operator
+  // out-of-band; the workspace had no formal "send this back" path.
+  //
+  // Return-for-correction transitions the order from
+  // PENDING_REVIEW or APPROVED back to DRAFT with a required
+  // reason text. The reason is persisted via audit_events so the
+  // Activity tab + ThreadDrawer surface it next time the operator
+  // opens the workspace. The status flip also clears the approval
+  // queue entry so the row stops blocking the approver's view.
+  const requestCorrection = async () => {
+    if (!o?.id) return;
+    const reason = window.prompt(
+      "What needs to be corrected? This note is shared with the operator.",
+      "",
+    );
+    if (reason == null) return;
+    const trimmed = reason.trim();
+    if (!trimmed) {
+      window.notifyWarn?.("Reason required", "Add a one-line note so the operator knows what to fix.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await ObaraBackend?.orders?.update?.(o.id, {
+        status: "DRAFT",
+        correction_reason: trimmed,
+        correction_requested_by: RBAC?.role?.() || "sales_manager",
+        correction_requested_at: new Date().toISOString(),
+      });
+      window.notifySuccess?.(
+        "Sent back for correction",
+        (o.po_number || o.id.slice(0, 8)) + " · operator notified",
+      );
+      setBump((n) => n + 1);
+    } catch (err) {
+      window.notifyError?.("Return-for-correction failed", err?.message || String(err));
     } finally {
       setBusy(false);
     }
@@ -582,12 +626,12 @@ const WiredSOWorkspace = () => {
         <td>{uom}</td>
         <td className="r mono">{qty != null ? qty : "—"}</td>
         <td className="r mono">{qtyQuoted != null ? qtyQuoted : "—"}</td>
-        <td className="r mono">{rate ? fmtINRShort(rate) : "—"}</td>
-        <td className="r mono">{ratePrev ? fmtINRShort(ratePrev) : "—"}</td>
+        <td className="r mono">{rate ? fmtINR(rate) : "—"}</td>
+        <td className="r mono">{ratePrev ? fmtINR(ratePrev) : "—"}</td>
         <td className="r mono" style={{ color: drift == null ? "var(--ink-4)" : drift > 0.10 ? "var(--rust)" : drift > 0 ? "var(--amber-2)" : "var(--sage)" }}>
           {drift == null ? "·" : (drift >= 0 ? "+" : "") + (drift * 100).toFixed(1) + "%"}
         </td>
-        <td className="r mono"><span className="pri">{lineTotal ? fmtINRShort(lineTotal) : "—"}</span></td>
+        <td className="r mono"><span className="pri">{lineTotal ? fmtINR(lineTotal) : "—"}</span></td>
         <td className="row gap-sm">{ln.evidence?.page ? <Prov>p{ln.evidence.page}{ln.evidence.line ? `·l${ln.evidence.line}` : ""}</Prov> : "—"}</td>
         <td>{issueChip}</td>
       </tr>
@@ -837,6 +881,21 @@ const WiredSOWorkspace = () => {
                }>
             {Icon.send} send for review
           </Btn>
+          {/* Return for correction: manager exit-path when the SO has
+              a wrong ship-to, rate, qty, etc. The operator sees the
+              note next time they open the workspace. Available only
+              to roles that can approve, and only before the order has
+              been pushed to Tally. */}
+          <Btn sm kind="ghost"
+               disabled={!canApprove || busy || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED" || o.status === "CANCELLED" || o.status === "DRAFT"}
+               onClick={requestCorrection}
+               title={
+                 canApprove
+                   ? "Send back to operator with a note explaining what to fix"
+                   : "needs sales_manager / finance / admin"
+               }>
+            {Icon.cycle} return for fix
+          </Btn>
           <Btn sm kind="ghost"
                disabled={!canApprove || busy || o.status === "APPROVED" || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED"}
                onClick={approveOrder}
@@ -922,6 +981,28 @@ const WiredSOWorkspace = () => {
             an empty reconciliation table behind a green-stepper
             UI. The "run extraction" button on the action bar
             re-runs `docai/extract` against the attached PO. */}
+        {/* Return-for-correction banner. Mounts when a manager has
+            sent the order back to the operator. The correction note
+            is shown so the operator knows exactly what to fix before
+            re-submitting for review. Banner clears automatically
+            once the order moves out of DRAFT. */}
+        {o.correction_reason && o.status === "DRAFT" && (
+          <Banner
+            kind="warn"
+            icon={Icon.alert}
+            title="Sent back for correction"
+          >
+            <div className="mono-sm" style={{ marginBottom: 4 }}>
+              <b>{o.correction_requested_by || "Manager"}</b>
+              {o.correction_requested_at
+                ? " at " + new Date(o.correction_requested_at).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+                : ""}
+              :
+            </div>
+            <div style={{ whiteSpace: "pre-wrap" }}>{o.correction_reason}</div>
+          </Banner>
+        )}
+
         {!!(o.preflight_payload?.extraction_run_id) && lines.length === 0 && o.status !== "CANCELLED" && (
           <Banner
             kind="warn"
@@ -997,7 +1078,7 @@ const WiredSOWorkspace = () => {
                     <td colSpan={8} className="r mono" style={{ paddingTop: 10, paddingBottom: 10 }}>
                       <span style={{ color: "var(--ink-3)" }}>subtotal · before tax & freight</span>
                     </td>
-                    <td className="r mono"><b style={{ fontSize: 13 }}>{fmtINRShort(subtotal)}</b></td>
+                    <td className="r mono"><b style={{ fontSize: 13 }}>{fmtINR(subtotal)}</b></td>
                     <td colSpan={2}></td>
                   </tr>
                 </tfoot>
@@ -1017,17 +1098,17 @@ const WiredSOWorkspace = () => {
                   <div style={{ fontFamily: "var(--mono)", fontSize: 32, fontWeight: 500, letterSpacing: "-0.02em", color: "var(--ink)", marginTop: 4 }}>
                     {(realizedMargin * 100).toFixed(1)}%
                   </div>
-                  <div className="mono-sm">{fmtINRShort(grandTotal - totalCost)} on {fmtINRShort(grandTotal)}</div>
+                  <div className="mono-sm">{fmtINR(grandTotal - totalCost)} on {fmtINR(grandTotal)}</div>
                 </div>
                 <div>
                   <div className="h-eyebrow">Cost decomposition</div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 6 }}>
                     {[
-                      ["Materials · landed", pct(matCost), fmtINRShort(matCost)],
-                      ["Freight",            pct(freight), fmtINRShort(freight)],
-                      ["Customs · GST",      pct(customs), fmtINRShort(customs)],
-                      ["Service",            pct(service), fmtINRShort(service)],
-                      ["Margin",             Math.round(realizedMargin * 100), fmtINRShort(grandTotal - totalCost), true],
+                      ["Materials · landed", pct(matCost), fmtINR(matCost)],
+                      ["Freight",            pct(freight), fmtINR(freight)],
+                      ["Customs · GST",      pct(customs), fmtINR(customs)],
+                      ["Service",            pct(service), fmtINR(service)],
+                      ["Margin",             Math.round(realizedMargin * 100), fmtINR(grandTotal - totalCost), true],
                     ].map((r, i) => (
                       <div key={i} className="row mono-sm">
                         <span style={{ minWidth: 130 }}>{r[0]}</span>

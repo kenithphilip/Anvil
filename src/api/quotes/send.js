@@ -190,6 +190,34 @@ export default async function handler(req, res) {
       ? linesRes.data
       : (Array.isArray(quote.line_items) ? quote.line_items : []);
 
+    // Audit fix May 2026: load the customer's active terms pack
+    // so the emailed PDF + share link include the negotiated
+    // boilerplate (orders POST auto-attaches them; quote send was
+    // missing the read path).
+    let customerTermsClauses = [];
+    let customerTermsPack = null;
+    if (quote.customer_id) {
+      try {
+        const packs = await svc.from("customer_terms_packs")
+          .select("id, pack_name, version")
+          .eq("tenant_id", ctx.tenantId)
+          .eq("customer_id", quote.customer_id)
+          .eq("is_active", true)
+          .order("version", { ascending: false })
+          .limit(1);
+        const pack = packs.data && packs.data[0];
+        if (pack) {
+          customerTermsPack = pack;
+          const clauses = await svc.from("customer_terms_clauses")
+            .select("clause_index, heading, body, is_blocking")
+            .eq("tenant_id", ctx.tenantId)
+            .eq("pack_id", pack.id)
+            .order("clause_index", { ascending: true });
+          customerTermsClauses = clauses.data || [];
+        }
+      } catch (_) { /* pre-106: tables do not exist */ }
+    }
+
     // Render + upload PDF.
     let shareUrl = null;
     let pdfError = null;
@@ -207,6 +235,14 @@ export default async function handler(req, res) {
           gstin: customer?.gstin,
         },
         items: canonicalLines,
+        customerTermsPack: customerTermsPack
+          ? { name: customerTermsPack.pack_name, version: customerTermsPack.version }
+          : null,
+        customerTermsClauses: customerTermsClauses.map((c) => ({
+          heading: c.heading || null,
+          body: c.body || "",
+          blocking: !!c.is_blocking,
+        })),
         subtotal: quote.subtotal,
         tax: quote.tax_total,
         total: quote.grand_total,

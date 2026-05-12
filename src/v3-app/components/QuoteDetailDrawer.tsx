@@ -98,11 +98,14 @@ export const QuoteDetailDrawer: React.FC<{
 
   const setField = (k: string, v: any) => setDraft((d: Quote) => ({ ...d, [k]: v }));
 
+  // Audit fix May 2026: saveHeader used to also send `terms` from
+  // the same draft, so a concurrent edit on the Terms tab could
+  // be overwritten when an operator clicked "Save header". The
+  // two tabs now patch only their own fields. saveTerms patches
+  // only `terms`; saveHeader patches only the header columns.
   const saveHeader = async () => {
     setBusy(true);
     try {
-      // /api/quotes/[id] accepts PATCH for header field updates.
-      // Falls back to /api/quotes if the legacy path doesn't exist.
       const url = `/api/quotes/${quote.id}`;
       await fetchJson(url, {
         method: "PATCH",
@@ -113,13 +116,30 @@ export const QuoteDetailDrawer: React.FC<{
           validity_days: draft.validity_days != null ? Number(draft.validity_days) : null,
           conversion_factor: draft.conversion_factor != null ? Number(draft.conversion_factor) : null,
           fx_snapshot: draft.fx_snapshot || null,
-          terms: draft.terms || null,
         }),
       });
       window.notifySuccess?.("Quote header saved", quote.quote_number || quote.id?.slice(0, 8));
       onSaved?.();
     } catch (e: any) {
       window.notifyError?.("Could not save header", e?.message || String(e));
+      setErr(e);
+    } finally { setBusy(false); }
+  };
+
+  const saveTerms = async () => {
+    setBusy(true);
+    try {
+      const url = `/api/quotes/${quote.id}`;
+      await fetchJson(url, {
+        method: "PATCH",
+        body: JSON.stringify({
+          terms: draft.terms || null,
+        }),
+      });
+      window.notifySuccess?.("Quote terms saved", quote.quote_number || quote.id?.slice(0, 8));
+      onSaved?.();
+    } catch (e: any) {
+      window.notifyError?.("Could not save terms", e?.message || String(e));
       setErr(e);
     } finally { setBusy(false); }
   };
@@ -316,7 +336,7 @@ export const QuoteDetailDrawer: React.FC<{
                 </Card>
               )}
               <div className="row" style={{ justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
-                <Btn sm kind="primary" disabled={busy} onClick={saveHeader}>{busy ? "Saving..." : "Save terms"}</Btn>
+                <Btn sm kind="primary" disabled={busy} onClick={saveTerms}>{busy ? "Saving..." : "Save terms"}</Btn>
               </div>
             </>
           )}

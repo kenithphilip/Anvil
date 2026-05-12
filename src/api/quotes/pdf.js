@@ -80,7 +80,7 @@ const amountInWords = (raw, currencyOrOpts = "INR") => {
   return out + " " + opts.currency + " Only";
 };
 
-const buildPdfData = (tenant, order, customer, template) => {
+const buildPdfData = (tenant, order, customer, template, termsPack, termsClauses) => {
   const so = order.result?.salesOrder || {};
   const items = Array.isArray(so.lineItems) ? so.lineItems : [];
   const grandTotal = so.grandTotal || so.total || items.reduce((s, ln) => s + (Number(ln.lineTotal) || Number(ln.amount) || 0), 0);
@@ -92,6 +92,19 @@ const buildPdfData = (tenant, order, customer, template) => {
     // defaults so legacy quotes keep rendering.
     formCode: template?.form_code || null,
     standardMessage: template?.standard_message || null,
+    // Audit fix May 2026: pass through the customer's terms-pack
+    // clauses so the renderer can stamp them after the line table.
+    // Falls back to an empty list for tenants without a pack;
+    // template-level clauses (paymentTermsClause, warrantyClause,
+    // etc.) still apply as a static default.
+    customerTermsPack: termsPack
+      ? { name: termsPack.pack_name, version: termsPack.version }
+      : null,
+    customerTermsClauses: (termsClauses || []).map((c) => ({
+      heading: c.heading || null,
+      body: c.body || "",
+      blocking: !!c.is_blocking,
+    })),
     warrantyClause: template?.warranty_clause || null,
     penaltyClause: template?.penalty_clause || null,
     cancellationClause: template?.cancellation_clause || null,
@@ -209,7 +222,36 @@ export default async function handler(req, res) {
       // falls back to its own defaults.
     }
 
-    const pdfBuffer = await renderQuote(buildPdfData(tenant, orderQ.data, customer, template));
+    // Audit fix May 2026: pull the customer's active terms pack +
+    // clauses so the PDF can render them after the line items.
+    // The orders POST already auto-attaches the pack (per migration
+    // 106) but the PDF renderer had no read path; the email +
+    // share-link PDFs were missing the negotiated boilerplate.
+    let termsPack = null;
+    let termsClauses = [];
+    try {
+      if (orderQ.data.customer_id) {
+        const packs = await svc.from("customer_terms_packs")
+          .select("id, pack_name, version")
+          .eq("tenant_id", ctx.tenantId)
+          .eq("customer_id", orderQ.data.customer_id)
+          .eq("is_active", true)
+          .order("version", { ascending: false })
+          .limit(1);
+        const pack = packs.data && packs.data[0];
+        if (pack) {
+          termsPack = pack;
+          const clauses = await svc.from("customer_terms_clauses")
+            .select("clause_index, heading, body, is_blocking")
+            .eq("tenant_id", ctx.tenantId)
+            .eq("pack_id", pack.id)
+            .order("clause_index", { ascending: true });
+          termsClauses = clauses.data || [];
+        }
+      }
+    } catch (_) { /* pre-106 deployments: tables do not exist */ }
+
+    const pdfBuffer = await renderQuote(buildPdfData(tenant, orderQ.data, customer, template, termsPack, termsClauses));
 
     if (format === "share") {
       // Upload (overwrite) so the same orderId always resolves to the

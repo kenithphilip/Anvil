@@ -55,6 +55,7 @@ import { prepareEmailBody } from "./email-body.js";
 import { annotateLineLanguages, translateBatch } from "./multi-language.js";
 import { detectHandwriting, planHandwritingRoute } from "./handwriting.js";
 import { detectAnomalies } from "./anomaly.js";
+import { computeLayoutFingerprint, findRunByLayoutFingerprint, adapterBiasFromPriorLayout } from "./layout-fingerprint.js";
 import { callAnthropic as callAnthropicForTranslate } from "../anthropic.js";
 // Bet 2: format-template marketplace L3.5 hook.
 import {
@@ -662,6 +663,48 @@ export const runExtractionPipeline = async (params) => {
     };
   }
   if (kind && kind !== "po") dispatchHints.expectedKind = kind;
+
+  // Wave 3.5: layout-fingerprint dedupe. Two POs from the same
+  // customer often share a layout (same headers, same column
+  // ordering) even when content differs. The fingerprint is a
+  // sha256 of (first-20 distinct header tokens, page count,
+  // body-text size bucket). A match against a prior run lets us
+  // bias the adapter order toward whichever adapter won last
+  // time. Best-effort; failures fall through silently.
+  let layoutFingerprint = null;
+  let priorLayoutRun = null;
+  if (bodyText && settings?.docai_layout_fingerprint !== false) {
+    try {
+      layoutFingerprint = await computeLayoutFingerprint({
+        bodyText,
+        pageCount: textLayer?.page_count || ocrLayer?.page_count || 1,
+        sourceSizeBytes: bytes ? bytes.length : 0,
+      });
+      if (layoutFingerprint) {
+        priorLayoutRun = await findRunByLayoutFingerprint(svc, {
+          tenantId: ctx.tenantId, customerId, layoutFingerprint,
+        });
+        if (priorLayoutRun) {
+          dispatchHints.priorLayoutAdapter = priorLayoutRun.adapter_used;
+          // Surface the bias signal so dispatchExtract can prepend
+          // the prior winner to its adapter chain. Tenant explicit
+          // docai_provider_order still wins over this.
+          const bias = adapterBiasFromPriorLayout(priorLayoutRun);
+          if (bias && !settings?.docai_provider_order) {
+            // Mutate settings copy carefully; dispatchExtract reads
+            // from this settings object.
+            dispatchHints.layoutFingerprintBias = bias;
+          }
+          await recordRunEvent("docai_layout_fingerprint_matched", {
+            layout_fingerprint: layoutFingerprint,
+            prior_run_id: priorLayoutRun.id,
+            prior_adapter_used: priorLayoutRun.adapter_used,
+            prior_confidence: priorLayoutRun.confidence_overall,
+          });
+        }
+      }
+    } catch (_e) { layoutFingerprint = null; }
+  }
   // Phase Cost-Opt: pass extraction-context summaries so the
   // model selector inside claude.js / gemini.js can pick the
   // right tier deterministically (long doc -> Sonnet, OCR-fed
@@ -1020,6 +1063,8 @@ export const runExtractionPipeline = async (params) => {
     anomalies: anomalyReport.anomalies,
     anomalies_summary: anomalyReport.summary,
     anomalies_has_blockers: anomalyReport.has_blockers,
+    layout_fingerprint: layoutFingerprint,
+    layout_fingerprint_match: priorLayoutRun?.id || null,
     text_layer_used: textLayerUsed,
     ocr_layer_used: ocrLayerUsed,
     template_used: templateApplied?.used ? templateApplied.template_id : null,

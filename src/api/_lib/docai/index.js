@@ -226,6 +226,14 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
       }
     }
   }
+  // Wave 3.5: layout-fingerprint bias. When run.js computed a
+  // fingerprint match against a prior successful run, it surfaces
+  // the prior winning adapter on hints.layoutFingerprintBias.
+  // Compose-ahead so this bias is applied AFTER pdf metadata
+  // bias but BEFORE customer-learning rerank.
+  if (!settings?.docai_provider_order && Array.isArray(hints?.layoutFingerprintBias) && hints.layoutFingerprintBias.length) {
+    order = composeOrderWithBias(order, hints.layoutFingerprintBias);
+  }
   // Per-customer adapter learning (Phase E1) reorders on top of
   // the metadata bias when we have enough observations. Skipped
   // if tenant pinned an explicit order or no customerId.

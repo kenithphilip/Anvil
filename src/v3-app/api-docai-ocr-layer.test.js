@@ -38,8 +38,11 @@ describe("ocr_layer / summarisePages", () => {
       { index: 1, blocks: [] },
     ]);
     expect(summary).toEqual([
-      { page: 1, blocks: 2, chars: "hello\nworld".length, has_text: false },
-      { page: 2, blocks: 0, chars: 0, has_text: false },
+      // Phase E3 added a per-page `confidence` field (null when
+      // the upstream OCR did not report block-level confidences,
+      // which is the case for these synthetic test blocks).
+      { page: 1, blocks: 2, chars: "hello\nworld".length, has_text: false, confidence: null },
+      { page: 2, blocks: 0, chars: 0, has_text: false, confidence: null },
     ]);
   });
 
@@ -101,6 +104,39 @@ describe("ocr_layer / fail-soft paths", () => {
     } finally {
       if (saved) process.env.MISTRAL_API_KEY = saved;
     }
+  });
+});
+
+describe("ocr_layer / per-page confidence (Phase E3)", () => {
+  it("summarisePages computes chars-weighted mean confidence per page", () => {
+    const summary = __test__.summarisePages([
+      { index: 0, blocks: [
+        { text: "longer text here", confidence: 0.9 },
+        { text: "short", confidence: 0.5 },
+      ] },
+    ]);
+    // weighted mean: (16*0.9 + 5*0.5) / (16+5) = 16.9/21 ≈ 0.805
+    expect(summary[0].confidence).toBeGreaterThan(0.79);
+    expect(summary[0].confidence).toBeLessThan(0.82);
+  });
+  it("returns null when blocks have no confidence at all", () => {
+    const summary = __test__.summarisePages([
+      { index: 0, blocks: [{ text: "abc" }, { text: "def" }] },
+    ]);
+    expect(summary[0].confidence).toBeNull();
+  });
+});
+
+describe("ocr_layer / lowConfidencePages (Phase E3)", () => {
+  it("returns pages below the threshold with their confidence", async () => {
+    const { lowConfidencePages } = await import("../api/_lib/docai/ocr_layer.js");
+    const out = lowConfidencePages([
+      { page: 1, confidence: 0.9, chars: 100 },
+      { page: 2, confidence: 0.5, chars: 80 },
+      { page: 3, confidence: null, chars: 0 },
+      { page: 4, confidence: 0.6, chars: 50 },
+    ], 0.65);
+    expect(out.map((p) => p.page)).toEqual([2, 4]);
   });
 });
 

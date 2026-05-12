@@ -23,6 +23,7 @@ import * as marker from "./marker.js";
 import * as gemini from "./gemini.js";
 import { allowedToCall, recordCall } from "../cost_guard.js";
 import { serviceClient } from "../supabase.js";
+import { rankAdaptersForCustomer } from "./adapter-learning.js";
 
 const ADAPTERS = {
   reducto,
@@ -134,8 +135,31 @@ export const dispatchExtract = async ({ source, settings, customerId, hints }) =
   // false, so an operator with only Claude still gets the single-
   // adapter path; the cost-guard then enforces docai_daily_limits
   // so a runaway Claude bill is impossible.
-  const order = settings?.docai_provider_order
-    || ["gemini", "docling", "marker", "unstructured", "azure_di", "reducto", "claude"];
+  //
+  // Phase E1: when the caller provides customerId and the tenant
+  // hasn't pinned an explicit docai_provider_order, consult the
+  // per-customer adapter-learning helper to bias the order based
+  // on this customer's recent extraction history. New customers
+  // (or customers with <MIN_OBSERVATIONS runs per adapter) fall
+  // through to the static default. The helper caches per
+  // (tenant, customer) for 30 minutes so the per-call cost is at
+  // most one Postgres select per cache window.
+  const defaultStaticOrder = ["gemini", "docling", "marker", "unstructured", "azure_di", "reducto", "claude"];
+  let order = settings?.docai_provider_order || defaultStaticOrder;
+  if (!settings?.docai_provider_order && customerId && settings?.tenant_id) {
+    try {
+      let learnSvc = null;
+      try { learnSvc = serviceClient(); } catch (_e) { learnSvc = null; }
+      if (learnSvc) {
+        order = await rankAdaptersForCustomer({
+          svc: learnSvc,
+          tenantId: settings.tenant_id,
+          customerId,
+          defaultOrder: defaultStaticOrder,
+        });
+      }
+    } catch (_e) { /* fall back to static order on any error */ }
+  }
   const attempts = [];
   let last = null;
   // Materialise an svc reference once so per-iteration cost-guard

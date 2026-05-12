@@ -311,12 +311,28 @@ export const runExtractionPipeline = async (params) => {
       bodyText = ocrLayer.body_text;
       ocrLayerUsed = true;
     }
+    // Phase E3: surface low-confidence OCR pages so operators
+    // can spot a scanned-page miss before it pollutes the
+    // extraction. lowConfidencePages returns pages whose
+    // chars-weighted block confidence is below the threshold
+    // (default 0.65, tunable per tenant via
+    // settings.docai_ocr_min_confidence).
+    let lowConfPages = [];
+    try {
+      const { lowConfidencePages } = await import("./ocr_layer.js");
+      const threshold = Number.isFinite(Number(settings?.docai_ocr_min_confidence))
+        ? Number(settings.docai_ocr_min_confidence)
+        : 0.65;
+      lowConfPages = lowConfidencePages(ocrLayer?.page_breakdown || [], threshold);
+    } catch (_e) { /* swallow; this is observability only */ }
     await recordRunEvent("docai_ocr_layer_extracted", {
       status: ocrLayer?.status,
       char_count: ocrLayer?.char_count,
       page_count: ocrLayer?.page_count,
       bbox_count: ocrLayer?.bbox_count,
       cached: got.cached,
+      low_confidence_page_count: lowConfPages.length,
+      low_confidence_pages: lowConfPages.slice(0, 30), // cap to keep payload small
     });
   }
 

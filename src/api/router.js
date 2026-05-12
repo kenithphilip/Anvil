@@ -316,6 +316,7 @@ import ordersSuggestMappings   from "./orders/suggest_mappings.js";
 import ordersExtractionStatus from "./orders/extraction_status.js";
 import ordersExtractionJobs   from "./orders/extraction_jobs.js";
 import ordersExtractionJobsId from "./orders/extraction_jobs_id.js";
+import ordersCostSummary      from "./orders/cost_summary.js";
 
 import supplierRfqIndex        from "./supplier_rfq/index.js";
 import supplierRfqSend         from "./supplier_rfq/send.js";
@@ -536,6 +537,7 @@ const STATIC_ROUTES = {
   "/orders/suggest_mappings":       ordersSuggestMappings,
   "/orders/extraction_status":      ordersExtractionStatus,
   "/orders/extraction_jobs":        ordersExtractionJobs,
+  "/orders/cost_summary":           ordersCostSummary,
   "/supplier_rfq":                  supplierRfqIndex,
   "/supplier_rfq/send":             supplierRfqSend,
   "/supplier_rfq/quote":            supplierRfqQuote,

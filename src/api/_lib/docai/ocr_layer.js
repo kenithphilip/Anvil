@@ -53,6 +53,29 @@ const blocksToText = (blocks) => {
     .join("\n");
 };
 
+// Aggregate per-page block confidences into a single per-page
+// confidence figure. Each block has its own confidence (when
+// the upstream OCR reports one); we take the chars-weighted
+// mean so a long high-confidence block dominates a short
+// low-confidence one. Returns a number in [0, 1] or null when
+// the upstream provider did not emit any block confidences.
+const pageConfidence = (blocks) => {
+  if (!Array.isArray(blocks) || !blocks.length) return null;
+  let weightSum = 0;
+  let confSum = 0;
+  let anyConf = false;
+  for (const b of blocks) {
+    const c = Number(b?.confidence);
+    if (!Number.isFinite(c)) continue;
+    anyConf = true;
+    const w = Math.max(1, ((b?.text || "")).length);
+    weightSum += w;
+    confSum += w * Math.max(0, Math.min(1, c));
+  }
+  if (!anyConf || weightSum === 0) return null;
+  return confSum / weightSum;
+};
+
 const summarisePages = (pages) => {
   if (!Array.isArray(pages)) return [];
   return pages.map((p) => {
@@ -62,8 +85,24 @@ const summarisePages = (pages) => {
       blocks: (p.blocks || []).length,
       chars: text.length,
       has_text: text.length >= PER_PAGE_TEXT_THRESHOLD,
+      // Phase E3: per-page OCR confidence. null when upstream
+      // didn't report block-level confidences; the run.js
+      // gating skips such pages rather than guessing.
+      confidence: pageConfidence(p.blocks),
     };
   });
+};
+
+// Phase E3: identify pages below a confidence threshold so
+// run.js can flag them for operator review or escalate the
+// page-only re-OCR to a more accurate adapter. Default 0.65
+// is conservative; tenants can tune via
+// settings.docai_ocr_min_confidence.
+export const lowConfidencePages = (pageBreakdown, threshold = 0.65) => {
+  if (!Array.isArray(pageBreakdown)) return [];
+  return pageBreakdown
+    .filter((p) => Number.isFinite(p.confidence) && p.confidence < threshold)
+    .map((p) => ({ page: p.page, confidence: p.confidence, chars: p.chars }));
 };
 
 const classifyOcr = (totalChars, pageBreakdown) => {

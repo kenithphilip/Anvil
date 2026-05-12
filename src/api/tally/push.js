@@ -23,6 +23,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { tallyPush, tallyResolveCompany, tallyIsRecoverable } from "../_lib/tally-client.js";
+import { resolveSalesVoucherType } from "../_lib/tally-voucher-type.js";
 
 const idempotencyKey = (gstin, poNumber, payloadHash) =>
   [String(gstin || ""), String(poNumber || ""), String(payloadHash || "")].join("|");
@@ -34,13 +35,13 @@ const extractVoucherId = (xml) => {
   return m ? m[1] : null;
 };
 
-const enqueueRetry = async (svc, ctx, company, order, body, voucherRecordId, status, errorMsg) => {
+const enqueueRetry = async (svc, ctx, company, order, body, voucherType, voucherRecordId, status, errorMsg) => {
   await svc.from("tally_retry_queue").insert({
     tenant_id: ctx.tenantId,
     company_id: company?.id || null,
     order_id: order.id,
     voucher_record_id: voucherRecordId,
-    voucher_type: body.voucherType || "SalesOrder",
+    voucher_type: voucherType,
     payload_xml: body.tallyXml,
     payload_hash: body.payloadHash || order.payload_hash || "",
     attempt_count: 1,
@@ -62,10 +63,13 @@ export default async function handler(req, res) {
     if (!body?.orderId || !body?.tallyXml) {
       return json(res, 400, { error: { message: "orderId and tallyXml required" } });
     }
-    const voucherType = body.voucherType || "SalesOrder";
-
     const svc = serviceClient();
     const company = await tallyResolveCompany(svc, ctx.tenantId, body.companyId);
+    // Resolve voucher type: explicit override on the request wins,
+    // otherwise fall back to the company's default_sales_voucher_type
+    // (migration 110). The canonical default is "Sales" so the SO
+    // pushes as an accounting voucher (books GST output + revenue).
+    const voucherType = body.voucherType || resolveSalesVoucherType(company);
     if (!company || !company.bridge_url) {
       return json(res, 409, {
         error: {
@@ -162,7 +166,7 @@ export default async function handler(req, res) {
     });
 
     if (!ok && tallyIsRecoverable(pushResp.status)) {
-      await enqueueRetry(svc, ctx, company, order, body, upsert.data.id, pushResp.status, bridgeError);
+      await enqueueRetry(svc, ctx, company, order, body, voucherType, upsert.data.id, pushResp.status, bridgeError);
     }
 
     return json(res, ok ? 200 : 502, {

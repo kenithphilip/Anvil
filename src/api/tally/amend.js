@@ -7,6 +7,8 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
+import { tallyResolveCompany } from "../_lib/tally-client.js";
+import { resolveSalesVoucherType, toTallyXmlName } from "../_lib/tally-voucher-type.js";
 
 const lineKey = (li) => String(li.tallyItemName || li.itemName || li.sellerPartNo || "").toUpperCase();
 
@@ -40,11 +42,15 @@ const classifyAmendment = (changes) => {
   return kinds.values().next().value || "mixed";
 };
 
-const buildTallyAmendXml = (revised, voucherId) => {
+const buildTallyAmendXml = (revised, voucherId, voucherTypeXml) => {
   const escape = (s) => String(s == null ? "" : s).replace(/[&<>\"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+  const vt = escape(voucherTypeXml);
   const items = (revised.lineItems || []).map((li) => "<ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>" + escape(li.tallyItemName || li.itemName) + "</STOCKITEMNAME><RATE>" + escape(li.rate) + "/Nos.</RATE><AMOUNT>-" + escape(li.amount) + "</AMOUNT><ACTUALQTY>" + escape(li.qty) + " Nos.</ACTUALQTY><BILLEDQTY>" + escape(li.qty) + " Nos.</BILLEDQTY></ALLINVENTORYENTRIES.LIST>").join("");
-  return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME></REQUESTDESC><REQUESTDATA><TALLYMESSAGE><VOUCHER" + (voucherId ? " REMOTEID=\"" + escape(voucherId) + "\"" : "") + " VCHTYPE=\"Sales Order\" ACTION=\"Alter\"><DATE>" + escape((revised.date || "").replace(/-/g, "")) + "</DATE><VOUCHERTYPENAME>Sales Order</VOUCHERTYPENAME><VOUCHERNUMBER>" + escape(revised.voucherNo) + "</VOUCHERNUMBER><PARTYLEDGERNAME>" + escape(revised.partyName) + "</PARTYLEDGERNAME>" + items + "</VOUCHER></TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>";
+  return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME></REQUESTDESC><REQUESTDATA><TALLYMESSAGE><VOUCHER" + (voucherId ? " REMOTEID=\"" + escape(voucherId) + "\"" : "") + " VCHTYPE=\"" + vt + "\" ACTION=\"Alter\"><DATE>" + escape((revised.date || "").replace(/-/g, "")) + "</DATE><VOUCHERTYPENAME>" + vt + "</VOUCHERTYPENAME><VOUCHERNUMBER>" + escape(revised.voucherNo) + "</VOUCHERNUMBER><PARTYLEDGERNAME>" + escape(revised.partyName) + "</PARTYLEDGERNAME>" + items + "</VOUCHER></TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>";
 };
+
+// Exported for unit tests; callers should prefer the request handler.
+export const __buildTallyAmendXmlForTests = buildTallyAmendXml;
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -62,8 +68,11 @@ export default async function handler(req, res) {
     const revisedLines = body.revisedSalesOrder.lineItems || [];
     const changes = diffLineItems(originalLines, revisedLines);
     const amendmentType = classifyAmendment(changes);
-    const tallyVoucher = await svc.from("tally_voucher_records").select("tally_voucher_id").eq("tenant_id", ctx.tenantId).eq("order_id", parent.data.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
-    const xml = buildTallyAmendXml(body.revisedSalesOrder, tallyVoucher && tallyVoucher.data && tallyVoucher.data.tally_voucher_id);
+    const tallyVoucher = await svc.from("tally_voucher_records").select("tally_voucher_id, company_id").eq("tenant_id", ctx.tenantId).eq("order_id", parent.data.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    const companyId = (body && body.companyId) || (tallyVoucher && tallyVoucher.data && tallyVoucher.data.company_id) || null;
+    const company = await tallyResolveCompany(svc, ctx.tenantId, companyId);
+    const voucherTypeXml = toTallyXmlName(resolveSalesVoucherType(company));
+    const xml = buildTallyAmendXml(body.revisedSalesOrder, tallyVoucher && tallyVoucher.data && tallyVoucher.data.tally_voucher_id, voucherTypeXml);
     const insert = await svc.from("order_amendments").insert({
       tenant_id: ctx.tenantId,
       parent_order_id: parent.data.id,

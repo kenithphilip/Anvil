@@ -32,12 +32,16 @@ const orderRow = (ctx, body) => {
     status: STATUS_VALUES.has(body.status) ? body.status : "DRAFT",
     po_number: body.po_number || null,
     // Audit fix May 2026: callers (so-intake auto-detect, ERP
-     // adapters) may supply DD/MM/YYYY or DD-MM-YYYY date strings.
-     // Postgres `date` columns reject those; normalise here so
-     // the order create never 500s on a locale-formatted value.
-     po_date: parsePoDate(body.po_date),
+     // adapters) may supply DD/MM/YYYY (IN/EU/UK), MM/DD/YYYY
+     // (US/CA), or YYYY/MM/DD (JP/KR/CN). Postgres `date`
+     // columns reject those; normalise via parsePoDate with the
+     // customer's country as the locale hint so order create
+     // never 500s on a locale-formatted value. body.country is
+     // either set by the caller or filled in by the POST handler
+     // from the customers row.
+     po_date: parsePoDate(body.po_date, { country: body.country }),
     quote_number: body.quote_number || null,
-    quote_date: parsePoDate(body.quote_date),
+    quote_date: parsePoDate(body.quote_date, { country: body.country }),
     doc_fingerprint: body.doc_fingerprint || null,
     result: body.result || {},
     preflight_payload: body.preflight_payload || {},
@@ -99,6 +103,22 @@ export default async function handler(req, res) {
       requirePermission(ctx, "write");
       const body = await readBody(req);
       const svc = serviceClient();
+      // Derive the customer's country so parsePoDate inside
+      // orderRow can apply the right locale convention to
+      // ambiguous date strings. Cheap one-row lookup; falls
+      // through to null when no customer_id is supplied.
+      if (body.customer_id && !body.country) {
+        try {
+          const cust = await svc.from("customers")
+            .select("country")
+            .eq("tenant_id", ctx.tenantId)
+            .eq("id", body.customer_id)
+            .maybeSingle();
+          if (cust && cust.data && cust.data.country) {
+            body.country = cust.data.country;
+          }
+        } catch (_) { /* country lookup is best-effort */ }
+      }
       let { data, error } = await svc.from("orders").insert(orderRow(ctx, body)).select("*").single();
       // PostgREST schema-cache miss (PGRST204) or Postgres
       // column-not-found (42703) on a migration 106 column.

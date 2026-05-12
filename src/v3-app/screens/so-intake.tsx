@@ -823,12 +823,21 @@ const WiredSOIntake = () => {
        if (vendorCodeFromOcr) headerColumnDefaults.vendor_code = vendorCodeFromOcr;
        const poNumberFromOcr = (extractedCustomer?.po_number || "").toString().trim();
        // Audit fix May 2026: the extractor returns po_date "as
-       // written" on the PO, which for Indian customers is
-       // DD/MM/YYYY. Postgres `date` columns only accept ISO
-       // YYYY-MM-DD, so the unnormalised value crashed the order
-       // create with "date/time field value out of range". parsePoDate
-       // returns null for anything it cannot confidently coerce.
-       const poDateFromOcr = parsePoDate(extractedCustomer?.po_date);
+       // written" on the PO. That format is locale-specific:
+       //   IN, GB, EU, AU, NZ, etc.  -> DD/MM/YYYY
+       //   US, CA (English)          -> MM/DD/YYYY
+       //   JP, KR, CN, TW, HK        -> YYYY/MM/DD
+       // parsePoDate accepts a country hint and applies the
+       // matching convention for ambiguous dates. Falls back to
+       // DMY (the global majority) when the customer's country
+       // is unknown. The extractor's customer block carries
+       // `country`; the local customers list also carries it as
+       // a fallback for matched-customer flows.
+       const customerCountry =
+         (extractedCustomer && extractedCustomer.country)
+         || (customers?.data && customers.data.find?.((c: any) => c.id === customerId)?.country)
+         || null;
+       const poDateFromOcr = parsePoDate(extractedCustomer?.po_date, { country: customerCountry });
        if (poNumberFromOcr) headerColumnDefaults.po_number = poNumberFromOcr;
        if (poDateFromOcr) headerColumnDefaults.po_date = poDateFromOcr;
 

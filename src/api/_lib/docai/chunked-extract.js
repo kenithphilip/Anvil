@@ -36,6 +36,7 @@
 
 import { chunkPdf, probePdfPageCount, DEFAULT_MAX_PAGES_PER_CHUNK, SYNC_MAX_TOTAL_PAGES } from "./pdf-chunker.js";
 import { dispatchExtract } from "./index.js";
+import { detectSpanningTables, planHeaderReplication } from "./cross-page-tables.js";
 
 // Page threshold above which we engage the chunker. Documents
 // at or below this run the single-shot path (cheaper, lower
@@ -227,6 +228,23 @@ export const chunkedExtract = async (args) => {
     keepPages: opts.keepPages,
     maxTotalPages: opts.maxTotalPages || SYNC_MAX_TOTAL_PAGES,
   });
+  // Wave 5.3: cross-page table continuation. When the caller
+  // provided per-page text snippets (opts.pageTexts), detect
+  // tables that span chunk boundaries and plan header
+  // replication. The chunker can't rewrite the PDF mid-flight
+  // so we surface the plan to the dispatcher via hints so the
+  // LLM prompt for the destination chunk carries a
+  // "[continuation of table from page X]" note.
+  let headerReplication = [];
+  if (Array.isArray(opts.pageTexts) && opts.pageTexts.length) {
+    const spans = detectSpanningTables(opts.pageTexts);
+    if (spans.length) {
+      headerReplication = planHeaderReplication(spans, chunkResult.chunks);
+      if (headerReplication.length) {
+        emit(eventSink, { stage: "header_replication_planned", count: headerReplication.length, plan: headerReplication });
+      }
+    }
+  }
   emit(eventSink, {
     stage: "chunking_complete",
     page_count: chunkResult.totalPages,
@@ -269,11 +287,25 @@ export const chunkedExtract = async (args) => {
     });
     const tChunk = Date.now();
     try {
+      const replication = headerReplication.find((p) => p.chunk_index === ch.index);
       const out = await dispatchExtract({
         source: { ...source, bytes: ch.buffer },
         settings,
         customerId,
-        hints: { ...hints, chunk_index: ch.index, chunk_count: chunkResult.chunks.length, page_start: ch.pageStart, page_end: ch.pageEnd },
+        hints: {
+          ...hints,
+          chunk_index: ch.index,
+          chunk_count: chunkResult.chunks.length,
+          page_start: ch.pageStart,
+          page_end: ch.pageEnd,
+          ...(replication ? {
+            table_continuation: {
+              header_page: replication.header_page,
+              span_from: replication.span_from,
+              span_to: replication.span_to,
+            },
+          } : {}),
+        },
         runCost,
       });
       chunkResults.push(out);

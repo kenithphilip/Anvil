@@ -26,10 +26,56 @@ import { recordAudit, recordEvent } from "../_lib/audit.js";
 
 const VALID_ORDER_MODES = new Set(["SPARES", "SPARES_ASSEMBLY", "PROJECT_FOR", "PROJECT_HSS", "INTERNAL"]);
 
-const buildSalesOrder = (quote) => {
+// Audit fix May 2026: prefer the canonical quote_lines table over
+// the legacy quotes.line_items JSONB. Any quote edited via the
+// QuoteDetailDrawer (post-108) writes to quote_lines, so reading
+// JSONB silently dropped operator edits + every per-line tax
+// component. Falls back to JSONB only when quote_lines has no
+// rows for this quote (pre-108 quotes that pre-date the backfill).
+const buildSalesOrderFromLines = (quote, lineRows) => {
+  const lineItems = (lineRows || []).map((ql, i) => {
+    const qty = Number(ql.qty || 0);
+    const rate = Number(ql.discounted_unit_price ?? ql.listed_unit_price ?? 0);
+    return {
+      line_no: ql.line_index != null ? ql.line_index + 1 : i + 1,
+      partNumber: ql.part_no || null,
+      itemName: ql.part_no || ql.description || null,
+      description: ql.description || null,
+      qty,
+      rate,
+      uom: ql.uom || null,
+      hsn: ql.hsn_sac || null,
+      // Per-line tax components survive the convert hop so the
+      // resulting order's Tally push has the data it needs.
+      cgst_pct: ql.cgst_pct != null ? Number(ql.cgst_pct) : null,
+      sgst_pct: ql.sgst_pct != null ? Number(ql.sgst_pct) : null,
+      igst_pct: ql.igst_pct != null ? Number(ql.igst_pct) : null,
+      utgst_pct: ql.utgst_pct != null ? Number(ql.utgst_pct) : null,
+      cess_pct: ql.cess_pct != null ? Number(ql.cess_pct) : null,
+      // Mirror sum into gst_pct for code paths that read a single
+      // rate (e.g. recon table, Tally composer).
+      gst_pct: [ql.cgst_pct, ql.sgst_pct, ql.igst_pct, ql.utgst_pct]
+        .map((v) => Number(v || 0))
+        .reduce((a, b) => a + b, 0) || null,
+      customer_part_number: ql.customer_part_number || null,
+      source_country: ql.source_country || null,
+      discount_pct: ql.discount_pct != null ? Number(ql.discount_pct) : null,
+      amount: Number(ql.line_amount ?? (qty * rate)),
+    };
+  });
+  return {
+    salesOrder: {
+      lineItems,
+      currency: quote.currency || "INR",
+      subtotal: quote.subtotal,
+      taxTotal: quote.tax_total,
+      grandTotal: quote.grand_total,
+    },
+  };
+};
+
+const buildSalesOrderFromJsonb = (quote) => {
   const items = Array.isArray(quote.line_items) ? quote.line_items : [];
-  // Normalise the line shape so the existing renderers (PDF,
-  // Tally push, anomaly engine) read familiar field names.
   const lineItems = items.map((li, i) => ({
     line_no: li.line_no || (i + 1),
     partNumber: li.partNumber || li.partNo || li.sellerPartNo || null,
@@ -77,7 +123,20 @@ export default async function handler(req, res) {
     }
 
     const orderMode = body.order_mode && VALID_ORDER_MODES.has(body.order_mode) ? body.order_mode : null;
-    const result = buildSalesOrder(quote);
+    // Prefer quote_lines (post-108 canonical source) over the
+    // legacy JSONB. Falls back when the table has no rows for
+    // this quote (pre-108 quote that pre-dates the 109 backfill).
+    const linesRes = await svc.from("quote_lines")
+      .select("*")
+      .eq("tenant_id", ctx.tenantId)
+      .eq("quote_id", quote.id)
+      .order("line_index", { ascending: true });
+    const lineRows = (linesRes && !linesRes.error && Array.isArray(linesRes.data) && linesRes.data.length)
+      ? linesRes.data
+      : null;
+    const result = lineRows
+      ? buildSalesOrderFromLines(quote, lineRows)
+      : buildSalesOrderFromJsonb(quote);
 
     const insOrder = await svc.from("orders").insert({
       tenant_id: ctx.tenantId,

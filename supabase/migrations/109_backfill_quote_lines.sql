@@ -14,7 +14,7 @@ insert into quote_lines (
   part_no, description, qty, uom,
   hsn_sac, customer_part_number, source_country,
   listed_unit_price, discount_pct, discounted_unit_price, line_amount,
-  cgst_pct, sgst_pct, igst_pct, remark
+  cgst_pct, sgst_pct, igst_pct, utgst_pct, cess_pct, remark
 )
 select
   q.tenant_id,
@@ -34,6 +34,11 @@ select
   nullif(coalesce(li ->> 'cgst_pct', li ->> 'cgstRate', li ->> 'cgst'), '')::numeric as cgst_pct,
   nullif(coalesce(li ->> 'sgst_pct', li ->> 'sgstRate', li ->> 'sgst'), '')::numeric as sgst_pct,
   nullif(coalesce(li ->> 'igst_pct', li ->> 'igstRate', li ->> 'igst'), '')::numeric as igst_pct,
+  -- Audit fix May 2026: utgst_pct + cess_pct were missing from
+  -- the original 109 backfill, so any pre-108 quote with UT-GST
+  -- or cess in its JSONB lost those columns on backfill.
+  nullif(coalesce(li ->> 'utgst_pct', li ->> 'utgstRate', li ->> 'utgst'), '')::numeric as utgst_pct,
+  nullif(coalesce(li ->> 'cess_pct',  li ->> 'cessRate',  li ->> 'cess'),  '')::numeric as cess_pct,
   li ->> 'remark' as remark
 from quotes q
 cross join lateral jsonb_array_elements(coalesce(q.line_items, '[]'::jsonb)) with ordinality as t(li, idx)

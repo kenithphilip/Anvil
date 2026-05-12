@@ -861,6 +861,12 @@ const WiredSOWorkspace = () => {
         },
       };
       await ObaraBackend?.orders?.update?.(o.id, { result: nextResult });
+      // Audit fix May 2026: clear the draft immediately so a
+      // second Save click during the reload window cannot fire a
+      // duplicate PATCH. The useEffect on persistedLinesKey will
+      // also null this when the new lines arrive, but it races
+      // the click; we win the race here.
+      setLinesDraft(null);
       window.notifySuccess?.("Line edits saved", `${draftLines.length} line${draftLines.length === 1 ? "" : "s"} on ${o.po_number || o.id.slice(0, 8)}`);
       setBump((n: number) => n + 1);
     } catch (err: any) {
@@ -1929,15 +1935,25 @@ export default WiredSOWorkspace;
 // flows through the existing /api/orders/[id] PATCH endpoint with
 // APPROVE_INPUTS already extended to accept them.
 const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = ({ order, onSaved }) => {
-  const [draft, setDraft] = React.useState<any>({
-    dispatch_mode: order.dispatch_mode || "",
-    registration_serial_no: order.registration_serial_no || "",
-    incoterm_code: order.incoterm_code || order.incoterms || "",
-    delivery_terms: order.delivery_terms || "",
-    vendor_code: order.vendor_code || "",
-    delivery_point_contact_id: order.delivery_point_contact_id || "",
-    requisition_no: "",
+  const buildDraft = (o: any) => ({
+    dispatch_mode: o.dispatch_mode || "",
+    registration_serial_no: o.registration_serial_no || "",
+    incoterm_code: o.incoterm_code || o.incoterms || "",
+    delivery_terms: o.delivery_terms || "",
+    vendor_code: o.vendor_code || "",
+    delivery_point_contact_id: o.delivery_point_contact_id || "",
   });
+  const [draft, setDraft] = React.useState<any>(buildDraft(order));
+  // Audit fix May 2026: useState only runs its initialiser on the
+  // first mount. When the parent re-renders with a fresh order
+  // prop after save (setBump -> refetch), the draft retained the
+  // pre-save snapshot and a second save would push stale values
+  // over a concurrent edit. Re-sync the draft whenever the order
+  // identity or updated_at changes.
+  React.useEffect(() => {
+    setDraft(buildDraft(order));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order.id, order.updated_at]);
   const [reference, setReference] = React.useState<any>({ incoterms: [], contacts: [] });
   const [busy, setBusy] = React.useState(false);
 
@@ -1970,6 +1986,29 @@ const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = ({ orde
   const save = async () => {
     setBusy(true);
     try {
+      // Audit fix May 2026: flip _header_field_sources for any
+      // field the operator actually changed from the persisted
+      // value, so the OCR pill drops after save instead of
+      // re-rendering on the new server data. Stamped inside
+      // result.salesOrder._header_field_sources, where so-intake
+      // initially writes it. Side-effect: PATCHing `result`
+      // invalidates approval per orders/[id].js:131 - that's the
+      // correct behaviour (header-field edits should require
+      // re-approval).
+      const headerSourcesPrev: Record<string, string> =
+        (order.result?.salesOrder?._header_field_sources) || {};
+      const headerSourcesNext = { ...headerSourcesPrev };
+      const HEADER_KEYS = [
+        "dispatch_mode", "registration_serial_no", "incoterm_code",
+        "delivery_terms", "vendor_code", "delivery_point_contact_id",
+      ];
+      let anyChanged = false;
+      for (const k of HEADER_KEYS) {
+        if ((draft[k] || "") !== (order[k] || "")) {
+          anyChanged = true;
+          if (headerSourcesNext[k] === "ocr") headerSourcesNext[k] = "human";
+        }
+      }
       const patch: any = {
         dispatch_mode: draft.dispatch_mode || null,
         registration_serial_no: draft.registration_serial_no || null,
@@ -1978,6 +2017,15 @@ const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = ({ orde
         vendor_code: draft.vendor_code || null,
         delivery_point_contact_id: draft.delivery_point_contact_id || null,
       };
+      if (anyChanged && Object.keys(headerSourcesNext).length) {
+        patch.result = {
+          ...(order.result || {}),
+          salesOrder: {
+            ...(order.result?.salesOrder || {}),
+            _header_field_sources: headerSourcesNext,
+          },
+        };
+      }
       await ObaraBackend?.orders?.update?.(order.id, patch);
       window.notifySuccess?.("Header fields saved", order.po_number || order.id.slice(0, 8));
       onSaved();

@@ -93,7 +93,12 @@ const buildPdfData = (tenant, order, customer, template) => {
     // Amount-in-words helper output. Mirrors the Tally SO PDF
     // convention and the helper-pinned tests.
     totalInWords: grandTotal ? amountInWords(grandTotal, so.currency || "INR") : null,
-    currency: so.currency || "USD",
+    // Audit fix May 2026: currency default was "USD" but the
+    // amount-in-words helper above defaults to "INR" when so.currency
+    // is null. The PDF rendered "INR Only" in the words line and
+    // "USD" everywhere else. The codebase ships an Indian-distributor
+    // default; INR is the right fallback.
+    currency: so.currency || "INR",
     notes: so.notes || order.notes || null,
   };
 };
@@ -144,13 +149,20 @@ export default async function handler(req, res) {
     //   2. The order's explicit template_id.
     //   3. The tenant's default template for doc_type=quotation.
     //   4. None (renderer falls back to its built-in copy).
+    //
+    // Audit fix May 2026: the order's template_id used to win
+    // over the quote's, contradicting the docstring. Operators
+    // who picked a template on the QuoteDetailDrawer got their
+    // choice overridden if the underlying order had any default
+    // template_id. Quote wins now.
     let template = null;
     try {
-      let templateId = orderQ.data.template_id || null;
-      if (!templateId && orderQ.data.quote_id) {
+      let templateId = null;
+      if (orderQ.data.quote_id) {
         const qt = await svc.from("quotes").select("template_id").eq("tenant_id", ctx.tenantId).eq("id", orderQ.data.quote_id).maybeSingle();
         templateId = qt.data?.template_id || null;
       }
+      if (!templateId) templateId = orderQ.data.template_id || null;
       if (templateId) {
         const t = await svc.from("document_templates").select("*").eq("tenant_id", ctx.tenantId).eq("id", templateId).maybeSingle();
         template = t.data || null;

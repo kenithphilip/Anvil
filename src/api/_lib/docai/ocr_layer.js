@@ -22,6 +22,7 @@
 // Mistral call.
 
 import { ocrDocument } from "../mistral.js";
+import { preprocessImage } from "./image-preprocess.js";
 
 const PER_PAGE_TEXT_THRESHOLD = 30;
 const MAX_BODY_TEXT_BYTES = 200_000;
@@ -148,9 +149,26 @@ export const extractOcrLayer = async ({ buffer, filename, mimeType, opts }) => {
       error: "no bytes provided",
     };
   }
+  // Wave 2.1: image preprocessing. For raster inputs (jpeg, png,
+  // tiff, webp) we run the deskew + upscale + normalize chain
+  // before handing bytes to the OCR provider. Sharp is loaded
+  // dynamically; when absent (no install) the preprocessor
+  // returns the original bytes with skipped_reason set so the
+  // caller still gets OCR output. PDFs route through Mistral
+  // OCR's own rasteriser and bypass this step.
+  let preprocessed = null;
+  let ocrBuffer = buffer;
+  let ocrMime = mimeType;
+  if (opts?.skip_image_preprocessing !== true) {
+    preprocessed = await preprocessImage({ buffer, mimeType });
+    if (preprocessed.ok) {
+      ocrBuffer = preprocessed.bytes;
+      ocrMime = preprocessed.mime || mimeType;
+    }
+  }
   let result;
   try {
-    result = await ocrDocument({ buffer, filename, mimeType, opts });
+    result = await ocrDocument({ buffer: ocrBuffer, filename, mimeType: ocrMime, opts });
   } catch (err) {
     return {
       ok: false,
@@ -189,6 +207,15 @@ export const extractOcrLayer = async ({ buffer, filename, mimeType, opts }) => {
     latency_ms: Date.now() - t0,
     raw_pages: pages,
     error: null,
+    preprocess: preprocessed ? {
+      ok: preprocessed.ok,
+      applied: preprocessed.applied,
+      width: preprocessed.width,
+      height: preprocessed.height,
+      mime: preprocessed.mime,
+      skipped_reason: preprocessed.skipped_reason,
+      latency_ms: preprocessed.latency_ms,
+    } : null,
   };
 };
 

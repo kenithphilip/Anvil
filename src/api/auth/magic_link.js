@@ -31,9 +31,47 @@ const safeRedirectTo = (caller) => {
   return DEFAULT_REDIRECT;
 };
 
+// Resolve the user's tenant from email. Magic-link requests
+// are pre-auth so there is no JWT claim; we look up auth.users
+// by email and pick the user's first tenant_members row. Returns
+// null when the email is not associated with any tenant; the
+// caller skips the audit insert in that case (migration 111
+// enforces tenant_id NOT NULL).
+const resolveTenantForEmail = async (svc, email) => {
+  try {
+    const lower = String(email || "").trim().toLowerCase();
+    if (!lower) return null;
+    const { data: users } = await svc.auth.admin.listUsers({
+      filter: 'email.eq."' + lower + '"',
+      page: 1,
+      perPage: 1,
+    });
+    const user = users?.users?.[0];
+    if (!user) return null;
+    const r = await svc
+      .from("tenant_members")
+      .select("tenant_id")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    return r.data?.tenant_id || null;
+  } catch (_) {
+    return null;
+  }
+};
+
 const recordMagicLink = async (svc, email, outcome, ip, ua) => {
   try {
+    // Phase 1 F2: tenant_id is now NOT NULL. Resolve the user's
+    // tenant before insert; skip the audit row when the email is
+    // not tied to a tenant (an attacker spraying random emails
+    // generates no rows, which matches the security intent of
+    // shouldCreateUser=false on the magic-link send below).
+    const tenantId = await resolveTenantForEmail(svc, email);
+    if (!tenantId) return;
     await svc.from("auth_magic_links").insert({
+      tenant_id: tenantId,
       email: String(email || "").toLowerCase(),
       outcome,
       ip: ip || null,

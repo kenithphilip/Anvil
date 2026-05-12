@@ -50,6 +50,7 @@ import { extractTextLayer, contentHash } from "./text_layer.js";
 import { extractOcrLayer } from "./ocr_layer.js";
 import { applyTemplate, buildTemplate } from "./templates.js";
 import { createRunCostAccumulator } from "./run-cost.js";
+import { buildCustomerHints } from "./customer-hints.js";
 // Bet 2: format-template marketplace L3.5 hook.
 import {
   findGlobalCandidates, applyGlobalTemplate, shouldPromoteToSkipLlm,
@@ -559,7 +560,32 @@ export const runExtractionPipeline = async (params) => {
   const runCost = createRunCostAccumulator(settings?.docai_per_extraction_cost_cap_usd);
   await recordRunEvent("docai_run_cost_started", { cap_usd: runCost.cap });
 
+  // Wave 1.5: customer-hint priming. Pulls identity + recent line
+  // patterns + a small sample of customer-part -> canonical
+  // mappings; the adapters embed the rendered block in the system
+  // prompt so the model gets a head start. Best-effort: no hint
+  // if no customer, no signal, or query failures. Cached per
+  // (tenant_id, customer_id) for 15 minutes inside the module.
+  let customerHint = null;
+  if (customerId && settings?.docai_customer_hint_priming !== false) {
+    try {
+      customerHint = await buildCustomerHints(svc, { tenantId: ctx.tenantId, customerId });
+      if (customerHint?.rendered) {
+        await recordRunEvent("docai_customer_hint_primed", {
+          customer_id: customerId,
+          has_identity: !!customerHint.identity,
+          line_count_sample: customerHint.line_patterns?.line_count_sample || 0,
+          top_hsn_count: customerHint.line_patterns?.top_hsn?.length || 0,
+          item_mappings_sample_count: customerHint.item_mappings_sample?.length || 0,
+        });
+      }
+    } catch (_e) { customerHint = null; }
+  }
+
   const dispatchHints = { ...hints };
+  if (customerHint?.rendered) {
+    dispatchHints.customerHint = customerHint;
+  }
   if (bodyText) dispatchHints.bodyText = bodyText;
   if (templateApplied?.used && templateApplied?.normalized?.customer) {
     dispatchHints.knownFields = templateApplied.normalized.customer;

@@ -336,6 +336,16 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
         + JSON.stringify(hints.knownFields, null, 2),
     });
   }
+  // Wave 1.5: customer-hint priming. Rendered block from
+  // customer-hints.js carries identity + recent line patterns +
+  // a small sample of customer-part to canonical mappings.
+  if (hints?.customerHint?.rendered) {
+    systemBlocks.push({
+      type: "text",
+      text: "Customer prior (use to validate field extractions; do not blindly copy):\n"
+        + hints.customerHint.rendered,
+    });
+  }
 
   const result = await callGemini({
     tenantId,

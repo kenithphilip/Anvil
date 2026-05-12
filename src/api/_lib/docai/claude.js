@@ -540,6 +540,19 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       cache_control: { type: "ephemeral" },
     });
   }
+  // Wave 1.5: customer-hint priming. Rendered block from
+  // customer-hints.js carries identity + recent line patterns +
+  // a small sample of customer-part to canonical mappings. The
+  // block primes the model to recognise the customer's PO format
+  // without burning extra tokens to re-derive it on every run.
+  if (hints?.customerHint?.rendered) {
+    systemBlocks.push({
+      type: "text",
+      text: "Customer prior (use to validate field extractions; do not blindly copy):\n"
+        + hints.customerHint.rendered,
+      cache_control: { type: "ephemeral" },
+    });
+  }
 
   const userParts = [bodyBlock];
   userParts.push({ type: "text", text: "Call " + activeToolName + " with the result." });

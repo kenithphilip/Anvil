@@ -280,6 +280,32 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   // Build the user message + optional template hint block.
   const userContent = [block, { type: "text", text: "Return the structured JSON object now." }];
   const systemBlocks = [{ type: "text", text: systemPrompt }];
+
+  // Audit fix May 2026: surface tenant identity (same shape as
+  // claude.js) so Gemini does not promote the seller's printed
+  // contact details into the customer record.
+  const tenantIdentityLines = [];
+  if (settings?.einvoice_seller_legal_name) tenantIdentityLines.push("  legal_name: " + settings.einvoice_seller_legal_name);
+  if (settings?.einvoice_seller_gstin) tenantIdentityLines.push("  gstin: " + settings.einvoice_seller_gstin);
+  if (settings?.einvoice_seller_email) tenantIdentityLines.push("  email: " + settings.einvoice_seller_email + " (and any address @<this-domain>)");
+  if (settings?.einvoice_seller_phone) tenantIdentityLines.push("  phone: " + settings.einvoice_seller_phone);
+  if (tenantIdentityLines.length) {
+    systemBlocks.push({
+      type: "text",
+      text: [
+        "TENANT IDENTITY (the seller; NEVER the customer):",
+        ...tenantIdentityLines,
+        "",
+        "Any email, phone, or GSTIN that matches the tenant identity above",
+        "belongs to the SELLER, not the buyer. Do NOT copy them into",
+        "customer.email / customer.phone / customer.gstin. Set those fields",
+        "to null when the only contact details on the document belong to",
+        "the seller. Buyer blocks on Indian POs frequently omit email and",
+        "phone; null is the correct value in that case.",
+      ].join("\n"),
+    });
+  }
+
   if (hints?.knownFields && Object.keys(hints.knownFields).length) {
     systemBlocks.push({
       type: "text",

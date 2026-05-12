@@ -55,6 +55,7 @@ import { applyOverrides, loadOverrides, recordOverrideUsage } from "./overrides.
 import { voteAcrossAdapters } from "./voter.js";
 import { validateExtraction } from "./validators.js";
 import { recordEvent } from "../audit.js";
+import { buildTenantIdentity, scrubCustomerOfTenantIdentity } from "./tenant-scrub.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (s) => typeof s === "string" && UUID_REGEX.test(s);
@@ -518,6 +519,33 @@ export const runExtractionPipeline = async (params) => {
         });
       }
     } catch (_e) { /* don't break the run */ }
+  }
+
+  // 6b. Tenant-identity scrub (May 2026 audit fix). Strip any
+  // customer fields that match the tenant's own contact info.
+  // Closes the "extractor pulled the seller's salesperson email
+  // into the customer record" leak on Indian POs whose buyer
+  // block omits an email but the document body carries the
+  // seller's printed contact details.
+  let tenantScrubbed = [];
+  if (out?.normalized?.customer) {
+    try {
+      const tQ = await svc.from("tenants")
+        .select("display_name")
+        .eq("id", ctx.tenantId)
+        .maybeSingle();
+      const identity = buildTenantIdentity(tQ?.data || null, settings);
+      if (identity) {
+        const { customer, scrubbed } = scrubCustomerOfTenantIdentity(out.normalized.customer, identity);
+        out.normalized.customer = customer;
+        tenantScrubbed = scrubbed;
+        if (scrubbed.length) {
+          await recordRunEvent("docai_tenant_identity_scrubbed", {
+            fields: scrubbed,
+          });
+        }
+      }
+    } catch (_e) { /* scrub is best-effort */ }
   }
 
   // 7. L5 validators.

@@ -449,6 +449,36 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   // tenant and the same customer's overrides.
   const fewShot = buildFewShot(promptOverrides);
   const systemBlocks = [{ type: "text", text: activePrompt, cache_control: { type: "ephemeral" } }];
+
+  // Audit fix May 2026: surface the tenant identity to the model
+  // so it does not promote the seller's printed contact details
+  // (the tenant's salesperson email/phone, support number) into
+  // the customer record on POs whose buyer block omits an email.
+  // The server still scrubs as a safety net (tenant-scrub.js) but
+  // proactive prevention is cheaper than reactive cleanup.
+  const tenantIdentityLines = [];
+  if (settings?.einvoice_seller_legal_name) tenantIdentityLines.push("  legal_name: " + settings.einvoice_seller_legal_name);
+  if (settings?.einvoice_seller_gstin) tenantIdentityLines.push("  gstin: " + settings.einvoice_seller_gstin);
+  if (settings?.einvoice_seller_email) tenantIdentityLines.push("  email: " + settings.einvoice_seller_email + " (and any address @<this-domain>)");
+  if (settings?.einvoice_seller_phone) tenantIdentityLines.push("  phone: " + settings.einvoice_seller_phone);
+  if (tenantIdentityLines.length) {
+    systemBlocks.push({
+      type: "text",
+      text: [
+        "TENANT IDENTITY (the seller; NEVER the customer):",
+        ...tenantIdentityLines,
+        "",
+        "Any email, phone, or GSTIN that matches the tenant identity above",
+        "belongs to the SELLER, not the buyer. Do NOT copy them into",
+        "customer.email / customer.phone / customer.gstin. Set those fields",
+        "to null when the only contact details on the document belong to",
+        "the seller. Buyer blocks on Indian POs frequently omit email and",
+        "phone; null is the correct value in that case.",
+      ].join("\n"),
+      cache_control: { type: "ephemeral" },
+    });
+  }
+
   if (fewShot.length) {
     systemBlocks.push({
       type: "text",

@@ -3,6 +3,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { parsePoDate } from "../_lib/parse-date.js";
+import { mapLinesToItemMaster } from "../_lib/item-mapper.js";
 
 const STATUS_VALUES = new Set(["DRAFT", "PENDING_REVIEW", "APPROVED", "BLOCKED", "DUPLICATE", "REUSED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED", "CANCELLED"]);
 
@@ -118,6 +119,26 @@ export default async function handler(req, res) {
             body.country = cust.data.country;
           }
         } catch (_) { /* country lookup is best-effort */ }
+      }
+
+      // Item alias auto-map (May 2026 audit fix). The buyer may
+      // write their own part numbers; map each line back to the
+      // tenant's canonical item_master row via
+      // item_customer_parts -> item_master.part_no -> item_master.alias.
+      // Backfills hsn / uom on the line when the buyer omitted
+      // them; stamps `_mapped_item` so the recon table + Tally
+      // emit + PDF know the canonical print_name / GST rate.
+      if (body.customer_id && body.result?.salesOrder?.lineItems?.length) {
+        try {
+          const mapped = await mapLinesToItemMaster(
+            svc, ctx.tenantId, body.customer_id,
+            body.result.salesOrder.lineItems,
+          );
+          body.result = {
+            ...body.result,
+            salesOrder: { ...body.result.salesOrder, lineItems: mapped },
+          };
+        } catch (_) { /* item map is best-effort */ }
       }
       let { data, error } = await svc.from("orders").insert(orderRow(ctx, body)).select("*").single();
       // PostgREST schema-cache miss (PGRST204) or Postgres

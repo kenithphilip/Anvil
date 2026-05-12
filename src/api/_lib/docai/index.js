@@ -21,6 +21,7 @@ import * as gaeb from "./gaeb.js";
 import * as docling from "./docling.js";
 import * as marker from "./marker.js";
 import * as gemini from "./gemini.js";
+import * as office from "./office.js";
 import { allowedToCall, recordCall } from "../cost_guard.js";
 import { serviceClient } from "../supabase.js";
 import { rankAdaptersForCustomer } from "./adapter-learning.js";
@@ -45,6 +46,11 @@ const guessSourceType = ({ filename, mime, bytes }) => {
   // GAEB DA XML: detect by extension OR by sniffing the file bytes
   // for a top-level <GAEB> element. Phase 5.3.
   if (gaeb.looksLikeGaeb({ filename, bytes })) return "gaeb";
+  // Wave 2.2: Office formats (DOCX zip, RTF stream). Sniff so an
+  // attachment renamed without extension still routes.
+  if (office.isDocx({ filename, mime, bytes })) return "docx";
+  if (office.isRtf({ filename, mime, bytes })) return "rtf";
+  if (office.isLegacyDoc({ filename, bytes })) return "legacy_doc";
   if (f.endsWith(".pdf") || mime === "application/pdf") return "pdf";
   return "pdf";
 };
@@ -64,6 +70,61 @@ export const buildPromptOverrides = (settings, customerId) => {
 
 export const dispatchExtract = async ({ source, settings, customerId, hints, runCost = null }) => {
   const sourceType = source.sourceType || guessSourceType(source);
+  // Wave 2.2: DOCX / RTF inputs are extracted to plain text via the
+  // office parser, then the normal LLM chain runs on the extracted
+  // text. We mutate `hints.bodyText` so claude.js / gemini.js's
+  // pre_extracted_text mode kicks in. Source is rewritten to look
+  // like a non-PDF "text source" so the PDF chunker / TOC profiler
+  // don't accidentally fire on docx bytes. Legacy .doc surfaces an
+  // explicit error so the operator gets clear feedback.
+  if (sourceType === "docx" || sourceType === "rtf") {
+    const office = await import("./office.js");
+    const extracted = await office.extractOfficeText({
+      bytes: source.bytes, filename: source.filename, mime: source.mime,
+    });
+    if (!extracted.ok) {
+      return {
+        ok: false,
+        adapter_used: "office",
+        normalized: null,
+        confidences: {},
+        confidence_overall: null,
+        attempts: [{ adapter: "office", status: "failed", error: extracted.error }],
+        reason: extracted.error || "office_extract_failed",
+        error: extracted.error || "office_extract_failed",
+        latency_ms: extracted.latency_ms,
+        mode: extracted.kind,
+      };
+    }
+    const officeHints = { ...(hints || {}), bodyText: extracted.body_text, expectedFormat: extracted.kind };
+    const officeSource = { ...source, sourceType: "text", mime: "text/plain" };
+    const llmOut = await dispatchExtract({
+      source: officeSource, settings, customerId, hints: officeHints, runCost,
+    });
+    // Tag the result so audit can tell a docx/rtf path apart from
+    // a native PDF run.
+    if (llmOut && typeof llmOut === "object") {
+      llmOut.office_extracted = {
+        kind: extracted.kind,
+        extractor: extracted.extractor,
+        char_count: extracted.char_count,
+      };
+    }
+    return llmOut;
+  }
+  if (sourceType === "legacy_doc") {
+    return {
+      ok: false,
+      adapter_used: "office",
+      normalized: null,
+      confidences: {},
+      confidence_overall: null,
+      attempts: [{ adapter: "office", status: "failed", reason: "unsupported_legacy_doc" }],
+      reason: "unsupported_legacy_doc",
+      error: "legacy .doc binary is not supported; ask the sender for a PDF or .docx",
+      mode: "legacy_doc",
+    };
+  }
   // Excel always routes to the in-process parser; LLMs are bad at
   // multi-tab tenders.
   if (sourceType === "xlsx") {

@@ -45,12 +45,10 @@ begin
   select count(*) into anvil_objects from storage.objects where bucket_id = 'anvil-documents';
   total_objects := coalesce(obara_objects, 0) + coalesce(anvil_objects, 0);
 
-  insert into audit_events (tenant_id, action, object_type, object_id, detail, created_at)
-  values (null, 'rls.storage_tenant_scope.bringup', 'storage.objects', null,
-          'obara=' || coalesce(obara_objects, 0) ||
-          ', anvil=' || coalesce(anvil_objects, 0) ||
-          ', total=' || total_objects, now())
-  on conflict do nothing;
+  -- Emit a NOTICE rather than writing audit_events: that table
+  -- requires tenant_id NOT NULL and this bringup row is
+  -- platform-wide. The migration log captures the counts.
+  raise notice 'rls.storage_tenant_scope.bringup: obara=%, anvil=%, total=%', coalesce(obara_objects, 0), coalesce(anvil_objects, 0), total_objects;
 end $$;
 
 -- 1. Drop the open policies and replace with the strict

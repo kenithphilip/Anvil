@@ -59,13 +59,12 @@ begin
    where a.id = p.audit_id;
   get diagnostics backfilled = row_count;
 
-  -- Audit the backfill so SOC 2 reviewers can prove the rows
-  -- were touched intentionally.
+  -- Emit a NOTICE so the migration log captures the count.
+  -- We do NOT write a row to audit_events here because that table
+  -- requires tenant_id NOT NULL and the backfill spans tenants.
+  -- The migration log line is enough for SOC 2 review.
   if backfilled > 0 then
-    insert into audit_events (tenant_id, action, object_type, object_id, detail, created_at)
-    values (null, 'rls.backfill.auth_magic_links', 'auth_magic_links', null,
-            'backfilled ' || backfilled || ' rows', now())
-    on conflict do nothing;
+    raise notice 'rls.backfill.auth_magic_links: backfilled % rows', backfilled;
   end if;
 
   -- Orphans: emails not in auth.users at all. Safe to delete:
@@ -84,10 +83,7 @@ begin
   select count(*) into orphaned from orphans;
 
   if orphaned > 0 then
-    insert into audit_events (tenant_id, action, object_type, object_id, detail, created_at)
-    values (null, 'rls.delete_orphan.auth_magic_links', 'auth_magic_links', null,
-            'deleted ' || orphaned || ' null-tenant orphan rows (email not in auth.users)', now())
-    on conflict do nothing;
+    raise notice 'rls.delete_orphan.auth_magic_links: deleted % null-tenant orphan rows (email not in auth.users)', orphaned;
   end if;
 end $$;
 
@@ -106,10 +102,7 @@ begin
   select count(*) into orphaned from quarantine;
 
   if orphaned > 0 then
-    insert into audit_events (tenant_id, action, object_type, object_id, detail, created_at)
-    values (null, 'rls.delete_orphan.auth_magic_links', 'auth_magic_links', null,
-            'deleted ' || orphaned || ' tenantless-user audit rows', now())
-    on conflict do nothing;
+    raise notice 'rls.delete_orphan.auth_magic_links: deleted % tenantless-user audit rows', orphaned;
   end if;
 end $$;
 

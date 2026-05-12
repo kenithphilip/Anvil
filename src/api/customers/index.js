@@ -3,6 +3,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { safeAwait } from "../_lib/safe-thenable.js";
+import { validateGstin } from "../_lib/gstin.js";
 
 // Best-effort parser that pulls structured fields out of a multi-line
 // address blob. The intake dialog gives us free-text; the
@@ -96,6 +97,25 @@ export default async function handler(req, res) {
       const derivedKey = body.customer_key || slugify(body.customer_name);
       if (!derivedKey) {
         return json(res, 400, { error: { message: "customer_key or customer_name required" } });
+      }
+
+      // Phase 1 F8: validate GSTIN at the entry point so typos
+      // (digit-swap, transposed letters, wrong last char) cannot
+      // land on the customer master and break downstream e-invoice
+      // IRN generation or Tally party lookup. Existing records are
+      // not retroactively validated; only new writes.
+      if (body.gstin && String(body.gstin).trim()) {
+        const v = validateGstin(body.gstin);
+        if (!v.ok) {
+          return json(res, 400, {
+            error: {
+              code: v.code,
+              message: "Customer GSTIN rejected: " + v.message,
+              field: "gstin",
+            },
+          });
+        }
+        body.gstin = v.normalized;
       }
       // Normalise country: NULL when caller passes an empty string;
       // upper-case otherwise. Migration 096 has no constraint other

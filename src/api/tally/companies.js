@@ -15,6 +15,26 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { tallyEncryptedTokenColumns } from "../_lib/tally-client.js";
+import { validateGstin } from "../_lib/gstin.js";
+
+// Phase 1 F8: reject typo'd GSTINs at the tally_companies entry
+// point. A typo on the tenant's own GSTIN poisons every voucher
+// the bridge pushes and breaks the GSTR-1 sync. Validates on POST
+// (create) and PATCH (update); leaves existing rows unchanged.
+const checkCompanyGstin = (body) => {
+  if (!body || body.gstin === undefined || body.gstin === null) return null;
+  const raw = String(body.gstin).trim();
+  if (!raw) return null;
+  const v = validateGstin(raw);
+  if (!v.ok) {
+    return {
+      code: v.code,
+      message: "Tally company GSTIN rejected: " + v.message,
+    };
+  }
+  body.gstin = v.normalized;
+  return null;
+};
 
 const STRIP_TOKEN = (row) => {
   if (!row) return row;
@@ -44,6 +64,8 @@ export default async function handler(req, res) {
       requirePermission(ctx, "admin");
       const body = await readBody(req);
       if (!body?.name) return json(res, 400, { error: { message: "name required" } });
+      const gstinErr = checkCompanyGstin(body);
+      if (gstinErr) return json(res, 400, { error: { ...gstinErr, field: "gstin" } });
       const tokenColumns = tallyEncryptedTokenColumns(body.bridge_token || null);
 
       // First company auto-becomes default.
@@ -87,6 +109,8 @@ export default async function handler(req, res) {
     if (req.method === "PATCH" || req.method === "PUT") {
       requirePermission(ctx, "admin");
       const body = await readBody(req);
+      const gstinErr = checkCompanyGstin(body);
+      if (gstinErr) return json(res, 400, { error: { ...gstinErr, field: "gstin" } });
       const patch = {};
       const fields = ["name", "bridge_url", "bridge_version", "default_voucher_series",
         "default_sales_ledger", "default_party_group", "gstin", "state_code"];

@@ -43,7 +43,13 @@ const isValidEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || "").tr
 // echo the caller's value back to Supabase when it shares the
 // configured APP_URL origin. Otherwise fall back to APP_URL/#/reset.
 const safeRedirectTo = (caller) => {
-  const fallback = APP_URL ? APP_URL.replace(/\/+$/, "") + "/#/reset" : "";
+  // Bug fix May 2026 (recovery-stuck-on-home report): default to
+  // /auth/callback.html rather than /#/reset. The callback page
+  // hands the recovery token off via sessionStorage and routes to
+  // /#/reset on a single-fragment URL. The previous /#/reset
+  // fallback produced a double-fragment URL (#/reset#access_token=...)
+  // that the SPA router treated as an unknown route.
+  const fallback = APP_URL ? APP_URL.replace(/\/+$/, "") + "/auth/callback.html" : "";
   if (!caller) return fallback;
   if (!APP_URL) return fallback;
   try {

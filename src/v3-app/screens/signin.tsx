@@ -264,7 +264,14 @@ const SignInScreen: React.FC = () => {
     persistConfig();
     try {
       const cfg = (ObaraBackend?.getConfig?.() || {}) as { url?: string };
-      const redirect = (cfg.url || "").replace(/\/+$/, "") + "/#/reset";
+      // Bug fix May 2026 (recovery-stuck-on-home report): point
+      // Supabase at /auth/callback.html instead of /#/reset. The
+      // callback page detects type=recovery, hands the token off
+      // via sessionStorage, and redirects to /#/reset. Avoids the
+      // double-fragment URL shape (#/reset#access_token=...) that
+      // would otherwise leave the user on the home screen.
+      const origin = (typeof window !== "undefined" && window.location.origin) || (cfg.url || "");
+      const redirect = origin.replace(/\/+$/, "") + "/auth/callback.html";
       const resp = await fetch((cfg.url || "").replace(/\/+$/, "") + "/api/auth/request_reset", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

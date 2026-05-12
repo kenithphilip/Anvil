@@ -16,34 +16,90 @@ import { ObaraBackend } from "../lib/api";
 
 const MIN_PASSWORD = 10;
 
-const parseRecoveryToken = (): { access_token: string | null; type: string | null; error: string | null } => {
-  // Supabase recovery links put params in the fragment after the
-  // hash route, e.g. #/reset#access_token=...&type=recovery .
-  // We accept either an embedded fragment or a "?access_token=..."
-  // query. URLSearchParams handles both transparently when we
-  // strip the leading char.
+// Recovery-token transport.
+//
+// Preferred: sessionStorage["anvil:recovery"] populated by the
+// callback page (public/auth/callback.js). The recovery flow is:
+//   1. User clicks the Supabase recovery email link.
+//   2. Supabase verifies the token and 302's to /auth/callback.html
+//      with #access_token=...&type=recovery in the URL fragment.
+//   3. callback.js detects type=recovery, moves the token to
+//      sessionStorage, clears the URL fragment, redirects to /#/reset.
+//   4. This screen reads sessionStorage, clears it immediately, and
+//      shows the new-password form.
+//
+// Fallback: URL parse. For old links generated before the callback
+// route landed, or operator hand-crafted URLs, we still parse the
+// fragment + search. The fallback also clears the URL fragment via
+// history.replaceState as soon as the token is captured.
+//
+// Both paths put the token in component state for the lifetime of
+// the form; it is sent to /api/auth/complete_reset and discarded.
+const RECOVERY_KEY = "anvil:recovery";
+
+type RecoveryState = { access_token: string | null; type: string | null; error: string | null };
+
+const readSessionStorage = (): RecoveryState | null => {
+  try {
+    const raw = sessionStorage.getItem(RECOVERY_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return {
+      access_token: parsed?.access_token || null,
+      type: "recovery",
+      error: null,
+    };
+  } catch (_) {
+    return null;
+  }
+};
+
+const clearSessionStorage = () => {
+  try { sessionStorage.removeItem(RECOVERY_KEY); } catch (_) {}
+};
+
+const clearUrlFragment = () => {
+  if (typeof window === "undefined") return;
+  try {
+    // Keep the route on /reset; drop the inner fragment with the
+    // token. history.replaceState avoids the back-button history
+    // entry.
+    window.history.replaceState(null, "", window.location.pathname + "#/reset");
+  } catch (_) {}
+};
+
+const parseRecoveryToken = (): RecoveryState => {
   if (typeof window === "undefined") return { access_token: null, type: null, error: null };
+  // Tier 1: sessionStorage handoff from the callback page.
+  const fromStorage = readSessionStorage();
+  if (fromStorage?.access_token) {
+    // Single-use: clear immediately so a refresh + abandoned form
+    // does not leave the token sitting in storage.
+    clearSessionStorage();
+    return fromStorage;
+  }
+  // Tier 2: legacy URL fragment parse.
   const raw = window.location.hash || "";
-  // Drop the route prefix (#/reset). Anything after the next # or ?
-  // is the param payload.
   const tail = raw.replace(/^#\/?reset/, "").replace(/^[?#]/, "");
-  if (!tail) {
-    // Token might be in the search string for some hosts.
+  let params: URLSearchParams;
+  if (tail) {
+    params = new URLSearchParams(tail);
+  } else {
     const search = window.location.search.replace(/^\?/, "");
     if (!search) return { access_token: null, type: null, error: null };
-    const params = new URLSearchParams(search);
-    return {
-      access_token: params.get("access_token"),
-      type: params.get("type"),
-      error: params.get("error_description") || params.get("error"),
-    };
+    params = new URLSearchParams(search);
   }
-  const params = new URLSearchParams(tail);
-  return {
+  const state: RecoveryState = {
     access_token: params.get("access_token"),
     type: params.get("type"),
     error: params.get("error_description") || params.get("error"),
   };
+  if (state.access_token) {
+    // Hide the token from the address bar + browser history as soon
+    // as we have it in memory.
+    clearUrlFragment();
+  }
+  return state;
 };
 
 const ResetPassword: React.FC = () => {
@@ -56,11 +112,10 @@ const ResetPassword: React.FC = () => {
 
   useEffect(() => {
     // If we got here without a token, the user probably opened the
-    // route directly; bounce them to the landing sign-in tab.
-    if (!parsed.access_token && !parsed.error) {
-      const t = setTimeout(() => { window.location.hash = "#/landing"; }, 1500);
-      return () => clearTimeout(t);
-    }
+    // route directly. Surface a clear "request a reset email" CTA
+    // instead of bouncing them; the previous auto-bounce hid the
+    // problem and made the failure mode look like the home screen
+    // loading. The CTA is rendered below when access_token is null.
     return undefined;
   }, [parsed.access_token, parsed.error]);
 
@@ -147,7 +202,12 @@ const ResetPassword: React.FC = () => {
                 <Banner kind="bad">{parsed.error}</Banner>
               )}
               {!parsed.access_token && !parsed.error && (
-                <Banner kind="info">No recovery token found. Redirecting to sign-in…</Banner>
+                <Banner kind="info">
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <span>This page expects a recovery token from a password-reset email. If you arrived here directly, request a new email from sign-in.</span>
+                    <Btn kind="ghost" onClick={() => { window.location.hash = "#/signin"; }}>Go to sign-in</Btn>
+                  </div>
+                </Banner>
               )}
               <form onSubmit={onSubmit} className="landing-auth-form">
                 <label className="landing-field">

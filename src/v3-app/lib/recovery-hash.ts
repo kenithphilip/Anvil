@@ -26,19 +26,34 @@ const RECOVERY_PARAM_NAMES = new Set([
   "token_type",
 ]);
 
+// Bug fix May 2026 (recovery-stuck-on-home report): Supabase's
+// recovery email lands on `#/reset?access_token=...&type=recovery`
+// (legacy `?`) or `#/reset#access_token=...&type=recovery` (double
+// fragment when redirect_to had a hash). We detect the reset-route
+// prefix explicitly so we only walk past the inner delimiter when
+// it is a known recovery-eligible route. This stops a malicious
+// link like `#/some-route?access_token=injected` from masquerading
+// as a recovery URL.
+const RECOVERY_ROUTE_PREFIX = /^#\/?reset[?#]/;
+
 export const looksLikeRecoveryHash = (hash: string | null | undefined): boolean => {
   if (!hash) return false;
-  // Strip route prefix (`#/`) + leading delimiter (`?` or `#`).
+  // Case A: reset-route + inner recovery params.
+  if (RECOVERY_ROUTE_PREFIX.test(hash)) {
+    const tail = hash.replace(RECOVERY_ROUTE_PREFIX, "");
+    if (!tail) return false;
+    // Must contain recovery markers.
+    if (!tail.includes("access_token=") && !tail.includes("type=recovery")) return false;
+    const firstPair = tail.split("&")[0];
+    const [key] = firstPair.split("=");
+    return RECOVERY_PARAM_NAMES.has(key);
+  }
+  // Case B: canonical Supabase shape (no route prefix).
   const stripped = hash.replace(/^#\/?/, "").replace(/^[?#]/, "");
   if (!stripped) return false;
-  // Cheap check: if neither indicator is present, this is not a
-  // recovery URL.
-  if (!stripped.includes("access_token=") && !stripped.includes("type=recovery")) {
-    return false;
-  }
-  // Confirm the structure is a key=value param string. A route id
-  // that happens to contain "access_token" as a substring is not
-  // a recovery URL.
+  if (!stripped.includes("access_token=") && !stripped.includes("type=recovery")) return false;
+  // A route id that happens to contain "access_token" as a substring
+  // is not a recovery URL.
   const firstPair = stripped.split("&")[0];
   const [key] = firstPair.split("=");
   return RECOVERY_PARAM_NAMES.has(key);

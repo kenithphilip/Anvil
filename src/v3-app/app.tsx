@@ -32,7 +32,14 @@ const INTENDED_ROUTE_KEY_SUFFIX = "v3_intended_route";
 const parseRoute = () => {
   const hash = (typeof window !== "undefined" && window.location.hash) || "";
   if (looksLikeRecoveryHash(hash)) return "reset";
-  const id = hash.replace(/^#\/?/, "").split("?")[0];
+  // Bug fix May 2026: when a Supabase recovery email lands on
+  // `#/reset#access_token=...` and the recovery-hash check above
+  // somehow misses (shouldn't, after the helper fix; this is belt
+  // and suspenders), the prior `.split("?")[0]` would treat the
+  // entire "reset#access_token=..." chunk as the route id and fall
+  // through to the home route. Splitting on both `?` and `#` keeps
+  // the route id clean.
+  const id = hash.replace(/^#\/?/, "").split(/[#?]/)[0];
   if (id && RESOLVERS[id]) return id;
   try { return lsGet(ROUTE_KEY_SUFFIX) || DEFAULT_ROUTE; }
   catch (_) { return DEFAULT_ROUTE; }
@@ -183,7 +190,10 @@ export default function App() {
         setRoute("reset");
         return;
       }
-      const id = hash.replace(/^#\/?/, "").split("?")[0];
+      // Split on both `?` and `#` so the double-fragment shape from
+      // a provider redirect (`#/reset#access_token=...`) reduces to
+      // the route id, not a long blob.
+      const id = hash.replace(/^#\/?/, "").split(/[#?]/)[0];
       if (id && RESOLVERS[id] && id !== route) setRoute(id);
     };
     window.addEventListener("hashchange", onHash);

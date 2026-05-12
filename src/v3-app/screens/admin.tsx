@@ -1855,6 +1855,45 @@ const WiredAdminCRUD = () => {
                     ["Tenant memberships", String(profile.memberships?.length || 0)],
                   ]} />
                 </Card>
+                {/* Bug fix May 2026 (magic-link-only user lockout):
+                    users who signed up via CLI or magic link only
+                    never set a password, so the sign-in screen's
+                    password field is unusable for them. The
+                    recovery email path was broken on the route
+                    side too. This card lets the logged-in user
+                    trigger a recovery email for their own account,
+                    completing the flow without needing to log out
+                    first. The email link lands on /auth/callback.html
+                    which hands off to /#/reset via sessionStorage. */}
+                <Card title="Set or change password" eyebrow="for sign-in without magic link">
+                  <div className="body" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                      A reset link will be emailed to <b>{profile.user?.email || "your account"}</b>.
+                      The link is single-use and expires in 1 hour. Use it to set a password so you can sign in
+                      without a magic link.
+                    </span>
+                    <Btn sm kind="primary" onClick={async () => {
+                      try {
+                        const cfg = (ObaraBackend?.getConfig?.() || {}) as { url?: string };
+                        const origin = (typeof window !== "undefined" && window.location.origin) || (cfg.url || "");
+                        const redirect = origin.replace(/\/+$/, "") + "/auth/callback.html";
+                        const session = (ObaraBackend?.getSession?.() || null) as { access_token?: string } | null;
+                        const headers: Record<string, string> = { "Content-Type": "application/json" };
+                        if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+                        const resp = await fetch((cfg.url || "").replace(/\/+$/, "") + "/api/auth/request_reset", {
+                          method: "POST",
+                          headers,
+                          body: JSON.stringify({ email: profile.user?.email, redirect_to: redirect }),
+                        });
+                        const body = await resp.json().catch(() => null);
+                        if (!resp.ok) throw new Error(body?.error?.message || "Could not send reset email");
+                        window.notifySuccess?.("Reset link sent", body?.message || "Check your inbox.");
+                      } catch (err: any) {
+                        window.notifyError?.("Could not send reset email", err?.message || String(err));
+                      }
+                    }}>Email me a password-set link</Btn>
+                  </div>
+                </Card>
                 {Array.isArray(profile.memberships) && profile.memberships.length > 0 && (
                   <Card title="Your roles" eyebrow="across all tenants you belong to">
                     <table className="tbl">

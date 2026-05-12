@@ -3,6 +3,15 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
+<!-- no-referrer prevents the access_token in the URL fragment from
+     leaking via the Referer header to any third-party origin a
+     subsequent link on this page might point to. -->
+<meta name="referrer" content="no-referrer"/>
+<!-- This page handles single-use auth callbacks. Aggressive cache
+     suppression prevents the URL (with token in the fragment) from
+     being served from disk cache on a back-button. -->
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, private"/>
+<meta http-equiv="Pragma" content="no-cache"/>
 <title>Anvil sign-in callback</title>
 <style>
   body { font-family: Inter, system-ui, sans-serif; background: #fafaf9; color: #1c1917; padding: 32px; max-width: 520px; margin: 6vh auto; }

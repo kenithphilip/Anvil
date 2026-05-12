@@ -19,13 +19,22 @@ describe("looksLikeRecoveryHash", () => {
   });
 
   it("returns false for the legacy '#/reset?access_token=...' shape (handled by RESOLVERS)", () => {
-    // The legacy shape carries the "reset" route id directly, so
-    // the existing RESOLVERS lookup in parseRoute handles it
-    // without this helper firing. We document the contract here:
-    // looksLikeRecoveryHash is only for the canonical Supabase
-    // shape where the fragment starts with the recovery params
-    // themselves.
-    expect(looksLikeRecoveryHash("#/reset?access_token=abc&type=recovery")).toBe(false);
+    // After the May 2026 fix the helper handles this shape too,
+    // by walking past the inner `?` or `#` delimiter so the
+    // recovery params are recognised. parseRoute still gets `reset`
+    // via its split-on-[#?] logic; this helper is the safety net
+    // for any code path that needs to know we are mid-recovery.
+    expect(looksLikeRecoveryHash("#/reset?access_token=abc&type=recovery")).toBe(true);
+  });
+
+  it("returns true for the double-fragment '#/reset#access_token=...' shape", () => {
+    // The actual shape from a Supabase recovery email when
+    // redirect_to was '/#/reset': the provider appends
+    // #access_token=... to the configured URL, producing two
+    // fragments in one URL. The browser flattens both into
+    // window.location.hash as a single string. The helper must
+    // walk past the inner # delimiter.
+    expect(looksLikeRecoveryHash("#/reset#access_token=abc&type=recovery&expires_in=3600")).toBe(true);
   });
 
   it("returns false for a normal route hash", () => {

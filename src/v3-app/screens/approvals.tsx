@@ -352,7 +352,15 @@ const WiredApprovals = () => {
               Queue is empty. Pending approvals appear here when an SO breaches policy.
             </div>
           ) : (
-            <table className="tbl">
+            // Wrap the table in a horizontally scrollable container.
+            // The Actions column carries 3 buttons (review, approve,
+            // reject) plus generous gaps; on standard laptop widths
+            // (1280px) the rightmost button was being clipped by the
+            // viewport edge because the Card had no overflow guard.
+            // overflow-x: auto lets the user scroll if the columns
+            // exceed the Card width without ever hiding actions.
+            <div style={{ overflowX: "auto" }}>
+            <table className="tbl" style={{ minWidth: 960 }}>
               <thead><tr>
                 <th>Reference</th>
                 <th>Customer</th>
@@ -393,6 +401,7 @@ const WiredApprovals = () => {
                 })}
               </tbody>
             </table>
+            </div>
           )}
         </Card>
       </div>

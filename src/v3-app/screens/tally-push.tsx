@@ -18,10 +18,13 @@ const tallyPushSnapshot = (order) => ({
   orderId: order.id,
   voucherNo: order.po_number || ("SO:" + String(order.id).slice(0, 8)),
   payloadHash: order.payload_hash || (order.approval && order.approval.payloadHash) || null,
-  // Server requires tallyXml in body; with no client-side composer, emit a
-  // minimal envelope so the push endpoint can record an attempt and surface
-  // any bridge error in the UI.
-  tallyXml: "<ENVELOPE/>",
+  // Phase 1 F1 (second half): the server composes the Tally
+  // voucher XML from order + customer + tally_companies. We
+  // intentionally do NOT send a tallyXml body; the push handler
+  // builds it via buildSalesVoucherXml in
+  // src/api/_lib/tally-build-voucher.js. Old callers that send
+  // the literal "<ENVELOPE/>" placeholder are detected by
+  // isPlaceholderXml and rebuilt server-side.
   salesOrder: (order.result && order.result.salesOrder) || null,
 });
 

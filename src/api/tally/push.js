@@ -24,6 +24,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { tallyPush, tallyResolveCompany, tallyIsRecoverable } from "../_lib/tally-client.js";
 import { resolveSalesVoucherType } from "../_lib/tally-voucher-type.js";
+import { buildSalesVoucherXml, isPlaceholderXml } from "../_lib/tally-build-voucher.js";
 
 const idempotencyKey = (gstin, poNumber, payloadHash) =>
   [String(gstin || ""), String(poNumber || ""), String(payloadHash || "")].join("|");
@@ -60,8 +61,8 @@ export default async function handler(req, res) {
     const ctx = await resolveContext(req);
     requirePermission(ctx, "approve");
     const body = await readBody(req);
-    if (!body?.orderId || !body?.tallyXml) {
-      return json(res, 400, { error: { message: "orderId and tallyXml required" } });
+    if (!body?.orderId) {
+      return json(res, 400, { error: { message: "orderId required" } });
     }
     const svc = serviceClient();
     const company = await tallyResolveCompany(svc, ctx.tenantId, body.companyId);
@@ -90,6 +91,29 @@ export default async function handler(req, res) {
       return json(res, 409, { error: { message: "Payload hash mismatch with approved order" } });
     }
 
+    // F1 second half: compose the voucher XML server-side when
+    // the caller did not supply one or supplied the placeholder
+    // <ENVELOPE/>. Old callers continue to work; the v3 UI now
+    // omits tallyXml and lets the server build it from the
+    // order + customer + tally_companies row.
+    const customerGstin = (order.result?.po?.customerGstin) || order.customer_gstin || "";
+    const voucherNo = body.voucherNo || ("SO:" + order.po_number);
+    let tallyXml = body.tallyXml;
+    let composer_metadata = null;
+    if (!tallyXml || isPlaceholderXml(tallyXml)) {
+      const customerQ = order.customer_id
+        ? await svc.from("customers").select("*").eq("tenant_id", ctx.tenantId).eq("id", order.customer_id).maybeSingle()
+        : { data: null };
+      const built = buildSalesVoucherXml({
+        order,
+        company,
+        customer: customerQ.data || null,
+        voucherNo,
+      });
+      tallyXml = built.xml;
+      composer_metadata = built.metadata;
+    }
+
     if (body.dry_run) {
       return json(res, 200, {
         ok: true,
@@ -97,15 +121,13 @@ export default async function handler(req, res) {
         bridge_url: company.bridge_url,
         company: company.name,
         voucher_type: voucherType,
-        payload_xml: body.tallyXml,
+        payload_xml: tallyXml,
         payload_hash: expected,
+        composer_metadata,
       });
     }
 
-    const customerGstin = (order.result?.po?.customerGstin) || order.customer_gstin || "";
     const idem = idempotencyKey(customerGstin, order.po_number || body.voucherNo, expected);
-
-    const voucherNo = body.voucherNo || ("SO:" + order.po_number);
     const existing = await svc.from("tally_voucher_records")
       .select("*")
       .eq("tenant_id", ctx.tenantId)
@@ -116,7 +138,7 @@ export default async function handler(req, res) {
       return json(res, 200, { idempotent: true, record: existing.data });
     }
 
-    const pushResp = await tallyPush(company, body.tallyXml).catch((err) => ({
+    const pushResp = await tallyPush(company, tallyXml).catch((err) => ({
       ok: false, status: 0, body: err?.message || String(err), latency_ms: 0,
     }));
     const ok = pushResp.ok;
@@ -166,7 +188,7 @@ export default async function handler(req, res) {
     });
 
     if (!ok && tallyIsRecoverable(pushResp.status)) {
-      await enqueueRetry(svc, ctx, company, order, body, voucherType, upsert.data.id, pushResp.status, bridgeError);
+      await enqueueRetry(svc, ctx, company, order, { ...body, tallyXml }, voucherType, upsert.data.id, pushResp.status, bridgeError);
     }
 
     return json(res, ok ? 200 : 502, {

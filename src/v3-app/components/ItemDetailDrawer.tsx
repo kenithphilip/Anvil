@@ -261,7 +261,7 @@ export const ItemDetailDrawer: React.FC<{
           <TabBtn active={tab === "tax"} onClick={() => setTab("tax")}>Tax</TabBtn>
           <TabBtn active={tab === "inv"} onClick={() => setTab("inv")}>Inventory</TabBtn>
           <TabBtn active={tab === "spec"} onClick={() => setTab("spec")}>Specifications</TabBtn>
-          <TabBtn active={tab === "customers"} onClick={() => setTab("customers")}>Customer parts</TabBtn>
+          <TabBtn active={tab === "customers"} onClick={() => setTab("customers")}>Used by these customers</TabBtn>
           <TabBtn active={tab === "custom"} onClick={() => setTab("custom")}>Custom fields</TabBtn>
         </div>
 
@@ -545,15 +545,48 @@ const CustomerPartsTab: React.FC<{
           <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>No customer part mappings yet.</div>
         ) : (
           <table className="tbl">
-            <thead><tr><th>Customer</th><th>Their part #</th><th>Description</th><th>Primary</th><th>Valid</th></tr></thead>
+            <thead><tr>
+              <th>Customer</th>
+              <th>Their part #</th>
+              <th>Description</th>
+              <th>Source</th>
+              <th>Confidence</th>
+              <th>Confirmed</th>
+              <th>Primary</th>
+              <th>Valid</th>
+            </tr></thead>
             <tbody>
               {mappings.map((m, i) => {
                 const c = customers.find((cc: any) => cc.id === m.customer_id);
+                // Soft-enum chip palette: explicit human action
+                // (manual / bulk_import) reads as `good`; learning
+                // sources (quote / llm) read as `info`; legacy as
+                // `ghost`.
+                const sourceTone: Record<string, "good" | "info" | "ghost"> = {
+                  manual: "good",
+                  bulk_import: "good",
+                  quote_sent: "info",
+                  quote_accepted: "info",
+                  llm_suggest: "info",
+                  cross_customer: "ghost",
+                  legacy: "ghost",
+                };
+                const cv = m.created_via || "legacy";
+                const tone = sourceTone[cv] || "ghost";
+                const confLabel = m.confidence_pct != null
+                  ? Math.round(Number(m.confidence_pct)) + "%"
+                  : "-";
+                const confirmedAt = m.confirmed_at
+                  ? new Date(m.confirmed_at).toISOString().slice(0, 10)
+                  : "-";
                 return (
                   <tr key={i}>
                     <td>{c?.customer_name || m.customer_id.slice(0, 8)}</td>
                     <td className="mono"><span className="pri">{m.customer_part_number}</span></td>
                     <td>{m.customer_part_description || "-"}</td>
+                    <td><Chip k={tone}>{cv.replace(/_/g, " ")}</Chip></td>
+                    <td className="mono-sm">{confLabel}</td>
+                    <td className="mono-sm">{confirmedAt}</td>
                     <td>{m.is_primary ? <Chip k="good">primary</Chip> : "-"}</td>
                     <td className="mono-sm">
                       {m.valid_from ? new Date(m.valid_from).toISOString().slice(0, 10) : ""}

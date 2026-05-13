@@ -2,55 +2,52 @@
 --
 -- Wave CM 2.1: canonical-bound mapping invariant.
 --
--- The user constraint:
+-- The user requirement: many customer SAP numbers can map to
+-- ONE Obara canonical part. The schema today already allows
+-- many-to-one (composite PK on tenant + item + customer + part_no).
+-- But it ALSO allows the same (tenant, customer, customer_part_number)
+-- to map to TWO different items simultaneously. That's a bug.
 --
---   "many part SAP numbers but referred to a common Obara number
---    based on customer master."
+-- This migration enforces "one active mapping per (customer,
+-- customer_part_number)" via a partial unique index where
+-- "active" is defined as `valid_to IS NULL`. The supersession
+-- workflow is:
 --
--- That's the many-to-one shape: many (customer, customer_part_number)
--- rows can point at ONE item_master row. The schema today already
--- allows that because the PK is (tenant, item, customer, part_no).
--- BUT the reverse is also currently permitted: the same
--- (tenant, customer, customer_part_number) pair can be entered
--- twice with two different item_id values, breaking the
--- "one canonical mapping per buyer code" invariant.
+--   Before:  insert row { customer_part='X', item='A',  valid_to=NULL }
+--   To replace A with B:
+--     1. UPDATE the prior row SET valid_to = current_date.
+--     2. INSERT a new row { customer_part='X', item='B', valid_to=NULL }.
 --
--- Example of the bug today:
---   row 1: customer Hyundai, part GD544...0008 -> item THB-L1-GA
---   row 2: customer Hyundai, part GD544...0008 -> item THB-L1-PH
--- The resolver picks whichever is read first; the operator gets
--- a non-deterministic result.
+-- The partial unique index allows step 2 because the prior row
+-- no longer has valid_to=NULL after step 1. Superseded rows
+-- (valid_to non-null) are preserved as audit trail and don't
+-- block the new mapping.
 --
--- This migration adds a partial unique index that enforces the
--- correct direction:
---
---   For each (tenant, customer, customer_part_number), at most
---   ONE ACTIVE row can exist. Activity is defined as:
---     valid_to IS NULL OR valid_to >= today.
---
--- Inactive rows (operator soft-deleted via valid_to in the past)
--- are not constrained, so the audit trail of prior mappings is
--- preserved.
+-- Why NOT `valid_to IS NULL OR valid_to >= current_date`:
+-- Postgres requires functions in index predicates to be
+-- IMMUTABLE. `current_date` is STABLE, so the predicate is
+-- rejected. The application could update valid_to to "today"
+-- and have the row "expire" automatically, but the trade-off
+-- of running an UPDATE in the supersession path is acceptable
+-- for the safety of an enforceable invariant.
 --
 -- Idempotent.
 
--- Drop any prior partial index by this name (in case of re-run
--- with a different predicate).
 drop index if exists item_customer_parts_one_canonical_per_part;
 
--- The partial unique index enforces ONE active item_id per
--- (tenant, customer, customer_part_number).
+-- The partial unique index: one ACTIVE (valid_to IS NULL) row
+-- per (tenant, customer, customer_part_number). Predicate is
+-- pure-immutable so Postgres accepts it.
 create unique index if not exists item_customer_parts_one_canonical_per_part
   on item_customer_parts (tenant_id, customer_id, customer_part_number)
-  where valid_to is null or valid_to >= current_date;
+  where valid_to is null;
 
 comment on index item_customer_parts_one_canonical_per_part is
-  'CM 2.1: enforces many-to-one. The same (tenant, customer, customer_part_number) can be active under at most one item_id at a time; superseded rows must carry valid_to < today.';
+  'CM 2.1: enforces many-to-one. The same (tenant, customer, customer_part_number) can be active under at most one item_id at a time; superseded rows must carry a non-null valid_to.';
 
 -- Audit-friendly: existing rows that already violate the new
 -- invariant. We DO NOT auto-fix them (that's a data decision
--- the operator owns), but we surface them via a verification
--- query the operator can run after the migration.
+-- the operator owns), but we surface them via a NOTICE.
 do $$
 declare
   conflict_count int;
@@ -58,7 +55,7 @@ begin
   select count(*) into conflict_count from (
     select tenant_id, customer_id, customer_part_number
       from item_customer_parts
-      where valid_to is null or valid_to >= current_date
+      where valid_to is null
       group by tenant_id, customer_id, customer_part_number
       having count(distinct item_id) > 1
   ) conflicts;
@@ -69,21 +66,17 @@ begin
   end if;
 end $$;
 
--- Companion index for the supersession workflow: "show me every
--- mapping that has been superseded (valid_to < today) for this
--- customer + part".
+-- Companion index for the supersession-history query.
 create index if not exists item_customer_parts_superseded_idx
   on item_customer_parts (tenant_id, customer_id, customer_part_number, valid_to desc)
-  where valid_to is not null and valid_to < current_date;
+  where valid_to is not null;
 
--- Helper view: only-active mappings. The resolver and the
--- admin UI can SELECT from this view instead of remembering the
--- valid_to filter. Materialised? No: trivial filter, fast index
--- scan; refresh latency would defeat the audit-trail purpose.
+-- Helper view: only-active mappings. Defined as valid_to IS NULL
+-- for the same reason as the index predicate.
 create or replace view item_customer_parts_active as
 select *
   from item_customer_parts
- where (valid_to is null or valid_to >= current_date);
+ where valid_to is null;
 
 comment on view item_customer_parts_active is
-  'CM 2.1: rolling view of currently-active customer-part mappings. Resolver and UI prefer this over the underlying table so superseded rows are invisible by default.';
+  'CM 2.1: rolling view of currently-active customer-part mappings (valid_to IS NULL). Resolver and UI prefer this over the underlying table so superseded rows are invisible by default.';

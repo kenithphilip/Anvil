@@ -156,9 +156,11 @@ export const buildBulkDiff = async (svc, { tenantId, rows = [] }) => {
           .eq("tenant_id", tenantId)
           .in("customer_id", customerIds)
           .in("customer_part_number", partNumbers);
-        const today = new Date().toISOString().slice(0, 10);
         for (const row of r?.data || []) {
-          if (row.valid_to && row.valid_to < today) continue;       // superseded
+          // CM 2.1: "active" means valid_to IS NULL. Superseded
+          // rows have a non-null valid_to (set by the
+          // supersession workflow on replacement).
+          if (row.valid_to != null) continue;
           const k = row.customer_id + "::" + normCode(row.customer_part_number);
           priorByKey.set(k, row);
         }

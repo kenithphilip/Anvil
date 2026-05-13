@@ -156,13 +156,12 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opt
         .in("customer_part_number", codes)
         .contains("applies_to", [context]);
       if (cp && !cp.error && Array.isArray(cp.data)) {
-        // CM 2.1: drop superseded rows in JS (valid_to < today).
-        // We don't push the filter to PostgREST because the chain
-        // is .or() syntax which complicates the .contains() above;
-        // the candidate set is tiny (typically <20 rows) so the
-        // post-filter cost is negligible.
-        const today = new Date().toISOString().slice(0, 10);
-        const active = cp.data.filter((row) => !row.valid_to || row.valid_to >= today);
+        // CM 2.1: drop superseded rows in JS. "Active" means
+        // valid_to IS NULL; the supersession workflow stamps
+        // valid_to=current_date on the prior row before inserting
+        // the replacement so the new partial unique index allows
+        // the swap.
+        const active = cp.data.filter((row) => row.valid_to == null);
         // CM 2.1 invariant: at most one active mapping per
         // (customer, customer_part_number). If two rows survive
         // the filter (race condition pre-migration-129), prefer

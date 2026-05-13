@@ -192,9 +192,10 @@ export const sweepCustomer = async (svc, { tenantId, customerId, opts = {} }) =>
       .eq("tenant_id", tenantId)
       .eq("customer_id", customerId);
     for (const row of r?.data || []) {
-      const today = new Date().toISOString().slice(0, 10);
-      const active = !row.valid_to || row.valid_to >= today;
-      if (active) existingActive.set(String(row.customer_part_number).toUpperCase(), row.item_id);
+      // CM 2.1: "active" means valid_to IS NULL.
+      if (row.valid_to == null) {
+        existingActive.set(String(row.customer_part_number).toUpperCase(), row.item_id);
+      }
     }
   } catch (_e) { /* fall through; treat as no existing */ }
   let promoted = 0;

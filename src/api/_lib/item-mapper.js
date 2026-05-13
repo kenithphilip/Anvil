@@ -114,8 +114,19 @@ const descriptionMatches = (long, short) => {
 // Look up item_customer_parts and item_master once, then iterate
 // the lines in memory. Single read per table; cheap for orders
 // up to ~200 lines.
-export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines) => {
+//
+// CM 1.4: opts.context (default 'sales_order') gates the tier-1
+// customer_part lookup against item_customer_parts.applies_to.
+// Purchase-order / manufacturing contexts pass context='purchase_order'
+// (or any non-sales_order value) and the resolver skips tier-1
+// entirely so a customer's SAP code never bleeds into a Tally PO.
+// Accepted contexts: 'sales_order' | 'quote' | 'rfq' | 'internal_so'.
+// Anything else routes to tiers 2..5 only.
+export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opts = {}) => {
   if (!Array.isArray(lines) || !lines.length) return lines || [];
+  const context = typeof opts.context === "string" && opts.context.length
+    ? opts.context
+    : "sales_order";
   const allCodes = new Set();
   for (const ln of lines) {
     for (const c of lineCandidates(ln)) allCodes.add(c);
@@ -124,15 +135,18 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines) => 
   const codes = [...allCodes];
 
   // Per-customer override table: best authority on what part
-  // means what when the buyer's terminology differs.
+  // means what when the buyer's terminology differs. Filtered
+  // by applies_to (CM 1.4) so PO / manufacturing paths can't
+  // pick up SO-only mappings.
   let cpMap = new Map(); // code(uppercase) -> { item_id, customer_part_description }
   if (customerId) {
     try {
       const cp = await svc.from("item_customer_parts")
-        .select("item_id, customer_part_number, customer_part_description")
+        .select("item_id, customer_part_number, customer_part_description, applies_to")
         .eq("tenant_id", tenantId)
         .eq("customer_id", customerId)
-        .in("customer_part_number", codes);
+        .in("customer_part_number", codes)
+        .contains("applies_to", [context]);
       if (cp && !cp.error && Array.isArray(cp.data)) {
         for (const row of cp.data) {
           const key = norm(row.customer_part_number);

@@ -214,3 +214,64 @@ describe("__mapLinesPure: Hyundai PO scenarios", () => {
     expect(out[0]._mapped_item.part_no).toBe("THB-L1-70B-2-GA");
   });
 });
+
+// CM 1.4: sales-order-only enforcement. The DB-aware
+// mapLinesToItemMaster() filters item_customer_parts.applies_to
+// based on opts.context. We verify the surface contract here
+// using an in-memory svc shim that records the filter applied.
+describe("mapLinesToItemMaster: CM 1.4 applies_to context gate", () => {
+  // Lazy import so the vi.mock pattern from other tests does not
+  // contaminate this suite.
+  it("defaults to 'sales_order' context and passes that to the .contains() filter", async () => {
+    const { mapLinesToItemMaster } = await import("../api/_lib/item-mapper.js");
+    let capturedContext = null;
+    const svc = {
+      from: (table) => {
+        const builder = {
+          _filters: [],
+          select() { return builder; },
+          eq() { return builder; },
+          in() { return builder; },
+          contains(col, vals) {
+            if (table === "item_customer_parts" && col === "applies_to") {
+              capturedContext = vals;
+            }
+            return builder;
+          },
+          or() { return builder; },
+          limit() { return Promise.resolve({ data: [], error: null }); },
+          then(fn) { fn({ data: [], error: null }); return { catch: () => {} }; },
+        };
+        return builder;
+      },
+    };
+    await mapLinesToItemMaster(svc, "t1", "c1", [{ partNumber: "X" }]);
+    expect(capturedContext).toEqual(["sales_order"]);
+  });
+
+  it("propagates a non-default context to the .contains() filter", async () => {
+    const { mapLinesToItemMaster } = await import("../api/_lib/item-mapper.js");
+    let capturedContext = null;
+    const svc = {
+      from: (table) => {
+        const builder = {
+          select() { return builder; },
+          eq() { return builder; },
+          in() { return builder; },
+          contains(col, vals) {
+            if (table === "item_customer_parts" && col === "applies_to") {
+              capturedContext = vals;
+            }
+            return builder;
+          },
+          or() { return builder; },
+          limit() { return Promise.resolve({ data: [], error: null }); },
+          then(fn) { fn({ data: [], error: null }); return { catch: () => {} }; },
+        };
+        return builder;
+      },
+    };
+    await mapLinesToItemMaster(svc, "t1", "c1", [{ partNumber: "X" }], { context: "quote" });
+    expect(capturedContext).toEqual(["quote"]);
+  });
+});

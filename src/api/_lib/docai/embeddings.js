@@ -29,9 +29,13 @@ const DEFAULT_BATCH = 64;
 
 export const buildItemEmbedSource = (item) => {
   if (!item) return "";
+  // Real item_master text columns. spec_text was a hypothetical
+  // field that does not exist on the table; specification_details
+  // is a boolean Yes/No flag (migration 107) and is NOT a text
+  // field to embed.
   const parts = [
     item.part_no, item.description, item.print_name, item.alias,
-    item.spec_text, item.category,
+    item.category, item.sub_category, item.stock_group,
   ].filter((x) => typeof x === "string" && x.length > 0);
   return parts.join(" | ").slice(0, 1024);
 };
@@ -61,7 +65,7 @@ export const findStaleItems = async (svc, tenantId, opts = {}) => {
   if (!svc || !tenantId) return [];
   try {
     const r = await svc.from("item_master")
-      .select("id, part_no, description, alias, print_name, spec_text, category, updated_at")
+      .select("id, part_no, description, alias, print_name, category, sub_category, stock_group, updated_at")
       .eq("tenant_id", tenantId)
       .limit(Number(opts.limit || 1000));
     const items = r?.data || [];

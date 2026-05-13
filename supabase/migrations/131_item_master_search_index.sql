@@ -18,12 +18,15 @@
 --
 -- Idempotent.
 
--- Generated tsvector column. Concatenates part_no, description,
--- alias, print_name, spec_text, category. The 'simple' config
--- preserves alphanumerics + dashes verbatim (no stemming) so
--- "THB-L1" tokenises as "thb-l1" not "thb" / "l1". 'english'
--- would stem "adapters" -> "adapt"; we want the operator to
--- type the word they see on the document.
+-- Generated tsvector column. Concatenates the real text columns
+-- of item_master: part_no (weight A, most authoritative),
+-- alias + print_name (B, common operator vocabulary),
+-- description (C), category + sub_category + stock_group (D,
+-- broad classifiers). The 'simple' config preserves
+-- alphanumerics + dashes verbatim (no stemming) so "THB-L1"
+-- tokenises as "thb-l1" not "thb" / "l1". 'english' would stem
+-- "adapters" -> "adapt"; we want the operator to type the word
+-- they see on the document.
 alter table item_master
   add column if not exists search_tsv tsvector
   generated always as (
@@ -31,12 +34,13 @@ alter table item_master
     || setweight(to_tsvector('simple', coalesce(alias, '')), 'B')
     || setweight(to_tsvector('simple', coalesce(print_name, '')), 'B')
     || setweight(to_tsvector('simple', coalesce(description, '')), 'C')
-    || setweight(to_tsvector('simple', coalesce(spec_text, '')), 'D')
     || setweight(to_tsvector('simple', coalesce(category, '')), 'D')
+    || setweight(to_tsvector('simple', coalesce(sub_category, '')), 'D')
+    || setweight(to_tsvector('simple', coalesce(stock_group, '')), 'D')
   ) stored;
 
 comment on column item_master.search_tsv is
-  'CM 2.2: generated tsvector for the hybrid BM25 + vector retrieval. part_no=A, alias/print_name=B, description=C, spec_text/category=D.';
+  'CM 2.2: generated tsvector for the hybrid BM25 + vector retrieval. part_no=A, alias/print_name=B, description=C, category/sub_category/stock_group=D.';
 
 -- GIN index for the lexical half of the hybrid query.
 create index if not exists item_master_search_tsv_idx

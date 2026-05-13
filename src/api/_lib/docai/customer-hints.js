@@ -30,11 +30,15 @@
 // Cached per (tenant_id, customer_id) for 15 minutes so repeated
 // extractions on the same customer don't re-query.
 
+import { topKWeighted } from "../decay-weight.js";
+
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const LINE_HISTORY_LIMIT = 8;          // recent line-bearing runs to scan
 const TOP_HSN_COUNT = 5;
 const TOP_GST_COUNT = 3;
 const ITEM_MAPPING_SAMPLE = 5;
+const RECENT_CORRECTIONS_LIMIT = 50;
+const TOP_K_CORRECTIONS = 8;
 
 const cache = new Map();               // key = tenantId + "|" + customerId
 
@@ -141,6 +145,18 @@ export const renderHintBlock = (hint) => {
       .map((m) => "  " + m.customer_part_number + " -> " + m.canonical_part_no);
     parts.push("Sample customer-part to canonical mappings:\n" + sample.join("\n"));
   }
+  // Wave CM 3.2: recent operator corrections, sorted by decay
+  // weight (newer = higher weight). Each line is short so the
+  // model can pattern-match without bleeding attention.
+  if (hint.recent_corrections?.length) {
+    const lines = hint.recent_corrections.slice(0, 6).map((c) => {
+      const op = typeof c.operator_value === "object" ? JSON.stringify(c.operator_value) : String(c.operator_value ?? "");
+      const mv = typeof c.model_value === "object" ? JSON.stringify(c.model_value) : String(c.model_value ?? "");
+      const w = typeof c.weight === "number" ? c.weight.toFixed(2) : "?";
+      return "  " + c.field_path + ": model='" + mv.slice(0, 40) + "' -> operator='" + op.slice(0, 40) + "' (w=" + w + ")";
+    });
+    parts.push("Recent operator corrections (weight is the recency decay; 1.0 is today):\n" + lines.join("\n"));
+  }
   if (!parts.length) return null;
   return parts.join("\n");
 };
@@ -202,6 +218,25 @@ export const buildCustomerHints = async (svc, { tenantId, customerId, opts = {} 
     linePatterns = summariseLinePatterns(r?.data || []);
   } catch (_e) { linePatterns = null; }
 
+  // 3b. Wave CM 3.2: recent operator corrections, decay-weighted.
+  //     Pulled from learned_corrections so the model sees the
+  //     specific (field, model_value -> operator_value) edits the
+  //     operator made on this customer's last few extractions.
+  //     A correction from yesterday weighs more than one from last
+  //     year per halfLifeDecay; the top-K by weight land in the
+  //     prompt.
+  let recentCorrections = [];
+  try {
+    const r = await svc.from("learned_corrections")
+      .select("field_path, model_value, operator_value, severity, created_at, diff_kind")
+      .eq("tenant_id", tenantId)
+      .eq("customer_id", customerId)
+      .order("created_at", { ascending: false })
+      .limit(RECENT_CORRECTIONS_LIMIT);
+    const topK = topKWeighted(r?.data || [], TOP_K_CORRECTIONS);
+    recentCorrections = topK.filter((row) => row.weight > 0.05);
+  } catch (_e) { recentCorrections = []; }
+
   // 4. A small sample of item_customer_parts so the model sees the
   //    customer's part-numbering scheme.
   let itemMappingsSample = [];
@@ -235,6 +270,7 @@ export const buildCustomerHints = async (svc, { tenantId, customerId, opts = {} 
     && !confirmedFields.length
     && !(linePatterns?.line_count_sample)
     && !itemMappingsSample.length
+    && !recentCorrections.length
   );
   if (empty) {
     toCache(tenantId, customerId, null);
@@ -246,6 +282,7 @@ export const buildCustomerHints = async (svc, { tenantId, customerId, opts = {} 
     confirmed_fields: confirmedFields.map((x) => x.field_path),
     line_patterns: linePatterns,
     item_mappings_sample: itemMappingsSample,
+    recent_corrections: recentCorrections,
   };
   hint.rendered = renderHintBlock(hint);
   toCache(tenantId, customerId, hint);

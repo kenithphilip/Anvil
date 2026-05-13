@@ -199,6 +199,35 @@ describe("__mapLinesPure: Hyundai PO scenarios", () => {
     expect(out[0]._mapped_item).toBeNull();
   });
 
+  it("CM 2.4: fuzzy_blocked tier catches a typo'd part_no when description shares a block", () => {
+    // PartNo has a trailing extraneous char ("THB-001A"); the
+    // item_master row is "THB-001" with description "Bend Adapter".
+    // Tier 2 (part_no exact) misses; alias misses; description
+    // _fuzzy misses (line has no clean 2-word description). The
+    // new fuzzy_blocked tier should win.
+    const im = { id: "im-1", part_no: "THB-001", description: "Bend adapter", alias: "BEND ADAPTER" };
+    const out = __mapLinesPure([
+      { partNumber: "THB-001A", description: "Bend adapter" },
+    ], {
+      imAll: [im],
+    });
+    expect(out[0]._mapped_item).not.toBeNull();
+    expect(out[0]._mapped_item.match_via).toBe("item_master.fuzzy_blocked");
+    expect(out[0]._mapped_item.part_no).toBe("THB-001");
+  });
+
+  it("CM 2.4: fuzzy_blocked tier rejects below-threshold scores", () => {
+    // Same block (THB prefix + bend) but the item description is
+    // an entirely different product. Score should fall below 0.75.
+    const im = { id: "im-1", part_no: "THB-999", description: "Random gizmo Z2", alias: "GIZMO" };
+    const out = __mapLinesPure([
+      { partNumber: "ABC-001", description: "Bend adapter" },
+    ], {
+      imAll: [im],
+    });
+    expect(out[0]._mapped_item).toBeNull();
+  });
+
   it("customer_part still wins over description fuzzy match", () => {
     // The operator has a translation table; trust it over the
     // description text on the PO.

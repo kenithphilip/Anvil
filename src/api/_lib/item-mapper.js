@@ -32,6 +32,13 @@
 // in-place overwrite of the operator-visible value so the
 // human-in-the-loop can still inspect the original.
 
+import { blockingKey, compositeScore } from "./fuzzy-match.js";
+
+// CM 2.4: minimum compositeScore for the fuzzy_blocked tier to
+// accept a match. 0.75 = strong agreement across two of three
+// metrics. Operator-tunable in a later wave via tenant_settings.
+const FUZZY_BLOCK_THRESHOLD = 0.75;
+
 // Exported so the orders PATCH server hook (Layer A) and the
 // quote-SENT hook (Layer B) can extract the same customer-part
 // candidate the resolver matches on, keeping the read and write
@@ -363,6 +370,32 @@ export const __mapLinesPure = (
       for (const code of candidates) {
         const im = imByAlias.get(code);
         if (im) { match = im; matchVia = "item_master.alias"; break; }
+      }
+    }
+    // CM 2.4 tier: blocked fuzzy. Compute a blocking key for the
+    // line; only score against items that share the same block.
+    // Within the block we rank by compositeScore (Jaro-Winkler
+    // over partno + Jaccard 3-grams over description + Metaphone
+    // exact match). Top scorer above FUZZY_BLOCK_THRESHOLD wins.
+    // This catches typos in partno and rephrased descriptions
+    // that the substring-based description_fuzzy tier (below)
+    // would miss, without scanning every item.
+    if (!match && Array.isArray(imAll) && imAll.length) {
+      const lineKey = blockingKey({
+        partNo: line.partNumber || line.partNo || line.sku || "",
+        description: line.description || line.name || line.item || "",
+      });
+      let bestScore = 0;
+      let bestRow = null;
+      for (const row of imAll) {
+        const rowKey = blockingKey({ partNo: row.part_no, description: row.description || row.print_name || row.alias });
+        if (rowKey !== lineKey) continue;
+        const s = compositeScore(line, row);
+        if (s > bestScore) { bestScore = s; bestRow = row; }
+      }
+      if (bestRow && bestScore >= FUZZY_BLOCK_THRESHOLD) {
+        match = bestRow;
+        matchVia = "item_master.fuzzy_blocked";
       }
     }
     if (!match) {

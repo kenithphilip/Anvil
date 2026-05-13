@@ -137,18 +137,36 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opt
   // Per-customer override table: best authority on what part
   // means what when the buyer's terminology differs. Filtered
   // by applies_to (CM 1.4) so PO / manufacturing paths can't
-  // pick up SO-only mappings.
+  // pick up SO-only mappings, and by valid_to (CM 2.1) so
+  // operator-superseded rows are invisible to the resolver.
   let cpMap = new Map(); // code(uppercase) -> { item_id, customer_part_description }
   if (customerId) {
     try {
       const cp = await svc.from("item_customer_parts")
-        .select("item_id, customer_part_number, customer_part_description, applies_to")
+        .select("item_id, customer_part_number, customer_part_description, applies_to, valid_to, confirmed_at")
         .eq("tenant_id", tenantId)
         .eq("customer_id", customerId)
         .in("customer_part_number", codes)
         .contains("applies_to", [context]);
       if (cp && !cp.error && Array.isArray(cp.data)) {
-        for (const row of cp.data) {
+        // CM 2.1: drop superseded rows in JS (valid_to < today).
+        // We don't push the filter to PostgREST because the chain
+        // is .or() syntax which complicates the .contains() above;
+        // the candidate set is tiny (typically <20 rows) so the
+        // post-filter cost is negligible.
+        const today = new Date().toISOString().slice(0, 10);
+        const active = cp.data.filter((row) => !row.valid_to || row.valid_to >= today);
+        // CM 2.1 invariant: at most one active mapping per
+        // (customer, customer_part_number). If two rows survive
+        // the filter (race condition pre-migration-129), prefer
+        // the most-recent confirmed_at to give the operator's
+        // latest decision authority.
+        active.sort((a, b) => {
+          const ta = a?.confirmed_at ? Date.parse(a.confirmed_at) : 0;
+          const tb = b?.confirmed_at ? Date.parse(b.confirmed_at) : 0;
+          return tb - ta;
+        });
+        for (const row of active) {
           const key = norm(row.customer_part_number);
           if (key && !cpMap.has(key)) cpMap.set(key, row);
         }

@@ -166,10 +166,21 @@ export const renderHintBlock = (hint) => {
 // block (for embedding in the system prompt).
 //
 // Returns null when there is no useful signal.
+//
+// CM 3.3: opts.contactId attributes priming to one buyer at a
+// multi-buyer customer. When supplied, corrections by THIS
+// contact get a 1.5x weight boost relative to corrections from
+// other contacts at the same customer; the model then sees the
+// buyer-specific pattern at the top of the prompt.
+const CONTACT_MATCH_WEIGHT_BOOST = 1.5;
 export const buildCustomerHints = async (svc, { tenantId, customerId, opts = {} }) => {
   if (!svc || !tenantId || !customerId) return null;
+  const contactId = opts?.contactId || null;
+  // Cache by (tenant, customer, contact?) so two different
+  // buyers at the same customer get distinct hint priming.
+  const cacheKeyContact = contactId ? customerId + "|" + contactId : customerId;
   if (!opts.skipCache) {
-    const cached = fromCache(tenantId, customerId);
+    const cached = fromCache(tenantId, cacheKeyContact);
     if (cached.hit) return cached.value;
   }
 
@@ -218,23 +229,37 @@ export const buildCustomerHints = async (svc, { tenantId, customerId, opts = {} 
     linePatterns = summariseLinePatterns(r?.data || []);
   } catch (_e) { linePatterns = null; }
 
-  // 3b. Wave CM 3.2: recent operator corrections, decay-weighted.
-  //     Pulled from learned_corrections so the model sees the
-  //     specific (field, model_value -> operator_value) edits the
-  //     operator made on this customer's last few extractions.
-  //     A correction from yesterday weighs more than one from last
-  //     year per halfLifeDecay; the top-K by weight land in the
-  //     prompt.
+  // 3b. Wave CM 3.2 + 3.3: recent operator corrections, decay-
+  //     weighted and (optionally) contact-attributed. When the
+  //     caller passes contactId, corrections by that contact get
+  //     a 1.5x weight boost before top-K so the per-buyer pattern
+  //     dominates the prompt. Without contactId, plain decay.
   let recentCorrections = [];
   try {
     const r = await svc.from("learned_corrections")
-      .select("field_path, model_value, operator_value, severity, created_at, diff_kind")
+      .select("field_path, model_value, operator_value, severity, created_at, diff_kind, customer_contact_id")
       .eq("tenant_id", tenantId)
       .eq("customer_id", customerId)
       .order("created_at", { ascending: false })
       .limit(RECENT_CORRECTIONS_LIMIT);
-    const topK = topKWeighted(r?.data || [], TOP_K_CORRECTIONS);
-    recentCorrections = topK.filter((row) => row.weight > 0.05);
+    let rows = r?.data || [];
+    // CM 3.3 boost: multiply weight by 1.5 for rows attributed
+    // to the current contact. The decay-weight module emits
+    // weight after the topKWeighted call below; we pre-stamp a
+    // _contact_boost so the comparator can lift them.
+    if (contactId) {
+      rows = rows.map((row) => ({
+        ...row,
+        _contact_boost: row.customer_contact_id === contactId ? CONTACT_MATCH_WEIGHT_BOOST : 1,
+      }));
+    }
+    const ranked = topKWeighted(rows, TOP_K_CORRECTIONS).map((row) => ({
+      ...row,
+      weight: row.weight * (row._contact_boost || 1),
+    }));
+    // Re-sort after the boost is applied.
+    ranked.sort((a, b) => b.weight - a.weight);
+    recentCorrections = ranked.filter((row) => row.weight > 0.05);
   } catch (_e) { recentCorrections = []; }
 
   // 4. A small sample of item_customer_parts so the model sees the
@@ -273,7 +298,7 @@ export const buildCustomerHints = async (svc, { tenantId, customerId, opts = {} 
     && !recentCorrections.length
   );
   if (empty) {
-    toCache(tenantId, customerId, null);
+    toCache(tenantId, cacheKeyContact, null);
     return null;
   }
 
@@ -283,8 +308,9 @@ export const buildCustomerHints = async (svc, { tenantId, customerId, opts = {} 
     line_patterns: linePatterns,
     item_mappings_sample: itemMappingsSample,
     recent_corrections: recentCorrections,
+    contact_id: contactId,
   };
   hint.rendered = renderHintBlock(hint);
-  toCache(tenantId, customerId, hint);
+  toCache(tenantId, cacheKeyContact, hint);
   return hint;
 };

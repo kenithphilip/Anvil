@@ -20,6 +20,45 @@ const ORDER_MODES = [
   { id: null,              ti: "Decide later",      code: "— · ASK ME LATER",            desc: "Capture documents now and let OCR + Claude pre-classifier suggest the mode at extraction time." },
 ];
 
+// Honest waiting indicator for the extract call. The /api/docai/extract
+// endpoint is a single fire-and-wait POST with no streaming progress,
+// so we cannot report a true completion percentage. Instead we show
+// elapsed wall-clock seconds plus an asymptotic estimate that approaches
+// (but never reaches) 95%, so the bar stops advancing visibly while the
+// request is still in flight. The estimate uses a half-life of ~21s
+// (1 - exp(-t/30)), which matches the median runtime observed for a
+// typical 5-10 page PDF on the Sonnet adapter. The label explicitly
+// says "approx" so operators don't read the percentage as authoritative.
+const ExtractionProgress: React.FC = () => {
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const startedAt = useRef<number>(Date.now());
+  useEffect(() => {
+    startedAt.current = Date.now();
+    const id = window.setInterval(() => setElapsedMs(Date.now() - startedAt.current), 250);
+    return () => window.clearInterval(id);
+  }, []);
+  const seconds = Math.floor(elapsedMs / 1000);
+  const asymptotic = 1 - Math.exp(-elapsedMs / 30_000);
+  const pct = Math.min(0.95, asymptotic);
+  return (
+    <div>
+      <span className="mono-sm">Auto-extracting customer name, GSTIN, addresses, currency, and payment terms.</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+        <div className="hbar live" style={{ flex: 1 }} aria-hidden="true">
+          <span style={{ width: `${(pct * 100).toFixed(1)}%`, transition: "width 250ms linear" }} />
+        </div>
+        <span
+          className="mono-sm"
+          style={{ minWidth: 96, textAlign: "right", color: "var(--ink-3)" }}
+          aria-live="polite"
+        >
+          {seconds}s · ~{Math.round(pct * 100)}%
+        </span>
+      </div>
+    </div>
+  );
+};
+
 const WiredSOIntake = () => {
   const { useState: u, useEffect: e, useRef: r } = React;
   const [mode, setMode] = u("SPARES");
@@ -931,7 +970,7 @@ const WiredSOIntake = () => {
               )}
               {busy === "extract" && (
                 <Banner kind="info" icon={Icon.cycle} title="Reading the PO…">
-                  <span className="mono-sm">Auto-extracting customer name, GSTIN, addresses, currency, and payment terms.</span>
+                  <ExtractionProgress />
                 </Banner>
               )}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>

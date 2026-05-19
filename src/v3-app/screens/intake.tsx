@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ageLabel } from "../lib/helpers";
+import { ageLabel, draftLabel } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle, rowActivateProps } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
@@ -94,11 +94,13 @@ const WiredInbox = () => {
   };
 
   const fileNameOf = (o) => {
+    // Prefer the email subject when this row came in via inbound mail
+    // (it's the most disambiguating string a human wrote). Otherwise
+    // fall through to the shared draftLabel resolution chain
+    // (po_number -> quote_number -> CUSTOMER-DDMMM-id4 -> DRAFT-...).
     return o.preflight_payload?.subject
-      || o.po_number
-      || o.quote_number
-      || (o.preflight_payload?.from ? `from ${o.preflight_payload.from}` : null)
-      || (o.id ? `draft ${o.id.slice(0, 8)}` : "draft");
+      || (o.preflight_payload?.from && !o.po_number && !o.quote_number ? `from ${o.preflight_payload.from}` : null)
+      || draftLabel(o);
   };
 
   const sizeOf = (o) => {
@@ -179,7 +181,7 @@ const WiredInbox = () => {
                   return (
                     <tr key={o.id} {...rowActivateProps(
                       () => { window.location.hash = `#/so?id=${o.id}`; },
-                      `Open draft ${o.po_number || o.quote_number || o.id?.slice(0, 8) || "order"}`,
+                      `Open draft ${draftLabel(o)}`,
                     )}>
                       <td className="mono-sm">{src}{o.preflight_payload?.from ? ` · ${o.preflight_payload.from}` : ""}</td>
                       <td>{fileNameOf(o)}</td>

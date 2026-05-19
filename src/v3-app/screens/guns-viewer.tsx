@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ageLabel, fmtDate, stageOf, useFetch } from "../lib/helpers";
+import { ageLabel, draftLabel, fmtDate, stageOf, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
@@ -484,7 +484,7 @@ const GunsRightPane = ({ gun, ordersData, ordersLoading, ordersError, customerLo
                 const st = stageOf(m.order.status);
                 return (
                   <tr key={m.order.id}>
-                    <td className="mono"><span className="pri">{m.order.po_number || m.order.quote_number || "draft"}</span></td>
+                    <td className="mono"><span className="pri">{draftLabel(m.order)}</span></td>
                     <td>{m.customer}</td>
                     <td><Chip k={st.k}>{st.label}</Chip></td>
                     <td className="r mono" title={m.hits.join(", ")}>{m.hits.length}</td>

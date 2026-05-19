@@ -145,10 +145,17 @@
       clearSession();
       // Bounce to the connect screen so the user can sign back in. We
       // do not redirect if the user is already on connect, otherwise
-      // the route reload causes a refresh loop.
+      // the route reload causes a refresh loop. We also skip the
+      // redirect on the pre-auth surface (signin / reset / landing /
+      // the bare "#") because those screens have NO session by
+      // design: a background telemetry poll (useShellTelemetry's
+      // focus listener) firing a 401 after a tab switch would
+      // otherwise punt the visitor off the sign-in form straight
+      // onto the marketing landing within seconds.
       if (typeof global !== "undefined" && global.location) {
         const here = String(global.location.hash || "").replace(/^#\/?/, "").split("?")[0];
-        if (here !== "connect") {
+        const PRE_AUTH = new Set(["connect", "signin", "reset", "landing", ""]);
+        if (!PRE_AUTH.has(here)) {
           // Remember where they were so the post-sign-in flow can
           // bring them back.
           try {

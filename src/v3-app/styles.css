@@ -107,6 +107,22 @@
   --pad-x: 12px;
 }
 
+/* Density tokens above were defined but never consumed, so toggling
+   density only flipped the data attribute with no visible effect.
+   Wire them through the high-traffic surfaces (table cells and form
+   inputs) here. Other surfaces continue to use fixed paint values
+   and remain unchanged. Default ("normal") leaves the existing
+   rule weights untouched. */
+[data-density="compact"] .tbl thead th,
+[data-density="compact"] .tbl tbody td { padding: 4px 8px; }
+[data-density="compact"] .input,
+[data-density="compact"] .select { height: 26px; }
+
+[data-density="comfortable"] .tbl thead th,
+[data-density="comfortable"] .tbl tbody td { padding: 10px 12px; }
+[data-density="comfortable"] .input,
+[data-density="comfortable"] .select { height: 36px; }
+
 [data-theme="dark"] {
   --bg:        #0E0F11;
   --paper:     #16181B;
@@ -184,6 +200,8 @@ button { cursor: pointer; }
   height: 100vh;
   width: 100%;
   background: var(--bg);
+  /* Smooth out the rail expand/collapse so the layout doesn't snap. */
+  transition: grid-template-columns 0.14s ease;
 }
 [data-rail="collapsed"] .app { grid-template-columns: 56px 1fr; }
 [data-rail="collapsed"] .nav-label { display: none; }
@@ -213,6 +231,14 @@ button { cursor: pointer; }
   overflow: auto;
   position: relative;
   background: var(--bg);
+  /* CSS grid items default to min-width: auto, which prevents the
+     main pane from shrinking below its intrinsic content width.
+     With a wide table inside, collapsing the sidebar from 232px to
+     56px would not actually give the content the extra space on a
+     laptop viewport. Pin both axes to 0 so the grid track truly
+     governs the size. */
+  min-width: 0;
+  min-height: 0;
 }
 .app-dock {
   grid-area: dock;

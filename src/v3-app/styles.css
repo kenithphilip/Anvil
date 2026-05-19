@@ -46,6 +46,13 @@
   --accent:    #C8FF2B;        /* live/active fill */
   --accent-2: #6BBA00;          /* live/active stroke + small text */
   --accent-3: #F1FFC2;          /* live wash background */
+  /* Text colour to pair with --accent (lime) backgrounds. Pinned to
+     a dark ink in BOTH themes because --accent is the same bright
+     lime in both, so the contrast-safe pairing is always dark text.
+     Previously these surfaces inherited `color: var(--ink)`, which
+     in dark mode resolves to #ECECE6 (cream) and rendered illegible
+     on the lime fill. */
+  --on-accent: #15171A;
 
   /* ── Semantic ──────────────────────────────────────────── */
   --sage:      #355E3B;        /* good · positive */
@@ -120,6 +127,9 @@
   --accent:    #C8FF2B;
   --accent-2:  #B4F500;
   --accent-3:  #2A3914;
+  /* Pin --on-accent dark in dark mode too: the lime --accent is the
+     same bright value in both themes, so text on it must stay dark. */
+  --on-accent: #15171A;
 
   --sage:      #6FBF7E;
   --sage-2:    #88D396;
@@ -463,7 +473,7 @@ button { cursor: pointer; }
   background: var(--paper-3);
   border-radius: 2px;
 }
-.nav-badge.live { background: var(--accent); color: var(--ink); font-weight: 600; }
+.nav-badge.live { background: var(--accent); color: var(--on-accent); font-weight: 600; }
 .nav-badge.warn { background: var(--amber-3); color: var(--amber-2); }
 .nav-badge.bad  { background: var(--rust-3); color: var(--rust-2); }
 
@@ -679,11 +689,11 @@ button { cursor: pointer; }
 }
 .btn.primary:hover { background: var(--ink-2); border-color: var(--ink-2); }
 .btn.live {
-  background: var(--accent); color: var(--ink);
+  background: var(--accent); color: var(--on-accent);
   border-color: var(--accent-2);
   font-weight: 600;
 }
-.btn.live:hover { background: var(--accent-2); color: var(--paper); border-color: var(--accent-2); }
+.btn.live:hover { background: var(--accent-2); color: var(--on-accent); border-color: var(--accent-2); }
 .btn.danger {
   background: var(--rust); color: var(--paper);
   border-color: var(--rust-2);
@@ -750,7 +760,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   border-radius: 2px;
   white-space: nowrap;
 }
-.chip.live  { background: var(--accent);    color: var(--ink); border-color: var(--accent-2); font-weight: 600; }
+.chip.live  { background: var(--accent);    color: var(--on-accent); border-color: var(--accent-2); font-weight: 600; }
 .chip.good  { background: var(--sage-3);    color: var(--sage-2); border-color: transparent; }
 .chip.warn  { background: var(--amber-3);   color: var(--amber-2); border-color: transparent; }
 .chip.bad   { background: var(--rust-3);    color: var(--rust-2); border-color: transparent; }

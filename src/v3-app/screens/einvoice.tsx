@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
+import { draftLabel } from "../lib/helpers";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
@@ -241,7 +242,10 @@ const WiredEinvoiceCRUD = () => {
     return Date.now() - new Date(iso).getTime() < 24 * 3600 * 1000;
   };
 
-  const orderRef = (id) => orders.find((o) => o.id === id)?.po_number || orders.find((o) => o.id === id)?.quote_number || (id ? id.slice(0, 8) : "—");
+  const orderRef = (id) => {
+    const o = orders.find((row) => row.id === id);
+    return o ? draftLabel(o) : (id ? id.slice(0, 8) : "—");
+  };
 
   return (
     <>
@@ -282,7 +286,7 @@ const WiredEinvoiceCRUD = () => {
                 <select id="ei-order" className="select" value={form.order_id} onChange={(ev) => setForm({ ...form, order_id: ev.target.value })}>
                   <option value="">Pick order…</option>
                   {orders.filter((o) => o.status === "APPROVED" || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED").map((o) => (
-                    <option key={o.id} value={o.id}>{o.po_number || o.quote_number || o.id.slice(0, 8)} · {o.customer?.customer_name || "—"}</option>
+                    <option key={o.id} value={o.id}>{draftLabel(o)} · {o.customer?.customer_name || "—"}</option>
                   ))}
                 </select>
               </div>

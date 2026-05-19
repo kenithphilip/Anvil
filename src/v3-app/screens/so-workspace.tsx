@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ageLabel, stageOf } from "../lib/helpers";
+import { ageLabel, stageOf, draftLabel } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Prov, Steps, Stream, WSTabs, WSTitle, fmtINR, fmtUSD } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
@@ -290,7 +290,7 @@ const WiredSOWorkspace = () => {
 
   const cancelOrder = async () => {
     if (!o?.id) return;
-    if (!confirm(`Cancel order ${o.po_number || o.quote_number || o.id.slice(0, 8)}? This sets status to CANCELLED.`)) return;
+    if (!confirm(`Cancel order ${draftLabel(o)}? This sets status to CANCELLED.`)) return;
     setBusy(true);
     try {
       await ObaraBackend?.orders?.update?.(o.id, { status: "CANCELLED" });
@@ -1351,7 +1351,7 @@ const WiredSOWorkspace = () => {
             <div className="h-eyebrow">Sales Orders · Workspace</div>
             <div className="row gap-sm" style={{ marginTop: 2, minWidth: 0, flexWrap: "wrap", alignItems: "center" }}>
               <h1 style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {o.po_number || o.quote_number || `draft ${o.id?.slice(0, 8)}`}
+                {draftLabel(o)}
               </h1>
               {o.order_mode && <Chip k={o.order_mode === "INTERNAL" ? "plum" : o.order_mode.startsWith("PROJECT") ? "info" : "ghost"}>{o.order_mode}</Chip>}
               <Chip k={st.k}>{st.label}</Chip>

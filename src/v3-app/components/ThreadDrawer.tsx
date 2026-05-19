@@ -19,7 +19,7 @@ import React, { useEffect, useState } from "react";
 import { Icon } from "../lib/icons";
 import { Chip } from "../lib/primitives";
 import { ObaraBackend } from "../lib/api";
-import { ageLabel, stageOf } from "../lib/helpers";
+import { ageLabel, stageOf, draftLabel } from "../lib/helpers";
 
 export interface ThreadDrawerProps {
   open: boolean;
@@ -169,7 +169,10 @@ export const ThreadDrawer: React.FC<ThreadDrawerProps> = ({ open, onClose }) => 
   if (!open) return null;
 
   const o = order.data || {};
-  const headerLabel = o.po_number || o.quote_number || (orderId ? `draft ${orderId.slice(0, 8)}` : "");
+  // When the drawer is opened with an id but the order hasn't loaded
+  // yet, pass a synthetic shape so draftLabel still returns something
+  // meaningful (DRAFT-NEW-<id4>) rather than the empty string.
+  const headerLabel = draftLabel(order.data ? o : (orderId ? { id: orderId } : null));
   const customer = o.customer?.customer_name || o.customer_id || "";
   const stage = stageOf(o.status);
 

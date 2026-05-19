@@ -147,3 +147,69 @@ export const sevOf = (order: { status?: string } | null | undefined): "high" | "
   if (s === "PENDING_REVIEW" || s === "DUPLICATE") return "med";
   return "low";
 };
+
+// Order identifier resolution. Replaces the ad-hoc fallback chain
+//   o.po_number || o.quote_number || `draft ${o.id.slice(0,8)}`
+// that was inlined at ~15 call sites and gave the operator a row of
+// "draft 8a3f1b2c" labels with no way to tell one DRAFT from another
+// in a list of 50.
+//
+// Resolution order:
+//   1. po_number       buyer's PO/RFQ ref once extracted
+//   2. quote_number    our outbound quote ref
+//   3. <CUSTOMER>-<DDMMM>-<id4>   e.g. "HYUND-19MAY-8a3f" when a
+//      customer is set but no PO# yet (extraction pending, manual
+//      intake-in-progress, etc.)
+//   4. DRAFT-<DDMMM>-<id4>        e.g. "DRAFT-19MAY-8a3f" when no
+//      customer yet either (very early intake state).
+//
+// The label evolves as the order picks up data: a draft with just an
+// id renders DRAFT-..., gains the HYUND-... prefix as soon as the
+// customer is set, and flips to the real P250432265 once extraction
+// stamps po_number. No server-side persistence; everything is derived
+// from columns the orders endpoint already returns.
+export interface OrderLabelInput {
+  id?: string | null;
+  po_number?: string | null;
+  quote_number?: string | null;
+  created_at?: string | null;
+  customer?: { customer_name?: string | null; customer_key?: string | null } | null;
+}
+
+const DRAFT_PREFIX_MAX = 5;
+const LEGAL_SUFFIX_RX = /\b(Pvt|Ltd|LLP|Inc|Corp|GmbH|KK|AG|BV|SA|Company|Limited|Co)\b\.?/gi;
+const MONTH_TAGS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+const draftCustomerPrefix = (o: OrderLabelInput): string => {
+  // Prefer the tenant-unique customer_key from the customer master --
+  // it's already a short stable handle the operator recognises.
+  const key = String(o.customer?.customer_key || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  if (key.length >= 2) return key.slice(0, DRAFT_PREFIX_MAX);
+  const name = String(o.customer?.customer_name || "");
+  if (!name.trim()) return "DRAFT";
+  const cleaned = name.replace(LEGAL_SUFFIX_RX, " ").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  if (cleaned.length < 2) return "DRAFT";
+  return cleaned.slice(0, DRAFT_PREFIX_MAX);
+};
+
+const draftDateTag = (iso: string | null | undefined): string => {
+  if (!iso) return "NEW";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "NEW";
+  return String(d.getDate()).padStart(2, "0") + MONTH_TAGS[d.getMonth()];
+};
+
+const draftIdTail = (id: string | null | undefined): string => {
+  if (!id) return "";
+  return String(id).replace(/-/g, "").slice(0, 4);
+};
+
+export const draftLabel = (o: OrderLabelInput | null | undefined): string => {
+  if (!o) return "draft";
+  if (o.po_number) return String(o.po_number);
+  if (o.quote_number) return String(o.quote_number);
+  const prefix = draftCustomerPrefix(o);
+  const date = draftDateTag(o.created_at);
+  const tail = draftIdTail(o.id);
+  return [prefix, date, tail].filter(Boolean).join("-");
+};

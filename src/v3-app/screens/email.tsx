@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ageLabel, useFetch } from "../lib/helpers";
+import { ageLabel, draftLabel, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
@@ -275,7 +275,7 @@ const WiredEmailTriage = () => {
                       {matchedOrders.map((o) => (
                         <li key={o.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: 6, border: "1px solid var(--hairline)" }}>
                           <span className="mono-sm" style={{ flex: 1 }}>
-                            <b>{o.po_number || o.quote_number || "draft"}</b> · {o.customer?.customer_name || "—"}
+                            <b>{draftLabel(o)}</b> · {o.customer?.customer_name || "—"}
                           </span>
                           <Btn sm disabled={busy} onClick={() => attachToOrder(o.id)}>attach</Btn>
                         </li>

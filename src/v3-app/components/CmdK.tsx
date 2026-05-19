@@ -17,7 +17,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
-import { ageLabel } from "../lib/helpers";
+import { ageLabel, draftLabel } from "../lib/helpers";
 
 interface CmdKItem {
   ic: React.ReactNode;
@@ -109,7 +109,10 @@ export const CmdK: React.FC<CmdKProps> = ({ open, onClose, onJump }) => {
         (o.po_number || "").toLowerCase().includes(q) ||
         (o.quote_number || "").toLowerCase().includes(q) ||
         (o.customer?.customer_name || "").toLowerCase().includes(q) ||
-        (o.id || "").toLowerCase().includes(q),
+        (o.id || "").toLowerCase().includes(q) ||
+        // Match the synthesised draft label so typing "HYUND" or
+        // "DRAFT-19MAY" finds the matching order from the palette.
+        draftLabel(o).toLowerCase().includes(q),
       )
       .slice(0, 12);
   }, [orders, query]);
@@ -140,7 +143,7 @@ export const CmdK: React.FC<CmdKProps> = ({ open, onClose, onJump }) => {
   const orderItems = useMemo<CmdKItem[]>(() =>
     filteredOrders.map((o) => ({
       ic: Icon.layers,
-      t: [o.po_number || o.quote_number || `draft ${(o.id || "").slice(0, 8)}`,
+      t: [draftLabel(o),
           o.customer?.customer_name,
           o.updated_at ? ageLabel(o.updated_at) + " ago" : null,
          ].filter(Boolean).join(" · "),

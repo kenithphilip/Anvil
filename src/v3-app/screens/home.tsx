@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ageLabel, fmtINRShort, sevOf, stageOf, useFetch } from "../lib/helpers";
+import { ageLabel, draftLabel, fmtINRShort, sevOf, stageOf, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Sev, Stream, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
@@ -100,7 +100,7 @@ const WiredHomeEngineer = () => {
           <Banner kind="live" icon={Icon.bolt}
                   title={`${myQueue.length} order${myQueue.length === 1 ? "" : "s"} in your queue · oldest ${ageLabel(myQueue[0]?.updated_at || myQueue[0]?.created_at)}`}
                   action={<Btn sm kind="live" onClick={() => window.location.hash = "#/so"}>Open queue</Btn>}>
-            <span className="mono-sm">First up: {myQueue[0]?.po_number || myQueue[0]?.quote_number || "draft"} · {myQueue[0]?.customer?.customer_name || ""}</span>
+            <span className="mono-sm">First up: {draftLabel(myQueue[0])} · {myQueue[0]?.customer?.customer_name || ""}</span>
           </Banner>
         )}
 
@@ -141,7 +141,7 @@ const WiredHomeEngineer = () => {
                     return (
                       <tr key={o.id || i}>
                         <td><Sev k={sevOf(o)} /></td>
-                        <td className="mono"><span className="pri">{o.po_number || o.quote_number || "draft"}</span></td>
+                        <td className="mono"><span className="pri">{draftLabel(o)}</span></td>
                         <td>{o.customer?.customer_name || o.customer_id?.slice(0, 8) || "—"}</td>
                         <td><Chip k={st.k}>{st.label}</Chip></td>
                         <td className="r mono">{value ? fmtINRShort(value) : "—"}</td>

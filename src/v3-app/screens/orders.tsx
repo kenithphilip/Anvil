@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ageLabel, fmtINRShort, sevOf, stageOf } from "../lib/helpers";
+import { ageLabel, fmtINRShort, sevOf, stageOf, draftLabel } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, Sev, WSTabs, WSTitle, rowActivateProps } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
@@ -105,7 +105,11 @@ const WiredSOList = () => {
         (o.po_number || "").toLowerCase().includes(q) ||
         (o.quote_number || "").toLowerCase().includes(q) ||
         (o.customer?.customer_name || "").toLowerCase().includes(q) ||
-        (o.id || "").toLowerCase().includes(q)
+        (o.id || "").toLowerCase().includes(q) ||
+        // Include the synthesised draft label so an operator typing
+        // "HYUND" or "DRAFT-19MAY" finds the matching row even when
+        // the order has no PO# yet.
+        draftLabel(o).toLowerCase().includes(q)
       );
     });
 
@@ -296,10 +300,10 @@ const WiredSOList = () => {
                 return (
                   <tr key={o.id} {...rowActivateProps(
                     () => { window.location.hash = `#/so?id=${o.id}`; },
-                    `Open order ${o.po_number || o.quote_number || o.id?.slice(0, 8) || "draft"}`,
+                    `Open order ${draftLabel(o)}`,
                   )}>
                     <td><Sev k={sevOf(o)} /></td>
-                    <td className="mono"><span className="pri">{o.po_number || o.quote_number || "draft"}</span></td>
+                    <td className="mono"><span className="pri">{draftLabel(o)}</span></td>
                     <td>{o.customer?.customer_name || "—"}<div className="mono-sm">{o.customer?.state_code || ""}</div></td>
                     <td><Chip k={mode === "INTERNAL" ? "plum" : mode.startsWith("PROJECT") ? "info" : "ghost"}>{mode}</Chip></td>
                     <td><Chip k={st.k}>{st.label}</Chip></td>

@@ -3,7 +3,7 @@
 // each screen conversion in Sub-PR 3.
 
 import { describe, it, expect } from "vitest";
-import { ageLabel, fmtINRShort, stageOf, sevOf } from "./helpers";
+import { ageLabel, fmtINRShort, stageOf, sevOf, draftLabel } from "./helpers";
 
 describe("ageLabel", () => {
   it("returns em-dash for nullish input", () => {
@@ -72,5 +72,72 @@ describe("sevOf", () => {
   it("returns low otherwise", () => {
     expect(sevOf({ status: "APPROVED" })).toBe("low");
     expect(sevOf(null)).toBe("low");
+  });
+});
+
+describe("draftLabel", () => {
+  it("prefers po_number when present", () => {
+    expect(draftLabel({ po_number: "P250432265", quote_number: "Q-1", id: "x" })).toBe("P250432265");
+  });
+
+  it("falls back to quote_number when no po_number", () => {
+    expect(draftLabel({ po_number: null, quote_number: "OIQTLC-240123", id: "x" })).toBe("OIQTLC-240123");
+  });
+
+  it("builds <CUSTOMER>-<DDMMM>-<id4> when only customer + id are set", () => {
+    const out = draftLabel({
+      id: "8a3f1b2c-1234-5678-abcd-1111aaaa2222",
+      created_at: "2026-05-19T10:00:00Z",
+      customer: { customer_name: "Hyundai Motor India Ltd" },
+    });
+    expect(out).toBe("HYUND-19MAY-8a3f");
+  });
+
+  it("prefers customer_key over customer_name when both are present", () => {
+    const out = draftLabel({
+      id: "8a3f1b2c-1234",
+      created_at: "2026-05-19T10:00:00Z",
+      customer: { customer_key: "hmil_pune", customer_name: "Hyundai Motor India Ltd" },
+    });
+    // customer_key wins, non-alnum stripped, uppercased, capped at 5
+    expect(out).toBe("HMILP-19MAY-8a3f");
+  });
+
+  it("strips legal suffixes from customer_name before truncating", () => {
+    // Without suffix stripping, "Faith Automation Pvt Ltd" would
+    // start with "FAITH" anyway, but a name like "MG Ltd" must yield
+    // "MG", not include "Ltd" in the prefix.
+    expect(draftLabel({
+      id: "abcd",
+      created_at: "2026-05-19T10:00:00Z",
+      customer: { customer_name: "MG Ltd" },
+    })).toBe("MG-19MAY-abcd");
+  });
+
+  it("falls back to DRAFT when there is no customer at all", () => {
+    expect(draftLabel({
+      id: "8a3f1b2c-1234",
+      created_at: "2026-05-19T10:00:00Z",
+    })).toBe("DRAFT-19MAY-8a3f");
+  });
+
+  it("uses NEW when created_at is missing or unparseable", () => {
+    expect(draftLabel({
+      id: "8a3f1b2c",
+      customer: { customer_name: "OBARA Korea Co Ltd" },
+    })).toBe("OBARA-NEW-8a3f");
+  });
+
+  it("returns literal 'draft' for nullish input so legacy renderers stay safe", () => {
+    expect(draftLabel(null)).toBe("draft");
+    expect(draftLabel(undefined)).toBe("draft");
+  });
+
+  it("does not lose the hex prefix when the id has no dashes", () => {
+    expect(draftLabel({
+      id: "deadbeef1234",
+      created_at: "2026-05-19T10:00:00Z",
+      customer: { customer_name: "Tata Motors" },
+    })).toBe("TATAM-19MAY-dead");
   });
 });

@@ -579,6 +579,18 @@ button { cursor: pointer; }
   min-width: 0;
 }
 .ws-title > * { min-width: 0; }
+/* Opt-in sticky variant. Used by so-workspace.tsx so the action bar
+   (cancel / run extraction / run validation / send for review /
+   approve / push to Tally) stays on screen while the operator
+   scrolls a long reconciliation table. Scoped to a modifier class so
+   no other screen using the plain .ws-title is affected.
+   z-index sits above the workspace body content but well below the
+   app shell overlays (CmdK is 80; sidebar rail is 50). */
+.ws-title.ws-title-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+}
 .ws-title h1 {
   margin: 0;
   font-size: 17px;

@@ -18,12 +18,18 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SCREENS_DIR = path.join(ROOT, "src", "v3-app", "screens");
 
-const TEMPLATE = (name, importName) => `// Auto-generated smoke test for screens/${name}.jsx.
+// Vite/TypeScript port: every screen file is .tsx and imports
+// without an extension, so the template emits a .test.tsx file
+// targeting the .tsx module. The pre-rename generator only saw
+// .jsx files (none exist after the migration) and wrote zero
+// stubs, which let 10 screens land without smoke coverage and
+// kept the audit-migration "screen-tests-exist" check red.
+const TEMPLATE = (name, importName) => `// Auto-generated smoke test for screens/${name}.tsx.
 // Hand-edit if a screen needs a more specific assertion; the generator
 // only overwrites files that match the auto-generated header below.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { installBackend, installRbac, renderScreen } from "../test-utils.jsx";
+import { installBackend, installRbac, renderScreen } from "../test-utils";
 
 beforeEach(() => {
   installBackend();
@@ -37,7 +43,7 @@ beforeEach(() => {
 
 describe("${importName}", () => {
   it("renders without throwing", async () => {
-    const mod = await import("./${name}.jsx");
+    const mod = await import("./${name}");
     const Screen = mod.default;
     expect(typeof Screen).toBe("function");
     const { container } = renderScreen(Screen);
@@ -50,20 +56,23 @@ describe("${importName}", () => {
 `;
 
 const main = () => {
-  const files = fs.readdirSync(SCREENS_DIR).filter((f) => f.endsWith(".jsx") && !f.endsWith(".test.jsx"));
+  const files = fs.readdirSync(SCREENS_DIR).filter((f) => f.endsWith(".tsx") && !f.endsWith(".test.tsx"));
   let written = 0;
   for (const f of files) {
-    const base = f.replace(/\.jsx$/, "");
+    const base = f.replace(/\.tsx$/, "");
     const importName = base
       .split("-")
       .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
       .join("");
-    const out = path.join(SCREENS_DIR, base + ".test.jsx");
-    // Don't overwrite custom-edited test files. Header sentinel = first line.
+    const out = path.join(SCREENS_DIR, base + ".test.tsx");
+    // Strictly create-only. Many test files start with the auto-gen
+    // sentinel but have hand-written additional `it(...)` blocks
+    // below the smoke case; the previous overwrite-on-sentinel-match
+    // policy silently destroyed those extra cases on every run. Use
+    // `--force` to opt back into overwriting.
     if (fs.existsSync(out)) {
-      const cur = fs.readFileSync(out, "utf8");
-      if (!cur.startsWith("// Auto-generated smoke test")) {
-        console.log(`skip ${path.relative(ROOT, out)} (hand-edited)`);
+      if (!process.argv.includes("--force")) {
+        console.log(`skip ${path.relative(ROOT, out)} (already exists; pass --force to overwrite)`);
         continue;
       }
     }

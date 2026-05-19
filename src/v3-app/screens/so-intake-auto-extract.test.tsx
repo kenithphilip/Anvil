@@ -536,4 +536,54 @@ describe("SO Intake auto-extract", () => {
     const sel = container.querySelector('#so-intake-customer') as HTMLSelectElement | null;
     expect(sel?.value).not.toBe("cust-tata");
   });
+
+  it("auto-selects HMI Pune when bill-to is street-only but state_code corroborates (P250432265 regression)", async () => {
+    // The actual user-reported case from PO P250432265. Hyundai
+    // Motor India Ltd's PO header carries the buyer name and a
+    // street/district/state postal address, but the address text
+    // itself does not contain the word "Hyundai". The matcher used
+    // to require the buyer's name token to appear inside
+    // bill_to_address, so the auto-match refused and the operator
+    // had to find HMIL manually in the dropdown every time.
+    // Now state_code corroboration ("27" = Maharashtra) plus the
+    // exact normalised name match is sufficient.
+    const HMIL = {
+      id: "cust-hmil",
+      customer_name: "Hyundai Motor India Ltd",
+      gstin: "",                 // HMIL header on this PO does not print buyer GSTIN
+      state_code: "27",
+      country: "IN",
+    };
+    installBackend({
+      health: async () => ({ integrations: [] }),
+      customers: { list: async () => ({ customers: [HMIL] }) },
+      documents: {
+        upload: async () => ({ documentId: "doc-hmil", scan: { status: "clean" } }),
+        extract: async () => ({
+          confidence_overall: 0.92,
+          normalized: { customer: {
+            name: "Hyundai Motor India Ltd",
+            country: "IN",
+            state_code: "27",
+            currency: "INR",
+            payment_terms: "",
+            vendor_code: "TH1M",
+            // Street-only bill-to: no occurrence of "hyundai" anywhere.
+            bill_to_address: "Plot No A 16, MIDC Phase II Expansion, Talegaon, District-Pune 410507, Maharashtra",
+            ship_to_address: "Plot No A 16, MIDC Phase II Expansion, Talegaon, District-Pune 410507, Maharashtra",
+          } },
+        }),
+      },
+    });
+    const mod = await import("./so-intake");
+    const { container } = renderScreen(mod.default);
+    await new Promise((r) => setTimeout(r, 0));
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    Object.defineProperty(fileInput!, "files", { value: [fakeFile("P250432265.pdf")] });
+    fireEvent.change(fileInput!);
+    await waitFor(() => {
+      const sel = container.querySelector('#so-intake-customer') as HTMLSelectElement | null;
+      expect(sel?.value).toBe("cust-hmil");
+    }, { timeout: 2000 });
+  });
 });

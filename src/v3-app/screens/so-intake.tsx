@@ -396,29 +396,56 @@ const WiredSOIntake = () => {
       }
     }
 
-    // Tier 2: name match REQUIRES bill-to corroboration via the
-    // first significant token of the canonical name. The extractor
-    // will sometimes pick up an end-customer / project / brand
-    // reference from line items; the bill-to block is the ground
-    // truth.
+    // Tier 2: name match with at-least-one corroborating signal.
+    // The extractor will sometimes pick up an end-customer / project
+    // / brand reference from line items, so we never auto-match on
+    // name alone -- we require at least one independent signal that
+    // points at the same buyer. Accepted signals (any one suffices):
+    //   (a) the name's first significant token appears in bill_to
+    //   (b) the extracted state_code matches the DB customer's
+    //       state_code (Indian buyers only -- 2-digit codes)
+    //   (c) the extracted country matches the DB customer's country
+    //       AND no other DB customer's name normalises to `target`
+    // We deliberately do NOT corroborate via ship_to_address. The
+    // OBARA-Korea-buys-for-Hyundai-Steel-project case puts the
+    // project's end-customer site into ship_to even when bill_to
+    // correctly points at the actual buyer (OBARA Korea); accepting
+    // a ship_to token-match would re-introduce that regression.
+    // (a) alone used to be the only path, which made the matcher
+    // refuse correct HMI POs whose bill-to block carries the buyer's
+    // postal address with no "Hyundai" anywhere inside it. Adding
+    // (b) and (c) covers that case while keeping the false-positive
+    // guard: each signal independently rules out a different class
+    // of mistaken match.
     const name = (extracted.name || "").trim();
     if (!name) return null;
     const target = norm(name);
     if (target.length < 3) return null;
+
+    const exact = list.find((c) => norm(c.customer_name) === target);
+    if (!exact) return null;
 
     const billToTight = normTight(extracted.bill_to_address);
     // First word of the canonical name, stripped to alphanumerics so
     // hyphenated names (e.g. "Brand-new Customer") still corroborate
     // against bill-to addresses that flatten the hyphen.
     const firstToken = (target.split(/\s+/)[0] || "").replace(/[^a-z0-9]/g, "");
-    if (firstToken.length < 4 || !billToTight || !billToTight.includes(firstToken)) {
-      // Bill-to does not corroborate the extracted name. Refuse to
-      // auto-match. The operator confirms via the dialog.
+    const tokenLongEnough = firstToken.length >= 4;
+    const billOk = tokenLongEnough && billToTight && billToTight.includes(firstToken);
+
+    const extState = String(extracted.state_code || "").trim().toUpperCase();
+    const stateOk = extState && exact.state_code && extState === String(exact.state_code).toUpperCase();
+
+    const extCountry = String(extracted.country || "").trim().toUpperCase();
+    const countryOk = extCountry && exact.country && extCountry === String(exact.country).toUpperCase();
+    const nameIsUnique = list.filter((c) => norm(c.customer_name) === target).length === 1;
+    const countrySignal = countryOk && nameIsUnique;
+
+    if (!billOk && !stateOk && !countrySignal) {
+      // No corroborating signal. Refuse to auto-match. The operator
+      // confirms via the dialog.
       return null;
     }
-
-    const exact = list.find((c) => norm(c.customer_name) === target);
-    if (!exact) return null;
 
     return { customer: exact, confidence: "exact_name" };
   };

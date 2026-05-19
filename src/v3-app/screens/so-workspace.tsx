@@ -1339,7 +1339,13 @@ const WiredSOWorkspace = () => {
        * clipping). Action buttons get flex-shrink: 0 so they keep
        * their natural width when the row wraps.
        */}
-      <div className="ws-title" style={{ alignItems: "stretch", flexDirection: "column", gap: 10 }}>
+      {/* ws-title-sticky pins this header (identity + action bar + meta)
+          to the top of the scroll container so the workflow CTAs --
+          run extraction, run validation, send for review, approve,
+          push to Tally -- stay reachable while the operator scrolls
+          a long reconciliation table. Other screens that use the
+          plain .ws-title primitive are unaffected. */}
+      <div className="ws-title ws-title-sticky" style={{ alignItems: "stretch", flexDirection: "column", gap: 10 }}>
         <div className="row gap-sm" style={{ width: "100%", minWidth: 0, flexWrap: "wrap", alignItems: "center" }}>
           <div style={{ minWidth: 0, flex: "1 1 auto", overflow: "hidden" }}>
             <div className="h-eyebrow">Sales Orders · Workspace</div>
@@ -1657,9 +1663,25 @@ const WiredSOWorkspace = () => {
             )}
             {draftLines.length === 0 ? (
               <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-                No line items extracted yet. Use the "run extraction"
-                button on the action bar to re-run docai/extract
-                against the attached PO, or attach a higher-quality PO.
+                <div style={{ marginBottom: 12 }}>
+                  No line items extracted yet. Re-run docai/extract against the
+                  attached PO, or attach a higher-quality PO.
+                </div>
+                {/* Inline CTA so the operator does not have to scroll back
+                    to the top action bar. Mirrors the same disabled
+                    conditions as the action-bar copy at the top. */}
+                <Btn kind="primary"
+                     disabled={!canWrite || busy || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
+                     onClick={runExtraction}
+                     title={
+                       !sourceDocId
+                         ? "No PO attached to this order"
+                         : (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")
+                           ? "Extraction is only available before approval"
+                           : "Re-run docai/extract against the attached PO"
+                     }>
+                  {Icon.cycle} {busy ? "extracting…" : "run extraction"}
+                </Btn>
               </div>
             ) : (
               (() => {

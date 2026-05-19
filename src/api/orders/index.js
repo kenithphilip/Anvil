@@ -92,7 +92,18 @@ export default async function handler(req, res) {
       const svc = serviceClient();
       const status = req.query.status;
       const limit = Math.max(1, Math.min(200, Number(req.query.limit || 100)));
-      let query = svc.from("orders").select("*").eq("tenant_id", ctx.tenantId).order("created_at", { ascending: false }).limit(limit);
+      // Embed the related customer row under the `customer` key so the
+      // SO list view (src/v3-app/screens/orders.tsx) can render
+      // `o.customer?.customer_name` and `o.customer?.state_code` without
+      // a second round-trip per row. The orders.customer_id FK to
+      // customers(id) is declared in migration 001 so PostgREST resolves
+      // the embed automatically. Selecting `*` still returns every order
+      // column (po_number, status, created_at, etc.) unchanged.
+      let query = svc.from("orders")
+        .select("*, customer:customer_id(customer_name, state_code)")
+        .eq("tenant_id", ctx.tenantId)
+        .order("created_at", { ascending: false })
+        .limit(limit);
       if (status && STATUS_VALUES.has(status)) query = query.eq("status", status);
       if (req.query.po) query = query.ilike("po_number", "%" + req.query.po + "%");
       if (req.query.customer) query = query.eq("customer_id", req.query.customer);

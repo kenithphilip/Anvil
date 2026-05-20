@@ -1314,6 +1314,70 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   display: flex; align-items: center; gap: 6px;
   flex-shrink: 0;
 }
+/* Phase B: shared selection state. Both panes flip the same
+   `.is-active` class on hover/click via the ReviewPaneSelection
+   context, so the field row and its matching bbox light up in
+   lockstep. */
+.rp-field-row { cursor: pointer; transition: background 0.08s; }
+.rp-field-row:hover,
+.rp-field-row.is-active {
+  background: var(--paper-3);
+}
+.rp-field-row.is-active {
+  /* The colour-coded stripe widens on the active row so the eye
+     gets a stronger anchor for the selected group. */
+  outline: 1px solid var(--hairline);
+  outline-offset: -1px;
+}
+
+/* Phase B: PDF.js page + overlay. The page wrap is the positioning
+   parent for the SVG overlay; pages stack vertically inside the
+   container with a small gap so a multi-page PO has clear page
+   boundaries. */
+.rp-pdf-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: var(--paper-3);
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+}
+.rp-pdf-page-wrap {
+  position: relative;
+  background: var(--paper);
+  box-shadow: var(--shadow-1);
+  /* The canvas inside is positioned by react-pdf; the overlay SVG
+     is absolute over it. */
+}
+.rp-pdf-page-wrap canvas {
+  display: block;
+}
+.rp-pdf-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none; /* individual <rect>s opt in via attribute */
+}
+.rp-bbox-rect {
+  fill: transparent;
+  stroke-width: 1.5;
+  cursor: pointer;
+  transition: fill-opacity 0.08s, stroke-width 0.08s;
+}
+.rp-bbox-rect:hover { fill-opacity: 0.08; fill: currentColor; }
+.rp-bbox-rect.is-active {
+  stroke-width: 2.5;
+  fill: var(--accent-3);
+  fill-opacity: 0.45;
+}
+.rp-pdf-error {
+  padding: 14px;
+  color: var(--rust);
+  background: var(--rust-3);
+  border-radius: var(--r-2);
+}
 
 /* Selectable card list (e.g., order mode picker).
  * Auto-fit floor of 200px keeps each card readable; on a 320px

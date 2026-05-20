@@ -30,10 +30,21 @@
 //     `groupForFieldPath`) so the Phase B BboxOverlay can paint each
 //     bbox in the same colour as its field row.
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Banner, Chip } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
+import {
+  ReviewPaneSelectionProvider,
+  useReviewPaneSelection,
+} from "./ReviewPaneContext";
+import type { EvidenceBbox } from "./PdfPagePreview";
+
+// Lazy-load PdfPagePreview so the ~280KB pdfjs payload only lands in
+// the chunk that mounts when the Review tab opens a PDF. Other
+// screens, and the Review tab on image-only documents, do not pay
+// the bundle cost.
+const PdfPagePreview = lazy(() => import("./PdfPagePreview"));
 
 // Shape of an entry in `orders.evidence_by_field`. Kept loose because
 // historical orders may have rows missing `page`, `line`, or `confidence`.
@@ -152,14 +163,29 @@ const FieldRow: React.FC<{
   entry: EvidenceEntry;
   group: FieldGroupId;
 }> = ({ path, entry, group }) => {
+  const { hoveredField, selectedField, setHoveredField, setSelectedField } = useReviewPaneSelection();
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  const isActive = path === hoveredField || path === selectedField;
+  // When the bbox side (the SVG overlay on the PDF) selects this
+  // field, scroll the row into view so the operator does not have to
+  // hunt for it in the right pane. Skipped on mere hover to avoid
+  // jumpy scrolling.
+  useEffect(() => {
+    if (path !== selectedField || !rowRef.current) return;
+    rowRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [path, selectedField]);
   const stripe = `var(${FIELD_GROUPS[group].cssVar})`;
   const pageLine = formatPageLine(entry);
   const conf = entry?.confidence ?? null;
   return (
     <div
+      ref={rowRef}
       data-field-path={path}
       data-field-group={group}
-      className="rp-field-row"
+      className={"rp-field-row" + (isActive ? " is-active" : "")}
+      onMouseEnter={() => setHoveredField(path)}
+      onMouseLeave={() => setHoveredField(null)}
+      onClick={() => setSelectedField(path === selectedField ? null : path)}
     >
       <span className="rp-field-stripe" style={{ background: stripe }} aria-hidden="true" />
       <div className="rp-field-body">
@@ -196,11 +222,38 @@ const FieldGroupSection: React.FC<{
   );
 };
 
-// Render whichever preview matches the document mime. PDFs use the
-// browser's native viewer (opaque, no overlays — overlays land in
-// Phase B). Images use the existing BboxOverlay-friendly layout via
-// a plain <img>; the actual overlay component is wired in Phase B.
-const DocumentPreview: React.FC<{ doc: DocResolution }> = ({ doc }) => {
+// ErrorBoundary that catches a PdfPagePreview crash (worker failure,
+// corrupt PDF, etc.) and lets the parent fall back to the opaque
+// native <embed>. Localised so other parts of the workspace never
+// see the boundary.
+class PdfErrorBoundary extends React.Component<
+  { onError: () => void; children: React.ReactNode },
+  { errored: boolean }
+> {
+  constructor(props: { onError: () => void; children: React.ReactNode }) {
+    super(props);
+    this.state = { errored: false };
+  }
+  static getDerivedStateFromError() { return { errored: true }; }
+  componentDidCatch() { this.props.onError(); }
+  render() { return this.state.errored ? null : this.props.children; }
+}
+
+// Render whichever preview matches the document mime. PDFs prefer
+// PdfPagePreview (PDF.js + bbox overlays); if that fails for any
+// reason we fall through to the opaque-but-reliable native <embed>
+// so the operator never loses access to the source document.
+// Images render with <img>. Other mimes fall back to a download link.
+interface DocumentPreviewProps {
+  doc: DocResolution;
+  evidenceRows: EvidenceBbox[];
+  colourForField: (fieldPath: string) => string;
+}
+const DocumentPreview: React.FC<DocumentPreviewProps> = ({ doc, evidenceRows, colourForField }) => {
+  // Tracks whether the PDF.js path crashed; once flipped we render
+  // the native <embed> for the remainder of this component's life.
+  const [pdfFailed, setPdfFailed] = useState(false);
+
   if (doc.loading) {
     return (
       <div className="rp-pdf-loading mono-sm">
@@ -226,14 +279,31 @@ const DocumentPreview: React.FC<{ doc: DocResolution }> = ({ doc }) => {
     );
   }
   const mime = (doc.mime || "").toLowerCase();
-  if (mime === "application/pdf" || /\.pdf(\?|$)/i.test(doc.url)) {
+  const isPdf = mime === "application/pdf" || /\.pdf(\?|$)/i.test(doc.url);
+  if (isPdf) {
+    if (pdfFailed) {
+      // PDF.js bailed; native viewer keeps the document accessible
+      // even though we can no longer overlay bboxes on it.
+      return (
+        <embed
+          src={doc.url}
+          type="application/pdf"
+          title={doc.filename || "Source PO"}
+          className="rp-pdf-embed"
+        />
+      );
+    }
     return (
-      <embed
-        src={doc.url}
-        type="application/pdf"
-        title={doc.filename || "Source PO"}
-        className="rp-pdf-embed"
-      />
+      <PdfErrorBoundary onError={() => setPdfFailed(true)}>
+        <Suspense fallback={<div className="rp-pdf-loading mono-sm">Loading PDF viewer…</div>}>
+          <PdfPagePreview
+            url={doc.url}
+            filename={doc.filename}
+            evidenceRows={evidenceRows}
+            colourForField={colourForField}
+          />
+        </Suspense>
+      </PdfErrorBoundary>
     );
   }
   if (mime.startsWith("image/") || /\.(png|jpe?g|webp|tiff?|gif|bmp)(\?|$)/i.test(doc.url)) {
@@ -255,13 +325,40 @@ const DocumentPreview: React.FC<{ doc: DocResolution }> = ({ doc }) => {
   );
 };
 
+// Internal hook: fetch the document's per-token bbox evidence rows
+// (from the Mistral OCR pipeline at /api/documents/<id>/evidence)
+// alongside the order's flat evidence_by_field map. Used in Phase B
+// to paint clickable rectangles on the rendered PDF/image. Bails to
+// an empty array when no docId is supplied or the fetch fails, so
+// the caller can render fields without overlays in those cases.
+const useDocumentEvidence = (docId: string | null | undefined): EvidenceBbox[] => {
+  const [rows, setRows] = useState<EvidenceBbox[]>([]);
+  useEffect(() => {
+    if (!docId) { setRows([]); return; }
+    let cancelled = false;
+    Promise.resolve(ObaraBackend?.documents?.evidence?.(docId))
+      .then((resp: any) => {
+        if (cancelled) return;
+        const list: any[] = Array.isArray(resp?.rows) ? resp.rows : [];
+        // Filter to rows with usable bboxes; a row without geometry
+        // cannot be highlighted on the page so it's dead weight in
+        // the overlay loop.
+        setRows(list.filter((r) => r && r.bbox && r.bbox.page_width && r.bbox.page_height));
+      })
+      .catch(() => { if (!cancelled) setRows([]); });
+    return () => { cancelled = true; };
+  }, [docId]);
+  return rows;
+};
+
 interface ReviewPaneProps {
   docId: string | null | undefined;
   evidenceByField: EvidenceByField | null | undefined;
 }
 
-const ReviewPane: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) => {
+const ReviewPaneInner: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) => {
   const doc = useSignedDoc(docId);
+  const evidenceRows = useDocumentEvidence(docId);
 
   // Group + stable-sort fields once per render. Sorted alphabetically
   // within each group so the operator can predict where a field will
@@ -286,6 +383,13 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) => {
     [grouped]
   );
 
+  // Stable colour function passed to the PDF overlay so each bbox
+  // adopts the same hue as the corresponding field-list group.
+  const colourForField = useCallback(
+    (fieldPath: string) => `var(${FIELD_GROUPS[groupForFieldPath(fieldPath)].cssVar})`,
+    [],
+  );
+
   return (
     <div className="rp-grid">
       {/* Left: source document preview. */}
@@ -295,7 +399,11 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) => {
           {doc.filename && <span className="mono-sm" style={{ color: "var(--ink-3)" }}>{doc.filename}</span>}
         </header>
         <div className="rp-pane-body rp-pane-body-doc">
-          <DocumentPreview doc={doc} />
+          <DocumentPreview
+            doc={doc}
+            evidenceRows={evidenceRows}
+            colourForField={colourForField}
+          />
         </div>
       </div>
 
@@ -329,5 +437,11 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) => {
     </div>
   );
 };
+
+const ReviewPane: React.FC<ReviewPaneProps> = (props) => (
+  <ReviewPaneSelectionProvider>
+    <ReviewPaneInner {...props} />
+  </ReviewPaneSelectionProvider>
+);
 
 export default ReviewPane;

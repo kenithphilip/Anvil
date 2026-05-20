@@ -1184,6 +1184,137 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .hbar.warn > span { background: var(--amber); }
 .hbar.bad  > span { background: var(--rust); }
 
+/* ── Review pane (so-workspace -> "Review" tab) ───────────
+ * Side-by-side document preview + extracted-field list. All
+ * selectors are .rp- prefixed so the rules never collide with
+ * any existing screen. Phase A: read-only. Phase B will paint
+ * highlights on .rp-field-row.is-selected + .rp-bbox-rect.is-selected,
+ * and Phase C will style .is-confirmed / .is-flagged states. */
+.rp-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 12px;
+  /* Tall enough that the operator sees most of a typical PO page
+     plus the field list without immediate scrolling. The workspace
+     scroll container above takes over for taller content. */
+  min-height: min(78vh, 720px);
+}
+@media (max-width: 960px) {
+  .rp-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.rp-pane {
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-2);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.rp-pane-header {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--hairline-2);
+  background: var(--paper-2);
+  flex-shrink: 0;
+}
+.rp-pane-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  min-height: 0;
+}
+.rp-pane-body-doc {
+  /* The PDF embed / image preview wants to fill the body without
+     introducing nested scroll. The embed handles its own scrolling. */
+  display: flex; flex-direction: column;
+  padding: 0;
+}
+.rp-pdf-embed {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  /* min-height keeps the embed from collapsing to 0 in some browsers
+     when the parent grid track is shorter than the natural PDF height. */
+  min-height: 60vh;
+}
+.rp-pdf-loading {
+  padding: 16px;
+  color: var(--ink-3);
+}
+.rp-image-wrap {
+  width: 100%; height: 100%;
+  display: flex; align-items: flex-start; justify-content: center;
+  background: var(--paper-3);
+  padding: 12px;
+  overflow: auto;
+}
+.rp-image {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+.rp-field-group + .rp-field-group {
+  border-top: 1px solid var(--hairline-3);
+}
+.rp-field-group-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px 6px;
+  background: var(--paper-2);
+  position: sticky; top: 0; z-index: 1;
+}
+.rp-field-group-swatch {
+  width: 8px; height: 8px; border-radius: 2px;
+  flex-shrink: 0;
+}
+.rp-field-group-label {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+}
+.rp-field-group-count {
+  color: var(--ink-4);
+  margin-left: auto;
+}
+.rp-field-row {
+  display: grid;
+  grid-template-columns: 4px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 14px;
+  border-top: 1px solid var(--hairline-3);
+}
+.rp-field-row:first-of-type {
+  border-top: 0;
+}
+.rp-field-stripe {
+  align-self: stretch;
+  border-radius: 1px;
+}
+.rp-field-body {
+  min-width: 0;
+}
+.rp-field-name {
+  color: var(--ink-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rp-field-value {
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.rp-field-meta {
+  display: flex; align-items: center; gap: 6px;
+  flex-shrink: 0;
+}
+
 /* Selectable card list (e.g., order mode picker).
  * Auto-fit floor of 200px keeps each card readable; on a 320px
  * viewport that means a single column, on a 800px viewport three

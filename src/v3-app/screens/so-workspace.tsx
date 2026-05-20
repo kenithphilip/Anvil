@@ -7,6 +7,7 @@ import { RBAC } from "../lib/rbac";
 import { amountInWords } from "../lib/amount-words";
 import { getFieldSource, markFieldEdited, FieldSource } from "../lib/field-sources";
 import { ItemMasterPicker, PickedItem } from "../components/ItemMasterPicker";
+import ReviewPane from "../components/ReviewPane";
 import { computeLineTotals, TAX_AMOUNT_KEYS, AUX_AMOUNT_KEYS, COMPONENT_LABEL } from "../lib/line-totals";
 import { ExtractionProgress } from "../components/ExtractionProgress";
 
@@ -1301,11 +1302,25 @@ const WiredSOWorkspace = () => {
     );
   };
 
+  // Review-tab count: number of distinct field paths the extractor
+  // has cited. Surfaces the "X fields extracted" signal on the tab
+  // strip without needing to open the tab. Falls back to null (no
+  // badge) for orders that haven't been through extraction yet.
+  const reviewFieldCount = o.evidence_by_field
+    ? Object.keys(o.evidence_by_field as Record<string, unknown>).length
+    : 0;
+
   const tabs = [
     { id: "recon", label: "Reconciliation", count: findings.length || null },
     { id: "header", label: "Header fields" },
     { id: "margin", label: "Margin cockpit" },
     { id: "why", label: "Why" },
+    // Phase A of the operator-facing extraction review surface. New
+    // read-only tab that side-by-sides the source document and the
+    // extracted-field list (`evidence_by_field`). The existing
+    // "Evidence" tab is unchanged and continues to render the raw
+    // audit table; "Review" is the operator-friendly visual.
+    { id: "review", label: "Review", count: reviewFieldCount || null },
     { id: "evidence", label: "Evidence" },
     { id: "approval", label: "Approval" },
     { id: "tally", label: "Tally" },
@@ -1829,6 +1844,13 @@ const WiredSOWorkspace = () => {
               </div>
             )}
           </Card>
+        )}
+
+        {tab === "review" && (
+          <ReviewPane
+            docId={sourceDocId}
+            evidenceByField={o.evidence_by_field || {}}
+          />
         )}
 
         {tab === "evidence" && (

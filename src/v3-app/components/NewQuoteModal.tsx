@@ -108,7 +108,6 @@ export const NewQuoteModal: React.FC<{
             aria-label="Customer"
             value={customerId}
             onChange={(e) => pick(e.target.value)}
-            size={Math.min(8, Math.max(3, filtered.length + 1))}
             style={{ marginTop: 6 }}
           >
             <option value="">

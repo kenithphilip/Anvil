@@ -782,9 +782,21 @@ const WiredSOWorkspace = () => {
       );
     }
     if (mi && mi.part_no) {
+      // Auto-mapped via a resolver tier (customer_part / part_no /
+      // alias / spec / fuzzy). Previously this was a static chip with
+      // no override, so an operator stuck with a wrong auto-map could
+      // not re-pick. Offer a "change" link (same picker as the manual
+      // path) when lines are editable.
       return (
-        <div style={{ marginTop: 2 }}>
+        <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 2 }}>
           <Chip k="info">{(mi.match_via || "auto").replace(/_/g, " ")}: {mi.part_no}</Chip>
+          {canEditLines && (
+            <button
+              type="button"
+              onClick={() => setPickerLineIdx(i)}
+              style={{ background: "none", border: "none", padding: 0, color: "var(--ink-3)", cursor: "pointer", fontSize: 11, textDecoration: "underline" }}
+            >change</button>
+          )}
         </div>
       );
     }

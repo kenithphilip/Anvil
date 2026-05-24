@@ -452,4 +452,55 @@ describe("SoWorkspace", () => {
       window.location.hash = original;
     }
   });
+
+  it("offers a 'change' control to re-map a tier-auto-mapped line (so.write role)", async () => {
+    // Bug fix: a line auto-mapped via a resolver tier showed a static
+    // info chip with no override, so an operator could not re-pick the
+    // canonical item. so.write roles now get a "change" link that opens
+    // the item-master picker.
+    const original = window.location.hash;
+    const orderId = "ord-fixture-remap";
+    const order = {
+      id: orderId,
+      status: "DRAFT",
+      po_number: "PO-REMAP-1",
+      customer_id: "cust-1",
+      customer_name: "Fixture Customer",
+      result: {
+        salesOrder: {
+          lineItems: [
+            {
+              partNumber: "BR-6204-ZZ",
+              description: "Deep groove ball bearing",
+              quantity: 5,
+              unitPrice: 145,
+              _mapped_item: { id: "item-1", part_no: "BR-6204-ZZ", match_via: "part_no" },
+            },
+          ],
+        },
+      },
+      preflight_payload: { source_document_id: "doc-1" },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    try {
+      window.location.hash = "#/so?id=" + orderId;
+      installBackend({
+        orders: { get: vi.fn(async () => ({ order })), update: vi.fn(async () => ({})) },
+        audit: { list: vi.fn(async () => []) },
+        events: { list: vi.fn(async () => []) },
+        cost: { breakdown: vi.fn(async () => null) },
+      });
+      installRbac("sales_manager"); // so = "rw" -> canEditLines true
+      const mod = await import("./so-workspace");
+      const Screen = mod.default;
+      const { container } = renderScreen(Screen);
+      // The tier-mapped chip renders ("part no: BR-6204-ZZ").
+      await waitFor(() => expect(container.innerHTML).toContain("part no: BR-6204-ZZ"));
+      const changeBtn = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "change");
+      expect(changeBtn).toBeTruthy();
+    } finally {
+      window.location.hash = original;
+    }
+  });
 });

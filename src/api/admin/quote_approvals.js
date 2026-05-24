@@ -53,11 +53,53 @@ export default async function handler(req, res) {
     if (type === "approvals") {
       if (req.method === "GET") {
         requirePermission(ctx, "read");
-        let q = svc.from("quote_approvals").select("*").eq("tenant_id", ctx.tenantId).order("created_at", { ascending: false }).limit(500);
+        // The Approvals queue UI (src/v3-app/screens/approvals.tsx)
+        // renders po_number, customer_name, order_mode, value_inr,
+        // margin_pct and a line-item count per row -- but NONE of
+        // those columns exist on quote_approvals (migration 006 only
+        // carries id, order_id, approver_role, status, comments,
+        // decided_at). With a bare select("*") every column rendered
+        // "—". Embed the related order (and through it the customer)
+        // so we can flatten the fields the UI reads. The
+        // quote_approvals.order_id FK -> orders(id) and
+        // orders.customer_id -> customers(id) let PostgREST resolve
+        // the nested embed automatically.
+        let q = svc.from("quote_approvals")
+          .select("*, order:order_id(po_number, quote_number, order_mode, result, created_at, customer:customer_id(customer_name, gstin, state_code))")
+          .eq("tenant_id", ctx.tenantId)
+          .order("created_at", { ascending: false })
+          .limit(500);
         if (req.query.order_id) q = q.eq("order_id", req.query.order_id);
         const { data, error } = await q;
         if (error) throw new Error(error.message);
-        return json(res, 200, { approvals: data || [] });
+        // Flatten the embed into the top-level shape the UI already
+        // expects (a.po_number, a.customer_name, ...) so no client
+        // change is needed beyond adding the Line-items column.
+        // value_inr / margin_pct are derived from the order's result
+        // JSONB; margin is read defensively because the field name
+        // drifts between marginPct (camel) and margin_pct (snake)
+        // across older orders.
+        const approvals = (data || []).map((row) => {
+          const ord = row.order || null;
+          const so = ord?.result?.salesOrder || null;
+          const lines = Array.isArray(so?.lineItems) ? so.lineItems : [];
+          const grand = so ? Number(so.grandTotal) : NaN;
+          const margin = so ? Number(so.marginPct ?? so.margin_pct) : NaN;
+          const { order: _omit, ...rest } = row;
+          return {
+            ...rest,
+            po_number: ord?.po_number || null,
+            quote_number: ord?.quote_number || null,
+            order_mode: ord?.order_mode || null,
+            customer_name: ord?.customer?.customer_name || null,
+            gstin: ord?.customer?.gstin || null,
+            state_code: ord?.customer?.state_code || null,
+            line_count: lines.length,
+            value_inr: Number.isFinite(grand) ? grand : null,
+            margin_pct: Number.isFinite(margin) ? margin : null,
+          };
+        });
+        return json(res, 200, { approvals });
       }
       if (req.method === "POST") {
         requirePermission(ctx, "write");

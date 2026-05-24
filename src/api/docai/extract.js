@@ -22,6 +22,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { runExtractionPipeline } from "../_lib/docai/run.js";
+import { safeFetch } from "../_lib/safe-fetch.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -37,20 +38,72 @@ export default async function handler(req, res) {
     const svc = serviceClient();
     const settings = await tenantSettings(svc, ctx.tenantId);
 
-    const sourceType = body?.source_type
-      || (body?.source_filename?.toLowerCase().endsWith(".xlsx") ? "xlsx"
-          : (body?.mime?.startsWith("image/") ? "image" : "pdf"));
-
-    const sourceBytes = body?.bytes_base64
+    let sourceBytes = body?.bytes_base64
       ? Buffer.from(body.bytes_base64, "base64")
       : null;
+    let resolvedUrl = body?.source_url || null;
+    let resolvedFilename = body?.source_filename || null;
+    let resolvedMime = body?.mime || null;
+
+    // Re-extraction path. The SO workspace's "run extraction" button
+    // (and any caller re-running against an already-uploaded PO) ships
+    // only { source_id, order_id } -- the file is no longer in the
+    // browser, so there are no bytes_base64 to send. Previously the
+    // endpoint passed bytes=null straight through, the pipeline never
+    // populated bodyText, and the Claude adapter died with the cryptic
+    // "needs hints.bodyText, bytes (PDF/image/text), or url". Resolve
+    // the storage object server-side instead: it avoids round-tripping
+    // a multi-MB PDF through the client and gives every caller (cron
+    // rerun, source-PO ack, future correction-driven rerun) the same
+    // behaviour. We only do this when nothing else can feed the model.
+    const docHandle = body?.document_id || body?.source_id || null;
+    if (!sourceBytes && !resolvedUrl && !body?.hints?.bodyText && docHandle) {
+      const { data: doc } = await svc.from("documents")
+        .select("storage_bucket, storage_path, mime_type, filename")
+        .eq("tenant_id", ctx.tenantId)
+        .eq("id", docHandle)
+        .maybeSingle();
+      if (doc?.storage_bucket && doc?.storage_path) {
+        resolvedMime = resolvedMime || doc.mime_type || null;
+        resolvedFilename = resolvedFilename || doc.filename || null;
+        const { data: signed, error: signErr } = await svc.storage
+          .from(doc.storage_bucket)
+          .createSignedUrl(doc.storage_path, 60 * 5);
+        if (!signErr && signed?.signedUrl) {
+          try {
+            const upstream = await safeFetch(signed.signedUrl);
+            if (upstream.ok) {
+              sourceBytes = Buffer.from(await upstream.arrayBuffer());
+            }
+          } catch (_) { /* fall through to the 400 below */ }
+        }
+      }
+    }
+
+    // Fail fast with a clear, operator-actionable error instead of the
+    // adapter-level "needs hints.bodyText, bytes, or url" message when
+    // we genuinely have nothing to extract from.
+    if (!sourceBytes && !resolvedUrl && !body?.hints?.bodyText) {
+      return json(res, 400, {
+        error: {
+          code: "NO_SOURCE_BYTES",
+          message: docHandle
+            ? "Could not load the source document for extraction. It may have been moved or deleted from storage; re-upload the PO and try again."
+            : "Extraction needs a document: attach a PO file, pass source_id, or provide source_url.",
+        },
+      });
+    }
+
+    const sourceType = body?.source_type
+      || (resolvedFilename?.toLowerCase().endsWith(".xlsx") ? "xlsx"
+          : (resolvedMime?.startsWith("image/") ? "image" : "pdf"));
 
     const result = await runExtractionPipeline({
       ctx, svc, settings,
       bytes: sourceBytes,
-      url: body?.source_url || null,
-      filename: body?.source_filename || null,
-      mime: body?.mime || null,
+      url: resolvedUrl,
+      filename: resolvedFilename,
+      mime: resolvedMime,
       sourceType,
       customerId: body?.customer_id || null,
       documentId: body?.document_id || (body?.source_id || null),

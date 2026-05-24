@@ -18,9 +18,10 @@
 // a step.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, hasPermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { belowFloorLines } from "../_lib/quote-margin.js";
 
 const VALID_STATUSES = new Set([
   "DRAFT", "PENDING_INTERNAL_APPROVAL", "SENT", "ACCEPTED",
@@ -239,6 +240,26 @@ export default async function handler(req, res) {
         return json(res, 409, { error: { message: "Field edits are only allowed on DRAFT quotes; use revise to clone." } });
       }
 
+      // Margin-floor guard: a quote with any line below its profile's
+      // floor cannot transition to SENT unless the actor can approve.
+      // The floor is read from the authoritative price composition.
+      let floorOverride = false;
+      if (body.status === "SENT" && cur.data.status !== "SENT") {
+        const below = await belowFloorLines(svc, ctx.tenantId, id);
+        if (below.length) {
+          if (!hasPermission(ctx, "approve")) {
+            return json(res, 409, {
+              error: {
+                code: "MARGIN_FLOOR_BLOCK",
+                message: below.length + " line(s) below the margin floor; needs sales_manager / finance / admin approval.",
+                below,
+              },
+            });
+          }
+          floorOverride = true; // approver is overriding; recorded in the audit below
+        }
+      }
+
       const patch = { updated_at: new Date().toISOString() };
       for (const k of editFields) if (k in body) patch[k] = body[k];
       if ("line_items" in patch) Object.assign(patch, computeTotals(patch.line_items));
@@ -261,8 +282,11 @@ export default async function handler(req, res) {
         objectType: "quote",
         objectId: id,
         before: { status: cur.data.status },
-        after: { status: upd.data.status },
+        after: { status: upd.data.status, margin_floor_override: floorOverride || undefined },
       });
+      if (floorOverride) {
+        await recordAudit(ctx, { action: "quote_margin_override", objectType: "quote", objectId: id, detail: "approver sent a quote with line(s) below the margin floor" });
+      }
       return json(res, 200, { quote: upd.data });
     }
 

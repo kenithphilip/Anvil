@@ -26,6 +26,7 @@ import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { renderQuote } from "../_lib/pdf-renderer.js";
 import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "../_lib/storage.js";
 import { upsertCustomerPart } from "../_lib/item-customer-parts.js";
+import { belowFloorLines } from "../_lib/quote-margin.js";
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PORTAL_TOKEN_TTL_DAYS = 30;
@@ -164,6 +165,19 @@ export default async function handler(req, res) {
     const quote = qQ.data;
     if (!["DRAFT", "PENDING_INTERNAL_APPROVAL"].includes(quote.status)) {
       return json(res, 409, { error: { message: "Cannot send a quote in status " + quote.status } });
+    }
+
+    // Margin-floor guard. This endpoint is already approver-gated, so a
+    // send here is an implicit approval; we record the override for the
+    // audit trail when any line is below its floor.
+    const belowFloor = await belowFloorLines(svc, ctx.tenantId, quote.id);
+    if (belowFloor.length) {
+      await recordAudit(ctx, {
+        action: "quote_margin_override",
+        objectType: "quote",
+        objectId: quote.id,
+        detail: belowFloor.length + " line(s) below the margin floor, sent by approver",
+      });
     }
 
     const recipient = await resolveRecipient(svc, ctx.tenantId, quote, body.to);
@@ -508,6 +522,7 @@ export default async function handler(req, res) {
       pdf_error: pdfError,
       quote: upd.data,
       armed_goals: armed.error ? [] : armed.goals,
+      margin_floor_override: belowFloor.length > 0,
       status: "queued",
     });
   } catch (err) { sendError(res, err); }

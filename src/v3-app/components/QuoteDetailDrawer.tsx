@@ -419,7 +419,7 @@ export const QuoteDetailDrawer: React.FC<{
                 Cost composition preview. Enter supplier prices to see the landed-cost waterfall, the
                 recommended price, and the realized margin implied by the currently quoted price.
               </div>
-              <QuoteComposition lines={lines} currency={draft.currency} />
+              <QuoteComposition lines={lines} currency={draft.currency} quoteId={quote.id} />
             </>
           )}
 

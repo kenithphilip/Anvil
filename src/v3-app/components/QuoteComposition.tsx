@@ -47,16 +47,19 @@ const marginTone = (realized: number, floor: number, target: number): "good" | "
   return "good";
 };
 
-export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string }> = ({ lines }) => {
+export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quoteId?: string }> = ({ lines, quoteId }) => {
   const [profileCode, setProfileCode] = useState("granular");
   const [fx, setFx] = useState<FxSnapshot>({ ...DEFAULT_FX, rates: { ...DEFAULT_FX.rates } });
-  // Supplier price + currency per line, keyed by line_index. Not
-  // persisted; seeded with a currency guess from source country.
+  // Supplier price + currency per line, keyed by line_index. Seeded with
+  // a currency guess from source country, then overwritten by any saved
+  // composition loaded for this quote.
   const [supplier, setSupplier] = useState<Record<number, { price: number; cur: string }>>({});
   const [selected, setSelected] = useState<number | null>(null);
   // Tenant-configured profiles from /api/admin/pricing_profiles; falls
   // back to the in-code defaults until a tenant configures its own.
   const [apiProfiles, setApiProfiles] = useState<PricingProfile[] | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,6 +74,65 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string }> = 
     })();
     return () => { cancelled = true; };
   }, []);
+
+  // Restore any previously saved composition for this quote: seed
+  // supplier inputs, the chosen profile and the FX snapshot.
+  useEffect(() => {
+    if (!quoteId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp: any = await ObaraBackend?.admin?.listPriceComposition?.(quoteId);
+        if (cancelled) return;
+        const saved = Array.isArray(resp) ? resp : resp?.lines || [];
+        if (!saved.length) return;
+        const sup: Record<number, { price: number; cur: string }> = {};
+        for (const r of saved) {
+          if (r.line_index == null) continue;
+          sup[r.line_index] = { price: Number(r.supplier_unit_price) || 0, cur: r.supplier_currency || "INR" };
+        }
+        setSupplier(sup);
+        if (saved[0]?.profile_code) setProfileCode(saved[0].profile_code);
+        if (saved[0]?.fx_snapshot && typeof saved[0].fx_snapshot === "object") {
+          setFx({ ...DEFAULT_FX, ...saved[0].fx_snapshot, rates: { ...DEFAULT_FX.rates, ...(saved[0].fx_snapshot.rates || {}) } });
+        }
+      } catch { /* no saved composition yet */ }
+    })();
+    return () => { cancelled = true; };
+  }, [quoteId]);
+
+  const save = async () => {
+    if (!quoteId) return;
+    setSaving(true);
+    setSavedMsg(null);
+    try {
+      const payloadLines = (lines || []).map((ln) => ({
+        line_index: ln.line_index,
+        part_no: ln.part_no || null,
+        unit: ln.uom || null,
+        qty: Number(ln.qty) || 0,
+        source_country: ln.source_country || null,
+        discount_pct: Number(ln.discount_pct) || 0,
+        supplier_unit_price: Number((supplier[ln.line_index] || {}).price) || 0,
+        supplier_currency: (supplier[ln.line_index] || {}).cur || currencyForCountry(ln.source_country),
+      }));
+      const resp: any = await ObaraBackend?.admin?.recomputePriceComposition?.({
+        quote_id: quoteId,
+        profile_code: profile.code,
+        fx,
+        lines: payloadLines,
+      });
+      const n = (resp?.lines || []).length;
+      setSavedMsg(`Saved composition for ${n} line${n === 1 ? "" : "s"}.`);
+      window.notifySuccess?.("Composition saved", `${n} line${n === 1 ? "" : "s"} priced`);
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      setSavedMsg(null);
+      window.notifyError?.("Could not save composition", msg);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const profiles = apiProfiles && apiProfiles.length ? apiProfiles : FALLBACK_PROFILES;
   const profile = profiles.find((p) => p.code === profileCode) || profiles[0] || PROFILE_GRANULAR;
@@ -155,6 +217,13 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string }> = 
                 value={fx.multiplicationFactor?.[c] ?? ""} onChange={(e) => setLoaded(c, Number(e.target.value))} />
             </div>
           ))}
+        </div>
+        <div className="row" style={{ gap: 8, marginLeft: "auto", alignItems: "center" }}>
+          {savedMsg && <span className="mono-sm" style={{ color: "var(--ink-3)" }}>{savedMsg}</span>}
+          <Btn sm kind="primary" disabled={!quoteId || saving} onClick={save}
+            title={quoteId ? "Recompute server-side and save this composition" : "Save the quote first"}>
+            {saving ? "Saving..." : "Save composition"}
+          </Btn>
         </div>
       </div>
 

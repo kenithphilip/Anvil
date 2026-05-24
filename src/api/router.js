@@ -28,6 +28,7 @@ import adminInventory          from "./admin/inventory.js";
 import adminItemMaster         from "./admin/item_master.js";
 import adminItemSpecifications from "./admin/item_specifications.js";
 import adminItemCustomerParts  from "./admin/item_customer_parts.js";
+import adminItemUsage          from "./admin/item_usage.js";
 import adminItemFieldDefinitions from "./admin/item_field_definitions.js";
 import adminItemFieldValues    from "./admin/item_field_values.js";
 import adminItemReference      from "./admin/item_reference.js";
@@ -697,6 +698,7 @@ const STATIC_ROUTES = {
   "/admin/item_master":             adminItemMaster,
   "/admin/item_specifications":     adminItemSpecifications,
   "/admin/item_customer_parts":     adminItemCustomerParts,
+  "/admin/item_usage":              adminItemUsage,
   "/admin/item_field_definitions":  adminItemFieldDefinitions,
   "/admin/item_field_values":       adminItemFieldValues,
   "/admin/item_reference":          adminItemReference,

@@ -91,7 +91,13 @@ export const ItemDetailDrawer: React.FC<{
   onSaved?: () => void;
 }> = ({ item, onClose, onSaved }) => {
   const isNew = !item || !item.id;
-  const [tab, setTab] = useState<"id" | "class" | "tax" | "inv" | "spec" | "customers" | "custom">("id");
+  const [tab, setTab] = useState<"id" | "class" | "tax" | "inv" | "spec" | "customers" | "used" | "custom">("id");
+  // "Used in orders" tab data (backlog #15). Lazy-loaded the first
+  // time the operator opens the tab so the drawer's initial open isn't
+  // slowed by the reverse order scan.
+  const [usage, setUsage] = useState<{ rows: any[]; meta: any } | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageErr, setUsageErr] = useState<any>(null);
   const [draft, setDraft] = useState<Item>(item ? { ...item } : { lifecycle: "ACTIVE", type_of_supply: "GOODS", gst_applicable: true });
   const [spec, setSpec] = useState<any>(null);
   const [customerParts, setCustomerParts] = useState<any[]>([]);
@@ -157,6 +163,19 @@ export const ItemDetailDrawer: React.FC<{
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Lazy-load the "Used in orders" data on first open of that tab.
+  useEffect(() => {
+    if (tab !== "used" || !item?.id || usage || usageLoading) return;
+    let cancelled = false;
+    setUsageLoading(true);
+    setUsageErr(null);
+    fetchJson("/api/admin/item_usage?item_id=" + item.id)
+      .then((d) => { if (!cancelled) setUsage({ rows: d.usage || [], meta: d }); })
+      .catch((e) => { if (!cancelled) setUsageErr(e); })
+      .finally(() => { if (!cancelled) setUsageLoading(false); });
+    return () => { cancelled = true; };
+  }, [tab, item?.id, usage, usageLoading]);
 
   const setField = (k: string, v: any) => setDraft((d: Item) => ({ ...d, [k]: v }));
   const setSpecField = (k: string, v: any) => setSpec((d: any) => ({ ...(d || {}), [k]: v }));
@@ -262,6 +281,7 @@ export const ItemDetailDrawer: React.FC<{
           <TabBtn active={tab === "inv"} onClick={() => setTab("inv")}>Inventory</TabBtn>
           <TabBtn active={tab === "spec"} onClick={() => setTab("spec")}>Specifications</TabBtn>
           <TabBtn active={tab === "customers"} onClick={() => setTab("customers")}>Used by these customers</TabBtn>
+          {!isNew && <TabBtn active={tab === "used"} onClick={() => setTab("used")}>Used in orders</TabBtn>}
           <TabBtn active={tab === "custom"} onClick={() => setTab("custom")}>Custom fields</TabBtn>
         </div>
 
@@ -488,6 +508,16 @@ export const ItemDetailDrawer: React.FC<{
             }} />
           )}
 
+          {tab === "used" && (
+            <UsedInOrdersTab
+              loading={usageLoading}
+              err={usageErr}
+              rows={usage?.rows || []}
+              meta={usage?.meta || null}
+              itemCreatedAt={item?.created_at || null}
+            />
+          )}
+
           {tab === "custom" && (
             <CustomFieldsTab definitions={fieldDefs} values={fieldValues} setValues={setFieldValues} />
           )}
@@ -501,6 +531,74 @@ export const ItemDetailDrawer: React.FC<{
           </Btn>
         </div>
       </div>
+    </div>
+  );
+};
+
+// "Used in orders" tab: read-only list of orders/drafts whose line
+// items reference this item, newest first, plus the item's own
+// created-at so the operator sees how long it has existed.
+const UsedInOrdersTab: React.FC<{
+  loading: boolean;
+  err: any;
+  rows: any[];
+  meta: any;
+  itemCreatedAt: string | null;
+}> = ({ loading, err, rows, meta, itemCreatedAt }) => {
+  const fmtDate = (iso: string | null) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  };
+  const STATUS_K: Record<string, string> = {
+    DRAFT: "ghost", PENDING_REVIEW: "warn", PENDING_APPROVAL: "warn",
+    APPROVED: "good", EXPORTED_TO_TALLY: "info", RECONCILED: "good",
+    CANCELLED: "ghost", BLOCKED: "bad", DUPLICATE: "warn",
+  };
+  if (loading) return <div className="mono-sm" style={{ color: "var(--ink-3)", padding: 8 }}>Scanning orders…</div>;
+  if (err) return <div className="mono-sm" style={{ color: "var(--rust)", padding: 8 }}>Could not load usage: {String(err.message || err)}</div>;
+  return (
+    <div>
+      <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 10, display: "flex", gap: 14, flexWrap: "wrap" }}>
+        <span>Item created <b style={{ color: "var(--ink)" }}>{fmtDate(itemCreatedAt)}</b></span>
+        <span>·</span>
+        <span>{meta?.order_count ?? rows.length} order{(meta?.order_count ?? rows.length) === 1 ? "" : "s"}</span>
+        {typeof meta?.total_qty === "number" && meta.total_qty > 0 && (
+          <><span>·</span><span>{meta.total_qty} total qty</span></>
+        )}
+        {meta?.scan_capped && <span style={{ color: "var(--amber)" }}>· showing most recent {meta.scanned}</span>}
+      </div>
+      {rows.length === 0 ? (
+        <div className="body" style={{ padding: 18, textAlign: "center", color: "var(--ink-3)" }}>
+          This item has not been referenced by any order yet.
+        </div>
+      ) : (
+        <table className="tbl" style={{ fontSize: 12 }}>
+          <thead><tr>
+            <th>Reference</th>
+            <th>Customer</th>
+            <th>Status</th>
+            <th className="r">Qty</th>
+            <th className="r">Date</th>
+            <th></th>
+          </tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.order_id}>
+                <td className="mono"><span className="pri">{r.po_number || r.quote_number || (r.order_id ? r.order_id.slice(0, 8) : "draft")}</span></td>
+                <td>{r.customer_name || "—"}</td>
+                <td><Chip k={(STATUS_K[r.status] as any) || "ghost"}>{(r.status || "").toLowerCase() || "—"}</Chip></td>
+                <td className="r mono">{r.total_qty || "—"}{r.line_count > 1 ? <span style={{ color: "var(--ink-4)" }}> ·{r.line_count}ln</span> : null}</td>
+                <td className="r mono-sm">{fmtDate(r.po_date || r.created_at)}</td>
+                <td className="r">
+                  <Btn sm kind="ghost" onClick={() => { window.location.hash = `#/so?id=${r.order_id}`; }}>open</Btn>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 };

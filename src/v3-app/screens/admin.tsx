@@ -5,6 +5,7 @@ import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { RBAC, MATRIX, ACTIONS } from "../lib/rbac";
 import { Prefs } from "../lib/preferences";
+import { PricingProfilesAdmin } from "../components/PricingProfilesAdmin";
 
 // ============================================================
 // ANVIL v3 — Admin Center CRUD overlay
@@ -62,6 +63,7 @@ const ADMIN_CRUD_TABS = [
   { id: "doc_templates", label: "Document templates" },
   { id: "freight", label: "Freight rates" },
   { id: "pricing", label: "Pricing settings" },
+  { id: "pricing_profiles", label: "Pricing profiles" },
   { id: "vendor_codes", label: "Vendor codes" },
   { id: "customer_parts", label: "Customer parts" },
   { id: "terms_packs", label: "Customer terms" },
@@ -3602,6 +3604,10 @@ const WiredAdminCRUD = () => {
 
         {active === "pricing" && (
           <PricingSettingsPanel />
+        )}
+
+        {active === "pricing_profiles" && (
+          <PricingProfilesAdmin />
         )}
 
         {active === "vendor_codes" && (

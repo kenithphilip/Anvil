@@ -1,7 +1,9 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Btn, Card, Chip, fmtINR } from "../lib/primitives";
+import { ObaraBackend } from "../lib/api";
 import {
   composePrice,
+  pricingProfileFromRow,
   PROFILE_GRANULAR,
   PROFILE_COMPACT,
   DEFAULT_FX,
@@ -24,7 +26,9 @@ import {
 
 type Line = any;
 
-const PROFILES: PricingProfile[] = [PROFILE_GRANULAR, PROFILE_COMPACT];
+// In-code fallback used when the tenant has no configured profiles yet
+// (or the API is unavailable), so the preview always works.
+const FALLBACK_PROFILES: PricingProfile[] = [PROFILE_GRANULAR, PROFILE_COMPACT];
 
 const currencyForCountry = (sc?: string): string => {
   const s = (sc || "").toUpperCase();
@@ -50,8 +54,26 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string }> = 
   // persisted; seeded with a currency guess from source country.
   const [supplier, setSupplier] = useState<Record<number, { price: number; cur: string }>>({});
   const [selected, setSelected] = useState<number | null>(null);
+  // Tenant-configured profiles from /api/admin/pricing_profiles; falls
+  // back to the in-code defaults until a tenant configures its own.
+  const [apiProfiles, setApiProfiles] = useState<PricingProfile[] | null>(null);
 
-  const profile = PROFILES.find((p) => p.code === profileCode) || PROFILE_GRANULAR;
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp: any = await ObaraBackend?.admin?.listPricingProfiles?.();
+        if (cancelled) return;
+        const rows = Array.isArray(resp) ? resp : resp?.profiles || [];
+        const mapped = rows.map((r: any) => pricingProfileFromRow(r)).filter((p: PricingProfile) => p.code && p.components.length);
+        if (mapped.length) setApiProfiles(mapped);
+      } catch { /* fall back to in-code defaults */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const profiles = apiProfiles && apiProfiles.length ? apiProfiles : FALLBACK_PROFILES;
+  const profile = profiles.find((p) => p.code === profileCode) || profiles[0] || PROFILE_GRANULAR;
 
   const setFxRate = (cur: string, v: number) =>
     setFx((f) => ({ ...f, rates: { ...f.rates, [cur]: v } }));
@@ -113,7 +135,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string }> = 
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <label className="mono-sm" style={{ color: "var(--ink-3)" }}>Pricing profile</label>
           <select className="select" value={profileCode} onChange={(e) => setProfileCode(e.target.value)} aria-label="Pricing profile">
-            {PROFILES.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
+            {profiles.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
           </select>
         </div>
         <div className="row" style={{ gap: 8 }}>

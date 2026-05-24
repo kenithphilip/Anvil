@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip, fmtINR } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
+import { QuoteComposition } from "./QuoteComposition";
 
 // Quote detail drawer.
 //
@@ -62,7 +63,7 @@ export const QuoteDetailDrawer: React.FC<{
   onClose: () => void;
   onSaved?: () => void;
 }> = ({ quote, onClose, onSaved }) => {
-  const [tab, setTab] = useState<"header" | "lines" | "terms">("header");
+  const [tab, setTab] = useState<"header" | "lines" | "comp" | "terms">("header");
   const [draft, setDraft] = useState<Quote>({ ...quote });
   const [lines, setLines] = useState<Line[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -260,6 +261,7 @@ export const QuoteDetailDrawer: React.FC<{
         <div style={{ display: "flex", gap: 2, padding: "0 18px", borderBottom: "1px solid var(--line)" }}>
           <TabBtn active={tab === "header"} onClick={() => setTab("header")}>Header</TabBtn>
           <TabBtn active={tab === "lines"} onClick={() => setTab("lines")}>Lines</TabBtn>
+          <TabBtn active={tab === "comp"} onClick={() => setTab("comp")}>Composition</TabBtn>
           <TabBtn active={tab === "terms"} onClick={() => setTab("terms")}>Terms</TabBtn>
         </div>
 
@@ -408,6 +410,16 @@ export const QuoteDetailDrawer: React.FC<{
               <div className="row" style={{ justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
                 <Btn sm kind="primary" disabled={busy} onClick={saveLines}>{busy ? "Saving..." : "Save lines"}</Btn>
               </div>
+            </>
+          )}
+
+          {tab === "comp" && (
+            <>
+              <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 8 }}>
+                Cost composition preview. Enter supplier prices to see the landed-cost waterfall, the
+                recommended price, and the realized margin implied by the currently quoted price.
+              </div>
+              <QuoteComposition lines={lines} currency={draft.currency} />
             </>
           )}
 

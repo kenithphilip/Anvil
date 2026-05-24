@@ -1330,6 +1330,55 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   outline-offset: -1px;
 }
 
+/* ── Phase C: per-field verification ───────────────────── */
+/* Confirmed / flagged tint on the row background so the operator
+   sees verification progress at a glance while scrolling. */
+.rp-field-row.rp-status-confirmed { background: color-mix(in srgb, var(--sage) 10%, transparent); }
+.rp-field-row.rp-status-flagged   { background: color-mix(in srgb, var(--rust) 12%, transparent); }
+.rp-field-row.rp-status-confirmed.is-active { background: color-mix(in srgb, var(--sage) 18%, transparent); }
+.rp-field-row.rp-status-flagged.is-active   { background: color-mix(in srgb, var(--rust) 20%, transparent); }
+
+.rp-field-actions { display: inline-flex; gap: 4px; }
+.rp-act {
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-2);
+  background: var(--paper);
+  color: var(--ink-3);
+  cursor: pointer;
+  font-size: 12px; font-weight: 700; line-height: 1;
+  transition: background 0.08s, color 0.08s, border-color 0.08s;
+}
+.rp-act:hover { border-color: var(--ink-4); color: var(--ink); }
+.rp-act-confirm.on { background: var(--sage); border-color: var(--sage); color: var(--paper); }
+.rp-act-flag.on    { background: var(--rust); border-color: var(--rust); color: var(--paper); }
+
+.rp-field-edit {
+  display: flex; gap: 6px; align-items: center;
+  margin-top: 8px;
+}
+.rp-field-edit .input { height: 28px; }
+
+/* Verification progress bar above the field list. */
+.rp-verify-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--hairline-2);
+  background: var(--paper-2);
+}
+.rp-verify-progress {
+  flex: 1; height: 6px;
+  background: var(--paper-4);
+  border-radius: 3px; overflow: hidden;
+}
+.rp-verify-progress-fill {
+  display: block; height: 100%;
+  background: var(--sage);
+  transition: width 0.2s ease;
+}
+.rp-verify-count { color: var(--ink-3); white-space: nowrap; }
+
 /* Phase B: PDF.js page + overlay. The page wrap is the positioning
    parent for the SVG overlay; pages stack vertically inside the
    container with a small gap so a multi-page PO has clear page

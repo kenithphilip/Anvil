@@ -163,9 +163,19 @@ const FieldRow: React.FC<{
   entry: EvidenceEntry;
   group: FieldGroupId;
 }> = ({ path, entry, group }) => {
-  const { hoveredField, selectedField, setHoveredField, setSelectedField } = useReviewPaneSelection();
+  const {
+    hoveredField, selectedField, setHoveredField, setSelectedField,
+    statusOf, setFieldStatus, canCorrect, submitCorrection,
+  } = useReviewPaneSelection();
   const rowRef = useRef<HTMLDivElement | null>(null);
   const isActive = path === hoveredField || path === selectedField;
+  const status = statusOf(path);
+  // Phase C: inline correction editor state. Opens when the operator
+  // flags a field; prefilled with the extracted value so a small typo
+  // fix is one edit away.
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string>("");
+  const [saving, setSaving] = useState(false);
   // When the bbox side (the SVG overlay on the PDF) selects this
   // field, scroll the row into view so the operator does not have to
   // hunt for it in the right pane. Skipped on mere hover to avoid
@@ -177,12 +187,44 @@ const FieldRow: React.FC<{
   const stripe = `var(${FIELD_GROUPS[group].cssVar})`;
   const pageLine = formatPageLine(entry);
   const conf = entry?.confidence ?? null;
+
+  const onConfirm = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setFieldStatus(path, status === "confirmed" ? "pending" : "confirmed");
+    setEditing(false);
+  };
+  const onFlag = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (status === "flagged") { setFieldStatus(path, "pending"); setEditing(false); return; }
+    setFieldStatus(path, "flagged");
+    setDraft(formatValue(entry?.value));
+    setEditing(true);
+  };
+  const onSaveCorrection = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSaving(true);
+    const res = await submitCorrection({
+      fieldPath: path,
+      originalValue: entry?.value ?? null,
+      correctedValue: draft,
+      reason: "operator flagged on Review tab",
+    });
+    setSaving(false);
+    if (res.ok) {
+      (window as any).notifySuccess?.("Correction saved", path + " → " + draft);
+      setEditing(false);
+    } else {
+      (window as any).notifyError?.("Could not save correction", res.error || "unknown error");
+    }
+  };
+
   return (
     <div
       ref={rowRef}
       data-field-path={path}
       data-field-group={group}
-      className={"rp-field-row" + (isActive ? " is-active" : "")}
+      data-field-status={status}
+      className={"rp-field-row rp-status-" + status + (isActive ? " is-active" : "")}
       onMouseEnter={() => setHoveredField(path)}
       onMouseLeave={() => setHoveredField(null)}
       onClick={() => setSelectedField(path === selectedField ? null : path)}
@@ -191,12 +233,46 @@ const FieldRow: React.FC<{
       <div className="rp-field-body">
         <div className="rp-field-name mono-sm" title={path}>{path}</div>
         <div className="rp-field-value">{formatValue(entry?.value)}</div>
+        {editing && (
+          <div className="rp-field-edit" onClick={(e) => e.stopPropagation()}>
+            <input
+              className="input mono"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="corrected value"
+              aria-label={"Corrected value for " + path}
+            />
+            <button type="button" className="btn primary sm" disabled={saving || !canCorrect} onClick={onSaveCorrection}
+              title={canCorrect ? "Save this correction (feeds the per-customer learning loop)" : "Needs sales_manager / finance / admin to persist corrections"}>
+              {saving ? "saving…" : "save fix"}
+            </button>
+            <button type="button" className="btn ghost sm" disabled={saving} onClick={(e) => { e.stopPropagation(); setEditing(false); }}>
+              cancel
+            </button>
+          </div>
+        )}
       </div>
       <div className="rp-field-meta">
         {pageLine && <span className="mono-sm" style={{ color: "var(--ink-4)" }}>{pageLine}</span>}
         {conf != null && (
           <Chip k={confidenceChipKind(conf)}>{Math.round(conf * 100)}%</Chip>
         )}
+        <div className="rp-field-actions" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            className={"rp-act rp-act-confirm" + (status === "confirmed" ? " on" : "")}
+            onClick={onConfirm}
+            aria-pressed={status === "confirmed"}
+            title="Confirm this field is correct"
+          >✓</button>
+          <button
+            type="button"
+            className={"rp-act rp-act-flag" + (status === "flagged" ? " on" : "")}
+            onClick={onFlag}
+            aria-pressed={status === "flagged"}
+            title="Flag this field as wrong and correct it"
+          >!</button>
+        </div>
       </div>
     </div>
   );
@@ -354,11 +430,16 @@ const useDocumentEvidence = (docId: string | null | undefined): EvidenceBbox[] =
 interface ReviewPaneProps {
   docId: string | null | undefined;
   evidenceByField: EvidenceByField | null | undefined;
+  // Phase C: the run a correction attaches to, and whether the
+  // current role may persist corrections (approve permission).
+  extractionRunId?: string | null;
+  canCorrect?: boolean;
 }
 
 const ReviewPaneInner: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) => {
   const doc = useSignedDoc(docId);
   const evidenceRows = useDocumentEvidence(docId);
+  const { counts, confirmAll } = useReviewPaneSelection();
 
   // Group + stable-sort fields once per render. Sorted alphabetically
   // within each group so the operator can predict where a field will
@@ -382,6 +463,14 @@ const ReviewPaneInner: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) 
     () => (Object.values(grouped) as Array<Array<unknown>>).reduce((s, arr) => s + arr.length, 0),
     [grouped]
   );
+
+  // Flat list of every field path, for the verification progress
+  // counter + the "mark all correct" bulk action.
+  const allPaths = useMemo(
+    () => (Object.values(grouped) as Array<Array<[string, EvidenceEntry]>>).flatMap((arr) => arr.map(([p]) => p)),
+    [grouped]
+  );
+  const c = counts(allPaths);
 
   // Stable colour function passed to the PDF overlay so each bbox
   // adopts the same hue as the corresponding field-list group.
@@ -415,6 +504,28 @@ const ReviewPaneInner: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) 
             {totalFields} {totalFields === 1 ? "field" : "fields"}
           </span>
         </header>
+        {totalFields > 0 && (
+          <div className="rp-verify-bar">
+            <div className="rp-verify-progress" aria-hidden="true">
+              <span
+                className="rp-verify-progress-fill"
+                style={{ width: `${c.total ? Math.round((c.confirmed / c.total) * 100) : 0}%` }}
+              />
+            </div>
+            <span className="mono-sm rp-verify-count">
+              {c.confirmed}/{c.total} confirmed{c.flagged ? ` · ${c.flagged} flagged` : ""}
+            </span>
+            <button
+              type="button"
+              className="btn ghost sm"
+              disabled={c.pending === 0}
+              onClick={() => confirmAll(allPaths)}
+              title="Mark every still-pending field as correct"
+            >
+              {Icon.check} mark all correct
+            </button>
+          </div>
+        )}
         <div className="rp-pane-body">
           {totalFields === 0 ? (
             <div className="mono-sm" style={{ color: "var(--ink-3)", padding: 16 }}>
@@ -439,7 +550,7 @@ const ReviewPaneInner: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) 
 };
 
 const ReviewPane: React.FC<ReviewPaneProps> = (props) => (
-  <ReviewPaneSelectionProvider>
+  <ReviewPaneSelectionProvider canCorrect={!!props.canCorrect} extractionRunId={props.extractionRunId ?? null}>
     <ReviewPaneInner {...props} />
   </ReviewPaneSelectionProvider>
 );

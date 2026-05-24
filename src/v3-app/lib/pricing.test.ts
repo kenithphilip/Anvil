@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   composePrice,
+  pricingProfileFromRow,
   PROFILE_COMPACT,
   PROFILE_GRANULAR,
   DEFAULT_FX,
@@ -132,5 +133,41 @@ describe("composePrice — config flexibility", () => {
   it("computes line totals from qty", () => {
     const r = composePrice(PROFILE_COMPACT, { qty: 3, supplierUnitPrice: 0.85, supplierCurrency: "USD" }, DEFAULT_FX);
     expect(r.lineTotal).toBeCloseTo(r.perUnit.finalPrice * 3, 6);
+  });
+});
+
+describe("pricingProfileFromRow — DB row maps back to a runnable profile", () => {
+  // A row shaped like /api/admin/pricing_profiles returns (snake_case,
+  // components nested + unordered) must map to a profile that the engine
+  // runs identically to the in-code granular profile.
+  const row = {
+    code: "granular",
+    label: "Granular",
+    base_currency: "INR",
+    margin_floor_pct: 0.05,
+    fx_stale_days: 30,
+    components: [
+      // intentionally out of seq order
+      { seq: 2, code: "packing", label: "Packing", kind: "per_unit", amount: 150, currency: "supplier" },
+      { seq: 1, code: "fx", label: "Supplier price in INR", kind: "fx_convert" },
+      { seq: 3, code: "shipping", label: "Shipping", kind: "per_unit", amount: 50000, currency: "base" },
+      { seq: 4, code: "insurance", label: "Insurance", kind: "pct_of", base_ref: "running", rate: 0.01125 },
+      { seq: 5, code: "customs_duty", label: "Basic customs duty", kind: "pct_of", base_ref: "running", rate: 0.1 },
+      { seq: 6, code: "social_welfare", label: "Social welfare tax", kind: "pct_of", base_ref: "customs_duty", rate: 0.1 },
+      { seq: 7, code: "cha", label: "CHA charges", kind: "pct_of", base_ref: "running", rate: 0.003 },
+      { seq: 8, code: "local_transport", label: "Local transportation", kind: "pct_of", base_ref: "running", rate: 0.01 },
+      { seq: 9, code: "install_warranty", label: "Install & warranty", kind: "pct_of", base_ref: "running", rate: 0.01 },
+      { seq: 10, code: "margin", label: "Margin", kind: "margin_markup", rate: 0.1 },
+      { seq: 11, code: "discount", label: "Customer discount", kind: "discount", rate: 0, visibility: "customer" },
+    ],
+  };
+
+  it("sorts by seq, maps base_ref/use_loaded_rate, and reproduces the sheet", () => {
+    const profile = pricingProfileFromRow(row);
+    expect(profile.components[0].code).toBe("fx"); // re-sorted
+    expect(profile.marginFloorPct).toBe(0.05);
+    const r = composePrice(profile, { qty: 1, supplierUnitPrice: 8000, supplierCurrency: "USD" }, { base: "INR", rates: { INR: 1, USD: 83.3 } });
+    expect(r.perUnit.loadedCost).toBeCloseTo(837124.72, 1);
+    expect(r.perUnit.finalPrice).toBeCloseTo(930138.57, 1);
   });
 });

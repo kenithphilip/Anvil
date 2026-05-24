@@ -1378,6 +1378,18 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   transition: width 0.2s ease;
 }
 .rp-verify-count { color: var(--ink-3); white-space: nowrap; }
+.rp-kbd-hint { color: var(--ink-4); white-space: nowrap; letter-spacing: 0.04em; }
+
+/* ── Phase D: confidence wash ──────────────────────────── */
+/* Pending (un-verified) rows whose extraction confidence is below the
+   comfortable band get a subtle tint so the operator's eye lands on
+   the fields that warrant a closer look. Confirmed/flagged rows keep
+   their Phase C status colour (those selectors win via specificity:
+   they also set background, and appear later). */
+.rp-field-row.rp-conf-mid { background: color-mix(in srgb, var(--amber) 7%, transparent); }
+.rp-field-row.rp-conf-low { background: color-mix(in srgb, var(--rust) 8%, transparent); }
+.rp-field-row.rp-conf-mid.is-active { background: color-mix(in srgb, var(--amber) 14%, transparent); }
+.rp-field-row.rp-conf-low.is-active { background: color-mix(in srgb, var(--rust) 15%, transparent); }
 
 /* Phase B: PDF.js page + overlay. The page wrap is the positioning
    parent for the SVG overlay; pages stack vertically inside the

@@ -162,6 +162,10 @@ export default async function handler(req, res) {
         // path; persisting them here closes the loop.
         contact_email: body.contact_email || null,
         contact_phone: body.contact_phone || null,
+        // Migration 137: self-referential parent for corporate-group
+        // hierarchy (group -> child entities/plants). Self-parenting is
+        // corrected to null after the upsert returns the row id.
+        parent_customer_id: body.parent_customer_id || null,
       }, { onConflict: "tenant_id,customer_key" }).select("*").single();
       if (upsert.error) {
         // If migration 061 hasn't been applied yet on this deployment,
@@ -189,6 +193,14 @@ export default async function handler(req, res) {
         throw new Error(upsert.error.message);
       }
       const customer = upsert.data;
+
+      // Guard against a customer being its own parent (the id is only
+      // known after the upsert). Cycles deeper than one hop are left to
+      // the picker, which excludes self.
+      if (customer.parent_customer_id && customer.parent_customer_id === customer.id) {
+        await svc.from("customers").update({ parent_customer_id: null }).eq("tenant_id", ctx.tenantId).eq("id", customer.id);
+        customer.parent_customer_id = null;
+      }
 
       // Mirror bill_to / ship_to into customer_locations so the
       // e-invoice handler's JOIN finds the address fields. The text

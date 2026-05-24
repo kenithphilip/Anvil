@@ -4,6 +4,7 @@ import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTitle } from "../lib/primit
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { CustomerContactsPanel } from "../components/CustomerContactsPanel";
+import { CustomerHierarchyPanel } from "../components/CustomerHierarchyPanel";
 
 // Read `id` from the hash so the customers screen can render a
 // detail panel inline when a row is clicked. Avoids needing a
@@ -261,6 +262,15 @@ const WiredCustomers = () => {
                 </div>
               </>
             )}
+            <div className="divider" />
+            <div style={{ marginTop: 10 }}>
+              <CustomerHierarchyPanel
+                customer={selectedCustomer}
+                allCustomers={rows}
+                onChanged={list.reload}
+                onOpen={(id) => setSelectedId(id)}
+              />
+            </div>
             <div className="divider" />
             <div style={{ marginTop: 10 }}>
               <CustomerContactsPanel customerId={selectedCustomer.id} />

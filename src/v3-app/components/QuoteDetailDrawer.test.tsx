@@ -22,14 +22,24 @@ const ITEMS = [
   },
 ];
 
+let transitionSpy: any;
+
 beforeEach(() => {
   // The drawer loads quote_lines + document_templates via its local
   // fetchJson helper (global fetch). The item picker uses the
   // ObaraBackend.admin.listItemMaster facade.
+  transitionSpy = vi.fn(async (id: string, status: string) => ({ quote: { id, status } }));
   (window as any).ObaraBackend = (window as any).AnvilBackend = {
     getConfig: () => ({ url: "https://api.test", tenantId: "t-1" }),
     getSession: () => ({ access_token: "x" }),
     admin: { listItemMaster: vi.fn(async () => ({ items: ITEMS })) },
+    quotes: {
+      transition: transitionSpy,
+      sendQuote: vi.fn(async (id: string) => ({ ok: true, quote: { id, status: "SENT" } })),
+      revise: vi.fn(async (id: string) => ({ quote: { id, status: "DRAFT", version: 2 } })),
+      convertToOrder: vi.fn(async () => ({ ok: true })),
+      cancel: vi.fn(async (id: string) => ({ quote: { id, status: "CANCELLED" } })),
+    },
   };
   global.fetch = vi.fn(async (url: any) => {
     const u = String(url);
@@ -82,5 +92,27 @@ describe("QuoteDetailDrawer — line enrichment", () => {
     fireEvent.click(getByText("Composition"));
     // With no lines loaded, the preview shows its empty state.
     await waitFor(() => expect(getByText(/No lines to price yet/i)).toBeTruthy());
+  });
+
+  it("shows DRAFT lifecycle actions", async () => {
+    const { getByText } = render(<QuoteDetailDrawer quote={QUOTE} onClose={() => undefined} />);
+    expect(getByText("Send to customer")).toBeTruthy();
+    expect(getByText("Request approval")).toBeTruthy();
+    expect(getByText("Cancel quote")).toBeTruthy();
+  });
+
+  it("transitions a SENT quote to ACCEPTED via the lifecycle bar", async () => {
+    const sent = { ...QUOTE, status: "SENT" };
+    const { getByText } = render(<QuoteDetailDrawer quote={sent} onClose={() => undefined} />);
+    fireEvent.click(getByText("Mark accepted"));
+    await waitFor(() => expect(transitionSpy).toHaveBeenCalledWith("q-1", "ACCEPTED"));
+  });
+
+  it("offers Revise on a SENT quote and Convert on an ACCEPTED quote", () => {
+    const sent = render(<QuoteDetailDrawer quote={{ ...QUOTE, status: "SENT" }} onClose={() => undefined} />);
+    expect(sent.getByText("Revise")).toBeTruthy();
+    sent.unmount();
+    const accepted = render(<QuoteDetailDrawer quote={{ ...QUOTE, status: "ACCEPTED" }} onClose={() => undefined} />);
+    expect(accepted.getByText("Convert to order")).toBeTruthy();
   });
 });

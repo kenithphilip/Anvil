@@ -239,6 +239,51 @@ export const QuoteDetailDrawer: React.FC<{
   });
   const total = computedLines.reduce((s, ln) => s + (ln.lineTotal || 0), 0);
 
+  // ---- Lifecycle actions (Send / accept / decline / revise / convert /
+  // cancel). Errors surface the server's friendly message; the
+  // margin-floor block (409 MARGIN_FLOOR_BLOCK) shows as a clear nudge.
+  const [lifeBusy, setLifeBusy] = useState<string | null>(null);
+  const runLife = async (key: string, fn: () => Promise<any>, okMsg: string) => {
+    setLifeBusy(key);
+    try {
+      const resp = await fn();
+      const next = resp?.quote || resp;
+      if (next?.status) setDraft((d: Quote) => ({ ...d, status: next.status, version: next.version ?? d.version }));
+      if (resp?.margin_floor_override) window.notifyWarn?.("Sent below margin floor", "Recorded for approval review");
+      window.notifySuccess?.(okMsg, draft.quote_number || quote.id?.slice(0, 8));
+      onSaved?.();
+    } catch (e: any) {
+      const code = e?.body?.error?.code;
+      const msg = code === "MARGIN_FLOOR_BLOCK"
+        ? e.message
+        : e?.status === 403
+          ? "Needs sales_manager / finance / admin"
+          : (e?.message || String(e));
+      window.notifyError?.("Action failed", msg);
+      setErr(e);
+    } finally { setLifeBusy(null); }
+  };
+  const transition = (status: string, label: string) =>
+    runLife(status, () => (ObaraBackend as any)?.quotes?.transition?.(quote.id, status), label);
+  const sendToCustomer = () =>
+    runLife("send", () => (ObaraBackend as any)?.quotes?.sendQuote?.(quote.id), "Quote sent to customer");
+  const revise = () =>
+    runLife("revise", async () => {
+      const r = await (ObaraBackend as any)?.quotes?.revise?.(quote.id);
+      onSaved?.();
+      return r;
+    }, "New revision created");
+  const convert = () =>
+    runLife("convert", () => (ObaraBackend as any)?.quotes?.convertToOrder?.(quote.id), "Converted to order");
+  const cancelQuote = () => {
+    if (typeof confirm === "function" && !confirm("Cancel this quote?")) return;
+    runLife("cancel", () => (ObaraBackend as any)?.quotes?.cancel?.(quote.id), "Quote cancelled");
+  };
+
+  const status = String(draft.status || "DRAFT");
+  const LB = (key: string) => lifeBusy === key;
+  const anyBusy = lifeBusy != null;
+
   return (
     <div role="dialog" aria-modal="true" aria-label="Quote detail"
       style={{ position: "fixed", inset: 0, background: "rgba(8,10,12,0.55)", display: "flex", justifyContent: "flex-end", zIndex: 200 }}
@@ -447,6 +492,33 @@ export const QuoteDetailDrawer: React.FC<{
                 <Btn sm kind="primary" disabled={busy} onClick={saveTerms}>{busy ? "Saving..." : "Save terms"}</Btn>
               </div>
             </>
+          )}
+        </div>
+
+        {/* Lifecycle action bar: status-appropriate transitions. */}
+        <div style={{ padding: "12px 18px", borderTop: "1px solid var(--line)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span className="mono-sm" style={{ color: "var(--ink-3)", marginRight: "auto" }}>{status.toLowerCase().replace(/_/g, " ")}</span>
+          {(status === "DRAFT" || status === "PENDING_INTERNAL_APPROVAL") && (
+            <Btn sm kind="primary" disabled={anyBusy} onClick={sendToCustomer}>{LB("send") ? "Sending..." : "Send to customer"}</Btn>
+          )}
+          {status === "DRAFT" && (
+            <Btn sm kind="ghost" disabled={anyBusy} onClick={() => transition("PENDING_INTERNAL_APPROVAL", "Sent for approval")}>{LB("PENDING_INTERNAL_APPROVAL") ? "..." : "Request approval"}</Btn>
+          )}
+          {status === "PENDING_INTERNAL_APPROVAL" && (
+            <Btn sm kind="ghost" disabled={anyBusy} onClick={() => transition("DRAFT", "Returned to draft")}>{LB("DRAFT") ? "..." : "Back to draft"}</Btn>
+          )}
+          {status === "SENT" && (<>
+            <Btn sm kind="primary" disabled={anyBusy} onClick={() => transition("ACCEPTED", "Marked accepted")}>{LB("ACCEPTED") ? "..." : "Mark accepted"}</Btn>
+            <Btn sm kind="ghost" disabled={anyBusy} onClick={() => transition("DECLINED", "Marked declined")}>{LB("DECLINED") ? "..." : "Mark declined"}</Btn>
+          </>)}
+          {status === "ACCEPTED" && (
+            <Btn sm kind="primary" disabled={anyBusy} onClick={convert}>{LB("convert") ? "Converting..." : "Convert to order"}</Btn>
+          )}
+          {(status === "SENT" || status === "DECLINED" || status === "EXPIRED") && (
+            <Btn sm kind="ghost" disabled={anyBusy} onClick={revise}>{LB("revise") ? "..." : "Revise"}</Btn>
+          )}
+          {!["CONVERTED", "CANCELLED"].includes(status) && (
+            <Btn sm kind="ghost" disabled={anyBusy} onClick={cancelQuote}>{LB("cancel") ? "..." : "Cancel quote"}</Btn>
           )}
         </div>
       </div>

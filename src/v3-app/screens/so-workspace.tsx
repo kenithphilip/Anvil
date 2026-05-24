@@ -2119,6 +2119,10 @@ const PipelineDiagnostics: React.FC<{
     parse_failed: "Parse failed · model didn't call the tool",
     model_refused: "Model refused · safety stop",
     upstream_error: "Upstream error · provider 5xx",
+    no_source_bytes: "No document reached the extractor · re-upload the PO or re-run from intake",
+    no_api_key: "LLM API key not configured · ask an admin to set it",
+    no_tenant: "Tenant context missing on the run · internal error, retry",
+    adapter_threw: "Extractor crashed · see attempts for the error",
     fail_unknown: "Unknown failure",
   };
   const reasonTone = (r: string): "good" | "info" | "warn" | "bad" =>

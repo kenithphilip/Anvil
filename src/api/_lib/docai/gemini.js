@@ -269,9 +269,12 @@ const normalizeSupplierAck = (out) => ({
 
 export const extract = async ({ url, bytes, filename: _filename, mime, settings, hints }) => {
   const key = apiKey(settings);
-  if (!key) return { ok: false, error: "GEMINI_API_KEY not set" };
+  // Carry a `reason` on every early bail so extraction_runs records
+  // a precise status_reason instead of the orchestrator's
+  // 'fail_unknown' fallback. Mirrors claude.js.
+  if (!key) return { ok: false, reason: "no_api_key", error: "GEMINI_API_KEY not set" };
   const tenantId = settings?.tenant_id;
-  if (!tenantId) return { ok: false, error: "tenant_id missing on settings (caller must pass it)" };
+  if (!tenantId) return { ok: false, reason: "no_tenant", error: "tenant_id missing on settings (caller must pass it)" };
 
   const expectedKind = hints?.expectedKind || "po";
   const isSupplierAck = expectedKind === "supplier_ack";
@@ -280,7 +283,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
 
   const built = buildBodyBlock({ hints, bytes, mime, url });
   if (!built) {
-    return { ok: false, error: "Gemini adapter needs hints.bodyText, bytes, or url" };
+    return { ok: false, reason: "no_source_bytes", error: "Gemini adapter needs hints.bodyText, bytes, or url" };
   }
   const { mode, block } = built;
 

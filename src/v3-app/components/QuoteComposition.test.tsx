@@ -3,8 +3,9 @@
 // below-floor guardrail.
 
 import React from "react";
-import { describe, it, expect } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { render, fireEvent, waitFor } from "@testing-library/react";
+import { installBackend } from "../test-utils";
 import { QuoteComposition } from "./QuoteComposition";
 
 const LINES = [
@@ -43,5 +44,43 @@ describe("QuoteComposition", () => {
     // The granular waterfall lists named overhead steps.
     expect(getByText("Basic customs duty")).toBeTruthy();
     expect(getByText("Social welfare tax")).toBeTruthy();
+  });
+});
+
+describe("QuoteComposition — persistence", () => {
+  let recompute: any;
+  beforeEach(() => {
+    recompute = vi.fn(async (p: any) => ({ lines: (p.lines || []).map((l: any) => ({ ...l })) }));
+    installBackend({
+      admin: {
+        listPricingProfiles: vi.fn(async () => ({ profiles: [] })), // -> fallback to in-code defaults
+        listPriceComposition: vi.fn(async () => ({
+          lines: [{ line_index: 0, supplier_unit_price: 8000, supplier_currency: "USD", profile_code: "granular" }],
+        })),
+        recomputePriceComposition: recompute,
+      },
+    });
+  });
+
+  it("seeds supplier inputs from a saved composition", async () => {
+    const { getByLabelText } = render(<QuoteComposition lines={LINES} quoteId="q-1" />);
+    await waitFor(() => expect((getByLabelText("supplier price line 1") as HTMLInputElement).value).toBe("8000"));
+  });
+
+  it("Save composition recomputes server-side with the supplier inputs", async () => {
+    const { getByText, getByLabelText } = render(<QuoteComposition lines={LINES} quoteId="q-1" />);
+    await waitFor(() => expect((getByLabelText("supplier price line 1") as HTMLInputElement).value).toBe("8000"));
+    fireEvent.click(getByText("Save composition"));
+    await waitFor(() => expect(recompute).toHaveBeenCalledTimes(1));
+    const payload = recompute.mock.calls[0][0];
+    expect(payload.quote_id).toBe("q-1");
+    expect(payload.profile_code).toBe("granular");
+    expect(payload.lines[0].supplier_unit_price).toBe(8000);
+    expect(payload.lines[0].supplier_currency).toBe("USD");
+  });
+
+  it("disables Save when there is no quote id", () => {
+    const { getByText } = render(<QuoteComposition lines={LINES} />);
+    expect((getByText("Save composition").closest("button") as HTMLButtonElement).disabled).toBe(true);
   });
 });

@@ -219,11 +219,14 @@ describe("SoWorkspace", () => {
       const mod = await import("./so-workspace");
       const Screen = mod.default;
       const { container } = renderScreen(Screen);
-      await new Promise((r) => setTimeout(r, 0));
-      await new Promise((r) => setTimeout(r, 0));
-      const sendForReview = Array.from(container.querySelectorAll("button"))
-        .find((b) => b.textContent && b.textContent.toLowerCase().includes("send for review"));
-      expect(sendForReview).toBeTruthy();
+      // Poll until the order-load effect resolves and the action bar
+      // renders; a fixed tick count is racy in CI.
+      let sendForReview;
+      await waitFor(() => {
+        sendForReview = Array.from(container.querySelectorAll("button"))
+          .find((b) => b.textContent && b.textContent.toLowerCase().includes("send for review"));
+        expect(sendForReview).toBeTruthy();
+      });
       expect(sendForReview?.hasAttribute("disabled")).toBe(true);
     } finally {
       window.location.hash = original;
@@ -266,8 +269,9 @@ describe("SoWorkspace", () => {
       const mod = await import("./so-workspace");
       const Screen = mod.default;
       const { container } = renderScreen(Screen);
-      await new Promise((r) => setTimeout(r, 0));
-      await new Promise((r) => setTimeout(r, 0));
+      await waitFor(() => {
+        expect(container.querySelectorAll(".step").length).toBe(6);
+      });
       const steps = container.querySelectorAll(".step");
       expect(steps.length).toBe(6);
       // Capture done, Preflight done, Extract = current (not done).
@@ -314,8 +318,11 @@ describe("SoWorkspace", () => {
       const mod = await import("./so-workspace");
       const Screen = mod.default;
       const { container } = renderScreen(Screen);
-      await new Promise((r) => setTimeout(r, 0));
-      await new Promise((r) => setTimeout(r, 0));
+      await waitFor(() => {
+        const s = container.querySelectorAll(".step");
+        expect(s.length).toBe(6);
+        expect(s[2].className).toContain("done");
+      });
       const steps = container.querySelectorAll(".step");
       expect(steps[2].className).toContain("done");
       expect(steps[3].className).toContain("cur");
@@ -368,8 +375,9 @@ describe("SoWorkspace", () => {
       const mod = await import("./so-workspace");
       const Screen = mod.default;
       const { container } = renderScreen(Screen);
-      await new Promise((r) => setTimeout(r, 0));
-      await new Promise((r) => setTimeout(r, 0));
+      await waitFor(() => {
+        expect(container.innerHTML).toContain("Customer · from PO header");
+      });
       const html = container.innerHTML;
       expect(html).toContain("Customer · from PO header");
       expect(html).toContain("29ABCDE1234F1Z5");
@@ -429,8 +437,9 @@ describe("SoWorkspace", () => {
       const mod = await import("./so-workspace");
       const Screen = mod.default;
       const { container } = renderScreen(Screen);
-      await new Promise((r) => setTimeout(r, 0));
-      await new Promise((r) => setTimeout(r, 0));
+      await waitFor(() => {
+        expect(container.innerHTML).toContain("= from PO");
+      });
       const html = container.innerHTML;
       // The legend at the top of the table explains the pills.
       expect(html).toContain("= from PO");

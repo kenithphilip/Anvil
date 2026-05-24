@@ -270,6 +270,29 @@ const WiredSOIntake = () => {
     }
   };
 
+  // Escape hatch for the "Customer not detected" dialog. The docai
+  // matcher sometimes fails to auto-link a PO to a customer that IS
+  // already in the system (street-only bill-to block, vendor-code-only
+  // header, a name spelled differently from the master record). Before
+  // this, the operator's only path forward was "Create customer",
+  // which silently produced a duplicate. This lets them pick the
+  // existing record instead: select it as the order's customer and
+  // close the dialog without writing anything new.
+  const pickExistingCustomer = (id: string) => {
+    if (!id) return;
+    setCustomerId(id);
+    const picked = (customerList || []).find((c: any) => c.id === id);
+    setNewCustomerOpen(false);
+    setDialogMode("create");
+    setEditingCustomerKey(null);
+    setEditingCustomerId(null);
+    setNewCustomerErr(null);
+    window.notifySuccess?.(
+      "Customer selected",
+      picked?.customer_name ? `Linked this order to ${picked.customer_name}.` : "Linked to the existing customer record.",
+    );
+  };
+
   // Read shell health to decide which doc-pipeline guarantees are real
   // versus aspirational. Without it the pre-flight checklist below was
   // a hardcoded set of green dots regardless of actual integration state.
@@ -1360,6 +1383,42 @@ const WiredSOIntake = () => {
                 </Banner>
               );
             })()}
+            {/* Already-in-system escape hatch. When the matcher missed
+                a customer that exists, let the operator pick it here
+                instead of being forced to Create (which duplicates).
+                Only in create mode -- edit mode is already bound to a
+                specific existing record. */}
+            {dialogMode !== "edit" && (
+              <div style={{ marginTop: 10 }}>
+                <label htmlFor="nc-existing" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>
+                  Already in your customer list?
+                </label>
+                <select
+                  id="nc-existing"
+                  className="select"
+                  value=""
+                  disabled={customers.loading || !!customers.error || (customerList || []).length === 0}
+                  onChange={(e) => pickExistingCustomer(e.target.value)}
+                >
+                  <option value="">
+                    {customers.loading ? "loading customers…"
+                      : customers.error ? "could not load customers"
+                      : (customerList || []).length === 0 ? "no customers yet — create one below"
+                      : "select an existing customer…"}
+                  </option>
+                  {(customerList || []).map((c: any) => (
+                    <option key={c.id} value={c.id}>
+                      {c.customer_name}{c.gstin ? ` · ${c.gstin}` : ""}{c.state_code ? ` · ${c.state_code}` : ""}
+                    </option>
+                  ))}
+                </select>
+                <div className="mono-sm" style={{ color: "var(--ink-4)", marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ flex: 1, height: 1, background: "var(--hairline)" }} />
+                  or create a new one below
+                  <span style={{ flex: 1, height: 1, background: "var(--hairline)" }} />
+                </div>
+              </div>
+            )}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
               <div style={{ gridColumn: "1 / -1" }}>
                 <label htmlFor="nc-name" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Customer name *</label>

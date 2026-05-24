@@ -429,9 +429,15 @@ const isPdfBytes = (b) => {
 const isImageMime = (m) => /^image\//i.test(String(m || ""));
 
 export const extract = async ({ url, bytes, filename: _filename, mime, settings, hints, promptOverrides }) => {
-  if (!isConfigured()) return { ok: false, error: "ANTHROPIC_API_KEY not set" };
+  // Every early failure return below carries a `reason` so the
+  // extraction_runs row records WHY claude bailed. Without it the
+  // orchestrator falls back to status_reason='fail_unknown', which
+  // the Pipeline Diagnostics tab renders as the useless "Unknown
+  // failure / model —" -- the exact signature operators hit on
+  // P250432265 (no source bytes reached the adapter, line below).
+  if (!isConfigured()) return { ok: false, reason: "no_api_key", error: "ANTHROPIC_API_KEY not set" };
   const tenantId = settings?.tenant_id;
-  if (!tenantId) return { ok: false, error: "tenant_id missing on settings (caller must pass it)" };
+  if (!tenantId) return { ok: false, reason: "no_tenant", error: "tenant_id missing on settings (caller must pass it)" };
 
   const expectedKind = hints?.expectedKind || "po";
   const isSupplierAck = expectedKind === "supplier_ack";
@@ -506,7 +512,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     mode = "url_only";
     bodyBlock = { type: "text", text: "DOCUMENT URL: " + url };
   } else {
-    return { ok: false, error: "claude adapter needs hints.bodyText, bytes (PDF/image/text), or url", mode: "none" };
+    return { ok: false, reason: "no_source_bytes", error: "claude adapter needs hints.bodyText, bytes (PDF/image/text), or url", mode: "none" };
   }
 
   // Cache the static system prompt + the per-customer few-shot

@@ -310,7 +310,9 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
       });
     } catch (err) {
       attempts.push({ adapter: adapterName, status: "error", ms: Date.now() - t0, error: err.message });
-      last = { ok: false, error: err.message };
+      // Carry a reason so a thrown adapter surfaces as
+      // status_reason='adapter_threw' instead of 'fail_unknown'.
+      last = { ok: false, reason: "adapter_threw", error: err.message };
       continue;
     }
     const latency_ms = Date.now() - t0;

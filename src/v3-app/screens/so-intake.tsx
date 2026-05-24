@@ -666,6 +666,18 @@ const WiredSOIntake = () => {
           "Upstream LLM error",
           "Provider returned a 5xx. Re-try in a moment.",
         ],
+        no_source_bytes: [
+          "No document reached the extractor",
+          "The PO file wasn't passed to the model. Re-upload the PO here, or re-run extraction from the workspace once the document is attached.",
+        ],
+        no_api_key: [
+          "LLM API key not configured",
+          "The extraction provider's API key isn't set on this deployment. Ask an admin to configure it before re-uploading.",
+        ],
+        adapter_threw: [
+          "Extractor crashed mid-run",
+          "The extraction adapter threw an error. Re-try; if it persists, check the Pipeline Diagnostics tab for the underlying message.",
+        ],
         // Audit fix May 2026: low_confidence used to fall through
         // silently. The operator saw lines + a green stepper but
         // no warning that the model's overall confidence was below

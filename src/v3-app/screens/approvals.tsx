@@ -360,11 +360,12 @@ const WiredApprovals = () => {
             // overflow-x: auto lets the user scroll if the columns
             // exceed the Card width without ever hiding actions.
             <div style={{ overflowX: "auto" }}>
-            <table className="tbl" style={{ minWidth: 960 }}>
+            <table className="tbl" style={{ minWidth: 1040 }}>
               <thead><tr>
                 <th>Reference</th>
                 <th>Customer</th>
                 <th>Mode</th>
+                <th className="r">Lines</th>
                 <th>Why</th>
                 <th className="r">Value</th>
                 <th className="r">Margin</th>
@@ -377,8 +378,9 @@ const WiredApprovals = () => {
                   return (
                     <tr key={a.id}>
                       <td className="mono"><span className="pri">{a.po_number || a.order_reference || (a.order_id ? a.order_id.slice(0, 12) : "—")}</span></td>
-                      <td>{a.customer_name || "—"}</td>
+                      <td>{a.customer_name || "—"}{a.state_code ? <div className="mono-sm" style={{ color: "var(--ink-3)" }}>{a.state_code}</div> : null}</td>
                       <td><Chip k={a.order_mode === "INTERNAL" ? "plum" : (a.order_mode || "").startsWith("PROJECT") ? "info" : "ghost"}>{a.order_mode || "—"}</Chip></td>
+                      <td className="r mono" style={{ color: a.line_count === 0 ? "var(--rust)" : "var(--ink)" }}>{a.line_count != null ? a.line_count : "—"}</td>
                       <td><Chip k="warn">{reasonOf(a)}</Chip></td>
                       <td className="r mono">{a.value_inr ? fmtINR(Number(a.value_inr)) : "—"}</td>
                       <td className="r mono" style={{ color: margin > 0 && margin < 10 ? "var(--rust)" : "var(--ink)", fontWeight: 600 }}>

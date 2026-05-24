@@ -331,3 +331,31 @@ export const DEFAULT_FX: FxSnapshot = {
 
 export const round0 = (n: number) => Math.round(n);
 export const roundUp0 = (n: number) => Math.ceil(n);
+
+// Map a DB row (snake_case, from /api/admin/pricing_profiles) into the
+// engine's PricingProfile shape. Components are sorted by seq.
+export function pricingProfileFromRow(row: any): PricingProfile {
+  const components: PricingComponent[] = (row?.components || [])
+    .slice()
+    .sort((a: any, b: any) => (a.seq ?? 0) - (b.seq ?? 0))
+    .map((c: any) => ({
+      code: c.code,
+      label: c.label || c.code,
+      kind: c.kind as ComponentKind,
+      base: c.base_ref ?? undefined,
+      rate: c.rate != null ? Number(c.rate) : undefined,
+      amount: c.amount != null ? Number(c.amount) : undefined,
+      currency: c.currency === "supplier" ? "supplier" : "base",
+      useLoadedRate: !!c.use_loaded_rate,
+      enabled: c.enabled !== false,
+      visibility: c.visibility === "customer" ? "customer" : "internal",
+    }));
+  return {
+    code: row?.code,
+    label: row?.label || row?.code,
+    baseCurrency: row?.base_currency || "INR",
+    marginFloorPct: row?.margin_floor_pct != null ? Number(row.margin_floor_pct) : 0.05,
+    fxStaleDays: row?.fx_stale_days != null ? Number(row.fx_stale_days) : 30,
+    components,
+  };
+}

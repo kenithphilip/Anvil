@@ -35,6 +35,7 @@ import adminItemReference      from "./admin/item_reference.js";
 import adminDocumentTemplates  from "./admin/document_templates.js";
 import adminFreightRates       from "./admin/freight_rates.js";
 import adminTenantPricingSettings from "./admin/tenant_pricing_settings.js";
+import adminPricingProfiles    from "./admin/pricing_profiles.js";
 import adminCustomerVendorCodes from "./admin/customer_vendor_codes.js";
 import adminCustomerTerms        from "./admin/customer_terms.js";
 import adminOrderLineTaxComponents from "./admin/order_line_tax_components.js";
@@ -705,6 +706,7 @@ const STATIC_ROUTES = {
   "/admin/document_templates":      adminDocumentTemplates,
   "/admin/freight_rates":           adminFreightRates,
   "/admin/tenant_pricing_settings": adminTenantPricingSettings,
+  "/admin/pricing_profiles":        adminPricingProfiles,
   "/admin/customer_vendor_codes":   adminCustomerVendorCodes,
   "/admin/customer_terms":          adminCustomerTerms,
   "/admin/customer_terms/pack":     adminCustomerTerms,

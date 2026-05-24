@@ -76,4 +76,11 @@ describe("QuoteDetailDrawer — line enrichment", () => {
     const srcInput = container.querySelector('input[value="O-JAPAN"]') as HTMLInputElement;
     expect(srcInput).toBeTruthy();
   });
+
+  it("exposes a Composition tab with the cost-preview surface", async () => {
+    const { getByText } = render(<QuoteDetailDrawer quote={QUOTE} onClose={() => undefined} />);
+    fireEvent.click(getByText("Composition"));
+    // With no lines loaded, the preview shows its empty state.
+    await waitFor(() => expect(getByText(/No lines to price yet/i)).toBeTruthy());
+  });
 });

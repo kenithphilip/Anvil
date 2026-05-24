@@ -326,7 +326,7 @@
     get: async (id) => apiFetch("/api/quotes?id=" + encodeURIComponent(id)),
     create: async (payload) => apiFetch("/api/quotes", { method: "POST", body: payload }),
     update: async (id, patch) => apiFetch("/api/quotes?id=" + encodeURIComponent(id), { method: "PATCH", body: patch }),
-    revise: async (id) => apiFetch("/api/quotes?id=" + encodeURIComponent(id), { method: "PATCH", body: { action: "revise" } }),
+    revise: async (id) => apiFetch("/api/quotes?id=" + encodeURIComponent(id) + "&action=revise", { method: "POST" }),
     transition: async (id, status) => apiFetch("/api/quotes?id=" + encodeURIComponent(id), { method: "PATCH", body: { status } }),
     cancel: async (id) => apiFetch("/api/quotes?id=" + encodeURIComponent(id), { method: "DELETE" }),
     sendQuote: async (id, payload) => apiFetch("/api/quotes/send", { method: "POST", body: { id, ...(payload || {}) } }),

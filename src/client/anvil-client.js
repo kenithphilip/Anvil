@@ -1330,6 +1330,8 @@
     listPricingProfiles: async () => apiFetch("/api/admin/pricing_profiles"),
     upsertPricingProfile: async (payload) => apiFetch("/api/admin/pricing_profiles", { method: "POST", body: payload }),
     deletePricingProfile: async (id) => apiFetch("/api/admin/pricing_profiles?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    listPriceComposition: async (quote_id) => apiFetch("/api/admin/price_composition_lines?quote_id=" + encodeURIComponent(quote_id)),
+    recomputePriceComposition: async (payload) => apiFetch("/api/admin/price_composition_lines?action=recompute", { method: "POST", body: payload }),
     listItemMaster: async (params) => apiFetch("/api/admin/item_master" + (params ? "?" + new URLSearchParams(params).toString() : "")),
     upsertItemMaster: async (payload) => apiFetch("/api/admin/item_master", { method: "POST", body: payload }),
     bulkItemMaster: async (rows) => apiFetch("/api/admin/item_master", { method: "POST", body: { rows } }),

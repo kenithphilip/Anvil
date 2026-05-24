@@ -25,6 +25,7 @@ import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/pr
 import { ageLabel, fmtINRShort } from "../lib/helpers";
 import { ObaraBackend } from "../lib/api";
 import { QuoteDetailDrawer } from "../components/QuoteDetailDrawer";
+import { NewQuoteModal } from "../components/NewQuoteModal";
 
 interface Quote {
   id: string;
@@ -84,6 +85,10 @@ const Quotes: React.FC = () => {
   // snapshot, conversion factor) and the first-class line editor
   // backed by the `quote_lines` table introduced in migration 108.
   const [editing, setEditing] = useState<Quote | null>(null);
+  // Create-from-scratch entry point: opens NewQuoteModal, then drops
+  // the operator into the detail drawer on the freshly created DRAFT
+  // so they can add lines straight away.
+  const [creating, setCreating] = useState(false);
 
   const reload = () => {
     setRows(null);
@@ -145,6 +150,7 @@ const Quotes: React.FC = () => {
             style={{ width: 260, height: 28 }}
           />
           <Btn sm kind="ghost" onClick={reload}>Refresh</Btn>
+          <Btn sm kind="primary" onClick={() => setCreating(true)}>New quote</Btn>
         </>}
       />
       <WSTabs
@@ -177,9 +183,9 @@ const Quotes: React.FC = () => {
                 <tr><td colSpan={6} className="muted">Loading...</td></tr>
               ) : filtered.length === 0 ? (
                 <tr><td colSpan={6} className="muted">
-                  {(rows || []).length === 0
-                    ? "No quotes yet. Start a draft from a customer or opportunity."
-                    : "No quotes match the current filter."}
+                  {(rows || []).length === 0 ? (
+                    <span>No quotes yet. <a role="button" tabIndex={0} style={{ color: "var(--accent)", textDecoration: "underline", cursor: "pointer" }} onClick={() => setCreating(true)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setCreating(true); }}>Create your first quote</a>.</span>
+                  ) : "No quotes match the current filter."}
                 </td></tr>
               ) : filtered.map((q) => (
                 <tr key={q.id} style={{ cursor: "pointer" }} onClick={() => setEditing(q)}>
@@ -209,6 +215,17 @@ const Quotes: React.FC = () => {
           }}
         />
       )}
+      <NewQuoteModal
+        open={creating}
+        onClose={() => setCreating(false)}
+        onCreated={(quote) => {
+          setCreating(false);
+          reload();
+          // Jump straight into the detail drawer on the new draft so
+          // the operator can add lines without an extra click.
+          setEditing(quote);
+        }}
+      />
     </>
   );
 };

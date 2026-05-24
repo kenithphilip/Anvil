@@ -132,6 +132,11 @@ const WiredSOIntake = () => {
     statusReason?: string | null;
     adapterMode?: string | null;
   }>({});
+  // Per-field evidence map ({ path: { value, confidence, source } })
+  // from the extractor, stashed so onContinue can persist it onto the
+  // order. Powers the workspace Review tab (fields + confidence +
+  // template-vs-LLM source).
+  const [extractedEvidence, setExtractedEvidence] = u<Record<string, any> | null>(null);
   // Large-PO state. When the uploaded PDF exceeds the server's
   // sync-safe page threshold, the extractor returns a page-1-only
   // preview (customer auto-detected from the header) and flags
@@ -625,6 +630,11 @@ const WiredSOIntake = () => {
       // order create payload.
       const lines = Array.isArray(out?.normalized?.lines) ? out.normalized.lines : null;
       if (lines && lines.length) setExtractedLines(lines);
+      if (out?.evidence_by_field && Object.keys(out.evidence_by_field).length) {
+        setExtractedEvidence(out.evidence_by_field);
+      } else {
+        setExtractedEvidence(null);
+      }
       setExtractMeta({
         runId: out?.run_id || null,
         adapter: out?.adapter_used || null,
@@ -972,6 +982,10 @@ const WiredSOIntake = () => {
          status: "DRAFT",
          result: initialResult,
          preflight_payload: initialPreflight,
+         // Persist the per-field evidence map so the workspace Review
+         // tab opens populated (value + confidence + template-vs-LLM
+         // source). Omitted when extraction produced none.
+         ...(extractedEvidence ? { evidence_by_field: extractedEvidence } : {}),
          ...headerColumnDefaults,
        });
       const newId = res?.order?.id || res?.id;

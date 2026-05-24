@@ -218,13 +218,22 @@ const FieldRow: React.FC<{
     }
   };
 
+  // Phase D: confidence wash. Only un-verified (pending) rows get a
+  // tint, and only when confidence is below the comfortable band, so
+  // the operator's eye is drawn to the fields that actually need a
+  // look. Confirmed/flagged rows keep their Phase C status tint.
+  const confBand = status !== "pending" || conf == null
+    ? ""
+    : conf < 0.5 ? " rp-conf-low"
+      : conf < 0.7 ? " rp-conf-mid"
+        : "";
   return (
     <div
       ref={rowRef}
       data-field-path={path}
       data-field-group={group}
       data-field-status={status}
-      className={"rp-field-row rp-status-" + status + (isActive ? " is-active" : "")}
+      className={"rp-field-row rp-status-" + status + confBand + (isActive ? " is-active" : "")}
       onMouseEnter={() => setHoveredField(path)}
       onMouseLeave={() => setHoveredField(null)}
       onClick={() => setSelectedField(path === selectedField ? null : path)}
@@ -439,7 +448,7 @@ interface ReviewPaneProps {
 const ReviewPaneInner: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) => {
   const doc = useSignedDoc(docId);
   const evidenceRows = useDocumentEvidence(docId);
-  const { counts, confirmAll } = useReviewPaneSelection();
+  const { counts, confirmAll, selectedField, setSelectedField, setFieldStatus } = useReviewPaneSelection();
 
   // Group + stable-sort fields once per render. Sorted alphabetically
   // within each group so the operator can predict where a field will
@@ -471,6 +480,35 @@ const ReviewPaneInner: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) 
     [grouped]
   );
   const c = counts(allPaths);
+
+  // Phase D: keyboard navigation. Mounts only while the Review tab is
+  // open (this component unmounts on tab change), so the listener is
+  // naturally scoped. Ignored while the operator is typing in the
+  // inline corrector. J/K (or arrows) move a cursor through the field
+  // list; Y/N confirm/flag the cursor row; Cmd/Ctrl+Enter marks all
+  // correct; Escape clears the cursor.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const tag = (t?.tagName || "").toUpperCase();
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t?.isContentEditable) return;
+      if (!allPaths.length) return;
+      const idx = selectedField ? allPaths.indexOf(selectedField) : -1;
+      const move = (delta: number) => {
+        const next = idx < 0 ? (delta > 0 ? 0 : allPaths.length - 1) : (idx + delta + allPaths.length) % allPaths.length;
+        setSelectedField(allPaths[next]);
+      };
+      const k = e.key.toLowerCase();
+      if (k === "j" || e.key === "ArrowDown") { e.preventDefault(); move(1); }
+      else if (k === "k" || e.key === "ArrowUp") { e.preventDefault(); move(-1); }
+      else if (k === "y" && selectedField) { e.preventDefault(); setFieldStatus(selectedField, "confirmed"); }
+      else if (k === "n" && selectedField) { e.preventDefault(); setFieldStatus(selectedField, "flagged"); }
+      else if (k === "enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); confirmAll(allPaths); }
+      else if (e.key === "Escape" && selectedField) { setSelectedField(null); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [allPaths, selectedField, setSelectedField, setFieldStatus, confirmAll]);
 
   // Stable colour function passed to the PDF overlay so each bbox
   // adopts the same hue as the corresponding field-list group.
@@ -524,6 +562,9 @@ const ReviewPaneInner: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) 
             >
               {Icon.check} mark all correct
             </button>
+            <span className="mono-sm rp-kbd-hint" title="Keyboard: J/K move · Y confirm · N flag · ⌘↵ all">
+              J/K · Y · N
+            </span>
           </div>
         )}
         <div className="rp-pane-body">

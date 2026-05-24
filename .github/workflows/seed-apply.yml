@@ -46,6 +46,11 @@ on:
           - staging
           - local
           - ci
+      only:
+        description: "phase=migrations only: comma-separated migration filenames to apply in order (e.g. 135_pricing_profiles.sql,136_price_composition_engine_columns.sql). Empty = all. Use to apply a single new migration without replaying older ones that may trip on drifted data."
+        required: false
+        type: string
+        default: ""
 
 jobs:
   apply:
@@ -81,16 +86,32 @@ jobs:
         if: ${{ inputs.phase == 'migrations' || inputs.phase == 'all' }}
         env:
           PGURL: ${{ secrets.SUPABASE_DB_URL }}
+          ONLY: ${{ inputs.only }}
         run: |
           set -euo pipefail
-          # Glob fix May 2026: was `0*.sql` which only matched
-          # 001..099 and silently skipped migrations 100..113.
-          # `[0-9]*.sql` matches every numbered migration file.
-          for f in $(ls supabase/migrations/[0-9]*.sql | sort); do
-            echo "::group::$f"
-            psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"
-            echo "::endgroup::"
-          done
+          if [ -n "$ONLY" ]; then
+            # Targeted apply: only the named files, in the given order.
+            # Lets a single new (idempotent) migration land without
+            # replaying every earlier file -- some of which can trip
+            # ON_ERROR_STOP on rows that drifted since they first ran.
+            IFS=',' read -ra FILES <<< "$ONLY"
+            for name in "${FILES[@]}"; do
+              f="supabase/migrations/$(echo "$name" | xargs)"
+              if [ ! -f "$f" ]; then echo "::error::migration not found: $f"; exit 1; fi
+              echo "::group::$f"
+              psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"
+              echo "::endgroup::"
+            done
+          else
+            # Glob fix May 2026: was `0*.sql` which only matched
+            # 001..099 and silently skipped migrations 100..113.
+            # `[0-9]*.sql` matches every numbered migration file.
+            for f in $(ls supabase/migrations/[0-9]*.sql | sort); do
+              echo "::group::$f"
+              psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"
+              echo "::endgroup::"
+            done
+          fi
           # Force PostgREST to refresh its schema cache so newly-
           # added columns are visible to the REST API immediately.
           # Without this nudge, the previous run could leave the

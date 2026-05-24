@@ -478,10 +478,14 @@ const WiredSOWorkspace = () => {
       if (lines.length > 0 && out?.run_id) {
         nextPreflight.extraction_run_id = out.run_id;
       }
-      await ObaraBackend?.orders?.update?.(o.id, {
-        result: nextResult,
-        preflight_payload: nextPreflight,
-      });
+      const updatePayload: any = { result: nextResult, preflight_payload: nextPreflight };
+      // Persist the per-field evidence map so the Review tab renders
+      // the extracted fields with their confidence + template-vs-LLM
+      // source. Only overwrite when the run actually returned one.
+      if (out?.evidence_by_field && Object.keys(out.evidence_by_field).length) {
+        updatePayload.evidence_by_field = out.evidence_by_field;
+      }
+      await ObaraBackend?.orders?.update?.(o.id, updatePayload);
       // Large-PO path. The server returned a page-1-only preview
       // (customer + first-page lines, merged above) to stay under the
       // 60s function limit; the full N-page extraction must run on the

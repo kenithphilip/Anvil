@@ -53,6 +53,12 @@ export interface EvidenceEntry {
   page?: number | null;
   line?: number | null;
   confidence?: number | null;
+  // "template" when the value came from a deterministic
+  // customer_format_templates anchor, "llm" when the model extracted
+  // it. Drives the dotted-vs-solid field stripe so the operator can
+  // tell pattern-matched fields (this customer has been seen before)
+  // from fresh LLM guesses.
+  source?: "template" | "llm" | "ocr" | null;
 }
 export type EvidenceByField = Record<string, EvidenceEntry | null | undefined>;
 
@@ -184,9 +190,18 @@ const FieldRow: React.FC<{
     if (path !== selectedField || !rowRef.current) return;
     rowRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [path, selectedField]);
-  const stripe = `var(${FIELD_GROUPS[group].cssVar})`;
+  const stripeColour = `var(${FIELD_GROUPS[group].cssVar})`;
   const pageLine = formatPageLine(entry);
   const conf = entry?.confidence ?? null;
+  // Template-anchored fields get a dotted stripe (deterministic
+  // pattern-match: this customer's PO has been seen before) vs a solid
+  // stripe for LLM-extracted fields. A dotted stripe quietly absent on
+  // a field that's usually anchored is the operator's first hint that
+  // the customer's PO format has drifted.
+  const isTemplate = entry?.source === "template";
+  const stripeStyle: React.CSSProperties = isTemplate
+    ? { backgroundImage: `repeating-linear-gradient(to bottom, ${stripeColour} 0 3px, transparent 3px 6px)` }
+    : { background: stripeColour };
 
   const onConfirm = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -238,9 +253,18 @@ const FieldRow: React.FC<{
       onMouseLeave={() => setHoveredField(null)}
       onClick={() => setSelectedField(path === selectedField ? null : path)}
     >
-      <span className="rp-field-stripe" style={{ background: stripe }} aria-hidden="true" />
+      <span
+        className={"rp-field-stripe" + (isTemplate ? " rp-field-stripe-anchored" : "")}
+        style={stripeStyle}
+        aria-hidden="true"
+      />
       <div className="rp-field-body">
-        <div className="rp-field-name mono-sm" title={path}>{path}</div>
+        <div className="rp-field-name mono-sm" title={path}>
+          {path}
+          {isTemplate && (
+            <span className="rp-anchor-badge" title="Pulled by a saved per-customer template anchor (deterministic, not the LLM)">anchor</span>
+          )}
+        </div>
         <div className="rp-field-value">{formatValue(entry?.value)}</div>
         {editing && (
           <div className="rp-field-edit" onClick={(e) => e.stopPropagation()}>

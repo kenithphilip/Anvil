@@ -1391,6 +1391,22 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .rp-field-row.rp-conf-mid.is-active { background: color-mix(in srgb, var(--amber) 14%, transparent); }
 .rp-field-row.rp-conf-low.is-active { background: color-mix(in srgb, var(--rust) 15%, transparent); }
 
+/* Template-anchored field marker. The dotted stripe is set inline
+   (it needs the group colour); this widens it slightly so the dotted
+   pattern reads clearly at 4px. */
+.rp-field-stripe-anchored { width: 4px; }
+.rp-anchor-badge {
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px dashed var(--ink-4);
+  border-radius: var(--r-1);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  vertical-align: middle;
+}
+
 /* Phase B: PDF.js page + overlay. The page wrap is the positioning
    parent for the SVG overlay; pages stack vertically inside the
    container with a small gap so a multi-page PO has clear page

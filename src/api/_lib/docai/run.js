@@ -1169,11 +1169,37 @@ export const runExtractionPipeline = async (params) => {
     "enqueueReview",
   );
 
+  // Build a flat per-field evidence map for the Review tab:
+  //   { "customer.gstin": { value, confidence, source } }
+  // `source` is "template" when the value came from a deterministic
+  // customer_format_templates anchor, else "llm". Template anchors only
+  // ever fill customer.* paths, so the Review tab's "anchored" (dotted)
+  // stripe is inherently a customer-field signal. Nothing else built
+  // this map before, so the Review tab was empty for normal orders;
+  // populating it here (returned to the caller, which persists it onto
+  // the order) is what makes the side-by-side review show fields.
+  const evidenceByField = {};
+  {
+    const templatePaths = new Set(Object.keys(templateApplied?.confidences || {}));
+    const conf = out?.confidences || {};
+    const cust = out?.normalized?.customer || {};
+    for (const [k, v] of Object.entries(cust)) {
+      if (v == null || v === "") continue;
+      const path = "customer." + k;
+      evidenceByField[path] = {
+        value: v,
+        confidence: conf[path] ?? conf[k] ?? null,
+        source: templatePaths.has(path) ? "template" : "llm",
+      };
+    }
+  }
+
   return {
     runId,
     status,
     statusReason,
     normalized: out?.normalized || null,
+    evidenceByField,
     confidenceOverall: out?.confidence_overall ?? null,
     adapterUsed: out?.adapter_used || null,
     adapterMode: out?.mode || null,

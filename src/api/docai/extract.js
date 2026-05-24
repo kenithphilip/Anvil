@@ -172,6 +172,11 @@ export default async function handler(req, res) {
       adapter_mode: result.adapterMode,
       confidence_overall: result.confidenceOverall,
       normalized: result.normalized,
+      // Flat per-field evidence map ({ path: { value, confidence, source } })
+      // for the Review tab. `source` distinguishes template-anchored
+      // fields from LLM-extracted ones. The caller persists this onto
+      // the order so the side-by-side review renders the field list.
+      evidence_by_field: result.evidenceByField || {},
       attempts: result.attempts,
       text_layer: result.textLayer
         ? {

@@ -190,6 +190,15 @@ describe("integration / Phase B: image-only PDF triggers OCR fallback", () => {
     const lastCall = dispatchExtract.mock.calls.at(-1)[0];
     expect(lastCall.hints.bodyText).toMatch(/OCR/);
     expect(lastCall.source.bytes).toBeTruthy();
+
+    // Review-tab evidence map: built from normalized.customer with a
+    // per-field source. No template here, so every field is "llm".
+    expect(result.evidenceByField).toBeTruthy();
+    expect(result.evidenceByField["customer.gstin"]).toMatchObject({
+      value: "27AAACA1234B1Z5",
+      source: "llm",
+    });
+    expect(result.evidenceByField["customer.name"].source).toBe("llm");
   });
 });
 

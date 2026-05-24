@@ -69,6 +69,13 @@ export const QuoteDetailDrawer: React.FC<{
   const [activeTemplate, setActiveTemplate] = useState<Template | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<any>(null);
+  // Item-master picker: lets the operator append a quote line straight
+  // from the item master so the line carries the catalogue part_no,
+  // HSN, source country and tax rates. This makes the quote a usable
+  // reference for downstream PO-price / source-country matching.
+  const [picking, setPicking] = useState(false);
+  const [items, setItems] = useState<any[] | null>(null);
+  const [itemQuery, setItemQuery] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -166,6 +173,7 @@ export const QuoteDetailDrawer: React.FC<{
     description: "",
     qty: 1,
     uom: "NO",
+    source_country: "",
     listed_unit_price: 0,
     discount_pct: 0,
     cgst_pct: 0.09,
@@ -174,6 +182,48 @@ export const QuoteDetailDrawer: React.FC<{
   }]);
   const setLine = (i: number, k: string, v: any) => setLines((arr) => arr.map((ln, idx) => idx === i ? { ...ln, [k]: v } : ln));
   const removeLine = (i: number) => setLines((arr) => arr.filter((_, idx) => idx !== i).map((ln, idx) => ({ ...ln, line_index: idx })));
+
+  // Lazy-load the item master the first time the picker opens. Loaded
+  // once and filtered client-side so typing stays instant.
+  const openPicker = async () => {
+    setPicking(true);
+    setItemQuery("");
+    if (items != null) return;
+    try {
+      const resp: any = await ObaraBackend?.admin?.listItemMaster?.({ limit: 1000 });
+      setItems(Array.isArray(resp) ? resp : resp?.items || []);
+    } catch (e) {
+      setItems([]);
+      setErr(e);
+    }
+  };
+
+  // Append a quote line prefilled from an item-master row. Listed price
+  // seeds from the catalogue purchase price (the operator marks it up
+  // before sending); tax rates and source country carry over verbatim.
+  const addFromItem = (item: any) => {
+    setLines((arr) => [...arr, {
+      line_index: arr.length,
+      part_no: item.part_no || "",
+      description: item.description || "",
+      qty: 1,
+      uom: item.uom || "NO",
+      hsn_sac: item.hsn_sac || "",
+      source_country: item.source_country || "",
+      listed_unit_price: item.purchase_price != null ? Number(item.purchase_price) : 0,
+      discount_pct: 0,
+      cgst_pct: item.cgst_rate != null ? Number(item.cgst_rate) : 0,
+      sgst_pct: item.sgst_rate != null ? Number(item.sgst_rate) : 0,
+      igst_pct: item.igst_rate != null ? Number(item.igst_rate) : 0,
+    }]);
+    setPicking(false);
+  };
+
+  const itemMatches = (items || []).filter((it) => {
+    if (!itemQuery) return true;
+    const v = itemQuery.toLowerCase();
+    return (it.part_no || "").toLowerCase().includes(v) || (it.description || "").toLowerCase().includes(v);
+  }).slice(0, 50);
 
   // Auto-compute discounted unit + line amount for preview.
   const computedLines = lines.map((ln) => {
@@ -271,14 +321,59 @@ export const QuoteDetailDrawer: React.FC<{
                   <div className="mono-sm" style={{ color: "var(--ink-3)" }}>Quote lines</div>
                   <div style={{ fontSize: 14, fontWeight: 600 }}>{lines.length} line{lines.length === 1 ? "" : "s"} . total {fmtINR(total)}</div>
                 </div>
-                <Btn sm kind="primary" onClick={addLine}>{Icon.plus} Add line</Btn>
+                <div className="row" style={{ gap: 8 }}>
+                  <Btn sm kind="ghost" onClick={openPicker}>{Icon.plus} From item master</Btn>
+                  <Btn sm kind="primary" onClick={addLine}>{Icon.plus} Add line</Btn>
+                </div>
               </div>
+              {picking && (
+                <Card title="Item master" eyebrow="Pick an item to append a prefilled line" style={{ marginBottom: 10 }}>
+                  <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <input
+                      className="input"
+                      aria-label="Search item master"
+                      placeholder="search part number or description..."
+                      value={itemQuery}
+                      onChange={(e) => setItemQuery(e.target.value)}
+                      style={{ width: 320 }}
+                    />
+                    <Btn sm kind="ghost" onClick={() => setPicking(false)}>Close</Btn>
+                  </div>
+                  {items == null ? (
+                    <div className="mono-sm" style={{ color: "var(--ink-3)", padding: 10 }}>Loading items...</div>
+                  ) : itemMatches.length === 0 ? (
+                    <div className="mono-sm" style={{ color: "var(--ink-3)", padding: 10 }}>
+                      {(items.length === 0) ? "No items in the item master yet." : "No items match."}
+                    </div>
+                  ) : (
+                    <div style={{ maxHeight: 220, overflowY: "auto" }}>
+                      <table className="tbl" style={{ fontSize: 12 }}>
+                        <thead><tr>
+                          <th>Part</th><th>Description</th><th>UoM</th><th>Src</th><th className="r">Price</th><th></th>
+                        </tr></thead>
+                        <tbody>
+                          {itemMatches.map((it) => (
+                            <tr key={it.id || it.part_no}>
+                              <td className="mono">{it.part_no}</td>
+                              <td>{it.description || "-"}</td>
+                              <td className="mono">{it.uom || "-"}</td>
+                              <td className="mono">{it.source_country || "-"}</td>
+                              <td className="r mono">{it.purchase_price != null ? fmtINR(Number(it.purchase_price)) : "-"}</td>
+                              <td><Btn sm kind="primary" onClick={() => addFromItem(it)}>Add</Btn></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Card>
+              )}
               {computedLines.length === 0 ? (
                 <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>No lines yet. Click <b>Add line</b> to start.</div>
               ) : (
                 <table className="tbl" style={{ fontSize: 12 }}>
                   <thead><tr>
-                    <th>#</th><th>Part</th><th>Description</th><th className="r">Qty</th><th>UoM</th>
+                    <th>#</th><th>Part</th><th>Description</th><th className="r">Qty</th><th>UoM</th><th>Src</th>
                     <th className="r">Listed</th><th className="r">Disc %</th><th className="r">Net</th><th className="r">CGST</th><th className="r">SGST</th><th className="r">IGST</th><th className="r">Line</th><th></th>
                   </tr></thead>
                   <tbody>
@@ -289,6 +384,7 @@ export const QuoteDetailDrawer: React.FC<{
                         <td><input className="input" style={{ width: 200 }} value={ln.description || ""} onChange={(e) => setLine(i, "description", e.target.value)} /></td>
                         <td className="r"><input className="input mono r" style={{ width: 60 }} type="number" step="0.01" value={ln.qty ?? ""} onChange={(e) => setLine(i, "qty", e.target.value === "" ? null : Number(e.target.value))} /></td>
                         <td><input className="input mono" style={{ width: 60 }} value={ln.uom || ""} onChange={(e) => setLine(i, "uom", e.target.value)} /></td>
+                        <td><input className="input mono" style={{ width: 80 }} value={ln.source_country || ""} placeholder="e.g. O-KOREA" onChange={(e) => setLine(i, "source_country", e.target.value)} /></td>
                         <td className="r"><input className="input mono r" style={{ width: 90 }} type="number" step="0.01" value={ln.listed_unit_price ?? ""} onChange={(e) => setLine(i, "listed_unit_price", e.target.value === "" ? null : Number(e.target.value))} /></td>
                         <td className="r"><input className="input mono r" style={{ width: 60 }} type="number" step="0.001" value={ln.discount_pct ?? 0} onChange={(e) => setLine(i, "discount_pct", Number(e.target.value))} /></td>
                         <td className="r mono"><span className="pri">{ln.effective != null ? fmtINR(ln.effective) : "-"}</span></td>
@@ -302,7 +398,7 @@ export const QuoteDetailDrawer: React.FC<{
                   </tbody>
                   <tfoot>
                     <tr style={{ background: "var(--paper-2)" }}>
-                      <td colSpan={11} className="r mono"><b>Total</b></td>
+                      <td colSpan={12} className="r mono"><b>Total</b></td>
                       <td className="r mono"><b style={{ fontSize: 13 }}>{fmtINR(total)}</b></td>
                       <td></td>
                     </tr>

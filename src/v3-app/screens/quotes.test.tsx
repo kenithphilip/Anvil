@@ -43,4 +43,12 @@ describe("Quotes", () => {
     const { findByText } = renderScreen(Screen);
     expect(await findByText(/No quotes yet/i)).toBeTruthy();
   });
+
+  it("exposes a New quote entry point", async () => {
+    const mod = await import("./quotes");
+    const Screen = mod.default;
+    const { findByText } = renderScreen(Screen);
+    // The create-from-scratch button lives in the title bar.
+    expect(await findByText("New quote")).toBeTruthy();
+  });
 });

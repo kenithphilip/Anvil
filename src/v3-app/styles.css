@@ -41,6 +41,11 @@
   --hairline:   #D8D8D0;
   --hairline-2: #E5E5DD;
   --hairline-3: #EFEFE9;
+  /* `--line` is referenced (without a fallback) by several drawers,
+     modals and panels but was never defined, so those borders silently
+     did not render. Alias it to the hairline; lazy var() substitution
+     resolves it per theme (dark redefines --hairline). */
+  --line: var(--hairline);
 
   /* ── Brand · electric chartreuse, used sparingly ───────── */
   --accent:    #C8FF2B;        /* live/active fill */
@@ -1759,9 +1764,50 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
  * hide doesn't truncate the modal, and reserve space for the
  * platform safe-area insets so notched phones don't clip the close
  * button into the status bar. */
+/* Modal primitive (lib/primitives.tsx) emits
+   .modal-backdrop > .modal[ > .modal-h / .modal-body / .modal-f ].
+   These rules were missing, so primitive-based modals (e.g. the New
+   Quote dialog) rendered inline in normal flow instead of as a fixed,
+   dimmed, centered overlay. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(8, 10, 12, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
 .modal {
+  width: min(640px, 92vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
   max-height: calc(100dvh - 48px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-  overflow: auto;
+  overflow: hidden;
+}
+.modal-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.modal-h .ti { font-size: 15px; font-weight: 600; }
+.modal-body { padding: 16px 18px; overflow: auto; flex: 1; }
+.modal-f {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  flex-shrink: 0;
 }
 
 /* Reduced-motion users: kill the animations the toast stack adds. */

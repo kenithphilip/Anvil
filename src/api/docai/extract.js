@@ -23,6 +23,20 @@ import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { runExtractionPipeline } from "../_lib/docai/run.js";
 import { safeFetch } from "../_lib/safe-fetch.js";
+import { probePdfPageCount } from "../_lib/docai/pdf-chunker.js";
+
+// Above this page count a synchronous extraction (TOC profiler +
+// ceil(pages/5) sequential LLM chunk calls) risks exceeding Vercel's
+// 60-second function ceiling and timing out with nothing returned --
+// the failure operators hit on long HMIL POs (e.g. P250432276, 23pp).
+// For PDFs over this size we extract ONLY page 1 synchronously (the
+// customer header + a first-page preview, which stays well under 60s)
+// and signal `large_pdf` so the caller enqueues the full N-page
+// extraction on the background worker (cron/extraction_jobs.js, which
+// drains chunks across 5-minute ticks and has no single-request
+// ceiling up to BACKGROUND_MAX_TOTAL_PAGES=500). Short POs (<=12pp)
+// keep the existing single-request sync path unchanged.
+const BACKGROUND_PAGE_THRESHOLD = 12;
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -98,6 +112,25 @@ export default async function handler(req, res) {
       || (resolvedFilename?.toLowerCase().endsWith(".xlsx") ? "xlsx"
           : (resolvedMime?.startsWith("image/") ? "image" : "pdf"));
 
+    // Large-PDF guard. Probe the page count for PDFs and, when it
+    // exceeds the sync-safe threshold, restrict THIS synchronous run
+    // to page 1 only (customer header + first-page preview) so we
+    // return fast and never time out. The caller sees large_pdf=true
+    // and enqueues the full extraction on the background worker.
+    // Callers can opt out with body.no_background (the cron worker
+    // itself sets this so its own re-extraction is never down-scoped).
+    const hints = { ...(body?.hints || {}) };
+    let largePdf = false;
+    let totalPages = 0;
+    const isPdfSource = sourceType === "pdf" || resolvedMime === "application/pdf";
+    if (isPdfSource && sourceBytes && !body?.no_background && !hints.keepPages) {
+      try { totalPages = await probePdfPageCount(sourceBytes); } catch (_) { totalPages = 0; }
+      if (totalPages > BACKGROUND_PAGE_THRESHOLD) {
+        largePdf = true;
+        hints.keepPages = [1]; // 1-based: customer header lives on every page
+      }
+    }
+
     const result = await runExtractionPipeline({
       ctx, svc, settings,
       bytes: sourceBytes,
@@ -117,7 +150,7 @@ export default async function handler(req, res) {
       triggeredBy: ctx.user?.id || null,
       inboundEmailId: body?.inbound_email_id || null,
       vote: !!body?.vote,
-      hints: body?.hints || {},
+      hints,
     });
 
     await recordAudit(ctx, {
@@ -166,6 +199,12 @@ export default async function handler(req, res) {
       validator_issues: result.validatorIssues,
       validator_summary: result.validatorSummary,
       error: result.error,
+      // Large-PDF signal. When true, the result above is a page-1-only
+      // preview (customer + first-page lines) and the caller must
+      // enqueue a background extraction_jobs row for the full document.
+      large_pdf: largePdf,
+      total_pages: totalPages || null,
+      background_page_threshold: BACKGROUND_PAGE_THRESHOLD,
     });
   } catch (err) { sendError(res, err); }
 }

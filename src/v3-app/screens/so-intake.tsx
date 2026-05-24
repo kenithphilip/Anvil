@@ -132,6 +132,13 @@ const WiredSOIntake = () => {
     statusReason?: string | null;
     adapterMode?: string | null;
   }>({});
+  // Large-PO state. When the uploaded PDF exceeds the server's
+  // sync-safe page threshold, the extractor returns a page-1-only
+  // preview (customer auto-detected from the header) and flags
+  // large_pdf. We capture the page count so the banner can explain
+  // it, and onContinue enqueues the full background extraction once
+  // the order exists (the background job is order-scoped).
+  const [largePo, setLargePo] = u<{ pages: number } | null>(null);
   // Bug fix May 2026 (customer-prefill report): keep the raw
   // extracted customer block around so the right-hand intake card
   // can render a "From PO" panel side-by-side with the existing-
@@ -625,6 +632,20 @@ const WiredSOIntake = () => {
         statusReason: out?.status_reason || null,
         adapterMode: out?.adapter_mode || null,
       });
+      // Large-PO: the server gave us page 1 only. Record it so the
+      // banner shows + onContinue enqueues the full background job.
+      // Show the large-PO toast and SKIP the generic reason toasts
+      // below (a page-1 preview is expected to be partial, so an
+      // "empty_lines"/"low_confidence" warning would be misleading).
+      if (out?.large_pdf) {
+        setLargePo({ pages: Number(out.total_pages) || 0 });
+        window.notifyLive?.(
+          "Large PO · customer detected from page 1",
+          `This PO is ${out.total_pages || "many"} pages. We've read the header now; all line items extract in the background once you create the order.`,
+        );
+      } else {
+        setLargePo(null);
+      }
       // Phase 3.6 observability: if the extract API returned a
       // structured status_reason that means "extraction did not
       // produce usable lines", surface a specific operator-facing
@@ -693,7 +714,10 @@ const WiredSOIntake = () => {
           "All adapters skipped the run because the tenant's docai cost cap was hit. Adjust the cap or wait for the budget window to roll.",
         ],
       };
-      if (reason && REASON_TOAST[reason]) {
+      // Skip the generic reason toast on a large-PO page-1 preview:
+      // the result is partial by design, so empty_lines/low_confidence
+      // warnings would be misleading. The large-PO toast already fired.
+      if (!out?.large_pdf && reason && REASON_TOAST[reason]) {
         const [title, body] = REASON_TOAST[reason];
         window.notifyWarn?.(title, body);
       }
@@ -956,9 +980,32 @@ const WiredSOIntake = () => {
       if (doc?.id) {
         try { await ObaraBackend?.ocr?.run?.(doc.id, newId); } catch (_) { /* surface in workspace */ }
       }
-      const linesMsg = extractedLines && extractedLines.length
-        ? " (" + extractedLines.length + " line" + (extractedLines.length === 1 ? "" : "s") + " from PO)"
-        : "";
+      // Large-PO: the intake extraction was a page-1 preview. Now that
+      // the order exists, enqueue the full N-page extraction on the
+      // background worker (which is order-scoped). The cron worker
+      // merges the complete line set back onto this order. Best-effort:
+      // a failed enqueue still leaves a usable draft with the page-1
+      // preview + customer, and the operator can re-run from the
+      // workspace.
+      if (largePo && doc?.id) {
+        try {
+          const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
+          const session: any = (ObaraBackend as any)?.getSession?.() || null;
+          const headers: any = { "Content-Type": "application/json" };
+          if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+          if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+          await fetch(cfg.url.replace(/\/+$/, "") + "/api/orders/extraction_jobs", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ order_id: newId, document_id: doc.id, source_filename: doc?.filename || "po.pdf" }),
+          });
+        } catch (_) { /* non-fatal; workspace re-run can retry */ }
+      }
+      const linesMsg = largePo
+        ? ` (${largePo.pages || "many"}-page PO · line items extracting in background)`
+        : (extractedLines && extractedLines.length
+          ? " (" + extractedLines.length + " line" + (extractedLines.length === 1 ? "" : "s") + " from PO)"
+          : "");
       window.notifySuccess?.("Draft created", String(newId).slice(0, 8) + linesMsg);
       window.location.hash = `#/so?id=${newId}`;
     } catch (e2: any) {
@@ -1033,6 +1080,15 @@ const WiredSOIntake = () => {
               {busy === "extract" && (
                 <Banner kind="info" icon={Icon.cycle} title="Reading the PO…">
                   <ExtractionProgress />
+                </Banner>
+              )}
+              {largePo && busy !== "extract" && (
+                <Banner kind="live" icon={Icon.layers} title={`Large PO · ${largePo.pages || "many"} pages`}>
+                  <span className="mono-sm">
+                    The customer was detected from the page-1 header. To stay fast, only page 1 was read now;
+                    all {largePo.pages || ""} pages of line items will extract in the background as soon as you
+                    create the draft. Confirm the customer below and continue.
+                  </span>
                 </Banner>
               )}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>

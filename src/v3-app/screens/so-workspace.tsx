@@ -407,6 +407,28 @@ const WiredSOWorkspace = () => {
     return docs[0]?.id || null;
   })();
 
+  // POST an extraction_jobs row so the cron worker drains the full
+  // document chunk-by-chunk (no 60s single-request ceiling). Used by
+  // both the large-PDF page-1 path and the legacy >60pp PDF_TOO_LARGE
+  // catch. Returns true when the job was created or de-duped.
+  const enqueueBackgroundExtraction = async (orderId: string, docId: string | null): Promise<boolean> => {
+    try {
+      const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
+      const session: any = (ObaraBackend as any)?.getSession?.() || null;
+      const headers: any = { "Content-Type": "application/json" };
+      if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+      if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+      const resp = await fetch(cfg.url.replace(/\/+$/, "") + "/api/orders/extraction_jobs", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ order_id: orderId, document_id: docId, source_filename: "po.pdf" }),
+      });
+      return resp.ok;
+    } catch (_) {
+      return false;
+    }
+  };
+
   const runExtraction = async () => {
     if (!o?.id) return;
     if (!sourceDocId) {
@@ -460,6 +482,23 @@ const WiredSOWorkspace = () => {
         result: nextResult,
         preflight_payload: nextPreflight,
       });
+      // Large-PO path. The server returned a page-1-only preview
+      // (customer + first-page lines, merged above) to stay under the
+      // 60s function limit; the full N-page extraction must run on the
+      // background worker. Enqueue it and tell the operator the lines
+      // will fill in shortly. The cron worker writes the merged result
+      // back onto this same order.
+      if (out?.large_pdf && o?.id) {
+        const queued = await enqueueBackgroundExtraction(o.id, sourceDocId);
+        window[queued ? "notifySuccess" : "notifyWarn"]?.(
+          queued ? "Large PO · customer + page 1 shown" : "Large PO · could not queue background job",
+          queued
+            ? `Full ${out.total_pages || "multi"}-page extraction is running in the background; line items will fill in within a few minutes.`
+            : "Showing the page-1 preview. Re-run extraction to retry the background queue.",
+        );
+        setBump((n) => n + 1);
+        return;
+      }
       // 3. Best-effort OCR for the evidence bbox overlay.
       try { await (ObaraBackend as any)?.ocr?.run?.(sourceDocId, o.id); } catch (_) { /* surface in audit */ }
       const tone = lines.length === 0 ? "notifyWarn" : "notifySuccess";
@@ -481,32 +520,14 @@ const WiredSOWorkspace = () => {
       const message = err?.message || String(err);
       const looksTooLarge = /PDF_TOO_LARGE|exceeds max \d+ pages|background-job mode/i.test(message);
       if (looksTooLarge && o?.id) {
-        try {
-          const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
-          const session: any = (ObaraBackend as any)?.getSession?.() || null;
-          const headers: any = { "Content-Type": "application/json" };
-          if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-          if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
-          const url = cfg.url.replace(/\/+$/, "") + "/api/orders/extraction_jobs";
-          const resp = await fetch(url, {
-            method: "POST", headers,
-            body: JSON.stringify({
-              order_id: o.id,
-              document_id: sourceDocId,
-              source_filename: "po.pdf",
-            }),
-          });
-          if (resp.ok) {
-            window.notifySuccess?.(
-              "Large PDF queued for background extraction",
-              "The progress bar above will keep you posted; this can take several minutes for documents over 60 pages.",
-            );
-            return;
-          }
-          const txt = await resp.text().catch(() => "");
-          window.notifyError?.("Could not queue background job", txt || resp.statusText);
-        } catch (e: any) {
-          window.notifyError?.("Background job creation failed", e?.message || String(e));
+        const queued = await enqueueBackgroundExtraction(o.id, sourceDocId);
+        if (queued) {
+          window.notifySuccess?.(
+            "Large PDF queued for background extraction",
+            "The progress bar above will keep you posted; this can take several minutes for very large documents.",
+          );
+        } else {
+          window.notifyError?.("Could not queue background job", "Re-run extraction to retry.");
         }
       } else {
         window.notifyError?.("Extraction failed", message);

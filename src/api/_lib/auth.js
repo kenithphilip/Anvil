@@ -108,6 +108,15 @@ export const resolveContext = async (req) => {
   return { user, tenantId, role: membership.role, anonymous: false };
 };
 
+// Non-throwing permission check. Use when a handler needs to branch on
+// the caller's level (e.g. allow an approver to override a guardrail)
+// rather than hard-fail.
+export const hasPermission = (ctx, level) => {
+  if (ctx?.anonymous && level !== "read") return false;
+  const required = REQUIRED_ROLES[level] || REQUIRED_ROLES.read;
+  return required.has(ctx?.role);
+};
+
 export const requirePermission = (ctx, level) => {
   // Hard gate: anonymous callers may at most read. Even in dev,
   // never let an unauthenticated caller cross into write/approve/admin.

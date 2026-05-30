@@ -231,6 +231,34 @@ export default async function handler(req, res) {
         validityDays = 30;
       }
 
+      // your_ref carries the buyer's PO/RFQ reference. When the quote is
+      // created from a linked opportunity, walk opportunity -> lead and
+      // adopt the lead's reference (the original buyer inquiry id).
+      // Best-effort: a missing or unfetchable hop simply leaves your_ref
+      // null for the operator to fill manually in the drawer.
+      let yourRef = body.your_ref || null;
+      if (!yourRef && body.opportunity_id) {
+        try {
+          const opp = await svc.from("opportunities")
+            .select("related_lead_id")
+            .eq("tenant_id", ctx.tenantId)
+            .eq("id", body.opportunity_id)
+            .maybeSingle();
+          const leadId = opp && opp.data && opp.data.related_lead_id;
+          if (leadId) {
+            const lead = await svc.from("leads")
+              .select("reference")
+              .eq("tenant_id", ctx.tenantId)
+              .eq("id", leadId)
+              .maybeSingle();
+            if (lead && lead.data && lead.data.reference) {
+              yourRef = lead.data.reference;
+              autoFilled.your_ref = "opportunity.lead.reference";
+            }
+          }
+        } catch { /* best-effort: leave your_ref null */ }
+      }
+
       const lineItems = Array.isArray(body.line_items) ? body.line_items : [];
       const totals = computeTotals(lineItems);
       const quoteNumber = body.quote_number || await generateQuoteNumber(svc, ctx.tenantId);
@@ -248,6 +276,7 @@ export default async function handler(req, res) {
         expires_at: null,                             // set on SEND, not on draft create
         terms: body.terms || null,
         notes: body.notes || null,
+        your_ref: yourRef,
         line_items: lineItems,
         created_by: ctx.user?.id || null,
       }).select("*").single();

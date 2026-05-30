@@ -7,6 +7,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const h = vi.hoisted(() => ({
   customer: null,
+  opportunity: null,
+  lead: null,
   inserted: null,
   audits: [],
 }));
@@ -38,6 +40,12 @@ const makeQuery = (resolve) => {
 const resolver = (table) => (state, mode) => {
   if (table === "customers") {
     return { data: h.customer, error: null };
+  }
+  if (table === "opportunities") {
+    return { data: h.opportunity, error: null };
+  }
+  if (table === "leads") {
+    return { data: h.lead, error: null };
   }
   if (table === "quotes") {
     if (state.count) return { count: 0, error: null }; // generateQuoteNumber count
@@ -74,6 +82,8 @@ const post = async (body) => {
 
 beforeEach(() => {
   h.customer = null;
+  h.opportunity = null;
+  h.lead = null;
   h.inserted = null;
   h.audits = [];
 });
@@ -119,5 +129,51 @@ describe("POST /api/quotes — customer-default auto-fill", () => {
     expect(h.inserted.currency).toBe("INR");
     expect(h.inserted.validity_days).toBe(30);
     expect(h.audits.some((a) => a.action === "quote_auto_populate")).toBe(false);
+  });
+});
+
+describe("POST /api/quotes — your_ref auto-fill from opportunity -> lead", () => {
+  it("adopts lead.reference as your_ref when the opp links a lead with one", async () => {
+    h.opportunity = { related_lead_id: "L-1" };
+    h.lead = { reference: "RFQ-2026-Q1-007" };
+    const { res } = await post({ customer_id: "c-1", opportunity_id: "OPP-1" });
+    expect(res.statusCode).toBe(201);
+    expect(h.inserted.your_ref).toBe("RFQ-2026-Q1-007");
+    const ap = h.audits.find((a) => a.action === "quote_auto_populate");
+    expect(ap).toBeTruthy();
+    expect(ap.after.auto_filled).toMatchObject({ your_ref: "opportunity.lead.reference" });
+  });
+
+  it("explicit body.your_ref wins over the opp/lead chain (no auto-populate audit for your_ref)", async () => {
+    h.opportunity = { related_lead_id: "L-1" };
+    h.lead = { reference: "RFQ-2026-Q1-007" };
+    const { res } = await post({ customer_id: "c-1", opportunity_id: "OPP-1", your_ref: "PO-9001" });
+    expect(res.statusCode).toBe(201);
+    expect(h.inserted.your_ref).toBe("PO-9001");
+    const ap = h.audits.find((a) => a.action === "quote_auto_populate");
+    expect(ap?.after?.auto_filled?.your_ref).toBeUndefined();
+  });
+
+  it("leaves your_ref null when the opportunity has no linked lead", async () => {
+    h.opportunity = { related_lead_id: null };
+    const { res } = await post({ customer_id: "c-1", opportunity_id: "OPP-1" });
+    expect(res.statusCode).toBe(201);
+    expect(h.inserted.your_ref).toBeNull();
+    expect(h.audits.some((a) => a.action === "quote_auto_populate" && a.after?.auto_filled?.your_ref)).toBe(false);
+  });
+
+  it("leaves your_ref null when the lead has no reference", async () => {
+    h.opportunity = { related_lead_id: "L-1" };
+    h.lead = { reference: null };
+    const { res } = await post({ customer_id: "c-1", opportunity_id: "OPP-1" });
+    expect(res.statusCode).toBe(201);
+    expect(h.inserted.your_ref).toBeNull();
+  });
+
+  it("does not query opportunities at all when no opportunity_id is supplied", async () => {
+    // No opportunity / lead set; the chain simply never runs.
+    const { res } = await post({ customer_id: "c-1" });
+    expect(res.statusCode).toBe(201);
+    expect(h.inserted.your_ref).toBeNull();
   });
 });

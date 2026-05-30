@@ -126,10 +126,12 @@ export default async function handler(req, res) {
       requirePermission(ctx, "read");
       const status = req.query?.status;
       const customerId = req.query?.customer_id;
+      const opportunityId = req.query?.opportunity_id;
       const expiresBefore = req.query?.expires_before;
       let q = svc.from("quotes").select("*").eq("tenant_id", ctx.tenantId);
       if (status && VALID_STATUSES.has(status)) q = q.eq("status", status);
       if (customerId) q = q.eq("customer_id", customerId);
+      if (opportunityId) q = q.eq("opportunity_id", opportunityId);
       if (expiresBefore) q = q.lte("expires_at", expiresBefore);
       q = q.order("created_at", { ascending: false }).limit(500);
       const r = await q;

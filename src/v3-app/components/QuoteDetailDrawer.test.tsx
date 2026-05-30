@@ -144,4 +144,21 @@ describe("QuoteDetailDrawer — line enrichment", () => {
       expect(body.customer_contact_id).toBe("ct-2");
     });
   });
+
+  it("renders provenance pills in the Header tab from field_sources", () => {
+    const q = {
+      ...QUOTE,
+      field_sources: {
+        currency: "customer.currency",
+        validity_days: "customer.default_quote_validity_days",
+        your_ref: "opportunity.lead.reference",
+        attention_contact: "operator_override",
+      },
+    };
+    const { getAllByText, getByText } = render(<QuoteDetailDrawer quote={q} onClose={() => undefined} />);
+    // "from customer" appears next to currency + validity_days.
+    expect(getAllByText("from customer").length).toBeGreaterThanOrEqual(2);
+    expect(getByText("from opportunity")).toBeTruthy();
+    expect(getByText("edited")).toBeTruthy();
+  });
 });

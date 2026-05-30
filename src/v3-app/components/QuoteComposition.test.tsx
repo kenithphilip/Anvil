@@ -55,7 +55,7 @@ describe("QuoteComposition — persistence", () => {
       admin: {
         listPricingProfiles: vi.fn(async () => ({ profiles: [] })), // -> fallback to in-code defaults
         listPriceComposition: vi.fn(async () => ({
-          lines: [{ line_index: 0, supplier_unit_price: 8000, supplier_currency: "USD", profile_code: "granular" }],
+          lines: [{ line_index: 0, supplier_unit_price: 8000, supplier_currency: "USD", supplier_name: "Obara Korea", profile_code: "granular" }],
         })),
         recomputePriceComposition: recompute,
       },
@@ -82,5 +82,16 @@ describe("QuoteComposition — persistence", () => {
   it("disables Save when there is no quote id", () => {
     const { getByText } = render(<QuoteComposition lines={LINES} />);
     expect((getByText("Save composition").closest("button") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("seeds and persists supplier_name per line", async () => {
+    const { getByLabelText, getByText } = render(<QuoteComposition lines={LINES} quoteId="q-1" />);
+    await waitFor(() => expect((getByLabelText("supplier name line 1") as HTMLInputElement).value).toBe("Obara Korea"));
+    // Operator can change the name.
+    fireEvent.change(getByLabelText("supplier name line 1"), { target: { value: "Anil Steel" } });
+    fireEvent.click(getByText("Save composition"));
+    await waitFor(() => expect(recompute).toHaveBeenCalledTimes(1));
+    const payload = recompute.mock.calls[0][0];
+    expect(payload.lines[0].supplier_name).toBe("Anil Steel");
   });
 });

@@ -29,6 +29,7 @@ const buildRow = (tenantId, quoteId, raw) => {
     unit: raw.unit || null,
     supplier_currency: raw.supplier_currency || null,
     supplier_quote_no: raw.supplier_quote_no || null,
+    supplier_name: raw.supplier_name || null,
     source_country: raw.source_country || null,
     reference_currency: raw.reference_currency || null,
     notes: raw.notes || null,
@@ -97,6 +98,7 @@ const handleRecompute = async (svc, ctx, body, res) => {
       supplier_unit_price: Number(ln.supplier_unit_price) || 0,
       supplier_currency: ln.supplier_currency || profile.baseCurrency,
       supplier_quote_no: ln.supplier_quote_no || null,
+      supplier_name: ln.supplier_name || null,
       source_country: ln.source_country || null,
       qty: Number(ln.qty) || 0,
       weight_kg: ln.weight_kg != null ? Number(ln.weight_kg) : null,
@@ -116,9 +118,16 @@ const handleRecompute = async (svc, ctx, body, res) => {
       conversion_factor: r.effectiveMultiplier,
       updated_at: new Date().toISOString(),
     };
-    const upsert = await svc.from("price_composition_lines")
+    let upsert = await svc.from("price_composition_lines")
       .upsert(row, { onConflict: "tenant_id,quote_id,line_index" })
       .select("*").single();
+    // Pre-139 deployments lack supplier_name; strip and retry once.
+    if (upsert.error && (upsert.error.code === "42703" || /supplier_name/i.test(upsert.error.message))) {
+      delete row.supplier_name;
+      upsert = await svc.from("price_composition_lines")
+        .upsert(row, { onConflict: "tenant_id,quote_id,line_index" })
+        .select("*").single();
+    }
     if (upsert.error) throw new Error(upsert.error.message);
     out.push(upsert.data);
   }

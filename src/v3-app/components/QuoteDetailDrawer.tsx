@@ -326,6 +326,13 @@ export const QuoteDetailDrawer: React.FC<{
             <div className="mono-sm" style={{ color: "var(--ink-3)" }}>Sales . Quote</div>
             <div style={{ fontSize: 16, fontWeight: 600 }}>{draft.quote_number || quote.id?.slice(0, 8)} . v{draft.version || 1}</div>
           </div>
+          {quote.opportunity?.opportunity_name && (
+            <a href={"#/opps?id=" + encodeURIComponent(quote.opportunity.id)}
+              title={"Open opportunity " + quote.opportunity.opportunity_name}
+              style={{ textDecoration: "none" }}>
+              <Chip k="ghost">for opp: {quote.opportunity.opportunity_name}</Chip>
+            </a>
+          )}
           {draft.status && <Chip k={String(draft.status) === "DRAFT" ? "info" : String(draft.status) === "SENT" ? "warn" : "good"}>{String(draft.status).toLowerCase()}</Chip>}
           <Btn sm kind="ghost" onClick={onClose}>close</Btn>
         </div>

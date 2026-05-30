@@ -27,10 +27,11 @@ export const NAV: NavGroup[] = [
   {
     label: "Sales",
     items: [
-      { id: "leads",     label: "Leads",         icon: Icon.flame },
-      { id: "opps",      label: "Opportunities", icon: Icon.signal },
-      { id: "projects",  label: "Projects",      icon: Icon.briefcase },
-      { id: "shipments", label: "Shipments",     icon: Icon.truck },
+      { id: "leads",            label: "Leads",          icon: Icon.flame },
+      { id: "opps",             label: "Opportunities",  icon: Icon.signal },
+      { id: "pipeline-kanban",  label: "Pipeline Kanban",icon: Icon.diff },
+      { id: "projects",         label: "Projects",       icon: Icon.briefcase },
+      { id: "shipments",        label: "Shipments",      icon: Icon.truck },
     ],
   },
   {
@@ -83,10 +84,11 @@ export const NAV: NavGroup[] = [
   {
     label: "Data",
     items: [
-      { id: "customers", label: "Customers",     icon: Icon.users },
-      { id: "items",     label: "Item Master",   icon: Icon.tag },
-      { id: "graph",     label: "Master Data Graph", icon: Icon.graph },
-      { id: "forecasts", label: "Forecasts",     icon: Icon.signal },
+      { id: "customers",           label: "Customers",         icon: Icon.users },
+      { id: "customer-duplicates", label: "Customer Duplicates",icon: Icon.users },
+      { id: "items",               label: "Item Master",       icon: Icon.tag },
+      { id: "graph",               label: "Master Data Graph", icon: Icon.graph },
+      { id: "forecasts",           label: "Forecasts",         icon: Icon.signal },
     ],
   },
   {
@@ -106,6 +108,7 @@ export const NAV: NavGroup[] = [
     items: [
       { id: "comms",     label: "Communications",icon: Icon.send },
       { id: "email",     label: "Email Triage",  icon: Icon.inbox },
+      { id: "voice",     label: "Voice",         icon: Icon.send },
       { id: "security",  label: "Security",      icon: Icon.shield },
     ],
   },

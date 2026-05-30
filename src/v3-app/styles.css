@@ -747,10 +747,16 @@ button { cursor: pointer; }
 }
 .btn.ghost {
   background: transparent;
-  border-color: transparent;
+  /* Faint resting border so the button is discoverable as a click
+     target -- without it, .btn.ghost renders as flat plain text and
+     users miss it (reported on the quote drawer lifecycle bar). The
+     hover rule below upgrades to the brighter hairline. */
+  border-color: var(--hairline-2);
   color: var(--ink-2);
 }
 .btn.ghost:hover { background: var(--paper-2); color: var(--ink); border-color: var(--hairline); }
+.btn.ghost.icon { border-color: transparent; }
+.btn.ghost.icon:hover { border-color: var(--hairline); }
 .btn.icon { width: 28px; padding: 0; justify-content: center; }
 .btn.icon.sm { width: 24px; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }

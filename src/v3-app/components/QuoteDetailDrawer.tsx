@@ -50,13 +50,31 @@ const TabBtn: React.FC<{ active: boolean; onClick: () => void; children: React.R
   }}>{children}</button>
 );
 
-const Field: React.FC<{ label: string; children: React.ReactNode; hint?: string }> = ({ label, children, hint }) => (
+const Field: React.FC<{ label: string; children: React.ReactNode; hint?: string; provenance?: React.ReactNode }> = ({ label, children, hint, provenance }) => (
   <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
-    <label className="mono-sm" style={{ color: "var(--ink-3)" }}>{label}</label>
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <label className="mono-sm" style={{ color: "var(--ink-3)" }}>{label}</label>
+      {provenance}
+    </div>
     {children}
     {hint && <span className="mono-sm" style={{ color: "var(--ink-4)", fontSize: 10 }}>{hint}</span>}
   </div>
 );
+
+// Renders a small provenance chip next to a header field label, sourced
+// from quotes.field_sources (migration 138 / PR 2A). Maps source
+// strings to a human label; raw source goes on the chip's tooltip.
+const ProvenancePill: React.FC<{ source?: string | null }> = ({ source }) => {
+  if (!source) return null;
+  const label = source.startsWith("customer.") ? "from customer"
+    : source.startsWith("opportunity.") ? "from opportunity"
+    : source === "operator_override" ? "edited"
+    : source === "template" ? "from template"
+    : null;
+  if (!label) return null;
+  const tone = source === "operator_override" ? "info" : "ghost";
+  return <span title={source}><Chip k={tone}>{label}</Chip></span>;
+};
 
 export const QuoteDetailDrawer: React.FC<{
   quote: Quote;
@@ -324,7 +342,7 @@ export const QuoteDetailDrawer: React.FC<{
           {tab === "header" && (
             <>
               <div className="row" style={{ gap: 16, flexWrap: "wrap" }}>
-                <Field label="Contact (from customer master)" hint="Drives the recipient on send. Default is the customer's primary contact.">
+                <Field label="Contact (from customer master)" hint="Drives the recipient on send. Default is the customer's primary contact." provenance={<ProvenancePill source={draft.field_sources?.customer_contact_id} />}>
                   <select
                     className="select"
                     aria-label="Contact"
@@ -349,20 +367,20 @@ export const QuoteDetailDrawer: React.FC<{
                     ))}
                   </select>
                 </Field>
-                <Field label="Your reference (their PO / RFQ)" hint="Buyer's internal reference, prints on the quote header.">
+                <Field label="Your reference (their PO / RFQ)" hint="Buyer's internal reference, prints on the quote header." provenance={<ProvenancePill source={draft.field_sources?.your_ref} />}>
                   <input className="input mono" value={draft.your_ref || ""} onChange={(e) => setField("your_ref", e.target.value)} placeholder="e.g., E-Mail, RFQ-2026-04-23" />
                 </Field>
-                <Field label="Attention contact (Kind Attn)" hint="Named contact at the buyer.">
+                <Field label="Attention contact (Kind Attn)" hint="Named contact at the buyer." provenance={<ProvenancePill source={draft.field_sources?.attention_contact} />}>
                   <input className="input" value={draft.attention_contact || ""} onChange={(e) => setField("attention_contact", e.target.value)} placeholder="e.g., Mr. Prashant Shinde" />
                 </Field>
-                <Field label="Validity (days)">
+                <Field label="Validity (days)" provenance={<ProvenancePill source={draft.field_sources?.validity_days} />}>
                   <input className="input mono r" type="number" value={draft.validity_days || 30} onChange={(e) => setField("validity_days", Number(e.target.value))} />
                 </Field>
-                <Field label="Currency">
+                <Field label="Currency" provenance={<ProvenancePill source={draft.field_sources?.currency} />}>
                   <input className="input mono" maxLength={3} value={draft.currency || "INR"} onChange={(e) => setField("currency", e.target.value.toUpperCase())} />
                 </Field>
               </div>
-              <Field label="Document template (form code)" hint="Pick a template from Admin . Document templates. Defines the form code (e.g., OI/F/SP/19/R-00/020226), header/footer blocks, signatory block, and the 9 standard clauses.">
+              <Field label="Document template (form code)" hint="Pick a template from Admin . Document templates. Defines the form code (e.g., OI/F/SP/19/R-00/020226), header/footer blocks, signatory block, and the 9 standard clauses." provenance={<ProvenancePill source={draft.field_sources?.template_id} />}>
                 <select className="select" value={draft.template_id || ""} onChange={(e) => {
                   const id = e.target.value || null;
                   setField("template_id", id);
@@ -383,10 +401,10 @@ export const QuoteDetailDrawer: React.FC<{
                   {activeTemplate.penalty_clause && <div className="mono-sm" style={{ marginBottom: 8 }}><b>Penalty:</b><div style={{ whiteSpace: "pre-wrap" }}>{activeTemplate.penalty_clause}</div></div>}
                 </Card>
               )}
-              <Field label="Conversion factor" hint="From Price Composition. Default 1.0. Excel uses 1.63 for KRW path.">
+              <Field label="Conversion factor" hint="From Price Composition. Default 1.0. Excel uses 1.63 for KRW path." provenance={<ProvenancePill source={draft.field_sources?.conversion_factor} />}>
                 <input className="input mono r" type="number" step="0.001" value={draft.conversion_factor || 1.0} onChange={(e) => setField("conversion_factor", Number(e.target.value))} />
               </Field>
-              <Field label="FX snapshot (JSON, frozen at quote time)" hint='e.g., {"INR": 1.0, "USD": 96.0, "CNY": 14.0, "JPY": 0.65, "multiplication_factor": {"USD": 126.6}}'>
+              <Field label="FX snapshot (JSON, frozen at quote time)" hint='e.g., {"INR": 1.0, "USD": 96.0, "CNY": 14.0, "JPY": 0.65, "multiplication_factor": {"USD": 126.6}}' provenance={<ProvenancePill source={draft.field_sources?.fx_snapshot} />}>
                 <textarea className="input mono-sm" rows={4} style={{ width: "100%" }} value={typeof draft.fx_snapshot === "string" ? draft.fx_snapshot : JSON.stringify(draft.fx_snapshot || {}, null, 2)} onChange={(e) => setField("fx_snapshot", e.target.value)} />
               </Field>
               <div className="row" style={{ justifyContent: "flex-end", gap: 8, marginTop: 12 }}>

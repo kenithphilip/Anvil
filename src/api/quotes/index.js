@@ -200,10 +200,40 @@ export default async function handler(req, res) {
       requirePermission(ctx, "write");
       const body = await readBody(req);
       if (!body?.customer_id) return json(res, 400, { error: { message: "customer_id required" } });
+
+      // Fall back currency + validity_days from the customer's defaults
+      // when the caller omitted them. Track which fields were filled
+      // automatically and from where, so the audit trail is explicit
+      // (operator-set values still win; only nulls/missing get filled).
+      const autoFilled = {};
+      let customer = null;
+      if (body.currency == null || body.currency === "" || body.validity_days == null) {
+        const c = await svc.from("customers")
+          .select("currency, default_quote_validity_days")
+          .eq("tenant_id", ctx.tenantId)
+          .eq("id", body.customer_id)
+          .maybeSingle();
+        if (!c.error) customer = c.data;
+      }
+      let currency = body.currency;
+      if (!currency && customer && customer.currency) {
+        currency = customer.currency;
+        autoFilled.currency = "customer.currency";
+      }
+      if (!currency) currency = "INR";
+      let validityDays;
+      if (body.validity_days != null) {
+        validityDays = Number(body.validity_days);
+      } else if (customer && customer.default_quote_validity_days != null) {
+        validityDays = Number(customer.default_quote_validity_days);
+        autoFilled.validity_days = "customer.default_quote_validity_days";
+      } else {
+        validityDays = 30;
+      }
+
       const lineItems = Array.isArray(body.line_items) ? body.line_items : [];
       const totals = computeTotals(lineItems);
       const quoteNumber = body.quote_number || await generateQuoteNumber(svc, ctx.tenantId);
-      const validityDays = body.validity_days != null ? Number(body.validity_days) : 30;
       const ins = await svc.from("quotes").insert({
         tenant_id: ctx.tenantId,
         customer_id: body.customer_id,
@@ -212,7 +242,7 @@ export default async function handler(req, res) {
         quote_number: quoteNumber,
         version: 1,
         status: "DRAFT",
-        currency: body.currency || "INR",
+        currency,
         ...totals,
         validity_days: validityDays,
         expires_at: null,                             // set on SEND, not on draft create
@@ -226,8 +256,16 @@ export default async function handler(req, res) {
         action: "quote_create",
         objectType: "quote",
         objectId: ins.data.id,
-        detail: quoteNumber + " :: " + (totals.grand_total || 0) + " " + (body.currency || "INR"),
+        detail: quoteNumber + " :: " + (totals.grand_total || 0) + " " + currency,
       });
+      if (Object.keys(autoFilled).length) {
+        await recordAudit(ctx, {
+          action: "quote_auto_populate",
+          objectType: "quote",
+          objectId: ins.data.id,
+          after: { auto_filled: autoFilled },
+        });
+      }
       return json(res, 201, { quote: ins.data });
     }
 

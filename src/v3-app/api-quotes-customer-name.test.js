@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const h = vi.hoisted(() => ({ quotes: [], customers: [] }));
+const h = vi.hoisted(() => ({ quotes: [], customers: [], opportunities: [] }));
 
 vi.mock("../api/_lib/auth.js", () => ({
   resolveContext: vi.fn(async () => ({ user: { id: "u-1" }, tenantId: "t-1", role: "admin", anonymous: false })),
@@ -33,6 +33,10 @@ const resolver = (table) => (state) => {
   if (table === "customers") {
     const want = new Set(state.inVals || []);
     return { data: h.customers.filter((c) => want.has(c.id)), error: null };
+  }
+  if (table === "opportunities") {
+    const want = new Set(state.inVals || []);
+    return { data: h.opportunities.filter((o) => want.has(o.id)), error: null };
   }
   return { data: [], error: null };
 };
@@ -62,6 +66,7 @@ const listQuotes = async () => {
 beforeEach(() => {
   h.quotes = [];
   h.customers = [];
+  h.opportunities = [];
 });
 
 describe("/api/quotes GET — customer_name attach", () => {
@@ -94,5 +99,17 @@ describe("/api/quotes GET — customer_name attach", () => {
     h.customers = []; // customer_id refers to a row that was deleted
     const parsed = await listQuotes();
     expect(parsed.quotes[0].customer).toBeUndefined();
+  });
+
+  it("attaches opportunity.opportunity_name when a quote is linked to an opportunity", async () => {
+    h.quotes = [
+      { id: "q1", customer_id: "c1", opportunity_id: "o1", quote_number: "Q-1", status: "DRAFT" },
+      { id: "q2", customer_id: "c1", opportunity_id: null, quote_number: "Q-2", status: "DRAFT" },
+    ];
+    h.customers = [{ id: "c1", customer_name: "Hyundai" }];
+    h.opportunities = [{ id: "o1", opportunity_name: "Hyundai Pune RFQ Q1" }];
+    const parsed = await listQuotes();
+    expect(parsed.quotes[0].opportunity).toEqual({ id: "o1", opportunity_name: "Hyundai Pune RFQ Q1" });
+    expect(parsed.quotes[1].opportunity).toBeUndefined();
   });
 });

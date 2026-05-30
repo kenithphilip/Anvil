@@ -155,6 +155,23 @@ export default async function handler(req, res) {
           }
         }
       }
+      // Same shape for opportunities so the drawer can render a small
+      // "for OPP-X" chip without a second round trip. Best-effort.
+      const oppIds = [...new Set(rows.map((x) => x.opportunity_id).filter(Boolean))];
+      if (oppIds.length) {
+        const opps = await svc.from("opportunities")
+          .select("id, opportunity_name")
+          .eq("tenant_id", ctx.tenantId)
+          .in("id", oppIds);
+        if (!opps.error && Array.isArray(opps.data)) {
+          const nameById = new Map(opps.data.map((o) => [o.id, o.opportunity_name]));
+          for (const x of rows) {
+            if (x.opportunity_id && nameById.has(x.opportunity_id)) {
+              x.opportunity = { id: x.opportunity_id, opportunity_name: nameById.get(x.opportunity_id) };
+            }
+          }
+        }
+      }
       return json(res, 200, { quotes: rows });
     }
 

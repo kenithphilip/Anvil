@@ -134,7 +134,28 @@ export default async function handler(req, res) {
       q = q.order("created_at", { ascending: false }).limit(500);
       const r = await q;
       if (r.error) throw new Error(r.error.message);
-      return json(res, 200, { quotes: r.data || [] });
+      const rows = r.data || [];
+      // Attach customer_name so the quotes list can display the
+      // customer instead of "—". Two-query map (rather than a
+      // PostgREST embed) so we don't depend on the relationship being
+      // in the schema cache. Best-effort: if the lookup fails the
+      // list still renders.
+      const custIds = [...new Set(rows.map((x) => x.customer_id).filter(Boolean))];
+      if (custIds.length) {
+        const cust = await svc.from("customers")
+          .select("id, customer_name")
+          .eq("tenant_id", ctx.tenantId)
+          .in("id", custIds);
+        if (!cust.error && Array.isArray(cust.data)) {
+          const nameById = new Map(cust.data.map((c) => [c.id, c.customer_name]));
+          for (const x of rows) {
+            if (x.customer_id && nameById.has(x.customer_id)) {
+              x.customer = { customer_name: nameById.get(x.customer_id) };
+            }
+          }
+        }
+      }
+      return json(res, 200, { quotes: rows });
     }
 
     if (req.method === "POST" && action === "revise" && id) {

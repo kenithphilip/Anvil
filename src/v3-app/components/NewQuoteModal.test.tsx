@@ -13,12 +13,25 @@ const CUSTOMERS = [
   { id: "cust-2", customer_name: "Tata Motors", customer_key: "tata" },
 ];
 
+const CONTACTS: Record<string, any[]> = {
+  "cust-1": [
+    { id: "ct-1a", name: "Asha Rao", email: "asha@hyundai.example", is_primary: true, role: "procurement" },
+    { id: "ct-1b", name: "Vikram Shah", email: "vikram@hyundai.example", is_primary: false, role: "accounts" },
+  ],
+  "cust-2": [],
+};
+
 describe("NewQuoteModal", () => {
   let createSpy: any;
+  let listContactsSpy: any;
   beforeEach(() => {
     createSpy = vi.fn(async (payload: any) => ({ quote: { id: "q-new", quote_number: "Q-202605-0001", ...payload } }));
+    listContactsSpy = vi.fn(async ({ customer_id }: any) => ({ contacts: CONTACTS[customer_id] || [] }));
     installBackend({
-      customers: { list: vi.fn(async () => ({ customers: CUSTOMERS })) },
+      customers: {
+        list: vi.fn(async () => ({ customers: CUSTOMERS })),
+        listContacts: listContactsSpy,
+      },
       quotes: { create: createSpy },
     });
   });
@@ -54,5 +67,40 @@ describe("NewQuoteModal", () => {
     await waitFor(() => expect(getByText("Hyundai Motor India Ltd")).toBeTruthy());
     fireEvent.change(getByLabelText("Customer"), { target: { value: "cust-1" } });
     expect((getByLabelText("Validity days") as HTMLInputElement).value).toBe("45");
+  });
+
+  it("loads the customer's contacts and defaults to the primary", async () => {
+    const { getByText, getByLabelText } = render(
+      <NewQuoteModal open onClose={() => undefined} onCreated={() => undefined} />
+    );
+    await waitFor(() => expect(getByText("Hyundai Motor India Ltd")).toBeTruthy());
+    fireEvent.change(getByLabelText("Customer"), { target: { value: "cust-1" } });
+    await waitFor(() => expect(listContactsSpy).toHaveBeenCalledWith({ customer_id: "cust-1" }));
+    await waitFor(() => expect((getByLabelText("Contact") as HTMLSelectElement).value).toBe("ct-1a"));
+  });
+
+  it("includes the picked customer_contact_id in the create payload", async () => {
+    const { getByText, getByLabelText } = render(
+      <NewQuoteModal open onClose={() => undefined} onCreated={() => undefined} />
+    );
+    await waitFor(() => expect(getByText("Hyundai Motor India Ltd")).toBeTruthy());
+    fireEvent.change(getByLabelText("Customer"), { target: { value: "cust-1" } });
+    await waitFor(() => expect((getByLabelText("Contact") as HTMLSelectElement).value).toBe("ct-1a"));
+    fireEvent.change(getByLabelText("Contact"), { target: { value: "ct-1b" } });
+    fireEvent.click(getByText("Create draft"));
+    await waitFor(() => expect(createSpy).toHaveBeenCalledTimes(1));
+    expect(createSpy.mock.calls[0][0]).toMatchObject({ customer_id: "cust-1", customer_contact_id: "ct-1b" });
+  });
+
+  it("sends customer_contact_id = null when the customer has no contacts", async () => {
+    const { getByText, getByLabelText } = render(
+      <NewQuoteModal open onClose={() => undefined} onCreated={() => undefined} />
+    );
+    await waitFor(() => expect(getByText("Tata Motors")).toBeTruthy());
+    fireEvent.change(getByLabelText("Customer"), { target: { value: "cust-2" } });
+    await waitFor(() => expect(listContactsSpy).toHaveBeenCalledWith({ customer_id: "cust-2" }));
+    fireEvent.click(getByText("Create draft"));
+    await waitFor(() => expect(createSpy).toHaveBeenCalledTimes(1));
+    expect(createSpy.mock.calls[0][0]).toMatchObject({ customer_id: "cust-2", customer_contact_id: null });
   });
 });

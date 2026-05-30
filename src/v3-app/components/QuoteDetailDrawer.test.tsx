@@ -33,6 +33,12 @@ beforeEach(() => {
     getConfig: () => ({ url: "https://api.test", tenantId: "t-1" }),
     getSession: () => ({ access_token: "x" }),
     admin: { listItemMaster: vi.fn(async () => ({ items: ITEMS })) },
+    customers: {
+      listContacts: vi.fn(async () => ({ contacts: [
+        { id: "ct-1", name: "Asha Rao", email: "asha@x.example", is_primary: true, role: "procurement" },
+        { id: "ct-2", name: "Vikram Shah", email: "vikram@x.example", is_primary: false, role: "accounts" },
+      ] })),
+    },
     quotes: {
       transition: transitionSpy,
       sendQuote: vi.fn(async (id: string) => ({ ok: true, quote: { id, status: "SENT" } })),
@@ -114,5 +120,28 @@ describe("QuoteDetailDrawer — line enrichment", () => {
     sent.unmount();
     const accepted = render(<QuoteDetailDrawer quote={{ ...QUOTE, status: "ACCEPTED" }} onClose={() => undefined} />);
     expect(accepted.getByText("Convert to order")).toBeTruthy();
+  });
+
+  it("renders the contact picker in the Header tab seeded from the quote", async () => {
+    const q = { ...QUOTE, customer_id: "cust-1", customer_contact_id: "ct-2" };
+    const { getByLabelText } = render(<QuoteDetailDrawer quote={q} onClose={() => undefined} />);
+    await waitFor(() => expect((getByLabelText("Contact") as HTMLSelectElement).value).toBe("ct-2"));
+  });
+
+  it("includes customer_contact_id in the Save header PATCH payload", async () => {
+    const q = { ...QUOTE, customer_id: "cust-1", customer_contact_id: "ct-1" };
+    const { getByLabelText, getByText } = render(<QuoteDetailDrawer quote={q} onClose={() => undefined} />);
+    await waitFor(() => expect((getByLabelText("Contact") as HTMLSelectElement).value).toBe("ct-1"));
+    fireEvent.change(getByLabelText("Contact"), { target: { value: "ct-2" } });
+    fireEvent.click(getByText("Save header"));
+    // Find the PATCH call to /api/quotes/q-1 and assert the body.
+    await waitFor(() => {
+      const patchCall = (global.fetch as any).mock.calls.find(
+        ([url, init]: any[]) => String(url).includes("/api/quotes/q-1") && init?.method === "PATCH"
+      );
+      expect(patchCall).toBeTruthy();
+      const body = JSON.parse(patchCall[1].body);
+      expect(body.customer_contact_id).toBe("ct-2");
+    });
   });
 });

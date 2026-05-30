@@ -3,6 +3,7 @@ import { Banner, Btn, Card, Chip, fmtINR } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { QuoteComposition } from "./QuoteComposition";
+import { QuoteHistoryTab } from "./QuoteHistoryTab";
 
 // Quote detail drawer.
 //
@@ -81,7 +82,7 @@ export const QuoteDetailDrawer: React.FC<{
   onClose: () => void;
   onSaved?: () => void;
 }> = ({ quote, onClose, onSaved }) => {
-  const [tab, setTab] = useState<"header" | "lines" | "comp" | "terms">("header");
+  const [tab, setTab] = useState<"header" | "lines" | "comp" | "terms" | "history">("header");
   const [draft, setDraft] = useState<Quote>({ ...quote });
   const [lines, setLines] = useState<Line[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -336,6 +337,7 @@ export const QuoteDetailDrawer: React.FC<{
           <TabBtn active={tab === "lines"} onClick={() => setTab("lines")}>Lines</TabBtn>
           <TabBtn active={tab === "comp"} onClick={() => setTab("comp")}>Composition</TabBtn>
           <TabBtn active={tab === "terms"} onClick={() => setTab("terms")}>Terms</TabBtn>
+          <TabBtn active={tab === "history"} onClick={() => setTab("history")}>History</TabBtn>
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", padding: 18 }}>
@@ -545,6 +547,10 @@ export const QuoteDetailDrawer: React.FC<{
                 <Btn sm kind="primary" disabled={busy} onClick={saveTerms}>{busy ? "Saving..." : "Save terms"}</Btn>
               </div>
             </>
+          )}
+
+          {tab === "history" && (
+            <QuoteHistoryTab quoteId={quote.id} />
           )}
         </div>
 

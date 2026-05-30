@@ -53,7 +53,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
   // Supplier price + currency per line, keyed by line_index. Seeded with
   // a currency guess from source country, then overwritten by any saved
   // composition loaded for this quote.
-  const [supplier, setSupplier] = useState<Record<number, { price: number; cur: string }>>({});
+  const [supplier, setSupplier] = useState<Record<number, { price: number; cur: string; name: string }>>({});
   const [selected, setSelected] = useState<number | null>(null);
   // Tenant-configured profiles from /api/admin/pricing_profiles; falls
   // back to the in-code defaults until a tenant configures its own.
@@ -86,10 +86,14 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
         if (cancelled) return;
         const saved = Array.isArray(resp) ? resp : resp?.lines || [];
         if (!saved.length) return;
-        const sup: Record<number, { price: number; cur: string }> = {};
+        const sup: Record<number, { price: number; cur: string; name: string }> = {};
         for (const r of saved) {
           if (r.line_index == null) continue;
-          sup[r.line_index] = { price: Number(r.supplier_unit_price) || 0, cur: r.supplier_currency || "INR" };
+          sup[r.line_index] = {
+            price: Number(r.supplier_unit_price) || 0,
+            cur: r.supplier_currency || "INR",
+            name: r.supplier_name || "",
+          };
         }
         setSupplier(sup);
         if (saved[0]?.profile_code) setProfileCode(saved[0].profile_code);
@@ -115,6 +119,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
         discount_pct: Number(ln.discount_pct) || 0,
         supplier_unit_price: Number((supplier[ln.line_index] || {}).price) || 0,
         supplier_currency: (supplier[ln.line_index] || {}).cur || currencyForCountry(ln.source_country),
+        supplier_name: (supplier[ln.line_index] || {}).name || null,
       }));
       const resp: any = await ObaraBackend?.admin?.recomputePriceComposition?.({
         quote_id: quoteId,
@@ -142,18 +147,18 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
   const setLoaded = (cur: string, v: number) =>
     setFx((f) => ({ ...f, multiplicationFactor: { ...(f.multiplicationFactor || {}), [cur]: v } }));
   const supFor = (ln: Line) =>
-    supplier[ln.line_index] || { price: 0, cur: currencyForCountry(ln.source_country) };
+    supplier[ln.line_index] || { price: 0, cur: currencyForCountry(ln.source_country), name: "" };
   // Seed currency from the line's source country so the first price
   // edit converts at the right FX rate (not the INR default).
-  const setSup = (ln: Line, patch: Partial<{ price: number; cur: string }>) =>
+  const setSup = (ln: Line, patch: Partial<{ price: number; cur: string; name: string }>) =>
     setSupplier((s) => ({
       ...s,
-      [ln.line_index]: { ...(s[ln.line_index] || { price: 0, cur: currencyForCountry(ln.source_country) }), ...patch },
+      [ln.line_index]: { ...(s[ln.line_index] || { price: 0, cur: currencyForCountry(ln.source_country), name: "" }), ...patch },
     }));
 
   const rows = useMemo(() => {
     return (lines || []).map((ln) => {
-      const sup = supplier[ln.line_index] || { price: 0, cur: currencyForCountry(ln.source_country) };
+      const sup = supplier[ln.line_index] || { price: 0, cur: currencyForCountry(ln.source_country), name: "" };
       const res = composePrice(
         profile,
         {
@@ -231,13 +236,14 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
         <table className="tbl" style={{ fontSize: 12 }}>
           <thead><tr>
             <th>#</th><th>Part</th><th className="r">Qty</th>
-            <th className="r">Supplier</th><th>Cur</th>
+            <th>Supplier</th>
+            <th className="r">Price</th><th>Cur</th>
             <th className="r">Loaded</th><th className="r">Recommended</th>
             <th className="r">Quoted (net)</th><th className="r">Margin @ quoted</th><th></th>
           </tr></thead>
           <tbody>
             {rows.length === 0 ? (
-              <tr><td colSpan={10} className="muted" style={{ padding: 18, textAlign: "center" }}>No lines to price yet.</td></tr>
+              <tr><td colSpan={11} className="muted" style={{ padding: 18, textAlign: "center" }}>No lines to price yet.</td></tr>
             ) : rows.map(({ ln, sup, res, listed, net, marginAtListed }) => {
               const tone = listed > 0 ? marginTone(marginAtListed, profile.marginFloorPct, res.marginTarget) : "ghost";
               return (
@@ -246,6 +252,11 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
                   <td className="mono">{(ln.line_index ?? 0) + 1}</td>
                   <td className="mono">{ln.part_no || "-"}</td>
                   <td className="r mono">{ln.qty ?? "-"}</td>
+                  <td><input className="input" style={{ width: 160 }}
+                    aria-label={"supplier name line " + ((ln.line_index ?? 0) + 1)}
+                    placeholder="who quoted this?"
+                    value={sup.name || ""} onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => setSup(ln, { name: e.target.value })} /></td>
                   <td className="r"><input className="input mono r" style={{ width: 90 }} type="number" step="0.01"
                     aria-label={"supplier price line " + ((ln.line_index ?? 0) + 1)}
                     value={sup.price || ""} onClick={(e) => e.stopPropagation()}
@@ -265,7 +276,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
           </tbody>
           <tfoot>
             <tr style={{ background: "var(--paper-2)" }}>
-              <td colSpan={5} className="r mono"><b>Totals</b></td>
+              <td colSpan={6} className="r mono"><b>Totals</b></td>
               <td className="r mono"><b>{fmtINR(totals.loaded)}</b></td>
               <td className="r mono"><b>{fmtINR(totals.engineSell)}</b></td>
               <td className="r mono"><b>{fmtINR(totals.listedNet)}</b></td>

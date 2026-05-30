@@ -262,7 +262,7 @@ export default async function handler(req, res) {
       const lineItems = Array.isArray(body.line_items) ? body.line_items : [];
       const totals = computeTotals(lineItems);
       const quoteNumber = body.quote_number || await generateQuoteNumber(svc, ctx.tenantId);
-      const ins = await svc.from("quotes").insert({
+      const insertPayload = {
         tenant_id: ctx.tenantId,
         customer_id: body.customer_id,
         customer_contact_id: body.customer_contact_id || null,
@@ -278,8 +278,18 @@ export default async function handler(req, res) {
         notes: body.notes || null,
         your_ref: yourRef,
         line_items: lineItems,
+        // Field provenance (migration 138): record auto-fill sources so
+        // the drawer can show "from customer" / "from opportunity" pills
+        // and the trail is queryable without parsing audit_events.
+        field_sources: autoFilled,
         created_by: ctx.user?.id || null,
-      }).select("*").single();
+      };
+      let ins = await svc.from("quotes").insert(insertPayload).select("*").single();
+      // Pre-138 deployments lack field_sources; strip and retry once.
+      if (ins.error && (ins.error.code === "42703" || /field_sources/i.test(ins.error.message))) {
+        delete insertPayload.field_sources;
+        ins = await svc.from("quotes").insert(insertPayload).select("*").single();
+      }
       if (ins.error) throw new Error(ins.error.message);
       await recordAudit(ctx, {
         action: "quote_create",
@@ -319,10 +329,16 @@ export default async function handler(req, res) {
           },
         });
       }
-      // Field edits (terms, notes, line_items, validity_days,
-      // currency) are only allowed on DRAFT. Status transitions
-      // are independent.
-      const editFields = ["terms", "notes", "line_items", "validity_days", "currency", "customer_contact_id"];
+      // Field edits are only allowed on DRAFT. Status transitions are
+      // independent. The 106-era header fields (your_ref,
+      // attention_contact, template_id, fx_snapshot, conversion_factor)
+      // were silently dropped pre-138 because they were missing from
+      // this list; restore them so the drawer's Save header actually
+      // persists what it sends.
+      const editFields = [
+        "terms", "notes", "line_items", "validity_days", "currency", "customer_contact_id",
+        "your_ref", "attention_contact", "template_id", "fx_snapshot", "conversion_factor",
+      ];
       const editing = editFields.some((k) => k in body);
       if (editing && cur.data.status !== "DRAFT") {
         return json(res, 409, { error: { message: "Field edits are only allowed on DRAFT quotes; use revise to clone." } });
@@ -349,7 +365,17 @@ export default async function handler(req, res) {
       }
 
       const patch = { updated_at: new Date().toISOString() };
-      for (const k of editFields) if (k in body) patch[k] = body[k];
+      // Track which editFields the operator actually changed (vs. just
+      // re-sending the same value). Stamp each change as
+      // operator_override in field_sources so the trail explains
+      // why a quote diverged from its auto-filled defaults.
+      const overrideSources = {};
+      for (const k of editFields) {
+        if (k in body) {
+          patch[k] = body[k];
+          if (body[k] !== cur.data[k]) overrideSources[k] = "operator_override";
+        }
+      }
       if ("line_items" in patch) Object.assign(patch, computeTotals(patch.line_items));
       if (body.status && body.status !== cur.data.status) {
         patch.status = body.status;
@@ -360,8 +386,16 @@ export default async function handler(req, res) {
         }
       }
       if (body.declined_reason && cur.data.status === "DECLINED") patch.declined_reason = body.declined_reason;
+      if (Object.keys(overrideSources).length) {
+        patch.field_sources = { ...(cur.data.field_sources || {}), ...overrideSources };
+      }
 
-      const upd = await svc.from("quotes").update(patch).eq("tenant_id", ctx.tenantId).eq("id", id).select("*").single();
+      let upd = await svc.from("quotes").update(patch).eq("tenant_id", ctx.tenantId).eq("id", id).select("*").single();
+      // Pre-138 deployments lack field_sources; strip and retry once.
+      if (upd.error && (upd.error.code === "42703" || /field_sources/i.test(upd.error.message))) {
+        delete patch.field_sources;
+        upd = await svc.from("quotes").update(patch).eq("tenant_id", ctx.tenantId).eq("id", id).select("*").single();
+      }
       if (upd.error) throw new Error(upd.error.message);
       await recordAudit(ctx, {
         action: body.status && body.status !== cur.data.status

@@ -101,6 +101,11 @@ describe("POST /api/quotes — customer-default auto-fill", () => {
       currency: "customer.currency",
       validity_days: "customer.default_quote_validity_days",
     });
+    // field_sources is stamped on insert with the same map.
+    expect(h.inserted.field_sources).toMatchObject({
+      currency: "customer.currency",
+      validity_days: "customer.default_quote_validity_days",
+    });
   });
 
   it("explicit body values win over customer defaults (and no auto-populate audit)", async () => {

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { ageLabel, fmtINRShort, useFetch, useHashParam } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTitle } from "../lib/primitives";
+import { OpportunityQuotesPanel } from "../components/OpportunityQuotesPanel";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 
@@ -249,6 +250,10 @@ const WiredOpportunities = () => {
                 </pre>
               </>
             )}
+            <div className="divider" />
+            <div style={{ marginTop: 10 }}>
+              <OpportunityQuotesPanel opportunityId={selected.id} />
+            </div>
           </Card>
         )}
 

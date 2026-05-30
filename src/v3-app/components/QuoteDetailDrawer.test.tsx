@@ -39,6 +39,7 @@ beforeEach(() => {
         { id: "ct-2", name: "Vikram Shah", email: "vikram@x.example", is_primary: false, role: "accounts" },
       ] })),
     },
+    audit: { list: vi.fn(async () => ({ events: [] })) },
     quotes: {
       transition: transitionSpy,
       sendQuote: vi.fn(async (id: string) => ({ ok: true, quote: { id, status: "SENT" } })),
@@ -143,6 +144,13 @@ describe("QuoteDetailDrawer — line enrichment", () => {
       const body = JSON.parse(patchCall[1].body);
       expect(body.customer_contact_id).toBe("ct-2");
     });
+  });
+
+  it("exposes a History tab that loads the audit timeline", async () => {
+    const { getByText, findByText } = render(<QuoteDetailDrawer quote={QUOTE} onClose={() => undefined} />);
+    fireEvent.click(getByText("History"));
+    // The empty-state copy proves the tab mounted and called audit.list.
+    expect(await findByText(/No history yet/i)).toBeTruthy();
   });
 
   it("renders provenance pills in the Header tab from field_sources", () => {

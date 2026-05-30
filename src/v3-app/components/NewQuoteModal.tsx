@@ -32,6 +32,10 @@ export const NewQuoteModal: React.FC<{
   const [query, setQuery] = useState("");
   const [currency, setCurrency] = useState("INR");
   const [validityDays, setValidityDays] = useState(30);
+  // Reference contact from the customer's contact master. Loaded after a
+  // customer is picked; defaults to the customer's primary contact.
+  const [contacts, setContacts] = useState<any[] | null>(null);
+  const [contactId, setContactId] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -43,12 +47,33 @@ export const NewQuoteModal: React.FC<{
     setQuery("");
     setCurrency("INR");
     setValidityDays(30);
+    setContacts(null);
+    setContactId("");
     setErr(null);
     setCustomers(null);
     Promise.resolve(ObaraBackend?.customers?.list?.())
       .then((data: any) => setCustomers(Array.isArray(data) ? data : data?.customers || []))
       .catch((e: any) => setErr(e?.message || String(e)));
   }, [open]);
+
+  // When a customer is picked, fetch that customer's contacts and
+  // default the picker to the primary contact (if any). Best-effort:
+  // if the lookup fails the operator can still create the quote.
+  useEffect(() => {
+    if (!open || !customerId) { setContacts(null); setContactId(""); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp: any = await ObaraBackend?.customers?.listContacts?.({ customer_id: customerId });
+        if (cancelled) return;
+        const list = Array.isArray(resp) ? resp : resp?.contacts || [];
+        setContacts(list);
+        const primary = list.find((c: any) => c.is_primary) || list[0];
+        if (primary?.id) setContactId(primary.id);
+      } catch { /* contacts are optional */ }
+    })();
+    return () => { cancelled = true; };
+  }, [open, customerId]);
 
   const filtered = useMemo(() => {
     const list = customers || [];
@@ -73,6 +98,7 @@ export const NewQuoteModal: React.FC<{
     try {
       const resp: any = await ObaraBackend?.quotes?.create?.({
         customer_id: customerId,
+        customer_contact_id: contactId || null,
         currency: currency || "INR",
         validity_days: Number(validityDays) || 30,
       });
@@ -120,6 +146,27 @@ export const NewQuoteModal: React.FC<{
             ))}
           </select>
         </div>
+
+        {customerId && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <label className="mono-sm" style={{ color: "var(--ink-3)" }}>Contact (from customer master)</label>
+            <select
+              className="select"
+              aria-label="Contact"
+              value={contactId}
+              onChange={(e) => setContactId(e.target.value)}
+            >
+              <option value="">
+                {contacts == null ? "Loading contacts..." : contacts.length === 0 ? "No contacts on file" : "No contact"}
+              </option>
+              {(contacts || []).map((c: any) => (
+                <option key={c.id} value={c.id}>
+                  {(c.name || c.email || c.id.slice(0, 8)) + (c.is_primary ? " [primary]" : "") + (c.role ? " - " + c.role : "")}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="row" style={{ gap: 16 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>

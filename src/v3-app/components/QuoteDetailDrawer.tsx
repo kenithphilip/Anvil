@@ -77,18 +77,27 @@ export const QuoteDetailDrawer: React.FC<{
   const [picking, setPicking] = useState(false);
   const [items, setItems] = useState<any[] | null>(null);
   const [itemQuery, setItemQuery] = useState("");
+  // Reference contact from the customer's contact master. Drives the
+  // recipient on send and seeds attention_contact for the printed quote.
+  const [contacts, setContacts] = useState<any[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [linesResp, templatesResp] = await Promise.all([
+        const [linesResp, templatesResp, contactsResp] = await Promise.all([
           fetchJson("/api/admin/quote_lines?quote_id=" + quote.id).catch(() => ({ lines: [] })),
           fetchJson("/api/admin/document_templates?doc_type=quotation").catch(() => ({ templates: [] })),
+          quote.customer_id
+            ? Promise.resolve((ObaraBackend as any)?.customers?.listContacts?.({ customer_id: quote.customer_id }))
+                .then((r: any) => Array.isArray(r) ? { contacts: r } : (r || { contacts: [] }))
+                .catch(() => ({ contacts: [] }))
+            : Promise.resolve({ contacts: [] }),
         ]);
         if (cancelled) return;
         setLines(linesResp.lines || []);
         setTemplates(templatesResp.templates || []);
+        setContacts(contactsResp.contacts || []);
         if (quote.template_id) {
           const t = (templatesResp.templates || []).find((x: any) => x.id === quote.template_id);
           if (t) setActiveTemplate(t);
@@ -120,6 +129,7 @@ export const QuoteDetailDrawer: React.FC<{
         body: JSON.stringify({
           your_ref: draft.your_ref || null,
           attention_contact: draft.attention_contact || null,
+          customer_contact_id: draft.customer_contact_id || null,
           template_id: draft.template_id || null,
           validity_days: draft.validity_days != null ? Number(draft.validity_days) : null,
           conversion_factor: draft.conversion_factor != null ? Number(draft.conversion_factor) : null,
@@ -314,6 +324,31 @@ export const QuoteDetailDrawer: React.FC<{
           {tab === "header" && (
             <>
               <div className="row" style={{ gap: 16, flexWrap: "wrap" }}>
+                <Field label="Contact (from customer master)" hint="Drives the recipient on send. Default is the customer's primary contact.">
+                  <select
+                    className="select"
+                    aria-label="Contact"
+                    value={draft.customer_contact_id || ""}
+                    onChange={(e) => {
+                      const id = e.target.value || null;
+                      setField("customer_contact_id", id);
+                      // Mirror the contact's name into the printed-header
+                      // attention text when it is currently empty; do not
+                      // clobber an explicit operator override.
+                      const c = (contacts || []).find((x: any) => x.id === id);
+                      if (c && !draft.attention_contact) setField("attention_contact", c.name || c.email || "");
+                    }}
+                  >
+                    <option value="">
+                      {contacts == null ? "Loading contacts..." : contacts.length === 0 ? "No contacts on file" : "No contact"}
+                    </option>
+                    {(contacts || []).map((c: any) => (
+                      <option key={c.id} value={c.id}>
+                        {(c.name || c.email || c.id.slice(0, 8)) + (c.is_primary ? " [primary]" : "") + (c.role ? " - " + c.role : "")}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
                 <Field label="Your reference (their PO / RFQ)" hint="Buyer's internal reference, prints on the quote header.">
                   <input className="input mono" value={draft.your_ref || ""} onChange={(e) => setField("your_ref", e.target.value)} placeholder="e.g., E-Mail, RFQ-2026-04-23" />
                 </Field>

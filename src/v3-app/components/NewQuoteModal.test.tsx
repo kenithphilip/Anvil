@@ -9,7 +9,7 @@ import { installBackend } from "../test-utils";
 import { NewQuoteModal } from "./NewQuoteModal";
 
 const CUSTOMERS = [
-  { id: "cust-1", customer_name: "Hyundai Motor India Ltd", customer_key: "hyundai", default_quote_validity_days: 45 },
+  { id: "cust-1", customer_name: "Hyundai Motor India Ltd", customer_key: "hyundai", default_quote_validity_days: 45, currency: "USD" },
   { id: "cust-2", customer_name: "Tata Motors", customer_key: "tata" },
 ];
 
@@ -67,6 +67,15 @@ describe("NewQuoteModal", () => {
     await waitFor(() => expect(getByText("Hyundai Motor India Ltd")).toBeTruthy());
     fireEvent.change(getByLabelText("Customer"), { target: { value: "cust-1" } });
     expect((getByLabelText("Validity days") as HTMLInputElement).value).toBe("45");
+  });
+
+  it("prefills currency from the customer when set", async () => {
+    const { getByText, getByLabelText } = render(
+      <NewQuoteModal open onClose={() => undefined} onCreated={() => undefined} />
+    );
+    await waitFor(() => expect(getByText("Hyundai Motor India Ltd")).toBeTruthy());
+    fireEvent.change(getByLabelText("Customer"), { target: { value: "cust-1" } });
+    expect((getByLabelText("Currency") as HTMLInputElement).value).toBe("USD");
   });
 
   it("loads the customer's contacts and defaults to the primary", async () => {

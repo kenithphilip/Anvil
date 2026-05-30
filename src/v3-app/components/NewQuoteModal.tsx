@@ -20,6 +20,7 @@ interface Customer {
   customer_name?: string | null;
   customer_key?: string | null;
   default_quote_validity_days?: number | null;
+  currency?: string | null;
 }
 
 export const NewQuoteModal: React.FC<{
@@ -84,11 +85,15 @@ export const NewQuoteModal: React.FC<{
       (c.customer_key || "").toLowerCase().includes(v));
   }, [customers, query]);
 
-  // When a customer is chosen, adopt its default quote validity if set.
+  // When a customer is chosen, adopt its currency + default quote
+  // validity if set. The POST handler does the same fallback server-
+  // side (and records `quote_auto_populate` in the audit), so this
+  // preview just keeps the modal honest.
   const pick = (id: string) => {
     setCustomerId(id);
-    const c = (customers || []).find((x) => x.id === id);
+    const c: any = (customers || []).find((x) => x.id === id);
     if (c?.default_quote_validity_days) setValidityDays(Number(c.default_quote_validity_days));
+    if (c?.currency) setCurrency(String(c.currency).toUpperCase());
   };
 
   const create = async () => {

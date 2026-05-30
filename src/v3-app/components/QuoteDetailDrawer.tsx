@@ -382,19 +382,29 @@ export const QuoteDetailDrawer: React.FC<{
                   <input className="input mono" maxLength={3} value={draft.currency || "INR"} onChange={(e) => setField("currency", e.target.value.toUpperCase())} />
                 </Field>
               </div>
-              <Field label="Document template (form code)" hint="Pick a template from Admin . Document templates. Defines the form code (e.g., OI/F/SP/19/R-00/020226), header/footer blocks, signatory block, and the 9 standard clauses." provenance={<ProvenancePill source={draft.field_sources?.template_id} />}>
-                <select className="select" value={draft.template_id || ""} onChange={(e) => {
-                  const id = e.target.value || null;
-                  setField("template_id", id);
-                  setActiveTemplate(id ? templates.find((t) => t.id === id) || null : null);
-                }}>
-                  <option value="">Not set (use ad-hoc terms below)</option>
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.template_name}{t.form_code ? " . " + t.form_code : ""} v{t.version}
-                    </option>
-                  ))}
-                </select>
+              <Field label="Document template (form code)" hint="Defines the form code (e.g., OI/F/SP/19/R-00/020226), header/footer blocks, signatory block, and the 9 standard clauses including inco terms." provenance={<ProvenancePill source={draft.field_sources?.template_id} />}>
+                <div className="row" style={{ gap: 10, alignItems: "center" }}>
+                  <select className="select" style={{ flex: 1, minWidth: 0 }} value={draft.template_id || ""} onChange={(e) => {
+                    const id = e.target.value || null;
+                    setField("template_id", id);
+                    setActiveTemplate(id ? templates.find((t) => t.id === id) || null : null);
+                  }}>
+                    <option value="">Not set (use ad-hoc terms below)</option>
+                    {templates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.template_name}{t.form_code ? " . " + t.form_code : ""} v{t.version}
+                      </option>
+                    ))}
+                  </select>
+                  {/* Quick path to the admin tab where operators set up
+                      / edit document templates (inco terms, warranty
+                      clauses, payment terms etc. all live there). */}
+                  <a className="mono-sm" href="#/admin?tab=doc_templates"
+                    title="Open Admin > Document templates"
+                    style={{ color: "var(--accent)", textDecoration: "underline", whiteSpace: "nowrap", fontSize: 11 }}>
+                    Manage templates
+                  </a>
+                </div>
               </Field>
               {activeTemplate && (
                 <Card title="Template preview" eyebrow={`${activeTemplate.template_name} . ${activeTemplate.form_code || "no form code"}`}>

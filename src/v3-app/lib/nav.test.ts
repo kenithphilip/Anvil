@@ -11,13 +11,14 @@ describe("NAV", () => {
       "Data", "Quality", "Comms & Security", "Admin",
     ]);
   });
-  it("exposes 43 unique nav ids", () => {
+  it("exposes 46 unique nav ids", () => {
     // 38 base + 2 from Bet 7 (brsr-supplier, brsr-buyer-dashboard)
     // + 1 from Bet 6 (treds) + 1 from Bet 2 (marketplace under Quality)
-    // + 1 Quotes (Workflows) wired into the sidebar.
+    // + 1 Quotes (Workflows) + 3 finance orphans now surfaced
+    // (eway-bills, credit-notes, recurring-invoices).
     const ids = NAV.flatMap((g) => g.items.map((i) => i.id));
-    expect(ids.length).toBe(43);
-    expect(new Set(ids).size).toBe(43);
+    expect(ids.length).toBe(46);
+    expect(new Set(ids).size).toBe(46);
   });
   it("each item has id + label + icon", () => {
     for (const group of NAV) {

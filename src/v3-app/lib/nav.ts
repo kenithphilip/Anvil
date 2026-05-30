@@ -61,12 +61,15 @@ export const NAV: NavGroup[] = [
   {
     label: "Finance",
     items: [
-      { id: "tally",     label: "Tally Sync",    icon: Icon.ledger },
-      { id: "einvoice",  label: "e-Invoice",     icon: Icon.doc },
-      { id: "invoices",  label: "Invoices",      icon: Icon.doc },
-      { id: "cost",      label: "Cost & Margin", icon: Icon.cash },
+      { id: "tally",              label: "Tally Sync",        icon: Icon.ledger },
+      { id: "einvoice",           label: "e-Invoice",         icon: Icon.doc },
+      { id: "eway-bills",         label: "e-Way Bills",       icon: Icon.truck },
+      { id: "invoices",           label: "Invoices",          icon: Icon.doc },
+      { id: "credit-notes",       label: "Credit Notes",      icon: Icon.doc },
+      { id: "recurring-invoices", label: "Recurring Invoices",icon: Icon.cycle },
+      { id: "cost",               label: "Cost & Margin",     icon: Icon.cash },
       // Bet 6: TReDS receivables loop (sandbox).
-      { id: "treds",     label: "TReDS",         icon: Icon.cash },
+      { id: "treds",              label: "TReDS",             icon: Icon.cash },
     ],
   },
   // Bet 7: BRSR value-chain reporting (SEBI BRSR Core).

@@ -183,7 +183,7 @@ jobs:
 
       - name: Upload verify output
         if: ${{ always() && (inputs.phase == 'verify' || inputs.phase == 'all') }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: verify-output
           path: verify.txt

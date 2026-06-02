@@ -114,7 +114,7 @@ export const enqueueReview = async (svc, ctx, runOutcome, opts = {}) => {
 // Public helper to mark an entry as in-review/resolved. Caller
 // is the workspace handler when the operator opens or completes
 // the review.
-export const updateReviewStatus = async (svc, { tenantId, queueId, status, resolution, resolvedBy, notes }) => {
+export const updateReviewStatus = async (svc, { tenantId, queueId, status, resolution, resolvedBy, assignedTo, notes }) => {
   if (!svc || !tenantId || !queueId) return { ok: false, error: "missing_args" };
   const update = {
     updated_at: new Date().toISOString(),
@@ -122,6 +122,7 @@ export const updateReviewStatus = async (svc, { tenantId, queueId, status, resol
   if (status) update.status = status;
   if (resolution !== undefined) update.resolution = resolution;
   if (resolvedBy !== undefined) update.resolved_by = resolvedBy;
+  if (assignedTo !== undefined) update.assigned_to = assignedTo;
   if (notes !== undefined) update.notes = notes;
   if (status === "resolved") update.resolved_at = new Date().toISOString();
   try {

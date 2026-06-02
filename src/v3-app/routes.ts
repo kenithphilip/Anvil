@@ -85,6 +85,9 @@ const screens = {
   evals:              lazy(() => import("./screens/evals")),
   studio:             lazy(() => import("./screens/studio")),
   anomaly:            lazy(() => import("./screens/anomaly")),
+  // Wave 4.1: operator review queue for low-confidence / anomaly /
+  // parse-failed docai extractions.
+  extractionReview:   lazy(() => import("./screens/extraction-review")),
   duplicates:         lazy(() => import("./screens/duplicates")),
   // Audit P9.5: customer-level duplicate-merge screen.
   customerDuplicates: lazy(() => import("./screens/customer-duplicates")),
@@ -176,6 +179,7 @@ export const RESOLVERS = {
   evals:       () => screens.evals,
   studio:      () => screens.studio,
   anomaly:     () => screens.anomaly,
+  "extraction-review": () => screens.extractionReview,
   duplicates:  () => screens.duplicates,
   "customer-duplicates": () => screens.customerDuplicates,
   agents:      () => screens.agents,

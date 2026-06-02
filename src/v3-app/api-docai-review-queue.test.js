@@ -141,6 +141,40 @@ describe("updateReviewStatus", () => {
     expect(payload.resolved_at).toBeDefined();
   });
 
+  it("maps assignedTo to assigned_to (claim path)", async () => {
+    let payload = null;
+    const svc = {
+      from: () => ({
+        update: (vals) => {
+          payload = vals;
+          return { eq: () => ({ eq: () => Promise.resolve({ error: null }) }) };
+        },
+      }),
+    };
+    const out = await updateReviewStatus(svc, {
+      tenantId: "t", queueId: "q1", status: "in_review", assignedTo: "u9",
+    });
+    expect(out.ok).toBe(true);
+    expect(payload.status).toBe("in_review");
+    expect(payload.assigned_to).toBe("u9");
+    expect(payload.resolved_at).toBeUndefined();
+  });
+
+  it("clears assigned_to when assignedTo is null (reopen path)", async () => {
+    let payload = null;
+    const svc = {
+      from: () => ({
+        update: (vals) => {
+          payload = vals;
+          return { eq: () => ({ eq: () => Promise.resolve({ error: null }) }) };
+        },
+      }),
+    };
+    await updateReviewStatus(svc, { tenantId: "t", queueId: "q1", status: "open", assignedTo: null });
+    expect(payload.status).toBe("open");
+    expect(payload.assigned_to).toBeNull();
+  });
+
   it("returns ok=false on missing args", async () => {
     expect((await updateReviewStatus(null, {})).ok).toBe(false);
     expect((await updateReviewStatus({}, { tenantId: null })).ok).toBe(false);

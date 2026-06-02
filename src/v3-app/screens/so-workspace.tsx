@@ -5,7 +5,11 @@ import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 import { amountInWords } from "../lib/amount-words";
-import { getFieldSource, markFieldEdited, FieldSource } from "../lib/field-sources";
+import {
+  getFieldSource, markFieldEdited, FieldSource,
+  buildExtractionIndex, issuesForCanonicalCell, worstSeverity, EXTRACTOR_FIELD,
+  IssueEntry,
+} from "../lib/field-sources";
 import { ItemMasterPicker, PickedItem } from "../components/ItemMasterPicker";
 import ReviewPane from "../components/ReviewPane";
 import { computeLineTotals, TAX_AMOUNT_KEYS, AUX_AMOUNT_KEYS, COMPONENT_LABEL } from "../lib/line-totals";
@@ -60,6 +64,10 @@ const WiredSOWorkspace = () => {
   // Phase 3.6 observability: pipeline-diagnostics state (lazy-
   // loaded the first time the operator opens the Diagnostics tab).
   const [pipelineState, setPipelineState] = u<{ data: any; loading: boolean; error: any }>({ data: null, loading: false, error: null });
+  // Wave 4.1: the full extraction_runs row (field_provenance,
+  // validator_issues, anomalies) backing the reconciliation tab's
+  // per-field provenance + per-line validation flags.
+  const [extractionRun, setExtractionRun] = u<any>(null);
 
   // Read order id + tab from URL hash query: #/so?id=...&tab=schedule
   const hashQuery = (() => {
@@ -190,6 +198,23 @@ const WiredSOWorkspace = () => {
   e(() => {
     setLinesDraft(null);
   }, [persistedLinesKey]);
+
+  // Wave 4.1: load the rich extraction run for the recon tab. Only the
+  // run id + overall confidence live on preflight_payload; the
+  // per-field provenance / validator / anomaly columns come from
+  // /api/docai/runs?id=. Kept above the early returns for a stable
+  // hook count.
+  const extractionRunId = order.data?.preflight_payload?.extraction_run_id || null;
+  e(() => {
+    if (!extractionRunId) { setExtractionRun(null); return; }
+    let cancelled = false;
+    Promise.resolve(ObaraBackend?.docai?.getRun?.(extractionRunId) || Promise.resolve(null))
+      .then((r: any) => { if (!cancelled) setExtractionRun(r?.run || (r && r.id ? r : null)); })
+      .catch(() => { if (!cancelled) setExtractionRun(null); });
+    return () => { cancelled = true; };
+  }, [extractionRunId]);
+
+  const extractionIndex = m(() => buildExtractionIndex(extractionRun), [extractionRun]);
 
   // ─────────────────────────────────────────────────────────────
   // Activity timeline merge (Surface B). Same hook-rule constraint:
@@ -1130,6 +1155,30 @@ const WiredSOWorkspace = () => {
     setLinesDraft(next);
   };
 
+  // Wave 4.1: when an operator changes an extracted line field, feed
+  // the docai correction loop (learned_corrections -> customer field
+  // overrides) so the fix improves the NEXT extraction for this
+  // customer. Best-effort + fire-and-forget: a failure here must never
+  // block the edit. Only fires when the value actually changed and we
+  // have an extraction run to attribute the correction to.
+  const recordFieldCorrection = (
+    i: number, canonicalKey: string, before: string, after: string,
+  ) => {
+    if (!extractionRunId || !canEditLines) return;
+    if (String(before ?? "") === String(after ?? "")) return;
+    const token = EXTRACTOR_FIELD[canonicalKey] || canonicalKey;
+    try {
+      Promise.resolve(ObaraBackend?.docai?.correction?.({
+        extraction_run_id: extractionRunId,
+        customer_id: o.customer_id,
+        field_path: `lines[${i}].${token}`,
+        original_value: before === "" ? null : before,
+        corrected_value: after === "" ? null : after,
+        reason: "recon_edit",
+      }))?.catch?.(() => {});
+    } catch (_e) { /* never block the edit */ }
+  };
+
   // Layer A: stamp _mapped_item on the line with match_via:"manual"
   // (or "llm_suggest" when the operator accepts an AI suggestion).
   // Mirrors the resolver's _mapped_item shape so downstream
@@ -1291,6 +1340,87 @@ const WiredSOWorkspace = () => {
     return null;
   };
 
+  // Wave 4.1: adapter + confidence chip for a recon cell, coloured by
+  // the worst validator/anomaly severity touching that cell. The
+  // tooltip carries the adapter, confidence, and any issue messages so
+  // the operator can see why a field is flagged without leaving the row.
+  const ProvenanceChip: React.FC<{
+    canonicalKey: string; lineIndex: number;
+  }> = ({ canonicalKey, lineIndex }) => {
+    const prov = extractionIndex.lineProvenance(lineIndex, canonicalKey);
+    const cellIssues = issuesForCanonicalCell(extractionIndex.lineIssues(lineIndex), canonicalKey);
+    const sev = worstSeverity(cellIssues);
+    if (!prov && !sev) return null;
+    const tone = sev === "error" ? "bad" : sev === "warn" ? "warn" : "ghost";
+    const confPct = prov?.confidence != null ? Math.round(prov.confidence * 100) + "%" : null;
+    const voted = (prov?.voters?.length || 0) > 1;
+    const label = sev
+      ? (sev === "error" ? "check" : "review")
+      : (prov?.source || "src");
+    const title = [
+      prov?.source ? `source: ${prov.source}${voted ? " (voted)" : ""}` : null,
+      confPct ? `confidence: ${confPct}` : null,
+      ...cellIssues.map((x) => `${x.severity}: ${x.message || x.code}`),
+    ].filter(Boolean).join("\n");
+    return (
+      <span title={title} style={{ display: "inline-flex" }}>
+        <Chip k={tone as any}>{label}{confPct && !sev ? ` ${confPct}` : ""}</Chip>
+      </span>
+    );
+  };
+
+  // Wave 4.1: extraction-quality summary for the recon tab. Surfaces
+  // the winning adapter, overall confidence, validator + anomaly
+  // counts, and an expandable list of every flagged field so the
+  // operator knows where to look before approving.
+  const ExtractionQualityCard: React.FC = () => {
+    const [open, setOpen] = React.useState(false);
+    if (!extractionRun) return null;
+    const s = extractionIndex.summary;
+    const issues: IssueEntry[] = extractionIndex.allIssues;
+    const confPct = s.confidence != null ? Math.round(s.confidence * 100) + "%" : "—";
+    const sevChip = (sev: string) =>
+      <Chip k={sev === "error" ? "bad" : sev === "warn" ? "warn" : "ghost"}>{sev}</Chip>;
+    return (
+      <Card
+        title="Extraction quality"
+        eyebrow="docai provenance · validators · anomalies"
+        right={issues.length
+          ? <Btn sm kind="ghost" onClick={() => setOpen((v) => !v)}>
+              {open ? "hide" : `${issues.length} flagged field${issues.length === 1 ? "" : "s"}`}
+            </Btn>
+          : <Chip k="good">clean</Chip>}
+      >
+        <KPIRow cols={4}>
+          <KPI lbl="Adapter" v={s.adapter || "—"} d={s.voterUsed ? "cross-adapter vote" : ""} />
+          <KPI lbl="Confidence" v={confPct}
+               dKind={s.confidence == null ? "" : (s.confidence >= 0.8 ? "up" : s.confidence < 0.5 ? "down" : "")} />
+          <KPI lbl="Validator" v={String(s.validator.total)}
+               d={`${s.validator.error} err · ${s.validator.warn} warn`}
+               dKind={s.validator.error ? "down" : ""} />
+          <KPI lbl="Anomalies" v={String(s.anomalies.total)}
+               d={`${s.anomalies.error} blocker${s.anomalies.error === 1 ? "" : "s"}`}
+               dKind={s.anomalies.error ? "down" : ""} />
+        </KPIRow>
+        {open && issues.length > 0 && (
+          <table className="tbl">
+            <thead><tr><th>Field</th><th>Check</th><th>Severity</th><th>Detail</th></tr></thead>
+            <tbody>
+              {issues.slice(0, 100).map((iss, n) => (
+                <tr key={iss.field + ":" + iss.code + ":" + n}>
+                  <td className="mono-sm">{iss.field}</td>
+                  <td className="mono-sm">{iss.kind === "anomaly" ? "anomaly" : "validator"} · {iss.code}</td>
+                  <td>{sevChip(iss.severity)}</td>
+                  <td>{iss.message || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+    );
+  };
+
   const EditableCell: React.FC<{
     line: any; i: number; canonicalKey: string;
     type: "text" | "number"; align?: "left" | "right";
@@ -1301,6 +1431,10 @@ const WiredSOWorkspace = () => {
       .map((k) => line[k])
       .find((v) => v != null && v !== "");
     const value = raw == null ? "" : String(raw);
+    // Snapshot the value at focus so blur can tell whether the operator
+    // actually changed it (and feed the docai correction loop only when
+    // they did).
+    const focusValue = React.useRef<string>(value);
     // Tighter input styling: no implicit browser styling, no
     // outline ring, no min-width that would render an empty box
     // for short / blank values. The cell shows the value as plain
@@ -1325,8 +1459,16 @@ const WiredSOWorkspace = () => {
           value={value}
           placeholder={placeholder || ""}
           disabled={!canEditLines}
-          onFocus={(e) => { e.currentTarget.style.border = "1px solid var(--hairline-2)"; e.currentTarget.style.background = "var(--paper)"; }}
-          onBlur={(e) => { e.currentTarget.style.border = "1px solid transparent"; e.currentTarget.style.background = "transparent"; }}
+          onFocus={(e) => {
+            focusValue.current = value;
+            e.currentTarget.style.border = "1px solid var(--hairline-2)";
+            e.currentTarget.style.background = "var(--paper)";
+          }}
+          onBlur={(e) => {
+            e.currentTarget.style.border = "1px solid transparent";
+            e.currentTarget.style.background = "transparent";
+            recordFieldCorrection(i, canonicalKey, focusValue.current, e.currentTarget.value);
+          }}
           onChange={(e) => {
             const v = type === "number"
               ? (e.target.value === "" ? null : Number(e.target.value))
@@ -1335,6 +1477,7 @@ const WiredSOWorkspace = () => {
           }}
         />
         {src && <FieldPill src={src} />}
+        <ProvenanceChip canonicalKey={canonicalKey} lineIndex={i} />
       </div>
     );
   };
@@ -1665,6 +1808,7 @@ const WiredSOWorkspace = () => {
             ]} />
           </Card>
         )}
+        {tab === "recon" && <ExtractionQualityCard />}
         {tab === "recon" && (
           <Card flush>
             <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--hairline-2)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>

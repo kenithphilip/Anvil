@@ -54,6 +54,7 @@ export const MATRIX: Record<string, MatrixRow> = {
   evals:       { sales_engineer: "r",   sales_manager: "r",  procurement: "",   finance: "",    admin: "rw", operator: "",   viewer: "r" },
   studio:      { sales_engineer: "r",   sales_manager: "rw", procurement: "",   finance: "",    admin: "rw", operator: "",   viewer: "r" },
   anomaly:     { sales_engineer: "r",   sales_manager: "r",  procurement: "r",  finance: "r",   admin: "rw", operator: "",   viewer: "r" },
+  "extraction-review": { sales_engineer: "rw",  sales_manager: "rw", procurement: "r",  finance: "",   admin: "rw", operator: "rw", viewer: "r" },
   duplicates:  { sales_engineer: "r",   sales_manager: "r",  procurement: "r",  finance: "r",   admin: "rw", operator: "",   viewer: "r" },
   "customer-duplicates": { sales_engineer: "r",   sales_manager: "r",  procurement: "r",  finance: "r",   admin: "rw", operator: "",   viewer: "r" },
   "pipeline-kanban":     { sales_engineer: "rw",  sales_manager: "rw", procurement: "",   finance: "r",   admin: "r",  operator: "",   viewer: "r" },

@@ -99,3 +99,192 @@ export const markFieldEdited = <T extends WithFieldSources>(
   next[canonicalKey] = "human";
   return { ...line, _field_sources: next };
 };
+
+// ───────────────────────────────────────────────────────────────────
+// Rich extraction provenance (Wave 4.1 operator surface).
+//
+// The binary ocr | human pill above answers "did a human touch this?".
+// The docai pipeline also produces, per extraction_runs row:
+//
+//   field_provenance: [{ field, source, confidence, voters }]
+//       which adapter (claude / reducto / template / …) won each field
+//       and how confident it was. `field` is a dotted/indexed path like
+//       "customer.gstin" or "lines[0].unitPrice".
+//   validator_issues: [{ field, code, severity, message }]
+//       per-field shape checks (GSTIN, currency, HSN, line math).
+//   anomalies:        [{ code, severity, path, line_index?, detail }]
+//       cross-field accounting checks (line arithmetic, totals, …).
+//
+// These helpers turn those arrays into cheap lookups the recon table
+// can render per cell + per line, without the screen re-parsing paths.
+// All pure; no I/O.
+
+// Canonical recon key  ->  the token the extractor / validator uses in
+// its field paths (e.g. recon "rate" is "unitPrice" in lines[N].*).
+export const EXTRACTOR_FIELD: Record<string, string> = {
+  itemCode: "partNumber",
+  description: "description",
+  qty: "quantity",
+  rate: "unitPrice",
+  uom: "uom",
+  hsn: "hsn",
+  gst_pct: "gst_pct",
+};
+const TOKEN_TO_CANONICAL: Record<string, string> = Object.fromEntries(
+  Object.entries(EXTRACTOR_FIELD).map(([canonical, token]) => [token, canonical]),
+);
+
+export interface ProvenanceEntry {
+  source: string | null;            // winning adapter, e.g. "claude"
+  confidence: number | null;        // 0..1
+  voters?: Array<{ adapter?: string; confidence?: number; value?: unknown }>;
+}
+export interface IssueEntry {
+  field: string;                    // path the issue/anomaly is keyed on
+  code: string;
+  severity: string;                 // "error" | "warn" | "info"
+  message?: string;
+  kind: "validator" | "anomaly";
+}
+export interface ExtractionSummary {
+  adapter: string | null;
+  confidence: number | null;
+  voterUsed: boolean;
+  validator: { error: number; warn: number; info: number; total: number };
+  anomalies: { error: number; warn: number; total: number };
+}
+export interface ExtractionIndex {
+  headerProvenance: (path: string) => ProvenanceEntry | null;
+  lineProvenance: (lineIndex: number, canonicalKey: string) => ProvenanceEntry | null;
+  lineIssues: (lineIndex: number) => IssueEntry[];
+  headerIssues: (path: string) => IssueEntry[];
+  allIssues: IssueEntry[];
+  summary: ExtractionSummary;
+}
+
+// Parse "lines[3].unitPrice" -> { lineIndex: 3, token: "unitPrice" }.
+// Returns null for non-line paths.
+const parseLinePath = (path: string): { lineIndex: number; token: string | null } | null => {
+  const m = /^lines\[(\d+)\](?:\.(.+))?$/.exec(path || "");
+  if (!m) return null;
+  return { lineIndex: Number(m[1]), token: m[2] || null };
+};
+
+const SEVERITY_RANK: Record<string, number> = { error: 3, warn: 2, info: 1 };
+
+// Pick the worst severity among a set of issues. "" when empty.
+export const worstSeverity = (issues: ReadonlyArray<{ severity: string }>): string => {
+  let best = "";
+  let rank = 0;
+  for (const i of issues) {
+    const r = SEVERITY_RANK[i.severity] || 0;
+    if (r > rank) { rank = r; best = i.severity; }
+  }
+  return best;
+};
+
+// Build the per-run index. `run` is an extraction_runs row (or null).
+export const buildExtractionIndex = (run: any): ExtractionIndex => {
+  const provByPath = new Map<string, ProvenanceEntry>();
+  const issuesByLine = new Map<number, IssueEntry[]>();
+  const issuesByHeader = new Map<string, IssueEntry[]>();
+  const allIssues: IssueEntry[] = [];
+
+  const provArr = Array.isArray(run?.field_provenance) ? run.field_provenance : [];
+  for (const p of provArr) {
+    if (p && typeof p.field === "string") {
+      provByPath.set(p.field, {
+        source: p.source ?? null,
+        confidence: typeof p.confidence === "number" ? p.confidence : null,
+        voters: Array.isArray(p.voters) ? p.voters : undefined,
+      });
+    }
+  }
+
+  const addIssue = (entry: IssueEntry) => {
+    allIssues.push(entry);
+    const parsed = parseLinePath(entry.field);
+    if (parsed) {
+      const list = issuesByLine.get(parsed.lineIndex) || [];
+      list.push(entry);
+      issuesByLine.set(parsed.lineIndex, list);
+    } else {
+      const list = issuesByHeader.get(entry.field) || [];
+      list.push(entry);
+      issuesByHeader.set(entry.field, list);
+    }
+  };
+
+  const vIssues = Array.isArray(run?.validator_issues) ? run.validator_issues : [];
+  for (const v of vIssues) {
+    if (!v) continue;
+    addIssue({
+      field: String(v.field || ""),
+      code: String(v.code || "issue"),
+      severity: String(v.severity || "warn"),
+      message: v.message,
+      kind: "validator",
+    });
+  }
+
+  const anomalies = Array.isArray(run?.anomalies) ? run.anomalies : [];
+  for (const a of anomalies) {
+    if (!a) continue;
+    // Anomalies carry an explicit line_index for line checks; fall
+    // back to the path so totals/header anomalies still land.
+    const field = typeof a.line_index === "number"
+      ? `lines[${a.line_index}]`
+      : String(a.path || a.field || "order");
+    addIssue({
+      field,
+      code: String(a.code || "anomaly"),
+      severity: String(a.severity || "warn"),
+      message: a.message || a.detail || undefined,
+      kind: "anomaly",
+    });
+  }
+
+  const vSummary = run?.validator_summary || {};
+  const aSummary = run?.anomalies_summary || {};
+
+  return {
+    headerProvenance: (path) => provByPath.get(path) || null,
+    lineProvenance: (lineIndex, canonicalKey) => {
+      const token = EXTRACTOR_FIELD[canonicalKey] || canonicalKey;
+      return provByPath.get(`lines[${lineIndex}].${token}`) || null;
+    },
+    lineIssues: (lineIndex) => issuesByLine.get(lineIndex) || [],
+    headerIssues: (path) => issuesByHeader.get(path) || [],
+    allIssues,
+    summary: {
+      adapter: run?.adapter_used ?? null,
+      confidence: typeof run?.confidence_overall === "number" ? run.confidence_overall : null,
+      voterUsed: !!run?.voter_used,
+      validator: {
+        error: Number(vSummary.error || 0),
+        warn: Number(vSummary.warn || 0),
+        info: Number(vSummary.info || 0),
+        total: Number(vSummary.total || vIssues.length || 0),
+      },
+      anomalies: {
+        error: Number(aSummary.error || 0),
+        warn: Number(aSummary.warn || 0),
+        total: Number(aSummary.total || anomalies.length || 0),
+      },
+    },
+  };
+};
+
+// Issues on a line that map to a specific recon cell (so the cell can
+// colour itself). Matches the validator/anomaly token to the canonical
+// key via TOKEN_TO_CANONICAL.
+export const issuesForCanonicalCell = (
+  lineIssues: ReadonlyArray<IssueEntry>,
+  canonicalKey: string,
+): IssueEntry[] => {
+  return lineIssues.filter((iss) => {
+    const parsed = parseLinePath(iss.field);
+    if (!parsed || !parsed.token) return false;
+    return (TOKEN_TO_CANONICAL[parsed.token] || parsed.token) === canonicalKey;
+  });
+};

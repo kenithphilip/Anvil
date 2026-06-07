@@ -8,6 +8,18 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { recordStageEvent } from "../_lib/funnel-analytics.js";
+
+// Append a funnel stage event without ever failing the request it
+// rides on — the opportunity write + audit have already committed.
+const safeStageEvent = async (svc, evt) => {
+  try {
+    const r = await recordStageEvent(svc, evt);
+    if (!r.ok) console.warn("[opportunities] stage-event capture failed:", r.error);
+  } catch (err) {
+    console.warn("[opportunities] stage-event capture threw:", err?.message || err);
+  }
+};
 
 const STAGES = new Set(["QUALIFICATION","STRATEGY_CHECK","NEEDS_ANALYSIS","FOLLOW_UP","RFQ","INTERNAL_PROPOSAL","PROPOSAL_PRICE_QUOTE","NEGOTIATION_REVIEW","CLOSE_WON","CLOSE_LOST","REGRETTED"]);
 
@@ -83,6 +95,14 @@ export default async function handler(req, res) {
       const { data, error } = await svc.from("opportunities").insert(row).select("*").single();
       if (error) throw new Error(error.message);
       await recordAudit(ctx, { action: "opp_create", objectType: "opportunity", objectId: data.id, after: data });
+      // Funnel: creation is the opp's entry into the pipeline (from_stage null).
+      await safeStageEvent(svc, {
+        tenantId: ctx.tenantId, opportunityId: data.id,
+        fromStage: null, toStage: data.stage,
+        changedBy: ctx.user ? ctx.user.id : null, ownerId: data.owner_id,
+        amountInr: data.amount_inr, probability: data.probability,
+        changedAt: data.created_at,
+      });
       return json(res, 201, { opportunity: data });
     }
     if (req.method === "PATCH") {
@@ -112,6 +132,16 @@ export default async function handler(req, res) {
       if (error) throw new Error(error.message);
       const stageChanged = before.data && patch.stage && patch.stage !== before.data.stage;
       await recordAudit(ctx, { action: stageChanged ? "opp_stage_change" : "opp_update", objectType: "opportunity", objectId: body.id, before: before.data, after: data });
+      // Funnel: capture the transition as a first-class event so the
+      // analytics layer can measure conversion / velocity / aging.
+      if (stageChanged) {
+        await safeStageEvent(svc, {
+          tenantId: ctx.tenantId, opportunityId: body.id,
+          fromStage: before.data.stage, toStage: data.stage,
+          changedBy: ctx.user ? ctx.user.id : null, ownerId: data.owner_id,
+          amountInr: data.amount_inr, probability: data.probability,
+        });
+      }
       return json(res, 200, { opportunity: data });
     }
     if (req.method === "DELETE") {

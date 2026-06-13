@@ -61,6 +61,39 @@ const WiredLeads = () => {
   const [creating, setCreating] = useState(false);
   const [sortByScore, setSortByScore] = useState(false);
   const [scoringId, setScoringId] = useState<string | null>(null);
+  const [convertingId, setConvertingId] = useState<string | null>(null);
+
+  // Promote a lead to an opportunity via the existing
+  // PATCH /api/sales/leads {convert_to_opportunity}. Requires a linked
+  // customer account (opportunities.customer_id is NOT NULL); we guide
+  // the operator rather than fail opaquely when it's missing. On
+  // success we jump straight to the new opportunity.
+  const convertLead = async (lead: any) => {
+    if (!lead?.id) return;
+    const accountId = lead.account_id || lead.customer_id || null;
+    if (!accountId) {
+      window.notifyError?.("Link a customer first",
+        "This lead has no linked customer account. Set one before converting to an opportunity.");
+      return;
+    }
+    setConvertingId(lead.id);
+    try {
+      const r: any = await ObaraBackend?.sales?.updateLead?.({
+        id: lead.id,
+        convert_to_opportunity: true,
+        account_id: accountId,
+        company_name: lead.company_name || lead.company || lead.name || null,
+      });
+      const oppId = r?.lead?.converted_opportunity_id;
+      window.notifySuccess?.("Lead converted", "An opportunity was created.");
+      if (oppId) window.location.hash = `#/opps?id=${oppId}`;
+      else list.reload();
+    } catch (err: any) {
+      window.notifyError?.("Convert failed", err?.message || String(err));
+    } finally {
+      setConvertingId(null);
+    }
+  };
   const [draft, setDraft] = useState({
     name: "",
     source: "",
@@ -199,6 +232,19 @@ const WiredLeads = () => {
                    title="Score this lead with the Haiku scorer">
                 {scoringId === selected.id ? "Scoring..." : (selected.ai_score == null ? "Score lead" : "Re-score")}
               </Btn>
+              {selected.status === "CONVERTED" && selected.converted_opportunity_id ? (
+                <Btn sm kind="ghost"
+                     onClick={() => { window.location.hash = `#/opps?id=${selected.converted_opportunity_id}`; }}
+                     title="Open the opportunity this lead became">
+                  {Icon.arrowR} View opportunity
+                </Btn>
+              ) : (selected.status !== "CONVERTED" && selected.status !== "REJECTED" && selected.status !== "REGRETTED") && (
+                <Btn sm kind="primary" disabled={convertingId === selected.id}
+                     onClick={() => convertLead(selected)}
+                     title="Promote this lead to an opportunity">
+                  {convertingId === selected.id ? "Converting..." : "Convert to opportunity"}
+                </Btn>
+              )}
               <Btn sm kind="ghost" onClick={() => { window.location.hash = "#/leads"; }}>{Icon.x} close</Btn>
             </>}
           >

@@ -316,6 +316,7 @@ import ordersPrintJobs         from "./orders/print_jobs.js";
 import ordersReconcile         from "./orders/reconcile.js";
 import ordersSuggestMappings   from "./orders/suggest_mappings.js";
 import ordersExtractionStatus from "./orders/extraction_status.js";
+import ordersVoucherPdf       from "./orders/voucher_pdf.js";
 import ordersExtractionJobs   from "./orders/extraction_jobs.js";
 import ordersExtractionJobsId from "./orders/extraction_jobs_id.js";
 import ordersCostSummary      from "./orders/cost_summary.js";
@@ -541,6 +542,7 @@ const STATIC_ROUTES = {
   "/orders/extraction_status":      ordersExtractionStatus,
   "/orders/extraction_jobs":        ordersExtractionJobs,
   "/orders/cost_summary":           ordersCostSummary,
+  "/orders/voucher_pdf":            ordersVoucherPdf,
   "/supplier_rfq":                  supplierRfqIndex,
   "/supplier_rfq/send":             supplierRfqSend,
   "/supplier_rfq/quote":            supplierRfqQuote,

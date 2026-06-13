@@ -1354,6 +1354,10 @@
     listPricingProfiles: async () => apiFetch("/api/admin/pricing_profiles"),
     upsertPricingProfile: async (payload) => apiFetch("/api/admin/pricing_profiles", { method: "POST", body: payload }),
     deletePricingProfile: async (id) => apiFetch("/api/admin/pricing_profiles?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    // P3 account/supplier-aware pricing bindings.
+    listPricingBindings: async (params) => apiFetch("/api/admin/pricing_profile_bindings" + (params ? "?" + new URLSearchParams(params).toString() : "")),
+    upsertPricingBinding: async (payload) => apiFetch("/api/admin/pricing_profile_bindings", { method: "POST", body: payload }),
+    deletePricingBinding: async (id) => apiFetch("/api/admin/pricing_profile_bindings?id=" + encodeURIComponent(id), { method: "DELETE" }),
     listPriceComposition: async (quote_id) => apiFetch("/api/admin/price_composition_lines?quote_id=" + encodeURIComponent(quote_id)),
     recomputePriceComposition: async (payload) => apiFetch("/api/admin/price_composition_lines?action=recompute", { method: "POST", body: payload }),
     // P2 recipe-authoring: drawing-derived raw-material breakup per

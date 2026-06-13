@@ -170,3 +170,148 @@ export const renderQuote = async (data) => renderPdf({ ...data, kind: "Quote" })
 
 // Convenience for the invoice endpoint.
 export const renderInvoice = async (data) => renderPdf({ ...data, kind: "Invoice" });
+
+// ───────────────────────────────────────────────────────────────────
+// Sales-voucher (ERP / Tally style) document.
+//
+// Distinct from the quote PDF: this is the post-approval sales-order
+// voucher with an HSN column, an explicit CGST/SGST vs IGST split
+// driven by place of supply, seller + party GSTIN/state blocks, and a
+// tax-summary footer. Mirrors the Tally sales voucher the XML push
+// builds (src/api/_lib/tally-build-voucher.js) so the printed document
+// matches what lands in the ERP.
+const vstyles = StyleSheet.create({
+  metaStrip:   { flexDirection: "row", justifyContent: "space-between", backgroundColor: "#f5f5f4", borderWidth: 1, borderColor: "#d6d3d1", padding: 6, marginBottom: 12 },
+  metaCell:    { flexDirection: "column" },
+  metaLbl:     { fontSize: 7, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#78716c" },
+  metaVal:     { fontSize: 9, color: "#1c1917", marginTop: 1 },
+  colHsn:      { width: "12%" },
+  vColDesc:    { width: "34%" },
+  vColQty:     { width: "9%", textAlign: "right" },
+  vColUom:     { width: "9%" },
+  vColRate:    { width: "14%", textAlign: "right" },
+  vColTax:     { width: "10%", textAlign: "right" },
+  vColAmt:     { width: "12%", textAlign: "right" },
+});
+
+const VoucherMeta = ({ voucherType, poRef, placeOfSupply }) => (
+  React.createElement(View, { style: vstyles.metaStrip },
+    React.createElement(View, { style: vstyles.metaCell },
+      React.createElement(Text, { style: vstyles.metaLbl }, "Voucher type"),
+      React.createElement(Text, { style: vstyles.metaVal }, voucherType || "Sales"),
+    ),
+    React.createElement(View, { style: vstyles.metaCell },
+      React.createElement(Text, { style: vstyles.metaLbl }, "Buyer ref / PO"),
+      React.createElement(Text, { style: vstyles.metaVal }, poRef || "—"),
+    ),
+    React.createElement(View, { style: vstyles.metaCell },
+      React.createElement(Text, { style: vstyles.metaLbl }, "Place of supply"),
+      React.createElement(Text, { style: vstyles.metaVal }, placeOfSupply || "—"),
+    ),
+  )
+);
+
+const VoucherParties = ({ from, to }) => (
+  React.createElement(View, { style: styles.twoCol },
+    React.createElement(View, { style: styles.partyBox },
+      React.createElement(Text, { style: styles.partyTitle }, "Seller"),
+      React.createElement(Text, { style: styles.partyName }, from?.name || "—"),
+      from?.line2 && React.createElement(Text, { style: styles.partyMono }, from.line2),
+      from?.gstin && React.createElement(Text, { style: styles.partyMono }, "GSTIN " + from.gstin),
+      from?.state && React.createElement(Text, { style: styles.partyMono }, "State " + from.state),
+    ),
+    React.createElement(View, { style: styles.partyBox },
+      React.createElement(Text, { style: styles.partyTitle }, "Party (buyer)"),
+      React.createElement(Text, { style: styles.partyName }, to?.name || "—"),
+      to?.line2 && React.createElement(Text, { style: styles.partyMono }, to.line2),
+      to?.gstin && React.createElement(Text, { style: styles.partyMono }, "GSTIN " + to.gstin),
+      to?.state && React.createElement(Text, { style: styles.partyMono }, "State " + to.state),
+    ),
+  )
+);
+
+const VoucherLines = ({ items, currency }) => (
+  React.createElement(View, { style: styles.table },
+    React.createElement(View, { style: styles.thead },
+      React.createElement(Text, { style: [styles.th, vstyles.vColDesc] }, "Description"),
+      React.createElement(Text, { style: [styles.th, vstyles.colHsn] }, "HSN/SAC"),
+      React.createElement(Text, { style: [styles.th, vstyles.vColQty] }, "Qty"),
+      React.createElement(Text, { style: [styles.th, vstyles.vColUom] }, "UOM"),
+      React.createElement(Text, { style: [styles.th, vstyles.vColRate] }, "Rate"),
+      React.createElement(Text, { style: [styles.th, vstyles.vColTax] }, "GST%"),
+      React.createElement(Text, { style: [styles.th, vstyles.vColAmt] }, "Taxable"),
+    ),
+    (items || []).map((it, i) => (
+      React.createElement(View, { style: styles.tr, key: i },
+        React.createElement(Text, { style: [styles.td, vstyles.vColDesc] },
+          (it.partNumber ? it.partNumber + " " : "") + (it.description || it.itemName || "—")),
+        React.createElement(Text, { style: [styles.td, vstyles.colHsn] }, it.hsn || ""),
+        React.createElement(Text, { style: [styles.td, vstyles.vColQty] }, String(it.quantity ?? it.qty ?? "")),
+        React.createElement(Text, { style: [styles.td, vstyles.vColUom] }, it.uom || ""),
+        React.createElement(Text, { style: [styles.td, vstyles.vColRate] }, fmtMoney(it.rate ?? it.unitPrice, currency)),
+        React.createElement(Text, { style: [styles.td, vstyles.vColTax] }, (it.gstPct != null ? it.gstPct + "%" : "")),
+        React.createElement(Text, { style: [styles.td, vstyles.vColAmt] }, fmtMoney(it.taxable ?? it.amount, currency)),
+      )
+    ))
+  )
+);
+
+const VoucherTotals = ({ taxable, cgst, sgst, igst, total, currency }) => (
+  React.createElement(View, { style: styles.totalsBox },
+    React.createElement(View, { style: styles.totalsRow },
+      React.createElement(Text, { style: styles.totalsLbl }, "Taxable value"),
+      React.createElement(Text, { style: styles.totalsVal }, fmtMoney(taxable, currency)),
+    ),
+    (Number(cgst) > 0) && React.createElement(View, { style: styles.totalsRow },
+      React.createElement(Text, { style: styles.totalsLbl }, "CGST"),
+      React.createElement(Text, { style: styles.totalsVal }, fmtMoney(cgst, currency)),
+    ),
+    (Number(sgst) > 0) && React.createElement(View, { style: styles.totalsRow },
+      React.createElement(Text, { style: styles.totalsLbl }, "SGST"),
+      React.createElement(Text, { style: styles.totalsVal }, fmtMoney(sgst, currency)),
+    ),
+    (Number(igst) > 0) && React.createElement(View, { style: styles.totalsRow },
+      React.createElement(Text, { style: styles.totalsLbl }, "IGST"),
+      React.createElement(Text, { style: styles.totalsVal }, fmtMoney(igst, currency)),
+    ),
+    React.createElement(View, { style: styles.grandRow },
+      React.createElement(Text, { style: styles.grandLbl }, "Voucher total"),
+      React.createElement(Text, { style: styles.grandVal }, fmtMoney(total, currency)),
+    ),
+  )
+);
+
+const VoucherDoc = ({
+  number, date, brand, from, to, voucherType, poRef, placeOfSupply,
+  items, taxable, cgst, sgst, igst, total, currency, totalInWords, notes,
+}) => (
+  React.createElement(Document, null,
+    React.createElement(Page, { size: "A4", style: styles.page },
+      React.createElement(Header, { kind: "Sales Voucher", number, date, brand }),
+      React.createElement(VoucherParties, { from, to }),
+      React.createElement(VoucherMeta, { voucherType, poRef, placeOfSupply }),
+      React.createElement(VoucherLines, { items, currency }),
+      React.createElement(VoucherTotals, { taxable, cgst, sgst, igst, total, currency }),
+      totalInWords && React.createElement(View, { style: styles.notes },
+        React.createElement(Text, { style: styles.notesTitle }, "Amount in words"),
+        React.createElement(Text, null, totalInWords),
+      ),
+      notes && React.createElement(View, { style: styles.notes },
+        React.createElement(Text, { style: styles.notesTitle }, "Notes"),
+        React.createElement(Text, null, notes),
+      ),
+      React.createElement(Text, {
+        style: styles.footer,
+        render: ({ pageNumber, totalPages }) => "Page " + pageNumber + " of " + totalPages,
+        fixed: true,
+      }),
+    )
+  )
+);
+
+// Public: render an ERP-format sales voucher. Data contract:
+//   { number, date, brand, from:{name,line2,gstin,state},
+//     to:{name,line2,gstin,state}, voucherType, poRef, placeOfSupply,
+//     items:[{partNumber,description,hsn,quantity,uom,rate,gstPct,taxable}],
+//     taxable, cgst, sgst, igst, total, currency, totalInWords, notes }
+export const renderVoucher = async (data) => await renderToBuffer(VoucherDoc(data));

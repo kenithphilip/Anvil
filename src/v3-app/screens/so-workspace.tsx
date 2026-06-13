@@ -681,6 +681,27 @@ const WiredSOWorkspace = () => {
     }
   };
 
+  // ERP-format sales-order voucher PDF (post-approval). Same
+  // download mechanics as the quote PDF, against /api/orders/voucher_pdf.
+  const downloadVoucherPdf = async (orderObj: any) => {
+    if (!orderObj?.id) return;
+    try {
+      const blob = await (ObaraBackend as any)?.orders?.voucherPdfBlob?.(orderObj.id);
+      if (!blob) throw new Error("Voucher PDF helper unavailable");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "voucher-" + (orderObj.po_number || orderObj.quote_number || String(orderObj.id).slice(0, 8)) + ".pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      window.notifySuccess?.("ERP voucher ready", "Saved to Downloads.");
+    } catch (err: any) {
+      window.notifyError?.("Voucher PDF failed", err?.message || String(err));
+    }
+  };
+
   // Draft a new invoice from this order. Templates totals + line items
   // from result.salesOrder; the operator can edit fields on the
   // Invoices screen after creation. We navigate there on success.
@@ -1565,6 +1586,13 @@ const WiredSOWorkspace = () => {
                title="Render a branded PDF of the quote and download it">
             {Icon.download} quote PDF
           </Btn>
+          {["APPROVED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED"].includes(o.status) && (
+            <Btn sm kind="ghost"
+                 onClick={() => downloadVoucherPdf(o)}
+                 title="Render the ERP-format sales-order voucher (Tally style, with GST split)">
+              {Icon.download} ERP voucher
+            </Btn>
+          )}
           <Btn sm kind="ghost"
                onClick={() => createInvoiceForOrder(o)}
                title="Draft a new invoice templated from this order">

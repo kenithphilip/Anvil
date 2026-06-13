@@ -16,6 +16,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { recipeToBomRows } from "../_lib/composition-recipe.js";
+import { resolveMaterialPrice } from "../_lib/material-prices.js";
 
 const numericKeys = ["density", "gross_qty", "yield_pct", "consumption_per_unit", "unit_cost"];
 
@@ -116,6 +117,17 @@ export default async function handler(req, res) {
           return json(res, 400, { error: { message: "raw_material_part_no required on every line" } });
         }
         const row = buildRow(ctx.tenantId, body.quote_id, ln);
+        // P3: fill unit_cost from the central market reference when the
+        // operator didn't type one, so recipe material cost tracks the
+        // market. Best-effort; an explicit unit_cost always wins.
+        if (row.unit_cost == null) {
+          try {
+            const ref = await resolveMaterialPrice(svc, ctx.tenantId, {
+              partNo: row.raw_material_part_no, grade: row.material, uom: row.uom,
+            });
+            if (ref) { row.unit_cost = Number(ref.unit_price); if (!row.currency) row.currency = ref.currency || null; }
+          } catch (_e) { /* no reference: leave unit_cost null */ }
+        }
         const upsert = await svc.from("composition_material_lines")
           .upsert(row, { onConflict: "tenant_id,quote_id,composition_line_index,seq" })
           .select("*").single();

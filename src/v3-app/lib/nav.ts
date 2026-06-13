@@ -49,6 +49,7 @@ export const NAV: NavGroup[] = [
       { id: "inventory-exceptions", label: "Stock Exceptions",   icon: Icon.alert },
       { id: "inventory-allocations",label: "Allocations",        icon: Icon.lock },
       { id: "inventory-suppliers",  label: "Suppliers",          icon: Icon.briefcase },
+      { id: "logistics",            label: "Freight Bidding",    icon: Icon.truck },
     ],
   },
   {

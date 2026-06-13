@@ -45,6 +45,8 @@ const screens = {
   inventoryItem:        lazy(() => import("./screens/inventory-item")),
   inventoryAllocations: lazy(() => import("./screens/inventory-allocations")),
   inventorySuppliers:   lazy(() => import("./screens/inventory-suppliers")),
+  // P4: freight consolidation + LCL/FCL bidding.
+  logistics:            lazy(() => import("./screens/logistics")),
   // Bet 7: BRSR value-chain reporting.
   brsrSupplier:         lazy(() => import("./screens/brsr-supplier")),
   brsrBuyerDashboard:   lazy(() => import("./screens/brsr-buyer-dashboard")),
@@ -140,6 +142,7 @@ export const RESOLVERS = {
   "inventory-item":       () => screens.inventoryItem,
   "inventory-allocations":() => screens.inventoryAllocations,
   "inventory-suppliers":  () => screens.inventorySuppliers,
+  logistics:              () => screens.logistics,
   // Bet 7: BRSR value-chain reporting.
   "brsr-supplier":          () => screens.brsrSupplier,
   "brsr-buyer-dashboard":   () => screens.brsrBuyerDashboard,

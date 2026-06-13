@@ -431,6 +431,7 @@
   const analytics = {
     winloss:  async (q) => apiFetch("/api/analytics/winloss" + (q ? "?" + new URLSearchParams(q).toString() : "")),
     refresh:  async (payload) => apiFetch("/api/analytics/refresh", { method: "POST", body: payload || {} }),
+    funnel:   async (q) => apiFetch("/api/analytics/funnel" + (q ? "?" + new URLSearchParams(q).toString() : "")),
   };
 
   const supplierRfq = {

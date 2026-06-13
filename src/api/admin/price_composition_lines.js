@@ -12,6 +12,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { composePrice, mapProfile } from "../_lib/pricing.js";
+import { resolvePricingBinding } from "../_lib/pricing-bindings.js";
 
 const numericKeys = [
   "qty", "supplier_unit_price", "total_cost",
@@ -68,11 +69,24 @@ const resolveProfile = async (svc, tenantId, code) => {
 // stored price is authoritative (never trusts a client-sent total).
 const handleRecompute = async (svc, ctx, body, res) => {
   if (!body.quote_id) return json(res, 400, { error: { message: "quote_id required" } });
-  if (!body.profile_code) return json(res, 400, { error: { message: "profile_code required" } });
   const inputs = Array.isArray(body.lines) ? body.lines : [];
   if (!inputs.length) return json(res, 400, { error: { message: "no lines supplied" } });
-  const profile = await resolveProfile(svc, ctx.tenantId, body.profile_code);
-  if (!profile) return json(res, 404, { error: { message: "Pricing profile not found: " + body.profile_code } });
+  // P3 account-aware pricing: resolve the quote's customer and any
+  // pricing-profile binding. A customer with a binding prices on their
+  // bound profile when none is explicitly chosen, and their margin-floor
+  // override is always enforced. Best-effort: no binding => prior behaviour.
+  let binding = null;
+  try {
+    const q = await svc.from("quotes").select("customer_id")
+      .eq("tenant_id", ctx.tenantId).eq("id", body.quote_id).maybeSingle();
+    binding = await resolvePricingBinding(svc, ctx.tenantId, { customerId: q?.data?.customer_id || null });
+  } catch (_e) { binding = null; }
+  const profileCode = body.profile_code || binding?.profile_code;
+  if (!profileCode) return json(res, 400, { error: { message: "profile_code required (no pricing binding for this customer)" } });
+  const profile = await resolveProfile(svc, ctx.tenantId, profileCode);
+  if (!profile) return json(res, 404, { error: { message: "Pricing profile not found: " + profileCode } });
+  // Account/supplier-specific floor override wins over the profile's floor.
+  if (binding && binding.margin_floor_pct != null) profile.marginFloorPct = Number(binding.margin_floor_pct);
   const fx = body.fx && typeof body.fx === "object" ? body.fx : { base: "INR", rates: { INR: 1 } };
 
   const out = [];

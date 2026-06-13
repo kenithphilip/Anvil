@@ -78,6 +78,7 @@ export const MATRIX: Record<string, MatrixRow> = {
   "inventory-item":       { sales_engineer: "r",  sales_manager: "r",   procurement: "rwa", finance: "r",    admin: "rwa", operator: "r",  viewer: "r" },
   "inventory-allocations":{ sales_engineer: "r",  sales_manager: "rw",  procurement: "rwa", finance: "r",    admin: "rwa", operator: "r",  viewer: "r" },
   "inventory-suppliers":  { sales_engineer: "r",  sales_manager: "r",   procurement: "rwa", finance: "r",    admin: "rwa", operator: "",   viewer: "r" },
+  logistics:              { sales_engineer: "r",  sales_manager: "r",   procurement: "rwa", finance: "r",    admin: "rwa", operator: "r",  viewer: "r" },
   // Bet 7: BRSR value-chain reporting. Supplier side: admin owns
   // the disclosure and the attestation; finance reads for audit
   // pack. Buyer side: admin / finance can read + export; sales

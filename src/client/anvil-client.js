@@ -1358,6 +1358,10 @@
     listPricingBindings: async (params) => apiFetch("/api/admin/pricing_profile_bindings" + (params ? "?" + new URLSearchParams(params).toString() : "")),
     upsertPricingBinding: async (payload) => apiFetch("/api/admin/pricing_profile_bindings", { method: "POST", body: payload }),
     deletePricingBinding: async (id) => apiFetch("/api/admin/pricing_profile_bindings?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    // P3 raw-material price reference (market-tracking material costs).
+    listMaterialPrices: async (params) => apiFetch("/api/admin/material_price_references" + (params ? "?" + new URLSearchParams(params).toString() : "")),
+    upsertMaterialPrice: async (payload) => apiFetch("/api/admin/material_price_references", { method: "POST", body: payload }),
+    deleteMaterialPrice: async (id) => apiFetch("/api/admin/material_price_references?id=" + encodeURIComponent(id), { method: "DELETE" }),
     listPriceComposition: async (quote_id) => apiFetch("/api/admin/price_composition_lines?quote_id=" + encodeURIComponent(quote_id)),
     recomputePriceComposition: async (payload) => apiFetch("/api/admin/price_composition_lines?action=recompute", { method: "POST", body: payload }),
     // P2 recipe-authoring: drawing-derived raw-material breakup per

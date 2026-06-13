@@ -1531,6 +1531,17 @@
     };
   };
 
+  // P4 logistics: freight consolidation + LCL/FCL bidding.
+  const logistics = {
+    listConsolidations: async (params) => apiFetch("/api/logistics/consolidations" + (params ? "?" + new URLSearchParams(params).toString() : "")),
+    buildConsolidations: async (payload) => apiFetch("/api/logistics/consolidations", { method: "POST", body: { action: "build", ...(payload || {}) } }),
+    setConsolidationStatus: async (id, status) => apiFetch("/api/logistics/consolidations", { method: "POST", body: { id, status } }),
+    listBids: async (consolidationId) => apiFetch("/api/logistics/freight_bids?consolidation_id=" + encodeURIComponent(consolidationId)),
+    addBid: async (payload) => apiFetch("/api/logistics/freight_bids", { method: "POST", body: payload }),
+    awardBid: async (id) => apiFetch("/api/logistics/freight_bids", { method: "POST", body: { action: "award", id } }),
+    deleteBid: async (id) => apiFetch("/api/logistics/freight_bids?id=" + encodeURIComponent(id), { method: "DELETE" }),
+  };
+
   const api = {
     isReady,
     setConfig,
@@ -1580,6 +1591,7 @@
     claudeCall,
     documents,
     orders,
+    logistics,
     customers,
     aliases,
     audit,

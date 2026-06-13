@@ -403,6 +403,7 @@ import docaiCorrection         from "./docai/correction.js";
 import docaiUsage               from "./docai/usage.js";
 import docaiCostStatus          from "./docai/cost_status.js";
 import docaiRuns               from "./docai/runs.js";
+import docaiReviewQueue        from "./docai/review_queue.js";
 
 import p21Connect              from "./p21/connect.js";
 import p21Health               from "./p21/health.js";
@@ -613,6 +614,7 @@ const STATIC_ROUTES = {
   "/docai/usage":                   docaiUsage,
   "/docai/cost_status":             docaiCostStatus,
   "/docai/runs":                    docaiRuns,
+  "/docai/review_queue":            docaiReviewQueue,
   "/p21/connect":                   p21Connect,
   "/p21/health":                    p21Health,
   "/p21/sync":                      p21Sync,

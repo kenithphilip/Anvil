@@ -99,6 +99,7 @@ export const NAV: NavGroup[] = [
       // Bet 2: format-template marketplace (consumer-side surface).
       { id: "marketplace", label: "Template Marketplace", icon: Icon.layers },
       { id: "anomaly",   label: "Anomaly Compute", icon: Icon.alert },
+      { id: "extraction-review", label: "Extraction Review", icon: Icon.inbox },
       { id: "duplicates",label: "Duplicates",    icon: Icon.layers },
       { id: "agents",    label: "Agents",        icon: Icon.bolt },
     ],

@@ -543,6 +543,11 @@
     // values; updateSettings PATCHes a partial.
     getSettings:    async () => apiFetch("/api/admin/docai_settings"),
     updateSettings: async (patch) => apiFetch("/api/admin/docai_settings", { method: "PATCH", body: patch }),
+    // Wave 4.1 operator review queue. listReviewQueue returns
+    // { queue, summary }; reviewDecide triages one row with an
+    // action of "claim" | "resolve" | "reopen".
+    listReviewQueue: async (q) => apiFetch("/api/docai/review_queue" + (q ? "?" + new URLSearchParams(q).toString() : "")),
+    reviewDecide:    async (payload) => apiFetch("/api/docai/review_queue", { method: "POST", body: payload }),
   };
 
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });

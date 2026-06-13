@@ -31,7 +31,7 @@ import {
 import { estimateLeadTime } from "../_lib/inventory/lead-time.js";
 import {
   computePipelineDemand, isoWeekStart, STAGE_PROBABILITY_DEFAULTS,
-  calibrateStageProbabilities,
+  calibrateStageProbabilities, explodePipelineThroughBom,
 } from "../_lib/inventory/pipeline-demand.js";
 import { planForItem, addWeeks } from "../_lib/inventory/net-req.js";
 
@@ -40,6 +40,7 @@ import { planForItem, addWeeks } from "../_lib/inventory/net-req.js";
 const SL_BY_TYPE = {
   ATD: 0.99, TIMER: 0.99,                   // critical bundled
   GUN: 0.95, GUN_COMPONENT: 0.95,           // standard
+  RAW_MATERIAL: 0.95,                        // P2: production inputs
   SPARE: 0.85, CONSUMABLE: 0.85,            // long tail
   OTHER: 0.95,
 };
@@ -271,6 +272,19 @@ const planTenant = async (svc, tenantId) => {
   const history = await buildHistory(svc, tenantId, parts);
   const calibration = await buildStageCalibration(svc, tenantId);
   const pipeline = await buildPipeline(svc, tenantId, weeks, calibration);
+
+  // P2: BOM-explode demand. Cascade finished-good pipeline demand down
+  // the tenant's bill of materials into the raw materials / components
+  // it consumes, so RAW_MATERIAL (and any planning-enabled child) parts
+  // receive procurement plans driven by upstream sales pipeline. Read
+  // bill_of_materials directly (tenant-scoped column) rather than the
+  // v_bom_walk_recursive view, which has no tenant_id to filter on.
+  // Inert for tenants without a BOM.
+  const bomRows = await svc.from("bill_of_materials")
+    .select("parent_part_no, child_part_no, qty")
+    .eq("tenant_id", tenantId);
+  if (bomRows.error) throw new Error("bom: " + bomRows.error.message);
+  const bomExplosion = explodePipelineThroughBom(pipeline, bomRows.data || []);
 
   // Pre-fetch the opportunity pairs for top-opp attribution.
   const oppsForAttribution = await svc.from("opportunities")
@@ -671,6 +685,7 @@ const planTenant = async (svc, tenantId) => {
       conformal_used_ratio: parts.length ? conformalUsed / parts.length : 0,
     },
     notes: "Weekly cron run; plans_created=" + plansCreated
+      + "; bom_edges_exploded=" + (bomExplosion?.exploded || 0)
       + (conformalOn ? "; cp_used=" + conformalUsed : ""),
   }).eq("id", runId);
 
@@ -688,6 +703,7 @@ const planTenant = async (svc, tenantId) => {
     run_id: runId,
     conformal_enabled: conformalOn,
     conformal_used: conformalUsed,
+    bom_edges_exploded: bomExplosion?.exploded || 0,
   };
 };
 

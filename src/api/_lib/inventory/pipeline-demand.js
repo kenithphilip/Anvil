@@ -92,6 +92,70 @@ export const computePipelineDemand = ({
   return out;
 };
 
+// P2 (BOM-explode demand): cascade finished-good pipeline demand down
+// the bill of materials into the raw materials / sub-components it
+// consumes. The probability weighting already happened upstream (each
+// finished part's qty is expected = qty * win-prob), so multiplying by
+// the per-unit BOM quantity gives expected raw-material demand.
+//
+// Mutates `pipeline` in place — for every part with demand we walk its
+// BOM descendants (depth-capped, cycle-guarded) and ADD
+// expected_qty * cumulative_multiplier into each descendant's per-week
+// bucket. A descendant that is itself a finished good keeps its own
+// direct demand AND accrues component demand; both are correct.
+//
+// Inputs:
+//   pipeline: Map<part_no, Map<weekStart, qty>>  (from computePipelineDemand)
+//   bomRows:  [{ parent_part_no, child_part_no, qty }]  (one tenant's BOM)
+// Returns { exploded } — count of (root → descendant) edges applied.
+//
+// Inert when bomRows is empty: existing tenants without a BOM are
+// unaffected.
+export const explodePipelineThroughBom = (pipeline, bomRows, maxDepth = 8) => {
+  const rows = Array.isArray(bomRows) ? bomRows : [];
+  if (!rows.length || !pipeline || pipeline.size === 0) return { exploded: 0 };
+
+  const children = new Map();
+  for (const r of rows) {
+    if (!r || !r.parent_part_no || !r.child_part_no) continue;
+    const a = children.get(r.parent_part_no) || [];
+    a.push({ child: r.child_part_no, qty: Number(r.qty) || 0 });
+    children.set(r.parent_part_no, a);
+  }
+  if (children.size === 0) return { exploded: 0 };
+
+  // Snapshot original per-part demand so each root's contribution is
+  // independent of mutation order (a root whose child is also a root
+  // must not pick up the child's freshly-added component demand).
+  const original = new Map();
+  for (const [part, weeks] of pipeline) original.set(part, new Map(weeks));
+
+  let exploded = 0;
+  for (const [root, rootWeeks] of original) {
+    const stack = [{ part: root, mult: 1, depth: 0, seen: new Set([root]) }];
+    while (stack.length) {
+      const node = stack.pop();
+      if (node.depth >= maxDepth) continue;
+      const kids = children.get(node.part);
+      if (!kids) continue;
+      for (const k of kids) {
+        const m = node.mult * k.qty;
+        if (!(m > 0)) continue;
+        let bucket = pipeline.get(k.child);
+        if (!bucket) { bucket = new Map(); pipeline.set(k.child, bucket); }
+        for (const [wk, qty] of rootWeeks) bucket.set(wk, (bucket.get(wk) || 0) + qty * m);
+        exploded += 1;
+        if (!node.seen.has(k.child)) {
+          const seen = new Set(node.seen);
+          seen.add(k.child);
+          stack.push({ part: k.child, mult: m, depth: node.depth + 1, seen });
+        }
+      }
+    }
+  }
+  return { exploded };
+};
+
 // Convenience: roll up the pipeline-demand map into a flat array of
 // (part_no, week_start, qty) triples for upsert into demand_forecasts.
 export const flattenPipelineDemand = (mapByPart) => {

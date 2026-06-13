@@ -26,6 +26,16 @@ import {
 
 type Line = any;
 
+// A drawing-derived raw-material row the operator edits per line.
+type MatRow = {
+  raw_material_part_no: string;
+  material: string;       // grade / spec
+  form: string;           // block | rod | sheet | ...
+  dimensions: string;     // free text, stored as { note }
+  consumption_per_unit: string;
+  uom: string;
+};
+
 // In-code fallback used when the tenant has no configured profiles yet
 // (or the API is unavailable), so the preview always works.
 const FALLBACK_PROFILES: PricingProfile[] = [PROFILE_GRANULAR, PROFILE_COMPACT];
@@ -60,6 +70,11 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
   const [apiProfiles, setApiProfiles] = useState<PricingProfile[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  // P2 recipe-authoring: drawing-derived raw-material breakup per line,
+  // keyed by line_index. Saving syncs into bill_of_materials so the
+  // demand planner's BOM explosion is fed from this RFQ work.
+  const [materials, setMaterials] = useState<Record<number, MatRow[]>>({});
+  const [matSaving, setMatSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,6 +119,75 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
     })();
     return () => { cancelled = true; };
   }, [quoteId]);
+
+  // Restore any saved raw-material breakup for this quote, grouped by
+  // the composition line it belongs to.
+  useEffect(() => {
+    if (!quoteId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp: any = await ObaraBackend?.admin?.listCompositionMaterials?.(quoteId);
+        if (cancelled) return;
+        const saved = Array.isArray(resp) ? resp : resp?.lines || [];
+        const byLine: Record<number, MatRow[]> = {};
+        for (const r of saved) {
+          const li = r.composition_line_index;
+          if (li == null) continue;
+          (byLine[li] = byLine[li] || []).push({
+            raw_material_part_no: r.raw_material_part_no || "",
+            material: r.material || "",
+            form: r.form || "",
+            dimensions: (r.dimensions && r.dimensions.note) || "",
+            consumption_per_unit: r.consumption_per_unit != null ? String(r.consumption_per_unit) : "",
+            uom: r.uom || "kg",
+          });
+        }
+        if (Object.keys(byLine).length) setMaterials(byLine);
+      } catch { /* no saved recipe yet */ }
+    })();
+    return () => { cancelled = true; };
+  }, [quoteId]);
+
+  const matRows = (li: number) => materials[li] || [];
+  const addMat = (li: number) =>
+    setMaterials((m) => ({ ...m, [li]: [...(m[li] || []), { raw_material_part_no: "", material: "", form: "", dimensions: "", consumption_per_unit: "", uom: "kg" }] }));
+  const updMat = (li: number, i: number, patch: Partial<MatRow>) =>
+    setMaterials((m) => { const arr = [...(m[li] || [])]; arr[i] = { ...arr[i], ...patch }; return { ...m, [li]: arr }; });
+  const rmMat = (li: number, i: number) =>
+    setMaterials((m) => { const arr = [...(m[li] || [])]; arr.splice(i, 1); return { ...m, [li]: arr }; });
+
+  const saveMaterials = async (ln: Line) => {
+    if (!quoteId) return;
+    const li = ln.line_index;
+    const arr = (materials[li] || []).filter((r) => r.raw_material_part_no.trim());
+    setMatSaving(true);
+    try {
+      const resp: any = await ObaraBackend?.admin?.saveCompositionMaterials?.({
+        quote_id: quoteId,
+        lines: arr.map((r, seq) => ({
+          composition_line_index: li,
+          seq,
+          finished_part_no: ln.part_no || null,
+          raw_material_part_no: r.raw_material_part_no.trim(),
+          material: r.material || null,
+          form: r.form || null,
+          dimensions: r.dimensions ? { note: r.dimensions } : {},
+          consumption_per_unit: r.consumption_per_unit !== "" ? Number(r.consumption_per_unit) : null,
+          uom: r.uom || "kg",
+        })),
+      });
+      const synced = resp?.bom_synced ?? 0;
+      window.notifySuccess?.(
+        "Materials saved",
+        `${arr.length} material${arr.length === 1 ? "" : "s"}${ln.part_no ? ` → ${synced} BOM row${synced === 1 ? "" : "s"} synced` : ""}`,
+      );
+    } catch (e: any) {
+      window.notifyError?.("Could not save materials", e?.message || String(e));
+    } finally {
+      setMatSaving(false);
+    }
+  };
 
   const save = async () => {
     if (!quoteId) return;
@@ -294,6 +378,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
       )}
 
       {sel && (
+      <>
         <Card title={`Waterfall - line ${(sel.ln.line_index ?? 0) + 1} ${sel.ln.part_no || ""}`}
           eyebrow="Supplier cost to final price" style={{ marginTop: 10 }}>
           <table className="tbl" style={{ fontSize: 12 }}>
@@ -327,6 +412,61 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
             </div>
           )}
         </Card>
+
+        <Card
+          title={`Raw materials (BOM) - line ${(sel.ln.line_index ?? 0) + 1} ${sel.ln.part_no || ""}`}
+          eyebrow="From the engineering drawing - saving syncs the bill of materials"
+          style={{ marginTop: 10 }}
+        >
+          <table className="tbl" style={{ fontSize: 12 }}>
+            <thead><tr>
+              <th>Raw material part</th><th>Grade</th><th>Form</th>
+              <th>Dimensions</th><th className="r">Consumption / unit</th><th>UOM</th><th></th>
+            </tr></thead>
+            <tbody>
+              {matRows(sel.ln.line_index).length === 0 ? (
+                <tr><td colSpan={7} className="muted" style={{ padding: 14, textAlign: "center" }}>
+                  No materials yet. Add the raw material(s) this part consumes.
+                </td></tr>
+              ) : matRows(sel.ln.line_index).map((m, i) => (
+                <tr key={i}>
+                  <td><input className="input mono" style={{ width: 140 }} placeholder="e.g. STEEL-EN8"
+                    aria-label={"raw material part " + (i + 1)}
+                    value={m.raw_material_part_no} onChange={(e) => updMat(sel.ln.line_index, i, { raw_material_part_no: e.target.value })} /></td>
+                  <td><input className="input" style={{ width: 80 }} placeholder="EN8"
+                    aria-label={"grade " + (i + 1)}
+                    value={m.material} onChange={(e) => updMat(sel.ln.line_index, i, { material: e.target.value })} /></td>
+                  <td><input className="input" style={{ width: 80 }} placeholder="rod"
+                    aria-label={"form " + (i + 1)}
+                    value={m.form} onChange={(e) => updMat(sel.ln.line_index, i, { form: e.target.value })} /></td>
+                  <td><input className="input" style={{ width: 120 }} placeholder="Ø40 x 200mm"
+                    aria-label={"dimensions " + (i + 1)}
+                    value={m.dimensions} onChange={(e) => updMat(sel.ln.line_index, i, { dimensions: e.target.value })} /></td>
+                  <td className="r"><input className="input mono r" style={{ width: 90 }} type="number" step="0.0001"
+                    aria-label={"consumption per unit " + (i + 1)}
+                    value={m.consumption_per_unit} onChange={(e) => updMat(sel.ln.line_index, i, { consumption_per_unit: e.target.value })} /></td>
+                  <td><input className="input mono" style={{ width: 52 }}
+                    aria-label={"uom " + (i + 1)}
+                    value={m.uom} onChange={(e) => updMat(sel.ln.line_index, i, { uom: e.target.value })} /></td>
+                  <td><Btn sm kind="ghost" onClick={() => rmMat(sel.ln.line_index, i)} title="Remove">×</Btn></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="row" style={{ gap: 8, marginTop: 8, alignItems: "center" }}>
+            <Btn sm kind="ghost" onClick={() => addMat(sel.ln.line_index)}>+ Add material</Btn>
+            <Btn sm kind="primary" disabled={!quoteId || matSaving} onClick={() => saveMaterials(sel.ln)}
+              title={quoteId ? "Save the recipe and sync the bill of materials" : "Save the quote first"}>
+              {matSaving ? "Saving..." : "Save materials → BOM"}
+            </Btn>
+            {!sel.ln.part_no && (
+              <span className="mono-sm" style={{ color: "var(--amber)" }}>
+                Set a part number on this line to sync a reusable BOM recipe.
+              </span>
+            )}
+          </div>
+        </Card>
+      </>
       )}
     </>
   );

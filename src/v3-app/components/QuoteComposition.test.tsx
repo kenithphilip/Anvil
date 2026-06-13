@@ -95,3 +95,55 @@ describe("QuoteComposition — persistence", () => {
     expect(payload.lines[0].supplier_name).toBe("Anil Steel");
   });
 });
+
+describe("QuoteComposition — raw materials (BOM) editor", () => {
+  let saveMaterials: any;
+  beforeEach(() => {
+    saveMaterials = vi.fn(async () => ({ bom_synced: 1, finished_parts: ["X-MEDIUM"] }));
+    installBackend({
+      admin: {
+        listPricingProfiles: vi.fn(async () => ({ profiles: [] })),
+        listPriceComposition: vi.fn(async () => ({ lines: [] })),
+        listCompositionMaterials: vi.fn(async () => ({ lines: [] })),
+        saveCompositionMaterials: saveMaterials,
+      },
+    });
+  });
+
+  it("authors a material on the selected line and syncs it to the BOM", async () => {
+    const { getByText, getByLabelText } = render(<QuoteComposition lines={LINES} quoteId="q-1" />);
+    fireEvent.click(getByText("X-MEDIUM"));                       // select the line
+    expect(getByText(/Raw materials \(BOM\)/)).toBeTruthy();
+    fireEvent.click(getByText("+ Add material"));
+    fireEvent.change(getByLabelText("raw material part 1"), { target: { value: "STEEL-EN8" } });
+    fireEvent.change(getByLabelText("grade 1"), { target: { value: "EN8" } });
+    fireEvent.change(getByLabelText("consumption per unit 1"), { target: { value: "1.4" } });
+    fireEvent.click(getByText(/Save materials/));
+    await waitFor(() => expect(saveMaterials).toHaveBeenCalledTimes(1));
+    const payload = saveMaterials.mock.calls[0][0];
+    expect(payload.quote_id).toBe("q-1");
+    expect(payload.lines).toHaveLength(1);
+    expect(payload.lines[0]).toMatchObject({
+      composition_line_index: 0, seq: 0, finished_part_no: "X-MEDIUM",
+      raw_material_part_no: "STEEL-EN8", material: "EN8", consumption_per_unit: 1.4,
+    });
+  });
+
+  it("seeds the editor from a saved recipe", async () => {
+    installBackend({
+      admin: {
+        listPricingProfiles: vi.fn(async () => ({ profiles: [] })),
+        listPriceComposition: vi.fn(async () => ({ lines: [] })),
+        listCompositionMaterials: vi.fn(async () => ({ lines: [
+          { composition_line_index: 0, seq: 0, raw_material_part_no: "STEEL-EN8", material: "EN8", consumption_per_unit: 1.4, uom: "kg" },
+        ] })),
+        saveCompositionMaterials: saveMaterials,
+      },
+    });
+    const { getByText, getByLabelText } = render(<QuoteComposition lines={LINES} quoteId="q-1" />);
+    await waitFor(() => {
+      fireEvent.click(getByText("X-MEDIUM"));
+      expect((getByLabelText("raw material part 1") as HTMLInputElement).value).toBe("STEEL-EN8");
+    });
+  });
+});

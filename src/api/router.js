@@ -40,6 +40,7 @@ import adminCustomerVendorCodes from "./admin/customer_vendor_codes.js";
 import adminCustomerTerms        from "./admin/customer_terms.js";
 import adminOrderLineTaxComponents from "./admin/order_line_tax_components.js";
 import adminPriceCompositionLines from "./admin/price_composition_lines.js";
+import adminCompositionMaterialLines from "./admin/composition_material_lines.js";
 import adminQuoteLines           from "./admin/quote_lines.js";
 import adminLeadTimes          from "./admin/lead_times.js";
 import adminLostReasons        from "./admin/lost_reasons.js";
@@ -717,6 +718,7 @@ const STATIC_ROUTES = {
   "/admin/customer_terms/clause":   adminCustomerTerms,
   "/admin/order_line_tax_components": adminOrderLineTaxComponents,
   "/admin/price_composition_lines": adminPriceCompositionLines,
+  "/admin/composition_material_lines": adminCompositionMaterialLines,
   "/admin/quote_lines":             adminQuoteLines,
   "/admin/lead_times":              adminLeadTimes,
   "/admin/lost_reasons":            adminLostReasons,

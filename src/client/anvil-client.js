@@ -1356,6 +1356,11 @@
     deletePricingProfile: async (id) => apiFetch("/api/admin/pricing_profiles?id=" + encodeURIComponent(id), { method: "DELETE" }),
     listPriceComposition: async (quote_id) => apiFetch("/api/admin/price_composition_lines?quote_id=" + encodeURIComponent(quote_id)),
     recomputePriceComposition: async (payload) => apiFetch("/api/admin/price_composition_lines?action=recompute", { method: "POST", body: payload }),
+    // P2 recipe-authoring: drawing-derived raw-material breakup per
+    // composition line; POST syncs into bill_of_materials.
+    listCompositionMaterials: async (quote_id) => apiFetch("/api/admin/composition_material_lines?quote_id=" + encodeURIComponent(quote_id)),
+    saveCompositionMaterials: async (payload) => apiFetch("/api/admin/composition_material_lines", { method: "POST", body: payload }),
+    deleteCompositionMaterial: async (id) => apiFetch("/api/admin/composition_material_lines?id=" + encodeURIComponent(id), { method: "DELETE" }),
     listItemMaster: async (params) => apiFetch("/api/admin/item_master" + (params ? "?" + new URLSearchParams(params).toString() : "")),
     upsertItemMaster: async (payload) => apiFetch("/api/admin/item_master", { method: "POST", body: payload }),
     bulkItemMaster: async (rows) => apiFetch("/api/admin/item_master", { method: "POST", body: { rows } }),

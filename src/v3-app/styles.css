@@ -685,7 +685,10 @@ button { cursor: pointer; }
   background: var(--paper-3); color: var(--ink-3);
   border-radius: 2px;
 }
-.ws-tab.active .tab-count { background: var(--accent); color: var(--ink); }
+/* Dark text on the lime fill in BOTH themes. --ink flips to near-white
+   in dark mode, which left this badge's count near-invisible on lime;
+   --on-accent is pinned dark, matching .btn.live / .chip.live. */
+.ws-tab.active .tab-count { background: var(--accent); color: var(--on-accent); }
 
 /* ============================================================
    PRIMITIVES
@@ -1023,7 +1026,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .step.done { color: var(--ink-2); background: var(--paper); }
 .step.done .n { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .step.cur { color: var(--ink); background: var(--accent-3); font-weight: 600; }
-.step.cur .n { background: var(--accent); color: var(--ink); border-color: var(--accent-2); }
+.step.cur .n { background: var(--accent); color: var(--on-accent); border-color: var(--accent-2); }
 
 /* ── Tabs (sub-section) ───────────────────────────────── */
 .tabs {

@@ -11,17 +11,18 @@ describe("NAV", () => {
       "Data", "Quality", "Comms & Security", "Admin",
     ]);
   });
-  it("exposes 51 unique nav ids", () => {
+  it("exposes 52 unique nav ids", () => {
     // 38 base + 2 from Bet 7 (brsr-supplier, brsr-buyer-dashboard)
     // + 1 from Bet 6 (treds) + 1 from Bet 2 (marketplace under Quality)
     // + 1 Quotes (Workflows) + 3 finance orphans now surfaced
     // (eway-bills, credit-notes, recurring-invoices)
     // + 3 other orphans (customer-duplicates, pipeline-kanban, voice)
     // + 1 Wave 4.1 extraction-review (under Quality)
-    // + 1 P4 logistics freight-bidding (under Procurement).
+    // + 1 P4 logistics freight-bidding (under Procurement)
+    // + 1 sales-ops cockpit (under Sales).
     const ids = NAV.flatMap((g) => g.items.map((i) => i.id));
-    expect(ids.length).toBe(51);
-    expect(new Set(ids).size).toBe(51);
+    expect(ids.length).toBe(52);
+    expect(new Set(ids).size).toBe(52);
   });
   it("each item has id + label + icon", () => {
     for (const group of NAV) {

@@ -33,6 +33,7 @@ const screens = {
   // Sales
   leads:              lazy(() => import("./screens/leads")),
   opps:               lazy(() => import("./screens/opps")),
+  salesOps:           lazy(() => import("./screens/sales-ops")),
   projects:           lazy(() => import("./screens/projects")),
   shipments:          lazy(() => import("./screens/shipments")),
   // Procurement
@@ -131,6 +132,7 @@ export const RESOLVERS = {
   approvals:   () => screens.approvals,
   leads:       () => screens.leads,
   opps:        () => screens.opps,
+  "sales-ops": () => screens.salesOps,
   projects:    () => screens.projects,
   shipments:   () => screens.shipments,
   spo:         () => screens.spo,

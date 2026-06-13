@@ -29,6 +29,7 @@ export const NAV: NavGroup[] = [
     items: [
       { id: "leads",            label: "Leads",          icon: Icon.flame },
       { id: "opps",             label: "Opportunities",  icon: Icon.signal },
+      { id: "sales-ops",        label: "Sales Ops Cockpit", icon: Icon.graph },
       { id: "pipeline-kanban",  label: "Pipeline Kanban",icon: Icon.diff },
       { id: "projects",         label: "Projects",       icon: Icon.briefcase },
       { id: "shipments",        label: "Shipments",      icon: Icon.truck },

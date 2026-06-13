@@ -278,7 +278,34 @@ export default async function handler(req, res) {
         } catch { /* best-effort: leave your_ref null */ }
       }
 
-      const lineItems = Array.isArray(body.line_items) ? body.line_items : [];
+      let lineItems = Array.isArray(body.line_items) ? body.line_items : [];
+      // Carry opportunity_line_items into the quote when the caller
+      // created it from an opportunity and didn't supply lines. This is
+      // what makes "Create quote from opportunity" pre-fill the line
+      // editor instead of forcing the operator to re-key everything.
+      // The operator's expected qty / price seed the quote; they refine
+      // in the drawer. Best-effort: any failure leaves lines empty.
+      if (lineItems.length === 0 && body.opportunity_id) {
+        try {
+          const oli = await svc.from("opportunity_line_items")
+            .select("line_index, product_family, product_category, part_no, description, qty, uom, expected_unit_price")
+            .eq("tenant_id", ctx.tenantId)
+            .eq("opportunity_id", body.opportunity_id)
+            .order("line_index", { ascending: true });
+          if (!oli.error && Array.isArray(oli.data) && oli.data.length) {
+            lineItems = oli.data.map((l) => ({
+              partNumber: l.part_no || null,
+              description: l.description
+                || [l.product_family, l.product_category].filter(Boolean).join(" / ")
+                || null,
+              quantity: Number(l.qty) || 0,
+              uom: l.uom || "Nos",
+              unitPrice: l.expected_unit_price != null ? Number(l.expected_unit_price) : 0,
+            }));
+            autoFilled.line_items = "opportunity.line_items";
+          }
+        } catch { /* best-effort: leave lines empty for manual entry */ }
+      }
       const totals = computeTotals(lineItems);
       const quoteNumber = body.quote_number || await generateQuoteNumber(svc, ctx.tenantId);
       const insertPayload = {

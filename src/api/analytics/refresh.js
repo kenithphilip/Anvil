@@ -9,6 +9,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { refreshWinloss } from "../_lib/winloss.js";
+import { refreshFunnel } from "../_lib/funnel-analytics.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -24,7 +25,9 @@ export default async function handler(req, res) {
       if (tenants.error) throw new Error("tenants: " + tenants.error.message);
       const out = [];
       for (const t of tenants.data || []) {
-        out.push(await refreshWinloss(svc, t.id, { sinceDays: 90 }));
+        const winloss = await refreshWinloss(svc, t.id, { sinceDays: 90 });
+        const funnel = await refreshFunnel(svc, t.id, { sinceDays: 90 });
+        out.push({ ...winloss, funnel });
       }
       return json(res, 200, { ran_at: new Date().toISOString(), tenants: out });
     }
@@ -33,6 +36,7 @@ export default async function handler(req, res) {
     const body = req.method === "POST" ? await readBody(req) : {};
     const sinceDays = Math.min(365, Math.max(7, Number(body?.since_days || 90)));
     const out = await refreshWinloss(svc, ctx.tenantId, { sinceDays });
-    return json(res, 200, { ran_at: new Date().toISOString(), ...out });
+    const funnel = await refreshFunnel(svc, ctx.tenantId, { sinceDays });
+    return json(res, 200, { ran_at: new Date().toISOString(), ...out, funnel });
   } catch (err) { sendError(res, err); }
 }

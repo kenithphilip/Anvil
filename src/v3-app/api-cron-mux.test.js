@@ -120,7 +120,12 @@ describe("cron-mux / per-handler timeout (Phase 1 F10)", () => {
     expect(r.error).toBe("timeout");
     expect(r.status).toBe(504);
     expect(r.budget_ms).toBe(30);
-    expect(r.duration_ms).toBeGreaterThanOrEqual(30);
+    // The handler hangs forever, so it must have run ~to the budget
+    // (not to completion). Allow a few ms of timer/measurement jitter
+    // below the budget — the exact-budget assertion flaked in CI
+    // ("expected 29 to be >= 30"). The timeout itself is already proven
+    // by timed_out / status 504 / budget_ms above.
+    expect(r.duration_ms).toBeGreaterThanOrEqual(25);
   });
 
   it("does not time out a fast handler", async () => {

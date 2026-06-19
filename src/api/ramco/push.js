@@ -8,6 +8,7 @@ import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { ramcoDecryptCreds, ramcoPushSalesOrder, ramcoIsConfigured } from "../_lib/ramco-client.js";
 import { httpIsRecoverable, requireApprovedOrder } from "../_lib/erp-runner.js";
+import { checkExportIdempotency, recordExport, orderPayloadHash } from "../_lib/erp-export-ledger.js";
 
 const enqueueRetry = async (svc, tenantId, orderId, payload, status, err) => {
   await svc.from("ramco_retry_queue").insert({
@@ -68,6 +69,14 @@ export default async function handler(req, res) {
       return json(res, 200, { ok: true, dry_run: true, preview });
     }
 
+    const payloadHash = orderPayloadHash(orderQ.data);
+    const idem = await checkExportIdempotency(svc, {
+      tenantId: ctx.tenantId, orderId: orderQ.data.id, connector: "ramco",
+      payloadHash, allowReexport: body.reexport === true,
+    });
+    if (idem.idempotent) return json(res, 200, { ok: true, idempotent: true, external_id: idem.external_id, ramco_id: idem.external_id });
+    if (idem.blocked) return json(res, idem.status, idem.body);
+
     let resp = null;
     try {
       resp = await ramcoPushSalesOrder(settings, orderForPush, settings.ramco_field_map || {});
@@ -115,6 +124,7 @@ export default async function handler(req, res) {
         error: resp.response?.error || resp.response?.message || null,
       });
     }
+    await recordExport(svc, { tenantId: ctx.tenantId, orderId: orderQ.data.id, connector: "ramco", payloadHash, externalId });
     return json(res, 200, { ok: true, ramco_id: externalId, status: resp.status });
   } catch (err) {
     return sendError(res, err);

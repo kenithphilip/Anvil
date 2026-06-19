@@ -301,6 +301,32 @@ Indexes:
 
 All new tables RLS-scoped on `tenant_id` against the JWT claim.
 
+## Migration 146: ERP export ledger (PR3)
+
+Idempotency guard for ERP sales-order exports. The HTTP push handlers
+(SAP, NetSuite, D365, Acumatica, P21, Eclipse, SX.e, Sage X3, IFS,
+Oracle Fusion, Ramco, JDE, Plex, JobBoss, Oracle EBS, proALPHA)
+previously sent no idempotency key and did not check whether an order
+was already exported, so a double-click or two overlapping pushes
+created duplicate sales orders in the live ERP. This generalises the
+Tally pattern to every HTTP connector. Tally keeps its own ledger
+(`tally_voucher_records`) and is not duplicated here.
+
+### erp_export_ledger
+One success row per `(tenant_id, order_id, connector, payload_hash)`,
+enforced by a unique constraint. Columns: `connector` (the
+`external_systems` key, e.g. `sap`, `oracle_ebs`, `sage_x3`),
+`payload_hash` (the approval-bound hash the export was built from),
+`external_id` (the ERP-side sales order id), `status` (`success`),
+`last_pushed_at`, `created_at`. Before the outbound call a handler
+calls `checkExportIdempotency`: an exact match short-circuits to a
+no-op returning the prior `external_id`; a different hash is blocked
+(`PAYLOAD_HASH_CHANGED`) unless the caller passes `reexport:true`. On
+success the handler calls `recordExport` to upsert the row.
+
+Index: `(tenant_id, order_id, connector)` for the prior-export lookup.
+RLS-scoped on `tenant_id` with the standard select/write policies.
+
 ## Verifying after applying
 
 In the SQL editor:

@@ -44,6 +44,15 @@ functions read and write Supabase Postgres with RLS.
 7. Approval flips status. Tally push at `/api/tally/push` re-checks the
    payload hash, writes a voucher record, posts to the local Tally HTTP
    bridge if `TALLY_BRIDGE_URL` is set.
+8. HTTP ERP pushes (SAP, NetSuite, D365, Acumatica, P21, Eclipse, SX.e,
+   Sage X3, IFS, Oracle Fusion, Ramco, JDE, Plex, JobBoss, Oracle EBS,
+   proALPHA) are idempotent via `erp_export_ledger`: before the outbound
+   call `checkExportIdempotency` short-circuits a repeat of an
+   already-exported `(order, connector, payload_hash)` to a no-op
+   returning the prior external id, and blocks a changed-hash re-export
+   (`PAYLOAD_HASH_CHANGED`) unless `reexport:true` is passed. This is a
+   guard in front of the existing retry/audit path, not a replacement;
+   Tally uses its own `tally_voucher_records` ledger.
 
 ## Multi-tenant safety
 

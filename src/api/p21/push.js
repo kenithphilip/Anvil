@@ -7,6 +7,7 @@ import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { p21DecryptCreds, p21Fetch, p21IsConfigured } from "../_lib/p21-client.js";
 import { httpIsRecoverable, requireApprovedOrder } from "../_lib/erp-runner.js";
+import { checkExportIdempotency, recordExport, orderPayloadHash } from "../_lib/erp-export-ledger.js";
 
 const dotGet = (obj, p) => p.split(".").reduce((a, k) => (a ? a[k] : undefined), obj);
 const dotSet = (obj, p, v) => { const parts = p.split("."); let cur = obj;
@@ -76,6 +77,13 @@ export default async function handler(req, res) {
     }
     const payload = buildPayload(orderQ.data, customer, settings);
     if (body.dry_run) return json(res, 200, { ok: true, dry_run: true, payload });
+    const payloadHash = orderPayloadHash(orderQ.data);
+    const idem = await checkExportIdempotency(svc, {
+      tenantId: ctx.tenantId, orderId: orderQ.data.id, connector: "p21",
+      payloadHash, allowReexport: body.reexport === true,
+    });
+    if (idem.idempotent) return json(res, 200, { ok: true, idempotent: true, external_id: idem.external_id, p21_id: idem.external_id });
+    if (idem.blocked) return json(res, idem.status, idem.body);
     let resp = null;
     try {
       resp = await p21Fetch(settings, { method: "POST", path: "/api/v2/data/OrderHeader", body: payload });
@@ -112,6 +120,7 @@ export default async function handler(req, res) {
       queued_for_retry: httpIsRecoverable(resp.status),
       error: resp.body?.error || resp.body?.message || resp.body?.raw,
     });
+    await recordExport(svc, { tenantId: ctx.tenantId, orderId: orderQ.data.id, connector: "p21", payloadHash, externalId });
     return json(res, 200, { ok: true, p21_id: externalId, status: resp.status });
   } catch (err) { sendError(res, err); }
 }

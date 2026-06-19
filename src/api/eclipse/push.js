@@ -7,6 +7,7 @@ import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { eclipseDecryptCreds, eclipseFetch, eclipseIsConfigured } from "../_lib/eclipse-client.js";
 import { httpIsRecoverable, requireApprovedOrder } from "../_lib/erp-runner.js";
+import { checkExportIdempotency, recordExport, orderPayloadHash } from "../_lib/erp-export-ledger.js";
 
 const dotGet = (obj, p) => p.split(".").reduce((a, k) => (a ? a[k] : undefined), obj);
 const dotSet = (obj, p, v) => { const parts = p.split("."); let cur = obj;
@@ -75,6 +76,13 @@ export default async function handler(req, res) {
     }
     const payload = buildPayload(orderQ.data, customer, settings);
     if (body.dry_run) return json(res, 200, { ok: true, dry_run: true, payload });
+    const payloadHash = orderPayloadHash(orderQ.data);
+    const idem = await checkExportIdempotency(svc, {
+      tenantId: ctx.tenantId, orderId: orderQ.data.id, connector: "eclipse",
+      payloadHash, allowReexport: body.reexport === true,
+    });
+    if (idem.idempotent) return json(res, 200, { ok: true, idempotent: true, external_id: idem.external_id, eclipse_id: idem.external_id });
+    if (idem.blocked) return json(res, idem.status, idem.body);
     let resp = null;
     try {
       resp = await eclipseFetch(settings, { method: "POST", path: "/eterm/orders", body: payload });
@@ -112,6 +120,7 @@ export default async function handler(req, res) {
       queued_for_retry: httpIsRecoverable(resp.status),
       error: resp.body?.error || resp.body?.raw,
     });
+    await recordExport(svc, { tenantId: ctx.tenantId, orderId: orderQ.data.id, connector: "eclipse", payloadHash, externalId });
     return json(res, 200, { ok: true, eclipse_id: externalId, status: resp.status, transport: resp.transport });
   } catch (err) { sendError(res, err); }
 }

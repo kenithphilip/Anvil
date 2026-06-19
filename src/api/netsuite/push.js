@@ -22,6 +22,7 @@ import { tenantSettings } from "../_lib/stripe-client.js";
 import { netsuiteIsConfigured, netsuiteFetch } from "../_lib/netsuite-client.js";
 import { decryptNetsuiteCreds } from "../_lib/secrets.js";
 import { requireApprovedOrder } from "../_lib/erp-runner.js";
+import { checkExportIdempotency, recordExport, orderPayloadHash } from "../_lib/erp-export-ledger.js";
 
 // Tiny dot-path get/set for field-map overrides. Map shape:
 // { "<source.path>": "<target.path>" } where source is read from the
@@ -128,6 +129,14 @@ export default async function handler(req, res) {
       return json(res, 200, { ok: true, dry_run: true, payload });
     }
 
+    const payloadHash = orderPayloadHash(orderQ.data);
+    const idem = await checkExportIdempotency(svc, {
+      tenantId: ctx.tenantId, orderId: orderQ.data.id, connector: "netsuite",
+      payloadHash, allowReexport: body.reexport === true,
+    });
+    if (idem.idempotent) return json(res, 200, { ok: true, idempotent: true, external_id: idem.external_id, netsuite_id: idem.external_id });
+    if (idem.blocked) return json(res, idem.status, idem.body);
+
     let resp = null;
     try {
       resp = await netsuiteFetch(settings, {
@@ -194,6 +203,7 @@ export default async function handler(req, res) {
         error: resp.body?.["o:errorDetails"] || resp.body?.error || resp.body?.raw || null,
       });
     }
+    await recordExport(svc, { tenantId: ctx.tenantId, orderId: orderQ.data.id, connector: "netsuite", payloadHash, externalId });
     return json(res, 200, {
       ok: true,
       netsuite_id: externalId,

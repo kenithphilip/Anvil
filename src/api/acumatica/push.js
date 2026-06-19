@@ -7,6 +7,7 @@ import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { acuDecryptCreds, acuFetch, acuIsConfigured } from "../_lib/acumatica-client.js";
 import { httpIsRecoverable, requireApprovedOrder } from "../_lib/erp-runner.js";
+import { checkExportIdempotency, recordExport, orderPayloadHash } from "../_lib/erp-export-ledger.js";
 
 // Acumatica's contract-based REST expects { Field: { value: X } } shape.
 const v = (x) => ({ value: x });
@@ -68,6 +69,13 @@ export default async function handler(req, res) {
     }
     const payload = buildPayload(orderQ.data, customer, settings);
     if (body.dry_run) return json(res, 200, { ok: true, dry_run: true, payload });
+    const payloadHash = orderPayloadHash(orderQ.data);
+    const idem = await checkExportIdempotency(svc, {
+      tenantId: ctx.tenantId, orderId: orderQ.data.id, connector: "acumatica",
+      payloadHash, allowReexport: body.reexport === true,
+    });
+    if (idem.idempotent) return json(res, 200, { ok: true, idempotent: true, external_id: idem.external_id, acumatica_id: idem.external_id });
+    if (idem.blocked) return json(res, idem.status, idem.body);
     const ep = settings.acumatica_endpoint_name || "Default";
     const ver = settings.acumatica_endpoint_version || "20.200.001";
     let resp = null;
@@ -110,6 +118,7 @@ export default async function handler(req, res) {
       queued_for_retry: httpIsRecoverable(resp.status),
       error: resp.body?.message || resp.body?.error || resp.body?.raw,
     });
+    await recordExport(svc, { tenantId: ctx.tenantId, orderId: orderQ.data.id, connector: "acumatica", payloadHash, externalId });
     return json(res, 200, { ok: true, acumatica_id: externalId, status: resp.status });
   } catch (err) { sendError(res, err); }
 }

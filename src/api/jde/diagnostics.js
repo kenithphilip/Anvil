@@ -1,5 +1,9 @@
-// GET /api/jde/diagnostics
-// Browses JDE EnterpriseOne tables read-only and reports status + latency.
+// GET /api/jde/diagnostics[?drift=1]
+// Browses JDE EnterpriseOne tables read-only and reports status +
+// latency. With ?drift=1 (admin) drift is reported unavailable: JDE
+// reads return a nested dataservice grid (not a flat field set) and the
+// field map targets orchestrator inputs, so there is no comparable
+// live schema to diff against.
 
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
@@ -26,13 +30,18 @@ export default async function handler(req, res) {
   try {
     const ctx = await resolveContext(req);
     requirePermission(ctx, "read");
+    const wantDrift = ["1", "true"].includes(String(req.query?.drift || ""));
+    if (wantDrift) requirePermission(ctx, "admin");
     const svc = serviceClient();
     const settingsRaw = await tenantSettings(svc, ctx.tenantId);
     const settings = jdeDecryptCreds({ ...settingsRaw, tenant_id: ctx.tenantId });
     if (!jdeIsConfigured(settings)) {
       return json(res, 200, { configured: false, probes: [], notes: ["JDE not configured"] });
     }
-    const { probes, summary } = await runConnectorDiagnostics(jdeFetch, settings, PROBES);
-    return json(res, 200, { configured: true, base_url: settings.jde_base_url, probes, summary, ran_at: new Date().toISOString() });
+    // schemaEntity null -> runner reports drift unavailable instead of
+    // diffing against the nested dataservice grid.
+    const opts = wantDrift ? { drift: { fieldMap: settings.jde_field_map || {}, schemaEntity: null } } : {};
+    const { probes, summary, drift } = await runConnectorDiagnostics(jdeFetch, settings, PROBES, opts);
+    return json(res, 200, { configured: true, base_url: settings.jde_base_url, probes, summary, ...(wantDrift ? { drift } : {}), ran_at: new Date().toISOString() });
   } catch (err) { sendError(res, err); }
 }

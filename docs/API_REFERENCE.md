@@ -1148,7 +1148,7 @@ when called with `Authorization: Bearer $CRON_SECRET`.
 Returns `{ configured, probe_ok, probe_error, base_url,
 connected_at, sync_state[], retry_pending }` for the calling tenant.
 
-### `GET /api/<prefix>/diagnostics` — read
+### `GET /api/<prefix>/diagnostics` — read (`?drift=1` requires admin)
 
 Probes the live ERP read surfaces (per-connector entities) and
 reports connectivity + config completeness. Returns
@@ -1156,6 +1156,14 @@ reports connectivity + config completeness. Returns
 rows_returned, error }], summary: { all_ok, total, failed }, ran_at }`,
 or `{ configured: false, probes: [], notes }` when the connector is
 not configured. Read-only; performs no writes.
+
+With `?drift=1` (permission `admin`) the response also carries a
+`drift` block diffing `tenant_settings.<prefix>_field_map` against the
+live sales-order schema: `{ available, entity, live_field_count,
+findings: [{ finding_kind: "mapped_field_absent", severity, field,
+expected: { target }, actual: { present } }] }`. Connectors with no
+readable sales-order schema (jde, oracle_ebs) return
+`drift.available: false`. Backed by `_lib/connector-drift.js`.
 
 ### `GET | PUT /api/<prefix>/field_map` — read (GET) / admin (PUT)
 

@@ -1,5 +1,8 @@
-// GET /api/oracle_ebs/diagnostics
-// Probes the Oracle EBS Integrated SOA Gateway REST surface and reports status.
+// GET /api/oracle_ebs/diagnostics[?drift=1]
+// Probes the Oracle EBS Integrated SOA Gateway REST surface and reports
+// status. With ?drift=1 (admin) drift is reported unavailable: sales
+// orders push through OE_ORDER_PUB.Process_Order (write-only PL/SQL
+// API) with no readable sales-order schema to diff the field map against.
 
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
@@ -20,13 +23,18 @@ export default async function handler(req, res) {
   try {
     const ctx = await resolveContext(req);
     requirePermission(ctx, "read");
+    const wantDrift = ["1", "true"].includes(String(req.query?.drift || ""));
+    if (wantDrift) requirePermission(ctx, "admin");
     const svc = serviceClient();
     const settingsRaw = await tenantSettings(svc, ctx.tenantId);
     const settings = oracleEbsDecryptCreds({ ...settingsRaw, tenant_id: ctx.tenantId });
     if (!oracleEbsIsConfigured(settings)) {
       return json(res, 200, { configured: false, probes: [], notes: ["Oracle EBS not configured"] });
     }
-    const { probes, summary } = await runConnectorDiagnostics(oracleEbsFetch, settings, PROBES);
-    return json(res, 200, { configured: true, base_url: settings.oracle_ebs_base_url, probes, summary, ran_at: new Date().toISOString() });
+    // schemaEntity null -> runner reports drift unavailable; the SO push
+    // is a write-only PL/SQL API with no readable schema.
+    const opts = wantDrift ? { drift: { fieldMap: settings.oracle_ebs_field_map || {}, schemaEntity: null } } : {};
+    const { probes, summary, drift } = await runConnectorDiagnostics(oracleEbsFetch, settings, PROBES, opts);
+    return json(res, 200, { configured: true, base_url: settings.oracle_ebs_base_url, probes, summary, ...(wantDrift ? { drift } : {}), ran_at: new Date().toISOString() });
   } catch (err) { sendError(res, err); }
 }

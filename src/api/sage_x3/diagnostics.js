@@ -1,5 +1,7 @@
-// GET /api/sage_x3/diagnostics
-// Probes Sage X3 representations and reports per-entity status + latency.
+// GET /api/sage_x3/diagnostics[?drift=1]
+// Probes Sage X3 representations and reports per-entity status +
+// latency. With ?drift=1 (admin) it also diffs the tenant
+// sagex3_field_map against the live SOH (sales order header) schema.
 
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
@@ -21,13 +23,16 @@ export default async function handler(req, res) {
   try {
     const ctx = await resolveContext(req);
     requirePermission(ctx, "read");
+    const wantDrift = ["1", "true"].includes(String(req.query?.drift || ""));
+    if (wantDrift) requirePermission(ctx, "admin");
     const svc = serviceClient();
     const settingsRaw = await tenantSettings(svc, ctx.tenantId);
     const settings = sagex3DecryptCreds({ ...settingsRaw, tenant_id: ctx.tenantId });
     if (!sagex3IsConfigured(settings)) {
       return json(res, 200, { configured: false, probes: [], notes: ["Sage X3 not configured"] });
     }
-    const { probes, summary } = await runConnectorDiagnostics(sagex3Fetch, settings, PROBES);
-    return json(res, 200, { configured: true, base_url: settings.sagex3_base_url, probes, summary, ran_at: new Date().toISOString() });
+    const opts = wantDrift ? { drift: { fieldMap: settings.sagex3_field_map || {}, schemaEntity: "sales_order" } } : {};
+    const { probes, summary, drift } = await runConnectorDiagnostics(sagex3Fetch, settings, PROBES, opts);
+    return json(res, 200, { configured: true, base_url: settings.sagex3_base_url, probes, summary, ...(wantDrift ? { drift } : {}), ran_at: new Date().toISOString() });
   } catch (err) { sendError(res, err); }
 }

@@ -830,3 +830,36 @@ so the field map is no longer write-only-from-push:
 The field-map handler is factored into `_lib/connector-fieldmap.js`
 and the probe loop into `_lib/connector-diagnostics.js`, so each
 connector file only declares its settings column and probe list.
+
+### Config / schema drift
+
+`GET /api/<erp>/diagnostics?drift=1` (permission `admin`) additionally
+diffs the tenant's `<erp>_field_map` against the connector's live
+sales-order schema and returns a `drift` block:
+
+```
+"drift": {
+  "available": true,
+  "entity": "sales_order",
+  "live_field_count": 42,
+  "findings": [
+    { "finding_kind": "mapped_field_absent", "severity": "error",
+      "field": "<anvilField>", "expected": { "target": "<erpField>" },
+      "actual": { "present": false } }
+  ]
+}
+```
+
+A finding means the tenant maps an Anvil field to an ERP target that
+no longer exists in the live schema, so the push silently writes to a
+dead field. The detector is the connector-agnostic
+`_lib/connector-drift.js` (`detectDrift(expectedMap, liveSchema)`),
+which mirrors the finding shape of Tally's reconciler
+(`_lib/tally-reconciler.js`) without altering Tally's separate
+voucher-reconciliation behavior. It returns no findings when the map
+is empty or the schema is unreadable, so an unreachable ERP never
+raises a false alarm. Connectors whose sales-order surface is
+write-only or returns a non-flat shape (JDE dataservice, Oracle EBS
+`Process_Order`) report `drift.available: false` rather than diffing
+against the wrong entity. The plain `diagnostics` call (no `?drift=1`)
+is unchanged and stays `read`.

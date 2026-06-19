@@ -9,6 +9,8 @@
 // that fetch fn, so connectors that key reads on `path`, `resource`,
 // or `entity` all work unchanged.
 
+import { detectDrift, liveFieldSet } from "./connector-drift.js";
+
 // Best-effort row count across the response shapes our clients return
 // (OData v4 `value`, Fusion/REST `items`, OData v2 `d.results`, or a
 // bare array). Diagnostics is read-only; this is informational only.
@@ -22,8 +24,18 @@ const rowsOf = (body) => {
 
 // probes: [{ entity, args }] where args is the fetch options object
 // (e.g. { method: "GET", path: "customers", query: { limit: 1 } }).
-export const runConnectorDiagnostics = async (fetchFn, settings, probes) => {
+//
+// opts.drift, when present, runs a config/schema drift check after the
+// probes complete:
+//   { fieldMap, schemaEntity } where fieldMap is the tenant's
+//   <erp>_field_map and schemaEntity is the probe entity whose live
+//   sample record carries the field map's target schema (typically the
+//   sales-order entity). A null schemaEntity means the connector has no
+//   readable target schema, so drift is reported unavailable rather than
+//   diffed against the wrong entity (which would yield false positives).
+export const runConnectorDiagnostics = async (fetchFn, settings, probes, opts = {}) => {
   const out = [];
+  const samples = {};
   for (const p of probes) {
     const t0 = Date.now();
     try {
@@ -34,12 +46,30 @@ export const runConnectorDiagnostics = async (fetchFn, settings, probes) => {
         rows_returned: r.ok ? rowsOf(r.body) : 0,
         error: r.ok ? null : (r.body?.error?.message || r.body?.error || r.body?.message || r.body?.raw || null),
       });
+      if (r.ok && r.body != null) samples[p.entity] = r.body;
     } catch (err) {
       out.push({ entity: p.entity, ok: false, status: 0, latency_ms: Date.now() - t0, rows_returned: 0, error: err.message });
     }
   }
-  return {
+  const result = {
     probes: out,
     summary: { all_ok: out.every((p) => p.ok), total: out.length, failed: out.filter((p) => !p.ok).length },
   };
+  if (opts.drift) {
+    const { fieldMap, schemaEntity } = opts.drift;
+    if (!schemaEntity) {
+      result.drift = { available: false, reason: "no readable target schema for this connector", findings: [] };
+    } else if (samples[schemaEntity] == null) {
+      result.drift = { available: false, reason: "schema probe '" + schemaEntity + "' returned no sample", findings: [] };
+    } else {
+      const fields = liveFieldSet(samples[schemaEntity]);
+      result.drift = {
+        available: true,
+        entity: schemaEntity,
+        live_field_count: fields.size,
+        findings: detectDrift(fieldMap || {}, fields),
+      };
+    }
+  }
+  return result;
 };

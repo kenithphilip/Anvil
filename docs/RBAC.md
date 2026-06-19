@@ -131,6 +131,7 @@ override the route matrix:
 | Admin | Change member role | ADM |
 | Admin | View ERP connector field map / run diagnostics | any role with `read` (GET `/api/<erp>/field_map`, `/api/<erp>/diagnostics`) |
 | Admin | Edit ERP connector field map | ADM (PUT `/api/<erp>/field_map`) |
+| Admin | Run connector config/schema drift check | ADM (GET `/api/<erp>/diagnostics?drift=1`) |
 | Security | Edit redaction rule | ADM |
 | Security | Run injection test | ADM |
 

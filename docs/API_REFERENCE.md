@@ -1085,10 +1085,12 @@ the configured handoff number; marks status=`escalated`.
 
 ## Phase 5.4b ERP endpoints
 
-Eight new ERP connectors share the canonical 5-endpoint shape
-(connect, sync, push, retry, health). They all behave identically at
-the API level — the ERP-specific differences (auth, base URL,
-field maps) are configured per-tenant via the connect call.
+Eight new ERP connectors share the canonical 7-endpoint shape
+(connect, sync, push, retry, health, diagnostics, field_map). They
+all behave identically at the API level — the ERP-specific
+differences (auth, base URL, field maps) are configured per-tenant
+via the connect call. (Sage X3, shipped in Phase 5.4a, exposes the
+same `diagnostics` + `field_map` pair under `/api/sage_x3/*`.)
 
 For each ERP `<prefix>` in `{ifs, oracle_fusion, ramco, jde, plex,
 jobboss, oracle_ebs, proalpha}`:
@@ -1145,6 +1147,25 @@ when called with `Authorization: Bearer $CRON_SECRET`.
 
 Returns `{ configured, probe_ok, probe_error, base_url,
 connected_at, sync_state[], retry_pending }` for the calling tenant.
+
+### `GET /api/<prefix>/diagnostics` — read
+
+Probes the live ERP read surfaces (per-connector entities) and
+reports connectivity + config completeness. Returns
+`{ configured, base_url, probes: [{ entity, ok, status, latency_ms,
+rows_returned, error }], summary: { all_ok, total, failed }, ran_at }`,
+or `{ configured: false, probes: [], notes }` when the connector is
+not configured. Read-only; performs no writes.
+
+### `GET | PUT /api/<prefix>/field_map` — read (GET) / admin (PUT)
+
+GET returns the tenant's current override:
+`{ field_map: { <anvilField>: <erpField> } }` (empty object when
+unset). PUT validates and persists the map on
+`tenant_settings.<prefix>_field_map` (jsonb) and writes an audit row;
+body `{ field_map: {...} }`, max 50 string→string entries. Returns
+`{ ok: true, field_map }`. Backed by the shared
+`_lib/connector-fieldmap.js` helper.
 
 ## ERP credential storage
 

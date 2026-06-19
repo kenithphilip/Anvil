@@ -129,6 +129,8 @@ override the route matrix:
 | Service visits | Submit closure report | OPS |
 | Admin | Add / remove member | ADM |
 | Admin | Change member role | ADM |
+| Admin | View ERP connector field map / run diagnostics | any role with `read` (GET `/api/<erp>/field_map`, `/api/<erp>/diagnostics`) |
+| Admin | Edit ERP connector field map | ADM (PUT `/api/<erp>/field_map`) |
 | Security | Edit redaction rule | ADM |
 | Security | Run injection test | ADM |
 

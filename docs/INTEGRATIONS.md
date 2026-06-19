@@ -807,3 +807,26 @@ encrypted at rest and replayed on every call.
 - Health endpoints (`/api/<erp>/health`) return configured /
   probe_ok / sync_state / retry_pending for the calling tenant.
   Wired into the Admin Center status panels.
+
+### Field-map + diagnostics parity
+
+Every connector listed above (IFS, Oracle Fusion, Ramco, JDE, Plex,
+JobBoss, Oracle EBS, proALPHA, Sage X3) now exposes the same two
+control-surface endpoints the seven older connectors already ship,
+so the field map is no longer write-only-from-push:
+
+- `GET /api/<erp>/field_map` (permission `read`) returns the tenant's
+  current `<erp>_field_map` override (`{ field_map: {...} }`).
+- `PUT /api/<erp>/field_map` (permission `admin`) validates and
+  persists the map on `tenant_settings.<erp>_field_map` (jsonb), then
+  writes an audit row. Body: `{ field_map: { <anvilField>: <erpField> } }`.
+  Max 50 entries; keys and values must be non-empty strings.
+- `GET /api/<erp>/diagnostics` (permission `read`) probes the live
+  ERP for connectivity + config completeness and returns
+  `{ configured, base_url, probes: [{ entity, ok, status, latency_ms,
+  rows_returned, error }], summary, ran_at }` — the same shape as
+  `sap/diagnostics`. Read-only; no side effects.
+
+The field-map handler is factored into `_lib/connector-fieldmap.js`
+and the probe loop into `_lib/connector-diagnostics.js`, so each
+connector file only declares its settings column and probe list.

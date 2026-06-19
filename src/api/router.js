@@ -440,6 +440,8 @@ import sageX3Health            from "./sage_x3/health.js";
 import sageX3Sync              from "./sage_x3/sync.js";
 import sageX3Push              from "./sage_x3/push.js";
 import sageX3Retry             from "./sage_x3/retry.js";
+import sageX3Diagnostics       from "./sage_x3/diagnostics.js";
+import sageX3FieldMap          from "./sage_x3/field_map.js";
 import sxeDiagnostics          from "./sxe/diagnostics.js";
 import sxeFieldMap             from "./sxe/field_map.js";
 
@@ -449,43 +451,59 @@ import ifsHealth               from "./ifs/health.js";
 import ifsSync                 from "./ifs/sync.js";
 import ifsPush                 from "./ifs/push.js";
 import ifsRetry                from "./ifs/retry.js";
+import ifsDiagnostics          from "./ifs/diagnostics.js";
+import ifsFieldMap             from "./ifs/field_map.js";
 import oracleFusionConnect     from "./oracle_fusion/connect.js";
 import oracleFusionHealth      from "./oracle_fusion/health.js";
 import oracleFusionSync        from "./oracle_fusion/sync.js";
 import oracleFusionPush        from "./oracle_fusion/push.js";
 import oracleFusionRetry       from "./oracle_fusion/retry.js";
+import oracleFusionDiagnostics from "./oracle_fusion/diagnostics.js";
+import oracleFusionFieldMap    from "./oracle_fusion/field_map.js";
 import ramcoConnect            from "./ramco/connect.js";
 import ramcoHealth             from "./ramco/health.js";
 import ramcoSync               from "./ramco/sync.js";
 import ramcoPush               from "./ramco/push.js";
 import ramcoRetry              from "./ramco/retry.js";
+import ramcoDiagnostics        from "./ramco/diagnostics.js";
+import ramcoFieldMap           from "./ramco/field_map.js";
 // Phase 5.4b cluster B (token-pair): JDE, Plex, JobBoss.
 import jdeConnect              from "./jde/connect.js";
 import jdeHealth               from "./jde/health.js";
 import jdeSync                 from "./jde/sync.js";
 import jdePush                 from "./jde/push.js";
 import jdeRetry                from "./jde/retry.js";
+import jdeDiagnostics          from "./jde/diagnostics.js";
+import jdeFieldMap             from "./jde/field_map.js";
 import plexConnect             from "./plex/connect.js";
 import plexHealth              from "./plex/health.js";
 import plexSync                from "./plex/sync.js";
 import plexPush                from "./plex/push.js";
 import plexRetry               from "./plex/retry.js";
+import plexDiagnostics         from "./plex/diagnostics.js";
+import plexFieldMap            from "./plex/field_map.js";
 import jobbossConnect          from "./jobboss/connect.js";
 import jobbossHealth           from "./jobboss/health.js";
 import jobbossSync             from "./jobboss/sync.js";
 import jobbossPush             from "./jobboss/push.js";
 import jobbossRetry            from "./jobboss/retry.js";
+import jobbossDiagnostics      from "./jobboss/diagnostics.js";
+import jobbossFieldMap         from "./jobboss/field_map.js";
 // Phase 5.4b cluster C (HTTP Basic): Oracle EBS, proALPHA.
 import oracleEbsConnect        from "./oracle_ebs/connect.js";
 import oracleEbsHealth         from "./oracle_ebs/health.js";
 import oracleEbsSync           from "./oracle_ebs/sync.js";
 import oracleEbsPush           from "./oracle_ebs/push.js";
 import oracleEbsRetry          from "./oracle_ebs/retry.js";
+import oracleEbsDiagnostics    from "./oracle_ebs/diagnostics.js";
+import oracleEbsFieldMap       from "./oracle_ebs/field_map.js";
 import proalphaConnect         from "./proalpha/connect.js";
 import proalphaHealth          from "./proalpha/health.js";
 import proalphaSync            from "./proalpha/sync.js";
 import proalphaPush            from "./proalpha/push.js";
 import proalphaRetry           from "./proalpha/retry.js";
+import proalphaDiagnostics     from "./proalpha/diagnostics.js";
+import proalphaFieldMap        from "./proalpha/field_map.js";
 
 import healthCheck             from "./health.js";
 import healthz                 from "./healthz.js";
@@ -649,54 +667,72 @@ const STATIC_ROUTES = {
   "/sage_x3/sync":                  sageX3Sync,
   "/sage_x3/push":                  sageX3Push,
   "/sage_x3/retry":                 sageX3Retry,
+  "/sage_x3/diagnostics":           sageX3Diagnostics,
+  "/sage_x3/field_map":             sageX3FieldMap,
 
   "/ifs/connect":                   ifsConnect,
   "/ifs/health":                    ifsHealth,
   "/ifs/sync":                      ifsSync,
   "/ifs/push":                      ifsPush,
   "/ifs/retry":                     ifsRetry,
+  "/ifs/diagnostics":               ifsDiagnostics,
+  "/ifs/field_map":                 ifsFieldMap,
 
   "/oracle_fusion/connect":         oracleFusionConnect,
   "/oracle_fusion/health":          oracleFusionHealth,
   "/oracle_fusion/sync":            oracleFusionSync,
   "/oracle_fusion/push":            oracleFusionPush,
   "/oracle_fusion/retry":           oracleFusionRetry,
+  "/oracle_fusion/diagnostics":     oracleFusionDiagnostics,
+  "/oracle_fusion/field_map":       oracleFusionFieldMap,
 
   "/ramco/connect":                 ramcoConnect,
   "/ramco/health":                  ramcoHealth,
   "/ramco/sync":                    ramcoSync,
   "/ramco/push":                    ramcoPush,
   "/ramco/retry":                   ramcoRetry,
+  "/ramco/diagnostics":             ramcoDiagnostics,
+  "/ramco/field_map":               ramcoFieldMap,
 
   "/jde/connect":                   jdeConnect,
   "/jde/health":                    jdeHealth,
   "/jde/sync":                      jdeSync,
   "/jde/push":                      jdePush,
   "/jde/retry":                     jdeRetry,
+  "/jde/diagnostics":               jdeDiagnostics,
+  "/jde/field_map":                 jdeFieldMap,
 
   "/plex/connect":                  plexConnect,
   "/plex/health":                   plexHealth,
   "/plex/sync":                     plexSync,
   "/plex/push":                     plexPush,
   "/plex/retry":                    plexRetry,
+  "/plex/diagnostics":              plexDiagnostics,
+  "/plex/field_map":                plexFieldMap,
 
   "/jobboss/connect":               jobbossConnect,
   "/jobboss/health":                jobbossHealth,
   "/jobboss/sync":                  jobbossSync,
   "/jobboss/push":                  jobbossPush,
   "/jobboss/retry":                 jobbossRetry,
+  "/jobboss/diagnostics":           jobbossDiagnostics,
+  "/jobboss/field_map":             jobbossFieldMap,
 
   "/oracle_ebs/connect":            oracleEbsConnect,
   "/oracle_ebs/health":             oracleEbsHealth,
   "/oracle_ebs/sync":               oracleEbsSync,
   "/oracle_ebs/push":               oracleEbsPush,
   "/oracle_ebs/retry":              oracleEbsRetry,
+  "/oracle_ebs/diagnostics":        oracleEbsDiagnostics,
+  "/oracle_ebs/field_map":          oracleEbsFieldMap,
 
   "/proalpha/connect":              proalphaConnect,
   "/proalpha/health":               proalphaHealth,
   "/proalpha/sync":                 proalphaSync,
   "/proalpha/push":                 proalphaPush,
   "/proalpha/retry":                proalphaRetry,
+  "/proalpha/diagnostics":          proalphaDiagnostics,
+  "/proalpha/field_map":            proalphaFieldMap,
   "/sxe/diagnostics":               sxeDiagnostics,
   "/sxe/field_map":                 sxeFieldMap,
   "/admin/contracts":               adminContracts,

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Chip } from "../lib/primitives";
 import { ObaraBackend } from "../lib/api";
+import { RBAC } from "../lib/rbac";
 
 // Customer contacts manager.
 //
@@ -16,6 +17,9 @@ const BLANK = { id: null, name: "", email: "", phone: "", role: "", is_primary: 
 const ROLES = ["procurement", "accounts", "dispatch", "qa", "owner", "other"];
 
 export const CustomerContactsPanel: React.FC<{ customerId: string }> = ({ customerId }) => {
+  // Guard rail (2026-06): customer-master edits are admin-only. Non-admins
+  // see the contact list read-only.
+  const canEdit = RBAC.isAdmin();
   const [contacts, setContacts] = useState<Contact[] | null>(null);
   const [form, setForm] = useState<Contact>({ ...BLANK });
   const [open, setOpen] = useState(false);
@@ -81,7 +85,9 @@ export const CustomerContactsPanel: React.FC<{ customerId: string }> = ({ custom
         <div className="mono-sm" style={{ color: "var(--ink-3)" }}>
           Contacts {contacts ? `(${contacts.length})` : ""}
         </div>
-        <Btn sm kind="ghost" onClick={startAdd}>+ Add contact</Btn>
+        {canEdit
+          ? <Btn sm kind="ghost" onClick={startAdd}>+ Add contact</Btn>
+          : <span className="mono-sm" style={{ color: "var(--ink-4)", fontSize: 10 }}>Read-only (admin to edit)</span>}
       </div>
 
       {err && <Banner kind="bad" title="Contacts">{err}</Banner>}
@@ -100,10 +106,12 @@ export const CustomerContactsPanel: React.FC<{ customerId: string }> = ({ custom
                 <td className="mono-sm">{c.email || "-"}</td>
                 <td className="mono-sm">{c.phone || "-"}</td>
                 <td>{c.role ? <Chip k="ghost">{c.role}</Chip> : "-"}</td>
-                <td>{c.is_primary ? <Chip k="good">primary</Chip> : <Btn sm kind="ghost" onClick={() => makePrimary(c)}>Make primary</Btn>}</td>
+                <td>{c.is_primary ? <Chip k="good">primary</Chip> : (canEdit ? <Btn sm kind="ghost" onClick={() => makePrimary(c)}>Make primary</Btn> : "-")}</td>
                 <td className="r">
-                  <Btn sm kind="ghost" onClick={() => startEdit(c)}>Edit</Btn>
-                  <Btn sm kind="ghost" onClick={() => del(c)}>Delete</Btn>
+                  {canEdit && <>
+                    <Btn sm kind="ghost" onClick={() => startEdit(c)}>Edit</Btn>
+                    <Btn sm kind="ghost" onClick={() => del(c)}>Delete</Btn>
+                  </>}
                 </td>
               </tr>
             ))}

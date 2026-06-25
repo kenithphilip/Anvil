@@ -1,12 +1,17 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Btn, Chip } from "../lib/primitives";
 import { ObaraBackend } from "../lib/api";
+import { RBAC } from "../lib/rbac";
 
 // Customer hierarchy: pick a parent (corporate group / holding entity)
 // and see the child entities that roll up under this customer. Backed by
-// customers.parent_customer_id (migration 137). Saving sends the full
-// customer object through customers.upsert so the partial change does
-// not clobber other columns.
+// customers.parent_customer_id (migration 137).
+//
+// Guard rails (2026-06): editing the customer master is admin-only, and a
+// parent change is staged as a draft that must be explicitly confirmed +
+// saved - it no longer mutates the record the instant the dropdown changes.
+// Saving sends the full customer object through customers.upsert so the
+// partial change does not clobber other columns.
 
 type Customer = any;
 
@@ -16,7 +21,12 @@ export const CustomerHierarchyPanel: React.FC<{
   onChanged?: () => void;
   onOpen?: (id: string) => void;
 }> = ({ customer, allCustomers, onChanged, onOpen }) => {
+  const canEdit = RBAC.isAdmin();
   const [busy, setBusy] = useState(false);
+  // Staged selection. Synced to the record whenever the selected customer
+  // changes so switching rows never leaves a stale draft behind.
+  const [draftParent, setDraftParent] = useState<string>(customer.parent_customer_id || "");
+  useEffect(() => { setDraftParent(customer.parent_customer_id || ""); }, [customer.id, customer.parent_customer_id]);
 
   const nameOf = (c: Customer) => c?.customer_name || c?.customer_key || (c?.id ? c.id.slice(0, 8) : "");
   // Candidate parents: every other customer (exclude self). Cycle
@@ -25,17 +35,22 @@ export const CustomerHierarchyPanel: React.FC<{
     () => (allCustomers || []).filter((c) => c.id !== customer.id).sort((a, b) => nameOf(a).localeCompare(nameOf(b))),
     [allCustomers, customer.id]
   );
-  const parent = (allCustomers || []).find((c) => c.id === customer.parent_customer_id) || null;
+  const currentParentId = customer.parent_customer_id || "";
+  const parent = (allCustomers || []).find((c) => c.id === currentParentId) || null;
   const children = useMemo(
     () => (allCustomers || []).filter((c) => c.parent_customer_id === customer.id),
     [allCustomers, customer.id]
   );
+  const dirty = draftParent !== currentParentId;
 
-  const setParent = async (parentId: string) => {
+  const saveParent = async () => {
+    if (!canEdit || !dirty) return;
+    const targetName = draftParent ? nameOf(options.find((c) => c.id === draftParent)) : "No parent (top-level)";
+    if (!window.confirm(`Change the parent of "${nameOf(customer)}" to "${targetName}"?\n\nThis updates the customer master hierarchy.`)) return;
     setBusy(true);
     try {
-      await ObaraBackend?.customers?.upsert?.({ ...customer, parent_customer_id: parentId || null });
-      window.notifySuccess?.("Hierarchy updated", parentId ? "Parent set" : "Parent cleared");
+      await ObaraBackend?.customers?.upsert?.({ ...customer, parent_customer_id: draftParent || null });
+      window.notifySuccess?.("Hierarchy updated", draftParent ? "Parent set" : "Parent cleared");
       onChanged?.();
     } catch (e: any) {
       window.notifyError?.("Could not update hierarchy", e?.message || String(e));
@@ -47,21 +62,36 @@ export const CustomerHierarchyPanel: React.FC<{
       <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 8 }}>Hierarchy</div>
       <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <label className="mono-sm" style={{ color: "var(--ink-3)" }}>Parent / group</label>
-        <select
-          className="select"
-          aria-label="Parent customer"
-          disabled={busy}
-          value={customer.parent_customer_id || ""}
-          onChange={(e) => setParent(e.target.value)}
-          style={{ minWidth: 220 }}
-        >
-          <option value="">No parent (top-level)</option>
-          {options.map((c) => <option key={c.id} value={c.id}>{nameOf(c)}</option>)}
-        </select>
+        {canEdit ? (
+          <>
+            <select
+              className="select"
+              aria-label="Parent customer"
+              disabled={busy}
+              value={draftParent}
+              onChange={(e) => setDraftParent(e.target.value)}
+              style={{ minWidth: 220 }}
+            >
+              <option value="">No parent (top-level)</option>
+              {options.map((c) => <option key={c.id} value={c.id}>{nameOf(c)}</option>)}
+            </select>
+            <Btn sm kind="primary" disabled={!dirty || busy} onClick={saveParent} title="Confirm and save the parent change">
+              {busy ? "Saving..." : "Save"}
+            </Btn>
+            {dirty && !busy && (
+              <Btn sm kind="ghost" onClick={() => setDraftParent(currentParentId)} title="Discard the change">Reset</Btn>
+            )}
+          </>
+        ) : (
+          <span className="mono-sm">{parent ? nameOf(parent) : "No parent (top-level)"}</span>
+        )}
         {parent && (
           <Btn sm kind="ghost" onClick={() => onOpen?.(parent.id)} title="Open parent">{"↑"} {nameOf(parent)}</Btn>
         )}
       </div>
+      {canEdit
+        ? dirty && <div className="mono-sm" style={{ color: "var(--ink-4)", fontSize: 10, marginTop: 4 }}>Unsaved change - click Save to confirm.</div>
+        : <div className="mono-sm" style={{ color: "var(--ink-4)", fontSize: 10, marginTop: 4 }}>Read-only. Admin access is required to edit the customer master.</div>}
 
       <div style={{ marginTop: 10 }}>
         <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 4 }}>

@@ -4748,12 +4748,11 @@ const loadXLSXForCustomerParts = () => {
   if (typeof window === "undefined") return Promise.reject(new Error("no window"));
   if ((window as any).XLSX) return Promise.resolve((window as any).XLSX);
   if (__xlsxPanelPromise) return __xlsxPanelPromise;
-  __xlsxPanelPromise = new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
-    s.onload = () => resolve((window as any).XLSX);
-    s.onerror = () => reject(new Error("Failed to load XLSX from CDN"));
-    document.head.appendChild(s);
+  // xlsx is a bundled dep loaded via dynamic import (CSP blocks CDN scripts).
+  __xlsxPanelPromise = import("xlsx").then((m: any) => {
+    const XLSX = (m && m.read) ? m : (m.default || m);
+    try { (window as any).XLSX = XLSX; } catch (_) { /* noop */ }
+    return XLSX;
   });
   return __xlsxPanelPromise;
 };

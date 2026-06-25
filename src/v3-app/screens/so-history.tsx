@@ -14,7 +14,7 @@ import { ObaraBackend } from "../lib/api";
 // ============================================================
 
 const SOH_STORE_KEY = "obara:v3_so_history";
-const SOH_XLSX_CDN = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+// xlsx is a bundled dep loaded via dynamic import (CSP blocks CDN scripts).
 
 // ── Storage helpers ─────────────────────────────────────────────
 const sohLoad = () => {
@@ -31,14 +31,10 @@ let _xlsxPromise = null;
 const ensureXlsx = () => {
   if (typeof window !== "undefined" && window.XLSX) return Promise.resolve(window.XLSX);
   if (_xlsxPromise) return _xlsxPromise;
-  const toastId = window.notify?.("Loading parser…", "fetching xlsx engine", { ttlMs: 0 }) as number | undefined;
-  _xlsxPromise = new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = SOH_XLSX_CDN;
-    s.async = true;
-    s.onload = () => { if (toastId) window.notifyDismiss?.(toastId); resolve(window.XLSX); };
-    s.onerror = () => { if (toastId) window.notifyDismiss?.(toastId); reject(new Error("Failed to load XLSX engine")); };
-    document.head.appendChild(s);
+  _xlsxPromise = import("xlsx").then((m: any) => {
+    const XLSX = (m && m.read) ? m : (m.default || m);
+    try { if (typeof window !== "undefined") window.XLSX = XLSX; } catch (_) { /* noop */ }
+    return XLSX;
   });
   return _xlsxPromise;
 };

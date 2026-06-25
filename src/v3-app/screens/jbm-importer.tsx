@@ -11,32 +11,13 @@ import { ObaraBackend } from "../lib/api";
 // Reached at #/items?view=jbm-import.
 // ============================================================
 
-const XLSX_CDN_JBM = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
-
+// xlsx is a bundled dep loaded via dynamic import (CSP blocks CDN scripts).
 const ensureXlsxJbm = async () => {
   if (window.XLSX) return window.XLSX;
-  if (document.querySelector(`script[src="${XLSX_CDN_JBM}"]`)) {
-    // Wait for it to attach
-    await new Promise<void>((resolve) => {
-      const t0 = Date.now();
-      const tick = () => {
-        if (window.XLSX || Date.now() - t0 > 5000) return resolve();
-        setTimeout(tick, 50);
-      };
-      tick();
-    });
-    if (window.XLSX) return window.XLSX;
-  }
-  await new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = XLSX_CDN_JBM;
-    s.async = true;
-    s.onload = resolve;
-    s.onerror = () => reject(new Error("Failed to load XLSX from CDN"));
-    document.head.appendChild(s);
-  });
-  if (!window.XLSX) throw new Error("XLSX did not attach to window");
-  return window.XLSX;
+  const m: any = await import("xlsx");
+  const XLSX = (m && m.read) ? m : (m.default || m);
+  try { window.XLSX = XLSX; } catch (_) { /* noop */ }
+  return XLSX;
 };
 
 // Detect JBM matrix structure: header row contains a Plant or Line

@@ -12,7 +12,7 @@ import { ObaraBackend } from "../lib/api";
 // ============================================================
 
 const SM_LS_KEY = "obara:v3_spare_matrices";
-const SM_XLSX_CDN = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+// xlsx is a bundled dep loaded via dynamic import (CSP blocks CDN scripts).
 
 // ---------- helpers ----------------------------------------------------
 const smUid = () => "mx_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
@@ -39,18 +39,14 @@ const smUpsert = (matrix) => {
 
 const smRemove = (id) => smWriteAll(smReadAll().filter((m) => m.id !== id));
 
-const smLoadXlsx = (): Promise<any> => new Promise((resolve, reject) => {
-  if (window.XLSX) return resolve(window.XLSX);
-  const existing = document.querySelector('script[data-sm-xlsx="1"]');
-  if (existing) { existing.addEventListener("load", () => resolve(window.XLSX)); existing.addEventListener("error", reject); return; }
-  const s = document.createElement("script");
-  s.src = SM_XLSX_CDN;
-  s.async = true;
-  s.dataset.smXlsx = "1";
-  s.onload = () => resolve(window.XLSX);
-  s.onerror = () => reject(new Error("Could not load XLSX library."));
-  document.head.appendChild(s);
-});
+const smLoadXlsx = (): Promise<any> => {
+  if (typeof window !== "undefined" && window.XLSX) return Promise.resolve(window.XLSX);
+  return import("xlsx").then((m: any) => {
+    const XLSX = (m && m.read) ? m : (m.default || m);
+    try { if (typeof window !== "undefined") window.XLSX = XLSX; } catch (_) { /* noop */ }
+    return XLSX;
+  });
+};
 
 const smDownload = (filename, mime, content) => {
   const blob = content instanceof Blob ? content : new Blob([content], { type: mime || "application/octet-stream" });

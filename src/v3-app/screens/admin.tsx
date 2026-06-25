@@ -231,6 +231,8 @@ const WiredAdminCRUD = () => {
   const [quoteUnitsSaved, setQuoteUnitsSaved] = u<string[]>([]);
   const [quoteSources, setQuoteSources] = u<string[]>([]);
   const [quoteSourcesSaved, setQuoteSourcesSaved] = u<string[]>([]);
+  const [quoteCurrencies, setQuoteCurrencies] = u<string[]>([]);
+  const [quoteCurrenciesSaved, setQuoteCurrenciesSaved] = u<string[]>([]);
   const [quoteSettingsSaving, setQuoteSettingsSaving] = u(false);
   const [quoteSettingsLoaded, setQuoteSettingsLoaded] = u(false);
 
@@ -1426,8 +1428,10 @@ const WiredAdminCRUD = () => {
         setQuoteValidityDraft(s);
         const units = Array.isArray(r?.quote_line_units) ? r.quote_line_units : [];
         const srcs = Array.isArray(r?.quote_line_source_countries) ? r.quote_line_source_countries : [];
+        const curs = Array.isArray(r?.quote_currencies) ? r.quote_currencies : [];
         setQuoteUnits(units); setQuoteUnitsSaved(units);
         setQuoteSources(srcs); setQuoteSourcesSaved(srcs);
+        setQuoteCurrencies(curs); setQuoteCurrenciesSaved(curs);
       } catch (_) { /* leave blank on failure */ }
       finally { setQuoteSettingsLoaded(true); }
     })();
@@ -1435,7 +1439,8 @@ const WiredAdminCRUD = () => {
 
   const quoteSettingsDirty = quoteValidityDraft !== quoteValidity
     || JSON.stringify(quoteUnits) !== JSON.stringify(quoteUnitsSaved)
-    || JSON.stringify(quoteSources) !== JSON.stringify(quoteSourcesSaved);
+    || JSON.stringify(quoteSources) !== JSON.stringify(quoteSourcesSaved)
+    || JSON.stringify(quoteCurrencies) !== JSON.stringify(quoteCurrenciesSaved);
 
   const onSaveQuoteSettings = async () => {
     setQuoteSettingsSaving(true);
@@ -1445,14 +1450,17 @@ const WiredAdminCRUD = () => {
         quote_default_validity_days: raw === "" ? null : Number(raw),
         quote_line_units: quoteUnits,
         quote_line_source_countries: quoteSources,
+        quote_currencies: quoteCurrencies,
       });
       const v = r?.quote_default_validity_days;
       const s = v == null ? "" : String(v);
       const units = Array.isArray(r?.quote_line_units) ? r.quote_line_units : quoteUnits;
       const srcs = Array.isArray(r?.quote_line_source_countries) ? r.quote_line_source_countries : quoteSources;
+      const curs = Array.isArray(r?.quote_currencies) ? r.quote_currencies : quoteCurrencies;
       setQuoteValidity(s); setQuoteValidityDraft(s);
       setQuoteUnits(units); setQuoteUnitsSaved(units);
       setQuoteSources(srcs); setQuoteSourcesSaved(srcs);
+      setQuoteCurrencies(curs); setQuoteCurrenciesSaved(curs);
       flashOk("Quote settings saved");
     } catch (err) { flashErr(err); }
     finally { setQuoteSettingsSaving(false); }
@@ -3354,6 +3362,13 @@ const WiredAdminCRUD = () => {
                   onChange={setQuoteSources}
                   placeholder="e.g. O-KOREA, INDIA, CHINA"
                   hint="Shown as the Source country dropdown in the quote Lines editor."
+                />
+                <OptionListEditor
+                  label="Currencies dropdown"
+                  values={quoteCurrencies}
+                  onChange={setQuoteCurrencies}
+                  placeholder="e.g. INR, USD, EUR, CNY, KRW, JPY"
+                  hint="Currency dropdown for new quotes, composition supplier prices, and RFQ capture."
                 />
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <Btn sm kind="primary" onClick={onSaveQuoteSettings} disabled={quoteSettingsSaving || !quoteSettingsDirty}>{quoteSettingsSaving ? "Saving…" : "Save quote settings"}</Btn>

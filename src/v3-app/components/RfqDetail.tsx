@@ -26,6 +26,14 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
   // Per-invitation capture draft: { [invitationId]: { ref, currency, lines: {line_no: {unit_price, lead_time_days}} } }
   const [capture, setCapture] = useState<Record<string, Any>>({});
   const [picks, setPicks] = useState<Record<number, string>>({}); // line_no -> invitation_id
+  const [currencyOptions, setCurrencyOptions] = useState<string[]>(["INR", "USD", "EUR", "CNY", "KRW", "JPY", "GBP"]);
+  useEffect(() => {
+    let cancel = false;
+    Promise.resolve(ObaraBackend?.admin?.quoteSettings?.())
+      .then((qs: any) => { if (!cancel && Array.isArray(qs?.quote_currencies) && qs.quote_currencies.length) setCurrencyOptions(qs.quote_currencies); })
+      .catch(() => {});
+    return () => { cancel = true; };
+  }, []);
 
   const load = async () => {
     setErr("");
@@ -199,6 +207,7 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <datalist id="rfq-currencies">{currencyOptions.map((c) => <option key={c} value={c} />)}</datalist>
       {/* Header */}
       <div className="row" style={{ alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <div style={{ fontWeight: 600 }}>{rfq?.rfq_number || "RFQ"}</div>
@@ -283,7 +292,7 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
               </div>
               <div>
                 <div className="label">currency</div>
-                <input className="input mono" style={{ width: 90 }} maxLength={3} value={d.currency || "USD"} onChange={(e) => setCap(inv.id, { currency: e.target.value.toUpperCase() })} />
+                <input className="input mono" style={{ width: 90 }} list="rfq-currencies" value={d.currency || "USD"} onChange={(e) => setCap(inv.id, { currency: e.target.value.toUpperCase() })} />
               </div>
             </div>
             <table className="tbl" style={{ fontSize: 12 }}>

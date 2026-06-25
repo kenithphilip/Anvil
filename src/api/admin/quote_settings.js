@@ -69,6 +69,7 @@ export default async function handler(req, res) {
         quote_default_validity_days: settings?.quote_default_validity_days ?? null,
         quote_line_units: asList(settings?.quote_line_units),
         quote_line_source_countries: asList(settings?.quote_line_source_countries),
+        quote_currencies: asList(settings?.quote_currencies),
       });
     }
 
@@ -92,9 +93,13 @@ export default async function handler(req, res) {
         const r = validateOptionList("quote_line_source_countries", body.quote_line_source_countries);
         if (r.error) errors.push(r.error); else updates.quote_line_source_countries = r.value;
       }
+      if (Object.prototype.hasOwnProperty.call(body, "quote_currencies")) {
+        const r = validateOptionList("quote_currencies", body.quote_currencies);
+        if (r.error) errors.push(r.error); else updates.quote_currencies = r.value;
+      }
       if (errors.length) return json(res, 400, { error: { message: errors.join("; ") } });
       if (!Object.keys(updates).length) {
-        return json(res, 400, { error: { message: "no recognised keys. Allowed: quote_default_validity_days, quote_line_units, quote_line_source_countries" } });
+        return json(res, 400, { error: { message: "no recognised keys. Allowed: quote_default_validity_days, quote_line_units, quote_line_source_countries, quote_currencies" } });
       }
 
       const next = await updateTenantSettings(svc, ctx.tenantId, updates);
@@ -110,6 +115,7 @@ export default async function handler(req, res) {
         quote_default_validity_days: next?.quote_default_validity_days ?? null,
         quote_line_units: asList(next?.quote_line_units),
         quote_line_source_countries: asList(next?.quote_line_source_countries),
+        quote_currencies: asList(next?.quote_currencies),
       });
     }
 

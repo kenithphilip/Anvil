@@ -39,6 +39,8 @@ type MatRow = {
 // In-code fallback used when the tenant has no configured profiles yet
 // (or the API is unavailable), so the preview always works.
 const FALLBACK_PROFILES: PricingProfile[] = [PROFILE_GRANULAR, PROFILE_COMPACT];
+// Used when the admin currency list (Admin > Settings) is empty.
+const DEFAULT_CURRENCIES = ["INR", "USD", "EUR", "CNY", "KRW", "JPY", "GBP"];
 
 const currencyForCountry = (sc?: string): string => {
   const s = (sc || "").toUpperCase();
@@ -91,6 +93,32 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
   }, []);
 
   const [syncing, setSyncing] = useState(false);
+  // Admin-defined dropdowns: currencies (Admin > Settings) + supplier names
+  // (suppliers master + RFQ vendors). Currencies fall back to a default set
+  // so the dropdown is never empty.
+  const [currencyOptions, setCurrencyOptions] = useState<string[]>([]);
+  const [supplierOptions, setSupplierOptions] = useState<string[]>([]);
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const qs: any = await ObaraBackend?.admin?.quoteSettings?.();
+        if (!cancel) setCurrencyOptions(Array.isArray(qs?.quote_currencies) && qs.quote_currencies.length ? qs.quote_currencies : DEFAULT_CURRENCIES);
+      } catch { if (!cancel) setCurrencyOptions(DEFAULT_CURRENCIES); }
+      try {
+        const [sup, ven]: any[] = await Promise.all([
+          Promise.resolve((ObaraBackend as any)?.inventory?.suppliers?.list?.()).catch(() => null),
+          Promise.resolve(ObaraBackend?.supplierRfq?.listVendors?.()).catch(() => null),
+        ]);
+        if (cancel) return;
+        const names = new Set<string>();
+        (Array.isArray(sup) ? sup : (sup?.suppliers || sup?.rows || [])).forEach((s: any) => s?.supplier_name && names.add(s.supplier_name));
+        (Array.isArray(ven) ? ven : (ven?.vendors || [])).forEach((v: any) => v?.vendor_name && names.add(v.vendor_name));
+        setSupplierOptions(Array.from(names).sort());
+      } catch { /* suppliers optional */ }
+    })();
+    return () => { cancel = true; };
+  }, []);
 
   // Restore the saved composition for this quote: seed supplier inputs, the
   // chosen profile and the FX snapshot. Reusable so the "Sync awarded vendors"
@@ -302,6 +330,9 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
 
   return (
     <>
+      {/* Admin-defined dropdowns for the supplier name + currency cells. */}
+      <datalist id="comp-suppliers">{supplierOptions.map((s) => <option key={s} value={s} />)}</datalist>
+      <datalist id="comp-currencies">{currencyOptions.map((c) => <option key={c} value={c} />)}</datalist>
       <div className="row" style={{ gap: 16, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 10 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <label className="mono-sm" style={{ color: "var(--ink-3)" }}>Pricing profile</label>
@@ -360,7 +391,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
                   <td className="mono">{(ln.line_index ?? 0) + 1}</td>
                   <td className="mono">{ln.part_no || "-"}</td>
                   <td className="r mono">{ln.qty ?? "-"}</td>
-                  <td><input className="input" style={{ width: 160 }}
+                  <td><input className="input" style={{ width: 160 }} list="comp-suppliers"
                     aria-label={"supplier name line " + ((ln.line_index ?? 0) + 1)}
                     placeholder="who quoted this?"
                     value={sup.name || ""} onClick={(e) => e.stopPropagation()}
@@ -369,7 +400,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
                     aria-label={"supplier price line " + ((ln.line_index ?? 0) + 1)}
                     value={sup.price || ""} onClick={(e) => e.stopPropagation()}
                     onChange={(e) => setSup(ln, { price: Number(e.target.value) })} /></td>
-                  <td><input className="input mono" style={{ width: 56 }} maxLength={3}
+                  <td><input className="input mono" style={{ width: 64 }} list="comp-currencies"
                     aria-label={"supplier currency line " + ((ln.line_index ?? 0) + 1)}
                     value={sup.cur} onClick={(e) => e.stopPropagation()}
                     onChange={(e) => setSup(ln, { cur: e.target.value.toUpperCase() })} /></td>

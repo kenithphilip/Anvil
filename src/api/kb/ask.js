@@ -87,7 +87,7 @@ export default async function handler(req, res) {
       if (!toolCalls.length) break;
       const toolResults = [];
       for (const tc of toolCalls) {
-        const dispatched = await dispatchErpChatTool(ctx.tenantId, tc.name, tc.input || {});
+        const dispatched = await dispatchErpChatTool(ctx.tenantId, tc.name, tc.input || {}, { userId: ctx.user?.id });
         toolResults.push({ type: "tool_result", tool_use_id: tc.id, content: JSON.stringify(dispatched) });
         if (dispatched?.source) citations.push({ source: dispatched.source, tool: tc.name });
       }

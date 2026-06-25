@@ -112,6 +112,9 @@ override the route matrix:
 
 | Surface | Action | Allowed roles |
 | --- | --- | --- |
+| Copilot | Propose a write action (create_lead / draft_and_send_comms) | any role with `read` (chat); MCP needs the `write.*` token scope |
+| Copilot | Confirm + execute a proposed action | any role with `approve` (POST `/api/copilot/confirm`) |
+| Copilot | View pending proposals | any role with `read` (GET `/api/copilot/proposals`) |
 | SOWorkspace | Push to Tally | MGR, FIN, ADM |
 | SOWorkspace | Approve | MGR if margin ≥ delegate cap, FIN if below cap, ADM always |
 | SOWorkspace | Cancel order | MGR, ADM |

@@ -113,7 +113,7 @@ export const mcpHandle = async ({ svc, req, token, message }) => {
     if (!name) return jsonrpcError(id, -32602, "missing tool name");
     const scope = erpChatToolScope(name);
     const t0 = Date.now();
-    const result = await dispatchErpChatTool(token.tenant_id, name, args, { scopes: token.scopes });
+    const result = await dispatchErpChatTool(token.tenant_id, name, args, { scopes: token.scopes, userId: token.user_id });
     const latencyMs = Date.now() - t0;
     const rows = Array.isArray(result?.rows) ? result.rows.length
       : (result?.rows ? 1 : 0);

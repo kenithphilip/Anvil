@@ -186,6 +186,35 @@ Body to decide: `{ id, status: PENDING|APPROVED|REJECTED|SKIPPED, comments? }`. 
 
 Permission: admin.
 
+## copilot (safe actions)
+
+The copilot can take **safe, human-confirmed** actions (PR2). Write-
+capable chat/MCP tools never execute on first call: they create a
+proposal (preview + single-use `confirm_token`) via `action_proposals`,
+and a human confirms to execute.
+
+Write tools (in `_lib/erp-chat-tools.js`): `create_lead` (scope
+`write.leads`) and `draft_and_send_comms` (scope `write.comms`). Each
+returns `{ proposed: true, preview, confirm_token, expires_at }` and
+performs no business write. Internal chat may propose under `read`; MCP
+tokens must hold the matching `write.*` scope (default-deny - new tokens
+are issued read-only unless write scopes are explicitly requested).
+
+### POST /api/copilot/confirm
+
+Permission: approve. Body `{ confirm_token, cancel? }`. Atomically
+consumes the proposal (must match tenant + the proposing user, be
+unexpired and unconsumed), then executes the bound action and audits it.
+Returns `{ ok, action, result }`. Rejects replays (`409
+ALREADY_CONSUMED`), expired (`410 EXPIRED`), wrong user (`403
+WRONG_USER`), wrong tenant / unknown (`404 NOT_FOUND`). `cancel: true`
+discards a pending proposal.
+
+### GET /api/copilot/proposals
+
+Permission: read. Lists the tenant's pending (proposed, unexpired)
+proposals with preview + confirm_token for a Confirm/Cancel UI.
+
 ## bom (BOM ingestion)
 
 Generalized BOM ingestion (Phase 1). See `docs/BOM_INGESTION_DESIGN.md`.

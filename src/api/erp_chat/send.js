@@ -127,7 +127,7 @@ export default async function handler(req, res) {
       // Run each tool, attach a tool_result block, push assistant + user messages.
       const toolResults = [];
       for (const tc of toolCalls) {
-        const result = await dispatchErpChatTool(ctx.tenantId, tc.name, tc.input || {});
+        const result = await dispatchErpChatTool(ctx.tenantId, tc.name, tc.input || {}, { userId: ctx.user?.id });
         toolResults.push({ type: "tool_result", tool_use_id: tc.id, content: JSON.stringify(result) });
         if (result?.source) {
           citations.push({ source: result.source, tool: tc.name });

@@ -9,7 +9,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-import { erpChatScopes } from "../_lib/erp-chat-tools.js";
+import { erpChatScopes, erpChatReadScopes } from "../_lib/erp-chat-tools.js";
 import { mcpHashToken, mcpNewToken } from "../_lib/mcp.js";
 
 export default async function handler(req, res) {
@@ -35,13 +35,16 @@ export default async function handler(req, res) {
       const body = await readBody(req);
       if (!body?.name) return json(res, 400, { error: { message: "name required" } });
       const allScopes = erpChatScopes();
+      // Default-deny write.*: a new token gets read-only scopes unless
+      // write scopes are explicitly requested. A copilot token therefore
+      // cannot take actions unless issued with the matching write scope.
       const scopes = Array.isArray(body.scopes) && body.scopes.length
         ? body.scopes.filter((s) => allScopes.includes(s))
-        : allScopes;
+        : erpChatReadScopes();
       const plaintext = mcpNewToken();
       const ins = await svc.from("mcp_tokens").insert({
         tenant_id: ctx.tenantId,
-        user_id: ctx.userId || null,
+        user_id: ctx.user?.id || null,
         name: body.name,
         token_hash: mcpHashToken(plaintext),
         token_prefix: plaintext.slice(0, 8),

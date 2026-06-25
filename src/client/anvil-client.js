@@ -1152,6 +1152,14 @@
     parse: async (payload) => apiFetch("/api/bom/parse", { method: "POST", body: payload }),
   };
 
+  // Copilot safe actions (PR2): list pending proposals, confirm (execute)
+  // or cancel a proposed write action created by a write.* copilot tool.
+  const copilot = {
+    proposals: async () => apiFetch("/api/copilot/proposals"),
+    confirm: async (confirmToken) => apiFetch("/api/copilot/confirm", { method: "POST", body: { confirm_token: confirmToken } }),
+    cancel: async (confirmToken) => apiFetch("/api/copilot/confirm", { method: "POST", body: { confirm_token: confirmToken, cancel: true } }),
+  };
+
   const profileVersions = {
     list: async (customerId) => apiFetch("/api/customers/profile_versions?customerId=" + encodeURIComponent(customerId)),
     rollback: async (profileVersionId) => apiFetch("/api/customers/profile_versions", { method: "POST", body: { profileVersionId } }),
@@ -1642,6 +1650,7 @@
     treds,
     marketplace,
     bom,
+    copilot,
     profileVersions,
     sourcePos,
     communications,

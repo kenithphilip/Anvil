@@ -382,6 +382,19 @@ this table holds tenant-authored formats and overrides of a built-in
 `remarks_append`, `meta_labels`), `enabled`, `created_by`. RLS-scoped on
 `tenant_id`. Lets any industry add a BOM layout as data, no code change.
 
+## Migration 149: copilot action proposals (PR2)
+
+### action_proposals
+The confirm-token store for copilot safe actions. A write-capable copilot
+tool creates a row here (preview + single-use `confirm_token`, short TTL,
+bound to tenant + proposer) instead of acting; the action runs only when
+a human confirms via `POST /api/copilot/confirm`. Columns: `created_by`,
+`action`, `args` jsonb, `preview` jsonb, `payload_hash`, `confirm_token`
+(unique), `status` (`proposed|consumed|cancelled|expired`), `expires_at`,
+`consumed_at`, `result` jsonb. Consume is an atomic claim (single-use:
+proposed -> consumed in one update), so a replay or concurrent confirm
+cannot execute twice. RLS-scoped on `tenant_id`.
+
 ## Verifying after applying
 
 In the SQL editor:

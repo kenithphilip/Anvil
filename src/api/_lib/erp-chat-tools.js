@@ -13,6 +13,7 @@
 // permission-checked at the route layer).
 
 import { serviceClient } from "./supabase.js";
+import { createProposal } from "./action-proposals.js";
 
 const limit = (n) => Math.max(1, Math.min(50, Number(n || 25)));
 
@@ -379,6 +380,71 @@ const TOOLS = {
       };
     },
   },
+
+  // ── write.* tools (PR2): propose-only. They NEVER execute on first
+  // call - they create an action_proposals row and return a preview +
+  // single-use confirm_token. A human confirms via POST /api/copilot/
+  // confirm (approve-gated) to actually run the action. MCP tokens must
+  // hold the write.* scope to call these (default-deny); internal chat
+  // allows proposing under `read` (execution is still approve-gated).
+  create_lead: {
+    scope: "write.leads",
+    description: "Propose creating a new sales lead. Does NOT create it - returns a preview and a confirm_token; a human must confirm in the app to actually create the lead.",
+    parameters: {
+      type: "object",
+      properties: {
+        company_name: { type: "string" },
+        contact_name: { type: "string" },
+        contact_email: { type: "string" },
+        contact_phone: { type: "string" },
+        product_interest: { type: "string" },
+        region: { type: "string" },
+        lead_source: { type: "string" },
+        notes: { type: "string" },
+      },
+      required: ["company_name"],
+    },
+    run: async (svc, tenantId, args, ctx2) => {
+      if (!args || !args.company_name) return { error: "company_name required" };
+      const preview = {
+        action: "create_lead",
+        company_name: args.company_name,
+        contact_name: args.contact_name || null,
+        contact_email: args.contact_email || null,
+        product_interest: args.product_interest || null,
+      };
+      const p = await createProposal(svc, { tenantId, userId: ctx2?.userId, action: "create_lead", args, preview });
+      return { proposed: true, action: "create_lead", preview, confirm_token: p.confirm_token, expires_at: p.expires_at, note: "No lead created yet. Confirm in the app to execute." };
+    },
+  },
+  draft_and_send_comms: {
+    scope: "write.comms",
+    description: "Propose drafting and sending a customer message (email/whatsapp/slack/teams). Does NOT send - returns the drafted message preview and a confirm_token; a human must confirm in the app to send.",
+    parameters: {
+      type: "object",
+      properties: {
+        channel: { type: "string", description: "email | whatsapp | slack | teams", default: "email" },
+        to_addr: { type: "string" },
+        subject: { type: "string" },
+        body: { type: "string" },
+        order_id: { type: "string" },
+        from_addr: { type: "string" },
+      },
+      required: ["to_addr", "body"],
+    },
+    run: async (svc, tenantId, args, ctx2) => {
+      if (!args || !args.to_addr || !args.body) return { error: "to_addr and body required" };
+      const preview = {
+        action: "draft_and_send_comms",
+        channel: args.channel || "email",
+        to_addr: args.to_addr,
+        subject: args.subject || null,
+        body: args.body,
+      };
+      const p = await createProposal(svc, { tenantId, userId: ctx2?.userId, action: "draft_and_send_comms", args, preview });
+      return { proposed: true, action: "draft_and_send_comms", preview, confirm_token: p.confirm_token, expires_at: p.expires_at, note: "Nothing sent yet. Confirm in the app to send." };
+    },
+  },
 };
 
 // Default scope set for tools that didn't declare one.
@@ -399,6 +465,11 @@ export const erpChatTools = (opts) => {
 export const erpChatScopes = () =>
   Array.from(new Set(Object.values(TOOLS).map((t) => t.scope || DEFAULT_SCOPE))).sort();
 
+// Read-only scopes; the default grant for a new MCP token. write.*
+// scopes are opt-in (default-deny) so a copilot token cannot take
+// actions unless explicitly issued with the matching write scope.
+export const erpChatReadScopes = () => erpChatScopes().filter((s) => s.startsWith("read."));
+
 // Lookup helper: which scope does a tool need?
 export const erpChatToolScope = (name) => TOOLS[name]?.scope || DEFAULT_SCOPE;
 
@@ -414,7 +485,9 @@ export const dispatchErpChatTool = async (tenantId, name, args, opts) => {
   }
   try {
     const svc = serviceClient();
-    return await tool.run(svc, tenantId, args || {});
+    // 4th arg carries the actor so write/propose tools bind the proposal
+    // to the proposing user. Read tools ignore it.
+    return await tool.run(svc, tenantId, args || {}, { userId: opts?.userId });
   } catch (err) {
     return { error: err.message || String(err) };
   }

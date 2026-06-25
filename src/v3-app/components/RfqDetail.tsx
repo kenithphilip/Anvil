@@ -156,7 +156,15 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
       const r: any = await ObaraBackend?.supplierRfq?.award?.({ rfq_id: rfqId, awards });
       await load();
       const fed = r?.fed || 0;
-      window.notifySuccess?.("Awarded", r?.source_quote_id ? `${fed} line(s) fed into the quote composition` : `${awards.length} line(s) awarded`);
+      const eligible = r?.eligible || 0;
+      if (!r?.source_quote_id) {
+        window.notifyWarn?.("Awarded", "This RFQ isn't linked to a quote, so nothing was fed to a composition. Raise the RFQ from a quote's Vendor RFQ tab to enable that.");
+      } else if (fed > 0) {
+        window.notifySuccess?.("Awarded", `${fed} line(s) fed into the quote composition. Open the Composition tab to review + recompute.`);
+      } else {
+        const why = r?.feed_errors?.[0] || (eligible === 0 ? "no captured winning prices matched" : "no composition lines matched the awarded line numbers");
+        window.notifyError?.("Awarded, but not mapped to composition", why);
+      }
       onChanged?.();
     } catch (e: any) { window.notifyError?.("Could not award", e?.message || String(e)); }
     finally { setBusy(false); }
@@ -173,6 +181,7 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
       <div className="row" style={{ alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <div style={{ fontWeight: 600 }}>{rfq?.rfq_number || "RFQ"}</div>
         {statusChip(rfq?.status || "draft")}
+        {rfq?.source_quote_id ? <Chip k="info">linked to quote</Chip> : <Chip k="ghost">not linked to a quote</Chip>}
         <span className="mono-sm" style={{ color: "var(--ink-3)" }}>{lines.length} line(s) · {invitations.length} vendor(s)</span>
       </div>
 

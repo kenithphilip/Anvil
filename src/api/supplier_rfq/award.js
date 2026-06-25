@@ -62,7 +62,9 @@ export default async function handler(req, res) {
     const sourceQuoteId = rfqQ.data?.source_quote_id || null;
 
     for (const aw of body.awards) {
-      if (!aw.line_no || !aw.invitation_id) continue;
+      // line_no can be 0 (quote line indices are 0-based) - guard on null,
+      // not falsiness, or the first line is silently skipped.
+      if (aw.line_no == null || !aw.invitation_id) continue;
       await svc.from("supplier_rfq_lines").update({
         awarded_invitation_id: aw.invitation_id,
       }).eq("tenant_id", ctx.tenantId).eq("rfq_id", body.rfq_id).eq("line_no", aw.line_no);
@@ -72,6 +74,8 @@ export default async function handler(req, res) {
 
     // Feed winners into the linked quote's composition.
     let fed = 0;
+    let eligible = 0;
+    const feedErrors = [];
     if (sourceQuoteId) {
       const [quotesQ, linesQ, vendorsQ] = await Promise.all([
         svc.from("supplier_quotes").select("invitation_id, line_no, unit_price, currency, supplier_quote_ref, vendor_id")
@@ -83,9 +87,10 @@ export default async function handler(req, res) {
       const vendorName = new Map((vendorsQ.data || []).map((v) => [v.id, v.vendor_name]));
       const lineMeta = new Map((linesQ.data || []).map((l) => [l.line_no, l]));
       for (const aw of body.awards) {
-        if (!aw.line_no || !aw.invitation_id) continue;
+        if (aw.line_no == null || !aw.invitation_id) continue;
         const win = (quotesQ.data || []).find((q) => q.invitation_id === aw.invitation_id && q.line_no === aw.line_no);
         if (!win) continue;
+        eligible += 1;
         const meta = lineMeta.get(aw.line_no) || {};
         try {
           await feedCompositionLine(svc, ctx, sourceQuoteId, {
@@ -98,7 +103,7 @@ export default async function handler(req, res) {
             quantity: meta.quantity,
           });
           fed += 1;
-        } catch (_) { /* best-effort; one bad line should not fail the award */ }
+        } catch (e) { feedErrors.push(String(e?.message || e)); }
       }
     }
 
@@ -106,8 +111,8 @@ export default async function handler(req, res) {
       action: "supplier_rfq_awarded",
       objectType: "supplier_rfq",
       objectId: body.rfq_id,
-      detail: body.awards.length + " lines awarded" + (sourceQuoteId ? `; ${fed} fed to quote composition` : ""),
+      detail: body.awards.length + " lines awarded" + (sourceQuoteId ? `; ${fed}/${eligible} fed to quote composition` : ""),
     });
-    return json(res, 200, { ok: true, fed, source_quote_id: sourceQuoteId });
+    return json(res, 200, { ok: true, fed, eligible, source_quote_id: sourceQuoteId, feed_errors: feedErrors.length ? feedErrors : undefined });
   } catch (err) { sendError(res, err); }
 }

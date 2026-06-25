@@ -3,6 +3,7 @@ import { fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
+import { matchSpares, SPARE_PRESETS, isConsumableCol, type SpareBomItem } from "../lib/spare-match";
 
 // ============================================================
 // ANVIL v3 — Spare Matrix Worksheet
@@ -92,6 +93,41 @@ const smFmtTs = (iso) => {
   return d.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 };
 
+// Fetch the rich BOM lines for one gun/asset code, normalized to the
+// { part_no, part_name, material, size } shape the matcher consumes.
+// Prefers the imported bom_assets/bom_lines detail (asset_code lookup);
+// falls back to flat bill_of_materials children for legacy data.
+const smFetchLinesForGun = async (code: string): Promise<SpareBomItem[]> => {
+  const c = String(code || "").trim();
+  if (!c) return [];
+  try {
+    if (ObaraBackend?.bom?.assetByCode) {
+      const r: any = await ObaraBackend.bom.assetByCode(c);
+      const lines = r?.lines || [];
+      if (Array.isArray(lines) && lines.length) {
+        return lines.map((l: any) => ({
+          part_no: l.part_no || l.supplier_part_no || "",
+          part_name: l.part_name || "",
+          material: l.material || "",
+          size: l.size || "",
+        }));
+      }
+    }
+  } catch (_) { /* fall through to legacy */ }
+  // Legacy fallback: flat bill_of_materials children (no material/size,
+  // so only name + part-number matching can apply).
+  try {
+    const resp: any = await ObaraBackend?.bom?.list?.({ parent: c });
+    const rows = Array.isArray(resp) ? resp : (resp?.rows || resp?.bom || []);
+    return (rows || []).map((b: any) => ({
+      part_no: String(b.child_part_no || b.child_item || b.child || "").trim(),
+      part_name: String(b.child_name || b.child_description || "").trim(),
+      material: String(b.material || "").trim(),
+      size: String(b.size || "").trim(),
+    })).filter((l: SpareBomItem) => l.part_no);
+  } catch (_) { return []; }
+};
+
 // ---------- Worksheet pane ---------------------------------------------
 const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const { useState: uM, useEffect: eM, useMemo: mM, useRef: rM } = React;
@@ -147,35 +183,25 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const totalCells = (draft.rows?.length || 0) * Math.max(1, draft.cols?.length || 0);
 
   // ------- Add row -------------------------------------------------------
-  const onAddRow = async (gun_no, qty) => {
+  // Adds a gun/asset row. Spare-category cells are filled by Auto-fill
+  // (matchSpares), matching this gun's BOM parts into the category columns
+  // - same process as the standalone tool.
+  const onAddRow = (gun_no, qty) => {
     const code = String(gun_no || "").trim();
     if (!code) return;
     setShowAddRow(false);
-    // Pre-populate the new row from this asset's BOM (bill_of_materials
-    // children of the asset_code). Best-effort: adds an empty row if the
-    // lookup fails or the asset has no BOM yet.
-    let children: Array<{ child: string; qty: number }> = [];
-    try {
-      const resp = await ObaraBackend?.bom?.list?.({ parent: code });
-      const rows = Array.isArray(resp) ? resp : (resp?.rows || resp?.bom || []);
-      children = (rows || [])
-        .map((b: any) => ({ child: String(b.child_part_no || b.child_item || b.child || "").trim(), qty: Number(b.qty) || 1 }))
-        .filter((c) => c.child);
-    } catch (_) { /* add empty row */ }
     dirty((d) => {
-      const cols = [...(d.cols || [])];
-      const colNames = new Set(cols.map((c) => c.col_name));
-      const values: Record<string, string> = {};
-      children.forEach((ch) => {
-        if (!colNames.has(ch.child)) { cols.push({ id: smUid(), col_name: ch.child, col_type: "spare", locked: false }); colNames.add(ch.child); }
-        values[ch.child] = String(ch.qty);
-      });
-      return { ...d, cols, rows: [...(d.rows || []), { id: smUid(), gun_no: code, qty: Number(qty) || 1, values }] };
+      if ((d.rows || []).some((r) => String(r.gun_no || "").toUpperCase() === code.toUpperCase())) {
+        window.notifyError?.("Row exists", `"${code}" is already in this matrix.`);
+        return d;
+      }
+      return { ...d, rows: [...(d.rows || []), { id: smUid(), gun_no: code, qty: Number(qty) || 1, values: {} }] };
     });
-    if (children.length) window.notifySuccess?.("Added " + code, children.length + " spare part" + (children.length === 1 ? "" : "s") + " populated");
   };
 
   // ------- Add col -------------------------------------------------------
+  // Stays open so several categories can be added in a row (presets); the
+  // form closes itself on typed submit / cancel.
   const onAddCol = (col_name, col_type) => {
     const trimmed = String(col_name || "").trim();
     if (!trimmed) return;
@@ -184,7 +210,6 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       return;
     }
     dirty((d) => ({ ...d, cols: [...(d.cols || []), { id: smUid(), col_name: trimmed, col_type: col_type || "spare", locked: false }] }));
-    setShowAddCol(false);
   };
 
   // ------- Cell change ---------------------------------------------------
@@ -255,45 +280,52 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   };
 
   // ------- Auto-fill from BOMs ------------------------------------------
+  // Matches each gun's BOM parts INTO the spare-category columns - same
+  // engine as the standalone tool (part-name keyword + part-number pattern
+  // + copper-material filter for consumables). A cell holds the matched
+  // part number(s). Locked columns and manually edited cells are preserved.
   const onAutoFill = async () => {
+    const colNames = (draft.cols || []).map((c) => c.col_name);
+    if (!colNames.length) {
+      window.notifyError?.("Auto-fill", "Add one or more spare columns first (e.g. TIP, SHUNT, ELECTRODE).");
+      return;
+    }
+    const guns = Array.from(new Set((draft.rows || []).map((r) => String(r.gun_no || "").trim()).filter(Boolean)));
+    if (!guns.length) {
+      window.notifyError?.("Auto-fill", "Add gun/asset rows first.");
+      return;
+    }
     setBusyAuto(true);
     try {
-      const resp = await ObaraBackend?.bom?.list?.();
-      const bomRows = Array.isArray(resp) ? resp : (resp?.rows || resp?.bom || []);
-      if (!Array.isArray(bomRows) || !bomRows.length) {
-        window.notifyError?.("Auto-fill", "No BOM rows available.");
-        return;
-      }
-      // Group children by parent (gun)
-      const byParent = new Map();
-      bomRows.forEach((b) => {
-        const parent = String(b.parent_part_no || b.parent_item || b.parent || "").trim().toUpperCase();
-        if (!parent) return;
-        const child = String(b.child_part_no || b.child_item || b.child || "").trim();
-        if (!child) return;
-        const list = byParent.get(parent) || [];
-        list.push({ child, qty: Number(b.qty) || 1, type: String(b.consumable_spare || b.type || "spare").toLowerCase() });
-        byParent.set(parent, list);
-      });
+      const lockedCols = new Set((draft.cols || []).filter((c) => c.locked).map((c) => c.col_name));
+      // Fetch each unique gun's rich BOM lines once.
+      const linesByGun = new Map<string, SpareBomItem[]>();
+      await Promise.all(guns.map(async (code: string) => {
+        linesByGun.set(code.toUpperCase(), await smFetchLinesForGun(code));
+      }));
       let filled = 0;
+      let matchedGuns = 0;
+      let emptyGuns = 0;
       dirty((d) => {
-        const cols = [...(d.cols || [])];
-        const colNames = new Set(cols.map((c) => c.col_name));
+        const names = (d.cols || []).map((c) => c.col_name);
         const rows = (d.rows || []).map((r) => {
-          const children = byParent.get(String(r.gun_no || "").toUpperCase()) || [];
+          const lines = linesByGun.get(String(r.gun_no || "").toUpperCase()) || [];
+          if (!lines.length) { emptyGuns += 1; return r; }
+          const matched = matchSpares(lines, names);
           const values = { ...(r.values || {}) };
-          children.forEach((ch) => {
-            if (!colNames.has(ch.child)) {
-              cols.push({ id: smUid(), col_name: ch.child, col_type: ch.type === "consumable" ? "consumable" : "spare", locked: false });
-              colNames.add(ch.child);
-            }
-            if (!values[ch.child]) { values[ch.child] = String(ch.qty); filled += 1; }
+          let any = false;
+          names.forEach((col) => {
+            if (lockedCols.has(col)) return;
+            const val = matched[col];
+            if (val && values[col] !== val) { values[col] = val; filled += 1; any = true; }
           });
+          if (any) matchedGuns += 1;
           return { ...r, values };
         });
-        return { ...d, cols, rows };
+        return { ...d, rows };
       });
-      window.notifySuccess?.("Auto-fill complete", `${filled} cells populated.`);
+      const tail = emptyGuns ? ` ${emptyGuns} gun(s) had no imported BOM.` : "";
+      window.notifySuccess?.("Auto-fill complete", `${filled} cells filled across ${matchedGuns} gun(s).${tail}`);
     } catch (err) {
       window.notifyError?.("Auto-fill failed", String(err.message || err));
     } finally {
@@ -431,15 +463,18 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const onSyncRecommended = async () => {
     setBusySync(true);
     try {
-      // Flatten matrix → recommended part_no rows
+      // Flatten matrix → recommended part_no rows. Each cell lists the
+      // matched spare part number(s); a part's qty is the sum of the gun
+      // quantities across every row/column it appears in.
       const partTotals = new Map();
       (draft.rows || []).forEach((r) => {
         const rowQty = Number(r.qty) || 1;
         (draft.cols || []).forEach((c) => {
-          const cellQty = Number((r.values || {})[c.col_name]);
-          if (!cellQty) return;
-          const key = c.col_name;
-          partTotals.set(key, (partTotals.get(key) || 0) + (cellQty * rowQty));
+          const cell = (r.values || {})[c.col_name];
+          if (!cell) return;
+          String(cell).split(/\r?\n/).map((s) => s.trim()).filter(Boolean).forEach((partNo) => {
+            partTotals.set(partNo, (partTotals.get(partNo) || 0) + rowQty);
+          });
         });
       });
       const rec = Array.from(partTotals.entries())
@@ -555,7 +590,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       {/* Add col */}
       {showAddCol && !recView && (
         <Card>
-          <SMAddColForm onAdd={onAddCol} onCancel={() => setShowAddCol(false)} />
+          <SMAddColForm onAdd={onAddCol} onClose={() => setShowAddCol(false)} existing={draft.cols || []} />
         </Card>
       )}
 
@@ -760,38 +795,75 @@ const SMAddRowForm = ({ onAdd, onCancel }) => {
         <div className="label">qty</div>
         <input className="input mono" type="number" min={0} value={qty} onChange={(e) => setQty(e.target.value)} />
       </div>
-      <Btn sm type="submit" kind="primary">Add + populate</Btn>
+      <Btn sm type="submit" kind="primary">Add row</Btn>
       <Btn sm kind="ghost" onClick={onCancel}>Cancel</Btn>
     </form>
   );
 };
 
 // ---------- Add Col form ----------
-const SMAddColForm = ({ onAdd, onCancel }) => {
+// A column is a spare CATEGORY (TIP, SHUNT, ELECTRODE, BOLT, ...). Auto-fill
+// matches each gun's BOM parts into these categories. Presets seed the
+// familiar categories; the type defaults from the preset (consumable cells
+// are copper-filtered during matching).
+const SMAddColForm = ({ onAdd, onClose, existing }) => {
   const { useState: uF, useRef: rF, useEffect: eF } = React;
   const [name, setName] = uF("");
   const [type, setType] = uF("spare");
   const ref = rF(null);
   eF(() => { ref.current?.focus(); }, []);
-  const submit = (e) => { e?.preventDefault(); onAdd(name, type); };
+
+  const usedNames = new Set((existing || []).map((c) => c.col_name));
+  const onNameChange = (val) => {
+    setName(val);
+    const up = String(val || "").trim().toUpperCase();
+    const preset = SPARE_PRESETS.find((p) => p.name === up);
+    if (preset) setType(preset.category === "Consumable" ? "consumable" : "spare");
+  };
+  const addPreset = (presetName) => {
+    onAdd(presetName, isConsumableCol(presetName) ? "consumable" : "spare");
+  };
+  const submit = (e) => {
+    e?.preventDefault();
+    const trimmed = String(name).trim().toUpperCase();
+    if (!trimmed) return;
+    onAdd(trimmed, type);
+    onClose();
+  };
+
   return (
-    <form onSubmit={submit} style={{ display: "flex", gap: 8, alignItems: "end" }}>
-      <div style={{ flex: 1 }}>
-        <div className="label">column name (part #)</div>
-        <input ref={ref} className="input mono" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. SRTC-K12464" onKeyDown={(e) => { if (e.key === "Escape") onCancel(); }} />
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <form onSubmit={submit} style={{ display: "flex", gap: 8, alignItems: "end" }}>
+        <div style={{ flex: 1 }}>
+          <div className="label">spare category (column)</div>
+          <input ref={ref} list="sm-preset-cats" className="input mono" value={name} onChange={(e) => onNameChange(e.target.value)} placeholder="e.g. TIP, SHUNT, ELECTRODE" onKeyDown={(e) => { if (e.key === "Escape") onClose(); }} />
+          <datalist id="sm-preset-cats">
+            {SPARE_PRESETS.map((p) => <option key={p.name} value={p.name}>{p.category}</option>)}
+          </datalist>
+        </div>
+        <div style={{ width: 160 }}>
+          <div className="label">type</div>
+          <select className="input" value={type} onChange={(e) => setType(e.target.value)}>
+            <option value="spare">spare</option>
+            <option value="consumable">consumable</option>
+            <option value="kit">kit</option>
+            <option value="drawing">drawing</option>
+          </select>
+        </div>
+        <Btn sm type="submit" kind="primary">Add column</Btn>
+        <Btn sm kind="ghost" onClick={onClose}>Cancel</Btn>
+      </form>
+      <div>
+        <div className="label" style={{ marginBottom: 4 }}>quick add presets</div>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {SPARE_PRESETS.filter((p) => !usedNames.has(p.name)).map((p) => (
+            <button key={p.name} type="button" className="chip ghost" style={{ cursor: "pointer", fontSize: 10.5 }} title={p.category} onClick={() => addPreset(p.name)}>
+              {p.name}
+            </button>
+          ))}
+        </div>
       </div>
-      <div style={{ width: 160 }}>
-        <div className="label">type</div>
-        <select className="input" value={type} onChange={(e) => setType(e.target.value)}>
-          <option value="spare">spare</option>
-          <option value="consumable">consumable</option>
-          <option value="kit">kit</option>
-          <option value="drawing">drawing</option>
-        </select>
-      </div>
-      <Btn sm type="submit" kind="primary">Add column</Btn>
-      <Btn sm kind="ghost" onClick={onCancel}>Cancel</Btn>
-    </form>
+    </div>
   );
 };
 

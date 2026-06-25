@@ -1,6 +1,8 @@
-// GET /api/bom/assets            - list BOM assets (optional ?q= filter)
-// GET /api/bom/assets?id=<uuid>  - one asset with its lines, project +
-//                                  customer where-used, and import history
+// GET /api/bom/assets                    - list BOM assets (optional ?q= filter)
+// GET /api/bom/assets?id=<uuid>          - one asset with its lines, project +
+//                                          customer where-used, and import history
+// GET /api/bom/assets?asset_code=<code>  - same detail, resolved by asset_code
+//                                          (used by the spare matrix auto-fill)
 //
 // Read-only. See docs/BOM_INGESTION_DESIGN.md section 5.
 
@@ -17,19 +19,30 @@ export default async function handler(req, res) {
     const svc = serviceClient();
     const tenantId = ctx.tenantId;
 
-    if (req.query.id) {
+    // Resolve a code -> id so the detail path below can be shared.
+    let assetId = req.query.id || null;
+    if (!assetId && req.query.asset_code) {
+      const code = String(req.query.asset_code).trim();
+      const codeQ = await svc.from("bom_assets").select("id")
+        .eq("tenant_id", tenantId).eq("asset_code", code).maybeSingle();
+      if (codeQ.error) throw new Error(codeQ.error.message);
+      if (!codeQ.data) return json(res, 404, { error: { message: "Asset not found" } });
+      assetId = codeQ.data.id;
+    }
+
+    if (assetId) {
       const assetQ = await svc.from("bom_assets").select("*")
-        .eq("tenant_id", tenantId).eq("id", req.query.id).maybeSingle();
+        .eq("tenant_id", tenantId).eq("id", assetId).maybeSingle();
       if (assetQ.error) throw new Error(assetQ.error.message);
       if (!assetQ.data) return json(res, 404, { error: { message: "Asset not found" } });
 
       const linesQ = await svc.from("bom_lines").select("*")
-        .eq("tenant_id", tenantId).eq("asset_id", req.query.id)
+        .eq("tenant_id", tenantId).eq("asset_id", assetId)
         .order("seq_no", { ascending: true });
       if (linesQ.error) throw new Error(linesQ.error.message);
 
       const linkQ = await svc.from("bom_asset_projects").select("project_id, qty, notes, created_at")
-        .eq("tenant_id", tenantId).eq("asset_id", req.query.id);
+        .eq("tenant_id", tenantId).eq("asset_id", assetId);
       if (linkQ.error) throw new Error(linkQ.error.message);
       let projects = [];
       const projIds = (linkQ.data || []).map((l) => l.project_id);
@@ -49,7 +62,7 @@ export default async function handler(req, res) {
 
       const histQ = await svc.from("bom_import_events")
         .select("uploaded_by, source_format, file_name, line_count, diff, created_at")
-        .eq("tenant_id", tenantId).eq("asset_id", req.query.id)
+        .eq("tenant_id", tenantId).eq("asset_id", assetId)
         .order("created_at", { ascending: false }).limit(20);
       if (histQ.error) throw new Error(histQ.error.message);
 

@@ -435,7 +435,10 @@
   };
 
   const supplierRfq = {
-    list:        async () => apiFetch("/api/supplier_rfq"),
+    list:        async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/supplier_rfq" + (qs ? "?" + qs : ""));
+    },
     get:         async (id) => apiFetch("/api/supplier_rfq?id=" + encodeURIComponent(id)),
     create:      async (payload) => apiFetch("/api/supplier_rfq", { method: "POST", body: payload }),
     update:      async (id, payload) => apiFetch("/api/supplier_rfq?id=" + encodeURIComponent(id), { method: "PATCH", body: payload }),

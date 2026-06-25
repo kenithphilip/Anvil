@@ -40,6 +40,7 @@ export default async function handler(req, res) {
         lead_time_days: li.lead_time_days ?? null,
         currency: li.currency || "USD",
         validity_days: li.validity_days || 30,
+        supplier_quote_ref: li.supplier_quote_ref || body.supplier_quote_ref || null,
         notes: li.notes || null,
         raw: li.raw || {},
       }, { onConflict: "tenant_id,invitation_id,line_no" });

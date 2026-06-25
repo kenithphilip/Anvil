@@ -33,9 +33,10 @@ export default async function handler(req, res) {
 
     if (req.method === "GET" && !id) {
       requirePermission(ctx, "read");
-      const r = await svc.from("supplier_rfqs").select("*")
-        .eq("tenant_id", ctx.tenantId)
-        .order("created_at", { ascending: false }).limit(100);
+      const sourceQuoteId = req.query?.source_quote_id || new URL(req.url, "http://x").searchParams.get("source_quote_id");
+      let q = svc.from("supplier_rfqs").select("*").eq("tenant_id", ctx.tenantId);
+      if (sourceQuoteId) q = q.eq("source_quote_id", sourceQuoteId);
+      const r = await q.order("created_at", { ascending: false }).limit(100);
       if (r.error) throw new Error(r.error.message);
       return json(res, 200, { rfqs: r.data || [] });
     }
@@ -68,10 +69,11 @@ export default async function handler(req, res) {
       const ins = await svc.from("supplier_rfqs").insert({
         tenant_id: ctx.tenantId,
         source_order_id: body.source_order_id || null,
+        source_quote_id: body.source_quote_id || null,
         rfq_number: rfqNumber,
         due_at: body.due_at || null,
         notes: body.notes || null,
-        created_by: ctx.userId || null,
+        created_by: ctx.user?.id || null,
       }).select("*").single();
       if (ins.error) throw new Error(ins.error.message);
       const linesIns = await svc.from("supplier_rfq_lines").insert(body.lines.map((li, idx) => ({

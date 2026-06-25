@@ -135,6 +135,8 @@ override the route matrix:
 | Items | Import a BOM (asset + lines) | any role with `write` (POST `/api/bom/import`); creates item_master rows + bill_of_materials edges |
 | Items | Link a BOM asset to a project | any role with `write` (POST/DELETE `/api/bom/asset_projects`) |
 | Items | View BOM assets / lines / history | any role with `read` (GET `/api/bom/assets`) |
+| Items | Preview-parse a BOM file / view source formats | any role with `read` (POST `/api/bom/parse`, GET `/api/bom/source_formats`) |
+| Items | Add / edit a BOM source format | ADM (PUT/DELETE `/api/bom/source_formats`) |
 | Items | Approve a BOM revision | reserved for `approve` (future; no endpoint in v1) |
 | Security | Edit redaction rule | ADM |
 | Security | Run injection test | ADM |

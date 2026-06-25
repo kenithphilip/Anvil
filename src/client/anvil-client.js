@@ -1144,6 +1144,12 @@
     linkProject: async (payload) => apiFetch("/api/bom/asset_projects", { method: "POST", body: payload }),
     unlinkProject: async (assetId, projectId) =>
       apiFetch("/api/bom/asset_projects?asset_id=" + encodeURIComponent(assetId) + "&project_id=" + encodeURIComponent(projectId), { method: "DELETE" }),
+    // Phase 2: tenant-configurable source-format registry + server-side
+    // detect/column-map of a parsed sheet.
+    sourceFormats: async () => apiFetch("/api/bom/source_formats"),
+    saveSourceFormat: async (payload) => apiFetch("/api/bom/source_formats", { method: "PUT", body: payload }),
+    deleteSourceFormat: async (key) => apiFetch("/api/bom/source_formats?key=" + encodeURIComponent(key), { method: "DELETE" }),
+    parse: async (payload) => apiFetch("/api/bom/parse", { method: "POST", body: payload }),
   };
 
   const profileVersions = {

@@ -95,6 +95,8 @@ import bomIndex                from "./bom/index.js";
 import bomImport               from "./bom/import.js";
 import bomAssets               from "./bom/assets.js";
 import bomAssetProjects        from "./bom/asset_projects.js";
+import bomSourceFormats        from "./bom/source_formats.js";
+import bomParse                from "./bom/parse.js";
 import claudeMessages          from "./claude/messages.js";
 
 import commsDraft              from "./communications/draft.js";
@@ -825,6 +827,8 @@ const STATIC_ROUTES = {
   "/bom/import":                     bomImport,
   "/bom/assets":                     bomAssets,
   "/bom/asset_projects":            bomAssetProjects,
+  "/bom/source_formats":            bomSourceFormats,
+  "/bom/parse":                      bomParse,
   "/claude/messages":               claudeMessages,
 
   "/communications":                commsList,

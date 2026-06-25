@@ -368,6 +368,20 @@ workflow.
 All four tables are RLS-scoped on `tenant_id` with the standard
 select/write policies.
 
+## Migration 148: BOM source-format registry (Phase 2)
+
+### bom_source_formats
+Tenant-configurable BOM source formats. Built-in profiles (obara india/
+korea/china/japan + generic_flat) ship in code (`_lib/bom-format.js`);
+this table holds tenant-authored formats and overrides of a built-in
+(same `key` wins, merged at read time). Columns: `key`
+(`unique(tenant_id, key)`), `label`, `source_country`, `column_map` jsonb
+(`{ canonicalField: [header aliases] }`), `detect` jsonb (`headers_all`,
+`any_label`, `script`, `filename`, `priority`), `quirks` jsonb
+(`parts_code_to`, `level_from_col`, `level_from_dotted`, `lr_yes_no`,
+`remarks_append`, `meta_labels`), `enabled`, `created_by`. RLS-scoped on
+`tenant_id`. Lets any industry add a BOM layout as data, no code change.
+
 ## Verifying after applying
 
 In the SQL editor:

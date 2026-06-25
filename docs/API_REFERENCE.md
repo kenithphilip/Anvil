@@ -220,6 +220,25 @@ asset_code/name). With `id`: `{ asset, lines (seq order), projects
 Permission: write. POST `{ asset_id, project_id, qty?, notes? }` links an
 asset to a project; DELETE `?asset_id=&project_id=` unlinks. Audited.
 
+### GET | PUT | DELETE /api/bom/source_formats
+
+Tenant-configurable BOM source-format registry (Phase 2). GET (read)
+returns the effective formats (built-in obara india/korea/china/japan +
+generic_flat, merged with tenant rows; tenant wins by key). PUT/POST
+(admin) upserts a tenant format `{ key, label?, source_country?,
+column_map?, detect?, quirks?, enabled? }`. DELETE (admin) `?key=` removes
+a tenant format (reverts to the built-in if the key shadowed one).
+
+### POST /api/bom/parse
+
+Permission: read. Body `{ rows: <2D array>, file_name?, source_format? }`.
+Runs the detect + column-map + normalize engine over a client-parsed
+sheet using the tenant's effective format registry; returns `{
+source_format, header_index, columns, asset: { asset_code, name,
+source_country, customer_hint, metadata }, lines: [...] }` ready to feed
+`/api/bom/import`. Non-mutating. `source_format` forces a specific
+profile instead of auto-detecting.
+
 ## sales
 
 ### GET /api/sales/leads?status=&account_id=

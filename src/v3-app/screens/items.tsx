@@ -39,6 +39,7 @@ const WiredItems = () => {
     { id: "master",    label: "Item Master" },
     { id: "aliases",   label: "Aliases" },
     { id: "inventory", label: "Inventory" },
+    { id: "assets",    label: "Assets (BOMs)" },
     { id: "bom",       label: "BOM" },
   ];
 
@@ -59,6 +60,7 @@ const WiredItems = () => {
         {tab === "master" && <ItemMasterTab />}
         {tab === "aliases" && <ItemAliasesTab />}
         {tab === "inventory" && <ItemInventoryTab />}
+        {tab === "assets" && <ItemAssetsTab />}
         {tab === "bom" && <ItemBomTab />}
       </div>
     </>
@@ -270,6 +272,97 @@ const ItemBomTab = () => {
               <td className="mono">{r.child_item || r.child || "—"}</td>
               <td className="r mono">{r.qty != null ? Number(r.qty).toLocaleString("en-IN") : "—"}</td>
             </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+};
+
+// Imported BOMs / assets browser (PR4 Phase 3 follow-up). Lists bom_assets
+// and expands to the as-imported lines + project/customer where-used.
+const ItemAssetsTab = () => {
+  const list = useFetch(() => ObaraBackend?.bom?.assets?.() || Promise.resolve({ assets: [] }), []);
+  const [open, setOpen] = useState<string | null>(null);
+  const [detail, setDetail] = useState<Record<string, any>>({});
+
+  if (list.loading) return <Card><div className="body">Loading assets…</div></Card>;
+  if (list.error) {
+    return (
+      <Banner kind="bad" icon={Icon.alert} title="Could not load assets"
+              action={<Btn sm onClick={list.reload}>Retry</Btn>}>
+        <span className="mono-sm">{String(list.error.message || list.error)}</span>
+      </Banner>
+    );
+  }
+  const assets = (list.data && list.data.assets) || [];
+  if (!assets.length) {
+    return <Card><div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+      No imported BOMs yet. Use the <b>Import BOM</b> button (top right) to upload a parts list.
+    </div></Card>;
+  }
+
+  const toggle = async (a) => {
+    if (open === a.id) { setOpen(null); return; }
+    setOpen(a.id);
+    if (!detail[a.id]) {
+      try { const d = await ObaraBackend.bom.asset(a.id); setDetail((m) => ({ ...m, [a.id]: d })); }
+      catch (e: any) { setDetail((m) => ({ ...m, [a.id]: { error: String(e.message || e) } })); }
+    }
+  };
+
+  return (
+    <Card flush>
+      <table className="tbl">
+        <thead><tr>
+          <th>Asset code</th><th>Name</th><th>Source</th><th>Status</th><th style={{ width: 90 }}></th>
+        </tr></thead>
+        <tbody>
+          {assets.map((a) => (
+            <React.Fragment key={a.id}>
+              <tr>
+                <td className="mono"><span className="pri">{a.asset_code}</span></td>
+                <td>{a.name || "—"}</td>
+                <td className="mono-sm">{a.source_format || a.source_country || "—"}</td>
+                <td><Chip k="ghost">{a.approval_status || "imported"}</Chip></td>
+                <td><Btn sm kind="ghost" onClick={() => toggle(a)}>{open === a.id ? "hide" : "lines"}</Btn></td>
+              </tr>
+              {open === a.id && (
+                <tr><td colSpan={5} style={{ background: "var(--paper-2)", padding: 12 }}>
+                  {!detail[a.id] ? <div className="mono-sm" style={{ color: "var(--ink-3)" }}>Loading lines…</div>
+                   : detail[a.id].error ? <div className="mono-sm" style={{ color: "var(--bad)" }}>{detail[a.id].error}</div>
+                   : (() => {
+                       const d = detail[a.id];
+                       const lines = d.lines || [];
+                       const projects = d.projects || [];
+                       return (<>
+                         {projects.length ? (
+                           <div className="mono-sm" style={{ marginBottom: 8, color: "var(--ink-3)" }}>
+                             Used in: {projects.map((p) => p.project_code || p.project_name || p.project_id).join(", ")}
+                           </div>
+                         ) : null}
+                         <table className="tbl">
+                           <thead><tr><th>#</th><th>Lvl</th><th>Part</th><th>Name</th><th>Material</th><th>Supplier part</th><th className="r">Qty</th></tr></thead>
+                           <tbody>
+                             {lines.slice(0, 500).map((ln) => (
+                               <tr key={ln.id}>
+                                 <td className="mono-sm">{ln.seq_no}</td>
+                                 <td className="mono-sm">{ln.level ? ("L" + ln.level) : "—"}</td>
+                                 <td className="mono"><span className="pri">{ln.part_no}</span></td>
+                                 <td>{ln.part_name || "—"}</td>
+                                 <td className="mono-sm">{ln.material || "—"}</td>
+                                 <td className="mono-sm">{ln.supplier_part_no || "—"}</td>
+                                 <td className="r mono">{ln.qty != null ? ln.qty : "—"}</td>
+                               </tr>
+                             ))}
+                           </tbody>
+                         </table>
+                         <div className="mono-sm" style={{ marginTop: 6, color: "var(--ink-4)" }}>{lines.length} line{lines.length === 1 ? "" : "s"}</div>
+                       </>);
+                     })()}
+                </td></tr>
+              )}
+            </React.Fragment>
           ))}
         </tbody>
       </table>

@@ -147,11 +147,32 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const totalCells = (draft.rows?.length || 0) * Math.max(1, draft.cols?.length || 0);
 
   // ------- Add row -------------------------------------------------------
-  const onAddRow = (gun_no, qty) => {
-    const trimmed = String(gun_no || "").trim();
-    if (!trimmed) return;
-    dirty((d) => ({ ...d, rows: [...(d.rows || []), { id: smUid(), gun_no: trimmed, qty: Number(qty) || 1, values: {} }] }));
+  const onAddRow = async (gun_no, qty) => {
+    const code = String(gun_no || "").trim();
+    if (!code) return;
     setShowAddRow(false);
+    // Pre-populate the new row from this asset's BOM (bill_of_materials
+    // children of the asset_code). Best-effort: adds an empty row if the
+    // lookup fails or the asset has no BOM yet.
+    let children: Array<{ child: string; qty: number }> = [];
+    try {
+      const resp = await ObaraBackend?.bom?.list?.({ parent: code });
+      const rows = Array.isArray(resp) ? resp : (resp?.rows || resp?.bom || []);
+      children = (rows || [])
+        .map((b: any) => ({ child: String(b.child_part_no || b.child_item || b.child || "").trim(), qty: Number(b.qty) || 1 }))
+        .filter((c) => c.child);
+    } catch (_) { /* add empty row */ }
+    dirty((d) => {
+      const cols = [...(d.cols || [])];
+      const colNames = new Set(cols.map((c) => c.col_name));
+      const values: Record<string, string> = {};
+      children.forEach((ch) => {
+        if (!colNames.has(ch.child)) { cols.push({ id: smUid(), col_name: ch.child, col_type: "spare", locked: false }); colNames.add(ch.child); }
+        values[ch.child] = String(ch.qty);
+      });
+      return { ...d, cols, rows: [...(d.rows || []), { id: smUid(), gun_no: code, qty: Number(qty) || 1, values }] };
+    });
+    if (children.length) window.notifySuccess?.("Added " + code, children.length + " spare part" + (children.length === 1 ? "" : "s") + " populated");
   };
 
   // ------- Add col -------------------------------------------------------
@@ -677,25 +698,69 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   );
 };
 
-// ---------- Add Row form ----------
+// ---------- Add Row form (search imported assets) ----------
 const SMAddRowForm = ({ onAdd, onCancel }) => {
   const { useState: uF, useRef: rF, useEffect: eF } = React;
   const [gunNo, setGunNo] = uF("");
   const [qty, setQty] = uF<number | string>(1);
+  const [results, setResults] = uF<Array<{ code: string; name?: string | null }>>([]);
+  const [searching, setSearching] = uF(false);
   const ref = rF(null);
   eF(() => { ref.current?.focus(); }, []);
+
+  // Search imported assets (bom_assets). Falls back to distinct parents in
+  // bill_of_materials so it works even on legacy / flat-imported data.
+  const runSearch = async (term) => {
+    setGunNo(term);
+    const q = String(term || "").trim();
+    if (q.length < 2) { setResults([]); return; }
+    setSearching(true);
+    try {
+      let assets: Array<{ code: string; name?: string | null }> = [];
+      if (ObaraBackend?.bom?.assets) {
+        const r = await ObaraBackend.bom.assets({ q });
+        assets = (r?.assets || []).map((a: any) => ({ code: a.asset_code, name: a.name }));
+      }
+      if (!assets.length && ObaraBackend?.bom?.list) {
+        const r = await ObaraBackend.bom.list();
+        const rows = Array.isArray(r) ? r : (r?.rows || r?.bom || []);
+        const seen = new Set<string>();
+        (rows || []).forEach((b: any) => {
+          const p = String(b.parent_part_no || b.parent || "").trim();
+          if (p && !seen.has(p) && p.toLowerCase().includes(q.toLowerCase())) { seen.add(p); assets.push({ code: p, name: null }); }
+        });
+        assets = assets.slice(0, 20);
+      }
+      setResults(assets);
+    } catch (_) { setResults([]); } finally { setSearching(false); }
+  };
+
+  const pick = (code) => { setResults([]); onAdd(code, qty); };
   const submit = (e) => { e?.preventDefault(); onAdd(gunNo, qty); };
+
   return (
-    <form onSubmit={submit} style={{ display: "flex", gap: 8, alignItems: "end" }}>
-      <div style={{ flex: 1 }}>
-        <div className="label">gun_no</div>
-        <input ref={ref} className="input mono" value={gunNo} onChange={(e) => setGunNo(e.target.value)} placeholder="e.g. X-Gun" onKeyDown={(e) => { if (e.key === "Escape") onCancel(); }} />
+    <form onSubmit={submit} style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }}>
+      <div style={{ flex: 1, minWidth: 240, position: "relative" }}>
+        <div className="label">Search asset / gun (or type a code)</div>
+        <input ref={ref} className="input mono" value={gunNo} onChange={(e) => runSearch(e.target.value)} placeholder="search imported BOMs…" onKeyDown={(e) => { if (e.key === "Escape") onCancel(); }} />
+        {results.length > 0 && (
+          <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20, background: "var(--paper)", border: "1px solid var(--hairline)", borderRadius: 8, maxHeight: 220, overflow: "auto", marginTop: 4 }}>
+            {results.map((a) => (
+              <div key={a.code} onClick={() => pick(a.code)}
+                   style={{ padding: "8px 10px", cursor: "pointer", borderBottom: "1px solid var(--hairline-2)" }}>
+                <span className="mono pri">{a.code}</span>
+                {a.name ? <span className="mono-sm" style={{ color: "var(--ink-3)", marginLeft: 8 }}>{a.name}</span> : null}
+              </div>
+            ))}
+          </div>
+        )}
+        {searching ? <div className="mono-sm" style={{ color: "var(--ink-4)", marginTop: 2 }}>searching…</div> : null}
       </div>
       <div style={{ width: 100 }}>
         <div className="label">qty</div>
         <input className="input mono" type="number" min={0} value={qty} onChange={(e) => setQty(e.target.value)} />
       </div>
-      <Btn sm type="submit" kind="primary">Add row</Btn>
+      <Btn sm type="submit" kind="primary">Add + populate</Btn>
       <Btn sm kind="ghost" onClick={onCancel}>Cancel</Btn>
     </form>
   );

@@ -11,7 +11,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-import { composePrice, mapProfile } from "../_lib/pricing.js";
+import { composePrice, mapProfile, applyOverrides } from "../_lib/pricing.js";
 import { resolvePricingBinding } from "../_lib/pricing-bindings.js";
 
 const numericKeys = [
@@ -92,7 +92,9 @@ const handleRecompute = async (svc, ctx, body, res) => {
   const out = [];
   for (const ln of inputs) {
     if (ln.line_index == null) continue;
-    const r = composePrice(profile, {
+    // Per-line overhead adjustments override the profile's component rates.
+    const lineProfile = applyOverrides(profile, ln.overrides);
+    const r = composePrice(lineProfile, {
       qty: Number(ln.qty) || 0,
       supplierUnitPrice: Number(ln.supplier_unit_price) || 0,
       supplierCurrency: ln.supplier_currency || profile.baseCurrency,
@@ -118,6 +120,7 @@ const handleRecompute = async (svc, ctx, body, res) => {
       weight_kg: ln.weight_kg != null ? Number(ln.weight_kg) : null,
       volume_cbm: ln.volume_cbm != null ? Number(ln.volume_cbm) : null,
       discount_pct: ln.discount_pct != null ? Number(ln.discount_pct) : null,
+      overrides: (ln.overrides && typeof ln.overrides === "object" && !Array.isArray(ln.overrides)) ? ln.overrides : {},
       profile_code: profile.code,
       fx_snapshot: fx,
       waterfall: r.waterfall,

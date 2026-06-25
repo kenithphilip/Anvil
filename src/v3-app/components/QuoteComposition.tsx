@@ -3,6 +3,7 @@ import { Btn, Card, Chip, fmtINR } from "../lib/primitives";
 import { ObaraBackend } from "../lib/api";
 import {
   composePrice,
+  applyOverrides,
   pricingProfileFromRow,
   PROFILE_GRANULAR,
   PROFILE_COMPACT,
@@ -93,6 +94,16 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
   }, []);
 
   const [syncing, setSyncing] = useState(false);
+  // Per-line overhead adjustments: { line_index: { component_code: value } }.
+  const [overridesByLine, setOverridesByLine] = useState<Record<number, Record<string, number>>>({});
+  const setOverride = (li: number, code: string, val: number | null) =>
+    setOverridesByLine((m) => {
+      const cur = { ...(m[li] || {}) };
+      if (val == null || Number.isNaN(val)) delete cur[code]; else cur[code] = val;
+      return { ...m, [li]: cur };
+    });
+  const resetOverrides = (li: number) =>
+    setOverridesByLine((m) => { const next = { ...m }; delete next[li]; return next; });
   // Admin-defined dropdowns: currencies (Admin > Settings) + supplier names
   // (suppliers master + RFQ vendors). Currencies fall back to a default set
   // so the dropdown is never empty.
@@ -130,6 +141,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
       const saved = Array.isArray(resp) ? resp : resp?.lines || [];
       if (!saved.length) return;
       const sup: Record<number, { price: number; cur: string; name: string }> = {};
+      const ovr: Record<number, Record<string, number>> = {};
       for (const r of saved) {
         if (r.line_index == null) continue;
         sup[r.line_index] = {
@@ -137,8 +149,10 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
           cur: r.supplier_currency || "INR",
           name: r.supplier_name || "",
         };
+        if (r.overrides && typeof r.overrides === "object" && Object.keys(r.overrides).length) ovr[r.line_index] = r.overrides;
       }
       setSupplier(sup);
+      setOverridesByLine(ovr);
       if (saved[0]?.profile_code) setProfileCode(saved[0].profile_code);
       if (saved[0]?.fx_snapshot && typeof saved[0].fx_snapshot === "object") {
         setFx({ ...DEFAULT_FX, ...saved[0].fx_snapshot, rates: { ...DEFAULT_FX.rates, ...(saved[0].fx_snapshot.rates || {}) } });
@@ -252,6 +266,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
         supplier_unit_price: Number((supplier[ln.line_index] || {}).price) || 0,
         supplier_currency: (supplier[ln.line_index] || {}).cur || currencyForCountry(ln.source_country),
         supplier_name: (supplier[ln.line_index] || {}).name || null,
+        overrides: overridesByLine[ln.line_index] || {},
       }));
       const resp: any = await ObaraBackend?.admin?.recomputePriceComposition?.({
         quote_id: quoteId,
@@ -292,7 +307,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
     return (lines || []).map((ln) => {
       const sup = supplier[ln.line_index] || { price: 0, cur: currencyForCountry(ln.source_country), name: "" };
       const res = composePrice(
-        profile,
+        applyOverrides(profile, overridesByLine[ln.line_index]),
         {
           qty: Number(ln.qty) || 0,
           supplierUnitPrice: Number(sup.price) || 0,
@@ -308,7 +323,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
       const marginAtListed = net > 0 ? (net - res.perUnit.loadedCost) / net : 0;
       return { ln, sup, res, listed, net, marginAtListed };
     });
-  }, [lines, supplier, profile, fx]);
+  }, [lines, supplier, profile, fx, overridesByLine]);
 
   const totals = useMemo(() => {
     let loaded = 0;
@@ -435,21 +450,42 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
       {sel && (
       <>
         <Card title={`Waterfall - line ${(sel.ln.line_index ?? 0) + 1} ${sel.ln.part_no || ""}`}
-          eyebrow="Supplier cost to final price" style={{ marginTop: 10 }}>
+          eyebrow="Adjust overhead rates/amounts for this line" style={{ marginTop: 10 }}
+          right={Object.keys(overridesByLine[sel.ln.line_index] ?? {}).length
+            ? <Btn sm kind="ghost" onClick={() => resetOverrides(sel.ln.line_index)}>Reset adjustments</Btn>
+            : undefined}>
           <table className="tbl" style={{ fontSize: 12 }}>
             <thead><tr><th>Step</th><th>Kind</th><th className="r">Rate / amount</th><th className="r">+ / -</th><th className="r">Subtotal</th></tr></thead>
             <tbody>
-              {sel.res.waterfall.map((s, i) => (
-                <tr key={i}>
-                  <td>{s.label}</td>
+              {sel.res.waterfall.map((s, i) => {
+                const li = sel.ln.line_index;
+                const adjusted = (overridesByLine[li] || {})[s.code] != null;
+                const editable = s.kind === "pct_of" || s.kind === "margin_markup" || s.kind === "discount" || s.kind === "per_unit";
+                return (
+                <tr key={i} style={adjusted ? { background: "var(--paper-2)" } : undefined}>
+                  <td>{s.label}{adjusted ? " *" : ""}</td>
                   <td className="mono-sm" style={{ color: "var(--ink-3)" }}>{s.kind}</td>
-                  <td className="r mono">{s.rate != null ? pct(s.rate) : s.amount != null ? fmtINR(s.amount) : "-"}</td>
+                  <td className="r mono">
+                    {!editable ? (s.rate != null ? pct(s.rate) : s.amount != null ? fmtINR(s.amount) : "-")
+                      : s.kind === "per_unit" ? (
+                        <input className="input mono r" style={{ width: 80 }} type="number" step="0.01"
+                          value={Number((s.amount ?? 0).toFixed(4))}
+                          onChange={(e) => setOverride(li, s.code, e.target.value === "" ? null : Number(e.target.value))} />
+                      ) : (
+                        <span><input className="input mono r" style={{ width: 64 }} type="number" step="0.1"
+                          value={Number((((s.rate ?? 0) * 100)).toFixed(4))}
+                          onChange={(e) => setOverride(li, s.code, e.target.value === "" ? null : Number(e.target.value) / 100)} />%</span>
+                      )}
+                  </td>
                   <td className="r mono">{fmtINR(s.delta)}</td>
                   <td className="r mono"><b>{fmtINR(s.subtotal)}</b></td>
                 </tr>
-              ))}
+              ); })}
             </tbody>
           </table>
+          <div className="mono-sm" style={{ color: "var(--ink-4)", marginTop: 6 }}>
+            Edit a rate/amount to adjust this line's overheads; * marks adjusted steps. Click Save composition to persist + recompute.
+          </div>
           <div className="row" style={{ gap: 18, marginTop: 8, flexWrap: "wrap" }}>
             <span className="mono-sm">Loaded cost: <b>{fmtINR(sel.res.perUnit.loadedCost)}</b></span>
             <span className="mono-sm">Recommended: <b>{fmtINR(sel.res.perUnit.finalPrice)}</b></span>

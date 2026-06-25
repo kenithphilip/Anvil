@@ -129,6 +129,25 @@ const daysBetween = (iso?: string): number | null => {
   return (Date.now() - t) / 86400000;
 };
 
+// Return a copy of `profile` with per-component overrides applied. The value
+// replaces a per_unit component's amount, or any other component's rate
+// (pct_of / margin_markup / discount). Empty/absent => the same profile.
+export function applyOverrides(
+  profile: PricingProfile,
+  overrides?: Record<string, number> | null
+): PricingProfile {
+  if (!overrides || !Object.keys(overrides).length) return profile;
+  return {
+    ...profile,
+    components: profile.components.map((c) => {
+      if (!(c.code in overrides)) return c;
+      const v = Number(overrides[c.code]);
+      if (!Number.isFinite(v)) return c;
+      return c.kind === "per_unit" ? { ...c, amount: v } : { ...c, rate: v };
+    }),
+  };
+}
+
 // Evaluate a profile against one line. Pure: no IO, no mutation of args.
 export function composePrice(
   profile: PricingProfile,

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   composePrice,
+  applyOverrides,
   pricingProfileFromRow,
   PROFILE_COMPACT,
   PROFILE_GRANULAR,
@@ -8,6 +9,26 @@ import {
   type PricingProfile,
   type FxSnapshot,
 } from "./pricing";
+
+describe("applyOverrides", () => {
+  it("overrides a pct_of rate + a per_unit amount, leaves others, no mutation", () => {
+    const p = applyOverrides(PROFILE_GRANULAR, { customs_duty: 0.05, packing: 12 });
+    expect(p.components.find((c) => c.code === "customs_duty")?.rate).toBe(0.05);
+    expect(p.components.find((c) => c.code === "packing")?.amount).toBe(12);
+    expect(p.components.find((c) => c.code === "insurance")?.rate).toBe(0.01125);
+    expect(PROFILE_GRANULAR.components.find((c) => c.code === "customs_duty")?.rate).toBe(0.1);
+  });
+  it("is a no-op for empty/absent overrides", () => {
+    expect(applyOverrides(PROFILE_COMPACT, {})).toBe(PROFILE_COMPACT);
+    expect(applyOverrides(PROFILE_COMPACT, null)).toBe(PROFILE_COMPACT);
+  });
+  it("lowering duty lowers the landed cost", () => {
+    const line = { qty: 1, supplierUnitPrice: 100, supplierCurrency: "USD", sourceCountry: "US" };
+    const base = composePrice(PROFILE_GRANULAR, line, DEFAULT_FX);
+    const adj = composePrice(applyOverrides(PROFILE_GRANULAR, { customs_duty: 0 }), line, DEFAULT_FX);
+    expect(adj.perUnit.loadedCost).toBeLessThan(base.perUnit.loadedCost);
+  });
+});
 
 // The two profiles are validated against the real Obara spreadsheets.
 // If these numbers drift, the engine no longer matches the sheets it

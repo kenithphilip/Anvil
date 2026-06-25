@@ -17,6 +17,22 @@ const daysBetween = (iso) => {
   return (Date.now() - t) / 86400000;
 };
 
+// Return a copy of `profile` with per-component overrides applied. The
+// override value replaces a per_unit component's amount, or any other
+// component's rate (pct_of / margin_markup / discount). Empty/absent => no-op.
+export function applyOverrides(profile, overrides) {
+  if (!overrides || typeof overrides !== "object" || !Object.keys(overrides).length) return profile;
+  return {
+    ...profile,
+    components: (profile.components || []).map((c) => {
+      if (!Object.prototype.hasOwnProperty.call(overrides, c.code)) return c;
+      const v = Number(overrides[c.code]);
+      if (!Number.isFinite(v)) return c;
+      return c.kind === "per_unit" ? { ...c, amount: v } : { ...c, rate: v };
+    }),
+  };
+}
+
 // Pure: evaluate a profile against one line. profile/line/fx mirror the
 // TS shapes.
 export function composePrice(profile, line, fx) {

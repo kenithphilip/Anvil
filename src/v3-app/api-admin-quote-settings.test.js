@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateValidityDays } from "../api/admin/quote_settings.js";
+import { validateValidityDays, validateOptionList } from "../api/admin/quote_settings.js";
 
 describe("quote_settings validateValidityDays", () => {
   it("accepts a whole number in range", () => {
@@ -18,5 +18,24 @@ describe("quote_settings validateValidityDays", () => {
   it("rejects out-of-range values", () => {
     expect(validateValidityDays(0).error).toMatch(/between 1 and 3650/);
     expect(validateValidityDays(4000).error).toMatch(/between 1 and 3650/);
+  });
+});
+
+describe("quote_settings validateOptionList", () => {
+  it("trims, drops blanks, dedups case-insensitively", () => {
+    expect(validateOptionList("units", [" NO ", "no", "SET", "", "Set"]))
+      .toEqual({ value: ["NO", "SET"] });
+  });
+  it("treats null as an empty list", () => {
+    expect(validateOptionList("units", null)).toEqual({ value: [] });
+  });
+  it("rejects a non-array", () => {
+    expect(validateOptionList("units", "NO").error).toMatch(/must be an array/);
+  });
+  it("rejects non-string entries", () => {
+    expect(validateOptionList("units", ["NO", 5]).error).toMatch(/must be strings/);
+  });
+  it("rejects an over-long value", () => {
+    expect(validateOptionList("units", ["x".repeat(65)]).error).toMatch(/64 characters/);
   });
 });

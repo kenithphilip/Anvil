@@ -108,12 +108,15 @@ export const QuoteDetailDrawer: React.FC<{
   const [newContact, setNewContact] = useState<{ name: string; email: string; phone: string; role: string; is_primary: boolean }>(
     { name: "", email: "", phone: "", role: "", is_primary: false }
   );
+  // Admin-defined option lists for line-item dropdowns (Admin > Settings).
+  const [unitOptions, setUnitOptions] = useState<string[]>([]);
+  const [sourceOptions, setSourceOptions] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [linesResp, templatesResp, contactsResp] = await Promise.all([
+        const [linesResp, templatesResp, contactsResp, quoteSettings] = await Promise.all([
           fetchJson("/api/admin/quote_lines?quote_id=" + quote.id).catch(() => ({ lines: [] })),
           fetchJson("/api/admin/document_templates?doc_type=quotation").catch(() => ({ templates: [] })),
           quote.customer_id
@@ -121,11 +124,14 @@ export const QuoteDetailDrawer: React.FC<{
                 .then((r: any) => Array.isArray(r) ? { contacts: r } : (r || { contacts: [] }))
                 .catch(() => ({ contacts: [] }))
             : Promise.resolve({ contacts: [] }),
+          Promise.resolve((ObaraBackend as any)?.admin?.quoteSettings?.()).catch(() => ({})),
         ]);
         if (cancelled) return;
         setLines(linesResp.lines || []);
         setTemplates(templatesResp.templates || []);
         setContacts(contactsResp.contacts || []);
+        setUnitOptions(Array.isArray(quoteSettings?.quote_line_units) ? quoteSettings.quote_line_units : []);
+        setSourceOptions(Array.isArray(quoteSettings?.quote_line_source_countries) ? quoteSettings.quote_line_source_countries : []);
         if (quote.template_id) {
           const t = (templatesResp.templates || []).find((x: any) => x.id === quote.template_id);
           if (t) setActiveTemplate(t);
@@ -517,6 +523,14 @@ export const QuoteDetailDrawer: React.FC<{
                 Add or remove items and set quantity, units and source country (from the item master).
                 Pricing, source selection and overheads are decided at the Composition stage.
               </div>
+              {/* Admin-defined dropdowns (Admin > Settings). Datalists allow a
+                  controlled list while still accepting a free-typed value. */}
+              <datalist id="qd-unit-options">
+                {unitOptions.map((u) => <option key={u} value={u} />)}
+              </datalist>
+              <datalist id="qd-source-options">
+                {sourceOptions.map((s) => <option key={s} value={s} />)}
+              </datalist>
               {picking && (
                 <Card title="Item master" eyebrow="Pick an item to append a prefilled line" style={{ marginBottom: 10 }}>
                   <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -572,8 +586,8 @@ export const QuoteDetailDrawer: React.FC<{
                         <td><input className="input mono" style={{ width: 120 }} value={ln.part_no || ""} onChange={(e) => setLine(i, "part_no", e.target.value)} /></td>
                         <td><input className="input" style={{ width: 240 }} value={ln.description || ""} onChange={(e) => setLine(i, "description", e.target.value)} /></td>
                         <td className="r"><input className="input mono r" style={{ width: 70 }} type="number" step="0.01" value={ln.qty ?? ""} onChange={(e) => setLine(i, "qty", e.target.value === "" ? null : Number(e.target.value))} /></td>
-                        <td><input className="input mono" style={{ width: 70 }} value={ln.uom || ""} onChange={(e) => setLine(i, "uom", e.target.value)} /></td>
-                        <td><input className="input mono" style={{ width: 110 }} value={ln.source_country || ""} placeholder="e.g. O-KOREA" onChange={(e) => setLine(i, "source_country", e.target.value)} /></td>
+                        <td><input className="input mono" list="qd-unit-options" style={{ width: 80 }} value={ln.uom || ""} onChange={(e) => setLine(i, "uom", e.target.value)} /></td>
+                        <td><input className="input mono" list="qd-source-options" style={{ width: 120 }} value={ln.source_country || ""} placeholder="e.g. O-KOREA" onChange={(e) => setLine(i, "source_country", e.target.value)} /></td>
                         <td><Btn sm kind="ghost" onClick={() => removeLine(i)} title="Remove line">x</Btn></td>
                       </tr>
                     ))}

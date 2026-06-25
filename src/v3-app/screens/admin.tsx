@@ -7,6 +7,7 @@ import { RBAC, MATRIX, ACTIONS } from "../lib/rbac";
 import { Prefs } from "../lib/preferences";
 import { PricingProfilesAdmin } from "../components/PricingProfilesAdmin";
 import { NavVisibilityAdmin } from "../components/NavVisibilityAdmin";
+import { OptionListEditor } from "../components/OptionListEditor";
 
 // ============================================================
 // ANVIL v3 — Admin Center CRUD overlay
@@ -221,12 +222,17 @@ const WiredAdminCRUD = () => {
   const [csvBusy, setCsvBusy] = u(false);
   const [drawingBase, setDrawingBase] = u(() => { try { return localStorage.getItem(ADMIN_DRAWING_BASE_KEY) || ""; } catch (_) { return ""; } });
   const [drawingDraft, setDrawingDraft] = u(() => { try { return localStorage.getItem(ADMIN_DRAWING_BASE_KEY) || ""; } catch (_) { return ""; } });
-  // Tenant quote defaults (backend tenant_settings). Loaded when the
-  // Settings tab opens. Empty string = no tenant default (falls back to 30).
+  // Tenant quote defaults + line-item option lists (backend tenant_settings).
+  // Loaded when the Settings tab opens. *Draft holds the editable value;
+  // *Saved is the last persisted snapshot used for the dirty check.
   const [quoteValidity, setQuoteValidity] = u<string>("");
   const [quoteValidityDraft, setQuoteValidityDraft] = u<string>("");
-  const [quoteValiditySaving, setQuoteValiditySaving] = u(false);
-  const [quoteValidityLoaded, setQuoteValidityLoaded] = u(false);
+  const [quoteUnits, setQuoteUnits] = u<string[]>([]);
+  const [quoteUnitsSaved, setQuoteUnitsSaved] = u<string[]>([]);
+  const [quoteSources, setQuoteSources] = u<string[]>([]);
+  const [quoteSourcesSaved, setQuoteSourcesSaved] = u<string[]>([]);
+  const [quoteSettingsSaving, setQuoteSettingsSaving] = u(false);
+  const [quoteSettingsLoaded, setQuoteSettingsLoaded] = u(false);
 
   const flashOk = (msg) => setFlash({ kind: "good", msg });
   const flashErr = (err) => setFlash({ kind: "bad", msg: String(err.message || err) });
@@ -1408,9 +1414,9 @@ const WiredAdminCRUD = () => {
     } catch (err) { flashErr(err); }
   };
 
-  // Load tenant quote defaults when the Settings tab first opens.
+  // Load tenant quote defaults + option lists when the Settings tab opens.
   e(() => {
-    if (active !== "settings" || quoteValidityLoaded) return;
+    if (active !== "settings" || quoteSettingsLoaded) return;
     (async () => {
       try {
         const r: any = await ObaraBackend?.admin?.quoteSettings?.();
@@ -1418,23 +1424,38 @@ const WiredAdminCRUD = () => {
         const s = v == null ? "" : String(v);
         setQuoteValidity(s);
         setQuoteValidityDraft(s);
+        const units = Array.isArray(r?.quote_line_units) ? r.quote_line_units : [];
+        const srcs = Array.isArray(r?.quote_line_source_countries) ? r.quote_line_source_countries : [];
+        setQuoteUnits(units); setQuoteUnitsSaved(units);
+        setQuoteSources(srcs); setQuoteSourcesSaved(srcs);
       } catch (_) { /* leave blank on failure */ }
-      finally { setQuoteValidityLoaded(true); }
+      finally { setQuoteSettingsLoaded(true); }
     })();
-  }, [active, quoteValidityLoaded]);
+  }, [active, quoteSettingsLoaded]);
 
-  const onSaveQuoteValidity = async () => {
-    setQuoteValiditySaving(true);
+  const quoteSettingsDirty = quoteValidityDraft !== quoteValidity
+    || JSON.stringify(quoteUnits) !== JSON.stringify(quoteUnitsSaved)
+    || JSON.stringify(quoteSources) !== JSON.stringify(quoteSourcesSaved);
+
+  const onSaveQuoteSettings = async () => {
+    setQuoteSettingsSaving(true);
     try {
       const raw = quoteValidityDraft.trim();
-      const r: any = await ObaraBackend?.admin?.updateQuoteSettings?.({ quote_default_validity_days: raw === "" ? null : Number(raw) });
+      const r: any = await ObaraBackend?.admin?.updateQuoteSettings?.({
+        quote_default_validity_days: raw === "" ? null : Number(raw),
+        quote_line_units: quoteUnits,
+        quote_line_source_countries: quoteSources,
+      });
       const v = r?.quote_default_validity_days;
       const s = v == null ? "" : String(v);
-      setQuoteValidity(s);
-      setQuoteValidityDraft(s);
+      const units = Array.isArray(r?.quote_line_units) ? r.quote_line_units : quoteUnits;
+      const srcs = Array.isArray(r?.quote_line_source_countries) ? r.quote_line_source_countries : quoteSources;
+      setQuoteValidity(s); setQuoteValidityDraft(s);
+      setQuoteUnits(units); setQuoteUnitsSaved(units);
+      setQuoteSources(srcs); setQuoteSourcesSaved(srcs);
       flashOk("Quote settings saved");
     } catch (err) { flashErr(err); }
-    finally { setQuoteValiditySaving(false); }
+    finally { setQuoteSettingsSaving(false); }
   };
 
   return (
@@ -3311,8 +3332,8 @@ const WiredAdminCRUD = () => {
                 </div>
               </div>
             </Card>
-            <Card title="Default quote validity" eyebrow="applies to new quotes">
-              <div style={{ display: "grid", gap: 8 }}>
+            <Card title="Quote settings" eyebrow="defaults + line-item option lists">
+              <div style={{ display: "grid", gap: 16 }}>
                 <label className="lbl mono-sm">
                   Default validity (days) — leave blank to use 30
                   <input type="number" min={1} max={3650} className="input" style={{ maxWidth: 160 }}
@@ -3320,10 +3341,24 @@ const WiredAdminCRUD = () => {
                          placeholder="30"
                          onChange={(ev) => setQuoteValidityDraft(ev.target.value)} />
                 </label>
+                <OptionListEditor
+                  label="Units (UoM) dropdown"
+                  values={quoteUnits}
+                  onChange={setQuoteUnits}
+                  placeholder="e.g. NO, SET, KG, M"
+                  hint="Shown as the Units dropdown in the quote Lines editor."
+                />
+                <OptionListEditor
+                  label="Source country dropdown"
+                  values={quoteSources}
+                  onChange={setQuoteSources}
+                  placeholder="e.g. O-KOREA, INDIA, CHINA"
+                  hint="Shown as the Source country dropdown in the quote Lines editor."
+                />
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <Btn sm kind="primary" onClick={onSaveQuoteValidity} disabled={quoteValiditySaving || quoteValidityDraft === quoteValidity}>{quoteValiditySaving ? "Saving…" : "Save"}</Btn>
+                  <Btn sm kind="primary" onClick={onSaveQuoteSettings} disabled={quoteSettingsSaving || !quoteSettingsDirty}>{quoteSettingsSaving ? "Saving…" : "Save quote settings"}</Btn>
                   <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
-                    Used when a new quote has no explicit validity and the customer has no own default. Precedence: explicit &gt; customer &gt; tenant &gt; 30.
+                    Validity precedence: explicit &gt; customer &gt; tenant &gt; 30. Empty lists leave the field free-text.
                   </span>
                 </div>
               </div>

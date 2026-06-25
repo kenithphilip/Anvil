@@ -11,30 +11,30 @@ import { ObaraBackend } from "../lib/api";
 // by type, layouts switchable, click-node side drawer.
 // ============================================================
 
-const CYTOSCAPE_CDN = "https://cdn.jsdelivr.net/npm/cytoscape@3.30.0/dist/cytoscape.min.js";
-const CYTOSCAPE_DAGRE_CDN = "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js";
-const DAGRE_CDN = "https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js";
-
-const lazyLoadScript = (src: string): Promise<void> => new Promise<void>((resolve, reject) => {
-  if (document.querySelector(`script[src="${src}"]`)) {
-    resolve();
-    return;
-  }
-  const s = document.createElement("script");
-  s.src = src;
-  s.async = true;
-  s.onload = () => resolve();
-  s.onerror = () => reject(new Error("Failed to load " + src));
-  document.head.appendChild(s);
-});
-
+// cytoscape + dagre + cytoscape-dagre are bundled deps loaded via dynamic
+// import (CSP blocks third-party CDN <script> loads). Code-split into a
+// local chunk fetched the first time the graph renders. window.cytoscape /
+// window.dagre are still set so the rest of the screen's checks work.
+let __cytoPromise: Promise<any> | null = null;
 const ensureCytoscape = async () => {
   if (window.cytoscape) return window.cytoscape;
-  await lazyLoadScript(DAGRE_CDN);
-  await lazyLoadScript(CYTOSCAPE_CDN);
-  await lazyLoadScript(CYTOSCAPE_DAGRE_CDN).catch(() => null);
-  if (!window.cytoscape) throw new Error("cytoscape failed to attach to window");
-  return window.cytoscape;
+  if (!__cytoPromise) {
+    __cytoPromise = Promise.all([
+      import("cytoscape"),
+      import("dagre"),
+      import("cytoscape-dagre"),
+    ]).then(([cyMod, dagreMod, cyDagreMod]: any[]) => {
+      const cytoscape = cyMod.default || cyMod;
+      const dagre = dagreMod.default || dagreMod;
+      const cyDagre = cyDagreMod.default || cyDagreMod;
+      try { cytoscape.use(cyDagre); } catch (_) { /* already registered */ }
+      try { window.cytoscape = cytoscape; window.dagre = dagre; } catch (_) { /* noop */ }
+      return cytoscape;
+    });
+  }
+  const cy = await __cytoPromise;
+  if (!cy) throw new Error("cytoscape failed to load");
+  return cy;
 };
 
 const NODE_COLORS = {

@@ -1133,6 +1133,17 @@
     },
     upsert: async (rows) => apiFetch("/api/bom", { method: "POST", body: Array.isArray(rows) ? { rows } : rows }),
     remove: async (id) => apiFetch("/api/bom?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    // BOM ingestion (Phase 1): asset + lines import deriving item_master
+    // + bill_of_materials, with provenance + project linkage.
+    importBom: async (payload) => apiFetch("/api/bom/import", { method: "POST", body: payload }),
+    assets: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/bom/assets" + (qs ? "?" + qs : ""));
+    },
+    asset: async (id) => apiFetch("/api/bom/assets?id=" + encodeURIComponent(id)),
+    linkProject: async (payload) => apiFetch("/api/bom/asset_projects", { method: "POST", body: payload }),
+    unlinkProject: async (assetId, projectId) =>
+      apiFetch("/api/bom/asset_projects?asset_id=" + encodeURIComponent(assetId) + "&project_id=" + encodeURIComponent(projectId), { method: "DELETE" }),
   };
 
   const profileVersions = {

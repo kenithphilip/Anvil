@@ -186,6 +186,40 @@ Body to decide: `{ id, status: PENDING|APPROVED|REJECTED|SKIPPED, comments? }`. 
 
 Permission: admin.
 
+## bom (BOM ingestion)
+
+Generalized BOM ingestion (Phase 1). See `docs/BOM_INGESTION_DESIGN.md`.
+The legacy flat `/api/bom` (parent/child edge upsert) is unchanged; these
+are additive.
+
+### POST /api/bom/import
+
+Permission: write. Body: `{ asset: { asset_code, name?, asset_type?,
+customer_id?, source_format?, revision?, drawing_no?, source_country?,
+metadata? }, lines: [{ part_no, part_name?, supplier_part_no?,
+supplier_id?, material?, size?, qty?, uom?, level?, seq_no?, side?,
+std_category?, is_spare?, remarks?, raw? }], project_id?, file_name? }`.
+Rows are parsed + column-mapped client-side. Effects: upserts `bom_assets`
+(by `tenant_id, asset_code, revision`) tracking uploader; replaces
+`bom_lines`; creates `item_master` rows for every part (fills gaps, never
+clobbers operator-set fields); derives `bill_of_materials` edges from the
+level hierarchy (replaces this asset's root edges, upserts sub-edges
+additively); optional project link; writes a `bom_import_events` row;
+audits `bom_import`. Returns `{ ok, asset_id, lines, derived: {
+items_upserted, edges_upserted }, diff: { added, removed, changed,
+unchanged } }`.
+
+### GET /api/bom/assets[?id=<uuid>][&q=<term>]
+
+Permission: read. Without `id`: list assets (optional `q` filter on
+asset_code/name). With `id`: `{ asset, lines (seq order), projects
+(project + customer where-used), history (recent bom_import_events) }`.
+
+### POST | DELETE /api/bom/asset_projects
+
+Permission: write. POST `{ asset_id, project_id, qty?, notes? }` links an
+asset to a project; DELETE `?asset_id=&project_id=` unlinks. Audited.
+
 ## sales
 
 ### GET /api/sales/leads?status=&account_id=

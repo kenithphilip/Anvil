@@ -132,6 +132,10 @@ override the route matrix:
 | Admin | View ERP connector field map / run diagnostics | any role with `read` (GET `/api/<erp>/field_map`, `/api/<erp>/diagnostics`) |
 | Admin | Edit ERP connector field map | ADM (PUT `/api/<erp>/field_map`) |
 | Admin | Run connector config/schema drift check | ADM (GET `/api/<erp>/diagnostics?drift=1`) |
+| Items | Import a BOM (asset + lines) | any role with `write` (POST `/api/bom/import`); creates item_master rows + bill_of_materials edges |
+| Items | Link a BOM asset to a project | any role with `write` (POST/DELETE `/api/bom/asset_projects`) |
+| Items | View BOM assets / lines / history | any role with `read` (GET `/api/bom/assets`) |
+| Items | Approve a BOM revision | reserved for `approve` (future; no endpoint in v1) |
 | Security | Edit redaction rule | ADM |
 | Security | Run injection test | ADM |
 

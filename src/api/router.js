@@ -92,6 +92,9 @@ import stripeCheckout          from "./billing/stripe/checkout.js";
 import stripeWebhook           from "./billing/stripe/webhook.js";
 
 import bomIndex                from "./bom/index.js";
+import bomImport               from "./bom/import.js";
+import bomAssets               from "./bom/assets.js";
+import bomAssetProjects        from "./bom/asset_projects.js";
 import claudeMessages          from "./claude/messages.js";
 
 import commsDraft              from "./communications/draft.js";
@@ -819,6 +822,9 @@ const STATIC_ROUTES = {
   "/invoices/extract":              invoicesExtract,
 
   "/bom":                           bomIndex,
+  "/bom/import":                     bomImport,
+  "/bom/assets":                     bomAssets,
+  "/bom/asset_projects":            bomAssetProjects,
   "/claude/messages":               claudeMessages,
 
   "/communications":                commsList,

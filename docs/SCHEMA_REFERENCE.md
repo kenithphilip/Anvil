@@ -327,6 +327,47 @@ success the handler calls `recordExport` to upsert the row.
 Index: `(tenant_id, order_id, connector)` for the prior-export lookup.
 RLS-scoped on `tenant_id` with the standard select/write policies.
 
+## Migration 147: BOM ingestion (Phase 1)
+
+Generalized, industry-neutral BOM ingestion. See
+`docs/BOM_INGESTION_DESIGN.md`. Strictly additive: `bill_of_materials`,
+`item_master`, and `/api/bom` are unchanged; the import endpoint derives
+edges + catalog rows from these new tables.
+
+### bom_assets
+The finished product / equipment / assembly whose parts list was
+imported (neutral generalization of a per-asset BOM header). Key columns:
+`asset_code`, `name`, `asset_type` (free label), `customer_id`,
+`source_format`, `revision` (default `''`; `unique(tenant_id, asset_code,
+revision)`), `drawing_no`, `source_country`, `metadata` jsonb. Provenance:
+`uploaded_by`, `last_uploaded_by`, `last_imported_at`. Governance (future
+approver workflow; v1 only sets `imported`): `approval_status`
+(`imported|pending_approval|approved|rejected`), `approved_by`,
+`approved_at`.
+
+### bom_lines
+The as-imported parts list for an asset (source of truth for its
+structure). Columns: `asset_id`, `seq_no` (source order;
+`unique(tenant_id, asset_id, seq_no)`), `level` (assembly depth, null =
+flat), `parent_line_id` (nullable; reserved), `part_no`, `part_name`,
+`supplier_part_no` (external/source code), `supplier_id`, `material`,
+`size`, `qty` numeric(18,6), `uom`, `side`, `std_category`, `is_spare`,
+`remarks`, `raw` jsonb.
+
+### bom_asset_projects
+M:N link of an asset to `projects` (`primary key (tenant_id, asset_id,
+project_id)`), with `qty`, `notes`, `created_by`. Customer flows from the
+project or `bom_assets.customer_id`.
+
+### bom_import_events
+One row per upload / re-import: `asset_id`, `uploaded_by`,
+`source_format`, `file_name`, `line_count`, `diff` jsonb (added/removed/
+changed/unchanged counts). Provenance + basis for the future approver
+workflow.
+
+All four tables are RLS-scoped on `tenant_id` with the standard
+select/write policies.
+
 ## Verifying after applying
 
 In the SQL editor:

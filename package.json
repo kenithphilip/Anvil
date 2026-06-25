@@ -35,7 +35,7 @@
     "dagre": "^0.8.5",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "4.8.69",
-    "react": "^18.3.1",
+    "react": "^19.2.6",
     "react-dom": "^18.3.1",
     "react-pdf": "9.2.1",
     "stripe": "^22.1.0"
@@ -49,7 +49,7 @@
     "@babel/parser": "^7.29.7",
     "@testing-library/react": "^16.0.1",
     "@types/node": "^22.7.4",
-    "@types/react": "^18.3.10",
+    "@types/react": "^19.2.15",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.4",
     "eslint": "^10.3.0",

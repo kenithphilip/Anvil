@@ -21,8 +21,8 @@ describe("NAV", () => {
     // + 1 P4 logistics freight-bidding (under Procurement)
     // + 1 sales-ops cockpit (under Sales).
     const ids = NAV.flatMap((g) => g.items.map((i) => i.id));
-    expect(ids.length).toBe(53);
-    expect(new Set(ids).size).toBe(53);
+    expect(ids.length).toBe(54);
+    expect(new Set(ids).size).toBe(54);
   });
   it("each item has id + label + icon", () => {
     for (const group of NAV) {

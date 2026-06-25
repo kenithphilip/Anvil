@@ -66,18 +66,17 @@ describe("QuoteDetailDrawer — line enrichment", () => {
     );
     fireEvent.click(getByText("Lines"));
     // The lines table (and its column headers) only render once there
-    // is at least one line; add a blank line first. Target the button
-    // by role since the empty-state copy also mentions "Add line".
-    fireEvent.click(getByRole("button", { name: "Add line" }));
-    await waitFor(() => expect(getAllByText("Src").length).toBeGreaterThan(0));
+    // is at least one line; add a blank line first.
+    fireEvent.click(getByRole("button", { name: "Blank line" }));
+    await waitFor(() => expect(getAllByText("Source country").length).toBeGreaterThan(0));
   });
 
   it("appends a line prefilled from an item-master pick", async () => {
-    const { getByText, getByPlaceholderText, container } = render(
+    const { getByText, getByRole, getByPlaceholderText, container } = render(
       <QuoteDetailDrawer quote={QUOTE} onClose={() => undefined} />
     );
     fireEvent.click(getByText("Lines"));
-    fireEvent.click(getByText("From item master"));
+    fireEvent.click(getByRole("button", { name: "Add from item master" }));
     // The picker loads items via the facade and lists the catalogue row.
     await waitFor(() => expect(getByPlaceholderText("search part number or description...")).toBeTruthy());
     await waitFor(() => expect(getByText("Deep groove ball bearing")).toBeTruthy());

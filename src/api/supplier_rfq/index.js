@@ -79,7 +79,7 @@ export default async function handler(req, res) {
       const linesIns = await svc.from("supplier_rfq_lines").insert(body.lines.map((li, idx) => ({
         tenant_id: ctx.tenantId,
         rfq_id: ins.data.id,
-        line_no: li.line_no || (idx + 1),
+        line_no: li.line_no != null ? li.line_no : (idx + 1),
         item_id: li.item_id || null,
         part_number: li.part_number || null,
         description: li.description || null,

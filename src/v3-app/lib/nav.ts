@@ -39,6 +39,7 @@ export const NAV: NavGroup[] = [
     label: "Procurement",
     items: [
       { id: "spo",                  label: "Source POs",         icon: Icon.pkg },
+      { id: "supplier-rfq",         label: "Supplier RFQ",       icon: Icon.send },
       { id: "spares",               label: "Spares Matrix",      icon: Icon.layers },
       { id: "items-import",         label: "Import BOM",         icon: Icon.upload },
       { id: "delays",               label: "Delays",             icon: Icon.alert },

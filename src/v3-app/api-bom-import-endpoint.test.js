@@ -56,7 +56,7 @@ vi.mock("../api/_lib/cors.js", () => ({
   sendError: (res, err) => { res._status = err.status || 500; res._json = { error: { message: err.message } }; return res; },
 }));
 vi.mock("../api/_lib/auth.js", () => ({
-  resolveContext: async () => ({ tenantId: TENANT, userId: USER }),
+  resolveContext: async () => ({ tenantId: TENANT, user: { id: USER } }),
   requirePermission: () => {},
 }));
 vi.mock("../api/_lib/supabase.js", () => ({ serviceClient: () => makeSvc() }));

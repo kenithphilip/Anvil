@@ -46,7 +46,7 @@ export default async function handler(req, res) {
         detect: body.detect || {},
         quirks: body.quirks || {},
         enabled: body.enabled !== false,
-        created_by: ctx.userId || null,
+        created_by: ctx.user?.id || null,
         updated_at: new Date().toISOString(),
       };
       const up = await svc.from("bom_source_formats").upsert(row, { onConflict: "tenant_id,key" }).select("*").maybeSingle();

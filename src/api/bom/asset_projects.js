@@ -30,7 +30,7 @@ export default async function handler(req, res) {
         project_id: body.project_id,
         qty: body.qty != null && Number.isFinite(Number(body.qty)) ? Number(body.qty) : null,
         notes: body.notes || null,
-        created_by: ctx.userId || null,
+        created_by: ctx.user?.id || null,
       };
       const up = await svc.from("bom_asset_projects")
         .upsert(row, { onConflict: "tenant_id,asset_id,project_id" });

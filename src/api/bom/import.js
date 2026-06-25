@@ -68,7 +68,7 @@ export default async function handler(req, res) {
       drawing_no: asset.drawing_no != null ? asset.drawing_no : undefined,
       source_country: asset.source_country != null ? asset.source_country : undefined,
       metadata: asset.metadata && typeof asset.metadata === "object" ? asset.metadata : undefined,
-      last_uploaded_by: ctx.userId || null,
+      last_uploaded_by: ctx.user?.id || null,
       last_imported_at: now,
       updated_at: now,
     };
@@ -85,7 +85,7 @@ export default async function handler(req, res) {
         tenant_id: tenantId,
         asset_code: assetCode,
         revision,
-        uploaded_by: ctx.userId || null,
+        uploaded_by: ctx.user?.id || null,
         ...headerPatch,
       }).select("id").single();
       if (ins.error) throw new Error("bom_assets insert: " + ins.error.message);
@@ -193,7 +193,7 @@ export default async function handler(req, res) {
         tenant_id: tenantId,
         asset_id: assetId,
         project_id: body.project_id,
-        created_by: ctx.userId || null,
+        created_by: ctx.user?.id || null,
       }, { onConflict: "tenant_id,asset_id,project_id" });
       if (link.error) throw new Error("bom_asset_projects link: " + link.error.message);
     }
@@ -202,7 +202,7 @@ export default async function handler(req, res) {
     await svc.from("bom_import_events").insert({
       tenant_id: tenantId,
       asset_id: assetId,
-      uploaded_by: ctx.userId || null,
+      uploaded_by: ctx.user?.id || null,
       source_format: asset.source_format || null,
       file_name: body.file_name || null,
       line_count: rows.length,

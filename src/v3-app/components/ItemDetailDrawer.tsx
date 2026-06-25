@@ -89,7 +89,11 @@ export const ItemDetailDrawer: React.FC<{
   item: Item | null;
   onClose: () => void;
   onSaved?: () => void;
-}> = ({ item, onClose, onSaved }) => {
+  // Guard rail (2026-06): item-master edits are admin-only. When false the
+  // drawer is a read-only viewer (inputs + save + satellite actions
+  // disabled). Defaults true so existing callers are unaffected.
+  canEdit?: boolean;
+}> = ({ item, onClose, onSaved, canEdit = true }) => {
   const isNew = !item || !item.id;
   const [tab, setTab] = useState<"id" | "class" | "tax" | "inv" | "spec" | "customers" | "used" | "custom">("id");
   // "Used in orders" tab data (backlog #15). Lazy-loaded the first
@@ -262,8 +266,17 @@ export const ItemDetailDrawer: React.FC<{
             </div>
           </div>
           {draft.lifecycle && <Chip k={draft.lifecycle === "ACTIVE" ? "good" : "ghost"}>{String(draft.lifecycle).toLowerCase()}</Chip>}
+          {!canEdit && <Chip k="ghost">read-only</Chip>}
           <Btn sm kind="ghost" onClick={onClose}>close</Btn>
         </div>
+
+        {!canEdit && (
+          <div style={{ padding: "10px 18px 0" }}>
+            <Banner kind="info" icon={Icon.lock} title="Read-only">
+              <span className="mono-sm">Admin access is required to edit the item master.</span>
+            </Banner>
+          </div>
+        )}
 
         {err && (
           <div style={{ padding: "10px 18px" }}>
@@ -285,8 +298,10 @@ export const ItemDetailDrawer: React.FC<{
           <TabBtn active={tab === "custom"} onClick={() => setTab("custom")}>Custom fields</TabBtn>
         </div>
 
-        {/* Body */}
-        <div style={{ flex: 1, overflowY: "auto", padding: 18, display: "flex", flexDirection: "column", gap: 8 }}>
+        {/* Body. fieldset(disabled) makes the whole form read-only for
+            non-admins in one shot - inputs, selects and satellite action
+            buttons all go inert. Tabs + Close live outside it. */}
+        <fieldset disabled={!canEdit} style={{ flex: 1, overflowY: "auto", padding: 18, display: "flex", flexDirection: "column", gap: 8, border: 0, margin: 0, minInlineSize: 0 }}>
           {tab === "id" && (
             <>
               <Field label="Part number" required>
@@ -521,14 +536,16 @@ export const ItemDetailDrawer: React.FC<{
           {tab === "custom" && (
             <CustomFieldsTab definitions={fieldDefs} values={fieldValues} setValues={setFieldValues} />
           )}
-        </div>
+        </fieldset>
 
         {/* Footer */}
         <div style={{ padding: 14, borderTop: "1px solid var(--line)", display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <Btn sm kind="ghost" onClick={onClose}>Cancel</Btn>
-          <Btn sm kind="primary" disabled={saving || !draft.part_no} onClick={save}>
-            {saving ? "Saving..." : (isNew ? "Create item" : "Save changes")}
-          </Btn>
+          <Btn sm kind="ghost" onClick={onClose}>{canEdit ? "Cancel" : "Close"}</Btn>
+          {canEdit && (
+            <Btn sm kind="primary" disabled={saving || !draft.part_no} onClick={save}>
+              {saving ? "Saving..." : (isNew ? "Create item" : "Save changes")}
+            </Btn>
+          )}
         </div>
       </div>
     </div>

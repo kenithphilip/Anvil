@@ -3,6 +3,7 @@ import { useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
+import { RBAC } from "../lib/rbac";
 import { ItemDetailDrawer } from "../components/ItemDetailDrawer";
 
 // ============================================================
@@ -68,6 +69,9 @@ const WiredItems = () => {
 };
 
 const ItemMasterTab = () => {
+  // Guard rail (2026-06): item-master edits are admin-only. Non-admins get a
+  // read-only list + read-only detail drawer.
+  const canEdit = RBAC.isAdmin();
   const list = useFetch(
     () => ObaraBackend?.admin?.listItemMaster?.() || itemFetch("/api/admin/item_master"),
     []
@@ -91,9 +95,11 @@ const ItemMasterTab = () => {
 
   return (
     <>
-      <div className="row" style={{ justifyContent: "flex-end", marginBottom: 8 }}>
-        <Btn sm kind="primary" onClick={() => setEditing({})}>{Icon.plus} New item</Btn>
-      </div>
+      {canEdit && (
+        <div className="row" style={{ justifyContent: "flex-end", marginBottom: 8 }}>
+          <Btn sm kind="primary" onClick={() => setEditing({})}>{Icon.plus} New item</Btn>
+        </div>
+      )}
       <Card flush>
         {rows.length === 0 ? (
           <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
@@ -122,7 +128,7 @@ const ItemMasterTab = () => {
                   <td className="mono-sm">{r.hsn_sac || r.hsn || r.hsn_code || "—"}</td>
                   <td><Chip k={r.lifecycle === "ACTIVE" ? "good" : r.lifecycle === "OBSOLETE" || r.lifecycle === "DISCONTINUED" ? "bad" : "ghost"}>{(r.lifecycle || "—").toLowerCase()}</Chip></td>
                   <td className="r">
-                    <Btn sm kind="ghost" onClick={(e) => { e.stopPropagation(); setEditing(r); }}>edit</Btn>
+                    <Btn sm kind="ghost" onClick={(e) => { e.stopPropagation(); setEditing(r); }}>{canEdit ? "edit" : "view"}</Btn>
                   </td>
                 </tr>
               ))}
@@ -140,6 +146,7 @@ const ItemMasterTab = () => {
           item={editing && editing.id ? editing : null}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); list.reload?.(); }}
+          canEdit={canEdit}
         />
       )}
     </>

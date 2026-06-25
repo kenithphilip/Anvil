@@ -2,9 +2,10 @@
 // the facade, and surfaces make-primary.
 
 import React from "react";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, waitFor, fireEvent } from "@testing-library/react";
 import { installBackend } from "../test-utils";
+import { RBAC } from "../lib/rbac";
 import { CustomerContactsPanel } from "./CustomerContactsPanel";
 
 const CONTACTS = [
@@ -26,7 +27,10 @@ describe("CustomerContactsPanel", () => {
         deleteContact: vi.fn(async () => ({ ok: true })),
       },
     });
+    // Editing is admin-only; default these tests to admin.
+    vi.spyOn(RBAC, "isAdmin").mockReturnValue(true);
   });
+  afterEach(() => vi.restoreAllMocks());
 
   it("lists existing contacts with a primary badge", async () => {
     const { findByText, getByText } = render(<CustomerContactsPanel customerId="cust-1" />);
@@ -51,5 +55,14 @@ describe("CustomerContactsPanel", () => {
     await findByText("Vikram Shah");
     fireEvent.click(getByText("Make primary"));
     await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ id: "c2", is_primary: true })));
+  });
+
+  it("is read-only for non-admins (no edit controls)", async () => {
+    (RBAC.isAdmin as any).mockReturnValue(false);
+    const { findByText, queryByText } = render(<CustomerContactsPanel customerId="cust-1" />);
+    await findByText("Asha Rao");
+    expect(queryByText("+ Add contact")).toBeNull();
+    expect(queryByText("Make primary")).toBeNull();
+    expect(queryByText("Edit")).toBeNull();
   });
 });

@@ -17,33 +17,32 @@ import { ObaraBackend } from "../lib/api";
 // ROUTES["items-import"]; suggested hash #/items?view=import.
 // ============================================================
 
-// ── CDN loaders ──────────────────────────────────────────────
+// ── Parser loaders ───────────────────────────────────────────
+// SheetJS + JSZip are bundled deps loaded via dynamic import(), so they
+// are served from our own origin. The previous CDN <script> approach is
+// blocked by the app CSP (script-src 'self'), which surfaced as
+// "Failed to load XLSX from CDN". Vite code-splits these into chunks
+// fetched on demand the first time the importer runs.
 let __xlsxPromise = null;
 const loadXLSX = () => {
-  if (typeof window === "undefined") return Promise.reject(new Error("no window"));
-  if (window.XLSX) return Promise.resolve(window.XLSX);
+  if (typeof window !== "undefined" && window.XLSX && window.XLSX.read) return Promise.resolve(window.XLSX);
   if (__xlsxPromise) return __xlsxPromise;
-  __xlsxPromise = new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
-    s.onload = () => resolve(window.XLSX);
-    s.onerror = () => reject(new Error("Failed to load XLSX from CDN"));
-    document.head.appendChild(s);
+  __xlsxPromise = import("xlsx").then((m) => {
+    const XLSX = (m && m.read) ? m : (m.default || m);
+    try { if (typeof window !== "undefined") window.XLSX = XLSX; } catch (_) { /* noop */ }
+    return XLSX;
   });
   return __xlsxPromise;
 };
 
 let __jszipPromise = null;
 const loadJSZipForBom = () => {
-  if (typeof window === "undefined") return Promise.reject(new Error("no window"));
-  if (window.JSZip) return Promise.resolve(window.JSZip);
+  if (typeof window !== "undefined" && window.JSZip) return Promise.resolve(window.JSZip);
   if (__jszipPromise) return __jszipPromise;
-  __jszipPromise = new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js";
-    s.onload = () => resolve(window.JSZip);
-    s.onerror = () => reject(new Error("Failed to load JSZip from CDN"));
-    document.head.appendChild(s);
+  __jszipPromise = import("jszip").then((m) => {
+    const JSZip = m.default || m;
+    try { if (typeof window !== "undefined") window.JSZip = JSZip; } catch (_) { /* noop */ }
+    return JSZip;
   });
   return __jszipPromise;
 };

@@ -40,6 +40,7 @@ export const NAV: NavGroup[] = [
     items: [
       { id: "spo",                  label: "Source POs",         icon: Icon.pkg },
       { id: "spares",               label: "Spares Matrix",      icon: Icon.layers },
+      { id: "items-import",         label: "Import BOM",         icon: Icon.upload },
       { id: "delays",               label: "Delays",             icon: Icon.alert },
       // Inventory-planning module (Phase 3). Dashboard surfaces
       // 12-week shortage timeline + KPIs; the other inventory

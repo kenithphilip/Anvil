@@ -50,6 +50,7 @@ export const MATRIX: Record<string, MatrixRow> = {
   cost:        { sales_engineer: "r",   sales_manager: "rw", procurement: "r",  finance: "rw",  admin: "rw", operator: "",   viewer: "r" },
   customers:   { sales_engineer: "rw",  sales_manager: "rw", procurement: "r",  finance: "r",   admin: "rw", operator: "r",  viewer: "r" },
   items:       { sales_engineer: "r",   sales_manager: "r",  procurement: "rw", finance: "r",   admin: "rw", operator: "r",  viewer: "r" },
+  "items-import": { sales_engineer: "rw", sales_manager: "rw", procurement: "rw", finance: "r", admin: "rw", operator: "r", viewer: "r" },
   graph:       { sales_engineer: "r",   sales_manager: "r",  procurement: "r",  finance: "r",   admin: "r",  operator: "",   viewer: "r" },
   forecasts:   { sales_engineer: "r",   sales_manager: "r",  procurement: "r",  finance: "rw",  admin: "rw", operator: "",   viewer: "r" },
   evals:       { sales_engineer: "r",   sales_manager: "r",  procurement: "",   finance: "",    admin: "rw", operator: "",   viewer: "r" },

@@ -179,6 +179,7 @@ export const RESOLVERS = {
     if (view === "jbm-import") return screens.jbmImporter;
     return screens.items;
   },
+  "items-import": () => screens.bomImport,
   graph:       () => screens.graph,
   forecasts:   () => screens.forecasts,
   evals:       () => screens.evals,

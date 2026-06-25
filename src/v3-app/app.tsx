@@ -14,6 +14,7 @@ import { Card, WSTitle } from "./lib/primitives";
 import { Icon } from "./lib/icons";
 import { NAV, ROLES, crumbFor } from "./lib/nav";
 import { RBAC } from "./lib/rbac";
+import { loadNavSettings, isNavEnabled } from "./lib/nav-settings";
 import { Prefs } from "./lib/preferences";
 import { ObaraBackend } from "./lib/api";
 import { ToastStack } from "./lib/toasts";
@@ -163,9 +164,21 @@ export default function App() {
   const [route, setRoute] = useState(parseRoute);
   const [cmdkOpen, setCmdk] = useState(false);
   const [threadOpen, setThread] = useState(false);
+  // Bumped on "nav:change" so the sidebar filter + route gate recompute when
+  // the per-role nav-visibility setting loads or an admin saves it.
+  const [navTick, setNavTick] = useState(0);
   // Recompute on every render so token expiry, cross-tab sign-in,
   // and explicit sign-out propagate without a manual reload.
   const authed = isSessionValid();
+
+  // Load the tenant's per-role nav-visibility map once we're authenticated,
+  // then keep it fresh on every "nav:change" (load completes / admin saves).
+  useEffect(() => {
+    const bump = () => setNavTick((n) => n + 1);
+    window.addEventListener("nav:change", bump);
+    if (authed) loadNavSettings();
+    return () => window.removeEventListener("nav:change", bump);
+  }, [authed]);
 
   // When the storage event reports a fresh session in another tab,
   // force a re-render here so the gate flips to authenticated.
@@ -181,7 +194,7 @@ export default function App() {
 
   const onRoute = useCallback((id: string) => {
     if (!RESOLVERS[id]) return;
-    if (!RBAC.canRead(id)) {
+    if (!RBAC.canRead(id) || !isNavEnabled(id)) {
       console.warn(`[v3-app] role ${RBAC.role()} cannot access ${id}`);
       return;
     }
@@ -307,7 +320,17 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const navFiltered = useMemo(() => RBAC.filterNav(NAV), [RBAC.role()]);
+  // Sidebar = role permissions (RBAC) intersected with the tenant's per-role
+  // nav-visibility setting. Re-runs on rbac:change / nav:change via the
+  // force-rerender above. eslint-disable: the gate reads module state, not
+  // props, so the role dep is the meaningful trigger.
+  const navFiltered = useMemo(
+    () => RBAC.filterNav(NAV)
+      .map((g) => ({ ...g, items: g.items.filter((it) => isNavEnabled(it.id)) }))
+      .filter((g) => g.items.length > 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [RBAC.role(), navTick],
+  );
 
   // Bounce to home if the current route is no longer accessible.
   // Pre-auth routes (signin / reset / landing) bypass RBAC because
@@ -315,8 +338,9 @@ export default function App() {
   // yet, so RBAC.canRead would otherwise force-redirect them.
   useEffect(() => {
     if (route === "signin" || route === "reset" || route === "landing") return;
-    if (!RBAC.canRead(route)) onRoute("home");
-  }, [route, onRoute]);
+    if (!RBAC.canRead(route) || !isNavEnabled(route)) onRoute("home");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route, onRoute, navTick]);
 
   const role = RBAC.role();
   const roleObj = ROLES.find((r) => r.id === role) ||

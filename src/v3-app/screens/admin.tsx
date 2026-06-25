@@ -6,6 +6,7 @@ import { ObaraBackend } from "../lib/api";
 import { RBAC, MATRIX, ACTIONS } from "../lib/rbac";
 import { Prefs } from "../lib/preferences";
 import { PricingProfilesAdmin } from "../components/PricingProfilesAdmin";
+import { NavVisibilityAdmin } from "../components/NavVisibilityAdmin";
 
 // ============================================================
 // ANVIL v3 — Admin Center CRUD overlay
@@ -36,6 +37,7 @@ const ADMIN_CRUD_TABS = [
   { id: "profile",   label: "My profile" },
   { id: "security",  label: "Security" },
   { id: "roles",     label: "Roles & permissions" },
+  { id: "navigation",label: "Navigation" },
   { id: "billing",   label: "Billing" },
   { id: "netsuite",  label: "NetSuite" },
   { id: "tally",     label: "Tally" },
@@ -1981,6 +1983,8 @@ const WiredAdminCRUD = () => {
             </Card>
           </>
         )}
+
+        {active === "navigation" && <NavVisibilityAdmin />}
 
         {active === "billing" && (
           <>

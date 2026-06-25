@@ -1361,6 +1361,10 @@
   };
 
   const admin = {
+    // Per-role left-nav visibility (admin chooses which nav items are
+    // activated for each role). GET is read-level; update is approve-level.
+    navSettings:       async () => apiFetch("/api/admin/nav_settings"),
+    updateNavSettings: async (patch) => apiFetch("/api/admin/nav_settings", { method: "PATCH", body: patch }),
     listHolidays: async (params) => {
       const qs = new URLSearchParams(params || {}).toString();
       return apiFetch("/api/admin/holidays" + (qs ? "?" + qs : ""));

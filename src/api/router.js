@@ -21,6 +21,7 @@ import adminContracts          from "./admin/contracts.js";
 import adminCustomerLocations  from "./admin/customer_locations.js";
 import adminDiagnostics        from "./admin/diagnostics.js";
 import adminDocaiSettings      from "./admin/docai_settings.js";
+import adminNavSettings        from "./admin/nav_settings.js";
 import adminEquipment          from "./admin/equipment.js";
 import adminFxRates            from "./admin/fx_rates.js";
 import adminHolidays           from "./admin/holidays.js";
@@ -750,6 +751,7 @@ const STATIC_ROUTES = {
   "/admin/customer_locations":      adminCustomerLocations,
   "/admin/diagnostics":             adminDiagnostics,
   "/admin/docai_settings":          adminDocaiSettings,
+  "/admin/nav_settings":            adminNavSettings,
   "/admin/equipment":               adminEquipment,
   "/admin/fx_rates":                adminFxRates,
   "/admin/holidays":                adminHolidays,

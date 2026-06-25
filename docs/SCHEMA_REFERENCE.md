@@ -395,6 +395,33 @@ a human confirms via `POST /api/copilot/confirm`. Columns: `created_by`,
 proposed -> consumed in one update), so a replay or concurrent confirm
 cannot execute twice. RLS-scoped on `tenant_id`.
 
+## Migration 150: operator actions (PR4)
+
+Governed bridge for API-less workflow steps. See
+`docs/OPERATOR_ACTIONS_DESIGN.md`. Flag-gated by
+`tenant_settings.operator_actions_enabled` (added here, default false).
+
+### operator_actions
+A typed, ordered checklist for an off-system step (thick client / VDI /
+console), optionally bound to an Anvil object (`object_type`/`object_id`).
+`status` walks `proposed -> in_progress -> evidence_captured ->
+reconciled` (+ `abandoned`). `reconcile_contract` jsonb declares the
+governed write-back (`note` or guarded order `status`); `reconcile_result`
+captures the outcome. Provenance: `created_by`/`started_by`/
+`reconciled_by`. `driver` is `human` (a future computer-use driver sets
+`cua` behind the same contract).
+
+### operator_action_steps
+One instruction per row (`seq`, `unique (tenant_id, operator_action_id,
+seq)`), `status` (`pending|done|skipped`), notes, `done_by`/`done_at`.
+
+### operator_action_evidence
+Captured artifacts linked to the action / a step, pointing at `documents`
+for the bytes (`document_id`) plus optional `ocr_text` (from
+`documents/ocr`); `kind` (`screenshot|export|diff|note`), `captured_by`.
+
+All RLS-scoped on `tenant_id` with the standard policies.
+
 ## Verifying after applying
 
 In the SQL editor:

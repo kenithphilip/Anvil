@@ -115,6 +115,9 @@ override the route matrix:
 | Copilot | Propose a write action (create_lead / draft_and_send_comms) | any role with `read` (chat); MCP needs the `write.*` token scope |
 | Copilot | Confirm + execute a proposed action | any role with `approve` (POST `/api/copilot/confirm`) |
 | Copilot | View pending proposals | any role with `read` (GET `/api/copilot/proposals`) |
+| Operator actions | Create / advance / attach evidence | any role with `write` (`/api/operator_actions`, `/advance`, `/evidence`) |
+| Operator actions | Reconcile (note) | any role with `write` (POST `/api/operator_actions/reconcile`) |
+| Operator actions | Reconcile that mutates a record (order status) | any role with `approve` (behind requireApprovedOrder) |
 | SOWorkspace | Push to Tally | MGR, FIN, ADM |
 | SOWorkspace | Approve | MGR if margin ≥ delegate cap, FIN if below cap, ADM always |
 | SOWorkspace | Cancel order | MGR, ADM |

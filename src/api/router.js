@@ -218,6 +218,10 @@ import salesInternalSo         from "./sales/internal_so.js";
 import salesLeads              from "./sales/leads.js";
 import salesOpportunities      from "./sales/opportunities.js";
 import opportunityLineItems    from "./opportunities/line_items.js";
+import operatorActions         from "./operator_actions/index.js";
+import operatorActionsAdvance  from "./operator_actions/advance.js";
+import operatorActionsEvidence from "./operator_actions/evidence.js";
+import operatorActionsReconcile from "./operator_actions/reconcile.js";
 import salesProjects           from "./sales/projects.js";
 import salesShipments          from "./sales/shipments.js";
 // Phase 7.1 + 7.2: lead scoring + opportunity probability.
@@ -938,6 +942,11 @@ const STATIC_ROUTES = {
 
   "/orders":                        ordersIndex,
   "/orders/schedule_lines":         ordersScheduleLines,
+
+  "/operator_actions":              operatorActions,
+  "/operator_actions/advance":      operatorActionsAdvance,
+  "/operator_actions/evidence":     operatorActionsEvidence,
+  "/operator_actions/reconcile":    operatorActionsReconcile,
 
   "/sales/internal_so":             salesInternalSo,
   "/sales/leads":                   salesLeads,

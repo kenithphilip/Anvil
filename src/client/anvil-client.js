@@ -1152,6 +1152,17 @@
     parse: async (payload) => apiFetch("/api/bom/parse", { method: "POST", body: payload }),
   };
 
+  // Operator actions (PR4): governed checklist for API-less steps with
+  // evidence + reconcile-back. Flag-gated server-side.
+  const operatorActions = {
+    list: async (params) => { const qs = new URLSearchParams(params || {}).toString(); return apiFetch("/api/operator_actions" + (qs ? "?" + qs : "")); },
+    get: async (id) => apiFetch("/api/operator_actions?id=" + encodeURIComponent(id)),
+    create: async (payload) => apiFetch("/api/operator_actions", { method: "POST", body: payload }),
+    advance: async (payload) => apiFetch("/api/operator_actions/advance", { method: "POST", body: payload }),
+    attachEvidence: async (payload) => apiFetch("/api/operator_actions/evidence", { method: "POST", body: payload }),
+    reconcile: async (payload) => apiFetch("/api/operator_actions/reconcile", { method: "POST", body: payload }),
+  };
+
   // Copilot safe actions (PR2): list pending proposals, confirm (execute)
   // or cancel a proposed write action created by a write.* copilot tool.
   const copilot = {
@@ -1651,6 +1662,7 @@
     marketplace,
     bom,
     copilot,
+    operatorActions,
     profileVersions,
     sourcePos,
     communications,

@@ -186,6 +186,44 @@ Body to decide: `{ id, status: PENDING|APPROVED|REJECTED|SKIPPED, comments? }`. 
 
 Permission: admin.
 
+## operator_actions (API-less bridge)
+
+Governed checklist + evidence + reconcile for API-less workflow steps
+(PR4). Flag-gated by `tenant_settings.operator_actions_enabled` (returns
+`409 FEATURE_DISABLED` when off). See `docs/OPERATOR_ACTIONS_DESIGN.md`.
+
+### POST /api/operator_actions
+
+Permission: write. Body `{ title, action_type?, target_system?,
+object_type?, object_id?, requires_evidence?, reconcile_contract?, steps:
+[{ instruction, expected? }] }`. Creates the action (`proposed`) + steps.
+
+### GET /api/operator_actions[?status=&object_id=] | ?id=
+
+Permission: read. List, or one action with its steps + evidence.
+
+### POST /api/operator_actions/advance
+
+Permission: write. Body `{ id, event: start|advance_step|attach_evidence|
+abandon, step_id?, step_status?, notes? }`. Drives the state machine +
+per-step updates; audits each transition. Illegal transitions return
+`409 ILLEGAL_TRANSITION`.
+
+### POST /api/operator_actions/evidence
+
+Permission: write. Body `{ id, step_id?, document_id?, kind?, ocr_text? }`.
+Links a captured artifact (uploaded via `/api/documents/upload`; OCR via
+`/api/documents/ocr`).
+
+### POST /api/operator_actions/reconcile
+
+Permission: write, escalating to **approve** when the contract mutates a
+system of record. Body `{ id, payload_hash?, reconcile_contract? }`.
+Executes the validated contract: `note` (audited timeline event, no SOR
+mutation) or `status` (sets `orders.status` behind `requireApprovedOrder`).
+Sets the action `reconciled`. Rejects illegal state, unsupported
+contracts, and unapproved order mutations.
+
 ## copilot (safe actions)
 
 The copilot can take **safe, human-confirmed** actions (PR2). Write-

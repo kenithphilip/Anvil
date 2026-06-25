@@ -18,9 +18,17 @@ const smFmtTs = (iso?: string) => {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 };
 
-const NewRfqModal: React.FC<{ onCreate: (lines: any[], notes: string) => void; onClose: () => void; busy: boolean }> = ({ onCreate, onClose, busy }) => {
+const NewRfqModal: React.FC<{ onCreate: (lines: any[], notes: string, customerId: string, customerRef: string) => void; onClose: () => void; busy: boolean }> = ({ onCreate, onClose, busy }) => {
   const [rows, setRows] = useState<any[]>([{ part_number: "", description: "", quantity: 1, uom: "NO" }]);
   const [notes, setNotes] = useState("");
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [customerId, setCustomerId] = useState("");
+  const [customerRef, setCustomerRef] = useState("");
+  useEffect(() => {
+    Promise.resolve(ObaraBackend?.customers?.list?.())
+      .then((r: any) => setCustomers(Array.isArray(r) ? r : (r?.customers || r?.rows || [])))
+      .catch(() => setCustomers([]));
+  }, []);
   const setRow = (i: number, patch: any) => setRows((r) => r.map((x, idx) => idx === i ? { ...x, ...patch } : x));
   const addRow = () => setRows((r) => [...r, { part_number: "", description: "", quantity: 1, uom: "NO" }]);
   const delRow = (i: number) => setRows((r) => r.filter((_, idx) => idx !== i));
@@ -29,7 +37,7 @@ const NewRfqModal: React.FC<{ onCreate: (lines: any[], notes: string) => void; o
       .filter((r) => r.part_number || r.description)
       .map((r, idx) => ({ line_no: idx, part_number: r.part_number || null, description: r.description || null, quantity: r.quantity != null ? Number(r.quantity) : null, uom: r.uom || null }));
     if (!lines.length) { window.notifyError?.("No lines", "Add at least one line."); return; }
-    onCreate(lines, notes);
+    onCreate(lines, notes, customerId, customerRef);
   };
   return (
     <div className="cmdk-bg" onClick={onClose} role="dialog" aria-modal="true" aria-label="New RFQ">
@@ -39,6 +47,19 @@ const NewRfqModal: React.FC<{ onCreate: (lines: any[], notes: string) => void; o
           <button className="btn icon sm ghost" style={{ marginLeft: "auto" }} onClick={onClose} aria-label="Close">{Icon.x}</button>
         </div>
         <div style={{ padding: 16, overflow: "auto", flex: 1 }}>
+          <div className="row" style={{ gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+            <div>
+              <div className="label">end customer (for special rates)</div>
+              <select className="select" style={{ minWidth: 220 }} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+                <option value="">none</option>
+                {customers.map((c) => <option key={c.id} value={c.id}>{c.customer_name || c.customer_key || c.id.slice(0, 8)}</option>)}
+              </select>
+            </div>
+            <div>
+              <div className="label">customer reference</div>
+              <input className="input mono" style={{ width: 200 }} value={customerRef} placeholder="code sent to vendors" onChange={(e) => setCustomerRef(e.target.value)} disabled={!customerId} />
+            </div>
+          </div>
           <table className="tbl" style={{ fontSize: 12 }}>
             <thead><tr><th>#</th><th>Part</th><th>Description</th><th className="r">Qty</th><th>UoM</th><th></th></tr></thead>
             <tbody>
@@ -87,10 +108,10 @@ const SupplierRfqScreen: React.FC = () => {
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
-  const onCreate = async (lines: any[], notes: string) => {
+  const onCreate = async (lines: any[], notes: string, customerId: string, customerRef: string) => {
     setBusy(true);
     try {
-      const r: any = await ObaraBackend?.supplierRfq?.create?.({ lines, notes: notes || null });
+      const r: any = await ObaraBackend?.supplierRfq?.create?.({ lines, notes: notes || null, customer_id: customerId || null, customer_ref: customerRef || null });
       const created = r?.rfq || r;
       setShowNew(false);
       await load();

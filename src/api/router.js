@@ -345,6 +345,7 @@ import supplierRfqQuote        from "./supplier_rfq/quote.js";
 import supplierRfqMatrix       from "./supplier_rfq/matrix.js";
 import supplierRfqAward        from "./supplier_rfq/award.js";
 import supplierRfqSyncComp     from "./supplier_rfq/sync_composition.js";
+import supplierRfqCustomerRef  from "./supplier_rfq/customer_ref.js";
 import supplierRfqVendors      from "./supplier_rfq/vendors.js";
 
 import analyticsWinloss        from "./analytics/winloss.js";
@@ -587,6 +588,7 @@ const STATIC_ROUTES = {
   "/supplier_rfq/matrix":           supplierRfqMatrix,
   "/supplier_rfq/award":            supplierRfqAward,
   "/supplier_rfq/sync_composition": supplierRfqSyncComp,
+  "/supplier_rfq/customer_ref":     supplierRfqCustomerRef,
   "/supplier_rfq/vendors":          supplierRfqVendors,
   "/analytics/winloss":             analyticsWinloss,
   "/analytics/refresh":             analyticsRefresh,

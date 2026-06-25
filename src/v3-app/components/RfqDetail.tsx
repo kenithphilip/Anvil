@@ -44,6 +44,28 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
   const lines: Any[] = data?.lines || [];
   const invitations: Any[] = data?.invitations || [];
   const quotes: Any[] = data?.quotes || [];
+  const customerName: string | null = data?.customer_name || null;
+  const refByVendor = useMemo(
+    () => new Map<string, string>((data?.customer_refs || []).map((r: Any) => [String(r.vendor_id), String(r.customer_ref || "")])),
+    [data]
+  );
+
+  // Save the RFQ-level default customer reference (used when a vendor has no
+  // specific code of its own).
+  const saveDefaultRef = async (val: string) => {
+    if (val === (rfq?.customer_ref || "")) return;
+    try { await ObaraBackend?.supplierRfq?.update?.(rfqId, { customer_ref: val }); await load(); }
+    catch (e: any) { window.notifyError?.("Could not save reference", e?.message || String(e)); }
+  };
+  // Save a vendor's own reference/code for this end customer (reused across RFQs).
+  const saveVendorRef = async (vendorId: string, val: string) => {
+    if (!rfq?.customer_id) return;
+    if (val === (refByVendor.get(vendorId) || "")) return;
+    try {
+      await ObaraBackend?.supplierRfq?.setCustomerRef?.({ vendor_id: vendorId, customer_id: rfq.customer_id, customer_ref: val });
+      await load();
+    } catch (e: any) { window.notifyError?.("Could not save vendor reference", e?.message || String(e)); }
+  };
 
   const vendorById = useMemo(() => new Map(vendors.map((v) => [v.id, v])), [vendors]);
   const uninvited = useMemo(
@@ -185,6 +207,27 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
         <span className="mono-sm" style={{ color: "var(--ink-3)" }}>{lines.length} line(s) · {invitations.length} vendor(s)</span>
       </div>
 
+      {/* End customer + default reference (special-rate basis) */}
+      {rfq?.customer_id && (
+        <Card title="End customer" eyebrow="vendors are asked to quote this customer's special rates">
+          <div className="row" style={{ gap: 12, alignItems: "end", flexWrap: "wrap" }}>
+            <div>
+              <div className="label">customer</div>
+              <div className="mono">{customerName || rfq.customer_id.slice(0, 8)}</div>
+            </div>
+            <div>
+              <div className="label">default customer reference</div>
+              <input className="input mono" style={{ width: 200 }} defaultValue={rfq.customer_ref || ""}
+                     placeholder="ref used in the RFQ email"
+                     onBlur={(e) => saveDefaultRef(e.target.value.trim())} />
+            </div>
+            <span className="mono-sm" style={{ color: "var(--ink-4)" }}>
+              Sent to vendors so subsidiaries (Obara Korea/China/India) apply the agreed customer rate. Each vendor's own code can override below.
+            </span>
+          </div>
+        </Card>
+      )}
+
       {/* Invite vendors */}
       <Card title="Vendors" eyebrow="invite + send RFQ email">
         <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "end" }}>
@@ -204,11 +247,23 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
           <Btn sm kind="ghost" disabled={!newVendor.trim() || busy} onClick={quickAddVendor}>{Icon.plus} Add vendor</Btn>
         </div>
         {invitations.length > 0 && (
-          <div className="row" style={{ gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
             {invitations.map((inv) => (
-              <Chip key={inv.id} k={inv.response_status === "quoted" ? "good" : "ghost"}>
-                {vendorById.get(inv.vendor_id)?.vendor_name || "vendor"} · {inv.response_status}
-              </Chip>
+              <div key={inv.id} className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <Chip k={inv.response_status === "quoted" ? "good" : "ghost"}>
+                  {vendorById.get(inv.vendor_id)?.vendor_name || "vendor"} · {inv.response_status}
+                </Chip>
+                {rfq?.customer_id && (
+                  <span className="row" style={{ gap: 4, alignItems: "center" }}>
+                    <span className="mono-sm" style={{ color: "var(--ink-4)" }}>cust ref:</span>
+                    <input className="input mono" style={{ width: 150 }}
+                           defaultValue={refByVendor.get(inv.vendor_id) || ""}
+                           placeholder={rfq.customer_ref || "this vendor's code"}
+                           title="The reference this vendor knows the customer by (used in the RFQ email). Reused across RFQs."
+                           onBlur={(e) => saveVendorRef(inv.vendor_id, e.target.value.trim())} />
+                  </span>
+                )}
+              </div>
             ))}
           </div>
         )}

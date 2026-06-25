@@ -10,13 +10,18 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 
-const buildRfqEmail = ({ rfq, lines, vendor }) => {
+const buildRfqEmail = ({ rfq, lines, vendor, customerRef, customerName }) => {
   const linesText = lines.map((l) => `${l.line_no}. ${l.part_number || ""} ${l.description || ""} qty=${l.quantity || 0}${l.uom ? " " + l.uom : ""}${l.target_price ? " target=" + l.target_price : ""}${l.spec ? " spec=" + l.spec : ""}`).join("\n");
+  // Tell the vendor which end customer this RFQ is for, using the reference
+  // they know that customer by, so customer-specific (special) rates apply.
+  const custLine = (customerRef || customerName)
+    ? `Quotation for end customer: ${customerName || ""}${customerRef ? ` (ref: ${customerRef})` : ""}\nPlease apply the agreed customer-specific rates.\n\n`
+    : "";
   return {
     subject: "RFQ " + (rfq.rfq_number || rfq.id) + " from Anvil",
     body_text: `Hello ${vendor.vendor_name},
 
-Please quote the following items by ${rfq.due_at || "your earliest convenience"}:
+${custLine}Please quote the following items by ${rfq.due_at || "your earliest convenience"}:
 
 ${linesText}
 
@@ -53,13 +58,27 @@ export default async function handler(req, res) {
     const lines = linesQ.data || [];
     const vendors = vendorsQ.data || [];
 
+    // Resolve the end customer + each vendor's reference for them, so the RFQ
+    // email carries the customer-specific code (special-rate basis).
+    let customerName = null;
+    const refByVendor = new Map();
+    if (rfq.customer_id) {
+      const [custQ, refsQ] = await Promise.all([
+        svc.from("customers").select("customer_name").eq("tenant_id", ctx.tenantId).eq("id", rfq.customer_id).maybeSingle(),
+        svc.from("vendor_customer_refs").select("vendor_id, customer_ref").eq("tenant_id", ctx.tenantId).eq("customer_id", rfq.customer_id),
+      ]);
+      customerName = custQ.data?.customer_name || null;
+      (refsQ.data || []).forEach((r) => refByVendor.set(r.vendor_id, r.customer_ref));
+    }
+
     const out = [];
     for (const v of vendors) {
       if (!v.contact_email) {
         out.push({ vendor_id: v.id, skipped: true, reason: "no email" });
         continue;
       }
-      const draft = buildRfqEmail({ rfq, lines, vendor: v });
+      const customerRef = refByVendor.get(v.id) || rfq.customer_ref || null;
+      const draft = buildRfqEmail({ rfq, lines, vendor: v, customerRef, customerName });
       const inv = await svc.from("supplier_rfq_invitations").upsert({
         tenant_id: ctx.tenantId,
         rfq_id: rfq.id,

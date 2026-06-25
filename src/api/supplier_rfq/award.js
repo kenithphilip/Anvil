@@ -14,34 +14,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-
-// Feed one awarded line into the linked quote's composition. Throws on a hard
-// DB error; the caller treats each line best-effort.
-const feedCompositionLine = async (svc, ctx, quoteId, line) => {
-  const fields = {
-    supplier_name: line.vendor_name || null,
-    supplier_unit_price: line.unit_price != null ? Number(line.unit_price) : null,
-    supplier_currency: line.currency || null,
-    supplier_quote_no: line.supplier_quote_ref || null,
-    updated_at: new Date().toISOString(),
-  };
-  const upd = await svc.from("price_composition_lines")
-    .update(fields)
-    .eq("tenant_id", ctx.tenantId).eq("quote_id", quoteId).eq("line_index", line.line_no)
-    .select("id");
-  if (upd.error) throw new Error(upd.error.message);
-  if (upd.data && upd.data.length) return;
-  // No composition row yet -> insert a minimal one keyed by line_index.
-  const ins = await svc.from("price_composition_lines").insert({
-    tenant_id: ctx.tenantId,
-    quote_id: quoteId,
-    line_index: line.line_no,
-    part_no: line.part_number || null,
-    qty: line.quantity != null ? Number(line.quantity) : null,
-    ...fields,
-  }).select("id");
-  if (ins.error) throw new Error(ins.error.message);
-};
+import { feedCompositionLine } from "../_lib/rfq-composition.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;

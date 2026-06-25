@@ -447,6 +447,7 @@
     submitQuote: async (payload) => apiFetch("/api/supplier_rfq/quote", { method: "POST", body: payload }),
     matrix:      async (rfqId) => apiFetch("/api/supplier_rfq/matrix?rfq_id=" + encodeURIComponent(rfqId)),
     award:       async (payload) => apiFetch("/api/supplier_rfq/award", { method: "POST", body: payload }),
+    syncComposition: async (quoteId) => apiFetch("/api/supplier_rfq/sync_composition", { method: "POST", body: { quote_id: quoteId } }),
     listVendors: async () => apiFetch("/api/supplier_rfq/vendors"),
     createVendor: async (payload) => apiFetch("/api/supplier_rfq/vendors", { method: "POST", body: payload }),
     updateVendor: async (id, payload) => apiFetch("/api/supplier_rfq/vendors?id=" + encodeURIComponent(id), { method: "PATCH", body: payload }),

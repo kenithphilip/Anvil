@@ -90,35 +90,55 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
     return () => { cancelled = true; };
   }, []);
 
-  // Restore any previously saved composition for this quote: seed
-  // supplier inputs, the chosen profile and the FX snapshot.
-  useEffect(() => {
+  const [syncing, setSyncing] = useState(false);
+
+  // Restore the saved composition for this quote: seed supplier inputs, the
+  // chosen profile and the FX snapshot. Reusable so the "Sync awarded vendors"
+  // button can re-pull after re-deriving from RFQ awards.
+  const loadSaved = React.useCallback(async () => {
     if (!quoteId) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const resp: any = await ObaraBackend?.admin?.listPriceComposition?.(quoteId);
-        if (cancelled) return;
-        const saved = Array.isArray(resp) ? resp : resp?.lines || [];
-        if (!saved.length) return;
-        const sup: Record<number, { price: number; cur: string; name: string }> = {};
-        for (const r of saved) {
-          if (r.line_index == null) continue;
-          sup[r.line_index] = {
-            price: Number(r.supplier_unit_price) || 0,
-            cur: r.supplier_currency || "INR",
-            name: r.supplier_name || "",
-          };
-        }
-        setSupplier(sup);
-        if (saved[0]?.profile_code) setProfileCode(saved[0].profile_code);
-        if (saved[0]?.fx_snapshot && typeof saved[0].fx_snapshot === "object") {
-          setFx({ ...DEFAULT_FX, ...saved[0].fx_snapshot, rates: { ...DEFAULT_FX.rates, ...(saved[0].fx_snapshot.rates || {}) } });
-        }
-      } catch { /* no saved composition yet */ }
-    })();
-    return () => { cancelled = true; };
+    try {
+      const resp: any = await ObaraBackend?.admin?.listPriceComposition?.(quoteId);
+      const saved = Array.isArray(resp) ? resp : resp?.lines || [];
+      if (!saved.length) return;
+      const sup: Record<number, { price: number; cur: string; name: string }> = {};
+      for (const r of saved) {
+        if (r.line_index == null) continue;
+        sup[r.line_index] = {
+          price: Number(r.supplier_unit_price) || 0,
+          cur: r.supplier_currency || "INR",
+          name: r.supplier_name || "",
+        };
+      }
+      setSupplier(sup);
+      if (saved[0]?.profile_code) setProfileCode(saved[0].profile_code);
+      if (saved[0]?.fx_snapshot && typeof saved[0].fx_snapshot === "object") {
+        setFx({ ...DEFAULT_FX, ...saved[0].fx_snapshot, rates: { ...DEFAULT_FX.rates, ...(saved[0].fx_snapshot.rates || {}) } });
+      }
+    } catch { /* no saved composition yet */ }
   }, [quoteId]);
+
+  useEffect(() => { loadSaved(); }, [loadSaved]);
+
+  // Re-derive supplier mapping from this quote's awarded RFQ winners, then
+  // re-pull the saved composition so the inputs reflect the awarded vendors.
+  const syncAwarded = async () => {
+    if (!quoteId) return;
+    setSyncing(true);
+    try {
+      const r: any = await ObaraBackend?.supplierRfq?.syncComposition?.(quoteId);
+      await loadSaved();
+      if (!r || (r.rfqs ?? 0) === 0) {
+        window.notifyWarn?.("No linked RFQ", "No RFQ is linked to this quote. Raise one from the Vendor RFQ tab.");
+      } else if ((r.fed ?? 0) > 0) {
+        window.notifySuccess?.("Synced awarded vendors", `${r.fed} line(s) mapped. Click Save composition to recompute landed cost + margin.`);
+      } else {
+        window.notifyWarn?.("Nothing to sync", "No awarded winners found on the linked RFQ(s) yet.");
+      }
+    } catch (e: any) {
+      window.notifyError?.("Sync failed", e?.message || String(e));
+    } finally { setSyncing(false); }
+  };
 
   // Restore any saved raw-material breakup for this quote, grouped by
   // the composition line it belongs to.
@@ -309,6 +329,10 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
         </div>
         <div className="row" style={{ gap: 8, marginLeft: "auto", alignItems: "center" }}>
           {savedMsg && <span className="mono-sm" style={{ color: "var(--ink-3)" }}>{savedMsg}</span>}
+          <Btn sm kind="ghost" disabled={!quoteId || syncing} onClick={syncAwarded}
+            title={quoteId ? "Pull the awarded vendor's price + quote reference from this quote's RFQ(s) into the lines below" : "Save the quote first"}>
+            {syncing ? "Syncing..." : "Sync awarded vendors"}
+          </Btn>
           <Btn sm kind="primary" disabled={!quoteId || saving} onClick={save}
             title={quoteId ? "Recompute server-side and save this composition" : "Save the quote first"}>
             {saving ? "Saving..." : "Save composition"}

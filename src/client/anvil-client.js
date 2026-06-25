@@ -1365,6 +1365,10 @@
     // activated for each role). GET is read-level; update is approve-level.
     navSettings:       async () => apiFetch("/api/admin/nav_settings"),
     updateNavSettings: async (patch) => apiFetch("/api/admin/nav_settings", { method: "PATCH", body: patch }),
+    // Tenant quote defaults (e.g. default validity days for new quotes).
+    // GET is read-level; update is approve-level.
+    quoteSettings:       async () => apiFetch("/api/admin/quote_settings"),
+    updateQuoteSettings: async (patch) => apiFetch("/api/admin/quote_settings", { method: "PATCH", body: patch }),
     listHolidays: async (params) => {
       const qs = new URLSearchParams(params || {}).toString();
       return apiFetch("/api/admin/holidays" + (qs ? "?" + qs : ""));

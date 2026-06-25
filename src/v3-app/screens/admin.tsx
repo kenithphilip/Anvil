@@ -221,6 +221,12 @@ const WiredAdminCRUD = () => {
   const [csvBusy, setCsvBusy] = u(false);
   const [drawingBase, setDrawingBase] = u(() => { try { return localStorage.getItem(ADMIN_DRAWING_BASE_KEY) || ""; } catch (_) { return ""; } });
   const [drawingDraft, setDrawingDraft] = u(() => { try { return localStorage.getItem(ADMIN_DRAWING_BASE_KEY) || ""; } catch (_) { return ""; } });
+  // Tenant quote defaults (backend tenant_settings). Loaded when the
+  // Settings tab opens. Empty string = no tenant default (falls back to 30).
+  const [quoteValidity, setQuoteValidity] = u<string>("");
+  const [quoteValidityDraft, setQuoteValidityDraft] = u<string>("");
+  const [quoteValiditySaving, setQuoteValiditySaving] = u(false);
+  const [quoteValidityLoaded, setQuoteValidityLoaded] = u(false);
 
   const flashOk = (msg) => setFlash({ kind: "good", msg });
   const flashErr = (err) => setFlash({ kind: "bad", msg: String(err.message || err) });
@@ -1400,6 +1406,35 @@ const WiredAdminCRUD = () => {
       setDrawingBase(drawingDraft);
       flashOk("Drawing base URL saved (local browser only)");
     } catch (err) { flashErr(err); }
+  };
+
+  // Load tenant quote defaults when the Settings tab first opens.
+  e(() => {
+    if (active !== "settings" || quoteValidityLoaded) return;
+    (async () => {
+      try {
+        const r: any = await ObaraBackend?.admin?.quoteSettings?.();
+        const v = r?.quote_default_validity_days;
+        const s = v == null ? "" : String(v);
+        setQuoteValidity(s);
+        setQuoteValidityDraft(s);
+      } catch (_) { /* leave blank on failure */ }
+      finally { setQuoteValidityLoaded(true); }
+    })();
+  }, [active, quoteValidityLoaded]);
+
+  const onSaveQuoteValidity = async () => {
+    setQuoteValiditySaving(true);
+    try {
+      const raw = quoteValidityDraft.trim();
+      const r: any = await ObaraBackend?.admin?.updateQuoteSettings?.({ quote_default_validity_days: raw === "" ? null : Number(raw) });
+      const v = r?.quote_default_validity_days;
+      const s = v == null ? "" : String(v);
+      setQuoteValidity(s);
+      setQuoteValidityDraft(s);
+      flashOk("Quote settings saved");
+    } catch (err) { flashErr(err); }
+    finally { setQuoteValiditySaving(false); }
   };
 
   return (
@@ -3272,6 +3307,23 @@ const WiredAdminCRUD = () => {
                   <Btn sm kind="primary" onClick={onSaveDrawingBase} disabled={drawingDraft === drawingBase}>Save</Btn>
                   <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
                     Composes <span className="mono">{drawingBase || "—"}/&lt;drawing_no&gt;.pdf</span>
+                  </span>
+                </div>
+              </div>
+            </Card>
+            <Card title="Default quote validity" eyebrow="applies to new quotes">
+              <div style={{ display: "grid", gap: 8 }}>
+                <label className="lbl mono-sm">
+                  Default validity (days) — leave blank to use 30
+                  <input type="number" min={1} max={3650} className="input" style={{ maxWidth: 160 }}
+                         value={quoteValidityDraft}
+                         placeholder="30"
+                         onChange={(ev) => setQuoteValidityDraft(ev.target.value)} />
+                </label>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <Btn sm kind="primary" onClick={onSaveQuoteValidity} disabled={quoteValiditySaving || quoteValidityDraft === quoteValidity}>{quoteValiditySaving ? "Saving…" : "Save"}</Btn>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                    Used when a new quote has no explicit validity and the customer has no own default. Precedence: explicit &gt; customer &gt; tenant &gt; 30.
                   </span>
                 </div>
               </div>

@@ -22,6 +22,7 @@ import { resolveContext, requirePermission, hasPermission } from "../_lib/auth.j
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { belowFloorLines } from "../_lib/quote-margin.js";
+import { tenantSettings } from "../_lib/stripe-client.js";
 
 const VALID_STATUSES = new Set([
   "DRAFT", "PENDING_INTERNAL_APPROVAL", "SENT", "ACCEPTED",
@@ -247,7 +248,16 @@ export default async function handler(req, res) {
         validityDays = Number(customer.default_quote_validity_days);
         autoFilled.validity_days = "customer.default_quote_validity_days";
       } else {
-        validityDays = 30;
+        // Tenant-level default (Admin > Settings) before the hard-coded 30.
+        let tenantDefault = null;
+        try { tenantDefault = (await tenantSettings(svc, ctx.tenantId))?.quote_default_validity_days ?? null; }
+        catch (_) { /* fall through to 30 */ }
+        if (tenantDefault != null) {
+          validityDays = Number(tenantDefault);
+          autoFilled.validity_days = "tenant.quote_default_validity_days";
+        } else {
+          validityDays = 30;
+        }
       }
 
       // your_ref carries the buyer's PO/RFQ reference. When the quote is

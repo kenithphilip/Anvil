@@ -55,6 +55,11 @@ export const NewQuoteModal: React.FC<{
     Promise.resolve(ObaraBackend?.customers?.list?.())
       .then((data: any) => setCustomers(Array.isArray(data) ? data : data?.customers || []))
       .catch((e: any) => setErr(e?.message || String(e)));
+    // Seed validity from the tenant default (Admin > Settings) before any
+    // customer is picked. A customer's own default overrides this in pick().
+    Promise.resolve(ObaraBackend?.admin?.quoteSettings?.())
+      .then((r: any) => { const v = r?.quote_default_validity_days; if (v != null) setValidityDays(Number(v)); })
+      .catch(() => { /* keep the 30-day default */ });
   }, [open]);
 
   // When a customer is picked, fetch that customer's contacts and

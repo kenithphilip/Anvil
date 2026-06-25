@@ -4,14 +4,17 @@ import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 
 // ============================================================
-// ANVIL v3 — wired BOM Import
-// Multi-file XLSX/XLS/CSV/TSV/TXT/ZIP ingest into bill_of_materials.
-// Lazy-loads SheetJS (XLSX) + JSZip from CDN; per-file origin
-// auto-detection (India / Korea / China / Japan); editable gun_no;
-// preview pane; mod-detection diff vs. existing BOM rows; progress
-// bar driven by file index; toasts + log on import completion.
-// Mounted by app.jsx as ROUTES["items-import"]; suggested hash
-// #/items?view=import.
+// ANVIL v3 - wired BOM Import
+// Multi-file XLSX/XLS/CSV/TSV/TXT/ZIP ingest. Lazy-loads SheetJS
+// (XLSX) + JSZip from CDN, reads each file to a 2D sheet, then maps
+// it through the server format engine (/api/bom/parse, registry-
+// driven: level / material / supplier part) and imports via
+// /api/bom/import (asset + lines -> item_master + bill_of_materials
+// with provenance). Falls back to the legacy client mapping + flat
+// /api/bom upsert when those endpoints are unavailable, so the
+// screen always works. Editable asset/gun no; rich preview; mod diff;
+// progress bar; toasts + log. Mounted by app.jsx as
+// ROUTES["items-import"]; suggested hash #/items?view=import.
 // ============================================================
 
 // ── CDN loaders ──────────────────────────────────────────────
@@ -221,21 +224,52 @@ const extractItems = (rows2d) => {
 };
 
 // ── File parsing entry point ────────────────────────────────
-const parseBomFile = async (file) => {
+// Read a file to a 2D array of cells (the SheetJS {header:1} shape).
+const readRows = async (file) => {
   const ext = (file.name.split(".").pop() || "").toLowerCase();
   if (ext === "xlsx" || ext === "xls") {
     const buf = await file.arrayBuffer();
-    const rows = await parseXlsx(buf);
-    const { items } = extractItems(rows);
-    return items;
+    return await parseXlsx(buf);
   }
   if (ext === "csv" || ext === "tsv" || ext === "txt") {
     const text = await file.text();
-    const rows = parseDelimited(text);
-    const { items } = extractItems(rows);
-    return items;
+    return parseDelimited(text);
   }
   throw new Error("Unsupported extension: ." + ext);
+};
+
+// Map a parsed sheet to normalized BOM line items. Prefers the server
+// format engine (/api/bom/parse) which is registry-driven and captures
+// level / material / supplier part. Falls back to the shallow client
+// mapping so the screen keeps working if the backend is not reachable.
+const parseRowsRich = async (rows, fileName) => {
+  try {
+    if (ObaraBackend?.bom?.parse) {
+      const resp = await ObaraBackend.bom.parse({ rows, file_name: fileName });
+      if (resp && Array.isArray(resp.lines) && resp.lines.length) {
+        const items = resp.lines.map((ln) => ({
+          part_no: ln.part_no,
+          description: ln.part_name || "",
+          qty: ln.qty != null ? ln.qty : 1,
+          uom: ln.uom || null,
+          hierarchy_level: ln.level || 1,
+          level: ln.level != null ? ln.level : null,
+          material: ln.material || null,
+          supplier_part_no: ln.supplier_part_no || null,
+          side: ln.side || null,
+          std_category: ln.std_category || null,
+          remarks: ln.remarks || null,
+        }));
+        return { items, source_format: resp.source_format || null, asset: resp.asset || null };
+      }
+    }
+  } catch (_) { /* fall through to client mapping */ }
+  const { items } = extractItems(rows);
+  return {
+    items: items.map((it) => ({ ...it, level: it.hierarchy_level || null, material: null, supplier_part_no: null })),
+    source_format: null,
+    asset: null,
+  };
 };
 
 // Convert a parsed-zip entry into a File-like object so parseBomFile() works.
@@ -301,16 +335,19 @@ const WiredBomImport = () => {
     setFiles((arr) => [...arr, {
       id, name: file.name, origin, gunNo,
       items: [], status: "parsing", error: "",
-      expanded: false, diff: null, _file: file,
+      expanded: false, diff: null, sourceFormat: null, _file: file,
     }]);
     try {
-      const items = await parseBomFile(file);
+      const rows = await readRows(file);
+      const { items, source_format, asset } = await parseRowsRich(rows, file.name);
       if (!items.length) throw new Error("No item rows detected (header not found)");
+      // The engine's detected asset code beats the filename guess.
+      const resolvedGun = (asset && asset.asset_code) || gunNo;
       // Mod-detection diff against existing BOM (best-effort; non-fatal).
-      const existing = await fetchExistingBomChildren(gunNo);
+      const existing = await fetchExistingBomChildren(resolvedGun);
       const diff = computeDiff(existing, items);
       const status = items.length > 1000 ? "warn" : "good";
-      upsertFile(id, { items, status, diff });
+      upsertFile(id, { items, status, diff, gunNo: resolvedGun, sourceFormat: source_format });
     } catch (err) {
       upsertFile(id, { items: [], status: "bad", error: String(err.message || err) });
     }
@@ -383,34 +420,58 @@ const WiredBomImport = () => {
     for (let i = 0; i < importable.length; i++) {
       const f = importable[i];
       setProgress({ done: i, total: importable.length, current: f.name });
-      const rows = f.items.map((it) => ({
-        // Match the api/bom POST schema (parent_part_no / child_part_no required).
-        parent_part_no: f.gunNo,
-        child_part_no: it.part_no,
-        qty: it.qty || 1,
-        uom: it.uom,
-        notes: [
-          it.description ? "desc=" + it.description : "",
-          "origin=" + f.origin,
-          "level=" + (it.hierarchy_level || 1),
-        ].filter(Boolean).join(" · "),
-        // Future-friendly extra fields the API currently ignores:
-        parent_part: f.gunNo,
-        child_part: it.part_no,
-        description: it.description,
-        source_country: f.origin,
-        hierarchy_level: it.hierarchy_level || 1,
-      }));
       try {
-        const resp = await ObaraBackend?.bom?.upsert?.({ rows });
-        if (!resp) throw new Error("Backend not configured");
-        const n = resp.count != null ? resp.count : rows.length;
-        log(f.name + " — " + n + " row" + (n === 1 ? "" : "s") + " imported");
+        if (ObaraBackend?.bom?.importBom) {
+          // Rich path: asset + lines -> item_master + bill_of_materials,
+          // with provenance. The server computes + returns the diff.
+          const asset = {
+            asset_code: f.gunNo,
+            source_format: f.sourceFormat || undefined,
+            source_country: f.origin || undefined,
+          };
+          const lines = f.items.map((it) => ({
+            part_no: it.part_no,
+            part_name: it.description || null,
+            qty: it.qty != null ? it.qty : 1,
+            uom: it.uom || null,
+            level: it.level != null ? it.level : (it.hierarchy_level || null),
+            material: it.material || null,
+            supplier_part_no: it.supplier_part_no || null,
+            side: it.side || null,
+            std_category: it.std_category || null,
+            remarks: it.remarks || null,
+          }));
+          const resp = await ObaraBackend.bom.importBom({ asset, lines, file_name: f.name, source_format: f.sourceFormat || undefined });
+          if (!resp || resp.ok === false) throw new Error((resp && resp.error && resp.error.message) || "Import failed");
+          const d = resp.diff;
+          const der = resp.derived;
+          log(f.name + " - imported " + (resp.lines != null ? resp.lines : lines.length) + " lines"
+            + (d ? " (+" + d.added + "/-" + d.removed + "/~" + d.changed + ")" : "")
+            + (der ? "; " + der.items_upserted + " items, " + der.edges_upserted + " edges" : ""));
+        } else {
+          // Fallback: legacy flat upsert (keeps working if importBom is
+          // not deployed). Matches the original api/bom POST schema.
+          const rows = f.items.map((it) => ({
+            parent_part_no: f.gunNo,
+            child_part_no: it.part_no,
+            qty: it.qty || 1,
+            uom: it.uom,
+            notes: [
+              it.description ? "desc=" + it.description : "",
+              "origin=" + f.origin,
+              "level=" + (it.level || it.hierarchy_level || 1),
+            ].filter(Boolean).join(" - "),
+          }));
+          const resp = await ObaraBackend?.bom?.upsert?.({ rows });
+          if (!resp) throw new Error("Backend not configured");
+          const n = resp.count != null ? resp.count : rows.length;
+          log(f.name + " - " + n + " row" + (n === 1 ? "" : "s") + " imported (legacy)");
+        }
         upsertFile(f.id, { status: "good" });
         okCount += 1;
       } catch (err) {
         const msg = String(err.message || err);
-        log(f.name + " — ERROR: " + msg);
+        log(f.name + " - ERROR: " + msg);
         upsertFile(f.id, { status: "bad", error: msg });
         errCount += 1;
       }
@@ -518,12 +579,13 @@ const WiredBomImport = () => {
                     ? (f.diff.added === 0 && f.diff.removed === 0
                         ? <Chip k="ghost">no change</Chip>
                         : <Chip k={f.diff.removed > 0 ? "warn" : "info"}>+{f.diff.added} −{f.diff.removed}</Chip>)
-                    : <span className="mono-sm" style={{ color: "var(--ink-4)" }}>—</span>;
+                    : <span className="mono-sm" style={{ color: "var(--ink-4)" }}>-</span>;
                   return (
                     <React.Fragment key={f.id}>
                       <tr>
                         <td>
                           <span className="pri">{f.name}</span>
+                          {f.sourceFormat ? <div className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 2 }}>format: {f.sourceFormat}</div> : null}
                           {f.error ? <div className="mono-sm" style={{ color: "var(--bad)", marginTop: 2 }}>{f.error}</div> : null}
                         </td>
                         <td><Chip k={ORIGIN_CHIP_KIND[f.origin] || "ghost"}>{ORIGIN_LABEL[f.origin] || f.origin}</Chip></td>
@@ -574,6 +636,8 @@ const WiredBomImport = () => {
                                     <thead><tr>
                                       <th>Item #</th>
                                       <th>Description</th>
+                                      <th>Material</th>
+                                      <th>Supplier part</th>
                                       <th className="r">Qty</th>
                                       <th>UoM</th>
                                       <th className="r">Level</th>
@@ -582,10 +646,12 @@ const WiredBomImport = () => {
                                       {f.items.slice(0, 20).map((it, i) => (
                                         <tr key={i}>
                                           <td className="mono"><span className="pri">{it.part_no}</span></td>
-                                          <td>{it.description || "—"}</td>
+                                          <td>{it.description || "-"}</td>
+                                          <td className="mono-sm">{it.material || "-"}</td>
+                                          <td className="mono-sm">{it.supplier_part_no || "-"}</td>
                                           <td className="r mono">{it.qty}</td>
-                                          <td className="mono-sm">{it.uom || "—"}</td>
-                                          <td className="r mono">L{it.hierarchy_level || 1}</td>
+                                          <td className="mono-sm">{it.uom || "-"}</td>
+                                          <td className="r mono">{(it.level || it.hierarchy_level) ? "L" + (it.level || it.hierarchy_level) : "-"}</td>
                                         </tr>
                                       ))}
                                     </tbody>

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Banner, Btn, Card, Chip, fmtINR } from "../lib/primitives";
+import { Banner, Btn, Card, Chip } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { QuoteComposition } from "./QuoteComposition";
@@ -10,8 +10,9 @@ import { QuoteHistoryTab } from "./QuoteHistoryTab";
 // Mounts on top of the quotes list when an operator clicks a quote
 // row. Surfaces the four quote-header partials from the audit
 // (your_ref, attention_contact, template picker / form code,
-// validity) plus a first-class per-line editor with listed price,
-// discount percent, discounted price, and CGST / SGST / IGST.
+// validity) plus a per-line editor. Lines capture identity + qty/units/
+// source country only (sourced from the item master); pricing, source
+// selection and overheads are decided later at the Composition stage.
 //
 // Schema backing the drawer:
 //   - `quotes.your_ref`, `attention_contact`, `template_id`,
@@ -255,6 +256,8 @@ export const QuoteDetailDrawer: React.FC<{
     } finally { setBusy(false); }
   };
 
+  // Blank line for ad-hoc entries (e.g. freight). Identity + qty/uom/source
+  // only; pricing + overheads are set at the Composition stage.
   const addLine = () => setLines((arr) => [...arr, {
     line_index: arr.length,
     part_no: "",
@@ -262,11 +265,6 @@ export const QuoteDetailDrawer: React.FC<{
     qty: 1,
     uom: "NO",
     source_country: "",
-    listed_unit_price: 0,
-    discount_pct: 0,
-    cgst_pct: 0.09,
-    sgst_pct: 0.09,
-    igst_pct: 0,
   }]);
   const setLine = (i: number, k: string, v: any) => setLines((arr) => arr.map((ln, idx) => idx === i ? { ...ln, [k]: v } : ln));
   const removeLine = (i: number) => setLines((arr) => arr.filter((_, idx) => idx !== i).map((ln, idx) => ({ ...ln, line_index: idx })));
@@ -286,9 +284,9 @@ export const QuoteDetailDrawer: React.FC<{
     }
   };
 
-  // Append a quote line prefilled from an item-master row. Listed price
-  // seeds from the catalogue purchase price (the operator marks it up
-  // before sending); tax rates and source country carry over verbatim.
+  // Append a quote line from an item-master row. Only identity + qty/uom/
+  // source country carry over - pricing, tax and overheads are decided at
+  // the Composition stage, not here.
   const addFromItem = (item: any) => {
     setLines((arr) => [...arr, {
       line_index: arr.length,
@@ -298,11 +296,6 @@ export const QuoteDetailDrawer: React.FC<{
       uom: item.uom || "NO",
       hsn_sac: item.hsn_sac || "",
       source_country: item.source_country || "",
-      listed_unit_price: item.purchase_price != null ? Number(item.purchase_price) : 0,
-      discount_pct: 0,
-      cgst_pct: item.cgst_rate != null ? Number(item.cgst_rate) : 0,
-      sgst_pct: item.sgst_rate != null ? Number(item.sgst_rate) : 0,
-      igst_pct: item.igst_rate != null ? Number(item.igst_rate) : 0,
     }]);
     setPicking(false);
   };
@@ -313,18 +306,10 @@ export const QuoteDetailDrawer: React.FC<{
     return (it.part_no || "").toLowerCase().includes(v) || (it.description || "").toLowerCase().includes(v);
   }).slice(0, 50);
 
-  // Auto-compute discounted unit + line amount for preview.
-  const computedLines = lines.map((ln) => {
-    const listed = Number(ln.listed_unit_price || 0);
-    const disc = Number(ln.discount_pct || 0);
-    const qty = Number(ln.qty || 0);
-    const effective = ln.discounted_unit_price != null
-      ? Number(ln.discounted_unit_price)
-      : (disc > 0 ? listed * (1 - disc) : listed);
-    const lineTotal = qty * effective;
-    return { ...ln, effective, lineTotal };
-  });
-  const total = computedLines.reduce((s, ln) => s + (ln.lineTotal || 0), 0);
+  // Lines carry only identity + qty/uom/source at this stage; pricing,
+  // source selection and overheads are decided later at the Composition
+  // stage. We keep this passthrough so the table can render uniformly.
+  const computedLines = lines.map((ln) => ({ ...ln }));
 
   // ---- Lifecycle actions (Send / accept / decline / revise / convert /
   // cancel). Errors surface the server's friendly message; the
@@ -518,15 +503,19 @@ export const QuoteDetailDrawer: React.FC<{
 
           {tab === "lines" && (
             <>
-              <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                 <div>
                   <div className="mono-sm" style={{ color: "var(--ink-3)" }}>Quote lines</div>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>{lines.length} line{lines.length === 1 ? "" : "s"} . total {fmtINR(total)}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{lines.length} line{lines.length === 1 ? "" : "s"}</div>
                 </div>
                 <div className="row" style={{ gap: 8 }}>
-                  <Btn sm kind="ghost" onClick={openPicker}>{Icon.plus} From item master</Btn>
-                  <Btn sm kind="primary" onClick={addLine}>{Icon.plus} Add line</Btn>
+                  <Btn sm kind="primary" onClick={openPicker}>{Icon.plus} Add from item master</Btn>
+                  <Btn sm kind="ghost" onClick={addLine}>{Icon.plus} Blank line</Btn>
                 </div>
+              </div>
+              <div className="mono-sm" style={{ color: "var(--ink-4)", marginBottom: 10 }}>
+                Add or remove items and set quantity, units and source country (from the item master).
+                Pricing, source selection and overheads are decided at the Composition stage.
               </div>
               {picking && (
                 <Card title="Item master" eyebrow="Pick an item to append a prefilled line" style={{ marginBottom: 10 }}>
@@ -551,7 +540,7 @@ export const QuoteDetailDrawer: React.FC<{
                     <div style={{ maxHeight: 220, overflowY: "auto" }}>
                       <table className="tbl" style={{ fontSize: 12 }}>
                         <thead><tr>
-                          <th>Part</th><th>Description</th><th>UoM</th><th>Src</th><th className="r">Price</th><th></th>
+                          <th>Part</th><th>Description</th><th>UoM</th><th>Src</th><th></th>
                         </tr></thead>
                         <tbody>
                           {itemMatches.map((it) => (
@@ -560,7 +549,6 @@ export const QuoteDetailDrawer: React.FC<{
                               <td>{it.description || "-"}</td>
                               <td className="mono">{it.uom || "-"}</td>
                               <td className="mono">{it.source_country || "-"}</td>
-                              <td className="r mono">{it.purchase_price != null ? fmtINR(Number(it.purchase_price)) : "-"}</td>
                               <td><Btn sm kind="primary" onClick={() => addFromItem(it)}>Add</Btn></td>
                             </tr>
                           ))}
@@ -571,40 +559,25 @@ export const QuoteDetailDrawer: React.FC<{
                 </Card>
               )}
               {computedLines.length === 0 ? (
-                <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>No lines yet. Click <b>Add line</b> to start.</div>
+                <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>No lines yet. Click <b>Add from item master</b> to start.</div>
               ) : (
                 <table className="tbl" style={{ fontSize: 12 }}>
                   <thead><tr>
-                    <th>#</th><th>Part</th><th>Description</th><th className="r">Qty</th><th>UoM</th><th>Src</th>
-                    <th className="r">Listed</th><th className="r">Disc %</th><th className="r">Net</th><th className="r">CGST</th><th className="r">SGST</th><th className="r">IGST</th><th className="r">Line</th><th></th>
+                    <th>#</th><th>Part</th><th>Description</th><th className="r">Qty</th><th>Units</th><th>Source country</th><th></th>
                   </tr></thead>
                   <tbody>
                     {computedLines.map((ln, i) => (
                       <tr key={i}>
                         <td className="mono">{i + 1}</td>
-                        <td><input className="input mono" style={{ width: 110 }} value={ln.part_no || ""} onChange={(e) => setLine(i, "part_no", e.target.value)} /></td>
-                        <td><input className="input" style={{ width: 200 }} value={ln.description || ""} onChange={(e) => setLine(i, "description", e.target.value)} /></td>
-                        <td className="r"><input className="input mono r" style={{ width: 60 }} type="number" step="0.01" value={ln.qty ?? ""} onChange={(e) => setLine(i, "qty", e.target.value === "" ? null : Number(e.target.value))} /></td>
-                        <td><input className="input mono" style={{ width: 60 }} value={ln.uom || ""} onChange={(e) => setLine(i, "uom", e.target.value)} /></td>
-                        <td><input className="input mono" style={{ width: 80 }} value={ln.source_country || ""} placeholder="e.g. O-KOREA" onChange={(e) => setLine(i, "source_country", e.target.value)} /></td>
-                        <td className="r"><input className="input mono r" style={{ width: 90 }} type="number" step="0.01" value={ln.listed_unit_price ?? ""} onChange={(e) => setLine(i, "listed_unit_price", e.target.value === "" ? null : Number(e.target.value))} /></td>
-                        <td className="r"><input className="input mono r" style={{ width: 60 }} type="number" step="0.001" value={ln.discount_pct ?? 0} onChange={(e) => setLine(i, "discount_pct", Number(e.target.value))} /></td>
-                        <td className="r mono"><span className="pri">{ln.effective != null ? fmtINR(ln.effective) : "-"}</span></td>
-                        <td className="r"><input className="input mono r" style={{ width: 55 }} type="number" step="0.001" value={ln.cgst_pct ?? ""} onChange={(e) => setLine(i, "cgst_pct", e.target.value === "" ? null : Number(e.target.value))} /></td>
-                        <td className="r"><input className="input mono r" style={{ width: 55 }} type="number" step="0.001" value={ln.sgst_pct ?? ""} onChange={(e) => setLine(i, "sgst_pct", e.target.value === "" ? null : Number(e.target.value))} /></td>
-                        <td className="r"><input className="input mono r" style={{ width: 55 }} type="number" step="0.001" value={ln.igst_pct ?? ""} onChange={(e) => setLine(i, "igst_pct", e.target.value === "" ? null : Number(e.target.value))} /></td>
-                        <td className="r mono"><b>{ln.lineTotal != null ? fmtINR(ln.lineTotal) : "-"}</b></td>
-                        <td><Btn sm kind="ghost" onClick={() => removeLine(i)}>x</Btn></td>
+                        <td><input className="input mono" style={{ width: 120 }} value={ln.part_no || ""} onChange={(e) => setLine(i, "part_no", e.target.value)} /></td>
+                        <td><input className="input" style={{ width: 240 }} value={ln.description || ""} onChange={(e) => setLine(i, "description", e.target.value)} /></td>
+                        <td className="r"><input className="input mono r" style={{ width: 70 }} type="number" step="0.01" value={ln.qty ?? ""} onChange={(e) => setLine(i, "qty", e.target.value === "" ? null : Number(e.target.value))} /></td>
+                        <td><input className="input mono" style={{ width: 70 }} value={ln.uom || ""} onChange={(e) => setLine(i, "uom", e.target.value)} /></td>
+                        <td><input className="input mono" style={{ width: 110 }} value={ln.source_country || ""} placeholder="e.g. O-KOREA" onChange={(e) => setLine(i, "source_country", e.target.value)} /></td>
+                        <td><Btn sm kind="ghost" onClick={() => removeLine(i)} title="Remove line">x</Btn></td>
                       </tr>
                     ))}
                   </tbody>
-                  <tfoot>
-                    <tr style={{ background: "var(--paper-2)" }}>
-                      <td colSpan={12} className="r mono"><b>Total</b></td>
-                      <td className="r mono"><b style={{ fontSize: 13 }}>{fmtINR(total)}</b></td>
-                      <td></td>
-                    </tr>
-                  </tfoot>
                 </table>
               )}
               <div className="row" style={{ justifyContent: "flex-end", gap: 8, marginTop: 12 }}>

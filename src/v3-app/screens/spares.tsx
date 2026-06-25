@@ -3,7 +3,7 @@ import { fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
-import { matchSpares, SPARE_PRESETS, isConsumableCol, type SpareBomItem } from "../lib/spare-match";
+import { matchSpares, SPARE_PRESETS, isConsumableCol, nameMatchCandidates, type SpareBomItem } from "../lib/spare-match";
 
 // ============================================================
 // ANVIL v3 — Spare Matrix Worksheet
@@ -590,7 +590,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       {/* Add col */}
       {showAddCol && !recView && (
         <Card>
-          <SMAddColForm onAdd={onAddCol} onClose={() => setShowAddCol(false)} existing={draft.cols || []} />
+          <SMAddColForm onAdd={onAddCol} onClose={() => setShowAddCol(false)} existing={draft.cols || []} guns={(draft.rows || []).map((r) => r.gun_no).filter(Boolean)} />
         </Card>
       )}
 
@@ -803,25 +803,70 @@ const SMAddRowForm = ({ onAdd, onCancel }) => {
 
 // ---------- Add Col form ----------
 // A column is a spare CATEGORY (TIP, SHUNT, ELECTRODE, BOLT, ...). Auto-fill
-// matches each gun's BOM parts into these categories. Presets seed the
-// familiar categories; the type defaults from the preset (consumable cells
-// are copper-filtered during matching).
-const SMAddColForm = ({ onAdd, onClose, existing }) => {
+// matches each gun's BOM parts into these categories. Suggestions are drawn
+// from the actual BOM descriptions of the guns already in this matrix (so
+// you only see categories/parts that exist), plus the familiar presets.
+const SMAddColForm = ({ onAdd, onClose, existing, guns }) => {
   const { useState: uF, useRef: rF, useEffect: eF } = React;
   const [name, setName] = uF("");
   const [type, setType] = uF("spare");
+  const [loading, setLoading] = uF(false);
+  // presetHits: presets that actually match >=1 part in the loaded guns.
+  const [presetHits, setPresetHits] = uF<Array<{ name: string; count: number; consumable: boolean }>>([]);
+  // descOptions: distinct cleaned part descriptions found in the loaded guns.
+  const [descOptions, setDescOptions] = uF<string[]>([]);
   const ref = rF(null);
   eF(() => { ref.current?.focus(); }, []);
 
   const usedNames = new Set((existing || []).map((c) => c.col_name));
+
+  // Load the BOM descriptions of the populated guns and derive suggestions.
+  eF(() => {
+    let cancel = false;
+    const codes = Array.from(new Set((guns || []).map((g) => String(g || "").trim()).filter(Boolean)));
+    if (!codes.length) { setPresetHits([]); setDescOptions([]); return; }
+    setLoading(true);
+    (async () => {
+      const all: SpareBomItem[] = [];
+      await Promise.all(codes.map(async (code: string) => {
+        const lines = await smFetchLinesForGun(code);
+        all.push(...lines);
+      }));
+      if (cancel) return;
+      // Presets that match >=1 part across the loaded guns, ranked by count.
+      const hits = SPARE_PRESETS
+        .map((p) => {
+          const v = matchSpares(all, [p.name])[p.name] || "";
+          const count = v ? v.split("\n").filter(Boolean).length : 0;
+          return { name: p.name, count, consumable: p.category === "Consumable" };
+        })
+        .filter((h) => h.count > 0)
+        .sort((a, b) => b.count - a.count);
+      // Distinct cleaned descriptions for free-text autocomplete.
+      const seen = new Set<string>();
+      const descs: string[] = [];
+      all.forEach((l) => {
+        const cands = nameMatchCandidates(l.part_name);
+        const cleaned = (cands.length ? cands[cands.length - 1] : String(l.part_name || "")).trim().toUpperCase();
+        if (cleaned && !seen.has(cleaned)) { seen.add(cleaned); descs.push(cleaned); }
+      });
+      descs.sort();
+      setPresetHits(hits);
+      setDescOptions(descs.slice(0, 200));
+      setLoading(false);
+    })().catch(() => { if (!cancel) { setLoading(false); } });
+    return () => { cancel = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const onNameChange = (val) => {
     setName(val);
     const up = String(val || "").trim().toUpperCase();
     const preset = SPARE_PRESETS.find((p) => p.name === up);
     if (preset) setType(preset.category === "Consumable" ? "consumable" : "spare");
   };
-  const addPreset = (presetName) => {
-    onAdd(presetName, isConsumableCol(presetName) ? "consumable" : "spare");
+  const addCol = (colName, consumable) => {
+    onAdd(colName, consumable ? "consumable" : "spare");
   };
   const submit = (e) => {
     e?.preventDefault();
@@ -831,14 +876,23 @@ const SMAddColForm = ({ onAdd, onClose, existing }) => {
     onClose();
   };
 
+  // Datalist = matched presets + descriptions + all preset names (deduped).
+  const dataOptions = Array.from(new Set([
+    ...presetHits.map((h) => h.name),
+    ...descOptions,
+    ...SPARE_PRESETS.map((p) => p.name),
+  ])).filter((n) => !usedNames.has(n));
+
+  const hasGuns = (guns || []).length > 0;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <form onSubmit={submit} style={{ display: "flex", gap: 8, alignItems: "end" }}>
         <div style={{ flex: 1 }}>
-          <div className="label">spare category (column)</div>
-          <input ref={ref} list="sm-preset-cats" className="input mono" value={name} onChange={(e) => onNameChange(e.target.value)} placeholder="e.g. TIP, SHUNT, ELECTRODE" onKeyDown={(e) => { if (e.key === "Escape") onClose(); }} />
-          <datalist id="sm-preset-cats">
-            {SPARE_PRESETS.map((p) => <option key={p.name} value={p.name}>{p.category}</option>)}
+          <div className="label">spare category / description (column)</div>
+          <input ref={ref} list="sm-col-suggestions" className="input mono" value={name} onChange={(e) => onNameChange(e.target.value)} placeholder={hasGuns ? "type to autocomplete from your guns…" : "e.g. TIP, SHUNT, ELECTRODE"} onKeyDown={(e) => { if (e.key === "Escape") onClose(); }} />
+          <datalist id="sm-col-suggestions">
+            {dataOptions.map((n) => <option key={n} value={n} />)}
           </datalist>
         </div>
         <div style={{ width: 160 }}>
@@ -853,11 +907,31 @@ const SMAddColForm = ({ onAdd, onClose, existing }) => {
         <Btn sm type="submit" kind="primary">Add column</Btn>
         <Btn sm kind="ghost" onClick={onClose}>Cancel</Btn>
       </form>
+
+      {/* Suggestions found in the guns currently in this matrix */}
+      {hasGuns && (
+        <div>
+          <div className="label" style={{ marginBottom: 4 }}>
+            {loading ? "scanning your guns…" : presetHits.filter((h) => !usedNames.has(h.name)).length ? "found in your guns" : "no preset categories matched your guns - use a preset or description below"}
+          </div>
+          {!loading && (
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              {presetHits.filter((h) => !usedNames.has(h.name)).map((h) => (
+                <button key={h.name} type="button" className="chip" style={{ cursor: "pointer", fontSize: 10.5 }} title={h.consumable ? "consumable" : "spare"} onClick={() => addCol(h.name, h.consumable)}>
+                  {h.name} <span style={{ opacity: 0.6 }}>· {h.count}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Familiar preset categories (always available) */}
       <div>
-        <div className="label" style={{ marginBottom: 4 }}>quick add presets</div>
+        <div className="label" style={{ marginBottom: 4 }}>preset categories</div>
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
           {SPARE_PRESETS.filter((p) => !usedNames.has(p.name)).map((p) => (
-            <button key={p.name} type="button" className="chip ghost" style={{ cursor: "pointer", fontSize: 10.5 }} title={p.category} onClick={() => addPreset(p.name)}>
+            <button key={p.name} type="button" className="chip ghost" style={{ cursor: "pointer", fontSize: 10.5 }} title={p.category} onClick={() => addCol(p.name, p.category === "Consumable")}>
               {p.name}
             </button>
           ))}
@@ -1241,12 +1315,11 @@ const SMSubTab = ({ tab, customerId, customers, onCustomerChange }) => {
 };
 
 // ---------- Top-level ----------
+// Kit / Opportunities / Obsolete are hidden for now (SMSubTab still supports
+// them if re-enabled here).
 const SM_TABS = [
   { id: "worksheet",    label: "Worksheet" },
   { id: "recommend",    label: "Recommend" },
-  { id: "kit",          label: "Kit" },
-  { id: "opps",         label: "Opportunities" },
-  { id: "obsolete",     label: "Obsolete" },
 ];
 
 const WiredSparesWorksheet = () => {
@@ -1272,7 +1345,7 @@ const WiredSparesWorksheet = () => {
       <WSTitle
         eyebrow="Procurement · Spares Matrix"
         title="Spares matrix"
-        meta="worksheet · recommend · kit · opportunities · obsolete"
+        meta="worksheet · recommend"
       />
       <WSTabs tabs={SM_TABS} active={active} onChange={setActive} />
       <div className="ws-content">

@@ -6,6 +6,7 @@ import { ObaraBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 import { CustomerContactsPanel } from "../components/CustomerContactsPanel";
 import { CustomerHierarchyPanel } from "../components/CustomerHierarchyPanel";
+import { CustomerRegistrationPanel } from "../components/CustomerRegistrationPanel";
 
 // Create-customer modal. Customers usually auto-register from orders/email/
 // BOM. Admins apply directly; everyone else submits for approval. The parent
@@ -399,6 +400,10 @@ const WiredCustomers = () => {
             <div className="divider" />
             <div style={{ marginTop: 10 }}>
               <CustomerContactsPanel customerId={selectedCustomer.id} />
+            </div>
+            <div className="divider" />
+            <div style={{ marginTop: 10 }}>
+              <CustomerRegistrationPanel customerId={selectedCustomer.id} />
             </div>
           </Card>
         )}

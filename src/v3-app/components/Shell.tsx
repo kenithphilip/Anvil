@@ -6,7 +6,9 @@
 
 import React, { ReactNode, useEffect, useRef, useState } from "react";
 import { Icon } from "../lib/icons";
-import { Dot } from "../lib/primitives";
+import { Dot, Chip } from "../lib/primitives";
+import { ageLabel } from "../lib/helpers";
+import { getRecent, clearRecent, type RecentItem } from "../lib/recent-items";
 import { ObaraBackend } from "../lib/api";
 import { Prefs } from "../lib/preferences";
 import { signOutAndRedirect } from "../lib/session";
@@ -31,6 +33,55 @@ interface NotificationRow {
   resolved?: boolean;
   created_at?: string;
 }
+
+// Header "Recent" menu: quick navigation back to records the user recently
+// opened or created. Reads the client-side recent-items store; additive.
+const RecentMenu: React.FC = () => {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<RecentItem[]>(() => getRecent());
+  useEffect(() => {
+    const on = () => setItems(getRecent());
+    window.addEventListener("recent:change", on);
+    return () => window.removeEventListener("recent:change", on);
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement)?.closest?.(".recent-menu-wrap")) setOpen(false);
+    };
+    window.addEventListener("mousedown", onDoc);
+    return () => window.removeEventListener("mousedown", onDoc);
+  }, [open]);
+  const go = (href: string) => { setOpen(false); try { window.location.hash = href; } catch (_) { /* noop */ } };
+  return (
+    <div className="recent-menu-wrap" style={{ position: "relative" }}>
+      <button type="button" className="head-pill" title="Recently opened / created records"
+        onClick={() => { setItems(getRecent()); setOpen((o) => !o); }}>
+        {Icon.history} Recent
+      </button>
+      {open && (
+        <div role="menu" style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", width: 340, maxWidth: "90vw", zIndex: 300, background: "var(--paper)", border: "1px solid var(--hairline)", borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.18)", padding: 4, maxHeight: "72vh", overflowY: "auto" }}>
+          {items.length === 0 ? (
+            <div className="mono-sm" style={{ padding: 12, color: "var(--ink-3)" }}>No recent items yet. Open or create a record and it shows up here.</div>
+          ) : items.map((it) => (
+            <div key={it.key} role="button" tabIndex={0} className="cmdk-row"
+              onClick={() => go(it.href)} onKeyDown={(e) => { if (e.key === "Enter") go(it.href); }}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", cursor: "pointer", borderRadius: 6 }}>
+              <Chip k="ghost">{it.type}</Chip>
+              <span style={{ flex: 1, fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.label}</span>
+              <span className="mono-sm" style={{ color: "var(--ink-4)", fontSize: 10 }}>{ageLabel(new Date(it.ts).toISOString())}</span>
+            </div>
+          ))}
+          {items.length > 0 && (
+            <div style={{ borderTop: "1px solid var(--hairline-2)", padding: "6px 10px", display: "flex", justifyContent: "flex-end" }}>
+              <button type="button" className="btn sm ghost" onClick={() => clearRecent()}>Clear</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const NotificationsBell: React.FC<{ onRoute?: (id: string) => void; isAdminLike: boolean }> = ({ onRoute, isAdminLike }) => {
   const [open, setOpen] = useState(false);
@@ -513,6 +564,8 @@ export const Shell: React.FC<ShellProps> = ({
           {Icon.caret}
         </button>
       )}
+
+      <RecentMenu />
 
       <button className="head-pill" title="Thread drawer" onClick={onThread}>
         {Icon.history} Thread

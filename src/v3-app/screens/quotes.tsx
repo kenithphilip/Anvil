@@ -24,6 +24,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { ageLabel, fmtINRShort } from "../lib/helpers";
 import { ObaraBackend } from "../lib/api";
+import { pushRecent } from "../lib/recent-items";
 import { QuoteDetailDrawer } from "../components/QuoteDetailDrawer";
 import { NewQuoteModal } from "../components/NewQuoteModal";
 
@@ -115,6 +116,12 @@ const Quotes: React.FC = () => {
     setEditing(q);
     setActiveTab(tb);
     writeQuoteParams(q.id, tb);
+    pushRecent({
+      type: "quote",
+      id: q.id,
+      label: `${q.quote_number || q.id.slice(0, 8)}${q.customer?.customer_name || q.customer_name ? " · " + (q.customer?.customer_name || q.customer_name) : ""}`,
+      href: `#/quotes?id=${encodeURIComponent(q.id)}&tab=${encodeURIComponent(tb)}`,
+    });
   };
   const closeQuote = () => { setEditing(null); writeQuoteParams(null); };
   const onTab = (t: string) => { setActiveTab(t); if (editing) writeQuoteParams(editing.id, t); };

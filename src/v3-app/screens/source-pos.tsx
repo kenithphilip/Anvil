@@ -171,7 +171,7 @@ const WiredSourcePOs = () => {
 
   const totalValueINR = mS(() => {
     return rows.reduce((s, p) => {
-      const v = Number(p.value_inr || p.total_value_inr || p.value) || 0;
+      const v = Number(p.total_inr != null ? p.total_inr : p.total_landed_inr) || 0;
       return s + v;
     }, 0);
   }, [rows]);
@@ -179,9 +179,10 @@ const WiredSourcePOs = () => {
   const openAck = (po) => {
     setAckPo(po);
     setAckForm({
-      acked_unit_price: po.unit_price != null ? String(po.unit_price) : "",
-      acked_eta_date:   po.eta_date ? String(po.eta_date).slice(0, 10) : "",
-      acked_qty:        po.qty != null ? String(po.qty) : "",
+      acked_unit_price: po.total_foreign != null ? String(po.total_foreign)
+        : (po.total_inr != null ? String(po.total_inr) : ""),
+      acked_eta_date:   po.acknowledged_eta ? String(po.acknowledged_eta).slice(0, 10) : "",
+      acked_qty:        "",
       notes: "",
     });
     setSubmitErr(null);
@@ -194,14 +195,19 @@ const WiredSourcePOs = () => {
     setSubmitting(true);
     setSubmitErr(null);
     try {
+      // The API (source_pos/ack.js) reads confirmedPrice/confirmedEta and
+      // compares the price to the PO total; send those canonical keys or
+      // the ack records 0/null. qty + notes ride along in ack_payload.
       const ack = {
-        acked_unit_price: ackForm.acked_unit_price ? Number(ackForm.acked_unit_price) : null,
-        acked_eta_date:   ackForm.acked_eta_date || null,
-        acked_qty:        ackForm.acked_qty ? Number(ackForm.acked_qty) : null,
-        notes:            ackForm.notes || null,
+        confirmedPrice: ackForm.acked_unit_price ? Number(ackForm.acked_unit_price) : null,
+        confirmedEta:   ackForm.acked_eta_date || null,
+        confirmedQty:   ackForm.acked_qty ? Number(ackForm.acked_qty) : null,
+        notes:          ackForm.notes || null,
       };
-      await ObaraBackend?.sourcePos?.ack?.({ sourcePoId: ackPo.id, ack });
-      window.notifySuccess?.("Ack submitted", ackPo.po_number || ackPo.id?.slice(0, 8));
+      // Bridge signature is ack(sourcePoId, ack). Passing a single object
+      // left body.ack undefined, so the endpoint 400'd on every ack.
+      await ObaraBackend?.sourcePos?.ack?.(ackPo.id, ack);
+      window.notifySuccess?.("Ack submitted", ackPo.reference || ackPo.id?.slice(0, 8));
       closeAck();
       reload();
     } catch (err: any) {
@@ -372,12 +378,12 @@ const WiredSourcePOs = () => {
                       style={{ cursor: "pointer" }}
                       aria-label={`Open ack for ${po.po_reference || po.id}`}
                     >
-                      <td className="mono"><span className="pri">{po.po_reference || po.po_number || po.id?.slice(0, 8) || "—"}</span></td>
-                      <td>{po.supplier_name || po.supplier?.name || po.supplier_id?.slice(0, 8) || "—"}</td>
-                      <td className="mono-sm">{po.country || po.supplier?.country || "—"}</td>
+                      <td className="mono"><span className="pri">{po.reference || po.id?.slice(0, 8) || "—"}</span></td>
+                      <td>{po.supplier || "—"}</td>
+                      <td className="mono-sm">{po.country || "—"}</td>
                       <td className="mono-sm">{ccy}</td>
-                      <td className="r mono">{spoFmtValue(po.value || po.total_value || po.unit_price * po.qty, ccy)}</td>
-                      <td className="mono-sm">{spoFmtDate(po.eta_date || po.acked_eta_date)}</td>
+                      <td className="r mono">{spoFmtValue(po.total_foreign != null ? po.total_foreign : (po.total_inr != null ? po.total_inr : po.total_landed_inr), ccy)}</td>
+                      <td className="mono-sm">{spoFmtDate(po.acknowledged_eta)}</td>
                       <td><Chip k={chip.k}>{chip.label}</Chip></td>
                       <td><Btn sm onClick={(ev) => { ev.stopPropagation(); openAck(po); }}>ack {Icon.arrowR}</Btn></td>
                     </tr>
@@ -388,11 +394,11 @@ const WiredSourcePOs = () => {
           </Card>
 
           {ackPo ? (
-            <Card title={`Record ack · ${ackPo.po_reference || ackPo.id?.slice(0, 8) || ""}`} eyebrow={ackPo.supplier_name || ""}
+            <Card title={`Record ack · ${ackPo.reference || ackPo.id?.slice(0, 8) || ""}`} eyebrow={ackPo.supplier || ""}
                   right={<Btn sm kind="ghost" onClick={closeAck} title="Close">{Icon.x}</Btn>}>
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 <div>
-                  <label htmlFor="spo-ack-price" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Acked unit price ({spoCurrency(ackPo)})</label>
+                  <label htmlFor="spo-ack-price" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Acked total ({spoCurrency(ackPo)})</label>
                   <input
                     id="spo-ack-price"
                     className="input"
@@ -462,13 +468,19 @@ const WiredSourcePOs = () => {
                   </tr></thead>
                   <tbody>
                     {scorecardRows.slice(0, 8).map((s) => {
-                      const grade = s.grade || (s.on_time_pct >= 0.9 ? "A" : s.on_time_pct >= 0.75 ? "B" : "C");
+                      // on_time_pct + price_accuracy_pct are stored 0-100
+                      // (source_pos/ack.js), not 0-1 fractions.
+                      const onTimePct = s.on_time_pct != null ? Number(s.on_time_pct) : null;
+                      const grade = s.grade || (onTimePct == null ? "—" : onTimePct >= 90 ? "A" : onTimePct >= 75 ? "B" : "C");
+                      const defectPct = s.defect_rate_pct != null
+                        ? Number(s.defect_rate_pct) * 100
+                        : (s.total_acks ? (Number(s.variance_count || 0) / Number(s.total_acks)) * 100 : null);
                       return (
-                        <tr key={s.id || s.supplier_id || s.supplier_name}>
-                          <td>{s.supplier_name || s.supplier_id?.slice(0, 8) || "—"}</td>
+                        <tr key={s.id || s.supplier}>
+                          <td>{s.supplier || "—"}</td>
                           <td><Chip k={grade === "A" || grade === "A+" ? "good" : grade === "B" ? "warn" : "bad"}>{grade}</Chip></td>
-                          <td className="r mono">{s.on_time_pct != null ? `${(Number(s.on_time_pct) * 100).toFixed(0)}%` : "—"}</td>
-                          <td className="r mono">{s.defect_rate_pct != null ? `${(Number(s.defect_rate_pct) * 100).toFixed(1)}%` : "—"}</td>
+                          <td className="r mono">{onTimePct != null ? `${onTimePct.toFixed(0)}%` : "—"}</td>
+                          <td className="r mono">{defectPct != null ? `${defectPct.toFixed(1)}%` : "—"}</td>
                         </tr>
                       );
                     })}

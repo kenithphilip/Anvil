@@ -7,7 +7,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { ageLabel, fmtCurrency, fmtDate } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
+import { Banner, Btn, Card, Chip, KPI, KPIRow, Modal, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 
@@ -34,6 +34,25 @@ const statusChip = (s: string) => {
 // every screen uses the same locale + symbol logic.
 const fmtMoney = (amount: any, currency: string = "USD") => fmtCurrency(amount, currency);
 
+// Payment methods offered in the manual record-payment form. Customers
+// are OEMs paying through SAP AP runs, so corporate bank rails lead; the
+// hosted card gateways (Stripe/Razorpay) stay as a separate optional
+// online path and are not listed here. Mirrors PAYMENT_METHODS in
+// src/api/_lib/payments.js.
+const PAYMENT_METHOD_OPTIONS = [
+  { id: "bank_transfer", label: "Bank transfer" },
+  { id: "rtgs",          label: "RTGS" },
+  { id: "neft",          label: "NEFT" },
+  { id: "wire",          label: "Wire transfer" },
+  { id: "cheque",        label: "Cheque" },
+  { id: "imps",          label: "IMPS" },
+  { id: "upi",           label: "UPI" },
+  { id: "cash",          label: "Cash" },
+  { id: "other",         label: "Other" },
+];
+
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
 const WiredInvoices = () => {
   const [tab, setTab] = useState("all");
   const [rows, setRows] = useState<any[]>([]);
@@ -41,6 +60,14 @@ const WiredInvoices = () => {
   const [error, setError] = useState<Error | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [flash, setFlash] = useState<{ kind: string; msg: string } | null>(null);
+  // Record-payment modal. payRow holds the invoice being settled; the
+  // form defaults amount to the outstanding balance (full payment) but
+  // the operator can enter less for a partial receipt.
+  const [payRow, setPayRow] = useState<any | null>(null);
+  const [payForm, setPayForm] = useState<{ amount: string; tds: string; method: string; reference: string; paid_at: string; note: string }>(
+    { amount: "", tds: "", method: "bank_transfer", reference: "", paid_at: todayISO(), note: "" }
+  );
+  const [payBusy, setPayBusy] = useState(false);
 
   // load() is shared by the tab-change effect and by manual refetch
   // (after a mutation). The cancel-flag pattern prevents a stale
@@ -147,15 +174,56 @@ const WiredInvoices = () => {
     } finally { setBusy(null); }
   };
 
-  const markPaid = async (row: any) => {
-    setBusy(row.id);
+  const outstandingOf = (row: any) =>
+    Math.max(0, (Number(row.grand_total) || 0) - (Number(row.paid_amount) || 0));
+
+  const openPay = (row: any) => {
+    setPayRow(row);
+    setPayForm({
+      amount: String(outstandingOf(row).toFixed(2)),
+      tds: "",
+      method: "bank_transfer",
+      reference: "",
+      paid_at: todayISO(),
+      note: "",
+    });
+  };
+
+  const submitPayment = async () => {
+    if (!payRow) return;
+    const amount = Number(payForm.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setFlash({ kind: "bad", msg: "Enter a cash-received amount greater than zero" });
+      return;
+    }
+    const tds = payForm.tds ? Number(payForm.tds) : 0;
+    if (!Number.isFinite(tds) || tds < 0) {
+      setFlash({ kind: "bad", msg: "TDS must be zero or a positive number" });
+      return;
+    }
+    setPayBusy(true);
     try {
-      await ObaraBackend?.invoices?.update?.(row.id, { status: "paid", paid_amount: row.grand_total });
-      setFlash({ kind: "good", msg: "Marked " + row.invoice_number + " paid" });
+      const resp: any = await ObaraBackend?.invoices?.recordPayment?.(payRow.id, {
+        amount,
+        tds: tds || undefined,
+        method: payForm.method,
+        reference: payForm.reference || undefined,
+        paid_at: payForm.paid_at || undefined,
+        note: payForm.note || undefined,
+      });
+      const status = resp?.status || resp?.invoice?.status;
+      const tdsMsg = tds > 0 ? " (+ " + fmtMoney(tds, payRow.currency) + " TDS)" : "";
+      setFlash({
+        kind: "good",
+        msg: "Recorded " + fmtMoney(amount, payRow.currency) + tdsMsg + " on " + payRow.invoice_number +
+             (status === "paid" ? " — now fully paid" : " — partially paid"),
+      });
+      window.notifySuccess?.("Payment recorded", payRow.invoice_number);
+      setPayRow(null);
       await load();
     } catch (err: any) {
       setFlash({ kind: "bad", msg: err.message || String(err) });
-    } finally { setBusy(null); }
+    } finally { setPayBusy(false); }
   };
 
   const voidInvoice = async (row: any) => {
@@ -233,7 +301,7 @@ const WiredInvoices = () => {
                           <Btn sm kind="ghost" disabled={busy === r.id} onClick={() => sendInvoice(r)}>{Icon.send} send</Btn>
                         )}
                         {(r.status === "sent" || r.status === "partial" || r.status === "overdue") && (
-                          <Btn sm kind="ghost" disabled={busy === r.id} onClick={() => markPaid(r)}>{Icon.check} paid</Btn>
+                          <Btn sm kind="ghost" disabled={busy === r.id} onClick={() => openPay(r)}>{Icon.check} record payment</Btn>
                         )}
                         {r.status !== "paid" && r.status !== "void" && (
                           <Btn sm kind="ghost" disabled={busy === r.id} onClick={() => voidInvoice(r)}>{Icon.x} void</Btn>
@@ -255,11 +323,99 @@ const WiredInvoices = () => {
             <p style={{ marginTop: 8 }}>
               <code>Send</code> renders a fresh PDF, uploads it, regenerates a 7-day share link, queues an
               email via the existing comms pipeline (SendGrid if configured), and flips status to
-              <code> sent</code>. <code>Mark paid</code> records the full amount and flips to <code>paid</code>.
+              <code> sent</code>. <code>Record payment</code> logs an OEM payment (bank transfer, RTGS, NEFT
+              or wire) with its reference; enter the <code>cash received</code> plus any <code>TDS withheld</code>
+              and the invoice clears in full (cash + TDS), matching how SAP settles an AR open item. Short
+              receipts flip the invoice to <code>partial</code> until fully settled.
             </p>
           </div>
         </Card>
       </div>
+
+      <Modal
+        open={!!payRow}
+        title={payRow ? "Record payment · " + payRow.invoice_number : "Record payment"}
+        onClose={() => (payBusy ? null : setPayRow(null))}
+        maxWidth={460}
+      >
+        {payRow && (
+          <>
+            <Modal.Body>
+              <div className="mono-sm" style={{ color: "var(--ink-2)" }}>
+                Total {fmtMoney(payRow.grand_total, payRow.currency)} ·
+                already paid {fmtMoney(payRow.paid_amount, payRow.currency)} ·
+                outstanding <strong>{fmtMoney(outstandingOf(payRow), payRow.currency)}</strong>
+              </div>
+              <label className="mono-sm">Cash received ({payRow.currency || "INR"})
+                <input
+                  type="number" min="0" step="0.01" autoFocus
+                  value={payForm.amount}
+                  onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })}
+                  style={{ width: "100%" }}
+                />
+              </label>
+              <label className="mono-sm">TDS withheld at source (optional)
+                <input
+                  type="number" min="0" step="0.01" placeholder="0.00"
+                  value={payForm.tds}
+                  onChange={(e) => setPayForm({ ...payForm, tds: e.target.value })}
+                  style={{ width: "100%" }}
+                />
+              </label>
+              {(() => {
+                const cash = Number(payForm.amount) || 0;
+                const tds = Number(payForm.tds) || 0;
+                const remaining = outstandingOf(payRow) - cash - tds;
+                return (
+                  <div className="mono-sm" style={{ color: remaining <= 0.005 ? "var(--ok, var(--ink-2))" : "var(--ink-3)" }}>
+                    Cash {fmtMoney(cash, payRow.currency)} + TDS {fmtMoney(tds, payRow.currency)} ·{" "}
+                    {remaining <= 0.005
+                      ? "settles the invoice in full"
+                      : "leaves " + fmtMoney(remaining, payRow.currency) + " outstanding (partial)"}
+                  </div>
+                );
+              })()}
+              <label className="mono-sm">Method
+                <select
+                  value={payForm.method}
+                  onChange={(e) => setPayForm({ ...payForm, method: e.target.value })}
+                  style={{ width: "100%" }}
+                >
+                  {PAYMENT_METHOD_OPTIONS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                </select>
+              </label>
+              <label className="mono-sm">Reference (UTR / UPI ref / cheque no)
+                <input
+                  type="text" placeholder="optional"
+                  value={payForm.reference}
+                  onChange={(e) => setPayForm({ ...payForm, reference: e.target.value })}
+                  style={{ width: "100%" }}
+                />
+              </label>
+              <label className="mono-sm">Date received
+                <input
+                  type="date"
+                  value={payForm.paid_at}
+                  onChange={(e) => setPayForm({ ...payForm, paid_at: e.target.value })}
+                  style={{ width: "100%" }}
+                />
+              </label>
+              <label className="mono-sm">Note
+                <input
+                  type="text" placeholder="optional"
+                  value={payForm.note}
+                  onChange={(e) => setPayForm({ ...payForm, note: e.target.value })}
+                  style={{ width: "100%" }}
+                />
+              </label>
+            </Modal.Body>
+            <Modal.Footer>
+              <Btn kind="ghost" disabled={payBusy} onClick={() => setPayRow(null)}>Cancel</Btn>
+              <Btn disabled={payBusy} onClick={submitPayment}>{payBusy ? "Recording…" : "Record payment"}</Btn>
+            </Modal.Footer>
+          </>
+        )}
+      </Modal>
     </>
   );
 };

@@ -281,6 +281,7 @@ import invoicesById            from "./invoices/[id].js";
 import invoicesPdf             from "./invoices/pdf.js";
 import invoicesSend            from "./invoices/send.js";
 import invoicesExtract         from "./invoices/extract.js";
+import invoicesPayment         from "./invoices/payment.js";
 
 import netsuiteConnect         from "./netsuite/connect.js";
 import netsuiteHealth          from "./netsuite/health.js";
@@ -837,6 +838,7 @@ const STATIC_ROUTES = {
   "/invoices/pdf":                  invoicesPdf,
   "/invoices/send":                 invoicesSend,
   "/invoices/extract":              invoicesExtract,
+  "/invoices/payment":              invoicesPayment,
 
   "/bom":                           bomIndex,
   "/bom/import":                     bomImport,

@@ -287,6 +287,10 @@
     update: async (id, patch) => apiFetch("/api/invoices/" + encodeURIComponent(id), { method: "PATCH", body: patch }),
     void: async (id) => apiFetch("/api/invoices/" + encodeURIComponent(id), { method: "DELETE" }),
     send: async (payload) => apiFetch("/api/invoices/send", { method: "POST", body: payload }),
+    // Manual cash-application fallback (bank transfer / NEFT / RTGS /
+    // IMPS / UPI / cheque / cash). payload = { amount, method?,
+    // reference?, paid_at?, note? }. Partial-aware: status auto-derives.
+    recordPayment: async (id, payload) => apiFetch("/api/invoices/payment", { method: "POST", body: { invoice_id: id, ...(payload || {}) } }),
     pdfBlob: async (id) => {
       const cfg = readConfig();
       if (!cfg.url) throw new Error("Backend URL not configured");

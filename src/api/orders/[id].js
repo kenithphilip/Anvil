@@ -83,15 +83,27 @@ export default async function handler(req, res) {
       requirePermission(ctx, "read");
       const { data, error } = await svc.from("orders").select("*").eq("tenant_id", ctx.tenantId).eq("id", id).single();
       if (error || !data) return json(res, 404, { error: { message: "Order not found" } });
-      const findings = await svc.from("validation_findings").select("*").eq("tenant_id", ctx.tenantId).eq("order_id", id);
-      const evidence = await svc.from("evidence").select("*").eq("tenant_id", ctx.tenantId).eq("order_id", id);
-      const sourcePos = await svc.from("source_pos").select("*").eq("tenant_id", ctx.tenantId).eq("order_id", id);
-      return json(res, 200, {
-        order: data,
-        findings: findings.data || [],
-        evidence: evidence.data || [],
-        sourcePos: sourcePos.data || [],
-      });
+      // Perf: the order workspace + approvals only consume `order` itself.
+      // The child rows (evidence is bbox-heavy - can be hundreds of rows per
+      // order) were fetched sequentially on EVERY open and then discarded by
+      // the client - a big part of the slow draft-open. They are now opt-in
+      // via ?include=findings,evidence,sourcePos and fetched in parallel.
+      // Response shape is unchanged (keys present, empty unless requested).
+      const include = new Set(String(req.query.include || "").split(",").map((s) => s.trim()).filter(Boolean));
+      let findings = [];
+      let evidence = [];
+      let sourcePos = [];
+      if (include.size) {
+        const [f, e, s] = await Promise.all([
+          include.has("findings") ? svc.from("validation_findings").select("*").eq("tenant_id", ctx.tenantId).eq("order_id", id) : Promise.resolve({ data: [] }),
+          include.has("evidence") ? svc.from("evidence").select("*").eq("tenant_id", ctx.tenantId).eq("order_id", id) : Promise.resolve({ data: [] }),
+          include.has("sourcePos") ? svc.from("source_pos").select("*").eq("tenant_id", ctx.tenantId).eq("order_id", id) : Promise.resolve({ data: [] }),
+        ]);
+        findings = f.data || [];
+        evidence = e.data || [];
+        sourcePos = s.data || [];
+      }
+      return json(res, 200, { order: data, findings, evidence, sourcePos });
     }
 
     if (req.method === "PATCH") {

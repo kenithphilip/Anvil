@@ -20,7 +20,7 @@
 // "All" + "Open" tabs are virtual: All shows everything, Open
 // shows the actionable subset (draft + sent + pending-internal).
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { ageLabel, fmtINRShort } from "../lib/helpers";
 import { ObaraBackend } from "../lib/api";
@@ -75,6 +75,23 @@ const toRows = (data: any): Quote[] => {
   return [];
 };
 
+// Drawer tab order for keyboard switching; must match QuoteDetailDrawer.
+const QUOTE_TAB_ORDER = ["header", "lines", "comp", "rfq", "terms", "history"];
+
+// Deep-link: ?id=<quote>&tab=<tab> in the #/quotes hash, so the open quote +
+// active tab survive reload and are shareable. replaceState keeps it out of
+// history and avoids triggering the app router.
+const readQuoteParams = (): { id: string | null; tab: string | null } => {
+  const h = typeof window !== "undefined" ? (window.location.hash || "") : "";
+  const qi = h.indexOf("?");
+  const sp = new URLSearchParams(qi >= 0 ? h.slice(qi + 1) : "");
+  return { id: sp.get("id"), tab: sp.get("tab") };
+};
+const writeQuoteParams = (id: string | null, tab?: string | null) => {
+  const next = id ? `#/quotes?id=${encodeURIComponent(id)}&tab=${encodeURIComponent(tab || "header")}` : "#/quotes";
+  try { if (window.location.hash !== next) window.history.replaceState(null, "", next); } catch (_) { /* noop */ }
+};
+
 const Quotes: React.FC = () => {
   const [rows, setRows] = useState<Quote[] | null>(null);
   const [active, setActive] = useState("all");
@@ -89,6 +106,18 @@ const Quotes: React.FC = () => {
   // the operator into the detail drawer on the freshly created DRAFT
   // so they can add lines straight away.
   const [creating, setCreating] = useState(false);
+  // Active drawer tab (controlled so it can be deep-linked + keyboard-driven).
+  const [activeTab, setActiveTab] = useState<string>(() => readQuoteParams().tab || "header");
+  const pendingId = useRef<string | null>(readQuoteParams().id);
+
+  const openQuote = (q: Quote, t?: string) => {
+    const tb = t || activeTab || "header";
+    setEditing(q);
+    setActiveTab(tb);
+    writeQuoteParams(q.id, tb);
+  };
+  const closeQuote = () => { setEditing(null); writeQuoteParams(null); };
+  const onTab = (t: string) => { setActiveTab(t); if (editing) writeQuoteParams(editing.id, t); };
 
   const reload = () => {
     setRows(null);
@@ -112,6 +141,33 @@ const Quotes: React.FC = () => {
         );
       });
   }, [rows, active, query]);
+
+  // Open the deep-linked quote once the list has loaded.
+  useEffect(() => {
+    if (!rows || editing || !pendingId.current) return;
+    const q = rows.find((r) => r.id === pendingId.current);
+    pendingId.current = null;
+    if (q) setEditing(q);
+  }, [rows, editing]);
+
+  // Keyboard nav while a quote is open: j/k move between quotes, [ ] or
+  // arrows switch tabs, Esc closes. Ignored while typing in a field.
+  useEffect(() => {
+    if (!editing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { closeQuote(); return; }
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
+      const idx = filtered.findIndex((q) => q.id === editing.id);
+      if (e.key === "j") { const n = filtered[idx + 1]; if (n) { e.preventDefault(); openQuote(n, activeTab); } }
+      else if (e.key === "k") { const n = filtered[idx - 1]; if (n) { e.preventDefault(); openQuote(n, activeTab); } }
+      else if (e.key === "ArrowRight" || e.key === "]") { e.preventDefault(); onTab(QUOTE_TAB_ORDER[(QUOTE_TAB_ORDER.indexOf(activeTab) + 1) % QUOTE_TAB_ORDER.length]); }
+      else if (e.key === "ArrowLeft" || e.key === "[") { e.preventDefault(); onTab(QUOTE_TAB_ORDER[(QUOTE_TAB_ORDER.indexOf(activeTab) - 1 + QUOTE_TAB_ORDER.length) % QUOTE_TAB_ORDER.length]); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, filtered, activeTab]);
 
   const counts = useMemo(() => Object.fromEntries(
     TABS.map((t) => [t.id, (rows || []).filter(t.match).length])
@@ -188,7 +244,7 @@ const Quotes: React.FC = () => {
                   ) : "No quotes match the current filter."}
                 </td></tr>
               ) : filtered.map((q) => (
-                <tr key={q.id} style={{ cursor: "pointer" }} onClick={() => setEditing(q)}>
+                <tr key={q.id} style={{ cursor: "pointer", background: editing?.id === q.id ? "var(--paper-3)" : undefined }} onClick={() => openQuote(q)}>
                   <td>
                     <span className="mono-sm">{q.quote_number}</span>
                     {q.version > 1 && <Chip k="ghost">v{q.version}</Chip>}
@@ -207,7 +263,9 @@ const Quotes: React.FC = () => {
       {editing && (
         <QuoteDetailDrawer
           quote={editing}
-          onClose={() => setEditing(null)}
+          tab={activeTab}
+          onTab={onTab}
+          onClose={closeQuote}
           onSaved={() => {
             // After a save in the drawer the row in the list may be
             // stale. Reload by clearing rows; the effect re-fetches.
@@ -221,9 +279,9 @@ const Quotes: React.FC = () => {
         onCreated={(quote) => {
           setCreating(false);
           reload();
-          // Jump straight into the detail drawer on the new draft so
-          // the operator can add lines without an extra click.
-          setEditing(quote);
+          // Jump straight into the detail drawer's Lines tab on the new
+          // draft so the operator can add lines without an extra click.
+          openQuote(quote, "lines");
         }}
       />
     </>

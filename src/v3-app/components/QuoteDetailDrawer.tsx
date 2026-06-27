@@ -83,8 +83,18 @@ export const QuoteDetailDrawer: React.FC<{
   quote: Quote;
   onClose: () => void;
   onSaved?: () => void;
-}> = ({ quote, onClose, onSaved }) => {
-  const [tab, setTab] = useState<"header" | "lines" | "comp" | "rfq" | "terms" | "history">("header");
+  // Controlled tab (deep-link + keyboard nav from the Quotes screen). When
+  // omitted the drawer manages its own tab state.
+  tab?: string;
+  onTab?: (t: string) => void;
+}> = ({ quote, onClose, onSaved, tab: tabProp, onTab }) => {
+  const [tabState, setTabState] = useState<string>("header");
+  const tab = tabProp != null ? tabProp : tabState;
+  const setTab = (t: string) => { onTab ? onTab(t) : setTabState(t); };
+  // Keep heavy data tabs mounted once visited so switching back is instant
+  // (no refetch). Light tabs (header/lines/terms) are state-backed already.
+  const [visited, setVisited] = useState<Set<string>>(() => new Set([tab]));
+  useEffect(() => { setVisited((s) => (s.has(tab) ? s : new Set(s).add(tab))); }, [tab]);
   const [draft, setDraft] = useState<Quote>({ ...quote });
   const [lines, setLines] = useState<Line[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -396,6 +406,11 @@ export const QuoteDetailDrawer: React.FC<{
           <TabBtn active={tab === "rfq"} onClick={() => setTab("rfq")}>Vendor RFQ</TabBtn>
           <TabBtn active={tab === "terms"} onClick={() => setTab("terms")}>Terms</TabBtn>
           <TabBtn active={tab === "history"} onClick={() => setTab("history")}>History</TabBtn>
+          {onTab && (
+            <span className="mono-sm" style={{ marginLeft: "auto", alignSelf: "center", color: "var(--ink-4)", fontSize: 10, whiteSpace: "nowrap" }} title="Keyboard: j / k next & previous quote · ← / → switch tabs · Esc close">
+              j/k quote · ←/→ tab · esc
+            </span>
+          )}
         </div>
 
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 18 }}>
@@ -602,18 +617,20 @@ export const QuoteDetailDrawer: React.FC<{
             </>
           )}
 
-          {tab === "comp" && (
-            <>
+          {visited.has("comp") && (
+            <div style={{ display: tab === "comp" ? undefined : "none" }}>
               <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 8 }}>
                 Cost composition preview. Enter supplier prices to see the landed-cost waterfall, the
                 recommended price, and the realized margin implied by the currently quoted price.
               </div>
               <QuoteComposition lines={lines} currency={draft.currency} quoteId={quote.id} />
-            </>
+            </div>
           )}
 
-          {tab === "rfq" && (
-            <QuoteRfqTab quoteId={quote.id} lines={lines} />
+          {visited.has("rfq") && (
+            <div style={{ display: tab === "rfq" ? undefined : "none" }}>
+              <QuoteRfqTab quoteId={quote.id} lines={lines} />
+            </div>
           )}
 
           {tab === "terms" && (
@@ -642,8 +659,10 @@ export const QuoteDetailDrawer: React.FC<{
             </>
           )}
 
-          {tab === "history" && (
-            <QuoteHistoryTab quoteId={quote.id} />
+          {visited.has("history") && (
+            <div style={{ display: tab === "history" ? undefined : "none" }}>
+              <QuoteHistoryTab quoteId={quote.id} />
+            </div>
           )}
         </div>
 

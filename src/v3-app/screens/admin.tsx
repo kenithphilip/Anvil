@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { ageLabel, fmtDate, fmtINRShort, useFetch } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, KV, WSTabs, WSTitle } from "../lib/primitives";
+import { Banner, Btn, Card, Chip, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { RBAC, MATRIX, ACTIONS } from "../lib/rbac";
@@ -73,6 +73,21 @@ const ADMIN_CRUD_TABS = [
   { id: "docai_cost", label: "DocAI cost" },
   { id: "diag",      label: "Diagnostics" },
 ];
+
+// Group the (~39) admin tabs into categories so the nav is a short category
+// row + only the selected category's tabs, instead of one long horizontally
+// scrolling strip.
+const ADMIN_TAB_GROUPS: { label: string; ids: string[] }[] = [
+  { label: "Team & access", ids: ["access", "members", "profile", "security", "roles", "navigation", "billing"] },
+  { label: "ERP connectors", ids: ["netsuite", "tally", "sage_x3", "ifs", "oracle_fusion", "ramco", "jde", "plex", "jobboss", "oracle_ebs", "proalpha", "plm"] },
+  { label: "Channels", ids: ["voice", "chat"] },
+  { label: "Sales & quotes", ids: ["settings", "holidays", "leadtimes", "fx", "thresh", "doc_templates", "terms_packs"] },
+  { label: "Master data", ids: ["locations", "contracts", "items", "item_fields", "vendor_codes", "customer_parts"] },
+  { label: "Pricing & freight", ids: ["pricing", "pricing_profiles", "freight"] },
+  { label: "AI & diagnostics", ids: ["docai_cost", "diag"] },
+];
+const ADMIN_TAB_LABEL: Record<string, string> = Object.fromEntries(ADMIN_CRUD_TABS.map((t) => [t.id, t.label]));
+const adminGroupOf = (id: string): string => (ADMIN_TAB_GROUPS.find((g) => g.ids.includes(id)) || ADMIN_TAB_GROUPS[0]).label;
 
 const ADMIN_ROLES = ["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer"];
 const ADMIN_DRAWING_BASE_KEY = "obara:drawing_base_url";
@@ -179,6 +194,14 @@ const WiredAdminCRUD = () => {
     return "members";
   })();
   const [active, setActive] = u(initialTab);
+  // Which settings category is shown in the nav. Derived from the active tab
+  // so deep-links / ?tab= land on the right category.
+  const [cat, setCat] = u(() => adminGroupOf(initialTab));
+  const selectCategory = (label: string) => {
+    setCat(label);
+    const g = ADMIN_TAB_GROUPS.find((x) => x.label === label);
+    if (g && !g.ids.includes(active)) setActive(g.ids[0]);
+  };
   const [busy, setBusy] = u(false);
   const [flash, setFlash] = u(null);
   const [memberForm, setMemberForm] = u({ email: "", role: "sales_engineer" });
@@ -1478,7 +1501,18 @@ const WiredAdminCRUD = () => {
                title="Refresh all">{Icon.cycle}</Btn>
         </>}
       />
-      <WSTabs tabs={ADMIN_CRUD_TABS} active={active} onChange={setActive} />
+      {/* Two-tier settings nav: category row, then only that category's
+          tabs - both wrap, so no long horizontal scroll. */}
+      <div style={{ padding: "8px 18px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {ADMIN_TAB_GROUPS.map((g) => (
+          <Btn key={g.label} sm kind={cat === g.label ? "primary" : "ghost"} onClick={() => selectCategory(g.label)}>{g.label}</Btn>
+        ))}
+      </div>
+      <div style={{ padding: "8px 18px", display: "flex", gap: 6, flexWrap: "wrap", borderBottom: "1px solid var(--hairline)" }}>
+        {(ADMIN_TAB_GROUPS.find((g) => g.label === cat)?.ids || []).map((id) => (
+          <Btn key={id} sm kind={active === id ? "primary" : "ghost"} onClick={() => setActive(id)}>{ADMIN_TAB_LABEL[id] || id}</Btn>
+        ))}
+      </div>
 
       <div className="ws-content">
         {flash && (

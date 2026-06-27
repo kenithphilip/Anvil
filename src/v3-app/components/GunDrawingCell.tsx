@@ -11,6 +11,20 @@ import { ObaraBackend } from "../lib/api";
 // across every matrix. Files are fetched on demand with fresh signed URLs.
 
 const FORMAT_CHIP: Record<string, string> = { pdf: "info", dwg: "warn", step: "plum", other: "ghost" };
+const VERDICT_CHIP: Record<string, [string, string]> = {
+  verified:     ["good", "✓ verified"],
+  filename_only:["warn", "name only"],
+  mismatch:     ["bad", "mismatch"],
+  unverifiable: ["warn", "unverified"],
+  no_gun:       ["ghost", "—"],
+};
+const verdictChip = (v: any) => {
+  if (!v || !v.verdict) return <span className="mono-sm" style={{ color: "var(--ink-4)" }}>—</span>;
+  const [k, label] = VERDICT_CHIP[v.verdict] || ["ghost", String(v.verdict)];
+  const tip = "matched: " + [v.content_match ? "content" : "", v.filename_match ? "filename" : ""].filter(Boolean).join(" + ") +
+    (v.ocr_status ? " · " + v.ocr_status : "");
+  return <span title={tip}><Chip k={k as any}>{label}{v.forced ? " (override)" : ""}</Chip></span>;
+};
 
 export const GunDrawingCell: React.FC<{ gunNo: string }> = ({ gunNo }) => {
   const [open, setOpen] = useState(false);
@@ -36,8 +50,21 @@ export const GunDrawingCell: React.FC<{ gunNo: string }> = ({ gunNo }) => {
     try {
       const up: any = await ObaraBackend?.documents?.upload?.(file, "gun_drawing");
       if (!up?.documentId) throw new Error("Upload did not return a document id");
-      await ObaraBackend?.gunDrawings?.link?.({ gun_no: code, document_id: up.documentId, label: file.name });
-      window.notifySuccess?.("Drawing attached", file.name);
+      try {
+        await ObaraBackend?.gunDrawings?.link?.({ gun_no: code, document_id: up.documentId, label: file.name });
+        window.notifySuccess?.("Drawing attached", file.name);
+      } catch (linkErr: any) {
+        // Vetting guardrail: asset number not found in file name or OCR'd
+        // content. Let the operator override after an explicit confirm.
+        if (linkErr?.body?.error?.code === "DRAWING_MISMATCH") {
+          const v = linkErr.body.error.verification || {};
+          const ok = typeof confirm === "function" && confirm(
+            `"${code}" was not found in the file name or the drawing content (${v.verdict}). Attach anyway?`);
+          if (!ok) { setErr("Attach cancelled — asset number not verified in the drawing."); return; }
+          await ObaraBackend?.gunDrawings?.link?.({ gun_no: code, document_id: up.documentId, label: file.name, force: true });
+          window.notifyWarn?.("Drawing attached (override)", file.name);
+        } else { throw linkErr; }
+      }
       await load();
     } catch (e: any) {
       const msg = e?.message || String(e);
@@ -76,12 +103,13 @@ export const GunDrawingCell: React.FC<{ gunNo: string }> = ({ gunNo }) => {
             <div className="mono-sm" style={{ color: "var(--ink-3)" }}>No drawings yet for this gun.</div>
           ) : (
             <table className="tbl" style={{ fontSize: 12 }}>
-              <thead><tr><th>File</th><th>Format</th><th></th><th></th></tr></thead>
+              <thead><tr><th>File</th><th>Format</th><th>Check</th><th></th><th></th></tr></thead>
               <tbody>
                 {(drawings || []).map((d) => (
                   <tr key={d.id}>
                     <td className="mono-sm">{d.filename || (d.document_id ? String(d.document_id).slice(0, 8) : "—")}</td>
                     <td><Chip k={(FORMAT_CHIP[d.format] || "ghost") as any}>{d.format || "?"}</Chip></td>
+                    <td>{verdictChip(d.verification)}</td>
                     <td>
                       {d.download_url
                         ? <a href={d.download_url} target="_blank" rel="noopener noreferrer" className="mono-sm" style={{ textDecoration: "underline", color: "var(--ink)" }}>open</a>

@@ -15,6 +15,7 @@ create table if not exists gun_drawings (
   format text,                                -- pdf | dwg | step | other
   label text,                                 -- e.g. Assembly, Exploded view
   is_primary boolean not null default false,
+  verification jsonb not null default '{}'::jsonb,  -- vetting result: asset-no vs filename + OCR'd content
   uploaded_by uuid references auth.users(id),
   created_at timestamptz not null default now(),
   unique (tenant_id, document_id)

@@ -3,8 +3,48 @@ import { ageLabel, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
+import { RBAC } from "../lib/rbac";
 import { CustomerContactsPanel } from "../components/CustomerContactsPanel";
 import { CustomerHierarchyPanel } from "../components/CustomerHierarchyPanel";
+
+// Create-customer modal. Customers usually auto-register from orders/email/
+// BOM, but admins can also add one directly here.
+const NewCustomerModal: React.FC<{ onClose: () => void; onCreated: (id: string) => void }> = ({ onClose, onCreated }) => {
+  const [name, setName] = useState("");
+  const [key, setKey] = useState("");
+  const [gstin, setGstin] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!name.trim()) { window.notifyError?.("Name required", "Enter a customer name."); return; }
+    setBusy(true);
+    try {
+      const r: any = await ObaraBackend?.customers?.upsert?.({ customer_name: name.trim(), customer_key: key.trim() || undefined, gstin: gstin.trim() || undefined });
+      const created = r?.customer || r;
+      window.notifySuccess?.("Customer created", name.trim());
+      onCreated(created?.id || "");
+    } catch (e: any) { window.notifyError?.("Could not create customer", e?.message || String(e)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="cmdk-bg" onClick={onClose} role="dialog" aria-modal="true" aria-label="New customer">
+      <div className="drawer" onClick={(e) => e.stopPropagation()} style={{ width: 460, maxHeight: "80vh" }}>
+        <div className="drawer-h">
+          <div><div className="h-eyebrow">Customers</div><div className="h2" style={{ marginTop: 2 }}>New customer</div></div>
+          <button className="btn icon sm ghost" style={{ marginLeft: "auto" }} onClick={onClose} aria-label="Close">{Icon.x}</button>
+        </div>
+        <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+          <div><div className="label">customer name *</div><input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Tata Motors Ltd." /></div>
+          <div><div className="label">customer key (optional)</div><input className="input mono" value={key} onChange={(e) => setKey(e.target.value)} placeholder="auto from name if blank" /></div>
+          <div><div className="label">GSTIN (optional)</div><input className="input mono" value={gstin} onChange={(e) => setGstin(e.target.value)} placeholder="29ABCDE1234F1Z5" /></div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <Btn sm kind="ghost" onClick={onClose}>Cancel</Btn>
+            <Btn sm kind="primary" disabled={busy} onClick={submit}>{busy ? "Creating…" : "Create customer"}</Btn>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // Read `id` from the hash so the customers screen can render a
 // detail panel inline when a row is clicked. Avoids needing a
@@ -66,6 +106,10 @@ const WiredCustomers = () => {
   const [selectedId, setSelectedId] = useState<string | null>(customerIdFromHash());
   // Audit P9.3: per-customer refresh-health spinner.
   const [refreshingHealthId, setRefreshingHealthId] = useState<string | null>(null);
+  // Manual customer create (admin-only, consistent with the customer-master
+  // edit guard rails). Customers otherwise auto-register from orders/email/BOM.
+  const canEdit = RBAC.isAdmin();
+  const [showNew, setShowNew] = useState(false);
 
   // Sync the selected customer with hash changes so back/forward and
   // direct links keep state coherent.
@@ -141,6 +185,7 @@ const WiredCustomers = () => {
             aria-label="Search customers"
           />
           <Btn icon kind="ghost" sm onClick={list.reload} title="Refresh">{Icon.cycle}</Btn>
+          {canEdit && <Btn sm kind="primary" onClick={() => setShowNew(true)}>{Icon.plus} New customer</Btn>}
         </>}
       />
 
@@ -351,6 +396,16 @@ const WiredCustomers = () => {
           )}
         </Card>
       </div>
+      {showNew && (
+        <NewCustomerModal
+          onClose={() => setShowNew(false)}
+          onCreated={(id) => {
+            setShowNew(false);
+            list.reload();
+            if (id) window.location.hash = `#/customers?id=${id}`;
+          }}
+        />
+      )}
     </>
   );
 };

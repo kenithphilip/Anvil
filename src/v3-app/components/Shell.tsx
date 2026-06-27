@@ -496,6 +496,21 @@ export const Shell: React.FC<ShellProps> = ({
   const time = telemetry?.time || "";
   const version = telemetry?.version || "dev";
 
+  // Universal "back to list": any record/sub-view opens as #/<object>?<params>
+  // (e.g. #/so?id=, #/quotes?id=, #/customers?id=). When params are present we
+  // show a back button that strips them, returning to that object's list.
+  const inRecordView = (h: string) => /#\/[^?]+\?.+/.test(h || "");
+  const [recordView, setRecordView] = useState(() => inRecordView(typeof window !== "undefined" ? window.location.hash : ""));
+  useEffect(() => {
+    const on = () => setRecordView(inRecordView(window.location.hash || ""));
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
+  const backToList = () => {
+    const base = (window.location.hash.match(/#\/([^?]+)/) || [])[1] || route;
+    if (base) { try { window.location.hash = "#/" + base; } catch (_) { /* noop */ } }
+  };
+
   return (
   <div className="app">
     {/* Skip-to-main link: visible only when focused via keyboard,
@@ -514,6 +529,13 @@ export const Shell: React.FC<ShellProps> = ({
         </div>
         <span className="name">Anvil</span>
       </div>
+
+      {recordView && (
+        <button type="button" className="head-pill" title="Back to list" aria-label="Back to list"
+          onClick={backToList} style={{ marginRight: 2 }}>
+          ← Back
+        </button>
+      )}
 
       <div className="crumb">
         {crumb?.map((c, i) => (

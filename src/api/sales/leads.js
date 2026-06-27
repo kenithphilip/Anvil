@@ -64,11 +64,27 @@ export default async function handler(req, res) {
       const allowed = ["status","category","reliability_score","approval_status","contact_name","contact_email","contact_phone","designation","product_interest","lead_type","customer_segment","region","budget_estimate","timeline","decision_maker","lost_reason","notes","allocated_to"];
       for (const k of allowed) if (body[k] !== undefined) patch[k] = body[k];
       if (body.convert_to_opportunity) {
+        // Pull the source lead so the new opportunity inherits its deal
+        // value and product interest. Without this the opp landed with a
+        // null amount and pipeline forecasting was blind to converted
+        // leads. Done server-side so any caller (not just the UI) gets it.
+        const leadRow = await svc.from("leads").select("*")
+          .eq("tenant_id", ctx.tenantId).eq("id", body.id).single();
+        if (leadRow.error || !leadRow.data) {
+          return json(res, 404, { error: { message: "Lead not found" } });
+        }
+        const lead = leadRow.data;
+        const leadVal = lead.budget_estimate ?? lead.estimated_value ?? lead.estimated_value_inr;
+        const amountInr = body.amount_inr != null
+          ? Number(body.amount_inr)
+          : (leadVal != null ? Number(leadVal) : null);
         const opp = await svc.from("opportunities").insert({
           tenant_id: ctx.tenantId,
-          customer_id: body.account_id,
-          opportunity_name: body.opportunity_name || ("From lead: " + (body.company_name || body.id)),
+          customer_id: body.account_id || lead.customer_id || null,
+          opportunity_name: body.opportunity_name || ("From lead: " + (body.company_name || lead.company_name || body.id)),
           stage: "QUALIFICATION",
+          amount_inr: amountInr,
+          product_summary: lead.product_interest || null,
           related_lead_id: body.id,
           owner_id: ctx.user ? ctx.user.id : null,
         }).select("*").single();

@@ -21,7 +21,9 @@ export default async function handler(req, res) {
   }
   try {
     const ctx = await resolveContext(req);
-    requirePermission(ctx, "write");
+    // Feeds awarded vendor prices into the quote composition, so it is
+    // gated like the award itself (approve), not plain write.
+    requirePermission(ctx, "approve");
     const body = await readBody(req);
     if (!body?.quote_id) return json(res, 400, { error: { message: "quote_id required" } });
     const svc = serviceClient();

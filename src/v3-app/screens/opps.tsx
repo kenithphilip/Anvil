@@ -64,6 +64,12 @@ const oppRows = (resp) => {
   return [];
 };
 
+// Opportunity monetary value. The API returns the canonical `amount_inr`
+// column (select * on the opportunities table); earlier code read
+// `r.value`, which is not a column, so every figure rendered blank.
+// Keep a `value` fallback for safety.
+const oppValue = (r) => Number(r?.amount_inr ?? r?.value) || 0;
+
 const WiredOpportunities = () => {
   // Inline create-opp form, identical pattern to leads.tsx. Replaces
   // the dead-button bug where `New opp` set `#/opps?new=1` but neither
@@ -154,26 +160,29 @@ const WiredOpportunities = () => {
   const selected = selectedId ? rows.find((r) => r.id === selectedId) || null : null;
 
   const weighted = rows.reduce((sum, r) => {
-    const v = Number(r.value) || 0;
+    const v = oppValue(r);
     const w = stageMap[r.stage] != null ? stageMap[r.stage] : 0;
     return sum + v * w;
   }, 0);
 
   const countByStage = (stage) => rows.filter((r) => r.stage === stage).length;
-  const discoveryCount = countByStage("DISCOVERY");
-  const demoCount = countByStage("DEMO");
-  const quoteCount = countByStage("QUOTE");
-  const negotCount = countByStage("NEGOTIATION");
+  // Counts use the canonical stage enum (OPP_STAGES). Earlier code
+  // referenced DISCOVERY/DEMO/QUOTE/NEGOTIATION/WON, none of which exist
+  // in the opportunity_stage enum, so these tiles were always zero.
+  const qualCount = countByStage("QUALIFICATION");
+  const rfqCount = countByStage("RFQ");
+  const proposalCount = countByStage("PROPOSAL_PRICE_QUOTE");
+  const negotCount = countByStage("NEGOTIATION_REVIEW");
 
   const wonMtd = rows.filter((r) => {
-    if (r.stage !== "WON") return false;
+    if (r.stage !== "CLOSE_WON") return false;
     const t = r.closed_at || r.updated_at;
     if (!t) return false;
     const d = new Date(t);
     const now = new Date();
     return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
   });
-  const wonValueMtd = wonMtd.reduce((sum, r) => sum + (Number(r.value) || 0), 0);
+  const wonValueMtd = wonMtd.reduce((sum, r) => sum + oppValue(r), 0);
 
   // Group rows by stage for the kanban
   const byStage = {};
@@ -204,7 +213,7 @@ const WiredOpportunities = () => {
         <KPIRow cols={5}>
           <KPI lbl="Total" v={String(total)} d="all stages" />
           <KPI lbl="Weighted ₹" v={fmtINRShort(weighted)} d="probability-adjusted" live={weighted > 0} />
-          <KPI lbl="Discovery" v={String(discoveryCount)} d={`${demoCount} demo · ${quoteCount} quote`} />
+          <KPI lbl="Qualification" v={String(qualCount)} d={`${rfqCount} RFQ · ${proposalCount} proposal`} />
           <KPI lbl="Negotiation" v={String(negotCount)} d="late stage" />
           <KPI lbl="Won · MTD" v={fmtINRShort(wonValueMtd)} d={`${wonMtd.length} closed`} dKind={wonMtd.length ? "up" : ""} />
         </KPIRow>
@@ -231,7 +240,7 @@ const WiredOpportunities = () => {
               ["Customer",   selected.customer_name || selected.customer || "—"],
               ["Stage",      selected.stage || "—"],
               ["Owner",      selected.owner || selected.assigned_to || "—"],
-              ["Value",      selected.value ? fmtINRShort(Number(selected.value)) : "—"],
+              ["Value",      oppValue(selected) ? fmtINRShort(oppValue(selected)) : "—"],
               ["Probability (operator)", selected.probability != null ? Math.round(Number(selected.probability) * 100) + "%" : "—"],
               ["AI probability", (() => {
                 if (selected.ai_probability == null) return <span style={{ color: "var(--ink-3)" }}>not predicted yet</span>;
@@ -336,7 +345,7 @@ const WiredOpportunities = () => {
                     <div className="mono-sm" style={{ color: "var(--ink-4)", padding: "8px 4px" }}>—</div>
                   ) : (
                     cards.map((kard) => {
-                      const v = Number(kard.value) || 0;
+                      const v = oppValue(kard);
                       const customer = kard.customer_name || kard.customer || "—";
                       const owner = kard.owner || "—";
                       const created = kard.created_at || kard.updated_at;

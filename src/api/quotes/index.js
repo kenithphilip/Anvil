@@ -43,8 +43,10 @@ const ALLOWED_TRANSITIONS = {
 };
 
 const isTransitionAllowed = (from, to) => {
-  if (!from || !to) return true;
+  if (!to) return true;            // no status change requested -> no-op
   if (from === to) return true;
+  // A null/unknown current status must NOT be a free pass to any target;
+  // ALLOWED_TRANSITIONS[undefined] is undefined, so this returns false.
   const allowed = ALLOWED_TRANSITIONS[from];
   return !!(allowed && allowed.has(to));
 };
@@ -347,6 +349,46 @@ export default async function handler(req, res) {
         ins = await svc.from("quotes").insert(insertPayload).select("*").single();
       }
       if (ins.error) throw new Error(ins.error.message);
+      // Mirror the create-time lines into the canonical quote_lines table.
+      // The drawer's Lines tab reads quote_lines (migration 108), NOT the
+      // JSONB line_items, so a quote built from an opportunity used to
+      // show an empty Lines tab. Non-fatal: the JSONB copy remains the
+      // create-time source of truth; a failure here is audited, not thrown,
+      // so quote creation never breaks on an older deploy.
+      if (Array.isArray(lineItems) && lineItems.length) {
+        try {
+          const qlRows = lineItems.map((li, idx) => {
+            const qty = li.quantity != null ? Number(li.quantity)
+              : (li.qty != null ? Number(li.qty) : null);
+            const price = li.unitPrice != null ? Number(li.unitPrice)
+              : (li.listed_unit_price != null ? Number(li.listed_unit_price)
+              : (li.unit_price != null ? Number(li.unit_price) : null));
+            const row = {
+              tenant_id: ctx.tenantId,
+              quote_id: ins.data.id,
+              line_index: idx,
+              part_no: li.partNumber || li.part_number || li.part_no || null,
+              description: li.description || null,
+              uom: li.uom || null,
+              source_country: li.source_country || li.sourceCountry || null,
+              hsn_sac: li.hsn_sac || null,
+              qty,
+              listed_unit_price: price,
+            };
+            if (qty != null && price != null) row.line_amount = Number((qty * price).toFixed(4));
+            return row;
+          });
+          const qlIns = await svc.from("quote_lines").upsert(qlRows, { onConflict: "tenant_id,quote_id,line_index" });
+          if (qlIns.error) throw new Error(qlIns.error.message);
+        } catch (e) {
+          await recordAudit(ctx, {
+            action: "quote_lines_seed_failed",
+            objectType: "quote",
+            objectId: ins.data.id,
+            detail: String(e?.message || e),
+          });
+        }
+      }
       await recordAudit(ctx, {
         action: "quote_create",
         objectType: "quote",

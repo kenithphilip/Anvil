@@ -4,6 +4,7 @@ import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Prov, Steps, Stream, WSTabs, 
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
+import { pushRecent } from "../lib/recent-items";
 import { amountInWords } from "../lib/amount-words";
 import {
   getFieldSource, markFieldEdited, FieldSource,
@@ -95,7 +96,20 @@ const WiredSOWorkspace = () => {
     let cancelled = false;
     setOrder((s) => ({ ...s, loading: true }));
     soPerf("orders.get", Promise.resolve(ObaraBackend?.orders?.get?.(orderId)))
-      .then((data) => { if (!cancelled) setOrder({ data: data?.order || data, loading: false, error: null }); })
+      .then((data) => {
+        if (cancelled) return;
+        const o = data?.order || data;
+        setOrder({ data: o, loading: false, error: null });
+        if (o?.id) {
+          const cust = o.customer?.customer_name || o.result?.salesOrder?.customer?.name || "";
+          pushRecent({
+            type: "order",
+            id: o.id,
+            label: `SO ${o.po_number || o.quote_number || o.id.slice(0, 8)}${cust ? " · " + cust : ""}`,
+            href: `#/so?id=${encodeURIComponent(o.id)}`,
+          });
+        }
+      })
       .catch((error) => { if (!cancelled) setOrder({ data: null, loading: false, error }); });
     return () => { cancelled = true; };
   }, [orderId, bump]);

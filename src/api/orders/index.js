@@ -95,12 +95,18 @@ export default async function handler(req, res) {
       // Embed the related customer row under the `customer` key so the
       // SO list view (src/v3-app/screens/orders.tsx) can render
       // `o.customer?.customer_name` and `o.customer?.state_code` without
-      // a second round-trip per row. The orders.customer_id FK to
-      // customers(id) is declared in migration 001 so PostgREST resolves
-      // the embed automatically. Selecting `*` still returns every order
-      // column (po_number, status, created_at, etc.) unchanged.
+      // a second round-trip per row.
+      //
+      // Perf: `select(*)` returns the heavy per-order detail JSON
+      // (preflight_payload = raw PO text + extraction, api_usage,
+      // cost_policy_snapshot, token_estimate, ...) for EVERY row, which made
+      // the list multi-MB and slow. `?slim=1` returns only the columns list
+      // views need (incl. `result` for totals) and drops that detail JSON.
+      // Default stays `*` so other list consumers are unaffected.
+      const slim = req.query.slim === "1" || req.query.slim === "true";
+      const SLIM_COLS = "id, status, order_mode, currency, po_number, quote_number, approved_by, payload_hash, created_at, updated_at, customer_id, result, customer:customer_id(customer_name, state_code)";
       let query = svc.from("orders")
-        .select("*, customer:customer_id(customer_name, state_code)")
+        .select(slim ? SLIM_COLS : "*, customer:customer_id(customer_name, state_code)")
         .eq("tenant_id", ctx.tenantId)
         .order("created_at", { ascending: false })
         .limit(limit);

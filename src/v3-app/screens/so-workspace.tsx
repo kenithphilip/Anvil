@@ -22,6 +22,17 @@ import { ExtractionProgress } from "../components/ExtractionProgress";
 // all keyed by ?id= in the URL hash.
 // ============================================================
 
+// Temporary perf probe: logs how long each open-path fetch takes so we can
+// see which one is slow ([so-perf] in the console). Remove once tuned.
+const soPerf = <T,>(label: string, p: Promise<T>): Promise<T> => {
+  const t = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const ms = () => Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - t);
+  return p.then(
+    (v) => { try { console.log(`[so-perf] ${label}: ${ms()}ms`); } catch (_) { /* noop */ } return v; },
+    (e) => { try { console.log(`[so-perf] ${label}: FAILED ${ms()}ms`, e?.message || e); } catch (_) { /* noop */ } throw e; },
+  );
+};
+
 const WiredSOWorkspace = () => {
   const { useState: u, useEffect: e, useMemo: m } = React;
   const [order, setOrder] = u({ data: null, loading: true, error: null });
@@ -83,7 +94,7 @@ const WiredSOWorkspace = () => {
     if (!orderId) { setOrder({ data: null, loading: false, error: new Error("no order id in URL") }); return; }
     let cancelled = false;
     setOrder((s) => ({ ...s, loading: true }));
-    Promise.resolve(ObaraBackend?.orders?.get?.(orderId))
+    soPerf("orders.get", Promise.resolve(ObaraBackend?.orders?.get?.(orderId)))
       .then((data) => { if (!cancelled) setOrder({ data: data?.order || data, loading: false, error: null }); })
       .catch((error) => { if (!cancelled) setOrder({ data: null, loading: false, error }); });
     return () => { cancelled = true; };
@@ -92,7 +103,7 @@ const WiredSOWorkspace = () => {
   e(() => {
     if (!orderId) return;
     let cancelled = false;
-    Promise.resolve(ObaraBackend?.audit?.list?.({ object_id: orderId, limit: 100 }) || Promise.resolve([]))
+    soPerf("audit.list", Promise.resolve(ObaraBackend?.audit?.list?.({ object_id: orderId, limit: 100 }) || Promise.resolve([])))
       .then((data) => {
         if (cancelled) return;
         const rows = Array.isArray(data) ? data : (data?.events || data?.rows || []);
@@ -114,7 +125,7 @@ const WiredSOWorkspace = () => {
   e(() => {
     if (!orderId) return;
     let cancelled = false;
-    Promise.resolve(ObaraBackend?.events?.list?.(orderId) || Promise.resolve([]))
+    soPerf("events.list", Promise.resolve(ObaraBackend?.events?.list?.(orderId) || Promise.resolve([])))
       .then((data) => {
         if (cancelled) return;
         const rows = Array.isArray(data) ? data : (data?.events || data?.rows || []);
@@ -132,7 +143,7 @@ const WiredSOWorkspace = () => {
   e(() => {
     if (!orderId || !order.data?.customer_id) return;
     let cancelled = false;
-    Promise.resolve(ObaraBackend?.cost?.breakdown?.({ customer_id: order.data.customer_id }) || Promise.resolve(null))
+    soPerf("cost.breakdown", Promise.resolve(ObaraBackend?.cost?.breakdown?.({ customer_id: order.data.customer_id }) || Promise.resolve(null)))
       .then((data) => { if (!cancelled) setCost({ data, loading: false }); })
       .catch((err) => {
         if (!cancelled) {
@@ -148,7 +159,7 @@ const WiredSOWorkspace = () => {
     if (!orderId) return;
     let cancelled = false;
     setSchedule((s) => ({ ...s, loading: true }));
-    Promise.resolve(ObaraBackend?.scheduleLines?.list?.(orderId) || Promise.resolve({ schedule_lines: [] }))
+    soPerf("scheduleLines.list", Promise.resolve(ObaraBackend?.scheduleLines?.list?.(orderId) || Promise.resolve({ schedule_lines: [] })))
       .then((data) => {
         if (cancelled) return;
         const rows = Array.isArray(data) ? data : (data?.schedule_lines || data?.rows || []);
@@ -208,7 +219,7 @@ const WiredSOWorkspace = () => {
   e(() => {
     if (!extractionRunId) { setExtractionRun(null); return; }
     let cancelled = false;
-    Promise.resolve(ObaraBackend?.docai?.getRun?.(extractionRunId) || Promise.resolve(null))
+    soPerf("docai.getRun", Promise.resolve(ObaraBackend?.docai?.getRun?.(extractionRunId) || Promise.resolve(null)))
       .then((r: any) => { if (!cancelled) setExtractionRun(r?.run || (r && r.id ? r : null)); })
       .catch(() => { if (!cancelled) setExtractionRun(null); });
     return () => { cancelled = true; };

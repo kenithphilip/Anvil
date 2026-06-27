@@ -257,7 +257,7 @@ export const ItemDetailDrawer: React.FC<{
         }}
       >
         {/* Header */}
-        <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ flexShrink: 0, padding: "14px 18px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ flex: 1 }}>
             <div className="mono-sm" style={{ color: "var(--ink-3)" }}>Master . Item</div>
             <div style={{ fontSize: 16, fontWeight: 600 }}>
@@ -287,7 +287,7 @@ export const ItemDetailDrawer: React.FC<{
         )}
 
         {/* Tabs */}
-        <div style={{ display: "flex", gap: 2, padding: "0 18px", borderBottom: "1px solid var(--line)", overflowX: "auto" }}>
+        <div style={{ flexShrink: 0, display: "flex", gap: 2, padding: "0 18px", borderBottom: "1px solid var(--line)", overflowX: "auto" }}>
           <TabBtn active={tab === "id"} onClick={() => setTab("id")}>Identification</TabBtn>
           <TabBtn active={tab === "class"} onClick={() => setTab("class")}>Classification</TabBtn>
           <TabBtn active={tab === "tax"} onClick={() => setTab("tax")}>Tax</TabBtn>
@@ -301,7 +301,7 @@ export const ItemDetailDrawer: React.FC<{
         {/* Body. fieldset(disabled) makes the whole form read-only for
             non-admins in one shot - inputs, selects and satellite action
             buttons all go inert. Tabs + Close live outside it. */}
-        <fieldset disabled={!canEdit} style={{ flex: 1, overflowY: "auto", padding: 18, display: "flex", flexDirection: "column", gap: 8, border: 0, margin: 0, minInlineSize: 0 }}>
+        <fieldset disabled={!canEdit} style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 18, display: "flex", flexDirection: "column", gap: 8, border: 0, margin: 0, minInlineSize: 0 }}>
           {tab === "id" && (
             <>
               <Field label="Part number" required>
@@ -539,7 +539,7 @@ export const ItemDetailDrawer: React.FC<{
         </fieldset>
 
         {/* Footer */}
-        <div style={{ padding: 14, borderTop: "1px solid var(--line)", display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <div style={{ flexShrink: 0, padding: 14, borderTop: "1px solid var(--line)", display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <Btn sm kind="ghost" onClick={onClose}>{canEdit ? "Cancel" : "Close"}</Btn>
           {canEdit && (
             <Btn sm kind="primary" disabled={saving || !draft.part_no} onClick={save}>

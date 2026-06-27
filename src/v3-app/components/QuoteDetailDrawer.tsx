@@ -371,7 +371,7 @@ export const QuoteDetailDrawer: React.FC<{
         width: "min(1000px, 100vw)", height: "100vh", background: "var(--bg)",
         borderLeft: "1px solid var(--line)", display: "flex", flexDirection: "column",
       }}>
-        <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ flexShrink: 0, padding: "14px 18px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ flex: 1 }}>
             <div className="mono-sm" style={{ color: "var(--ink-3)" }}>Sales . Quote</div>
             <div style={{ fontSize: 16, fontWeight: 600 }}>{draft.quote_number || quote.id?.slice(0, 8)} . v{draft.version || 1}</div>
@@ -389,7 +389,7 @@ export const QuoteDetailDrawer: React.FC<{
 
         {err && <div style={{ padding: "10px 18px" }}><Banner kind="bad" icon={Icon.alert} title="Error"><span className="mono-sm">{String(err.message || err)}</span></Banner></div>}
 
-        <div style={{ display: "flex", gap: 2, padding: "0 18px", borderBottom: "1px solid var(--line)" }}>
+        <div style={{ flexShrink: 0, display: "flex", gap: 2, padding: "0 18px", borderBottom: "1px solid var(--line)", overflowX: "auto" }}>
           <TabBtn active={tab === "header"} onClick={() => setTab("header")}>Header</TabBtn>
           <TabBtn active={tab === "lines"} onClick={() => setTab("lines")}>Lines</TabBtn>
           <TabBtn active={tab === "comp"} onClick={() => setTab("comp")}>Composition</TabBtn>
@@ -398,7 +398,7 @@ export const QuoteDetailDrawer: React.FC<{
           <TabBtn active={tab === "history"} onClick={() => setTab("history")}>History</TabBtn>
         </div>
 
-        <div style={{ flex: 1, overflowY: "auto", padding: 18 }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 18 }}>
           {tab === "header" && (
             <>
               <div className="row" style={{ gap: 16, flexWrap: "wrap" }}>
@@ -648,7 +648,7 @@ export const QuoteDetailDrawer: React.FC<{
         </div>
 
         {/* Lifecycle action bar: status-appropriate transitions. */}
-        <div style={{ padding: "12px 18px", borderTop: "1px solid var(--line)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ flexShrink: 0, padding: "12px 18px", borderTop: "1px solid var(--line)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <span className="mono-sm" style={{ color: "var(--ink-3)", marginRight: "auto" }}>{status.toLowerCase().replace(/_/g, " ")}</span>
           {(status === "DRAFT" || status === "PENDING_INTERNAL_APPROVAL") && (
             <Btn sm kind="primary" disabled={anyBusy} onClick={sendToCustomer}>{LB("send") ? "Sending..." : "Send to customer"}</Btn>

@@ -8,22 +8,20 @@ import { CustomerContactsPanel } from "../components/CustomerContactsPanel";
 import { CustomerHierarchyPanel } from "../components/CustomerHierarchyPanel";
 
 // Create-customer modal. Customers usually auto-register from orders/email/
-// BOM, but admins can also add one directly here.
-const NewCustomerModal: React.FC<{ onClose: () => void; onCreated: (id: string) => void }> = ({ onClose, onCreated }) => {
+// BOM. Admins apply directly; everyone else submits for approval. The parent
+// supplies onSubmit(payload) + whether this is the direct-apply path.
+const NewCustomerModal: React.FC<{ onClose: () => void; onSubmit: (payload: any) => Promise<void>; apply: boolean }> = ({ onClose, onSubmit, apply }) => {
   const [name, setName] = useState("");
   const [key, setKey] = useState("");
   const [gstin, setGstin] = useState("");
+  const [currency, setCurrency] = useState("");
   const [busy, setBusy] = useState(false);
   const submit = async () => {
     if (!name.trim()) { window.notifyError?.("Name required", "Enter a customer name."); return; }
     setBusy(true);
     try {
-      const r: any = await ObaraBackend?.customers?.upsert?.({ customer_name: name.trim(), customer_key: key.trim() || undefined, gstin: gstin.trim() || undefined });
-      const created = r?.customer || r;
-      window.notifySuccess?.("Customer created", name.trim());
-      onCreated(created?.id || "");
-    } catch (e: any) { window.notifyError?.("Could not create customer", e?.message || String(e)); }
-    finally { setBusy(false); }
+      await onSubmit({ customer_name: name.trim(), customer_key: key.trim() || undefined, gstin: gstin.trim() || undefined, currency: currency.trim() || undefined });
+    } finally { setBusy(false); }
   };
   return (
     <div className="cmdk-bg" onClick={onClose} role="dialog" aria-modal="true" aria-label="New customer">
@@ -33,12 +31,14 @@ const NewCustomerModal: React.FC<{ onClose: () => void; onCreated: (id: string) 
           <button className="btn icon sm ghost" style={{ marginLeft: "auto" }} onClick={onClose} aria-label="Close">{Icon.x}</button>
         </div>
         <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+          {!apply && <div className="mono-sm" style={{ color: "var(--ink-4)" }}>This will be submitted for approval before it is created.</div>}
           <div><div className="label">customer name *</div><input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Tata Motors Ltd." /></div>
           <div><div className="label">customer key (optional)</div><input className="input mono" value={key} onChange={(e) => setKey(e.target.value)} placeholder="auto from name if blank" /></div>
           <div><div className="label">GSTIN (optional)</div><input className="input mono" value={gstin} onChange={(e) => setGstin(e.target.value)} placeholder="29ABCDE1234F1Z5" /></div>
+          <div><div className="label">currency (optional)</div><input className="input mono" value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} placeholder="INR" maxLength={3} /></div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <Btn sm kind="ghost" onClick={onClose}>Cancel</Btn>
-            <Btn sm kind="primary" disabled={busy} onClick={submit}>{busy ? "Creating…" : "Create customer"}</Btn>
+            <Btn sm kind="primary" disabled={busy} onClick={submit}>{busy ? "Saving…" : (apply ? "Create customer" : "Submit for approval")}</Btn>
           </div>
         </div>
       </div>
@@ -106,10 +106,53 @@ const WiredCustomers = () => {
   const [selectedId, setSelectedId] = useState<string | null>(customerIdFromHash());
   // Audit P9.3: per-customer refresh-health spinner.
   const [refreshingHealthId, setRefreshingHealthId] = useState<string | null>(null);
-  // Manual customer create (admin-only, consistent with the customer-master
-  // edit guard rails). Customers otherwise auto-register from orders/email/BOM.
-  const canEdit = RBAC.isAdmin();
+  // Customer data entry with approval. Admins apply directly; write-roles
+  // submit a change request; approvers decide the queue.
+  const role = RBAC.role();
+  const canApply = RBAC.isAdmin();
+  const canSubmit = ["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator"].includes(role);
+  const canApprove = ["sales_manager", "finance", "admin"].includes(role);
   const [showNew, setShowNew] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [pending, setPending] = useState<any[] | null>(null);
+  const loadPending = () => {
+    if (!canApprove) return;
+    Promise.resolve(ObaraBackend?.customers?.listChangeRequests?.({ status: "pending" }))
+      .then((r: any) => setPending(Array.isArray(r) ? r : (r?.requests || [])))
+      .catch(() => setPending([]));
+  };
+  useEffect(loadPending, [canApprove]);
+  const decide = async (id: string, decision: "approve" | "reject") => {
+    const reason = decision === "reject" ? (window.prompt("Reason for rejection? (optional)") || "") : undefined;
+    try {
+      await ObaraBackend?.customers?.decideChangeRequest?.(id, decision, reason);
+      window.notifySuccess?.(`Change ${decision === "approve" ? "approved" : "rejected"}`, "");
+      loadPending();
+      list.reload();
+    } catch (e: any) { window.notifyError?.(`Could not ${decision}`, e?.message || String(e)); }
+  };
+  // Inline edit-details form for the selected customer.
+  const [editDraft, setEditDraft] = useState<any>({});
+  const startEdit = (c: any) => { setEditDraft({ customer_name: c.customer_name || "", gstin: c.gstin || "", currency: c.currency || "", customer_type: c.customer_type || "" }); setEditing(true); };
+  const submitEdit = async (c: any) => {
+    const payload: any = {};
+    for (const k of ["customer_name", "gstin", "currency", "customer_type"]) {
+      const v = (editDraft[k] || "").trim?.() ?? editDraft[k];
+      if (v !== (c[k] || "")) payload[k] = v || null;
+    }
+    if (!Object.keys(payload).length) { setEditing(false); return; }
+    try {
+      if (canApply) {
+        await ObaraBackend?.customers?.upsert?.({ customer_key: c.customer_key, ...payload });
+        window.notifySuccess?.("Customer updated", c.customer_name || c.customer_key);
+        list.reload();
+      } else {
+        await ObaraBackend?.customers?.submitChangeRequest?.({ change_type: "update", target_customer_id: c.id, payload });
+        window.notifySuccess?.("Submitted for approval", c.customer_name || c.customer_key);
+      }
+      setEditing(false);
+    } catch (e: any) { window.notifyError?.("Could not save changes", e?.message || String(e)); }
+  };
 
   // Sync the selected customer with hash changes so back/forward and
   // direct links keep state coherent.
@@ -185,7 +228,7 @@ const WiredCustomers = () => {
             aria-label="Search customers"
           />
           <Btn icon kind="ghost" sm onClick={list.reload} title="Refresh">{Icon.cycle}</Btn>
-          {canEdit && <Btn sm kind="primary" onClick={() => setShowNew(true)}>{Icon.plus} New customer</Btn>}
+          {(canApply || canSubmit) && <Btn sm kind="primary" onClick={() => setShowNew(true)}>{Icon.plus} New customer</Btn>}
         </>}
       />
 
@@ -196,6 +239,27 @@ const WiredCustomers = () => {
           <KPI lbl="Tier one" v={String(tierOne)} d="strategic accounts" />
           <KPI lbl="Other" v={String(otherCount)} d="long tail" />
         </KPIRow>
+
+        {canApprove && pending && pending.length > 0 && (
+          <Card title={`Pending customer changes (${pending.length})`} eyebrow="data-entry requests awaiting approval">
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              {pending.map((r) => (
+                <div key={r.id} className="row" style={{ gap: 10, alignItems: "center", padding: "8px 0", borderBottom: "1px solid var(--hairline-2)", flexWrap: "wrap" }}>
+                  <Chip k={r.change_type === "create" ? "good" : "info"}>{r.change_type}</Chip>
+                  <span className="mono-sm" style={{ flex: 1, minWidth: 220 }}>
+                    {r.change_type === "create"
+                      ? (r.payload?.customer_name || "(new customer)")
+                      : (rows.find((x) => x.id === r.target_customer_id)?.customer_name || (r.target_customer_id || "").slice(0, 8))}
+                    {" · "}
+                    <span style={{ color: "var(--ink-3)" }}>{Object.entries(r.payload || {}).map(([k, v]) => `${k}=${v}`).join(", ")}</span>
+                  </span>
+                  <Btn sm kind="primary" onClick={() => decide(r.id, "approve")}>Approve</Btn>
+                  <Btn sm kind="ghost" onClick={() => decide(r.id, "reject")}>Reject</Btn>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
 
         {selectedCustomer && (
           <Card
@@ -211,9 +275,25 @@ const WiredCustomers = () => {
                    title="Run /api/customers/health_score for this customer">
                 {refreshingHealthId === selectedCustomer.id ? "Scoring..." : (selectedCustomer.ai_health_score == null ? "Score health" : "Re-score health")}
               </Btn>
-              <Btn sm kind="ghost" onClick={() => { setSelectedId(null); }}>{Icon.x} close</Btn>
+              {(canApply || canSubmit) && !editing && <Btn sm kind="ghost" onClick={() => startEdit(selectedCustomer)}>{Icon.settings} Edit details</Btn>}
+              <Btn sm kind="ghost" onClick={() => { setSelectedId(null); setEditing(false); }}>{Icon.x} close</Btn>
             </>}
           >
+            {editing && (
+              <div style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, marginBottom: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                {!canApply && <div className="mono-sm" style={{ color: "var(--ink-4)" }}>Changes are submitted for approval before they apply.</div>}
+                <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                  <div><div className="label">customer name</div><input className="input" value={editDraft.customer_name} onChange={(e) => setEditDraft((d: any) => ({ ...d, customer_name: e.target.value }))} style={{ width: 220 }} /></div>
+                  <div><div className="label">GSTIN</div><input className="input mono" value={editDraft.gstin} onChange={(e) => setEditDraft((d: any) => ({ ...d, gstin: e.target.value }))} style={{ width: 180 }} /></div>
+                  <div><div className="label">currency</div><input className="input mono" maxLength={3} value={editDraft.currency} onChange={(e) => setEditDraft((d: any) => ({ ...d, currency: e.target.value.toUpperCase() }))} style={{ width: 90 }} /></div>
+                  <div><div className="label">type</div><input className="input mono" value={editDraft.customer_type} onChange={(e) => setEditDraft((d: any) => ({ ...d, customer_type: e.target.value }))} style={{ width: 140 }} /></div>
+                </div>
+                <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+                  <Btn sm kind="ghost" onClick={() => setEditing(false)}>Cancel</Btn>
+                  <Btn sm kind="primary" onClick={() => submitEdit(selectedCustomer)}>{canApply ? "Save" : "Submit for approval"}</Btn>
+                </div>
+              </div>
+            )}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
               <KV rows={[
                 ["Customer name", selectedCustomer.customer_name || "—"],
@@ -398,11 +478,25 @@ const WiredCustomers = () => {
       </div>
       {showNew && (
         <NewCustomerModal
+          apply={canApply}
           onClose={() => setShowNew(false)}
-          onCreated={(id) => {
-            setShowNew(false);
-            list.reload();
-            if (id) window.location.hash = `#/customers?id=${id}`;
+          onSubmit={async (payload) => {
+            try {
+              if (canApply) {
+                const r: any = await ObaraBackend?.customers?.upsert?.(payload);
+                const created = r?.customer || r;
+                window.notifySuccess?.("Customer created", payload.customer_name);
+                setShowNew(false);
+                list.reload();
+                if (created?.id) window.location.hash = `#/customers?id=${created.id}`;
+              } else {
+                await ObaraBackend?.customers?.submitChangeRequest?.({ change_type: "create", payload });
+                window.notifySuccess?.("Submitted for approval", payload.customer_name);
+                setShowNew(false);
+              }
+            } catch (e: any) {
+              window.notifyError?.("Could not save customer", e?.message || String(e));
+            }
           }}
         />
       )}

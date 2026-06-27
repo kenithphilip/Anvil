@@ -695,6 +695,14 @@
   const customers = {
     list: async () => apiFetch("/api/customers"),
     upsert: async (payload) => apiFetch("/api/customers", { method: "POST", body: payload }),
+    // Customer data entry with approval: write-roles submit a change request;
+    // approvers decide; on approve it applies to the customer master.
+    listChangeRequests: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/customers/change_requests" + (qs ? "?" + qs : ""));
+    },
+    submitChangeRequest: async (payload) => apiFetch("/api/customers/change_requests", { method: "POST", body: payload }),
+    decideChangeRequest: async (id, decision, reason) => apiFetch("/api/customers/change_requests?id=" + encodeURIComponent(id), { method: "PATCH", body: { decision, reason } }),
     // Lists customer_locations across the tenant. Used by the
     // so-intake "new customer" dialog's address picker so the
     // operator can pick an existing address (any customer's) instead

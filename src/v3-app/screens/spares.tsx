@@ -4,6 +4,7 @@ import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { matchSpares, SPARE_PRESETS, isConsumableCol, nameMatchCandidates, type SpareBomItem } from "../lib/spare-match";
+import { GunDrawingCell } from "../components/GunDrawingCell";
 
 // ============================================================
 // ANVIL v3 — Spare Matrix Worksheet
@@ -636,6 +637,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                   <tr>
                     <th style={{ minWidth: 110, position: "sticky", left: 0, background: "var(--paper-3)", zIndex: 2 }}>gun_no</th>
                     <th className="r" style={{ minWidth: 60 }}>qty</th>
+                    <th style={{ width: 56 }} title="Gun assembly drawing (PDF / DWG / STEP)">drawing</th>
                     {(draft.cols || []).map((c) => (
                       <th key={c.id} style={{ minWidth: 110 }} title={c.col_type}>
                         {c.locked && <span style={{ marginRight: 4, color: "var(--ink-4)" }}>{Icon.lock}</span>}
@@ -666,6 +668,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                           style={{ height: 26, fontSize: 11.5, padding: "0 6px", width: 56, textAlign: "right" }}
                         />
                       </td>
+                      <td className="r"><GunDrawingCell gunNo={r.gun_no} /></td>
                       {(draft.cols || []).map((c) => (
                         <td key={c.id} className="mono">
                           <textarea

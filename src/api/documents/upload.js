@@ -23,6 +23,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { recordAudit } from "../_lib/audit.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "../_lib/storage.js";
+import { DRAWING_MIME } from "../_lib/gun-drawings.js";
 
 const MAX_UPLOAD_BYTES = Number(process.env.DOCUMENTS_MAX_UPLOAD_BYTES || 50 * 1024 * 1024);
 
@@ -47,6 +48,8 @@ const ALLOWED_MIME = new Set([
   "application/msword",
   "application/json",
   "application/octet-stream",
+  // Gun assembly drawings: CAD formats (PDF already covered above).
+  ...DRAWING_MIME,
 ]);
 
 const sanitizeName = (s) => String(s || "upload").replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);

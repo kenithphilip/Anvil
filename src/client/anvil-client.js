@@ -1300,6 +1300,15 @@
     routingLog: async (limit) => apiFetch("/api/claude/messages?routing=1" + (limit ? "&limit=" + limit : "")),
   };
 
+  // Gun assembly drawings (PDF/DWG/STEP) attached to a gun by gun_no. Upload
+  // the file via documents.upload first (signed URL + scan), then link the
+  // returned documentId with link(). list() returns fresh signed download URLs.
+  const gunDrawings = {
+    list: async (gunNo) => apiFetch("/api/gun_drawings?gun_no=" + encodeURIComponent(gunNo)),
+    link: async (payload) => apiFetch("/api/gun_drawings", { method: "POST", body: payload }),
+    unlink: async (id) => apiFetch("/api/gun_drawings?id=" + encodeURIComponent(id), { method: "DELETE" }),
+  };
+
   const spareMatrix = {
     recommend: async (payload) => apiFetch("/api/spare_matrix/recommend", { method: "POST", body: payload || {} }),
     kit: async (payload) => apiFetch("/api/spare_matrix/kit", { method: "POST", body: payload }),
@@ -1703,6 +1712,7 @@
     salesHistory,
     security,
     spareMatrix,
+    gunDrawings,
     admin,
     sales,
     service,

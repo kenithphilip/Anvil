@@ -707,6 +707,13 @@
     },
     submitChangeRequest: async (payload) => apiFetch("/api/customers/change_requests", { method: "POST", body: payload }),
     decideChangeRequest: async (id, decision, reason) => apiFetch("/api/customers/change_requests?id=" + encodeURIComponent(id), { method: "PATCH", body: { decision, reason } }),
+    // Categorized customer-registration data-point capture. registrationCatalog()
+    // returns the blank field catalog; getRegistration(id) returns it merged
+    // with stored values grouped by category; saveRegistration({customer_id,
+    // fields}) upserts values (fields = key -> value | {value,source,verified}).
+    registrationCatalog: async () => apiFetch("/api/customers/registration?catalog=1"),
+    getRegistration: async (customerId) => apiFetch("/api/customers/registration?customer_id=" + encodeURIComponent(customerId)),
+    saveRegistration: async (payload) => apiFetch("/api/customers/registration", { method: "POST", body: payload }),
     // Lists customer_locations across the tenant. Used by the
     // so-intake "new customer" dialog's address picker so the
     // operator can pick an existing address (any customer's) instead

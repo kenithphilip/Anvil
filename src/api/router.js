@@ -116,6 +116,7 @@ import customersIndex          from "./customers/index.js";
 import customersProfileVersions from "./customers/profile_versions.js";
 import customersContacts        from "./customers/contacts.js";
 import customersChangeRequests  from "./customers/change_requests.js";
+import customersRegistration    from "./customers/registration.js";
 import customersDuplicates      from "./customers/duplicates.js";
 import customersMerge           from "./customers/merge.js";
 import customerLocationsIndex   from "./customer_locations/index.js";
@@ -863,6 +864,7 @@ const STATIC_ROUTES = {
   "/customers/profile_versions":    customersProfileVersions,
   "/customers/contacts":            customersContacts,
   "/customers/change_requests":     customersChangeRequests,
+  "/customers/registration":        customersRegistration,
   "/customers/duplicates":          customersDuplicates,
   "/customers/merge":               customersMerge,
   "/customer_locations":            customerLocationsIndex,

@@ -12,7 +12,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { callAnthropic } from "../_lib/anthropic.js";
 
 const SYSTEM_PROMPT = [
-  "You are an inventory-planning copilot for Obara India.",
+  "You are an inventory-planning copilot for a manufacturing operations team.",
   "Operators approve or release planned purchase orders for long-lead bundled items (ATD, Timer).",
   "Given a plan's rationale (decomposed forecast, position, lead time, EOQ candidates, top opportunities) explain in 2-3 short sentences:",
   " (1) why the system recommends this PO at this time,",

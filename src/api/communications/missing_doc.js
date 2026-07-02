@@ -9,7 +9,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 
 const TEMPLATES = {
-  quote: { code: "missing_quote", subject: "Quote reference needed", body: "Hi {{contact}},\\n\\nWe received PO {{poNumber}} but could not locate the matching Obara quote. Could you share the quote reference number?\\n\\nThanks,\\n{{senderName}}" },
+  quote: { code: "missing_quote", subject: "Quote reference needed", body: "Hi {{contact}},\\n\\nWe received PO {{poNumber}} but could not locate the matching quote. Could you share the quote reference number?\\n\\nThanks,\\n{{senderName}}" },
   price_composition: { code: "missing_price_comp", subject: "Price composition for PO {{poNumber}}", body: "Hi {{contact}},\\n\\nFor PO {{poNumber}} we need the internal price composition document. Could you forward the latest version?\\n\\nThanks,\\n{{senderName}}" },
   purchase_order: { code: "missing_po", subject: "PO copy needed", body: "Hi {{contact}},\\n\\nThe quote {{quoteNumber}} is ready but we have not yet received the customer PO. Could you share it once available?\\n\\nThanks,\\n{{senderName}}" },
 };
@@ -37,7 +37,7 @@ export default async function handler(req, res) {
     const variables = {
       poNumber: order.data.po_number || "",
       contact: order.data.result && order.data.result.po && order.data.result.po.contact || "Customer",
-      senderName: "Obara India Sales",
+      senderName: "Sales Team",
       quoteNumber: order.data.quote_number || "",
     };
     const drafts = [];

@@ -17,6 +17,29 @@ import { createProposal } from "./action-proposals.js";
 
 const limit = (n) => Math.max(1, Math.min(50, Number(n || 25)));
 
+// The orders table stores SO totals + currency inside the `result`
+// JSONB (result.salesOrder.grandTotal / .currency), NOT as top-level
+// columns — selecting `total_value` / `currency` / `tally_status`
+// directly throws "column orders.currency does not exist". The Tally
+// lifecycle is encoded in `status` (…_TALLY / RECONCILED), so there is
+// no separate tally_status column either. Select `result` and flatten
+// to the shape the chat / MCP consumers expect.
+const TALLY_STATUSES = new Set(["EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED"]);
+const mapOrderRow = (o) => {
+  const so = (o && o.result && o.result.salesOrder) || {};
+  return {
+    id: o.id,
+    quote_number: o.quote_number,
+    po_number: o.po_number,
+    status: o.status,
+    tally_status: TALLY_STATUSES.has(o.status) ? o.status : null,
+    total_value: so.grandTotal != null ? so.grandTotal : null,
+    currency: so.currency != null ? so.currency : null,
+    customer_id: o.customer_id,
+    created_at: o.created_at,
+  };
+};
+
 const TOOLS = {
   search_orders: {
     scope: "read.orders",
@@ -30,14 +53,14 @@ const TOOLS = {
       },
     },
     run: async (svc, tenantId, args) => {
-      let q = svc.from("orders").select("id, quote_number, po_number, status, tally_status, total_value, currency, customer_id, created_at");
+      let q = svc.from("orders").select("id, quote_number, po_number, status, result, customer_id, created_at");
       q = q.eq("tenant_id", tenantId);
       if (args?.status) q = q.eq("status", args.status);
       if (args?.query) {
         q = q.or(`quote_number.ilike.%${args.query}%,po_number.ilike.%${args.query}%`);
       }
       const r = await q.order("created_at", { ascending: false }).limit(limit(args?.limit));
-      return { rows: r.data || [], source: "orders" };
+      return { rows: (r.data || []).map(mapOrderRow), source: "orders" };
     },
   },
 
@@ -290,7 +313,7 @@ const TOOLS = {
       }
       if (!customerId) return { error: "customer not found" };
       const [orders, invoices] = await Promise.all([
-        svc.from("orders").select("id, quote_number, po_number, status, total_value, currency, created_at")
+        svc.from("orders").select("id, quote_number, po_number, status, result, customer_id, created_at")
           .eq("tenant_id", tenantId).eq("customer_id", customerId)
           .gte("created_at", since).order("created_at", { ascending: false }).limit(50),
         svc.from("invoices").select("id, invoice_number, issue_date, grand_total, paid_amount, status, currency")
@@ -299,7 +322,7 @@ const TOOLS = {
       ]);
       return {
         customer_id: customerId,
-        orders: orders.data || [],
+        orders: (orders.data || []).map(mapOrderRow),
         invoices: invoices.data || [],
         source: "customers+orders+invoices",
       };

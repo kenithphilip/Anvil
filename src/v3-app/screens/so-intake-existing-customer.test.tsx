@@ -14,8 +14,8 @@ import { fireEvent, waitFor, within } from "@testing-library/react";
 import { installBackend, installRbac, renderScreen } from "../test-utils";
 
 const CUSTOMERS = [
-  { id: "cust-mg", customer_name: "MG Motor India", gstin: "24AABCM1234A1Z5", state_code: "24" },
-  { id: "cust-hmil", customer_name: "Hyundai Motor India Ltd", gstin: "27AAACH5678B1Z9", state_code: "27" },
+  { id: "cust-mg", customer_name: "Vega Motor India", gstin: "24AABCM1234A1Z5", state_code: "24" },
+  { id: "cust-hmil", customer_name: "Meridian Motor India Ltd", gstin: "27AAACH5678B1Z9", state_code: "27" },
 ];
 
 let upsertSpy;
@@ -61,8 +61,8 @@ describe("SoIntake — pick existing customer from the not-detected dialog", () 
     await openNewCustomerDialog(container);
     const select = document.getElementById("nc-existing") as HTMLSelectElement;
     const optionLabels = Array.from(select.options).map((o) => o.textContent || "");
-    expect(optionLabels.some((l) => /MG Motor India/.test(l))).toBe(true);
-    expect(optionLabels.some((l) => /Hyundai Motor India Ltd/.test(l))).toBe(true);
+    expect(optionLabels.some((l) => /Vega Motor India/.test(l))).toBe(true);
+    expect(optionLabels.some((l) => /Meridian Motor India Ltd/.test(l))).toBe(true);
   });
 
   it("selecting an existing customer closes the dialog without creating a duplicate", async () => {

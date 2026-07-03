@@ -146,9 +146,9 @@ describe("QuoteDetailDrawer — line enrichment", () => {
   });
 
   it("renders a 'for opp: <name>' chip linking to the opportunity when the quote carries one", () => {
-    const q = { ...QUOTE, opportunity: { id: "OPP-1", opportunity_name: "Hyundai Pune RFQ Q1" } };
+    const q = { ...QUOTE, opportunity: { id: "OPP-1", opportunity_name: "Meridian Pune RFQ Q1" } };
     const { getByText, container } = render(<QuoteDetailDrawer quote={q} onClose={() => undefined} />);
-    expect(getByText(/for opp: Hyundai Pune RFQ Q1/)).toBeTruthy();
+    expect(getByText(/for opp: Meridian Pune RFQ Q1/)).toBeTruthy();
     const link = container.querySelector('a[href="#/opps?id=OPP-1"]');
     expect(link).toBeTruthy();
   });

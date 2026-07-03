@@ -5175,7 +5175,7 @@ const CustomerPartsPanel: React.FC = () => {
 };
 
 // Customer terms pack editor (migration 106). Per-customer T&C
-// library: HMIL's 15-clause boilerplate becomes a pack with 15
+// library: MMIL's 15-clause boilerplate becomes a pack with 15
 // clauses. Surfaces on the order PDF and on the operator review
 // screen when an order is opened for that customer.
 const CustomerTermsPanel: React.FC = () => {
@@ -5233,7 +5233,7 @@ const CustomerTermsPanel: React.FC = () => {
 
   return (
     <>
-      <Card title="Customer terms packs" eyebrow="HMIL-style T&C boilerplate, per customer">
+      <Card title="Customer terms packs" eyebrow="MMIL-style T&C boilerplate, per customer">
         <div className="row" style={{ gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
           <div>
             <label className="mono-sm">Customer</label>
@@ -5248,7 +5248,7 @@ const CustomerTermsPanel: React.FC = () => {
         <>
           <Card title="Add pack" eyebrow="group clauses under a named version">
             <div className="row" style={{ gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
-              <div><label className="mono-sm">Pack name</label><input className="input" value={packDraft.pack_name} onChange={(e) => setPackDraft({ ...packDraft, pack_name: e.target.value })} placeholder="e.g., HMIL Standard T&C" /></div>
+              <div><label className="mono-sm">Pack name</label><input className="input" value={packDraft.pack_name} onChange={(e) => setPackDraft({ ...packDraft, pack_name: e.target.value })} placeholder="e.g., MMIL Standard T&C" /></div>
               <div><label className="mono-sm">Version</label><input className="input mono r" type="number" value={packDraft.version} onChange={(e) => setPackDraft({ ...packDraft, version: Number(e.target.value) })} /></div>
               <Btn sm kind="primary" onClick={savePack}>Add pack</Btn>
             </div>

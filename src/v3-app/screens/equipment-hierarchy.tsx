@@ -337,7 +337,7 @@ const EquipmentDetail = ({ node, customers, locations, onSave, onDelete, onCance
             <input className="input mono" value={draft.robot_no} onChange={(e) => set("robot_no", e.target.value)} aria-label="Robot no" />
           ))}
           {fld("Gun no" + (isGun ? " *" : ""), (
-            <input className="input mono" value={draft.gun_no} onChange={(e) => set("gun_no", e.target.value)} placeholder="SRTC-K6133-IND" aria-label="Gun no" />
+            <input className="input mono" value={draft.gun_no} onChange={(e) => set("gun_no", e.target.value)} placeholder="WGC-K6133-IND" aria-label="Gun no" />
           ))}
           {fld("Gun type", (
             <input className="input mono" value={draft.gun_type} onChange={(e) => set("gun_type", e.target.value)} aria-label="Gun type" />

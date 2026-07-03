@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { computeLineTotals } from "./line-totals";
 
 describe("computeLineTotals", () => {
-  it("Path 1: explicit per-unit tax components from a Hyundai PO line", () => {
+  it("Path 1: explicit per-unit tax components from a Meridian PO line", () => {
     // PO line 1 (GUIDE ASSY): Ex-Price 46991 per unit, CGST 4229.19,
     // SGST 4229.19. Unit Price = 55449.38 (tax-inclusive),
     // qty 2 -> TotAmt 110,898.76.

@@ -56,8 +56,8 @@ describe("claude extractor system prompt", () => {
     expect(SRC).toMatch(/payment_terms[\s\S]{0,200}verbatim/i);
   });
 
-  it("instructs the LLM to merge multi-row-per-item table layouts (P250432265 / HMIL 32-line regression)", () => {
-    // The HMIL PO P250432265 has 32 line items printed as 4-5
+  it("instructs the LLM to merge multi-row-per-item table layouts (P250432265 / MMIL 32-line regression)", () => {
+    // The MMIL PO P250432265 has 32 line items printed as 4-5
     // physical rows each (partNumber row 1, description row 2,
     // specification row 3, requisition row 4). Without explicit
     // guidance the model returned 0 lines because it saw an
@@ -66,7 +66,7 @@ describe("claude extractor system prompt", () => {
     // group the rows into one lines[] entry per S.No.
     expect(SRC).toMatch(/MULTI-ROW-PER-ITEM|multi[- ]row[- ]per[- ]item/i);
     expect(SRC).toMatch(/S\.No|s\.no/);
-    expect(SRC).toMatch(/HMIL|Hyundai Motor India/i);
+    expect(SRC).toMatch(/MMIL|Meridian Motor India/i);
     // The model must understand that N physical S.No values => N lines[] entries.
     // Source-text assertion: the string literals are line-broken
     // across the array, so we test the discrete phrases rather than

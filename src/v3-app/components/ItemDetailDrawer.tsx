@@ -380,7 +380,7 @@ export const ItemDetailDrawer: React.FC<{
                   <option value="DISCONTINUED">Discontinued</option>
                 </select>
               </Field>
-              {/* Hyundai-PO style per-line attributes (migration 107).
+              {/* Meridian-PO style per-line attributes (migration 107).
                   Defaults that flow onto order line items unless the
                   inbound PO overrides them. */}
               <div className="row" style={{ gap: 16, flexWrap: "wrap" }}>

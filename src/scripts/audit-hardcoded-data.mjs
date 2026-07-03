@@ -7,7 +7,7 @@
 // Patterns we treat as suspicious (deny-list):
 //   - Customer names known to be in the legacy demos:
 //     "Hyderabad Refractories", "Voestalpine", "Yokoi", "Kumera",
-//     "POSCO", "Tata Steel", "JFE", "Maruti", "Hyundai" (when
+//     "POSCO", "Tata Steel", "JFE", "Maruti", "Meridian" (when
 //     hardcoded inline), etc. Some of these may legitimately appear
 //     in inline schema docs / comments. The audit reports each line
 //     so a human can triage.

@@ -13,11 +13,11 @@ describe("amountInWords", () => {
     expect(amountInWords(230_202, { style: "intl" }))
       .toBe("Two Hundred Thirty Thousand Two Hundred Two INR Only");
   });
-  it("renders the Hyundai PO grand total in Indian numbering by default for INR", () => {
+  it("renders the Meridian PO grand total in Indian numbering by default for INR", () => {
     expect(amountInWords(271_638.36))
       .toBe("Two Lakh Seventy One Thousand Six Hundred Thirty Eight and Thirty Six Paise INR Only");
   });
-  it("renders the Hyundai PO grand total in international numbering when style:intl is forced", () => {
+  it("renders the Meridian PO grand total in international numbering when style:intl is forced", () => {
     expect(amountInWords(271_638.36, { style: "intl" }))
       .toBe("Two Hundred Seventy One Thousand Six Hundred Thirty Eight and Thirty Six Paise INR Only");
   });

@@ -30,7 +30,7 @@ votes across adapters when they disagree.**
 |---|------|---------|
 | G1 | Eliminate the `image_pdf_no_text` failure mode | 0 occurrences over 100 uploads |
 | G2 | Cut average extraction cost per PO by 70% | mean LLM tokens per PO |
-| G3 | Auto-extract 95%+ of fields on POs from repeat customers (Tata, JBM, Mahindra, etc.) | per-customer field-fill rate |
+| G3 | Auto-extract 95%+ of fields on POs from repeat customers (Tata, NRD, Mahindra, etc.) | per-customer field-fill rate |
 | G4 | Surface a categorised reason for every failed extraction | every extract response carries `status_reason` (already shipped in PR #84) |
 | G5 | Same pipeline serves SO intake, source PO ack, invoice match, e-Way bill | one extraction service called by 5+ modules |
 | G6 | Operator corrections feed back to the engine, not just Claude | corrections dictionary applies pre-LLM |

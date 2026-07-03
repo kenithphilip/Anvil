@@ -9,7 +9,7 @@
  *   trigger), item-master extensions covering every lifecycle, part
  *   aliases (active/pending/deprecated), UOM normalisation rules,
  *   a 3-level BOM, tally inventory, catalog synonyms / alternatives,
- *   private-label items, vendors, the JBM-shaped equipment hierarchy
+ *   private-label items, vendors, the NRD-shaped equipment hierarchy
  *   for two customers + installed parts + installed_base counts,
  *   contracts (every type × every status), contract_lines,
  *   payment_milestones, blanket_release_drawdown, engineering_specs.
@@ -262,7 +262,7 @@ begin
     (uuid_generate_v5(ns,'item:new:cable-y'),   default_tenant,'CABLE-Y-2026',  'Power cable Y (UV-stable, new)',            null,'Mtr','cables','power','cables','power','O-KOREA','USD',16,null,null,null,'85446030',0.09,0.09,0.18,21,10,10,'ceil','NEW',false,false,'{}'::jsonb,'10m pack.', now() - interval '30 days', now() - interval '5 days'),
     (uuid_generate_v5(ns,'item:new:assembly-z'),default_tenant,'ASSY-Z-2026',   'Modular sub-assembly Z (new)',              'ASSY-Z','Nos','assemblies','module','assemblies','module','O-JAPAN','JPY',125000,null,null,null,'85152110',0.09,0.09,0.18,90,1,1,'none','NEW',true,true,'{}'::jsonb,'Modular replacement for legacy gun-200.', now() - interval '50 days', now() - interval '5 days'),
     -- TRIAL (3) -- under evaluation, not yet ready for full ACTIVE list
-    (uuid_generate_v5(ns,'item:trial:tip-z'),   default_tenant,'TIP-Z-TRIAL',   'Cap Tip (trial alloy, eval until 2026-Q3)', null,'Nos','spares','tips','spares','tip','O-KOREA','USD',1.20,null,null,null,'85159000',0.09,0.09,0.18,30,500,500,'round','TRIAL',false,false, jsonb_build_object('alloy','Cu-Be-Co-trial','seed_marker','anvil-test-seed-v1'),'Customer JBM trial.', now() - interval '20 days', now() - interval '5 days'),
+    (uuid_generate_v5(ns,'item:trial:tip-z'),   default_tenant,'TIP-Z-TRIAL',   'Cap Tip (trial alloy, eval until 2026-Q3)', null,'Nos','spares','tips','spares','tip','O-KOREA','USD',1.20,null,null,null,'85159000',0.09,0.09,0.18,30,500,500,'round','TRIAL',false,false, jsonb_build_object('alloy','Cu-Be-Co-trial','seed_marker','anvil-test-seed-v1'),'Customer NRD trial.', now() - interval '20 days', now() - interval '5 days'),
     (uuid_generate_v5(ns,'item:trial:gun-x4'),  default_tenant,'X4-X-TRIAL',    'Servo Gun X4 prototype',                   'X4-PROTO','Nos','assemblies','servo_gun','assemblies','gun','O-KOREA','USD',11000,null,null,null,'85152110',0.09,0.09,0.18,90,1,1,'none','TRIAL',true,true,'{}'::jsonb,'Prototype for MG.', now() - interval '20 days', now() - interval '5 days'),
     (uuid_generate_v5(ns,'item:trial:timer-y'), default_tenant,'TIMER-Y-TRIAL', 'Welding timer (trial firmware)',            null,'Nos','spares','timer','spares','timer','O-KOREA','USD',1100,null,null,null,'85159000',0.09,0.09,0.18,45,1,1,'none','TRIAL',false,false,'{}'::jsonb,'Firmware eval.', now() - interval '20 days', now() - interval '5 days'),
     -- Extra ACTIVE rows used by BOM and contracts later
@@ -285,7 +285,7 @@ declare
 begin
   select id into mg_id     from customers where tenant_id = default_tenant and customer_key = 'MG_MOTOR_INDIA';
   select id into tata_id   from customers where tenant_id = default_tenant and customer_key = 'TATA_MOTORS_PV_PUNE';
-  select id into jbm_id    from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO_PLANT_1';
+  select id into jbm_id    from customers where tenant_id = default_tenant and customer_key = 'NRD_AUTO_PLANT_1';
   select id into ati_id    from customers where tenant_id = default_tenant and customer_key = 'ANVIL_TEST_INDUSTRIES';
   select id into nippon_id from customers where tenant_id = default_tenant and customer_key = 'NIPPON_KOGYO';
 
@@ -303,7 +303,7 @@ begin
   end if;
   if jbm_id is not null then
     insert into part_aliases (id, tenant_id, customer_id, customer_part_no, customer_description, obara_part_no, status, confidence, first_seen_po, last_seen_po, created_at, updated_at) values
-      (uuid_generate_v5(ns,'pa:JBM:1'), default_tenant, jbm_id, 'JBM-X2C-MED','Servo gun X2C medium','X2C-X-MEDIUM','active', 0.99, 'JBM-PO-501', 'JBM-PO-650', now() - interval '300 days', now() - interval '30 days')
+      (uuid_generate_v5(ns,'pa:NRD:1'), default_tenant, jbm_id, 'NRD-X2C-MED','Servo gun X2C medium','X2C-X-MEDIUM','active', 0.99, 'NRD-PO-501', 'NRD-PO-650', now() - interval '300 days', now() - interval '30 days')
     on conflict (tenant_id, customer_id, customer_part_no) do nothing;
   end if;
 
@@ -568,8 +568,8 @@ on conflict (tenant_id, vendor_name) do nothing;
 -- ───────────────────────────────────────────────────────────────────
 -- 11. EQUIPMENT_HIERARCHY  --  full Plant→Line→Zone→Station→Robot→Gun chain
 -- ───────────────────────────────────────────────────────────────────
--- Two customers: JBM Auto (already in 010 corpus, rows likely partial)
--- and MG Motor (Halol). Each gets a 6-level chain.
+-- Two customers: NRD Auto (already in 010 corpus, rows likely partial)
+-- and Vega Motor (Halol). Each gets a 6-level chain.
 do $eq$
 declare
   default_tenant uuid := '00000000-0000-0000-0000-000000000001';
@@ -581,10 +581,10 @@ declare
   jbm_plant      uuid;  jbm_line uuid; jbm_zone  uuid; jbm_station  uuid; jbm_robot  uuid;
 begin
   select id into mg_id  from customers where tenant_id = default_tenant and customer_key = 'MG_MOTOR_INDIA';
-  select id into jbm_id from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO_PLANT_1';
+  select id into jbm_id from customers where tenant_id = default_tenant and customer_key = 'NRD_AUTO_PLANT_1';
   select id into mg_halol_loc from customer_locations where tenant_id = default_tenant and customer_id = mg_id and location_code = 'HALOL';
 
-  -- MG Motor Halol chain
+  -- Vega Motor Halol chain
   if mg_id is not null then
     mg_plant   := uuid_generate_v5(ns,'eq:MG:plant');
     mg_line    := uuid_generate_v5(ns,'eq:MG:line');
@@ -603,24 +603,24 @@ begin
     on conflict (id) do nothing;
   end if;
 
-  -- JBM Auto chain (Plant 1)
+  -- NRD Auto chain (Plant 1)
   if jbm_id is not null then
     select id into jbm_loc from customer_locations where tenant_id = default_tenant and customer_id = jbm_id limit 1;
 
-    jbm_plant   := uuid_generate_v5(ns,'eq:JBM:plant');
-    jbm_line    := uuid_generate_v5(ns,'eq:JBM:line');
-    jbm_zone    := uuid_generate_v5(ns,'eq:JBM:zone');
-    jbm_station := uuid_generate_v5(ns,'eq:JBM:station');
-    jbm_robot   := uuid_generate_v5(ns,'eq:JBM:robot');
+    jbm_plant   := uuid_generate_v5(ns,'eq:NRD:plant');
+    jbm_line    := uuid_generate_v5(ns,'eq:NRD:line');
+    jbm_zone    := uuid_generate_v5(ns,'eq:NRD:zone');
+    jbm_station := uuid_generate_v5(ns,'eq:NRD:station');
+    jbm_robot   := uuid_generate_v5(ns,'eq:NRD:robot');
 
     insert into equipment_hierarchy (id, tenant_id, customer_id, customer_location_id, plant_name, line_name, zone_name, station_name, robot_make, robot_no, gun_no, gun_type, qty, timer_model, atd_model, parent_id, notes, created_at, updated_at) values
-      (jbm_plant,   default_tenant, jbm_id, jbm_loc, 'JBM Plant 1', null,        null,    null,            null,    null,   null,    null,   1, null, null, null,        null, now() - interval '300 days', now() - interval '30 days'),
-      (jbm_line,    default_tenant, jbm_id, jbm_loc, 'JBM Plant 1', 'Line 2',     null,    null,            null,    null,   null,    null,   1, null, null, jbm_plant,   null, now() - interval '300 days', now() - interval '30 days'),
-      (jbm_zone,    default_tenant, jbm_id, jbm_loc, 'JBM Plant 1', 'Line 2',     'Zone 5',null,            null,    null,   null,    null,   1, null, null, jbm_line,    null, now() - interval '300 days', now() - interval '30 days'),
-      (jbm_station, default_tenant, jbm_id, jbm_loc, 'JBM Plant 1', 'Line 2',     'Zone 5','Station S05',   null,    null,   null,    null,   1, null, null, jbm_zone,    null, now() - interval '300 days', now() - interval '30 days'),
-      (jbm_robot,   default_tenant, jbm_id, jbm_loc, 'JBM Plant 1', 'Line 2',     'Zone 5','Station S05',   'KUKA',  'R-05', 'GUN-05-A','servo', 1, 'TMR-300','ATD-200', jbm_station, null, now() - interval '300 days', now() - interval '30 days'),
-      (uuid_generate_v5(ns,'eq:JBM:gun-b'),
-                   default_tenant, jbm_id, jbm_loc, 'JBM Plant 1', 'Line 2',     'Zone 5','Station S05',   'KUKA',  'R-05', 'GUN-05-B','servo', 1, 'TMR-300','ATD-200', jbm_robot,   null, now() - interval '300 days', now() - interval '30 days')
+      (jbm_plant,   default_tenant, jbm_id, jbm_loc, 'NRD Plant 1', null,        null,    null,            null,    null,   null,    null,   1, null, null, null,        null, now() - interval '300 days', now() - interval '30 days'),
+      (jbm_line,    default_tenant, jbm_id, jbm_loc, 'NRD Plant 1', 'Line 2',     null,    null,            null,    null,   null,    null,   1, null, null, jbm_plant,   null, now() - interval '300 days', now() - interval '30 days'),
+      (jbm_zone,    default_tenant, jbm_id, jbm_loc, 'NRD Plant 1', 'Line 2',     'Zone 5',null,            null,    null,   null,    null,   1, null, null, jbm_line,    null, now() - interval '300 days', now() - interval '30 days'),
+      (jbm_station, default_tenant, jbm_id, jbm_loc, 'NRD Plant 1', 'Line 2',     'Zone 5','Station S05',   null,    null,   null,    null,   1, null, null, jbm_zone,    null, now() - interval '300 days', now() - interval '30 days'),
+      (jbm_robot,   default_tenant, jbm_id, jbm_loc, 'NRD Plant 1', 'Line 2',     'Zone 5','Station S05',   'KUKA',  'R-05', 'GUN-05-A','servo', 1, 'TMR-300','ATD-200', jbm_station, null, now() - interval '300 days', now() - interval '30 days'),
+      (uuid_generate_v5(ns,'eq:NRD:gun-b'),
+                   default_tenant, jbm_id, jbm_loc, 'NRD Plant 1', 'Line 2',     'Zone 5','Station S05',   'KUKA',  'R-05', 'GUN-05-B','servo', 1, 'TMR-300','ATD-200', jbm_robot,   null, now() - interval '300 days', now() - interval '30 days')
     on conflict (id) do nothing;
   end if;
 end $eq$;
@@ -634,8 +634,8 @@ declare
   ns             uuid := 'd7a7e5e4-0001-0002-0001-000000000001';
   mg_gun_a    uuid := uuid_generate_v5(ns,'eq:MG:robot');
   mg_gun_b    uuid := uuid_generate_v5(ns,'eq:MG:gun-b');
-  jbm_gun_a   uuid := uuid_generate_v5(ns,'eq:JBM:robot');
-  jbm_gun_b   uuid := uuid_generate_v5(ns,'eq:JBM:gun-b');
+  jbm_gun_a   uuid := uuid_generate_v5(ns,'eq:NRD:robot');
+  jbm_gun_b   uuid := uuid_generate_v5(ns,'eq:NRD:gun-b');
 begin
   -- 8 parts per gun = 32 rows total. Use real corpus + new items.
   insert into equipment_installed_parts (id, tenant_id, equipment_id, part_no, description, installed_qty, is_critical, is_emergency_only, recommended_qty_90d, recommended_qty_180d, recommended_qty_365d, last_replaced_at, notes) values
@@ -657,24 +657,24 @@ begin
     (uuid_generate_v5(ns,'eqp:MG-B:6'),  default_tenant, mg_gun_b, '403A7K878-169',     'Point holder',     2, false, false, 2,   4,  6, (now() - interval '60 days')::date,  null),
     (uuid_generate_v5(ns,'eqp:MG-B:7'),  default_tenant, mg_gun_b, 'SUB-ARM',           'Actuator arm',     1, false, false, 0,   0,  1, (now() - interval '300 days')::date, null),
     (uuid_generate_v5(ns,'eqp:MG-B:8'),  default_tenant, mg_gun_b, 'SUB-BRACKET',       'Bracket',          1, false, false, 0,   0,  1, (now() - interval '300 days')::date, null),
-    -- JBM Gun A
-    (uuid_generate_v5(ns,'eqp:JBM-A:1'), default_tenant, jbm_gun_a, 'CT-16-D-1-FS',     'Cap tip 16D',      4, true,  false, 8,  16, 32, (now() - interval '15 days')::date, null),
-    (uuid_generate_v5(ns,'eqp:JBM-A:2'), default_tenant, jbm_gun_a, '4-TP3082',          'Cap tip alt',      2, true,  false, 4,   8, 16, (now() - interval '15 days')::date, null),
-    (uuid_generate_v5(ns,'eqp:JBM-A:3'), default_tenant, jbm_gun_a, '4-HD32208-2',       'Holder',           1, false, false, 1,   2,  4, (now() - interval '90 days')::date, null),
-    (uuid_generate_v5(ns,'eqp:JBM-A:4'), default_tenant, jbm_gun_a, 'IN0-0133',          'Terminal box assy',1, true,  true,  1,   1,  2, (now() - interval '180 days')::date, null),
-    (uuid_generate_v5(ns,'eqp:JBM-A:5'), default_tenant, jbm_gun_a, 'X2C-X-LARGE',       'Servo gun assy',   1, true,  true,  0,   0,  1, (now() - interval '300 days')::date, 'Larger throat for JBM line.'),
-    (uuid_generate_v5(ns,'eqp:JBM-A:6'), default_tenant, jbm_gun_a, 'SW-Y1000-6P-MM-H/S','Connector cable',  1, false, false, 1,   2,  3, (now() - interval '60 days')::date,  null),
-    (uuid_generate_v5(ns,'eqp:JBM-A:7'), default_tenant, jbm_gun_a, '403A7K878-169',     'Point holder',     2, false, false, 2,   4,  6, (now() - interval '60 days')::date,  null),
-    (uuid_generate_v5(ns,'eqp:JBM-A:8'), default_tenant, jbm_gun_a, 'CABLE-Y-2026',      'Power cable Y',    6, false, false, 0,   6, 12, (now() - interval '20 days')::date,  null),
-    -- JBM Gun B
-    (uuid_generate_v5(ns,'eqp:JBM-B:1'), default_tenant, jbm_gun_b, 'CT-16-D-1-FS',     'Cap tip 16D',      4, true,  false, 8,  16, 32, (now() - interval '15 days')::date, null),
-    (uuid_generate_v5(ns,'eqp:JBM-B:2'), default_tenant, jbm_gun_b, 'TIP-Y-2026',        'Cap tip Y trial',  500, true, false, 1000, 2000, 4000, (now() - interval '10 days')::date, 'Trial-alloy bulk pack on this gun.'),
-    (uuid_generate_v5(ns,'eqp:JBM-B:3'), default_tenant, jbm_gun_b, 'IN0-0133',          'Terminal box assy',1, true,  true,  1,   1,  2, (now() - interval '180 days')::date, null),
-    (uuid_generate_v5(ns,'eqp:JBM-B:4'), default_tenant, jbm_gun_b, 'X2C-X-LARGE',       'Servo gun assy',   1, true,  true,  0,   0,  1, (now() - interval '300 days')::date, null),
-    (uuid_generate_v5(ns,'eqp:JBM-B:5'), default_tenant, jbm_gun_b, 'SW-Y1000-6P-MM-H/S','Connector cable',  1, false, false, 1,   2,  3, (now() - interval '60 days')::date,  null),
-    (uuid_generate_v5(ns,'eqp:JBM-B:6'), default_tenant, jbm_gun_b, '403A7K878-169',     'Point holder',     2, false, false, 2,   4,  6, (now() - interval '60 days')::date,  null),
-    (uuid_generate_v5(ns,'eqp:JBM-B:7'), default_tenant, jbm_gun_b, 'SUB-ELECTRODE',     'Electrode holder', 1, false, false, 0,   0,  1, (now() - interval '300 days')::date, null),
-    (uuid_generate_v5(ns,'eqp:JBM-B:8'), default_tenant, jbm_gun_b, '4-HD32208-2',       'Holder',           1, false, false, 1,   2,  4, (now() - interval '120 days')::date, null)
+    -- NRD Gun A
+    (uuid_generate_v5(ns,'eqp:NRD-A:1'), default_tenant, jbm_gun_a, 'CT-16-D-1-FS',     'Cap tip 16D',      4, true,  false, 8,  16, 32, (now() - interval '15 days')::date, null),
+    (uuid_generate_v5(ns,'eqp:NRD-A:2'), default_tenant, jbm_gun_a, '4-TP3082',          'Cap tip alt',      2, true,  false, 4,   8, 16, (now() - interval '15 days')::date, null),
+    (uuid_generate_v5(ns,'eqp:NRD-A:3'), default_tenant, jbm_gun_a, '4-HD32208-2',       'Holder',           1, false, false, 1,   2,  4, (now() - interval '90 days')::date, null),
+    (uuid_generate_v5(ns,'eqp:NRD-A:4'), default_tenant, jbm_gun_a, 'IN0-0133',          'Terminal box assy',1, true,  true,  1,   1,  2, (now() - interval '180 days')::date, null),
+    (uuid_generate_v5(ns,'eqp:NRD-A:5'), default_tenant, jbm_gun_a, 'X2C-X-LARGE',       'Servo gun assy',   1, true,  true,  0,   0,  1, (now() - interval '300 days')::date, 'Larger throat for NRD line.'),
+    (uuid_generate_v5(ns,'eqp:NRD-A:6'), default_tenant, jbm_gun_a, 'SW-Y1000-6P-MM-H/S','Connector cable',  1, false, false, 1,   2,  3, (now() - interval '60 days')::date,  null),
+    (uuid_generate_v5(ns,'eqp:NRD-A:7'), default_tenant, jbm_gun_a, '403A7K878-169',     'Point holder',     2, false, false, 2,   4,  6, (now() - interval '60 days')::date,  null),
+    (uuid_generate_v5(ns,'eqp:NRD-A:8'), default_tenant, jbm_gun_a, 'CABLE-Y-2026',      'Power cable Y',    6, false, false, 0,   6, 12, (now() - interval '20 days')::date,  null),
+    -- NRD Gun B
+    (uuid_generate_v5(ns,'eqp:NRD-B:1'), default_tenant, jbm_gun_b, 'CT-16-D-1-FS',     'Cap tip 16D',      4, true,  false, 8,  16, 32, (now() - interval '15 days')::date, null),
+    (uuid_generate_v5(ns,'eqp:NRD-B:2'), default_tenant, jbm_gun_b, 'TIP-Y-2026',        'Cap tip Y trial',  500, true, false, 1000, 2000, 4000, (now() - interval '10 days')::date, 'Trial-alloy bulk pack on this gun.'),
+    (uuid_generate_v5(ns,'eqp:NRD-B:3'), default_tenant, jbm_gun_b, 'IN0-0133',          'Terminal box assy',1, true,  true,  1,   1,  2, (now() - interval '180 days')::date, null),
+    (uuid_generate_v5(ns,'eqp:NRD-B:4'), default_tenant, jbm_gun_b, 'X2C-X-LARGE',       'Servo gun assy',   1, true,  true,  0,   0,  1, (now() - interval '300 days')::date, null),
+    (uuid_generate_v5(ns,'eqp:NRD-B:5'), default_tenant, jbm_gun_b, 'SW-Y1000-6P-MM-H/S','Connector cable',  1, false, false, 1,   2,  3, (now() - interval '60 days')::date,  null),
+    (uuid_generate_v5(ns,'eqp:NRD-B:6'), default_tenant, jbm_gun_b, '403A7K878-169',     'Point holder',     2, false, false, 2,   4,  6, (now() - interval '60 days')::date,  null),
+    (uuid_generate_v5(ns,'eqp:NRD-B:7'), default_tenant, jbm_gun_b, 'SUB-ELECTRODE',     'Electrode holder', 1, false, false, 0,   0,  1, (now() - interval '300 days')::date, null),
+    (uuid_generate_v5(ns,'eqp:NRD-B:8'), default_tenant, jbm_gun_b, '4-HD32208-2',       'Holder',           1, false, false, 1,   2,  4, (now() - interval '120 days')::date, null)
   on conflict (id) do nothing;
 end $eqp$;
 
@@ -688,8 +688,8 @@ declare
 begin
   select id into mg     from customers where tenant_id = default_tenant and customer_key = 'MG_MOTOR_INDIA';
   select id into tata   from customers where tenant_id = default_tenant and customer_key = 'TATA_MOTORS_PV_PUNE';
-  select id into jbm    from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO_PLANT_1';
-  select id into rn     from customers where tenant_id = default_tenant and customer_key = 'RNAIPL';
+  select id into jbm    from customers where tenant_id = default_tenant and customer_key = 'NRD_AUTO_PLANT_1';
+  select id into rn     from customers where tenant_id = default_tenant and customer_key = 'ALAP';
   select id into ati    from customers where tenant_id = default_tenant and customer_key = 'ANVIL_TEST_INDUSTRIES';
   select id into nippon from customers where tenant_id = default_tenant and customer_key = 'NIPPON_KOGYO';
   select id into globex from customers where tenant_id = default_tenant and customer_key = 'GLOBEX_MFG_GMBH';
@@ -697,8 +697,8 @@ begin
   if mg     is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, mg,     'X2C-X-MEDIUM',     12, (now() - interval '720 days')::date, 'MG Halol BIW.')   on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
   if mg     is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, mg,     'X2C-X-LARGE',       4, (now() - interval '720 days')::date, 'MG Haryana.')      on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
   if tata   is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, tata,   'X2C-X-MEDIUM',     18, (now() - interval '600 days')::date, 'Tata Pune.')       on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
-  if jbm    is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, jbm,    'X2C-X-LARGE',      24, (now() - interval '600 days')::date, 'JBM Plant 1+2.')   on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
-  if jbm    is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, jbm,    'X2C-X-EXTRA-LARGE', 6, (now() - interval '500 days')::date, 'JBM heavy cells.') on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
+  if jbm    is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, jbm,    'X2C-X-LARGE',      24, (now() - interval '600 days')::date, 'NRD Plant 1+2.')   on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
+  if jbm    is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, jbm,    'X2C-X-EXTRA-LARGE', 6, (now() - interval '500 days')::date, 'NRD heavy cells.') on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
   if rn     is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, rn,     'X2C-X-MEDIUM',     16, (now() - interval '500 days')::date, 'RN India.')        on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
   if ati    is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, ati,    'X2C-X-MEDIUM',      8, (now() - interval '300 days')::date, 'ATI fixture.')     on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
   if ati    is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, ati,    'X3-X-MEDIUM',       2, (now() - interval '40 days')::date,  'X3 launch fixture.') on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
@@ -718,7 +718,7 @@ declare
   cstatuses      text[] := array['ACTIVE','EXPIRED','TERMINATED','PENDING_RENEWAL'];
   ctype          text;
   cstatus        text;
-  customer_keys  text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO_PLANT_1','ANVIL_TEST_INDUSTRIES'];
+  customer_keys  text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','NRD_AUTO_PLANT_1','ANVIL_TEST_INDUSTRIES'];
   ckey           text;
   i              int := 0;
   c_id           uuid;
@@ -837,11 +837,11 @@ end $brd$;
 insert into engineering_specs (id, tenant_id, part_no, spec_type, motor_model, max_electrode_force_n, max_rpm, ball_screw_diameter_mm, lead_mm, length_mm, max_speed_mm_sec, motor_axis_inertia_kgm2, mechanical_efficiency, drawing_no, payload, issued_by, issued_on, created_at, updated_at) values
   (uuid_generate_v5('d7a7e5e4-0001-0002-0001-000000000001','spec:x2c-med'),
    '00000000-0000-0000-0000-000000000001'::uuid, 'X2C-X-MEDIUM',  'gun', 'FANUC alpha8/4000', 6000.00, 4000, 25, 10, 320, 80, 0.000200000000, 0.9000, 'X2C-MED-DRAW',
-   jsonb_build_object('seed_marker','anvil-test-seed-v1','source','SRTX EG SHEET style v2'),
+   jsonb_build_object('seed_marker','anvil-test-seed-v1','source','WGX EG SHEET style v2'),
    'Engineering KR', (now() - interval '300 days')::date, now() - interval '300 days', now() - interval '60 days'),
   (uuid_generate_v5('d7a7e5e4-0001-0002-0001-000000000001','spec:x2c-large'),
    '00000000-0000-0000-0000-000000000001'::uuid, 'X2C-X-LARGE',   'gun', 'FANUC alpha12/4000', 8000.00, 4000, 32, 12, 360, 75, 0.000280000000, 0.9000, 'X2C-LRG-DRAW',
-   jsonb_build_object('seed_marker','anvil-test-seed-v1','source','SRTX EG SHEET style v2'),
+   jsonb_build_object('seed_marker','anvil-test-seed-v1','source','WGX EG SHEET style v2'),
    'Engineering KR', (now() - interval '300 days')::date, now() - interval '300 days', now() - interval '60 days'),
   (uuid_generate_v5('d7a7e5e4-0001-0002-0001-000000000001','spec:x3-med'),
    '00000000-0000-0000-0000-000000000001'::uuid, 'X3-X-MEDIUM',   'gun', 'FANUC alpha10/5000', 7500.00, 5000, 28, 12, 330, 95, 0.000220000000, 0.9200, 'X3-MED-DRAW',

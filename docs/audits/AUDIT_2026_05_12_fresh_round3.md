@@ -9,7 +9,7 @@ Source documents (re-read in this round):
 - Tally Stock Item / Sales Order Processing field schema (10 sections)
 - Price Quotation OIQTLC-260320-HMI PUNE-GUIDE ASSY & POINT HOLDER-REV-1
 - Price Composition Excel master sheet
-- Hyundai Motor India Purchase Order P260484306
+- Meridian Motor India Purchase Order P260484306
 - Obara Sales Order voucher 440
 
 ## 1. Tally Stock Item spec coverage on main (sections 1 to 10)
@@ -142,14 +142,14 @@ Stock Group (covered), Category (covered), Negative Stock Control (covered), Bat
 ### Engineering + Specification
 Drawing Number, Material, Gun Number, Customer Project, Feasibility, Life Time: all covered in item_specifications (105).
 
-## 3. Hyundai PO sample fields
+## 3. Meridian PO sample fields
 
 | Field | Anvil column | Verified |
 |---|---|---|
 | Vendor code (TH1M) | `customer_vendor_codes.vendor_code` + `orders.vendor_code` | grep 106:222, 106:319 |
 | Buyer GSTN | `customers.gstin` (covered) | covered |
 | Req No (1000372863) | `source_pos.requisition_no` (106) | grep |
-| Item No (HMIL part code) | `item_customer_parts.customer_part_number` (105) | covered |
+| Item No (MMIL part code) | `item_customer_parts.customer_part_number` (105) | covered |
 | Description | covered | covered |
 | Specification (drawing) | `item_specifications.drawing_number` | covered |
 | Qty, UoM, Currency | covered | covered |

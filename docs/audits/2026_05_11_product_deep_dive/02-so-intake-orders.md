@@ -55,8 +55,8 @@ three-tier rule cascade:
 
 `norm()` at line 264 strips `pvt|ltd|llp|inc|corp|gmbh|kk|ag|bv|sa|company|limited|co`
 suffixes, collapses whitespace, and lowercases. The point is to make
-`"Faith Automation"` extracted from the PO header match
-`"Faith Automation Pvt Ltd"` stored. `normTight()` at line 270 reduces
+`"Summit Automation"` extracted from the PO header match
+`"Summit Automation Pvt Ltd"` stored. `normTight()` at line 270 reduces
 arbitrary text to lowercase alphanumerics for the bill-to comparison.
 [main-verified]
 
@@ -190,7 +190,7 @@ These shape the 18 findings in this v2 document.
 deterministic three-tier matcher: GSTIN exact, canonical-name exact with
 bill-to corroboration, fall through. There is no middle band where the
 system says "62% confidence, please confirm" and learns from the operator's
-decision. The OBARA / Faith Automation incident (resolved at PR #91 by
+decision. The OBARA / Summit Automation incident (resolved at PR #91 by
 adding bill-to corroboration + dropping a filename guard) is the visible
 symptom of a deeper problem. Indian SME naming has high permutation count
 per legal entity: Tata Steel Limited vs TATASTEEL vs Tata Stee vs M/s Tata
@@ -302,7 +302,7 @@ name agreement, u-probability is much higher (1/N where N is the count of
 distinct first tokens, perhaps 1/300 if a tenant has 300 distinct first
 tokens), yielding a much smaller match weight per agreement.
 
-For OBARA-vs-Faith problem class specifically, the dominant feature is not
+For OBARA-vs-Summit problem class specifically, the dominant feature is not
 identifier agreement but **position context**: the buyer entity appears in
 the bill-to and signature blocks; the brand entity appears in the items
 table. Position features (page region, document section) materially
@@ -444,7 +444,7 @@ Edge cases:
   phonetic-only (Ranbaxi vs Ranbaxy), name acronym-only (BHEL vs Bharat
   Heavy Electricals), name-token-set (Tata Communications Limited vs
   Tata Comms Ltd), bill-to corroboration win, bill-to corroboration
-  fail (OBARA vs Faith), end-customer rejection (Hyundai mentioned in
+  fail (OBARA vs Summit), end-customer rejection (Meridian mentioned in
   line item not bill-to). [main 1122 tests + 30 = 1152]
 
 ### Integration plan
@@ -518,10 +518,10 @@ of evaluation on PR-91/92 fixtures plus a new ground-truth set.
 
 ### Problem
 
-When operator A merges "Faith Auto Pvt Ltd" (id 1234) into "Faith Automation
+When operator A merges "Summit Auto Pvt Ltd" (id 1234) into "Summit Automation
 Pvt Ltd" (id 5678), the loser's name disappears. Next time a PO arrives
-with header "FAITH AUTO" or "Faith Auto Pvt. Ltd." (extra period) the
-matcher does not know the historical alias. The OBARA-vs-Faith incident
+with header "FAITH AUTO" or "Summit Auto Pvt. Ltd." (extra period) the
+matcher does not know the historical alias. The OBARA-vs-Summit incident
 class includes a sub-class: an extractor pulling out a clean canonical
 name that matches no stored canonical-name even though a historical
 duplicate had that exact spelling. The merge endpoint at
@@ -586,8 +586,8 @@ Add `customer_aliases` table (defined in F2.1's plan). Populate it three ways:
    the same transaction as the FK-move loop and the hard-delete.
 2. Intake-time operator capture. When the new-customer dialog has a
    "Possibly the same as" panel (F2.1) and the operator picks the
-   existing customer, the dialog renders a checkbox "Record 'Faith
-   Automation' as an alias of Faith Automation Pvt Ltd" (checked by
+   existing customer, the dialog renders a checkbox "Record 'Summit
+   Automation' as an alias of Summit Automation Pvt Ltd" (checked by
    default). On submit, write the alias with `alias_type = 'intake'`.
 3. Admin-direct. A new `/admin/customers/:id/aliases` tab for add and
    remove, `alias_type = 'operator'`.
@@ -662,8 +662,8 @@ S (table + migration ~ 1 day), S (merge.js + canonicalizer.js wire-up
 ### Deep-dive prompt
 
 > Investigate alias-collision detection and resolution. When operator A
-> records "Faith Auto" as an alias of customer X (1234) and operator B
-> records "Faith Auto" as an alias of customer Y (5678), which one wins?
+> records "Summit Auto" as an alias of customer X (1234) and operator B
+> records "Summit Auto" as an alias of customer Y (5678), which one wins?
 > Propose a UX for `src/v3-app/screens/customer-duplicates.tsx` to surface
 > alias collisions as a new group type with a `signal = 'alias_collision'`
 > and a side-by-side comparison view.
@@ -675,7 +675,7 @@ S (table + migration ~ 1 day), S (merge.js + canonicalizer.js wire-up
 ### Problem
 
 Industrial distributors and tier-2 suppliers frequently buy on behalf of a
-known downstream customer. Faith Automation buying OBARA spares for Hyundai
+known downstream customer. Summit Automation buying OBARA spares for Meridian
 Steel HDS-1234 is a common shape. PR #91 (commit `3a39b04`) tells the LLM
 that the brand is not the customer, which is correct, but it throws out the
 brand/end-customer signal entirely. That is overcorrection. The end-customer
@@ -760,8 +760,8 @@ edge in the relationship map.
 ### User-facing behavior
 
 SO intake right-hand card grows a "Context" section:
-- Buyer: Faith Automation
-- Servicing: Hyundai Steel HDS-1234 (project ref)
+- Buyer: Summit Automation
+- Servicing: Meridian Steel HDS-1234 (project ref)
 - Brand: OBARA
 
 The workspace `Why` tab shows these as structured rows. No new approval
@@ -773,7 +773,7 @@ matches the buyer name. Hidden when no secondary parties extracted.
 Schema: new column on `orders` (JSONB). New table `customer_relationships`
 in same migration. AI: prompt addition to `claude.js`, `gemini.js` (~50
 tokens). Model: Claude Sonnet remains the default. Eval: add 5 cases to
-`eval_cases` covering Faith + Hyundai, Tier-2 + Tata, distributor + OEM.
+`eval_cases` covering Summit + Meridian, Tier-2 + Tata, distributor + OEM.
 Perf: no additional API calls. New endpoint
 `GET /api/orders/:id/relationships` returns the graph fragment for the
 relationship map UI.
@@ -824,8 +824,8 @@ days. Total: 4 days.
 
 > Explore connecting `orders.secondary_parties[role=end_customer]` to the
 > `equipment_hierarchy` and `spare_recommendations` tables. If we can tie
-> "PO 12345 buys 5 of part X for Hyundai Steel HDS-1234", and we know
-> Hyundai Steel HDS-1234 has an installed BOM from
+> "PO 12345 buys 5 of part X for Meridian Steel HDS-1234", and we know
+> Meridian Steel HDS-1234 has an installed BOM from
 > `equipment_installed_parts`, the recommender can flag missing spares
 > and the line-item matcher can use the installed-base BOM as a
 > validation oracle. Specifically: schema-level changes, query plan,
@@ -1648,7 +1648,7 @@ biggest predictor of operator confidence in data-management products".
 
 Merge button opens a "preview merge" modal with field-by-field choices
 + a per-row "soft delete in 24h" banner. After merge, the customers list
-shows a 24-hour undo banner: "Merged Faith Auto into Faith Automation.
+shows a 24-hour undo banner: "Merged Summit Auto into Summit Automation.
 Undo within 24h." Undo banner is on the customers list (not a global
 toast); easier to find when an operator notices a mistake.
 
@@ -2582,8 +2582,8 @@ cannot inspect it via the UI. F2.4's doc-review screen surfaces this.
    10k+ tenants? Validate against a synthetic Indian-customer corpus.
 
 2. Investigate alias-collision detection and resolution. When operator A
-   records "Faith Auto" as an alias of customer X (1234) and operator B
-   records "Faith Auto" as an alias of customer Y (5678), which one wins?
+   records "Summit Auto" as an alias of customer X (1234) and operator B
+   records "Summit Auto" as an alias of customer Y (5678), which one wins?
    Propose a UX for `customer-duplicates.tsx` to surface alias collisions
    as a new group type with signal `alias_collision`.
 

@@ -1,20 +1,20 @@
 -- 010_seed_corpus_round2_data.sql
 -- Concrete seeds extracted from the round-2 deep-read of the Obara corpus.
 --
--- New customers: JBM Auto (Plant 1 spare matrix, 2024-05-29 snapshot),
--- Renault Nissan (RNAIPL), MG Halol & Haryana variants confirmed.
+-- New customers: NRD Auto (Plant 1 spare matrix, 2024-05-29 snapshot),
+-- Alliance Auto (ALAP), MG Halol & Haryana variants confirmed.
 --
 -- New rows:
---   * customers + customer_locations for JBM, RNAIPL
+--   * customers + customer_locations for NRD, ALAP
 --   * MG master contract (OIQTLC-240123) + 11 release POs
 --   * payment_milestones for MG (50/50), ABC FOR mode, ABC HSS mode
---   * customer_format_profiles for MG, SRTX, ABC variants
---   * engineering_specs for SRTX (BOM payload + FANUC motor reference)
---   * 60 additional item_master rows (extra HSN codes, JBM matrix parts)
+--   * customer_format_profiles for MG, WGX, ABC variants
+--   * engineering_specs for WGX (BOM payload + FANUC motor reference)
+--   * 60 additional item_master rows (extra HSN codes, NRD matrix parts)
 --   * approval_thresholds (Sales Manager / Finance / Director ladder)
 --   * expense_rate_cards (design/install/travel manday + buffer pcts)
 --   * sample shipments with real vessels (HX-2628Y, HX-2786Y, HX-2780Y)
---   * sample equipment_hierarchy + equipment_installed_parts for JBM
+--   * sample equipment_hierarchy + equipment_installed_parts for NRD
 --
 -- Idempotent: ON CONFLICT DO NOTHING / unique guards everywhere.
 -- Tenant: 00000000-0000-0000-0000-000000000001
@@ -32,15 +32,15 @@ declare
   abc_id uuid;
   tata_id uuid;
 begin
-  -- JBM Auto (Plant 1 spare matrix is the source for items + equipment)
+  -- NRD Auto (Plant 1 spare matrix is the source for items + equipment)
   insert into customers (tenant_id, customer_key, customer_name, customer_type, default_payment_terms, default_incoterms, notes)
   values
-    (default_tenant, 'JBM_AUTO_PLANT_1', 'JBM Auto Limited (Plant 1)', 'TIER_ONE', 'Net 45 days NEFT', 'FOR Plant 1', 'From JBM Plant 1 Spare Matrix 29-05-2024'),
-    (default_tenant, 'RNAIPL', 'Renault Nissan Automotive India Pvt. Ltd.', 'AUTO_OEM', 'Net 30 days NEFT', 'FOR Oragadam', 'From Pending Sales Order tracker')
+    (default_tenant, 'NRD_AUTO_PLANT_1', 'NRD Auto Limited (Plant 1)', 'TIER_ONE', 'Net 45 days NEFT', 'FOR Plant 1', 'From NRD Plant 1 Spare Matrix 29-05-2024'),
+    (default_tenant, 'ALAP', 'Alliance Auto Automotive India Pvt. Ltd.', 'AUTO_OEM', 'Net 30 days NEFT', 'FOR Oragadam', 'From Pending Sales Order tracker')
   on conflict (tenant_id, customer_key) do nothing;
 
-  select id into jbm_id    from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO_PLANT_1';
-  select id into rnaipl_id from customers where tenant_id = default_tenant and customer_key = 'RNAIPL';
+  select id into jbm_id    from customers where tenant_id = default_tenant and customer_key = 'NRD_AUTO_PLANT_1';
+  select id into rnaipl_id from customers where tenant_id = default_tenant and customer_key = 'ALAP';
   select id into mg_id     from customers where tenant_id = default_tenant and customer_key = 'MG_MOTOR_INDIA';
   select id into abc_id    from customers where tenant_id = default_tenant and customer_key = 'ABC_MOTORS';
   select id into tata_id   from customers where tenant_id = default_tenant and customer_key = 'TATA_MOTORS_PV_PUNE';
@@ -48,14 +48,14 @@ begin
   if jbm_id is not null then
     insert into customer_locations (tenant_id, customer_id, location_code, plant_name, state_code, city, is_default, tax_treatment)
     values
-      (default_tenant, jbm_id, 'PLANT-1', 'JBM Plant 1', '06', 'Faridabad', true, 'AUTO')
+      (default_tenant, jbm_id, 'PLANT-1', 'NRD Plant 1', '06', 'Faridabad', true, 'AUTO')
     on conflict (tenant_id, customer_id, location_code) do nothing;
   end if;
 
   if rnaipl_id is not null then
     insert into customer_locations (tenant_id, customer_id, location_code, plant_name, state_code, city, is_default, tax_treatment)
     values
-      (default_tenant, rnaipl_id, 'ORAGADAM', 'RNAIPL Oragadam', '33', 'Chennai', true, 'IGST_ONLY')
+      (default_tenant, rnaipl_id, 'ORAGADAM', 'ALAP Oragadam', '33', 'Chennai', true, 'IGST_ONLY')
     on conflict (tenant_id, customer_id, location_code) do nothing;
   end if;
 
@@ -138,8 +138,8 @@ begin
 end $$;
 
 -- ───────────────────────────────────────────────────────────────────────────
--- D. SRTX engineering specs row (BOM-style with assembly references)
--- The SRTX-2C16934L-IND sheet is a BOM, not a spec sheet, but it contains the
+-- D. WGX engineering specs row (BOM-style with assembly references)
+-- The WGX-2C16934L-IND sheet is a BOM, not a spec sheet, but it contains the
 -- FANUC motor model (A06B-0235-B605) and a full assembly tree we want to
 -- preserve. Numeric spec fields are null because the source has none.
 -- ───────────────────────────────────────────────────────────────────────────
@@ -153,7 +153,7 @@ begin
     drawing_no, issued_by, issued_on, payload
   ) values (
     default_tenant,
-    'SRTX-2C16934L-IND',
+    'WGX-2C16934L-IND',
     'gun',
     'A06B-0235-B605 (FANUC)',
     null,
@@ -161,9 +161,9 @@ begin
     '2024-07-18'::date,
     jsonb_build_object(
       'item_no',           '307229053',
-      'product_code',      'SRTX-2C16934L-IND',
+      'product_code',      'WGX-2C16934L-IND',
       'left_or_right',     'L',
-      'main_body_assy',    'MBAC-SRTX-2C16934L',
+      'main_body_assy',    'MBAC-WGX-2C16934L',
       'arm_assy',          'XSGZX-206050 (D45, 2-phi8H7--&gt;M5)',
       'movable_yoke_assy', 'XSYZX-206135 (D45, 2-phi8H7--&gt;M5)',
       'x2c_body_assy',     'X2C-XS-DB6-ST110-HH-01',
@@ -176,7 +176,7 @@ begin
       'cooling_circuit',   'C009119C (X2C-X, 2-3-2, G-R, KQ2H12-03S)',
       'electrode_cap',     'T-16-D',
       'low_adapter',       'LADC021842-3 (IND-D45-194-50)',
-      'bend_adapter',      'BADC025559-3 (IND-D45-194-135-15deg)',
+      'bend_adapter',      'GBC025559-3 (IND-D45-194-135-15deg)',
       'shunt',             'U3-013249A (750SQMM, L=300)',
       'insulation_assy',   '3-432781 (PCD125, D=75, T=20, 6-M10)'
     )
@@ -338,7 +338,7 @@ begin
     default_tenant, mg_id, 'BLANKET_PO'::contract_type,
     'MG-BLANKET-OIQTLC-240123', master_order_id,
     '2024-01-23'::date, '2025-04-30'::date, 'INR', 'ACTIVE',
-    'MG Motor Halol blanket against OIQTLC-240123 master quote'
+    'Vega Motor Halol blanket against OIQTLC-240123 master quote'
   where master_order_id is not null and not exists (
     select 1 from contracts
     where tenant_id = default_tenant and contract_number = 'MG-BLANKET-OIQTLC-240123'
@@ -408,7 +408,7 @@ begin
     (default_tenant, 'TNA-13-04-110-2', 'ADAPTER',         'TNA-13-04-110-2', 'Nos', 'O-INDIA', 'INR', 3540,  '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
     (default_tenant, 'ELCC000002',      'CAP TIP',         null,              'Nos', 'O-INDIA', 'INR', 88,    '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
     (default_tenant, 'ELCC000127',      'CAP TIP',         null,              'Nos', 'O-INDIA', 'INR', 94,    '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
-    (default_tenant, 'BADC019736',      'BEND ADAPTER',    'BADC019736',      'Nos', 'O-INDIA', 'INR', 10135, '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
+    (default_tenant, 'GBC019736',      'BEND ADAPTER',    'GBC019736',      'Nos', 'O-INDIA', 'INR', 10135, '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
     (default_tenant, 'C-4-251035-104',  'SHANK',           null,              'Nos', 'O-INDIA', 'INR', 1756,  '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
     (default_tenant, 'C-4-251035-109',  'SHANK',           null,              'Nos', 'O-INDIA', 'INR', 1813,  '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
     (default_tenant, 'C-4-251035-49',   'SHANK',           null,              'Nos', 'O-INDIA', 'INR', 1133,  '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
@@ -426,15 +426,15 @@ begin
     (default_tenant, 'RB419248S',       'SHANK',           'RB419248S',       'Nos', 'O-JAPAN', 'JPY', 4882,  '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
     (default_tenant, 'RB420645S',       'SHANK',           'RB420645S',       'Nos', 'O-JAPAN', 'JPY', 3887,  '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
     (default_tenant, 'RB421906S',       'SHANK',           'RB421906S',       'Nos', 'O-JAPAN', 'JPY', 5544,  '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
-    (default_tenant, 'BADC005425-B',    'BEND ADAPTER',    'BADC005425-B',    'Nos', 'O-INDIA', 'INR', 5073,  '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
+    (default_tenant, 'GBC005425-B',    'BEND ADAPTER',    'GBC005425-B',    'Nos', 'O-INDIA', 'INR', 5073,  '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
     (default_tenant, 'RB421717S-A',     'SHANK',           'RB421717S-A',     'Nos', 'O-JAPAN', 'JPY', 21247, '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
     (default_tenant, 'RB422396S',       'BEND ADAPTER',    'RB422396S',       'Nos', 'O-JAPAN', 'JPY', 26326, '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
-    (default_tenant, 'BADC004956-A',    'BEND ADAPTER',    'BADC004956-A',    'Nos', 'O-INDIA', 'INR', 29158, '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false)
+    (default_tenant, 'GBC004956-A',    'BEND ADAPTER',    'GBC004956-A',    'Nos', 'O-INDIA', 'INR', 29158, '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false)
   on conflict (tenant_id, part_no) do nothing;
 end $$;
 
 -- ───────────────────────────────────────────────────────────────────────────
--- I. JBM equipment hierarchy (20 sample rows from Plant 1 spare matrix)
+-- I. NRD equipment hierarchy (20 sample rows from Plant 1 spare matrix)
 -- ───────────────────────────────────────────────────────────────────────────
 
 do $$
@@ -443,11 +443,11 @@ declare
   jbm_id uuid;
   jbm_loc uuid;
 begin
-  select id into jbm_id from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO_PLANT_1';
+  select id into jbm_id from customers where tenant_id = default_tenant and customer_key = 'NRD_AUTO_PLANT_1';
   select id into jbm_loc from customer_locations where tenant_id = default_tenant and customer_id = jbm_id and location_code = 'PLANT-1';
   if jbm_id is null then return; end if;
 
-  -- Skip if JBM already has equipment seeded
+  -- Skip if NRD already has equipment seeded
   if exists (select 1 from equipment_hierarchy where tenant_id = default_tenant and customer_id = jbm_id) then
     return;
   end if;
@@ -456,25 +456,25 @@ begin
     tenant_id, customer_id, customer_location_id, plant_name, line_name, zone_name,
     station_name, gun_no, qty, timer_model, atd_model, notes
   ) values
-    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'FCA 556', 'FIAT',           'SRTC-K6133-IND',   'SRTC-K6133-IND',   6, null,                                 'ATDNS-5S-16D-HMA10Q-S1P-B19D',  'JBM Plant 1 Spare Matrix 2024-05-29'),
-    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'FCA 556', 'FIAT',           'SRTX-K7626',       'SRTX-K7626',       1, 'SIV21CV-N6VG8-6M-IND',                'ATDNS-5S-13DJ-VMA10Q-S1P-B19D', 'JBM Plant 1 Spare Matrix 2024-05-29'),
-    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'FCA 556', 'FIAT',           'SRTX-K7627',       'SRTX-K7627',       1, 'SIV21CV-N6VG8-6M-IND',                'ATDNS-5S-13D-HMA10Q-S1P-B19D',  'JBM Plant 1 Spare Matrix 2024-05-29'),
-    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'FCA 556', 'FIAT',           'SRTX-K7628',       'SRTX-K7628',       1, 'SIV21CV-N6VG8-6M-IND',                'ATDNS-5S-16DJ-HMA10Q-S1P-B19D', 'JBM Plant 1 Spare Matrix 2024-05-29'),
-    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'FCA 556', 'FIAT',           'SRTX-K7629',       'SRTX-K7629',       1, 'SIV21CV-N6VG8-6M-IND',                'ATDNS-5S-16DJ-HMA10Q-S1P-B19D', 'JBM Plant 1 Spare Matrix 2024-05-29'),
-    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'DUV 596', null,             'SRTC-2C8016L',     'SRTC-2C8016L',     3, 'STN21S-E02-S111-DE0-DM',             'ATDNS-0622-16D-V1000',          'JBM Plant 1 Spare Matrix 2024-05-29'),
-    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'DUV 596', null,             'SRTX-2C11384L',    'SRTX-2C11384L',    1, 'STN21S-E02-S111-DE0-DM',             'ATDNS-5S-16D-VMA10Q-S1P-B19D',  'JBM Plant 1 Spare Matrix 2024-05-29'),
-    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'DUV 596', null,             'SRTX-2C11385L',    'SRTX-2C11385L',    1, 'STN21S-E02-S111-DE0-DM',             'ATDNS-5S-16D-VMA10Q-S1P-B19D',  'JBM Plant 1 Spare Matrix 2024-05-29'),
-    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'X104',    'X104 - Old',     'SRTC-K5901',       'SRTC-K5901',       5, 'STN21S-E02-S111-DE0-DM',             'ATDNS-5S-16D-VMA10Q-S1P-B19D',  'JBM Plant 1 Spare Matrix 2024-05-29'),
-    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'X104',    'X104 - Old',     'SRTX-K7159',       'SRTX-K7159',       1, 'STN21S-E02-S111-DE0-DM',             'ATDNS-5S-16D-VMA10Q-S1P-B19D',  'JBM Plant 1 Spare Matrix 2024-05-29'),
-    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'X104',    'X104 - Old',     'SRTX-K14058',      'SRTX-K14058',      1, 'SIV326-2002395 (DeviceNet)',         'ATDNS-0622-16D-V1000',          'JBM Plant 1 Spare Matrix 2024-05-29'),
-    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'X104',    'X104 - Expansion','SRTX-K14058',     'SRTX-K14058',      1, 'SIV326-2002395 (DeviceNet)',         'ATDNS-0622-16D-V1000',          'JBM Plant 1 Spare Matrix 2024-05-29'),
-    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'X451 ccb',null,             'SRTX-2C8063',      'SRTX-2C8063',      1, null,                                 null,                             'JBM Plant 1 Spare Matrix 2024-05-29'),
-    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'X445 ccb','Mod',            'SRTX-2C9484L-IND', 'SRTX-2C9484L-IND', 1, 'SIV316-2002163',                      'ATDNS-0622-13D-V1000',          'JBM Plant 1 Spare Matrix 2024-05-29'),
-    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'Fuel Lid',null,             'SRTC-2C6333L',     'SRTC-2C6333L',     1, 'SIV21-2002244 SIV21CV-N6VG9-6M-IND', 'ATDNS-4S-A754-VMA10Q-S1P-B388D','JBM Plant 1 Spare Matrix 2024-05-29');
+    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'FCA 556', 'FIAT',           'WGC-K6133-IND',   'WGC-K6133-IND',   6, null,                                 'ATDNS-5S-16D-HMA10Q-S1P-B19D',  'NRD Plant 1 Spare Matrix 2024-05-29'),
+    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'FCA 556', 'FIAT',           'WGX-K7626',       'WGX-K7626',       1, 'SIV21CV-N6VG8-6M-IND',                'ATDNS-5S-13DJ-VMA10Q-S1P-B19D', 'NRD Plant 1 Spare Matrix 2024-05-29'),
+    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'FCA 556', 'FIAT',           'WGX-K7627',       'WGX-K7627',       1, 'SIV21CV-N6VG8-6M-IND',                'ATDNS-5S-13D-HMA10Q-S1P-B19D',  'NRD Plant 1 Spare Matrix 2024-05-29'),
+    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'FCA 556', 'FIAT',           'WGX-K7628',       'WGX-K7628',       1, 'SIV21CV-N6VG8-6M-IND',                'ATDNS-5S-16DJ-HMA10Q-S1P-B19D', 'NRD Plant 1 Spare Matrix 2024-05-29'),
+    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'FCA 556', 'FIAT',           'WGX-K7629',       'WGX-K7629',       1, 'SIV21CV-N6VG8-6M-IND',                'ATDNS-5S-16DJ-HMA10Q-S1P-B19D', 'NRD Plant 1 Spare Matrix 2024-05-29'),
+    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'DUV 596', null,             'WGC-2C8016L',     'WGC-2C8016L',     3, 'STN21S-E02-S111-DE0-DM',             'ATDNS-0622-16D-V1000',          'NRD Plant 1 Spare Matrix 2024-05-29'),
+    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'DUV 596', null,             'WGX-2C11384L',    'WGX-2C11384L',    1, 'STN21S-E02-S111-DE0-DM',             'ATDNS-5S-16D-VMA10Q-S1P-B19D',  'NRD Plant 1 Spare Matrix 2024-05-29'),
+    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'DUV 596', null,             'WGX-2C11385L',    'WGX-2C11385L',    1, 'STN21S-E02-S111-DE0-DM',             'ATDNS-5S-16D-VMA10Q-S1P-B19D',  'NRD Plant 1 Spare Matrix 2024-05-29'),
+    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'X104',    'X104 - Old',     'WGC-K5901',       'WGC-K5901',       5, 'STN21S-E02-S111-DE0-DM',             'ATDNS-5S-16D-VMA10Q-S1P-B19D',  'NRD Plant 1 Spare Matrix 2024-05-29'),
+    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'X104',    'X104 - Old',     'WGX-K7159',       'WGX-K7159',       1, 'STN21S-E02-S111-DE0-DM',             'ATDNS-5S-16D-VMA10Q-S1P-B19D',  'NRD Plant 1 Spare Matrix 2024-05-29'),
+    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'X104',    'X104 - Old',     'WGX-K14058',      'WGX-K14058',      1, 'SIV326-2002395 (DeviceNet)',         'ATDNS-0622-16D-V1000',          'NRD Plant 1 Spare Matrix 2024-05-29'),
+    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'X104',    'X104 - Expansion','WGX-K14058',     'WGX-K14058',      1, 'SIV326-2002395 (DeviceNet)',         'ATDNS-0622-16D-V1000',          'NRD Plant 1 Spare Matrix 2024-05-29'),
+    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'X451 ccb',null,             'WGX-2C8063',      'WGX-2C8063',      1, null,                                 null,                             'NRD Plant 1 Spare Matrix 2024-05-29'),
+    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'X445 ccb','Mod',            'WGX-2C9484L-IND', 'WGX-2C9484L-IND', 1, 'SIV316-2002163',                      'ATDNS-0622-13D-V1000',          'NRD Plant 1 Spare Matrix 2024-05-29'),
+    (default_tenant, jbm_id, jbm_loc, 'Plant 1', 'Fuel Lid',null,             'WGC-2C6333L',     'WGC-2C6333L',     1, 'SIV21-2002244 SIV21CV-N6VG9-6M-IND', 'ATDNS-4S-A754-VMA10Q-S1P-B388D','NRD Plant 1 Spare Matrix 2024-05-29');
 end $$;
 
 -- ───────────────────────────────────────────────────────────────────────────
--- J. JBM item master (50 spare matrix rows) + equipment_installed_parts
+-- J. NRD item master (50 spare matrix rows) + equipment_installed_parts
 -- ───────────────────────────────────────────────────────────────────────────
 
 do $$
@@ -486,68 +486,68 @@ begin
     hsn_sac, sgst_rate, cgst_rate, igst_rate, lifecycle, is_assembly,
     is_critical, notes
   ) values
-    (default_tenant, 'ELCC000031', 'CAP TIP F',         'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-2C8063'),
-    (default_tenant, 'ELCC000201', 'CAP TIP F',         'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-2C11385L'),
-    (default_tenant, 'ELCC010508', 'CAP TIP F',         'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTC-2C6333L'),
-    (default_tenant, 'T-13-D-1',   'CAP TIP F',         'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-K7626'),
-    (default_tenant, 'T-16-D-1',   'CAP TIP F',         'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTC-K6133-IND'),
-    (default_tenant, 'TNA-16-04-45-1','ADAPTER (F)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTC-2C8016L'),
-    (default_tenant, 'TNA-13-04-50-2','ADAPTER (M)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTC-2C6333L'),
-    (default_tenant, 'TNA-13-04-60-2','ADAPTER (M)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-K7627'),
-    (default_tenant, 'TNA-16-04-10-2','ADAPTER (M)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-K7159'),
-    (default_tenant, 'TNA-16-04-50-2','ADAPTER (M)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTC-K5901'),
-    (default_tenant, 'TNA-16-04-60-2','ADAPTER (M)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-K7628'),
-    (default_tenant, 'TNA-16-04-65-1','ADAPTER (M)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTC-2C8016L'),
-    (default_tenant, 'TNA-16-04-65-2','ADAPTER (M)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-K7629'),
-    (default_tenant, 'TNA-16-04-85-2','ADAPTER (M)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTC-K6133-IND'),
-    (default_tenant, '4-HD26309-2','HOLDER (F)',        'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTC-K5901'),
-    (default_tenant, '4-HD26313-2','HOLDER (F)',        'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-K7159'),
-    (default_tenant, '4-HD26868-2','HOLDER (F)',        'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-K7626'),
-    (default_tenant, '4-HD26869-2','HOLDER (F)',        'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-K7629'),
-    (default_tenant, '4-HD26879-2','HOLDER (F)',        'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-K7627'),
-    (default_tenant, 'AB-0-36H-124-70-2','HOLDER (F)',  'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-K14058'),
-    (default_tenant, 'BADI001231','HOLDER (F)',         'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTC-K6133-IND'),
-    (default_tenant, 'C0S6-36H-144-40-2','HOLDER (F)',  'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-K7628; lead 70d'),
-    (default_tenant, 'C105823','HOLDER (F)',            'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-2C8063'),
-    (default_tenant, 'C106678','HOLDER (F)',            'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTC-2C6333L'),
-    (default_tenant, 'C110125','HOLDER (F)',            'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTC-2C8016L'),
-    (default_tenant, 'C110185','HOLDER (F)',            'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-2C11384L'),
-    (default_tenant, 'C110190','HOLDER (F)',            'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-2C11385L'),
-    (default_tenant, '28C100-AB-0-36H-144-130-2','HOLDER (M)','Nos','O-INDIA','INR','85159000',0.09,0.09,0.18,'ACTIVE',false,true,'JBM consumable; gun SRTX-K7628'),
-    (default_tenant, '28C59-AB-0-36H-124-70-2','HOLDER (M)', 'Nos','O-INDIA','INR','85159000',0.09,0.09,0.18,'ACTIVE',false,true,'JBM consumable; gun SRTX-K7159'),
-    (default_tenant, '4-HD33863-2','HOLDER (M)',        'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-K14058'),
-    (default_tenant, 'AB-0-45H-224-50-2','HOLDER (M)',  'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-K7627'),
-    (default_tenant, 'AR-0-45H-164-20-2','HOLDER (M)',  'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-K7629'),
-    (default_tenant, 'BHOI001068','HOLDER (M)',         'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-2C9484L-IND'),
-    (default_tenant, 'C0B3-45H-224-145-2','HOLDER (M)', 'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-K7626'),
-    (default_tenant, 'TEFLON-PIPE-6X4','PIPE Teflon 6x4 mm','Mtr','O-INDIA','INR','39173100',0.09,0.09,0.18,'ACTIVE',false,false,'JBM consumable; replaces unicode part code Φ6*Φ4'),
-    (default_tenant, 'TWS-092-100-1','SHANK (F)',       'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTC-2C8016L'),
-    (default_tenant, 'TWS-091-100-2','SHANK (M)',       'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-K7627'),
-    (default_tenant, 'TWS-091-60-3', 'SHANK (M)',       'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTC-2C6333L'),
-    (default_tenant, 'TWS-091-90-3', 'SHANK (M)',       'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-2C9484L-IND'),
-    (default_tenant, 'TWS-092-100-2','SHANK (M)',       'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM consumable; gun SRTX-K7159'),
-    (default_tenant, 'KZ-1385',      'ADAPTER (COUPLER)','Nos','O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM spare; gun SRTC-2C8016L'),
-    (default_tenant, 'KZ-1386',      'ADAPTER (COUPLER)','Nos','O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM spare; gun SRTX-2C9484L-IND'),
-    (default_tenant, 'KZ-1387',      'ADAPTER (COUPLER)','Nos','O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM spare; gun SRTX-2C11384L'),
-    (default_tenant, '403C1K094',    'ARM ASSY',        'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', true,  false, 'JBM spare; gun SRTX-K14058'),
-    (default_tenant, 'C5D03092-CN2', 'GEAR CASE ASSY',  'Nos', 'O-CHINA', 'CNY', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', true,  true,  'JBM spare; gun SRTC-2C6333L; lead 120d'),
-    (default_tenant, 'C5E0069',      'GEAR CASE ASSY',  'Nos', 'O-CHINA', 'CNY', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', true,  true,  'JBM spare; gun SRTX-2C11384L'),
-    (default_tenant, 'CB210-KUKA',   'GEAR CASE ASSY',  'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', true,  true,  'JBM spare; gun SRTC-K6133-IND; KUKA robot'),
-    (default_tenant, 'X118-KUKA',    'GEAR CASE ASSY',  'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', true,  true,  'JBM spare; gun SRTX-K7627; KUKA robot'),
-    (default_tenant, 'DB6-100R1-V2', 'TRANSFORMER',     'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM spare; transformer; gun SRTC-2C8016L'),
-    (default_tenant, 'IT110H-6100-G3','TRANSFORMER',    'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM spare; transformer; gun SRTX-K14058'),
-    (default_tenant, 'IT90H-6100-R', 'TRANSFORMER',     'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'JBM spare; transformer; gun SRTC-K6133-IND')
+    (default_tenant, 'ELCC000031', 'CAP TIP F',         'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-2C8063'),
+    (default_tenant, 'ELCC000201', 'CAP TIP F',         'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-2C11385L'),
+    (default_tenant, 'ELCC010508', 'CAP TIP F',         'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGC-2C6333L'),
+    (default_tenant, 'T-13-D-1',   'CAP TIP F',         'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-K7626'),
+    (default_tenant, 'T-16-D-1',   'CAP TIP F',         'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGC-K6133-IND'),
+    (default_tenant, 'TNA-16-04-45-1','ADAPTER (F)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGC-2C8016L'),
+    (default_tenant, 'TNA-13-04-50-2','ADAPTER (M)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGC-2C6333L'),
+    (default_tenant, 'TNA-13-04-60-2','ADAPTER (M)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-K7627'),
+    (default_tenant, 'TNA-16-04-10-2','ADAPTER (M)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-K7159'),
+    (default_tenant, 'TNA-16-04-50-2','ADAPTER (M)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGC-K5901'),
+    (default_tenant, 'TNA-16-04-60-2','ADAPTER (M)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-K7628'),
+    (default_tenant, 'TNA-16-04-65-1','ADAPTER (M)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGC-2C8016L'),
+    (default_tenant, 'TNA-16-04-65-2','ADAPTER (M)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-K7629'),
+    (default_tenant, 'TNA-16-04-85-2','ADAPTER (M)',    'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGC-K6133-IND'),
+    (default_tenant, '4-HD26309-2','HOLDER (F)',        'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGC-K5901'),
+    (default_tenant, '4-HD26313-2','HOLDER (F)',        'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-K7159'),
+    (default_tenant, '4-HD26868-2','HOLDER (F)',        'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-K7626'),
+    (default_tenant, '4-HD26869-2','HOLDER (F)',        'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-K7629'),
+    (default_tenant, '4-HD26879-2','HOLDER (F)',        'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-K7627'),
+    (default_tenant, 'AB-0-36H-124-70-2','HOLDER (F)',  'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-K14058'),
+    (default_tenant, 'BADI001231','HOLDER (F)',         'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGC-K6133-IND'),
+    (default_tenant, 'C0S6-36H-144-40-2','HOLDER (F)',  'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-K7628; lead 70d'),
+    (default_tenant, 'C105823','HOLDER (F)',            'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-2C8063'),
+    (default_tenant, 'C106678','HOLDER (F)',            'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGC-2C6333L'),
+    (default_tenant, 'C110125','HOLDER (F)',            'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGC-2C8016L'),
+    (default_tenant, 'C110185','HOLDER (F)',            'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-2C11384L'),
+    (default_tenant, 'C110190','HOLDER (F)',            'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-2C11385L'),
+    (default_tenant, '28C100-AB-0-36H-144-130-2','HOLDER (M)','Nos','O-INDIA','INR','85159000',0.09,0.09,0.18,'ACTIVE',false,true,'NRD consumable; gun WGX-K7628'),
+    (default_tenant, '28C59-AB-0-36H-124-70-2','HOLDER (M)', 'Nos','O-INDIA','INR','85159000',0.09,0.09,0.18,'ACTIVE',false,true,'NRD consumable; gun WGX-K7159'),
+    (default_tenant, '4-HD33863-2','HOLDER (M)',        'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-K14058'),
+    (default_tenant, 'AB-0-45H-224-50-2','HOLDER (M)',  'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-K7627'),
+    (default_tenant, 'AR-0-45H-164-20-2','HOLDER (M)',  'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-K7629'),
+    (default_tenant, 'BHOI001068','HOLDER (M)',         'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-2C9484L-IND'),
+    (default_tenant, 'C0B3-45H-224-145-2','HOLDER (M)', 'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-K7626'),
+    (default_tenant, 'TEFLON-PIPE-6X4','PIPE Teflon 6x4 mm','Mtr','O-INDIA','INR','39173100',0.09,0.09,0.18,'ACTIVE',false,false,'NRD consumable; replaces unicode part code Φ6*Φ4'),
+    (default_tenant, 'TWS-092-100-1','SHANK (F)',       'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGC-2C8016L'),
+    (default_tenant, 'TWS-091-100-2','SHANK (M)',       'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-K7627'),
+    (default_tenant, 'TWS-091-60-3', 'SHANK (M)',       'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGC-2C6333L'),
+    (default_tenant, 'TWS-091-90-3', 'SHANK (M)',       'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-2C9484L-IND'),
+    (default_tenant, 'TWS-092-100-2','SHANK (M)',       'Nos', 'O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD consumable; gun WGX-K7159'),
+    (default_tenant, 'KZ-1385',      'ADAPTER (COUPLER)','Nos','O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD spare; gun WGC-2C8016L'),
+    (default_tenant, 'KZ-1386',      'ADAPTER (COUPLER)','Nos','O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD spare; gun WGX-2C9484L-IND'),
+    (default_tenant, 'KZ-1387',      'ADAPTER (COUPLER)','Nos','O-INDIA', 'INR', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD spare; gun WGX-2C11384L'),
+    (default_tenant, '403C1K094',    'ARM ASSY',        'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', true,  false, 'NRD spare; gun WGX-K14058'),
+    (default_tenant, 'C5D03092-CN2', 'GEAR CASE ASSY',  'Nos', 'O-CHINA', 'CNY', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', true,  true,  'NRD spare; gun WGC-2C6333L; lead 120d'),
+    (default_tenant, 'C5E0069',      'GEAR CASE ASSY',  'Nos', 'O-CHINA', 'CNY', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', true,  true,  'NRD spare; gun WGX-2C11384L'),
+    (default_tenant, 'CB210-KUKA',   'GEAR CASE ASSY',  'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', true,  true,  'NRD spare; gun WGC-K6133-IND; KUKA robot'),
+    (default_tenant, 'X118-KUKA',    'GEAR CASE ASSY',  'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', true,  true,  'NRD spare; gun WGX-K7627; KUKA robot'),
+    (default_tenant, 'DB6-100R1-V2', 'TRANSFORMER',     'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD spare; transformer; gun WGC-2C8016L'),
+    (default_tenant, 'IT110H-6100-G3','TRANSFORMER',    'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD spare; transformer; gun WGX-K14058'),
+    (default_tenant, 'IT90H-6100-R', 'TRANSFORMER',     'Nos', 'O-KOREA', 'USD', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false, true,  'NRD spare; transformer; gun WGC-K6133-IND')
   on conflict (tenant_id, part_no) do nothing;
 end $$;
 
--- equipment_installed_parts: link parts to JBM equipment rows where the gun matches
+-- equipment_installed_parts: link parts to NRD equipment rows where the gun matches
 do $$
 declare
   default_tenant uuid := '00000000-0000-0000-0000-000000000001';
   jbm_id uuid;
   rec record;
 begin
-  select id into jbm_id from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO_PLANT_1';
+  select id into jbm_id from customers where tenant_id = default_tenant and customer_key = 'NRD_AUTO_PLANT_1';
   if jbm_id is null then return; end if;
 
   -- Skip if already populated
@@ -572,7 +572,7 @@ begin
       tenant_id, equipment_id, part_no, description, installed_qty, is_critical, notes
     ) values (
       default_tenant, rec.equipment_id, rec.part_no, rec.description, 1, coalesce(rec.is_critical, false),
-      'Auto-linked from JBM Plant 1 spare matrix'
+      'Auto-linked from NRD Plant 1 spare matrix'
     );
   end loop;
 end $$;
@@ -593,7 +593,7 @@ declare
   abc_id uuid;
 begin
   select id into mg_id   from customers where tenant_id = default_tenant and customer_key = 'MG_MOTOR_INDIA';
-  select id into srtx_id from customers where tenant_id = default_tenant and customer_key = 'SRTX';
+  select id into srtx_id from customers where tenant_id = default_tenant and customer_key = 'WGX';
   select id into abc_id  from customers where tenant_id = default_tenant and customer_key = 'ABC_MOTORS';
 
   -- MG fingerprint
@@ -608,7 +608,7 @@ begin
       jsonb_build_object(
         'header_keywords', jsonb_build_array(
           'PRICE QUOTATION', 'OIQTLC-240123-MG-CONSUMABLES & MAINTENANCE SPARES-REV-1',
-          'TO: MG Motor India Pvt. Ltd (Gujarat)', 'KindAttn: Ms. Varada Puranik',
+          'TO: Vega Motor India Pvt. Ltd (Gujarat)', 'KindAttn: Ms. Varada Puranik',
           'OBARA INDIA PRIVATE LIMITED', 'M.I.D.C PIMPRI', 'PUNE: 411018', 'DISCOUNTED PRICE', 'GST'
         ),
         'column_headers', jsonb_build_array(
@@ -639,7 +639,7 @@ begin
     );
   end if;
 
-  -- SRTX fingerprint
+  -- WGX fingerprint
   if srtx_id is not null and not exists (
     select 1 from customer_format_profiles
      where tenant_id = default_tenant and customer_id = srtx_id and version = 1
@@ -660,7 +660,7 @@ begin
         'taxation', null,
         'mode_hint', 'SPARES',
         'unique_markers', jsonb_build_array(
-          'SRTX-2C16934L-IND','Hierarchical dotted Item No (4 levels)','LEVEL column with integer 1..4',
+          'WGX-2C16934L-IND','Hierarchical dotted Item No (4 levels)','LEVEL column with integer 1..4',
           'L/R column with values L or R','MATERIAL codes (CRCU, A6061-T6, SUS304, TEFLON, etc.)',
           'No price columns - BOM/parts-list format','Mixed Chinese/English part names'
         )

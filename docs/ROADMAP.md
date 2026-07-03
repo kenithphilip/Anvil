@@ -43,7 +43,7 @@ audit. Status of each sub-release:
 - 7.2 BOM Import workflow: **DONE** (commit 70d7838).
 - 7.3 Guns viewer: **DONE** (commit 70d7838).
 - 7.4 SO History import: **DONE** (commit 70d7838).
-- 7.5 JBM spare matrix importer: **DONE** (commit 70d7838).
+- 7.5 NRD spare matrix importer: **DONE** (commit 70d7838).
 - 7.6 Equipment hierarchy editor: **DONE** (commit 70d7838).
 - 7.7 Project + Opportunity enum alignment: **DONE** (commit 1fa7aca).
 - 7.8 CRUD completeness: **DONE**. Earlier: Shipments, Internal SOs,
@@ -116,7 +116,7 @@ codified in [docs/V3_WIRING_PATTERN.md](V3_WIRING_PATTERN.md).
 - Multi-format export (XLSX/CSV/TSV/JSON).
 - Lives at `#/so?view=history` or its own nav id.
 
-7.5. **JBM spare matrix importer**
+7.5. **NRD spare matrix importer**
 - One-click XLSX -> equipment_hierarchy + equipment_installed_parts.
 - Schema and API exist; only UI is missing.
 - Lives inside Items > BOM as a customer-specific import variant.

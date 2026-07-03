@@ -77,14 +77,14 @@ describe("/api/quotes GET — customer_name attach", () => {
       { id: "q3", customer_id: "c1", quote_number: "Q-3", status: "DRAFT" },
     ];
     h.customers = [
-      { id: "c1", customer_name: "Hyundai Motor India Ltd" },
-      { id: "c2", customer_name: "Tata Motors" },
+      { id: "c1", customer_name: "Meridian Motor India Ltd" },
+      { id: "c2", customer_name: "Comet Motors" },
     ];
     const parsed = await listQuotes();
     expect(parsed.quotes).toHaveLength(3);
-    expect(parsed.quotes[0].customer.customer_name).toBe("Hyundai Motor India Ltd");
-    expect(parsed.quotes[1].customer.customer_name).toBe("Tata Motors");
-    expect(parsed.quotes[2].customer.customer_name).toBe("Hyundai Motor India Ltd");
+    expect(parsed.quotes[0].customer.customer_name).toBe("Meridian Motor India Ltd");
+    expect(parsed.quotes[1].customer.customer_name).toBe("Comet Motors");
+    expect(parsed.quotes[2].customer.customer_name).toBe("Meridian Motor India Ltd");
   });
 
   it("skips the lookup when there are no quotes with customer_id", async () => {
@@ -106,10 +106,10 @@ describe("/api/quotes GET — customer_name attach", () => {
       { id: "q1", customer_id: "c1", opportunity_id: "o1", quote_number: "Q-1", status: "DRAFT" },
       { id: "q2", customer_id: "c1", opportunity_id: null, quote_number: "Q-2", status: "DRAFT" },
     ];
-    h.customers = [{ id: "c1", customer_name: "Hyundai" }];
-    h.opportunities = [{ id: "o1", opportunity_name: "Hyundai Pune RFQ Q1" }];
+    h.customers = [{ id: "c1", customer_name: "Meridian" }];
+    h.opportunities = [{ id: "o1", opportunity_name: "Meridian Pune RFQ Q1" }];
     const parsed = await listQuotes();
-    expect(parsed.quotes[0].opportunity).toEqual({ id: "o1", opportunity_name: "Hyundai Pune RFQ Q1" });
+    expect(parsed.quotes[0].opportunity).toEqual({ id: "o1", opportunity_name: "Meridian Pune RFQ Q1" });
     expect(parsed.quotes[1].opportunity).toBeUndefined();
   });
 });

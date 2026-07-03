@@ -2,14 +2,14 @@
 --
 -- Anchored on docs/audits/AUDIT_2026_05_12_quote_po_so_field_coverage.md.
 -- Fills 11 schema gaps surfaced by auditing the Obara India price
--- quotation, price composition, Hyundai purchase order, and Obara
+-- quotation, price composition, Meridian purchase order, and Obara
 -- sales order documents against main @ acbaf99.
 --
 -- All new tables are tenant-scoped via RLS. Seeded reference data
 -- (incoterms, dispatch modes, tax-component codes) carries tenant_id
 -- null so any tenant inherits the global defaults and overrides via
 -- per-tenant rows. Nothing in this migration is specific to Obara,
--- Tally, India, or HMIL; the names line up to the audit document.
+-- Tally, India, or MMIL; the names line up to the audit document.
 
 -- ---------------------------------------------------------------------------
 -- 1. document_templates
@@ -250,7 +250,7 @@ create policy freight_rates_write on freight_rates
 
 -- ---------------------------------------------------------------------------
 -- 6. customer_vendor_codes: how each customer refers to the tenant.
---    HMIL calls Obara "TH1M". GM India calls them something else.
+--    MMIL calls Obara "TH1M". GM India calls them something else.
 --    Stored per (tenant, customer) so we can match incoming POs by
 --    their vendor code field.
 -- ---------------------------------------------------------------------------
@@ -279,7 +279,7 @@ create policy customer_vendor_codes_write on customer_vendor_codes
 
 -- ---------------------------------------------------------------------------
 -- 7. order_line_tax_components: per-line tax + charge decomposition.
---    The Hyundai PO carries SGST + CGST + IGST + UTGST + Excise Duty +
+--    The Meridian PO carries SGST + CGST + IGST + UTGST + Excise Duty +
 --    Ed. Cess + S-VAT + C-VAT + Tooling Cost + P&F + Others. Today
 --    Anvil only models SGST / CGST / IGST as item_master columns.
 -- ---------------------------------------------------------------------------
@@ -359,12 +359,12 @@ alter table orders
   add column if not exists template_id uuid references document_templates(id) on delete set null;
 
 comment on column orders.vendor_code is
-  'The vendor code the customer uses for the tenant (HMIL calls Obara TH1M).';
+  'The vendor code the customer uses for the tenant (MMIL calls Obara TH1M).';
 comment on column orders.dispatch_mode is
   'Free text but commonly air / ocean / road / courier. Renders on the sales order PDF.';
 
 -- Source-po extension: capture the customer requisition number that
--- appears on the inbound PO body (HMIL: 1000372863).
+-- appears on the inbound PO body (MMIL: 1000372863).
 alter table source_pos
   add column if not exists requisition_no text;
 
@@ -404,7 +404,7 @@ create policy tenant_pricing_settings_write on tenant_pricing_settings
 
 -- ---------------------------------------------------------------------------
 -- 10. customer_terms_packs: per-customer reusable boilerplate libraries.
---     HMIL's 15-clause T&C set lives here once and applies to every
+--     MMIL's 15-clause T&C set lives here once and applies to every
 --     order they place. The 15 paragraphs become rows so individual
 --     clauses can be acknowledged or overridden.
 -- ---------------------------------------------------------------------------

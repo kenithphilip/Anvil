@@ -898,7 +898,7 @@ Deep-dive prompt DD13. Rossum review-UI architecture. Hyperscience Hypercell. Kl
 
 ### F66. Customer canonicalisation drift fix
 
-Problem. `src/api/_lib/customer-canonicalizer.js` does `findByCanonicalName` after `findByGstin`. The canonicalisation strips legal suffixes but does not normalise punctuation, leading to drift between "Faith Automation Pvt. Ltd." and "Faith Automation, Pvt Ltd". `[verified-from-surface-report A2]`
+Problem. `src/api/_lib/customer-canonicalizer.js` does `findByCanonicalName` after `findByGstin`. The canonicalisation strips legal suffixes but does not normalise punctuation, leading to drift between "Summit Automation Pvt. Ltd." and "Summit Automation, Pvt Ltd". `[verified-from-surface-report A2]`
 
 Proposed change. Stronger normalisation (punctuation, multiple spaces, common typos) plus a confidence score on the match.
 

@@ -115,7 +115,7 @@ begin
       uuid_generate_v5(ns,'ns:oo:' || i::text), default_tenant,
       'NS-OO-' || lpad(i::text,5,'0'),
       'SO-' || lpad((1000 + i)::text,6,'0'),
-      case (i % 3) when 0 then 'MG Motor India Pvt. Ltd.' when 1 then 'Tata Motors PV Pune' else 'JBM Auto' end,
+      case (i % 3) when 0 then 'Vega Motor India Pvt. Ltd.' when 1 then 'Comet Motors PV Pune' else 'NRD Auto' end,
       case (i % 4) when 0 then 'Pending Approval' when 1 then 'Pending Fulfillment' when 2 then 'Partially Fulfilled' else 'Closed' end,
       250000 + i * 12500, 'INR',
       now() - (i || ' days')::interval,
@@ -232,7 +232,7 @@ begin
     values (
       uuid_generate_v5(ns,'sap:bp:' || i::text), default_tenant,
       'SAP-BP-' || lpad((10000 + i)::text,6,'0'),
-      case (i % 3) when 0 then 'MG Motor India Pvt. Ltd.' when 1 then 'Tata Motors PV Pune' else 'JBM Auto' end || ' (SAP) #' || i::text,
+      case (i % 3) when 0 then 'Vega Motor India Pvt. Ltd.' when 1 then 'Comet Motors PV Pune' else 'NRD Auto' end || ' (SAP) #' || i::text,
       'bp' || i::text || '@partner.example', '+91 11 5550 ' || lpad(i::text,4,'0'),
       case (i % 2) when 0 then '1' else '2' end,
       false,
@@ -380,7 +380,7 @@ begin
       uuid_generate_v5(ns,'tally:pr:' || i::text), default_tenant, v_company_id,
       'RCT-' || lpad((100 + i)::text,6,'0'),
       (now() - ((10 - i) || ' days')::interval)::date,
-      'MG Motor India - Customer',
+      'Vega Motor India - Customer',
       280000 + i * 8500, 'INR', 'HDFC Bank Sweep',
       'NEFT-OB' || lpad(i::text,4,'0'),
       uuid_generate_v5('d7a7e5e4-0001-0003-0001-000000000001','inv:' || i::text),
@@ -528,9 +528,9 @@ begin
   execute format($q$
     insert into %I (id, tenant_id, external_id, name, email, currency, raw, synced_at)
     values
-      (uuid_generate_v5($1,'erp:%I:c:1'), $2, '%I-CUST-0001', 'MG Motor India',     'mg@partner.example',   'INR', jsonb_build_object('seed_marker','anvil-test-seed-v1'), now() - interval '6 hours'),
-      (uuid_generate_v5($1,'erp:%I:c:2'), $2, '%I-CUST-0002', 'Tata Motors Pune',   'tata@partner.example', 'INR', jsonb_build_object('seed_marker','anvil-test-seed-v1'), now() - interval '6 hours'),
-      (uuid_generate_v5($1,'erp:%I:c:3'), $2, '%I-CUST-0003', 'JBM Auto',           'jbm@partner.example',  'INR', jsonb_build_object('seed_marker','anvil-test-seed-v1'), now() - interval '6 hours')
+      (uuid_generate_v5($1,'erp:%I:c:1'), $2, '%I-CUST-0001', 'Vega Motor India',     'mg@partner.example',   'INR', jsonb_build_object('seed_marker','anvil-test-seed-v1'), now() - interval '6 hours'),
+      (uuid_generate_v5($1,'erp:%I:c:2'), $2, '%I-CUST-0002', 'Comet Motors Pune',   'tata@partner.example', 'INR', jsonb_build_object('seed_marker','anvil-test-seed-v1'), now() - interval '6 hours'),
+      (uuid_generate_v5($1,'erp:%I:c:3'), $2, '%I-CUST-0003', 'NRD Auto',           'jbm@partner.example',  'INR', jsonb_build_object('seed_marker','anvil-test-seed-v1'), now() - interval '6 hours')
     on conflict (tenant_id, external_id) do nothing
   $q$, p_prefix || '_customers', p_prefix, p_prefix, p_prefix, p_prefix, p_prefix, p_prefix, p_prefix)
     using ns, default_tenant;

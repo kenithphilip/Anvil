@@ -83,7 +83,7 @@ declare
   status_i       int := 0;
   src_i          int := 0;
   cust_id        uuid;
-  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO_PLANT_1','RNAIPL','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH'];
+  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','NRD_AUTO_PLANT_1','ALAP','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH'];
 begin
   foreach s in array statuses loop
     status_i := status_i + 1;
@@ -150,7 +150,7 @@ declare
   s              text;
   k              int := 0;
   cust_id        uuid;
-  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO_PLANT_1','RNAIPL','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH','ACME_ROBOTICS_LLC'];
+  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','NRD_AUTO_PLANT_1','ALAP','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH','ACME_ROBOTICS_LLC'];
 begin
   foreach s in array stages loop
     -- two opportunities per stage (different customers).
@@ -227,7 +227,7 @@ declare
   p              text;
   k              int := 0;
   cust_id        uuid;
-  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO_PLANT_1','RNAIPL','ANVIL_TEST_INDUSTRIES'];
+  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','NRD_AUTO_PLANT_1','ALAP','ANVIL_TEST_INDUSTRIES'];
   proj_id        uuid;
   alpha          uuid := uuid_generate_v5(uuid_ns_dns(), 'anvil-seed-user:eng.alpha@anvil.test');
 begin
@@ -281,7 +281,7 @@ declare
   s              text;
   k              int := 0;
   cust_id        uuid;
-  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO_PLANT_1','RNAIPL'];
+  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','NRD_AUTO_PLANT_1','ALAP'];
   iso_id         uuid;
 begin
   foreach t in array types loop
@@ -353,7 +353,7 @@ declare
   mode_idx       int;
   cust_id        uuid;
   loc_id         uuid;
-  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO_PLANT_1','RNAIPL','ABC_MOTORS','SRTX','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH','ACME_ROBOTICS_LLC','NIPPON_KOGYO'];
+  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','NRD_AUTO_PLANT_1','ALAP','ABC_MOTORS','WGX','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH','ACME_ROBOTICS_LLC','NIPPON_KOGYO'];
   ckey           text;
   k              int := 0;
   o_id           uuid;
@@ -820,7 +820,7 @@ declare
 begin
   select id into mg_id   from customers where tenant_id = default_tenant and customer_key = 'MG_MOTOR_INDIA';
   select id into tata_id from customers where tenant_id = default_tenant and customer_key = 'TATA_MOTORS_PV_PUNE';
-  select id into jbm_id  from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO_PLANT_1';
+  select id into jbm_id  from customers where tenant_id = default_tenant and customer_key = 'NRD_AUTO_PLANT_1';
   select id into mg_loc   from customer_locations where tenant_id = default_tenant and customer_id = mg_id   and location_code = 'HALOL';
   select id into tata_loc from customer_locations where tenant_id = default_tenant and customer_id = tata_id and location_code = 'PUNE';
   -- Pick an AMC contract attached to MG.

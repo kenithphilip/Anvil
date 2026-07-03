@@ -41,7 +41,7 @@ phased plan).
 ### 1.1 The operational problem
 
 Obara India sells custom-designed welding guns to automotive OEMs
-(Tata, JBM Auto, Mahindra, Bajaj, etc.). Every gun ships with a
+(Tata, NRD Auto, Mahindra, Bajaj, etc.). Every gun ships with a
 small set of standard, long-lead-time bundled items, the two named
 in the spec are:
 
@@ -238,7 +238,7 @@ F_i_t = F_committed_i_t           (orders already booked; probability ~ 1.0)
 
 Each is computed and persisted separately so the explainability
 panel can show the operator "8 from confirmed orders, 6 expected
-from the JBM RFQ at 60% stage probability, 2 from the baseline".
+from the NRD RFQ at 60% stage probability, 2 from the baseline".
 
 ### 2.7 Probability-weighted pipeline demand
 
@@ -1110,7 +1110,7 @@ All screens follow the existing primitives in
 | Top exceptions (Card)                          [Stream component]         |
 |   ●● [bad ]   ATD-STD-1 stockout in 3 wk · 4 short                ack    |
 |   ●● [warn]   Supplier ABC delayed 4 days on PO-9412               ack    |
-|   ●● [info]   JBM Auto opp moved to PROPOSAL · +6 ATD demand              |
+|   ●● [info]   NRD Auto opp moved to PROPOSAL · +6 ATD demand              |
 +--------------------------------------------------------------------------+
 | Action bar (Btn primary): "Run replan now"   "Export plan"   "Settings"   |
 +--------------------------------------------------------------------------+

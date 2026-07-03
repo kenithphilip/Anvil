@@ -8,7 +8,7 @@
 --
 -- Closes:
 --   1. listed vs discounted unit price per line
---   2. discount percent per line (Tally + Hyundai PO + Obara SO column)
+--   2. discount percent per line (Tally + Meridian PO + Obara SO column)
 --   3. CGST / SGST / IGST percent per line (queryable)
 --   4. customer_part_number per line (denormalised lookup)
 --   5. source_country per line (for the O/K suffix render)

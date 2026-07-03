@@ -15,7 +15,7 @@ each file into the Supabase SQL editor, or run via psql with
 | 007_seed_real_corpus_data.sql | 0 (seeds 4 customers + 3 locations + 35 items) | none |
 | 008_einvoice_forecast_amc.sql | 3 | einvoice_status |
 | 009_corpus_round2_schema.sql | 7 | none (engineering_specs, payment_milestones, expense_rate_cards, inco_terms_taxonomy, blanket_release_drawdown, logistics_ports, logistics_carriers; partial unique indexes on payment_milestones and shipments) |
-| 010_seed_corpus_round2_data.sql | 0 (seeds 2 more customers + JBM equipment + MG master + 11 release POs + 6 fingerprints + 1 eng spec + 11 expense rates + 4 approval thresholds + 96 more items) | none |
+| 010_seed_corpus_round2_data.sql | 0 (seeds 2 more customers + NRD equipment + MG master + 11 release POs + 6 fingerprints + 1 eng spec + 11 expense rates + 4 approval thresholds + 96 more items) | none |
 
 Total: 72 tables, 13 enums, 177 indexes, RLS on every business table.
 
@@ -235,7 +235,7 @@ Tenant-nullable for global codes. Seed adds 9 default codes (PRICE_HIGH, LEAD_TI
 Idempotent (`on conflict do nothing`). All inserts under tenant `00000000-0000-0000-0000-000000000001`.
 
 - Tenant row insert (in case migration was run before any other tenant seed).
-- 4 customers: MG Motor India Pvt. Ltd. (AUTO_OEM, GSTIN 24AAKCM8110E1ZR, PAN AAKCM8110E), SRTX (TIER_ONE), Tata Motors PV Pune (AUTO_OEM), ABC Motors (AUTO_OEM, sample customer from corpus).
+- 4 customers: Vega Motor India Pvt. Ltd. (AUTO_OEM, GSTIN 24AAKCM8110E1ZR, PAN AAKCM8110E), WGX (TIER_ONE), Comet Motors PV Pune (AUTO_OEM), ABC Motors (AUTO_OEM, sample customer from corpus).
 - 3 customer locations: MG HALOL (default, Gujarat), MG HARYANA, Tata PUNE.
 - 35 item_master rows with HSN codes, source country, currency, GST rates extracted from the corpus.
 

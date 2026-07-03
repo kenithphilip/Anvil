@@ -220,7 +220,7 @@ begin
   delete from plm_boms                where raw->>'seed_marker'          = 'anvil-test-seed-v1';
   delete from plm_systems             where raw->>'seed_marker'          = 'anvil-test-seed-v1';
   delete from edi_envelopes           where parsed->>'seed_marker'       = 'anvil-test-seed-v1';
-  delete from edi_partners            where name in ('MG Motor X12','Tata X12','Globex EDIFACT','Acme X12');
+  delete from edi_partners            where name in ('Vega Motor X12','Tata X12','Globex EDIFACT','Acme X12');
   delete from prospecting_suppressions where email like 'unsub%@target.example';
   delete from prospecting_targets     where metadata->>'seed_marker'     = 'anvil-test-seed-v1';
   delete from prospecting_campaigns   where name in ('ICP-paper','ICP-fasteners','ICP-PVF');
@@ -239,7 +239,7 @@ begin
   delete from rlhf_feedback           where prompt->>'seed_marker'       = 'anvil-test-seed-v1';
   delete from analytics_winloss_daily where lost_reasons->>'seed_marker' = 'anvil-test-seed-v1';
   delete from analytics_customer_monthly where tenant_id = default_tenant
-    and customer_id in (select id from customers where customer_key in ('MG_MOTOR_INDIA','JBM_AUTO_PLANT_1'));
+    and customer_id in (select id from customers where customer_key in ('MG_MOTOR_INDIA','NRD_AUTO_PLANT_1'));
   delete from forecast_snapshots      where tenant_id = default_tenant
     and segment_dimension in ('territory','customer_type');
   delete from injection_test_runs     where catalogue in ('owasp-llm-top-10-2024','anvil-internal-redteam-v1','agent-tool-misuse-v1');
@@ -388,17 +388,17 @@ begin
 
   -- Installed base.
   delete from installed_base           where tenant_id = default_tenant and notes in (
-    'MG Halol BIW.','MG Haryana.','Tata Pune.','JBM Plant 1+2.','JBM heavy cells.',
+    'MG Halol BIW.','MG Haryana.','Tata Pune.','NRD Plant 1+2.','NRD heavy cells.',
     'RN India.','ATI fixture.','X3 launch fixture.','Globex DE.','日本工業 横浜.'
   );
 
   -- Equipment installed parts (FK cascade from equipment_hierarchy).
   delete from equipment_installed_parts where equipment_id in (
     select id from equipment_hierarchy where tenant_id = default_tenant
-      and (plant_name in ('MG Halol Plant','JBM Plant 1'))
+      and (plant_name in ('MG Halol Plant','NRD Plant 1'))
   );
   delete from equipment_hierarchy      where tenant_id = default_tenant
-    and (plant_name in ('MG Halol Plant','JBM Plant 1'));
+    and (plant_name in ('MG Halol Plant','NRD Plant 1'));
 
   -- Catalog tables.
   delete from private_label_items      where label_brand = 'AnvilEdge';
@@ -421,7 +421,7 @@ begin
     and tenant_id = default_tenant;
 
   -- Part aliases.
-  delete from part_aliases             where customer_part_no like 'MG-%' or customer_part_no like 'TATA-%' or customer_part_no like 'JBM-%' or customer_part_no like 'ATI-%' or customer_part_no like 'NK-%';
+  delete from part_aliases             where customer_part_no like 'MG-%' or customer_part_no like 'TATA-%' or customer_part_no like 'NRD-%' or customer_part_no like 'ATI-%' or customer_part_no like 'NK-%';
 
   -- Vendors (8 rows).
   delete from vendors                  where external_ref->>'seed_marker' = 'anvil-test-seed-v1';
@@ -488,7 +488,7 @@ begin
   delete from lost_reason_taxonomy     where code in ('PRICE_UNDERCUT','PRICE_UNREALISTIC','LEAD_TIME','QUALITY','RELATIONSHIP','SCOPE_CHANGE','NO_RESPONSE','NOT_QUALIFIED','BUDGET_CUT','TECH_MISMATCH','INTERNAL_MAKE','LEGACY_UNUSED') and tenant_id is null;
 
   -- Customer / supplier lead times.
-  delete from customer_lead_times      where notes in ('Halol contract SLA: 10 days from PO.','Servo-gun assemblies allowed 21 days.','Pune dock-to-dock window.','Tier-1 line-builder; tight cycle.','Renault-Nissan India.');
+  delete from customer_lead_times      where notes in ('Halol contract SLA: 10 days from PO.','Servo-gun assemblies allowed 21 days.','Pune dock-to-dock window.','Tier-1 line-builder; tight cycle.','Alliance Auto India.');
   delete from supplier_lead_times      where supplier in ('Obara Korea','Obara Japan','Obara China','BKS Cables Pvt Ltd','Globex Manufacturing GmbH','Acme Robotics LLC');
 
   -- FX rates.

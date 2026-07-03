@@ -1,7 +1,7 @@
 -- 096_customer_intl_taxid.sql
 --
 -- Bug fix: the customer extraction path is hard-wired to Indian
--- conventions. For non-Indian POs (OBARA Japan, Hyundai Steel Korea,
+-- conventions. For non-Indian POs (OBARA Japan, Meridian Steel Korea,
 -- Voestalpine Austria, etc.) the schema only has GSTIN + state_code;
 -- the buyer's actual tax id (Korean BRN, Japanese T-number, German
 -- Steuernummer, US EIN, EU VAT) ends up nowhere on the customer

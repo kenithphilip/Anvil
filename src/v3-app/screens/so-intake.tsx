@@ -15,7 +15,7 @@ const ORDER_MODES = [
   { id: "SPARES",          ti: "Spares",            code: "SPARES · OIQTLC-** · INR",     desc: "Standard spares to a domestic customer. Margin floor 10%, target 30%. Road logistics. Most common mode." },
   { id: "SPARES_ASSEMBLY", ti: "Spares · Assembly", code: "SPARES_ASSEMBLY · OIQTLC-** · INR", desc: "Gun modification spares with assembly. Same prefix and floor as SPARES, but assembly service line is mandatory." },
   { id: "PROJECT_FOR",     ti: "Project · Free On Rail", code: "PROJECT_FOR · OFRPRJ-** · INR", desc: "Domestic project with freight inclusive in line price. Forward FX irrelevant. Floor 10%." },
-  { id: "PROJECT_HSS",     ti: "Project · CIF Nhava Sheva", code: "PROJECT_HSS · OIQTHS-** · USD", desc: "Hyundai Steel / Voestalpine pattern. Forward FX explicit, USD line items, customs cost band, floor 10%." },
+  { id: "PROJECT_HSS",     ti: "Project · CIF Nhava Sheva", code: "PROJECT_HSS · OIQTHS-** · USD", desc: "Meridian Steel / Voestalpine pattern. Forward FX explicit, USD line items, customs cost band, floor 10%." },
   { id: "INTERNAL",        ti: "Internal · Free of cost", code: "INTERNAL · INT-* · FOC",   desc: "Warranty replacement, product trial, expected PO, internal transfer. No margin, no Tally voucher." },
   { id: null,              ti: "Decide later",      code: "— · ASK ME LATER",            desc: "Capture documents now and let OCR + Claude pre-classifier suggest the mode at extraction time." },
 ];
@@ -65,7 +65,7 @@ const WiredSOIntake = () => {
   const [customers, setCustomers] = u({ data: null, loading: true, error: null });
   // Per-tenant vendor-code index (migration 106). Preloaded so the
   // matchCustomerFromExtraction tier 1b can resolve inbound PO
-  // vendor_code (e.g., HMIL "TH1M") to the right customer without
+  // vendor_code (e.g., MMIL "TH1M") to the right customer without
   // an extra network hop per upload.
   const [vendorCodeIndex, setVendorCodeIndex] = u<any[]>([]);
   const [customerId, setCustomerId] = u("");
@@ -93,7 +93,7 @@ const WiredSOIntake = () => {
   // exist on the customers table (migration 061) and the API now
   // accepts them, so the dialog persists them straight through.
   // International-ready: country + tax_id + tax_id_type carried alongside
-  // the legacy gstin/state_code so non-Indian POs (OBARA Korea, Hyundai
+  // the legacy gstin/state_code so non-Indian POs (OBARA Korea, Meridian
   // Steel Japan, Voestalpine AT) can populate the dialog correctly.
   // Defaults: country "" so the country dropdown forces an explicit pick.
   // Bug fix: payment_terms default no longer "Net 30" -- the previous
@@ -363,17 +363,17 @@ const WiredSOIntake = () => {
   // Customer matcher. Two regressions taught us how the LLM picks
   // the wrong entity on a multi-party PO:
   //
-  //   Round 1 (post-Phase F): LLM picked Hyundai (project /
+  //   Round 1 (post-Phase F): LLM picked Meridian (project /
   //   end-customer reference) as customer.name; matcher
   //   auto-selected without corroboration.
   //
-  //   Round 2 (this fix): on a PO whose buyer was Faith Automation
+  //   Round 2 (this fix): on a PO whose buyer was Summit Automation
   //   but whose document mentioned OBARA brand spares for a
-  //   Hyundai end-customer, the previous draft refused to
-  //   auto-select Faith Automation EVEN WHEN the LLM extracted it
+  //   Meridian end-customer, the previous draft refused to
+  //   auto-select Summit Automation EVEN WHEN the LLM extracted it
   //   correctly. Cause: a filename-hint guard insisted the
   //   filename token "obara" intersect the matched customer's
-  //   name. Faith Automation's name does not contain "obara", so
+  //   name. Summit Automation's name does not contain "obara", so
   //   the matcher refused. Filename hint dropped.
   //
   // Two guards apply before auto-select:
@@ -381,7 +381,7 @@ const WiredSOIntake = () => {
   //   - GSTIN exact match remains the highest-signal path.
   //   - Name match REQUIRES bill-to corroboration. The bill-to
   //     block is the buyer's ground truth; the LLM picking up
-  //     Hyundai or OBARA from line-item descriptions can never
+  //     Meridian or OBARA from line-item descriptions can never
   //     satisfy this check.
   //
   // Corroboration uses the FIRST significant token of the canonical
@@ -391,8 +391,8 @@ const WiredSOIntake = () => {
   //
   // norm() now strips legal-suffix tokens (Pvt, Ltd, Pvt Ltd, Inc,
   // GmbH, Co, KK, AG, BV, SA, LLP, Limited, Company) the way the
-  // backend canonicalizer does, so "Faith Automation" extracted
-  // from the PO matches "Faith Automation Pvt Ltd" stored in the
+  // backend canonicalizer does, so "Summit Automation" extracted
+  // from the PO matches "Summit Automation Pvt Ltd" stored in the
   // customer record.
   const norm = (s) => String(s || "").toLowerCase()
     .replace(/^m\/s\.?\s*/i, "")
@@ -417,7 +417,7 @@ const WiredSOIntake = () => {
     }
 
     // Tier 1b: vendor_code lookup (migration 106 + extractor 108).
-    // HMIL prints `VENDOR_CODE TH1M` on every PO. When the extractor
+    // MMIL prints `VENDOR_CODE TH1M` on every PO. When the extractor
     // picks it up we resolve by matching the code against the
     // customer_vendor_codes table preloaded into vendorCodeIndex.
     // Tightest signal after GSTIN since the code is unique per
@@ -442,13 +442,13 @@ const WiredSOIntake = () => {
     //   (c) the extracted country matches the DB customer's country
     //       AND no other DB customer's name normalises to `target`
     // We deliberately do NOT corroborate via ship_to_address. The
-    // OBARA-Korea-buys-for-Hyundai-Steel-project case puts the
+    // OBARA-Korea-buys-for-Meridian-Steel-project case puts the
     // project's end-customer site into ship_to even when bill_to
     // correctly points at the actual buyer (OBARA Korea); accepting
     // a ship_to token-match would re-introduce that regression.
     // (a) alone used to be the only path, which made the matcher
     // refuse correct HMI POs whose bill-to block carries the buyer's
-    // postal address with no "Hyundai" anywhere inside it. Adding
+    // postal address with no "Meridian" anywhere inside it. Adding
     // (b) and (c) covers that case while keeping the false-positive
     // guard: each signal independently rules out a different class
     // of mistaken match.

@@ -931,7 +931,7 @@ events.
 What's still missing:
 
 - **The text body itself isn't extracted.** A WhatsApp message
-  saying "Need 50 of SRTC-K12464 by Friday" creates an order
+  saying "Need 50 of WGC-K12464 by Friday" creates an order
   with `preflight_payload.text` set, but no extractor reads
   it for line items.
 - **Meta Cloud API media is left unfetched.** The code
@@ -1599,7 +1599,7 @@ Producer: `src/api/_lib/inbound-chat.js` line 107 (called from
 Slack, Teams, and the newer WhatsApp webhook handlers).
 Consumer: none.
 
-A customer messages "I need a quote for SRTC-K12464 qty 50"
+A customer messages "I need a quote for WGC-K12464 qty 50"
 on Slack to the tenant's bot. Row lands in `inbound_messages`
 with `status='arrived'`. Nobody reads it. Forever.
 

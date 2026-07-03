@@ -88,24 +88,24 @@ describe("draftLabel", () => {
     const out = draftLabel({
       id: "8a3f1b2c-1234-5678-abcd-1111aaaa2222",
       created_at: "2026-05-19T10:00:00Z",
-      customer: { customer_name: "Hyundai Motor India Ltd" },
+      customer: { customer_name: "Meridian Motor India Ltd" },
     });
-    expect(out).toBe("HYUND-19MAY-8a3f");
+    expect(out).toBe("MERID-19MAY-8a3f");
   });
 
   it("prefers customer_key over customer_name when both are present", () => {
     const out = draftLabel({
       id: "8a3f1b2c-1234",
       created_at: "2026-05-19T10:00:00Z",
-      customer: { customer_key: "hmil_pune", customer_name: "Hyundai Motor India Ltd" },
+      customer: { customer_key: "mmil_pune", customer_name: "Meridian Motor India Ltd" },
     });
     // customer_key wins, non-alnum stripped, uppercased, capped at 5
-    expect(out).toBe("HMILP-19MAY-8a3f");
+    expect(out).toBe("MMILP-19MAY-8a3f");
   });
 
   it("strips legal suffixes from customer_name before truncating", () => {
-    // Without suffix stripping, "Faith Automation Pvt Ltd" would
-    // start with "FAITH" anyway, but a name like "MG Ltd" must yield
+    // Without suffix stripping, "Summit Automation Pvt Ltd" would
+    // start with "SUMMI" anyway, but a name like "MG Ltd" must yield
     // "MG", not include "Ltd" in the prefix.
     expect(draftLabel({
       id: "abcd",
@@ -137,7 +137,7 @@ describe("draftLabel", () => {
     expect(draftLabel({
       id: "deadbeef1234",
       created_at: "2026-05-19T10:00:00Z",
-      customer: { customer_name: "Tata Motors" },
-    })).toBe("TATAM-19MAY-dead");
+      customer: { customer_name: "Comet Motors" },
+    })).toBe("COMET-19MAY-dead");
   });
 });

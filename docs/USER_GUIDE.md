@@ -386,7 +386,7 @@ Open from the palette: **Admin Center**. 13 tabs:
 10. **Contracts (ARC/Blanket/AMC)**: contract headers with line items.
     AMC contracts feed into the AMC Schedule modal.
 11. **Equipment hierarchy**: Plant -> Line -> Zone -> Station -> Robot ->
-    Gun -> Installed parts. JBM-style importer is in its own modal.
+    Gun -> Installed parts. NRD-style importer is in its own modal.
 12. **Quote approvals**: threshold rules (role + amount range + mode +
     margin floor) plus pending approval queue. Approve/Reject inline.
 13. **CSV import**: pasteable templates for Item Master, BOM, lead times,
@@ -602,9 +602,9 @@ Order delivery schedules attached to a customer PO. Paste TSV: `part_no
 \t qty \t date \t location \t remark` per row. Each row goes into
 `order_schedule_lines`.
 
-## JBM Spare Matrix Importer
+## NRD Spare Matrix Importer
 
-Pick a customer, upload an XLSX with the JBM-style structure (Line, Zone,
+Pick a customer, upload an XLSX with the NRD-style structure (Line, Zone,
 Station, Robot, Gun, Timer, ATD plus 150+ part columns). Each row
 becomes one `equipment_hierarchy` node and the part columns explode into
 `equipment_installed_parts` rows.

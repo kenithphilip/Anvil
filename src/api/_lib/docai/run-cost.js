@@ -22,7 +22,7 @@
 // The cap is tenant-tunable via
 //   tenant_settings.docai_per_extraction_cost_cap_usd
 // Default DEFAULT_PER_EXTRACTION_CAP_USD = $1.00. A 70-page
-// Hyundai PO using the cheap Gemini-first chain costs ~$0.05; the
+// Meridian PO using the cheap Gemini-first chain costs ~$0.05; the
 // Sonnet fallback path costs ~$0.30. $1 is roughly 4-5x the worst
 // single extraction we have seen in production.
 //

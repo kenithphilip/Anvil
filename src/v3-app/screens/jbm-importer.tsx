@@ -4,9 +4,9 @@ import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 
 // ============================================================
-// ANVIL v3 — JBM customer matrix importer
+// ANVIL v3 — NRD customer matrix importer
 // One-click XLSX -> equipment_hierarchy + equipment_installed_parts
-// for the JBM Plant 1 spare matrix layout.
+// for the NRD Plant 1 spare matrix layout.
 //
 // Reached at #/items?view=jbm-import.
 // ============================================================
@@ -20,16 +20,16 @@ const ensureXlsxJbm = async () => {
   return XLSX;
 };
 
-// Detect JBM matrix structure: header row contains a Plant or Line
+// Detect NRD matrix structure: header row contains a Plant or Line
 // indicator, and "Gun No" appears somewhere in the first 20 columns.
 // Spare-part columns are everything to the right of the fixed
 // equipment columns.
-const FIXED_HEADERS_JBM = [
+const FIXED_HEADERS_NRD = [
   "plant", "line", "zone", "station",
   "robot make", "robot no", "gun no", "gun type",
   "qty", "timer model", "atd model",
 ];
-const NORM_JBM = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+const NORM_NRD = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
 
 const parseJbmXlsx = async (file) => {
   const xlsx = await ensureXlsxJbm();
@@ -43,7 +43,7 @@ const parseJbmXlsx = async (file) => {
   // Find the header row: the first row where Gun No (or 'gun no') appears.
   let headerRowIdx = -1;
   for (let i = 0; i < Math.min(grid.length, 20); i++) {
-    const row = grid[i].map(NORM_JBM);
+    const row = grid[i].map(NORM_NRD);
     if (row.some((c) => c.includes("gun no") || c.includes("gun number"))) {
       headerRowIdx = i;
       break;
@@ -51,18 +51,18 @@ const parseJbmXlsx = async (file) => {
   }
   if (headerRowIdx < 0) throw new Error("Could not find header row with 'Gun No' column");
 
-  const header = grid[headerRowIdx].map(NORM_JBM);
+  const header = grid[headerRowIdx].map(NORM_NRD);
   // Map fixed columns
   const colIdx = {};
-  FIXED_HEADERS_JBM.forEach((label) => {
+  FIXED_HEADERS_NRD.forEach((label) => {
     const i = header.findIndex((c) => c === label || c.replace(/\.$/, "") === label);
     if (i >= 0) colIdx[label] = i;
   });
-  // Spare-part columns: anything not in FIXED_HEADERS_JBM and non-empty
+  // Spare-part columns: anything not in FIXED_HEADERS_NRD and non-empty
   const partColumns = [];
   header.forEach((c, i) => {
     if (!c) return;
-    if (FIXED_HEADERS_JBM.includes(c)) return;
+    if (FIXED_HEADERS_NRD.includes(c)) return;
     partColumns.push({ name: c, index: i });
   });
 
@@ -121,7 +121,7 @@ const WiredJbmImporter = () => {
         if (cancel) return;
         const list = Array.isArray(r) ? r : (r?.rows || []);
         setCustomers({ data: list, loading: false });
-        const jbm = list.find((c) => c.customer_key === "JBM_AUTO_PLANT_1") || list[0];
+        const jbm = list.find((c) => c.customer_key === "NRD_AUTO_PLANT_1") || list[0];
         if (jbm) setCustomerId(jbm.id);
       })
       .catch(() => { if (!cancel) setCustomers({ data: [], loading: false }); });
@@ -202,9 +202,9 @@ const WiredJbmImporter = () => {
     }
     setBusy(false);
     if (failure === 0) {
-      window.notifySuccess?.("JBM import complete", `${success} guns + ${parsed.guns.reduce((s, g) => s + g.installed_parts.length, 0)} installed parts`);
+      window.notifySuccess?.("NRD import complete", `${success} guns + ${parsed.guns.reduce((s, g) => s + g.installed_parts.length, 0)} installed parts`);
     } else {
-      window.notifyWarn?.("JBM import partial", `${success} ok, ${failure} failed. See log.`);
+      window.notifyWarn?.("NRD import partial", `${success} ok, ${failure} failed. See log.`);
     }
   };
 
@@ -214,8 +214,8 @@ const WiredJbmImporter = () => {
   return (
     <>
       <WSTitle
-        eyebrow="Data · Items · JBM importer"
-        title="Import JBM Plant 1 Spare Matrix"
+        eyebrow="Data · Items · NRD importer"
+        title="Import NRD Plant 1 Spare Matrix"
         meta={parsed ? `${parsed.guns.length} guns ready` : "drag XLSX to begin"}
       />
 
@@ -255,7 +255,7 @@ const WiredJbmImporter = () => {
                    style={{ display: "none" }}
                    onChange={(e) => onFile(e.target.files?.[0])} />
             <Btn kind="primary" onClick={() => fileRef.current?.click()} disabled={busy || !customerId}
-                 title={!customerId ? "Pick a customer first" : "Open file picker for the JBM XLSX export"}>
+                 title={!customerId ? "Pick a customer first" : "Open file picker for the NRD XLSX export"}>
               {Icon.upload} Choose XLSX
             </Btn>
             <div className="mono-sm" style={{ marginTop: 8, color: "var(--ink-3)" }}>

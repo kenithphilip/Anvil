@@ -2,7 +2,7 @@
 -- Schema additions derived from deep analysis of Obara India's actual corpus
 -- (Salesforce O-I/* with 99 source files: customer POs, quotes, pricecompo,
 -- sales orders, RFQs, item master, BRD, HLD, JTBD, Sales/Services Object Models,
--- Flow Diagrams, JBM Spare Matrix). See plan file
+-- Flow Diagrams, NRD Spare Matrix). See plan file
 -- /Users/kenith.philip/.claude/plans/keep-going-why-aren-t-linked-squid.md.
 -- Every new table and column maps back to a real document field; this is not speculative.
 
@@ -27,7 +27,7 @@ end $$;
 do $$ begin
   if not exists (select 1 from pg_type where typname = 'customer_type') then
     create type customer_type as enum (
-      'AUTO_OEM',     -- Tata, MG Motor, Hyundai, etc.
+      'AUTO_OEM',     -- Tata, Vega Motor, Meridian, etc.
       'TIER_ONE',     -- Tier-1 line builders downstream of OEMs
       'LINE_BUILDER', -- system integrators
       'OTHER'
@@ -116,8 +116,8 @@ alter table customers
 
 -- ───────────────────────────────────────────────────────────────────────────
 -- B. Customer locations: multi-GSTIN, multi-plant.
--- Source: real MG Motor POs reference 24AAKCM8110E1ZR (Gujarat / Halol)
--- and 06AAKCM8110E1ZP (Haryana). Tata Motors PO references "Pune" and Halol.
+-- Source: real Vega Motor POs reference 24AAKCM8110E1ZR (Gujarat / Halol)
+-- and 06AAKCM8110E1ZP (Haryana). Comet Motors PO references "Pune" and Halol.
 -- ───────────────────────────────────────────────────────────────────────────
 
 create table if not exists customer_locations (
@@ -382,7 +382,7 @@ create index if not exists iso_lines_idx on internal_so_lines (tenant_id, intern
 
 -- ───────────────────────────────────────────────────────────────────────────
 -- G. Equipment hierarchy for spare matrix
--- Source: JBM Plant 1 Spare Matrix 29-05-2024.xlsx and JBM-Joel.xlsx
+-- Source: NRD Plant 1 Spare Matrix 29-05-2024.xlsx and NRD-Joel.xlsx
 -- columns: SI NO, Line, ZONE, Station Name, Robot Make, Robot No, GUN NO, GUN TYPE,
 -- Timer, ATD, plus 150+ part columns and "Installed Qty" sheet.
 -- ───────────────────────────────────────────────────────────────────────────

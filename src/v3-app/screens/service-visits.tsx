@@ -307,7 +307,7 @@ const WiredServiceVisitsCRUD = () => {
                 <label htmlFor="sv-line" className="label">Line / station</label>
                 <input id="sv-line" className="input" value={form.line_or_station || ""}
                        onChange={(ev) => setForm({ ...form, line_or_station: ev.target.value })}
-                       placeholder="e.g. FCA 556 / SRTC-K6133-IND" />
+                       placeholder="e.g. FCA 556 / WGC-K6133-IND" />
               </div>
               <div>
                 <label htmlFor="sv-purpose" className="label">Purpose</label>

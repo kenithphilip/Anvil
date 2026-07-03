@@ -671,8 +671,8 @@ declare
 begin
   select id into mg_id   from customers where tenant_id = default_tenant and customer_key = 'MG_MOTOR_INDIA';
   select id into tata_id from customers where tenant_id = default_tenant and customer_key = 'TATA_MOTORS_PV_PUNE';
-  select id into jbm_id  from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO_PLANT_1';
-  select id into rn_id   from customers where tenant_id = default_tenant and customer_key = 'RNAIPL';
+  select id into jbm_id  from customers where tenant_id = default_tenant and customer_key = 'NRD_AUTO_PLANT_1';
+  select id into rn_id   from customers where tenant_id = default_tenant and customer_key = 'ALAP';
 
   if mg_id is not null then
     insert into customer_lead_times (id, tenant_id, customer_id, product_category, lead_days, notes, created_at, updated_at)
@@ -705,7 +705,7 @@ begin
     insert into customer_lead_times (id, tenant_id, customer_id, product_category, lead_days, notes, created_at, updated_at)
     values
       (uuid_generate_v5('d7a7e5e4-0001-0001-0001-000000000001','clt:rn:default'),
-       default_tenant, rn_id, null, 12, 'Renault-Nissan India.',
+       default_tenant, rn_id, null, 12, 'Alliance Auto India.',
        now() - interval '40 days', now() - interval '5 days')
     on conflict (id) do nothing;
   end if;

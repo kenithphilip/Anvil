@@ -3,7 +3,7 @@
 -- the earlier 6 corpus migrations did not cover.
 --
 -- New artifacts:
---   1. engineering_specs: machine spec sheets like the SRTX EG SHEET
+--   1. engineering_specs: machine spec sheets like the WGX EG SHEET
 --      (motor model, ball screw, lead, max electrode force, etc.). Linked
 --      to item_master.
 --   2. payment_milestones: multi-tranche payment terms attached to a
@@ -25,7 +25,7 @@
 -- Idempotent.
 
 -- ───────────────────────────────────────────────────────────────────────────
--- A. Engineering specs (SRTX EG SHEET style)
+-- A. Engineering specs (WGX EG SHEET style)
 -- ───────────────────────────────────────────────────────────────────────────
 
 create table if not exists engineering_specs (

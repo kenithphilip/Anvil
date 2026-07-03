@@ -4,7 +4,7 @@
 // of deterministic resolution (customer_part / item_master.part_no
 // / specification_code / alias / description_fuzzy). Many PO lines
 // still come back unmapped because the customer uses a coded
-// reference and a description we have no signal on (Hyundai PO
+// reference and a description we have no signal on (Meridian PO
 // item GD544202603190008 with description "GUIDE ASSY" where the
 // tenant master happens to call it "Guide Assembly THB-L1-70B-2").
 //

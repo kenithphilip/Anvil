@@ -128,7 +128,7 @@ PO with GSTIN, HSN per line, multi state freight terms, and an
 end customer project name lurking in the line item description.
 Phase 4 curates a 50 document split from three sources:
 
-Twenty five real Anvil tenant POs from Faith Automation, Innovec,
+Twenty five real Anvil tenant POs from Summit Automation, Innovec,
 Vinrose, and the three other design partners, scrubbed by
 running the redaction firewall in tagging mode (`tagPII: true`)
 and replacing real party names with stable hashed pseudonyms.
@@ -530,7 +530,7 @@ template pays 50 percent of the unit price to Anvil and 50
 percent to the producer tenant as a royalty.
 
 The economics. Anvil charges Rs 8 per extracted line on the
-standard tier. A producer tenant whose Faith Automation PO
+standard tier. A producer tenant whose Summit Automation PO
 template gets picked up by 200 other tenants in the Indian
 metal fabrication corridor earns Rs 4 per consumer extraction.
 At an average 18 lines per PO and 200 consumer extractions per

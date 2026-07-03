@@ -133,7 +133,7 @@ export default async function handler(req, res) {
         gstin: body.gstin || null,
         state_code: body.state_code || null,
         // Migration 096: country + tax_id + tax_id_type for non-Indian
-        // customers (OBARA Korea, Hyundai Steel Japan, Voestalpine AT).
+        // customers (OBARA Korea, Meridian Steel Japan, Voestalpine AT).
         // Indian customers leave these NULL and use gstin / state_code
         // as before. The retry-without-new-columns block below catches
         // pre-096 deployments.

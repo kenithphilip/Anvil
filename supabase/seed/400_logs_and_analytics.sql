@@ -527,7 +527,7 @@ declare
   k              int;
 begin
   select id into mg  from customers where tenant_id = default_tenant and customer_key = 'MG_MOTOR_INDIA';
-  select id into jbm from customers where tenant_id = default_tenant and customer_key = 'JBM_AUTO_PLANT_1';
+  select id into jbm from customers where tenant_id = default_tenant and customer_key = 'NRD_AUTO_PLANT_1';
 
   for k in 0..11 loop
     d := date_trunc('month', now() - (k * 30 || ' days')::interval)::date;
@@ -673,7 +673,7 @@ declare
   j              int;
   status_v       text;
   cust_id        uuid;
-  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','JBM_AUTO_PLANT_1','RNAIPL','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH','ACME_ROBOTICS_LLC','NIPPON_KOGYO'];
+  cust_keys      text[] := array['MG_MOTOR_INDIA','TATA_MOTORS_PV_PUNE','NRD_AUTO_PLANT_1','ALAP','ANVIL_TEST_INDUSTRIES','GLOBEX_MFG_GMBH','ACME_ROBOTICS_LLC','NIPPON_KOGYO'];
   total_emails   int := 0;
 begin
   for i in 1..40 loop
@@ -961,7 +961,7 @@ declare
   default_tenant uuid := '00000000-0000-0000-0000-000000000001';
   ns             uuid := 'd7a7e5e4-0001-0004-0001-000000000001';
   partner_id     uuid;
-  partners       text[] := array['MG Motor X12','Tata X12','Globex EDIFACT','Acme X12'];
+  partners       text[] := array['Vega Motor X12','Tata X12','Globex EDIFACT','Acme X12'];
   formats        text[] := array['x12','x12','edifact','x12'];
   i              int;
   k              int;

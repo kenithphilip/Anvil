@@ -35,7 +35,7 @@ const SYSTEM_PROMPT = [
   "doubt, prefer 'other' over 'rfq'.",
   "",
   "Examples:",
-  "  - 'Pls send pricing for SRTC-K12464 qty 50' -> rfq",
+  "  - 'Pls send pricing for WGC-K12464 qty 50' -> rfq",
   "  - 'Attached PO 9941. Pls confirm delivery'  -> purchase_order",
   "  - 'Update line 3 qty to 100'                 -> po_revision",
   "  - 'We accept your quote OBJ-2026-0042'       -> quote_accept",

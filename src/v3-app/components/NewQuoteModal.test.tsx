@@ -9,8 +9,8 @@ import { installBackend } from "../test-utils";
 import { NewQuoteModal } from "./NewQuoteModal";
 
 const CUSTOMERS = [
-  { id: "cust-1", customer_name: "Hyundai Motor India Ltd", customer_key: "hyundai", default_quote_validity_days: 45, currency: "USD" },
-  { id: "cust-2", customer_name: "Tata Motors", customer_key: "tata" },
+  { id: "cust-1", customer_name: "Meridian Motor India Ltd", customer_key: "hyundai", default_quote_validity_days: 45, currency: "USD" },
+  { id: "cust-2", customer_name: "Comet Motors", customer_key: "tata" },
 ];
 
 const CONTACTS: Record<string, any[]> = {
@@ -40,7 +40,7 @@ describe("NewQuoteModal", () => {
     const { getByText, getByLabelText } = render(
       <NewQuoteModal open onClose={() => undefined} onCreated={() => undefined} />
     );
-    await waitFor(() => expect(getByText("Hyundai Motor India Ltd")).toBeTruthy());
+    await waitFor(() => expect(getByText("Meridian Motor India Ltd")).toBeTruthy());
     const createBtn = getByText("Create draft") as HTMLButtonElement;
     expect(createBtn.hasAttribute("disabled")).toBe(true);
     fireEvent.change(getByLabelText("Customer"), { target: { value: "cust-1" } });
@@ -52,7 +52,7 @@ describe("NewQuoteModal", () => {
     const { getByText, getByLabelText } = render(
       <NewQuoteModal open onClose={() => undefined} onCreated={onCreated} />
     );
-    await waitFor(() => expect(getByText("Tata Motors")).toBeTruthy());
+    await waitFor(() => expect(getByText("Comet Motors")).toBeTruthy());
     fireEvent.change(getByLabelText("Customer"), { target: { value: "cust-2" } });
     fireEvent.click(getByText("Create draft"));
     await waitFor(() => expect(createSpy).toHaveBeenCalledTimes(1));
@@ -64,7 +64,7 @@ describe("NewQuoteModal", () => {
     const { getByText, getByLabelText } = render(
       <NewQuoteModal open onClose={() => undefined} onCreated={() => undefined} />
     );
-    await waitFor(() => expect(getByText("Hyundai Motor India Ltd")).toBeTruthy());
+    await waitFor(() => expect(getByText("Meridian Motor India Ltd")).toBeTruthy());
     fireEvent.change(getByLabelText("Customer"), { target: { value: "cust-1" } });
     expect((getByLabelText("Validity days") as HTMLInputElement).value).toBe("45");
   });
@@ -73,7 +73,7 @@ describe("NewQuoteModal", () => {
     const { getByText, getByLabelText } = render(
       <NewQuoteModal open onClose={() => undefined} onCreated={() => undefined} />
     );
-    await waitFor(() => expect(getByText("Hyundai Motor India Ltd")).toBeTruthy());
+    await waitFor(() => expect(getByText("Meridian Motor India Ltd")).toBeTruthy());
     fireEvent.change(getByLabelText("Customer"), { target: { value: "cust-1" } });
     expect((getByLabelText("Currency") as HTMLInputElement).value).toBe("USD");
   });
@@ -82,7 +82,7 @@ describe("NewQuoteModal", () => {
     const { getByText, getByLabelText } = render(
       <NewQuoteModal open onClose={() => undefined} onCreated={() => undefined} />
     );
-    await waitFor(() => expect(getByText("Hyundai Motor India Ltd")).toBeTruthy());
+    await waitFor(() => expect(getByText("Meridian Motor India Ltd")).toBeTruthy());
     fireEvent.change(getByLabelText("Customer"), { target: { value: "cust-1" } });
     await waitFor(() => expect(listContactsSpy).toHaveBeenCalledWith({ customer_id: "cust-1" }));
     await waitFor(() => expect((getByLabelText("Contact") as HTMLSelectElement).value).toBe("ct-1a"));
@@ -92,7 +92,7 @@ describe("NewQuoteModal", () => {
     const { getByText, getByLabelText } = render(
       <NewQuoteModal open onClose={() => undefined} onCreated={() => undefined} />
     );
-    await waitFor(() => expect(getByText("Hyundai Motor India Ltd")).toBeTruthy());
+    await waitFor(() => expect(getByText("Meridian Motor India Ltd")).toBeTruthy());
     fireEvent.change(getByLabelText("Customer"), { target: { value: "cust-1" } });
     await waitFor(() => expect((getByLabelText("Contact") as HTMLSelectElement).value).toBe("ct-1a"));
     fireEvent.change(getByLabelText("Contact"), { target: { value: "ct-1b" } });
@@ -105,7 +105,7 @@ describe("NewQuoteModal", () => {
     const { getByText, getByLabelText } = render(
       <NewQuoteModal open onClose={() => undefined} onCreated={() => undefined} />
     );
-    await waitFor(() => expect(getByText("Tata Motors")).toBeTruthy());
+    await waitFor(() => expect(getByText("Comet Motors")).toBeTruthy());
     fireEvent.change(getByLabelText("Customer"), { target: { value: "cust-2" } });
     await waitFor(() => expect(listContactsSpy).toHaveBeenCalledWith({ customer_id: "cust-2" }));
     fireEvent.click(getByText("Create draft"));

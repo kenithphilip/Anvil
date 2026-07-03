@@ -93,7 +93,7 @@ describe("admin/item_usage", () => {
     h.orders = [
       {
         id: "ord-1", po_number: "P250432265", po_date: "2025-04-16", status: "APPROVED",
-        created_at: "2025-04-16T00:00:00Z", customer: { customer_name: "Hyundai Motor India Ltd" },
+        created_at: "2025-04-16T00:00:00Z", customer: { customer_name: "Meridian Motor India Ltd" },
         result: { salesOrder: { lineItems: [
           { description: "ATD NS HEAD ASSY", quantity: 2, _mapped_item: { id: "item-1", match_via: "item_master.part_no" } },
           { description: "OTHER", quantity: 9, _mapped_item: { id: "item-99" } },
@@ -105,7 +105,7 @@ describe("admin/item_usage", () => {
     expect(parsed.order_count).toBe(1);
     expect(parsed.usage[0].po_number).toBe("P250432265");
     expect(parsed.usage[0].total_qty).toBe(2); // only the matching line
-    expect(parsed.usage[0].customer_name).toMatch(/Hyundai/);
+    expect(parsed.usage[0].customer_name).toMatch(/Meridian/);
     // tenant scoping applied to the orders query
     expect(h.orderEq.tenant_id).toBe("t-1");
   });

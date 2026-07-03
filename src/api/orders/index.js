@@ -104,7 +104,11 @@ export default async function handler(req, res) {
       // views need (incl. `result` for totals) and drops that detail JSON.
       // Default stays `*` so other list consumers are unaffected.
       const slim = req.query.slim === "1" || req.query.slim === "true";
-      const SLIM_COLS = "id, status, order_mode, currency, po_number, quote_number, approved_by, payload_hash, created_at, updated_at, customer_id, result, customer:customer_id(customer_name, state_code)";
+      // NB: `orders` has no top-level `currency` column — currency lives in
+      // result.salesOrder.currency (the SO list reads it from `result`, which
+      // is selected below). Selecting `currency` here throws
+      // "column orders.currency does not exist" -> "Failed to load orders".
+      const SLIM_COLS = "id, status, order_mode, po_number, quote_number, approved_by, payload_hash, created_at, updated_at, customer_id, result, customer:customer_id(customer_name, state_code)";
       let query = svc.from("orders")
         .select(slim ? SLIM_COLS : "*, customer:customer_id(customer_name, state_code)")
         .eq("tenant_id", ctx.tenantId)

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — Shipments CRUD overlay
@@ -51,7 +51,7 @@ const WiredShipmentsCRUD = () => {
 
   const reload = () => {
     setList((s) => ({ ...s, loading: true }));
-    Promise.resolve(ObaraBackend?.sales?.listShipments?.() || { shipments: [] })
+    Promise.resolve(AnvilBackend?.sales?.listShipments?.() || { shipments: [] })
       .then((r) => {
         const rows = Array.isArray(r) ? r : (r?.shipments || r?.rows || []);
         setList({ rows, loading: false, error: null });
@@ -98,14 +98,14 @@ const WiredShipmentsCRUD = () => {
       if (editing && editing !== "__new__") payload.id = editing;
       // Try the dedicated client wrappers if exposed; otherwise direct fetch.
       const fn = (editing && editing !== "__new__")
-        ? (ObaraBackend?.sales?.updateShipment || ObaraBackend?.sales?.upsertShipment)
-        : (ObaraBackend?.sales?.createShipment || ObaraBackend?.sales?.upsertShipment);
+        ? (AnvilBackend?.sales?.updateShipment || AnvilBackend?.sales?.upsertShipment)
+        : (AnvilBackend?.sales?.createShipment || AnvilBackend?.sales?.upsertShipment);
       let result;
       if (typeof fn === "function") {
         result = await fn(payload);
       } else {
-        const cfg = (ObaraBackend?.getConfig?.() || {});
-        const session = (ObaraBackend?.getSession?.() || null);
+        const cfg = (AnvilBackend?.getConfig?.() || {});
+        const session = (AnvilBackend?.getSession?.() || null);
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
         if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
@@ -132,12 +132,12 @@ const WiredShipmentsCRUD = () => {
     if (!window.confirm(`Delete shipment ${num || id}? This cannot be undone.`)) return;
     setBusy(true);
     try {
-      const fn = ObaraBackend?.sales?.deleteShipment;
+      const fn = AnvilBackend?.sales?.deleteShipment;
       if (typeof fn === "function") {
         await fn(id);
       } else {
-        const cfg = (ObaraBackend?.getConfig?.() || {});
-        const session = (ObaraBackend?.getSession?.() || null);
+        const cfg = (AnvilBackend?.getConfig?.() || {});
+        const session = (AnvilBackend?.getSession?.() || null);
         const headers: Record<string, string> = {};
         if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
         if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
@@ -159,12 +159,12 @@ const WiredShipmentsCRUD = () => {
   const setStatus = async (id, status) => {
     setBusy(true);
     try {
-      const fn = ObaraBackend?.sales?.updateShipment || ObaraBackend?.sales?.upsertShipment;
+      const fn = AnvilBackend?.sales?.updateShipment || AnvilBackend?.sales?.upsertShipment;
       if (typeof fn === "function") {
         await fn({ id, status });
       } else {
-        const cfg = (ObaraBackend?.getConfig?.() || {});
-        const session = (ObaraBackend?.getSession?.() || null);
+        const cfg = (AnvilBackend?.getConfig?.() || {});
+        const session = (AnvilBackend?.getSession?.() || null);
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
         if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;

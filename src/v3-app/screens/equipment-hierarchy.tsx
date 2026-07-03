@@ -2,12 +2,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired Equipment hierarchy
 // Plant > Line > Zone > Station > Gun + installed parts editor.
-// Reads via ObaraBackend.admin.listEquipment, writes via
+// Reads via AnvilBackend.admin.listEquipment, writes via
 // upsertEquipment/deleteEquipment. Reached at #/items?view=equipment.
 // ============================================================
 
@@ -410,15 +410,15 @@ const EquipmentDetail = ({ node, customers, locations, onSave, onDelete, onCance
 
 const WiredEquipmentHierarchy = () => {
   const equipment = useFetch(
-    () => ObaraBackend?.admin?.listEquipment?.() || Promise.resolve({ equipment: [] }),
+    () => AnvilBackend?.admin?.listEquipment?.() || Promise.resolve({ equipment: [] }),
     []
   );
   const customersList = useFetch(
-    () => ObaraBackend?.customers?.list?.() || Promise.resolve({ customers: [] }),
+    () => AnvilBackend?.customers?.list?.() || Promise.resolve({ customers: [] }),
     []
   );
   const locationsList = useFetch(
-    () => ObaraBackend?.admin?.listCustomerLocations?.() || Promise.resolve({ locations: [] }),
+    () => AnvilBackend?.admin?.listCustomerLocations?.() || Promise.resolve({ locations: [] }),
     []
   );
 
@@ -516,7 +516,7 @@ const WiredEquipmentHierarchy = () => {
     const optimisticRow = { ...row, id: tempId, installed_parts: installed_parts || [] };
     setOptimistic((o) => ({ ...o, [tempId]: optimisticRow }));
     try {
-      const resp = await ObaraBackend.admin.upsertEquipment({ ...row, installed_parts });
+      const resp = await AnvilBackend.admin.upsertEquipment({ ...row, installed_parts });
       const saved = resp?.equipment || resp;
       // Drop the optimistic temp entry, refetch the list to get authoritative state.
       setOptimistic((o) => {
@@ -542,7 +542,7 @@ const WiredEquipmentHierarchy = () => {
     setBusy(true);
     setOptimistic((o) => ({ ...o, [id]: null }));
     try {
-      await ObaraBackend.admin.deleteEquipment(id);
+      await AnvilBackend.admin.deleteEquipment(id);
       window.notifySuccess?.("Deleted", "Equipment removed.");
       setOptimistic((o) => { const cp = { ...o }; delete cp[id]; return cp; });
       setSelectedId(null);

@@ -22,7 +22,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { ageLabel } from "../lib/helpers";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 interface VoiceConfig {
   id: string;
@@ -104,14 +104,14 @@ const Voice: React.FC = () => {
 
   const reloadConfigs = () => {
     setErr(null);
-    Promise.resolve((ObaraBackend as any)?.voice?.listConfigs?.())
+    Promise.resolve((AnvilBackend as any)?.voice?.listConfigs?.())
       .then((data: any) => setConfigs(Array.isArray(data?.configs) ? data.configs : (Array.isArray(data) ? data : [])))
       .catch((e: any) => setErr(e?.message || String(e)));
   };
 
   const reloadConsent = (phone?: string) => {
     setErr(null);
-    Promise.resolve((ObaraBackend as any)?.voice?.listConsent?.(phone))
+    Promise.resolve((AnvilBackend as any)?.voice?.listConsent?.(phone))
       .then((data: any) => setConsent(Array.isArray(data?.rows) ? data.rows : []))
       .catch((e: any) => setErr(e?.message || String(e)));
   };
@@ -125,7 +125,7 @@ const Voice: React.FC = () => {
     setOBusy(true);
     setOResult(null);
     try {
-      const resp: any = await (ObaraBackend as any)?.voice?.placeOutbound?.({
+      const resp: any = await (AnvilBackend as any)?.voice?.placeOutbound?.({
         to: oTo.trim(),
         reason: oReason,
       });
@@ -150,7 +150,7 @@ const Voice: React.FC = () => {
     setCBusy(true);
     setErr(null);
     try {
-      await (ObaraBackend as any)?.voice?.recordConsent?.({
+      await (AnvilBackend as any)?.voice?.recordConsent?.({
         phone_number: cPhone.trim(),
         source: cSource,
         notes: cNotes || null,
@@ -169,7 +169,7 @@ const Voice: React.FC = () => {
   const onWithdraw = async (id: string) => {
     if (!window.confirm?.("Withdraw this consent? The customer will not be dialled until they re-consent.")) return;
     try {
-      await (ObaraBackend as any)?.voice?.withdrawConsent?.(id);
+      await (AnvilBackend as any)?.voice?.withdrawConsent?.(id);
       reloadConsent();
       window.notifySuccess?.("Consent withdrawn");
     } catch (e: any) {

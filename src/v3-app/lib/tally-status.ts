@@ -7,7 +7,7 @@
 // browser; integration absence comes from env-var presence.
 
 import { useEffect, useState } from "react";
-import { ObaraBackend } from "./api";
+import { AnvilBackend } from "./api";
 
 export interface TallyBridgeStatus {
   configured: boolean;
@@ -25,7 +25,7 @@ export const useTallyBridgeStatus = (): TallyBridgeStatus => {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.resolve(ObaraBackend?.health?.())
+    Promise.resolve(AnvilBackend?.health?.())
       .then((h: any) => {
         if (cancelled) return;
         const list = Array.isArray(h?.integrations) ? h.integrations : [];

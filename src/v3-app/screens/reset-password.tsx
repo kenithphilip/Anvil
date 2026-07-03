@@ -12,7 +12,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card } from "../lib/primitives";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 const MIN_PASSWORD = 10;
 
@@ -141,7 +141,7 @@ const ResetPassword: React.FC = () => {
       // tenant header but does NOT inject the user's session for
       // this call (we want the recovery token, not a stale user
       // token); the endpoint reads the body's access_token.
-      const cfg = (ObaraBackend?.getConfig?.() || {}) as { url?: string };
+      const cfg = (AnvilBackend?.getConfig?.() || {}) as { url?: string };
       if (!cfg.url) {
         setError("Backend not configured. Open the sign-in page first.");
         setBusy(false);

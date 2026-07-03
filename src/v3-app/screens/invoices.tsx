@@ -9,7 +9,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ageLabel, fmtCurrency, fmtDate } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 const STATUS_TABS = [
   { id: "all",     label: "All" },
@@ -54,7 +54,7 @@ const WiredInvoices = () => {
     try {
       const params: Record<string, string> = {};
       if (tab !== "all") params.status = tab;
-      const resp: any = await ObaraBackend?.invoices?.list?.(params);
+      const resp: any = await AnvilBackend?.invoices?.list?.(params);
       if (signal?.cancelled) return;
       setRows(resp?.invoices || []);
     } catch (err: any) {
@@ -102,7 +102,7 @@ const WiredInvoices = () => {
   const downloadPdf = async (row: any) => {
     setBusy(row.id);
     try {
-      const blob = await ObaraBackend?.invoices?.pdfBlob?.(row.id);
+      const blob = await AnvilBackend?.invoices?.pdfBlob?.(row.id);
       if (!blob) throw new Error("PDF helper unavailable");
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -121,7 +121,7 @@ const WiredInvoices = () => {
   const sendInvoice = async (row: any) => {
     setBusy(row.id);
     try {
-      const resp: any = await ObaraBackend?.invoices?.send?.({ id: row.id });
+      const resp: any = await AnvilBackend?.invoices?.send?.({ id: row.id });
       // Fire the queued comm immediately via the existing comms.send
       // path. Audit fix (May 2026): the previous code swallowed
       // errors silently; the operator saw "queued + sent" even when
@@ -130,7 +130,7 @@ const WiredInvoices = () => {
       let immediateOk = true;
       let immediateErr = null;
       if (resp?.communication_id) {
-        try { await ObaraBackend?.communications?.send?.({ id: resp.communication_id }); }
+        try { await AnvilBackend?.communications?.send?.({ id: resp.communication_id }); }
         catch (e: any) { immediateOk = false; immediateErr = e; }
       }
       if (immediateOk) {
@@ -150,7 +150,7 @@ const WiredInvoices = () => {
   const markPaid = async (row: any) => {
     setBusy(row.id);
     try {
-      await ObaraBackend?.invoices?.update?.(row.id, { status: "paid", paid_amount: row.grand_total });
+      await AnvilBackend?.invoices?.update?.(row.id, { status: "paid", paid_amount: row.grand_total });
       setFlash({ kind: "good", msg: "Marked " + row.invoice_number + " paid" });
       await load();
     } catch (err: any) {
@@ -161,7 +161,7 @@ const WiredInvoices = () => {
   const voidInvoice = async (row: any) => {
     setBusy(row.id);
     try {
-      await ObaraBackend?.invoices?.void?.(row.id);
+      await AnvilBackend?.invoices?.void?.(row.id);
       setFlash({ kind: "good", msg: "Voided " + row.invoice_number });
       await load();
     } catch (err: any) {

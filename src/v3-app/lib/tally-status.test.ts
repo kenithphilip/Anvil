@@ -1,21 +1,21 @@
 // Tests for the useTallyBridgeStatus hook. The hook reads /api/health
-// and looks up the integration entry by id. We stub ObaraBackend.health
+// and looks up the integration entry by id. We stub AnvilBackend.health
 // on window so the hook can resolve without a backend.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { useTallyBridgeStatus } from "./tally-status";
 
-// `Window.ObaraBackend` is already declared in `lib/api.ts` with the
+// `Window.AnvilBackend` is already declared in `lib/api.ts` with the
 // canonical shape. We don't re-declare here; we cast on assign.
 
 describe("useTallyBridgeStatus", () => {
   let prev: any;
-  beforeEach(() => { prev = (window as any).ObaraBackend; });
-  afterEach(() => { (window as any).ObaraBackend = prev; });
+  beforeEach(() => { prev = (window as any).AnvilBackend; });
+  afterEach(() => { (window as any).AnvilBackend = prev; });
 
   it("returns configured: true when /api/health reports tally configured", async () => {
-    (window as any).ObaraBackend = (window as any).AnvilBackend = {
+    (window as any).AnvilBackend = (window as any).AnvilBackend = {
       isReady: () => true,
       health: vi.fn().mockResolvedValue({
         integrations: [
@@ -31,7 +31,7 @@ describe("useTallyBridgeStatus", () => {
   });
 
   it("returns configured: false when tally is not configured", async () => {
-    (window as any).ObaraBackend = (window as any).AnvilBackend = {
+    (window as any).AnvilBackend = (window as any).AnvilBackend = {
       isReady: () => true,
       health: vi.fn().mockResolvedValue({
         integrations: [{ id: "tally", configured: false }],
@@ -43,7 +43,7 @@ describe("useTallyBridgeStatus", () => {
   });
 
   it("returns configured: false and stores the error when /api/health rejects", async () => {
-    (window as any).ObaraBackend = (window as any).AnvilBackend = {
+    (window as any).AnvilBackend = (window as any).AnvilBackend = {
       isReady: () => true,
       health: vi.fn().mockRejectedValue(new Error("Backend down")),
     };

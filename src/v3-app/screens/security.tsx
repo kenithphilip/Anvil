@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 
 // ============================================================
@@ -36,11 +36,11 @@ const WiredSecurity = () => {
   const [injectResults, setInjectResults] = useState(null);
 
   const redactions = useFetch(
-    () => ObaraBackend?.security?.listRedactions?.() || Promise.resolve({ redactions: [] }),
+    () => AnvilBackend?.security?.listRedactions?.() || Promise.resolve({ redactions: [] }),
     []
   );
   const routing = useFetch(
-    () => ObaraBackend?.security?.routingLog?.(100) || Promise.resolve({ rows: [] }),
+    () => AnvilBackend?.security?.routingLog?.(100) || Promise.resolve({ rows: [] }),
     []
   );
 
@@ -68,7 +68,7 @@ const WiredSecurity = () => {
     }
     setBusy(true); setFlash(null);
     try {
-      await ObaraBackend?.security?.upsertRedaction?.({
+      await AnvilBackend?.security?.upsertRedaction?.({
         name: editForm.name,
         pattern: editForm.pattern,
         replacement: editForm.replacement || `[${editForm.name.toUpperCase()}-####]`,
@@ -87,7 +87,7 @@ const WiredSecurity = () => {
   const runInjection = async () => {
     setBusy(true); setFlash(null);
     try {
-      const result = await ObaraBackend?.security?.runInjectionTest?.();
+      const result = await AnvilBackend?.security?.runInjectionTest?.();
       setInjectResults(result);
       setFlash({ kind: "good", msg: "Injection bench complete" });
     } catch (err) {

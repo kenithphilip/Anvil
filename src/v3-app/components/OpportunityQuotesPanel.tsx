@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Chip } from "../lib/primitives";
 import { ageLabel, fmtINRShort } from "../lib/helpers";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // Lists every quote that points at a given opportunity. Read-only --
 // click navigates to the Quotes screen (no per-quote deep-link exists
@@ -29,7 +29,7 @@ export const OpportunityQuotesPanel: React.FC<{ opportunityId: string }> = ({ op
     if (!opportunityId) return;
     setQuotes(null);
     setErr(null);
-    Promise.resolve(ObaraBackend?.quotes?.list?.({ opportunity_id: opportunityId, limit: 200 }))
+    Promise.resolve(AnvilBackend?.quotes?.list?.({ opportunity_id: opportunityId, limit: 200 }))
       .then((resp: any) => setQuotes(Array.isArray(resp) ? resp : resp?.quotes || []))
       .catch((e: any) => setErr(e?.message || String(e)));
   }, [opportunityId]);

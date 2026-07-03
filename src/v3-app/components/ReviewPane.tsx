@@ -33,7 +33,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Banner, Chip } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import {
   ReviewPaneSelectionProvider,
   useReviewPaneSelection,
@@ -137,7 +137,7 @@ const useSignedDoc = (docId: string | null | undefined): DocResolution => {
     let refreshTimer: number | undefined;
     const load = async () => {
       try {
-        const doc: any = await ObaraBackend?.documents?.fetch?.(docId);
+        const doc: any = await AnvilBackend?.documents?.fetch?.(docId);
         if (cancelled) return;
         setState({
           url: doc?.downloadUrl || null,
@@ -445,7 +445,7 @@ const useDocumentEvidence = (docId: string | null | undefined): EvidenceBbox[] =
   useEffect(() => {
     if (!docId) { setRows([]); return; }
     let cancelled = false;
-    Promise.resolve(ObaraBackend?.documents?.evidence?.(docId))
+    Promise.resolve(AnvilBackend?.documents?.evidence?.(docId))
       .then((resp: any) => {
         if (cancelled) return;
         const list: any[] = Array.isArray(resp?.rows) ? resp.rows : [];

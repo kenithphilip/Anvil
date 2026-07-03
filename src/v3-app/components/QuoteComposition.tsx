@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Btn, Card, Chip, fmtINR } from "../lib/primitives";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import {
   composePrice,
   applyOverrides,
@@ -83,7 +83,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
     let cancelled = false;
     (async () => {
       try {
-        const resp: any = await ObaraBackend?.admin?.listPricingProfiles?.();
+        const resp: any = await AnvilBackend?.admin?.listPricingProfiles?.();
         if (cancelled) return;
         const rows = Array.isArray(resp) ? resp : resp?.profiles || [];
         const mapped = rows.map((r: any) => pricingProfileFromRow(r)).filter((p: PricingProfile) => p.code && p.components.length);
@@ -113,13 +113,13 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
     let cancel = false;
     (async () => {
       try {
-        const qs: any = await ObaraBackend?.admin?.quoteSettings?.();
+        const qs: any = await AnvilBackend?.admin?.quoteSettings?.();
         if (!cancel) setCurrencyOptions(Array.isArray(qs?.quote_currencies) && qs.quote_currencies.length ? qs.quote_currencies : DEFAULT_CURRENCIES);
       } catch { if (!cancel) setCurrencyOptions(DEFAULT_CURRENCIES); }
       try {
         const [sup, ven]: any[] = await Promise.all([
-          Promise.resolve((ObaraBackend as any)?.inventory?.suppliers?.list?.()).catch(() => null),
-          Promise.resolve(ObaraBackend?.supplierRfq?.listVendors?.()).catch(() => null),
+          Promise.resolve((AnvilBackend as any)?.inventory?.suppliers?.list?.()).catch(() => null),
+          Promise.resolve(AnvilBackend?.supplierRfq?.listVendors?.()).catch(() => null),
         ]);
         if (cancel) return;
         const names = new Set<string>();
@@ -137,7 +137,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
   const loadSaved = React.useCallback(async () => {
     if (!quoteId) return;
     try {
-      const resp: any = await ObaraBackend?.admin?.listPriceComposition?.(quoteId);
+      const resp: any = await AnvilBackend?.admin?.listPriceComposition?.(quoteId);
       const saved = Array.isArray(resp) ? resp : resp?.lines || [];
       if (!saved.length) return;
       const sup: Record<number, { price: number; cur: string; name: string }> = {};
@@ -168,7 +168,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
     if (!quoteId) return;
     setSyncing(true);
     try {
-      const r: any = await ObaraBackend?.supplierRfq?.syncComposition?.(quoteId);
+      const r: any = await AnvilBackend?.supplierRfq?.syncComposition?.(quoteId);
       await loadSaved();
       if (!r || (r.rfqs ?? 0) === 0) {
         window.notifyWarn?.("No linked RFQ", "No RFQ is linked to this quote. Raise one from the Vendor RFQ tab.");
@@ -189,7 +189,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
     let cancelled = false;
     (async () => {
       try {
-        const resp: any = await ObaraBackend?.admin?.listCompositionMaterials?.(quoteId);
+        const resp: any = await AnvilBackend?.admin?.listCompositionMaterials?.(quoteId);
         if (cancelled) return;
         const saved = Array.isArray(resp) ? resp : resp?.lines || [];
         const byLine: Record<number, MatRow[]> = {};
@@ -225,7 +225,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
     const arr = (materials[li] || []).filter((r) => r.raw_material_part_no.trim());
     setMatSaving(true);
     try {
-      const resp: any = await ObaraBackend?.admin?.saveCompositionMaterials?.({
+      const resp: any = await AnvilBackend?.admin?.saveCompositionMaterials?.({
         quote_id: quoteId,
         lines: arr.map((r, seq) => ({
           composition_line_index: li,
@@ -268,7 +268,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
         supplier_name: (supplier[ln.line_index] || {}).name || null,
         overrides: overridesByLine[ln.line_index] || {},
       }));
-      const resp: any = await ObaraBackend?.admin?.recomputePriceComposition?.({
+      const resp: any = await AnvilBackend?.admin?.recomputePriceComposition?.({
         quote_id: quoteId,
         profile_code: profile.code,
         fx,

@@ -2,13 +2,13 @@ import React, { useEffect, useState } from "react";
 import { useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { useTallyBridgeStatus } from "../lib/tally-status";
 
 // ============================================================
 // ANVIL v3 — wired Tally · masters
 // Wave D · Finance
-// Backed by ObaraBackend.tally.listMasters(type)
+// Backed by AnvilBackend.tally.listMasters(type)
 // ============================================================
 
 const TALLY_MASTER_TABS = [
@@ -179,11 +179,11 @@ const WiredTallyMasters = () => {
   const bridge = useTallyBridgeStatus();
 
   // Fetch each master type once for KPI counts.
-  const stock    = useFetch(() => ObaraBackend?.tally?.listMasters?.("stock_item")   || Promise.resolve({ masters: [] }), []);
-  const ledgers  = useFetch(() => ObaraBackend?.tally?.listMasters?.("ledger")       || Promise.resolve({ masters: [] }), []);
-  const gst      = useFetch(() => ObaraBackend?.tally?.listMasters?.("gst_ledger")   || Promise.resolve({ masters: [] }), []);
-  const uoms     = useFetch(() => ObaraBackend?.tally?.listMasters?.("uom")          || Promise.resolve({ masters: [] }), []);
-  const vouchers = useFetch(() => ObaraBackend?.tally?.listMasters?.("voucher_type") || Promise.resolve({ masters: [] }), []);
+  const stock    = useFetch(() => AnvilBackend?.tally?.listMasters?.("stock_item")   || Promise.resolve({ masters: [] }), []);
+  const ledgers  = useFetch(() => AnvilBackend?.tally?.listMasters?.("ledger")       || Promise.resolve({ masters: [] }), []);
+  const gst      = useFetch(() => AnvilBackend?.tally?.listMasters?.("gst_ledger")   || Promise.resolve({ masters: [] }), []);
+  const uoms     = useFetch(() => AnvilBackend?.tally?.listMasters?.("uom")          || Promise.resolve({ masters: [] }), []);
+  const vouchers = useFetch(() => AnvilBackend?.tally?.listMasters?.("voucher_type") || Promise.resolve({ masters: [] }), []);
 
   const byType = {
     stock_item:   tallyMasterRows(stock.data),

@@ -16,7 +16,7 @@ import { NAV, ROLES, crumbFor } from "./lib/nav";
 import { RBAC } from "./lib/rbac";
 import { loadNavSettings, isNavEnabled } from "./lib/nav-settings";
 import { Prefs } from "./lib/preferences";
-import { ObaraBackend } from "./lib/api";
+import { AnvilBackend } from "./lib/api";
 import { ToastStack } from "./lib/toasts";
 import { useShellTelemetry } from "./lib/telemetry";
 import { RESOLVERS, ROUTE_IDS, DEFAULT_ROUTE, readHashParams } from "./routes";
@@ -125,7 +125,7 @@ const buildRoleOptions = (): Array<{ id: string; label: string; short: string }>
  */
 const isSessionValid = (): boolean => {
   try {
-    const session = ObaraBackend?.getSession?.();
+    const session = AnvilBackend?.getSession?.();
     if (!session?.access_token) return false;
     const expiresAt = Number(session.expires_at || 0);
     if (expiresAt && expiresAt < Math.floor(Date.now() / 1000)) return false;
@@ -256,13 +256,13 @@ export default function App() {
   // those users we round-trip /api/auth/profile here. Idempotent: skips
   // when the cache is already populated or when the user is anonymous.
   useEffect(() => {
-    const session = ObaraBackend?.getSession?.();
+    const session = AnvilBackend?.getSession?.();
     if (!session?.access_token) return;
     let cached = null;
     try { cached = JSON.parse(lsGet("auth_profile") || "null"); } catch (_) {}
     if (cached?.user?.email) return;
     let cancelled = false;
-    Promise.resolve(ObaraBackend?.auth?.getProfile?.())
+    Promise.resolve(AnvilBackend?.auth?.getProfile?.())
       .then((p: any) => {
         if (cancelled || !p) return;
         lsSet("auth_profile", JSON.stringify(p));
@@ -285,7 +285,7 @@ export default function App() {
       if (e.key !== lsKey("backend_session") && e.key !== lsLegacyKey("backend_session")) return;
       try {
         const next = e.newValue ? JSON.parse(e.newValue) : null;
-        ObaraBackend?.setSession?.(next);
+        AnvilBackend?.setSession?.(next);
         if (next?.access_token) {
           let target = "home";
           try {

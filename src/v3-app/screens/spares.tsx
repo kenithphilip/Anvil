@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { matchSpares, SPARE_PRESETS, isConsumableCol, nameMatchCandidates, type SpareBomItem } from "../lib/spare-match";
 
 // ============================================================
@@ -101,8 +101,8 @@ const smFetchLinesForGun = async (code: string): Promise<SpareBomItem[]> => {
   const c = String(code || "").trim();
   if (!c) return [];
   try {
-    if (ObaraBackend?.bom?.assetByCode) {
-      const r: any = await ObaraBackend.bom.assetByCode(c);
+    if (AnvilBackend?.bom?.assetByCode) {
+      const r: any = await AnvilBackend.bom.assetByCode(c);
       const lines = r?.lines || [];
       if (Array.isArray(lines) && lines.length) {
         return lines.map((l: any) => ({
@@ -117,7 +117,7 @@ const smFetchLinesForGun = async (code: string): Promise<SpareBomItem[]> => {
   // Legacy fallback: flat bill_of_materials children (no material/size,
   // so only name + part-number matching can apply).
   try {
-    const resp: any = await ObaraBackend?.bom?.list?.({ parent: c });
+    const resp: any = await AnvilBackend?.bom?.list?.({ parent: c });
     const rows = Array.isArray(resp) ? resp : (resp?.rows || resp?.bom || []);
     return (rows || []).map((b: any) => ({
       part_no: String(b.child_part_no || b.child_item || b.child || "").trim(),
@@ -161,8 +161,8 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       smUpsert(next);
       onChange(next);
       try {
-        if (next.customer_id && ObaraBackend?.spareMatrix?.recommend) {
-          await ObaraBackend.spareMatrix.recommend({ customer_id: next.customer_id });
+        if (next.customer_id && AnvilBackend?.spareMatrix?.recommend) {
+          await AnvilBackend.spareMatrix.recommend({ customer_id: next.customer_id });
         }
         setSaveState("saved");
         setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1800);
@@ -484,8 +484,8 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       smUpsert(next);
       onChange(next);
       setDraft(next);
-      if (draft.customer_id && ObaraBackend?.spareMatrix?.recommend) {
-        await ObaraBackend.spareMatrix.recommend({ customer_id: draft.customer_id });
+      if (draft.customer_id && AnvilBackend?.spareMatrix?.recommend) {
+        await AnvilBackend.spareMatrix.recommend({ customer_id: draft.customer_id });
       }
       window.notifySuccess?.("Recommended spares synced", `${rec.length} parts updated.`);
     } catch (err) {
@@ -752,12 +752,12 @@ const SMAddRowForm = ({ onAdd, onCancel }) => {
     setSearching(true);
     try {
       let assets: Array<{ code: string; name?: string | null }> = [];
-      if (ObaraBackend?.bom?.assets) {
-        const r = await ObaraBackend.bom.assets({ q });
+      if (AnvilBackend?.bom?.assets) {
+        const r = await AnvilBackend.bom.assets({ q });
         assets = (r?.assets || []).map((a: any) => ({ code: a.asset_code, name: a.name }));
       }
-      if (!assets.length && ObaraBackend?.bom?.list) {
-        const r = await ObaraBackend.bom.list();
+      if (!assets.length && AnvilBackend?.bom?.list) {
+        const r = await AnvilBackend.bom.list();
         const rows = Array.isArray(r) ? r : (r?.rows || r?.bom || []);
         const seen = new Set<string>();
         (rows || []).forEach((b: any) => {
@@ -1059,7 +1059,7 @@ const SMWorksheetTab = () => {
   const [activeId, setActiveId] = uM(() => (smReadAll()[0]?.id || ""));
   const [showNew, setShowNew] = uM(false);
 
-  const customers = useFetch(() => ObaraBackend?.customers?.list?.() || Promise.resolve([]), []);
+  const customers = useFetch(() => AnvilBackend?.customers?.list?.() || Promise.resolve([]), []);
   const customerList = mM(() => {
     const d = customers.data;
     if (!d) return [];
@@ -1092,8 +1092,8 @@ const SMWorksheetTab = () => {
     setActiveId(matrix.id);
     setShowNew(false);
     try {
-      if (ObaraBackend?.spareMatrix?.recommend) {
-        await ObaraBackend.spareMatrix.recommend({ customer_id });
+      if (AnvilBackend?.spareMatrix?.recommend) {
+        await AnvilBackend.spareMatrix.recommend({ customer_id });
       }
     } catch (err) {
       window.notifyError?.("Could not seed recommendations", String(err.message || err));
@@ -1188,10 +1188,10 @@ const SMSubTab = ({ tab, customerId, customers, onCustomerChange }) => {
     setState({ data: null, loading: true, error: null });
     try {
       let data;
-      if (tab === "recommend")     data = await ObaraBackend?.spareMatrix?.recommend?.({ customer_id: customerId });
-      else if (tab === "kit")      data = await ObaraBackend?.spareMatrix?.kit?.({ customer_id: customerId, months: Number(months) || 12 });
-      else if (tab === "opps")     data = await ObaraBackend?.spareMatrix?.opportunities?.(customerId);
-      else if (tab === "obsolete") data = await ObaraBackend?.spareMatrix?.obsolete?.(Number(obsMonths) || 18);
+      if (tab === "recommend")     data = await AnvilBackend?.spareMatrix?.recommend?.({ customer_id: customerId });
+      else if (tab === "kit")      data = await AnvilBackend?.spareMatrix?.kit?.({ customer_id: customerId, months: Number(months) || 12 });
+      else if (tab === "opps")     data = await AnvilBackend?.spareMatrix?.opportunities?.(customerId);
+      else if (tab === "obsolete") data = await AnvilBackend?.spareMatrix?.obsolete?.(Number(obsMonths) || 18);
       setState({ data, loading: false, error: null });
     } catch (err) {
       setState({ data: null, loading: false, error: err });
@@ -1327,7 +1327,7 @@ const WiredSparesWorksheet = () => {
   const [active, setActive] = uW("worksheet");
   const [customerId, setCustomerId] = uW("");
 
-  const customers = useFetch(() => ObaraBackend?.customers?.list?.() || Promise.resolve([]), []);
+  const customers = useFetch(() => AnvilBackend?.customers?.list?.() || Promise.resolve([]), []);
   const customerList = mW(() => {
     const d = customers.data;
     if (!d) return [];

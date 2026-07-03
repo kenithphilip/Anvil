@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Btn, Chip } from "../lib/primitives";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 
 // Customer hierarchy: pick a parent (corporate group / holding entity)
@@ -49,7 +49,7 @@ export const CustomerHierarchyPanel: React.FC<{
     if (!window.confirm(`Change the parent of "${nameOf(customer)}" to "${targetName}"?\n\nThis updates the customer master hierarchy.`)) return;
     setBusy(true);
     try {
-      await ObaraBackend?.customers?.upsert?.({ ...customer, parent_customer_id: draftParent || null });
+      await AnvilBackend?.customers?.upsert?.({ ...customer, parent_customer_id: draftParent || null });
       window.notifySuccess?.("Hierarchy updated", draftParent ? "Parent set" : "Parent cleared");
       onChanged?.();
     } catch (e: any) {

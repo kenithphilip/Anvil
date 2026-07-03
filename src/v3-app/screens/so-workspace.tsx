@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ageLabel, stageOf, draftLabel } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Prov, Steps, Stream, WSTabs, WSTitle, fmtINR, fmtUSD } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 import { pushRecent } from "../lib/recent-items";
 import { amountInWords } from "../lib/amount-words";
@@ -95,7 +95,7 @@ const WiredSOWorkspace = () => {
     if (!orderId) { setOrder({ data: null, loading: false, error: new Error("no order id in URL") }); return; }
     let cancelled = false;
     setOrder((s) => ({ ...s, loading: true }));
-    soPerf("orders.get", Promise.resolve(ObaraBackend?.orders?.get?.(orderId)))
+    soPerf("orders.get", Promise.resolve(AnvilBackend?.orders?.get?.(orderId)))
       .then((data) => {
         if (cancelled) return;
         const o = data?.order || data;
@@ -117,7 +117,7 @@ const WiredSOWorkspace = () => {
   e(() => {
     if (!orderId) return;
     let cancelled = false;
-    soPerf("audit.list", Promise.resolve(ObaraBackend?.audit?.list?.({ object_id: orderId, limit: 100 }) || Promise.resolve([])))
+    soPerf("audit.list", Promise.resolve(AnvilBackend?.audit?.list?.({ object_id: orderId, limit: 100 }) || Promise.resolve([])))
       .then((data) => {
         if (cancelled) return;
         const rows = Array.isArray(data) ? data : (data?.events || data?.rows || []);
@@ -139,7 +139,7 @@ const WiredSOWorkspace = () => {
   e(() => {
     if (!orderId) return;
     let cancelled = false;
-    soPerf("events.list", Promise.resolve(ObaraBackend?.events?.list?.(orderId) || Promise.resolve([])))
+    soPerf("events.list", Promise.resolve(AnvilBackend?.events?.list?.(orderId) || Promise.resolve([])))
       .then((data) => {
         if (cancelled) return;
         const rows = Array.isArray(data) ? data : (data?.events || data?.rows || []);
@@ -157,7 +157,7 @@ const WiredSOWorkspace = () => {
   e(() => {
     if (!orderId || !order.data?.customer_id) return;
     let cancelled = false;
-    soPerf("cost.breakdown", Promise.resolve(ObaraBackend?.cost?.breakdown?.({ customer_id: order.data.customer_id }) || Promise.resolve(null)))
+    soPerf("cost.breakdown", Promise.resolve(AnvilBackend?.cost?.breakdown?.({ customer_id: order.data.customer_id }) || Promise.resolve(null)))
       .then((data) => { if (!cancelled) setCost({ data, loading: false }); })
       .catch((err) => {
         if (!cancelled) {
@@ -173,7 +173,7 @@ const WiredSOWorkspace = () => {
     if (!orderId) return;
     let cancelled = false;
     setSchedule((s) => ({ ...s, loading: true }));
-    soPerf("scheduleLines.list", Promise.resolve(ObaraBackend?.scheduleLines?.list?.(orderId) || Promise.resolve({ schedule_lines: [] })))
+    soPerf("scheduleLines.list", Promise.resolve(AnvilBackend?.scheduleLines?.list?.(orderId) || Promise.resolve({ schedule_lines: [] })))
       .then((data) => {
         if (cancelled) return;
         const rows = Array.isArray(data) ? data : (data?.schedule_lines || data?.rows || []);
@@ -233,7 +233,7 @@ const WiredSOWorkspace = () => {
   e(() => {
     if (!extractionRunId) { setExtractionRun(null); return; }
     let cancelled = false;
-    soPerf("docai.getRun", Promise.resolve(ObaraBackend?.docai?.getRun?.(extractionRunId) || Promise.resolve(null)))
+    soPerf("docai.getRun", Promise.resolve(AnvilBackend?.docai?.getRun?.(extractionRunId) || Promise.resolve(null)))
       .then((r: any) => { if (!cancelled) setExtractionRun(r?.run || (r && r.id ? r : null)); })
       .catch(() => { if (!cancelled) setExtractionRun(null); });
     return () => { cancelled = true; };
@@ -344,7 +344,7 @@ const WiredSOWorkspace = () => {
     if (!confirm(`Cancel order ${draftLabel(o)}? This sets status to CANCELLED.`)) return;
     setBusy(true);
     try {
-      await ObaraBackend?.orders?.update?.(o.id, { status: "CANCELLED" });
+      await AnvilBackend?.orders?.update?.(o.id, { status: "CANCELLED" });
       window.notifySuccess?.("Order cancelled", o.po_number || o.id.slice(0, 8));
       setBump((n) => n + 1);
     } catch (err) {
@@ -370,7 +370,7 @@ const WiredSOWorkspace = () => {
     }
     setBusy(true);
     try {
-      await ObaraBackend?.orders?.update?.(o.id, {
+      await AnvilBackend?.orders?.update?.(o.id, {
         status: "APPROVED",
         approval: { payloadHash: o.payload_hash },
       });
@@ -409,7 +409,7 @@ const WiredSOWorkspace = () => {
     }
     setBusy(true);
     try {
-      await ObaraBackend?.orders?.update?.(o.id, {
+      await AnvilBackend?.orders?.update?.(o.id, {
         status: "DRAFT",
         correction_reason: trimmed,
         correction_requested_by: RBAC?.role?.() || "sales_manager",
@@ -463,8 +463,8 @@ const WiredSOWorkspace = () => {
   // catch. Returns true when the job was created or de-duped.
   const enqueueBackgroundExtraction = async (orderId: string, docId: string | null): Promise<boolean> => {
     try {
-      const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
-      const session: any = (ObaraBackend as any)?.getSession?.() || null;
+      const cfg: any = (AnvilBackend as any)?.getConfig?.() || {};
+      const session: any = (AnvilBackend as any)?.getSession?.() || null;
       const headers: any = { "Content-Type": "application/json" };
       if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
       if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
@@ -497,7 +497,7 @@ const WiredSOWorkspace = () => {
       // Phase 3.6 observability: pass order_id so extract events
       // are keyed for the workspace's Activity timeline + Pipeline
       // Diagnostics tab.
-      const out: any = await (ObaraBackend as any)?.docai?.extract?.({
+      const out: any = await (AnvilBackend as any)?.docai?.extract?.({
         source_id: sourceDocId,
         order_id: o.id,
       });
@@ -535,7 +535,7 @@ const WiredSOWorkspace = () => {
       if (out?.evidence_by_field && Object.keys(out.evidence_by_field).length) {
         updatePayload.evidence_by_field = out.evidence_by_field;
       }
-      await ObaraBackend?.orders?.update?.(o.id, updatePayload);
+      await AnvilBackend?.orders?.update?.(o.id, updatePayload);
       // Large-PO path. The server returned a page-1-only preview
       // (customer + first-page lines, merged above) to stay under the
       // 60s function limit; the full N-page extraction must run on the
@@ -554,7 +554,7 @@ const WiredSOWorkspace = () => {
         return;
       }
       // 3. Best-effort OCR for the evidence bbox overlay.
-      try { await (ObaraBackend as any)?.ocr?.run?.(sourceDocId, o.id); } catch (_) { /* surface in audit */ }
+      try { await (AnvilBackend as any)?.ocr?.run?.(sourceDocId, o.id); } catch (_) { /* surface in audit */ }
       const tone = lines.length === 0 ? "notifyWarn" : "notifySuccess";
       window[tone]?.(
         lines.length === 0 ? "Extraction returned no lines" : "Extraction complete",
@@ -595,7 +595,7 @@ const WiredSOWorkspace = () => {
     if (!o?.id) return;
     setBusy(true);
     try {
-      await ObaraBackend?.orders?.update?.(o.id, { status: "PENDING_REVIEW" });
+      await AnvilBackend?.orders?.update?.(o.id, { status: "PENDING_REVIEW" });
       window.notifySuccess?.("Sent for review", o.po_number || o.id.slice(0, 8));
       setBump((n) => n + 1);
     } catch (err: any) {
@@ -641,14 +641,14 @@ const WiredSOWorkspace = () => {
       // there is no diff, so this is correct in both modes.
       const candidateLines = linesDraft ?? (o.result?.salesOrder?.lineItems || []);
       const candidate = { ...(o.result?.salesOrder || {}), lineItems: candidateLines };
-      const out: any = await (ObaraBackend as any)?.anomaly?.compute?.(o.customer_id, candidate);
+      const out: any = await (AnvilBackend as any)?.anomaly?.compute?.(o.customer_id, candidate);
       const flags = Array.isArray(out?.flags) ? out.flags : [];
       const nextPreflight = {
         ...(o.preflight_payload || {}),
         last_validated_at: new Date().toISOString(),
         rules_evaluated: out?.rulesEvaluated || null,
       };
-      await ObaraBackend?.orders?.update?.(o.id, {
+      await AnvilBackend?.orders?.update?.(o.id, {
         rule_findings: flags,
         preflight_payload: nextPreflight,
       });
@@ -669,7 +669,7 @@ const WiredSOWorkspace = () => {
     if (!o?.id) return;
     setBusy(true);
     try {
-      const result = await ObaraBackend?.tally?.push?.({ orderId: o.id });
+      const result = await AnvilBackend?.tally?.push?.({ orderId: o.id });
       if (result?.error) {
         window.notifyError?.("Tally push failed", result.error.message || "see audit log");
       } else {
@@ -690,7 +690,7 @@ const WiredSOWorkspace = () => {
   const downloadQuotePdf = async (orderObj) => {
     if (!orderObj?.id) return;
     try {
-      const blob = await ObaraBackend?.quotes?.pdfBlob?.(orderObj.id);
+      const blob = await AnvilBackend?.quotes?.pdfBlob?.(orderObj.id);
       if (!blob) throw new Error("Quote PDF helper unavailable");
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -711,7 +711,7 @@ const WiredSOWorkspace = () => {
   const downloadVoucherPdf = async (orderObj: any) => {
     if (!orderObj?.id) return;
     try {
-      const blob = await (ObaraBackend as any)?.orders?.voucherPdfBlob?.(orderObj.id);
+      const blob = await (AnvilBackend as any)?.orders?.voucherPdfBlob?.(orderObj.id);
       if (!blob) throw new Error("Voucher PDF helper unavailable");
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -733,7 +733,7 @@ const WiredSOWorkspace = () => {
   const createInvoiceForOrder = async (orderObj) => {
     if (!orderObj?.id) return;
     try {
-      const resp: any = await ObaraBackend?.invoices?.create?.({
+      const resp: any = await AnvilBackend?.invoices?.create?.({
         order_id: orderObj.id,
         net_days: 30,
       });
@@ -751,7 +751,7 @@ const WiredSOWorkspace = () => {
   const shareQuotePdf = async (orderObj) => {
     if (!orderObj?.id) return;
     try {
-      const resp: any = await ObaraBackend?.quotes?.share?.(orderObj.id);
+      const resp: any = await AnvilBackend?.quotes?.share?.(orderObj.id);
       const url = resp?.url;
       if (!url) throw new Error("Share endpoint did not return a URL");
       try { await navigator.clipboard.writeText(url); } catch (_) { /* ignore */ }
@@ -770,7 +770,7 @@ const WiredSOWorkspace = () => {
       const evidence = [];
       for (const d of docs) {
         try {
-          const signed = await ObaraBackend?.documents?.fetch?.(d.id);
+          const signed = await AnvilBackend?.documents?.fetch?.(d.id);
           evidence.push({ id: d.id, role: d.role, filename: d.filename, signed });
         } catch (err) {
           evidence.push({ id: d.id, role: d.role, error: String(err.message || err) });
@@ -1089,7 +1089,7 @@ const WiredSOWorkspace = () => {
     }
     setBusy(true);
     try {
-      const resp = await ObaraBackend?.scheduleLines?.bulkCreate?.(orderId, rows);
+      const resp = await AnvilBackend?.scheduleLines?.bulkCreate?.(orderId, rows);
       const inserted = resp?.inserted ?? rows.length;
       window.notifySuccess?.("Schedule lines added", `Inserted ${inserted} row${inserted === 1 ? "" : "s"}`);
       setTsv("");
@@ -1108,7 +1108,7 @@ const WiredSOWorkspace = () => {
     if (!ok) return;
     setBusy(true);
     try {
-      const resp = await ObaraBackend?.scheduleLines?.clear?.(orderId);
+      const resp = await AnvilBackend?.scheduleLines?.clear?.(orderId);
       const deleted = resp?.deleted ?? scheduleRows.length;
       window.notifySuccess?.("Schedule cleared", `Removed ${deleted} row${deleted === 1 ? "" : "s"}`);
       setScheduleBump((n) => n + 1);
@@ -1128,7 +1128,7 @@ const WiredSOWorkspace = () => {
     if (!ok) return;
     setBusy(true);
     try {
-      await ObaraBackend?.scheduleLines?.deleteOne?.(row.id);
+      await AnvilBackend?.scheduleLines?.deleteOne?.(row.id);
       window.notifySuccess?.("Line deleted", `${row.scheduled_date} · qty ${row.scheduled_qty}`);
       setScheduleBump((n) => n + 1);
     } catch (err) {
@@ -1214,7 +1214,7 @@ const WiredSOWorkspace = () => {
     if (String(before ?? "") === String(after ?? "")) return;
     const token = EXTRACTOR_FIELD[canonicalKey] || canonicalKey;
     try {
-      Promise.resolve(ObaraBackend?.docai?.correction?.({
+      Promise.resolve(AnvilBackend?.docai?.correction?.({
         extraction_run_id: extractionRunId,
         customer_id: o.customer_id,
         field_path: `lines[${i}].${token}`,
@@ -1273,8 +1273,8 @@ const WiredSOWorkspace = () => {
     setSuggesting(true);
     setSuggestError(null);
     try {
-      const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
-      const session: any = (ObaraBackend as any)?.getSession?.() || null;
+      const cfg: any = (AnvilBackend as any)?.getConfig?.() || {};
+      const session: any = (AnvilBackend as any)?.getSession?.() || null;
       if (!cfg.url) throw new Error("Backend URL not configured");
       const headers: any = { "Content-Type": "application/json" };
       if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
@@ -1364,7 +1364,7 @@ const WiredSOWorkspace = () => {
           lineItems: draftLines,
         },
       };
-      await ObaraBackend?.orders?.update?.(o.id, { result: nextResult });
+      await AnvilBackend?.orders?.update?.(o.id, { result: nextResult });
       // Audit fix May 2026: clear the draft immediately so a
       // second Save click during the reload window cannot fire a
       // duplicate PATCH. The useEffect on persistedLinesKey will
@@ -2323,7 +2323,7 @@ const PipelineDiagnostics: React.FC<{
     if (state.data || state.loading) return;
     let cancelled = false;
     setState({ data: null, loading: true, error: null });
-    Promise.resolve((ObaraBackend as any)?.orders?.pipelineState?.(orderId))
+    Promise.resolve((AnvilBackend as any)?.orders?.pipelineState?.(orderId))
       .then((data: any) => { if (!cancelled) setState({ data, loading: false, error: null }); })
       .catch((err: any) => { if (!cancelled) setState({ data: null, loading: false, error: err }); });
     return () => { cancelled = true; };
@@ -2667,8 +2667,8 @@ const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = ({ orde
     let cancelled = false;
     (async () => {
       try {
-        const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
-        const session: any = (ObaraBackend as any)?.getSession?.() || null;
+        const cfg: any = (AnvilBackend as any)?.getConfig?.() || {};
+        const session: any = (AnvilBackend as any)?.getSession?.() || null;
         const headers: any = { "Content-Type": "application/json" };
         if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
         if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
@@ -2732,7 +2732,7 @@ const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = ({ orde
           },
         };
       }
-      await ObaraBackend?.orders?.update?.(order.id, patch);
+      await AnvilBackend?.orders?.update?.(order.id, patch);
       window.notifySuccess?.("Header fields saved", order.po_number || order.id.slice(0, 8));
       onSaved();
     } catch (err: any) {
@@ -2836,8 +2836,8 @@ const OrderLineTaxComponents: React.FC<{ orderId: string; lines: any[] }> = ({ o
   const [draft, setDraft] = React.useState<any>({ line_index: 0, component_code: "sgst", amount: 0 });
 
   const headers = () => {
-    const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
-    const session: any = (ObaraBackend as any)?.getSession?.() || null;
+    const cfg: any = (AnvilBackend as any)?.getConfig?.() || {};
+    const session: any = (AnvilBackend as any)?.getSession?.() || null;
     const h: any = { "Content-Type": "application/json" };
     if (session?.access_token) h["Authorization"] = "Bearer " + session.access_token;
     if (cfg.tenantId) h["x-obara-tenant"] = cfg.tenantId;
@@ -2961,7 +2961,7 @@ const TallyTab: React.FC<{
   const reload = React.useCallback(async () => {
     setRecon({ data: null, loading: true, error: null });
     try {
-      const next = await (ObaraBackend as any)?.tally?.getOrderRecon?.(orderId);
+      const next = await (AnvilBackend as any)?.tally?.getOrderRecon?.(orderId);
       setRecon({ data: next, loading: false, error: null });
     } catch (err) {
       setRecon({ data: null, loading: false, error: err });
@@ -2973,7 +2973,7 @@ const TallyTab: React.FC<{
   const reconcileNow = async () => {
     setBusy(true); setBusyMsg(null);
     try {
-      const out = await (ObaraBackend as any)?.tally?.driftCheck?.({
+      const out = await (AnvilBackend as any)?.tally?.driftCheck?.({
         scope: "order",
         scopeValue: orderId,
         trigger: "workspace",
@@ -2992,7 +2992,7 @@ const TallyTab: React.FC<{
 
   const resolveFinding = async (findingId: string) => {
     try {
-      await (ObaraBackend as any)?.tally?.resolveFinding?.(findingId);
+      await (AnvilBackend as any)?.tally?.resolveFinding?.(findingId);
       await reload();
     } catch (_e) { /* no-op */ }
   };

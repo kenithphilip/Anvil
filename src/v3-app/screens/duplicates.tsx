@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired Duplicates
@@ -21,7 +21,7 @@ const dupRowsOf = (resp) => {
 
 const WiredDuplicates = () => {
   const list = useFetch(
-    () => ObaraBackend?.duplicates?.search?.({ minScore: 0.7 }) || Promise.resolve({ candidates: [] }),
+    () => AnvilBackend?.duplicates?.search?.({ minScore: 0.7 }) || Promise.resolve({ candidates: [] }),
     []
   );
 

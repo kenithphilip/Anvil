@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ageLabel, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 
 // ============================================================
@@ -25,8 +25,8 @@ import { RBAC } from "../lib/rbac";
 // ============================================================
 
 const studioCrudFetch = async (path: string, opts: { method?: string; body?: any; headers?: Record<string, string> } = {}) => {
-  const cfg = (ObaraBackend?.getConfig?.() || {});
-  const session = (ObaraBackend?.getSession?.() || null);
+  const cfg = (AnvilBackend?.getConfig?.() || {});
+  const session = (AnvilBackend?.getSession?.() || null);
   const headers: Record<string, string> = { "Content-Type": "application/json", ...((opts.headers as Record<string, string>) || {}) };
   if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
   if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
@@ -104,7 +104,7 @@ const WiredStudioCRUD = () => {
   const { useState: u, useEffect: e, useMemo: m } = React;
 
   const customers = useFetch(
-    () => ObaraBackend?.customers?.list?.() || studioCrudFetch("/api/customers"),
+    () => AnvilBackend?.customers?.list?.() || studioCrudFetch("/api/customers"),
     []
   );
 
@@ -133,7 +133,7 @@ const WiredStudioCRUD = () => {
     }
     setVersions({ data: null, loading: true, error: null });
     setErr(null);
-    Promise.resolve(ObaraBackend?.profileVersions?.list?.(id)
+    Promise.resolve(AnvilBackend?.profileVersions?.list?.(id)
                     || studioCrudFetch("/api/customers/profile_versions?customerId=" + encodeURIComponent(id)))
       .then((data) => setVersions({ data, loading: false, error: null }))
       .catch((error) => setVersions({ data: null, loading: false, error }));
@@ -206,7 +206,7 @@ const WiredStudioCRUD = () => {
     setRollingBack(versionId);
     setErr(null);
     try {
-      await (ObaraBackend?.profileVersions?.rollback?.(versionId)
+      await (AnvilBackend?.profileVersions?.rollback?.(versionId)
              || studioCrudFetch("/api/customers/profile_versions", { method: "POST", body: { profileVersionId: versionId } }));
       setOkMsg("Rolled back");
       loadVersions(customerId);
@@ -250,7 +250,7 @@ const WiredStudioCRUD = () => {
           golden_examples: Array.isArray(currentProfile?.golden_examples) ? currentProfile.golden_examples : [],
         },
       };
-      await (ObaraBackend?.customers?.upsert?.(payload)
+      await (AnvilBackend?.customers?.upsert?.(payload)
              || studioCrudFetch("/api/customers", { method: "POST", body: payload }));
       setOkMsg("Profile saved as new version");
       window.notifySuccess?.("Profile saved", selectedCustomer.customer_name || "new version");

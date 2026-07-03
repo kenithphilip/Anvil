@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { ageLabel, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — Extraction Review Queue (Wave 4.1 operator surface)
@@ -14,8 +14,8 @@ import { ObaraBackend } from "../lib/api";
 // Operators triage from here: claim a row, jump to the order's
 // workspace to fix it, then resolve it confirmed / rejected.
 //
-// Data: ObaraBackend.docai.listReviewQueue({status}) -> { queue, summary }
-//       ObaraBackend.docai.reviewDecide({ id, action, resolution? })
+// Data: AnvilBackend.docai.listReviewQueue({status}) -> { queue, summary }
+//       AnvilBackend.docai.reviewDecide({ id, action, resolution? })
 // ============================================================
 
 type QueueRow = {
@@ -82,7 +82,7 @@ const ExtractionReview = () => {
   // for the In-review and Resolved tabs.
   const list = useFetch(async () => {
     const q = tab === "open" ? undefined : { status: STATUS_BY_TAB[tab] };
-    const r: any = await ObaraBackend?.docai?.listReviewQueue?.(q);
+    const r: any = await AnvilBackend?.docai?.listReviewQueue?.(q);
     return r || { queue: [], summary: {} };
   }, [tab]);
 
@@ -90,7 +90,7 @@ const ExtractionReview = () => {
     setBusy(id);
     setActionError(null);
     try {
-      await ObaraBackend?.docai?.reviewDecide?.({ id, action, resolution });
+      await AnvilBackend?.docai?.reviewDecide?.({ id, action, resolution });
       list.reload();
     } catch (err: any) {
       setActionError(err);

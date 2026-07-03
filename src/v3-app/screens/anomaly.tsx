@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { ageLabel, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // Rule library mirror of `src/api/anomaly/compute.js`. Kept in sync with
 // the server-side RULES array; the screen renders this when the user
@@ -37,8 +37,8 @@ const RULE_CATALOG: Array<{ id: string; label: string; bucket: string; severity:
 // ============================================================
 
 const findingFetch = async () => {
-  const cfg = (ObaraBackend?.getConfig?.() || {});
-  const session = (ObaraBackend?.getSession?.() || null);
+  const cfg = (AnvilBackend?.getConfig?.() || {});
+  const session = (AnvilBackend?.getSession?.() || null);
   if (!cfg.url) throw new Error("Backend URL not configured");
   const headers = { "Content-Type": "application/json" };
   if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
@@ -77,7 +77,7 @@ const WiredAnomaly = () => {
     setResolving(id);
     setResolveError(null);
     try {
-      await ObaraBackend?.findings?.resolve?.(id, true);
+      await AnvilBackend?.findings?.resolve?.(id, true);
       list.reload();
     } catch (err) {
       setResolveError(err);
@@ -89,7 +89,7 @@ const WiredAnomaly = () => {
   const explainOne = async (id: string) => {
     setExplanations((s) => ({ ...s, [id]: { loading: true } }));
     try {
-      const r: any = await ObaraBackend?.anomaly?.explain?.(id);
+      const r: any = await AnvilBackend?.anomaly?.explain?.(id);
       const out = r?.explanation || r?.data || r;
       setExplanations((s) => ({
         ...s,

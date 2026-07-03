@@ -7,7 +7,7 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 interface Supplier {
   id: string;
@@ -51,7 +51,7 @@ const InventorySuppliersScreen: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.resolve((ObaraBackend as any)?.inventory?.suppliers?.list?.())
+    Promise.resolve((AnvilBackend as any)?.inventory?.suppliers?.list?.())
       .then((r: any) => {
         if (cancelled) return;
         setSuppliers({ data: r?.suppliers || [], loading: false, error: null });
@@ -67,7 +67,7 @@ const InventorySuppliersScreen: React.FC = () => {
     setBusy(true); setErr(null);
     try {
       if (!form.supplier_code || !form.supplier_name) throw new Error("supplier_code + supplier_name required");
-      await (ObaraBackend as any)?.inventory?.suppliers?.upsert?.({
+      await (AnvilBackend as any)?.inventory?.suppliers?.upsert?.({
         supplier_code: form.supplier_code,
         supplier_name: form.supplier_name,
         country: form.country || null,

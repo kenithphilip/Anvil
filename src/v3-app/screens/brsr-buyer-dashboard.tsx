@@ -9,7 +9,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 const fmt = (n: number | null | undefined, d = 2) =>
   (n == null || !Number.isFinite(Number(n))) ? "—" : Number(n).toFixed(d);
@@ -30,7 +30,7 @@ const BrsrBuyerDashboardScreen: React.FC = () => {
 
   const reload = () => {
     setData((s) => ({ ...s, loading: true }));
-    Promise.resolve((ObaraBackend as any)?.brsr?.buyerDashboard?.(fy))
+    Promise.resolve((AnvilBackend as any)?.brsr?.buyerDashboard?.(fy))
       .then((d: any) => setData({ data: d, loading: false, error: null }))
       .catch((err: any) => setData({ data: null, loading: false, error: err }));
   };
@@ -38,12 +38,12 @@ const BrsrBuyerDashboardScreen: React.FC = () => {
   useEffect(reload, [fy]);
 
   const exportCsv = () => {
-    const url = (ObaraBackend as any)?.brsr?.exportUrl?.(fy, "csv");
+    const url = (AnvilBackend as any)?.brsr?.exportUrl?.(fy, "csv");
     if (url) (window as any).open(url, "_blank");
   };
 
   const exportXbrl = () => {
-    const url = (ObaraBackend as any)?.brsr?.exportUrl?.(fy, "xbrl");
+    const url = (AnvilBackend as any)?.brsr?.exportUrl?.(fy, "xbrl");
     if (url) (window as any).open(url, "_blank");
   };
 
@@ -51,7 +51,7 @@ const BrsrBuyerDashboardScreen: React.FC = () => {
     if (!invite.supplier_tenant_id) return;
     setSubmitting(true);
     try {
-      await (ObaraBackend as any)?.brsr?.invite?.({
+      await (AnvilBackend as any)?.brsr?.invite?.({
         supplier_tenant_id: invite.supplier_tenant_id,
         buyer_purchase_share_pct: invite.buyer_purchase_share_pct
           ? Number(invite.buyer_purchase_share_pct) : null,

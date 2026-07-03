@@ -2,12 +2,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ageLabel, draftLabel, fmtDate, stageOf, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired Guns viewer
 // Two-pane: gun list (left) · spec + BOM tree + matrix usage + recent SOs (right)
-// Reads via ObaraBackend.bom.list, ObaraBackend.customers.list, ObaraBackend.orders.list.
+// Reads via AnvilBackend.bom.list, AnvilBackend.customers.list, AnvilBackend.orders.list.
 // Drawing base URL pulled from localStorage["obara:drawing_base_url"]
 // (set elsewhere by drawing-link config). Falls back to disabled icon.
 // ============================================================
@@ -123,9 +123,9 @@ const buildCustomerLookup = (resp) => {
 const WiredGunsViewer = () => {
   const { useState: uS, useMemo: uMemo } = React;
 
-  const bom = useFetch(() => ObaraBackend?.bom?.list?.() || Promise.resolve({ rows: [] }), []);
-  const customers = useFetch(() => ObaraBackend?.customers?.list?.() || Promise.resolve({ customers: [] }), []);
-  const orders = useFetch(() => ObaraBackend?.orders?.list?.({ limit: 100 }) || Promise.resolve({ orders: [] }), []);
+  const bom = useFetch(() => AnvilBackend?.bom?.list?.() || Promise.resolve({ rows: [] }), []);
+  const customers = useFetch(() => AnvilBackend?.customers?.list?.() || Promise.resolve({ customers: [] }), []);
+  const orders = useFetch(() => AnvilBackend?.orders?.list?.({ limit: 100 }) || Promise.resolve({ orders: [] }), []);
 
   const [filter, setFilter] = uS("");
   const [selected, setSelected] = uS(null); // gun_no string

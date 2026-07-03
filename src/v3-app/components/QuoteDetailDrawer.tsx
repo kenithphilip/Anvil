@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { QuoteComposition } from "./QuoteComposition";
 import { QuoteHistoryTab } from "./QuoteHistoryTab";
 import { QuoteRfqTab } from "./QuoteRfqTab";
@@ -28,8 +28,8 @@ type Line = any;
 type Template = any;
 
 const fetchJson = async (path: string, opts?: RequestInit) => {
-  const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
-  const session: any = (ObaraBackend as any)?.getSession?.() || null;
+  const cfg: any = (AnvilBackend as any)?.getConfig?.() || {};
+  const session: any = (AnvilBackend as any)?.getSession?.() || null;
   if (!cfg.url) throw new Error("Backend URL not configured");
   const headers: any = { "Content-Type": "application/json", ...(opts?.headers as any || {}) };
   if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
@@ -131,11 +131,11 @@ export const QuoteDetailDrawer: React.FC<{
           fetchJson("/api/admin/quote_lines?quote_id=" + quote.id).catch(() => ({ lines: [] })),
           fetchJson("/api/admin/document_templates?doc_type=quotation").catch(() => ({ templates: [] })),
           quote.customer_id
-            ? Promise.resolve((ObaraBackend as any)?.customers?.listContacts?.({ customer_id: quote.customer_id }))
+            ? Promise.resolve((AnvilBackend as any)?.customers?.listContacts?.({ customer_id: quote.customer_id }))
                 .then((r: any) => Array.isArray(r) ? { contacts: r } : (r || { contacts: [] }))
                 .catch(() => ({ contacts: [] }))
             : Promise.resolve({ contacts: [] }),
-          Promise.resolve((ObaraBackend as any)?.admin?.quoteSettings?.()).catch(() => ({})),
+          Promise.resolve((AnvilBackend as any)?.admin?.quoteSettings?.()).catch(() => ({})),
         ]);
         if (cancelled) return;
         setLines(linesResp.lines || []);
@@ -171,7 +171,7 @@ export const QuoteDetailDrawer: React.FC<{
 
   const reloadContacts = async () => {
     if (!quote.customer_id) return [];
-    const r: any = await (ObaraBackend as any)?.customers?.listContacts?.({ customer_id: quote.customer_id });
+    const r: any = await (AnvilBackend as any)?.customers?.listContacts?.({ customer_id: quote.customer_id });
     const list = Array.isArray(r) ? r : (r?.contacts || []);
     setContacts(list);
     return list;
@@ -187,7 +187,7 @@ export const QuoteDetailDrawer: React.FC<{
     if (!name && !email) { window.notifyError?.("Contact needs a name or email", "Enter at least one."); return; }
     setSavingContact(true);
     try {
-      const resp: any = await (ObaraBackend as any)?.customers?.upsertContact?.({
+      const resp: any = await (AnvilBackend as any)?.customers?.upsertContact?.({
         customer_id: quote.customer_id,
         name: name || null,
         email: email || null,
@@ -293,7 +293,7 @@ export const QuoteDetailDrawer: React.FC<{
     setItemQuery("");
     if (items != null) return;
     try {
-      const resp: any = await ObaraBackend?.admin?.listItemMaster?.({ limit: 1000 });
+      const resp: any = await AnvilBackend?.admin?.listItemMaster?.({ limit: 1000 });
       setItems(Array.isArray(resp) ? resp : resp?.items || []);
     } catch (e) {
       setItems([]);
@@ -353,20 +353,20 @@ export const QuoteDetailDrawer: React.FC<{
     } finally { setLifeBusy(null); }
   };
   const transition = (status: string, label: string) =>
-    runLife(status, () => (ObaraBackend as any)?.quotes?.transition?.(quote.id, status), label);
+    runLife(status, () => (AnvilBackend as any)?.quotes?.transition?.(quote.id, status), label);
   const sendToCustomer = () =>
-    runLife("send", () => (ObaraBackend as any)?.quotes?.sendQuote?.(quote.id), "Quote sent to customer");
+    runLife("send", () => (AnvilBackend as any)?.quotes?.sendQuote?.(quote.id), "Quote sent to customer");
   const revise = () =>
     runLife("revise", async () => {
-      const r = await (ObaraBackend as any)?.quotes?.revise?.(quote.id);
+      const r = await (AnvilBackend as any)?.quotes?.revise?.(quote.id);
       onSaved?.();
       return r;
     }, "New revision created");
   const convert = () =>
-    runLife("convert", () => (ObaraBackend as any)?.quotes?.convertToOrder?.(quote.id), "Converted to order");
+    runLife("convert", () => (AnvilBackend as any)?.quotes?.convertToOrder?.(quote.id), "Converted to order");
   const cancelQuote = () => {
     if (typeof confirm === "function" && !confirm("Cancel this quote?")) return;
-    runLife("cancel", () => (ObaraBackend as any)?.quotes?.cancel?.(quote.id), "Quote cancelled");
+    runLife("cancel", () => (AnvilBackend as any)?.quotes?.cancel?.(quote.id), "Quote cancelled");
   };
 
   const status = String(draft.status || "DRAFT");

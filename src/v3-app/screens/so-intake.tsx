@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Banner, Btn, Card, Chip, Dot, KV, Steps, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { DocCropper } from "../components/DocCropper";
 import { stampOcrSources } from "../lib/field-sources";
 import { parsePoDate } from "../lib/parse-date";
@@ -161,7 +161,7 @@ const WiredSOIntake = () => {
     if (!newCustomerOpen) return;
     let cancelled = false;
     setLocationsList({ data: null, loading: true });
-    Promise.resolve(ObaraBackend?.customers?.listLocations?.() || Promise.resolve({ locations: [] }))
+    Promise.resolve(AnvilBackend?.customers?.listLocations?.() || Promise.resolve({ locations: [] }))
       .then((data) => { if (!cancelled) setLocationsList({ data, loading: false }); })
       .catch(() => { if (!cancelled) setLocationsList({ data: { locations: [] }, loading: false }); });
     return () => { cancelled = true; };
@@ -218,12 +218,12 @@ const WiredSOIntake = () => {
       const beforeRow = dialogMode === "edit"
         ? (customerList || []).find((c: any) => c.id === editingCustomerId) || null
         : null;
-      const res = await ObaraBackend?.customers?.upsert?.(payload);
+      const res = await AnvilBackend?.customers?.upsert?.(payload);
       const created = res?.customer || res?.row || res;
       // Re-fetch the list so the new customer (or freshly-edited
       // record) shows up with current values, then keep the right
       // row selected.
-      const fresh = await ObaraBackend?.customers?.list?.();
+      const fresh = await AnvilBackend?.customers?.list?.();
       setCustomers({ data: fresh, loading: false, error: null });
       const isEdit = dialogMode === "edit";
       const resolvedId = created?.id
@@ -311,7 +311,7 @@ const WiredSOIntake = () => {
   const [health, setHealth] = u<{ integrations?: Array<{ id: string; configured: boolean }> } | null>(null);
   e(() => {
     let cancelled = false;
-    Promise.resolve(ObaraBackend?.health?.()).then((h) => {
+    Promise.resolve(AnvilBackend?.health?.()).then((h) => {
       if (!cancelled && h) setHealth(h);
     }).catch(() => {});
     return () => { cancelled = true; };
@@ -333,7 +333,7 @@ const WiredSOIntake = () => {
 
   e(() => {
     let cancelled = false;
-    Promise.resolve(ObaraBackend?.customers?.list?.() || Promise.resolve({ customers: [] }))
+    Promise.resolve(AnvilBackend?.customers?.list?.() || Promise.resolve({ customers: [] }))
       .then((data) => { if (!cancelled) setCustomers({ data, loading: false, error: null }); })
       .catch((error) => { if (!cancelled) setCustomers({ data: null, loading: false, error }); });
     // Preload the vendor-code index for tier 1b auto-match.
@@ -342,8 +342,8 @@ const WiredSOIntake = () => {
     // + name tiers.
     (async () => {
       try {
-        const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
-        const session: any = (ObaraBackend as any)?.getSession?.() || null;
+        const cfg: any = (AnvilBackend as any)?.getConfig?.() || {};
+        const session: any = (AnvilBackend as any)?.getSession?.() || null;
         if (!cfg.url) return;
         const headers: any = { "Content-Type": "application/json" };
         if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
@@ -624,7 +624,7 @@ const WiredSOIntake = () => {
   const runExtraction = async (file, documentId) => {
     setBusy("extract");
     try {
-      const out = await ObaraBackend?.documents?.extract?.(file, { source_id: documentId });
+      const out = await AnvilBackend?.documents?.extract?.(file, { source_id: documentId });
       // Persist anything the extractor returned, even if customer
       // resolution falls through. Lines + cost meta land in the
       // order create payload.
@@ -869,7 +869,7 @@ const WiredSOIntake = () => {
     setErr(null);
     setBusy("upload");
     try {
-      const meta = await ObaraBackend?.documents?.upload?.(file, "purchase_order");
+      const meta = await AnvilBackend?.documents?.upload?.(file, "purchase_order");
       if (!meta || !meta.documentId) throw new Error("Upload returned no document id");
       setDoc({ id: meta.documentId, filename: file.name, size: file.size, scan: meta.scan || null });
       setBusy(null);
@@ -976,7 +976,7 @@ const WiredSOIntake = () => {
        if (poNumberFromOcr) headerColumnDefaults.po_number = poNumberFromOcr;
        if (poDateFromOcr) headerColumnDefaults.po_date = poDateFromOcr;
 
-       const res = await ObaraBackend?.orders?.create?.({
+       const res = await AnvilBackend?.orders?.create?.({
          order_mode: mode,
          customer_id: customerId,
          status: "DRAFT",
@@ -992,7 +992,7 @@ const WiredSOIntake = () => {
       if (!newId) throw new Error("Order create returned no id");
       // Best-effort OCR kickoff if a doc was uploaded; don't block navigation on it.
       if (doc?.id) {
-        try { await ObaraBackend?.ocr?.run?.(doc.id, newId); } catch (_) { /* surface in workspace */ }
+        try { await AnvilBackend?.ocr?.run?.(doc.id, newId); } catch (_) { /* surface in workspace */ }
       }
       // Large-PO: the intake extraction was a page-1 preview. Now that
       // the order exists, enqueue the full N-page extraction on the
@@ -1003,8 +1003,8 @@ const WiredSOIntake = () => {
       // workspace.
       if (largePo && doc?.id) {
         try {
-          const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
-          const session: any = (ObaraBackend as any)?.getSession?.() || null;
+          const cfg: any = (AnvilBackend as any)?.getConfig?.() || {};
+          const session: any = (AnvilBackend as any)?.getSession?.() || null;
           const headers: any = { "Content-Type": "application/json" };
           if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
           if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;

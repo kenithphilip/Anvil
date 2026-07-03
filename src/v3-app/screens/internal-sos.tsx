@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { ageLabel } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — Internal SOs CRUD overlay
@@ -51,7 +51,7 @@ const WiredInternalSosCRUD = () => {
 
   const reload = () => {
     setList((s) => ({ ...s, loading: true }));
-    Promise.resolve(ObaraBackend?.sales?.listInternalSos?.() || { rows: [] })
+    Promise.resolve(AnvilBackend?.sales?.listInternalSos?.() || { rows: [] })
       .then((r) => {
         const rows = Array.isArray(r) ? r : (r?.internal_sales_orders || r?.rows || []);
         setList({ rows, loading: false, error: null });
@@ -61,7 +61,7 @@ const WiredInternalSosCRUD = () => {
 
   e(reload, []);
   e(() => {
-    Promise.resolve(ObaraBackend?.customers?.list?.() || [])
+    Promise.resolve(AnvilBackend?.customers?.list?.() || [])
       .then((r) => setCustomers(Array.isArray(r) ? r : (r?.rows || [])));
   }, []);
 
@@ -120,14 +120,14 @@ const WiredInternalSosCRUD = () => {
       if (payload.expected_value_inr) payload.expected_value_inr = Number(payload.expected_value_inr);
       if (editing && editing !== "__new__") payload.id = editing;
       const fn = (editing && editing !== "__new__")
-        ? ObaraBackend?.sales?.updateInternalSo
-        : ObaraBackend?.sales?.createInternalSo;
+        ? AnvilBackend?.sales?.updateInternalSo
+        : AnvilBackend?.sales?.createInternalSo;
       let result;
       if (typeof fn === "function") {
         result = await fn(payload);
       } else {
-        const cfg = (ObaraBackend?.getConfig?.() || {});
-        const session = (ObaraBackend?.getSession?.() || null);
+        const cfg = (AnvilBackend?.getConfig?.() || {});
+        const session = (AnvilBackend?.getSession?.() || null);
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
         if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
@@ -154,12 +154,12 @@ const WiredInternalSosCRUD = () => {
     if (!window.confirm(`Delete internal SO ${ref || id}?`)) return;
     setBusy(true);
     try {
-      const fn = ObaraBackend?.sales?.deleteInternalSo;
+      const fn = AnvilBackend?.sales?.deleteInternalSo;
       if (typeof fn === "function") {
         await fn(id);
       } else {
-        const cfg = (ObaraBackend?.getConfig?.() || {});
-        const session = (ObaraBackend?.getSession?.() || null);
+        const cfg = (AnvilBackend?.getConfig?.() || {});
+        const session = (AnvilBackend?.getSession?.() || null);
         const headers: Record<string, string> = {};
         if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
         if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;

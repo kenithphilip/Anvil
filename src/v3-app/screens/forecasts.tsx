@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { ageLabel, fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired Forecasts
@@ -13,10 +13,10 @@ const forecastFetch = async () => {
   // The legacy unified app exposed `forecast.pipeline()` for a richer
   // pivot view. Phase 8 backend exposes `forecast.get()` only; that
   // returns the same snapshot rows so we use it directly.
-  if (ObaraBackend?.forecast?.get) return ObaraBackend.forecast.get();
+  if (AnvilBackend?.forecast?.get) return AnvilBackend.forecast.get();
   // Fallback to direct fetch
-  const cfg = (ObaraBackend?.getConfig?.() || {});
-  const session = (ObaraBackend?.getSession?.() || null);
+  const cfg = (AnvilBackend?.getConfig?.() || {});
+  const session = (AnvilBackend?.getSession?.() || null);
   if (!cfg.url) throw new Error("Backend URL not configured");
   const headers = { "Content-Type": "application/json" };
   if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
@@ -96,7 +96,7 @@ const WiredForecasts = () => {
         meta={snapshotAt ? `latest snapshot · ${ageLabel(snapshotAt)} ago` : "no snapshot yet"}
         right={<>
           <Btn icon kind="ghost" sm onClick={data.reload} title="Refresh">{Icon.cycle}</Btn>
-          <Btn sm kind="primary" onClick={() => ObaraBackend?.forecast?.snapshot?.().then(() => data.reload())}>{Icon.bolt} new snapshot</Btn>
+          <Btn sm kind="primary" onClick={() => AnvilBackend?.forecast?.snapshot?.().then(() => data.reload())}>{Icon.bolt} new snapshot</Btn>
         </>}
       />
       <WSTabs tabs={tabs} active={tab} onChange={setTab} />

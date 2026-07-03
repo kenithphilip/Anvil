@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 import { ItemDetailDrawer } from "../components/ItemDetailDrawer";
 
@@ -12,8 +12,8 @@ import { ItemDetailDrawer } from "../components/ItemDetailDrawer";
 // ============================================================
 
 const itemFetch = async (path) => {
-  const cfg = (ObaraBackend?.getConfig?.() || {});
-  const session = (ObaraBackend?.getSession?.() || null);
+  const cfg = (AnvilBackend?.getConfig?.() || {});
+  const session = (AnvilBackend?.getSession?.() || null);
   if (!cfg.url) throw new Error("Backend URL not configured");
   const headers = { "Content-Type": "application/json" };
   if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
@@ -73,7 +73,7 @@ const ItemMasterTab = () => {
   // read-only list + read-only detail drawer.
   const canEdit = RBAC.isAdmin();
   const list = useFetch(
-    () => ObaraBackend?.admin?.listItemMaster?.() || itemFetch("/api/admin/item_master"),
+    () => AnvilBackend?.admin?.listItemMaster?.() || itemFetch("/api/admin/item_master"),
     []
   );
   // Item-detail drawer state. null = closed, {} = create-new,
@@ -155,7 +155,7 @@ const ItemMasterTab = () => {
 
 const ItemAliasesTab = () => {
   const list = useFetch(
-    () => ObaraBackend?.aliases?.list?.() || Promise.resolve({ aliases: [] }),
+    () => AnvilBackend?.aliases?.list?.() || Promise.resolve({ aliases: [] }),
     []
   );
 
@@ -200,7 +200,7 @@ const ItemAliasesTab = () => {
 
 const ItemInventoryTab = () => {
   const list = useFetch(
-    () => ObaraBackend?.admin?.listInventory?.() || itemFetch("/api/admin/inventory"),
+    () => AnvilBackend?.admin?.listInventory?.() || itemFetch("/api/admin/inventory"),
     []
   );
 
@@ -245,7 +245,7 @@ const ItemInventoryTab = () => {
 
 const ItemBomTab = () => {
   const list = useFetch(
-    () => ObaraBackend?.bom?.list?.() || Promise.resolve({ rows: [] }),
+    () => AnvilBackend?.bom?.list?.() || Promise.resolve({ rows: [] }),
     []
   );
 
@@ -289,7 +289,7 @@ const ItemBomTab = () => {
 // Imported BOMs / assets browser (PR4 Phase 3 follow-up). Lists bom_assets
 // and expands to the as-imported lines + project/customer where-used.
 const ItemAssetsTab = () => {
-  const list = useFetch(() => ObaraBackend?.bom?.assets?.() || Promise.resolve({ assets: [] }), []);
+  const list = useFetch(() => AnvilBackend?.bom?.assets?.() || Promise.resolve({ assets: [] }), []);
   const [open, setOpen] = useState<string | null>(null);
   const [detail, setDetail] = useState<Record<string, any>>({});
 
@@ -313,7 +313,7 @@ const ItemAssetsTab = () => {
     if (open === a.id) { setOpen(null); return; }
     setOpen(a.id);
     if (!detail[a.id]) {
-      try { const d = await ObaraBackend.bom.asset(a.id); setDetail((m) => ({ ...m, [a.id]: d })); }
+      try { const d = await AnvilBackend.bom.asset(a.id); setDetail((m) => ({ ...m, [a.id]: d })); }
       catch (e: any) { setDetail((m) => ({ ...m, [a.id]: { error: String(e.message || e) } })); }
     }
   };

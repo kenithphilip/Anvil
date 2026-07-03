@@ -16,10 +16,10 @@ describe("signOutAndRedirect", () => {
     }
   });
 
-  it("calls ObaraBackend.setSession(null) and clears the auth keys", () => {
+  it("calls AnvilBackend.setSession(null) and clears the auth keys", () => {
     const setSession = vi.fn();
     const lsRemove = vi.spyOn(storage, "lsRemove").mockImplementation(() => undefined);
-    Object.defineProperty(api, "ObaraBackend", {
+    Object.defineProperty(api, "AnvilBackend", {
       configurable: true,
       get: () => ({ setSession }),
     });
@@ -30,7 +30,7 @@ describe("signOutAndRedirect", () => {
   });
 
   it("redirects to the marketing landing", () => {
-    Object.defineProperty(api, "ObaraBackend", {
+    Object.defineProperty(api, "AnvilBackend", {
       configurable: true,
       get: () => ({ setSession: () => undefined }),
     });
@@ -40,7 +40,7 @@ describe("signOutAndRedirect", () => {
   });
 
   it("survives a sealed-off localStorage without throwing", () => {
-    Object.defineProperty(api, "ObaraBackend", {
+    Object.defineProperty(api, "AnvilBackend", {
       configurable: true,
       get: () => ({ setSession: () => undefined }),
     });

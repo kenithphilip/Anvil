@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip } from "../lib/primitives";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // Admin: per-tenant pricing-profile configuration.
 //
@@ -42,7 +42,7 @@ export const PricingProfilesAdmin: React.FC = () => {
   const load = () => {
     setProfiles(null);
     setErr(null);
-    Promise.resolve(ObaraBackend?.admin?.listPricingProfiles?.())
+    Promise.resolve(AnvilBackend?.admin?.listPricingProfiles?.())
       .then((resp: any) => setProfiles(Array.isArray(resp) ? resp : resp?.profiles || []))
       .catch((e: any) => setErr(e?.message || String(e)));
   };
@@ -89,7 +89,7 @@ export const PricingProfilesAdmin: React.FC = () => {
           visibility: c.visibility === "customer" ? "customer" : "internal",
         })),
       };
-      await ObaraBackend?.admin?.upsertPricingProfile?.(payload);
+      await AnvilBackend?.admin?.upsertPricingProfile?.(payload);
       window.notifySuccess?.("Pricing profile saved", payload.code);
       setEditing(null);
       load();
@@ -104,7 +104,7 @@ export const PricingProfilesAdmin: React.FC = () => {
     if (!p.id || p.tenant_id == null) return; // globals are protected
     if (typeof confirm === "function" && !confirm(`Delete profile "${p.code}"?`)) return;
     try {
-      await ObaraBackend?.admin?.deletePricingProfile?.(p.id);
+      await AnvilBackend?.admin?.deletePricingProfile?.(p.id);
       load();
     } catch (e: any) {
       setErr(e?.message || String(e));

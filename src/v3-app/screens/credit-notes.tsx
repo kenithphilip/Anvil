@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // Audit P8.5: list + minimal CRUD UI for the P7.5 credit / debit
 // notes endpoint. Operators can browse, create a draft against an
@@ -59,7 +59,7 @@ const CreditNotesScreen: React.FC = () => {
 
   const reload = () => {
     setLoading(true);
-    Promise.resolve(ObaraBackend?.creditNotes?.list?.())
+    Promise.resolve(AnvilBackend?.creditNotes?.list?.())
       .then((r: any) => {
         const list = Array.isArray(r?.credit_notes) ? r.credit_notes : (Array.isArray(r) ? r : []);
         setRows(list);
@@ -76,7 +76,7 @@ const CreditNotesScreen: React.FC = () => {
   const transition = async (id: string, status: string) => {
     setBusy(true);
     try {
-      await ObaraBackend?.creditNotes?.transition?.(id, status);
+      await AnvilBackend?.creditNotes?.transition?.(id, status);
       reload();
     } catch (e) {
       setError((e as Error).message);
@@ -89,7 +89,7 @@ const CreditNotesScreen: React.FC = () => {
     if (!window.confirm("Cancel this credit/debit note? This is a soft cancel and cannot be undone.")) return;
     setBusy(true);
     try {
-      await ObaraBackend?.creditNotes?.cancel?.(id);
+      await AnvilBackend?.creditNotes?.cancel?.(id);
       reload();
     } catch (e) {
       setError((e as Error).message);
@@ -106,7 +106,7 @@ const CreditNotesScreen: React.FC = () => {
       try { lineItems = JSON.parse(form.line_items); }
       catch { throw new Error("line_items must be valid JSON array"); }
       if (!form.invoice_id && !form.einvoice_id) throw new Error("invoice_id or einvoice_id required");
-      await ObaraBackend?.creditNotes?.create?.({
+      await AnvilBackend?.creditNotes?.create?.({
         kind: form.kind,
         reason: form.reason,
         reason_text: form.reason_text || null,

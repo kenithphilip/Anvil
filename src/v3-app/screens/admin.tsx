@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { ageLabel, fmtDate, fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RBAC, MATRIX, ACTIONS } from "../lib/rbac";
 import { Prefs } from "../lib/preferences";
 import { PricingProfilesAdmin } from "../components/PricingProfilesAdmin";
@@ -21,7 +21,7 @@ import { OptionListEditor } from "../components/OptionListEditor";
 //   - Item master tab (inline edit + delete + CSV bulk import)
 //   - Live diagnostics from /api/admin/diagnostics
 //
-// All admin-only. Backend methods on ObaraBackend.admin (already
+// All admin-only. Backend methods on AnvilBackend.admin (already
 // in src/client/anvil-client.js):
 //   listHolidays/upsertHoliday/deleteHoliday
 //   listLeadTimes/upsertLeadTime/deleteLeadTime
@@ -94,8 +94,8 @@ const ADMIN_DRAWING_BASE_KEY = "obara:drawing_base_url";
 const CONTRACT_TYPES = ["ARC", "BLANKET", "AMC", "PROJECT"];
 
 const adminCrudFetch = async (path: string, opts: { method?: string; body?: any; headers?: Record<string, string> } = {}) => {
-  const cfg = (ObaraBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string };
-  const session = (ObaraBackend?.getSession?.() || null) as { access_token?: string } | null;
+  const cfg = (AnvilBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string };
+  const session = (AnvilBackend?.getSession?.() || null) as { access_token?: string } | null;
   const headers: Record<string, string> = { "Content-Type": "application/json", ...((opts.headers as Record<string, string>) || {}) };
   if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
   if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
@@ -171,7 +171,7 @@ const readCurrentUserId = (): string | null => {
     if (cached?.user?.id) return String(cached.user.id);
   } catch (_) { /* ignore */ }
   try {
-    const session = (ObaraBackend?.getSession?.() || null) as { user?: { id?: string } } | null;
+    const session = (AnvilBackend?.getSession?.() || null) as { user?: { id?: string } } | null;
     if (session?.user?.id) return String(session.user.id);
   } catch (_) { /* ignore */ }
   return null;
@@ -268,44 +268,44 @@ const WiredAdminCRUD = () => {
     []
   );
   const holidays = useFetch(
-    () => ObaraBackend?.admin?.listHolidays?.()
+    () => AnvilBackend?.admin?.listHolidays?.()
           || fetch("/api/admin/holidays").then((r) => r.ok ? r.json() : { holidays: [] }).catch(() => ({ holidays: [] })),
     []
   );
   const leadTimes = useFetch(
-    () => ObaraBackend?.admin?.listLeadTimes?.(leadTimeForm.type)
+    () => AnvilBackend?.admin?.listLeadTimes?.(leadTimeForm.type)
           || fetch("/api/admin/lead_times?type=" + encodeURIComponent(leadTimeForm.type))
               .then((r) => r.ok ? r.json() : { lead_times: [] }).catch(() => ({ lead_times: [] })),
     [leadTimeForm.type]
   );
   const fxRates = useFetch(
-    () => ObaraBackend?.fx?.lookup?.({ pairs: ["USD/INR", "JPY/INR", "CNY/INR"] }) || Promise.resolve({ rates: [] }),
+    () => AnvilBackend?.fx?.lookup?.({ pairs: ["USD/INR", "JPY/INR", "CNY/INR"] }) || Promise.resolve({ rates: [] }),
     []
   );
   const thresholds = useFetch(
-    () => ObaraBackend?.admin?.listApprovalThresholds?.()
+    () => AnvilBackend?.admin?.listApprovalThresholds?.()
           || adminCrudFetch("/api/admin/quote_approvals?type=thresholds"),
     []
   );
   const customers = useFetch(
-    () => ObaraBackend?.customers?.list?.() || adminCrudFetch("/api/customers"),
+    () => AnvilBackend?.customers?.list?.() || adminCrudFetch("/api/customers"),
     []
   );
   const locations = useFetch(
-    () => ObaraBackend?.admin?.listCustomerLocations?.() || adminCrudFetch("/api/admin/customer_locations"),
+    () => AnvilBackend?.admin?.listCustomerLocations?.() || adminCrudFetch("/api/admin/customer_locations"),
     []
   );
   const contracts = useFetch(
-    () => ObaraBackend?.admin?.listContracts?.() || adminCrudFetch("/api/admin/contracts"),
+    () => AnvilBackend?.admin?.listContracts?.() || adminCrudFetch("/api/admin/contracts"),
     []
   );
   const itemMaster = useFetch(
-    () => ObaraBackend?.admin?.listItemMaster?.({ limit: 500 })
+    () => AnvilBackend?.admin?.listItemMaster?.({ limit: 500 })
           || adminCrudFetch("/api/admin/item_master?limit=500"),
     []
   );
   const diagnostics = useFetch(
-    () => ObaraBackend?.admin?.diagnostics?.()
+    () => AnvilBackend?.admin?.diagnostics?.()
           || adminCrudFetch("/api/admin/diagnostics"),
     []
   );
@@ -333,8 +333,8 @@ const WiredAdminCRUD = () => {
   const contractRows = adminCrudRows(contracts.data, "contracts");
   const itemRows = adminCrudRows(itemMaster.data, "items");
 
-  const tenantSlug = (ObaraBackend && ObaraBackend.getConfig
-    && ObaraBackend.getConfig().tenantId)
+  const tenantSlug = (AnvilBackend && AnvilBackend.getConfig
+    && AnvilBackend.getConfig().tenantId)
     || localStorage.getItem("obara:v3_tenant_code") || "—";
 
   const customerName = (id) => {
@@ -424,14 +424,14 @@ const WiredAdminCRUD = () => {
     try {
       const params: Record<string, string> = {};
       if (from && from !== "month-to-date") params.from = from;
-      const resp = await ObaraBackend?.billing?.usage?.(params);
+      const resp = await AnvilBackend?.billing?.usage?.(params);
       setBilling(resp);
     } catch (err) { flashErr(err); }
   };
 
   const loadStripe = async () => {
     try {
-      const resp = await ObaraBackend?.billing?.stripe?.status?.();
+      const resp = await AnvilBackend?.billing?.stripe?.status?.();
       setStripe(resp);
     } catch (err) { flashErr(err); }
   };
@@ -439,7 +439,7 @@ const WiredAdminCRUD = () => {
   const onStripeConnect = async () => {
     setStripeBusy(true);
     try {
-      const resp: any = await ObaraBackend?.billing?.stripe?.onboard?.();
+      const resp: any = await AnvilBackend?.billing?.stripe?.onboard?.();
       if (resp?.onboarding_url) window.open(resp.onboarding_url, "_blank", "noopener");
     } catch (err) { flashErr(err); }
     finally { setStripeBusy(false); }
@@ -447,7 +447,7 @@ const WiredAdminCRUD = () => {
 
   const loadNetsuite = async () => {
     try {
-      const resp = await ObaraBackend?.netsuite?.health?.();
+      const resp = await AnvilBackend?.netsuite?.health?.();
       setNetsuite(resp);
       if (resp?.field_map) {
         try { setNsFieldMapDraft(JSON.stringify(resp.field_map, null, 2)); }
@@ -461,7 +461,7 @@ const WiredAdminCRUD = () => {
     if (!nsForm.account_id || !nsForm.consumer_key) return flashErr(new Error("All fields are required"));
     setNsBusy(true);
     try {
-      const resp: any = await ObaraBackend?.netsuite?.connect?.(nsForm);
+      const resp: any = await AnvilBackend?.netsuite?.connect?.(nsForm);
       if (resp?.ok) {
         flashOk("NetSuite probe succeeded; credentials stored " + (resp?.storage_mode || "plaintext") + ". Sync runs every 30 minutes.");
       } else {
@@ -477,7 +477,7 @@ const WiredAdminCRUD = () => {
   const onNsRunDiagnostics = async () => {
     setNsDiagBusy(true);
     try {
-      const resp = await ObaraBackend?.netsuite?.diagnostics?.();
+      const resp = await AnvilBackend?.netsuite?.diagnostics?.();
       setNsDiag(resp);
       if (resp?.summary?.all_ok) flashOk("All probes passed in " + (resp?.probes || []).length + " entities");
       else flashErr(new Error((resp?.summary?.failed || 0) + " probe(s) failed; see diagnostics table"));
@@ -491,7 +491,7 @@ const WiredAdminCRUD = () => {
       const body: any = {};
       if (entity) body.entity = entity;
       if (full) body.full = true;
-      const resp = await ObaraBackend?.netsuite?.syncNow?.(body);
+      const resp = await AnvilBackend?.netsuite?.syncNow?.(body);
       flashOk("Manual sync ran for " + ((resp?.results || []).length || 0) + " entities");
       loadNetsuite();
     } catch (err) { flashErr(err); }
@@ -501,7 +501,7 @@ const WiredAdminCRUD = () => {
   const onNsRetryNow = async () => {
     setNsRetryBusy(true);
     try {
-      const resp = await ObaraBackend?.netsuite?.retry?.();
+      const resp = await AnvilBackend?.netsuite?.retry?.();
       flashOk("Replayed " + ((resp?.processed || 0)) + " queued pushes");
       loadNetsuite();
     } catch (err) { flashErr(err); }
@@ -514,7 +514,7 @@ const WiredAdminCRUD = () => {
       let parsed: any = {};
       try { parsed = JSON.parse(nsFieldMapDraft || "{}"); }
       catch (_e) { throw new Error("Field map must be valid JSON"); }
-      await ObaraBackend?.netsuite?.saveFieldMap?.(parsed);
+      await AnvilBackend?.netsuite?.saveFieldMap?.(parsed);
       flashOk("Field map saved (" + Object.keys(parsed).length + " entries)");
       loadNetsuite();
     } catch (err) { flashErr(err); }
@@ -546,14 +546,14 @@ const WiredAdminCRUD = () => {
 
   const loadSecurity = async () => {
     try {
-      const resp: any = await ObaraBackend?.auth?.mfaSettings?.();
+      const resp: any = await AnvilBackend?.auth?.mfaSettings?.();
       setSecurity(resp);
     } catch (err) { flashErr(err); }
   };
   const onMfaStart = async () => {
     setSecurityBusy(true);
     try {
-      const resp: any = await ObaraBackend?.auth?.mfaEnroll?.();
+      const resp: any = await AnvilBackend?.auth?.mfaEnroll?.();
       setEnrollData(resp);
       setEnrollCode("");
       flashOk("Scan the QR with Authy / Google Authenticator / 1Password and enter the 6-digit code below.");
@@ -566,7 +566,7 @@ const WiredAdminCRUD = () => {
     if (code.length !== 6) return flashErr(new Error("Code must be 6 digits"));
     setSecurityBusy(true);
     try {
-      await ObaraBackend?.auth?.mfaVerify?.(code);
+      await AnvilBackend?.auth?.mfaVerify?.(code);
       flashOk("Two-factor authentication is on. From now on you'll need a code at sign-in.");
       window.notifySuccess?.("MFA enabled", "Two-factor authentication is active");
       setEnrollData(null);
@@ -583,7 +583,7 @@ const WiredAdminCRUD = () => {
 
   const loadPasskeys = async () => {
     try {
-      const resp: any = await ObaraBackend?.auth?.passkeyList?.();
+      const resp: any = await AnvilBackend?.auth?.passkeyList?.();
       setPasskeys(resp?.passkeys || []);
     } catch (err) { flashErr(err); }
   };
@@ -593,11 +593,11 @@ const WiredAdminCRUD = () => {
     }
     setPasskeyBusy(true);
     try {
-      const begin: any = await ObaraBackend?.auth?.passkeyRegisterBegin?.(passkeyLabel.trim() || null);
+      const begin: any = await AnvilBackend?.auth?.passkeyRegisterBegin?.(passkeyLabel.trim() || null);
       // Lazy-load @simplewebauthn/browser to keep the main bundle small.
       const { startRegistration } = await import("@simplewebauthn/browser");
       const att = await startRegistration(begin.options);
-      await ObaraBackend?.auth?.passkeyRegisterFinish?.(begin.pending_id, att);
+      await AnvilBackend?.auth?.passkeyRegisterFinish?.(begin.pending_id, att);
       flashOk("Passkey registered.");
       window.notifySuccess?.("Passkey registered", passkeyLabel || "Default");
       setPasskeyLabel("");
@@ -612,7 +612,7 @@ const WiredAdminCRUD = () => {
     if (!window.confirm(`Remove the passkey "${row.label || "this device"}"? You'll need at least one other way to sign in.`)) return;
     setPasskeyBusy(true);
     try {
-      await ObaraBackend?.auth?.passkeyRemove?.(row.id);
+      await AnvilBackend?.auth?.passkeyRemove?.(row.id);
       flashOk("Passkey removed.");
       loadPasskeys(); loadSecurity();
     } catch (err: any) {
@@ -626,7 +626,7 @@ const WiredAdminCRUD = () => {
     if (!window.confirm("Disable two-factor authentication for your account? You'll be able to sign in with just your password until you re-enable it.")) return;
     setSecurityBusy(true);
     try {
-      await ObaraBackend?.auth?.mfaUnenroll?.(code);
+      await AnvilBackend?.auth?.mfaUnenroll?.(code);
       flashOk("Two-factor authentication is off.");
       window.notifySuccess?.("MFA disabled", "");
       setUnenrollCode("");
@@ -646,7 +646,7 @@ const WiredAdminCRUD = () => {
     try {
       const params: Record<string, string> = {};
       if (accessFilter !== "all") params.status = accessFilter;
-      const resp: any = await ObaraBackend?.accessRequests?.list?.(params);
+      const resp: any = await AnvilBackend?.accessRequests?.list?.(params);
       setAccessRequests(resp);
     } catch (err) { flashErr(err); }
   };
@@ -659,9 +659,9 @@ const WiredAdminCRUD = () => {
       // If the admin renamed the user / changed email in the row,
       // first send a modify, then approve. Modify is idempotent.
       if (edit.display_name && edit.display_name !== (row.request_display_name || row.meta_name)) {
-        await ObaraBackend?.accessRequests?.modify?.(row.user_id, { display_name: edit.display_name });
+        await AnvilBackend?.accessRequests?.modify?.(row.user_id, { display_name: edit.display_name });
       }
-      await ObaraBackend?.accessRequests?.approve?.(row.user_id, role);
+      await AnvilBackend?.accessRequests?.approve?.(row.user_id, role);
       window.notifySuccess?.("Access approved", row.user_email || row.request_email);
       setAccessEdits((prev) => { const next = { ...prev }; delete next[row.user_id]; return next; });
       loadAccessRequests();
@@ -675,7 +675,7 @@ const WiredAdminCRUD = () => {
     if (!window.confirm(`Deny access for ${row.user_email || row.request_email}?` + (reason ? `\n\nReason: ${reason}` : ""))) return;
     setAccessBusy(row.user_id);
     try {
-      await ObaraBackend?.accessRequests?.deny?.(row.user_id, reason || null);
+      await AnvilBackend?.accessRequests?.deny?.(row.user_id, reason || null);
       window.notifySuccess?.("Access denied", row.user_email || row.request_email);
       setAccessEdits((prev) => { const next = { ...prev }; delete next[row.user_id]; return next; });
       loadAccessRequests();
@@ -689,7 +689,7 @@ const WiredAdminCRUD = () => {
     setAccessBusy(row.user_id);
     try {
       const role = row.requested_role || row.role || "sales_engineer";
-      await ObaraBackend?.accessRequests?.approve?.(row.user_id, role);
+      await AnvilBackend?.accessRequests?.approve?.(row.user_id, role);
       window.notifySuccess?.("Access reinstated", row.user_email || row.request_email);
       loadAccessRequests();
     } catch (err: any) {
@@ -787,7 +787,7 @@ const WiredAdminCRUD = () => {
 
   const loadTally = async () => {
     try {
-      const resp = await ObaraBackend?.tally?.health?.();
+      const resp = await AnvilBackend?.tally?.health?.();
       setTally(resp);
     } catch (err) { flashErr(err); }
   };
@@ -797,7 +797,7 @@ const WiredAdminCRUD = () => {
     if (!tallyCompanyForm.name) return flashErr(new Error("name required"));
     setTallyCompanyBusy(true);
     try {
-      await ObaraBackend?.tally?.createCompany?.(tallyCompanyForm);
+      await AnvilBackend?.tally?.createCompany?.(tallyCompanyForm);
       flashOk("Company added");
       setTallyCompanyForm({
         name: "", bridge_url: "", bridge_token: "", gstin: "",
@@ -810,7 +810,7 @@ const WiredAdminCRUD = () => {
 
   const onTallySetDefault = async (id: string) => {
     try {
-      await ObaraBackend?.tally?.updateCompany?.(id, { is_default: true });
+      await AnvilBackend?.tally?.updateCompany?.(id, { is_default: true });
       flashOk("Default updated");
       loadTally();
     } catch (err) { flashErr(err); }
@@ -819,7 +819,7 @@ const WiredAdminCRUD = () => {
   const onTallyDeleteCompany = async (id: string) => {
     if (!confirm("Remove this Tally company? Vouchers stay; the bridge config is removed.")) return;
     try {
-      await ObaraBackend?.tally?.deleteCompany?.(id);
+      await AnvilBackend?.tally?.deleteCompany?.(id);
       flashOk("Company removed");
       loadTally();
     } catch (err) { flashErr(err); }
@@ -828,7 +828,7 @@ const WiredAdminCRUD = () => {
   const onTallyDiagnostics = async (companyId?: string) => {
     setTallyDiagBusy(true);
     try {
-      const resp = await ObaraBackend?.tally?.diagnostics?.(companyId);
+      const resp = await AnvilBackend?.tally?.diagnostics?.(companyId);
       setTallyDiag(resp);
       if (resp?.summary?.all_ok) flashOk("All Tally bridge probes passed");
       else flashErr(new Error("Bridge probes failed: " + ((resp?.probes || []).filter((p:any)=>!p.ok).map((p:any)=>p.probe).join(", "))));
@@ -842,7 +842,7 @@ const WiredAdminCRUD = () => {
       const body: any = {};
       if (entity) body.entity = entity;
       if (full) body.full = true;
-      const resp = await ObaraBackend?.tally?.syncNow?.(body);
+      const resp = await AnvilBackend?.tally?.syncNow?.(body);
       flashOk("Tally sync ran (" + ((resp?.results || []).length || 0) + " entities)");
       loadTally();
     } catch (err) { flashErr(err); }
@@ -852,7 +852,7 @@ const WiredAdminCRUD = () => {
   const onTallyRetryNow = async () => {
     setTallyRetryBusy(true);
     try {
-      const resp = await ObaraBackend?.tally?.retry?.();
+      const resp = await AnvilBackend?.tally?.retry?.();
       flashOk("Replayed " + (resp?.processed || 0) + " queued vouchers");
       loadTally();
     } catch (err) { flashErr(err); }
@@ -1236,7 +1236,7 @@ const WiredAdminCRUD = () => {
     if (!holidayForm.date || !holidayForm.name) return flashErr(new Error("Date and name required"));
     setBusy(true); setFlash(null);
     try {
-      await (ObaraBackend?.admin?.upsertHoliday?.(holidayForm)
+      await (AnvilBackend?.admin?.upsertHoliday?.(holidayForm)
              || adminCrudFetch("/api/admin/holidays", { method: "POST", body: holidayForm }));
       flashOk(`Added holiday "${holidayForm.name}"`);
       setHolidayForm({ country: "IN", date: "", name: "" });
@@ -1249,7 +1249,7 @@ const WiredAdminCRUD = () => {
     if (!confirm("Delete this holiday?")) return;
     setBusy(true); setFlash(null);
     try {
-      await (ObaraBackend?.admin?.deleteHoliday?.(id)
+      await (AnvilBackend?.admin?.deleteHoliday?.(id)
              || adminCrudFetch("/api/admin/holidays?id=" + encodeURIComponent(id), { method: "DELETE" }));
       flashOk("Holiday deleted");
       holidays.reload();
@@ -1268,7 +1268,7 @@ const WiredAdminCRUD = () => {
         days: Number(leadTimeForm.days),
         notes: leadTimeForm.notes || null,
       };
-      await (ObaraBackend?.admin?.upsertLeadTime?.(leadTimeForm.type, payload)
+      await (AnvilBackend?.admin?.upsertLeadTime?.(leadTimeForm.type, payload)
              || adminCrudFetch("/api/admin/lead_times?type=" + encodeURIComponent(leadTimeForm.type), { method: "POST", body: payload }));
       flashOk("Lead time saved");
       setLeadTimeForm({ ...leadTimeForm, entity_id: "", days: "", notes: "" });
@@ -1281,7 +1281,7 @@ const WiredAdminCRUD = () => {
     if (!confirm("Delete this lead time?")) return;
     setBusy(true); setFlash(null);
     try {
-      await (ObaraBackend?.admin?.deleteLeadTime?.(leadTimeForm.type, id)
+      await (AnvilBackend?.admin?.deleteLeadTime?.(leadTimeForm.type, id)
              || adminCrudFetch("/api/admin/lead_times?type=" + encodeURIComponent(leadTimeForm.type) + "&id=" + encodeURIComponent(id), { method: "DELETE" }));
       flashOk("Lead time deleted");
       leadTimes.reload();
@@ -1293,7 +1293,7 @@ const WiredAdminCRUD = () => {
   const refreshFx = async () => {
     setBusy(true); setFlash(null);
     try {
-      await ObaraBackend?.fx?.refresh?.();
+      await AnvilBackend?.fx?.refresh?.();
       flashOk("FX rates refreshed");
       fxRates.reload();
     } catch (err) { flashErr(err); }
@@ -1306,7 +1306,7 @@ const WiredAdminCRUD = () => {
     if (!threshForm.role) return flashErr(new Error("Role required"));
     setBusy(true); setFlash(null);
     try {
-      await (ObaraBackend?.admin?.upsertApprovalThreshold?.(threshForm)
+      await (AnvilBackend?.admin?.upsertApprovalThreshold?.(threshForm)
              || adminCrudFetch("/api/admin/quote_approvals?type=thresholds", { method: "POST", body: threshForm }));
       flashOk("Threshold saved");
       setThreshForm(null);
@@ -1319,7 +1319,7 @@ const WiredAdminCRUD = () => {
     if (!confirm("Delete this approval threshold?")) return;
     setBusy(true); setFlash(null);
     try {
-      await (ObaraBackend?.admin?.deleteApprovalThreshold?.(id)
+      await (AnvilBackend?.admin?.deleteApprovalThreshold?.(id)
              || adminCrudFetch("/api/admin/quote_approvals?type=thresholds&id=" + encodeURIComponent(id), { method: "DELETE" }));
       flashOk("Threshold deleted");
       thresholds.reload();
@@ -1333,7 +1333,7 @@ const WiredAdminCRUD = () => {
     if (!locForm.customer_id || !locForm.location_name) return flashErr(new Error("Customer and location name required"));
     setBusy(true); setFlash(null);
     try {
-      await (ObaraBackend?.admin?.upsertCustomerLocation?.(locForm)
+      await (AnvilBackend?.admin?.upsertCustomerLocation?.(locForm)
              || adminCrudFetch("/api/admin/customer_locations", { method: "POST", body: locForm }));
       flashOk("Location saved");
       setLocForm(null);
@@ -1346,7 +1346,7 @@ const WiredAdminCRUD = () => {
     if (!confirm("Delete this customer location?")) return;
     setBusy(true); setFlash(null);
     try {
-      await (ObaraBackend?.admin?.deleteCustomerLocation?.(id)
+      await (AnvilBackend?.admin?.deleteCustomerLocation?.(id)
              || adminCrudFetch("/api/admin/customer_locations?id=" + encodeURIComponent(id), { method: "DELETE" }));
       flashOk("Location deleted");
       locations.reload();
@@ -1360,7 +1360,7 @@ const WiredAdminCRUD = () => {
     if (!contractForm.customer_id || !contractForm.contract_type) return flashErr(new Error("Customer and type required"));
     setBusy(true); setFlash(null);
     try {
-      await (ObaraBackend?.admin?.upsertContract?.(contractForm)
+      await (AnvilBackend?.admin?.upsertContract?.(contractForm)
              || adminCrudFetch("/api/admin/contracts", { method: "POST", body: contractForm }));
       flashOk("Contract saved");
       setContractForm(null);
@@ -1373,7 +1373,7 @@ const WiredAdminCRUD = () => {
     if (!confirm("Delete this contract?")) return;
     setBusy(true); setFlash(null);
     try {
-      await (ObaraBackend?.admin?.deleteContract?.(id)
+      await (AnvilBackend?.admin?.deleteContract?.(id)
              || adminCrudFetch("/api/admin/contracts?id=" + encodeURIComponent(id), { method: "DELETE" }));
       flashOk("Contract deleted");
       contracts.reload();
@@ -1387,7 +1387,7 @@ const WiredAdminCRUD = () => {
     if (!itemForm.tally_item_name) return flashErr(new Error("tally_item_name required"));
     setBusy(true); setFlash(null);
     try {
-      await (ObaraBackend?.admin?.upsertItemMaster?.(itemForm)
+      await (AnvilBackend?.admin?.upsertItemMaster?.(itemForm)
              || adminCrudFetch("/api/admin/item_master", { method: "POST", body: itemForm }));
       flashOk("Item saved");
       setItemForm(null);
@@ -1400,7 +1400,7 @@ const WiredAdminCRUD = () => {
     if (!confirm("Delete this item master row?")) return;
     setBusy(true); setFlash(null);
     try {
-      await (ObaraBackend?.admin?.deleteItemMaster?.(id)
+      await (AnvilBackend?.admin?.deleteItemMaster?.(id)
              || adminCrudFetch("/api/admin/item_master?id=" + encodeURIComponent(id), { method: "DELETE" }));
       flashOk("Item deleted");
       itemMaster.reload();
@@ -1422,7 +1422,7 @@ const WiredAdminCRUD = () => {
         return o;
       }).filter((o) => o.tally_item_name);
       if (items.length === 0) throw new Error("No rows with tally_item_name");
-      await (ObaraBackend?.admin?.bulkItemMaster?.(items)
+      await (AnvilBackend?.admin?.bulkItemMaster?.(items)
              || adminCrudFetch("/api/admin/item_master", { method: "POST", body: { rows: items } }));
       flashOk(`Imported ${items.length} items`);
       itemMaster.reload();
@@ -1444,7 +1444,7 @@ const WiredAdminCRUD = () => {
     if (active !== "settings" || quoteSettingsLoaded) return;
     (async () => {
       try {
-        const r: any = await ObaraBackend?.admin?.quoteSettings?.();
+        const r: any = await AnvilBackend?.admin?.quoteSettings?.();
         const v = r?.quote_default_validity_days;
         const s = v == null ? "" : String(v);
         setQuoteValidity(s);
@@ -1469,7 +1469,7 @@ const WiredAdminCRUD = () => {
     setQuoteSettingsSaving(true);
     try {
       const raw = quoteValidityDraft.trim();
-      const r: any = await ObaraBackend?.admin?.updateQuoteSettings?.({
+      const r: any = await AnvilBackend?.admin?.updateQuoteSettings?.({
         quote_default_validity_days: raw === "" ? null : Number(raw),
         quote_line_units: quoteUnits,
         quote_line_source_countries: quoteSources,
@@ -1977,10 +1977,10 @@ const WiredAdminCRUD = () => {
                     </span>
                     <Btn sm kind="primary" onClick={async () => {
                       try {
-                        const cfg = (ObaraBackend?.getConfig?.() || {}) as { url?: string };
+                        const cfg = (AnvilBackend?.getConfig?.() || {}) as { url?: string };
                         const origin = (typeof window !== "undefined" && window.location.origin) || (cfg.url || "");
                         const redirect = origin.replace(/\/+$/, "") + "/auth/callback.html";
-                        const session = (ObaraBackend?.getSession?.() || null) as { access_token?: string } | null;
+                        const session = (AnvilBackend?.getSession?.() || null) as { access_token?: string } | null;
                         const headers: Record<string, string> = { "Content-Type": "application/json" };
                         if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
                         const resp = await fetch((cfg.url || "").replace(/\/+$/, "") + "/api/auth/request_reset", {
@@ -3355,7 +3355,7 @@ const WiredAdminCRUD = () => {
               <KV rows={[
                 ["Display name", tenantSlug],
                 ["Slug", String(tenantSlug).toLowerCase()],
-                ["Backend", ObaraBackend?.isReady?.() ? "connected" : "not configured"],
+                ["Backend", AnvilBackend?.isReady?.() ? "connected" : "not configured"],
                 ["Theme", Prefs?.theme?.() || "default"],
               ]} />
             </Card>
@@ -3788,7 +3788,7 @@ const WiredAdminCRUD = () => {
             <Card title="Tenant" eyebrow="local browser snapshot">
               <KV rows={[
                 ["Tenant slug", tenantSlug],
-                ["Backend ready", String(!!ObaraBackend?.isReady?.())],
+                ["Backend ready", String(!!AnvilBackend?.isReady?.())],
                 ["FX last rate count", String(fxRows.length)],
                 ["Item master sample size", String(itemRows.length)],
               ]} />
@@ -5348,7 +5348,7 @@ const DocAICostPanel: React.FC = () => {
   const reload = React.useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const next = await (ObaraBackend as any)?.docai?.costStatus?.();
+      const next = await (AnvilBackend as any)?.docai?.costStatus?.();
       setData(next);
       // Seed the editable form with the current values.
       // Bet 1: drop the legacy claude-sonnet-4-20250514 default
@@ -5411,7 +5411,7 @@ const DocAICostPanel: React.FC = () => {
       if (["low", "medium", "high", "ultra_high"].includes(form.docai_gemini_media_resolution)) {
         patch.docai_gemini_media_resolution = form.docai_gemini_media_resolution;
       }
-      await (ObaraBackend as any)?.docai?.updateSettings?.(patch);
+      await (AnvilBackend as any)?.docai?.updateSettings?.(patch);
       setEditing(false);
       await reload();
     } catch (e: any) {

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Chip } from "../lib/primitives";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 
 // Customer contacts manager.
@@ -29,7 +29,7 @@ export const CustomerContactsPanel: React.FC<{ customerId: string }> = ({ custom
   const load = () => {
     setContacts(null);
     setErr(null);
-    Promise.resolve(ObaraBackend?.customers?.listContacts?.({ customer_id: customerId }))
+    Promise.resolve(AnvilBackend?.customers?.listContacts?.({ customer_id: customerId }))
       .then((resp: any) => setContacts(Array.isArray(resp) ? resp : resp?.contacts || []))
       .catch((e: any) => setErr(e?.message || String(e)));
   };
@@ -45,11 +45,11 @@ export const CustomerContactsPanel: React.FC<{ customerId: string }> = ({ custom
     setErr(null);
     try {
       if (form.id) {
-        await ObaraBackend?.customers?.updateContact?.({
+        await AnvilBackend?.customers?.updateContact?.({
           id: form.id, name: form.name, email: form.email, phone: form.phone, role: form.role, is_primary: form.is_primary,
         });
       } else {
-        await ObaraBackend?.customers?.upsertContact?.({
+        await AnvilBackend?.customers?.upsertContact?.({
           customer_id: customerId, name: form.name, email: form.email, phone: form.phone, role: form.role, is_primary: form.is_primary,
         });
       }
@@ -65,13 +65,13 @@ export const CustomerContactsPanel: React.FC<{ customerId: string }> = ({ custom
   };
 
   const makePrimary = async (c: Contact) => {
-    try { await ObaraBackend?.customers?.updateContact?.({ id: c.id, is_primary: true }); load(); }
+    try { await AnvilBackend?.customers?.updateContact?.({ id: c.id, is_primary: true }); load(); }
     catch (e: any) { setErr(e?.message || String(e)); }
   };
 
   const del = async (c: Contact) => {
     if (typeof confirm === "function" && !confirm(`Delete contact "${c.name || c.email}"?`)) return;
-    try { await ObaraBackend?.customers?.deleteContact?.(c.id); load(); }
+    try { await AnvilBackend?.customers?.deleteContact?.(c.id); load(); }
     catch (e: any) {
       const msg = e?.status === 403 ? "Needs sales_manager / finance / admin" : (e?.message || String(e));
       setErr(msg);

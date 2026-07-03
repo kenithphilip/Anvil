@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { ageLabel, fmtINRShort, sevOf, stageOf, draftLabel } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, Sev, WSTabs, WSTitle, rowActivateProps } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired Sales Orders list
@@ -18,7 +18,7 @@ const readCurrentUserId = (): string | null => {
     if (cached?.user?.id) return String(cached.user.id);
   } catch (_) { /* ignore */ }
   try {
-    const session = (ObaraBackend?.getSession?.() || null) as { user?: { id?: string } } | null;
+    const session = (AnvilBackend?.getSession?.() || null) as { user?: { id?: string } } | null;
     if (session?.user?.id) return String(session.user.id);
   } catch (_) { /* ignore */ }
   return null;
@@ -60,7 +60,7 @@ const WiredSOList = () => {
   e(() => {
     let cancel = false;
     setOrders((s) => ({ ...s, loading: true }));
-    Promise.resolve(ObaraBackend?.orders?.list?.({ limit: 200, slim: 1 }) || [])
+    Promise.resolve(AnvilBackend?.orders?.list?.({ limit: 200, slim: 1 }) || [])
       .then((data) => {
         if (cancel) return;
         setOrders({ rows: toRows(data), loading: false, error: null });
@@ -174,7 +174,7 @@ const WiredSOList = () => {
                  onChange={(ev) => setQuery(ev.target.value)} style={{ width: 260, height: 28 }} />
           <Btn sm kind="ghost" onClick={() => {
             setOrders((s) => ({ ...s, loading: true }));
-            const p = ObaraBackend?.orders?.list?.({ limit: 200, slim: 1 });
+            const p = AnvilBackend?.orders?.list?.({ limit: 200, slim: 1 });
             if (p) p.then((d: any) => setOrders({ rows: toRows(d), loading: false, error: null }));
           }}>{Icon.cycle} refresh</Btn>
           <Btn sm kind="primary" onClick={() => window.location.hash = "#/so?new=1"}>{Icon.plus} New from PO</Btn>

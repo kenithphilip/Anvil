@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Banner, Btn, Card, Chip, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 - wired BOM Import
@@ -243,8 +243,8 @@ const readRows = async (file) => {
 // mapping so the screen keeps working if the backend is not reachable.
 const parseRowsRich = async (rows, fileName) => {
   try {
-    if (ObaraBackend?.bom?.parse) {
-      const resp = await ObaraBackend.bom.parse({ rows, file_name: fileName });
+    if (AnvilBackend?.bom?.parse) {
+      const resp = await AnvilBackend.bom.parse({ rows, file_name: fileName });
       if (resp && Array.isArray(resp.lines) && resp.lines.length) {
         const items = resp.lines.map((ln) => ({
           part_no: ln.part_no,
@@ -281,8 +281,8 @@ const entryToFile = (entry) => {
 const fetchExistingBomChildren = async (gunNo) => {
   try {
     if (!gunNo) return null;
-    if (!ObaraBackend?.bom?.list) return null;
-    const resp = await ObaraBackend.bom.list({ parent: gunNo });
+    if (!AnvilBackend?.bom?.list) return null;
+    const resp = await AnvilBackend.bom.list({ parent: gunNo });
     const arr = Array.isArray(resp) ? resp : (resp?.rows || resp?.bom || []);
     const set = new Set();
     arr.forEach((r) => {
@@ -420,7 +420,7 @@ const WiredBomImport = () => {
       const f = importable[i];
       setProgress({ done: i, total: importable.length, current: f.name });
       try {
-        if (ObaraBackend?.bom?.importBom) {
+        if (AnvilBackend?.bom?.importBom) {
           // Rich path: asset + lines -> item_master + bill_of_materials,
           // with provenance. The server computes + returns the diff.
           const asset = {
@@ -440,7 +440,7 @@ const WiredBomImport = () => {
             std_category: it.std_category || null,
             remarks: it.remarks || null,
           }));
-          const resp = await ObaraBackend.bom.importBom({ asset, lines, file_name: f.name, source_format: f.sourceFormat || undefined });
+          const resp = await AnvilBackend.bom.importBom({ asset, lines, file_name: f.name, source_format: f.sourceFormat || undefined });
           if (!resp || resp.ok === false) throw new Error((resp && resp.error && resp.error.message) || "Import failed");
           const d = resp.diff;
           const der = resp.derived;
@@ -461,7 +461,7 @@ const WiredBomImport = () => {
               "level=" + (it.level || it.hierarchy_level || 1),
             ].filter(Boolean).join(" - "),
           }));
-          const resp = await ObaraBackend?.bom?.upsert?.({ rows });
+          const resp = await AnvilBackend?.bom?.upsert?.({ rows });
           if (!resp) throw new Error("Backend not configured");
           const n = resp.count != null ? resp.count : rows.length;
           log(f.name + " - " + n + " row" + (n === 1 ? "" : "s") + " imported (legacy)");

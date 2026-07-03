@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // RFQ workspace for ONE supplier RFQ. Shared by the quote-drawer RFQ tab
@@ -29,7 +29,7 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
   const [currencyOptions, setCurrencyOptions] = useState<string[]>(["INR", "USD", "EUR", "CNY", "KRW", "JPY", "GBP"]);
   useEffect(() => {
     let cancel = false;
-    Promise.resolve(ObaraBackend?.admin?.quoteSettings?.())
+    Promise.resolve(AnvilBackend?.admin?.quoteSettings?.())
       .then((qs: any) => { if (!cancel && Array.isArray(qs?.quote_currencies) && qs.quote_currencies.length) setCurrencyOptions(qs.quote_currencies); })
       .catch(() => {});
     return () => { cancel = true; };
@@ -39,8 +39,8 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
     setErr("");
     try {
       const [d, v] = await Promise.all([
-        ObaraBackend?.supplierRfq?.get?.(rfqId),
-        ObaraBackend?.supplierRfq?.listVendors?.(),
+        AnvilBackend?.supplierRfq?.get?.(rfqId),
+        AnvilBackend?.supplierRfq?.listVendors?.(),
       ]);
       setData(d || null);
       setVendors(Array.isArray(v) ? v : (v?.vendors || []));
@@ -62,7 +62,7 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
   // specific code of its own).
   const saveDefaultRef = async (val: string) => {
     if (val === (rfq?.customer_ref || "")) return;
-    try { await ObaraBackend?.supplierRfq?.update?.(rfqId, { customer_ref: val }); await load(); }
+    try { await AnvilBackend?.supplierRfq?.update?.(rfqId, { customer_ref: val }); await load(); }
     catch (e: any) { window.notifyError?.("Could not save reference", e?.message || String(e)); }
   };
   // Save a vendor's own reference/code for this end customer (reused across RFQs).
@@ -70,7 +70,7 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
     if (!rfq?.customer_id) return;
     if (val === (refByVendor.get(vendorId) || "")) return;
     try {
-      await ObaraBackend?.supplierRfq?.setCustomerRef?.({ vendor_id: vendorId, customer_id: rfq.customer_id, customer_ref: val });
+      await AnvilBackend?.supplierRfq?.setCustomerRef?.({ vendor_id: vendorId, customer_id: rfq.customer_id, customer_ref: val });
       await load();
     } catch (e: any) { window.notifyError?.("Could not save vendor reference", e?.message || String(e)); }
   };
@@ -105,7 +105,7 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
     if (!addVendorId) return;
     setBusy(true);
     try {
-      await ObaraBackend?.supplierRfq?.send?.({ rfq_id: rfqId, vendor_ids: [addVendorId] });
+      await AnvilBackend?.supplierRfq?.send?.({ rfq_id: rfqId, vendor_ids: [addVendorId] });
       setAddVendorId("");
       await load();
       window.notifySuccess?.("Vendor invited", "RFQ email drafted");
@@ -119,10 +119,10 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
     if (!name) return;
     setBusy(true);
     try {
-      const r: any = await ObaraBackend?.supplierRfq?.createVendor?.({ vendor_name: name });
+      const r: any = await AnvilBackend?.supplierRfq?.createVendor?.({ vendor_name: name });
       const created = r?.vendor || r;
       setNewVendor("");
-      const v = await ObaraBackend?.supplierRfq?.listVendors?.();
+      const v = await AnvilBackend?.supplierRfq?.listVendors?.();
       setVendors(Array.isArray(v) ? v : (v?.vendors || []));
       if (created?.id) setAddVendorId(created.id);
       window.notifySuccess?.("Vendor added", name);
@@ -168,7 +168,7 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
     if (!linesPayload.length) { window.notifyError?.("Nothing to save", "Enter at least one unit price."); return; }
     setBusy(true);
     try {
-      await ObaraBackend?.supplierRfq?.submitQuote?.({ invitation_id: inv.id, supplier_quote_ref: d.ref || null, lines: linesPayload });
+      await AnvilBackend?.supplierRfq?.submitQuote?.({ invitation_id: inv.id, supplier_quote_ref: d.ref || null, lines: linesPayload });
       await load();
       window.notifySuccess?.("Quote captured", vendorById.get(inv.vendor_id)?.vendor_name || "vendor");
       onChanged?.();
@@ -183,7 +183,7 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
     if (!awards.length) { window.notifyError?.("No winners selected", "Pick a vendor per line first."); return; }
     setBusy(true);
     try {
-      const r: any = await ObaraBackend?.supplierRfq?.award?.({ rfq_id: rfqId, awards });
+      const r: any = await AnvilBackend?.supplierRfq?.award?.({ rfq_id: rfqId, awards });
       await load();
       const fed = r?.fed || 0;
       const eligible = r?.eligible || 0;

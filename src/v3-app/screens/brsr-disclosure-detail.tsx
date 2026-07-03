@@ -12,7 +12,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 const fmt = (n: number | null | undefined, d = 2) =>
   (n == null || !Number.isFinite(Number(n))) ? "—" : Number(n).toFixed(d);
@@ -33,7 +33,7 @@ const BrsrDisclosureDetail: React.FC = () => {
 
   useEffect(() => {
     if (!q.supplier) return;
-    Promise.resolve((ObaraBackend as any)?.brsr?.buyerDashboard?.(q.fy))
+    Promise.resolve((AnvilBackend as any)?.brsr?.buyerDashboard?.(q.fy))
       .then((d: any) => {
         const row = (d?.suppliers || []).find((s: any) => s.supplier_tenant_id === q.supplier);
         setData({ data: row || null, loading: false, error: null });

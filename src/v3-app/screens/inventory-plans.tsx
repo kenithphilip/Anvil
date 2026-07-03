@@ -8,7 +8,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, RailPanel, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 const STATUS_CHIP: Record<string, "good" | "info" | "warn" | "bad"> = {
   draft:      "info",
@@ -42,7 +42,7 @@ const InventoryPlansScreen: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
     const params = tab === "all" ? {} : { status: tab };
-    Promise.resolve(ObaraBackend?.inventory?.plans?.list?.(params))
+    Promise.resolve(AnvilBackend?.inventory?.plans?.list?.(params))
       .then((r: any) => { if (!cancelled) setPlans({ data: r?.plans || [], loading: false, error: null }); })
       .catch((err: any) => { if (!cancelled) setPlans({ data: [], loading: false, error: err }); });
     return () => { cancelled = true; };
@@ -57,7 +57,7 @@ const InventoryPlansScreen: React.FC = () => {
   const onApprove = async (id: string) => {
     setBusy("approve:" + id);
     try {
-      await (ObaraBackend as any)?.inventory?.plans?.approve?.(id);
+      await (AnvilBackend as any)?.inventory?.plans?.approve?.(id);
       window.notifySuccess?.("Plan approved", id.slice(0, 8));
       setBump((n) => n + 1);
     } catch (err: any) {
@@ -69,7 +69,7 @@ const InventoryPlansScreen: React.FC = () => {
     if (!confirm("Release this plan to a source PO? This creates a draft source_pos record.")) return;
     setBusy("release:" + id);
     try {
-      const r = await (ObaraBackend as any)?.inventory?.plans?.release?.(id);
+      const r = await (AnvilBackend as any)?.inventory?.plans?.release?.(id);
       window.notifySuccess?.("Released to source PO", r?.source_po_id?.slice(0, 8) || id.slice(0, 8));
       setBump((n) => n + 1);
     } catch (err: any) {
@@ -81,7 +81,7 @@ const InventoryPlansScreen: React.FC = () => {
     const reason = prompt("Cancel reason (optional):") || null;
     setBusy("cancel:" + id);
     try {
-      await (ObaraBackend as any)?.inventory?.plans?.cancel?.(id, reason);
+      await (AnvilBackend as any)?.inventory?.plans?.cancel?.(id, reason);
       window.notifySuccess?.("Plan cancelled", id.slice(0, 8));
       setBump((n) => n + 1);
     } catch (err: any) {
@@ -94,7 +94,7 @@ const InventoryPlansScreen: React.FC = () => {
     setBusy("bulk-approve");
     let ok = 0; let fail = 0;
     for (const id of checked) {
-      try { await (ObaraBackend as any)?.inventory?.plans?.approve?.(id); ok += 1; }
+      try { await (AnvilBackend as any)?.inventory?.plans?.approve?.(id); ok += 1; }
       catch (_) { fail += 1; }
     }
     window[ok && !fail ? "notifySuccess" : "notifyWarn"]?.(
@@ -112,7 +112,7 @@ const InventoryPlansScreen: React.FC = () => {
     setBusy("bulk-release");
     let ok = 0; let fail = 0;
     for (const id of checked) {
-      try { await (ObaraBackend as any)?.inventory?.plans?.release?.(id); ok += 1; }
+      try { await (AnvilBackend as any)?.inventory?.plans?.release?.(id); ok += 1; }
       catch (_) { fail += 1; }
     }
     window[ok && !fail ? "notifySuccess" : "notifyWarn"]?.(
@@ -127,7 +127,7 @@ const InventoryPlansScreen: React.FC = () => {
   const onExplain = async (id: string) => {
     setExplanation("loading…");
     try {
-      const r: any = await (ObaraBackend as any)?.inventory?.plans?.explain?.(id);
+      const r: any = await (AnvilBackend as any)?.inventory?.plans?.explain?.(id);
       setExplanation(r?.explanation || "(no explanation)");
     } catch (err: any) {
       setExplanation("Explanation unavailable: " + (err?.message || String(err)));

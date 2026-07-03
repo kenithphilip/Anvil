@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ageLabel } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 
 // ============================================================
@@ -11,7 +11,7 @@ import { RBAC } from "../lib/rbac";
 // Run-cases form on top of the read-only dashboard in
 // wired-evals-e.jsx. Wins via load-order.
 //
-// Backend (ObaraBackend.eval):
+// Backend (AnvilBackend.eval):
 //   dashboard(suite?)
 //   listCases(suite?)
 //   upsertCase({ suite, case_id, description?, documents?, expected, enabled? })
@@ -27,8 +27,8 @@ const evalReadParams = () => {
 };
 
 const evalCrudFetch = async (path: string, opts: { method?: string; body?: any; headers?: Record<string, string> } = {}) => {
-  const cfg = (ObaraBackend?.getConfig?.() || {});
-  const session = (ObaraBackend?.getSession?.() || null);
+  const cfg = (AnvilBackend?.getConfig?.() || {});
+  const session = (AnvilBackend?.getSession?.() || null);
   const headers: Record<string, string> = { "Content-Type": "application/json", ...((opts.headers as Record<string, string>) || {}) };
   if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
   if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
@@ -93,7 +93,7 @@ const WiredEvalsCRUD = () => {
 
   const reloadDash = () => {
     setDash((s) => ({ ...s, loading: true }));
-    Promise.resolve(ObaraBackend?.eval?.dashboard?.(suiteFilter || undefined)
+    Promise.resolve(AnvilBackend?.eval?.dashboard?.(suiteFilter || undefined)
                     || evalCrudFetch("/api/eval/dashboard" + (suiteFilter ? "?suite=" + encodeURIComponent(suiteFilter) : "")))
       .then((data) => setDash({ data, loading: false, error: null }))
       .catch((error) => setDash({ data: null, loading: false, error }));
@@ -101,7 +101,7 @@ const WiredEvalsCRUD = () => {
 
   const reloadCases = () => {
     setCases((s) => ({ ...s, loading: true }));
-    Promise.resolve(ObaraBackend?.eval?.listCases?.(suiteFilter || undefined)
+    Promise.resolve(AnvilBackend?.eval?.listCases?.(suiteFilter || undefined)
                     || evalCrudFetch("/api/eval/cases" + (suiteFilter ? "?suite=" + encodeURIComponent(suiteFilter) : "")))
       .then((r) => {
         const rows = Array.isArray(r) ? r : (r?.cases || r?.rows || []);
@@ -176,7 +176,7 @@ const WiredEvalsCRUD = () => {
         expected,
         enabled: form.enabled !== false,
       };
-      await (ObaraBackend?.eval?.upsertCase?.(payload)
+      await (AnvilBackend?.eval?.upsertCase?.(payload)
              || evalCrudFetch("/api/eval/cases", { method: "POST", body: payload }));
       setOkMsg(editing === "__new__" ? "Case created" : "Case updated");
       closeForm();
@@ -193,7 +193,7 @@ const WiredEvalsCRUD = () => {
     setDelBusy(id);
     setErr(null);
     try {
-      await (ObaraBackend?.eval?.deleteCase?.(id)
+      await (AnvilBackend?.eval?.deleteCase?.(id)
              || evalCrudFetch("/api/eval/cases?id=" + encodeURIComponent(id), { method: "DELETE" }));
       setOkMsg("Case deleted");
       reloadCases();
@@ -229,7 +229,7 @@ const WiredEvalsCRUD = () => {
     setErr(null);
     setRunResult(null);
     try {
-      const result = await (ObaraBackend?.eval?.run?.(runForm.suite, runCases)
+      const result = await (AnvilBackend?.eval?.run?.(runForm.suite, runCases)
                             || evalCrudFetch("/api/eval/run", { method: "POST", body: { suite: runForm.suite, cases: runCases } }));
       setRunResult(result);
       reloadDash();

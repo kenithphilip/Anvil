@@ -2,7 +2,7 @@ import React from "react";
 import { fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — Sales Operations cockpit (manager view)
@@ -18,10 +18,10 @@ const prettyStage = (s: string) => String(s || "").toLowerCase().replace(/_/g, "
 const pctOrDash = (v: any) => (v == null || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(0) + "%");
 
 const SalesOpsCockpit = () => {
-  const funnel = useFetch(async () => { const r: any = await ObaraBackend?.analytics?.funnel?.(); return r || null; }, []);
-  const winloss = useFetch(async () => { const r: any = await ObaraBackend?.analytics?.winloss?.(); return r || null; }, []);
+  const funnel = useFetch(async () => { const r: any = await AnvilBackend?.analytics?.funnel?.(); return r || null; }, []);
+  const winloss = useFetch(async () => { const r: any = await AnvilBackend?.analytics?.winloss?.(); return r || null; }, []);
   const forecast = useFetch(async () => {
-    const r: any = await (ObaraBackend?.forecast?.get ? ObaraBackend.forecast.get() : null);
+    const r: any = await (AnvilBackend?.forecast?.get ? AnvilBackend.forecast.get() : null);
     return r || null;
   }, []);
 

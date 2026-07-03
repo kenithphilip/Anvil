@@ -27,9 +27,9 @@ let transitionSpy: any;
 beforeEach(() => {
   // The drawer loads quote_lines + document_templates via its local
   // fetchJson helper (global fetch). The item picker uses the
-  // ObaraBackend.admin.listItemMaster facade.
+  // AnvilBackend.admin.listItemMaster facade.
   transitionSpy = vi.fn(async (id: string, status: string) => ({ quote: { id, status } }));
-  (window as any).ObaraBackend = (window as any).AnvilBackend = {
+  (window as any).AnvilBackend = (window as any).AnvilBackend = {
     getConfig: () => ({ url: "https://api.test", tenantId: "t-1" }),
     getSession: () => ({ access_token: "x" }),
     admin: { listItemMaster: vi.fn(async () => ({ items: ITEMS })) },

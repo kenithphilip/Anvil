@@ -16,7 +16,7 @@
 // all per-pane state; two panes never interfere.
 
 import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 export type FieldStatus = "pending" | "confirmed" | "flagged";
 
@@ -116,8 +116,8 @@ export const ReviewPaneSelectionProvider: React.FC<{
   }): Promise<CorrectionResult> => {
     if (!extractionRunId) return { ok: false, error: "This order has no extraction run to attach a correction to." };
     try {
-      const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
-      const session: any = (ObaraBackend as any)?.getSession?.() || null;
+      const cfg: any = (AnvilBackend as any)?.getConfig?.() || {};
+      const session: any = (AnvilBackend as any)?.getSession?.() || null;
       if (!cfg.url) return { ok: false, error: "Backend URL not configured" };
       const headers: any = { "Content-Type": "application/json" };
       if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;

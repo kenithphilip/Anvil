@@ -2,15 +2,15 @@ import React, { useEffect, useState } from "react";
 import { ageLabel, fmtCurrency, fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired Cost & Margin
 // Wave D · Finance
 // Tabs:
-//   Breakdown  — ObaraBackend.cost.breakdown()  + by-month bar chart
-//   Simulator  — ObaraBackend.cost.simulator(...) per-scenario projection
-//   History    — ObaraBackend.cost.marginHistory(customerId) sparkline
+//   Breakdown  — AnvilBackend.cost.breakdown()  + by-month bar chart
+//   Simulator  — AnvilBackend.cost.simulator(...) per-scenario projection
+//   History    — AnvilBackend.cost.marginHistory(customerId) sparkline
 // ============================================================
 
 const COST_TABS = [
@@ -46,7 +46,7 @@ const useUsdInrRate = (): number | null => {
   const [rate, setRate] = useState<number | null>(null);
   useEffect(() => {
     let cancelled = false;
-    Promise.resolve(ObaraBackend?.fx?.lookup?.({ from: "USD", to: "INR" }))
+    Promise.resolve(AnvilBackend?.fx?.lookup?.({ from: "USD", to: "INR" }))
       .then((res: any) => {
         if (cancelled) return;
         const rows = Array.isArray(res) ? res : (res?.rows || res?.rates || []);
@@ -65,7 +65,7 @@ const useUsdInrRate = (): number | null => {
 
 // ---------- Breakdown tab --------------------------------
 const CostBreakdown = () => {
-  const breakdown = useFetch(() => ObaraBackend?.cost?.breakdown?.() || Promise.resolve({}), []);
+  const breakdown = useFetch(() => AnvilBackend?.cost?.breakdown?.() || Promise.resolve({}), []);
   const fxRate = useUsdInrRate();
 
   if (breakdown.loading) {
@@ -160,13 +160,13 @@ const CostSimulator = () => {
   const fxRate = useUsdInrRate();
 
   // Prime the simulator with current cost-per-success so we can show a delta.
-  const breakdown = useFetch(() => ObaraBackend?.cost?.breakdown?.() || Promise.resolve({}), []);
+  const breakdown = useFetch(() => AnvilBackend?.cost?.breakdown?.() || Promise.resolve({}), []);
 
   useEffect(() => {
     let cancelled = false;
     setBusy(true);
     setErr(null);
-    Promise.resolve(ObaraBackend?.cost?.simulator?.({ tokenEstimate: SIMULATOR_TOKEN_ESTIMATE }))
+    Promise.resolve(AnvilBackend?.cost?.simulator?.({ tokenEstimate: SIMULATOR_TOKEN_ESTIMATE }))
       .then((r) => { if (!cancelled) setResp(r); })
       .catch((e) => { if (!cancelled) setErr(e); })
       .finally(() => { if (!cancelled) setBusy(false); });
@@ -248,7 +248,7 @@ const CostSimulator = () => {
 
 // ---------- Margin history tab ---------------------------
 const CostMarginHistory = () => {
-  const customers = useFetch(() => ObaraBackend?.customers?.list?.() || Promise.resolve({ customers: [] }), []);
+  const customers = useFetch(() => AnvilBackend?.customers?.list?.() || Promise.resolve({ customers: [] }), []);
   const [customerId, setCustomerId] = useState("");
   const [history, setHistory] = useState({ data: null, error: null, loading: false });
 
@@ -263,7 +263,7 @@ const CostMarginHistory = () => {
     }
     let cancelled = false;
     setHistory({ data: null, error: null, loading: true });
-    Promise.resolve(ObaraBackend?.cost?.marginHistory?.(customerId))
+    Promise.resolve(AnvilBackend?.cost?.marginHistory?.(customerId))
       .then((d) => { if (!cancelled) setHistory({ data: d, error: null, loading: false }); })
       .catch((e) => { if (!cancelled) setHistory({ data: null, error: e, loading: false }); });
     return () => { cancelled = true; };

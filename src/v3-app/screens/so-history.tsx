@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { fmtINRShort } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired Sales Order History
@@ -10,7 +10,7 @@ import { ObaraBackend } from "../lib/api";
 // (PO vs Tally), filterable table, multi-format export, and
 // reverse-search drawer for any part_no.
 // Persistence: localStorage `obara:v3_so_history`.
-// Live data: ObaraBackend.salesHistory.priceBand.
+// Live data: AnvilBackend.salesHistory.priceBand.
 // ============================================================
 
 const SOH_STORE_KEY = "obara:v3_so_history";
@@ -605,7 +605,7 @@ const WiredSOHistory = () => {
       if (!targets.length) { setLivePB({ rows: [], loading: false, error: null }); return; }
       const results = await Promise.all(targets.map(async (t) => {
         try {
-          const resp = await ObaraBackend?.salesHistory?.priceBand?.({ part_no: t.part_no });
+          const resp = await AnvilBackend?.salesHistory?.priceBand?.({ part_no: t.part_no });
           return { ...t, ...(resp || {}) };
         } catch (err) {
           return { ...t, error: err.message || String(err) };
@@ -928,7 +928,7 @@ const ReverseSearchDrawer = ({ partNo, rows, onClose }) => {
   e(() => {
     let cancel = false;
     setBom({ data: [], loading: true, error: null });
-    Promise.resolve(ObaraBackend?.bom?.list?.({ part_no: partNo }) || [])
+    Promise.resolve(AnvilBackend?.bom?.list?.({ part_no: partNo }) || [])
       .then((resp) => {
         if (cancel) return;
         const list = Array.isArray(resp) ? resp : (resp?.rows || resp?.bom_items || []);
@@ -937,7 +937,7 @@ const ReverseSearchDrawer = ({ partNo, rows, onClose }) => {
       .catch((err) => { if (!cancel) setBom({ data: [], loading: false, error: err }); });
 
     setPb({ data: null, loading: true });
-    Promise.resolve(ObaraBackend?.salesHistory?.priceBand?.({ part_no: partNo }) || null)
+    Promise.resolve(AnvilBackend?.salesHistory?.priceBand?.({ part_no: partNo }) || null)
       .then((resp) => { if (!cancel) setPb({ data: resp || null, loading: false }); })
       .catch(() => { if (!cancel) setPb({ data: null, loading: false }); });
 

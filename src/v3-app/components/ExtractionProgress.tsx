@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Banner, Btn, Chip } from "../lib/primitives";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // Live progress indicator for an in-flight extraction.
 //
@@ -58,8 +58,8 @@ interface Props {
 }
 
 const fetchStatus = async (orderId: string): Promise<ProgressSnapshot | null> => {
-  const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
-  const session: any = (ObaraBackend as any)?.getSession?.() || null;
+  const cfg: any = (AnvilBackend as any)?.getConfig?.() || {};
+  const session: any = (AnvilBackend as any)?.getSession?.() || null;
   if (!cfg.url) return null;
   const headers: any = { "Content-Type": "application/json" };
   if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;

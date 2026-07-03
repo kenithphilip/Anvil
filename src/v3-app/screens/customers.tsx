@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { ageLabel, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 import { CustomerContactsPanel } from "../components/CustomerContactsPanel";
 import { CustomerHierarchyPanel } from "../components/CustomerHierarchyPanel";
@@ -60,7 +60,7 @@ const customerIdFromHash = (): string | null => {
 // ============================================================
 // ANVIL v3 — wired Customers
 // Wave E · Master data
-// Reads via ObaraBackend.customers.list (api/customers GET)
+// Reads via AnvilBackend.customers.list (api/customers GET)
 // ============================================================
 
 const customerRows = (resp) => {
@@ -99,7 +99,7 @@ const CUSTOMER_TYPE_CHIP = (t) => {
 
 const WiredCustomers = () => {
   const list = useFetch(
-    () => ObaraBackend?.customers?.list?.() || Promise.resolve({ customers: [] }),
+    () => AnvilBackend?.customers?.list?.() || Promise.resolve({ customers: [] }),
     []
   );
   const [query, setQuery] = useState("");
@@ -117,7 +117,7 @@ const WiredCustomers = () => {
   const [pending, setPending] = useState<any[] | null>(null);
   const loadPending = () => {
     if (!canApprove) return;
-    Promise.resolve(ObaraBackend?.customers?.listChangeRequests?.({ status: "pending" }))
+    Promise.resolve(AnvilBackend?.customers?.listChangeRequests?.({ status: "pending" }))
       .then((r: any) => setPending(Array.isArray(r) ? r : (r?.requests || [])))
       .catch(() => setPending([]));
   };
@@ -125,7 +125,7 @@ const WiredCustomers = () => {
   const decide = async (id: string, decision: "approve" | "reject") => {
     const reason = decision === "reject" ? (window.prompt("Reason for rejection? (optional)") || "") : undefined;
     try {
-      await ObaraBackend?.customers?.decideChangeRequest?.(id, decision, reason);
+      await AnvilBackend?.customers?.decideChangeRequest?.(id, decision, reason);
       window.notifySuccess?.(`Change ${decision === "approve" ? "approved" : "rejected"}`, "");
       loadPending();
       list.reload();
@@ -143,11 +143,11 @@ const WiredCustomers = () => {
     if (!Object.keys(payload).length) { setEditing(false); return; }
     try {
       if (canApply) {
-        await ObaraBackend?.customers?.upsert?.({ customer_key: c.customer_key, ...payload });
+        await AnvilBackend?.customers?.upsert?.({ customer_key: c.customer_key, ...payload });
         window.notifySuccess?.("Customer updated", c.customer_name || c.customer_key);
         list.reload();
       } else {
-        await ObaraBackend?.customers?.submitChangeRequest?.({ change_type: "update", target_customer_id: c.id, payload });
+        await AnvilBackend?.customers?.submitChangeRequest?.({ change_type: "update", target_customer_id: c.id, payload });
         window.notifySuccess?.("Submitted for approval", c.customer_name || c.customer_key);
       }
       setEditing(false);
@@ -269,7 +269,7 @@ const WiredCustomers = () => {
               <Btn sm kind={selectedCustomer.ai_health_score == null ? "live" : "ghost"} disabled={refreshingHealthId === selectedCustomer.id}
                    onClick={async () => {
                      setRefreshingHealthId(selectedCustomer.id);
-                     try { await ObaraBackend?.customers?.healthScore?.(selectedCustomer.id); list.reload(); }
+                     try { await AnvilBackend?.customers?.healthScore?.(selectedCustomer.id); list.reload(); }
                      finally { setRefreshingHealthId(null); }
                    }}
                    title="Run /api/customers/health_score for this customer">
@@ -483,14 +483,14 @@ const WiredCustomers = () => {
           onSubmit={async (payload) => {
             try {
               if (canApply) {
-                const r: any = await ObaraBackend?.customers?.upsert?.(payload);
+                const r: any = await AnvilBackend?.customers?.upsert?.(payload);
                 const created = r?.customer || r;
                 window.notifySuccess?.("Customer created", payload.customer_name);
                 setShowNew(false);
                 list.reload();
                 if (created?.id) window.location.hash = `#/customers?id=${created.id}`;
               } else {
-                await ObaraBackend?.customers?.submitChangeRequest?.({ change_type: "create", payload });
+                await AnvilBackend?.customers?.submitChangeRequest?.({ change_type: "create", payload });
                 window.notifySuccess?.("Submitted for approval", payload.customer_name);
                 setShowNew(false);
               }

@@ -17,7 +17,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 interface DelayFlag {
   kind: "po_source_country" | "po_local_supplier" | "work_order_manufacturing" | "ready_date_missing" | "ready_date_orphan";
@@ -71,8 +71,8 @@ const Delays: React.FC = () => {
     setLoading(true);
     setErr(null);
     try {
-      const cfg = (ObaraBackend?.getConfig?.() || {}) as { url?: string };
-      const session = (ObaraBackend?.getSession?.() || null) as { access_token?: string } | null;
+      const cfg = (AnvilBackend?.getConfig?.() || {}) as { url?: string };
+      const session = (AnvilBackend?.getSession?.() || null) as { access_token?: string } | null;
       if (!cfg.url) throw new Error("Backend URL not configured");
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;

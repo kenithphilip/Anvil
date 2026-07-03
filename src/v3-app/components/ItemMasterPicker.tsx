@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Banner, Btn, Chip } from "../lib/primitives";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // Typeahead picker for item_master rows. Used by:
 //   - so-workspace.tsx recon table manual map (Layer A)
@@ -30,11 +30,11 @@ export interface PickedItem {
 }
 
 // Lightweight fetch wrapper. Mirrors the pattern in
-// ItemDetailDrawer.tsx so we don't depend on a new ObaraBackend
+// ItemDetailDrawer.tsx so we don't depend on a new AnvilBackend
 // method that doesn't exist yet.
 const fetchJson = async (path: string): Promise<any> => {
-  const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
-  const session: any = (ObaraBackend as any)?.getSession?.() || null;
+  const cfg: any = (AnvilBackend as any)?.getConfig?.() || {};
+  const session: any = (AnvilBackend as any)?.getSession?.() || null;
   if (!cfg.url) throw new Error("Backend URL not configured");
   const headers: any = { "Content-Type": "application/json" };
   if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;

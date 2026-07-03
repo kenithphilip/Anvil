@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Banner, Btn, Card, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — Master Data Graph (Cytoscape)
@@ -71,7 +71,7 @@ const WiredGraphCytoscape = () => {
   // Load customers for the filter dropdown
   uE(() => {
     let cancel = false;
-    Promise.resolve(ObaraBackend?.customers?.list?.() || [])
+    Promise.resolve(AnvilBackend?.customers?.list?.() || [])
       .then((r) => {
         if (cancel) return;
         const list = Array.isArray(r) ? r : (r?.rows || []);
@@ -85,7 +85,7 @@ const WiredGraphCytoscape = () => {
     let cancel = false;
     setGraph({ data: null, loading: true, error: null });
     const params = customerId ? { customerId, depth: 2 } : { depth: 1 };
-    Promise.resolve(ObaraBackend?.masterData?.graph?.(params) || { nodes: [], edges: [] })
+    Promise.resolve(AnvilBackend?.masterData?.graph?.(params) || { nodes: [], edges: [] })
       .then((data) => {
         if (cancel) return;
         setGraph({ data, loading: false, error: null });

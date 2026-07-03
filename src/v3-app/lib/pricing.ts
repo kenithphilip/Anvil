@@ -1,7 +1,7 @@
 // Price-composition engine.
 //
 // Generalises the per-customer Excel "price composition" sheets (the
-// Obara SPARES "multiplication-factor" sheet and the granular
+// SPARES "multiplication-factor" sheet and the granular
 // PROJECT-FOR "new pcompo" sheet) into one deterministic calculator
 // usable by any B2B-manufacturing tenant.
 //
@@ -10,7 +10,7 @@
 //   supplier_price(FX) -> fx convert -> + overheads (stepwise)
 //     = LOADED COST -> margin markup -> SELLING -> discount = FINAL
 //
-// Both Obara sheets are the same pipeline with a different component
+// Both sheets are the same pipeline with a different component
 // set: the compact sheet collapses overhead into one loaded FX rate +
 // a 30% margin; the granular sheet itemises packing, freight,
 // insurance, customs duty, social-welfare tax, CHA, transport and
@@ -299,10 +299,10 @@ export function composePrice(
 //
 // v1 ships a fixed, ordered superset of named components; a tenant
 // enables the ones it uses and sets the rates. These two profiles
-// reproduce the two Obara sheets and double as worked examples.
+// reproduce the two sheets and double as worked examples.
 // ---------------------------------------------------------------------------
 
-// Compact: one loaded FX factor + a flat margin (Obara SPARES sheet).
+// Compact: one loaded FX factor + a flat margin (SPARES sheet).
 export const PROFILE_COMPACT: PricingProfile = {
   code: "compact",
   label: "Compact (loaded FX multiplier + margin)",
@@ -316,7 +316,7 @@ export const PROFILE_COMPACT: PricingProfile = {
   ],
 };
 
-// Granular: full import-expense waterfall (Obara PROJECT-FOR sheet).
+// Granular: full import-expense waterfall (PROJECT-FOR sheet).
 export const PROFILE_GRANULAR: PricingProfile = {
   code: "granular",
   label: "Granular (itemised import expenses + margin)",

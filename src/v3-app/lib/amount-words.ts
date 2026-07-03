@@ -69,7 +69,7 @@ const indianInteger = (n: number): string => {
 
 export type AmountWordsOptions = {
   // 'intl' renders 230,202 as "Two Hundred Thirty Thousand Two
-  // Hundred Two" (matches the supplied Obara SO sample).
+  // Hundred Two" (matches the supplied SO sample).
   // 'indian' renders the same as "Two Lakh Thirty Thousand Two
   // Hundred Two" for tenants who prefer the Tally default.
   style?: "intl" | "indian";

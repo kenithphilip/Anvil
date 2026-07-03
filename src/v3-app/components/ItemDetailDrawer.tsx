@@ -7,7 +7,7 @@ import { ObaraBackend } from "../lib/api";
 //
 // Mounts on top of the items list when the operator clicks a row or
 // the "new item" button. Renders six tabs that together cover the
-// generalized Tally + Obara Item Master schema (migration 105):
+// generalized Tally + Item Master schema (migration 105):
 //
 //   Identification    name, alias, print name, part no, codes
 //   Classification    stock group, category, units, lifecycle

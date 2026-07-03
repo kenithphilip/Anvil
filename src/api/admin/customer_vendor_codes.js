@@ -4,7 +4,7 @@
 //   DELETE ?customer_id=&vendor_code=
 //
 // Maps each customer to the code they use when referring to this
-// tenant as a supplier. HMIL calls Obara `TH1M` on every PO header.
+// tenant as a supplier. A customer may call the seller by its own vendor code on every PO header.
 // Stored per (tenant, customer) so the intake flow can resolve
 // inbound POs by their vendor code field. Migration 106.
 

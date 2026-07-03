@@ -347,8 +347,8 @@ export default function App() {
                   { id: role, label: role.replace(/_/g, " "), short: role.slice(0, 3).toUpperCase() };
 
   const tenant = { code: (() => {
-    try { return lsGet(TENANT_KEY_SUFFIX) || "OBARA-IN"; }
-    catch (_) { return "OBARA-IN"; }
+    try { return lsGet(TENANT_KEY_SUFFIX) || "TENANT"; }
+    catch (_) { return "TENANT"; }
   })() };
 
   // Resolve the active screen. resolver returns a lazy component; key the

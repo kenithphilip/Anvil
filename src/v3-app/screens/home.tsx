@@ -173,7 +173,7 @@ const WiredHomeEngineer = () => {
 
             <Card title="Backend" eyebrow="health">
               <KV rows={[
-                ["Tenant", localStorage.getItem("obara:v3_tenant_code") || "OBARA-IN"],
+                ["Tenant", localStorage.getItem("obara:v3_tenant_code") || "TENANT"],
                 ["Role", (RBAC?.role() || "—").replace(/_/g, " ")],
                 ["Session", ObaraBackend?.isReady?.() ? "live" : "anonymous"],
                 ["Theme", Prefs?.theme() || "—"],

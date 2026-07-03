@@ -89,7 +89,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // Aliases connect customer parts to Obara parts
+    // Aliases connect customer parts to seller parts
     const aliases = await svc.from("part_aliases").select("customer_id, customer_part_no, customer_description, obara_part_no, status").eq("tenant_id", ctx.tenantId).in("customer_id", customerIds);
     (aliases.data || []).forEach((alias) => {
       const customerNode = "customer:" + alias.customer_id;

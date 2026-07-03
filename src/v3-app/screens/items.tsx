@@ -52,7 +52,7 @@ const WiredItems = () => {
         meta="parts · aliases · stock · bills of material"
         right={<>
           <Btn sm kind="primary" onClick={() => { window.location.hash = "#/items?view=import"; }}>{Icon.plus} Import BOM</Btn>
-          <Btn sm kind="ghost"><span className="mono-sm">tenant: {localStorage.getItem("obara:v3_tenant_code") || "OBARA-IN"}</span></Btn>
+          <Btn sm kind="ghost"><span className="mono-sm">tenant: {localStorage.getItem("obara:v3_tenant_code") || "TENANT"}</span></Btn>
         </>}
       />
       <WSTabs tabs={tabs} active={tab} onChange={setTab} />

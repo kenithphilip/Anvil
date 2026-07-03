@@ -1,5 +1,5 @@
-// Spare-matrix matching engine - faithful port of the standalone Obara
-// tool's spare matrix logic (matchSpares + helpers). The "creation
+// Spare-matrix matching engine - faithful port of the standalone
+// spare matrix logic (matchSpares + helpers). The "creation
 // process" is: rows = guns, columns = named spare categories, and
 // auto-fill matches each gun's BOM parts INTO each category column by
 // part-name keyword + part-number pattern (+ copper-material filter for

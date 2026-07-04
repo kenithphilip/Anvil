@@ -15,7 +15,7 @@ import {
 
 const obaraSettings = {
   einvoice_seller_legal_name: "OBARA INDIA PRIVATE LIMITED",
-  einvoice_seller_gstin: "27AAACO8335K1Z5",
+  einvoice_seller_gstin: "27AAACX0001A1ZA",
   einvoice_seller_email: "benny@obara.co.in",
   einvoice_seller_phone: "020-67301641",
 };
@@ -24,7 +24,7 @@ describe("buildTenantIdentity", () => {
   it("derives email_domain from the seller email", () => {
     const id = buildTenantIdentity({ display_name: "OBARA" }, obaraSettings);
     expect(id.email_domain).toBe("obara.co.in");
-    expect(id.gstin).toBe("27AAACO8335K1Z5");
+    expect(id.gstin).toBe("27AAACX0001A1ZA");
     expect(id.legal_name).toBe("OBARA INDIA PRIVATE LIMITED");
   });
 
@@ -100,7 +100,7 @@ describe("scrubCustomerOfTenantIdentity (the Summit PO bug)", () => {
   it("hard-nulls customer.gstin when it matches the tenant GSTIN", () => {
     const { customer, scrubbed } = scrubCustomerOfTenantIdentity({
       name: "Some buyer",
-      gstin: "27AAACO8335K1Z5",
+      gstin: "27AAACX0001A1ZA",
     }, identity);
     expect(customer.gstin).toBeNull();
     expect(scrubbed).toContain("gstin");

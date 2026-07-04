@@ -83,9 +83,9 @@ currently configurable on Anvil; the cost cockpit at
 |---|---|---|
 | MMIL header (logo, address, phone) | `customers` joined; logo NOT stored | partial |
 | Vendor code (MMIL calls Obara `TH1M`) | new `customer_vendor_codes` (per-customer reverse mapping) | missing |
-| Vendor GSTN (`27AAACO8335K1Z5`) | `tenants.gstin` or `tenant_settings` | covered |
+| Vendor GSTN (`27AAACX0001A1ZA`) | `tenants.gstin` or `tenant_settings` | covered |
 | Vendor tel / fax | `tenant_settings.contact_phone` etc | covered |
-| Buyer GSTN (`33AAACH2364M1ZM` = Meridian Tamil Nadu) | `customers.gstin` | covered |
+| Buyer GSTN (`33AAACX0003A1ZF` = Meridian Tamil Nadu) | `customers.gstin` | covered |
 | MMIL ref number `P260484306` | `source_pos.po_number` or `orders.po_number` | covered |
 | Date `29/04/2026` | `source_pos.po_date` or extracted | covered |
 | Total amount `INR 271,638.36` | `orders.grand_total` | covered |

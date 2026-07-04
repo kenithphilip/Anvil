@@ -135,7 +135,7 @@ Setup:
 3. Set `GSTN_API_KEY` to the value GSP requires in `client_id`.
 4. Add `seller_gstin` field on Customer Locations for the entity issuing
    the invoice (default seeded value is Obara India's
-   `27AAACO8335K1Z5`).
+   `27AAACX0001A1ZA`).
 
 Smoke test: approve an order, open e-Invoice modal, **Compose draft**,
 then **Send to GSTN**. On success the row flips to `GENERATED` with `irn`,

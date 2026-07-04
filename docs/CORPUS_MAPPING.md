@@ -10,9 +10,9 @@ Use this when judging whether a column is real-world or speculative.
 
 | Doc field | Schema column |
 | --- | --- |
-| Vendor GSTIN 27AAACO8335K1Z5 | `customers.gstin` (Obara as supplier) |
-| Customer GSTIN 24AAKCM8110E1ZR (Halol) | `customer_locations.gstin` |
-| Customer GSTIN 06AAKCM8110E1ZP (Haryana) | `customer_locations.gstin` (second row) |
+| Vendor GSTIN 27AAACX0001A1ZA | `customers.gstin` (Obara as supplier) |
+| Customer GSTIN 24AAKCX0002A1Z5 (Halol) | `customer_locations.gstin` |
+| Customer GSTIN 06AAKCX0002A1Z3 (Haryana) | `customer_locations.gstin` (second row) |
 | Customer PAN AAKCM8110E | `customers.pan` |
 | Vendor code 200261 | not modeled, lives in `orders.preflight_payload` |
 | PO number 51XXXXXXX | `orders.po_number` |

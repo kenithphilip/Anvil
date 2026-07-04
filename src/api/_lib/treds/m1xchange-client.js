@@ -212,7 +212,7 @@ export const getEligibleBuyers = async (settings) => {
     return [
       { gstin: "27AAACR5055K1Z5",  name: "Sandbox Buyer Alpha Pvt Ltd", active: true },
       { gstin: "27AAFCS0014D1Z6",  name: "Sandbox Buyer Beta Industries", active: true },
-      { gstin: "33AAACS3856L1Z9",  name: "Sandbox Buyer Gamma Auto", active: true },
+      { gstin: "33AAACX0004A1ZE",  name: "Sandbox Buyer Gamma Auto", active: true },
     ];
   }
   const { api_key, api_secret } = decryptCreds(settings);

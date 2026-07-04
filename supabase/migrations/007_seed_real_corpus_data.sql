@@ -24,7 +24,7 @@ begin
   -- ── Customers ─────────────────────────────────────────────────────────────
   insert into customers (tenant_id, customer_key, customer_name, gstin, state_code, pan, customer_type, default_payment_terms, default_incoterms, notes)
   values
-    (default_tenant, 'MG_MOTOR_INDIA', 'Vega Motor India Pvt. Ltd.', '24AAKCM8110E1ZR', 'GJ', 'AAKCM8110E', 'AUTO_OEM', 'Net 30 days NEFT', 'FOR MGI Halol Plant', 'Real customer from corpus: 11 blanket POs against OIQTLC-240123-MG-CONSUMABLES'),
+    (default_tenant, 'MG_MOTOR_INDIA', 'Vega Motor India Pvt. Ltd.', '24AAKCX0002A1Z5', 'GJ', 'AAKCM8110E', 'AUTO_OEM', 'Net 30 days NEFT', 'FOR MGI Halol Plant', 'Real customer from corpus: 11 blanket POs against OIQTLC-240123-MG-CONSUMABLES'),
     (default_tenant, 'WGX', 'WGX', null, null, null, 'TIER_ONE', null, null, 'Real customer from corpus: WGX-2C15968L-IND PO + EG SHEET'),
     (default_tenant, 'TATA_MOTORS_PV_PUNE', 'Comet Motors Passenger Vehicles Limited (Pune)', null, 'MH', null, 'AUTO_OEM', 'Net 45 days', null, 'Real customer from Pending Sales Order tracker'),
     (default_tenant, 'ABC_MOTORS', 'ABC Motors', null, null, null, 'AUTO_OEM', null, null, 'Sample customer from Dummy Pricecompo workflow examples')
@@ -39,8 +39,8 @@ begin
   if mg_customer_id is not null then
     insert into customer_locations (tenant_id, customer_id, location_code, plant_name, gstin, state_code, city, is_default)
     values
-      (default_tenant, mg_customer_id, 'HALOL', 'MGI Halol Plant', '24AAKCM8110E1ZR', '24', 'Halol', true),
-      (default_tenant, mg_customer_id, 'HARYANA', 'MGI Haryana Plant', '06AAKCM8110E1ZP', '06', null, false)
+      (default_tenant, mg_customer_id, 'HALOL', 'MGI Halol Plant', '24AAKCX0002A1Z5', '24', 'Halol', true),
+      (default_tenant, mg_customer_id, 'HARYANA', 'MGI Haryana Plant', '06AAKCX0002A1Z3', '06', null, false)
     on conflict (tenant_id, customer_id, location_code) do nothing;
   end if;
 

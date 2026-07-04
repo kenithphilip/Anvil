@@ -19,7 +19,7 @@ vi.mock("./PdfPagePreview", () => ({
 }));
 
 const EVIDENCE: EvidenceByField = {
-  "customer.gstin": { value: "27AAACO8335K1Z5", page: 1, confidence: 0.95 },
+  "customer.gstin": { value: "27AAACX0001A1ZA", page: 1, confidence: 0.95 },
   "customer.name": { value: "Meridian Motor India Ltd", page: 1, confidence: 0.7 },
   "order.po_number": { value: "P250432265", page: 1, confidence: 0.9 },
 };
@@ -82,7 +82,7 @@ describe("ReviewPane Phase C — confirm / flag / correct", () => {
     fireEvent.click(within(row).getByTitle(/flag this field/i));
     expect(row.getAttribute("data-field-status")).toBe("flagged");
     const input = within(row).getByLabelText(/corrected value for customer.gstin/i) as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "27AAACO8335K1ZX" } });
+    fireEvent.change(input, { target: { value: "27AAACX0001A1ZX" } });
     fireEvent.click(within(row).getByText(/save fix/i));
     await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
     const [url, init] = fetchSpy.mock.calls[0];
@@ -91,8 +91,8 @@ describe("ReviewPane Phase C — confirm / flag / correct", () => {
     expect(body).toMatchObject({
       extraction_run_id: "run-1",
       field_path: "customer.gstin",
-      original_value: "27AAACO8335K1Z5",
-      corrected_value: "27AAACO8335K1ZX",
+      original_value: "27AAACX0001A1ZA",
+      corrected_value: "27AAACX0001A1ZX",
     });
     expect((window as any).notifySuccess).toHaveBeenCalled();
   });

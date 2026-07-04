@@ -10,7 +10,7 @@ import ReviewPane, { EvidenceByField } from "./ReviewPane";
 vi.mock("./PdfPagePreview", () => ({ __esModule: true, default: () => <div>pdf</div> }));
 
 const EVIDENCE: EvidenceByField = {
-  "customer.gstin": { value: "27AAACO8335K1Z5", confidence: 0.95, source: "template" },
+  "customer.gstin": { value: "27AAACX0001A1ZA", confidence: 0.95, source: "template" },
   "customer.name": { value: "Meridian Motor India Ltd", confidence: 0.8, source: "llm" },
 };
 

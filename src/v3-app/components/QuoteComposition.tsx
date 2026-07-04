@@ -45,7 +45,7 @@ const DEFAULT_CURRENCIES = ["INR", "USD", "EUR", "CNY", "KRW", "JPY", "GBP"];
 
 const currencyForCountry = (sc?: string): string => {
   const s = (sc || "").toUpperCase();
-  if (s.includes("KOR")) return "USD"; // Obara prices Korean supply in USD
+  if (s.includes("KOR")) return "USD"; // Korean supply is priced in USD
   if (s.includes("JPN") || s.includes("JAPAN")) return "JPY";
   if (s.includes("CHN") || s.includes("CHINA")) return "CNY";
   if (s.includes("IND")) return "INR";

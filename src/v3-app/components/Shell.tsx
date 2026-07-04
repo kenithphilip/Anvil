@@ -552,9 +552,9 @@ export const Shell: React.FC<ShellProps> = ({
         <kbd>⌘K</kbd>
       </button>
 
-      <button type="button" className="head-pill tenant" onClick={onTenant} title="Switch tenant" aria-label={`Switch tenant (current: ${tenant?.code || "OBARA-IN"})`}>
+      <button type="button" className="head-pill tenant" onClick={onTenant} title="Switch tenant" aria-label={`Switch tenant (current: ${tenant?.code || "TENANT"})`}>
         <Dot k="live" />
-        {tenant?.code || "OBARA-IN"}
+        {tenant?.code || "TENANT"}
         {Icon.caret}
       </button>
 

@@ -304,7 +304,7 @@ const sohEscCsv = (v) => {
   return /[",\n\t]/.test(s) ? `"${s.replace(/"/g, "\"\"")}"` : s;
 };
 const SOH_EXPORT_HEADERS = [
-  "Format", "Date", "Obara Part No", "Customer Part No", "Description", "Customer",
+  "Format", "Date", "Internal Part No", "Customer Part No", "Description", "Customer",
   "PO No", "SO No", "Type", "Qty", "Unit Price", "Total", "Delivered", "Pending",
   "Invoice", "WO", "Dispatched", "Drawing No", "Remark"
 ];
@@ -353,7 +353,7 @@ const SOH_TEMPLATES = {
     sheet: "PO Format",
     headers: [
       "Sr. No.", "PO No", "PO Received Date", "Customer Part No.", "PO Items",
-      "Obara Part No", "Customer", "Consumable/Spare", "Remarks",
+      "Internal Part No", "Customer", "Consumable/Spare", "Remarks",
       "Final Unit Price", "PO Qty", "Final Total Price", "Delivered Qty", "Pending Qty",
       "Invoice Number", "WO Number", "Dispatched On", "Source PO No", "Docket No.", "Delivery Date"
     ],

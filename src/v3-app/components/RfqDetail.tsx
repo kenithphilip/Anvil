@@ -231,7 +231,7 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
                      onBlur={(e) => saveDefaultRef(e.target.value.trim())} />
             </div>
             <span className="mono-sm" style={{ color: "var(--ink-4)" }}>
-              Sent to vendors so subsidiaries (Obara Korea/China/India) apply the agreed customer rate. Each vendor's own code can override below.
+              Sent to vendors so subsidiaries apply the agreed customer rate. Each vendor's own code can override below.
             </span>
           </div>
         </Card>

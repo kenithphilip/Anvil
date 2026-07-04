@@ -12,7 +12,7 @@
 // telemetry.
 //
 // Use case: customer ACME calls a Cutter Holder "CH-DZ-010505";
-// Obara's internal part_no is "Cutter Holder DZ-010505". The intake
+// The seller's internal part_no is "Cutter Holder DZ-010505". The intake
 // flow looks up customer_part_number on inbound POs to auto-resolve
 // the line to the canonical item_master row.
 //

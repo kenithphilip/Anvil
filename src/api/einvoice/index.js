@@ -20,7 +20,7 @@ const GSTN_API_KEY = process.env.GSTN_API_KEY || "";
 
 // Build the SellerDtls block from per-tenant einvoice_seller_*
 // columns on tenant_settings (migration 062). Audit P1.2 (May
-// 2026): this block was previously hardcoded to Obara India for
+// 2026): this block was previously hardcoded to a single tenant for
 // every tenant; the GSTN API rejected the payload because the
 // supplied GSTIN never matched the registered legal name + address.
 // Now, when the tenant has not configured the seller block, the
@@ -184,7 +184,7 @@ export default async function handler(req, res) {
       // Audit P1.2 (May 2026): pull seller details from per-tenant
       // einvoice_seller_* columns on tenant_settings (migration 062).
       // If the tenant has not configured them, refuse to compose
-      // a payload rather than ship Obara's address with someone
+      // a payload rather than ship one tenant's address with someone
       // else's GSTIN.
       const tsQ = await svc.from("tenant_settings")
         .select("einvoice_seller_gstin, einvoice_seller_legal_name, einvoice_seller_trade_name, einvoice_seller_address_line1, einvoice_seller_address_line2, einvoice_seller_locality, einvoice_seller_pincode, einvoice_seller_state_code, einvoice_seller_phone, einvoice_seller_email")

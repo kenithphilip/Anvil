@@ -19,7 +19,7 @@ const TEMPLATES = {
   },
   missing_quote: {
     subject: "Quote reference needed for PO {{poNumber}}",
-    body: "Hi {{contact}},\\n\\nWe received PO {{poNumber}} but could not locate the matching Obara quote. Could you share the quote reference number?\\n\\nThanks,\\n{{senderName}}",
+    body: "Hi {{contact}},\\n\\nWe received PO {{poNumber}} but could not locate the matching quote. Could you share the quote reference number?\\n\\nThanks,\\n{{senderName}}",
   },
   delivery_date_conflict: {
     subject: "Delivery date conflict on PO {{poNumber}}",

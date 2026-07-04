@@ -70,7 +70,7 @@ const WiredSOWorkspace = () => {
   // Per-line tax-breakdown expander: an entry { [i]: true } means
   // row i's sub-row (CGST / SGST / IGST / UTGST / Cess / Excise /
   // Ed.cess / Tooling / P&F / Others) is currently visible and
-  // editable. Operators with a Hyundai-style PO use this to fix
+  // editable. Operators with a Meridian-style PO use this to fix
   // up extractor output that landed under the wrong tax cell.
   const [breakdownOpen, setBreakdownOpen] = u<Record<number, boolean>>({});
   // Phase 3.6 observability: pipeline-diagnostics state (lazy-
@@ -1164,7 +1164,7 @@ const WiredSOWorkspace = () => {
     hsn: ["hsn", "hsn_sac", "hsnCode"],
     gst_pct: ["gst_pct", "gstRate", "rate_of_duty_pct"],
     // Per-line tax-component aliases. Each one is the per-unit
-    // amount (matching the Hyundai PO column layout). Identity
+    // amount (matching the Meridian PO column layout). Identity
     // maps because the extractor and the DB use the same key.
     cgst_amount:    ["cgst_amount"],
     sgst_amount:    ["sgst_amount"],

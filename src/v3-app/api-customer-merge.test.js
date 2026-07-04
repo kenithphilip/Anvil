@@ -23,9 +23,9 @@ describe("applySurvivorship", () => {
   it("prefers longer display name", () => {
     const out = applySurvivorship(
       { id: "w", display_name: "MG" },
-      { id: "l", display_name: "MG Motor India Pvt Ltd" },
+      { id: "l", display_name: "Vega Motor India Pvt Ltd" },
     );
-    expect(out.display_name).toBe("MG Motor India Pvt Ltd");
+    expect(out.display_name).toBe("Vega Motor India Pvt Ltd");
   });
 
   it("fills null fields from loser without overwriting", () => {
@@ -89,7 +89,7 @@ describe("buildMergePlan", () => {
                   maybeSingle: () => Promise.resolve({
                     data: select_calls === 1
                       ? { id: "w", display_name: "MG", gstin: "27ABC", country: null }
-                      : { id: "l", display_name: "MG Motor India Pvt Ltd", gstin: null, country: "IN" },
+                      : { id: "l", display_name: "Vega Motor India Pvt Ltd", gstin: null, country: "IN" },
                     error: null,
                   }),
                 };
@@ -103,7 +103,7 @@ describe("buildMergePlan", () => {
     };
     const out = await buildMergePlan(svc, { tenantId: "t", winnerId: "w", loserId: "l" });
     expect(out.ok).toBe(true);
-    expect(out.merged_row.display_name).toBe("MG Motor India Pvt Ltd");
+    expect(out.merged_row.display_name).toBe("Vega Motor India Pvt Ltd");
     expect(out.merged_row.country).toBe("IN");
     expect(out.fk_updates.length).toBe(__test.FK_TABLES.length);
   });

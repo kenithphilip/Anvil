@@ -53,10 +53,10 @@ const RULES = [
   // wkhtmltopdf (web-to-PDF conversion). Usually e-commerce or
   // SaaS-emitted POs; structured but with HTML-ish quirks.
   { match: /wkhtmltopdf|Puppeteer|Chromium/i, bias: ["docling", "marker"], label: "html_to_pdf" },
-  // Hyundai-style vertical block layouts. The Hyundai PO carries
+  // Meridian-style vertical block layouts. The Meridian PO carries
   // distinctive metadata; reducto wins consistently per pilot
   // data.
-  { match: /Hyundai|HMIL/i, bias: ["reducto", "azure_di", "claude"], label: "hyundai" },
+  { match: /Meridian|MMIL/i, bias: ["reducto", "azure_di", "claude"], label: "hyundai" },
 ];
 
 const toUint8 = (input) => {
@@ -110,7 +110,7 @@ export const readPdfBias = async (input) => {
     keywords: safeRead(doc, "keywords"),
   };
   // Concatenate every text field so a single rule can match on
-  // any combination ("Hyundai" might be in /Subject; "SAP" in
+  // any combination ("Meridian" might be in /Subject; "SAP" in
   // /Producer). Empty strings are fine.
   const haystack = [meta.producer, meta.creator, meta.title, meta.subject, meta.author, meta.keywords]
     .filter(Boolean).join(" | ");

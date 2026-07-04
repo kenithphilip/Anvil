@@ -9,7 +9,7 @@
 -- skips the deterministic extractors. The L4 LLM stage still runs
 -- every time because extraction_runs does not carry the hash, so
 -- there is no way to short-circuit the run before the adapter chain
--- fires. Concretely: an operator who uploads the same Hyundai PO
+-- fires. Concretely: an operator who uploads the same Meridian PO
 -- twice within a few minutes pays for the LLM call twice; a batch
 -- importer that retries a failed cron iteration burns the LLM
 -- budget on every retry.

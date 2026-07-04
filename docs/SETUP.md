@@ -85,8 +85,8 @@ select count(*) as holidays from holiday_calendar;
 select count(*) as lost_reasons from lost_reason_taxonomy;
 ```
 
-Expected: at least 6 customers (MG Motor, SRTX, Tata Motors, ABC Motors,
-JBM Auto Plant 1, RNAIPL), at least 131 item master rows, at least 58 holiday
+Expected: at least 6 customers (Vega Motor, WGX, Comet Motors, ABC Motors,
+NRD Auto Plant 1, ALAP), at least 131 item master rows, at least 58 holiday
 rows (IN/CN/JP/KR/US 2026), 9 lost reasons. If any returns 0, re-run the
 migration that should have seeded it (the seed migrations are 004, 007,
 009, 010).
@@ -314,7 +314,7 @@ UI to add customers, items, etc.
 From the running production app:
 
 1. Open the **Integration Report** action. Every row should be `ok`.
-2. Open **Admin Center → Customer locations**. You should see MG Motor's
+2. Open **Admin Center → Customer locations**. You should see Vega Motor's
    two GSTINs (Halol + Haryana).
 3. Open **Admin Center → Item master**. Filter by source country `O-KOREA`
    and confirm 11 rows.

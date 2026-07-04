@@ -1,7 +1,7 @@
--- Migration 107: residual Tally + Hyundai PO field closures.
+-- Migration 107: residual Tally + Meridian PO field closures.
 --
 -- After the comprehensive 105 + 106 round, a fresh audit against the
--- Tally Stock Item spec and the Hyundai sample PO surfaces six tiny
+-- Tally Stock Item spec and the Meridian sample PO surfaces six tiny
 -- gaps. All additive, nullable, non-breaking.
 --
 -- Closes:
@@ -9,8 +9,8 @@
 --   2. Tally section 1: `Other Details (Yes/No)` flag.
 --   3. Tally section 4: `HSN/SAC Details Source` enum.
 --   4. Tally section 4: `GST Rate Details Source` enum.
---   5. Hyundai PO: per-item default `inspection_required` flag.
---   6. Hyundai PO: per-item default `maker` text.
+--   5. Meridian PO: per-item default `inspection_required` flag.
+--   6. Meridian PO: per-item default `maker` text.
 --
 -- The first four mirror Tally's explicit Yes/No or three-state
 -- enums even when the underlying data is implicitly available
@@ -37,9 +37,9 @@ comment on column item_master.hsn_source is
 comment on column item_master.gst_rate_source is
   'Tally three-state fallback for GST rate: specify / as_per_company / not_available.';
 comment on column item_master.inspection_required is
-  'Default for the Hyundai-style PO Inspection Item column. Inbound POs override per-line via line_items.inspection_required.';
+  'Default for the Meridian-style PO Inspection Item column. Inbound POs override per-line via line_items.inspection_required.';
 comment on column item_master.maker is
-  'Default for the Hyundai-style PO Maker column. Inbound POs override per-line via line_items.maker.';
+  'Default for the Meridian-style PO Maker column. Inbound POs override per-line via line_items.maker.';
 
 -- Convenience index for inspection filters on the workspace.
 create index if not exists item_master_inspection_idx

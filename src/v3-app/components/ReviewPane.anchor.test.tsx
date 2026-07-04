@@ -11,7 +11,7 @@ vi.mock("./PdfPagePreview", () => ({ __esModule: true, default: () => <div>pdf</
 
 const EVIDENCE: EvidenceByField = {
   "customer.gstin": { value: "27AAACO8335K1Z5", confidence: 0.95, source: "template" },
-  "customer.name": { value: "Hyundai Motor India Ltd", confidence: 0.8, source: "llm" },
+  "customer.name": { value: "Meridian Motor India Ltd", confidence: 0.8, source: "llm" },
 };
 
 beforeEach(() => {

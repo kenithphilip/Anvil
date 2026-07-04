@@ -47,7 +47,7 @@ vi.mock("../api/_lib/docai/run.js", () => ({
     return {
       runId: "run-1", status: "ok", statusReason: "ok", adapterUsed: "claude",
       adapterMode: "pdf_document", confidenceOverall: 0.9,
-      normalized: { customer: { name: "Hyundai Motor India Ltd" }, lines: [{}] },
+      normalized: { customer: { name: "Meridian Motor India Ltd" }, lines: [{}] },
       attempts: [], textLayer: null,
     };
   }),
@@ -88,7 +88,7 @@ describe("docai/extract large-PDF routing", () => {
     expect(h.pipelineCalls).toHaveLength(1);
     expect(h.pipelineCalls[0].hints.keepPages).toEqual([1]);
     // customer still detected from the page-1 header
-    expect(parsed.normalized.customer.name).toMatch(/Hyundai/);
+    expect(parsed.normalized.customer.name).toMatch(/Meridian/);
   });
 
   it("leaves a <=12-page PDF on the full sync path (no down-scope)", async () => {

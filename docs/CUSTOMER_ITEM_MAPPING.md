@@ -67,7 +67,7 @@ learning baked in.
 | --- | --- | --- | --- |
 | CM 3.1 | `90cbee4` | 132 | N-of-M auto-promote. Pulls the last 4 successful runs for a customer; if the same (customer_part, item_id) appears in 3+ with confidence >= 0.85 AND no operator disagreement in 90 days, inserts an `item_customer_parts` row with `created_via='auto_consensus'` and confidence_pct=90. New `auto_consensus` value on the created_via CHECK constraint. |
 | CM 3.2 | `7558e89` | (no migration) | Decay-weighted operator confidence. Half-life 90 days; corrections from yesterday get weight 1.0, 90 days ago 0.5, 180 days ago 0.25. customer-hints priming reads top-K by weight (default 8) and drops rows below 0.05 weight. |
-| CM 3.3 | `f385e6a` | 133 | Contact-attributed mapping prior. `learned_corrections.customer_contact_id` FK. When `buildCustomerHints` is called with a contactId, that contact's corrections get a 1.5x weight boost so multi-buyer customers (Hyundai with two buyers using different part schemes) get buyer-specific priming. Cache key includes contact suffix. |
+| CM 3.3 | `f385e6a` | 133 | Contact-attributed mapping prior. `learned_corrections.customer_contact_id` FK. When `buildCustomerHints` is called with a contactId, that contact's corrections get a 1.5x weight boost so multi-buyer customers (Meridian with two buyers using different part schemes) get buyer-specific priming. Cache key includes contact suffix. |
 
 ### Wave 4: customer master intelligence
 

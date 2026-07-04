@@ -7,7 +7,7 @@ inside Anvil, or (b) flagged for a follow-up schema extension.
 Source documents:
 - Price Quotation `OIQTLC-260320-HMI PUNE-GUIDE ASSY & POINT HOLDER-REV-1` (2026-03-20, revised 2026-04-23)
 - Price Composition Excel (internal calculation sheet; the source of truth)
-- Hyundai Motor India Purchase Order `P260484306` (2026-04-29)
+- Meridian Motor India Purchase Order `P260484306` (2026-04-29)
 - Obara Sales Order voucher `440` for buyer ref `P260484306` (2026-05-11)
 
 Audit anchored on `main @ acbaf99`. Tags throughout: `[covered]` (field
@@ -15,7 +15,7 @@ already configurable on main), `[partial]` (some fields configurable,
 extension recommended), `[missing]` (no schema or template support),
 `[hardcoded]` (currently exists as a code or text constant).
 
-## 1. Price Quotation (Obara to Hyundai)
+## 1. Price Quotation (Obara to Meridian)
 
 | Field | Anvil column / table | Status |
 |---|---|---|
@@ -34,7 +34,7 @@ extension recommended), `[missing]` (no schema or template support),
 | HSN code per line | `item_master.hsn_sac` joined; or `quotes.line_items.hsn` | covered |
 | CGST / SGST / IGST percent per line | inside `quotes.line_items` JSONB | partial |
 | Source country marker (O/K = Obara Korea) | `item_master.source_country` | covered |
-| Drawing / customer number per line (SRTC-12464) | `item_master.drawing_no` + `item_specifications.drawing_number` | covered |
+| Drawing / customer number per line (WGC-12464) | `item_master.drawing_no` + `item_specifications.drawing_number` | covered |
 | Terms text (Prices, Taxes, Delivery, Freight, Validity, Payment, Warranty, Cancellation 1-4, Force Majeure 1-3) | `quotes.terms` text blob | partial. Stored as one blob; no per-section template. New `document_template_sections` table covers this. |
 | Authorised signatory block | new `document_templates` `signatory_block` | missing |
 | Footer (`OI/F/SP/19/R-00/020226` plus brand line) | new `document_templates` `footer_block` | missing |
@@ -77,22 +77,22 @@ currently configurable on Anvil; the cost cockpit at
 | Ocean freight FREEZE / SET / CBM / PACKING / OCEAN columns | new `freight_rates` | missing |
 | 14 sets / 26 CBM / packing 5,720 / ocean 273,000 | new `freight_rates` | missing |
 
-## 3. Hyundai Motor India Purchase Order (P260484306)
+## 3. Meridian Motor India Purchase Order (P260484306)
 
 | Field | Anvil column / table | Status |
 |---|---|---|
-| HMIL header (logo, address, phone) | `customers` joined; logo NOT stored | partial |
-| Vendor code (HMIL calls Obara `TH1M`) | new `customer_vendor_codes` (per-customer reverse mapping) | missing |
+| MMIL header (logo, address, phone) | `customers` joined; logo NOT stored | partial |
+| Vendor code (MMIL calls Obara `TH1M`) | new `customer_vendor_codes` (per-customer reverse mapping) | missing |
 | Vendor GSTN (`27AAACO8335K1Z5`) | `tenants.gstin` or `tenant_settings` | covered |
 | Vendor tel / fax | `tenant_settings.contact_phone` etc | covered |
-| Buyer GSTN (`33AAACH2364M1ZM` = Hyundai Tamil Nadu) | `customers.gstin` | covered |
-| HMIL ref number `P260484306` | `source_pos.po_number` or `orders.po_number` | covered |
+| Buyer GSTN (`33AAACH2364M1ZM` = Meridian Tamil Nadu) | `customers.gstin` | covered |
+| MMIL ref number `P260484306` | `source_pos.po_number` or `orders.po_number` | covered |
 | Date `29/04/2026` | `source_pos.po_date` or extracted | covered |
 | Total amount `INR 271,638.36` | `orders.grand_total` | covered |
-| Item No `GD544202603190008` (HMIL part code) | `item_customer_parts.customer_part_number` | covered |
+| Item No `GD544202603190008` (MMIL part code) | `item_customer_parts.customer_part_number` | covered |
 | Description | `item_master.description` | covered |
 | Specification `4-ET31062` (Obara drawing) | `item_specifications.drawing_number` | covered |
-| Req No `1000372863` (HMIL requisition) | new `source_pos.requisition_no` | missing |
+| Req No `1000372863` (MMIL requisition) | new `source_pos.requisition_no` | missing |
 | Qty / UoM (NOS) | covered | covered |
 | Currency (INR) | covered | covered |
 | Ex-Price | `quotes.line_items.unit_price` or new | partial |
@@ -115,7 +115,7 @@ currently configurable on Anvil; the cost cockpit at
 | Penalty Clause (`0.1% per day capped at 10%`) | new `document_templates.penalty_clause` plus order-level override | missing |
 | Other Conditions 5 bullets | new `document_template_sections.other_conditions` | missing |
 | Remarks | `orders.notes` | covered |
-| 15 HMIL boilerplate terms (pages 3-4) | new `customer_terms_packs` (per-customer terms library) | missing |
+| 15 MMIL boilerplate terms (pages 3-4) | new `customer_terms_packs` (per-customer terms library) | missing |
 | Acknowledgement footer | new template | missing |
 
 ## 4. Obara Sales Order (Voucher 440)
@@ -123,7 +123,7 @@ currently configurable on Anvil; the cost cockpit at
 | Field | Anvil column / table | Status |
 |---|---|---|
 | Seller block (Obara header) | `tenants` / `tenant_settings` | covered |
-| Consignee Ship-to (Hyundai Pune Plot A-16) | `customer_locations` joined via `orders.customer_location_id` | covered |
+| Consignee Ship-to (Meridian Pune Plot A-16) | `customer_locations` joined via `orders.customer_location_id` | covered |
 | Buyer Bill-to | `customer_locations` joined | covered |
 | Voucher No `440` | `tally_voucher_records.voucher_no` | covered |
 | Buyer's Ref / Order No `P260484306` | `orders.po_number` | covered |
@@ -152,7 +152,7 @@ Audited via grep. Constants that should become per-tenant configuration:
 | Constant | Location | Replacement |
 |---|---|---|
 | `OBARA_STATE = "Maharashtra"` | `src/scripts/build-unified-app.mjs:1363,1441,1446,1447,4412` | `tenant_settings.default_state_code` (Phase 1 P0 fix F8) |
-| Hardcoded HMIL terms paragraph in legacy bundle (none found on `main @ acbaf99`) | none | not applicable |
+| Hardcoded MMIL terms paragraph in legacy bundle (none found on `main @ acbaf99`) | none | not applicable |
 | GSTIN regex without checksum | per Phase 1 F52 | already in roadmap |
 | GST rate constants `18 / 9 / 9` | inferred from documents | computed from `item_master.sgst_rate / cgst_rate / igst_rate`; covered |
 
@@ -189,7 +189,7 @@ The highest-leverage fills are:
 4. `quotes.fx_snapshot` JSONB column for per-quote exchange-rate freezing.
 5. `freight_rates` (per-tenant) for air per-kg and ocean per-cbm tables.
 6. `customer_vendor_codes` (the code each customer uses to refer to the
-   tenant as a supplier; HMIL calls Obara `TH1M`).
+   tenant as a supplier; MMIL calls Obara `TH1M`).
 7. `order_line_tax_components` (per-line breakdown for SGST / CGST / IGST
    / UTGST / Excise / Ed. Cess / S-VAT / C-VAT / Tooling / P&F / Others).
 8. `orders.dispatch_mode`, `orders.registration_serial_no`,
@@ -198,7 +198,7 @@ The highest-leverage fills are:
    that appears on the PO body).
 10. `tenant_pricing_settings` (target_margin_pct, multiplication factors
     per currency, default conversion_factor).
-11. `customer_terms_packs` (per-customer terms library so HMIL's 15
+11. `customer_terms_packs` (per-customer terms library so MMIL's 15
     boilerplate clauses are stored once and reused on every order).
 
 ## 8. UI surfaces required (post-migration 106)
@@ -221,7 +221,7 @@ is needed to close the document-template, price-composition,
 tax-component, freight, and per-customer-terms gaps that the four
 documents reveal.
 
-Generalisation principle to follow in 106: nothing about HMIL, Obara,
+Generalisation principle to follow in 106: nothing about MMIL, Obara,
 Tally, or India is hard-coded. Seeds populate the global reference
 tables. Every tenant can override every value. Per-customer overrides
 sit alongside per-tenant defaults via the same fallback resolution

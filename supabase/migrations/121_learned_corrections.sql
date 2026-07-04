@@ -32,7 +32,7 @@
 --     extractor against the operator-true value over time.
 --   - The diagnostics tab plots correction rate per adapter
 --     per field, so an operator can see "claude misreads HSN
---     6% of the time on Hyundai POs".
+--     6% of the time on Meridian POs".
 --   - When 3+ corrections of the same diff_kind land on the
 --     same (customer, field_path) within 30 days, a
 --     customer_field_overrides row is auto-suggested.

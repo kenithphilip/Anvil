@@ -2,7 +2,7 @@
 
 Re-audit of Anvil's main branch against the four real Obara documents
 (Price Quotation OIQTLC-260320-REV-1, Price Composition Excel,
-Hyundai PO P260484306, Obara SO voucher 440), performed after
+Meridian PO P260484306, Obara SO voucher 440), performed after
 shipping migrations 104 / 105 / 106 plus the customer + admin UI
 extensions in this round.
 
@@ -35,7 +35,7 @@ Improvement from the prior audit: 39 to 78 covered, 34 to 1 missing.
 `src/v3-app/lib/amount-words.ts` plus tests. Supports both
 international and Indian numbering styles. 9 unit tests pin the helper
 against the Obara SO sample ("Two Hundred Thirty Thousand Two Hundred
-Two INR Only") and the Hyundai PO grand total ("Two Hundred Seventy
+Two INR Only") and the Meridian PO grand total ("Two Hundred Seventy
 One Thousand Six Hundred Thirty Eight and Thirty Six Paise INR Only").
 
 ### 2.2 Four new API handlers
@@ -68,9 +68,9 @@ of the SO workspace. Matches the Tally SO PDF convention.
 ### 2.4 Admin tabs
 Two new admin tabs:
 - **Vendor codes** mapping each customer to the supplier code they
-  use for the tenant (HMIL calls Obara `TH1M`).
+  use for the tenant (MMIL calls Obara `TH1M`).
 - **Customer terms** with per-customer pack creator + per-clause
-  editor. HMIL's 15-paragraph T&C boilerplate lives once per pack
+  editor. MMIL's 15-paragraph T&C boilerplate lives once per pack
   and can be acknowledged or overridden per order.
 
 ### 2.5 OBARA_STATE cleanup
@@ -148,7 +148,7 @@ observed while wiring the new fields. Captured for next-round work:
 ## 6. Architecture verdict
 
 Anvil now generalises the four-document surface area without any
-HMIL / Obara / Tally / India-specific hard-coding. Every value is
+MMIL / Obara / Tally / India-specific hard-coding. Every value is
 either seeded as a global default (overridable per tenant) or
 captured per-tenant from day one. The configuration UI surfaces are
 all in admin; once an admin enters their data (vendor codes, terms

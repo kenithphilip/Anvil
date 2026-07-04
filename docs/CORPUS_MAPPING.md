@@ -6,7 +6,7 @@ Use this when judging whether a column is real-world or speculative.
 
 ## Real customer documents
 
-### MG Motor Blanket PO (11 release POs)
+### Vega Motor Blanket PO (11 release POs)
 
 | Doc field | Schema column |
 | --- | --- |
@@ -20,7 +20,7 @@ Use this when judging whether a column is real-world or speculative.
 | Footnote "*As per Schedule Lines, to be sent separately" | `order_schedule_lines` table |
 | 11 POs against one parent quote | `contracts` (BLANKET_PO) + `orders.contract_id` |
 
-### SRTX
+### WGX
 
 | Doc field | Schema column |
 | --- | --- |
@@ -107,7 +107,7 @@ Three template files in `INternal Sales order/`:
 Plus a fifth `INTERNAL_TRANSFER` for Chennai/Pune/Halol store transfers
 mentioned in the JTBD doc.
 
-## Spare matrix structure (JBM Plant 1)
+## Spare matrix structure (NRD Plant 1)
 
 The 6.5MB matrix has:
 
@@ -116,7 +116,7 @@ The 6.5MB matrix has:
 - `ZONE` → `equipment_hierarchy.zone_name`
 - `Station Name` → `equipment_hierarchy.station_name`
 - `Robot Make` / `Robot No.` → `equipment_hierarchy.robot_make / .robot_no`
-- `GUN NO.` (e.g., SRTX-S2C7117L) → `equipment_hierarchy.gun_no`
+- `GUN NO.` (e.g., WGX-S2C7117L) → `equipment_hierarchy.gun_no`
 - `GUN TYPE`, `Timer`, `ATD` → matching columns
 - 150+ part columns → exploded into `equipment_installed_parts` rows
 

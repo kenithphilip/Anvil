@@ -191,13 +191,13 @@ describe("resolveCustomerRef + resolveItemRef", () => {
   });
 
   it("resolves a UUID customer ref via id", async () => {
-    const svc = makeSvc({ customers: [{ id: CUST, tenant_id: TENANT, customer_name: "Faith" }] });
+    const svc = makeSvc({ customers: [{ id: CUST, tenant_id: TENANT, customer_name: "Summit" }] });
     expect(await resolveCustomerRef(svc, TENANT, CUST)).toBe(CUST);
   });
 
   it("resolves a name-shaped customer ref via ilike", async () => {
-    const svc = makeSvc({ customers: [{ id: CUST, tenant_id: TENANT, customer_name: "Faith" }] });
-    expect(await resolveCustomerRef(svc, TENANT, "Faith")).toBe(CUST);
+    const svc = makeSvc({ customers: [{ id: CUST, tenant_id: TENANT, customer_name: "Summit" }] });
+    expect(await resolveCustomerRef(svc, TENANT, "Summit")).toBe(CUST);
   });
 
   it("resolves an item by part_no when no UUID provided", async () => {
@@ -210,15 +210,15 @@ describe("upsertCustomerPartsBatch", () => {
   it("returns per-row errors without aborting the batch", async () => {
     const svc = makeSvc({
       item_master: [{ id: ITEM, tenant_id: TENANT, part_no: "THB-L1-70B-2" }],
-      customers: [{ id: CUST, tenant_id: TENANT, customer_name: "Faith" }],
+      customers: [{ id: CUST, tenant_id: TENANT, customer_name: "Summit" }],
       item_customer_parts: [],
     });
     const ctx = { tenantId: TENANT, user: { id: ACTOR } };
     const { ok, errors } = await upsertCustomerPartsBatch(svc, ctx, [
-      { customer_name: "Faith", item_master_part_no: "THB-L1-70B-2", customer_part_number: PART },
-      { customer_name: "Faith", item_master_part_no: "DOES-NOT-EXIST", customer_part_number: "X" },
+      { customer_name: "Summit", item_master_part_no: "THB-L1-70B-2", customer_part_number: PART },
+      { customer_name: "Summit", item_master_part_no: "DOES-NOT-EXIST", customer_part_number: "X" },
       { customer_name: "MissingCustomer", item_master_part_no: "THB-L1-70B-2", customer_part_number: "Y" },
-      { customer_name: "Faith", item_master_part_no: "THB-L1-70B-2", customer_part_number: "   " },
+      { customer_name: "Summit", item_master_part_no: "THB-L1-70B-2", customer_part_number: "   " },
     ]);
     expect(ok).toBe(1);
     expect(errors.length).toBe(3);

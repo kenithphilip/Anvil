@@ -1,6 +1,6 @@
 // Unit tests for src/api/_lib/docai/tenant-scrub.js.
 //
-// Anchored on the real PO that surfaced the bug: Faith Automation
+// Anchored on the real PO that surfaced the bug: Summit Automation
 // (buyer) issued a PO to OBARA (tenant). The PDF carried the
 // tenant's salesperson email `benny@obara.co.in` in the "Your
 // Ref" block above the line table; the extractor pulled it into
@@ -54,25 +54,25 @@ describe("buildTenantIdentity", () => {
   });
 });
 
-describe("scrubCustomerOfTenantIdentity (the Faith PO bug)", () => {
+describe("scrubCustomerOfTenantIdentity (the Summit PO bug)", () => {
   const identity = buildTenantIdentity({ display_name: "OBARA INDIA" }, obaraSettings);
 
   it("nulls customer.email when it matches the tenant email exactly", () => {
     const { customer, scrubbed } = scrubCustomerOfTenantIdentity({
-      name: "Faith Automation Systems & Tooling Pvt. Ltd.",
+      name: "Summit Automation Systems & Tooling Pvt. Ltd.",
       gstin: "27AACCF1990R1ZZ",
       email: "benny@obara.co.in",
       phone: "020-65412121",
     }, identity);
     expect(customer.email).toBeNull();
-    expect(customer.name).toBe("Faith Automation Systems & Tooling Pvt. Ltd.");
+    expect(customer.name).toBe("Summit Automation Systems & Tooling Pvt. Ltd.");
     expect(customer.gstin).toBe("27AACCF1990R1ZZ");
     expect(scrubbed).toEqual(["email"]);
   });
 
   it("nulls customer.email when only the domain matches (other tenant employees)", () => {
     const { customer, scrubbed } = scrubCustomerOfTenantIdentity({
-      name: "Faith Automation Pvt Ltd",
+      name: "Summit Automation Pvt Ltd",
       email: "anyone-else@obara.co.in",
     }, identity);
     expect(customer.email).toBeNull();
@@ -81,7 +81,7 @@ describe("scrubCustomerOfTenantIdentity (the Faith PO bug)", () => {
 
   it("keeps a customer email when neither value nor domain matches the tenant", () => {
     const { customer, scrubbed } = scrubCustomerOfTenantIdentity({
-      name: "Faith Automation Pvt Ltd",
+      name: "Summit Automation Pvt Ltd",
       email: "procurement@faithautomation.com",
     }, identity);
     expect(customer.email).toBe("procurement@faithautomation.com");
@@ -90,7 +90,7 @@ describe("scrubCustomerOfTenantIdentity (the Faith PO bug)", () => {
 
   it("nulls customer.phone when last 10 digits match the tenant phone", () => {
     const { customer, scrubbed } = scrubCustomerOfTenantIdentity({
-      name: "Faith Automation Pvt Ltd",
+      name: "Summit Automation Pvt Ltd",
       phone: "+91-20-67301641",
     }, identity);
     expect(customer.phone).toBeNull();
@@ -116,7 +116,7 @@ describe("scrubCustomerOfTenantIdentity (the Faith PO bug)", () => {
   });
 
   it("leaves the customer untouched when identity is null", () => {
-    const cust = { name: "Faith", email: "x@y.com" };
+    const cust = { name: "Summit", email: "x@y.com" };
     const r = scrubCustomerOfTenantIdentity(cust, null);
     expect(r.customer).toBe(cust);
     expect(r.scrubbed).toEqual([]);

@@ -157,7 +157,7 @@ describe("ReviewPane", () => {
   it("renders one row per evidence entry, grouped, with data-field-path stamped", () => {
     const evidence: EvidenceByField = {
       "customer.gstin":    { value: "27AAACO8335K1Z5", page: 1, confidence: 0.92 },
-      "customer.name":     { value: "Hyundai Motor India Ltd", page: 1, confidence: 0.88 },
+      "customer.name":     { value: "Meridian Motor India Ltd", page: 1, confidence: 0.88 },
       "order.po_number":   { value: "P250432265", page: 1, confidence: 0.99 },
       "lines[0].partNumber": { value: "GD544202503060009", page: 1, line: 1, confidence: 0.95 },
       "totals.grand_inr":  { value: 1710922.76, page: 1, confidence: 0.97 },

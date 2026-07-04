@@ -1,6 +1,6 @@
 // /api/orders/schedule_lines
 // Customer schedule lines that arrive separately from the PO header.
-// Real-world example: every MG Motor PO has a footnote "*As per Schedule Lines,
+// Real-world example: every Vega Motor PO has a footnote "*As per Schedule Lines,
 // to be sent separately" pointing at a separate spreadsheet attachment.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";

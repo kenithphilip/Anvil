@@ -53,7 +53,7 @@ the v3 shell so every screen has a one-liner to call:
 2. `ObaraBackend.admin.inventory` (currently inline).
 3. `ObaraBackend.admin.contracts` (already used directly via fetch in
    spare-matrix code).
-4. `ObaraBackend.admin.equipment` (used by JBM importer).
+4. `ObaraBackend.admin.equipment` (used by NRD importer).
 5. `ObaraBackend.sales.internalSos` (CRUD wrappers for internal SOs).
 6. `ObaraBackend.admin.quoteApprovals` (Approvals screen needs list / decide /
    delegate methods).

@@ -32,7 +32,7 @@ const NewCustomerModal: React.FC<{ onClose: () => void; onSubmit: (payload: any)
         </div>
         <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
           {!apply && <div className="mono-sm" style={{ color: "var(--ink-4)" }}>This will be submitted for approval before it is created.</div>}
-          <div><div className="label">customer name *</div><input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Tata Motors Ltd." /></div>
+          <div><div className="label">customer name *</div><input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Comet Motors Ltd." /></div>
           <div><div className="label">customer key (optional)</div><input className="input mono" value={key} onChange={(e) => setKey(e.target.value)} placeholder="auto from name if blank" /></div>
           <div><div className="label">GSTIN (optional)</div><input className="input mono" value={gstin} onChange={(e) => setGstin(e.target.value)} placeholder="29ABCDE1234F1Z5" /></div>
           <div><div className="label">currency (optional)</div><input className="input mono" value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} placeholder="INR" maxLength={3} /></div>

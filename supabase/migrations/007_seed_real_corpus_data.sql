@@ -1,5 +1,5 @@
 -- 007_seed_real_corpus_data.sql
--- Seeds real customer master rows (MG Motor, SRTX, Tata Motors, ABC Motors)
+-- Seeds real customer master rows (Vega Motor, WGX, Comet Motors, ABC Motors)
 -- and 35 item master rows extracted from the corpus
 -- (Item Master Template-FEB-2024.xlsx).
 -- All inserts are idempotent (ON CONFLICT DO NOTHING).
@@ -24,14 +24,14 @@ begin
   -- ── Customers ─────────────────────────────────────────────────────────────
   insert into customers (tenant_id, customer_key, customer_name, gstin, state_code, pan, customer_type, default_payment_terms, default_incoterms, notes)
   values
-    (default_tenant, 'MG_MOTOR_INDIA', 'MG Motor India Pvt. Ltd.', '24AAKCM8110E1ZR', 'GJ', 'AAKCM8110E', 'AUTO_OEM', 'Net 30 days NEFT', 'FOR MGI Halol Plant', 'Real customer from corpus: 11 blanket POs against OIQTLC-240123-MG-CONSUMABLES'),
-    (default_tenant, 'SRTX', 'SRTX', null, null, null, 'TIER_ONE', null, null, 'Real customer from corpus: SRTX-2C15968L-IND PO + EG SHEET'),
-    (default_tenant, 'TATA_MOTORS_PV_PUNE', 'Tata Motors Passenger Vehicles Limited (Pune)', null, 'MH', null, 'AUTO_OEM', 'Net 45 days', null, 'Real customer from Pending Sales Order tracker'),
+    (default_tenant, 'MG_MOTOR_INDIA', 'Vega Motor India Pvt. Ltd.', '24AAKCM8110E1ZR', 'GJ', 'AAKCM8110E', 'AUTO_OEM', 'Net 30 days NEFT', 'FOR MGI Halol Plant', 'Real customer from corpus: 11 blanket POs against OIQTLC-240123-MG-CONSUMABLES'),
+    (default_tenant, 'WGX', 'WGX', null, null, null, 'TIER_ONE', null, null, 'Real customer from corpus: WGX-2C15968L-IND PO + EG SHEET'),
+    (default_tenant, 'TATA_MOTORS_PV_PUNE', 'Comet Motors Passenger Vehicles Limited (Pune)', null, 'MH', null, 'AUTO_OEM', 'Net 45 days', null, 'Real customer from Pending Sales Order tracker'),
     (default_tenant, 'ABC_MOTORS', 'ABC Motors', null, null, null, 'AUTO_OEM', null, null, 'Sample customer from Dummy Pricecompo workflow examples')
   on conflict (tenant_id, customer_key) do nothing;
 
   select id into mg_customer_id   from customers where tenant_id = default_tenant and customer_key = 'MG_MOTOR_INDIA';
-  select id into srtx_customer_id from customers where tenant_id = default_tenant and customer_key = 'SRTX';
+  select id into srtx_customer_id from customers where tenant_id = default_tenant and customer_key = 'WGX';
   select id into tata_customer_id from customers where tenant_id = default_tenant and customer_key = 'TATA_MOTORS_PV_PUNE';
   select id into abc_customer_id  from customers where tenant_id = default_tenant and customer_key = 'ABC_MOTORS';
 
@@ -47,7 +47,7 @@ begin
   if tata_customer_id is not null then
     insert into customer_locations (tenant_id, customer_id, location_code, plant_name, state_code, city, is_default)
     values
-      (default_tenant, tata_customer_id, 'PUNE', 'Tata Motors Pune Plant', '27', 'Pune', true)
+      (default_tenant, tata_customer_id, 'PUNE', 'Comet Motors Pune Plant', '27', 'Pune', true)
     on conflict (tenant_id, customer_id, location_code) do nothing;
   end if;
 end $$;
@@ -116,7 +116,7 @@ begin
     (default_tenant, 'BADI001558-3',            'Bend Adapter BADI001558-3',                                'BADI001558-3',            'Nos', 'O-INDIA', 'INR', 20000,   'XXX',           '2024-02-07', '2024-04-30', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
     (default_tenant, 'COOL4X6',                 'Teflon Hose COOL4X6',                                      'COOL4X6',                 'Mtr', 'O-INDIA', 'INR', 200,     'XXX',           '2024-02-07', '2024-04-30', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
     (default_tenant, 'NAME_PLATE_4_RIVET',      'NAME PLATE WITH 4NOS RIVET',                               null,                      'Nos', 'O-INDIA', 'INR', 100,     'XXX',           '2024-02-07', '2024-04-30', '85159000', 0.09, 0.09, 0.18, 'ACTIVE', false),
-    (default_tenant, 'MOD_FOR_SRTX_2C7507L',    'Modification for SRTX-2C7507L-IND',                        null,                      'Nos', 'O-INDIA', 'INR', null,    'ASSEMBLY ITEM', null,         null,         '85159000', 0.09, 0.09, 0.18, 'ACTIVE', true),
+    (default_tenant, 'MOD_FOR_WGX_2C7507L',    'Modification for WGX-2C7507L-IND',                        null,                      'Nos', 'O-INDIA', 'INR', null,    'ASSEMBLY ITEM', null,         null,         '85159000', 0.09, 0.09, 0.18, 'ACTIVE', true),
     (default_tenant, 'MODIFICATION_CHARGES',    'Modification Charges',                                     null,                      'Nos', 'O-INDIA', 'INR', 10000,   'XXX',           '2024-02-07', '2024-04-30', '996531',   0.09, 0.09, 0.18, 'ACTIVE', false),
     (default_tenant, 'POWER_CABLE_15M',         'Power Cable 15Mtr',                                        null,                      'Nos', 'O-INDIA', 'INR', 25000,   'XXX',           '2024-02-07', '2024-04-30', '85446030', 0.09, 0.09, 0.18, 'ACTIVE', false),
     (default_tenant, 'POWER_CABLE_10M',         'Power Cable 10M',                                          null,                      'Nos', 'O-INDIA', 'INR', 15000,   'XXX',           '2024-02-07', '2024-04-30', '85446030', 0.09, 0.09, 0.18, 'ACTIVE', false)

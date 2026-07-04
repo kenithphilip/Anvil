@@ -6,7 +6,7 @@
 //   DELETE ?clause_id=    hard-delete a single clause
 //
 // Drives the per-customer terms library introduced in migration 106.
-// HMIL's 15-clause boilerplate is stored once as a pack, with each
+// MMIL's 15-clause boilerplate is stored once as a pack, with each
 // clause as a child row, so individual clauses can be acknowledged or
 // overridden per order.
 

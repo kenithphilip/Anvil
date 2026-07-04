@@ -28,7 +28,7 @@ describe("detectFormatKey", () => {
     expect(detectFormatKey(rows, "IXM22-0556.xlsx", F)).toBe("obara_korea");
   });
   it("China: PARTS CODE + JPN MODEL headers -> obara_china", () => {
-    const rows = [["MESSRS.:", "ACME"], ["Item No", "Parts Code", "Part Name", "JPN MODEL", "LEVEL"], ["1", "BADC1", "x", "M", "1"]];
+    const rows = [["MESSRS.:", "ACME"], ["Item No", "Parts Code", "Part Name", "JPN MODEL", "LEVEL"], ["1", "GBC1", "x", "M", "1"]];
     expect(detectFormatKey(rows, "x.xlsx", F)).toBe("obara_china");
   });
   it("Japan: Structure header -> obara_japan (beats china on priority)", () => {
@@ -58,13 +58,13 @@ describe("mapSheet - China (parts code + level)", () => {
     const rows = [
       ["MESSRS.:", "ACME CORP"],
       ["Item No", "Parts Code", "Part Name", "JPN MODEL", "LEVEL", "Q'ty"],
-      ["1", "BADC026391A", "Tip", "M-1", "2", "4"],
+      ["1", "GBC026391A", "Tip", "M-1", "2", "4"],
     ];
     const out = mapSheet(rows, "PROD.xlsx", F);
     expect(out.source_format).toBe("obara_china");
     expect(out.lines[0]).toMatchObject({
-      part_no: "BADC026391A",
-      supplier_part_no: "BADC026391A",
+      part_no: "GBC026391A",
+      supplier_part_no: "GBC026391A",
       part_name: "Tip",
       level: 2,
       qty: 4,
@@ -90,7 +90,7 @@ describe("mapSheet - Japan (dotted structure level + LR)", () => {
       ["14 .1", "SUB", "Sub", "C06", "有", "2"],
       ["14 .1.1", "LEAF", "Leaf", "", "無", "3"],
     ];
-    const out = mapSheet(rows, "SRTC-7913-L.xlsx", F);
+    const out = mapSheet(rows, "WGC-7913-L.xlsx", F);
     expect(out.source_format).toBe("obara_japan");
     expect(out.lines.map((l) => l.level)).toEqual([1, 2, 3]);
     // 無 (no) clears LR; 有 (yes) inherits from filename suffix -L

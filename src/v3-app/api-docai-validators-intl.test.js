@@ -12,7 +12,7 @@
 //   - country!=IN with gstin set is a 'gstin_unexpected' warn,
 //   - country!=IN with bad tax_id_type is a 'tax_id_type_unknown' warn,
 //   - currency country-mismatch is a warn (e.g. country=JP currency=INR),
-//   - name-not-in-bill-to is a warn (the OBARA -> Hyundai bug).
+//   - name-not-in-bill-to is a warn (the OBARA -> Meridian bug).
 
 import { describe, it, expect } from "vitest";
 import { __test } from "../api/_lib/docai/validators.js";
@@ -133,11 +133,11 @@ describe("validators / validateCustomer country-conditional", () => {
     expect(codes).toContain("tax_id_type_unknown");
   });
 
-  it("name-not-in-bill-to warns (the OBARA -> Hyundai regression case)", () => {
-    // The LLM extracted Hyundai (project / end-customer) as the
+  it("name-not-in-bill-to warns (the OBARA -> Meridian regression case)", () => {
+    // The LLM extracted Meridian (project / end-customer) as the
     // customer name, but bill-to says OBARA. Validator should flag.
     const issues = validateCustomer({
-      name: "Hyundai Steel",
+      name: "Meridian Steel",
       country: "KR",
       tax_id: "123-45-67890",
       tax_id_type: "brn",

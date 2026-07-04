@@ -338,13 +338,13 @@ describe("cron/drift-report :: month-start gating + range computation", () => {
   it("renderHtmlBody includes the headline numbers", async () => {
     const { __test__ } = await import("../api/cron/drift-report.js");
     const html = __test__.renderHtmlBody({
-      tenantName: "Faith Automation",
+      tenantName: "Summit Automation",
       label: "Apr 2026",
       runs: [],
       findings: [],
       totals: { considered: 84, drifted: 3, autoFixed: 1, driftValueInr: 12500 },
     });
-    expect(html).toMatch(/Faith Automation/);
+    expect(html).toMatch(/Summit Automation/);
     expect(html).toMatch(/84/);
     expect(html).toMatch(/12,500/);
   });

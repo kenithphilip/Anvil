@@ -28,7 +28,7 @@ import { probePdfPageCount } from "../_lib/docai/pdf-chunker.js";
 // Above this page count a synchronous extraction (TOC profiler +
 // ceil(pages/5) sequential LLM chunk calls) risks exceeding Vercel's
 // 60-second function ceiling and timing out with nothing returned --
-// the failure operators hit on long HMIL POs (e.g. P250432276, 23pp).
+// the failure operators hit on long MMIL POs (e.g. P250432276, 23pp).
 // For PDFs over this size we extract ONLY page 1 synchronously (the
 // customer header + a first-page preview, which stays well under 60s)
 // and signal `large_pdf` so the caller enqueues the full N-page

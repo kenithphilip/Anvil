@@ -288,7 +288,7 @@ comms.send pattern.
 Smoke test:
 
 1. Send a WhatsApp from your phone to your Twilio Sandbox number with
-   "Need quote for SRTC-K12464 qty 50".
+   "Need quote for WGC-K12464 qty 50".
 2. Check the Anvil Inbox: a DRAFT order should appear with
    `preflight_payload.source = "whatsapp_inbound"` and
    `intent = "quote_request"`.

@@ -22,7 +22,7 @@ const masterRow = (overrides) => ({
 });
 
 describe("__mapLinesPure", () => {
-  it("matches via item_master.part_no when the line has the tenant's own code (Faith PO)", () => {
+  it("matches via item_master.part_no when the line has the tenant's own code (Summit PO)", () => {
     const im = masterRow({});
     const out = __mapLinesPure([
       { partNumber: "THB-L1-70B-2", description: "THB-L1-70B-2 (BEND ADAPTER)" },
@@ -47,7 +47,7 @@ describe("__mapLinesPure", () => {
     expect(out[0]._mapped_item.part_no).toBe("THB-L1-70B-2");
   });
 
-  it("prefers item_customer_parts when available (Hyundai uses GD544... -> THB-L1-70B-2)", () => {
+  it("prefers item_customer_parts when available (Meridian uses GD544... -> THB-L1-70B-2)", () => {
     const im = masterRow({});
     const out = __mapLinesPure([
       { partNumber: "GD544202603190008" },
@@ -118,12 +118,12 @@ describe("__mapLinesPure", () => {
   });
 });
 
-describe("__mapLinesPure: Hyundai PO scenarios", () => {
+describe("__mapLinesPure: Meridian PO scenarios", () => {
   const guideAssy = {
     id: "im-guide", part_no: "THB-L1-70B-2-GA",
     alias: "GUIDE ASSY",
     print_name: "Guide Assembly THB-L1-70B-2",
-    description: "Guide assembly for the Hyundai welding line",
+    description: "Guide assembly for the Meridian welding line",
     hsn_sac: "84669390", uom: "NOS",
     specification_code: "4-ET31062",
   };
@@ -136,7 +136,7 @@ describe("__mapLinesPure: Hyundai PO scenarios", () => {
     specification_code: "403A7K1172",
   };
 
-  it("specification_code tier maps Hyundai's spec to OBARA item (4-ET31062 -> Guide Assy)", () => {
+  it("specification_code tier maps Meridian's spec to OBARA item (4-ET31062 -> Guide Assy)", () => {
     const out = __mapLinesPure([
       {
         partNumber: "GD544202603190008",
@@ -235,7 +235,7 @@ describe("__mapLinesPure: Hyundai PO scenarios", () => {
     const out = __mapLinesPure([
       { partNumber: "GD544202603190008", description: "GUIDE ASSY" },
     ], {
-      cpMap: new Map([["GD544202603190008", { item_id: guideAssy.id, customer_part_description: "Hyundai code" }]]),
+      cpMap: new Map([["GD544202603190008", { item_id: guideAssy.id, customer_part_description: "Meridian code" }]]),
       imById: new Map([[guideAssy.id, guideAssy], [ph.id, ph]]),
       imAll: [ph, guideAssy],
     });

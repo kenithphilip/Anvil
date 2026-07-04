@@ -10,9 +10,9 @@ import { installBackend } from "../test-utils";
 import { RBAC } from "../lib/rbac";
 import { CustomerHierarchyPanel } from "./CustomerHierarchyPanel";
 
-const GROUP = { id: "grp", customer_name: "Hyundai Group", customer_key: "hyundai-group", parent_customer_id: null };
-const PLANT_A = { id: "pa", customer_name: "Hyundai Chennai", customer_key: "hmi-chennai", gstin: "33AAA", parent_customer_id: "grp" };
-const PLANT_B = { id: "pb", customer_name: "Hyundai Pune", customer_key: "hmi-pune", parent_customer_id: null };
+const GROUP = { id: "grp", customer_name: "Meridian Group", customer_key: "hyundai-group", parent_customer_id: null };
+const PLANT_A = { id: "pa", customer_name: "Meridian Chennai", customer_key: "hmi-chennai", gstin: "33AAA", parent_customer_id: "grp" };
+const PLANT_B = { id: "pb", customer_name: "Meridian Pune", customer_key: "hmi-pune", parent_customer_id: null };
 const ALL = [GROUP, PLANT_A, PLANT_B];
 
 describe("CustomerHierarchyPanel", () => {
@@ -27,7 +27,7 @@ describe("CustomerHierarchyPanel", () => {
 
   it("lists child entities rolling up under the customer", () => {
     const { getByRole } = render(<CustomerHierarchyPanel customer={GROUP} allCustomers={ALL} />);
-    expect(getByRole("button", { name: "Hyundai Chennai" })).toBeTruthy();
+    expect(getByRole("button", { name: "Meridian Chennai" })).toBeTruthy();
   });
 
   it("reflects the current parent selection", () => {

@@ -5,7 +5,7 @@
 // Three input paths are supported, in priority order:
 //
 //   1. Explicit per-component PER-UNIT amounts. This is the
-//      Hyundai-PO shape: each line carries CGST, SGST, IGST,
+//      Meridian-PO shape: each line carries CGST, SGST, IGST,
 //      UTGST, cess, excise duty, ed.cess, plus auxiliary costs
 //      tooling / P&F / others. When ANY of these is set the
 //      line's tax + line total are computed from them and
@@ -21,7 +21,7 @@
 //      tax from (lineTotal - taxable) so we don't lose value.
 //
 // All component values are interpreted as PER-UNIT amounts, the
-// same way Hyundai's PO prints SGST 4,229.190 next to a 2-unit
+// same way Meridian's PO prints SGST 4,229.190 next to a 2-unit
 // row and a 110,898.760 line total: per-unit, not per-line.
 
 export interface TaxBreakdown {

@@ -6,7 +6,7 @@
 // 1. Twilio WhatsApp HTTP webhook (urlencoded form):
 //      From=whatsapp:+919876543210
 //      To=whatsapp:+15551234567
-//      Body=Need quote for SRTC-K12464 qty 50
+//      Body=Need quote for WGC-K12464 qty 50
 //      MediaUrl0=https://...   MediaContentType0=application/pdf
 //
 // 2. Meta WhatsApp Cloud API webhook (JSON):

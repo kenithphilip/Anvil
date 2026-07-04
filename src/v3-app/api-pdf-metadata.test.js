@@ -67,8 +67,8 @@ describe("readPdfBias", () => {
     expect(out.bias_adapters?.[0]).toBe("azure_di");
   });
 
-  it("recognises Hyundai metadata via the subject field", async () => {
-    const bytes = await makePdfWithMetadata({ subject: "Hyundai PO 26-04" });
+  it("recognises Meridian metadata via the subject field", async () => {
+    const bytes = await makePdfWithMetadata({ subject: "Meridian PO 26-04" });
     const out = await readPdfBias(bytes);
     expect(out.bias_label).toBe("hyundai");
   });

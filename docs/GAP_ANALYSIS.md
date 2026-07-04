@@ -95,7 +95,7 @@ The live module surface, mapped from `src/v3-app/routes.ts` and `docs/V3_ROUTE_C
 
 **Finance.** Tally Push, Tally Masters, Tally Reconcile, e-Invoice (GSTN IRN/QR lifecycle), Cost & Margin (breakdown + simulator + margin history with FX-aware INR/USD cost policy).
 
-**Data.** Customers + customer locations + customer format profiles + version rollback, Items + part aliases + UOM aliases, BOM Import (XLSX origin auto-detect), Guns Viewer, Equipment Hierarchy, JBM importer, Master Data Graph (Cytoscape view), Forecasts.
+**Data.** Customers + customer locations + customer format profiles + version rollback, Items + part aliases + UOM aliases, BOM Import (XLSX origin auto-detect), Guns Viewer, Equipment Hierarchy, NRD importer, Master Data Graph (Cytoscape view), Forecasts.
 
 **Quality.** Eval Suites (cases, runs, dashboard), Profile Studio (fingerprint diff), Anomaly compute, Duplicates search.
 
@@ -146,7 +146,7 @@ Per `docs/ROADMAP.md` and code spot-checks:
 - Default currency, locale, and label conventions assume INR + en-IN. The cost simulator hardcodes INR display.
 - Holiday calendar is seeded with Indian holidays.
 - PII redaction patterns include Aadhaar (Indian national ID) and PAN (Indian tax ID). These are correct but signal the operating assumption.
-- Customer seeds are all Indian: MG Motor (Halol + Haryana), Tata Motors, JBM Auto, SRTX, Renault Nissan India, ABC Motors.
+- Customer seeds are all Indian: Vega Motor (Halol + Haryana), Comet Motors, NRD Auto, WGX, Alliance Auto India, ABC Motors.
 - Domain language: "guns" (welding guns), CAR, AMC, FOR/HSS shipping modes, OIQTLC quote prefixes — all reflect Obara India terminology.
 
 The `Anvil` rebrand in `package.json` is a thin layer; `obara-client.js`, `obara-ops-v11.1.html`, the `obara-documents` storage bucket, and substantial inline copy still say Obara. **This is a credibility risk for any prospect outside the Obara use case** and a non-trivial cleanup task.

@@ -112,17 +112,17 @@ describe("SO Intake auto-extract", () => {
     expect(phone?.value).toBe("+91 98765 43210");
   });
 
-  it("does NOT auto-select when extracted name is the project / end-customer (OBARA -> Hyundai regression)", async () => {
+  it("does NOT auto-select when extracted name is the project / end-customer (OBARA -> Meridian regression)", async () => {
     // Bug fix May 2026 (post-Phase-F): an OBARA Korea PO referencing
-    // a Hyundai Steel project auto-selected the existing "Hyundai
+    // a Meridian Steel project auto-selected the existing "Meridian
     // Steel" customer record because:
-    //   1. the LLM picked "Hyundai Steel" as customer.name (it was
+    //   1. the LLM picked "Meridian Steel" as customer.name (it was
     //      in the project name + line item descriptions),
     //   2. the matcher trusted the name without bill-to corroboration.
     // The matcher now requires the canonical name to appear inside
-    // bill_to_address. With bill_to = OBARA, name = Hyundai, the
+    // bill_to_address. With bill_to = OBARA, name = Meridian, the
     // matcher refuses to auto-select.
-    const HYUNDAI = { id: "cust-hyundai", customer_name: "Hyundai Steel", gstin: "" };
+    const HYUNDAI = { id: "cust-hyundai", customer_name: "Meridian Steel", gstin: "" };
     installBackend({
       health: async () => ({ integrations: [] }),
       customers: { list: async () => ({ customers: [HYUNDAI] }) },
@@ -131,14 +131,14 @@ describe("SO Intake auto-extract", () => {
         extract: async () => ({
           confidence_overall: 0.92,
           normalized: { customer: {
-            name: "Hyundai Steel",                                    // wrong, picked from project ref
+            name: "Meridian Steel",                                    // wrong, picked from project ref
             country: "KR",
             tax_id: "123-45-67890",
             tax_id_type: "brn",
             currency: "USD",
             payment_terms: "T/T 90 days from BL",
             bill_to_address: "OBARA Korea Co Ltd, 1-2 Industrial Park, Seoul, South Korea",
-            ship_to_address: "Hyundai Steel Dangjin Works, Dangjin, South Korea",
+            ship_to_address: "Meridian Steel Dangjin Works, Dangjin, South Korea",
           } },
         }),
       },
@@ -149,7 +149,7 @@ describe("SO Intake auto-extract", () => {
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
     Object.defineProperty(fileInput!, "files", { value: [fakeFile("25PO0008243-OBARA.pdf")] });
     fireEvent.change(fileInput!);
-    // Dialog should open. The matcher refused to auto-select Hyundai.
+    // Dialog should open. The matcher refused to auto-select Meridian.
     await waitFor(() => {
       const input = container.querySelector('#nc-name') as HTMLInputElement | null;
       expect(input).not.toBeNull();
@@ -159,7 +159,7 @@ describe("SO Intake auto-extract", () => {
   });
 
   it("auto-selects when name corroborates with bill-to (OBARA positive case)", async () => {
-    // Inverse of the OBARA -> Hyundai test: when the extractor name
+    // Inverse of the OBARA -> Meridian test: when the extractor name
     // appears inside bill_to_address AND there's an existing
     // customer with that name, auto-select still fires.
     const OBARA = { id: "cust-obara", customer_name: "OBARA Korea Co Ltd", gstin: "" };
@@ -193,14 +193,14 @@ describe("SO Intake auto-extract", () => {
     }, { timeout: 2000 });
   });
 
-  it("auto-selects Faith Automation when filename has unrelated OBARA (regression)", async () => {
-    // The actual user case from the OBARA file. The buyer is Faith
+  it("auto-selects Summit Automation when filename has unrelated OBARA (regression)", async () => {
+    // The actual user case from the OBARA file. The buyer is Summit
     // Automation. The filename has "OBARA" (equipment brand). The
     // earlier draft of this matcher refused auto-select because
     // filename token "obara" did not intersect "faithautomation".
     // Filename-hint refusal dropped; bill-to corroboration alone
     // is the auto-select gate for name matches.
-    const FAITH = { id: "cust-faith", customer_name: "Faith Automation Pvt Ltd", gstin: "" };
+    const FAITH = { id: "cust-faith", customer_name: "Summit Automation Pvt Ltd", gstin: "" };
     installBackend({
       health: async () => ({ integrations: [] }),
       customers: { list: async () => ({ customers: [FAITH] }) },
@@ -209,12 +209,12 @@ describe("SO Intake auto-extract", () => {
         extract: async () => ({
           confidence_overall: 0.92,
           normalized: { customer: {
-            name: "Faith Automation Pvt Ltd",
+            name: "Summit Automation Pvt Ltd",
             country: "IN",
             currency: "INR",
             payment_terms: "Net 30",
-            bill_to_address: "Faith Automation Pvt Ltd, Plot 12, MIDC, Pune 411018",
-            ship_to_address: "Faith Automation Pvt Ltd, Plot 12, MIDC, Pune 411018",
+            bill_to_address: "Summit Automation Pvt Ltd, Plot 12, MIDC, Pune 411018",
+            ship_to_address: "Summit Automation Pvt Ltd, Plot 12, MIDC, Pune 411018",
           } },
         }),
       },
@@ -231,12 +231,12 @@ describe("SO Intake auto-extract", () => {
     }, { timeout: 2000 });
   });
 
-  it("auto-selects with legal-suffix variation (extracted 'Faith Automation' matches stored 'Faith Automation Pvt Ltd')", async () => {
+  it("auto-selects with legal-suffix variation (extracted 'Summit Automation' matches stored 'Summit Automation Pvt Ltd')", async () => {
     // The customer record carries the full legal name; the LLM
     // sometimes drops the suffix when extracting from the bill-to
     // header. norm() now strips Pvt/Ltd/Inc/etc. so the match
     // succeeds either way.
-    const FAITH = { id: "cust-faith2", customer_name: "Faith Automation Pvt Ltd", gstin: "" };
+    const FAITH = { id: "cust-faith2", customer_name: "Summit Automation Pvt Ltd", gstin: "" };
     installBackend({
       health: async () => ({ integrations: [] }),
       customers: { list: async () => ({ customers: [FAITH] }) },
@@ -245,10 +245,10 @@ describe("SO Intake auto-extract", () => {
         extract: async () => ({
           confidence_overall: 0.9,
           normalized: { customer: {
-            name: "Faith Automation",                       // suffix dropped by LLM
+            name: "Summit Automation",                       // suffix dropped by LLM
             country: "IN",
             currency: "INR",
-            bill_to_address: "Faith Automation Pvt Ltd, Pune 411018",
+            bill_to_address: "Summit Automation Pvt Ltd, Pune 411018",
           } },
         }),
       },
@@ -322,7 +322,7 @@ describe("SO Intake auto-extract", () => {
             email: "ops@obara.kr",
             phone: "+82 2 1234 5678",
             bill_to_address: "OBARA Korea Co Ltd, Seoul",
-            ship_to_address: "Hyundai Dangjin Works, Dangjin",
+            ship_to_address: "Meridian Dangjin Works, Dangjin",
           } },
         }),
       },
@@ -363,12 +363,12 @@ describe("SO Intake auto-extract", () => {
     const FAITH = {
       id: "cust-faith3",
       customer_key: "faith-automation",
-      customer_name: "Faith Automation Pvt Ltd",
+      customer_name: "Summit Automation Pvt Ltd",
       gstin: "27OLDGS1234E1Z5",                            // stale
       country: "IN",
       currency: "INR",
       payment_terms: "Net 45",                             // older value
-      bill_to: "Faith Automation Pvt Ltd, Plot 12, MIDC, Pune 411018",
+      bill_to: "Summit Automation Pvt Ltd, Plot 12, MIDC, Pune 411018",
       contact_email: null,                                 // never recorded
     };
     let upsertPayload: any = null;
@@ -383,7 +383,7 @@ describe("SO Intake auto-extract", () => {
         extract: async () => ({
           confidence_overall: 0.92,
           normalized: { customer: {
-            name: "Faith Automation Pvt Ltd",
+            name: "Summit Automation Pvt Ltd",
             country: "IN",
             gstin: "27NEWGS9999F1Z5",                      // changed
             state_code: "27",
@@ -391,7 +391,7 @@ describe("SO Intake auto-extract", () => {
             payment_terms: "Net 30",                        // changed
             email: "ops@faith.in",                         // new (was empty)
             phone: "+91 98765 43210",                      // new
-            bill_to_address: "Faith Automation Pvt Ltd, Plot 14, MIDC, Pune 411019",   // changed
+            bill_to_address: "Summit Automation Pvt Ltd, Plot 14, MIDC, Pune 411019",   // changed
           } },
         }),
       },
@@ -453,13 +453,13 @@ describe("SO Intake auto-extract", () => {
     const FAITH = {
       id: "cust-faith4",
       customer_key: "faith-automation-2",
-      customer_name: "Faith Automation Pvt Ltd",
+      customer_name: "Summit Automation Pvt Ltd",
       gstin: "27ABCDE1234F1Z5",
       state_code: "27",
       country: "IN",
       currency: "INR",
       payment_terms: "Net 30",
-      bill_to: "Faith Automation Pvt Ltd, Plot 12, MIDC, Pune 411018",
+      bill_to: "Summit Automation Pvt Ltd, Plot 12, MIDC, Pune 411018",
     };
     installBackend({
       health: async () => ({ integrations: [] }),
@@ -469,13 +469,13 @@ describe("SO Intake auto-extract", () => {
         extract: async () => ({
           confidence_overall: 0.95,
           normalized: { customer: {
-            name: "Faith Automation Pvt Ltd",
+            name: "Summit Automation Pvt Ltd",
             country: "IN",
             gstin: "27ABCDE1234F1Z5",
             state_code: "27",
             currency: "INR",
             payment_terms: "Net 30",
-            bill_to_address: "Faith Automation Pvt Ltd, Plot 12, MIDC, Pune 411018",
+            bill_to_address: "Summit Automation Pvt Ltd, Plot 12, MIDC, Pune 411018",
           } },
         }),
       },
@@ -538,31 +538,31 @@ describe("SO Intake auto-extract", () => {
   });
 
   it("auto-selects HMI Pune when bill-to is street-only but state_code corroborates (P250432265 regression)", async () => {
-    // The actual user-reported case from PO P250432265. Hyundai
+    // The actual user-reported case from PO P250432265. Meridian
     // Motor India Ltd's PO header carries the buyer name and a
     // street/district/state postal address, but the address text
-    // itself does not contain the word "Hyundai". The matcher used
+    // itself does not contain the word "Meridian". The matcher used
     // to require the buyer's name token to appear inside
     // bill_to_address, so the auto-match refused and the operator
-    // had to find HMIL manually in the dropdown every time.
+    // had to find MMIL manually in the dropdown every time.
     // Now state_code corroboration ("27" = Maharashtra) plus the
     // exact normalised name match is sufficient.
-    const HMIL = {
+    const MMIL = {
       id: "cust-hmil",
-      customer_name: "Hyundai Motor India Ltd",
-      gstin: "",                 // HMIL header on this PO does not print buyer GSTIN
+      customer_name: "Meridian Motor India Ltd",
+      gstin: "",                 // MMIL header on this PO does not print buyer GSTIN
       state_code: "27",
       country: "IN",
     };
     installBackend({
       health: async () => ({ integrations: [] }),
-      customers: { list: async () => ({ customers: [HMIL] }) },
+      customers: { list: async () => ({ customers: [MMIL] }) },
       documents: {
         upload: async () => ({ documentId: "doc-hmil", scan: { status: "clean" } }),
         extract: async () => ({
           confidence_overall: 0.92,
           normalized: { customer: {
-            name: "Hyundai Motor India Ltd",
+            name: "Meridian Motor India Ltd",
             country: "IN",
             state_code: "27",
             currency: "INR",

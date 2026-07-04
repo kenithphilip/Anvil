@@ -2,9 +2,9 @@
 // item_master via per-customer translation tables.
 //
 // Different customers refer to the same physical part with
-// different codes. Hyundai writes "GD544202603190008" on their
+// different codes. Meridian writes "GD544202603190008" on their
 // PO; the tenant's master carries it as "THB-L1-70B-2" with an
-// alias "BEND ADAPTER". Faith's PO already uses the tenant's
+// alias "BEND ADAPTER". Summit's PO already uses the tenant's
 // own part number directly. Walk every line and try to resolve
 // the canonical item so the recon table + Tally voucher emit +
 // PDF render get the right print_name / hsn / GST rate /
@@ -70,7 +70,7 @@ export const lineCandidates = (line) => {
 };
 
 // Extract specification / drawing-style codes (alphanumeric with
-// dashes, 4-15 chars). The Hyundai PO format prints these in a
+// dashes, 4-15 chars). The Meridian PO format prints these in a
 // separate "Specification" cell (e.g. "4-ET31062", "403A7K1172")
 // distinct from the buyer's item code. Tenants whose
 // item_master.specification_code matches will resolve here.
@@ -191,7 +191,7 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opt
   // matching (last-resort tier). Cap the scan at a reasonable
   // ceiling so a 50k-row master doesn't blow the request.
   let imAll = [];
-  // Specification codes harvested from the lines (Hyundai-style).
+  // Specification codes harvested from the lines (Meridian-style).
   const specCodes = new Set();
   for (const ln of lines) for (const s of lineSpecCandidates(ln)) specCodes.add(s);
   const specs = [...specCodes];
@@ -262,7 +262,7 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opt
       }
     }
     if (!match) {
-      // Hyundai-style: the PO row has a separate "Specification"
+      // Meridian-style: the PO row has a separate "Specification"
       // column distinct from the buyer item code. Match the
       // specification value against item_master.specification_code
       // before falling through to alias / fuzzy tiers.

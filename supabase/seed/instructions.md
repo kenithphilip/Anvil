@@ -130,7 +130,7 @@ Reference data the rest of the seed pivots around.
   (10 covering all 4 relations), `private_label_items` (5),
   `vendors` (8 incl. one inactive).
 - `equipment_hierarchy`: full Plant -> Line -> Zone -> Station ->
-  Robot -> Gun chain for MG Halol and JBM Plant 1 (12 nodes).
+  Robot -> Gun chain for MG Halol and NRD Plant 1 (12 nodes).
 - `equipment_installed_parts` (32), `installed_base` (10).
 - `contracts`: 16 rows covering every `contract_type` x every
   `status` (4 x 4). `contract_lines` (3 per contract = 48).
@@ -397,7 +397,7 @@ ran clean end-to-end after the patches and `999_verify.sql` returned
 | 1 | `migrations/021` | `unique (col, coalesce(...))` rejected inline | Moved to `CREATE UNIQUE INDEX` |
 | 2 | phase 100 | PL/pgSQL `user_id` shadowed `tenant_members.user_id` in `ON CONFLICT` | Renamed to `v_user_id` |
 | 3 | phase 100 | `alter type ... add value` inside explicit txn | Moved before `begin;` |
-| 4 | phases 100/200/300/400/900 | Wrong corpus customer keys (`JBM_AUTO`, `RENAULT_NISSAN`) | Renamed to `JBM_AUTO_PLANT_1`, `RNAIPL` |
+| 4 | phases 100/200/300/400/900 | Wrong corpus customer keys (`NRD_AUTO`, `RENAULT_NISSAN`) | Renamed to `NRD_AUTO_PLANT_1`, `ALAP` |
 | 5 | phase 200 | `payment_milestones` ON CONFLICT missed partial-index predicate | Added `where contract_id is not null` |
 | 6 | phase 300 | `order_schedule_lines` referenced `doc_po` for DRAFT orders that never inserted one | Set `source_document_id = null` for DRAFT |
 | 7 | phase 300 | `source_pos.order_id` looked up orders by `source_po_status` instead of `order_status` | Added separate `ord_statuses` array |

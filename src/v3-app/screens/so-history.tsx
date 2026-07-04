@@ -359,7 +359,7 @@ const SOH_TEMPLATES = {
     ],
     example: [
       "1", "P241220197", "10-12-2024", "GD544202411300001", "ATD CUTTER BLADE",
-      "NS ATD CUTTER 13D-AC4-0090", "Victora Tool Engineers", "Spare", "",
+      "NS ATD CUTTER 13D-AC4-0090", "Pioneer Tool Engineers", "Spare", "",
       9251, 2, 18502, 2, 0,
       "INV-2024-0421", "WO-3344", "12-12-2024", "", "", "12-12-2024"
     ],
@@ -373,7 +373,7 @@ const SOH_TEMPLATES = {
       "Rate", "Value", "Mode", "Remark", "Source PO No"
     ],
     example: [
-      "21-Jan-25", "POU08-8325", "POU08-8325", "Victora Tool Engineers Pvt.Ltd.", "Name Plate SRTX-2C16",
+      "21-Jan-25", "POU08-8325", "POU08-8325", "Pioneer Tool Engineers Pvt.Ltd.", "Name Plate WGX-2C16",
       "129-IND", "", "1 No.", "1 No.", "0 No.",
       150, 150, "Stock", "Payment-WO", ""
     ],

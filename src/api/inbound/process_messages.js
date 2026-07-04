@@ -8,7 +8,7 @@
 // Audit P2.4. inbound-chat.js (called from Slack, Teams, and the
 // newer WhatsApp webhook) had been writing inbound_messages rows
 // since Phase 5 with status='arrived'. There was no consumer.
-// A customer messaging "I need a quote for SRTC-K12464 qty 50"
+// A customer messaging "I need a quote for WGC-K12464 qty 50"
 // over Slack ended up in a table no one read.
 //
 // Intent routing here is a deliberately simple keyword classifier;

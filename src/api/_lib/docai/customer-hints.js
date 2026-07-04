@@ -14,7 +14,7 @@
 //      (name, GSTIN, address) when we tell it what to expect.
 //   2. Line-item HSN/GST predictions converge faster when the
 //      model sees three recent examples from the same customer.
-//   3. The customer part-number convention (Hyundai writes
+//   3. The customer part-number convention (Meridian writes
 //      CH-DZ-010505 for every entry, Acme writes ACM-LL-000123)
 //      is learnable from 5 examples; the extractor sees it as a
 //      pattern instead of a string.

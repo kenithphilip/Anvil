@@ -1,6 +1,6 @@
 // Server-side price-composition engine.
 //
-// Faithful JS port of src/v3-app/lib/pricing.ts (composePrice). Kept in
+// Summitful JS port of src/v3-app/lib/pricing.ts (composePrice). Kept in
 // lockstep so the price the server persists is authoritative and never
 // disagrees with the client preview. Parity is locked by tests that run
 // the same regression numbers against both ports.

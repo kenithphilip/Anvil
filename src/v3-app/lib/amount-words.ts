@@ -84,7 +84,7 @@ export const amountInWords = (amount: number | string | null | undefined, opts: 
   if (!Number.isFinite(raw)) return "";
   const currency = opts.currency || "INR";
   // Default to Indian numbering (Lakh / Crore) when the currency
-  // is INR. Operators printing a Hyundai-style PO total of
+  // is INR. Operators printing a Meridian-style PO total of
   // ₹ 2,71,638 expect "Two Lakh Seventy One Thousand..." not
   // "Two Hundred Seventy One Thousand...". Non-INR currencies
   // (USD / EUR) keep the international default. An explicit

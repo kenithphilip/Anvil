@@ -57,7 +57,7 @@ const buildExtensionPatch = (body) => {
     patch.data_source = DATA_SOURCES.has(v) ? v : "manual";
   }
   setBool("alteration_locked");
-  // Migration 107: residual Tally + Hyundai PO columns.
+  // Migration 107: residual Tally + Meridian PO columns.
   setBool("specification_details");
   setBool("other_details");
   if ("hsn_source" in body) {

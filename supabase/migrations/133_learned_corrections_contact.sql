@@ -4,8 +4,8 @@
 --
 -- Some customers have multiple buyers with different
 -- part-numbering conventions:
---   - Buyer A at Hyundai uses GD544... codes.
---   - Buyer B at Hyundai uses CH-DZ-... codes.
+--   - Buyer A at Meridian uses GD544... codes.
+--   - Buyer B at Meridian uses CH-DZ-... codes.
 --
 -- Today the active-learning prior (Wave 3.3 docai) collapses
 -- every operator correction into one bucket per customer. When

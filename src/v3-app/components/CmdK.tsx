@@ -1,7 +1,7 @@
 // Live Cmd+K palette. Replaces the static demo CmdK in Shell.tsx with
 // a real backend-search palette:
 //
-//   1. Recent orders (loaded from ObaraBackend.orders.list).
+//   1. Recent orders (loaded from AnvilBackend.orders.list).
 //   2. As-you-type filter against po_number / quote_number / customer
 //      name / id.
 //   3. Static "Jump to" entries that route to known nav ids; these
@@ -15,7 +15,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 import { ageLabel, draftLabel } from "../lib/helpers";
 
@@ -81,7 +81,7 @@ export const CmdK: React.FC<CmdKProps> = ({ open, onClose, onJump }) => {
     if (!open) return;
     let cancel = false;
     setLoading(true);
-    Promise.resolve(ObaraBackend?.orders?.list?.({ limit: 20 }) ?? [])
+    Promise.resolve(AnvilBackend?.orders?.list?.({ limit: 20 }) ?? [])
       .then((r) => {
         if (cancel) return;
         setOrders(ordersOf(r));

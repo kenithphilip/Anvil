@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // Audit P8.5: list + lifecycle UI for the P7.7 e-Way bill module.
 // Composer + send to NIC + cancel within 24h + manual mark-generated
@@ -63,7 +63,7 @@ const EwayBillsScreen: React.FC = () => {
 
   const reload = () => {
     setLoading(true);
-    Promise.resolve(ObaraBackend?.ewayBills?.list?.())
+    Promise.resolve(AnvilBackend?.ewayBills?.list?.())
       .then((r: any) => {
         const list = Array.isArray(r?.eway_bills) ? r.eway_bills : (Array.isArray(r) ? r : []);
         setRows(list);
@@ -79,7 +79,7 @@ const EwayBillsScreen: React.FC = () => {
 
   const sendToNic = async (id: string) => {
     setBusy(true);
-    try { await ObaraBackend?.ewayBills?.sendToNic?.(id); reload(); }
+    try { await AnvilBackend?.ewayBills?.sendToNic?.(id); reload(); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   };
@@ -89,7 +89,7 @@ const EwayBillsScreen: React.FC = () => {
     if (!reasonCode) return;
     const remarks = window.prompt("Cancel remarks (optional):") || "";
     setBusy(true);
-    try { await ObaraBackend?.ewayBills?.cancel?.(id, { cancel_reason_code: Number(reasonCode), cancel_remarks: remarks }); reload(); }
+    try { await AnvilBackend?.ewayBills?.cancel?.(id, { cancel_reason_code: Number(reasonCode), cancel_remarks: remarks }); reload(); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   };
@@ -97,7 +97,7 @@ const EwayBillsScreen: React.FC = () => {
   const updateVehicle = async () => {
     if (!vehicleEdit) return;
     setBusy(true);
-    try { await ObaraBackend?.ewayBills?.updateVehicle?.(vehicleEdit.id, { vehicle_no: vehicleEdit.vehicle_no }); setVehicleEdit(null); reload(); }
+    try { await AnvilBackend?.ewayBills?.updateVehicle?.(vehicleEdit.id, { vehicle_no: vehicleEdit.vehicle_no }); setVehicleEdit(null); reload(); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   };
@@ -107,7 +107,7 @@ const EwayBillsScreen: React.FC = () => {
     setError(null);
     try {
       if (!form.invoice_id && !form.einvoice_id) throw new Error("invoice_id or einvoice_id required");
-      await ObaraBackend?.ewayBills?.create?.({
+      await AnvilBackend?.ewayBills?.create?.({
         invoice_id: form.invoice_id || null,
         einvoice_id: form.einvoice_id || null,
         doc_no: form.doc_no,

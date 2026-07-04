@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 
 // ============================================================
@@ -16,7 +16,7 @@ import { RBAC } from "../lib/rbac";
 //   SCHEDULED -> VISIT_CREATED -> COMPLETED
 //                              \-> SKIPPED / CANCELLED
 //
-// Backend methods on ObaraBackend.service:
+// Backend methods on AnvilBackend.service:
 //   listAmcSchedules({ contract_id?, customer_id?, status?, from?, to? })
 //   createAmcSchedule(row)
 //   bulkSeedAmcSchedule({ contract_id, frequency, start_date, count, visit_label })
@@ -41,8 +41,8 @@ const amcReadParams = () => {
 };
 
 const amcCrudFetch = async (path: string, opts: { method?: string; body?: any; headers?: Record<string, string> } = {}) => {
-  const cfg = (ObaraBackend?.getConfig?.() || {});
-  const session = (ObaraBackend?.getSession?.() || null);
+  const cfg = (AnvilBackend?.getConfig?.() || {});
+  const session = (AnvilBackend?.getSession?.() || null);
   const headers: Record<string, string> = { "Content-Type": "application/json", ...((opts.headers as Record<string, string>) || {}) };
   if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
   if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
@@ -128,7 +128,7 @@ const WiredAmcCRUD = () => {
   const reload = () => {
     setList((s) => ({ ...s, loading: true }));
     Promise.resolve(
-      ObaraBackend?.service?.listAmcSchedules?.()
+      AnvilBackend?.service?.listAmcSchedules?.()
       || amcCrudFetch("/api/service/amc")
     )
       .then((r) => {
@@ -142,7 +142,7 @@ const WiredAmcCRUD = () => {
 
   e(() => {
     Promise.resolve(
-      ObaraBackend?.admin?.listContracts?.()
+      AnvilBackend?.admin?.listContracts?.()
       || amcCrudFetch("/api/admin/contracts")
     )
       .then((r) => {
@@ -154,7 +154,7 @@ const WiredAmcCRUD = () => {
 
   e(() => {
     Promise.resolve(
-      ObaraBackend?.customers?.list?.()
+      AnvilBackend?.customers?.list?.()
       || amcCrudFetch("/api/customers")
     )
       .then((r) => {
@@ -167,7 +167,7 @@ const WiredAmcCRUD = () => {
   e(() => {
     if (!form?.customer_id) { setLocations([]); return; }
     Promise.resolve(
-      ObaraBackend?.admin?.listCustomerLocations?.(form.customer_id)
+      AnvilBackend?.admin?.listCustomerLocations?.(form.customer_id)
       || amcCrudFetch("/api/admin/customer_locations?customer_id=" + encodeURIComponent(form.customer_id))
     )
       .then((r) => {
@@ -298,11 +298,11 @@ const WiredAmcCRUD = () => {
       };
       if (editing && editing !== "__new__") {
         const body = { id: editing, ...payload };
-        await (ObaraBackend?.service?.updateAmcSchedule?.(body)
+        await (AnvilBackend?.service?.updateAmcSchedule?.(body)
                || amcCrudFetch("/api/service/amc", { method: "PATCH", body }));
         setOkMsg("Schedule updated");
       } else {
-        await (ObaraBackend?.service?.createAmcSchedule?.(payload)
+        await (AnvilBackend?.service?.createAmcSchedule?.(payload)
                || amcCrudFetch("/api/service/amc", { method: "POST", body: payload }));
         setOkMsg("Schedule created");
       }
@@ -332,7 +332,7 @@ const WiredAmcCRUD = () => {
         count,
         visit_label: seedForm.visit_label || null,
       };
-      await (ObaraBackend?.service?.bulkSeedAmcSchedule?.(payload)
+      await (AnvilBackend?.service?.bulkSeedAmcSchedule?.(payload)
              || amcCrudFetch("/api/service/amc", { method: "POST", body: { bulk_seed: payload } }));
       setOkMsg(`${count} visit(s) seeded`);
       closeForm();
@@ -349,7 +349,7 @@ const WiredAmcCRUD = () => {
     setGenBusy(id);
     setErr(null);
     try {
-      await (ObaraBackend?.service?.generateAmcVisit?.(id)
+      await (AnvilBackend?.service?.generateAmcVisit?.(id)
              || amcCrudFetch("/api/service/amc", { method: "PATCH", body: { id, generate_visit: true } }));
       setOkMsg("Service visit generated");
       reload();
@@ -365,7 +365,7 @@ const WiredAmcCRUD = () => {
     setDelBusy(id);
     setErr(null);
     try {
-      await (ObaraBackend?.service?.deleteAmcSchedule?.(id)
+      await (AnvilBackend?.service?.deleteAmcSchedule?.(id)
              || amcCrudFetch("/api/service/amc?id=" + encodeURIComponent(id), { method: "DELETE" }));
       setOkMsg("Schedule deleted");
       reload();
@@ -381,7 +381,7 @@ const WiredAmcCRUD = () => {
     setBusy(true);
     setErr(null);
     try {
-      await (ObaraBackend?.service?.updateAmcSchedule?.({ id, status: "CANCELLED" })
+      await (AnvilBackend?.service?.updateAmcSchedule?.({ id, status: "CANCELLED" })
              || amcCrudFetch("/api/service/amc", { method: "PATCH", body: { id, status: "CANCELLED" } }));
       reload();
     } catch (error) {

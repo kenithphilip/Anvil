@@ -1,5 +1,5 @@
 // Tests for the shell telemetry hook. Covers the parts that don't
-// depend on a live ObaraBackend, namely email->initials/displayName
+// depend on a live AnvilBackend, namely email->initials/displayName
 // derivation and the badge derivation rules.
 //
 // We also smoke-test the hook via render to confirm it doesn't throw
@@ -11,7 +11,7 @@ import { renderHook } from "@testing-library/react";
 import { useShellTelemetry } from "./telemetry";
 
 describe("useShellTelemetry", () => {
-  it("does not throw when ObaraBackend is unconfigured", () => {
+  it("does not throw when AnvilBackend is unconfigured", () => {
     const { result } = renderHook(() => useShellTelemetry());
     expect(result.current).toBeTruthy();
     expect(result.current.session).toBeTruthy();

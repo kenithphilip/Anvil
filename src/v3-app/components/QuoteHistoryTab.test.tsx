@@ -1,4 +1,4 @@
-// Read-only audit-timeline rendering. Stubs ObaraBackend.audit.list and
+// Read-only audit-timeline rendering. Stubs AnvilBackend.audit.list and
 // asserts the right human labels + detail formatting for representative
 // event types (create, auto-fill, status change, send).
 

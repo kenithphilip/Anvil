@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Banner, Btn, Card, KPI, KPIRow, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — JBM customer matrix importer
@@ -116,7 +116,7 @@ const WiredJbmImporter = () => {
 
   uE(() => {
     let cancel = false;
-    Promise.resolve(ObaraBackend?.customers?.list?.() || Promise.resolve([]))
+    Promise.resolve(AnvilBackend?.customers?.list?.() || Promise.resolve([]))
       .then((r) => {
         if (cancel) return;
         const list = Array.isArray(r) ? r : (r?.rows || []);
@@ -132,7 +132,7 @@ const WiredJbmImporter = () => {
     if (!customerId) return;
     let cancel = false;
     setLocations({ data: [], loading: true });
-    Promise.resolve(ObaraBackend?.admin?.listCustomerLocations?.(customerId) || Promise.resolve({ locations: [] }))
+    Promise.resolve(AnvilBackend?.admin?.listCustomerLocations?.(customerId) || Promise.resolve({ locations: [] }))
       .then((r) => {
         if (cancel) return;
         const list = Array.isArray(r) ? r : (r?.locations || r?.rows || []);
@@ -189,7 +189,7 @@ const WiredJbmImporter = () => {
         // plant_name, ...). The legacy build wrapped them in an
         // `equipment:` key by mistake; spread them directly so the
         // handler picks each up via body.<field>.
-        await ObaraBackend.admin.upsertEquipment({
+        await AnvilBackend.admin.upsertEquipment({
           ...equipment,
           installed_parts: gun.installed_parts,
         });

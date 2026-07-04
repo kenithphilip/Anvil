@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { ageLabel, draftLabel } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle, rowActivateProps } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired Inbox
@@ -19,7 +19,7 @@ const WiredInbox = () => {
   e(() => {
     let cancelled = false;
     setOrders((s) => ({ ...s, loading: true }));
-    Promise.resolve(ObaraBackend?.orders?.list?.({ limit: 200 }) || Promise.resolve([]))
+    Promise.resolve(AnvilBackend?.orders?.list?.({ limit: 200 }) || Promise.resolve([]))
       .then((data) => { if (!cancelled) setOrders({ data, loading: false, error: null }); })
       .catch((error) => { if (!cancelled) setOrders({ data: null, loading: false, error }); });
     return () => { cancelled = true; };
@@ -27,7 +27,7 @@ const WiredInbox = () => {
 
   e(() => {
     let cancelled = false;
-    Promise.resolve(ObaraBackend?.audit?.list?.({ limit: 50 }) || Promise.resolve([]))
+    Promise.resolve(AnvilBackend?.audit?.list?.({ limit: 50 }) || Promise.resolve([]))
       .then((data) => { if (!cancelled) setAudit({ data, loading: false, error: null }); })
       .catch((error) => { if (!cancelled) setAudit({ data: null, loading: false, error }); });
     return () => { cancelled = true; };

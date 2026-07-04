@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Btn, Card, Chip, Steps, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — Onboarding (first-run setup checklist)
@@ -23,9 +23,9 @@ const WiredOnboarding = () => {
   uE(() => {
     let cancel = false;
     Promise.allSettled([
-      ObaraBackend?.customers?.list?.() || Promise.resolve([]),
-      ObaraBackend?.orders?.list?.({ limit: 1 }) || Promise.resolve([]),
-      ObaraBackend?.bom?.list?.() || Promise.resolve({ rows: [] }),
+      AnvilBackend?.customers?.list?.() || Promise.resolve([]),
+      AnvilBackend?.orders?.list?.({ limit: 1 }) || Promise.resolve([]),
+      AnvilBackend?.bom?.list?.() || Promise.resolve({ rows: [] }),
     ]).then((res) => {
       if (cancel) return;
       const customers = res[0].status === "fulfilled" ? (Array.isArray(res[0].value) ? res[0].value : (res[0].value?.rows || [])) : [];
@@ -36,8 +36,8 @@ const WiredOnboarding = () => {
     return () => { cancel = true; };
   }, []);
 
-  const cfg = (ObaraBackend?.getConfig?.()) || {};
-  const ready = !!(ObaraBackend?.isReady?.());
+  const cfg = (AnvilBackend?.getConfig?.()) || {};
+  const ready = !!(AnvilBackend?.isReady?.());
 
   const steps = [
     {

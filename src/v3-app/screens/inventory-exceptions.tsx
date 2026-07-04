@@ -6,7 +6,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle, Stream } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 const SEV_TONE: Record<string, "good" | "info" | "warn" | "bad"> = {
   info: "info", warn: "warn", bad: "bad", critical: "bad",
@@ -31,7 +31,7 @@ const InventoryExceptionsScreen: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.resolve(ObaraBackend?.inventory?.exceptions?.list?.({ status: tab }))
+    Promise.resolve(AnvilBackend?.inventory?.exceptions?.list?.({ status: tab }))
       .then((r: any) => { if (!cancelled) setExceptions({ data: r?.exceptions || [], loading: false, error: null }); })
       .catch((err: any) => { if (!cancelled) setExceptions({ data: [], loading: false, error: err }); });
     return () => { cancelled = true; };
@@ -46,7 +46,7 @@ const InventoryExceptionsScreen: React.FC = () => {
   const onAction = async (action: "ack" | "resolve" | "suppress", id: string) => {
     try {
       const note = action !== "ack" ? (prompt(action + " note (optional):") || null) : null;
-      const fn = (ObaraBackend as any)?.inventory?.exceptions?.[action];
+      const fn = (AnvilBackend as any)?.inventory?.exceptions?.[action];
       await (action === "ack" ? fn?.(id) : fn?.(id, note));
       window.notifySuccess?.("Exception " + action + "'d", id.slice(0, 8));
       setBump((n) => n + 1);

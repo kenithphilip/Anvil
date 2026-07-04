@@ -8,7 +8,7 @@
 // fabricated value.
 
 import { useEffect, useState } from "react";
-import { ObaraBackend } from "./api";
+import { AnvilBackend } from "./api";
 
 export interface ShellBadge { v: string; k?: string; }
 export type BadgeMap = Record<string, ShellBadge>;
@@ -117,7 +117,7 @@ export const useShellTelemetry = (): ShellTelemetry => {
   const [time, setTime] = useState<string>(formatIST(new Date()));
 
   const session = ((): ShellSession => {
-    const s = ObaraBackend?.getSession?.() || null;
+    const s = AnvilBackend?.getSession?.() || null;
     // Prefer user info on the session (we now persist it via setSession).
     // Fall back to the cached profile that connect.tsx writes after a
     // password login or signup. Final fallback is the magic-link path
@@ -164,15 +164,15 @@ export const useShellTelemetry = (): ShellTelemetry => {
   })();
 
   const refresh = async () => {
-    if (!ObaraBackend?.isReady?.()) return;
+    if (!AnvilBackend?.isReady?.()) return;
     // /api/health is public + tenant-agnostic, so it works whether
     // the user is signed in or not. Orders + audit require a tenant
     // context; a 403 from those is non-fatal for the shell.
     const [orders, audit, fxRates, healthRes] = await Promise.all([
-      safe<any>(ObaraBackend?.orders?.list?.({ limit: 200 })),
-      safe<any>(ObaraBackend?.audit?.list?.({ limit: 50 })),
-      safe<any>(ObaraBackend?.fx?.lookup?.()),
-      safe<any>(ObaraBackend?.health?.()),
+      safe<any>(AnvilBackend?.orders?.list?.({ limit: 200 })),
+      safe<any>(AnvilBackend?.audit?.list?.({ limit: 50 })),
+      safe<any>(AnvilBackend?.fx?.lookup?.()),
+      safe<any>(AnvilBackend?.health?.()),
     ]);
 
     const orderArr = arrayOf(orders);

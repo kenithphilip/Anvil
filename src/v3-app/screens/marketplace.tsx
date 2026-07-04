@@ -14,7 +14,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 const REPORT_REASONS: Array<{ id: string; label: string }> = [
   { id: "mis_extracts_value", label: "Mis-extracts a value" },
@@ -37,8 +37,8 @@ const MarketplaceScreen: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
     Promise.allSettled([
-      Promise.resolve((ObaraBackend as any)?.marketplace?.list?.()),
-      Promise.resolve((ObaraBackend as any)?.marketplace?.imports?.()),
+      Promise.resolve((AnvilBackend as any)?.marketplace?.list?.()),
+      Promise.resolve((AnvilBackend as any)?.marketplace?.imports?.()),
     ]).then(([l, i]) => {
       if (cancelled) return;
       setList({ data: l.status === "fulfilled" ? (l.value?.templates || []) : [], loading: false });
@@ -50,7 +50,7 @@ const MarketplaceScreen: React.FC = () => {
   const confirm = async (id: string) => {
     setBusyId(id);
     try {
-      await (ObaraBackend as any)?.marketplace?.confirmImport?.(id);
+      await (AnvilBackend as any)?.marketplace?.confirmImport?.(id);
       (window as any).notifySuccess?.("Confirmed", "Confirmation count incremented; promotion to skip-LLM happens after the configured threshold.");
       setBump((n) => n + 1);
     } catch (err: any) {
@@ -63,7 +63,7 @@ const MarketplaceScreen: React.FC = () => {
   const revert = async (id: string) => {
     setBusyId(id);
     try {
-      await (ObaraBackend as any)?.marketplace?.revertImport?.(id, "consumer_revert");
+      await (AnvilBackend as any)?.marketplace?.revertImport?.(id, "consumer_revert");
       (window as any).notifySuccess?.("Reverted", "The global template will no longer be used for this tenant; the LLM resumes the full extraction path.");
       setBump((n) => n + 1);
     } catch (err: any) {
@@ -77,7 +77,7 @@ const MarketplaceScreen: React.FC = () => {
     if (!reportFor) return;
     setBusyId(reportFor);
     try {
-      await (ObaraBackend as any)?.marketplace?.report?.(reportFor, reportReason, {});
+      await (AnvilBackend as any)?.marketplace?.report?.(reportFor, reportReason, {});
       (window as any).notifySuccess?.("Report filed", "Super-admin will review. Three confirmed reports auto-suspend the publisher.");
       setReportFor(null);
       setBump((n) => n + 1);

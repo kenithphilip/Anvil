@@ -10,7 +10,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { Icon } from "../lib/icons";
 import { BboxOverlay, OcrEvidenceRow } from "../components/BboxOverlay";
 
@@ -115,7 +115,7 @@ const fmtAge = (iso: string | null | undefined): string => {
 // fields that didn't match the fingerprint.
 //
 // Save flow: clicking "Save corrections" POSTs the diff to
-// /api/documents/correct (resolved through ObaraBackend.documents.
+// /api/documents/correct (resolved through AnvilBackend.documents.
 // correct) and refreshes the parent.
 const OCRReview: React.FC<{
   selected: DocRow | null;
@@ -154,7 +154,7 @@ const OCRReview: React.FC<{
     if (!selected?.id) return;
     let cancelled = false;
     setPreviewLoading(true);
-    Promise.resolve((ObaraBackend as any)?.documents?.fetch?.(selected.id))
+    Promise.resolve((AnvilBackend as any)?.documents?.fetch?.(selected.id))
       .then((resp: any) => {
         if (cancelled) return;
         const url = resp?.downloadUrl || resp?.signedUrl || null;
@@ -168,7 +168,7 @@ const OCRReview: React.FC<{
     // Fetch OCR bboxes in parallel. Failures are non-fatal: the
     // preview still renders without an overlay.
     setEvidenceLoading(true);
-    Promise.resolve((ObaraBackend as any)?.documents?.evidence?.(selected.id))
+    Promise.resolve((AnvilBackend as any)?.documents?.evidence?.(selected.id))
       .then((resp: any) => {
         if (cancelled) return;
         setEvidence(Array.isArray(resp?.rows) ? resp.rows : []);
@@ -180,7 +180,7 @@ const OCRReview: React.FC<{
     // hits so the operator never sees a stale link.
     const id = setInterval(() => {
       if (cancelled) return;
-      Promise.resolve((ObaraBackend as any)?.documents?.fetch?.(selected.id))
+      Promise.resolve((AnvilBackend as any)?.documents?.fetch?.(selected.id))
         .then((resp: any) => {
           if (cancelled) return;
           const url = resp?.downloadUrl || resp?.signedUrl || null;
@@ -198,8 +198,8 @@ const OCRReview: React.FC<{
     setOcrRunning(true);
     setError(null);
     try {
-      await (ObaraBackend as any)?.ocr?.run?.(selected.id);
-      const resp = await (ObaraBackend as any)?.documents?.evidence?.(selected.id);
+      await (AnvilBackend as any)?.ocr?.run?.(selected.id);
+      const resp = await (AnvilBackend as any)?.documents?.evidence?.(selected.id);
       setEvidence(Array.isArray(resp?.rows) ? resp.rows : []);
     } catch (e: any) {
       setError(String(e?.message || e));
@@ -234,7 +234,7 @@ const OCRReview: React.FC<{
     setSavingHeaders(true);
     setError(null);
     try {
-      const fn = (ObaraBackend as any)?.documents?.correct;
+      const fn = (AnvilBackend as any)?.documents?.correct;
       if (typeof fn === "function") {
         await fn({ doc_id: selected.id, scope: "headers", extraction: draft });
       }
@@ -250,7 +250,7 @@ const OCRReview: React.FC<{
     setSavingLine(i);
     setError(null);
     try {
-      const fn = (ObaraBackend as any)?.documents?.correct;
+      const fn = (AnvilBackend as any)?.documents?.correct;
       if (typeof fn === "function") {
         await fn({ doc_id: selected.id, scope: "line", line_index: i, line: draft?.line_items?.[i] });
       }
@@ -514,7 +514,7 @@ const Documents: React.FC = () => {
     let cancelled = false;
     (async () => {
       try {
-        const resp: any = await ObaraBackend?.documents?.list?.();
+        const resp: any = await AnvilBackend?.documents?.list?.();
         const list = Array.isArray(resp?.documents) ? resp.documents
                    : Array.isArray(resp?.rows)      ? resp.rows
                    : Array.isArray(resp)             ? resp
@@ -541,12 +541,12 @@ const Documents: React.FC = () => {
     try {
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
-        if (ObaraBackend?.documents?.upload) {
-          await ObaraBackend.documents.upload(f);
+        if (AnvilBackend?.documents?.upload) {
+          await AnvilBackend.documents.upload(f);
         }
       }
       window.notifySuccess?.("Uploaded", `${files.length} document(s)`);
-      const resp: any = await ObaraBackend?.documents?.list?.();
+      const resp: any = await AnvilBackend?.documents?.list?.();
       const list = Array.isArray(resp?.documents) ? resp.documents : (resp?.rows || resp || []);
       setRows(list);
       setTab("library");
@@ -640,7 +640,7 @@ const Documents: React.FC = () => {
             // Refresh the row from the server after a save so the
             // UI reflects the persisted correction.
             try {
-              const resp: any = await ObaraBackend?.documents?.list?.();
+              const resp: any = await AnvilBackend?.documents?.list?.();
               const list = Array.isArray(resp?.documents) ? resp.documents : (resp?.rows || resp || []);
               setRows(list);
               const updated = list.find((d: DocRow) => d.id === selected?.id);

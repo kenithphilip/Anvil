@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { ageLabel, draftLabel, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired Email Triage
@@ -57,15 +57,15 @@ const WiredEmailTriage = () => {
   // error, silently rendering an empty inbox. Read the same data
   // surface the inbox itself was meant to use:
   // /api/inbound/email/threads (GET) via the
-  // ObaraBackend.inbound.listThreads helper, which authenticates
+  // AnvilBackend.inbound.listThreads helper, which authenticates
   // via the user's session token.
   const inbox = useFetch(
-    () => ObaraBackend?.inbound?.listThreads?.({ limit: 50 })
+    () => AnvilBackend?.inbound?.listThreads?.({ limit: 50 })
       || Promise.resolve({ messages: [] }),
     []
   );
   const orders = useFetch(
-    () => ObaraBackend?.orders?.list?.({ limit: 100 }) || Promise.resolve([]),
+    () => AnvilBackend?.orders?.list?.({ limit: 100 }) || Promise.resolve([]),
     []
   );
 
@@ -97,7 +97,7 @@ const WiredEmailTriage = () => {
     if (!selected) return;
     setBusy(true); setFlash(null);
     try {
-      await ObaraBackend?.orders?.create?.({ from_email_id: selected.id });
+      await AnvilBackend?.orders?.create?.({ from_email_id: selected.id });
       setFlash({ kind: "good", msg: "Promoted email to draft order" });
       window.notifySuccess?.("Promoted to draft order", selected.subject || "");
       inbox.reload();
@@ -113,7 +113,7 @@ const WiredEmailTriage = () => {
     if (!selected || !orderId) return;
     setBusy(true); setFlash(null);
     try {
-      await ObaraBackend?.orders?.update?.(orderId, { attached_email_id: selected.id });
+      await AnvilBackend?.orders?.update?.(orderId, { attached_email_id: selected.id });
       setFlash({ kind: "good", msg: `Attached to ${orderId.slice(0, 8)}` });
       window.notifySuccess?.("Email attached", `Order ${orderId.slice(0, 8)}`);
       inbox.reload();
@@ -131,7 +131,7 @@ const WiredEmailTriage = () => {
     try {
       const orderId = selected.order_id || selected.related_order_id || null;
       if (!orderId) throw new Error("No order linked to this email");
-      await ObaraBackend?.communications?.missingDoc?.(orderId);
+      await AnvilBackend?.communications?.missingDoc?.(orderId);
       setFlash({ kind: "good", msg: "Missing-doc nudge queued" });
       window.notifySuccess?.("Nudge queued", selected.subject || "");
     } catch (err: any) {

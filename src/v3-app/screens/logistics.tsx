@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { ageLabel, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — Logistics: freight consolidation + LCL/FCL bidding (P4)
@@ -40,13 +40,13 @@ const LogisticsScreen = () => {
     { carrier: "", service: "FCL_40", total_cost: "", currency: "USD", transit_days: "" });
 
   const list = useFetch(async () => {
-    const r: any = await ObaraBackend?.logistics?.listConsolidations?.();
+    const r: any = await AnvilBackend?.logistics?.listConsolidations?.();
     return r?.consolidations || [];
   }, [bump]);
 
   const bids = useFetch(async () => {
     if (!selected) return [];
-    const r: any = await ObaraBackend?.logistics?.listBids?.(selected);
+    const r: any = await AnvilBackend?.logistics?.listBids?.(selected);
     return r?.bids || [];
   }, [selected, bump]);
 
@@ -55,7 +55,7 @@ const LogisticsScreen = () => {
   const build = async () => {
     setBusy(true); setActionError(null);
     try {
-      const r: any = await ObaraBackend?.logistics?.buildConsolidations?.({});
+      const r: any = await AnvilBackend?.logistics?.buildConsolidations?.({});
       window.notifySuccess?.("Consolidations built", `${r?.built || 0} lane/week group${(r?.built || 0) === 1 ? "" : "s"} from procurement plans`);
       reload();
     } catch (e: any) { setActionError(e); } finally { setBusy(false); }
@@ -65,7 +65,7 @@ const LogisticsScreen = () => {
     if (!draft.carrier.trim()) { window.notifyError?.("Carrier required", "Enter a carrier/forwarder name."); return; }
     setBusy(true); setActionError(null);
     try {
-      await ObaraBackend?.logistics?.addBid?.({
+      await AnvilBackend?.logistics?.addBid?.({
         consolidation_id: consolidationId,
         carrier: draft.carrier.trim(),
         service: draft.service || null,
@@ -82,7 +82,7 @@ const LogisticsScreen = () => {
   const award = async (id: string) => {
     setBusy(true); setActionError(null);
     try {
-      await ObaraBackend?.logistics?.awardBid?.(id);
+      await AnvilBackend?.logistics?.awardBid?.(id);
       window.notifySuccess?.("Bid awarded", "Consolidation marked awarded.");
       reload();
     } catch (e: any) { setActionError(e); } finally { setBusy(false); }

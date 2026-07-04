@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip, fmtINR } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // Item detail drawer.
 //
@@ -37,8 +37,8 @@ type Ref = {
 };
 
 const fetchJson = async (path: string, opts?: RequestInit) => {
-  const cfg: any = (ObaraBackend as any)?.getConfig?.() || {};
-  const session: any = (ObaraBackend as any)?.getSession?.() || null;
+  const cfg: any = (AnvilBackend as any)?.getConfig?.() || {};
+  const session: any = (AnvilBackend as any)?.getSession?.() || null;
   if (!cfg.url) throw new Error("Backend URL not configured");
   const headers: any = { "Content-Type": "application/json", ...(opts?.headers as any || {}) };
   if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;

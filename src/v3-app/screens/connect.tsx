@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 import { Prefs } from "../lib/preferences";
 import { lsGet, lsSet, lsRemove } from "../lib/storage-keys";
@@ -10,14 +10,14 @@ import { signOutAndRedirect } from "../lib/session";
 // ============================================================
 // ANVIL v3 — Backend connect (sign-in / config)
 // Shipped as a dedicated route at #/connect AND as a modal that
-// auto-opens when ObaraBackend.isReady() is false on first load.
+// auto-opens when AnvilBackend.isReady() is false on first load.
 // Migrates the legacy showBackendModal flow.
 // ============================================================
 
 const WiredBackendConnect = () => {
   const { useState: uS, useEffect: uE } = React;
-  const cfg = (ObaraBackend && ObaraBackend.getConfig && ObaraBackend.getConfig()) || {};
-  const session = (ObaraBackend && ObaraBackend.getSession && ObaraBackend.getSession()) || {};
+  const cfg = (AnvilBackend && AnvilBackend.getConfig && AnvilBackend.getConfig()) || {};
+  const session = (AnvilBackend && AnvilBackend.getSession && AnvilBackend.getSession()) || {};
   // Default Backend URL to the page's own origin (Vercel hosts both
   // frontend and /api/* on the same domain) so users don't see
   // "Backend URL is required" the first time they hit the screen.
@@ -31,10 +31,10 @@ const WiredBackendConnect = () => {
   const [token, setToken] = uS(session.access_token || "");
   const [status, setStatus] = uS({ kind: "", text: "" });
   const [busy, setBusy] = uS(false);
-  const [signedIn, setSignedIn] = uS(!!(ObaraBackend?.isReady?.() && session.access_token));
+  const [signedIn, setSignedIn] = uS(!!(AnvilBackend?.isReady?.() && session.access_token));
 
   uE(() => {
-    const onChange = () => setSignedIn(!!(ObaraBackend?.isReady?.()));
+    const onChange = () => setSignedIn(!!(AnvilBackend?.isReady?.()));
     window.addEventListener("storage", onChange);
     return () => window.removeEventListener("storage", onChange);
   }, []);
@@ -55,11 +55,11 @@ const WiredBackendConnect = () => {
 
   const saveAndTest = async () => {
     try {
-      ObaraBackend?.setConfig?.({ url: url.trim().replace(/\/+$/, ""), tenantId: tenantId.trim() || null });
+      AnvilBackend?.setConfig?.({ url: url.trim().replace(/\/+$/, ""), tenantId: tenantId.trim() || null });
       if (token.trim()) {
-        ObaraBackend?.setSession?.({ access_token: token.trim() });
+        AnvilBackend?.setSession?.({ access_token: token.trim() });
         setStatus({ kind: "live", text: "Verifying access token…" });
-        const verified = await ObaraBackend.auth.verifyToken(token.trim());
+        const verified = await AnvilBackend.auth.verifyToken(token.trim());
         try { lsSet("auth_profile", JSON.stringify(verified)); } catch (_) {}
         setStatus({ kind: "good", text: "Signed in as " + (verified.user?.email || verified.user?.id || "user") });
         setSignedIn(true);
@@ -81,9 +81,9 @@ const WiredBackendConnect = () => {
     if (!url.trim()) { setStatus({ kind: "bad", text: "Backend URL is required first." }); return; }
     setStatus({ kind: "live", text: "Sending magic link…" });
     try {
-      ObaraBackend?.setConfig?.({ url: url.trim().replace(/\/+$/, ""), tenantId: tenantId.trim() || null });
+      AnvilBackend?.setConfig?.({ url: url.trim().replace(/\/+$/, ""), tenantId: tenantId.trim() || null });
       const redirect = url.trim().replace(/\/+$/, "") + "/auth/callback.html";
-      await ObaraBackend.auth.requestMagicLink(email.trim(), redirect);
+      await AnvilBackend.auth.requestMagicLink(email.trim(), redirect);
       setStatus({ kind: "good", text: "Magic link sent to " + email.trim() + ". Check your inbox." });
     } catch (err) {
       setStatus({ kind: "bad", text: "Magic link failed: " + (err?.message || String(err)) });
@@ -103,11 +103,11 @@ const WiredBackendConnect = () => {
     setBusy(true);
     setStatus({ kind: "live", text: "Creating your account…" });
     try {
-      ObaraBackend?.setConfig?.({ url: url.trim().replace(/\/+$/, ""), tenantId: tenantId.trim() || null });
-      const resp = await ObaraBackend.auth.signup({ email: e, password: p, display_name: n });
+      AnvilBackend?.setConfig?.({ url: url.trim().replace(/\/+$/, ""), tenantId: tenantId.trim() || null });
+      const resp = await AnvilBackend.auth.signup({ email: e, password: p, display_name: n });
       const sess = resp?.session;
       if (!sess?.access_token) throw new Error("Signup did not return a session");
-      ObaraBackend?.setSession?.({
+      AnvilBackend?.setSession?.({
         access_token: sess.access_token,
         refresh_token: sess.refresh_token,
         expires_at: sess.expires_at,
@@ -135,11 +135,11 @@ const WiredBackendConnect = () => {
     setBusy(true);
     setStatus({ kind: "live", text: "Signing in…" });
     try {
-      ObaraBackend?.setConfig?.({ url: url.trim().replace(/\/+$/, ""), tenantId: tenantId.trim() || null });
-      const resp = await ObaraBackend.auth.passwordLogin(e, p);
+      AnvilBackend?.setConfig?.({ url: url.trim().replace(/\/+$/, ""), tenantId: tenantId.trim() || null });
+      const resp = await AnvilBackend.auth.passwordLogin(e, p);
       const sess = resp?.session;
       if (!sess?.access_token) throw new Error("Sign-in did not return a session");
-      ObaraBackend?.setSession?.({
+      AnvilBackend?.setSession?.({
         access_token: sess.access_token,
         refresh_token: sess.refresh_token,
         expires_at: sess.expires_at,

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — Service Visits CRUD overlay
@@ -9,7 +9,7 @@ import { ObaraBackend } from "../lib/api";
 // delete actions on top of the read-only list in
 // wired-service-visits-c.jsx. Wins via load-order.
 //
-// Backend: ObaraBackend.service.{listVisits, createVisit,
+// Backend: AnvilBackend.service.{listVisits, createVisit,
 // updateVisit, deleteVisit} (api/service/visits).
 // Status state machine (from backend):
 //   PLANNED -> CHECKED_IN -> CHECKED_OUT -> REPORT_SUBMITTED -> CLOSED
@@ -38,8 +38,8 @@ const svReadParams = () => {
 };
 
 const svFetch = async (path: string, opts: { method?: string; body?: any; headers?: Record<string, string> } = {}) => {
-  const cfg = (ObaraBackend?.getConfig?.() || {});
-  const session = (ObaraBackend?.getSession?.() || null);
+  const cfg = (AnvilBackend?.getConfig?.() || {});
+  const session = (AnvilBackend?.getSession?.() || null);
   const headers: Record<string, string> = { "Content-Type": "application/json", ...((opts.headers as Record<string, string>) || {}) };
   if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
   if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
@@ -88,7 +88,7 @@ const WiredServiceVisitsCRUD = () => {
 
   const reload = () => {
     setList((s) => ({ ...s, loading: true }));
-    Promise.resolve(ObaraBackend?.service?.listVisits?.() || svFetch("/api/service/visits"))
+    Promise.resolve(AnvilBackend?.service?.listVisits?.() || svFetch("/api/service/visits"))
       .then((r) => {
         const rows = Array.isArray(r) ? r : (r?.visits || r?.rows || []);
         setList({ rows, loading: false, error: null });
@@ -98,12 +98,12 @@ const WiredServiceVisitsCRUD = () => {
 
   e(reload, []);
   e(() => {
-    Promise.resolve(ObaraBackend?.customers?.list?.() || [])
+    Promise.resolve(AnvilBackend?.customers?.list?.() || [])
       .then((r) => setCustomers(Array.isArray(r) ? r : (r?.rows || [])));
   }, []);
   e(() => {
     if (!form?.customer_id) { setLocations([]); return; }
-    Promise.resolve(ObaraBackend?.admin?.listCustomerLocations?.(form.customer_id) || [])
+    Promise.resolve(AnvilBackend?.admin?.listCustomerLocations?.(form.customer_id) || [])
       .then((r) => {
         const list = Array.isArray(r) ? r : (r?.locations || r?.rows || []);
         setLocations(list);
@@ -147,8 +147,8 @@ const WiredServiceVisitsCRUD = () => {
     setBusy(true);
     try {
       const fn = (editing && editing !== "__new__")
-        ? ObaraBackend?.service?.updateVisit
-        : ObaraBackend?.service?.createVisit;
+        ? AnvilBackend?.service?.updateVisit
+        : AnvilBackend?.service?.createVisit;
       const payload = { ...form };
       if (editing && editing !== "__new__") payload.id = editing;
       let result;
@@ -176,7 +176,7 @@ const WiredServiceVisitsCRUD = () => {
   const checkIn = async (id) => {
     setBusy(true);
     try {
-      const fn = ObaraBackend?.service?.updateVisit;
+      const fn = AnvilBackend?.service?.updateVisit;
       if (typeof fn === "function") await fn({ id, checkin: true });
       else await svFetch("/api/service/visits", { method: "PATCH", body: JSON.stringify({ id, checkin: true }) });
       window.notifySuccess?.("Checked in");
@@ -191,7 +191,7 @@ const WiredServiceVisitsCRUD = () => {
   const checkOut = async (id) => {
     setBusy(true);
     try {
-      const fn = ObaraBackend?.service?.updateVisit;
+      const fn = AnvilBackend?.service?.updateVisit;
       if (typeof fn === "function") await fn({ id, checkout: true });
       else await svFetch("/api/service/visits", { method: "PATCH", body: JSON.stringify({ id, checkout: true }) });
       window.notifySuccess?.("Checked out");
@@ -206,7 +206,7 @@ const WiredServiceVisitsCRUD = () => {
   const submitReport = async (id) => {
     setBusy(true);
     try {
-      const fn = ObaraBackend?.service?.updateVisit;
+      const fn = AnvilBackend?.service?.updateVisit;
       const payload = { id, status: "REPORT_SUBMITTED" };
       if (typeof fn === "function") await fn(payload);
       else await svFetch("/api/service/visits", { method: "PATCH", body: JSON.stringify(payload) });
@@ -223,7 +223,7 @@ const WiredServiceVisitsCRUD = () => {
     if (!window.confirm(`Delete service visit ${label || id}?`)) return;
     setBusy(true);
     try {
-      const fn = ObaraBackend?.service?.deleteVisit;
+      const fn = AnvilBackend?.service?.deleteVisit;
       if (typeof fn === "function") await fn(id);
       else await svFetch("/api/service/visits?id=" + encodeURIComponent(id), { method: "DELETE" });
       window.notifySuccess?.("Visit deleted");

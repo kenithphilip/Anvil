@@ -2,14 +2,14 @@ import React, { useEffect, useState } from "react";
 import { ageLabel, draftLabel, fmtINRShort, sevOf, stageOf, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Sev, Stream, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 import { Prefs } from "../lib/preferences";
 
 // ============================================================
 // ANVIL v3 — wired Home screens
 // Replaces the static demo HomeEngineer/HomeManager/HomeAdmin
-// with live data via ObaraBackend.* methods.
+// with live data via AnvilBackend.* methods.
 // ============================================================
 
 // (React hooks imported from 'react')
@@ -27,8 +27,8 @@ import { Prefs } from "../lib/preferences";
 // HomeEngineer (wired) — replaces the static demo of the same name.
 // ─────────────────────────────────────────────────────────────
 const WiredHomeEngineer = () => {
-  const orders = useFetch(() => ObaraBackend?.orders?.list?.({ limit: 50 }) || Promise.resolve([]), []);
-  const audit = useFetch(() => ObaraBackend?.audit?.list?.({ limit: 6 }) || Promise.resolve([]), []);
+  const orders = useFetch(() => AnvilBackend?.orders?.list?.({ limit: 50 }) || Promise.resolve([]), []);
+  const audit = useFetch(() => AnvilBackend?.audit?.list?.({ limit: 6 }) || Promise.resolve([]), []);
 
   const list = Array.isArray(orders.data) ? orders.data : (orders.data?.rows || []);
 
@@ -175,7 +175,7 @@ const WiredHomeEngineer = () => {
               <KV rows={[
                 ["Tenant", localStorage.getItem("obara:v3_tenant_code") || "TENANT"],
                 ["Role", (RBAC?.role() || "—").replace(/_/g, " ")],
-                ["Session", ObaraBackend?.isReady?.() ? "live" : "anonymous"],
+                ["Session", AnvilBackend?.isReady?.() ? "live" : "anonymous"],
                 ["Theme", Prefs?.theme() || "—"],
               ]} />
             </Card>

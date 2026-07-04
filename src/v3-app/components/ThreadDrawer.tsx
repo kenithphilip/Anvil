@@ -1,15 +1,15 @@
 // Thread drawer: per-order activity timeline. Replaces the static demo
-// drawer in Shell.tsx with live data from ObaraBackend.
+// drawer in Shell.tsx with live data from AnvilBackend.
 //
 // Reads the active order id from the URL hash query (`#/so?id=...`).
 // When no order is active, shows an empty state explaining that the
 // drawer follows the order currently in focus.
 //
 // Loads in parallel:
-//   - ObaraBackend.orders.get(id)              -> order envelope (PO, quote, status)
-//   - ObaraBackend.audit.list({ object_id })   -> audit events for this order
-//   - ObaraBackend.events.list(id)             -> processing_events
-//   - ObaraBackend.communications.list?.(id)   -> communications (optional)
+//   - AnvilBackend.orders.get(id)              -> order envelope (PO, quote, status)
+//   - AnvilBackend.audit.list({ object_id })   -> audit events for this order
+//   - AnvilBackend.events.list(id)             -> processing_events
+//   - AnvilBackend.communications.list?.(id)   -> communications (optional)
 //
 // Each event is normalized to `{ ts, kind, title, detail }` and merged
 // chronologically. Click an event to navigate to the order. Esc / click-
@@ -18,7 +18,7 @@
 import React, { useEffect, useState } from "react";
 import { Icon } from "../lib/icons";
 import { Chip } from "../lib/primitives";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { ageLabel, stageOf, draftLabel } from "../lib/helpers";
 
 export interface ThreadDrawerProps {
@@ -136,7 +136,7 @@ export const ThreadDrawer: React.FC<ThreadDrawerProps> = ({ open, onClose }) => 
     if (!open || !orderId) { setOrder({ data: null, loading: false, error: null }); return; }
     let cancel = false;
     setOrder({ data: null, loading: true, error: null });
-    Promise.resolve(ObaraBackend?.orders?.get?.(orderId))
+    Promise.resolve(AnvilBackend?.orders?.get?.(orderId))
       .then((r) => {
         if (cancel) return;
         setOrder({ data: r?.order || r, loading: false, error: null });
@@ -151,9 +151,9 @@ export const ThreadDrawer: React.FC<ThreadDrawerProps> = ({ open, onClose }) => 
     let cancel = false;
     setEventsLoading(true);
     Promise.all([
-      Promise.resolve(ObaraBackend?.audit?.list?.({ object_id: orderId, limit: 200 }) || []).catch(() => []),
-      Promise.resolve(ObaraBackend?.events?.list?.(orderId) || []).catch(() => []),
-      Promise.resolve(ObaraBackend?.communications?.list?.(orderId) || []).catch(() => []),
+      Promise.resolve(AnvilBackend?.audit?.list?.({ object_id: orderId, limit: 200 }) || []).catch(() => []),
+      Promise.resolve(AnvilBackend?.events?.list?.(orderId) || []).catch(() => []),
+      Promise.resolve(AnvilBackend?.communications?.list?.(orderId) || []).catch(() => []),
     ])
       .then(([audit, events, comms]) => {
         if (cancel) return;

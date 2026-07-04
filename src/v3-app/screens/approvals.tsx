@@ -3,7 +3,7 @@ import { fmtINRShort } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle, fmtINR } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { RBAC } from "../lib/rbac";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // In-page SO preview drawer used by the Approvals queue. Replaces
 // the prior "review" button that route-navigated to /so?id= and
@@ -26,7 +26,7 @@ const SOReviewDrawer: React.FC<{
   useEffect(() => {
     let cancelled = false;
     setState({ data: null, loading: true, error: null });
-    Promise.resolve(ObaraBackend?.orders?.get?.(orderId))
+    Promise.resolve(AnvilBackend?.orders?.get?.(orderId))
       .then((data) => { if (!cancelled) setState({ data, loading: false, error: null }); })
       .catch((error) => { if (!cancelled) setState({ data: null, loading: false, error }); });
     return () => { cancelled = true; };
@@ -189,8 +189,8 @@ const WiredApprovals = () => {
   const [reviewing, setReviewing] = u<any | null>(null);
 
   const fetchApprovals = async () => {
-    const cfg = (ObaraBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string };
-    const session = (ObaraBackend?.getSession?.() || null) as { access_token?: string } | null;
+    const cfg = (AnvilBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string };
+    const session = (AnvilBackend?.getSession?.() || null) as { access_token?: string } | null;
     if (!cfg.url) throw new Error("Backend URL not configured");
     const headers = { "Content-Type": "application/json" };
     if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
@@ -201,8 +201,8 @@ const WiredApprovals = () => {
   };
 
   const decideApproval = async (id, order_id, approver_role, status) => {
-    const cfg = (ObaraBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string };
-    const session = (ObaraBackend?.getSession?.() || null) as { access_token?: string } | null;
+    const cfg = (AnvilBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string };
+    const session = (AnvilBackend?.getSession?.() || null) as { access_token?: string } | null;
     if (!cfg.url) throw new Error("Backend URL not configured");
     const headers = { "Content-Type": "application/json" };
     if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
@@ -251,7 +251,7 @@ const WiredApprovals = () => {
   const onReturnForCorrection = async (a, reason: string) => {
     const ref = a.po_number || a.order_reference || (a.order_id ? a.order_id.slice(0, 12) : "this order");
     try {
-      await ObaraBackend?.orders?.update?.(a.order_id, {
+      await AnvilBackend?.orders?.update?.(a.order_id, {
         status: "DRAFT",
         correction_reason: reason,
         correction_requested_by: RBAC?.role?.() || "sales_manager",

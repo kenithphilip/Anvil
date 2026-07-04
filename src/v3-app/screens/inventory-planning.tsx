@@ -8,7 +8,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTabs, WSTitle, Stream } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 const SEV_TONE: Record<string, "good" | "info" | "warn" | "bad"> = {
   info: "info", warn: "warn", bad: "bad", critical: "bad",
@@ -29,10 +29,10 @@ const InventoryPlanningScreen: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
     Promise.allSettled([
-      Promise.resolve(ObaraBackend?.inventory?.positions?.()),
-      Promise.resolve(ObaraBackend?.inventory?.plans?.list?.({ status: "draft" })),
-      Promise.resolve(ObaraBackend?.inventory?.exceptions?.list?.({ status: "open" })),
-      Promise.resolve(ObaraBackend?.inventory?.forecasts?.({ horizon_weeks: 12 })),
+      Promise.resolve(AnvilBackend?.inventory?.positions?.()),
+      Promise.resolve(AnvilBackend?.inventory?.plans?.list?.({ status: "draft" })),
+      Promise.resolve(AnvilBackend?.inventory?.exceptions?.list?.({ status: "open" })),
+      Promise.resolve(AnvilBackend?.inventory?.forecasts?.({ horizon_weeks: 12 })),
     ]).then(([p, pl, ex, fc]) => {
       if (cancelled) return;
       setPositions({ data: p.status === "fulfilled" ? (p.value?.positions || []) : [], loading: false, error: p.status === "rejected" ? p.reason : null });
@@ -56,7 +56,7 @@ const InventoryPlanningScreen: React.FC = () => {
   const onReplan = async () => {
     setBusy(true);
     try {
-      await (ObaraBackend as any)?.inventory?.replan?.();
+      await (AnvilBackend as any)?.inventory?.replan?.();
       window.notifySuccess?.("Replan complete", "New forecasts and plans persisted.");
       setBump((n) => n + 1);
       setReplanConfirm(false);
@@ -76,7 +76,7 @@ const InventoryPlanningScreen: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.resolve((ObaraBackend as any)?.inventory?.calibration?.())
+    Promise.resolve((AnvilBackend as any)?.inventory?.calibration?.())
       .then((d: any) => { if (!cancelled) setCalibration({ data: d, loading: false }); })
       .catch(() => { if (!cancelled) setCalibration({ data: null, loading: false }); });
     return () => { cancelled = true; };
@@ -84,7 +84,7 @@ const InventoryPlanningScreen: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.resolve((ObaraBackend as any)?.inventory?.conformalDiagnostics?.())
+    Promise.resolve((AnvilBackend as any)?.inventory?.conformalDiagnostics?.())
       .then((d: any) => { if (!cancelled) setConformal({ data: d, loading: false }); })
       .catch(() => { if (!cancelled) setConformal({ data: null, loading: false }); });
     return () => { cancelled = true; };
@@ -92,7 +92,7 @@ const InventoryPlanningScreen: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.resolve((ObaraBackend as any)?.inventory?.forecastRuns?.(20))
+    Promise.resolve((AnvilBackend as any)?.inventory?.forecastRuns?.(20))
       .then((d: any) => { if (!cancelled) setForecastRuns({ data: d?.runs || [], loading: false }); })
       .catch(() => { if (!cancelled) setForecastRuns({ data: [], loading: false }); });
     return () => { cancelled = true; };
@@ -113,7 +113,7 @@ const InventoryPlanningScreen: React.FC = () => {
 
   const onExceptionAck = async (id: string) => {
     try {
-      await (ObaraBackend as any)?.inventory?.exceptions?.ack?.(id);
+      await (AnvilBackend as any)?.inventory?.exceptions?.ack?.(id);
       setBump((n) => n + 1);
     } catch (err: any) {
       window.notifyError?.("Ack failed", err?.message || String(err));

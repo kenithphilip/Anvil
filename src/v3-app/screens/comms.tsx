@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired Communications
@@ -134,7 +134,7 @@ const WiredComms = () => {
       // template-aware send path. Send the canonical names; keep the
       // legacy aliases as a redundant copy in case another reader
       // expects them.
-      await ObaraBackend?.communications?.draft?.({
+      await AnvilBackend?.communications?.draft?.({
         channel: tpl?.channel || "email",
         to_addr: composer.recipient,
         recipient: composer.recipient,

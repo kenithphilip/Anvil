@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // Audit P8.5: list + minimal CRUD UI for the P7.6 recurring invoice
 // schedule endpoint. Operators set cadence + amount + start/end and
@@ -55,7 +55,7 @@ const RecurringInvoicesScreen: React.FC = () => {
 
   const reload = () => {
     setLoading(true);
-    Promise.resolve(ObaraBackend?.billingRecurring?.list?.())
+    Promise.resolve(AnvilBackend?.billingRecurring?.list?.())
       .then((r: any) => {
         const list = Array.isArray(r?.schedules) ? r.schedules : (Array.isArray(r) ? r : []);
         setRows(list);
@@ -72,9 +72,9 @@ const RecurringInvoicesScreen: React.FC = () => {
   const setStatus = async (id: string, action: "pause" | "resume" | "cancel") => {
     setBusy(true);
     try {
-      if (action === "pause") await ObaraBackend?.billingRecurring?.pause?.(id);
-      else if (action === "resume") await ObaraBackend?.billingRecurring?.resume?.(id);
-      else await ObaraBackend?.billingRecurring?.cancel?.(id);
+      if (action === "pause") await AnvilBackend?.billingRecurring?.pause?.(id);
+      else if (action === "resume") await AnvilBackend?.billingRecurring?.resume?.(id);
+      else await AnvilBackend?.billingRecurring?.cancel?.(id);
       reload();
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -87,7 +87,7 @@ const RecurringInvoicesScreen: React.FC = () => {
       if (!form.customer_id) throw new Error("customer_id required");
       const amount = Number(form.amount);
       if (!Number.isFinite(amount) || amount <= 0) throw new Error("amount must be a positive number");
-      await ObaraBackend?.billingRecurring?.create?.({
+      await AnvilBackend?.billingRecurring?.create?.({
         customer_id: form.customer_id,
         contract_id: form.contract_id || null,
         cadence: form.cadence,

@@ -9,7 +9,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 const ItemDrilldown: React.FC = () => {
   const partNo = (() => {
@@ -32,10 +32,10 @@ const ItemDrilldown: React.FC = () => {
     if (!partNo) return;
     let cancelled = false;
     Promise.allSettled([
-      Promise.resolve(ObaraBackend?.inventory?.positions?.({ part_no: partNo })),
-      Promise.resolve(ObaraBackend?.inventory?.forecasts?.({ part_no: partNo, horizon_weeks: 12 })),
-      Promise.resolve(ObaraBackend?.inventory?.plans?.list?.({ part_no: partNo })),
-      Promise.resolve(ObaraBackend?.inventory?.exceptions?.list?.({ status: "all" })),
+      Promise.resolve(AnvilBackend?.inventory?.positions?.({ part_no: partNo })),
+      Promise.resolve(AnvilBackend?.inventory?.forecasts?.({ part_no: partNo, horizon_weeks: 12 })),
+      Promise.resolve(AnvilBackend?.inventory?.plans?.list?.({ part_no: partNo })),
+      Promise.resolve(AnvilBackend?.inventory?.exceptions?.list?.({ status: "all" })),
     ]).then(([p, f, pl, ex]) => {
       if (cancelled) return;
       setPositions({ data: p.status === "fulfilled" ? (p.value?.positions || []) : [], loading: false });
@@ -52,7 +52,7 @@ const ItemDrilldown: React.FC = () => {
     if (tab !== "coverage" || !partNo) return;
     let cancelled = false;
     setConformal({ data: null, loading: true });
-    Promise.resolve((ObaraBackend as any)?.inventory?.conformalDiagnostics?.(partNo))
+    Promise.resolve((AnvilBackend as any)?.inventory?.conformalDiagnostics?.(partNo))
       .then((d: any) => { if (!cancelled) setConformal({ data: d, loading: false }); })
       .catch(() => { if (!cancelled) setConformal({ data: null, loading: false }); });
     return () => { cancelled = true; };
@@ -62,13 +62,13 @@ const ItemDrilldown: React.FC = () => {
     if (!partNo) return;
     setSavingCoverage(true);
     try {
-      await (ObaraBackend as any)?.inventory?.setConformalOverride?.(partNo, {
+      await (AnvilBackend as any)?.inventory?.setConformalOverride?.(partNo, {
         conformal_coverage: coverage,
         conformal_method_override: methodOverride,
       });
       window.notifySuccess?.("Coverage saved", "Takes effect on the next planning cron run.");
       // Refresh.
-      const d = await (ObaraBackend as any)?.inventory?.conformalDiagnostics?.(partNo);
+      const d = await (AnvilBackend as any)?.inventory?.conformalDiagnostics?.(partNo);
       setConformal({ data: d, loading: false });
     } catch (err: any) {
       window.notifyError?.("Save failed", err?.message || String(err));

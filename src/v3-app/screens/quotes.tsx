@@ -23,7 +23,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { ageLabel, fmtINRShort } from "../lib/helpers";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { pushRecent } from "../lib/recent-items";
 import { QuoteDetailDrawer } from "../components/QuoteDetailDrawer";
 import { NewQuoteModal } from "../components/NewQuoteModal";
@@ -129,7 +129,7 @@ const Quotes: React.FC = () => {
   const reload = () => {
     setRows(null);
     setErr(null);
-    Promise.resolve(ObaraBackend?.quotes?.list?.({ limit: 200 }))
+    Promise.resolve(AnvilBackend?.quotes?.list?.({ limit: 200 }))
       .then((data: any) => setRows(toRows(data)))
       .catch((e: any) => setErr(e?.message || String(e)));
   };

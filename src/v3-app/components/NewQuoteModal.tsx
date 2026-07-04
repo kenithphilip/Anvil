@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Modal } from "../lib/primitives";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // New-quote-from-scratch modal.
 //
@@ -52,12 +52,12 @@ export const NewQuoteModal: React.FC<{
     setContactId("");
     setErr(null);
     setCustomers(null);
-    Promise.resolve(ObaraBackend?.customers?.list?.())
+    Promise.resolve(AnvilBackend?.customers?.list?.())
       .then((data: any) => setCustomers(Array.isArray(data) ? data : data?.customers || []))
       .catch((e: any) => setErr(e?.message || String(e)));
     // Seed validity from the tenant default (Admin > Settings) before any
     // customer is picked. A customer's own default overrides this in pick().
-    Promise.resolve(ObaraBackend?.admin?.quoteSettings?.())
+    Promise.resolve(AnvilBackend?.admin?.quoteSettings?.())
       .then((r: any) => { const v = r?.quote_default_validity_days; if (v != null) setValidityDays(Number(v)); })
       .catch(() => { /* keep the 30-day default */ });
   }, [open]);
@@ -70,7 +70,7 @@ export const NewQuoteModal: React.FC<{
     let cancelled = false;
     (async () => {
       try {
-        const resp: any = await ObaraBackend?.customers?.listContacts?.({ customer_id: customerId });
+        const resp: any = await AnvilBackend?.customers?.listContacts?.({ customer_id: customerId });
         if (cancelled) return;
         const list = Array.isArray(resp) ? resp : resp?.contacts || [];
         setContacts(list);
@@ -106,7 +106,7 @@ export const NewQuoteModal: React.FC<{
     setBusy(true);
     setErr(null);
     try {
-      const resp: any = await ObaraBackend?.quotes?.create?.({
+      const resp: any = await AnvilBackend?.quotes?.create?.({
         customer_id: customerId,
         customer_contact_id: contactId || null,
         currency: currency || "INR",

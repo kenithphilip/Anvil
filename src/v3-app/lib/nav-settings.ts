@@ -11,7 +11,7 @@
 // access (hard gate). Core ids stay reachable for every role so an admin can
 // never lock themselves out of the screen that edits this setting.
 
-import { ObaraBackend } from "./api";
+import { AnvilBackend } from "./api";
 import { RBAC, type Role } from "./rbac";
 
 export type NavDisabledMap = Record<string, string[]>;
@@ -30,7 +30,7 @@ const emitChange = () => {
 // leave everything visible rather than hiding the whole app.
 export const loadNavSettings = async (): Promise<void> => {
   try {
-    const resp: any = await ObaraBackend?.admin?.navSettings?.();
+    const resp: any = await AnvilBackend?.admin?.navSettings?.();
     const map = resp?.nav_disabled;
     disabledByRole = map && typeof map === "object" && !Array.isArray(map) ? map : {};
   } catch (_) {

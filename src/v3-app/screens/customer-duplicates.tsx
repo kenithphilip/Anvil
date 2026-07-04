@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // Audit P9.5: dedicated customer-duplicates screen with a merge
 // flow. The order-level duplicates screen lives at #/duplicates;
@@ -63,7 +63,7 @@ const CustomerDuplicatesScreen: React.FC = () => {
   const reload = () => {
     setLoading(true);
     setError(null);
-    Promise.resolve(ObaraBackend?.customers?.findDuplicates?.())
+    Promise.resolve(AnvilBackend?.customers?.findDuplicates?.())
       .then((r: any) => {
         const g: Group[] = Array.isArray(r?.groups) ? r.groups : [];
         setGroups(g);
@@ -120,7 +120,7 @@ const CustomerDuplicatesScreen: React.FC = () => {
     setMergingGroup(gi);
     setError(null);
     try {
-      await ObaraBackend?.customers?.merge?.({ primary_id: primary, duplicate_ids: dups });
+      await AnvilBackend?.customers?.merge?.({ primary_id: primary, duplicate_ids: dups });
       setMergedSignal({ idx: gi, primary, merged: dups.length });
       reload();
     } catch (e) {

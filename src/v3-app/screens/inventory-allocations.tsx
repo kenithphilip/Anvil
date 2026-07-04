@@ -7,7 +7,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 const STATUS_CHIP: Record<string, "good" | "info" | "warn" | "bad"> = {
   reserved: "info", consumed: "good", released: "warn", expired: "bad",
@@ -43,7 +43,7 @@ const InventoryAllocationsScreen: React.FC = () => {
       if (!payload.part_no || !Number.isFinite(payload.qty) || payload.qty <= 0) {
         throw new Error("part_no and qty (>0) required");
       }
-      await (ObaraBackend as any)?.inventory?.allocations?.create?.(payload);
+      await (AnvilBackend as any)?.inventory?.allocations?.create?.(payload);
       window.notifySuccess?.("Allocation created", payload.part_no + " x " + payload.qty);
       setShowCreate(false);
       setCreateForm({ part_no: "", qty: "", required_by: "", project_id: "", order_id: "", opportunity_id: "" });
@@ -64,7 +64,7 @@ const InventoryAllocationsScreen: React.FC = () => {
     const params: any = {};
     if (tab !== "all") params.status = tab;
     if (partFilter) params.part_no = partFilter;
-    Promise.resolve(ObaraBackend?.inventory?.allocations?.list?.(params))
+    Promise.resolve(AnvilBackend?.inventory?.allocations?.list?.(params))
       .then((r: any) => { if (!cancelled) setAllocs({ data: r?.allocations || [], loading: false }); })
       .catch(() => { if (!cancelled) setAllocs({ data: [], loading: false }); });
     return () => { cancelled = true; };
@@ -78,7 +78,7 @@ const InventoryAllocationsScreen: React.FC = () => {
 
   const onUpdate = async (id: string, patch: any) => {
     try {
-      await (ObaraBackend as any)?.inventory?.allocations?.update?.(id, patch);
+      await (AnvilBackend as any)?.inventory?.allocations?.update?.(id, patch);
       window.notifySuccess?.("Allocation updated", id.slice(0, 8));
       setBump((n) => n + 1);
     } catch (err: any) {

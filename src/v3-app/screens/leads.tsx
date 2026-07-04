@@ -2,13 +2,13 @@ import React, { useEffect, useState } from "react";
 import { ageLabel, fmtINRShort, useFetch, useHashParam } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired Leads
 // Wave B · Sales pipeline · top of funnel
-// Reads via ObaraBackend.sales.listLeads (api/sales/leads GET)
-// Creates via ObaraBackend.sales.createLead (api/sales/leads POST)
+// Reads via AnvilBackend.sales.listLeads (api/sales/leads GET)
+// Creates via AnvilBackend.sales.createLead (api/sales/leads POST)
 // ============================================================
 
 const LEAD_STATUS_CHIP = (s) => {
@@ -48,7 +48,7 @@ const leadRows = (resp) => {
 
 const WiredLeads = () => {
   const list = useFetch(
-    () => ObaraBackend?.sales?.listLeads?.() || Promise.resolve({ leads: [] }),
+    () => AnvilBackend?.sales?.listLeads?.() || Promise.resolve({ leads: [] }),
     []
   );
 
@@ -78,7 +78,7 @@ const WiredLeads = () => {
     }
     setConvertingId(lead.id);
     try {
-      const r: any = await ObaraBackend?.sales?.updateLead?.({
+      const r: any = await AnvilBackend?.sales?.updateLead?.({
         id: lead.id,
         convert_to_opportunity: true,
         account_id: accountId,
@@ -176,7 +176,7 @@ const WiredLeads = () => {
         budget_estimate: draft.estimated_value ? Number(draft.estimated_value) : null,
         estimated_value: draft.estimated_value ? Number(draft.estimated_value) : null,
       };
-      await ObaraBackend?.sales?.createLead?.(payload);
+      await AnvilBackend?.sales?.createLead?.(payload);
       setCreating(false);
       setDraft({ name: "", source: "", status: "NEW", owner: "", estimated_value: "" });
       list.reload();
@@ -226,7 +226,7 @@ const WiredLeads = () => {
               <Btn sm kind={selected.ai_score == null ? "live" : "ghost"} disabled={scoringId === selected.id}
                    onClick={async () => {
                      setScoringId(selected.id);
-                     try { await ObaraBackend?.sales?.scoreLead?.(selected.id); list.reload(); }
+                     try { await AnvilBackend?.sales?.scoreLead?.(selected.id); list.reload(); }
                      finally { setScoringId(null); }
                    }}
                    title="Score this lead with the Haiku scorer">

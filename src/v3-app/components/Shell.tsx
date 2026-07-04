@@ -9,7 +9,7 @@ import { Icon } from "../lib/icons";
 import { Dot, Chip } from "../lib/primitives";
 import { ageLabel } from "../lib/helpers";
 import { getRecent, clearRecent, type RecentItem } from "../lib/recent-items";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { Prefs } from "../lib/preferences";
 import { signOutAndRedirect } from "../lib/session";
 import type { NavGroup, RoleEntry, NavBadge } from "../lib/nav";
@@ -93,7 +93,7 @@ const NotificationsBell: React.FC<{ onRoute?: (id: string) => void; isAdminLike:
   const load = async () => {
     if (!isAdminLike) { setItems([]); setUnread(0); return; }
     try {
-      const resp: any = await ObaraBackend?.notifications?.list?.();
+      const resp: any = await AnvilBackend?.notifications?.list?.();
       setItems(resp?.notifications || []);
       setUnread(resp?.unread_count || 0);
     } catch (_) { /* leave previous state */ }
@@ -131,7 +131,7 @@ const NotificationsBell: React.FC<{ onRoute?: (id: string) => void; isAdminLike:
     try {
       // Mark read so the user-specific bell count goes down even if
       // someone else resolves the row later.
-      try { await ObaraBackend?.notifications?.markRead?.(n.id); } catch (_) { /* ignore */ }
+      try { await AnvilBackend?.notifications?.markRead?.(n.id); } catch (_) { /* ignore */ }
       // Deep-link if the row carries a route hint. Validate that
       // the target route exists in RESOLVERS so a stale link_route
       // (renamed screen, dropped feature) doesn't dump the user on
@@ -164,7 +164,7 @@ const NotificationsBell: React.FC<{ onRoute?: (id: string) => void; isAdminLike:
   };
 
   const onMarkAll = async () => {
-    try { await ObaraBackend?.notifications?.markAllRead?.(); } catch (_) { /* ignore */ }
+    try { await AnvilBackend?.notifications?.markAllRead?.(); } catch (_) { /* ignore */ }
     load();
   };
 

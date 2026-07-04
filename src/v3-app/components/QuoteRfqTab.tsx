@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RfqDetail } from "./RfqDetail";
 
 // Vendor-RFQ tab inside the quote drawer. Raises an internal RFQ from the
@@ -18,7 +18,7 @@ export const QuoteRfqTab: React.FC<{ quoteId: string; lines: any[] }> = ({ quote
   const load = async () => {
     setErr("");
     try {
-      const r: any = await ObaraBackend?.supplierRfq?.list?.({ source_quote_id: quoteId });
+      const r: any = await AnvilBackend?.supplierRfq?.list?.({ source_quote_id: quoteId });
       const list = Array.isArray(r) ? r : (r?.rfqs || []);
       setRfqs(list);
       if (list.length && !activeId) setActiveId(list[0].id);
@@ -39,7 +39,7 @@ export const QuoteRfqTab: React.FC<{ quoteId: string; lines: any[] }> = ({ quote
     if (!payloadLines.length) { window.notifyError?.("No lines", "Add quote lines first (Lines tab)."); return; }
     setBusy(true);
     try {
-      const r: any = await ObaraBackend?.supplierRfq?.create?.({ source_quote_id: quoteId, lines: payloadLines });
+      const r: any = await AnvilBackend?.supplierRfq?.create?.({ source_quote_id: quoteId, lines: payloadLines });
       const created = r?.rfq || r;
       await load();
       if (created?.id) setActiveId(created.id);

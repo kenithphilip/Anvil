@@ -63,7 +63,7 @@ export const subscribeToPush = async (vapidPublicKey: string): Promise<PushSubsc
   };
   // Push to the API.
   // eslint-disable-next-line no-restricted-globals
-  const w: any = (window as any).ObaraBackend || (window as any).AnvilBackend;
+  const w: any = (window as any).AnvilBackend || (window as any).AnvilBackend;
   if (w?.push?.subscribe) {
     try { await w.push.subscribe(body); }
     catch (_e) { /* surface to caller via UI */ }
@@ -86,7 +86,7 @@ export const unsubscribeFromPush = async (): Promise<boolean> => {
   const endpoint = sub.endpoint;
   const ok = await sub.unsubscribe();
   // eslint-disable-next-line no-restricted-globals
-  const w: any = (window as any).ObaraBackend || (window as any).AnvilBackend;
+  const w: any = (window as any).AnvilBackend || (window as any).AnvilBackend;
   if (w?.push?.unsubscribe) {
     try { await w.push.unsubscribe({ endpoint }); }
     catch (_e) { /* ignore */ }

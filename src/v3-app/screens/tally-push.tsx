@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { ageLabel, draftLabel, fmtINRShort, stageOf, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 import { tallyOrderRows, shortHash } from "../lib/tally";
 import { useTallyBridgeStatus } from "../lib/tally-status";
@@ -10,7 +10,7 @@ import { useTallyBridgeStatus } from "../lib/tally-status";
 // ============================================================
 // ANVIL v3 — wired Tally · push queue
 // Wave D · Finance
-// Pulls APPROVED + EXPORTED_TO_TALLY orders, drives ObaraBackend.tally.push.
+// Pulls APPROVED + EXPORTED_TO_TALLY orders, drives AnvilBackend.tally.push.
 // Reuses tallyOrderRows + shortHash from wired-tally-masters-d.jsx.
 // ============================================================
 
@@ -29,8 +29,8 @@ const tallyPushSnapshot = (order) => ({
 });
 
 const WiredTallyPush = () => {
-  const queue   = useFetch(() => ObaraBackend?.orders?.list?.({ status: "APPROVED", limit: 200 })          || Promise.resolve({ orders: [] }), []);
-  const pushed  = useFetch(() => ObaraBackend?.orders?.list?.({ status: "EXPORTED_TO_TALLY", limit: 200 }) || Promise.resolve({ orders: [] }), []);
+  const queue   = useFetch(() => AnvilBackend?.orders?.list?.({ status: "APPROVED", limit: 200 })          || Promise.resolve({ orders: [] }), []);
+  const pushed  = useFetch(() => AnvilBackend?.orders?.list?.({ status: "EXPORTED_TO_TALLY", limit: 200 }) || Promise.resolve({ orders: [] }), []);
 
   const [busyId, setBusyId] = useState(null);
   const [flash, setFlash]   = useState(null);
@@ -59,7 +59,7 @@ const WiredTallyPush = () => {
     setBusyId(order.id);
     setFlash(null);
     try {
-      await ObaraBackend?.tally?.push?.(tallyPushSnapshot(order));
+      await AnvilBackend?.tally?.push?.(tallyPushSnapshot(order));
       setFlash({ kind: "good", msg: `Pushed ${order.po_number || order.id.slice(0, 8)}` });
       queue.reload();
       pushed.reload();

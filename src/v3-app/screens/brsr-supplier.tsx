@@ -12,7 +12,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 type Disclosure = Record<string, any>;
 
@@ -77,10 +77,10 @@ const BrsrSupplierScreen: React.FC = () => {
     setLoading(true);
     (async () => {
       try {
-        const list = await (ObaraBackend as any)?.brsr?.periods?.({ fy, cadence: "annual" });
+        const list = await (AnvilBackend as any)?.brsr?.periods?.({ fy, cadence: "annual" });
         let p = list?.periods?.[0];
         if (!p) {
-          const r = await (ObaraBackend as any)?.brsr?.createPeriod?.({
+          const r = await (AnvilBackend as any)?.brsr?.createPeriod?.({
             fiscal_year: fy, cadence: "annual",
           });
           p = r?.period;
@@ -88,7 +88,7 @@ const BrsrSupplierScreen: React.FC = () => {
         if (cancelled || !p) return;
         setPeriodId(p.id);
         setStatus(p.status || "open");
-        const d = await (ObaraBackend as any)?.brsr?.disclosure?.(p.id);
+        const d = await (AnvilBackend as any)?.brsr?.disclosure?.(p.id);
         if (cancelled) return;
         setDisclosure(d?.disclosure || {});
       } catch (err: any) {
@@ -116,7 +116,7 @@ const BrsrSupplierScreen: React.FC = () => {
     if (!periodId) return;
     setSaving(true);
     try {
-      const r = await (ObaraBackend as any)?.brsr?.saveDisclosure?.({
+      const r = await (AnvilBackend as any)?.brsr?.saveDisclosure?.({
         period_id: periodId,
         ...disclosure,
       });
@@ -135,7 +135,7 @@ const BrsrSupplierScreen: React.FC = () => {
     if (!periodId) return;
     setSaving(true);
     try {
-      await (ObaraBackend as any)?.brsr?.submitDisclosure?.({
+      await (AnvilBackend as any)?.brsr?.submitDisclosure?.({
         period_id: periodId,
         attestation_text: attestation.text,
         attestation_role: attestation.role,
@@ -154,7 +154,7 @@ const BrsrSupplierScreen: React.FC = () => {
     const from = prevFy(fy);
     if (!from) return;
     try {
-      const r = await (ObaraBackend as any)?.brsr?.prefill?.(from);
+      const r = await (AnvilBackend as any)?.brsr?.prefill?.(from);
       if (r?.disclosure) {
         setDisclosure((prev) => ({ ...prev, ...r.disclosure }));
         setDirty(true);

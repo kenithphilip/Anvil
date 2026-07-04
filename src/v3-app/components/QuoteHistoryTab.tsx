@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Chip } from "../lib/primitives";
 import { ageLabel } from "../lib/helpers";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // Read-only timeline of audit_events for one quote. Reads via the
 // existing /api/audit endpoint (object_type=quote, object_id=quote.id).
@@ -62,7 +62,7 @@ export const QuoteHistoryTab: React.FC<{ quoteId: string }> = ({ quoteId }) => {
     if (!quoteId) return;
     setEvents(null);
     setErr(null);
-    Promise.resolve(ObaraBackend?.audit?.list?.({ object_type: "quote", object_id: quoteId, limit: 200 }))
+    Promise.resolve(AnvilBackend?.audit?.list?.({ object_type: "quote", object_id: quoteId, limit: 200 }))
       .then((resp: any) => setEvents(Array.isArray(resp) ? resp : resp?.events || []))
       .catch((e: any) => setErr(e?.message || String(e)));
   }, [quoteId]);

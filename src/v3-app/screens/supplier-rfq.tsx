@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RfqDetail } from "../components/RfqDetail";
 
 // ============================================================
@@ -25,7 +25,7 @@ const NewRfqModal: React.FC<{ onCreate: (lines: any[], notes: string, customerId
   const [customerId, setCustomerId] = useState("");
   const [customerRef, setCustomerRef] = useState("");
   useEffect(() => {
-    Promise.resolve(ObaraBackend?.customers?.list?.())
+    Promise.resolve(AnvilBackend?.customers?.list?.())
       .then((r: any) => setCustomers(Array.isArray(r) ? r : (r?.customers || r?.rows || [])))
       .catch(() => setCustomers([]));
   }, []);
@@ -100,7 +100,7 @@ const SupplierRfqScreen: React.FC = () => {
   const load = async () => {
     setErr("");
     try {
-      const r: any = await ObaraBackend?.supplierRfq?.list?.();
+      const r: any = await AnvilBackend?.supplierRfq?.list?.();
       const list = Array.isArray(r) ? r : (r?.rfqs || []);
       setRfqs(list);
       if (list.length && !activeId) setActiveId(list[0].id);
@@ -111,7 +111,7 @@ const SupplierRfqScreen: React.FC = () => {
   const onCreate = async (lines: any[], notes: string, customerId: string, customerRef: string) => {
     setBusy(true);
     try {
-      const r: any = await ObaraBackend?.supplierRfq?.create?.({ lines, notes: notes || null, customer_id: customerId || null, customer_ref: customerRef || null });
+      const r: any = await AnvilBackend?.supplierRfq?.create?.({ lines, notes: notes || null, customer_id: customerId || null, customer_ref: customerRef || null });
       const created = r?.rfq || r;
       setShowNew(false);
       await load();

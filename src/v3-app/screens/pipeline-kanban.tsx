@@ -21,7 +21,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { stageOf, ageLabel } from "../lib/helpers";
 
 interface Order {
@@ -92,7 +92,7 @@ const PipelineKanban: React.FC = () => {
     let cancelled = false;
     (async () => {
       try {
-        const resp: any = await ObaraBackend?.orders?.list?.({ limit: 200 });
+        const resp: any = await AnvilBackend?.orders?.list?.({ limit: 200 });
         const list = Array.isArray(resp?.orders) ? resp.orders
                    : Array.isArray(resp?.rows)   ? resp.rows
                    : Array.isArray(resp)          ? resp
@@ -140,11 +140,11 @@ const PipelineKanban: React.FC = () => {
       // The orders API hangs status updates off the singleton row
       // endpoint (PATCH /api/orders/<id>); fall back to update() if
       // the client surfaces it.
-      if (ObaraBackend?.orders?.update) {
-        await ObaraBackend.orders.update(id, { status: target });
+      if (AnvilBackend?.orders?.update) {
+        await AnvilBackend.orders.update(id, { status: target });
       } else {
-        const cfg = ObaraBackend?.getConfig?.() || {};
-        const session = ObaraBackend?.getSession?.() || null;
+        const cfg = AnvilBackend?.getConfig?.() || {};
+        const session = AnvilBackend?.getSession?.() || null;
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if ((session as any)?.access_token) headers["Authorization"] = "Bearer " + (session as any).access_token;
         if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
@@ -156,7 +156,7 @@ const PipelineKanban: React.FC = () => {
       // Revert by reloading.
       setMoveErr(String(e?.message || e));
       try {
-        const resp: any = await ObaraBackend?.orders?.list?.({ limit: 200 });
+        const resp: any = await AnvilBackend?.orders?.list?.({ limit: 200 });
         const list = Array.isArray(resp?.orders) ? resp.orders
                    : Array.isArray(resp?.rows)   ? resp.rows
                    : Array.isArray(resp)          ? resp

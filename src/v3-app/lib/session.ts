@@ -3,7 +3,7 @@
 // banner. Lives in `lib/` (not `app.tsx`) so the Shell can import it
 // without creating an `app -> Shell -> app` cycle.
 
-import { ObaraBackend } from "./api";
+import { AnvilBackend } from "./api";
 import { lsRemove } from "./storage-keys";
 
 const INTENDED_ROUTE_KEY_SUFFIX = "v3_intended_route";
@@ -14,7 +14,7 @@ const INTENDED_ROUTE_KEY_SUFFIX = "v3_intended_route";
 // in-flight fetches see the null session before the next route mounts.
 export const signOutAndRedirect = (): void => {
   try {
-    ObaraBackend?.setSession?.(null);
+    AnvilBackend?.setSession?.(null);
     lsRemove("auth_profile");
     lsRemove(INTENDED_ROUTE_KEY_SUFFIX);
   } catch (_) {

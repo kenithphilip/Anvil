@@ -2,14 +2,14 @@ import React, { useEffect, useState } from "react";
 import { ageLabel, draftLabel, fmtINRShort, stageOf, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { tallyOrderRows, shortHash } from "../lib/tally";
 import { useTallyBridgeStatus } from "../lib/tally-status";
 
 // ============================================================
 // ANVIL v3 - wired Tally · reconciliation
 // Wave D · Finance
-// Lists EXPORTED_TO_TALLY orders, calls ObaraBackend.tally.reconcile.
+// Lists EXPORTED_TO_TALLY orders, calls AnvilBackend.tally.reconcile.
 // Reuses tallyOrderRows + shortHash from wired-tally-masters-d.jsx.
 // ============================================================
 //
@@ -20,10 +20,10 @@ import { useTallyBridgeStatus } from "../lib/tally-status";
 // surfaces the synchronous 30-day first-run scan results.
 
 const WiredTallyReconcile = () => {
-  const exported = useFetch(() => ObaraBackend?.orders?.list?.({ status: "EXPORTED_TO_TALLY", limit: 200 }) || Promise.resolve({ orders: [] }), []);
-  const findings = useFetch(() => (ObaraBackend as any)?.tally?.listReconFindings?.(50) || Promise.resolve({ findings: [] }), []);
-  const reconRuns = useFetch(() => (ObaraBackend as any)?.tally?.listReconRuns?.(20) || Promise.resolve({ runs: [] }), []);
-  const reconState = useFetch(() => (ObaraBackend as any)?.tally?.getReconState?.() || Promise.resolve({ addon_enabled: false }), []);
+  const exported = useFetch(() => AnvilBackend?.orders?.list?.({ status: "EXPORTED_TO_TALLY", limit: 200 }) || Promise.resolve({ orders: [] }), []);
+  const findings = useFetch(() => (AnvilBackend as any)?.tally?.listReconFindings?.(50) || Promise.resolve({ findings: [] }), []);
+  const reconRuns = useFetch(() => (AnvilBackend as any)?.tally?.listReconRuns?.(20) || Promise.resolve({ runs: [] }), []);
+  const reconState = useFetch(() => (AnvilBackend as any)?.tally?.getReconState?.() || Promise.resolve({ addon_enabled: false }), []);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [flash, setFlash]   = useState<{ kind: string; msg: string } | null>(null);
   const [driftBusy, setDriftBusy] = useState(false);
@@ -46,7 +46,7 @@ const WiredTallyReconcile = () => {
         (order.result && order.result.tally_voucher_id) ||
         order.tally_voucher_id ||
         null;
-      await ObaraBackend?.tally?.reconcile?.({
+      await AnvilBackend?.tally?.reconcile?.({
         orderId: order.id,
         status: "reconciled",
         tally_voucher_id: tallyVoucherId,
@@ -69,7 +69,7 @@ const WiredTallyReconcile = () => {
   const runDriftCheck = async () => {
     setDriftBusy(true); setFlash(null);
     try {
-      const out = await (ObaraBackend as any)?.tally?.driftCheck?.({
+      const out = await (AnvilBackend as any)?.tally?.driftCheck?.({
         scope: "tenant_recent",
         trigger: "manual",
       });
@@ -93,7 +93,7 @@ const WiredTallyReconcile = () => {
   const enableAddon = async (plan: string) => {
     setEnableBusy(true); setFlash(null);
     try {
-      const out = await (ObaraBackend as any)?.tally?.enableDriftAddon?.(plan);
+      const out = await (AnvilBackend as any)?.tally?.enableDriftAddon?.(plan);
       const fr = out?.first_run;
       if (fr) {
         setFirstRunSummary(fr);
@@ -112,7 +112,7 @@ const WiredTallyReconcile = () => {
 
   const resolveOne = async (id: string) => {
     try {
-      await (ObaraBackend as any)?.tally?.resolveFinding?.(id);
+      await (AnvilBackend as any)?.tally?.resolveFinding?.(id);
       findings.reload();
     } catch (_e) { /* no-op */ }
   };
@@ -337,7 +337,7 @@ const WiredTallyReconcile = () => {
               onClick={async () => {
                 if (!window.confirm("Disable drift reconciliation? Findings + runs are preserved.")) return;
                 try {
-                  await (ObaraBackend as any)?.tally?.disableDriftAddon?.();
+                  await (AnvilBackend as any)?.tally?.disableDriftAddon?.();
                   reconState.reload();
                 } catch (_e) { /* no-op */ }
               }}

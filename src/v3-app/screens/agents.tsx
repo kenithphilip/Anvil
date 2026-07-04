@@ -9,7 +9,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ageLabel, fmtDate } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle, rowActivateProps } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 const GOAL_TYPES = [
   {
@@ -68,7 +68,7 @@ const WiredAgents = () => {
     try {
       const params: Record<string, string> = {};
       if (statusFilter && statusFilter !== "all") params.status = statusFilter;
-      const resp: any = await ObaraBackend?.agents?.listGoals?.(params);
+      const resp: any = await AnvilBackend?.agents?.listGoals?.(params);
       setGoals(resp?.goals || []);
       setSteps(resp?.steps || []);
     } catch (err: any) {
@@ -114,7 +114,7 @@ const WiredAgents = () => {
       const due_at = Number.isFinite(due) && due > 0
         ? new Date(Date.now() + due * 86400000).toISOString()
         : null;
-      await ObaraBackend?.agents?.armGoal?.({
+      await AnvilBackend?.agents?.armGoal?.({
         goal_type: armForm.goal_type,
         object_type: gt.objectType,
         object_id: armForm.object_id.trim(),
@@ -134,7 +134,7 @@ const WiredAgents = () => {
     setBusy(true);
     setFlash(null);
     try {
-      await ObaraBackend?.agents?.updateGoal?.({ id, status });
+      await AnvilBackend?.agents?.updateGoal?.({ id, status });
       setFlash({ kind: "good", msg: "Goal " + status });
       reload(tab);
     } catch (err: any) {

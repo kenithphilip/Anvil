@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // Map audit object_type -> hash route + param so an "open" button on
 // each row can navigate to the affected entity. The audit log is
@@ -119,7 +119,7 @@ const rowsToCsv = (rows) => {
 
 const WiredAudit = () => {
   const list = useFetch(
-    () => ObaraBackend?.audit?.list?.({ limit: 200 }) || Promise.resolve({ events: [] }),
+    () => AnvilBackend?.audit?.list?.({ limit: 200 }) || Promise.resolve({ events: [] }),
     []
   );
 

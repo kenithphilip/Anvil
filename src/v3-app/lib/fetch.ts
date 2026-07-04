@@ -5,19 +5,19 @@
 // session + config from localStorage directly, which duplicated
 // the SDK's storage logic and bypassed the sessionStorage-primary
 // migration in anvil-client.js. Now delegates to
-// ObaraBackend.getSession / getConfig so the SDK is the single
+// AnvilBackend.getSession / getConfig so the SDK is the single
 // source of truth.
 //
 // Returns the parsed JSON body. Throws on non-2xx responses with
 // the response body included in the error message so screens can
 // surface useful error text in their toast.
 //
-// Most screens should use ObaraBackend.<ns>.<method>(...) directly,
+// Most screens should use AnvilBackend.<ns>.<method>(...) directly,
 // which is itself a typed namespace. This helper is for the few
 // places that hit endpoints not yet exposed on the client (or that
 // need to compose a one-off URL).
 
-import { ObaraBackend } from "./api";
+import { AnvilBackend } from "./api";
 
 interface BackendConfig {
   url?: string;
@@ -29,10 +29,10 @@ interface SessionEnvelope {
 }
 
 const readConfig = (): BackendConfig =>
-  (ObaraBackend?.getConfig?.() as BackendConfig) || {};
+  (AnvilBackend?.getConfig?.() as BackendConfig) || {};
 
 const readSession = (): SessionEnvelope | null =>
-  (ObaraBackend?.getSession?.() as SessionEnvelope | null) || null;
+  (AnvilBackend?.getSession?.() as SessionEnvelope | null) || null;
 
 export interface BackendFetchOpts extends Omit<RequestInit, "body" | "headers"> {
   body?: unknown;

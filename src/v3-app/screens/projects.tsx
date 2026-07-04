@@ -2,12 +2,12 @@ import React, { useEffect, useState } from "react";
 import { ageLabel, fmtINRShort, useFetch, useHashParam } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Steps, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired Projects
 // Wave B · Sales · Project lifecycle (15-phase enum)
-// Reads via ObaraBackend.sales.listProjects (api/sales/projects GET)
+// Reads via AnvilBackend.sales.listProjects (api/sales/projects GET)
 // ============================================================
 
 // Phase enum matches the project_phase Postgres enum in
@@ -81,7 +81,7 @@ const WiredProjects = () => {
   const [submitErr, setSubmitErr] = useState(null);
   const [submitBusy, setSubmitBusy] = useState(false);
   const customers = useFetch(
-    () => creating ? (ObaraBackend?.customers?.list?.() || Promise.resolve({ customers: [] })) : Promise.resolve({ customers: [] }),
+    () => creating ? (AnvilBackend?.customers?.list?.() || Promise.resolve({ customers: [] })) : Promise.resolve({ customers: [] }),
     [creating],
   );
   const customerRows = (() => {
@@ -90,7 +90,7 @@ const WiredProjects = () => {
   })();
 
   const list = useFetch(
-    () => ObaraBackend?.sales?.listProjects?.() || Promise.resolve({ projects: [] }),
+    () => AnvilBackend?.sales?.listProjects?.() || Promise.resolve({ projects: [] }),
     []
   );
 
@@ -105,7 +105,7 @@ const WiredProjects = () => {
     if (!draft.project_name.trim()) { setSubmitErr({ message: "Project name is required." }); return; }
     setSubmitBusy(true);
     try {
-      await ObaraBackend?.sales?.createProject?.({
+      await AnvilBackend?.sales?.createProject?.({
         project_code: draft.project_code.trim(),
         project_name: draft.project_name.trim(),
         customer_id: draft.customer_id || null,

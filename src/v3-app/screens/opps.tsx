@@ -3,12 +3,12 @@ import { ageLabel, fmtINRShort, useFetch, useHashParam } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTitle } from "../lib/primitives";
 import { OpportunityQuotesPanel } from "../components/OpportunityQuotesPanel";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired Opportunities
 // Wave B · Sales pipeline · 11-stage kanban
-// Reads via ObaraBackend.sales.listOpportunities (api/sales/opportunities GET)
+// Reads via AnvilBackend.sales.listOpportunities (api/sales/opportunities GET)
 // ============================================================
 
 // Stage enum matches the opportunity_stage Postgres enum in
@@ -79,7 +79,7 @@ const WiredOpportunities = () => {
   const [submitErr, setSubmitErr] = useState(null);
   const [submitBusy, setSubmitBusy] = useState(false);
   const customers = useFetch(
-    () => creating ? (ObaraBackend?.customers?.list?.() || Promise.resolve({ customers: [] })) : Promise.resolve({ customers: [] }),
+    () => creating ? (AnvilBackend?.customers?.list?.() || Promise.resolve({ customers: [] })) : Promise.resolve({ customers: [] }),
     [creating],
   );
   const customerRows = (() => {
@@ -88,7 +88,7 @@ const WiredOpportunities = () => {
   })();
 
   const list = useFetch(
-    () => ObaraBackend?.sales?.listOpportunities?.() || Promise.resolve({ opportunities: [] }),
+    () => AnvilBackend?.sales?.listOpportunities?.() || Promise.resolve({ opportunities: [] }),
     []
   );
 
@@ -103,7 +103,7 @@ const WiredOpportunities = () => {
     if (!draft.customer_id)             { setSubmitErr({ message: "Customer is required." }); return; }
     setSubmitBusy(true);
     try {
-      await ObaraBackend?.sales?.createOpportunity?.({
+      await AnvilBackend?.sales?.createOpportunity?.({
         opportunity_name: draft.opportunity_name.trim(),
         customer_id: draft.customer_id,
         stage: draft.stage,
@@ -217,7 +217,7 @@ const WiredOpportunities = () => {
               <Btn sm kind={selected.ai_probability == null ? "live" : "ghost"} disabled={predictingId === selected.id}
                    onClick={async () => {
                      setPredictingId(selected.id);
-                     try { await ObaraBackend?.sales?.predictOpportunity?.(selected.id); list.reload(); }
+                     try { await AnvilBackend?.sales?.predictOpportunity?.(selected.id); list.reload(); }
                      finally { setPredictingId(null); }
                    }}
                    title="Run the AI close-probability predictor for this opportunity">

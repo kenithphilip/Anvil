@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired CAR Reports (Corrective Action Reports)
@@ -44,9 +44,9 @@ const carFmtDate = (iso) => {
 };
 
 const carFetchPath = async (path) => {
-  const cfg = (ObaraBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string };
+  const cfg = (AnvilBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string };
   if (!cfg.url) return [];
-  const session = (ObaraBackend?.getSession?.() || null) as { access_token?: string } | null;
+  const session = (AnvilBackend?.getSession?.() || null) as { access_token?: string } | null;
   const headers = { "Content-Type": "application/json" };
   if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
   if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
@@ -68,7 +68,7 @@ const WiredCAR = () => {
   const [submitErr, setSubmitErr] = uC(null);
   const [submitBusy, setSubmitBusy] = uC(false);
   const customers = useFetch(
-    () => creating ? (ObaraBackend?.customers?.list?.() || Promise.resolve({ customers: [] })) : Promise.resolve({ customers: [] }),
+    () => creating ? (AnvilBackend?.customers?.list?.() || Promise.resolve({ customers: [] })) : Promise.resolve({ customers: [] }),
     [creating],
   );
   const customerRows = (() => {
@@ -87,7 +87,7 @@ const WiredCAR = () => {
     }
     setSubmitBusy(true);
     try {
-      await ObaraBackend?.service?.createCarReport?.({
+      await AnvilBackend?.service?.createCarReport?.({
         customer_id: draft.customer_id || null,
         original_po_no: draft.original_po_no.trim() || null,
         original_so_no: draft.original_so_no.trim() || null,

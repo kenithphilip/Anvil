@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { draftLabel } from "../lib/helpers";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 
 // ============================================================
@@ -37,8 +37,8 @@ const eiReadParams = () => {
 };
 
 const eiFetch = async (path: string, opts: { method?: string; body?: any; headers?: Record<string, string> } = {}) => {
-  const cfg: any = (ObaraBackend?.getConfig?.() || {});
-  const session: any = (ObaraBackend?.getSession?.() || null);
+  const cfg: any = (AnvilBackend?.getConfig?.() || {});
+  const session: any = (AnvilBackend?.getSession?.() || null);
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(opts.headers as Record<string, string> || {}) };
   if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
   if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
@@ -63,7 +63,7 @@ const WiredEinvoiceCRUD = () => {
 
   const reload = () => {
     setList((s) => ({ ...s, loading: true }));
-    Promise.resolve(ObaraBackend?.einvoice?.list?.() || eiFetch("/api/einvoice"))
+    Promise.resolve(AnvilBackend?.einvoice?.list?.() || eiFetch("/api/einvoice"))
       .then((r) => {
         const rows = Array.isArray(r) ? r : (r?.einvoices || r?.rows || []);
         setList({ rows, loading: false, error: null });
@@ -73,7 +73,7 @@ const WiredEinvoiceCRUD = () => {
 
   e(reload, []);
   e(() => {
-    Promise.resolve(ObaraBackend?.orders?.list?.({ limit: 200 }) || [])
+    Promise.resolve(AnvilBackend?.orders?.list?.({ limit: 200 }) || [])
       .then((r) => setOrders(Array.isArray(r) ? r : (r?.rows || [])));
   }, []);
 

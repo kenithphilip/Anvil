@@ -8,7 +8,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 const fmtInr = (n: number | null | undefined) => {
   if (n == null || !Number.isFinite(Number(n))) return "—";
@@ -31,8 +31,8 @@ const TredsScreen: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
     Promise.allSettled([
-      Promise.resolve((ObaraBackend as any)?.treds?.list?.()),
-      Promise.resolve((ObaraBackend as any)?.aa?.list?.()),
+      Promise.resolve((AnvilBackend as any)?.treds?.list?.()),
+      Promise.resolve((AnvilBackend as any)?.aa?.list?.()),
     ]).then(([t, c]) => {
       if (cancelled) return;
       setList({
@@ -51,7 +51,7 @@ const TredsScreen: React.FC = () => {
   const refresh = async (id: string) => {
     setBusyId(id);
     try {
-      await (ObaraBackend as any)?.treds?.refreshOffer?.(id);
+      await (AnvilBackend as any)?.treds?.refreshOffer?.(id);
       (window as any).notifySuccess?.("Refreshed", "Auction state pulled from upstream.");
       setBump((n) => n + 1);
     } catch (err: any) {
@@ -64,7 +64,7 @@ const TredsScreen: React.FC = () => {
   const accept = async (offerId: string) => {
     setBusyId(offerId);
     try {
-      const r = await (ObaraBackend as any)?.treds?.acceptOffer?.(offerId);
+      const r = await (AnvilBackend as any)?.treds?.acceptOffer?.(offerId);
       (window as any).notifySuccess?.(
         "Bid accepted",
         "Disbursement T+1 of " + fmtInr(r?.discount?.net_to_supplier_inr) + " (UTR " + (r?.discount?.utr || "-") + ")",
@@ -80,7 +80,7 @@ const TredsScreen: React.FC = () => {
   const refreshBuyers = async () => {
     setBusyId("buyers");
     try {
-      const r = await (ObaraBackend as any)?.treds?.refreshEligibleBuyers?.();
+      const r = await (AnvilBackend as any)?.treds?.refreshEligibleBuyers?.();
       (window as any).notifySuccess?.("Buyers refreshed", (r?.count || 0) + " active buyers (" + (r?.mode || "?") + " mode)");
       setBump((n) => n + 1);
     } catch (err: any) {

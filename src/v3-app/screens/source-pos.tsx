@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired Source POs (procurement)
@@ -85,7 +85,7 @@ const WiredSourcePOs = () => {
   });
   const [createErr, setCreateErr] = uS(null);
   const [createBusy, setCreateBusy] = uS(false);
-  const ordersList = useFetch(() => creating ? (ObaraBackend?.orders?.list?.() || Promise.resolve([])) : Promise.resolve([]), [creating]);
+  const ordersList = useFetch(() => creating ? (AnvilBackend?.orders?.list?.() || Promise.resolve([])) : Promise.resolve([]), [creating]);
 
   // Sync `creating` with hash changes so back/forward + the
   // Cancel button (which strips `?new=1`) keep state coherent.
@@ -95,8 +95,8 @@ const WiredSourcePOs = () => {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
-  const list = useFetch(() => ObaraBackend?.sourcePos?.list?.() || Promise.resolve([]), [bump]);
-  const scorecard = useFetch(() => ObaraBackend?.sourcePos?.scorecard?.() || Promise.resolve([]), [bump]);
+  const list = useFetch(() => AnvilBackend?.sourcePos?.list?.() || Promise.resolve([]), [bump]);
+  const scorecard = useFetch(() => AnvilBackend?.sourcePos?.scorecard?.() || Promise.resolve([]), [bump]);
 
   const closeCreate = () => {
     setCreating(false);
@@ -120,7 +120,7 @@ const WiredSourcePOs = () => {
         acknowledged_eta: createForm.acknowledged_eta || null,
         payload: createForm.notes ? { notes: createForm.notes } : {},
       };
-      const res = await ObaraBackend?.sourcePos?.create?.(payload);
+      const res = await AnvilBackend?.sourcePos?.create?.(payload);
       window.notifySuccess?.("Source PO created", payload.reference);
       closeCreate();
       reload();
@@ -200,7 +200,7 @@ const WiredSourcePOs = () => {
         acked_qty:        ackForm.acked_qty ? Number(ackForm.acked_qty) : null,
         notes:            ackForm.notes || null,
       };
-      await ObaraBackend?.sourcePos?.ack?.({ sourcePoId: ackPo.id, ack });
+      await AnvilBackend?.sourcePos?.ack?.({ sourcePoId: ackPo.id, ack });
       window.notifySuccess?.("Ack submitted", ackPo.po_number || ackPo.id?.slice(0, 8));
       closeAck();
       reload();

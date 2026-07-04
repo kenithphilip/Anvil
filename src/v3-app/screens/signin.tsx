@@ -13,12 +13,12 @@
 //   3. Magic link (passwordless, server emails a one-time URL).
 //
 // All three call into the existing /api/auth/* endpoints. On
-// success we persist the session via ObaraBackend.setSession and
+// success we persist the session via AnvilBackend.setSession and
 // the App's auth-gate effect routes the user onward.
 
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card } from "../lib/primitives";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { lsGet, lsSet, lsRemove } from "../lib/storage-keys";
 
 type Mode = "signin" | "signup" | "magic";
@@ -32,7 +32,7 @@ const REQUESTABLE_ROLES = [
 ];
 
 const SignInScreen: React.FC = () => {
-  const cfgRef = (ObaraBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string | null };
+  const cfgRef = (AnvilBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string | null };
   // Default the Backend URL to the page's own origin when nothing is
   // configured. The deployed Vercel host serves both the static
   // frontend and the /api/* endpoints, so this is correct ~99% of the
@@ -56,7 +56,7 @@ const SignInScreen: React.FC = () => {
 
   const persistConfig = () => {
     try {
-      ObaraBackend?.setConfig?.({
+      AnvilBackend?.setConfig?.({
         url: (url || "").trim().replace(/\/+$/, ""),
         tenantId: (tenantId || "").trim() || null,
       });
@@ -66,7 +66,7 @@ const SignInScreen: React.FC = () => {
   // Persist the auto-defaulted Backend URL on mount so the very first
   // submit (signup / signin / magic-link) doesn't fail with "Backend
   // URL is required". Without this, defaultUrl populated state but the
-  // ObaraBackend client still reported no config.
+  // AnvilBackend client still reported no config.
   useEffect(() => {
     if (!cfgRef.url && url) persistConfig();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -98,7 +98,7 @@ const SignInScreen: React.FC = () => {
     setBusy(true);
     persistConfig();
     try {
-      const resp: any = await ObaraBackend?.auth?.passwordLogin?.(email.trim(), password);
+      const resp: any = await AnvilBackend?.auth?.passwordLogin?.(email.trim(), password);
       if (resp?.mfa_required) {
         setMfaFor(email);
         setStatus({ kind: "info", text: "Enter the 6-digit code from your authenticator." });
@@ -106,7 +106,7 @@ const SignInScreen: React.FC = () => {
       }
       const accessToken = resp?.session?.access_token || resp?.access_token;
       if (!accessToken) throw new Error("No access token returned");
-      ObaraBackend?.setSession?.({
+      AnvilBackend?.setSession?.({
         access_token: accessToken,
         refresh_token: resp?.session?.refresh_token || resp?.refresh_token,
         expires_at: resp?.session?.expires_at || resp?.expires_at,
@@ -142,7 +142,7 @@ const SignInScreen: React.FC = () => {
     setBusy(true);
     persistConfig();
     try {
-      const resp: any = await ObaraBackend?.auth?.signup?.({
+      const resp: any = await AnvilBackend?.auth?.signup?.({
         email: email.trim(),
         password,
         display_name: displayName.trim() || null,
@@ -158,7 +158,7 @@ const SignInScreen: React.FC = () => {
         return;
       }
       if (accessToken) {
-        ObaraBackend?.setSession?.({
+        AnvilBackend?.setSession?.({
           access_token: accessToken,
           refresh_token: resp?.session?.refresh_token || resp?.refresh_token,
           expires_at: resp?.session?.expires_at || resp?.expires_at,
@@ -187,13 +187,13 @@ const SignInScreen: React.FC = () => {
     setBusy(true);
     persistConfig();
     try {
-      const begin: any = await ObaraBackend?.auth?.passkeyAuthBegin?.(email.trim());
+      const begin: any = await AnvilBackend?.auth?.passkeyAuthBegin?.(email.trim());
       const { startAuthentication } = await import("@simplewebauthn/browser");
       const assertion = await startAuthentication(begin.options);
-      const resp: any = await ObaraBackend?.auth?.passkeyAuthFinish?.(email.trim(), begin.challenge_id, assertion);
+      const resp: any = await AnvilBackend?.auth?.passkeyAuthFinish?.(email.trim(), begin.challenge_id, assertion);
       const accessToken = resp?.session?.access_token;
       if (!accessToken) throw new Error("No session returned after passkey verification");
-      ObaraBackend?.setSession?.({
+      AnvilBackend?.setSession?.({
         access_token: accessToken,
         refresh_token: resp?.session?.refresh_token,
         expires_at: resp?.session?.expires_at,
@@ -224,10 +224,10 @@ const SignInScreen: React.FC = () => {
     if (!email || !password) { setStatus({ kind: "bad", text: "Session lost. Sign in again." }); setMfaFor(null); return; }
     setBusy(true);
     try {
-      const resp: any = await ObaraBackend?.auth?.passwordLogin?.(email.trim(), password, code);
+      const resp: any = await AnvilBackend?.auth?.passwordLogin?.(email.trim(), password, code);
       const accessToken = resp?.session?.access_token || resp?.access_token;
       if (!accessToken) throw new Error("Sign-in failed after TOTP");
-      ObaraBackend?.setSession?.({
+      AnvilBackend?.setSession?.({
         access_token: accessToken,
         refresh_token: resp?.session?.refresh_token,
         expires_at: resp?.session?.expires_at,
@@ -263,7 +263,7 @@ const SignInScreen: React.FC = () => {
     setBusy(true);
     persistConfig();
     try {
-      const cfg = (ObaraBackend?.getConfig?.() || {}) as { url?: string };
+      const cfg = (AnvilBackend?.getConfig?.() || {}) as { url?: string };
       // Bug fix May 2026 (recovery-stuck-on-home report): point
       // Supabase at /auth/callback.html instead of /#/reset. The
       // callback page detects type=recovery, hands the token off
@@ -303,7 +303,7 @@ const SignInScreen: React.FC = () => {
     persistConfig();
     try {
       const redirect = (url || "").trim().replace(/\/+$/, "") + "/auth/callback.html";
-      await ObaraBackend?.auth?.requestMagicLink?.(email.trim(), redirect);
+      await AnvilBackend?.auth?.requestMagicLink?.(email.trim(), redirect);
       setStatus({ kind: "good", text: "Magic link sent. Check your inbox." });
       window.notifySuccess?.("Magic link sent", email);
     } catch (err: any) {

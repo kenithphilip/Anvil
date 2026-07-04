@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip } from "../lib/primitives";
 import { Icon } from "../lib/icons";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { NAV, ROLES } from "../lib/nav";
 import { MATRIX, type Role } from "../lib/rbac";
 import { CORE_NAV_IDS, applyNavSettingsLocal, type NavDisabledMap } from "../lib/nav-settings";
@@ -35,7 +35,7 @@ export const NavVisibilityAdmin: React.FC = () => {
     (async () => {
       setLoading(true); setErr("");
       try {
-        const resp: any = await ObaraBackend?.admin?.navSettings?.();
+        const resp: any = await AnvilBackend?.admin?.navSettings?.();
         const m = resp?.nav_disabled;
         if (!cancel) setMap(m && typeof m === "object" && !Array.isArray(m) ? m : {});
       } catch (e: any) {
@@ -76,7 +76,7 @@ export const NavVisibilityAdmin: React.FC = () => {
   const onSave = async () => {
     setSaving(true); setErr("");
     try {
-      const resp: any = await ObaraBackend?.admin?.updateNavSettings?.({ nav_disabled: map });
+      const resp: any = await AnvilBackend?.admin?.updateNavSettings?.({ nav_disabled: map });
       const saved = resp?.nav_disabled && typeof resp.nav_disabled === "object" ? resp.nav_disabled : map;
       setMap(saved);
       applyNavSettingsLocal(saved); // reflect in the live sidebar immediately

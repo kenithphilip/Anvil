@@ -156,7 +156,7 @@ describe("ReviewPane", () => {
 
   it("renders one row per evidence entry, grouped, with data-field-path stamped", () => {
     const evidence: EvidenceByField = {
-      "customer.gstin":    { value: "27AAACO8335K1Z5", page: 1, confidence: 0.92 },
+      "customer.gstin":    { value: "27AAACX0001A1ZA", page: 1, confidence: 0.92 },
       "customer.name":     { value: "Meridian Motor India Ltd", page: 1, confidence: 0.88 },
       "order.po_number":   { value: "P250432265", page: 1, confidence: 0.99 },
       "lines[0].partNumber": { value: "GD544202503060009", page: 1, line: 1, confidence: 0.95 },

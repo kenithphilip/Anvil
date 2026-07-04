@@ -235,7 +235,7 @@ Tenant-nullable for global codes. Seed adds 9 default codes (PRICE_HIGH, LEAD_TI
 Idempotent (`on conflict do nothing`). All inserts under tenant `00000000-0000-0000-0000-000000000001`.
 
 - Tenant row insert (in case migration was run before any other tenant seed).
-- 4 customers: Vega Motor India Pvt. Ltd. (AUTO_OEM, GSTIN 24AAKCM8110E1ZR, PAN AAKCM8110E), WGX (TIER_ONE), Comet Motors PV Pune (AUTO_OEM), ABC Motors (AUTO_OEM, sample customer from corpus).
+- 4 customers: Vega Motor India Pvt. Ltd. (AUTO_OEM, GSTIN 24AAKCX0002A1Z5, PAN AAKCM8110E), WGX (TIER_ONE), Comet Motors PV Pune (AUTO_OEM), ABC Motors (AUTO_OEM, sample customer from corpus).
 - 3 customer locations: MG HALOL (default, Gujarat), MG HARYANA, Tata PUNE.
 - 35 item_master rows with HSN codes, source country, currency, GST rates extracted from the corpus.
 

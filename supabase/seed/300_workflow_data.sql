@@ -968,7 +968,7 @@ begin
       default_tenant, ord_id,
       'EI-' || lpad(k::text,5,'0'),
       (now() - (k || ' days')::interval)::date,
-      cust_id, '24AAKCM8110E1ZR', '27AAACI0000A1Z5',
+      cust_id, '24AAKCX0002A1Z5', '27AAACI0000A1Z5',
       250000, 295000, 'INR', s::einvoice_status,
       case s when 'GENERATED' then encode(digest('irn:'||k::text,'sha256'),'hex') || encode(digest('irn-suffix:'||k::text,'sha256'),'hex') else null end,
       case s when 'GENERATED' then '11200' || lpad(k::text,8,'0') else null end,

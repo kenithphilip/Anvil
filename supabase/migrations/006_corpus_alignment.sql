@@ -116,8 +116,8 @@ alter table customers
 
 -- ───────────────────────────────────────────────────────────────────────────
 -- B. Customer locations: multi-GSTIN, multi-plant.
--- Source: real Vega Motor POs reference 24AAKCM8110E1ZR (Gujarat / Halol)
--- and 06AAKCM8110E1ZP (Haryana). Comet Motors PO references "Pune" and Halol.
+-- Source: real Vega Motor POs reference 24AAKCX0002A1Z5 (Gujarat / Halol)
+-- and 06AAKCX0002A1Z3 (Haryana). Comet Motors PO references "Pune" and Halol.
 -- ───────────────────────────────────────────────────────────────────────────
 
 create table if not exists customer_locations (

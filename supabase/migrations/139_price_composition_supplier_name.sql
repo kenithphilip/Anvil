@@ -13,4 +13,4 @@ alter table price_composition_lines
   add column if not exists supplier_name text;
 
 comment on column price_composition_lines.supplier_name is
-  'Free-text supplier identifier (e.g. "Obara Korea", "Anil Steel"). A future migration may link this to a suppliers master.';
+  'Free-text supplier identifier (e.g. "Northwind Korea", "Anil Steel"). A future migration may link this to a suppliers master.';

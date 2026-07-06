@@ -1,13 +1,12 @@
 -- 062_einvoice_seller_details.sql
 --
 -- Audit P1.2 (May 2026). The e-invoice handler at src/api/einvoice/
--- index.js was building every IRN payload with a hardcoded
--- SellerDtls block reading "Obara India Pvt. Ltd., W-17 F2 Block
--- MIDC PIMPRI, Pune, 411018, Stcd 27", regardless of the calling
--- tenant. Any tenant other than Obara India shipped GSTN a payload
--- claiming to be Obara, which the GSTN API rejects (the GSTIN won't
--- match the registered legal name + address) or, worse, accepts
--- under the wrong legal name when the GSTIN happens to align.
+-- index.js was building every IRN payload with a single hardcoded
+-- SellerDtls block (one tenant's legal name + address + state code),
+-- regardless of the calling tenant. Any other tenant shipped GSTN a
+-- payload claiming to be that seller, which the GSTN API rejects (the
+-- GSTIN won't match the registered legal name + address) or, worse,
+-- accepts under the wrong legal name when the GSTIN happens to align.
 --
 -- Seller details for e-invoice need to come from per-tenant config.
 -- All fields are nullable so the migration is non-blocking on

@@ -18,7 +18,7 @@ begin
   -- Default tenant (idempotent). Migration 001 already creates this row,
   -- but we double-up here so 007 can run standalone in a fresh DB.
   insert into tenants (id, slug, display_name)
-  values (default_tenant, 'default', 'Obara India (default)')
+  values (default_tenant, 'default', 'Northwind Manufacturing (default)')
   on conflict (id) do nothing;
 
   -- ── Customers ─────────────────────────────────────────────────────────────

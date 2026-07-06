@@ -1,5 +1,5 @@
 -- 010_seed_corpus_round2_data.sql
--- Concrete seeds extracted from the round-2 deep-read of the Obara corpus.
+-- Concrete seeds extracted from the round-2 deep-read of the demo corpus.
 --
 -- New customers: NRD Auto (Plant 1 spare matrix, 2024-05-29 snapshot),
 -- Alliance Auto (ALAP), MG Halol & Haryana variants confirmed.
@@ -607,9 +607,9 @@ begin
       default_tenant, mg_id, 1, true, true,
       jsonb_build_object(
         'header_keywords', jsonb_build_array(
-          'PRICE QUOTATION', 'OIQTLC-240123-MG-CONSUMABLES & MAINTENANCE SPARES-REV-1',
-          'TO: Vega Motor India Pvt. Ltd (Gujarat)', 'KindAttn: Ms. Varada Puranik',
-          'OBARA INDIA PRIVATE LIMITED', 'M.I.D.C PIMPRI', 'PUNE: 411018', 'DISCOUNTED PRICE', 'GST'
+          'PRICE QUOTATION', 'SQ-240123-CONSUMABLES & MAINTENANCE SPARES-REV-1',
+          'TO: Vega Motor India Pvt. Ltd (Gujarat)', 'KindAttn: Ms. Sample Contact',
+          'NORTHWIND MANUFACTURING PRIVATE LIMITED', 'PLOT 12 INDUSTRIAL ESTATE', 'PUNE: 411001', 'DISCOUNTED PRICE', 'GST'
         ),
         'column_headers', jsonb_build_array(
           'Item','Part Name','Parts No.','Drawing/Customer Number','Remark','HSN Code',

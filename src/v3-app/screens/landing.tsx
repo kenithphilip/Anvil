@@ -489,7 +489,7 @@ const Demo: React.FC = () => {
             <div className="lp-imail-t">10:27</div>
           </div>
           <div className="lp-imail" style={{ animationDelay: "0.55s" }}>
-            <div /><div className="lp-imail-from">obara_jp</div>
+            <div /><div className="lp-imail-from">northwind_jp</div>
             <div className="lp-imail-sub">PO acknowledgement · V-9874</div>
             <div className="lp-imail-t">10:22</div>
           </div>

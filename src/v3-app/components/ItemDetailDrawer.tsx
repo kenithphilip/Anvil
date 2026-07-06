@@ -388,7 +388,7 @@ export const ItemDetailDrawer: React.FC<{
                   <input type="checkbox" checked={!!draft.inspection_required} onChange={(e) => setField("inspection_required", e.target.checked)} />
                 </Field>
                 <Field label="Maker (default)" hint="Brand / supplier name shown on the PO line">
-                  <input className="input" value={draft.maker || ""} onChange={(e) => setField("maker", e.target.value)} placeholder="e.g., OBARA" />
+                  <input className="input" value={draft.maker || ""} onChange={(e) => setField("maker", e.target.value)} placeholder="e.g., maker name" />
                 </Field>
               </div>
             </>

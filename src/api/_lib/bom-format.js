@@ -1,11 +1,16 @@
 // BOM source-format engine - pure detect + column-map + normalize.
 //
-// Generalizes the standalone Obara tool's per-origin logic (COL_MAP +
-// detectOrigin + the per-source quirks) into DATA: a format is a record
+// Generalizes per-origin BOM logic (COL_MAP + detectOrigin + the
+// per-source quirks) into DATA: a format is a record
 // of { key, column_map, detect, quirks } and the same engine ingests any
-// of them. Built-in profiles for the four Obara sources + a generic flat
-// fallback ship in code; tenants add/override formats via the
+// of them. Built-in profiles for four common import origins + a generic
+// flat fallback ship in code; tenants add/override formats via the
 // bom_source_formats table (merged at read time, tenant wins by key).
+//
+// NOTE: the built-in `key` values (e.g. "obara_japan") and
+// `source_country` codes (e.g. "O-JAPAN") are persisted on BOM rows and
+// referenced by tenant overrides, so they are intentionally kept stable
+// for data compatibility. Only the display `label` is genericized.
 //
 // Pure (no I/O): callers pass the parsed sheet as rows (array-of-arrays,
 // the SheetJS `{header:1}` shape) and the merged format list. See
@@ -26,7 +31,7 @@
 //   remarks_append : canonical cols to fold into remarks
 export const BUILTIN_FORMATS = [
   {
-    key: "obara_japan", label: "Obara Japan", is_builtin: true, source_country: "O-JAPAN",
+    key: "obara_japan", label: "Japan (structured)", is_builtin: true, source_country: "O-JAPAN",
     column_map: {
       part_no: ["item no", "item no.", "part no", "part number"],
       part_name: ["part name", "name", "description", "product name"],
@@ -41,7 +46,7 @@ export const BUILTIN_FORMATS = [
     quirks: { level_from_dotted: "structure", lr_yes_no: { yes: ["有", "yes", "y"], no: ["無", "no", "n"] } },
   },
   {
-    key: "obara_china", label: "Obara China", is_builtin: true, source_country: "O-CHINA",
+    key: "obara_china", label: "China (parts-code)", is_builtin: true, source_country: "O-CHINA",
     column_map: {
       part_no: ["item no", "item no."],
       parts_code: ["parts code", "product code"],
@@ -59,7 +64,7 @@ export const BUILTIN_FORMATS = [
     quirks: { parts_code_to: "part_no", level_from_col: "std_category", remarks_append: ["jpn_model", "hier_no"] },
   },
   {
-    key: "obara_korea", label: "Obara Korea", is_builtin: true, source_country: "O-KOREA",
+    key: "obara_korea", label: "Korea (Hangul)", is_builtin: true, source_country: "O-KOREA",
     column_map: {
       part_no: ["part no", "part no.", "part number", "item no"],
       part_name: ["part name", "name", "description"],
@@ -73,7 +78,7 @@ export const BUILTIN_FORMATS = [
     quirks: { level_from_col: "std_category" },
   },
   {
-    key: "obara_india", label: "Obara India", is_builtin: true, source_country: "O-INDIA",
+    key: "obara_india", label: "India (flat)", is_builtin: true, source_country: "O-INDIA",
     column_map: {
       part_no: ["part no", "part no.", "part number", "partno", "part_no"],
       part_name: ["part name", "name", "description", "item name"],

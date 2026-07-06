@@ -27,7 +27,7 @@ describe("canonicaliseName", () => {
     expect(f("")).toBe("");
   });
   it("matches case-insensitively", () => {
-    expect(f("OBARA INDIA PRIVATE LIMITED")).toBe(f("Obara India Private Limited"));
+    expect(f("NORTHWIND MANUFACTURING PRIVATE LIMITED")).toBe(f("Northwind Manufacturing Private Limited"));
   });
 });
 

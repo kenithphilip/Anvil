@@ -43,10 +43,16 @@ describe("Spares", () => {
     });
     const mod = await import("./spares");
     const { container } = renderScreen(mod.default);
-    // Tick for list load, then for the active-matrix get().
-    await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
+    // The screen chains async effects: list() -> setActiveId -> get() ->
+    // render pane. Poll until the loaded matrix's column renders rather
+    // than assuming a fixed number of ticks (fixed ticks flaked in CI).
+    const waitForHtml = async (needle: string, tries = 120) => {
+      for (let i = 0; i < tries; i++) {
+        if (container.innerHTML.includes(needle)) return;
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    };
+    await waitForHtml("CAP TIP");
     const html = container.innerHTML;
     expect(html).toContain("Hyundai Pune Servo"); // rail header from server list
     expect(html).toContain("CAP TIP");            // spare-category column from the loaded matrix

@@ -193,7 +193,7 @@ const WiredBackendConnect = () => {
           <div className="form-grid">
             <div>
               <label htmlFor="be-url" className="label">Backend URL</label>
-              <input id="be-url" className="input mono" placeholder="https://obara-ops.vercel.app"
+              <input id="be-url" className="input mono" placeholder="https://anvil-ops.vercel.app"
                      value={url} onChange={(e) => setUrl(e.target.value)} aria-label="Backend URL" />
               <div className="fieldnote">Vercel deploy URL, no trailing slash. The same origin serves the API and the static app.</div>
             </div>

@@ -118,12 +118,12 @@ begin
   -- Tally-specific tables (don't follow the prefix_table convention).
   delete from tally_voucher_state    where raw      ->> 'seed_marker' = 'anvil-test-seed-v1';
   delete from tally_sync_runs        where company_id in (
-    select id from tally_companies where name = 'Obara India (default)' and bridge_url like 'https://tally-bridge.example.com%'
+    select id from tally_companies where name = 'Northwind Manufacturing (default)' and bridge_url like 'https://tally-bridge.example.com%'
   );
   delete from tally_payment_receipts where raw      ->> 'seed_marker' = 'anvil-test-seed-v1';
   delete from tally_retry_queue      where payload_xml = '<ENVELOPE seed=true/>';
   delete from tally_voucher_records  where validation->> 'seed_marker' = 'anvil-test-seed-v1';
-  delete from tally_companies        where name = 'Obara India (default)' and bridge_url like 'https://tally-bridge.example.com%';
+  delete from tally_companies        where name = 'Northwind Manufacturing (default)' and bridge_url like 'https://tally-bridge.example.com%';
 
   -- For every other prefix, walk the candidate tables. Skip prefixes
   -- where the table doesn't exist (sagex3 has no inventory_balances,
@@ -476,7 +476,7 @@ begin
   delete from email_intake_rules       where notes in (
     'Bucket inbound POs by subject hint.',
     'Inbound RFQs land in the opportunity inbox.',
-    'Supplier acks come from internal Obara mailboxes.',
+    'Supplier acks come from internal Northwind mailboxes.',
     'Finance mailbox.',
     'Service team triages CAR-shaped emails.'
   );
@@ -489,7 +489,7 @@ begin
 
   -- Customer / supplier lead times.
   delete from customer_lead_times      where notes in ('Halol contract SLA: 10 days from PO.','Servo-gun assemblies allowed 21 days.','Pune dock-to-dock window.','Tier-1 line-builder; tight cycle.','Alliance Auto India.');
-  delete from supplier_lead_times      where supplier in ('Obara Korea','Obara Japan','Obara China','BKS Cables Pvt Ltd','Globex Manufacturing GmbH','Acme Robotics LLC');
+  delete from supplier_lead_times      where supplier in ('Northwind Korea','Northwind Japan','Northwind China','BKS Cables Pvt Ltd','Globex Manufacturing GmbH','Acme Robotics LLC');
 
   -- FX rates.
   delete from fx_rates                 where source = 'frankfurter' and tenant_id = default_tenant

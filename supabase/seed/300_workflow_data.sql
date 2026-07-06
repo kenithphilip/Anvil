@@ -586,7 +586,7 @@ declare
   k              int := 0;
   spo_id         uuid;
   ord_id         uuid;
-  suppliers      text[] := array['Obara Korea','Obara Japan','Obara China','BKS Cables Pvt Ltd'];
+  suppliers      text[] := array['Northwind Korea','Northwind Japan','Northwind China','BKS Cables Pvt Ltd'];
   countries      text[] := array['KR','JP','CN','IN'];
   currencies     text[] := array['USD','JPY','CNY','INR'];
 begin
@@ -1069,7 +1069,7 @@ declare
   p              text;
   k              int := 0;
 begin
-  select id into vid from vendors where tenant_id = default_tenant and vendor_name = 'Obara Korea Co. Ltd.';
+  select id into vid from vendors where tenant_id = default_tenant and vendor_name = 'Northwind Korea Co. Ltd.';
   spo_id := uuid_generate_v5(ns, 'spo:SUPPLIER_ACK:1');
 
   foreach p in array patterns loop

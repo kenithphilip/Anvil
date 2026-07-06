@@ -126,9 +126,9 @@ begin
 
   -- 1e. vendors mirror: 6 rows mirroring real suppliers.
   insert into netsuite_vendors (id, tenant_id, netsuite_id, name, email, phone, category, is_inactive, raw, synced_at) values
-    (uuid_generate_v5(ns,'ns:vd:1'), default_tenant, 'NS-VD-00001', 'Obara Korea Co. Ltd.',         'sales@obara-kr.example',   '+82 31 5550 0100', 'Manufacturing', false, jsonb_build_object('seed_marker','anvil-test-seed-v1','country','KR'), now() - interval '6 hours'),
-    (uuid_generate_v5(ns,'ns:vd:2'), default_tenant, 'NS-VD-00002', 'Obara Japan Co. Ltd.',         'eigyou@obara-jp.example',  '+81 3 5550 0200',  'Manufacturing', false, jsonb_build_object('seed_marker','anvil-test-seed-v1','country','JP'), now() - interval '6 hours'),
-    (uuid_generate_v5(ns,'ns:vd:3'), default_tenant, 'NS-VD-00003', 'Obara China Co. Ltd.',         'sales@obara-cn.example',   '+86 21 5550 0300', 'Manufacturing', false, jsonb_build_object('seed_marker','anvil-test-seed-v1','country','CN'), now() - interval '6 hours'),
+    (uuid_generate_v5(ns,'ns:vd:1'), default_tenant, 'NS-VD-00001', 'Northwind Korea Co. Ltd.',         'sales@northwind-kr.example',   '+82 31 5550 0100', 'Manufacturing', false, jsonb_build_object('seed_marker','anvil-test-seed-v1','country','KR'), now() - interval '6 hours'),
+    (uuid_generate_v5(ns,'ns:vd:2'), default_tenant, 'NS-VD-00002', 'Northwind Japan Co. Ltd.',         'eigyou@northwind-jp.example',  '+81 3 5550 0200',  'Manufacturing', false, jsonb_build_object('seed_marker','anvil-test-seed-v1','country','JP'), now() - interval '6 hours'),
+    (uuid_generate_v5(ns,'ns:vd:3'), default_tenant, 'NS-VD-00003', 'Northwind China Co. Ltd.',         'sales@northwind-cn.example',   '+86 21 5550 0300', 'Manufacturing', false, jsonb_build_object('seed_marker','anvil-test-seed-v1','country','CN'), now() - interval '6 hours'),
     (uuid_generate_v5(ns,'ns:vd:4'), default_tenant, 'NS-VD-00004', 'BKS Cables Pvt Ltd',           'sales@bks-cables.example', '+91 22 5550 0400', 'Distribution',  false, jsonb_build_object('seed_marker','anvil-test-seed-v1','country','IN'), now() - interval '6 hours'),
     (uuid_generate_v5(ns,'ns:vd:5'), default_tenant, 'NS-VD-00005', 'Globex Manufacturing GmbH',    'einkauf@globex-mfg.example','+49 40 5550 2020', 'Tooling',      false, jsonb_build_object('seed_marker','anvil-test-seed-v1','country','DE'), now() - interval '6 hours'),
     (uuid_generate_v5(ns,'ns:vd:6'), default_tenant, 'NS-VD-00006', 'Acme Robotics LLC',            'orders@acme-robotics.example','+1 216 555 3030','Robotics',     false, jsonb_build_object('seed_marker','anvil-test-seed-v1','country','US'), now() - interval '6 hours')
@@ -339,7 +339,7 @@ begin
                                 default_voucher_series, default_sales_ledger, default_party_group, gstin, state_code,
                                 last_health_at, last_health_status, last_health_error, created_at, updated_at)
   values (
-    v_company_id, default_tenant, 'Obara India (default)', true,
+    v_company_id, default_tenant, 'Northwind Manufacturing (default)', true,
     'https://tally-bridge.example.com:9000/tally',
     'tally_token_seed_' || encode(digest('tally_token','sha256'),'hex'),
     'tally_prime_3.0', 'OB-VS-2026', 'Sales - Spares', 'Customers - OEM',

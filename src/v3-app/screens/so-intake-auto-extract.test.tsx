@@ -112,15 +112,15 @@ describe("SO Intake auto-extract", () => {
     expect(phone?.value).toBe("+91 98765 43210");
   });
 
-  it("does NOT auto-select when extracted name is the project / end-customer (OBARA -> Meridian regression)", async () => {
-    // Bug fix May 2026 (post-Phase-F): an OBARA Korea PO referencing
+  it("does NOT auto-select when extracted name is the project / end-customer (Northwind -> Meridian regression)", async () => {
+    // Bug fix May 2026 (post-Phase-F): an Northwind Korea PO referencing
     // a Meridian Steel project auto-selected the existing "Meridian
     // Steel" customer record because:
     //   1. the LLM picked "Meridian Steel" as customer.name (it was
     //      in the project name + line item descriptions),
     //   2. the matcher trusted the name without bill-to corroboration.
     // The matcher now requires the canonical name to appear inside
-    // bill_to_address. With bill_to = OBARA, name = Meridian, the
+    // bill_to_address. With bill_to = Northwind, name = Meridian, the
     // matcher refuses to auto-select.
     const HYUNDAI = { id: "cust-hyundai", customer_name: "Meridian Steel", gstin: "" };
     installBackend({
@@ -137,7 +137,7 @@ describe("SO Intake auto-extract", () => {
             tax_id_type: "brn",
             currency: "USD",
             payment_terms: "T/T 90 days from BL",
-            bill_to_address: "OBARA Korea Co Ltd, 1-2 Industrial Park, Seoul, South Korea",
+            bill_to_address: "Northwind Korea Co Ltd, 1-2 Industrial Park, Seoul, South Korea",
             ship_to_address: "Meridian Steel Dangjin Works, Dangjin, South Korea",
           } },
         }),
@@ -147,7 +147,7 @@ describe("SO Intake auto-extract", () => {
     const { container } = renderScreen(mod.default);
     await new Promise((r) => setTimeout(r, 0));
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
-    Object.defineProperty(fileInput!, "files", { value: [fakeFile("25PO0008243-OBARA.pdf")] });
+    Object.defineProperty(fileInput!, "files", { value: [fakeFile("25PO0008243-Northwind.pdf")] });
     fireEvent.change(fileInput!);
     // Dialog should open. The matcher refused to auto-select Meridian.
     await waitFor(() => {
@@ -158,25 +158,25 @@ describe("SO Intake auto-extract", () => {
     expect(sel?.value).not.toBe("cust-hyundai");
   });
 
-  it("auto-selects when name corroborates with bill-to (OBARA positive case)", async () => {
-    // Inverse of the OBARA -> Meridian test: when the extractor name
+  it("auto-selects when name corroborates with bill-to (Northwind positive case)", async () => {
+    // Inverse of the Northwind -> Meridian test: when the extractor name
     // appears inside bill_to_address AND there's an existing
     // customer with that name, auto-select still fires.
-    const OBARA = { id: "cust-obara", customer_name: "OBARA Korea Co Ltd", gstin: "" };
+    const Northwind = { id: "cust-obara", customer_name: "Northwind Korea Co Ltd", gstin: "" };
     installBackend({
       health: async () => ({ integrations: [] }),
-      customers: { list: async () => ({ customers: [OBARA] }) },
+      customers: { list: async () => ({ customers: [Northwind] }) },
       documents: {
         upload: async () => ({ documentId: "doc-obara-ok", scan: { status: "clean" } }),
         extract: async () => ({
           confidence_overall: 0.92,
           normalized: { customer: {
-            name: "OBARA Korea Co Ltd",
+            name: "Northwind Korea Co Ltd",
             country: "KR",
             tax_id: "123-45-67890",
             tax_id_type: "brn",
             currency: "USD",
-            bill_to_address: "OBARA Korea Co Ltd, Seoul, South Korea",
+            bill_to_address: "Northwind Korea Co Ltd, Seoul, South Korea",
           } },
         }),
       },
@@ -185,7 +185,7 @@ describe("SO Intake auto-extract", () => {
     const { container } = renderScreen(mod.default);
     await new Promise((r) => setTimeout(r, 0));
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
-    Object.defineProperty(fileInput!, "files", { value: [fakeFile("25PO0008243-OBARA.pdf")] });
+    Object.defineProperty(fileInput!, "files", { value: [fakeFile("25PO0008243-Northwind.pdf")] });
     fireEvent.change(fileInput!);
     await waitFor(() => {
       const sel = container.querySelector('#so-intake-customer') as HTMLSelectElement | null;
@@ -193,9 +193,9 @@ describe("SO Intake auto-extract", () => {
     }, { timeout: 2000 });
   });
 
-  it("auto-selects Summit Automation when filename has unrelated OBARA (regression)", async () => {
-    // The actual user case from the OBARA file. The buyer is Summit
-    // Automation. The filename has "OBARA" (equipment brand). The
+  it("auto-selects Summit Automation when filename has unrelated Northwind (regression)", async () => {
+    // The actual user case from the Northwind file. The buyer is Summit
+    // Automation. The filename has "Northwind" (equipment brand). The
     // earlier draft of this matcher refused auto-select because
     // filename token "obara" did not intersect "faithautomation".
     // Filename-hint refusal dropped; bill-to corroboration alone
@@ -223,7 +223,7 @@ describe("SO Intake auto-extract", () => {
     const { container } = renderScreen(mod.default);
     await new Promise((r) => setTimeout(r, 0));
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
-    Object.defineProperty(fileInput!, "files", { value: [fakeFile("25PO0008243-OBARA.pdf")] });
+    Object.defineProperty(fileInput!, "files", { value: [fakeFile("25PO0008243-Northwind.pdf")] });
     fireEvent.change(fileInput!);
     await waitFor(() => {
       const sel = container.querySelector('#so-intake-customer') as HTMLSelectElement | null;
@@ -313,15 +313,15 @@ describe("SO Intake auto-extract", () => {
         extract: async () => ({
           confidence_overall: 0.9,
           normalized: { customer: {
-            name: "OBARA Korea Co Ltd",
+            name: "Northwind Korea Co Ltd",
             country: "KR",
             tax_id: "123-45-67890",
             tax_id_type: "brn",
             currency: "USD",
             payment_terms: "T/T 30 days from BL",
-            email: "ops@obara.kr",
+            email: "ops@northwind.kr",
             phone: "+82 2 1234 5678",
-            bill_to_address: "OBARA Korea Co Ltd, Seoul",
+            bill_to_address: "Northwind Korea Co Ltd, Seoul",
             ship_to_address: "Meridian Dangjin Works, Dangjin",
           } },
         }),
@@ -331,11 +331,11 @@ describe("SO Intake auto-extract", () => {
     const { container } = renderScreen(mod.default);
     await new Promise((r) => setTimeout(r, 0));
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
-    Object.defineProperty(fileInput!, "files", { value: [fakeFile("25PO0008243-OBARA.pdf")] });
+    Object.defineProperty(fileInput!, "files", { value: [fakeFile("25PO0008243-Northwind.pdf")] });
     fireEvent.change(fileInput!);
     await waitFor(() => {
       const input = container.querySelector('#nc-name') as HTMLInputElement | null;
-      expect(input?.value).toBe("OBARA Korea Co Ltd");
+      expect(input?.value).toBe("Northwind Korea Co Ltd");
     }, { timeout: 2000 });
     // Country dropdown should be set to KR.
     const country = container.querySelector('#nc-country') as HTMLSelectElement | null;

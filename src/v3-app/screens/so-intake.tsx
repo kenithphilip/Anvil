@@ -93,7 +93,7 @@ const WiredSOIntake = () => {
   // exist on the customers table (migration 061) and the API now
   // accepts them, so the dialog persists them straight through.
   // International-ready: country + tax_id + tax_id_type carried alongside
-  // the legacy gstin/state_code so non-Indian POs (OBARA Korea, Meridian
+  // the legacy gstin/state_code so non-Indian POs (Northwind Korea, Meridian
   // Steel Japan, Voestalpine AT) can populate the dialog correctly.
   // Defaults: country "" so the country dropdown forces an explicit pick.
   // Bug fix: payment_terms default no longer "Net 30" -- the previous
@@ -368,7 +368,7 @@ const WiredSOIntake = () => {
   //   auto-selected without corroboration.
   //
   //   Round 2 (this fix): on a PO whose buyer was Summit Automation
-  //   but whose document mentioned OBARA brand spares for a
+  //   but whose document mentioned Northwind brand spares for a
   //   Meridian end-customer, the previous draft refused to
   //   auto-select Summit Automation EVEN WHEN the LLM extracted it
   //   correctly. Cause: a filename-hint guard insisted the
@@ -381,7 +381,7 @@ const WiredSOIntake = () => {
   //   - GSTIN exact match remains the highest-signal path.
   //   - Name match REQUIRES bill-to corroboration. The bill-to
   //     block is the buyer's ground truth; the LLM picking up
-  //     Meridian or OBARA from line-item descriptions can never
+  //     Meridian or Northwind from line-item descriptions can never
   //     satisfy this check.
   //
   // Corroboration uses the FIRST significant token of the canonical
@@ -442,9 +442,9 @@ const WiredSOIntake = () => {
     //   (c) the extracted country matches the DB customer's country
     //       AND no other DB customer's name normalises to `target`
     // We deliberately do NOT corroborate via ship_to_address. The
-    // OBARA-Korea-buys-for-Meridian-Steel-project case puts the
+    // Northwind-Korea-buys-for-Meridian-Steel-project case puts the
     // project's end-customer site into ship_to even when bill_to
-    // correctly points at the actual buyer (OBARA Korea); accepting
+    // correctly points at the actual buyer (Northwind Korea); accepting
     // a ship_to token-match would re-introduce that regression.
     // (a) alone used to be the only path, which made the matcher
     // refuse correct HMI POs whose bill-to block carries the buyer's

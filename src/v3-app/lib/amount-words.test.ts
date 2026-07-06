@@ -1,15 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { amountInWords } from "./amount-words";
 
-// The Obara sales order voucher 440 renders this exact phrase under
+// The Northwind sales order voucher 440 renders this exact phrase under
 // "Amount Chargeable (in words)". Keep the test pinned to that input
 // so a regression on the helper is caught immediately.
 describe("amountInWords", () => {
-  it("defaults to Indian numbering for INR (the Obara SO sample)", () => {
+  it("defaults to Indian numbering for INR (the Northwind SO sample)", () => {
     expect(amountInWords(230_202))
       .toBe("Two Lakh Thirty Thousand Two Hundred Two INR Only");
   });
-  it("renders the same Obara value in international numbering when style:intl is forced", () => {
+  it("renders the same Northwind value in international numbering when style:intl is forced", () => {
     expect(amountInWords(230_202, { style: "intl" }))
       .toBe("Two Hundred Thirty Thousand Two Hundred Two INR Only");
   });

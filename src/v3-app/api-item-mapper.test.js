@@ -52,13 +52,13 @@ describe("__mapLinesPure", () => {
     const out = __mapLinesPure([
       { partNumber: "GD544202603190008" },
     ], {
-      cpMap: new Map([["GD544202603190008", { item_id: "im-1", customer_part_description: "OBARA Bend Adapter" }]]),
+      cpMap: new Map([["GD544202603190008", { item_id: "im-1", customer_part_description: "Northwind Bend Adapter" }]]),
       imById: new Map([[im.id, im]]),
       // Note: imByCode does NOT have GD544...; only the customer table does.
     });
     expect(out[0]._mapped_item.match_via).toBe("customer_part");
     expect(out[0]._mapped_item.part_no).toBe("THB-L1-70B-2");
-    expect(out[0]._mapped_item.customer_part_description).toBe("OBARA Bend Adapter");
+    expect(out[0]._mapped_item.customer_part_description).toBe("Northwind Bend Adapter");
   });
 
   it("backfills hsn + uom when the line omitted them", () => {
@@ -136,7 +136,7 @@ describe("__mapLinesPure: Meridian PO scenarios", () => {
     specification_code: "403A7K1172",
   };
 
-  it("specification_code tier maps Meridian's spec to OBARA item (4-ET31062 -> Guide Assy)", () => {
+  it("specification_code tier maps Meridian's spec to Northwind item (4-ET31062 -> Guide Assy)", () => {
     const out = __mapLinesPure([
       {
         partNumber: "GD544202603190008",

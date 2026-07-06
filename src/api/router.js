@@ -253,6 +253,8 @@ import spareMatrixKit          from "./spare_matrix/kit.js";
 import spareMatrixObsolete     from "./spare_matrix/obsolete.js";
 import spareMatrixOpportunities from "./spare_matrix/opportunities.js";
 import spareMatrixRecommend    from "./spare_matrix/recommend.js";
+import spareMatrixIndex        from "./spare_matrix/index.js";
+import spareMatrixById         from "./spare_matrix/[id].js";
 
 import tallyAmend              from "./tally/amend.js";
 import tallyMasters            from "./tally/masters.js";
@@ -987,6 +989,7 @@ const STATIC_ROUTES = {
   "/spare_matrix/obsolete":         spareMatrixObsolete,
   "/spare_matrix/opportunities":    spareMatrixOpportunities,
   "/spare_matrix/recommend":        spareMatrixRecommend,
+  "/spare_matrix":                  spareMatrixIndex,
 
   "/tally/amend":                   tallyAmend,
   "/tally/masters":                 tallyMasters,
@@ -1039,6 +1042,12 @@ const DYNAMIC_ROUTES = [
   { prefix: "/source_pos/",  suffix: "/ack_accept",  handler: sourcePosAckAccept,  param: "id" },
   // "/source_pos/<id>"
   { prefix: "/source_pos/",  handler: sourcePosById,  param: "id" },
+  // "/spare_matrix/<id>" -> full matrix read / bulk save / delete.
+  // Static "/spare_matrix" + "/spare_matrix/{kit,obsolete,opportunities,recommend}"
+  // are matched first (exact), so this only resolves for a real matrix id.
+  // Later PRs add suffix routes (/autofill, /recompute_recommended, /to_quote)
+  // BEFORE this bare entry.
+  { prefix: "/spare_matrix/", handler: spareMatrixById, param: "id" },
   // Invoices: /invoices/<id>. The static "/invoices" + "/invoices/pdf"
   // + "/invoices/send" entries above take precedence; the dynamic
   // path only resolves when none of those match.

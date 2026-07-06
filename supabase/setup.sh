@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # supabase/setup.sh
 #
-# Idempotent one-shot Supabase setup: applies all 10 migrations in order,
-# then runs the corpus seed file. Re-running is a no-op because every SQL
-# statement is idempotent (create-if-not-exists, on-conflict-do-nothing,
-# etc.).
+# Idempotent one-shot Supabase setup: applies ALL numbered migrations in
+# order, then runs the corpus seed file. Re-running is a no-op because
+# every SQL statement is idempotent (create-if-not-exists,
+# on-conflict-do-nothing, etc.).
 #
 # Usage:
 #
@@ -45,9 +45,13 @@ if ! command -v psql >/dev/null 2>&1; then
   exit 2
 fi
 
-echo "[setup.sh] applying 10 migrations from $MIGRATIONS_DIR ..."
+# Match every numbered migration (001_..160_.. and beyond). The old
+# glob was `0*.sql`, which silently skipped everything from 100_ onward.
+# Filenames are zero-padded, so shell (lexical) glob order == numeric order.
+mig_count=$(ls "$MIGRATIONS_DIR"/[0-9]*.sql 2>/dev/null | wc -l | tr -d ' ')
+echo "[setup.sh] applying $mig_count migrations from $MIGRATIONS_DIR ..."
 fail=0
-for f in "$MIGRATIONS_DIR"/0*.sql; do
+for f in "$MIGRATIONS_DIR"/[0-9]*.sql; do
   bn=$(basename "$f")
   echo "  [$bn] starting..."
   if psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -q -f "$f" 2>&1 | tee /tmp/setup-last.log | grep -E "ERROR|FATAL" >/dev/null; then

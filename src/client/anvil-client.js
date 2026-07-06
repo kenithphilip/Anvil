@@ -1301,6 +1301,9 @@
     create: async (payload) => apiFetch("/api/spare_matrix", { method: "POST", body: payload || {} }),
     update: async (id, payload) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id), { method: "PATCH", body: payload || {} }),
     remove: async (id) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id), { method: "DELETE" }),
+    // PR4: Recommended Spares sheet inside the matrix.
+    recomputeRecommended: async (id) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/recompute_recommended", { method: "POST", body: {} }),
+    updateRecommended: async (id, payload) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/recommended", { method: "PATCH", body: payload || {} }),
   };
 
   const sales = {

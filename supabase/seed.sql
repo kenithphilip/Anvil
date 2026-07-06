@@ -229,34 +229,34 @@ declare
 begin
   -- Sales Manager: 0 - 2,000,000 INR
   insert into quote_approval_thresholds (tenant_id, approver_role, min_amount_inr, max_amount_inr, active)
-  select default_tenant, 'sales_manager'::obara_role, 0, 2000000, true
+  select default_tenant, 'sales_manager'::anvil_role, 0, 2000000, true
   where not exists (
     select 1 from quote_approval_thresholds
-    where tenant_id = default_tenant and approver_role = 'sales_manager'::obara_role and min_amount_inr = 0 and max_amount_inr = 2000000
+    where tenant_id = default_tenant and approver_role = 'sales_manager'::anvil_role and min_amount_inr = 0 and max_amount_inr = 2000000
   );
 
   -- Finance: 2,000,000 - 5,000,000 INR
   insert into quote_approval_thresholds (tenant_id, approver_role, min_amount_inr, max_amount_inr, active)
-  select default_tenant, 'finance'::obara_role, 2000000, 5000000, true
+  select default_tenant, 'finance'::anvil_role, 2000000, 5000000, true
   where not exists (
     select 1 from quote_approval_thresholds
-    where tenant_id = default_tenant and approver_role = 'finance'::obara_role and min_amount_inr = 2000000 and max_amount_inr = 5000000
+    where tenant_id = default_tenant and approver_role = 'finance'::anvil_role and min_amount_inr = 2000000 and max_amount_inr = 5000000
   );
 
   -- Admin (acts as Director): >5,000,000 INR
   insert into quote_approval_thresholds (tenant_id, approver_role, min_amount_inr, max_amount_inr, active)
-  select default_tenant, 'admin'::obara_role, 5000000, null, true
+  select default_tenant, 'admin'::anvil_role, 5000000, null, true
   where not exists (
     select 1 from quote_approval_thresholds
-    where tenant_id = default_tenant and approver_role = 'admin'::obara_role and min_amount_inr = 5000000 and max_amount_inr is null
+    where tenant_id = default_tenant and approver_role = 'admin'::anvil_role and min_amount_inr = 5000000 and max_amount_inr is null
   );
 
   -- Margin-below trigger: any quote with margin < 10% needs Finance regardless of value
   insert into quote_approval_thresholds (tenant_id, approver_role, min_amount_inr, max_amount_inr, margin_below_pct, active)
-  select default_tenant, 'finance'::obara_role, 0, null, 0.10, true
+  select default_tenant, 'finance'::anvil_role, 0, null, 0.10, true
   where not exists (
     select 1 from quote_approval_thresholds
-    where tenant_id = default_tenant and approver_role = 'finance'::obara_role and margin_below_pct = 0.10
+    where tenant_id = default_tenant and approver_role = 'finance'::anvil_role and margin_below_pct = 0.10
   );
 end $$;
 

@@ -66,28 +66,33 @@ const parseMembersAllowedRoles = () => {
   return m[1].split(",").map((s) => s.replace(/["'\s]/g, "")).filter(Boolean);
 };
 
-// Parse obara_role enum values from the migration chain. Each
+// Parse the member-role enum values from the migration chain. Each
 // migration either CREATE TYPE ... AS ENUM (...) or
-// ALTER TYPE obara_role ADD VALUE 'x'. We walk every numbered
-// migration file in order and apply both forms, then return the
-// resulting union. Phase 1 F11 surfaces drift between this set
-// and rbac.ts / members.js.
+// ALTER TYPE <role_enum> ADD VALUE 'x'. The enum was renamed
+// obara_role -> anvil_role in migration 160, so we accept BOTH names:
+// the original CREATE (001) declares obara_role; later ADD VALUEs may
+// target either name. We walk every numbered migration file in order,
+// apply both forms, then return the union. Phase 1 F11 surfaces drift
+// between this set and rbac.ts / members.js.
+const ROLE_ENUM_NAME = /(?:obara_role|anvil_role)/;
 const parseObaraRoleEnum = () => {
   if (!fs.existsSync(MIGRATIONS_DIR)) return null;
   const files = fs.readdirSync(MIGRATIONS_DIR)
     .filter((f) => /^[0-9]+_.*\.sql$/.test(f))
     .sort();
   const values = new Set();
+  const createRe = new RegExp(`create type ${ROLE_ENUM_NAME.source} as enum \\(([^)]+)\\)`, "i");
+  const addRe = new RegExp(`alter type ${ROLE_ENUM_NAME.source} add value\\s+(?:if not exists\\s+)?'([^']+)'`, "gi");
   for (const f of files) {
     const src = readFile(path.join(MIGRATIONS_DIR, f));
-    const createMatch = src.match(/create type obara_role as enum \(([^)]+)\)/i);
+    const createMatch = src.match(createRe);
     if (createMatch) {
       for (const v of createMatch[1].split(",")) {
         const cleaned = v.replace(/['"\s]/g, "");
         if (cleaned) values.add(cleaned);
       }
     }
-    for (const m of src.matchAll(/alter type obara_role add value\s+(?:if not exists\s+)?'([^']+)'/gi)) {
+    for (const m of src.matchAll(addRe)) {
       values.add(m[1]);
     }
   }

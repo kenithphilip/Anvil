@@ -782,7 +782,7 @@ begin
       values (
         uuid_generate_v5(ns, 'qa:' || s || ':' || variant::text),
         default_tenant, ord_id,
-        case (k % 3) when 0 then 'sales_manager'::obara_role when 1 then 'finance'::obara_role else 'admin'::obara_role end,
+        case (k % 3) when 0 then 'sales_manager'::anvil_role when 1 then 'finance'::anvil_role else 'admin'::anvil_role end,
         case (k % 3) when 0 then mgr when 1 then fin else primary_admin end,
         s,
         case s when 'PENDING' then null when 'APPROVED' then 'Approved.' when 'REJECTED' then 'Margin below floor.' else 'Skipped: under threshold.' end,

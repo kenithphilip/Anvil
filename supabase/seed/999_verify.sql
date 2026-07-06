@@ -82,7 +82,7 @@ enum_values as (
   from pg_type t
     join pg_enum e on e.enumtypid = t.oid
   where t.typname in (
-    'obara_role','tenant_member_status','order_status','source_po_status',
+    'anvil_role','tenant_member_status','order_status','source_po_status',
     'order_mode','customer_type','internal_so_type','contract_type',
     'opportunity_stage','lead_status','project_phase','shipment_mode',
     'item_lifecycle','einvoice_status'
@@ -343,7 +343,7 @@ order by case when got < qty_min then 0 else 1 end, name;
 with role_check as (
   select 'role:' || r as check_name, '>= 1' as want,
          (select count(*) from tenant_members tm where tm.role = r) as got
-  from unnest(array['sales_engineer','sales_manager','procurement','finance','admin','operator','viewer']::obara_role[]) r
+  from unnest(array['sales_engineer','sales_manager','procurement','finance','admin','operator','viewer']::anvil_role[]) r
 ), status_check as (
   select 'status:' || s as check_name, '>= 1' as want,
          (select count(*) from tenant_members tm where tm.status = s) as got

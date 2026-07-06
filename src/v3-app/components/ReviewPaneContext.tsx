@@ -121,7 +121,7 @@ export const ReviewPaneSelectionProvider: React.FC<{
       if (!cfg.url) return { ok: false, error: "Backend URL not configured" };
       const headers: any = { "Content-Type": "application/json" };
       if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-      if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+      if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
       const resp = await fetch(cfg.url.replace(/\/+$/, "") + "/api/docai/correction", {
         method: "POST",
         headers,

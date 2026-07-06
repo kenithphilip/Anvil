@@ -108,7 +108,7 @@ const WiredShipmentsCRUD = () => {
         const session = (AnvilBackend?.getSession?.() || null);
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
-        if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+        if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
         const url = cfg.url.replace(/\/+$/, "") + "/api/sales/shipments";
         const resp = await fetch(url, {
           method: editing && editing !== "__new__" ? "PATCH" : "POST",
@@ -140,7 +140,7 @@ const WiredShipmentsCRUD = () => {
         const session = (AnvilBackend?.getSession?.() || null);
         const headers: Record<string, string> = {};
         if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
-        if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+        if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
         const url = cfg.url.replace(/\/+$/, "") + "/api/sales/shipments?id=" + encodeURIComponent(id);
         const resp = await fetch(url, { method: "DELETE", headers });
         if (!resp.ok) throw new Error("HTTP " + resp.status);
@@ -167,7 +167,7 @@ const WiredShipmentsCRUD = () => {
         const session = (AnvilBackend?.getSession?.() || null);
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
-        if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+        if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
         const url = cfg.url.replace(/\/+$/, "") + "/api/sales/shipments";
         await fetch(url, { method: "PATCH", headers, body: JSON.stringify({ id, status }) });
       }

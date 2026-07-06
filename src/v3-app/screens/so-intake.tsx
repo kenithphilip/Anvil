@@ -347,7 +347,7 @@ const WiredSOIntake = () => {
         if (!cfg.url) return;
         const headers: any = { "Content-Type": "application/json" };
         if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-        if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+        if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
         const r = await fetch(cfg.url.replace(/\/+$/, "") + "/api/admin/customer_vendor_codes", { headers });
         if (!r.ok || cancelled) return;
         const j = await r.json();
@@ -1007,7 +1007,7 @@ const WiredSOIntake = () => {
           const session: any = (AnvilBackend as any)?.getSession?.() || null;
           const headers: any = { "Content-Type": "application/json" };
           if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-          if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+          if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
           await fetch(cfg.url.replace(/\/+$/, "") + "/api/orders/extraction_jobs", {
             method: "POST",
             headers,

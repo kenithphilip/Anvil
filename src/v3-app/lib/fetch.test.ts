@@ -1,6 +1,6 @@
 // Unit tests for backendFetch. Covers:
 // - Throws when backend URL not configured.
-// - Builds Authorization + x-obara-tenant headers from localStorage.
+// - Builds Authorization + x-anvil-tenant headers from localStorage.
 // - Stringifies non-string bodies.
 // - Treats 204 as void.
 // - Throws on non-2xx with the response body included.
@@ -23,7 +23,7 @@ describe("backendFetch", () => {
     await expect(backendFetch("/api/anything")).rejects.toThrow(/Backend URL not configured/);
   });
 
-  it("attaches Authorization + x-obara-tenant headers from localStorage", async () => {
+  it("attaches Authorization + x-anvil-tenant headers from localStorage", async () => {
     localStorage.setItem("obara:backend_config", JSON.stringify({ url: "https://api.example.com", tenantId: "OBARA-IN" }));
     localStorage.setItem("obara:backend_session", JSON.stringify({ access_token: "abc" }));
     const fetchMock = vi.fn(async () => new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } }));
@@ -32,7 +32,7 @@ describe("backendFetch", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const init = (fetchMock.mock.calls[0] as unknown as [unknown, RequestInit])[1];
     expect((init.headers as any).Authorization).toBe("Bearer abc");
-    expect((init.headers as any)["x-obara-tenant"]).toBe("OBARA-IN");
+    expect((init.headers as any)["x-anvil-tenant"]).toBe("OBARA-IN");
   });
 
   it("strips trailing slashes from the configured URL", async () => {

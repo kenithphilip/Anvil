@@ -97,7 +97,7 @@ const apiCall = async (path, opts) => {
   const headers = {
     "Content-Type": "application/json",
     "Authorization": "Bearer " + session.access_token,
-    "x-obara-tenant": TENANT_ID,
+    "x-anvil-tenant": TENANT_ID,
   };
   const init = { method: opts.method || "GET", headers };
   if (opts.body) init.body = JSON.stringify(opts.body);

@@ -4,6 +4,7 @@ import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
+import { lsGet } from "../lib/storage-keys";
 import { ItemDetailDrawer } from "../components/ItemDetailDrawer";
 
 // ============================================================
@@ -52,7 +53,7 @@ const WiredItems = () => {
         meta="parts · aliases · stock · bills of material"
         right={<>
           <Btn sm kind="primary" onClick={() => { window.location.hash = "#/items?view=import"; }}>{Icon.plus} Import BOM</Btn>
-          <Btn sm kind="ghost"><span className="mono-sm">tenant: {localStorage.getItem("obara:v3_tenant_code") || "TENANT"}</span></Btn>
+          <Btn sm kind="ghost"><span className="mono-sm">tenant: {lsGet("v3_tenant_code") || "TENANT"}</span></Btn>
         </>}
       />
       <WSTabs tabs={tabs} active={tab} onChange={setTab} />

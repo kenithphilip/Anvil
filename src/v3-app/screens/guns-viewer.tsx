@@ -3,13 +3,15 @@ import { ageLabel, draftLabel, fmtDate, stageOf, useFetch } from "../lib/helpers
 import { Banner, Btn, Card, Chip, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { lsGet } from "../lib/storage-keys";
 
 // ============================================================
 // ANVIL v3 — wired Guns viewer
 // Two-pane: gun list (left) · spec + BOM tree + matrix usage + recent SOs (right)
 // Reads via AnvilBackend.bom.list, AnvilBackend.customers.list, AnvilBackend.orders.list.
-// Drawing base URL pulled from localStorage["obara:drawing_base_url"]
-// (set elsewhere by drawing-link config). Falls back to disabled icon.
+// Drawing base URL pulled from localStorage "drawing_base_url" via the
+// storage-keys helper (set elsewhere by drawing-link config). Falls back
+// to disabled icon.
 // ============================================================
 
 // ─────────────────────────────────────────────────────────────
@@ -97,7 +99,7 @@ const drawingUrlFor = (drawing_no) => {
   const dn = (drawing_no || "").trim();
   if (!dn) return null;
   let base = "";
-  try { base = (localStorage.getItem("obara:drawing_base_url") || "").trim(); } catch (_) { /* ignore */ }
+  try { base = (lsGet("drawing_base_url") || "").trim(); } catch (_) { /* ignore */ }
   if (!base) return null;
   if (!base.endsWith("/")) base += "/";
   // If the drawing already looks like a URL, just return it as-is.

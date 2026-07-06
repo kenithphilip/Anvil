@@ -6,6 +6,8 @@
 // points; nothing else changes. Deduped by `${type}:${id}`, newest first,
 // capped. Stored in localStorage so it survives reloads.
 
+import { lsGet, lsSet } from "./storage-keys";
+
 export interface RecentItem {
   key: string;        // `${type}:${id}`
   type: string;       // "quote" | "order" | "opportunity" | "project" | "lead" | "rfq" | ...
@@ -14,14 +16,14 @@ export interface RecentItem {
   ts: number;         // last opened/created (ms)
 }
 
-const LS_KEY = "obara:v3_recent_items";
+const LS_SUFFIX = "v3_recent_items";
 const MAX = 25;
 let cache: RecentItem[] | null = null;
 
 const read = (): RecentItem[] => {
   if (cache) return cache;
   try {
-    const raw = localStorage.getItem(LS_KEY);
+    const raw = lsGet(LS_SUFFIX);
     const arr = raw ? JSON.parse(raw) : [];
     cache = Array.isArray(arr) ? arr : [];
   } catch (_) { cache = []; }
@@ -30,7 +32,7 @@ const read = (): RecentItem[] => {
 
 const write = (arr: RecentItem[]) => {
   cache = arr;
-  try { localStorage.setItem(LS_KEY, JSON.stringify(arr)); } catch (_) { /* quota / private mode */ }
+  lsSet(LS_SUFFIX, JSON.stringify(arr)); // helper is quota/private-mode safe
   try { window.dispatchEvent(new CustomEvent("recent:change")); } catch (_) { /* SSR / tests */ }
 };
 

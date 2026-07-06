@@ -137,7 +137,7 @@ export default async function handler(req, res) {
     // Tenant must come from the trusted header or fall back to the configured default.
     // We do NOT trust `body.tenant_id` because the request body originates from the email
     // provider and could be spoofed by anyone who tricks the provider into forwarding.
-    const tenantId = (req.headers["x-obara-tenant"] || TENANT_DEFAULT).toString();
+    const tenantId = (req.headers["x-anvil-tenant"] || req.headers["x-obara-tenant"] || TENANT_DEFAULT).toString();
     const from = body.from || body.sender || (body.envelope && body.envelope.from) || "";
     const to = body.to || body.recipient || (body.envelope && body.envelope.to) || "";
     const subject = body.subject || body.Subject || "";

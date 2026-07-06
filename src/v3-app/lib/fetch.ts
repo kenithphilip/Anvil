@@ -49,7 +49,7 @@ export const backendFetch = async <T = unknown>(path: string, opts: BackendFetch
     ...(opts.headers || {}),
   };
   if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
-  if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+  if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
 
   const url = cfg.url.replace(/\/+$/, "") + path;
   const init: RequestInit = {

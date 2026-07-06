@@ -49,7 +49,7 @@ const carFetchPath = async (path) => {
   const session = (AnvilBackend?.getSession?.() || null) as { access_token?: string } | null;
   const headers = { "Content-Type": "application/json" };
   if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-  if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+  if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
   const resp = await fetch(cfg.url.replace(/\/+$/, "") + path, { headers });
   if (!resp.ok) throw new Error("HTTP " + resp.status);
   return resp.json();

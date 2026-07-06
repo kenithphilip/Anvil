@@ -63,7 +63,7 @@ const fetchStatus = async (orderId: string): Promise<ProgressSnapshot | null> =>
   if (!cfg.url) return null;
   const headers: any = { "Content-Type": "application/json" };
   if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-  if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+  if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
   const url = cfg.url.replace(/\/+$/, "") + "/api/orders/extraction_status?order_id=" + encodeURIComponent(orderId);
   const resp = await fetch(url, { headers });
   if (!resp.ok) return null;

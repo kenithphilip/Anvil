@@ -467,7 +467,7 @@ const WiredSOWorkspace = () => {
       const session: any = (AnvilBackend as any)?.getSession?.() || null;
       const headers: any = { "Content-Type": "application/json" };
       if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-      if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+      if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
       const resp = await fetch(cfg.url.replace(/\/+$/, "") + "/api/orders/extraction_jobs", {
         method: "POST",
         headers,
@@ -1278,7 +1278,7 @@ const WiredSOWorkspace = () => {
       if (!cfg.url) throw new Error("Backend URL not configured");
       const headers: any = { "Content-Type": "application/json" };
       if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-      if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+      if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
       const url = cfg.url.replace(/\/+$/, "") + "/api/orders/suggest_mappings?order_id=" + encodeURIComponent(o.id) + "&max=10";
       const resp = await fetch(url, { headers });
       if (!resp.ok) throw new Error("HTTP " + resp.status);
@@ -2671,7 +2671,7 @@ const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = ({ orde
         const session: any = (AnvilBackend as any)?.getSession?.() || null;
         const headers: any = { "Content-Type": "application/json" };
         if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-        if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+        if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
         const base = cfg.url.replace(/\/+$/, "");
         const [refResp, contactsResp] = await Promise.all([
           fetch(base + "/api/admin/item_reference", { headers }).then((r) => r.ok ? r.json() : { incoterms: [] }),
@@ -2840,7 +2840,7 @@ const OrderLineTaxComponents: React.FC<{ orderId: string; lines: any[] }> = ({ o
     const session: any = (AnvilBackend as any)?.getSession?.() || null;
     const h: any = { "Content-Type": "application/json" };
     if (session?.access_token) h["Authorization"] = "Bearer " + session.access_token;
-    if (cfg.tenantId) h["x-obara-tenant"] = cfg.tenantId;
+    if (cfg.tenantId) h["x-anvil-tenant"] = cfg.tenantId;
     return { h, base: cfg.url.replace(/\/+$/, "") };
   };
 

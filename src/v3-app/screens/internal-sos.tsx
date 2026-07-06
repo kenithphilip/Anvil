@@ -130,7 +130,7 @@ const WiredInternalSosCRUD = () => {
         const session = (AnvilBackend?.getSession?.() || null);
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
-        if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+        if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
         const url = cfg.url.replace(/\/+$/, "") + "/api/sales/internal_so";
         const resp = await fetch(url, {
           method: editing && editing !== "__new__" ? "PATCH" : "POST",
@@ -162,7 +162,7 @@ const WiredInternalSosCRUD = () => {
         const session = (AnvilBackend?.getSession?.() || null);
         const headers: Record<string, string> = {};
         if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
-        if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+        if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
         const url = cfg.url.replace(/\/+$/, "") + "/api/sales/internal_so?id=" + encodeURIComponent(id);
         await fetch(url, { method: "DELETE", headers });
       }

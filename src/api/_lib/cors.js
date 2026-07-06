@@ -36,7 +36,7 @@ export const applyCors = (req, res) => {
   if (allow) res.setHeader("Access-Control-Allow-Origin", allow);
   res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-obara-tenant");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-anvil-tenant, x-obara-tenant");
   res.setHeader("Access-Control-Max-Age", "86400");
 };
 

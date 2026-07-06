@@ -177,7 +177,7 @@ export default async function handler(req, res) {
 
   // Tenant id can be supplied by the trusted webhook; defaults to the
   // demo tenant. Never read from message body.
-  const tenantId = (req.headers["x-obara-tenant"] || "").toString() || TENANT_DEFAULT;
+  const tenantId = (req.headers["x-anvil-tenant"] || req.headers["x-obara-tenant"] || "").toString() || TENANT_DEFAULT;
 
   try {
     const raw = await parseBody(req);

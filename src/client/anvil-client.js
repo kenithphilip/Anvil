@@ -113,10 +113,10 @@
     const headers = Object.assign({}, extra || {});
     headers["Content-Type"] = "application/json";
     if (session && session.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-    // The legacy header name is preserved server-side; renaming it
-    // would break every call from a deployed client mid-rebrand.
-    // We keep `x-obara-tenant` as the wire-level header name.
-    if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+    // Wire header is `x-anvil-tenant`. The server also accepts the legacy
+    // `x-obara-tenant` as a fallback so clients already open during a
+    // deploy keep working; new clients only ever send the new name.
+    if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
     return headers;
   };
 
@@ -294,7 +294,7 @@
       const url = cfg.url.replace(/\/+$/, "") + "/api/invoices/pdf?id=" + encodeURIComponent(id);
       const headers = {};
       if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-      if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+      if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
       const resp = await fetch(url, { headers });
       if (!resp.ok) throw new Error("PDF " + resp.status);
       return await resp.blob();
@@ -315,7 +315,7 @@
       const url = cfg.url.replace(/\/+$/, "") + "/api/quotes/pdf?orderId=" + encodeURIComponent(orderId);
       const headers = {};
       if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-      if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+      if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
       const resp = await fetch(url, { headers });
       if (!resp.ok) throw new Error("PDF " + resp.status);
       return await resp.blob();
@@ -675,7 +675,7 @@
       const url = cfg.url.replace(/\/+$/, "") + "/api/orders/voucher_pdf?orderId=" + encodeURIComponent(orderId);
       const headers = {};
       if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-      if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+      if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
       const resp = await fetch(url, { headers });
       if (!resp.ok) {
         let msg = "Voucher PDF " + resp.status;

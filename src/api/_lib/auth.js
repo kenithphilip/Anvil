@@ -44,7 +44,9 @@ const REQUIRED_ROLES = {
 
 export const resolveContext = async (req) => {
   const headerAuth = (req.headers.authorization || req.headers.Authorization || "").trim();
-  const tenantHeader = (req.headers["x-obara-tenant"] || "").trim();
+  // Primary header is `x-anvil-tenant`; `x-obara-tenant` is accepted as a
+  // legacy fallback for in-flight clients + external inbound webhooks.
+  const tenantHeader = (req.headers["x-anvil-tenant"] || req.headers["x-obara-tenant"] || "").trim();
   if (!headerAuth) {
     if (!ALLOW_ANONYMOUS) {
       const err = new Error("Missing Authorization header");

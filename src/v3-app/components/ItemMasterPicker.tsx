@@ -38,7 +38,7 @@ const fetchJson = async (path: string): Promise<any> => {
   if (!cfg.url) throw new Error("Backend URL not configured");
   const headers: any = { "Content-Type": "application/json" };
   if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-  if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+  if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
   const url = cfg.url.replace(/\/+$/, "") + path;
   const resp = await fetch(url, { headers });
   if (!resp.ok) {

@@ -42,7 +42,7 @@ const fetchJson = async (path: string, opts?: RequestInit) => {
   if (!cfg.url) throw new Error("Backend URL not configured");
   const headers: any = { "Content-Type": "application/json", ...(opts?.headers as any || {}) };
   if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-  if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+  if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
   const url = cfg.url.replace(/\/+$/, "") + path;
   const resp = await fetch(url, { ...opts, headers });
   if (!resp.ok) {

@@ -194,7 +194,7 @@ const WiredApprovals = () => {
     if (!cfg.url) throw new Error("Backend URL not configured");
     const headers = { "Content-Type": "application/json" };
     if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-    if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+    if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
     const resp = await fetch(cfg.url.replace(/\/+$/, "") + "/api/admin/quote_approvals?type=approvals", { headers });
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     return resp.json();
@@ -206,7 +206,7 @@ const WiredApprovals = () => {
     if (!cfg.url) throw new Error("Backend URL not configured");
     const headers = { "Content-Type": "application/json" };
     if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-    if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+    if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
     const resp = await fetch(cfg.url.replace(/\/+$/, "") + "/api/admin/quote_approvals?type=approvals", {
       method: "POST",
       headers,

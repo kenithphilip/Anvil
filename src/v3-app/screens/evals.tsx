@@ -31,7 +31,7 @@ const evalCrudFetch = async (path: string, opts: { method?: string; body?: any; 
   const session = (AnvilBackend?.getSession?.() || null);
   const headers: Record<string, string> = { "Content-Type": "application/json", ...((opts.headers as Record<string, string>) || {}) };
   if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
-  if (cfg.tenantId) headers["x-obara-tenant"] = cfg.tenantId;
+  if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
   const url = (cfg.url || "").replace(/\/+$/, "") + path;
   const resp = await fetch(url, {
     ...opts,

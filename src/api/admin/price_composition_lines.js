@@ -31,6 +31,7 @@ const buildRow = (tenantId, quoteId, raw) => {
     supplier_currency: raw.supplier_currency || null,
     supplier_quote_no: raw.supplier_quote_no || null,
     supplier_name: raw.supplier_name || null,
+    supplier_id: raw.supplier_id || null,
     source_country: raw.source_country || null,
     reference_currency: raw.reference_currency || null,
     notes: raw.notes || null,
@@ -115,6 +116,7 @@ const handleRecompute = async (svc, ctx, body, res) => {
       supplier_currency: ln.supplier_currency || profile.baseCurrency,
       supplier_quote_no: ln.supplier_quote_no || null,
       supplier_name: ln.supplier_name || null,
+      supplier_id: ln.supplier_id || null,
       source_country: ln.source_country || null,
       qty: Number(ln.qty) || 0,
       weight_kg: ln.weight_kg != null ? Number(ln.weight_kg) : null,
@@ -138,9 +140,10 @@ const handleRecompute = async (svc, ctx, body, res) => {
     let upsert = await svc.from("price_composition_lines")
       .upsert(row, { onConflict: "tenant_id,quote_id,line_index" })
       .select("*").single();
-    // Pre-139 deployments lack supplier_name; strip and retry once.
-    if (upsert.error && (upsert.error.code === "42703" || /supplier_name/i.test(upsert.error.message))) {
+    // Pre-139/161 deployments lack supplier_name / supplier_id; strip and retry once.
+    if (upsert.error && (upsert.error.code === "42703" || /supplier_name|supplier_id/i.test(upsert.error.message))) {
       delete row.supplier_name;
+      delete row.supplier_id;
       upsert = await svc.from("price_composition_lines")
         .upsert(row, { onConflict: "tenant_id,quote_id,line_index" })
         .select("*").single();
@@ -185,10 +188,18 @@ export default async function handler(req, res) {
       for (const ln of inputs) {
         if (ln.line_index == null) continue;
         const row = buildRow(ctx.tenantId, body.quote_id, ln);
-        const upsert = await svc.from("price_composition_lines")
+        let upsert = await svc.from("price_composition_lines")
           .upsert(row, { onConflict: "tenant_id,quote_id,line_index" })
           .select("*")
           .single();
+        // Pre-139/161 deployments lack supplier_name / supplier_id; strip and retry once.
+        if (upsert.error && (upsert.error.code === "42703" || /supplier_name|supplier_id/i.test(upsert.error.message))) {
+          delete row.supplier_name;
+          delete row.supplier_id;
+          upsert = await svc.from("price_composition_lines")
+            .upsert(row, { onConflict: "tenant_id,quote_id,line_index" })
+            .select("*").single();
+        }
         if (upsert.error) throw new Error(upsert.error.message);
         out.push(upsert.data);
       }

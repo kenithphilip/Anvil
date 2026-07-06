@@ -66,7 +66,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
   // Supplier price + currency per line, keyed by line_index. Seeded with
   // a currency guess from source country, then overwritten by any saved
   // composition loaded for this quote.
-  const [supplier, setSupplier] = useState<Record<number, { price: number; cur: string; name: string }>>({});
+  const [supplier, setSupplier] = useState<Record<number, { price: number; cur: string; name: string; id?: string }>>({});
   const [selected, setSelected] = useState<number | null>(null);
   // Tenant-configured profiles from /api/admin/pricing_profiles; falls
   // back to the in-code defaults until a tenant configures its own.
@@ -109,6 +109,9 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
   // so the dropdown is never empty.
   const [currencyOptions, setCurrencyOptions] = useState<string[]>([]);
   const [supplierOptions, setSupplierOptions] = useState<string[]>([]);
+  // name -> suppliers-master id, so a picked supplier name resolves to the FK
+  // (migration 161). RFQ vendor names have no supplier-master id and stay null.
+  const [supplierIdByName, setSupplierIdByName] = useState<Record<string, string>>({});
   useEffect(() => {
     let cancel = false;
     (async () => {
@@ -123,9 +126,13 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
         ]);
         if (cancel) return;
         const names = new Set<string>();
-        (Array.isArray(sup) ? sup : (sup?.suppliers || sup?.rows || [])).forEach((s: any) => s?.supplier_name && names.add(s.supplier_name));
+        const idByName: Record<string, string> = {};
+        (Array.isArray(sup) ? sup : (sup?.suppliers || sup?.rows || [])).forEach((s: any) => {
+          if (s?.supplier_name) { names.add(s.supplier_name); if (s.id) idByName[s.supplier_name] = s.id; }
+        });
         (Array.isArray(ven) ? ven : (ven?.vendors || [])).forEach((v: any) => v?.vendor_name && names.add(v.vendor_name));
         setSupplierOptions(Array.from(names).sort());
+        setSupplierIdByName(idByName);
       } catch { /* suppliers optional */ }
     })();
     return () => { cancel = true; };
@@ -140,7 +147,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
       const resp: any = await AnvilBackend?.admin?.listPriceComposition?.(quoteId);
       const saved = Array.isArray(resp) ? resp : resp?.lines || [];
       if (!saved.length) return;
-      const sup: Record<number, { price: number; cur: string; name: string }> = {};
+      const sup: Record<number, { price: number; cur: string; name: string; id?: string }> = {};
       const ovr: Record<number, Record<string, number>> = {};
       for (const r of saved) {
         if (r.line_index == null) continue;
@@ -148,6 +155,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
           price: Number(r.supplier_unit_price) || 0,
           cur: r.supplier_currency || "INR",
           name: r.supplier_name || "",
+          id: r.supplier_id || "",
         };
         if (r.overrides && typeof r.overrides === "object" && Object.keys(r.overrides).length) ovr[r.line_index] = r.overrides;
       }
@@ -266,6 +274,9 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
         supplier_unit_price: Number((supplier[ln.line_index] || {}).price) || 0,
         supplier_currency: (supplier[ln.line_index] || {}).cur || currencyForCountry(ln.source_country),
         supplier_name: (supplier[ln.line_index] || {}).name || null,
+        supplier_id: (supplier[ln.line_index] || {}).id
+          || supplierIdByName[(supplier[ln.line_index] || {}).name || ""]
+          || null,
         overrides: overridesByLine[ln.line_index] || {},
       }));
       const resp: any = await AnvilBackend?.admin?.recomputePriceComposition?.({
@@ -297,7 +308,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
     supplier[ln.line_index] || { price: 0, cur: currencyForCountry(ln.source_country), name: "" };
   // Seed currency from the line's source country so the first price
   // edit converts at the right FX rate (not the INR default).
-  const setSup = (ln: Line, patch: Partial<{ price: number; cur: string; name: string }>) =>
+  const setSup = (ln: Line, patch: Partial<{ price: number; cur: string; name: string; id: string }>) =>
     setSupplier((s) => ({
       ...s,
       [ln.line_index]: { ...(s[ln.line_index] || { price: 0, cur: currencyForCountry(ln.source_country), name: "" }), ...patch },
@@ -410,7 +421,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
                     aria-label={"supplier name line " + ((ln.line_index ?? 0) + 1)}
                     placeholder="who quoted this?"
                     value={sup.name || ""} onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => setSup(ln, { name: e.target.value })} /></td>
+                    onChange={(e) => setSup(ln, { name: e.target.value, id: supplierIdByName[e.target.value] || "" })} /></td>
                   <td className="r"><input className="input mono r" style={{ width: 90 }} type="number" step="0.01"
                     aria-label={"supplier price line " + ((ln.line_index ?? 0) + 1)}
                     value={sup.price || ""} onClick={(e) => e.stopPropagation()}

@@ -1304,6 +1304,8 @@
     // PR4: Recommended Spares sheet inside the matrix.
     recomputeRecommended: async (id) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/recompute_recommended", { method: "POST", body: {} }),
     updateRecommended: async (id, payload) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/recommended", { method: "PATCH", body: payload || {} }),
+    // PR5: feed the recommended sheet into a DRAFT quote (unpriced).
+    toQuote: async (id, payload) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/to_quote", { method: "POST", body: payload || {} }),
   };
 
   const sales = {

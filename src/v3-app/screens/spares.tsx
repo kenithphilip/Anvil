@@ -211,6 +211,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const [recView, setRecView] = uM(false);
   const [busyAuto, setBusyAuto] = uM(false);
   const [busySync, setBusySync] = uM(false);
+  const [busyFeed, setBusyFeed] = uM(false);
   const [titleEdit, setTitleEdit] = uM(false);
   const debounceRef = rM(null);
   const fileRef = rM(null);
@@ -574,6 +575,41 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
     }
   };
 
+  // Feed the recommended sheet (rows with recommended qty > 0) into a
+  // DRAFT quote, then deep-link to it. Pricing happens downstream, so the
+  // quote lands unpriced; this just carries "what to quote, how many".
+  const onFeedToQuote = async () => {
+    if (!draft.id) return;
+    const feedable = (draft.recommended || []).filter((r) => Number(r.recommended_qty) > 0);
+    if (!feedable.length) {
+      window.notifyError?.("Nothing to quote", "Set a recommended quantity (> 0) on at least one spare first.");
+      return;
+    }
+    setBusyFeed(true);
+    try {
+      const res = await AnvilBackend.spareMatrix.toQuote(draft.id);
+      const q = res && res.quote;
+      if (!q || !q.id) throw new Error("Quote was not created");
+      // Reflect the new quote_ref locally so the sheet shows the link.
+      if (res.quote_number || q.quote_number) {
+        const ref = q.quote_number || res.quote_number;
+        const fedIds = new Set(feedable.map((r) => r.id));
+        const next = { ...draft, recommended: (draft.recommended || []).map((r) => fedIds.has(r.id) ? { ...r, quote_ref: ref, quote_id: q.id } : r) };
+        setDraft(next);
+        onChange(next);
+      }
+      window.notifySuccess?.(
+        res.reused ? "Opened existing draft quote" : "Draft quote created",
+        `${q.quote_number || "Quote"} · ${res.fed} spare line(s) · price it in the quote drawer.`,
+      );
+      window.location.hash = `#/quotes?id=${encodeURIComponent(q.id)}&tab=lines`;
+    } catch (err) {
+      window.notifyError?.("Feed to quote failed", String((err && err.message) || err));
+    } finally {
+      setBusyFeed(false);
+    }
+  };
+
   const onExportRecommended = (format) => {
     const rec = draft.recommended || [];
     if (!rec.length) { window.notifyError?.("Nothing to export", "Recompile the recommended sheet first."); return; }
@@ -785,7 +821,8 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       {recView && (
         <Card title="Recommended spares" eyebrow="installed qty counted across guns · feeds the quote"
               right={<>
-                <Btn sm kind="primary" onClick={onSyncRecommended} disabled={busySync}>{busySync ? "…" : <>{Icon.cycle} Recompile from grid</>}</Btn>
+                <Btn sm kind="ghost" onClick={onSyncRecommended} disabled={busySync}>{busySync ? "…" : <>{Icon.cycle} Recompile from grid</>}</Btn>
+                <Btn sm kind="primary" onClick={onFeedToQuote} disabled={busyFeed || busySync} title="Create a draft quote from rows with a recommended qty > 0">{busyFeed ? "…" : <>{Icon.doc} Feed to quote</>}</Btn>
                 <Btn sm kind="ghost" onClick={() => onExportRecommended("csv")}>CSV</Btn>
                 <Btn sm kind="ghost" onClick={() => onExportRecommended("tsv")}>TSV</Btn>
                 <Btn sm kind="ghost" onClick={() => onExportRecommended("json")}>JSON</Btn>

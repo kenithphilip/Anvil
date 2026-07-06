@@ -3,6 +3,7 @@ import { ageLabel, fmtINRShort, sevOf, stageOf, draftLabel } from "../lib/helper
 import { Banner, Btn, Card, Chip, KPI, KPIRow, Sev, WSTabs, WSTitle, rowActivateProps } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { lsGet } from "../lib/storage-keys";
 
 // ============================================================
 // ANVIL v3 — wired Sales Orders list
@@ -14,7 +15,7 @@ import { AnvilBackend } from "../lib/api";
 // so the Mine tab degrades gracefully (no rows match).
 const readCurrentUserId = (): string | null => {
   try {
-    const cached = JSON.parse(localStorage.getItem("obara:auth_profile") || "null");
+    const cached = JSON.parse(lsGet("auth_profile") || "null");
     if (cached?.user?.id) return String(cached.user.id);
   } catch (_) { /* ignore */ }
   try {

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Btn, Card, Chip, Steps, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { lsGet, lsSet } from "../lib/storage-keys";
 
 // ============================================================
 // ANVIL v3 — Onboarding (first-run setup checklist)
@@ -71,9 +72,9 @@ const WiredOnboarding = () => {
     {
       title: "Mark complete",
       detail: "Tells the app to stop showing this screen on first paint.",
-      done: localStorage.getItem("obara:v3_onboarded") === "1",
+      done: lsGet("v3_onboarded") === "1",
       action: () => {
-        localStorage.setItem("obara:v3_onboarded", "1");
+        lsSet("v3_onboarded", "1");
         window.notifySuccess?.("Onboarding marked complete", "You can revisit this checklist via #/onboarding any time.");
         window.location.hash = "#/home";
       },

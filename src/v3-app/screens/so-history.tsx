@@ -3,26 +3,27 @@ import { fmtINRShort } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { lsGet, lsSet, lsKey } from "../lib/storage-keys";
 
 // ============================================================
 // ANVIL v3 — wired Sales Order History
 // Drag-drop import (XLSX/XLS/CSV/TSV/TXT), format auto-detect
 // (PO vs Tally), filterable table, multi-format export, and
 // reverse-search drawer for any part_no.
-// Persistence: localStorage `obara:v3_so_history`.
+// Persistence: localStorage `anvil:v3_so_history` (via storage-keys helper).
 // Live data: AnvilBackend.salesHistory.priceBand.
 // ============================================================
 
-const SOH_STORE_KEY = "obara:v3_so_history";
+const SOH_SUFFIX = "v3_so_history";
 // xlsx is a bundled dep loaded via dynamic import (CSP blocks CDN scripts).
 
 // ── Storage helpers ─────────────────────────────────────────────
 const sohLoad = () => {
-  try { return JSON.parse(localStorage.getItem(SOH_STORE_KEY) || "[]") || []; }
+  try { return JSON.parse(lsGet(SOH_SUFFIX) || "[]") || []; }
   catch { return []; }
 };
 const sohSave = (rows) => {
-  try { localStorage.setItem(SOH_STORE_KEY, JSON.stringify(rows || [])); }
+  try { lsSet(SOH_SUFFIX, JSON.stringify(rows || [])); }
   catch (e) { console.warn("[soh] persist failed:", e.message); }
 };
 
@@ -484,7 +485,7 @@ const WiredSOHistory = () => {
   // Cross-tab / external sync.
   e(() => {
     const onChange = () => setRows(sohLoad());
-    const onStorage = (ev) => { if (ev.key === SOH_STORE_KEY) setRows(sohLoad()); };
+    const onStorage = (ev) => { if (ev.key === lsKey(SOH_SUFFIX)) setRows(sohLoad()); };
     window.addEventListener("soh:change", onChange);
     window.addEventListener("storage", onStorage);
     return () => {

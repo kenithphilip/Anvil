@@ -4,6 +4,7 @@ import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Sev, Stream, WSTitle } from "
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
+import { lsGet } from "../lib/storage-keys";
 import { Prefs } from "../lib/preferences";
 
 // ============================================================
@@ -173,7 +174,7 @@ const WiredHomeEngineer = () => {
 
             <Card title="Backend" eyebrow="health">
               <KV rows={[
-                ["Tenant", localStorage.getItem("obara:v3_tenant_code") || "TENANT"],
+                ["Tenant", lsGet("v3_tenant_code") || "TENANT"],
                 ["Role", (RBAC?.role() || "—").replace(/_/g, " ")],
                 ["Session", AnvilBackend?.isReady?.() ? "live" : "anonymous"],
                 ["Theme", Prefs?.theme() || "—"],

@@ -4,6 +4,7 @@ import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 import { matchSpares, SPARE_PRESETS, isConsumableCol, nameMatchCandidates, type SpareBomItem } from "../lib/spare-match";
+import { lsGet } from "../lib/storage-keys";
 
 // ============================================================
 // ANVIL v3 — Spare Matrix Worksheet
@@ -12,7 +13,7 @@ import { matchSpares, SPARE_PRESETS, isConsumableCol, nameMatchCandidates, type 
 // Overrides the minimal wired-spares-c.jsx via window.SparesMatrix.
 // ============================================================
 
-const SM_LS_KEY = "obara:v3_spare_matrices";
+const SM_LS_SUFFIX = "v3_spare_matrices";
 const SM_IMPORTED_KEY = "anvil:v3_spare_matrices_imported";
 // xlsx is a bundled dep loaded via dynamic import (CSP blocks CDN scripts).
 
@@ -24,7 +25,7 @@ const smUid = () => "mx_" + Math.random().toString(36).slice(2, 10) + Date.now()
 // written to. Server is the source of truth (spareMatrix.* endpoints).
 const smReadAll = () => {
   try {
-    const raw = localStorage.getItem(SM_LS_KEY);
+    const raw = lsGet(SM_LS_SUFFIX);
     if (!raw) return [];
     const arr = JSON.parse(raw);
     return Array.isArray(arr) ? arr : [];

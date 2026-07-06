@@ -4,6 +4,7 @@ import { Banner, Btn, Card, Chip, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 import { RBAC, MATRIX, ACTIONS } from "../lib/rbac";
+import { lsGet, lsSet } from "../lib/storage-keys";
 import { Prefs } from "../lib/preferences";
 import { PricingProfilesAdmin } from "../components/PricingProfilesAdmin";
 import { NavVisibilityAdmin } from "../components/NavVisibilityAdmin";
@@ -90,7 +91,7 @@ const ADMIN_TAB_LABEL: Record<string, string> = Object.fromEntries(ADMIN_CRUD_TA
 const adminGroupOf = (id: string): string => (ADMIN_TAB_GROUPS.find((g) => g.ids.includes(id)) || ADMIN_TAB_GROUPS[0]).label;
 
 const ADMIN_ROLES = ["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer"];
-const ADMIN_DRAWING_BASE_KEY = "obara:drawing_base_url";
+const ADMIN_DRAWING_BASE_SUFFIX = "drawing_base_url";
 const CONTRACT_TYPES = ["ARC", "BLANKET", "AMC", "PROJECT"];
 
 const adminCrudFetch = async (path: string, opts: { method?: string; body?: any; headers?: Record<string, string> } = {}) => {
@@ -167,7 +168,7 @@ const parseCSV = (text) => {
 // not on every refresh), which the user reads as "stale".
 const readCurrentUserId = (): string | null => {
   try {
-    const cached = JSON.parse(localStorage.getItem("obara:auth_profile") || "null");
+    const cached = JSON.parse(lsGet("auth_profile") || "null");
     if (cached?.user?.id) return String(cached.user.id);
   } catch (_) { /* ignore */ }
   try {
@@ -243,8 +244,8 @@ const WiredAdminCRUD = () => {
   const [contractForm, setContractForm] = u(null);
   const [itemForm, setItemForm] = u(null);
   const [csvBusy, setCsvBusy] = u(false);
-  const [drawingBase, setDrawingBase] = u(() => { try { return localStorage.getItem(ADMIN_DRAWING_BASE_KEY) || ""; } catch (_) { return ""; } });
-  const [drawingDraft, setDrawingDraft] = u(() => { try { return localStorage.getItem(ADMIN_DRAWING_BASE_KEY) || ""; } catch (_) { return ""; } });
+  const [drawingBase, setDrawingBase] = u(() => lsGet(ADMIN_DRAWING_BASE_SUFFIX) || "");
+  const [drawingDraft, setDrawingDraft] = u(() => lsGet(ADMIN_DRAWING_BASE_SUFFIX) || "");
   // Tenant quote defaults + line-item option lists (backend tenant_settings).
   // Loaded when the Settings tab opens. *Draft holds the editable value;
   // *Saved is the last persisted snapshot used for the dirty check.
@@ -335,7 +336,7 @@ const WiredAdminCRUD = () => {
 
   const tenantSlug = (AnvilBackend && AnvilBackend.getConfig
     && AnvilBackend.getConfig().tenantId)
-    || localStorage.getItem("obara:v3_tenant_code") || "—";
+    || lsGet("v3_tenant_code") || "—";
 
   const customerName = (id) => {
     const c = customerRows.find((x) => x.id === id);
@@ -1218,11 +1219,11 @@ const WiredAdminCRUD = () => {
       });
       setProfile((p) => ({ ...(p || {}), user: { ...(p?.user || {}), display_name: resp?.user?.display_name } }));
       // Update the cached profile so the shell avatar refreshes without
-      // a page reload. The telemetry hook reads obara:auth_profile.
+      // a page reload. The telemetry hook reads the same "auth_profile" key.
       try {
-        const cached = JSON.parse(localStorage.getItem("obara:auth_profile") || "null") || {};
+        const cached = JSON.parse(lsGet("auth_profile") || "null") || {};
         cached.user = { ...(cached.user || {}), display_name: resp?.user?.display_name };
-        localStorage.setItem("obara:auth_profile", JSON.stringify(cached));
+        lsSet("auth_profile", JSON.stringify(cached));
       } catch (_) {}
       flashOk("Profile updated");
       members.reload();
@@ -1433,7 +1434,7 @@ const WiredAdminCRUD = () => {
   // ---------- Settings ----------
   const onSaveDrawingBase = () => {
     try {
-      localStorage.setItem(ADMIN_DRAWING_BASE_KEY, drawingDraft);
+      lsSet(ADMIN_DRAWING_BASE_SUFFIX, drawingDraft);
       setDrawingBase(drawingDraft);
       flashOk("Drawing base URL saved (local browser only)");
     } catch (err) { flashErr(err); }

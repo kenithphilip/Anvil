@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from "react";
 import { AnvilBackend } from "./api";
+import { lsGet } from "./storage-keys";
 
 export interface ShellBadge { v: string; k?: string; }
 export type BadgeMap = Record<string, ShellBadge>;
@@ -132,12 +133,7 @@ export const useShellTelemetry = (): ShellTelemetry => {
       try {
         // Read via storage-keys helper so legacy `obara:auth_profile`
         // values keep flowing through after the rebrand.
-        const cachedRaw = (() => {
-          try {
-            return localStorage.getItem("anvil:auth_profile")
-              || localStorage.getItem("obara:auth_profile");
-          } catch (_) { return null; }
-        })();
+        const cachedRaw = lsGet("auth_profile");
         const cached = JSON.parse(cachedRaw || "null");
         if (cached?.user) {
           email = email || cached.user.email;

@@ -257,6 +257,7 @@ import spareMatrixIndex        from "./spare_matrix/index.js";
 import spareMatrixById         from "./spare_matrix/[id].js";
 import spareMatrixRecomputeRec from "./spare_matrix/recompute_recommended.js";
 import spareMatrixRecommended  from "./spare_matrix/recommended.js";
+import spareMatrixToQuote      from "./spare_matrix/to_quote.js";
 
 import tallyAmend              from "./tally/amend.js";
 import tallyMasters            from "./tally/masters.js";
@@ -1051,6 +1052,7 @@ const DYNAMIC_ROUTES = [
   // BEFORE this bare entry.
   { prefix: "/spare_matrix/", suffix: "/recompute_recommended", handler: spareMatrixRecomputeRec, param: "id" },
   { prefix: "/spare_matrix/", suffix: "/recommended",           handler: spareMatrixRecommended,  param: "id" },
+  { prefix: "/spare_matrix/", suffix: "/to_quote",              handler: spareMatrixToQuote,      param: "id" },
   { prefix: "/spare_matrix/", handler: spareMatrixById, param: "id" },
   // Invoices: /invoices/<id>. The static "/invoices" + "/invoices/pdf"
   // + "/invoices/send" entries above take precedence; the dynamic

@@ -15,40 +15,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-
-const NUMERIC_KEYS = [
-  "qty", "listed_unit_price", "discount_pct", "discounted_unit_price",
-  "line_amount", "cgst_pct", "sgst_pct", "igst_pct", "utgst_pct", "cess_pct",
-];
-
-const buildRow = (tenantId, quoteId, raw) => {
-  const row = {
-    tenant_id: tenantId,
-    quote_id: quoteId,
-    line_index: Number(raw.line_index),
-    part_no: raw.part_no || null,
-    description: raw.description || null,
-    uom: raw.uom || null,
-    hsn_sac: raw.hsn_sac || null,
-    customer_part_number: raw.customer_part_number || null,
-    source_country: raw.source_country || null,
-    remark: raw.remark || null,
-  };
-  for (const k of NUMERIC_KEYS) {
-    if (k in raw) row[k] = raw[k] == null || raw[k] === "" ? null : Number(raw[k]);
-  }
-  // Auto-compute: discounted_unit_price + line_amount when omitted.
-  if (row.listed_unit_price != null && row.discount_pct != null && row.discounted_unit_price == null) {
-    row.discounted_unit_price = Number((row.listed_unit_price * (1 - Number(row.discount_pct))).toFixed(4));
-  }
-  if (row.qty != null && row.line_amount == null) {
-    const ppu = row.discounted_unit_price != null
-      ? row.discounted_unit_price
-      : row.listed_unit_price;
-    if (ppu != null) row.line_amount = Number((row.qty * ppu).toFixed(4));
-  }
-  return row;
-};
+import { buildQuoteLineRow } from "../quotes/_lib/quote-build.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -80,7 +47,7 @@ export default async function handler(req, res) {
       const out = [];
       for (const raw of inputs) {
         if (raw.line_index == null) continue;
-        const row = buildRow(ctx.tenantId, body.quote_id, raw);
+        const row = buildQuoteLineRow(ctx.tenantId, body.quote_id, raw);
         const upsert = await svc.from("quote_lines")
           .upsert(row, { onConflict: "tenant_id,quote_id,line_index" })
           .select("*")

@@ -23,6 +23,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { belowFloorLines } from "../_lib/quote-margin.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
+import { computeTotals, generateQuoteNumber } from "./_lib/quote-build.js";
 
 const VALID_STATUSES = new Set([
   "DRAFT", "PENDING_INTERNAL_APPROVAL", "SENT", "ACCEPTED",
@@ -47,40 +48,6 @@ const isTransitionAllowed = (from, to) => {
   if (from === to) return true;
   const allowed = ALLOWED_TRANSITIONS[from];
   return !!(allowed && allowed.has(to));
-};
-
-const computeTotals = (lineItems) => {
-  const items = Array.isArray(lineItems) ? lineItems : [];
-  let subtotal = 0;
-  let taxTotal = 0;
-  for (const li of items) {
-    const qty = Number(li.quantity || li.qty || 0);
-    const rate = Number(li.unitPrice || li.rate || 0);
-    const lineSubtotal = qty * rate;
-    subtotal += lineSubtotal;
-    const gstRate = Number(li.gstRate || li.gst_rate || 0);
-    if (gstRate > 0 && Number.isFinite(gstRate)) {
-      taxTotal += lineSubtotal * gstRate / 100;
-    }
-  }
-  const grandTotal = subtotal + taxTotal;
-  return {
-    subtotal: Math.round(subtotal * 100) / 100,
-    tax_total: Math.round(taxTotal * 100) / 100,
-    grand_total: Math.round(grandTotal * 100) / 100,
-  };
-};
-
-const generateQuoteNumber = async (svc, tenantId) => {
-  // Per-tenant counter via a simple count-of-quotes-this-month
-  // approach. An RPC-backed sequence is cleaner but this works
-  // until volumes warrant it.
-  const stamp = new Date().toISOString().slice(0, 7).replace("-", ""); // YYYYMM
-  const r = await svc.from("quotes").select("id", { count: "exact", head: true })
-    .eq("tenant_id", tenantId)
-    .like("quote_number", "Q-" + stamp + "-%");
-  const next = String((r.count || 0) + 1).padStart(4, "0");
-  return "Q-" + stamp + "-" + next;
 };
 
 const buildLifecycleTimestamps = (status, current) => {

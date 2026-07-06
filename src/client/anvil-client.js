@@ -1290,10 +1290,17 @@
   };
 
   const spareMatrix = {
+    // Analytics subsystem (order-history criticality). Left untouched.
     recommend: async (payload) => apiFetch("/api/spare_matrix/recommend", { method: "POST", body: payload || {} }),
     kit: async (payload) => apiFetch("/api/spare_matrix/kit", { method: "POST", body: payload }),
     opportunities: async (customer_id) => apiFetch("/api/spare_matrix/opportunities?customer_id=" + encodeURIComponent(customer_id)),
     obsolete: async (months) => apiFetch("/api/spare_matrix/obsolete" + (months ? "?months=" + months : "")),
+    // Per-customer/project spare matrix (migration 159, PR1).
+    list: async (params) => apiFetch("/api/spare_matrix" + (params && Object.keys(params).length ? "?" + new URLSearchParams(params).toString() : "")),
+    get: async (id) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id)),
+    create: async (payload) => apiFetch("/api/spare_matrix", { method: "POST", body: payload || {} }),
+    update: async (id, payload) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id), { method: "PATCH", body: payload || {} }),
+    remove: async (id) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id), { method: "DELETE" }),
   };
 
   const sales = {

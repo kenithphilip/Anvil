@@ -30,7 +30,7 @@ describe("applyOverrides", () => {
   });
 });
 
-// The two profiles are validated against the real Obara spreadsheets.
+// The two profiles are validated against the real Northwind spreadsheets.
 // If these numbers drift, the engine no longer matches the sheets it
 // was modelled on.
 

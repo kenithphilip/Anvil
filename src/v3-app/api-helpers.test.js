@@ -15,7 +15,7 @@ describe("canonicaliseName", () => {
   it("strips legal suffixes (Pvt / Ltd / LLP / Inc / Corp / GmbH / Co / Limited)", () => {
     expect(f("Tata Steel Pvt Ltd")).toBe("tatasteel");
     expect(f("Acme LLP")).toBe("acme");
-    expect(f("OBARA Inc.")).toBe("obara");
+    expect(f("Northwind Inc.")).toBe("northwind");
     expect(f("MAHALAKSHMI Engineering Co")).toBe("mahalakshmiengineering");
   });
   it("collapses to alpha-numeric only", () => {

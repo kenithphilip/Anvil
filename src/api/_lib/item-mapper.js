@@ -17,7 +17,7 @@
 //      authoritative; the operator has explicitly recorded the
 //      translation.
 //   2. item_master row whose part_no matches the line's
-//      partNumber / itemCode / sku / code. Tenants like OBARA
+//      partNumber / itemCode / sku / code. Tenants like Northwind
 //      where the customer uses the tenant's own part number
 //      directly hit this branch.
 //   3. item_master row whose alias matches. Tally users

@@ -124,8 +124,8 @@ describe("draftLabel", () => {
   it("uses NEW when created_at is missing or unparseable", () => {
     expect(draftLabel({
       id: "8a3f1b2c",
-      customer: { customer_name: "OBARA Korea Co Ltd" },
-    })).toBe("OBARA-NEW-8a3f");
+      customer: { customer_name: "Northwind Korea Co Ltd" },
+    })).toBe("NORTH-NEW-8a3f");
   });
 
   it("returns literal 'draft' for nullish input so legacy renderers stay safe", () => {

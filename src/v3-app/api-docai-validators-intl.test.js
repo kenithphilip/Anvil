@@ -5,14 +5,14 @@
 // supports KR / JP / DE / US / EU customers with tax_id +
 // tax_id_type instead of GSTIN.
 //
-// Bug being prevented: an OBARA Korea PO returning gstin=null was
+// Bug being prevented: an Northwind Korea PO returning gstin=null was
 // previously NOT a validator finding, but the customer record would
 // have had no canonical id at all because the schema only stored
 // GSTIN. This test pins down that:
 //   - country!=IN with gstin set is a 'gstin_unexpected' warn,
 //   - country!=IN with bad tax_id_type is a 'tax_id_type_unknown' warn,
 //   - currency country-mismatch is a warn (e.g. country=JP currency=INR),
-//   - name-not-in-bill-to is a warn (the OBARA -> Meridian bug).
+//   - name-not-in-bill-to is a warn (the Northwind -> Meridian bug).
 
 import { describe, it, expect } from "vitest";
 import { __test } from "../api/_lib/docai/validators.js";
@@ -95,13 +95,13 @@ describe("validators / validateCustomer country-conditional", () => {
 
   it("KR customer with GSTIN set is a gstin_unexpected warn", () => {
     const issues = validateCustomer({
-      name: "OBARA Korea Co Ltd",
+      name: "Northwind Korea Co Ltd",
       country: "KR",
       gstin: "27FAKE12345E1Z5",                    // hallucinated
       tax_id: "123-45-67890",
       tax_id_type: "brn",
       currency: "KRW",
-      bill_to_address: "OBARA Korea Co Ltd, Seoul",
+      bill_to_address: "Northwind Korea Co Ltd, Seoul",
     });
     const codes = issues.map((i) => i.code);
     expect(codes).toContain("gstin_unexpected");
@@ -109,40 +109,40 @@ describe("validators / validateCustomer country-conditional", () => {
 
   it("KR customer with valid tax_id_type passes (modulo gstin warn)", () => {
     const issues = validateCustomer({
-      name: "OBARA Korea Co Ltd",
+      name: "Northwind Korea Co Ltd",
       country: "KR",
       gstin: null,
       tax_id: "123-45-67890",
       tax_id_type: "brn",
       currency: "KRW",
-      bill_to_address: "OBARA Korea Co Ltd, Seoul, South Korea",
+      bill_to_address: "Northwind Korea Co Ltd, Seoul, South Korea",
     });
     expect(issues).toEqual([]);
   });
 
   it("KR customer with bad tax_id_type warns", () => {
     const issues = validateCustomer({
-      name: "OBARA Korea Co Ltd",
+      name: "Northwind Korea Co Ltd",
       country: "KR",
       tax_id: "123-45-67890",
       tax_id_type: "vat_kr",                       // not in enum
       currency: "KRW",
-      bill_to_address: "OBARA Korea Co Ltd",
+      bill_to_address: "Northwind Korea Co Ltd",
     });
     const codes = issues.map((i) => i.code);
     expect(codes).toContain("tax_id_type_unknown");
   });
 
-  it("name-not-in-bill-to warns (the OBARA -> Meridian regression case)", () => {
+  it("name-not-in-bill-to warns (the Northwind -> Meridian regression case)", () => {
     // The LLM extracted Meridian (project / end-customer) as the
-    // customer name, but bill-to says OBARA. Validator should flag.
+    // customer name, but bill-to says Northwind. Validator should flag.
     const issues = validateCustomer({
       name: "Meridian Steel",
       country: "KR",
       tax_id: "123-45-67890",
       tax_id_type: "brn",
       currency: "KRW",
-      bill_to_address: "OBARA Korea Co Ltd, 1-2 Industrial Park, Seoul",
+      bill_to_address: "Northwind Korea Co Ltd, 1-2 Industrial Park, Seoul",
     });
     const codes = issues.map((i) => i.code);
     expect(codes).toContain("name_not_in_bill_to");
@@ -150,24 +150,24 @@ describe("validators / validateCustomer country-conditional", () => {
 
   it("name-in-bill-to does NOT warn", () => {
     const issues = validateCustomer({
-      name: "OBARA Korea Co Ltd",
+      name: "Northwind Korea Co Ltd",
       country: "KR",
       tax_id: "123-45-67890",
       tax_id_type: "brn",
       currency: "KRW",
-      bill_to_address: "OBARA Korea Co Ltd, 1-2 Industrial Park, Seoul",
+      bill_to_address: "Northwind Korea Co Ltd, 1-2 Industrial Park, Seoul",
     });
     expect(issues.find((i) => i.code === "name_not_in_bill_to")).toBeUndefined();
   });
 
   it("currency_country_mismatch fires on JP+INR", () => {
     const issues = validateCustomer({
-      name: "OBARA Japan KK",
+      name: "Northwind Japan KK",
       country: "JP",
       tax_id: "1234567890123",
       tax_id_type: "jp_corp",
       currency: "INR",                            // wrong for Japan
-      bill_to_address: "OBARA Japan KK, Tokyo",
+      bill_to_address: "Northwind Japan KK, Tokyo",
     });
     const codes = issues.map((i) => i.code);
     expect(codes).toContain("currency_country_mismatch");

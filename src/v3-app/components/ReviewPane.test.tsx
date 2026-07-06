@@ -161,7 +161,7 @@ describe("ReviewPane", () => {
       "order.po_number":   { value: "P250432265", page: 1, confidence: 0.99 },
       "lines[0].partNumber": { value: "GD544202503060009", page: 1, line: 1, confidence: 0.95 },
       "totals.grand_inr":  { value: 1710922.76, page: 1, confidence: 0.97 },
-      "seller.name":       { value: "OBARA India Pvt Ltd", page: 1, confidence: 0.80 },
+      "seller.name":       { value: "Northwind India Pvt Ltd", page: 1, confidence: 0.80 },
     };
     const { container } = render(<ReviewPane docId={null} evidenceByField={evidence} />);
     const rows = container.querySelectorAll("[data-field-path]");

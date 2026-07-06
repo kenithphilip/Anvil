@@ -1,6 +1,6 @@
 // Multi-language line items + translation (Wave 2.4 / #5).
 //
-// OBARA's pilot tenants are mostly Indian B2B but Meridian POs
+// Northwind's pilot tenants are mostly Indian B2B but Meridian POs
 // land with the supplier-side block in Korean (Hangul), Tally
 // vouchers from Tamil-Nadu shops often carry Tamil descriptions
 // on top of the English line items, German engineering POs use

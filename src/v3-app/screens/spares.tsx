@@ -544,41 +544,42 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
 
   // ------- Sync recommended ---------------------------------------------
   const onSyncRecommended = async () => {
+    if (!draft.id) return;
     setBusySync(true);
     try {
-      // Flatten matrix → recommended part_no rows. Each cell lists the
-      // matched spare part number(s); a part's qty is the sum of the gun
-      // quantities across every row/column it appears in.
-      const partTotals = new Map();
-      (draft.rows || []).forEach((r) => {
-        const rowQty = Number(r.qty) || 1;
-        (draft.cols || []).forEach((c) => {
-          const cell = (r.values || {})[c.col_name];
-          if (!cell) return;
-          String(cell).split(/\r?\n/).map((s) => s.trim()).filter(Boolean).forEach((partNo) => {
-            partTotals.set(partNo, (partTotals.get(partNo) || 0) + rowQty);
-          });
-        });
-      });
-      const rec = Array.from(partTotals.entries())
-        .map(([part_no, qty]) => ({ part_no, qty }))
-        .sort((a, b) => b.qty - a.qty);
+      // Persist current worksheet edits, then recompute the Recommended
+      // sheet server-side: installed_qty = COUNT of guns per (category,
+      // part). Human-edited fields are preserved by the server.
+      await AnvilBackend.spareMatrix.update(draft.id, toServer(draft));
+      const res = await AnvilBackend.spareMatrix.recomputeRecommended(draft.id);
+      const rec = (res && res.recommended) || [];
       const next = { ...draft, recommended: rec };
       onChange(next);
       setDraft(next);
-      window.notifySuccess?.("Recommended spares synced", `${rec.length} parts (in-session preview; the persisted Recommended Spares sheet lands in a follow-up PR).`);
+      window.notifySuccess?.("Recommended spares recompiled", `${rec.length} parts · installed qty counted across guns.`);
     } catch (err) {
-      window.notifyError?.("Sync failed", String(err.message || err));
+      window.notifyError?.("Recompile failed", String((err && err.message) || err));
     } finally {
       setBusySync(false);
     }
   };
 
+  // Edit a recommended-sheet field: update locally + persist immediately
+  // (recommended rows live in their own table, not the matrix autosave).
+  const onRecEdit = (rowId, field, val) => {
+    setDraft((d) => ({ ...d, recommended: (d.recommended || []).map((r) => r.id === rowId ? { ...r, [field]: val } : r) }));
+    if (draft.id) {
+      AnvilBackend.spareMatrix.updateRecommended(draft.id, { row_id: rowId, [field]: val })
+        .catch((err) => window.notifyError?.("Save failed", String((err && err.message) || err)));
+    }
+  };
+
   const onExportRecommended = (format) => {
     const rec = draft.recommended || [];
-    if (!rec.length) { window.notifyError?.("Nothing to export", "Sync recommended spares first."); return; }
+    if (!rec.length) { window.notifyError?.("Nothing to export", "Recompile the recommended sheet first."); return; }
     const filename = `RecommendedSpares_${(draft.name || "untitled").replace(/[^A-Za-z0-9_-]+/g, "_")}`;
-    const aoa = [["part_no", "qty"], ...rec.map((r) => [r.part_no, r.qty])];
+    const cols = ["sr_no", "description", "part_no", "gun_number", "installed_qty", "recommended_qty", "priority", "item_type", "customer_part_no", "lead_time_days", "remarks", "quote_ref", "po_ref"];
+    const aoa = [cols, ...rec.map((r) => cols.map((c) => (r[c] != null ? r[c] : "")))];
     if (format === "csv") return smDownload(filename + ".csv", "text/csv", smAoaToDelim(aoa, ","));
     if (format === "tsv") return smDownload(filename + ".tsv", "text/tab-separated-values", smAoaToDelim(aoa, "\t"));
     if (format === "json") return smDownload(filename + ".json", "application/json", JSON.stringify(rec, null, 2));
@@ -780,26 +781,66 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
         </Card>
       )}
 
-      {/* Recommended sub-view */}
+      {/* Recommended spares sheet (lives inside the matrix) */}
       {recView && (
-        <Card title="Recommended spares" eyebrow="flattened from worksheet"
+        <Card title="Recommended spares" eyebrow="installed qty counted across guns · feeds the quote"
               right={<>
-                <Btn sm kind="primary" onClick={onSyncRecommended} disabled={busySync}>{busySync ? "…" : "Sync from matrix"}</Btn>
+                <Btn sm kind="primary" onClick={onSyncRecommended} disabled={busySync}>{busySync ? "…" : <>{Icon.cycle} Recompile from grid</>}</Btn>
                 <Btn sm kind="ghost" onClick={() => onExportRecommended("csv")}>CSV</Btn>
                 <Btn sm kind="ghost" onClick={() => onExportRecommended("tsv")}>TSV</Btn>
                 <Btn sm kind="ghost" onClick={() => onExportRecommended("json")}>JSON</Btn>
               </>}>
           {!(draft.recommended || []).length ? (
-            <div className="body" style={{ color: "var(--ink-3)" }}>No recommendations yet. Click Sync from matrix.</div>
+            <div className="body" style={{ color: "var(--ink-3)" }}>No recommended spares yet. Click <b>Recompile from grid</b> to compile installed quantities from the worksheet.</div>
           ) : (
-            <table className="tbl">
-              <thead><tr><th>Part</th><th className="r">Qty</th></tr></thead>
-              <tbody>
-                {(draft.recommended || []).map((r, i) => (
-                  <tr key={i}><td className="mono"><span className="pri">{r.part_no}</span></td><td className="r mono">{r.qty}</td></tr>
-                ))}
-              </tbody>
-            </table>
+            <div style={{ overflow: "auto", maxHeight: "60vh" }}>
+              <table className="tbl" style={{ minWidth: "100%" }}>
+                <thead><tr>
+                  <th style={{ width: 40 }}>#</th>
+                  <th>Description</th>
+                  <th>Part no</th>
+                  <th>Gun</th>
+                  <th className="r" title="Number of guns using this part">Installed</th>
+                  <th className="r">Recommended</th>
+                  <th>Priority</th>
+                  <th>Type</th>
+                  <th>Customer Part No</th>
+                  <th>Lead Time</th>
+                  <th>Remarks</th>
+                  <th>Quote Ref</th>
+                  <th>PO Ref</th>
+                </tr></thead>
+                <tbody>
+                  {(draft.recommended || []).map((r, i) => (
+                    <tr key={r.id || i}>
+                      <td className="mono-sm" style={{ color: "var(--ink-3)" }}>{r.sr_no != null ? r.sr_no : i + 1}</td>
+                      <td>{r.description}</td>
+                      <td className="mono"><span className="pri">{r.part_no}</span></td>
+                      <td className="mono-sm">{r.gun_number || ""}</td>
+                      <td className="r mono">{r.installed_qty != null ? r.installed_qty : ""}</td>
+                      <td className="r mono">
+                        <input className="input mono" type="number" value={r.recommended_qty != null ? r.recommended_qty : ""} onChange={(e) => onRecEdit(r.id, "recommended_qty", e.target.value)} style={{ height: 26, width: 76, textAlign: "right", fontSize: 11.5, padding: "0 6px" }} />
+                      </td>
+                      <td>
+                        <select className="input" value={r.priority || ""} onChange={(e) => onRecEdit(r.id, "priority", e.target.value)} style={{ height: 26, fontSize: 11.5, padding: "0 4px" }}>
+                          <option value="">—</option><option>High</option><option>Medium</option><option>Low</option>
+                        </select>
+                      </td>
+                      <td>
+                        <select className="input" value={r.item_type || ""} onChange={(e) => onRecEdit(r.id, "item_type", e.target.value)} style={{ height: 26, fontSize: 11.5, padding: "0 4px" }}>
+                          <option value="">—</option><option>Consumable</option><option>Spare</option><option>Wear Part</option>
+                        </select>
+                      </td>
+                      <td><input className="input mono" value={r.customer_part_no || ""} onChange={(e) => onRecEdit(r.id, "customer_part_no", e.target.value)} style={{ height: 26, fontSize: 11.5, padding: "0 6px", minWidth: 120 }} /></td>
+                      <td><input className="input mono" value={r.lead_time_days || ""} onChange={(e) => onRecEdit(r.id, "lead_time_days", e.target.value)} style={{ height: 26, fontSize: 11.5, padding: "0 6px", width: 90 }} /></td>
+                      <td><input className="input mono" value={r.remarks || ""} onChange={(e) => onRecEdit(r.id, "remarks", e.target.value)} style={{ height: 26, fontSize: 11.5, padding: "0 6px", minWidth: 120 }} /></td>
+                      <td className="mono-sm" style={{ color: "var(--ink-3)" }}>{r.quote_ref || ""}</td>
+                      <td className="mono-sm" style={{ color: "var(--ink-3)" }}>{r.po_ref || ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </Card>
       )}

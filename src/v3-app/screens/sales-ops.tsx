@@ -24,9 +24,10 @@ const SalesOpsCockpit = () => {
     const r: any = await (AnvilBackend?.forecast?.get ? AnvilBackend.forecast.get() : null);
     return r || null;
   }, []);
+  const ops = useFetch(async () => { const r: any = await AnvilBackend?.analytics?.opsKpis?.(); return r || null; }, []);
 
-  const loading = funnel.loading || winloss.loading || forecast.loading;
-  const reloadAll = () => { funnel.reload(); winloss.reload(); forecast.reload(); };
+  const loading = funnel.loading || winloss.loading || forecast.loading || ops.loading;
+  const reloadAll = () => { funnel.reload(); winloss.reload(); forecast.reload(); ops.reload(); };
 
   const fd: any = funnel.data || {};
   const wl: any = winloss.data || {};
@@ -40,7 +41,14 @@ const SalesOpsCockpit = () => {
   const wlk: any = wl.kpis || {};
   const openOpps = fd.totals?.count_in_stage || stages.reduce((a, s) => a + (s.count_in_stage || 0), 0);
 
-  const anyError = funnel.error || winloss.error || forecast.error;
+  const ok: any = ops.data || {};
+  const aging: any = ok.ar_aging || {};
+  const cyc: any = ok.cycle_time || {};
+  const agingBuckets: any[] = Array.isArray(aging.buckets) ? aging.buckets : [];
+  const repRev: any[] = Array.isArray(ok.revenue_by_rep) ? ok.revenue_by_rep : [];
+  const dOrDash = (s: any) => (s && s.median != null ? `${s.median}d` : "—");
+
+  const anyError = funnel.error || winloss.error || forecast.error || ops.error;
 
   return (
     <>
@@ -127,6 +135,56 @@ const SalesOpsCockpit = () => {
                       <td className="r mono">{r.quotes_won ?? 0}</td>
                       <td className="r"><Chip k={(r.win_rate ?? 0) >= 50 ? "good" : "warn"}>{pctOrDash(r.win_rate)}</Chip></td>
                       <td className="r mono-sm">{r.median_response_minutes ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Card>
+        </div>
+
+        {/* Cash & cycle-time — the KPI/SLA substrate (live-computed) */}
+        <KPIRow cols={4}>
+          <KPI lbl="Outstanding AR" v={fmtINRShort(aging.total_outstanding || 0)} d="unpaid invoices" live={(aging.total_outstanding || 0) > 0} />
+          <KPI lbl="Overdue AR" v={fmtINRShort(aging.overdue_outstanding || 0)} d={`${aging.overdue_count || 0} invoices · ${pctOrDash(aging.overdue_rate)}`} dKind={(aging.overdue_rate || 0) > 0 ? "down" : ""} />
+          <KPI lbl="Quote → accept" v={dOrDash(cyc.sent_to_accepted)} d={`sent→accepted · p90 ${cyc.sent_to_accepted?.p90 ?? "—"}d`} />
+          <KPI lbl="Order → approve" v={dOrDash(cyc.order_to_approved)} d={`created→approved · p90 ${cyc.order_to_approved?.p90 ?? "—"}d`} />
+        </KPIRow>
+
+        <div className="row" style={{ gap: 12, marginTop: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+          {/* AR aging buckets */}
+          <Card title="AR aging" eyebrow="outstanding by days past due" style={{ flex: "1 1 320px", minWidth: 280 }} flush>
+            {agingBuckets.length === 0 || (aging.total_outstanding || 0) === 0 ? (
+              <div className="body" style={{ padding: 16, color: "var(--ink-3)" }}>No outstanding AR.</div>
+            ) : (
+              <table className="tbl" style={{ fontSize: 12 }}>
+                <thead><tr><th>Bucket</th><th className="r">Invoices</th><th className="r">Outstanding</th></tr></thead>
+                <tbody>
+                  {agingBuckets.map((b: any, i: number) => (
+                    <tr key={i}>
+                      <td><Chip k={b.label === "current" ? "good" : b.label === "90+" ? "bad" : "warn"}>{b.label === "current" ? "Current" : b.label + " days"}</Chip></td>
+                      <td className="r mono">{b.count}</td>
+                      <td className="r mono">{fmtINRShort(b.outstanding)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Card>
+
+          {/* Revenue by rep (accepted quotes) */}
+          <Card title="Revenue by rep" eyebrow="accepted quotes · this window" style={{ flex: "1 1 360px", minWidth: 320 }} flush>
+            {repRev.length === 0 ? (
+              <div className="body" style={{ padding: 16, color: "var(--ink-3)" }}>No accepted quotes in window.</div>
+            ) : (
+              <table className="tbl" style={{ fontSize: 12 }}>
+                <thead><tr><th>Rep</th><th className="r">Accepted</th><th className="r">Value</th></tr></thead>
+                <tbody>
+                  {repRev.slice(0, 8).map((r: any, i: number) => (
+                    <tr key={i}>
+                      <td className="mono-sm">{r.rep_id === "unassigned" ? "Unassigned" : String(r.rep_id).slice(0, 8)}</td>
+                      <td className="r mono">{r.count}</td>
+                      <td className="r mono">{fmtINRShort(r.accepted_value)}</td>
                     </tr>
                   ))}
                 </tbody>

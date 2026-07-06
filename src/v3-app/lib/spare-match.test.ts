@@ -5,6 +5,7 @@ import {
   nameMatchCandidates,
   isCopperMaterial,
   isConsumableCol,
+  stripVariant,
 } from "./spare-match";
 
 describe("nameIsCleanMatch", () => {
@@ -94,5 +95,32 @@ describe("matchSpares", () => {
       { part_no: "T-1", part_name: "TIP 1", material: "Copper", size: "1" },
     ];
     expect(matchSpares(dup, ["TIP"])["TIP"]).toBe("T-1");
+  });
+});
+
+describe("stripVariant + MOVING/FIXED columns (PR3)", () => {
+  it("strips moving/fixed qualifiers to the base category", () => {
+    expect(stripVariant("SHANK (MOVING)")).toBe("SHANK");
+    expect(stripVariant("TIP BASE (FIXED)")).toBe("TIP BASE");
+    expect(stripVariant("ADAPTER - MOVING")).toBe("ADAPTER");
+    expect(stripVariant("HOLDER")).toBe("HOLDER"); // unqualified unchanged
+  });
+
+  it("treats a moving/fixed consumable variant as consumable", () => {
+    expect(isConsumableCol("SHANK (MOVING)")).toBe(true);
+    expect(isConsumableCol("TIP BASE (FIXED)")).toBe(true);
+    expect(isConsumableCol("GEAR CASE ASSY")).toBe(false); // spare, not consumable
+  });
+
+  it("auto-fills both variants from the base part name, keeping the copper filter", () => {
+    const bom = [
+      { part_no: "TWS-092-100-3", part_name: "SHANK 100", material: "CuCrZr", size: "100" },
+      { part_no: "SS-SHANK", part_name: "SHANK 90", material: "SS304", size: "90" }, // non-copper
+    ];
+    const r = matchSpares(bom, ["SHANK (MOVING)", "SHANK (FIXED)"]);
+    expect(r["SHANK (MOVING)"].split("\n")).toContain("TWS-092-100-3");
+    expect(r["SHANK (FIXED)"].split("\n")).toContain("TWS-092-100-3");
+    // Consumable copper filter still applies to the variant column.
+    expect(r["SHANK (MOVING)"]).not.toContain("SS-SHANK");
   });
 });

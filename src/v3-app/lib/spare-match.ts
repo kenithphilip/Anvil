@@ -44,6 +44,35 @@ export const SPARE_PRESETS: SparePreset[] = [
   { name: "TIP CAP", category: "Consumable" },
   { name: "TIP", category: "Consumable" },
   { name: "ELECTRODE", category: "Consumable" },
+  // Reference "Guns Spare Matrix" variants (moving/fixed side). Auto-fill
+  // matches these on their base category (see stripVariant); the operator
+  // assigns which part is moving vs fixed.
+  { name: "CAP TIP", category: "Consumable" },
+  { name: "TIP BASE (MOVING)", category: "Consumable" },
+  { name: "TIP BASE (FIXED)", category: "Consumable" },
+  { name: "SHANK (MOVING)", category: "Consumable" },
+  { name: "SHANK (FIXED)", category: "Consumable" },
+  { name: "ADAPTER (MOVING)", category: "Consumable" },
+  { name: "ADAPTER (FIXED)", category: "Consumable" },
+  { name: "HOLDER (MOVING)", category: "Consumable" },
+  { name: "HOLDER (FIXED)", category: "Consumable" },
+  // Reference assemblies / spares.
+  { name: "GUN BODY", category: "Spare" },
+  { name: "LM GUIDE", category: "Spare" },
+  { name: "MOVABLE YOKE", category: "Spare" },
+  { name: "MOVABLE YOKE ASSY", category: "Spare" },
+  { name: "GEAR CASE ASSY", category: "Spare" },
+  { name: "SPATTER COVER", category: "Spare" },
+  { name: "SPATTER COVER ASSY", category: "Spare" },
+  { name: "STOPPER ASSY", category: "Spare" },
+  { name: "PIPE ADAPTER", category: "Spare" },
+  { name: "TEFLON HOSE", category: "Spare" },
+  { name: "PLUG SILENCER", category: "Spare" },
+  { name: "MANIFOLD ASSY", category: "Spare" },
+  { name: "GUIDE ASSY", category: "Spare" },
+  { name: "COUPLER", category: "Spare" },
+  { name: "BELT", category: "Spare" },
+  { name: "ATTACHMENT ASSY", category: "Spare" },
   { name: "BOLT", category: "Hardware" },
   { name: "WASHER", category: "Hardware" },
   { name: "NUT", category: "Hardware" },
@@ -82,12 +111,27 @@ const COL_EXCLUSIONS: Record<string, string[]> = {
   "SHUNT": ["SHUNT ASSY"],
   "ARM": ["ARM ASSY"],
   "BUSH": ["LINEAR BUSH"],
+  "GEAR CASE": ["GEAR CASE ASSY"],
+  "GUN BODY": ["GUN BODY ASSY"],
+  "MOVABLE YOKE": ["MOVABLE YOKE ASSY"],
+  "SPATTER COVER": ["SPATTER COVER ASSY"],
 };
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-export const isConsumableCol = (colName: string): boolean =>
-  SPARE_PRESETS.some((p) => p.category === "Consumable" && p.name === colName);
+// A category column may carry a moving/fixed (or LH/RH) qualifier, e.g.
+// "SHANK (MOVING)" / "TIP BASE (FIXED)". BOM part names have no such
+// qualifier, so strip it to match on the base category.
+export const stripVariant = (col: string): string =>
+  String(col || "")
+    .replace(/\s*[([]\s*(?:MOVING|FIXED|MOV|FIX|LH|RH|LEFT|RIGHT)\s*[)\]]?\s*$/i, "")
+    .replace(/\s*[-/]\s*(?:MOVING|FIXED|MOV|FIX|LH|RH|LEFT|RIGHT)\s*$/i, "")
+    .trim();
+
+export const isConsumableCol = (colName: string): boolean => {
+  const base = stripVariant(colName);
+  return SPARE_PRESETS.some((p) => p.category === "Consumable" && (p.name === colName || p.name === base));
+};
 
 export const isCopperMaterial = (mat?: string | null): boolean => {
   if (!mat) return false;
@@ -147,14 +191,17 @@ export interface SpareBomItem { part_no?: string | null; part_name?: string | nu
 export const matchSpares = (bomItems: SpareBomItem[], colNames: string[]): Record<string, string> => {
   const result: Record<string, string> = {};
   (colNames || []).forEach((col) => {
-    const colUp = String(col).toUpperCase().trim();
+    const base = stripVariant(col);
+    const colUp = base.toUpperCase().trim();
     const exclusions = (COL_EXCLUSIONS[colUp] || []).map((ex) => new RegExp("^" + escapeRe(ex) + "(?:\\s|$)", "i"));
 
-    // Path A: clean name match (specificity-guarded, CJK-prefix aware)
+    // Path A: clean name match (specificity-guarded, CJK-prefix aware).
+    // Match on the BASE category so "SHANK (MOVING)"/"SHANK (FIXED)" both
+    // pull shank candidates; the operator assigns which is moving vs fixed.
     let matches = (bomItems || []).filter((p) => {
       if (!p || !p.part_name) return false;
       const cands = nameMatchCandidates(p.part_name);
-      if (!cands.some((c) => nameIsCleanMatch(c, col))) return false;
+      if (!cands.some((c) => nameIsCleanMatch(c, base))) return false;
       if (cands.some((c) => exclusions.some((re) => re.test(c)))) return false;
       return true;
     });

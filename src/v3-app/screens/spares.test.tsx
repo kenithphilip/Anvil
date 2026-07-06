@@ -50,5 +50,7 @@ describe("Spares", () => {
     const html = container.innerHTML;
     expect(html).toContain("Hyundai Pune Servo"); // rail header from server list
     expect(html).toContain("CAP TIP");            // spare-category column from the loaded matrix
+    expect(html).toContain("Station");            // station-identity column (PR2b)
+    expect(html).toContain("Robot");              // station-identity column (PR2b)
   });
 });

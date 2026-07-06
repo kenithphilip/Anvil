@@ -13,11 +13,15 @@ import { matchSpares, SPARE_PRESETS, isConsumableCol, nameMatchCandidates, type 
 // ============================================================
 
 const SM_LS_KEY = "obara:v3_spare_matrices";
+const SM_IMPORTED_KEY = "anvil:v3_spare_matrices_imported";
 // xlsx is a bundled dep loaded via dynamic import (CSP blocks CDN scripts).
 
 // ---------- helpers ----------------------------------------------------
 const smUid = () => "mx_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 
+// Legacy localStorage matrices (pre-server, migration 159). Read-only
+// now — kept as a safety-net backup + one-time import source; never
+// written to. Server is the source of truth (spareMatrix.* endpoints).
 const smReadAll = () => {
   try {
     const raw = localStorage.getItem(SM_LS_KEY);
@@ -27,18 +31,53 @@ const smReadAll = () => {
   } catch (_) { return []; }
 };
 
-const smWriteAll = (rows) => {
-  try { localStorage.setItem(SM_LS_KEY, JSON.stringify(rows || [])); } catch (_) {}
+// ── Server <-> component-shape adapters ──────────────────────────────
+// Component shape: { id, customer_id, project_name, name, updated_at,
+//   cols:[{id, col_name, col_type, locked}],
+//   rows:[{id, gun_no, qty, values:{col_name:parts}, +station fields}] }
+// Local ids (smUid) are React keys ONLY; toServer() OMITS child ids so a
+// save FULL-REPLACES columns+rows (safe: recommended_spares keys on
+// matrix_id+part_no+description, not on row/col ids — no id round-trip).
+const fromHeader = (h) => ({
+  id: h.id, customer_id: h.customer_id || null,
+  project_name: h.project_name || "", name: h.name || "", updated_at: h.updated_at || null,
+});
+
+const fromServer = (full) => {
+  const m = (full && full.matrix) || {};
+  return {
+    id: m.id,
+    customer_id: m.customer_id || null,
+    project_name: m.project_name || "",
+    name: m.name || "",
+    updated_at: m.updated_at || null,
+    cols: ((full && full.columns) || []).map((c) => ({ id: c.id || smUid(), col_name: c.col_name || "", col_type: c.category || "spare", locked: !!c.locked })),
+    rows: ((full && full.rows) || []).map((r) => ({
+      id: r.id || smUid(),
+      gun_no: r.gun_no || "",
+      qty: r.qty != null ? r.qty : 1,
+      values: (r.spare_values && typeof r.spare_values === "object") ? r.spare_values : {},
+      sr_no: r.sr_no || "", line: r.line || "", station_no: r.station_no || "", robot_no: r.robot_no || "",
+      gun_type: r.gun_type || "", l_qty: r.l_qty != null ? r.l_qty : "", r_qty: r.r_qty != null ? r.r_qty : "", timer: r.timer || "", atd: r.atd || "",
+    })),
+    recommended: (full && full.recommended) || [],
+  };
 };
 
-const smUpsert = (matrix) => {
-  const rows = smReadAll();
-  const ix = rows.findIndex((m) => m.id === matrix.id);
-  if (ix >= 0) rows[ix] = matrix; else rows.push(matrix);
-  smWriteAll(rows);
-};
-
-const smRemove = (id) => smWriteAll(smReadAll().filter((m) => m.id !== id));
+const numOrNull = (v) => (v === "" || v == null ? null : Number(v));
+const toServer = (matrix) => ({
+  header: { customer_id: matrix.customer_id || null, project_name: matrix.project_name || null, name: matrix.name || null },
+  columns: (matrix.cols || []).map((c, i) => ({ col_name: c.col_name, category: c.col_type || null, locked: !!c.locked, position: i })),
+  rows: (matrix.rows || []).map((r, i) => ({
+    position: i,
+    gun_no: r.gun_no || null,
+    qty: numOrNull(r.qty),
+    spare_values: (r.values && typeof r.values === "object") ? r.values : {},
+    sr_no: r.sr_no || null, line: r.line || null, station_no: r.station_no || null, robot_no: r.robot_no || null,
+    gun_type: r.gun_type || null, l_qty: numOrNull(r.l_qty), r_qty: numOrNull(r.r_qty),
+    timer: r.timer || null, atd: r.atd || null,
+  })),
+});
 
 const smLoadXlsx = (): Promise<any> => {
   if (typeof window !== "undefined" && window.XLSX) return Promise.resolve(window.XLSX);
@@ -158,16 +197,13 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
     debounceRef.current = setTimeout(async () => {
       setSaveState("saving");
       const next = { ...draft, updated_at: new Date().toISOString() };
-      smUpsert(next);
-      onChange(next);
       try {
-        if (next.customer_id && AnvilBackend?.spareMatrix?.recommend) {
-          await AnvilBackend.spareMatrix.recommend({ customer_id: next.customer_id });
-        }
+        await AnvilBackend.spareMatrix.update(next.id, toServer(next));
+        onChange(next);
         setSaveState("saved");
         setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1800);
       } catch (err) {
-        window.notifyError?.("Autosave failed", String(err.message || err));
+        window.notifyError?.("Autosave failed", String((err && err.message) || err));
         setSaveState("error");
       }
     }, 1000);
@@ -480,14 +516,10 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       const rec = Array.from(partTotals.entries())
         .map(([part_no, qty]) => ({ part_no, qty }))
         .sort((a, b) => b.qty - a.qty);
-      const next = { ...draft, recommended: rec, updated_at: new Date().toISOString() };
-      smUpsert(next);
+      const next = { ...draft, recommended: rec };
       onChange(next);
       setDraft(next);
-      if (draft.customer_id && AnvilBackend?.spareMatrix?.recommend) {
-        await AnvilBackend.spareMatrix.recommend({ customer_id: draft.customer_id });
-      }
-      window.notifySuccess?.("Recommended spares synced", `${rec.length} parts updated.`);
+      window.notifySuccess?.("Recommended spares synced", `${rec.length} parts (in-session preview; the persisted Recommended Spares sheet lands in a follow-up PR).`);
     } catch (err) {
       window.notifyError?.("Sync failed", String(err.message || err));
     } finally {
@@ -512,10 +544,14 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
     setTitleEdit(false);
   };
 
-  const onDeleteMatrix = () => {
-    if (!window.confirm(`Delete matrix "${draft.name}"? This cannot be undone.`)) return;
-    smRemove(draft.id);
-    onDelete(draft.id);
+  const onDeleteMatrix = async () => {
+    if (!window.confirm(`Delete matrix "${draft.name || "Untitled"}"? This cannot be undone.`)) return;
+    try {
+      await AnvilBackend.spareMatrix.remove(draft.id);
+      onDelete(draft.id);
+    } catch (err) {
+      window.notifyError?.("Delete failed", String((err && err.message) || err));
+    }
   };
 
   const savingPill = saveState === "saving" || saveState === "dirty"
@@ -1055,9 +1091,15 @@ const SMNewMatrixModal = ({ customers, loading, onCreate, onClose }) => {
 // ---------- Worksheet outer ----------
 const SMWorksheetTab = () => {
   const { useState: uM, useEffect: eM, useMemo: mM } = React;
-  const [matrices, setMatrices] = uM(() => smReadAll());
-  const [activeId, setActiveId] = uM(() => (smReadAll()[0]?.id || ""));
+  const [matrices, setMatrices] = uM([]);          // light headers from the server
+  const [activeId, setActiveId] = uM("");
+  const [active, setActive] = uM(null);             // full matrix (fromServer)
+  const [loadingList, setLoadingList] = uM(true);
+  const [listErr, setListErr] = uM(null);
+  const [loadingActive, setLoadingActive] = uM(false);
   const [showNew, setShowNew] = uM(false);
+  const [legacyCount, setLegacyCount] = uM(0);
+  const [importing, setImporting] = uM(false);
 
   const customers = useFetch(() => AnvilBackend?.customers?.list?.() || Promise.resolve([]), []);
   const customerList = mM(() => {
@@ -1067,65 +1109,118 @@ const SMWorksheetTab = () => {
     return d.customers || d.rows || [];
   }, [customers.data]);
 
-  // Sync matrices state with localStorage when other tabs/instances change
-  eM(() => {
-    const onStorage = (e) => { if (e.key === SM_LS_KEY) setMatrices(smReadAll()); };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+  // Load the matrix list from the server (migration 159).
+  const reloadList = React.useCallback(async (selectId?: string) => {
+    setLoadingList(true); setListErr(null);
+    try {
+      const r = await AnvilBackend.spareMatrix.list();
+      const list = ((r && r.matrices) || []).map(fromHeader);
+      setMatrices(list);
+      setActiveId((cur) => selectId || cur || (list[0] ? list[0].id : ""));
+    } catch (err) {
+      setListErr(err);
+    } finally {
+      setLoadingList(false);
+    }
   }, []);
 
-  const onCreate = async ({ customer_id, project_name, name }) => {
-    const now = new Date().toISOString();
-    const matrix = {
-      id: smUid(),
-      customer_id,
-      project_name,
-      name,
-      created_at: now,
-      updated_at: now,
-      rows: [],
-      cols: [],
-      recommended: [],
-    };
-    smUpsert(matrix);
-    setMatrices(smReadAll());
-    setActiveId(matrix.id);
-    setShowNew(false);
-    try {
-      if (AnvilBackend?.spareMatrix?.recommend) {
-        await AnvilBackend.spareMatrix.recommend({ customer_id });
+  eM(() => { reloadList(); }, [reloadList]);
+
+  // Offer a one-time import of any legacy localStorage matrices.
+  eM(() => {
+    try { if (!localStorage.getItem(SM_IMPORTED_KEY)) setLegacyCount(smReadAll().length); } catch (_) { /* noop */ }
+  }, []);
+
+  // Load the full active matrix when the selection changes.
+  eM(() => {
+    if (!activeId) { setActive(null); return; }
+    let cancel = false;
+    setLoadingActive(true);
+    (async () => {
+      try {
+        const full = await AnvilBackend.spareMatrix.get(activeId);
+        if (!cancel) setActive(fromServer(full));
+      } catch (err) {
+        if (!cancel) { setActive(null); window.notifyError?.("Could not load matrix", String((err && err.message) || err)); }
+      } finally {
+        if (!cancel) setLoadingActive(false);
       }
+    })();
+    return () => { cancel = true; };
+  }, [activeId]);
+
+  const onCreate = async ({ customer_id, project_name, name }) => {
+    try {
+      const r = await AnvilBackend.spareMatrix.create({ customer_id, project_name, name });
+      const m = r && r.matrix;
+      if (!m) throw new Error("create returned no matrix");
+      setMatrices((prev) => [fromHeader(m), ...prev]);
+      setActiveId(m.id);
+      setShowNew(false);
+      window.notifySuccess?.("Matrix created", name || "Untitled");
     } catch (err) {
-      window.notifyError?.("Could not seed recommendations", String(err.message || err));
+      window.notifyError?.("Create failed", String((err && err.message) || err));
     }
-    window.notifySuccess?.("Matrix created", name);
   };
 
+  // In-pane edits (autosaved to server by the pane) reflect into the rail header.
   const onMatrixChange = (next) => {
-    setMatrices((all) => {
-      const ix = all.findIndex((m) => m.id === next.id);
-      if (ix < 0) return [...all, next];
-      const copy = [...all]; copy[ix] = next; return copy;
-    });
+    setActive(next);
+    setMatrices((all) => all.map((m) => (m.id === next.id ? { ...m, name: next.name, project_name: next.project_name, customer_id: next.customer_id, updated_at: next.updated_at } : m)));
   };
 
   const onMatrixDelete = (id) => {
     setMatrices((all) => all.filter((m) => m.id !== id));
-    setActiveId((cur) => (cur === id ? (smReadAll()[0]?.id || "") : cur));
+    setActive(null);
+    setActiveId((cur) => (cur === id ? "" : cur));
   };
 
-  const active = mM(() => matrices.find((m) => m.id === activeId), [matrices, activeId]);
+  // One-time migration of legacy localStorage matrices into the server.
+  // The local copy is left intact as a backup (idempotency via a flag).
+  const onImportLegacy = async () => {
+    setImporting(true);
+    let ok = 0; let total = 0;
+    try {
+      const legacy = smReadAll(); total = legacy.length;
+      for (const lm of legacy) {
+        try {
+          const r = await AnvilBackend.spareMatrix.create({ customer_id: lm.customer_id || null, project_name: lm.project_name || null, name: lm.name || null });
+          const id = r && r.matrix && r.matrix.id;
+          if (!id) continue;
+          await AnvilBackend.spareMatrix.update(id, toServer({
+            customer_id: lm.customer_id, project_name: lm.project_name, name: lm.name,
+            cols: (lm.cols || []).map((c) => ({ col_name: c.col_name, col_type: c.col_type, locked: !!c.locked })),
+            rows: (lm.rows || []).map((rw) => ({ gun_no: rw.gun_no, qty: rw.qty, values: rw.values || {} })),
+          }));
+          ok += 1;
+        } catch (_) { /* skip this one */ }
+      }
+      try { localStorage.setItem(SM_IMPORTED_KEY, new Date().toISOString()); } catch (_) { /* noop */ }
+      setLegacyCount(0);
+      await reloadList();
+      window.notifySuccess?.("Imported local matrices", `${ok} of ${total} imported. Your local copy is kept as a backup.`);
+    } catch (err) {
+      window.notifyError?.("Import failed", String((err && err.message) || err));
+    } finally {
+      setImporting(false);
+    }
+  };
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: 14, alignItems: "start" }}>
       {/* Left rail */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8, position: "sticky", top: 0 }}>
         <Btn kind="primary" sm full onClick={() => setShowNew(true)}>{Icon.plus} New matrix</Btn>
+        {legacyCount > 0 && (
+          <Btn sm kind="ghost" full onClick={onImportLegacy} disabled={importing}>{importing ? "Importing…" : <>{Icon.upload} Import {legacyCount} local</>}</Btn>
+        )}
         <Card flush>
-          {customers.error ? (
-            <Banner kind="bad" icon={Icon.alert} title="Could not load customers">
-              <span className="mono-sm">{String(customers.error.message || customers.error)}</span>
+          {listErr ? (
+            <Banner kind="bad" icon={Icon.alert} title="Could not load matrices">
+              <span className="mono-sm">{String((listErr && listErr.message) || listErr)}</span>
             </Banner>
+          ) : loadingList ? (
+            <div className="body" style={{ padding: 14, color: "var(--ink-3)" }}>Loading…</div>
           ) : matrices.length === 0 ? (
             <div className="body" style={{ padding: 14, color: "var(--ink-3)" }}>No matrices yet.</div>
           ) : (
@@ -1156,7 +1251,9 @@ const SMWorksheetTab = () => {
 
       {/* Right pane */}
       <div>
-        {!active ? (
+        {loadingActive ? (
+          <Card><div className="body" style={{ padding: 24, color: "var(--ink-3)" }}>Loading matrix…</div></Card>
+        ) : !active ? (
           <Card>
             <div style={{ padding: 28, textAlign: "center" }}>
               <div className="h-eyebrow" style={{ marginBottom: 6 }}>Spare matrix</div>

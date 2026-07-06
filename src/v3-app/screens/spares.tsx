@@ -167,6 +167,34 @@ const smFetchLinesForGun = async (code: string): Promise<SpareBomItem[]> => {
   } catch (_) { return []; }
 };
 
+// Fixed station-identity columns (reference "Guns Spare Matrix" model),
+// rendered as a leading block before the spare-category cols. gun_no is
+// the sticky identity column; qty folds in here.
+const SM_STATION_COLS = [
+  { key: "line", label: "Line", w: 84 },
+  { key: "station_no", label: "Station", w: 84 },
+  { key: "robot_no", label: "Robot", w: 68 },
+  { key: "gun_type", label: "Type", w: 84 },
+  { key: "l_qty", label: "L", w: 44, num: true },
+  { key: "r_qty", label: "R", w: 44, num: true },
+  { key: "timer", label: "Timer", w: 90 },
+  { key: "atd", label: "ATD", w: 100 },
+  { key: "qty", label: "Qty", w: 52, num: true },
+];
+const SM_NUM_ROW_FIELDS = new Set(["qty", "l_qty", "r_qty"]);
+// Import header aliases for the station-identity columns.
+const SM_STATION_ALIASES = {
+  line: ["line", "line name"],
+  station_no: ["station_no", "station", "station no", "station no.", "s'tn no", "s'tn  no", "station name", "s.tn no"],
+  robot_no: ["robot_no", "robot", "robot no", "robot no.", "robot number"],
+  gun_type: ["gun_type", "type", "gun type"],
+  l_qty: ["l_qty", "l qty", "l-qty", "l q'ty", "l"],
+  r_qty: ["r_qty", "r qty", "r-qty", "r q'ty", "r"],
+  timer: ["timer"],
+  atd: ["atd"],
+  qty: ["qty", "quantity", "m"],
+};
+
 // ---------- Worksheet pane ---------------------------------------------
 const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const { useState: uM, useEffect: eM, useMemo: mM, useRef: rM } = React;
@@ -222,8 +250,9 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   // Adds a gun/asset row. Spare-category cells are filled by Auto-fill
   // (matchSpares), matching this gun's BOM parts into the category columns
   // - same process as the standalone tool.
-  const onAddRow = (gun_no, qty) => {
-    const code = String(gun_no || "").trim();
+  const onAddRow = (fields) => {
+    const f = fields || {};
+    const code = String(f.gun_no || "").trim();
     if (!code) return;
     setShowAddRow(false);
     dirty((d) => {
@@ -231,7 +260,12 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
         window.notifyError?.("Row exists", `"${code}" is already in this matrix.`);
         return d;
       }
-      return { ...d, rows: [...(d.rows || []), { id: smUid(), gun_no: code, qty: Number(qty) || 1, values: {} }] };
+      return { ...d, rows: [...(d.rows || []), {
+        id: smUid(), gun_no: code, qty: Number(f.qty) || 1, values: {},
+        line: f.line || "", station_no: f.station_no || "", robot_no: f.robot_no || "",
+        gun_type: f.gun_type || "", l_qty: f.l_qty != null ? f.l_qty : "", r_qty: f.r_qty != null ? f.r_qty : "",
+        timer: f.timer || "", atd: f.atd || "",
+      }] };
     });
   };
 
@@ -260,7 +294,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const onRowMetaChange = (rowId, field, val) => {
     dirty((d) => ({
       ...d,
-      rows: (d.rows || []).map((r) => r.id === rowId ? { ...r, [field]: field === "qty" ? (Number(val) || 0) : val } : r),
+      rows: (d.rows || []).map((r) => r.id === rowId ? { ...r, [field]: SM_NUM_ROW_FIELDS.has(field) ? (val === "" ? "" : (Number(val) || 0)) : val } : r),
     }));
   };
 
@@ -413,15 +447,22 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
     if (!importPreview || importPreview.length < 2) return;
     const headers = importPreview[0].map((h) => String(h || "").trim());
     const ix = (label) => headers.findIndex((h) => h.toLowerCase() === label.toLowerCase());
-    const gunIx = [ix("gun_no"), ix("gun"), ix("gun no"), ix("part")].find((n) => n >= 0);
-    const qtyIx = [ix("qty"), ix("quantity")].find((n) => n >= 0);
+    const gunIx = [ix("gun_no"), ix("gun"), ix("gun no"), ix("gun no."), ix("part")].find((n) => n >= 0);
     if (gunIx == null || gunIx < 0) {
-      setImportErr("File must include a 'gun_no' column.");
+      setImportErr("File must include a 'gun' (or 'gun_no') column.");
       return;
     }
+    // Recognize station-identity columns by alias; everything else that
+    // isn't reserved becomes a spare-category column.
+    const stationIxByKey: Record<string, number> = {};
+    const reserved = new Set([gunIx]);
+    Object.entries(SM_STATION_ALIASES).forEach(([key, aliases]) => {
+      const i = headers.findIndex((h) => aliases.includes(h.toLowerCase()));
+      if (i >= 0 && !reserved.has(i)) { stationIxByKey[key] = i; reserved.add(i); }
+    });
     const spareCols = headers
       .map((h, i) => ({ name: h, i }))
-      .filter((c) => c.i !== gunIx && c.i !== qtyIx && c.name);
+      .filter((c) => !reserved.has(c.i) && c.name);
 
     const newCols = [...(draft.cols || [])];
     const colNames = new Set(newCols.map((c) => c.col_name));
@@ -437,16 +478,22 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
     importPreview.slice(1).forEach((row) => {
       const gunNo = String(row[gunIx] || "").trim();
       if (!gunNo) return;
-      const qty = qtyIx != null && qtyIx >= 0 ? (Number(row[qtyIx]) || 1) : 1;
-      const values = {};
+      const station: Record<string, any> = {};
+      Object.entries(stationIxByKey).forEach(([key, i]) => {
+        const v = row[i];
+        if (v == null || String(v) === "") return;
+        station[key] = SM_NUM_ROW_FIELDS.has(key) ? (Number(v) || 0) : String(v);
+      });
+      const qty = station.qty != null ? station.qty : 1;
+      const values: Record<string, string> = {};
       spareCols.forEach((c) => { const v = row[c.i]; if (v != null && String(v) !== "") values[c.name] = String(v); });
       const upper = gunNo.toUpperCase();
       const exists = existingByGun.get(upper) as any;
       if (exists) {
         const ixR = merged.findIndex((m: any) => m.id === exists.id);
-        if (ixR >= 0) merged[ixR] = { ...exists, qty, values: { ...(exists.values || {}), ...values } };
+        if (ixR >= 0) merged[ixR] = { ...exists, ...station, qty, values: { ...(exists.values || {}), ...values } };
       } else {
-        const newRow = { id: smUid(), gun_no: gunNo, qty, values };
+        const newRow = { id: smUid(), gun_no: gunNo, values, ...station, qty };
         merged.push(newRow);
         existingByGun.set(upper, newRow);
       }
@@ -461,10 +508,10 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
 
   // ------- Export --------------------------------------------------------
   const exportAoa = () => {
-    const headers = ["gun_no", "qty", ...(draft.cols || []).map((c) => c.col_name)];
+    const headers = ["gun_no", ...SM_STATION_COLS.map((sc) => sc.key), ...(draft.cols || []).map((c) => c.col_name)];
     const data = (draft.rows || []).map((r) => [
       r.gun_no || "",
-      r.qty || 0,
+      ...SM_STATION_COLS.map((sc) => ((r as any)[sc.key] != null ? (r as any)[sc.key] : "")),
       ...((draft.cols || []).map((c) => (r.values || {})[c.col_name] || "")),
     ]);
     return [headers, ...data];
@@ -670,8 +717,10 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
               <table className="tbl" style={{ minWidth: "100%" }}>
                 <thead>
                   <tr>
-                    <th style={{ minWidth: 110, position: "sticky", left: 0, background: "var(--paper-3)", zIndex: 2 }}>gun_no</th>
-                    <th className="r" style={{ minWidth: 60 }}>qty</th>
+                    <th style={{ minWidth: 110, position: "sticky", left: 0, background: "var(--paper-3)", zIndex: 2 }}>Gun</th>
+                    {SM_STATION_COLS.map((sc) => (
+                      <th key={sc.key} className={sc.num ? "r" : ""} style={{ minWidth: sc.w }}>{sc.label}</th>
+                    ))}
                     {(draft.cols || []).map((c) => (
                       <th key={c.id} style={{ minWidth: 110 }} title={c.col_type}>
                         {c.locked && <span style={{ marginRight: 4, color: "var(--ink-4)" }}>{Icon.lock}</span>}
@@ -692,16 +741,17 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                           style={{ height: 26, fontSize: 11.5, padding: "0 6px", minWidth: 90 }}
                         />
                       </td>
-                      <td className="r mono">
-                        <input
-                          className="input mono"
-                          type="number"
-                          min={0}
-                          value={r.qty || 0}
-                          onChange={(e) => onRowMetaChange(r.id, "qty", e.target.value)}
-                          style={{ height: 26, fontSize: 11.5, padding: "0 6px", width: 56, textAlign: "right" }}
-                        />
-                      </td>
+                      {SM_STATION_COLS.map((sc) => (
+                        <td key={sc.key} className={sc.num ? "r mono" : "mono"}>
+                          <input
+                            className="input mono"
+                            type={sc.num ? "number" : "text"}
+                            value={(r as any)[sc.key] != null ? (r as any)[sc.key] : ""}
+                            onChange={(e) => onRowMetaChange(r.id, sc.key, e.target.value)}
+                            style={{ height: 26, fontSize: 11.5, padding: "0 6px", width: sc.num ? 52 : Math.max(72, sc.w), textAlign: sc.num ? "right" : "left" }}
+                          />
+                        </td>
+                      ))}
                       {(draft.cols || []).map((c) => (
                         <td key={c.id} className="mono">
                           <textarea
@@ -774,6 +824,10 @@ const SMAddRowForm = ({ onAdd, onCancel }) => {
   const { useState: uF, useRef: rF, useEffect: eF } = React;
   const [gunNo, setGunNo] = uF("");
   const [qty, setQty] = uF<number | string>(1);
+  const [line, setLine] = uF("");
+  const [stationNo, setStationNo] = uF("");
+  const [robotNo, setRobotNo] = uF("");
+  const [gunType, setGunType] = uF("");
   const [results, setResults] = uF<Array<{ code: string; name?: string | null }>>([]);
   const [searching, setSearching] = uF(false);
   const ref = rF(null);
@@ -806,8 +860,9 @@ const SMAddRowForm = ({ onAdd, onCancel }) => {
     } catch (_) { setResults([]); } finally { setSearching(false); }
   };
 
-  const pick = (code) => { setResults([]); onAdd(code, qty); };
-  const submit = (e) => { e?.preventDefault(); onAdd(gunNo, qty); };
+  const station = () => ({ line, station_no: stationNo, robot_no: robotNo, gun_type: gunType });
+  const pick = (code) => { setResults([]); onAdd({ gun_no: code, qty, ...station() }); };
+  const submit = (e) => { e?.preventDefault(); onAdd({ gun_no: gunNo, qty, ...station() }); };
 
   return (
     <form onSubmit={submit} style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }}>
@@ -827,7 +882,11 @@ const SMAddRowForm = ({ onAdd, onCancel }) => {
         )}
         {searching ? <div className="mono-sm" style={{ color: "var(--ink-4)", marginTop: 2 }}>searching…</div> : null}
       </div>
-      <div style={{ width: 100 }}>
+      <div style={{ width: 88 }}><div className="label">Line</div><input className="input mono" value={line} onChange={(e) => setLine(e.target.value)} /></div>
+      <div style={{ width: 88 }}><div className="label">Station</div><input className="input mono" value={stationNo} onChange={(e) => setStationNo(e.target.value)} /></div>
+      <div style={{ width: 76 }}><div className="label">Robot</div><input className="input mono" value={robotNo} onChange={(e) => setRobotNo(e.target.value)} /></div>
+      <div style={{ width: 88 }}><div className="label">Type</div><input className="input mono" value={gunType} onChange={(e) => setGunType(e.target.value)} /></div>
+      <div style={{ width: 76 }}>
         <div className="label">qty</div>
         <input className="input mono" type="number" min={0} value={qty} onChange={(e) => setQty(e.target.value)} />
       </div>

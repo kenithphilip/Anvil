@@ -3,7 +3,7 @@
  *
  * Purpose
  *   Establish the test-environment identity layer: 15 auth.users
- *   spanning every role in obara_role and every tenant_member_status,
+ *   spanning every role in anvil_role and every tenant_member_status,
  *   the per-tenant settings row, the SOC 2 access_review ledger seed,
  *   the security audit timeline, MCP tokens, redaction rules, FX
  *   rates, lead times, taxonomies, logistics ports/carriers, magic
@@ -45,7 +45,7 @@
  *     - Used by:  admin.primary, mgr.alpha, fin.alpha
  *
  * Deviations from the prompt
- *   1. The `operator` value is missing from the `obara_role` enum
+ *   1. The `operator` value is missing from the `anvil_role` enum
  *      (no migration ever added it, despite docs/RBAC.md claiming
  *      migration 010 would). This file adds the enum value
  *      idempotently at the top so locked decision A's user fixture
@@ -70,7 +70,7 @@ end $guard$;
 -- ───────────────────────────────────────────────────────────────────
 -- 1. SCHEMA REPAIRS  --  fill enum gaps the migrations missed
 -- ───────────────────────────────────────────────────────────────────
--- Add 'operator' to obara_role if absent. ALTER TYPE ... ADD VALUE
+-- Add 'operator' to anvil_role if absent. ALTER TYPE ... ADD VALUE
 -- IF NOT EXISTS is supported on Postgres 12+ and is itself idempotent.
 --
 -- Must run OUTSIDE any explicit transaction. Postgres rejects use of
@@ -78,8 +78,8 @@ end $guard$;
 -- ('unsafe use of new value of enum type'); psql's implicit
 -- per-statement transaction commits this immediately so the rest of
 -- the file (in an explicit `begin; ... commit;` block below) can
--- cast strings to `obara_role` freely.
-alter type obara_role add value if not exists 'operator';
+-- cast strings to `anvil_role` freely.
+alter type anvil_role add value if not exists 'operator';
 
 -- ───────────────────────────────────────────────────────────────────
 -- 1b. AUTH USERS BACKFILL  --  must run OUTSIDE the explicit
@@ -280,9 +280,9 @@ begin
     ) values (
       default_tenant,
       v_user_id,
-      rec.role::obara_role,
+      rec.role::anvil_role,
       rec.status::tenant_member_status,
-      case when rec.status in ('pending','denied','deactivated') then rec.role::obara_role else null end,
+      case when rec.status in ('pending','denied','deactivated') then rec.role::anvil_role else null end,
       seed_now - case rec.status
         when 'pending'     then interval '1 day'
         when 'denied'      then interval '20 days'

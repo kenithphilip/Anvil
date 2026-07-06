@@ -111,12 +111,12 @@ begin
         else ops
       end,
       case (i % 6)
-        when 0 then 'admin'::obara_role
-        when 1 then 'sales_manager'::obara_role
-        when 2 then 'finance'::obara_role
-        when 3 then 'procurement'::obara_role
-        when 4 then 'sales_engineer'::obara_role
-        else 'operator'::obara_role
+        when 0 then 'admin'::anvil_role
+        when 1 then 'sales_manager'::anvil_role
+        when 2 then 'finance'::anvil_role
+        when 3 then 'procurement'::anvil_role
+        when 4 then 'sales_engineer'::anvil_role
+        else 'operator'::anvil_role
       end,
       case (i % 10)
         when 0 then 'order.amended'

@@ -102,7 +102,7 @@ Identity layer.
   covering sent/failed/verified), `password_reset_attempts`,
   `mfa_attempts`, `magic_link_attempts`.
 
-Schema repair: adds `operator` to `obara_role` enum
+Schema repair: adds `operator` to `anvil_role` enum
 (`alter type ... add value if not exists`). The matrix and
 `docs/RBAC.md` claim migration 010 added it but no migration
 ever did, and `auth.js` already references `operator` in
@@ -310,7 +310,7 @@ namespace, so no WHERE clause here can match them.
 
 Idempotent: every delete returns 0 rows on the second run.
 
-`obara_role.operator` enum value (added by phase 100) is not
+`anvil_role.operator` enum value (added by phase 100) is not
 removed: dropping enum values requires a full type rebuild and
 risks breaking unrelated code.
 
@@ -370,7 +370,7 @@ for storage-bucket smoke tests, follow-up work would either:
 
 ## Known gaps the seed pack repairs
 
-1. `obara_role` enum is missing `operator`. Phase 100 adds it via
+1. `anvil_role` enum is missing `operator`. Phase 100 adds it via
    `alter type ... add value if not exists`, run OUTSIDE the explicit
    transaction wrapper (Postgres rejects use of a newly-added enum
    value in the same transaction that adds it).

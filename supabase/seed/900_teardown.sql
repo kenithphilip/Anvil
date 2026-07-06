@@ -550,7 +550,7 @@ begin
     end loop;
   end if;
 
-  -- The `operator` enum value that 100 added to obara_role stays. We
+  -- The `operator` enum value that 100 added to anvil_role stays. We
   -- never drop enum values: that requires a full type rebuild and
   -- could break unrelated code. Leaving `operator` in place is safe.
 end $p100$;

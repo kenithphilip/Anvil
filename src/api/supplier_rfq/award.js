@@ -14,7 +14,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-import { feedCompositionLine } from "../_lib/rfq-composition.js";
+import { feedCompositionLine, loadVendorMaps } from "../_lib/rfq-composition.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -50,14 +50,14 @@ export default async function handler(req, res) {
     let eligible = 0;
     const feedErrors = [];
     if (sourceQuoteId) {
-      const [quotesQ, linesQ, vendorsQ] = await Promise.all([
+      const [quotesQ, linesQ, vendorMaps] = await Promise.all([
         svc.from("supplier_quotes").select("invitation_id, line_no, unit_price, currency, supplier_quote_ref, vendor_id")
           .eq("tenant_id", ctx.tenantId).eq("rfq_id", body.rfq_id),
         svc.from("supplier_rfq_lines").select("line_no, part_number, quantity")
           .eq("tenant_id", ctx.tenantId).eq("rfq_id", body.rfq_id),
-        svc.from("vendors").select("id, vendor_name").eq("tenant_id", ctx.tenantId),
+        loadVendorMaps(svc, ctx),
       ]);
-      const vendorName = new Map((vendorsQ.data || []).map((v) => [v.id, v.vendor_name]));
+      const { vendorName, vendorSupplier } = vendorMaps;
       const lineMeta = new Map((linesQ.data || []).map((l) => [l.line_no, l]));
       for (const aw of body.awards) {
         if (aw.line_no == null || !aw.invitation_id) continue;
@@ -72,6 +72,7 @@ export default async function handler(req, res) {
             currency: win.currency,
             supplier_quote_ref: win.supplier_quote_ref,
             vendor_name: vendorName.get(win.vendor_id) || null,
+            supplier_id: vendorSupplier.get(win.vendor_id) || null,
             part_number: meta.part_number,
             quantity: meta.quantity,
           });

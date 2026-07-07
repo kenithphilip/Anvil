@@ -22,6 +22,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { runExtractionPipeline } from "../_lib/docai/run.js";
+import { withEngineOverride } from "../_lib/docai/index.js";
 import { safeFetch } from "../_lib/safe-fetch.js";
 import { probePdfPageCount } from "../_lib/docai/pdf-chunker.js";
 
@@ -50,7 +51,13 @@ export default async function handler(req, res) {
     requirePermission(ctx, "write");
     const body = await readBody(req);
     const svc = serviceClient();
-    const settings = await tenantSettings(svc, ctx.tenantId);
+    let settings = await tenantSettings(svc, ctx.tenantId);
+
+    // Per-run engine override (SO workspace "run extraction with engine X").
+    // Scopes ONLY this run — never writes the tenant default. Prepends the
+    // (validated) engine to the provider order so it runs first, keeping the
+    // tenant's order as fallback. Unknown/blank -> unchanged.
+    settings = withEngineOverride(settings, body?.provider);
 
     let sourceBytes = body?.bytes_base64
       ? Buffer.from(body.bytes_base64, "base64")

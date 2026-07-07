@@ -43,6 +43,23 @@ const ADAPTERS = {
   llamaparse,
 };
 
+// Registered adapter names — the single source of truth for validating a
+// caller-supplied engine override (e.g. the SO workspace "run extraction with
+// engine X" picker) before it's trusted as a provider-order entry.
+export const ADAPTER_NAMES = Object.keys(ADAPTERS);
+
+// Apply a caller's per-run engine override to a settings object WITHOUT
+// mutating tenant config: prepend the (validated) engine to the provider order
+// so it runs first, keeping the tenant's existing order as fallback. A blank
+// or unknown engine returns settings unchanged. Used by /api/docai/extract for
+// the SO workspace "run extraction with engine X" picker.
+export const withEngineOverride = (settings, provider) => {
+  const eng = typeof provider === "string" ? provider.trim().toLowerCase() : null;
+  if (!eng || !ADAPTER_NAMES.includes(eng)) return settings;
+  const rest = (settings?.docai_provider_order || []).filter((a) => a !== eng);
+  return { ...settings, docai_provider_order: [eng, ...rest] };
+};
+
 const guessSourceType = ({ filename, mime, bytes }) => {
   const f = (filename || "").toLowerCase();
   if (f.endsWith(".xlsx") || f.endsWith(".xlsm") || f.endsWith(".xls")) return "xlsx";

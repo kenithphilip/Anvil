@@ -1,7 +1,7 @@
 // Unit tests for the Document AI v2 dispatcher.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { dispatchExtract, buildPromptOverrides } from "../api/_lib/docai/index.js";
+import { dispatchExtract, buildPromptOverrides, withEngineOverride, ADAPTER_NAMES } from "../api/_lib/docai/index.js";
 import * as reducto from "../api/_lib/docai/reducto.js";
 import * as azureDI from "../api/_lib/docai/azure_di.js";
 import * as unstructured from "../api/_lib/docai/unstructured.js";
@@ -36,6 +36,36 @@ describe("docai / prompt overrides", () => {
     const overrides = { "cust-1": { "lines[0].partNumber": [{ from: "X", to: "Y" }] } };
     const got = buildPromptOverrides({ docai_prompt_overrides: overrides }, "cust-1");
     expect(got).toEqual(overrides["cust-1"]);
+  });
+});
+
+describe("docai / per-run engine override (SO workspace picker)", () => {
+  it("registers llamaparse + gemini + claude among adapters", () => {
+    expect(ADAPTER_NAMES).toContain("llamaparse");
+    expect(ADAPTER_NAMES).toContain("gemini");
+    expect(ADAPTER_NAMES).toContain("claude");
+  });
+  it("prepends a valid engine, keeping the tenant order as fallback", () => {
+    const out = withEngineOverride({ docai_provider_order: ["reducto", "claude"] }, "llamaparse");
+    expect(out.docai_provider_order).toEqual(["llamaparse", "reducto", "claude"]);
+  });
+  it("dedupes when the engine is already in the order (moves it to the front)", () => {
+    const out = withEngineOverride({ docai_provider_order: ["claude", "gemini"] }, "gemini");
+    expect(out.docai_provider_order).toEqual(["gemini", "claude"]);
+  });
+  it("runs only the engine when the tenant has no custom order", () => {
+    const out = withEngineOverride({}, "gemini");
+    expect(out.docai_provider_order).toEqual(["gemini"]);
+  });
+  it("ignores a blank or unknown engine (settings unchanged)", () => {
+    const s = { docai_provider_order: ["claude"] };
+    expect(withEngineOverride(s, "")).toBe(s);
+    expect(withEngineOverride(s, "not_a_real_engine")).toBe(s);
+    expect(withEngineOverride(s, null)).toBe(s);
+  });
+  it("is case/space tolerant on the engine name", () => {
+    const out = withEngineOverride({ docai_provider_order: [] }, "  LlamaParse ");
+    expect(out.docai_provider_order).toEqual(["llamaparse"]);
   });
 });
 

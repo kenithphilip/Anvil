@@ -22,6 +22,7 @@ import * as docling from "./docling.js";
 import * as marker from "./marker.js";
 import * as gemini from "./gemini.js";
 import * as office from "./office.js";
+import * as llamaparse from "./llamaparse.js";
 import { allowedToCall, recordCall } from "../cost_guard.js";
 import { serviceClient } from "../supabase.js";
 import { rankAdaptersForCustomer } from "./adapter-learning.js";
@@ -37,6 +38,9 @@ const ADAPTERS = {
   docling,
   marker,
   gemini,
+  // Opt-in (issue #210): OFF by default — not in the default provider
+  // order and skipped unless the tenant configures a LlamaCloud key.
+  llamaparse,
 };
 
 const guessSourceType = ({ filename, mime, bytes }) => {

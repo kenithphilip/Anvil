@@ -615,7 +615,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
     const rec = draft.recommended || [];
     if (!rec.length) { window.notifyError?.("Nothing to export", "Recompile the recommended sheet first."); return; }
     const filename = `RecommendedSpares_${(draft.name || "untitled").replace(/[^A-Za-z0-9_-]+/g, "_")}`;
-    const cols = ["sr_no", "description", "part_no", "gun_number", "installed_qty", "recommended_qty", "priority", "item_type", "customer_part_no", "lead_time_days", "remarks", "quote_ref", "po_ref"];
+    const cols = ["sr_no", "description", "part_no", "gun_number", "installed_qty", "recommended_min", "recommended_max", "recommended_qty", "priority", "item_type", "customer_part_no", "lead_time_days", "remarks", "quote_ref", "po_ref"];
     const aoa = [cols, ...rec.map((r) => cols.map((c) => (r[c] != null ? r[c] : "")))];
     if (format === "csv") return smDownload(filename + ".csv", "text/csv", smAoaToDelim(aoa, ","));
     if (format === "tsv") return smDownload(filename + ".tsv", "text/tab-separated-values", smAoaToDelim(aoa, "\t"));
@@ -839,6 +839,8 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                     { label: "#", style: { width: 40 } },
                     { label: "Description" }, { label: "Part no" }, { label: "Gun" },
                     { label: "Installed", cls: "r", title: "Number of guns using this part" },
+                    { label: "Min", cls: "r", title: "Suggested minimum stock (reorder point) — auto from installed qty + type" },
+                    { label: "Max", cls: "r", title: "Suggested maximum stock — auto from installed qty + type" },
                     { label: "Recommended", cls: "r" },
                     { label: "Priority" }, { label: "Type" }, { label: "Customer Part No" },
                     { label: "Lead Time" }, { label: "Remarks" }, { label: "Quote Ref" }, { label: "PO Ref" },
@@ -857,6 +859,12 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                       <td className="mono"><span className="pri">{r.part_no}</span></td>
                       <td className="mono-sm">{r.gun_number || ""}</td>
                       <td className="r mono">{r.installed_qty != null ? r.installed_qty : ""}</td>
+                      <td className="r mono">
+                        <input className="input mono" type="number" value={r.recommended_min != null ? r.recommended_min : ""} onChange={(e) => onRecEdit(r.id, "recommended_min", e.target.value)} style={{ height: 26, width: 56, textAlign: "right", fontSize: 11.5, padding: "0 6px" }} />
+                      </td>
+                      <td className="r mono">
+                        <input className="input mono" type="number" value={r.recommended_max != null ? r.recommended_max : ""} onChange={(e) => onRecEdit(r.id, "recommended_max", e.target.value)} style={{ height: 26, width: 56, textAlign: "right", fontSize: 11.5, padding: "0 6px" }} />
+                      </td>
                       <td className="r mono">
                         <input className="input mono" type="number" value={r.recommended_qty != null ? r.recommended_qty : ""} onChange={(e) => onRecEdit(r.id, "recommended_qty", e.target.value)} style={{ height: 26, width: 76, textAlign: "right", fontSize: 11.5, padding: "0 6px" }} />
                       </td>

@@ -23,6 +23,15 @@ import { ExtractionProgress } from "../components/ExtractionProgress";
 // all keyed by ?id= in the URL hash.
 // ============================================================
 
+// Engines an operator can pick for a single "run extraction" (the endpoint
+// prepends the choice to the tenant provider order for that run only, and
+// validates it against the registered adapters). Mirrors admin's
+// DOCAI_ADAPTERS_LIST; kept local so the workspace has no admin-screen import.
+const DOCAI_ENGINE_CHOICES = [
+  "gemini", "llamaparse", "claude", "mistral_ocr",
+  "reducto", "azure_di", "unstructured", "docling", "marker",
+] as const;
+
 // Temporary perf probe: logs how long each open-path fetch takes so we can
 // see which one is slow ([so-perf] in the console). Remove once tuned.
 const soPerf = <T,>(label: string, p: Promise<T>): Promise<T> => {
@@ -80,6 +89,10 @@ const WiredSOWorkspace = () => {
   // validator_issues, anomalies) backing the reconciliation tab's
   // per-field provenance + per-line validation flags.
   const [extractionRun, setExtractionRun] = u<any>(null);
+  // Per-run extraction engine override ("" = tenant default). Lets an operator
+  // retry THIS order with a specific engine (e.g. llamaparse for a complex
+  // table) without touching the tenant-wide provider order in Admin.
+  const [extractEngine, setExtractEngine] = u<string>("");
 
   // Read order id + tab from URL hash query: #/so?id=...&tab=schedule
   const hashQuery = (() => {
@@ -500,6 +513,8 @@ const WiredSOWorkspace = () => {
       const out: any = await (AnvilBackend as any)?.docai?.extract?.({
         source_id: sourceDocId,
         order_id: o.id,
+        // Per-run engine override; omitted when "" so the tenant default runs.
+        ...(extractEngine ? { provider: extractEngine } : {}),
       });
       const lines = Array.isArray(out?.normalized?.lines) ? out.normalized.lines : [];
       const customer = out?.normalized?.customer || null;
@@ -1689,6 +1704,22 @@ const WiredSOWorkspace = () => {
               docai/extract against the attached PO and merges the
               normalized lines into the order so the workspace's
               reconciliation tab populates. */}
+          {/* Per-run engine picker: retry THIS order with a specific
+              extraction engine (e.g. llamaparse for a complex table)
+              without changing the tenant default in Admin. "" = default. */}
+          <select
+            className="input"
+            aria-label="extraction engine"
+            value={extractEngine}
+            disabled={!canWrite || busy || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
+            onChange={(e) => setExtractEngine(e.target.value)}
+            title="Which engine runs extraction for this order (this run only). Default uses the tenant provider order."
+            style={{ minWidth: 130 }}>
+            <option value="">engine: default</option>
+            {DOCAI_ENGINE_CHOICES.map((eng) => (
+              <option key={eng} value={eng}>{eng}</option>
+            ))}
+          </select>
           <Btn sm kind="ghost"
                disabled={!canWrite || busy || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
                onClick={runExtraction}
@@ -1697,9 +1728,11 @@ const WiredSOWorkspace = () => {
                    ? "No PO attached to this order"
                    : (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")
                      ? "Extraction is only available before approval"
-                     : "Re-run docai/extract against the attached PO"
+                     : (extractEngine
+                         ? "Re-run docai/extract with " + extractEngine + " (this run only)"
+                         : "Re-run docai/extract against the attached PO")
                }>
-            {Icon.cycle} {busy ? "extracting…" : "run extraction"}
+            {Icon.cycle} {busy ? "extracting…" : (extractEngine ? "run with " + extractEngine : "run extraction")}
           </Btn>
           {/* Run validation: scores the extracted lines against the
               anomaly rule library and persists findings into
@@ -2016,24 +2049,43 @@ const WiredSOWorkspace = () => {
             {draftLines.length === 0 ? (
               <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
                 <div style={{ marginBottom: 12 }}>
-                  No line items extracted yet. Re-run docai/extract against the
-                  attached PO, or attach a higher-quality PO.
+                  No line items extracted yet. Re-run extraction — try a different
+                  engine (e.g. <b>llamaparse</b> for complex tables) — or attach a
+                  higher-quality PO.
                 </div>
                 {/* Inline CTA so the operator does not have to scroll back
                     to the top action bar. Mirrors the same disabled
-                    conditions as the action-bar copy at the top. */}
-                <Btn kind="primary"
-                     disabled={!canWrite || busy || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
-                     onClick={runExtraction}
-                     title={
-                       !sourceDocId
-                         ? "No PO attached to this order"
-                         : (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")
-                           ? "Extraction is only available before approval"
-                           : "Re-run docai/extract against the attached PO"
-                     }>
-                  {Icon.cycle} {busy ? "extracting…" : "run extraction"}
-                </Btn>
+                    conditions as the action-bar copy at the top, and offers
+                    the same per-run engine picker right where extraction
+                    came back empty. */}
+                <div className="row" style={{ gap: 8, justifyContent: "center", alignItems: "center", flexWrap: "wrap" }}>
+                  <select
+                    className="input"
+                    aria-label="extraction engine"
+                    value={extractEngine}
+                    disabled={!canWrite || busy || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
+                    onChange={(e) => setExtractEngine(e.target.value)}
+                    style={{ minWidth: 140 }}>
+                    <option value="">engine: default</option>
+                    {DOCAI_ENGINE_CHOICES.map((eng) => (
+                      <option key={eng} value={eng}>{eng}</option>
+                    ))}
+                  </select>
+                  <Btn kind="primary"
+                       disabled={!canWrite || busy || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
+                       onClick={runExtraction}
+                       title={
+                         !sourceDocId
+                           ? "No PO attached to this order"
+                           : (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")
+                             ? "Extraction is only available before approval"
+                             : (extractEngine
+                                 ? "Re-run docai/extract with " + extractEngine + " (this run only)"
+                                 : "Re-run docai/extract against the attached PO")
+                       }>
+                    {Icon.cycle} {busy ? "extracting…" : (extractEngine ? "run with " + extractEngine : "run extraction")}
+                  </Btn>
+                </div>
               </div>
             ) : (
               (() => {

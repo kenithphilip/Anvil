@@ -99,7 +99,7 @@ const mostCommon = (xs) => {
 // normalised shape the rest of run.js expects.
 export const mergeChunkResults = (chunkResults, chunks) => {
   if (!chunkResults.length) {
-    return { ok: false, error: "no_chunks", lines: [], customer: null, confidences: {}, attempts: [] };
+    return { ok: false, reason: "no_chunks", error: "no_chunks", lines: [], customer: null, confidences: {}, attempts: [] };
   }
   if (chunkResults.length === 1) {
     return { ...chunkResults[0] };
@@ -157,10 +157,29 @@ export const mergeChunkResults = (chunkResults, chunks) => {
   const attempts = chunkResults.flatMap((r, i) =>
     (r.attempts || []).map((a) => ({ ...a, _chunk_index: i }))
   );
+  // Carry model identity + failure diagnostics THROUGH the merge. Previously
+  // these were dropped, so a multi-chunk run that failed collapsed to
+  // status_reason='fail_unknown' with selected_model=null (rendered "unknown
+  // failure / model —") — the exact black box hit on the 7-page P250432265 PO.
+  // Now the merged result surfaces the real model + the underlying reason.
+  const selectedModel = mostCommon(chunkResults.map((r) => r.selected_model).filter(Boolean))
+    || chunkResults.find((r) => r.selected_model)?.selected_model || null;
+  const modelSelectionReason = chunkResults.find((r) => r.model_selection_reason)?.model_selection_reason || null;
+  // On total failure, surface a representative reason/error from the chunks
+  // (most-common reason; first non-empty error) instead of silently null.
+  const failedResults = chunkResults.filter((r) => !r.ok);
+  const failReason = okAny ? null
+    : (mostCommon(failedResults.map((r) => r.reason).filter(Boolean))
+       || failedResults.find((r) => r.reason)?.reason || null);
+  const failError = okAny ? null : (failedResults.find((r) => r.error)?.error || null);
 
   return {
     ok: okAny,
     adapter_used: adapterUsed,
+    selected_model: selectedModel,
+    model_selection_reason: modelSelectionReason,
+    ...(failReason ? { reason: failReason } : {}),
+    ...(failError ? { error: failError } : {}),
     latency_ms: latencyMs,
     classification,
     customer,
@@ -324,7 +343,7 @@ export const chunkedExtract = async (args) => {
       // merger doesn't lose chunk-ordering. Operator can re-run
       // extraction (Phase D adds the partial-resume path so
       // only the failed chunk re-runs).
-      chunkResults.push({ ok: false, error: e?.message || String(e), lines: [], customer: null, confidences: {}, attempts: [] });
+      chunkResults.push({ ok: false, reason: "adapter_threw", error: e?.message || String(e), lines: [], customer: null, confidences: {}, attempts: [] });
       emit(eventSink, {
         stage: "chunk_failed",
         chunk_index: ch.index,

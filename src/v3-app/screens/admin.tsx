@@ -5526,6 +5526,16 @@ const DocAICostPanel: React.FC = () => {
       setForm({ ...form, docai_provider_order: [...cur, name] });
     }
   };
+  // Engine selector: make `name` the PRIMARY extraction engine (first in the
+  // order), keeping the rest as fallbacks. Adds it if it wasn't in the order.
+  const setPrimaryAdapter = (name: string) => {
+    if (!name) return;
+    const rest = form.docai_provider_order.filter((a) => a !== name);
+    setForm({ ...form, docai_provider_order: [name, ...rest] });
+  };
+  // A configured engine has a platform key (env) or a tenant key.
+  const adapterConfigured = (name: string): boolean =>
+    !!(data.adapter_health?.[name] || (data as any).tenant_has_key?.[name]);
 
   return (
     <>
@@ -5639,6 +5649,32 @@ const DocAICostPanel: React.FC = () => {
         )}
         {editing && (
           <div style={{ display: "grid", gap: 14 }}>
+            <div>
+              <div className="lbl" style={{ marginBottom: 6 }}>Extraction engine (primary)</div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <select
+                  className="input"
+                  style={{ minWidth: 180 }}
+                  value={form.docai_provider_order[0] || ""}
+                  onChange={(e) => setPrimaryAdapter(e.target.value)}
+                >
+                  {!form.docai_provider_order[0] && <option value="">select engine…</option>}
+                  {DOCAI_ADAPTERS_LIST.map((a) => (
+                    <option key={a} value={a}>
+                      {a}{adapterConfigured(a) ? "" : " (no key)"}
+                    </option>
+                  ))}
+                </select>
+                {form.docai_provider_order[0] && (
+                  <Chip k={adapterConfigured(form.docai_provider_order[0]) ? "good" : "bad"}>
+                    {adapterConfigured(form.docai_provider_order[0]) ? "configured" : "no key — will be skipped"}
+                  </Chip>
+                )}
+              </div>
+              <div className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 4 }}>
+                The chosen engine runs first; the rest below are fallbacks. Pick one that shows “configured”.
+              </div>
+            </div>
             <div>
               <div className="lbl" style={{ marginBottom: 6 }}>Provider order (drag-equivalent: move up/down or toggle)</div>
               <div style={{ display: "grid", gap: 6 }}>

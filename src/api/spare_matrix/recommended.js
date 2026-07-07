@@ -11,7 +11,8 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 
-const EDITABLE = ["recommended_qty", "priority", "item_type", "customer_part_no", "lead_time_days", "remarks", "po_ref"];
+const EDITABLE = ["recommended_qty", "recommended_min", "recommended_max", "priority", "item_type", "customer_part_no", "lead_time_days", "remarks", "po_ref"];
+const NUMERIC = new Set(["recommended_qty", "recommended_min", "recommended_max"]);
 const numOrNull = (v) => (v === "" || v == null ? null : Number(v));
 
 export default async function handler(req, res) {
@@ -29,7 +30,7 @@ export default async function handler(req, res) {
 
     const patch = { updated_at: new Date().toISOString() };
     for (const f of EDITABLE) {
-      if (f in body) patch[f] = f === "recommended_qty" ? numOrNull(body[f]) : (body[f] === "" ? null : body[f]);
+      if (f in body) patch[f] = NUMERIC.has(f) ? numOrNull(body[f]) : (body[f] === "" ? null : body[f]);
     }
 
     const up = await svc.from("recommended_spares")

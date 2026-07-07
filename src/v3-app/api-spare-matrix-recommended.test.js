@@ -109,6 +109,10 @@ describe("recompute_recommended (PR4)", () => {
     expect(byKey["CAP TIP|4-TP2109-1"].id).toBe("e1");
     expect(byKey["CAP TIP|CT-16-D"].id).toBeTruthy();
     expect(byKey["SHUNT|SHN-1"].id).toBeTruthy();
+    // min/max policy seeded: consumables held in bulk near installed qty.
+    expect(byKey["SHUNT|SHN-1"].recommended_min).toBe(2);  // installed 2
+    expect(byKey["SHUNT|SHN-1"].recommended_max).toBe(3);  // ceil(2*1.5)
+    expect(byKey["CAP TIP|CT-16-D"].recommended_max).toBe(2); // installed 1 -> ceil(1.5)
   });
 
   it("404 for an unknown matrix", async () => {

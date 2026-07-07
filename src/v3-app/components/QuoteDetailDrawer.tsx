@@ -122,6 +122,12 @@ export const QuoteDetailDrawer: React.FC<{
   // Admin-defined option lists for line-item dropdowns (Admin > Settings).
   const [unitOptions, setUnitOptions] = useState<string[]>([]);
   const [sourceOptions, setSourceOptions] = useState<string[]>([]);
+  // Supplier picker for line-level supplier selection (migration 167).
+  // Names come from the suppliers master + RFQ vendors; name -> id resolves
+  // a picked name to the suppliers-master FK (RFQ-only vendors stay null).
+  const [supplierOptions, setSupplierOptions] = useState<string[]>([]);
+  const [supplierIdByName, setSupplierIdByName] = useState<Record<string, string>>({});
+  const [supplierNameById, setSupplierNameById] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -157,6 +163,36 @@ export const QuoteDetailDrawer: React.FC<{
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Supplier options for the per-line picker: suppliers master (name -> id)
+  // plus RFQ vendors (name only). Mirrors QuoteComposition's list so the same
+  // names appear on both surfaces. Optional — failures leave the list empty.
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const [sup, ven]: any[] = await Promise.all([
+          Promise.resolve((AnvilBackend as any)?.inventory?.suppliers?.list?.()).catch(() => null),
+          Promise.resolve(AnvilBackend?.supplierRfq?.listVendors?.()).catch(() => null),
+        ]);
+        if (cancel) return;
+        const names = new Set<string>();
+        const idByName: Record<string, string> = {};
+        const nameById: Record<string, string> = {};
+        (Array.isArray(sup) ? sup : (sup?.suppliers || sup?.rows || [])).forEach((s: any) => {
+          if (s?.supplier_name) {
+            names.add(s.supplier_name);
+            if (s.id) { idByName[s.supplier_name] = s.id; nameById[s.id] = s.supplier_name; }
+          }
+        });
+        (Array.isArray(ven) ? ven : (ven?.vendors || [])).forEach((v: any) => v?.vendor_name && names.add(v.vendor_name));
+        setSupplierOptions(Array.from(names).sort());
+        setSupplierIdByName(idByName);
+        setSupplierNameById(nameById);
+      } catch { /* suppliers optional */ }
+    })();
+    return () => { cancel = true; };
+  }, []);
 
   const setField = (k: string, v: any) => setDraft((d: Quote) => ({ ...d, [k]: v }));
 
@@ -537,8 +573,8 @@ export const QuoteDetailDrawer: React.FC<{
                 </div>
               </div>
               <div className="mono-sm" style={{ color: "var(--ink-4)", marginBottom: 10 }}>
-                Add or remove items and set quantity, units and source country (from the item master).
-                Pricing, source selection and overheads are decided at the Composition stage.
+                Add or remove items and set quantity, units, origin and supplier (from the item master
+                and suppliers list). Pricing and overheads are decided at the Composition stage.
               </div>
               {/* Admin-defined dropdowns (Admin > Settings). Datalists allow a
                   controlled list while still accepting a free-typed value. */}
@@ -547,6 +583,9 @@ export const QuoteDetailDrawer: React.FC<{
               </datalist>
               <datalist id="qd-source-options">
                 {sourceOptions.map((s) => <option key={s} value={s} />)}
+              </datalist>
+              <datalist id="qd-supplier-options">
+                {supplierOptions.map((s) => <option key={s} value={s} />)}
               </datalist>
               {picking && (
                 <Card title="Item master" eyebrow="Pick an item to append a prefilled line" style={{ marginBottom: 10 }}>
@@ -594,7 +633,7 @@ export const QuoteDetailDrawer: React.FC<{
               ) : (
                 <table className="tbl" style={{ fontSize: 12 }}>
                   <thead><tr>
-                    <th>#</th><th>Part</th><th>Description</th><th className="r">Qty</th><th>Units</th><th>Source country</th><th></th>
+                    <th>#</th><th>Part</th><th>Description</th><th className="r">Qty</th><th>Units</th><th>Source country</th><th>Supplier</th><th></th>
                   </tr></thead>
                   <tbody>
                     {computedLines.map((ln, i) => (
@@ -604,7 +643,8 @@ export const QuoteDetailDrawer: React.FC<{
                         <td><input className="input" style={{ width: 240 }} value={ln.description || ""} onChange={(e) => setLine(i, "description", e.target.value)} /></td>
                         <td className="r"><input className="input mono r" style={{ width: 70 }} type="number" step="0.01" value={ln.qty ?? ""} onChange={(e) => setLine(i, "qty", e.target.value === "" ? null : Number(e.target.value))} /></td>
                         <td><input className="input mono" list="qd-unit-options" style={{ width: 80 }} value={ln.uom || ""} onChange={(e) => setLine(i, "uom", e.target.value)} /></td>
-                        <td><input className="input mono" list="qd-source-options" style={{ width: 120 }} value={ln.source_country || ""} placeholder="e.g. O-KOREA" onChange={(e) => setLine(i, "source_country", e.target.value)} /></td>
+                        <td><input className="input mono" list="qd-source-options" style={{ width: 120 }} value={ln.source_country || ""} placeholder="origin" onChange={(e) => setLine(i, "source_country", e.target.value)} /></td>
+                        <td><input className="input" list="qd-supplier-options" style={{ width: 150 }} aria-label={"supplier line " + (i + 1)} value={ln.supplier_name ?? (ln.supplier_id ? (supplierNameById[ln.supplier_id] || "") : "")} placeholder="choose supplier" onChange={(e) => { const name = e.target.value; setLines((arr) => arr.map((l, idx) => idx === i ? { ...l, supplier_name: name, supplier_id: supplierIdByName[name] || null } : l)); }} /></td>
                         <td><Btn sm kind="ghost" onClick={() => removeLine(i)} title="Remove line">x</Btn></td>
                       </tr>
                     ))}

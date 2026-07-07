@@ -32,7 +32,7 @@ const VALID_ORDER_MODES = new Set(["SPARES", "SPARES_ASSEMBLY", "PROJECT_FOR", "
 // JSONB silently dropped operator edits + every per-line tax
 // component. Falls back to JSONB only when quote_lines has no
 // rows for this quote (pre-108 quotes that pre-date the backfill).
-const buildSalesOrderFromLines = (quote, lineRows) => {
+export const buildSalesOrderFromLines = (quote, lineRows) => {
   const lineItems = (lineRows || []).map((ql, i) => {
     const qty = Number(ql.qty || 0);
     const rate = Number(ql.discounted_unit_price ?? ql.listed_unit_price ?? 0);
@@ -59,6 +59,7 @@ const buildSalesOrderFromLines = (quote, lineRows) => {
         .reduce((a, b) => a + b, 0) || null,
       customer_part_number: ql.customer_part_number || null,
       source_country: ql.source_country || null,
+      supplier_id: ql.supplier_id || null,
       discount_pct: ql.discount_pct != null ? Number(ql.discount_pct) : null,
       amount: Number(ql.line_amount ?? (qty * rate)),
     };

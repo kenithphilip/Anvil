@@ -4001,7 +4001,7 @@ export default WiredAdminCRUD;
 // other adapters.
 const DOCAI_ADAPTERS_LIST = [
   "gemini", "claude", "reducto", "azure_di", "unstructured",
-  "docling", "marker", "mistral_ocr",
+  "docling", "marker", "mistral_ocr", "llamaparse",
 ] as const;
 
 type CostStatus = {

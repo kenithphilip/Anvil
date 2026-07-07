@@ -5,22 +5,45 @@
 import { describe, it, expect, afterEach } from "vitest";
 import * as llamaparse from "../api/_lib/docai/llamaparse.js";
 
-const { parseMarkdownTable, normalizeFromMarkdown, tier } = llamaparse.__test__;
+const { parseMarkdownTable, normalizeFromMarkdown, scoreConfidence, tier } = llamaparse.__test__;
 
-afterEach(() => { delete process.env.LLAMA_CLOUD_API_KEY; delete process.env.LLAMAPARSE_TIER; });
+afterEach(() => {
+  delete process.env.LLAMA_CLOUD_API_KEY;
+  delete process.env.LLAMAPARSE_API_KEY;
+  delete process.env.LLAMAPARSE_TIER;
+});
 
 describe("llamaparse adapter — gating (off by default, env-keyed like claude)", () => {
-  it("isConfigured is false with no LLAMA_CLOUD_API_KEY", () => {
+  it("isConfigured is false with no key set", () => {
     expect(llamaparse.isConfigured({})).toBe(false);
     expect(llamaparse.isConfigured(null)).toBe(false);
   });
-  it("isConfigured is true only when LLAMA_CLOUD_API_KEY is set", () => {
-    process.env.LLAMA_CLOUD_API_KEY = "llx-test";
+  it("isConfigured is true when LLAMAPARSE_API_KEY is set (the deployed var)", () => {
+    process.env.LLAMAPARSE_API_KEY = "llx-test";
+    expect(llamaparse.isConfigured({})).toBe(true);
+  });
+  it("isConfigured falls back to LLAMA_CLOUD_API_KEY (legacy configs)", () => {
+    process.env.LLAMA_CLOUD_API_KEY = "legacy";
     expect(llamaparse.isConfigured({})).toBe(true);
   });
   it("extract fails soft when no key is set", async () => {
     const r = await llamaparse.extract({ bytes: Buffer.from("x") });
     expect(r.ok).toBe(false);
+  });
+});
+
+describe("llamaparse adapter — confidence must clear the 0.85 fallback threshold", () => {
+  // Old code hardcoded 0.8, which sat permanently below the dispatcher's
+  // default docai_fallback_confidence (0.85), so LlamaParse could never win
+  // as the primary — the dispatcher always fell through to the next adapter.
+  it("a complete line table scores ABOVE 0.85", () => {
+    expect(scoreConfidence([{ partNumber: "A", quantity: 1 }, { partNumber: "B", quantity: 2 }])).toBeGreaterThan(0.85);
+  });
+  it("a table with no quantities stays BELOW 0.85 (chain falls through)", () => {
+    expect(scoreConfidence([{ partNumber: "A", quantity: null }, { partNumber: "B", quantity: null }])).toBeLessThan(0.85);
+  });
+  it("no lines => low (0.4)", () => {
+    expect(scoreConfidence([])).toBe(0.4);
   });
 });
 

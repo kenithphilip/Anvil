@@ -345,6 +345,7 @@ export default async function handler(req, res) {
       docling:       !!process.env.DOCLING_ENDPOINT,
       marker:        !!process.env.MARKER_ENDPOINT,
       mistral_ocr:   !!process.env.MISTRAL_API_KEY,
+      llamaparse:    !!process.env.LLAMAPARSE_API_KEY || !!process.env.LLAMA_CLOUD_API_KEY,
     };
     // Per-tenant key presence (without revealing the key itself).
     const tenantHasKey = {
@@ -356,6 +357,7 @@ export default async function handler(req, res) {
       docling:       !!settings?.docai_docling_endpoint,
       marker:        !!settings?.docai_marker_endpoint,
       mistral_ocr:   false,
+      llamaparse:    false,                                            // platform-wide env key only
     };
 
     // Bet 4: roll up which parse_method each extraction took so the

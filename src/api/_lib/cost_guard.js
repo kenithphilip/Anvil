@@ -72,6 +72,9 @@ const DEFAULT_COST_USD = {
   // (~$0.002 per page); operator overrides via env.
   mistral_ocr:   Number(process.env.COST_USD_MISTRAL_OCR_3
                    || process.env.COST_USD_MISTRAL_OCR           || 0.001),
+  // LlamaParse (LlamaCloud). "agentic" tier ~30 credits/page and credits
+  // ~$1/1000 -> ~$0.03 for a 1-page PO; override per tier via env.
+  llamaparse:    Number(process.env.COST_USD_LLAMAPARSE          || 0.03),
 };
 
 const today = () => new Date().toISOString().slice(0, 10);     // YYYY-MM-DD

@@ -52,9 +52,18 @@ export default async function handler(req, res) {
       .eq("tenant_id", ctx.tenantId).eq("matrix_id", id)
       .order("sr_no", { ascending: true, nullsFirst: false });
     if (recQ.error) throw new Error(recQ.error.message);
-    const feedRows = (recQ.data || []).filter((r) => Number(r.recommended_qty) > 0);
+    // Optional selection: feed only the checked rows (body.row_ids), grouped
+    // (body.group, e.g. "spares" / "consumables") so a matrix can produce
+    // SEPARATE draft quotes per group. Default: all qty>0 rows, group "all".
+    const groupRaw = String(body.group || "all").toLowerCase().slice(0, 40);
+    const rowIds = Array.isArray(body.row_ids) && body.row_ids.length
+      ? new Set(body.row_ids.map(String)) : null;
+    const feedRows = (recQ.data || []).filter((r) =>
+      Number(r.recommended_qty) > 0 && (!rowIds || rowIds.has(String(r.id))));
     if (!feedRows.length) {
-      return json(res, 400, { error: { message: "No rows to quote. Set a recommended quantity (> 0) on at least one spare first." } });
+      return json(res, 400, { error: { message: rowIds
+        ? "None of the selected rows have a recommended quantity > 0."
+        : "No rows to quote. Set a recommended quantity (> 0) on at least one spare first." } });
     }
 
     // Build line_items JSONB (unpriced) from the recommended rows.
@@ -80,9 +89,12 @@ export default async function handler(req, res) {
       const existing = await svc.from("quotes")
         .select("*")
         .eq("tenant_id", ctx.tenantId).eq("source_matrix_id", id).eq("status", "DRAFT")
-        .order("created_at", { ascending: false }).limit(1);
-      // source_matrix_id may not exist on very old deployments; ignore that error.
-      if (!existing.error && Array.isArray(existing.data) && existing.data.length) existingDraft = existing.data[0];
+        .order("created_at", { ascending: false });
+      // Match the DRAFT for THIS group so spares / consumables stay on
+      // separate quotes (a matrix can have several group drafts).
+      if (!existing.error && Array.isArray(existing.data)) {
+        existingDraft = existing.data.find((qd) => String(qd.field_sources?.matrix_group || "all") === groupRaw) || null;
+      }
     }
 
     let quote, quoteNumber, reused = false;
@@ -109,8 +121,8 @@ export default async function handler(req, res) {
         tenant_id: ctx.tenantId, customer_id: matrix.customer_id, opportunity_id: null,
         source_matrix_id: id, quote_number: quoteNumber, version: 1, status: "DRAFT", currency,
         ...totals, validity_days: validityDays, expires_at: null,
-        notes: "Spares for " + (matrix.name || matrix.project_name || "matrix"),
-        line_items: lineItems, field_sources: { line_items: "spare_matrix.recommended" },
+        notes: (groupRaw !== "all" ? (groupRaw.charAt(0).toUpperCase() + groupRaw.slice(1) + " — ") : "") + "spares for " + (matrix.name || matrix.project_name || "matrix"),
+        line_items: lineItems, field_sources: { line_items: "spare_matrix.recommended", matrix_group: groupRaw },
         created_by: ctx.user?.id || null,
       };
       // Strip unknown columns and retry once (pre-migration deployments).

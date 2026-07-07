@@ -178,6 +178,30 @@ describe("spare_matrix to_quote (PR5)", () => {
     expect(out.statusCode).toBe(404);
   });
 
+  it("selective feed: row_ids feeds only the checked rows", async () => {
+    const out = await run(toQuote, { query: { id: "m1" }, body: { row_ids: ["e1"], group: "consumables" } });
+    expect(out.statusCode).toBe(200);
+    expect(out.body.fed).toBe(1);
+    expect(out.body.quote.line_items.length).toBe(1);
+    expect(out.body.quote.line_items[0].partNumber).toBe("4-TP2109-1");
+  });
+
+  it("spares and consumables go on SEPARATE grouped drafts", async () => {
+    H.store.recommended_spares.push({ id: "sp1", tenant_id: "t-1", matrix_id: "m1", sr_no: 9, description: "GEAR CASE ASSY", part_no: "X168-STD", installed_qty: 2, recommended_qty: 2, item_type: "Spare" });
+    const cons = await run(toQuote, { query: { id: "m1" }, body: { row_ids: ["e1", "e3"], group: "consumables" } });
+    const spares = await run(toQuote, { query: { id: "m1" }, body: { row_ids: ["sp1"], group: "spares" } });
+    expect(cons.body.quote.id).not.toBe(spares.body.quote.id);            // two distinct drafts
+    expect(H.store.quotes.filter((q) => q.source_matrix_id === "m1").length).toBe(2);
+    expect(cons.body.quote.line_items.length).toBe(2);
+    expect(spares.body.quote.line_items.length).toBe(1);
+    expect(spares.body.quote.line_items[0].partNumber).toBe("X168-STD");
+    // re-feeding the consumables group re-syncs ITS draft, not the spares one.
+    const cons2 = await run(toQuote, { query: { id: "m1" }, body: { row_ids: ["e1"], group: "consumables" } });
+    expect(cons2.body.quote.id).toBe(cons.body.quote.id);
+    expect(cons2.body.quote.line_items.length).toBe(1);
+    expect(H.store.quotes.filter((q) => q.source_matrix_id === "m1").length).toBe(2); // still 2
+  });
+
   it("re-feed RE-SYNCS the existing draft to the current selection (bug: others not pushed)", async () => {
     const first = await run(toQuote, { query: { id: "m1" } });
     expect(first.body.fed).toBe(2); // e1 + e3 (e2 qty 0)

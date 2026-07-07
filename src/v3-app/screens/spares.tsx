@@ -214,6 +214,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const [busySync, setBusySync] = uM(false);
   const [busyFeed, setBusyFeed] = uM(false);
   const [busyFill, setBusyFill] = uM(false);
+  const [selRec, setSelRec] = uM<Set<string>>(new Set()); // checked recommended rows to feed
   const [titleEdit, setTitleEdit] = uM(false);
   const debounceRef = rM(null);
   const fileRef = rM(null);
@@ -605,26 +606,36 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const onFeedToQuote = async () => {
     if (!draft.id) return;
     const feedable = (draft.recommended || []).filter((r) => Number(r.recommended_qty) > 0);
-    if (!feedable.length) {
-      window.notifyError?.("Nothing to quote", "Set a recommended quantity (> 0) on at least one spare first.");
+    // If rows are checked, feed only those; else feed all with qty > 0.
+    const chosen = selRec.size ? feedable.filter((r) => selRec.has(r.id)) : feedable;
+    if (!chosen.length) {
+      window.notifyError?.("Nothing to quote", selRec.size
+        ? "None of the checked rows have a recommended qty > 0."
+        : "Check the rows to quote (or set a recommended qty > 0).");
       return;
     }
+    // Infer the group so spares & consumables land on SEPARATE quotes.
+    const isCons = (r) => String(r.item_type || "").toLowerCase() === "consumable";
+    const group = !selRec.size ? "all"
+      : chosen.every(isCons) ? "consumables"
+      : chosen.every((r) => !isCons(r)) ? "spares"
+      : "selected";
     setBusyFeed(true);
     try {
-      const res = await AnvilBackend.spareMatrix.toQuote(draft.id);
+      const res = await AnvilBackend.spareMatrix.toQuote(draft.id, { row_ids: chosen.map((r) => r.id), group });
       const q = res && res.quote;
       if (!q || !q.id) throw new Error("Quote was not created");
       // Reflect the new quote_ref locally so the sheet shows the link.
       if (res.quote_number || q.quote_number) {
         const ref = q.quote_number || res.quote_number;
-        const fedIds = new Set(feedable.map((r) => r.id));
+        const fedIds = new Set(chosen.map((r) => r.id));
         const next = { ...draft, recommended: (draft.recommended || []).map((r) => fedIds.has(r.id) ? { ...r, quote_ref: ref, quote_id: q.id } : r) };
         setDraft(next);
         onChange(next);
       }
       window.notifySuccess?.(
-        res.reused ? "Opened existing draft quote" : "Draft quote created",
-        `${q.quote_number || "Quote"} · ${res.fed} spare line(s) · price it in the quote drawer.`,
+        res.reused ? `Updated ${group === "all" ? "" : group + " "}draft quote` : `Created ${group === "all" ? "" : group + " "}draft quote`,
+        `${q.quote_number || "Quote"} · ${res.fed} line(s) · price it in the quote drawer.`,
       );
       window.location.hash = `#/quotes?id=${encodeURIComponent(q.id)}&tab=lines`;
     } catch (err) {
@@ -852,7 +863,16 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                 <Btn sm kind="ghost" onClick={() => onBulkFill("max")} disabled={busyFill} title="Set every row's recommended qty to its Max level">{busyFill ? "…" : "Max"}</Btn>
                 <Btn sm kind="ghost" onClick={() => onBulkFill("min")} disabled={busyFill} title="Set every row's recommended qty to its Min level">Min</Btn>
                 <Btn sm kind="ghost" onClick={() => onBulkFill("installed")} disabled={busyFill} title="Set every row's recommended qty to its installed count">Installed</Btn>
-                <Btn sm kind="primary" onClick={onFeedToQuote} disabled={busyFeed || busySync} title="Create a draft quote from rows with a recommended qty > 0">{busyFeed ? "…" : <>{Icon.doc} Feed to quote</>}</Btn>
+                {/* Select rows to quote — spares & consumables typically go on separate quotes. */}
+                <span style={{ fontSize: 11, color: "var(--ink-3)", alignSelf: "center", marginLeft: 4 }}>Select:</span>
+                <Btn sm kind="ghost" onClick={() => setSelRec(new Set((draft.recommended || []).filter((r) => String(r.item_type || "").toLowerCase() !== "consumable").map((r) => r.id)))} title="Select all spares (non-consumables)">Spares</Btn>
+                <Btn sm kind="ghost" onClick={() => setSelRec(new Set((draft.recommended || []).filter((r) => String(r.item_type || "").toLowerCase() === "consumable").map((r) => r.id)))} title="Select all consumables">Consumables</Btn>
+                <Btn sm kind="ghost" onClick={() => setSelRec(new Set((draft.recommended || []).map((r) => r.id)))}>All</Btn>
+                {selRec.size > 0 && <Btn sm kind="ghost" onClick={() => setSelRec(new Set())}>None</Btn>}
+                <Btn sm kind="primary" onClick={onFeedToQuote} disabled={busyFeed || busySync}
+                     title={selRec.size ? "Feed the checked rows into their own draft quote (spares / consumables grouped separately)" : "Feed all rows with a recommended qty > 0 into a draft quote"}>
+                  {busyFeed ? "…" : <>{Icon.doc} Feed to quote{selRec.size ? ` (${selRec.size})` : ""}</>}
+                </Btn>
                 <Btn sm kind="ghost" onClick={() => onExportRecommended("csv")}>CSV</Btn>
                 <Btn sm kind="ghost" onClick={() => onExportRecommended("tsv")}>TSV</Btn>
                 <Btn sm kind="ghost" onClick={() => onExportRecommended("json")}>JSON</Btn>
@@ -863,6 +883,12 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
             <div style={{ overflow: "auto", maxHeight: "60vh" }}>
               <table className="tbl" style={{ minWidth: "100%" }}>
                 <thead><tr>
+                  <th style={{ width: 30, position: "sticky", top: 0, zIndex: 2, background: "var(--paper-3)", textAlign: "center" }}>
+                    <input type="checkbox" aria-label="select all"
+                      checked={(draft.recommended || []).length > 0 && selRec.size === (draft.recommended || []).length}
+                      ref={(el) => { if (el) el.indeterminate = selRec.size > 0 && selRec.size < (draft.recommended || []).length; }}
+                      onChange={(e) => setSelRec(e.target.checked ? new Set((draft.recommended || []).map((r) => r.id)) : new Set())} />
+                  </th>
                   {[
                     { label: "#", style: { width: 40 } },
                     { label: "Description" }, { label: "Part no" }, { label: "Gun" },
@@ -881,7 +907,12 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                 </tr></thead>
                 <tbody>
                   {(draft.recommended || []).map((r, i) => (
-                    <tr key={r.id || i}>
+                    <tr key={r.id || i} style={selRec.has(r.id) ? { background: "var(--paper-2)" } : undefined}>
+                      <td style={{ textAlign: "center" }}>
+                        <input type="checkbox" aria-label={"select " + (r.part_no || i)}
+                          checked={selRec.has(r.id)}
+                          onChange={(e) => setSelRec((s) => { const n = new Set(s); if (e.target.checked) n.add(r.id); else n.delete(r.id); return n; })} />
+                      </td>
                       <td className="mono-sm" style={{ color: "var(--ink-3)" }}>{r.sr_no != null ? r.sr_no : i + 1}</td>
                       <td>{r.description}</td>
                       <td className="mono"><span className="pri">{r.part_no}</span></td>

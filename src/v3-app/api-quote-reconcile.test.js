@@ -3,7 +3,7 @@
 // part-no normalization, and field enrichment/provenance.
 
 import { describe, it, expect } from "vitest";
-import { reconcilePoAgainstQuotes } from "../api/_lib/quote-reconcile.js";
+import { reconcilePoAgainstQuotes, comparePaymentTerms, extractPaymentDays } from "../api/_lib/quote-reconcile.js";
 
 // Two quotes for the same customer; a PO draws lines from BOTH.
 const ql = (quote_id, quote_number, created_at, part_no, extra = {}) => ({
@@ -86,5 +86,39 @@ describe("reconcilePoAgainstQuotes", () => {
     const po = [{ line_no: 1, part_no: "403A7K188-100", qty: 2, rate: 27244, customer_part_number: "GD544202503040002" }];
     const r = reconcilePoAgainstQuotes(po, QUOTES);
     expect(r.lines[0].customer_part_number).toBe("GD544202503040002");
+  });
+});
+
+describe("payment-terms reconciliation", () => {
+  it("extracts credit days from free-text terms", () => {
+    expect(extractPaymentDays("PAYMENT : 30 Days credit")).toBe(30);
+    expect(extractPaymentDays("Net 45")).toBe(45);
+    expect(extractPaymentDays("60 days")).toBe(60);
+    expect(extractPaymentDays("100% advance")).toBeNull();
+    expect(extractPaymentDays("")).toBeNull();
+  });
+
+  it("matches when day counts agree despite different wording", () => {
+    const r = comparePaymentTerms("30 Days credit", "PAYMENT : 30 Days");
+    expect(r.verdict).toBe("match");
+    expect(r.po_days).toBe(30);
+    expect(r.quote_days).toBe(30);
+  });
+
+  it("flags a mismatch when the PO changed the credit period", () => {
+    const r = comparePaymentTerms("60 days credit", "30 Days credit");
+    expect(r.verdict).toBe("mismatch");
+    expect(r.po_days).toBe(60);
+    expect(r.quote_days).toBe(30);
+  });
+
+  it("is unknown when either side is missing", () => {
+    expect(comparePaymentTerms(null, "30 days").verdict).toBe("unknown");
+    expect(comparePaymentTerms("30 days", "").verdict).toBe("unknown");
+  });
+
+  it("falls back to a normalized string compare for non-numeric terms", () => {
+    expect(comparePaymentTerms("Against Delivery", "against  delivery").verdict).toBe("match");
+    expect(comparePaymentTerms("Advance", "Against Delivery").verdict).toBe("mismatch");
   });
 });

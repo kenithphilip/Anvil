@@ -46,6 +46,40 @@ const indexQuoteLines = (quoteLines) => {
   return { byPart, ambiguous };
 };
 
+// Extract a credit-period day count from a free-text payment-terms string.
+// "30 Days credit" -> 30, "Net 45" -> 45, "PAYMENT : 60 days" -> 60.
+// Returns null when no day figure is present (advance / against-delivery /
+// letter-of-credit style terms fall back to a normalized string compare).
+export const extractPaymentDays = (s) => {
+  const str = String(s == null ? "" : s).toLowerCase();
+  if (!str.trim()) return null;
+  let m = str.match(/(\d+)\s*days?\b/);
+  if (m) return parseInt(m[1], 10);
+  m = str.match(/\bnet\s*(\d+)\b/);
+  if (m) return parseInt(m[1], 10);
+  return null;
+};
+
+const normTerms = (s) => String(s == null ? "" : s).toLowerCase().replace(/\s+/g, " ").trim();
+
+// Header-level commercial check: does the PO's payment terms agree with
+// the quote's? Compares credit days when both are numeric, else a
+// normalized string compare. verdict: match | mismatch | unknown.
+export const comparePaymentTerms = (poTerms, quoteTerms) => {
+  const poDays = extractPaymentDays(poTerms);
+  const quoteDays = extractPaymentDays(quoteTerms);
+  const has = (v) => v != null && String(v).trim() !== "";
+  let verdict;
+  if (!has(poTerms) || !has(quoteTerms)) verdict = "unknown";
+  else if (poDays != null && quoteDays != null) verdict = poDays === quoteDays ? "match" : "mismatch";
+  else verdict = normTerms(poTerms) === normTerms(quoteTerms) ? "match" : "mismatch";
+  return {
+    po_terms: has(poTerms) ? String(poTerms) : null,
+    quote_terms: has(quoteTerms) ? String(quoteTerms) : null,
+    po_days: poDays, quote_days: quoteDays, verdict,
+  };
+};
+
 // opts.priceTolerancePct: allowed |PO rate - quote rate| before flagging
 // a price_mismatch (default 0.5%).
 export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {

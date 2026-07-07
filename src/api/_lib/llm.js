@@ -29,9 +29,47 @@ import { callGemini, extractTextFromGemini, parseStructuredGemini } from "./gemi
 const norm = (s) => String(s || "").trim().toLowerCase();
 const featureEnv = (feature) => (feature ? process.env["LLM_PROVIDER_" + String(feature).toUpperCase()] : null);
 
-export const resolveProvider = (feature, explicit) => {
-  const pick = norm(explicit) || norm(featureEnv(feature)) || norm(process.env.LLM_PROVIDER) || "claude";
+// P2: per-tenant provider config from tenant_settings, short-TTL cached so
+// high-volume features don't add a DB read per call. `settings` may be the
+// full tenant_settings row or { llm_provider, llm_provider_overrides }.
+const providerOf = (settings, feature) => {
+  if (!settings) return null;
+  const ov = settings.llm_provider_overrides;
+  const perFeature = ov && typeof ov === "object" ? ov[feature] : null;
+  return { perFeature: norm(perFeature) || null, tenantDefault: norm(settings.llm_provider) || null };
+};
+
+// Precedence: explicit > per-tenant per-feature > env per-feature >
+// per-tenant default > env global > "claude".
+export const resolveProvider = (feature, explicit, settings) => {
+  const s = providerOf(settings, feature) || {};
+  const pick = norm(explicit)
+    || s.perFeature
+    || norm(featureEnv(feature))
+    || s.tenantDefault
+    || norm(process.env.LLM_PROVIDER)
+    || "claude";
   return pick === "gemini" ? "gemini" : "claude";
+};
+
+// tenantId -> { at, row } cache (per serverless instance, 60s TTL).
+const _settingsCache = new Map();
+const LLM_SETTINGS_TTL_MS = 60_000;
+const loadLlmSettings = async (svc, tenantId) => {
+  if (!svc || !tenantId) return null;
+  const hit = _settingsCache.get(tenantId);
+  if (hit && (Date.now() - hit.at) < LLM_SETTINGS_TTL_MS) return hit.row;
+  try {
+    const r = await svc.from("tenant_settings")
+      .select("llm_provider, llm_provider_overrides")
+      .eq("tenant_id", tenantId).maybeSingle();
+    const row = r.error ? null : (r.data || null);
+    _settingsCache.set(tenantId, { at: Date.now(), row });
+    return row;
+  } catch (_e) {
+    _settingsCache.set(tenantId, { at: Date.now(), row: null });
+    return null;
+  }
 };
 
 const providerConfigured = (p) =>
@@ -78,8 +116,11 @@ const normalizeGemini = (r) => {
   };
 };
 
-export const callLLM = async ({ feature, provider, tools, response_schema, ...rest }) => {
-  let p = resolveProvider(feature, provider);
+export const callLLM = async ({ feature, provider, settings, tools, response_schema, ...rest }) => {
+  // P2: per-tenant provider config (cached). Callers pass tenantId + svc;
+  // an explicit `settings` skips the fetch.
+  const tenantSettingsRow = settings || await loadLlmSettings(rest.svc, rest.tenantId);
+  let p = resolveProvider(feature, provider, tenantSettingsRow);
   if (!providerConfigured(p)) {
     const other = p === "gemini" ? "claude" : "gemini";
     if (providerConfigured(other)) p = other;

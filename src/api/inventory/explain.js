@@ -49,6 +49,7 @@ export default async function handler(req, res) {
     ].join("\n");
     const out = await callLLM({
       feature: "inventory_explain",
+      svc,
       tenantId: ctx.tenantId,
       purpose: "anomaly_explain",
       tier: "preflight",

@@ -9,7 +9,7 @@
 // signal feeds the inbox UI's chip + the dunning agent's reply-
 // handling loop in Phase 6.
 
-import { callAnthropic } from "./anthropic.js";
+import { callLLM } from "./llm.js";
 
 // One-shot intent enum the classifier picks from. Keep this
 // stable; the inbox UI maps each value to a chip color.
@@ -66,10 +66,6 @@ const TOOL_DEFINITION = {
   },
 };
 
-const findToolCall = (data) => {
-  const blocks = (data && data.content) || [];
-  return blocks.find((b) => b && b.type === "tool_use" && b.name === "classify_email");
-};
 
 // Public entry point. Caller passes the inbound_emails row (or
 // any { from_address, from_name, subject, body_text, attachments }
@@ -95,7 +91,8 @@ export const classifyInboundEmail = async (svc, tenantId, email, opts = {}) => {
     "Call classify_email.",
   ].join("\n");
 
-  const result = await callAnthropic({
+  const result = await callLLM({
+    feature: "email_classifier",
     svc,
     tenantId,
     purpose: "preflight",
@@ -112,13 +109,12 @@ export const classifyInboundEmail = async (svc, tenantId, email, opts = {}) => {
     metadata: opts.metadata || null,
   });
   if (!result.ok) {
-    return { ok: false, error: result.error || result.data?.error?.message || "classifier failed" };
+    return { ok: false, error: result.error || result.raw?.error?.message || "classifier failed" };
   }
-  const tool = findToolCall(result.data);
-  if (!tool || !tool.input) {
-    return { ok: false, error: "model did not call classify_email tool" };
+  const inp = result.toolInput("classify_email");
+  if (!inp) {
+    return { ok: false, error: "model did not return the classify_email structure" };
   }
-  const inp = tool.input;
   const intent = INTENT_ENUM.includes(inp.intent) ? inp.intent : "other";
   const confidence = Math.max(0, Math.min(1, Number(inp.confidence) || 0));
   return {

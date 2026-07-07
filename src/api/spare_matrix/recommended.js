@@ -24,9 +24,48 @@ export default async function handler(req, res) {
     requirePermission(ctx, "write");
     const id = req.query.id;
     const body = await readBody(req);
+    const svc = serviceClient();
+
+    // Bulk auto-fill: set recommended_qty across ALL rows of the matrix from
+    // a source column in one request, so the operator doesn't type each one.
+    //   body.bulk = { source: "max"|"min"|"installed", only_blank?: bool }
+    if (body.bulk && typeof body.bulk === "object") {
+      if (!id) return json(res, 400, { error: { message: "matrix id required" } });
+      const source = String(body.bulk.source || "max").toLowerCase();
+      const col = source === "min" ? "recommended_min" : source === "installed" ? "installed_qty" : "recommended_max";
+      const onlyBlank = body.bulk.only_blank === true;
+      const rowsQ = await svc.from("recommended_spares")
+        .select("id, installed_qty, recommended_min, recommended_max, recommended_qty")
+        .eq("tenant_id", ctx.tenantId).eq("matrix_id", id);
+      if (rowsQ.error) throw new Error(rowsQ.error.message);
+      const targets = (rowsQ.data || []).filter((r) => {
+        if (onlyBlank && r.recommended_qty != null) return false;
+        const v = r[col];
+        return v != null && Number(v) !== Number(r.recommended_qty);
+      });
+      // Per-row updates (each row's qty = its own source value); run in
+      // parallel chunks so a big matrix stays fast.
+      let updated = 0;
+      for (let i = 0; i < targets.length; i += 20) {
+        const chunk = targets.slice(i, i + 20);
+        await Promise.all(chunk.map(async (r) => {
+          const up = await svc.from("recommended_spares")
+            .update({ recommended_qty: Number(r[col]), updated_at: new Date().toISOString() })
+            .eq("tenant_id", ctx.tenantId).eq("id", r.id);
+          if (up.error) throw new Error(up.error.message);
+          updated += 1;
+        }));
+      }
+      const fresh = await svc.from("recommended_spares").select("*")
+        .eq("tenant_id", ctx.tenantId).eq("matrix_id", id)
+        .order("sr_no", { ascending: true, nullsFirst: false });
+      if (fresh.error) throw new Error(fresh.error.message);
+      await recordAudit(ctx, { action: "spare_matrix_recommended_bulk_fill", objectType: "spare_matrix", objectId: id, detail: { source, only_blank: onlyBlank, updated } });
+      return json(res, 200, { updated, source, recommended: fresh.data || [] });
+    }
+
     const rowId = body.row_id || body.id;
     if (!id || !rowId) return json(res, 400, { error: { message: "matrix id and row_id required" } });
-    const svc = serviceClient();
 
     const patch = { updated_at: new Date().toISOString() };
     for (const f of EDITABLE) {

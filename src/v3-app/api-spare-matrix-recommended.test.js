@@ -133,3 +133,33 @@ describe("recommended PATCH (PR4)", () => {
     expect(out.statusCode).toBe(404);
   });
 });
+
+describe("recommended bulk auto-fill", () => {
+  it("sets recommended_qty from Max across all rows in one call", async () => {
+    await run(recompute, { method: "POST", query: { id: "m1" } });   // seeds installed + min/max
+    const out = await run(patchRec, { method: "PATCH", query: { id: "m1" }, body: { bulk: { source: "max" } } });
+    expect(out.statusCode).toBe(200);
+    expect(out.body.updated).toBeGreaterThan(0);
+    for (const r of out.body.recommended) {
+      if (r.recommended_max != null) expect(r.recommended_qty).toBe(r.recommended_max);
+    }
+  });
+
+  it("only_blank leaves rows that already have a qty untouched", async () => {
+    await run(recompute, { method: "POST", query: { id: "m1" } });
+    // e1 (CAP TIP|4-TP2109-1) carries a human recommended_qty of 500.
+    const out = await run(patchRec, { method: "PATCH", query: { id: "m1" }, body: { bulk: { source: "max", only_blank: true } } });
+    expect(out.statusCode).toBe(200);
+    const e1 = out.body.recommended.find((r) => r.part_no === "4-TP2109-1");
+    expect(e1.recommended_qty).toBe(500); // preserved, not overwritten
+  });
+
+  it("source=installed fills qty from installed_qty", async () => {
+    await run(recompute, { method: "POST", query: { id: "m1" } });
+    const out = await run(patchRec, { method: "PATCH", query: { id: "m1" }, body: { bulk: { source: "installed" } } });
+    expect(out.statusCode).toBe(200);
+    for (const r of out.body.recommended) {
+      if (r.installed_qty != null && r.recommended_qty != null) expect(r.recommended_qty).toBe(r.installed_qty);
+    }
+  });
+});

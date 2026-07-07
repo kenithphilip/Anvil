@@ -15,7 +15,6 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings, updateTenantSettings } from "../_lib/stripe-client.js";
-import { encryptField, newIv, isSecretsConfigured } from "../_lib/secrets.js";
 
 const KNOWN_ADAPTERS = new Set([
   "gemini", "claude", "reducto", "azure_di", "unstructured",
@@ -114,20 +113,6 @@ const validateGeminiMediaResolution = (value) => {
   return null;
 };
 
-// Issue #210: LlamaParse tiers + regions (LlamaCloud has no India region).
-const LLAMAPARSE_TIERS = new Set(["fast", "cost_effective", "agentic", "agentic_plus"]);
-const LLAMACLOUD_REGIONS = new Set(["us", "eu"]);
-const validateLlamaparseTier = (value) => {
-  if (value == null || value === "") return null;
-  if (!LLAMAPARSE_TIERS.has(value)) return "docai_llamaparse_tier must be one of: " + [...LLAMAPARSE_TIERS].join(", ");
-  return null;
-};
-const validateLlamacloudRegion = (value) => {
-  if (value == null || value === "") return null;
-  if (!LLAMACLOUD_REGIONS.has(value)) return "docai_llamacloud_region must be one of: us, eu";
-  return null;
-};
-
 const SAFE_KEYS = [
   "docai_provider_order",
   "docai_daily_limits",
@@ -137,10 +122,6 @@ const SAFE_KEYS = [
   "docai_fallback_confidence",
   "docai_mistral_ocr_batch",
   "docai_gemini_media_resolution",
-  // Issue #210: LlamaCloud provider (key is write-only; never returned).
-  "docai_llamacloud_api_key",
-  "docai_llamaparse_tier",
-  "docai_llamacloud_region",
 ];
 
 export default async function handler(req, res) {
@@ -162,11 +143,6 @@ export default async function handler(req, res) {
         docai_fallback_confidence: settings?.docai_fallback_confidence ?? null,
         docai_mistral_ocr_batch: settings?.docai_mistral_ocr_batch !== false,
         docai_gemini_media_resolution: settings?.docai_gemini_media_resolution || null,
-        // Issue #210: LlamaCloud provider. Key is write-only — never
-        // returned; expose only whether one is set.
-        docai_llamacloud_configured: !!settings?.docai_llamacloud_api_key_enc,
-        docai_llamaparse_tier: settings?.docai_llamaparse_tier || "cost_effective",
-        docai_llamacloud_region: settings?.docai_llamacloud_region || null,
       });
     }
 
@@ -217,32 +193,6 @@ export default async function handler(req, res) {
         const err = validateGeminiMediaResolution(body.docai_gemini_media_resolution);
         if (err) errors.push(err);
         else updates.docai_gemini_media_resolution = body.docai_gemini_media_resolution || null;
-      }
-      // Issue #210: LlamaCloud provider config.
-      if (Object.prototype.hasOwnProperty.call(body, "docai_llamaparse_tier")) {
-        const err = validateLlamaparseTier(body.docai_llamaparse_tier);
-        if (err) errors.push(err);
-        else updates.docai_llamaparse_tier = body.docai_llamaparse_tier || null;
-      }
-      if (Object.prototype.hasOwnProperty.call(body, "docai_llamacloud_region")) {
-        const err = validateLlamacloudRegion(body.docai_llamacloud_region);
-        if (err) errors.push(err);
-        else updates.docai_llamacloud_region = body.docai_llamacloud_region || null;
-      }
-      if (Object.prototype.hasOwnProperty.call(body, "docai_llamacloud_api_key")) {
-        const raw = body.docai_llamacloud_api_key;
-        if (raw === "" || raw === null) {
-          updates.docai_llamacloud_api_key_enc = null; // clearing the key
-        } else if (typeof raw !== "string") {
-          errors.push("docai_llamacloud_api_key must be a string");
-        } else if (!isSecretsConfigured()) {
-          errors.push("secrets not configured on the server; cannot store the LlamaCloud key");
-        } else {
-          const cur = await tenantSettings(svc, ctx.tenantId);
-          const iv = cur?.docai_creds_iv || newIv();
-          updates.docai_llamacloud_api_key_enc = encryptField(raw, iv);
-          if (!cur?.docai_creds_iv) updates.docai_creds_iv = iv;
-        }
       }
 
       if (errors.length) {

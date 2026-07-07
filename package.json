@@ -26,6 +26,7 @@
     "predeploy": "npm run build && npm run check && npm run verify && npm run audit:systemic"
   },
   "dependencies": {
+    "@llamaindex/llama-cloud": "^2.10.0",
     "@react-pdf/renderer": "^4.5.1",
     "@simplewebauthn/browser": "^11.0.0",
     "@simplewebauthn/server": "^11.0.0",

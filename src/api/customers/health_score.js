@@ -27,7 +27,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-import { callAnthropic } from "../_lib/anthropic.js";
+import { callLLM } from "../_lib/llm.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const BATCH_SIZE = 50;
@@ -70,11 +70,6 @@ const TOOL_DEFINITION = {
       negative_signals: { type: "array", items: { type: "string" } },
     },
   },
-};
-
-const findToolCall = (data) => {
-  const blocks = (data && data.content) || [];
-  return blocks.find((b) => b && b.type === "tool_use" && b.name === "score_customer_health");
 };
 
 const fetchSignals = async (svc, tenantId, customerId) => {
@@ -161,7 +156,8 @@ const buildContext = (customer, signals) => {
 const computeOne = async (svc, tenantId, customer) => {
   const signals = await fetchSignals(svc, tenantId, customer.id);
   const userText = buildContext(customer, signals);
-  const result = await callAnthropic({
+  const result = await callLLM({
+    feature: "customer_health_score",
     svc,
     tenantId,
     purpose: "preflight",
@@ -175,9 +171,8 @@ const computeOne = async (svc, tenantId, customer) => {
     cache_ttl: "1h",
   });
   if (!result.ok) return { ok: false, error: result.error };
-  const tool = findToolCall(result.data);
-  if (!tool || !tool.input) return { ok: false, error: "no tool call" };
-  const out = tool.input;
+  const out = result.toolInput("score_customer_health");
+  if (!out) return { ok: false, error: "no structured result" };
   const score = Math.max(0, Math.min(100, Number(out.score) || 0));
   const band = ["green", "yellow", "red"].includes(out.band) ? out.band : (score >= 75 ? "green" : score >= 45 ? "yellow" : "red");
   await svc.from("customers").update({

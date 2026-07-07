@@ -9,7 +9,7 @@
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
-import { callAnthropic } from "../_lib/anthropic.js";
+import { callLLM } from "../_lib/llm.js";
 
 const SYSTEM_PROMPT = [
   "You are an inventory-planning copilot for a manufacturing operations team.",
@@ -47,7 +47,8 @@ export default async function handler(req, res) {
       "Rationale jsonb:",
       JSON.stringify(r, null, 2),
     ].join("\n");
-    const out = await callAnthropic({
+    const out = await callLLM({
+      feature: "inventory_explain",
       tenantId: ctx.tenantId,
       purpose: "anomaly_explain",
       tier: "preflight",
@@ -61,7 +62,7 @@ export default async function handler(req, res) {
         model: out.model || null, error: out.error || null,
       });
     }
-    const text = out.data?.content?.[0]?.text || "(no content)";
+    const text = out.text || "(no content)";
     return json(res, 200, { explanation: text, model: out.model });
   } catch (err) { sendError(res, err); }
 }

@@ -25,7 +25,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-import { callAnthropic } from "../_lib/anthropic.js";
+import { callLLM } from "../_lib/llm.js";
 
 const SYSTEM_PROMPT = [
   "You explain anomaly findings on B2B sales orders to operators",
@@ -68,11 +68,6 @@ const TOOL_DEFINITION = {
       severity: { type: "string", enum: ["low", "medium", "high"] },
     },
   },
-};
-
-const findToolCall = (data) => {
-  const blocks = (data && data.content) || [];
-  return blocks.find((b) => b && b.type === "tool_use" && b.name === "explain_flag");
 };
 
 const buildEvidenceText = (flag, ctx) => {
@@ -144,7 +139,8 @@ export default async function handler(req, res) {
       "Call explain_flag.",
     ].join("\n");
 
-    const result = await callAnthropic({
+    const result = await callLLM({
+      feature: "anomaly_explain",
       svc,
       tenantId: ctx.tenantId,
       userId: ctx.user?.id || null,
@@ -165,14 +161,13 @@ export default async function handler(req, res) {
     if (!result.ok) {
       return json(res, result.status || 502, {
         ok: false,
-        error: result.error || result.data?.error?.message || "explainer call failed",
+        error: result.error || result.raw?.error?.message || "explainer call failed",
       });
     }
-    const tool = findToolCall(result.data);
-    if (!tool || !tool.input) {
-      return json(res, 502, { ok: false, error: "model did not call explain_flag tool" });
+    const out = result.toolInput("explain_flag");
+    if (!out) {
+      return json(res, 502, { ok: false, error: "model did not return the explain_flag structure" });
     }
-    const out = tool.input;
     await recordAudit(ctx, {
       action: "anomaly_explain",
       objectType: body.order_id ? "order" : "anomaly",

@@ -727,6 +727,46 @@ const WiredSOWorkspace = () => {
     }
   };
 
+  // Tally-style Sales Order acknowledgment PDF (so_pdf.js). Available at
+  // any status (it's the order ack, not the post-tax voucher).
+  const downloadSoPdf = async (orderObj: any) => {
+    if (!orderObj?.id) return;
+    try {
+      const blob = await (AnvilBackend as any)?.orders?.soPdfBlob?.(orderObj.id);
+      if (!blob) throw new Error("SO PDF helper unavailable");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "SO-" + (orderObj.po_number || String(orderObj.id).slice(0, 8)) + ".pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      window.notifySuccess?.("Sales Order ready", "Saved to Downloads.");
+    } catch (err: any) {
+      window.notifyError?.("SO PDF failed", err?.message || String(err));
+    }
+  };
+
+  // Re-fetch the customer's quotes and re-verify this order's lines
+  // (price / qty / part / payment terms). Reloads the order via `bump`.
+  const rerunReconcile = async (orderObj: any) => {
+    if (!orderObj?.id) return;
+    setBusy(true);
+    try {
+      const rep: any = await (AnvilBackend as any)?.orders?.reconcileQuotes?.(orderObj.id);
+      const s = rep?.summary;
+      const pt = rep?.payment_terms?.verdict === "mismatch" ? ", pay-terms⚠" : "";
+      window.notifySuccess?.("Reconciled against quotes",
+        s ? `${s.matched}/${s.total} matched, ${s.price_mismatch || 0} price⚠, ${s.unmatched || 0} unmatched${pt}` : "done");
+      setBump((b) => b + 1);
+    } catch (err: any) {
+      window.notifyError?.("Reconcile failed", err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Draft a new invoice from this order. Templates totals + line items
   // from result.salesOrder; the operator can edit fields on the
   // Invoices screen after creation. We navigate there on success.
@@ -1611,6 +1651,11 @@ const WiredSOWorkspace = () => {
                title="Render a branded PDF of the quote and download it">
             {Icon.download} quote PDF
           </Btn>
+          <Btn sm kind="ghost"
+               onClick={() => downloadSoPdf(o)}
+               title="Download the Tally-style Sales Order acknowledgment PDF">
+            {Icon.download} Download SO
+          </Btn>
           {["APPROVED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED"].includes(o.status) && (
             <Btn sm kind="ghost"
                  onClick={() => downloadVoucherPdf(o)}
@@ -1722,6 +1767,64 @@ const WiredSOWorkspace = () => {
           <span style={{ marginLeft: "auto" }}>id <span className="mono">{o.id?.slice(0, 8)}…</span></span>
         </div>
       </div>
+
+      {(() => {
+        const recon = o.result?.quoteReconciliation;
+        const canReconcile = canWrite && o.status !== "CANCELLED" && !!o.customer_id;
+        const soBtn = (
+          <Btn sm kind="ghost" onClick={() => downloadSoPdf(o)} title="Download the Tally-style Sales Order PDF">
+            {Icon.download} SO PDF
+          </Btn>
+        );
+        const reBtn = canReconcile ? (
+          <Btn sm kind="ghost" disabled={busy} onClick={() => rerunReconcile(o)} title="Re-fetch the customer's quotes and re-verify price, quantity + payment terms">
+            {Icon.cycle} {busy ? "reconciling…" : "reconcile"}
+          </Btn>
+        ) : null;
+        if (!recon) {
+          return (
+            <Banner kind="info" icon={Icon.info} title="Not yet reconciled against quotes"
+                    action={<>{reBtn}{soBtn}</>}>
+              Reconcile to auto-match this order's lines to the customer's quotes and verify price, quantity + payment terms.
+            </Banner>
+          );
+        }
+        const s = recon.summary || {};
+        const flags = Array.isArray(recon.flags) ? recon.flags : [];
+        const pt = recon.payment_terms;
+        const clean = flags.length === 0;
+        const lineFlags = flags.filter((f: any) => f.verdict !== "payment_terms_mismatch");
+        return (
+          <Banner
+            kind={clean ? "good" : "warn"}
+            icon={clean ? Icon.check : Icon.alert}
+            title={clean
+              ? `Quotes verified — ${s.matched}/${s.total} lines matched`
+              : `Quote check: ${s.matched}/${s.total} matched · ${s.price_mismatch || 0} price · ${s.unmatched || 0} unmatched${pt?.verdict === "mismatch" ? " · payment-terms" : ""}`}
+            action={<>{reBtn}{soBtn}</>}>
+            {!clean && (
+              <div className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4 }}>
+                {pt?.verdict === "mismatch" && (
+                  <div>⚠ Payment terms: PO “{pt.po_terms}” vs quote “{pt.quote_terms}”{pt.source_quote_number ? ` (${pt.source_quote_number})` : ""}</div>
+                )}
+                {lineFlags.slice(0, 10).map((f: any, i: number) => (
+                  <div key={i}>
+                    {f.verdict === "price_mismatch"
+                      ? `⚠ ${f.part_no}: PO ${f.po_rate} vs quote ${f.quote_rate} (${f.price_delta_pct > 0 ? "+" : ""}${f.price_delta_pct}%)${f.source_quote_number ? ` · ${f.source_quote_number}` : ""}`
+                      : `• unmatched: ${f.part_no || "—"}`}
+                  </div>
+                ))}
+                {lineFlags.length > 10 && <div>…and {lineFlags.length - 10} more</div>}
+              </div>
+            )}
+            {recon.quotes_used?.length ? (
+              <div className="mono-sm" style={{ marginTop: 4, color: "var(--ink-3)" }}>
+                Priced from: {recon.quotes_used.map((q: any) => q.quote_number).filter(Boolean).join(", ")}
+              </div>
+            ) : null}
+          </Banner>
+        );
+      })()}
 
       <WSTabs tabs={tabs} active={tab} onChange={setTab} />
 

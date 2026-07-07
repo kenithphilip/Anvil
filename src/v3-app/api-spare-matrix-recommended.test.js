@@ -20,7 +20,7 @@ vi.mock("../api/_lib/supabase.js", () => ({
         select() { this._select = true; return this; },
         insert(p) { this._op = "insert"; this._payload = p; return this; },
         update(p) { this._op = "update"; this._payload = p; return this; },
-        upsert(p) { this._op = "upsert"; this._payload = p; return this; },
+        upsert(p, opts) { this._op = "upsert"; this._payload = p; this._onConflict = (opts && opts.onConflict) ? String(opts.onConflict).split(",").map((s) => s.trim()) : null; return this; },
         delete() { this._op = "delete"; return this; },
         eq(col, val) { this._filters.push({ t: "eq", col, val }); return this; },
         in(col, arr) { this._filters.push({ t: "in", col, arr }); return this; },
@@ -33,7 +33,15 @@ vi.mock("../api/_lib/supabase.js", () => ({
           else if (this._op === "insert" || this._op === "upsert") {
             const items = Array.isArray(this._payload) ? this._payload : [this._payload];
             const out = items.map((it) => {
-              if (this._op === "upsert" && it.id) { const ex = store.find((r) => r.id === it.id); if (ex) { Object.assign(ex, it); return ex; } }
+              // Model PostgREST: match existing rows by the onConflict key
+              // (composite), else by id. New rows get a generated id (the
+              // real table's uuid default) — the payload must NOT carry a
+              // null id, which would violate NOT NULL.
+              let ex = null;
+              if (this._op === "upsert" && this._onConflict) ex = store.find((r) => this._onConflict.every((c) => r[c] === it[c]));
+              else if (this._op === "upsert" && it.id) ex = store.find((r) => r.id === it.id);
+              if (ex) { Object.assign(ex, it); return ex; }
+              if (Object.prototype.hasOwnProperty.call(it, "id") && it.id == null) throw new Error('null value in column "id" of relation "recommended_spares" violates not-null constraint');
               const rec = { id: it.id || "id-" + (++H.seq), ...it }; store.push(rec); return rec;
             });
             data = this._select ? (single ? out[0] : out) : null;
@@ -96,6 +104,11 @@ describe("recompute_recommended (PR4)", () => {
     expect(byKey["SHUNT|SHN-1"].installed_qty).toBe(2);
     // representative gun is set.
     expect(byKey["SHUNT|SHN-1"].gun_number).toBeTruthy();
+    // Regression (null-id upsert): existing row updated in place (id kept),
+    // new computed rows get a generated id — never a null id.
+    expect(byKey["CAP TIP|4-TP2109-1"].id).toBe("e1");
+    expect(byKey["CAP TIP|CT-16-D"].id).toBeTruthy();
+    expect(byKey["SHUNT|SHN-1"].id).toBeTruthy();
   });
 
   it("404 for an unknown matrix", async () => {

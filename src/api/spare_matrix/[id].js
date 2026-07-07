@@ -40,9 +40,19 @@ const reconcile = async (svc, table, tenantId, matrixId, incoming, mapFn) => {
     if (del.error) throw new Error(del.error.message);
   }
   const upserts = (incoming || []).map((x, i) => mapFn(x, i));
-  if (upserts.length) {
-    const up = await svc.from(table).upsert(upserts).select("id");
+  // Split by id: a bulk upsert that MIXES rows-with-id and rows-without-id
+  // makes PostgREST unify columns and send id=null on the new rows (the
+  // uuid default only fires when the column is omitted) -> NOT NULL
+  // violation. Insert the id-less (new) rows plainly, upsert the rest.
+  const withId = upserts.filter((r) => r.id != null);
+  const withoutId = upserts.filter((r) => r.id == null);
+  if (withId.length) {
+    const up = await svc.from(table).upsert(withId).select("id");
     if (up.error) throw new Error(up.error.message);
+  }
+  if (withoutId.length) {
+    const ins = await svc.from(table).insert(withoutId).select("id");
+    if (ins.error) throw new Error(ins.error.message);
   }
 };
 

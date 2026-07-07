@@ -1417,6 +1417,9 @@
     // activated for each role). GET is read-level; update is approve-level.
     navSettings:       async () => apiFetch("/api/admin/nav_settings"),
     updateNavSettings: async (patch) => apiFetch("/api/admin/nav_settings", { method: "PATCH", body: patch }),
+    // Per-tenant LLM provider selection for the reasoning features (P2).
+    llmSettings:       async () => apiFetch("/api/admin/llm_settings"),
+    updateLlmSettings: async (patch) => apiFetch("/api/admin/llm_settings", { method: "PATCH", body: patch }),
     // Tenant quote defaults (e.g. default validity days for new quotes).
     // GET is read-level; update is approve-level.
     quoteSettings:       async () => apiFetch("/api/admin/quote_settings"),

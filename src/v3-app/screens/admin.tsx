@@ -3764,7 +3764,10 @@ const WiredAdminCRUD = () => {
         )}
 
         {active === "docai_cost" && (
-          <DocAICostPanel />
+          <>
+            <DocAICostPanel />
+            <LlmProviderCard />
+          </>
         )}
 
         {active === "diag" && (
@@ -5315,6 +5318,83 @@ const CustomerTermsPanel: React.FC = () => {
         </>
       )}
     </>
+  );
+};
+
+// P2: per-tenant LLM provider selection for the reasoning features routed
+// through callLLM. Global default + per-feature overrides. "Default" =
+// fall through to the server env / claude.
+const LLM_FEATURE_LABELS: Record<string, string> = {
+  email_classifier: "Email classifier",
+  anomaly_explain: "Anomaly explainer",
+  inventory_explain: "Inventory explainer",
+  customer_health_score: "Customer health score",
+};
+const LlmProviderCard: React.FC = () => {
+  const [provider, setProvider] = useState<string>("");
+  const [overrides, setOverrides] = useState<Record<string, string>>({});
+  const [features, setFeatures] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const reload = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const s: any = await (AnvilBackend as any)?.admin?.llmSettings?.();
+      setProvider(s?.llm_provider || "");
+      setOverrides((s?.llm_provider_overrides && typeof s.llm_provider_overrides === "object") ? s.llm_provider_overrides : {});
+      setFeatures(Array.isArray(s?.features) ? s.features : Object.keys(LLM_FEATURE_LABELS));
+    } catch (_) { setFeatures(Object.keys(LLM_FEATURE_LABELS)); } finally { setLoading(false); }
+  }, []);
+  React.useEffect(() => { reload(); }, [reload]);
+
+  const save = async () => {
+    setSaving(true); setMsg(null);
+    try {
+      const clean: Record<string, string> = {};
+      for (const [f, p] of Object.entries(overrides)) { if (p) clean[f] = p; }
+      await (AnvilBackend as any)?.admin?.updateLlmSettings?.({ llm_provider: provider || null, llm_provider_overrides: clean });
+      await reload();
+      setMsg("Saved");
+      window.notifySuccess?.("LLM provider settings saved", "");
+    } catch (e: any) {
+      setMsg(e?.message || String(e));
+      window.notifyError?.("Save failed", e?.message || String(e));
+    } finally { setSaving(false); }
+  };
+
+  const sel = (value: string, onChange: (v: string) => void) => (
+    <select className="input" value={value} onChange={(e) => onChange(e.target.value)} style={{ minWidth: 160 }}>
+      <option value="">Default (Claude)</option>
+      <option value="claude">Claude</option>
+      <option value="gemini">Gemini</option>
+    </select>
+  );
+
+  return (
+    <Card title="Reasoning LLM provider" eyebrow="which engine runs the non-extraction AI features · default Claude">
+      <div className="col gap-sm" style={{ maxWidth: 560 }}>
+        <label className="row gap-sm" style={{ alignItems: "center", justifyContent: "space-between" }}>
+          <span className="mono-sm"><b>Tenant default</b> — all reasoning features</span>
+          {sel(provider, setProvider)}
+        </label>
+        <div className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 4 }}>Per-feature overrides{loading ? " (loading…)" : ""}:</div>
+        {(features.length ? features : Object.keys(LLM_FEATURE_LABELS)).map((f) => (
+          <label key={f} className="row gap-sm" style={{ alignItems: "center", justifyContent: "space-between" }}>
+            <span className="mono-sm">{LLM_FEATURE_LABELS[f] || f}</span>
+            {sel(overrides[f] || "", (v) => setOverrides({ ...overrides, [f]: v }))}
+          </label>
+        ))}
+        <div className="row gap-sm" style={{ alignItems: "center", marginTop: 4 }}>
+          <Btn sm kind="primary" disabled={saving} onClick={save}>{saving ? "saving…" : "Save"}</Btn>
+          {msg && <span className="mono-sm" style={{ color: "var(--ink-3)" }}>{msg}</span>}
+        </div>
+        <div className="mono-sm" style={{ color: "var(--ink-3)" }}>
+          Gemini needs <b>GEMINI_API_KEY</b> set on the server. The copilot + KB assistant stay on Claude regardless (not yet routed). Precedence: per-feature &gt; env &gt; tenant default &gt; Claude.
+        </div>
+      </div>
+    </Card>
   );
 };
 

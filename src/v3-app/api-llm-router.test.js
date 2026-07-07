@@ -33,6 +33,25 @@ describe("resolveProvider precedence", () => {
   it("unknown provider values fall back to claude", () => {
     expect(resolveProvider("x", "bogus")).toBe("claude");
   });
+
+  // P2: per-tenant settings.
+  it("per-tenant default (settings.llm_provider) applies when no env/explicit", () => {
+    expect(resolveProvider("email_classifier", null, { llm_provider: "gemini" })).toBe("gemini");
+  });
+  it("per-tenant per-feature override beats per-tenant default AND env global", () => {
+    process.env.LLM_PROVIDER = "claude";
+    const settings = { llm_provider: "claude", llm_provider_overrides: { email_classifier: "gemini" } };
+    expect(resolveProvider("email_classifier", null, settings)).toBe("gemini");
+    expect(resolveProvider("anomaly_explain", null, settings)).toBe("claude");
+  });
+  it("env per-feature beats per-tenant default (env is more specific than tenant default)", () => {
+    process.env.LLM_PROVIDER_EMAIL_CLASSIFIER = "gemini";
+    expect(resolveProvider("email_classifier", null, { llm_provider: "claude" })).toBe("gemini");
+  });
+  it("explicit still wins over per-tenant override", () => {
+    const settings = { llm_provider_overrides: { email_classifier: "gemini" } };
+    expect(resolveProvider("email_classifier", "claude", settings)).toBe("claude");
+  });
 });
 
 describe("normalizeClaude — data.content blocks", () => {

@@ -1015,12 +1015,28 @@ const WiredSOIntake = () => {
           });
         } catch (_) { /* non-fatal; workspace re-run can retry */ }
       }
+      // Auto-reconcile the received PO against the customer's quotes so the
+      // SO is priced + verified with NO manual quote-picking. Skip for large
+      // POs (lines still extracting in the background — the workspace re-runs
+      // once they land). Best-effort: never blocks the draft.
+      let reconMsg = "";
+      if (!largePo && customerId && extractedLines && extractedLines.length) {
+        try {
+          const rep: any = await AnvilBackend?.orders?.reconcileQuotes?.(newId);
+          const s = rep?.summary;
+          if (s) {
+            reconMsg = ` · quotes ${s.matched}/${s.total} matched`
+              + (s.price_mismatch ? `, ${s.price_mismatch} price⚠` : "")
+              + (s.unmatched ? `, ${s.unmatched} unmatched` : "");
+          }
+        } catch (_) { /* non-fatal; the workspace can re-run reconciliation */ }
+      }
       const linesMsg = largePo
         ? ` (${largePo.pages || "many"}-page PO · line items extracting in background)`
         : (extractedLines && extractedLines.length
           ? " (" + extractedLines.length + " line" + (extractedLines.length === 1 ? "" : "s") + " from PO)"
           : "");
-      window.notifySuccess?.("Draft created", String(newId).slice(0, 8) + linesMsg);
+      window.notifySuccess?.("Draft created", String(newId).slice(0, 8) + linesMsg + reconMsg);
       window.location.hash = `#/so?id=${newId}`;
     } catch (e2: any) {
       setErr(String(e2?.message || e2));

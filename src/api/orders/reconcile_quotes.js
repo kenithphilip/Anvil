@@ -13,7 +13,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-import { reconcilePoAgainstQuotes } from "../_lib/quote-reconcile.js";
+import { reconcilePoAgainstQuotes, comparePaymentTerms } from "../_lib/quote-reconcile.js";
 
 // Quotes in these states can't have priced this PO.
 const EXCLUDED_QUOTE_STATUSES = ["CANCELLED"];
@@ -47,7 +47,7 @@ export default async function handler(req, res) {
 
     // 1. All the customer's quotes (most recent first = preferred price).
     const quotesQ = await svc.from("quotes")
-      .select("id, quote_number, created_at, status")
+      .select("id, quote_number, created_at, status, terms")
       .eq("tenant_id", ctx.tenantId).eq("customer_id", order.customer_id)
       .not("status", "in", "(" + EXCLUDED_QUOTE_STATUSES.join(",") + ")")
       .order("created_at", { ascending: false });
@@ -73,8 +73,24 @@ export default async function handler(req, res) {
       priceTolerancePct: body.price_tolerance_pct != null ? Number(body.price_tolerance_pct) : 0.5,
     });
 
-    // 4. Persist enriched lines + report; link the primary quote (most lines).
+    // 3b. Header-level payment-terms check: the PO's payment terms
+    // (extracted verbatim) vs the primary matched quote's terms.
     const primary = rec.quotes_used[0] || null;
+    const poPayTerms = order.result?.salesOrder?.customer?.payment_terms
+      || order.result?.salesOrder?.payment_terms || null;
+    const primaryQuoteTerms = primary ? (quoteMeta.get(primary.quote_id)?.terms || null) : null;
+    const paymentTerms = comparePaymentTerms(poPayTerms, primaryQuoteTerms);
+    if (primary) paymentTerms.source_quote_number = primary.quote_number;
+    if (paymentTerms.verdict === "mismatch") {
+      rec.flags.push({
+        line_no: null, part_no: null, verdict: "payment_terms_mismatch",
+        po_rate: null, quote_rate: null, price_delta_pct: null,
+        source_quote_number: primary?.quote_number || null,
+        po_terms: paymentTerms.po_terms, quote_terms: paymentTerms.quote_terms,
+      });
+    }
+
+    // 4. Persist enriched lines + report; link the primary quote (most lines).
     const nowIso = new Date().toISOString();
     const newResult = {
       ...(order.result || {}),
@@ -84,6 +100,7 @@ export default async function handler(req, res) {
         summary: rec.summary,
         quotes_used: rec.quotes_used,
         ambiguous_parts: rec.ambiguous_parts,
+        payment_terms: paymentTerms,
         flags: rec.flags,
       },
     };
@@ -98,7 +115,7 @@ export default async function handler(req, res) {
 
     await recordAudit(ctx, {
       action: "order_reconcile_quotes", objectType: "order", objectId: orderId,
-      detail: rec.summary.matched + "/" + rec.summary.total + " matched, " + rec.summary.price_mismatch + " price-mismatch, " + rec.summary.unmatched + " unmatched across " + rec.quotes_used.length + " quote(s)",
+      detail: rec.summary.matched + "/" + rec.summary.total + " matched, " + rec.summary.price_mismatch + " price-mismatch, " + rec.summary.unmatched + " unmatched across " + rec.quotes_used.length + " quote(s)" + (paymentTerms.verdict === "mismatch" ? "; PAYMENT-TERMS MISMATCH (PO " + paymentTerms.po_terms + " vs quote " + paymentTerms.quote_terms + ")" : ""),
     });
 
     return json(res, 200, {
@@ -106,6 +123,7 @@ export default async function handler(req, res) {
       summary: rec.summary,
       quotes_used: rec.quotes_used,
       ambiguous_parts: rec.ambiguous_parts,
+      payment_terms: paymentTerms,
       flags: rec.flags,
       quotes_available: quotes.length,
     });

@@ -1027,7 +1027,8 @@ const WiredSOIntake = () => {
           if (s) {
             reconMsg = ` · quotes ${s.matched}/${s.total} matched`
               + (s.price_mismatch ? `, ${s.price_mismatch} price⚠` : "")
-              + (s.unmatched ? `, ${s.unmatched} unmatched` : "");
+              + (s.unmatched ? `, ${s.unmatched} unmatched` : "")
+              + (rep?.payment_terms?.verdict === "mismatch" ? `, pay-terms⚠` : "");
           }
         } catch (_) { /* non-fatal; the workspace can re-run reconciliation */ }
       }

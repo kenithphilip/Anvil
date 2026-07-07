@@ -1,26 +1,32 @@
 // LlamaParse (LlamaCloud) extraction adapter — plug-and-play alongside
-// gemini / claude / the other engines in the provider chain.
+// gemini / claude / the other engines in the DocAI provider chain.
 //
-// Keyed EXACTLY like claude/gemini: a single server env var
-// (LLAMA_CLOUD_API_KEY), no per-tenant config entity, no encryption. It's
-// just another selectable engine — add "llamaparse" to docai_provider_order
-// and set the key. OFF by default (not in the default order + no key = skip).
+// LlamaParse is a DOCUMENT-PARSING engine (PDF/scan -> structured markdown +
+// tables), NOT a chat LLM. Its home is the docai extraction chain, where it is
+// switchable in place of the Claude-vision extractor / Mistral OCR — NOT the
+// reasoning-LLM abstraction (llm.js), which it cannot serve.
 //
-// Uses the official @llamaindex/llama-cloud SDK: upload the file, then
-// parse() with the chosen tier and pull markdown_full, mapped onto the
-// canonical line-item shape. Tier defaults to "agentic" (best accuracy);
-// override with LLAMAPARSE_TIER=fast|balanced|agentic|agentic_plus.
+// Keyed EXACTLY like claude/gemini: a single server env var, no per-tenant
+// config entity, no encryption. It's just another selectable engine — add
+// "llamaparse" to docai_provider_order (Admin > Document AI) and set the key.
+// OFF by default (not in the default order; no key => isConfigured() false =>
+// dispatcher skips it).
 //
-// DATA RESIDENCY: LlamaCloud is US/EU only. Enabling it sends document
-// content to a US/EU SaaS — a deployment choice made by whoever sets the
-// env key, same as choosing Gemini or Claude.
+// ENV: LLAMAPARSE_API_KEY (primary; the var the deployment sets). Falls back to
+// LLAMA_CLOUD_API_KEY for older configs. Tier via LLAMAPARSE_TIER
+// (fast|balanced|agentic|agentic_plus); default "agentic" (best accuracy).
+//
+// DATA RESIDENCY: LlamaCloud is US/EU only. Enabling it sends document content
+// to a US/EU SaaS — a deployment choice made by whoever sets the env key, same
+// as choosing Gemini or Claude.
 
 import { safeFetch } from "../safe-fetch.js";
 
+const apiKey = () => process.env.LLAMAPARSE_API_KEY || process.env.LLAMA_CLOUD_API_KEY || null;
 const tier = () => process.env.LLAMAPARSE_TIER || "agentic";
 
-// Mirror claude.js: config is purely the presence of the env key.
-export const isConfigured = (_settings) => !!process.env.LLAMA_CLOUD_API_KEY;
+// Config is purely the presence of the env key (mirrors claude.js/gemini.js).
+export const isConfigured = (_settings) => !!apiKey();
 
 // ── canonical mapping: markdown table -> line items ─────────────────
 export const parseMarkdownTable = (md) => {
@@ -60,39 +66,74 @@ export const normalizeFromMarkdown = (md) => {
   return { lines };
 };
 
-export const extract = async ({ url, bytes, filename }) => {
-  const key = process.env.LLAMA_CLOUD_API_KEY;
-  if (!key) return { ok: false, error: "LLAMA_CLOUD_API_KEY not set" };
+// LlamaParse returns no confidence score, so derive one from extraction
+// completeness: the share of lines that carry BOTH a part number and a
+// quantity. A clean line table clears the dispatcher's fallback threshold
+// (docai_fallback_confidence, 0.85 default); a table with no quantities stays
+// below it so the chain falls through to another engine rather than trusting a
+// half-read table. Hardcoding 0.8 (the old value) sat permanently below the
+// threshold, so LlamaParse could never win as the primary.
+export const scoreConfidence = (lines) => {
+  if (!lines || !lines.length) return 0.4;
+  const complete = lines.filter((l) => l && l.partNumber && l.quantity != null).length / lines.length;
+  return Math.min(0.97, 0.82 + 0.15 * complete);
+};
+
+// Pull the markdown out of the SDK parse result across its shape variants.
+const markdownOf = (result) =>
+  result?.markdown_full
+  || result?.markdown
+  || (Array.isArray(result?.pages) ? result.pages.map((p) => p?.md || p?.markdown || "").join("\n\n") : "")
+  || "";
+
+export const extract = async ({ url, bytes, filename, mime }) => {
+  const key = apiKey();
+  if (!key) return { ok: false, reason: "no_api_key", error: "LLAMAPARSE_API_KEY not set" };
   try {
     let fileBytes = bytes;
     if (!fileBytes && url) {
       const dl = await safeFetch(url);
-      if (!dl.ok) return { ok: false, status: dl.status, error: "could not fetch document url" };
+      if (!dl.ok) return { ok: false, status: dl.status, reason: "fetch_failed", error: "could not fetch document url" };
       fileBytes = Buffer.from(await dl.arrayBuffer());
     }
-    if (!fileBytes) return { ok: false, error: "LlamaParse adapter requires url or bytes" };
+    if (!fileBytes) return { ok: false, reason: "no_source_bytes", error: "LlamaParse adapter requires url or bytes" };
 
     // Dynamic import keeps the SDK out of cold-start until a tenant opts in.
     const { default: LlamaCloud } = await import("@llamaindex/llama-cloud");
     const client = new LlamaCloud({ apiKey: key });
 
-    const file = new File([fileBytes], filename || "document.pdf", { type: "application/pdf" });
+    const file = new File([fileBytes], filename || "document.pdf", { type: mime || "application/pdf" });
     const fileObj = await client.files.create({ file, purpose: "parse" });
     const result = await client.parsing.parse({
       file_id: fileObj.id,
       tier: tier(),
       expand: ["markdown_full"],
     });
-    const md = result?.markdown_full || result?.markdown || "";
-    const normalized = normalizeFromMarkdown(md);
-    const confidences = {};
-    normalized.lines.forEach((_li, i) => { confidences["lines[" + i + "]"] = 0.8; });
-    confidences["overall"] = normalized.lines.length > 0 ? 0.8 : 0.4;
-    return { ok: true, raw: { file_id: fileObj.id, tier: tier(), chars: md.length }, normalized, confidences };
+    const md = markdownOf(result);
+    const { lines } = normalizeFromMarkdown(md);
+    const overall = scoreConfidence(lines);
+    const confidences = { overall };
+    lines.forEach((_li, i) => { confidences["lines[" + i + "]"] = overall; });
+
+    return {
+      ok: true,
+      // LlamaParse parses tables; it does not classify or read the customer
+      // header. When a line table is found we treat it as a PO (the reason
+      // it's selected for this flow); downstream customer matching can run
+      // off raw.markdown. Empty table => leave classification null.
+      normalized: {
+        classification: lines.length ? "po" : null,
+        customer: null,
+        lines,
+      },
+      confidences,
+      reason: lines.length === 0 ? "empty_lines" : "ok",
+      raw: { file_id: fileObj.id, tier: tier(), markdown: md, chars: md.length },
+    };
   } catch (err) {
-    return { ok: false, error: String(err?.message || err) };
+    return { ok: false, reason: "adapter_threw", error: String(err?.message || err) };
   }
 };
 
 // Exported for tests (pure mapping, no network).
-export const __test__ = { parseMarkdownTable, normalizeFromMarkdown, tier };
+export const __test__ = { parseMarkdownTable, normalizeFromMarkdown, scoreConfidence, tier, apiKey };

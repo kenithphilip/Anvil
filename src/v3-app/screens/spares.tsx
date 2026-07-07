@@ -755,17 +755,18 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
               <table className="tbl" style={{ minWidth: "100%" }}>
                 <thead>
                   <tr>
-                    <th style={{ minWidth: 110, position: "sticky", left: 0, background: "var(--paper-3)", zIndex: 2 }}>Gun</th>
+                    {/* Corner cell: sticky on BOTH axes (top + left). */}
+                    <th style={{ minWidth: 110, position: "sticky", left: 0, top: 0, background: "var(--paper-3)", zIndex: 3 }}>Gun</th>
                     {SM_STATION_COLS.map((sc) => (
-                      <th key={sc.key} className={sc.num ? "r" : ""} style={{ minWidth: sc.w }}>{sc.label}</th>
+                      <th key={sc.key} className={sc.num ? "r" : ""} style={{ minWidth: sc.w, position: "sticky", top: 0, zIndex: 2, background: "var(--paper-3)" }}>{sc.label}</th>
                     ))}
                     {(draft.cols || []).map((c) => (
-                      <th key={c.id} style={{ minWidth: 110 }} title={c.col_type}>
+                      <th key={c.id} style={{ minWidth: 110, position: "sticky", top: 0, zIndex: 2, background: "var(--paper-3)" }} title={c.col_type}>
                         {c.locked && <span style={{ marginRight: 4, color: "var(--ink-4)" }}>{Icon.lock}</span>}
                         {c.col_name}
                       </th>
                     ))}
-                    <th style={{ width: 28 }}></th>
+                    <th style={{ width: 28, position: "sticky", top: 0, zIndex: 2, background: "var(--paper-3)" }}></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -834,19 +835,19 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
             <div style={{ overflow: "auto", maxHeight: "60vh" }}>
               <table className="tbl" style={{ minWidth: "100%" }}>
                 <thead><tr>
-                  <th style={{ width: 40 }}>#</th>
-                  <th>Description</th>
-                  <th>Part no</th>
-                  <th>Gun</th>
-                  <th className="r" title="Number of guns using this part">Installed</th>
-                  <th className="r">Recommended</th>
-                  <th>Priority</th>
-                  <th>Type</th>
-                  <th>Customer Part No</th>
-                  <th>Lead Time</th>
-                  <th>Remarks</th>
-                  <th>Quote Ref</th>
-                  <th>PO Ref</th>
+                  {[
+                    { label: "#", style: { width: 40 } },
+                    { label: "Description" }, { label: "Part no" }, { label: "Gun" },
+                    { label: "Installed", cls: "r", title: "Number of guns using this part" },
+                    { label: "Recommended", cls: "r" },
+                    { label: "Priority" }, { label: "Type" }, { label: "Customer Part No" },
+                    { label: "Lead Time" }, { label: "Remarks" }, { label: "Quote Ref" }, { label: "PO Ref" },
+                  ].map((h, i) => (
+                    <th key={i} className={h.cls || ""} title={h.title}
+                        style={{ ...(h.style || {}), position: "sticky", top: 0, zIndex: 2, background: "var(--paper-3)" }}>
+                      {h.label}
+                    </th>
+                  ))}
                 </tr></thead>
                 <tbody>
                   {(draft.recommended || []).map((r, i) => (

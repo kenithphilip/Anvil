@@ -64,6 +64,7 @@ export const buildQuoteLineRow = (tenantId, quoteId, raw) => {
     hsn_sac: raw.hsn_sac || null,
     customer_part_number: raw.customer_part_number || null,
     source_country: raw.source_country || null,
+    supplier_id: raw.supplier_id || null,
     remark: raw.remark || null,
   };
   for (const k of NUMERIC_KEYS) {

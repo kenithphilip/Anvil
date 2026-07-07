@@ -48,10 +48,17 @@ export default async function handler(req, res) {
       for (const raw of inputs) {
         if (raw.line_index == null) continue;
         const row = buildQuoteLineRow(ctx.tenantId, body.quote_id, raw);
-        const upsert = await svc.from("quote_lines")
+        let upsert = await svc.from("quote_lines")
           .upsert(row, { onConflict: "tenant_id,quote_id,line_index" })
           .select("*")
           .single();
+        // Pre-167 deployments lack supplier_id; strip and retry once.
+        if (upsert.error && (upsert.error.code === "42703" || /supplier_id/i.test(upsert.error.message))) {
+          delete row.supplier_id;
+          upsert = await svc.from("quote_lines")
+            .upsert(row, { onConflict: "tenant_id,quote_id,line_index" })
+            .select("*").single();
+        }
         if (upsert.error) throw new Error(upsert.error.message);
         out.push(upsert.data);
       }

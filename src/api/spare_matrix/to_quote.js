@@ -57,29 +57,6 @@ export default async function handler(req, res) {
       return json(res, 400, { error: { message: "No rows to quote. Set a recommended quantity (> 0) on at least one spare first." } });
     }
 
-    // Re-run guard: reuse an existing DRAFT quote for this matrix.
-    if (!body.force) {
-      const existing = await svc.from("quotes")
-        .select("*")
-        .eq("tenant_id", ctx.tenantId).eq("source_matrix_id", id).eq("status", "DRAFT")
-        .order("created_at", { ascending: false }).limit(1);
-      // source_matrix_id may not exist on very old deployments; ignore that error.
-      if (!existing.error && Array.isArray(existing.data) && existing.data.length) {
-        return json(res, 200, { quote: existing.data[0], reused: true, fed: feedRows.length });
-      }
-    }
-
-    // Customer defaults for currency / validity (mirror quotes/index.js).
-    let currency = "INR";
-    let validityDays = 30;
-    const cust = await svc.from("customers")
-      .select("currency, default_quote_validity_days")
-      .eq("tenant_id", ctx.tenantId).eq("id", matrix.customer_id).maybeSingle();
-    if (!cust.error && cust.data) {
-      if (cust.data.currency) currency = cust.data.currency;
-      if (cust.data.default_quote_validity_days != null) validityDays = Number(cust.data.default_quote_validity_days);
-    }
-
     // Build line_items JSONB (unpriced) from the recommended rows.
     const lineItems = feedRows.map((r) => ({
       partNumber: r.part_no || null,
@@ -93,37 +70,64 @@ export default async function handler(req, res) {
       customerPartNumber: r.customer_part_no || null,
     }));
     const totals = computeTotals(lineItems);
-    const quoteNumber = await generateQuoteNumber(svc, ctx.tenantId);
 
-    const insertPayload = {
-      tenant_id: ctx.tenantId,
-      customer_id: matrix.customer_id,
-      opportunity_id: null,
-      source_matrix_id: id,
-      quote_number: quoteNumber,
-      version: 1,
-      status: "DRAFT",
-      currency,
-      ...totals,
-      validity_days: validityDays,
-      expires_at: null,                   // set on SEND
-      notes: "Spares for " + (matrix.name || matrix.project_name || "matrix"),
-      line_items: lineItems,
-      field_sources: { line_items: "spare_matrix.recommended" },
-      created_by: ctx.user?.id || null,
-    };
-    // Strip unknown columns and retry once (pre-migration deployments may
-    // lack field_sources / source_matrix_id).
-    let ins = await svc.from("quotes").insert(insertPayload).select("*").single();
-    if (ins.error && (ins.error.code === "42703" || /field_sources|source_matrix_id/i.test(ins.error.message))) {
-      delete insertPayload.field_sources;
-      delete insertPayload.source_matrix_id;
-      ins = await svc.from("quotes").insert(insertPayload).select("*").single();
+    // Re-feed is IDEMPOTENT: if a DRAFT quote already exists for this matrix
+    // (and no force), UPDATE it to the CURRENT selection instead of leaving a
+    // stale draft — so filling more recommended qtys and feeding again adds
+    // the new lines rather than returning the old set.
+    let existingDraft = null;
+    if (!body.force) {
+      const existing = await svc.from("quotes")
+        .select("*")
+        .eq("tenant_id", ctx.tenantId).eq("source_matrix_id", id).eq("status", "DRAFT")
+        .order("created_at", { ascending: false }).limit(1);
+      // source_matrix_id may not exist on very old deployments; ignore that error.
+      if (!existing.error && Array.isArray(existing.data) && existing.data.length) existingDraft = existing.data[0];
     }
-    if (ins.error) throw new Error(ins.error.message);
-    const quote = ins.data;
 
-    // Write first-class quote_lines rows (convert.js reads these).
+    let quote, quoteNumber, reused = false;
+    if (existingDraft) {
+      reused = true;
+      quoteNumber = existingDraft.quote_number;
+      const upd = await svc.from("quotes")
+        .update({ line_items: lineItems, ...totals, updated_at: new Date().toISOString() })
+        .eq("tenant_id", ctx.tenantId).eq("id", existingDraft.id).select("*").single();
+      quote = (!upd.error && upd.data) ? upd.data : existingDraft;
+    } else {
+      // Customer defaults for currency / validity (mirror quotes/index.js).
+      let currency = "INR";
+      let validityDays = 30;
+      const cust = await svc.from("customers")
+        .select("currency, default_quote_validity_days")
+        .eq("tenant_id", ctx.tenantId).eq("id", matrix.customer_id).maybeSingle();
+      if (!cust.error && cust.data) {
+        if (cust.data.currency) currency = cust.data.currency;
+        if (cust.data.default_quote_validity_days != null) validityDays = Number(cust.data.default_quote_validity_days);
+      }
+      quoteNumber = await generateQuoteNumber(svc, ctx.tenantId);
+      const insertPayload = {
+        tenant_id: ctx.tenantId, customer_id: matrix.customer_id, opportunity_id: null,
+        source_matrix_id: id, quote_number: quoteNumber, version: 1, status: "DRAFT", currency,
+        ...totals, validity_days: validityDays, expires_at: null,
+        notes: "Spares for " + (matrix.name || matrix.project_name || "matrix"),
+        line_items: lineItems, field_sources: { line_items: "spare_matrix.recommended" },
+        created_by: ctx.user?.id || null,
+      };
+      // Strip unknown columns and retry once (pre-migration deployments).
+      let ins = await svc.from("quotes").insert(insertPayload).select("*").single();
+      if (ins.error && (ins.error.code === "42703" || /field_sources|source_matrix_id/i.test(ins.error.message))) {
+        delete insertPayload.field_sources;
+        delete insertPayload.source_matrix_id;
+        ins = await svc.from("quotes").insert(insertPayload).select("*").single();
+      }
+      if (ins.error) throw new Error(ins.error.message);
+      quote = ins.data;
+    }
+
+    // Replace quote_lines with the CURRENT selection (delete-then-insert) so
+    // a re-feed drops de-selected parts and adds newly-filled ones.
+    const delLines = await svc.from("quote_lines").delete().eq("tenant_id", ctx.tenantId).eq("quote_id", quote.id);
+    if (delLines.error) throw new Error(delLines.error.message);
     const lineRows = feedRows.map((r, i) => buildQuoteLineRow(ctx.tenantId, quote.id, {
       line_index: i,
       part_no: r.part_no || null,
@@ -133,9 +137,7 @@ export default async function handler(req, res) {
       qty: Number(r.recommended_qty) || 0,
       listed_unit_price: 0,
     }));
-    const linesUp = await svc.from("quote_lines")
-      .upsert(lineRows, { onConflict: "tenant_id,quote_id,line_index" })
-      .select("*");
+    const linesUp = await svc.from("quote_lines").insert(lineRows).select("*");
     if (linesUp.error) throw new Error(linesUp.error.message);
 
     // Link the fed recommended rows back to the quote.
@@ -151,10 +153,10 @@ export default async function handler(req, res) {
       action: "spare_matrix_to_quote",
       objectType: "quote",
       objectId: quote.id,
-      detail: quoteNumber + " :: " + feedRows.length + " spare line(s) from matrix " + id,
+      detail: quoteNumber + " :: " + feedRows.length + " spare line(s) from matrix " + id + (reused ? " (re-synced draft)" : " (new draft)"),
     });
 
-    return json(res, 200, { quote, lines: linesUp.data || [], fed: feedRows.length });
+    return json(res, 200, { quote, lines: linesUp.data || [], fed: feedRows.length, reused });
   } catch (err) {
     sendError(res, err);
   }

@@ -184,4 +184,43 @@ describe("mergeChunkResults", () => {
     expect(m.attempts.length).toBe(2);
     expect(m.attempts.every((a) => typeof a._chunk_index === "number")).toBe(true);
   });
+
+  // Observability: when EVERY chunk fails, the merge must surface the real
+  // reason + model instead of collapsing to fail_unknown / model — (the
+  // black box operators hit on the 7-page P250432265 PO).
+  const fail = (o) => ({ ok: false, lines: [], customer: null, confidences: {}, attempts: [], ...o });
+
+  it("propagates the underlying reason + selected_model when all chunks fail", () => {
+    const m = mergeChunkResults(
+      [
+        fail({ reason: "upstream_error", error: "401 invalid x-api-key", selected_model: "claude-sonnet-4-6", model_selection_reason: "default" }),
+        fail({ reason: "upstream_error", error: "401 invalid x-api-key", selected_model: "claude-sonnet-4-6" }),
+      ],
+      [{ pageCount: 3 }, { pageCount: 4 }],
+    );
+    expect(m.ok).toBe(false);
+    expect(m.reason).toBe("upstream_error");            // NOT undefined -> run.js no longer shows fail_unknown
+    expect(m.selected_model).toBe("claude-sonnet-4-6"); // NOT null -> diagnostics shows the model
+    expect(m.model_selection_reason).toBe("default");
+    expect(m.error).toContain("401");
+  });
+
+  it("carries selected_model even on a successful chunked run", () => {
+    const m = mergeChunkResults(
+      [ok({ selected_model: "gemini-3-flash" }), ok({ selected_model: "gemini-3-flash" })],
+      [{ pageCount: 1 }, { pageCount: 1 }],
+    );
+    expect(m.ok).toBe(true);
+    expect(m.selected_model).toBe("gemini-3-flash");
+    expect(m.reason).toBeUndefined();                   // no failure reason on success
+  });
+
+  it("does not fabricate a reason when at least one chunk succeeds", () => {
+    const m = mergeChunkResults(
+      [ok({ lines: [{ partNumber: "X-1" }] }), fail({ reason: "upstream_error" })],
+      [{ pageCount: 1 }, { pageCount: 1 }],
+    );
+    expect(m.ok).toBe(true);
+    expect(m.reason).toBeUndefined();
+  });
 });

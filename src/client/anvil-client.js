@@ -708,6 +708,10 @@
       return await resp.blob();
     },
     soShare: async (orderId) => apiFetch("/api/orders/so_pdf?orderId=" + encodeURIComponent(orderId) + "&format=share"),
+    // Auto-reconcile a received PO/SO against the customer's quotes
+    // (Anvil finds the quotes; no manual quote-picking). Returns the
+    // verification report (matched / price_mismatch / unmatched + flags).
+    reconcileQuotes: async (orderId, opts) => apiFetch("/api/orders/reconcile_quotes", { method: "POST", body: { order_id: orderId, ...(opts || {}) } }),
     // Phase 3.6 observability: full pipeline-diagnostics blob for
     // an order. Used by the workspace's Pipeline Diagnostics tab
     // to render extraction_runs + processing_events + adapter

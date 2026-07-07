@@ -4,6 +4,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { isMissingColumn } from "../_lib/rfq-composition.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -25,7 +26,7 @@ export default async function handler(req, res) {
       requirePermission(ctx, "approve");
       const body = await readBody(req);
       if (!body?.vendor_name) return json(res, 400, { error: { message: "vendor_name required" } });
-      const ins = await svc.from("vendors").insert({
+      const insRow = {
         tenant_id: ctx.tenantId,
         vendor_name: body.vendor_name,
         vendor_key: body.vendor_key || null,
@@ -35,7 +36,15 @@ export default async function handler(req, res) {
         default_lead_time_days: body.default_lead_time_days || null,
         notes: body.notes || null,
         external_ref: body.external_ref || {},
-      }).select("*").single();
+        supplier_id: body.supplier_id || null,   // bridge to suppliers master (migration 168)
+      };
+      let ins = await svc.from("vendors").insert(insRow).select("*").single();
+      // Pre-168 deployments lack supplier_id; strip and retry once. (A bad-FK
+      // error is NOT a missing column, so it still surfaces — see isMissingColumn.)
+      if (ins.error && isMissingColumn(ins.error, "supplier_id")) {
+        delete insRow.supplier_id;
+        ins = await svc.from("vendors").insert(insRow).select("*").single();
+      }
       if (ins.error) throw new Error(ins.error.message);
       await recordAudit(ctx, { action: "vendor_created", objectType: "vendor", objectId: ins.data.id, detail: body.vendor_name });
       return json(res, 200, { vendor: ins.data });
@@ -44,8 +53,15 @@ export default async function handler(req, res) {
     if (req.method === "PATCH") {
       requirePermission(ctx, "approve");
       const body = await readBody(req);
-      const r = await svc.from("vendors").update(body)
+      let r = await svc.from("vendors").update(body)
         .eq("tenant_id", ctx.tenantId).eq("id", id).select("*").single();
+      // Pre-168 deployments lack supplier_id; drop it and retry once so the
+      // rest of the edit still lands while the migration is unapplied.
+      if (r.error && "supplier_id" in body && isMissingColumn(r.error, "supplier_id")) {
+        const { supplier_id, ...rest } = body;
+        r = await svc.from("vendors").update(rest)
+          .eq("tenant_id", ctx.tenantId).eq("id", id).select("*").single();
+      }
       if (r.error) throw new Error(r.error.message);
       await recordAudit(ctx, { action: "vendor_updated", objectType: "vendor", objectId: id, detail: Object.keys(body).join(",") });
       return json(res, 200, { vendor: r.data });

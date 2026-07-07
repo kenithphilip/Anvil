@@ -19,6 +19,7 @@ type Any = any;
 export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({ rfqId, onChanged }) => {
   const [data, setData] = useState<Any>(null);
   const [vendors, setVendors] = useState<Any[]>([]);
+  const [suppliers, setSuppliers] = useState<Any[]>([]);   // suppliers master, for the vendor->supplier bridge (migration 168)
   const [err, setErr] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [addVendorId, setAddVendorId] = useState("");
@@ -31,6 +32,10 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
     let cancel = false;
     Promise.resolve(AnvilBackend?.admin?.quoteSettings?.())
       .then((qs: any) => { if (!cancel && Array.isArray(qs?.quote_currencies) && qs.quote_currencies.length) setCurrencyOptions(qs.quote_currencies); })
+      .catch(() => {});
+    // Suppliers master for the vendor->supplier link dropdown. Optional.
+    Promise.resolve((AnvilBackend as any)?.inventory?.suppliers?.list?.())
+      .then((s: any) => { if (!cancel) setSuppliers(Array.isArray(s) ? s : (s?.suppliers || s?.rows || [])); })
       .catch(() => {});
     return () => { cancel = true; };
   }, []);
@@ -80,6 +85,21 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
     () => vendors.filter((v) => v.active !== false && !invitations.some((i) => i.vendor_id === v.id)),
     [vendors, invitations]
   );
+  const supplierOptions = useMemo(
+    () => [...suppliers].filter((s) => s?.supplier_name).sort((a, b) => String(a.supplier_name).localeCompare(String(b.supplier_name))),
+    [suppliers]
+  );
+
+  // Link an invited vendor to a suppliers-master row (migration 168). This is
+  // what lets an award resolve the winning vendor deterministically to a
+  // supplier_id, which is then stamped onto the composition + the quote line.
+  const linkSupplier = async (vendorId: string, supplierId: string) => {
+    try {
+      await AnvilBackend?.supplierRfq?.updateVendor?.(vendorId, { supplier_id: supplierId || null });
+      setVendors((arr) => arr.map((v) => v.id === vendorId ? { ...v, supplier_id: supplierId || null } : v));
+      window.notifySuccess?.("Supplier " + (supplierId ? "linked" : "unlinked"), supplierId ? "vendor bridged to supplier" : "link cleared");
+    } catch (e: any) { window.notifyError?.("Could not link supplier", e?.message || String(e)); }
+  };
 
   // Existing quote lookup: invitationId|line_no -> supplier_quote
   const quoteFor = (invId: string, lineNo: number) => quotes.find((q) => q.invitation_id === invId && q.line_no === lineNo);
@@ -262,6 +282,16 @@ export const RfqDetail: React.FC<{ rfqId: string; onChanged?: () => void }> = ({
                 <Chip k={inv.response_status === "quoted" ? "good" : "ghost"}>
                   {vendorById.get(inv.vendor_id)?.vendor_name || "vendor"} · {inv.response_status}
                 </Chip>
+                <span className="row" style={{ gap: 4, alignItems: "center" }}>
+                  <span className="mono-sm" style={{ color: "var(--ink-4)" }}>supplier:</span>
+                  <select className="select" style={{ minWidth: 160 }}
+                          value={vendorById.get(inv.vendor_id)?.supplier_id || ""}
+                          title="Link this vendor to a suppliers-master row. On award, the winning vendor's supplier is stamped onto the quote line + composition."
+                          onChange={(e) => linkSupplier(inv.vendor_id, e.target.value)}>
+                    <option value="">— link supplier —</option>
+                    {supplierOptions.map((s) => <option key={s.id} value={s.id}>{s.supplier_name}</option>)}
+                  </select>
+                </span>
                 {rfq?.customer_id && (
                   <span className="row" style={{ gap: 4, alignItems: "center" }}>
                     <span className="mono-sm" style={{ color: "var(--ink-4)" }}>cust ref:</span>

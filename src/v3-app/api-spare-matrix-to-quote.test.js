@@ -177,4 +177,21 @@ describe("spare_matrix to_quote (PR5)", () => {
     const out = await run(toQuote, { query: { id: "nope" } });
     expect(out.statusCode).toBe(404);
   });
+
+  it("re-feed RE-SYNCS the existing draft to the current selection (bug: others not pushed)", async () => {
+    const first = await run(toQuote, { query: { id: "m1" } });
+    expect(first.body.fed).toBe(2); // e1 + e3 (e2 qty 0)
+    const qid = first.body.quote.id;
+    expect(H.store.quote_lines.filter((l) => l.quote_id === qid).length).toBe(2);
+
+    // Operator now fills another part's recommended qty and feeds again.
+    H.store.recommended_spares.find((r) => r.id === "e2").recommended_qty = 5;
+    const second = await run(toQuote, { query: { id: "m1" } });
+    expect(second.statusCode).toBe(200);
+    expect(second.body.reused).toBe(true);
+    expect(second.body.quote.id).toBe(qid);         // same draft, not a duplicate
+    expect(second.body.fed).toBe(3);                // now 3 rows fed
+    expect(H.store.quote_lines.filter((l) => l.quote_id === qid).length).toBe(3); // re-synced, not stale
+    expect(H.store.quotes.filter((q) => q.source_matrix_id === "m1").length).toBe(1);
+  });
 });

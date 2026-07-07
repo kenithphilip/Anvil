@@ -315,3 +315,159 @@ const VoucherDoc = ({
 //     items:[{partNumber,description,hsn,quantity,uom,rate,gstPct,taxable}],
 //     taxable, cgst, sgst, igst, total, currency, totalInWords, notes }
 export const renderVoucher = async (data) => await renderToBuffer(VoucherDoc(data));
+
+// ───────────────────────────────────────────────────────────────────
+// Sales ORDER voucher (Tally "SALES ORDER" acknowledgment layout).
+//
+// Distinct from the post-tax Sales Voucher above: this reproduces the
+// Tally Sales Order the seller sends back on receiving a customer PO —
+// seller box with PAN/CIN/State, a right-hand voucher-details box,
+// separate Consignee(Ship-to) + Buyer(Bill-to) blocks, and an 11-column
+// line table (Sl No, Description, HSN, Cust Part No, Part No, Due on,
+// Qty, Rate, per, Disc.%, Amount) with a "Batch : <PO#>" sub-row per
+// line. Body is EX-TAX (Amount = Qty x Rate); tax lives in the quote.
+const so = StyleSheet.create({
+  page:       { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 34, fontFamily: "Helvetica", fontSize: 7.2, color: "#111" },
+  title:      { fontSize: 12, fontWeight: 700, textAlign: "center", marginBottom: 6 },
+  frame:      { borderWidth: 0.7, borderColor: "#000" },
+  topRow:     { flexDirection: "row" },
+  sellerCell: { width: "58%", borderRightWidth: 0.7, borderRightColor: "#000", padding: 5 },
+  metaCell:   { width: "42%" },
+  metaKV:     { flexDirection: "row", borderBottomWidth: 0.5, borderBottomColor: "#000" },
+  metaK:      { width: "45%", padding: 3, borderRightWidth: 0.5, borderRightColor: "#000", color: "#333" },
+  metaV:      { width: "55%", padding: 3, fontWeight: 700 },
+  partyRow:   { flexDirection: "row", borderTopWidth: 0.7, borderTopColor: "#000" },
+  partyCell:  { width: "50%", padding: 5 },
+  partyDivR:  { borderRightWidth: 0.7, borderRightColor: "#000" },
+  ptitle:     { fontSize: 6.5, color: "#555", marginBottom: 2 },
+  pname:      { fontSize: 8.5, fontWeight: 700 },
+  pline:      { fontSize: 7, color: "#222", marginTop: 1 },
+  sellerName: { fontSize: 9.5, fontWeight: 700 },
+  msg:        { borderTopWidth: 0.7, borderTopColor: "#000", padding: 4, fontSize: 6.6, color: "#333" },
+  thead:      { flexDirection: "row", borderTopWidth: 0.7, borderTopColor: "#000", borderBottomWidth: 0.7, borderBottomColor: "#000", backgroundColor: "#eee" },
+  th:         { padding: 2.5, fontSize: 6.4, fontWeight: 700 },
+  row:        { flexDirection: "row" },
+  td:         { paddingHorizontal: 2.5, paddingTop: 2.5, fontSize: 6.8 },
+  batchRow:   { flexDirection: "row" },
+  batchTd:    { paddingHorizontal: 2.5, paddingBottom: 2.5, fontSize: 6.4, color: "#333" },
+  cSl:   { width: "4%" },
+  cDesc: { width: "17%" },
+  cHsn:  { width: "9%" },
+  cCust: { width: "15%" },
+  cPart: { width: "14%" },
+  cDue:  { width: "9%" },
+  cQty:  { width: "8%", textAlign: "right" },
+  cRate: { width: "9%", textAlign: "right" },
+  cPer:  { width: "4%" },
+  cDisc: { width: "4%", textAlign: "right" },
+  cAmt:  { width: "13%", textAlign: "right" },
+  soFooter: { position: "absolute", bottom: 16, left: 20, right: 20, fontSize: 7, color: "#333", textAlign: "center" },
+});
+
+const grp = (n) => {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "";
+  return v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+
+const SOKV = (k, v) => React.createElement(View, { style: so.metaKV },
+  React.createElement(Text, { style: so.metaK }, k),
+  React.createElement(Text, { style: so.metaV }, v || ""),
+);
+
+const SOParty = (title, p, extraStyle) => React.createElement(View, { style: extraStyle ? [so.partyCell, extraStyle] : so.partyCell },
+  React.createElement(Text, { style: so.ptitle }, title),
+  React.createElement(Text, { style: so.pname }, (p && p.name) || "—"),
+  ...(((p && p.addressLines) || []).map((l, i) => React.createElement(Text, { style: so.pline, key: i }, l))),
+  (p && p.gstin) && React.createElement(Text, { style: so.pline }, "GSTIN/UIN : " + p.gstin),
+  (p && (p.stateName || p.stateCode)) && React.createElement(Text, { style: so.pline }, "State Name : " + (p.stateName || "") + (p.stateCode ? ", Code : " + p.stateCode : "")),
+);
+
+const SOHeaderBlock = (d) => React.createElement(View, { style: so.frame, fixed: true },
+  // Seller + right meta box
+  React.createElement(View, { style: so.topRow },
+    React.createElement(View, { style: so.sellerCell },
+      React.createElement(Text, { style: so.sellerName }, (d.seller && d.seller.name) || "—"),
+      ...(((d.seller && d.seller.addressLines) || []).map((l, i) => React.createElement(Text, { style: so.pline, key: i }, l))),
+      (d.seller && d.seller.gstin) && React.createElement(Text, { style: so.pline }, "GSTIN/UIN: " + d.seller.gstin),
+      (d.seller && (d.seller.stateName || d.seller.stateCode)) && React.createElement(Text, { style: so.pline }, "State Name : " + (d.seller.stateName || "") + (d.seller.stateCode ? ", Code : " + d.seller.stateCode : "")),
+      (d.seller && d.seller.cin) && React.createElement(Text, { style: so.pline }, "CIN: " + d.seller.cin),
+      (d.seller && d.seller.email) && React.createElement(Text, { style: so.pline }, "E-Mail : " + d.seller.email),
+      (d.seller && d.seller.pan) && React.createElement(Text, { style: so.pline }, "Company's PAN : " + d.seller.pan),
+    ),
+    React.createElement(View, { style: so.metaCell },
+      SOKV("Voucher No.", d.voucherNo),
+      SOKV("Dated", d.dated),
+      SOKV("Mode/Terms of Payment", d.modeOfPayment),
+      SOKV("Buyer's Ref./Order No.", d.buyerRef),
+      SOKV("Reg. Serial No.", d.regSerialNo),
+      SOKV("Dispatched through", d.dispatchedThrough),
+      SOKV("Destination", d.destination),
+      SOKV("Terms of Delivery", d.termsOfDelivery),
+      SOKV("Contact Person", d.contactPerson),
+      SOKV("Contact Phone", d.contactPhone),
+    ),
+  ),
+  // Consignee + Buyer
+  React.createElement(View, { style: so.partyRow },
+    SOParty("Consignee (Ship to)", d.consignee, so.partyDivR),
+    SOParty("Buyer (Bill to)", d.buyer),
+  ),
+  d.message && React.createElement(View, { style: so.msg }, React.createElement(Text, null, d.message)),
+  // Column header
+  React.createElement(View, { style: so.thead },
+    React.createElement(Text, { style: [so.th, so.cSl] }, "Sl"),
+    React.createElement(Text, { style: [so.th, so.cDesc] }, "Description of Goods"),
+    React.createElement(Text, { style: [so.th, so.cHsn] }, "HSN/SAC"),
+    React.createElement(Text, { style: [so.th, so.cCust] }, "Cust Part No."),
+    React.createElement(Text, { style: [so.th, so.cPart] }, "Part No."),
+    React.createElement(Text, { style: [so.th, so.cDue] }, "Due on"),
+    React.createElement(Text, { style: [so.th, so.cQty] }, "Quantity"),
+    React.createElement(Text, { style: [so.th, so.cRate] }, "Rate"),
+    React.createElement(Text, { style: [so.th, so.cPer] }, "per"),
+    React.createElement(Text, { style: [so.th, so.cDisc] }, "Disc.%"),
+    React.createElement(Text, { style: [so.th, so.cAmt] }, "Amount"),
+  ),
+);
+
+const SOLine = (it, i) => React.createElement(View, { key: i, wrap: false },
+  React.createElement(View, { style: so.row },
+    React.createElement(Text, { style: [so.td, so.cSl] }, String(it.sl != null ? it.sl : i + 1)),
+    React.createElement(Text, { style: [so.td, so.cDesc] }, it.description || "—"),
+    React.createElement(Text, { style: [so.td, so.cHsn] }, it.hsn || ""),
+    React.createElement(Text, { style: [so.td, so.cCust] }, it.custPartNo || ""),
+    React.createElement(Text, { style: [so.td, so.cPart] }, it.partNo || ""),
+    React.createElement(Text, { style: [so.td, so.cDue] }, it.dueOn || ""),
+    React.createElement(Text, { style: [so.td, so.cQty] }, (it.qty != null ? String(it.qty) : "") + (it.uom ? " " + it.uom : "")),
+    React.createElement(Text, { style: [so.td, so.cRate] }, grp(it.rate)),
+    React.createElement(Text, { style: [so.td, so.cPer] }, it.uom || ""),
+    React.createElement(Text, { style: [so.td, so.cDisc] }, it.disc != null && it.disc !== "" ? String(it.disc) : ""),
+    React.createElement(Text, { style: [so.td, so.cAmt] }, grp(it.amount != null ? it.amount : (Number(it.qty) || 0) * (Number(it.rate) || 0))),
+  ),
+  it.batch && React.createElement(View, { style: so.batchRow },
+    React.createElement(Text, { style: [so.batchTd, so.cSl] }, ""),
+    React.createElement(Text, { style: [so.batchTd, so.cDesc] }, "Batch : " + it.batch),
+  ),
+);
+
+const SalesOrderDoc = (d) => React.createElement(Document, null,
+  React.createElement(Page, { size: "A4", style: so.page },
+    React.createElement(Text, {
+      style: so.title, fixed: true,
+      render: ({ pageNumber }) => pageNumber > 1 ? "SALES ORDER (Page " + pageNumber + ")" : "SALES ORDER",
+    }),
+    SOHeaderBlock(d),
+    React.createElement(View, { style: so.frame }, (d.items || []).map((it, i) => SOLine(it, i))),
+    React.createElement(Text, { style: so.soFooter, fixed: true }, "This is a Computer Generated Document"),
+  ),
+);
+
+// Public: render a Tally-style Sales Order. Data contract:
+//   { voucherNo, dated, modeOfPayment, buyerRef, regSerialNo,
+//     dispatchedThrough, destination, termsOfDelivery, contactPerson,
+//     contactPhone, message, currency,
+//     seller:{name,addressLines[],gstin,stateName,stateCode,cin,email,pan},
+//     consignee:{name,addressLines[],gstin,stateName,stateCode},
+//     buyer:{...same as consignee...},
+//     items:[{sl,description,hsn,custPartNo,partNo,dueOn,qty,uom,rate,disc,amount,batch}] }
+export const renderSalesOrder = async (data) => await renderToBuffer(SalesOrderDoc(data));

@@ -1331,6 +1331,9 @@
     // PR4: Recommended Spares sheet inside the matrix.
     recomputeRecommended: async (id) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/recompute_recommended", { method: "POST", body: {} }),
     updateRecommended: async (id, payload) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/recommended", { method: "PATCH", body: payload || {} }),
+    // Bulk auto-fill recommended_qty across all rows from a source column
+    // (max | min | installed). opts: { source, only_blank? }.
+    bulkFillRecommended: async (id, opts) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/recommended", { method: "PATCH", body: { bulk: { source: (opts && opts.source) || "max", only_blank: !!(opts && opts.only_blank) } } }),
     // PR5: feed the recommended sheet into a DRAFT quote (unpriced).
     toQuote: async (id, payload) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/to_quote", { method: "POST", body: payload || {} }),
   };

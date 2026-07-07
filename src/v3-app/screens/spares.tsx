@@ -213,6 +213,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const [busyAuto, setBusyAuto] = uM(false);
   const [busySync, setBusySync] = uM(false);
   const [busyFeed, setBusyFeed] = uM(false);
+  const [busyFill, setBusyFill] = uM(false);
   const [titleEdit, setTitleEdit] = uM(false);
   const debounceRef = rM(null);
   const fileRef = rM(null);
@@ -579,6 +580,28 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   // Feed the recommended sheet (rows with recommended qty > 0) into a
   // DRAFT quote, then deep-link to it. Pricing happens downstream, so the
   // quote lands unpriced; this just carries "what to quote, how many".
+  // Bulk auto-fill recommended qty across ALL rows from a source column
+  // (Max / Min / Installed) in one request — no per-row typing.
+  const onBulkFill = async (source: "max" | "min" | "installed") => {
+    if (!draft.id) return;
+    if (!(draft.recommended || []).length) {
+      window.notifyError?.("Nothing to fill", "Recompile the recommended sheet first.");
+      return;
+    }
+    setBusyFill(true);
+    try {
+      const res = await AnvilBackend.spareMatrix.bulkFillRecommended(draft.id, { source });
+      const next = { ...draft, recommended: (res && res.recommended) || draft.recommended };
+      setDraft(next);
+      onChange(next);
+      window.notifySuccess?.("Recommended qty filled", `${res?.updated ?? 0} row(s) set from ${source}.`);
+    } catch (err) {
+      window.notifyError?.("Auto-fill failed", String((err && err.message) || err));
+    } finally {
+      setBusyFill(false);
+    }
+  };
+
   const onFeedToQuote = async () => {
     if (!draft.id) return;
     const feedable = (draft.recommended || []).filter((r) => Number(r.recommended_qty) > 0);
@@ -824,6 +847,11 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
         <Card title="Recommended spares" eyebrow="installed qty counted across guns · feeds the quote"
               right={<>
                 <Btn sm kind="ghost" onClick={onSyncRecommended} disabled={busySync}>{busySync ? "…" : <>{Icon.cycle} Recompile from grid</>}</Btn>
+                {/* Bulk auto-fill recommended qty — no per-row typing. */}
+                <span style={{ fontSize: 11, color: "var(--ink-3)", alignSelf: "center", marginLeft: 4 }}>Fill qty:</span>
+                <Btn sm kind="ghost" onClick={() => onBulkFill("max")} disabled={busyFill} title="Set every row's recommended qty to its Max level">{busyFill ? "…" : "Max"}</Btn>
+                <Btn sm kind="ghost" onClick={() => onBulkFill("min")} disabled={busyFill} title="Set every row's recommended qty to its Min level">Min</Btn>
+                <Btn sm kind="ghost" onClick={() => onBulkFill("installed")} disabled={busyFill} title="Set every row's recommended qty to its installed count">Installed</Btn>
                 <Btn sm kind="primary" onClick={onFeedToQuote} disabled={busyFeed || busySync} title="Create a draft quote from rows with a recommended qty > 0">{busyFeed ? "…" : <>{Icon.doc} Feed to quote</>}</Btn>
                 <Btn sm kind="ghost" onClick={() => onExportRecommended("csv")}>CSV</Btn>
                 <Btn sm kind="ghost" onClick={() => onExportRecommended("tsv")}>TSV</Btn>

@@ -1,11 +1,12 @@
 // LlamaParse adapter (issue #210) — plug-and-play, env-keyed like
-// claude/gemini. Pure mapping + gating tests (no network; the live SDK
-// upload/parse flow is exercised against a real key on activation).
+// claude/gemini. Pure mapping + gating tests, PLUS a mocked-SDK test of the
+// extract() call shape (which caught the real "expand: markdown_full" bug that
+// made every live run 422 -> llamaparse:failed).
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import * as llamaparse from "../api/_lib/docai/llamaparse.js";
 
-const { parseMarkdownTable, normalizeFromMarkdown, scoreConfidence, tier } = llamaparse.__test__;
+const { parseMarkdownTable, normalizeFromMarkdown, scoreConfidence, markdownOf, tier } = llamaparse.__test__;
 
 afterEach(() => {
   delete process.env.LLAMA_CLOUD_API_KEY;
@@ -81,5 +82,72 @@ describe("llamaparse adapter — markdown_full -> line items", () => {
 
   it("returns no lines for markdown without a table", () => {
     expect(normalizeFromMarkdown("just prose, no table").lines).toEqual([]);
+  });
+});
+
+describe("markdownOf — handle the SDK response shapes", () => {
+  it("prefers the flat markdown_full string", () => {
+    expect(markdownOf({ markdown_full: "| a |\n|---|\n| 1 |" })).toContain("| a |");
+  });
+  it("joins the structured markdown.pages[] when markdown_full is absent", () => {
+    const r = { markdown: { pages: [{ markdown: "page1" }, { markdown: "page2" }] } };
+    expect(markdownOf(r)).toBe("page1\n\npage2");
+  });
+  it("tolerates a loose top-level pages array + a string markdown", () => {
+    expect(markdownOf({ pages: [{ md: "x" }] })).toBe("x");
+    expect(markdownOf({ markdown: "flat" })).toBe("flat");
+  });
+  it("returns empty string on an empty result", () => {
+    expect(markdownOf({})).toBe("");
+  });
+});
+
+describe("extract() — SDK call shape (regression: expand must be 'markdown', not 'markdown_full')", () => {
+  const MD = "| Part No | Qty | Unit Price |\n|---|---|---|\n| P-1 | 2 | 100 |";
+
+  const mockSdk = (parseImpl) => {
+    const parse = vi.fn(parseImpl);
+    vi.doMock("@llamaindex/llama-cloud", () => ({
+      default: class { constructor() { this.parsing = { parse }; } },
+      toFile: async (b, n, o) => ({ name: n, type: o?.type, bytes: b }),
+    }));
+    return parse;
+  };
+
+  afterEach(() => { vi.resetModules(); vi.doUnmock("@llamaindex/llama-cloud"); delete process.env.LLAMAPARSE_API_KEY; });
+
+  it("calls parsing.parse with expand:['markdown'] and maps result.markdown_full -> lines", async () => {
+    process.env.LLAMAPARSE_API_KEY = "llx-test";
+    const parse = mockSdk(async () => ({ markdown_full: MD, job: { id: "job-1" } }));
+    const { extract } = await import("../api/_lib/docai/llamaparse.js");
+    const out = await extract({ bytes: Buffer.from("%PDF-1.4"), filename: "po.pdf", mime: "application/pdf" });
+
+    expect(parse).toHaveBeenCalledTimes(1);
+    const args = parse.mock.calls[0][0];
+    expect(args.expand).toEqual(["markdown"]);          // NOT ["markdown_full"] — the bug
+    expect(args.upload_file).toBeTruthy();
+    expect(out.ok).toBe(true);
+    expect(out.normalized.lines).toHaveLength(1);
+    expect(out.normalized.lines[0]).toMatchObject({ partNumber: "P-1", quantity: 2, unitPrice: 100 });
+    expect(out.normalized.classification).toBe("po");
+  });
+
+  it("also maps the structured markdown.pages[] response shape", async () => {
+    process.env.LLAMAPARSE_API_KEY = "llx-test";
+    mockSdk(async () => ({ markdown: { pages: [{ markdown: MD }] } }));
+    const { extract } = await import("../api/_lib/docai/llamaparse.js");
+    const out = await extract({ bytes: Buffer.from("%PDF-1.4"), filename: "po.pdf", mime: "application/pdf" });
+    expect(out.ok).toBe(true);
+    expect(out.normalized.lines).toHaveLength(1);
+  });
+
+  it("fails soft (reason set) when the SDK throws", async () => {
+    process.env.LLAMAPARSE_API_KEY = "llx-test";
+    mockSdk(async () => { throw new Error("422 unprocessable: expand"); });
+    const { extract } = await import("../api/_lib/docai/llamaparse.js");
+    const out = await extract({ bytes: Buffer.from("%PDF-1.4"), filename: "po.pdf" });
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe("adapter_threw");
+    expect(out.error).toContain("422");
   });
 });

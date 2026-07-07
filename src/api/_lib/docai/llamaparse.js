@@ -79,12 +79,19 @@ export const scoreConfidence = (lines) => {
   return Math.min(0.97, 0.82 + 0.15 * complete);
 };
 
-// Pull the markdown out of the SDK parse result across its shape variants.
-const markdownOf = (result) =>
-  result?.markdown_full
-  || result?.markdown
-  || (Array.isArray(result?.pages) ? result.pages.map((p) => p?.md || p?.markdown || "").join("\n\n") : "")
-  || "";
+// Pull the markdown string out of the SDK parse result across its shape
+// variants. `markdown_full` is the plain full-document string; `markdown` is a
+// STRUCTURED object ({ pages: [{ markdown }] }), so join its pages when the
+// flat string isn't present. (Older/loose shapes may put a string on
+// `markdown` or a top-level `pages` array — handle both.)
+export const markdownOf = (result) => {
+  if (typeof result?.markdown_full === "string" && result.markdown_full) return result.markdown_full;
+  const md = result?.markdown;
+  if (typeof md === "string" && md) return md;
+  const pages = md?.pages || result?.pages;
+  if (Array.isArray(pages)) return pages.map((p) => p?.markdown || p?.md || "").join("\n\n").trim();
+  return "";
+};
 
 export const extract = async ({ url, bytes, filename, mime }) => {
   const key = apiKey();
@@ -99,15 +106,19 @@ export const extract = async ({ url, bytes, filename, mime }) => {
     if (!fileBytes) return { ok: false, reason: "no_source_bytes", error: "LlamaParse adapter requires url or bytes" };
 
     // Dynamic import keeps the SDK out of cold-start until a tenant opts in.
-    const { default: LlamaCloud } = await import("@llamaindex/llama-cloud");
+    const { default: LlamaCloud, toFile } = await import("@llamaindex/llama-cloud");
     const client = new LlamaCloud({ apiKey: key });
 
-    const file = new File([fileBytes], filename || "document.pdf", { type: mime || "application/pdf" });
-    const fileObj = await client.files.create({ file, purpose: "parse" });
+    // One-shot: upload + parse + wait-for-completion. `expand` valid values are
+    // text/markdown (NOT "markdown_full" — that's a RESPONSE field, and passing
+    // it as an expand option makes the API reject the request). The full
+    // markdown string comes back on result.markdown_full; markdownOf also
+    // handles the structured result.markdown.pages[] shape.
+    const uploadable = await toFile(fileBytes, filename || "document.pdf", { type: mime || "application/pdf" });
     const result = await client.parsing.parse({
-      file_id: fileObj.id,
+      upload_file: uploadable,
       tier: tier(),
-      expand: ["markdown_full"],
+      expand: ["markdown"],
     });
     const md = markdownOf(result);
     const { lines } = normalizeFromMarkdown(md);
@@ -128,7 +139,7 @@ export const extract = async ({ url, bytes, filename, mime }) => {
       },
       confidences,
       reason: lines.length === 0 ? "empty_lines" : "ok",
-      raw: { file_id: fileObj.id, tier: tier(), markdown: md, chars: md.length },
+      raw: { job_id: result?.job?.id || null, tier: tier(), markdown: md, chars: md.length },
     };
   } catch (err) {
     return { ok: false, reason: "adapter_threw", error: String(err?.message || err) };
@@ -136,4 +147,4 @@ export const extract = async ({ url, bytes, filename, mime }) => {
 };
 
 // Exported for tests (pure mapping, no network).
-export const __test__ = { parseMarkdownTable, normalizeFromMarkdown, scoreConfidence, tier, apiKey };
+export const __test__ = { parseMarkdownTable, normalizeFromMarkdown, scoreConfidence, markdownOf, tier, apiKey };

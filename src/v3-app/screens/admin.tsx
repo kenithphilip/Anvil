@@ -3764,10 +3764,7 @@ const WiredAdminCRUD = () => {
         )}
 
         {active === "docai_cost" && (
-          <>
-            <DocAICostPanel />
-            <LlamaCloudProviderCard />
-          </>
+          <DocAICostPanel />
         )}
 
         {active === "diag" && (
@@ -5318,89 +5315,6 @@ const CustomerTermsPanel: React.FC = () => {
         </>
       )}
     </>
-  );
-};
-
-// Issue #210: opt-in LlamaCloud (LlamaParse/LlamaExtract) provider. Lets an
-// admin store a per-tenant key + tier + region. OFF by default — the adapter
-// only runs once the key is set AND "llamaparse" is added to the provider
-// order above. Data-residency warning is mandatory (US/EU only, no India).
-const LLAMAPARSE_TIERS: Array<{ v: string; label: string }> = [
-  { v: "fast", label: "Fast (1 cr/pg · OCR only)" },
-  { v: "cost_effective", label: "Cost-effective (3 cr/pg)" },
-  { v: "agentic", label: "Agentic (10 cr/pg)" },
-  { v: "agentic_plus", label: "Agentic Plus (45 cr/pg)" },
-];
-const LlamaCloudProviderCard: React.FC = () => {
-  const [cfg, setCfg] = useState<{ configured: boolean; tier: string; region: string }>({ configured: false, tier: "cost_effective", region: "" });
-  const [keyInput, setKeyInput] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-
-  const reload = React.useCallback(async () => {
-    setLoading(true);
-    try {
-      const s: any = await (AnvilBackend as any)?.docai?.getSettings?.();
-      setCfg({
-        configured: !!s?.docai_llamacloud_configured,
-        tier: s?.docai_llamaparse_tier || "cost_effective",
-        region: s?.docai_llamacloud_region || "",
-      });
-    } catch (_) { /* leave defaults */ } finally { setLoading(false); }
-  }, []);
-  React.useEffect(() => { reload(); }, [reload]);
-
-  const save = async () => {
-    setSaving(true); setMsg(null);
-    try {
-      const patch: Record<string, any> = { docai_llamaparse_tier: cfg.tier, docai_llamacloud_region: cfg.region || null };
-      if (keyInput.trim()) patch.docai_llamacloud_api_key = keyInput.trim();
-      await (AnvilBackend as any)?.docai?.updateSettings?.(patch);
-      setKeyInput("");
-      await reload();
-      setMsg("Saved");
-      window.notifySuccess?.("LlamaCloud settings saved", "");
-    } catch (e: any) {
-      setMsg(e?.message || String(e));
-      window.notifyError?.("Save failed", e?.message || String(e));
-    } finally { setSaving(false); }
-  };
-
-  return (
-    <Card title="LlamaParse / LlamaCloud provider" eyebrow="opt-in document-AI adapter · off by default">
-      <Banner kind="warn" icon={Icon.alert} title="Data residency — US / EU only (no India region)">
-        Enabling this sends customer PO / quote content (GSTINs, prices, part IP) to LlamaCloud, a US/EU SaaS. Only enable if that is acceptable under your data-residency obligations. The in-house pipeline stays the default.
-      </Banner>
-      <div className="col gap-sm" style={{ maxWidth: 520, marginTop: 10 }}>
-        <div className="mono-sm">Status: {loading ? "…" : (cfg.configured ? "key configured ✓" : "no key — adapter inactive")}</div>
-        <label className="col gap-xs">
-          <span className="mono-sm">API key {cfg.configured ? "(enter a new value to replace)" : ""}</span>
-          <input className="input" type="password" placeholder="llx-…" value={keyInput} onChange={(e) => setKeyInput(e.target.value)} autoComplete="off" />
-        </label>
-        <label className="col gap-xs">
-          <span className="mono-sm">Parse tier</span>
-          <select className="input" value={cfg.tier} onChange={(e) => setCfg({ ...cfg, tier: e.target.value })}>
-            {LLAMAPARSE_TIERS.map((t) => <option key={t.v} value={t.v}>{t.label}</option>)}
-          </select>
-        </label>
-        <label className="col gap-xs">
-          <span className="mono-sm">Region</span>
-          <select className="input" value={cfg.region} onChange={(e) => setCfg({ ...cfg, region: e.target.value })}>
-            <option value="">— select —</option>
-            <option value="us">US (us-east-1)</option>
-            <option value="eu">EU (eu-central-1)</option>
-          </select>
-        </label>
-        <div className="row gap-sm" style={{ alignItems: "center" }}>
-          <Btn sm kind="primary" disabled={saving} onClick={save}>{saving ? "saving…" : "Save"}</Btn>
-          {msg && <span className="mono-sm" style={{ color: "var(--ink-3)" }}>{msg}</span>}
-        </div>
-        <div className="mono-sm" style={{ color: "var(--ink-3)" }}>
-          To route documents here, add <b>llamaparse</b> to the provider order above once a key is saved. Verify the LlamaCloud API against a test document before production use.
-        </div>
-      </div>
-    </Card>
   );
 };
 

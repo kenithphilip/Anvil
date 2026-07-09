@@ -331,6 +331,87 @@ const FieldGroupSection: React.FC<{
   );
 };
 
+// Line-items table (mirrors LlamaParse's LINEITEMS view). Reads each field
+// across the two shapes the pipeline emits: docai-normalized
+// (partNumber/quantity/unitPrice/hsn) and quote/SO-derived
+// (part_no/qty/rate/hsn_sac/line_amount). Empty cells are washed amber, like
+// LlamaParse flags missing values, so gaps are obvious at a glance.
+const LINE_COLS: Array<{ key: string; label: string; align?: "r"; get: (l: any) => unknown }> = [
+  { key: "part",   label: "Part / Ref",  get: (l) => l.partNumber ?? l.part_no ?? l.reference ?? null },
+  { key: "desc",   label: "Description", get: (l) => l.description ?? l.itemName ?? l.itemDescription ?? null },
+  { key: "qty",    label: "Qty", align: "r", get: (l) => l.quantity ?? l.qty ?? null },
+  { key: "uom",    label: "UoM",         get: (l) => l.uom ?? l.unit ?? null },
+  { key: "rate",   label: "Unit price", align: "r", get: (l) => l.unitPrice ?? l.rate ?? null },
+  { key: "hsn",    label: "HSN/SAC",     get: (l) => l.hsn ?? l.hsn_sac ?? null },
+  { key: "amount", label: "Amount", align: "r", get: (l) => l.amount ?? l.line_amount ?? null },
+];
+
+const LineItemsTable: React.FC<{ lines: any[] }> = ({ lines }) => {
+  // Only show columns at least one line populates, so a sparse extraction
+  // doesn't render a wall of empty columns.
+  const cols = LINE_COLS.filter((c) => lines.some((l) => { const v = c.get(l); return v != null && v !== ""; }));
+  const shown = cols.length ? cols : LINE_COLS.slice(0, 3);
+  return (
+    <section className="rp-field-group" aria-label="Line items">
+      <header className="rp-field-group-header">
+        <span className="rp-field-group-swatch" style={{ background: `var(${FIELD_GROUPS.lines.cssVar})` }} aria-hidden="true" />
+        <span className="rp-field-group-label">{FIELD_GROUPS.lines.label}</span>
+        <span className="rp-field-group-count mono-sm">{lines.length}</span>
+      </header>
+      <div style={{ overflowX: "auto", padding: "0 8px 8px" }}>
+        <table className="tbl" style={{ fontSize: 12 }}>
+          <thead><tr>
+            <th style={{ width: 28 }}>#</th>
+            {shown.map((c) => <th key={c.key} className={c.align === "r" ? "r" : undefined}>{c.label}</th>)}
+          </tr></thead>
+          <tbody>
+            {lines.map((l, i) => (
+              <tr key={i}>
+                <td className="mono-sm" style={{ color: "var(--ink-4)" }}>{i + 1}</td>
+                {shown.map((c) => {
+                  const v = c.get(l);
+                  const empty = v == null || v === "";
+                  return (
+                    <td key={c.key}
+                        className={c.align === "r" ? "r mono-sm" : "mono-sm"}
+                        style={empty ? { background: "rgba(255,196,0,0.08)", color: "var(--ink-4)" } : undefined}>
+                      {empty ? "—" : formatValue(v)}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+};
+
+// Simple key-value section for the customer/header fields when the pipeline
+// returned a normalized customer block but no per-field bbox evidence.
+const KvSection: React.FC<{ label: string; group: FieldGroupId; rows: Array<[string, string]> }> = ({ label, group, rows }) => {
+  if (!rows.length) return null;
+  return (
+    <section className="rp-field-group" aria-label={label}>
+      <header className="rp-field-group-header">
+        <span className="rp-field-group-swatch" style={{ background: `var(${FIELD_GROUPS[group].cssVar})` }} aria-hidden="true" />
+        <span className="rp-field-group-label">{label}</span>
+        <span className="rp-field-group-count mono-sm">{rows.length}</span>
+      </header>
+      {rows.map(([k, v]) => (
+        <div key={k} className="rp-field-row rp-status-pending" data-field-path={k}>
+          <span className="rp-field-stripe" style={{ background: `var(${FIELD_GROUPS[group].cssVar})` }} aria-hidden="true" />
+          <div className="rp-field-body">
+            <div className="rp-field-name mono-sm">{k}</div>
+            <div className="rp-field-value">{v || "—"}</div>
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+};
+
 // ErrorBoundary that catches a PdfPagePreview crash (worker failure,
 // corrupt PDF, etc.) and lets the parent fall back to the opaque
 // native <embed>. Localised so other parts of the workspace never
@@ -467,12 +548,39 @@ interface ReviewPaneProps {
   // current role may persist corrections (approve permission).
   extractionRunId?: string | null;
   canCorrect?: boolean;
+  // The normalized extraction result (customer + lineItems). Lets the pane
+  // render the line-items TABLE, a customer fallback, and the JSON view — so
+  // extracted data shows on ANY successful run, not only when the per-token
+  // bbox evidence map (evidence_by_field) was populated.
+  salesOrder?: any;
 }
 
-const ReviewPaneInner: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) => {
+const ReviewPaneInner: React.FC<ReviewPaneProps> = ({ docId, evidenceByField, salesOrder }) => {
   const doc = useSignedDoc(docId);
   const evidenceRows = useDocumentEvidence(docId);
   const { counts, confirmAll, selectedField, setSelectedField, setFieldStatus } = useReviewPaneSelection();
+  const [viewMode, setViewMode] = useState<"fields" | "json">("fields");
+
+  // Normalized extraction result -> line-items table + customer fallback +
+  // JSON view, so data shows on ANY successful run (not only when the bbox
+  // evidence map was populated).
+  const lineItems: any[] = Array.isArray(salesOrder?.lineItems) ? salesOrder.lineItems : [];
+  const customer = salesOrder?.customer || null;
+  const customerRows = useMemo<Array<[string, string]>>(() => {
+    if (!customer) return [];
+    const pairs: Array<[string, unknown]> = [
+      ["name", customer.name], ["gstin", (customer.gstin || "").toUpperCase()],
+      ["state", (customer.state_code || "").toUpperCase()], ["currency", customer.currency],
+      ["payment_terms", customer.payment_terms], ["email", customer.email], ["phone", customer.phone],
+      ["bill_to", customer.bill_to_address], ["ship_to", customer.ship_to_address],
+    ];
+    return pairs.filter(([, v]) => v != null && v !== "").map(([k, v]) => [k, String(v)] as [string, string]);
+  }, [customer]);
+  const extractionJson = useMemo(() => {
+    if (customer || lineItems.length) return { customer: customer || null, lineItems };
+    const map = evidenceByField || {};
+    return Object.keys(map).length ? map : null;
+  }, [customer, lineItems, evidenceByField]);
 
   // Group + stable-sort fields once per render. Sorted alphabetically
   // within each group so the operator can predict where a field will
@@ -558,15 +666,25 @@ const ReviewPaneInner: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) 
         </div>
       </div>
 
-      {/* Right: extracted-field list, grouped. */}
+      {/* Right: extracted data — grouped fields + line-items table, or JSON. */}
       <div className="rp-pane rp-pane-fields">
         <header className="rp-pane-header">
-          <span className="h-eyebrow">Extracted fields</span>
-          <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
-            {totalFields} {totalFields === 1 ? "field" : "fields"}
+          <span className="h-eyebrow">Extracted data</span>
+          <span className="row" style={{ gap: 8, alignItems: "center" }}>
+            <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+              {totalFields} {totalFields === 1 ? "field" : "fields"}{lineItems.length ? ` · ${lineItems.length} lines` : ""}
+            </span>
+            {extractionJson && (
+              <span className="rp-view-toggle" role="tablist" aria-label="view mode">
+                <button type="button" className={"btn sm " + (viewMode === "fields" ? "primary" : "ghost")}
+                        aria-pressed={viewMode === "fields"} onClick={() => setViewMode("fields")}>Fields</button>
+                <button type="button" className={"btn sm " + (viewMode === "json" ? "primary" : "ghost")}
+                        aria-pressed={viewMode === "json"} onClick={() => setViewMode("json")}>JSON</button>
+              </span>
+            )}
           </span>
         </header>
-        {totalFields > 0 && (
+        {viewMode === "fields" && totalFields > 0 && (
           <div className="rp-verify-bar">
             <div className="rp-verify-progress" aria-hidden="true">
               <span
@@ -592,17 +710,29 @@ const ReviewPaneInner: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) 
           </div>
         )}
         <div className="rp-pane-body">
-          {totalFields === 0 ? (
+          {viewMode === "json" ? (
+            <pre className="mono-sm" style={{ padding: 16, margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", color: "var(--ink-2)" }}>
+              {JSON.stringify(extractionJson, null, 2)}
+            </pre>
+          ) : (totalFields === 0 && lineItems.length === 0 && customerRows.length === 0) ? (
             <div className="mono-sm" style={{ color: "var(--ink-3)", padding: 16 }}>
-              No extracted fields yet. Once extraction runs, every
-              recognised field appears here with its source page and a
-              confidence score.
+              No extracted data yet. Once extraction runs, the customer header,
+              line items, and every recognised field appear here — with source
+              page and a confidence score when the OCR evidence map is available.
             </div>
           ) : (
             <>
-              <FieldGroupSection group="customer" entries={grouped.customer} />
+              {/* Customer: prefer the richer bbox-evidence group; otherwise
+                  fall back to the normalized customer block. */}
+              {grouped.customer.length
+                ? <FieldGroupSection group="customer" entries={grouped.customer} />
+                : <KvSection label={FIELD_GROUPS.customer.label} group="customer" rows={customerRows} />}
               <FieldGroupSection group="order"    entries={grouped.order} />
-              <FieldGroupSection group="lines"    entries={grouped.lines} />
+              {/* Line items: table when we have the normalized array; else the
+                  flat evidence rows (older orders with no salesOrder result). */}
+              {lineItems.length
+                ? <LineItemsTable lines={lineItems} />
+                : <FieldGroupSection group="lines" entries={grouped.lines} />}
               <FieldGroupSection group="totals"   entries={grouped.totals} />
               <FieldGroupSection group="seller"   entries={grouped.seller} />
               <FieldGroupSection group="other"    entries={grouped.other} />

@@ -4,6 +4,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { parsePoDate } from "../_lib/parse-date.js";
 import { mapLinesToItemMaster } from "../_lib/item-mapper.js";
+import { resolveCustomerDefaults, applyCustomerDefaults, CUSTOMER_DEFAULT_HEADER_KEYS } from "../_lib/customer-defaults.js";
 
 const STATUS_VALUES = new Set(["DRAFT", "PENDING_REVIEW", "APPROVED", "BLOCKED", "DUPLICATE", "REUSED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED", "CANCELLED"]);
 
@@ -125,21 +126,27 @@ export default async function handler(req, res) {
       requirePermission(ctx, "write");
       const body = await readBody(req);
       const svc = serviceClient();
-      // Derive the customer's country so parsePoDate inside
-      // orderRow can apply the right locale convention to
-      // ambiguous date strings. Cheap one-row lookup; falls
-      // through to null when no customer_id is supplied.
-      if (body.customer_id && !body.country) {
+      // Auto-fill order header fields from the customer master so operators
+      // don't re-type per PO: incoterm (customers.default_incoterms), the
+      // buyer's vendor code for us (customer_vendor_codes), the delivery
+      // contact (primary customer_contacts), and the country locale hint used
+      // by parsePoDate. Only fills a field the caller didn't already set, so an
+      // explicit value or an OCR-detected value from the PO always wins.
+      if (body.customer_id) {
         try {
-          const cust = await svc.from("customers")
-            .select("country")
-            .eq("tenant_id", ctx.tenantId)
-            .eq("id", body.customer_id)
-            .maybeSingle();
-          if (cust && cust.data && cust.data.country) {
-            body.country = cust.data.country;
+          const defaults = await resolveCustomerDefaults(svc, ctx.tenantId, body.customer_id);
+          const filled = applyCustomerDefaults(body, defaults);
+          // Stamp provenance so the Header tab shows a "from customer" pill
+          // (parallel to the OCR pill), stored on result.salesOrder like the
+          // OCR sources are — no schema change.
+          const hdrFilled = filled.filter((k) => CUSTOMER_DEFAULT_HEADER_KEYS.includes(k));
+          if (hdrFilled.length) {
+            const so = body.result?.salesOrder || {};
+            const sources = { ...(so._header_field_sources || {}) };
+            for (const k of hdrFilled) if (!sources[k]) sources[k] = "customer";
+            body.result = { ...(body.result || {}), salesOrder: { ...so, _header_field_sources: sources } };
           }
-        } catch (_) { /* country lookup is best-effort */ }
+        } catch (_) { /* customer-defaults are best-effort */ }
       }
 
       // Item alias auto-map (May 2026 audit fix). The buyer may

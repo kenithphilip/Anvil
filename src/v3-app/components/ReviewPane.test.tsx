@@ -97,10 +97,43 @@ describe("groupForFieldPath", () => {
   });
 });
 
+describe("ReviewPane — LlamaParse-style extraction view (salesOrder)", () => {
+  const salesOrder = {
+    customer: { name: "OBARA INDIA PRIVATE LIMITED", gstin: "27aaaco8335k1z5", currency: "INR" },
+    lineItems: [
+      { partNumber: "23271406D-900", description: "TIP DRESSERS 1", quantity: 1, unitPrice: 124157, uom: "PCE" },
+      { partNumber: "23271406D-900", description: "TIP DRESSERS 2", quantity: 1, unitPrice: 124157, uom: "PCE" },
+    ],
+  };
+
+  it("renders line items as a table (not flat lines[N] rows) when evidence is empty", () => {
+    const { container } = render(<ReviewPane docId={null} evidenceByField={{}} salesOrder={salesOrder} />);
+    expect(container.textContent).toMatch(/TIP DRESSERS 1/);
+    expect(container.textContent).toMatch(/TIP DRESSERS 2/);
+    expect(container.querySelector("table.tbl")).toBeTruthy();     // rendered as a table
+    expect(container.textContent).not.toMatch(/No extracted data yet/i);
+  });
+
+  it("falls back to the normalized customer block when there is no customer evidence", () => {
+    const { container } = render(<ReviewPane docId={null} evidenceByField={{}} salesOrder={salesOrder} />);
+    expect(container.textContent).toMatch(/OBARA INDIA PRIVATE LIMITED/);
+    expect(container.textContent).toMatch(/27AAACO8335K1Z5/);       // gstin upper-cased
+  });
+
+  it("offers a Fields/JSON toggle that shows the raw extraction JSON", () => {
+    const { container, getByText } = render(<ReviewPane docId={null} evidenceByField={{}} salesOrder={salesOrder} />);
+    fireEvent.click(getByText("JSON"));
+    const pre = container.querySelector("pre");
+    expect(pre).toBeTruthy();
+    expect(pre?.textContent).toMatch(/"lineItems"/);
+    expect(pre?.textContent).toMatch(/TIP DRESSERS 1/);
+  });
+});
+
 describe("ReviewPane", () => {
   it("renders the empty-state message when no evidence is present", () => {
     const { container } = render(<ReviewPane docId={null} evidenceByField={{}} />);
-    expect(container.textContent).toMatch(/No extracted fields yet/i);
+    expect(container.textContent).toMatch(/No extracted data yet/i);
   });
 
   it("warns when no source document is attached", () => {

@@ -2239,6 +2239,7 @@ const WiredSOWorkspace = () => {
           <ReviewPane
             docId={sourceDocId}
             evidenceByField={o.evidence_by_field || {}}
+            salesOrder={o.result?.salesOrder || null}
             extractionRunId={o.preflight_payload?.extraction_run_id || null}
             canCorrect={canApprove}
           />

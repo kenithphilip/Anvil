@@ -430,6 +430,59 @@ export const runExtractionPipeline = async (params) => {
     has_bytes: !!bytes,
   });
 
+  // Fail fast on an unreadable source. Empty bytes (0-length) can only be a
+  // truncated/failed upload or a broken storage fetch; pushing them through the
+  // pipeline yields a cascade of text-layer extract_failed + OCR failed + a
+  // cryptic Anthropic "Invalid base64 data" upstream error. Stop here with a
+  // clear, operator-actionable reason instead of burning an LLM call.
+  if (bytes && bytes.length === 0 && !hints?.bodyText && !emailBody) {
+    const reason = "source_unreadable";
+    const errMsg = "Source document is empty (0 bytes) — the upload was truncated or the file could not be fetched from storage. Re-upload the document and try again.";
+    await svc.from("extraction_runs").update({
+      status: "failed",
+      status_reason: reason,
+      error: errMsg,
+      finished_at: new Date().toISOString(),
+    }).eq("id", runId);
+    await recordRunEvent("docai_extract_failed", {
+      status_reason: reason,
+      error: errMsg,
+      source_size_bytes: 0,
+    });
+    return {
+      runId,
+      status: "failed",
+      statusReason: reason,
+      normalized: null,
+      evidenceByField: {},
+      confidenceOverall: null,
+      adapterUsed: null,
+      adapterMode: null,
+      attempts: [],
+      textLayer: null,
+      textLayerUsed: false,
+      ocrLayer: null,
+      ocrLayerUsed: false,
+      templateUsed: null,
+      templateHits: 0,
+      overridesApplied: [],
+      validatorIssues: [],
+      validatorSummary: null,
+      anomalies: [],
+      anomaliesSummary: null,
+      anomaliesHasBlockers: false,
+      fieldProvenance: [],
+      voterUsed: false,
+      selectedModel: null,
+      modelSelectionReason: null,
+      parseMethod: null,
+      parseRepairs: [],
+      parseRetries: 0,
+      costSummary: null,
+      error: errMsg,
+    };
+  }
+
   // 2. L1 text layer.
   let textLayer = null;
   let textLayerUsed = false;

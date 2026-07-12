@@ -41,7 +41,9 @@ const RUN_STAGES = new Set([
   "docai_text_layer_extracted",
   "docai_ocr_layer_extracted",
   "docai_template_applied",
-  "docai_extract_completed",
+  "docai_extract_completed",       // legacy success name (kept for back-compat)
+  "docai_extract_succeeded",       // actual success terminal emitted by run.js
+  "docai_extract_low_confidence",  // terminal: produced output but below threshold
   "docai_extract_failed",
 ]);
 
@@ -90,6 +92,8 @@ const stageLabel = (evt) => {
     return "done · " + n + " line" + (n === 1 ? "" : "s") + " extracted";
   }
   if (type === "docai_extract_completed") return "complete";
+  if (type === "docai_extract_succeeded") return "complete";
+  if (type === "docai_extract_low_confidence") return "complete · low confidence";
   if (type === "docai_extract_failed") return "failed · " + (d.error || "unknown");
   return type;
 };
@@ -118,6 +122,12 @@ const summarise = (events) => {
     const d = e.detail || {};
     if (t === "docai_extract_started") status = "running";
     if (t === "docai_extract_completed") { status = "completed"; lineCount = d.line_count ?? lineCount; }
+    // run.js emits docai_extract_succeeded (not ..._completed) on success, and
+    // docai_extract_low_confidence when it produced output below the confidence
+    // threshold. Both are terminal "finished" signals; without recognizing them
+    // a small (non-chunked) successful run reports "running" forever.
+    if (t === "docai_extract_succeeded") { status = "completed"; lineCount = d.lines_count ?? d.line_count ?? lineCount; }
+    if (t === "docai_extract_low_confidence") { status = "completed"; lastTerminalReason = d.status_reason || "low_confidence"; lineCount = d.lines_count ?? d.line_count ?? lineCount; }
     if (t === "docai_extract_failed") { status = "failed"; lastTerminalReason = d.error || null; }
     if (t === "docai_profiler_done") {
       profilerOk = !!d.ok;
@@ -210,4 +220,4 @@ export default async function handler(req, res) {
 
 // Test seam: expose the pure summariser so a unit test can
 // drive it without standing up a DB.
-export const __test = { summarise, stageLabel };
+export const __test = { summarise, stageLabel, RUN_STAGES };

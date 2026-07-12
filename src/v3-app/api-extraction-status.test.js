@@ -94,4 +94,41 @@ describe("__test.summarise", () => {
     expect(s.chunks_failed).toBe(1);
     expect(s.chunks_total).toBe(3);
   });
+
+  // run.js emits docai_extract_succeeded (NOT the legacy docai_extract_completed)
+  // on success, so a small non-chunked run only produces that terminal. The
+  // reader must recognize it or the status sticks on "running" forever.
+  it("recognizes docai_extract_succeeded (the real success terminal) as completed", () => {
+    expect(__test.RUN_STAGES.has("docai_extract_succeeded")).toBe(true);
+    const events = [
+      evt("docai_extract_succeeded", { lines_count: 5 }),
+      evt("docai_text_layer_extracted", { char_count: 900 }),
+      evt("docai_extract_started", {}),
+    ];
+    const s = __test.summarise(events);
+    expect(s.status).toBe("completed");
+    expect(s.line_count).toBe(5);
+    expect(s.current_stage).toContain("complete");
+  });
+
+  it("reports completed with a reason on low-confidence terminal", () => {
+    expect(__test.RUN_STAGES.has("docai_extract_low_confidence")).toBe(true);
+    const s = __test.summarise([
+      evt("docai_extract_low_confidence", { status_reason: "low_confidence", lines_count: 2 }),
+      evt("docai_extract_started", {}),
+    ]);
+    expect(s.status).toBe("completed");
+    expect(s.last_terminal_reason).toBe("low_confidence");
+    expect(s.line_count).toBe(2);
+  });
+
+  it("a later success overrides an earlier failed attempt (retry after failure)", () => {
+    const s = __test.summarise([
+      evt("docai_extract_succeeded", { lines_count: 3 }),   // newest = the retry
+      evt("docai_extract_failed", { error: "upstream_error" }),
+      evt("docai_extract_started", {}),
+    ]);
+    expect(s.status).toBe("completed");
+    expect(s.line_count).toBe(3);
+  });
 });

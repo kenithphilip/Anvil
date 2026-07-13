@@ -714,6 +714,14 @@
     registrationCatalog: async () => apiFetch("/api/customers/registration?catalog=1"),
     getRegistration: async (customerId) => apiFetch("/api/customers/registration?customer_id=" + encodeURIComponent(customerId)),
     saveRegistration: async (payload) => apiFetch("/api/customers/registration", { method: "POST", body: payload }),
+    // ICP (Ideal Customer Profile) fit score/tier -- a firmographic axis
+    // distinct from the behavioral health score. getIcp computes on first read.
+    getIcp: async (customerId) => apiFetch("/api/customers/icp?customer_id=" + encodeURIComponent(customerId)),
+    recomputeIcp: async (customerId) => apiFetch("/api/customers/icp", { method: "POST", body: { customer_id: customerId } }),
+    // Tenant ICP rubric (gate + weighted rules + tiers); returns the built-in
+    // default when none is defined yet.
+    getIcpProfile: async () => apiFetch("/api/admin/icp_profiles"),
+    saveIcpProfile: async (payload) => apiFetch("/api/admin/icp_profiles", { method: "POST", body: payload }),
     // Lists customer_locations across the tenant. Used by the
     // so-intake "new customer" dialog's address picker so the
     // operator can pick an existing address (any customer's) instead

@@ -51,6 +51,7 @@ export const CustomerRegistrationPanel: React.FC<{ customerId: string }> = ({ cu
 
   const [cats, setCats] = useState<Category[] | null>(null);
   const [completeness, setCompleteness] = useState<any>(null);
+  const [icp, setIcp] = useState<any>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -61,8 +62,26 @@ export const CustomerRegistrationPanel: React.FC<{ customerId: string }> = ({ cu
     Promise.resolve(ObaraBackend?.customers?.getRegistration?.(customerId))
       .then((resp: any) => { setCats(resp?.categories || []); setCompleteness(resp?.completeness || null); })
       .catch((e: any) => setErr(e?.message || String(e)));
+    // ICP fit (firmographic) — separate axis from the health score. Computed
+    // on first read; re-scored server-side whenever registration fields change.
+    Promise.resolve(ObaraBackend?.customers?.getIcp?.(customerId))
+      .then((resp: any) => setIcp(resp || null))
+      .catch(() => setIcp(null));
   };
   useEffect(load, [customerId]);
+
+  const ICP_CHIP: Record<string, string> = { A: "good", B: "warn", C: "bad", Out: "ghost" };
+  const icpChip = () => {
+    if (!icp || icp.tier == null) return null;
+    const missed = (icp.signals?.missed || []).slice(0, 4).join(", ");
+    const title = "ICP fit — matched: " + ((icp.signals?.matched || []).join(", ") || "none")
+      + (missed ? " · missing: " + missed : "");
+    return (
+      <span title={title}>
+        <Chip k={(ICP_CHIP[icp.tier] || "ghost") as any}>ICP {icp.tier}{icp.score != null ? " · " + icp.score : ""}</Chip>
+      </span>
+    );
+  };
 
   const allFields = useMemo(() => (cats || []).flatMap((c) => c.fields), [cats]);
 
@@ -118,6 +137,7 @@ export const CustomerRegistrationPanel: React.FC<{ customerId: string }> = ({ cu
               {completeness.pct}% · {completeness.mandatory_filled}/{completeness.mandatory_total} required
             </Chip>
           )}
+          {icpChip()}
         </div>
         {canEdit ? (
           editing

@@ -21,6 +21,7 @@ import { recordAudit } from "../_lib/audit.js";
 import {
   CATEGORIES, FIELD_CATALOG, isValidFieldKey, groupByCategory, completeness, normalizeFieldInput,
 } from "../_lib/customer-registration.js";
+import { computeAndPersistIcp } from "../_lib/icp-compute.js";
 
 const catalogPayload = () => ({ categories: CATEGORIES, fields: FIELD_CATALOG });
 
@@ -98,6 +99,12 @@ export default async function handler(req, res) {
         objectId: customerId,
         after: { fields: rows.map((r) => r.field_key), rejected },
       });
+
+      // The registration fields are the ICP attribute source, so re-score the
+      // customer's ICP fit whenever they change. Best-effort: a scoring failure
+      // must not fail the field save.
+      try { await computeAndPersistIcp(svc, ctx.tenantId, customerId); }
+      catch (e) { /* non-fatal: ICP recompute is derived, not authoritative */ }
 
       // Return the refreshed, grouped view.
       const fresh = await svc.from("customer_registration_fields")

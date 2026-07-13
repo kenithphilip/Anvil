@@ -23,6 +23,7 @@ import adminDiagnostics        from "./admin/diagnostics.js";
 import adminDocaiSettings      from "./admin/docai_settings.js";
 import adminNavSettings        from "./admin/nav_settings.js";
 import adminQuoteSettings      from "./admin/quote_settings.js";
+import adminIcpProfiles        from "./admin/icp_profiles.js";
 import adminEquipment          from "./admin/equipment.js";
 import adminFxRates            from "./admin/fx_rates.js";
 import adminHolidays           from "./admin/holidays.js";
@@ -117,6 +118,7 @@ import customersProfileVersions from "./customers/profile_versions.js";
 import customersContacts        from "./customers/contacts.js";
 import customersChangeRequests  from "./customers/change_requests.js";
 import customersRegistration    from "./customers/registration.js";
+import customersIcp             from "./customers/icp.js";
 import customersDuplicates      from "./customers/duplicates.js";
 import customersMerge           from "./customers/merge.js";
 import customerLocationsIndex   from "./customer_locations/index.js";
@@ -762,6 +764,7 @@ const STATIC_ROUTES = {
   "/admin/docai_settings":          adminDocaiSettings,
   "/admin/nav_settings":            adminNavSettings,
   "/admin/quote_settings":          adminQuoteSettings,
+  "/admin/icp_profiles":            adminIcpProfiles,
   "/admin/equipment":               adminEquipment,
   "/admin/fx_rates":                adminFxRates,
   "/admin/holidays":                adminHolidays,
@@ -866,6 +869,7 @@ const STATIC_ROUTES = {
   "/customers/contacts":            customersContacts,
   "/customers/change_requests":     customersChangeRequests,
   "/customers/registration":        customersRegistration,
+  "/customers/icp":                 customersIcp,
   "/customers/duplicates":          customersDuplicates,
   "/customers/merge":               customersMerge,
   "/customer_locations":            customerLocationsIndex,

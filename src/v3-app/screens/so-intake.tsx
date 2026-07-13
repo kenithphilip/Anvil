@@ -5,6 +5,7 @@ import { ObaraBackend } from "../lib/api";
 import { DocCropper } from "../components/DocCropper";
 import { stampOcrSources } from "../lib/field-sources";
 import { parsePoDate } from "../lib/parse-date";
+import { isValidGstin, panFromGstin } from "../../api/_lib/gstin.js";
 
 // ============================================================
 // ANVIL v3 — wired SO Intake
@@ -409,11 +410,30 @@ const WiredSOIntake = () => {
 
     const list = customerList || [];
 
-    // Tier 1: GSTIN exact match. Highest signal, can't false-positive.
+    // GSTIN checks (see docs/CUSTOMER_MATCH_GST_CHECKS.md for the full list +
+    // future work). The extracted GSTIN is validated with a real Mod-36
+    // checksum (not just a 15-char shape), so a garbled OCR string is never
+    // trusted as a match/create key. If the checksum fails we skip the exact
+    // match and rely on the PAN fallback below + name corroboration.
     const gstin = (extracted.gstin || "").trim().toUpperCase();
-    if (gstin && /^[0-9A-Z]{15}$/.test(gstin)) {
+    const gstinValid = isValidGstin(gstin);
+
+    // Tier 1: GSTIN exact match (checksum-valid only). Highest signal.
+    if (gstinValid) {
       const byGstin = list.find((c) => (c.gstin || "").toUpperCase() === gstin);
       if (byGstin) return { customer: byGstin, confidence: "exact_gstin" };
+    }
+
+    // Tier 1a: PAN-derived match. OCR frequently misreads the 2-digit state
+    // code or the trailing check digit while the embedded 10-char PAN
+    // (GSTIN chars 3-12) stays intact. When exactly ONE existing customer
+    // shares that PAN, resolve to it -- this is the guard that stops a
+    // misread GSTIN from being treated as a brand-new customer (the reported
+    // bug). Ambiguous (>1) falls through to name corroboration.
+    const pan = panFromGstin(gstin);
+    if (pan) {
+      const byPan = list.filter((c) => panFromGstin(c.gstin) === pan);
+      if (byPan.length === 1) return { customer: byPan[0], confidence: "pan_gstin" };
     }
 
     // Tier 1b: vendor_code lookup (migration 106 + extractor 108).

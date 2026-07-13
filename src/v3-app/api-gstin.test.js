@@ -14,6 +14,7 @@ import {
   gstinStateAbbr,
   isValidGstin,
   isValidGstinShape,
+  panFromGstin,
   STATE_CODES,
 } from "../api/_lib/gstin.js";
 
@@ -121,6 +122,23 @@ describe("gstinStateCode / gstinStateAbbr", () => {
   it("returns null on bad shape", () => {
     expect(gstinStateCode("invalid")).toBeNull();
     expect(gstinStateAbbr("invalid")).toBeNull();
+  });
+});
+
+// PAN-derived matching: the guard that stops an OCR-misread GSTIN from being
+// treated as a brand-new customer (SO-upload matcher, so-intake.tsx Tier 1a).
+describe("panFromGstin", () => {
+  it("extracts the embedded 10-char PAN (chars 3-12)", () => {
+    expect(panFromGstin("24AAACC4175D1Z4")).toBe("AAACC4175D");
+  });
+  it("is state-code and check-digit agnostic (misread state/check digit -> same PAN)", () => {
+    // Same entity, OCR misread the 2-digit state code and the trailing digits.
+    expect(panFromGstin("24AAACC4175D1Z4")).toBe(panFromGstin("29AAACC4175D2Z9"));
+  });
+  it("normalizes separators/case and returns null when too short", () => {
+    expect(panFromGstin("24 aaacc4175d1z4")).toBe("AAACC4175D");
+    expect(panFromGstin("24AAAC")).toBeNull();
+    expect(panFromGstin(null)).toBeNull();
   });
 });
 

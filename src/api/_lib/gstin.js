@@ -117,3 +117,13 @@ export const validateGstin = (s) => {
 
 // Convenience predicate for places that only want a boolean.
 export const isValidGstin = (s) => validateGstin(s).ok;
+
+// The embedded PAN — GSTIN characters 3-12 (0-indexed 2..12). Two GSTINs for
+// the SAME legal entity share this PAN even if the 2-digit state code or the
+// trailing check digit differ. Used to recover a customer match when OCR
+// misreads the state code / check digit but the PAN stays intact. Returns the
+// 10-char PAN, or null if the input isn't long enough.
+export const panFromGstin = (s) => {
+  const g = String(s == null ? "" : s).toUpperCase().replace(/[^0-9A-Z]/g, "");
+  return g.length >= 12 ? g.slice(2, 12) : null;
+};

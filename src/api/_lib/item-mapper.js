@@ -33,6 +33,7 @@
 // human-in-the-loop can still inspect the original.
 
 import { blockingKey, compositeScore } from "./fuzzy-match.js";
+import { resolveGstRate } from "./gst.js";
 
 // CM 2.4: minimum compositeScore for the fuzzy_blocked tier to
 // accept a match. 0.75 = strong agreement across two of three
@@ -297,13 +298,28 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opt
         }
       }
     }
-    if (!match) return { ...line, _mapped_item: null };
+    if (!match) return { ...line, gst_rate_source: line.gst_pct != null ? "line" : null, _mapped_item: null };
+    // Resolve the GST rate: line-stated rate wins, else exempt->0, else the
+    // item-master default. Backfilling this is the fix for a "no GST on the
+    // PO" line silently computing zero tax (the PO carries the value but no
+    // rate; the master carries the rate). gst_rate_source records provenance
+    // so the recon UI can show it was defaulted and flag when it's still
+    // unresolved (source=null). Never overwrites an operator/extraction rate.
+    const gstRes = resolveGstRate({
+      line,
+      item: {
+        taxability_type: match.taxability_type || null,
+        rate_of_duty_pct: match.rate_of_duty_pct != null ? Number(match.rate_of_duty_pct) : null,
+      },
+    });
     return {
       ...line,
       // Backfill canonical values only when the line is missing
       // them; never overwrite operator-visible numbers.
       hsn: line.hsn || line.hsn_sac || match.hsn_sac || null,
       uom: line.uom || line.unit || match.uom || null,
+      gst_pct: line.gst_pct != null ? line.gst_pct : gstRes.rate,
+      gst_rate_source: gstRes.source,
       _mapped_item: {
         id: match.id,
         part_no: match.part_no,

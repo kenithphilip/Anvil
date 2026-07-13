@@ -29,6 +29,7 @@
 
 import { gstinStateCode } from "./gstin.js";
 import { resolveSalesVoucherType, toTallyXmlName } from "./tally-voucher-type.js";
+import { placeOfSupply, splitTax } from "./gst.js";
 
 const escape = (s) => String(s == null ? "" : s).replace(/[&<>\"']/g, (c) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
@@ -67,12 +68,8 @@ export const buyerStateCode = (customer) => {
 // Returns either "intrastate" or "interstate". When either side is
 // unknown the conservative answer is "interstate"; misclassifying
 // the other way leaks tax revenue to the wrong jurisdiction.
-export const placeOfSupplyKind = (company, customer) => {
-  const s = sellerStateCode(company);
-  const b = buyerStateCode(customer);
-  if (!s || !b) return "interstate";
-  return s === b ? "intrastate" : "interstate";
-};
+export const placeOfSupplyKind = (company, customer) =>
+  placeOfSupply(sellerStateCode(company), buyerStateCode(customer));
 
 // Per-line tax shape. Each line returns
 //   { taxable, gst_pct, cgst, sgst, igst, cess, line_total }
@@ -85,16 +82,10 @@ export const computeLineTax = (line, kind) => {
   const gst_pct = num(line.gst_pct ?? line.gstRate ?? line.rate_of_duty_pct, 0);
   const cess_pct = num(line.cess_pct ?? line.cessRate, 0);
   const cess = round2((taxable * cess_pct) / 100);
-  let cgst = 0;
-  let sgst = 0;
-  let igst = 0;
-  if (kind === "intrastate") {
-    const half = round2((taxable * gst_pct) / 200);
-    cgst = half;
-    sgst = half;
-  } else {
-    igst = round2((taxable * gst_pct) / 100);
-  }
+  // Delegate the CGST/SGST vs IGST split to the shared resolver
+  // (src/api/_lib/gst.js) so every tax path stays in sync. UTGST ledger
+  // wiring is tracked in docs/GST_COVERAGE_ROADMAP.md.
+  const { cgst, sgst, igst } = splitTax(taxable, gst_pct, kind);
   return {
     taxable,
     gst_pct,

@@ -24,9 +24,30 @@ const SalesOpsCockpit = () => {
     const r: any = await (ObaraBackend?.forecast?.get ? ObaraBackend.forecast.get() : null);
     return r || null;
   }, []);
+  // ICP fit distribution across the customer base (are we winning ideal ones?).
+  const customers = useFetch(async () => { const r: any = await ObaraBackend?.customers?.list?.(); return r || null; }, []);
 
   const loading = funnel.loading || winloss.loading || forecast.loading;
-  const reloadAll = () => { funnel.reload(); winloss.reload(); forecast.reload(); };
+  const reloadAll = () => { funnel.reload(); winloss.reload(); forecast.reload(); customers.reload(); };
+
+  // ICP tier mix (A/B/C/Out/Unscored), tolerant of custom tenant tier labels.
+  const custRows: any[] = Array.isArray(customers.data) ? customers.data : (customers.data?.customers || customers.data?.rows || []);
+  const icpDist = (() => {
+    const m: Record<string, number> = {};
+    let scored = 0;
+    for (const c of custRows) {
+      const t = c.icp_tier || "Unscored";
+      m[t] = (m[t] || 0) + 1;
+      if (c.icp_tier) scored++;
+    }
+    const order = ["A", "B", "C", "Out", "Unscored"];
+    const entries = Object.entries(m).sort((a, b) => {
+      const ia = order.indexOf(a[0]); const ib = order.indexOf(b[0]);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+    });
+    return { entries, total: custRows.length, scored };
+  })();
+  const icpChipKind = (t: string) => (t === "A" ? "good" : t === "B" ? "warn" : t === "C" ? "bad" : "ghost");
 
   const fd: any = funnel.data || {};
   const wl: any = winloss.data || {};
@@ -97,6 +118,26 @@ const SalesOpsCockpit = () => {
         </Card>
 
         <div className="row" style={{ gap: 12, marginTop: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+          {/* ICP fit distribution */}
+          <Card title="ICP fit" eyebrow={`${icpDist.scored}/${icpDist.total} customers scored`} style={{ flex: "1 1 280px", minWidth: 240 }} flush>
+            {icpDist.total === 0 ? (
+              <div className="body" style={{ padding: 16, color: "var(--ink-3)" }}>No customers yet.</div>
+            ) : (
+              <table className="tbl" style={{ fontSize: 12 }}>
+                <thead><tr><th>Tier</th><th className="r">Count</th><th className="r">Share</th></tr></thead>
+                <tbody>
+                  {icpDist.entries.map(([tier, count]) => (
+                    <tr key={tier}>
+                      <td><Chip k={icpChipKind(tier)}>{tier}</Chip></td>
+                      <td className="r mono">{count}</td>
+                      <td className="r mono-sm">{icpDist.total ? Math.round((count / icpDist.total) * 100) : 0}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Card>
+
           {/* Revenue leakage — lost reasons */}
           <Card title="Lost reasons" eyebrow="last 90 days" style={{ flex: "1 1 320px", minWidth: 280 }} flush>
             {(wl.lost_reasons || []).length === 0 ? (

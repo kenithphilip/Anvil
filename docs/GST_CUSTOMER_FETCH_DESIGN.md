@@ -96,5 +96,48 @@ path for foreign customers (no GSTIN).
 - Foreign / unregistered customers have no GSTIN — keep manual path.
 - Cache staleness: registration status changes; P3 cron + a "re-fetch" button.
 
+## Addendum — provider: Sandbox.co.in (by Quicko) [verified 2026-07]
+
+Assessed as the concrete provider behind `_lib/gst-provider.js`. GSP-certified
+REST layer whose JSON matches what Anvil composes; slots in with almost no
+field-shaping. **Verdict: adopt for P1, pilot for e-invoice/e-way-bill.**
+
+**Auth (2 tiers):**
+- **Public** GSTIN endpoints need only Anvil's own key: `POST /authenticate`
+  with `x-api-key` + `x-api-secret` → 24h JWT (passed in `authorization`,
+  **no** `Bearer` prefix). No per-taxpayer consent, no onboarding. Hosts:
+  `api.sandbox.co.in` (prod, 500 rpm) / `test-api.sandbox.co.in` (test, 25 rpm).
+- **e-invoice / e-way-bill / returns** additionally need ASP onboarding with
+  Quicko GSP + per-tenant government-portal creds + (for taxpayer APIs) an OTP
+  session — real per-tenant setup, hence "pilot" not "adopt".
+
+**P1 endpoint (this design's provider):**
+`POST /gst/compliance/public/gstin/search` → legal name (`lgnm`), trade name
+(`tradeNam`), principal + additional address (`pradr`/`adadr`), status (`sts`),
+taxpayer type (`dty`), constitution (`ctb`), reg date (`rgdt`), jurisdiction.
+Maps ~1:1 onto `FIELD_CATALOG` in `customer-registration.js`
+(statutory_identity). Derive `state_code` + `pan` from the GSTIN itself
+(`gstinStateCode`/`panFromGstin`), **not** from the response `stcd` (a state
+NAME string). Also `/public/gstin/verify` (status only) and `/public/pan/search`
+(reverse GSTIN-by-PAN). Write back through `/api/customers/registration` with
+`source='gst', verified=true` (the panel already renders the `gst` badge).
+
+**Pricing:** subscription + metered, NOT rate-carded per call. Plans Startup
+₹899/mo · Growth ₹8,399/mo · Unicorn ₹16,699/mo (+ Enterprise); 14-day trial;
+only 2xx consume quota/wallet; per-call ~₹1–90 (premium ~₹500) visible only in
+their cost calculator. **Confirm the per-Search-GSTIN rate before P1 budgeting.**
+The `gst_registry` cache (recurring OEM GSTINs → mostly cache hits) blunts it.
+
+**Wins beyond P1 (pilot):** e-invoice IRN (issue #239 — takes Anvil's NIC JSON,
+returns IRN + signed QR; needs the SupTyp/RegRev/split fixes any IRP requires);
+e-way-bill (`eway_bills/index.js` — today cancel/extend are fake local flips);
+GSTR-2A/2B ITC reconciliation (defer). The single biggest missing plumbing both
+e-invoice + e-way-bill lack is a **cached auth-token module** (they send a bare
+`client_id`); build once, reuse.
+
+**Risks:** third-party in the critical path of every invoice/EWB → keep the
+manual fallback, never block; P2/P3 send full invoice JSON to Quicko → DPA
+review. See tracking issue #186.
+
 Related: [[backlog-parked-prs]] (zero-data-entry #1 win), [[project-payment-reality]],
-`docs/ZERO_DATA_ENTRY_AUDIT.md`.
+`docs/ZERO_DATA_ENTRY_AUDIT.md`, `docs/GST_COVERAGE_ROADMAP.md` (#239).

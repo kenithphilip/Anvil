@@ -718,6 +718,9 @@
     // distinct from the behavioral health score. getIcp computes on first read.
     getIcp: async (customerId) => apiFetch("/api/customers/icp?customer_id=" + encodeURIComponent(customerId)),
     recomputeIcp: async (customerId) => apiFetch("/api/customers/icp", { method: "POST", body: { customer_id: customerId } }),
+    // Re-score the whole book against the active rubric (after editing it, or a
+    // wave of GSTIN/registration data landing).
+    recomputeIcpAll: async () => apiFetch("/api/customers/icp", { method: "POST", body: { all: true } }),
     // Tenant ICP rubric (gate + weighted rules + tiers); returns the built-in
     // default when none is defined yet.
     getIcpProfile: async () => apiFetch("/api/admin/icp_profiles"),

@@ -89,8 +89,17 @@ criteria ("strategic account") when a tenant wants it — off by default.
   save; badge in the customer detail.
 - **P2 — Admin editor + list/cockpit filter:** tenant defines the rubric; filter
   customers/opps by ICP tier.
-- **P3 — GST-gated + enrichment:** wire the GST valid+Active gate via #186; auto
-  re-score when registration/GSTIN data lands.
+- **P3 — GST-gated + re-score (shipped):** the compute layer derives
+  `gstin_valid` (local Mod-36 checksum, no external call) + `gstin_present`, both
+  surfaced as rule/gate attributes so a tenant can require a registered business
+  today. Re-score triggers: on customer-master upsert (firmographic fields may
+  have changed) in addition to the P1 registration-save trigger, plus a
+  `POST /api/customers/icp {all:true}` batch re-score (`scoreAllCustomers`,
+  bounded 1000) exposed as "Re-score all" in the admin editor — used after
+  editing the rubric or a wave of data landing. The live `gst_status=Active`
+  gate is already scorable: when the Sandbox GSTIN fetch (#186) writes
+  `gst_status` into the registration fields it flows through as an attribute and
+  re-scores on save — no extra wiring needed, only the #186 fetch itself.
 - **P4 — Optional LLM-assist** for fuzzy criteria; apply ICP to leads/opps.
 
 ## Reuse map

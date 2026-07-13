@@ -69,4 +69,27 @@ describe("scoreCustomer", () => {
     expect(scoreCustomer({ country: "US" }, profile)).toMatchObject({ score: 100, tier: "Ideal" });
     expect(scoreCustomer({ country: "IN" }, profile)).toMatchObject({ score: 0, tier: "Out-of-profile" });
   });
+  // P3: the compute layer derives gstin_valid ("valid"/"invalid") with a local
+  // checksum -- no external call -- so a rubric can gate/score on it today.
+  it("can gate on the derived gstin_valid attribute (checksum proxy)", () => {
+    const profile = {
+      gate: [{ attribute_key: "gstin_valid", op: "equals", value: "valid", label: "Registered business (valid GSTIN)" }],
+      rules: [{ attribute_key: "customer_type", op: "equals", value: "OEM", weight: 100 }],
+      tiers: [{ min: 50, tier: "A" }, { min: 0, tier: "C" }],
+    };
+    expect(scoreCustomer({ customer_type: "OEM", gstin_valid: "valid" }, profile)).toMatchObject({ tier: "A" });
+    const bad = scoreCustomer({ customer_type: "OEM", gstin_valid: "invalid" }, profile);
+    expect(bad.tier).toBe("Out");
+    expect(bad.signals.gate_failed).toContain("Registered business (valid GSTIN)");
+  });
+  it("can weight the derived gstin_valid attribute as a scoring rule", () => {
+    const profile = {
+      gate: [],
+      rules: [{ attribute_key: "gstin_valid", op: "equals", value: "valid", weight: 100, label: "Valid GSTIN" }],
+      tiers: [{ min: 80, tier: "A" }, { min: 0, tier: "C" }],
+    };
+    expect(scoreCustomer({ gstin_valid: "valid" }, profile).tier).toBe("A");
+    expect(scoreCustomer({ gstin_valid: "invalid" }, profile).tier).toBe("C");
+    expect(scoreCustomer({ gstin_present: "no" }, profile).tier).toBe("C");
+  });
 });

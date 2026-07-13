@@ -88,9 +88,26 @@ export const IcpProfileEditor: React.FC = () => {
     } finally { setBusy(false); }
   };
 
+  const rescoreAll = async () => {
+    setBusy(true); setErr(null); setFlash(null);
+    try {
+      const r: any = await ObaraBackend?.customers?.recomputeIcpAll?.();
+      const tiers = r?.tiers ? Object.entries(r.tiers).map(([t, n]) => `${t}:${n}`).join(" · ") : "";
+      const msg = `Re-scored ${r?.scored ?? 0} customers${tiers ? " (" + tiers + ")" : ""}${r?.errors ? ` · ${r.errors} skipped` : ""}`;
+      setFlash(msg);
+      window.notifySuccess?.("ICP re-scored", msg);
+    } catch (e: any) {
+      setErr(e?.message || String(e));
+      window.notifyError?.("Could not re-score customers", e?.message || String(e));
+    } finally { setBusy(false); }
+  };
+
   if (!prof) return <Card title="ICP profile"><div className="body">{err ? <Banner kind="bad" title="ICP">{err}</Banner> : "Loading…"}</div></Card>;
 
-  const ruleRow = (kind: "gate" | "rules") => (r: Rule, i: number) => (
+  const ruleRow = (kind: "gate" | "rules") => (r: Rule, i: number) => {
+    const attr = attrKeys.find((a) => a.key === r.attribute_key);
+    const listId = Array.isArray(attr?.values) && attr.values.length ? `icp-vals-${kind}-${i}` : undefined;
+    return (
     <div key={i} className="row" style={{ gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
       <select className="select" disabled={!canEdit} value={r.attribute_key} onChange={(e) => setRule(kind, i, { attribute_key: e.target.value })} style={{ minWidth: 170 }}>
         {attrKeys.map((a) => <option key={a.key} value={a.key}>{a.label} ({a.key})</option>)}
@@ -99,18 +116,25 @@ export const IcpProfileEditor: React.FC = () => {
       <select className="select" disabled={!canEdit} value={r.op} onChange={(e) => setRule(kind, i, { op: e.target.value })}>
         {OPS.map((o) => <option key={o} value={o}>{o}</option>)}
       </select>
-      <input className="input" disabled={!canEdit || !needsValue(r.op)} placeholder={OP_HELP[r.op] || "value"} value={r._v || ""} onChange={(e) => setRule(kind, i, { _v: e.target.value })} style={{ width: 150 }} />
+      <input className="input" list={listId} disabled={!canEdit || !needsValue(r.op)} placeholder={OP_HELP[r.op] || "value"} value={r._v || ""} onChange={(e) => setRule(kind, i, { _v: e.target.value })} style={{ width: 150 }} />
+      {listId && <datalist id={listId}>{attr.values.map((v: string) => <option key={v} value={v} />)}</datalist>}
       {kind === "rules" && (
         <input className="input mono" type="number" disabled={!canEdit} title="weight" value={r.weight ?? 0} onChange={(e) => setRule(kind, i, { weight: Number(e.target.value) })} style={{ width: 64 }} />
       )}
       <input className="input" disabled={!canEdit} placeholder="label" value={r.label || ""} onChange={(e) => setRule(kind, i, { label: e.target.value })} style={{ width: 160 }} />
       {canEdit && <Btn sm kind="ghost" onClick={() => delRule(kind, i)}>×</Btn>}
     </div>
-  );
+    );
+  };
 
   return (
     <Card title="ICP profile" eyebrow="ideal-customer-profile fit rubric"
-          right={canEdit ? <Btn sm kind="primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save rubric"}</Btn> : <span className="mono-sm" style={{ color: "var(--ink-4)" }}>Admin to edit</span>}>
+          right={canEdit ? (
+            <span className="row" style={{ gap: 6 }}>
+              <Btn sm kind="ghost" disabled={busy} onClick={rescoreAll} title="Re-score all customers against the saved rubric">Re-score all</Btn>
+              <Btn sm kind="primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save rubric"}</Btn>
+            </span>
+          ) : <span className="mono-sm" style={{ color: "var(--ink-4)" }}>Admin to edit</span>}>
       {err && <Banner kind="bad" title="ICP">{err}</Banner>}
       {flash && <Banner kind="good" title="Saved">{flash}</Banner>}
       {isDefault && <Banner kind="info" title="Using the built-in default">Editing + saving creates this tenant's own rubric.</Banner>}

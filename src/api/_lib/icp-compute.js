@@ -4,6 +4,7 @@
 // The scoring itself is pure (src/api/_lib/icp.js); this is the I/O side.
 
 import { scoreCustomer, DEFAULT_ICP_PROFILE } from "./icp.js";
+import { isValidGstin } from "./gstin.js";
 
 // The tenant's most-recent active ICP profile, or null (caller uses the default).
 export const getActiveProfile = async (svc, tenantId) => {
@@ -38,6 +39,19 @@ export const resolveCustomerAttributes = async (svc, tenantId, customerId) => {
   // only if the column exists on the customer row).
   if (c.parent_customer_id != null) attrs.parent_customer_id = c.parent_customer_id;
 
+  // Derived attributes (P3). A checksum-valid GSTIN is a local proxy for "this
+  // is a real, registered business" -- available with NO external call, so a
+  // rubric can gate/score on it today. When the Sandbox GSTIN fetch (#186)
+  // lands, it writes gst_status=Active/Cancelled into the registration fields;
+  // that already flows through as an attribute and re-scores on save, so no
+  // extra wiring here is needed for the live-registry gate.
+  if (attrs.gstin != null && String(attrs.gstin).trim() !== "") {
+    attrs.gstin_present = "yes";
+    attrs.gstin_valid = isValidGstin(String(attrs.gstin)) ? "valid" : "invalid";
+  } else {
+    attrs.gstin_present = "no";
+  }
+
   return { attrs, customer: c };
 };
 
@@ -58,4 +72,29 @@ export const computeAndPersistIcp = async (svc, tenantId, customerId) => {
   }).eq("tenant_id", tenantId).eq("id", customerId);
   if (upd.error) throw new Error(upd.error.message);
   return { ...result, profile_id: profile.id || null, profile_name: profile.name || "Default ICP" };
+};
+
+// Batch re-score (P3). Editing the rubric, or a wave of GSTIN/registration data
+// landing, should re-score the whole book. Resolves the active profile once,
+// then scores each customer against it. Bounded by `limit` (default 1000) so a
+// single call can't run unbounded; returns { scored, tiers } for the caller to
+// report. Best-effort per row: a single bad row is counted in `errors`, not
+// fatal.
+export const scoreAllCustomers = async (svc, tenantId, { limit = 1000 } = {}) => {
+  const list = await svc.from("customers").select("id")
+    .eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(limit);
+  if (list.error) throw new Error(list.error.message);
+  const ids = (list.data || []).map((r) => r.id);
+  const tiers = {};
+  let scored = 0;
+  let errors = 0;
+  for (const id of ids) {
+    try {
+      const r = await computeAndPersistIcp(svc, tenantId, id);
+      if (r) { scored += 1; tiers[r.tier] = (tiers[r.tier] || 0) + 1; }
+    } catch {
+      errors += 1;
+    }
+  }
+  return { scored, errors, tiers, total: ids.length };
 };

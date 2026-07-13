@@ -28,9 +28,17 @@ const attributeKeys = () => {
     { key: "customer_type", label: "Customer type", category: "core" },
     { key: "parent_customer_id", label: "Parent company (group)", category: "core" },
   ];
+  // Derived attributes the compute layer synthesizes (P3). gstin_valid is a
+  // checksum check with no external call; gst_status arrives from the Sandbox
+  // fetch (#186) into the registration fields. Values are enumerated so the
+  // editor can offer a value picker for equals/in rules.
+  const derived = [
+    { key: "gstin_present", label: "GSTIN present", category: "derived", values: ["yes", "no"] },
+    { key: "gstin_valid", label: "GSTIN checksum valid", category: "derived", values: ["valid", "invalid"] },
+  ];
   // De-dup by key (catalog already has customer_type/country/gstin).
   const seen = new Set(fromCatalog.map((f) => f.key));
-  return [...fromCatalog, ...core.filter((c) => !seen.has(c.key))];
+  return [...fromCatalog, ...core.filter((c) => !seen.has(c.key)), ...derived.filter((c) => !seen.has(c.key))];
 };
 
 export default async function handler(req, res) {

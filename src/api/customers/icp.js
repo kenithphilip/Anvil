@@ -11,7 +11,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-import { computeAndPersistIcp } from "../_lib/icp-compute.js";
+import { computeAndPersistIcp, scoreAllCustomers } from "../_lib/icp-compute.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -44,6 +44,13 @@ export default async function handler(req, res) {
     if (req.method === "POST") {
       requirePermission(ctx, "write");
       const body = await readBody(req);
+      // Batch re-score (P3): re-score the whole book against the active rubric.
+      // Used after editing the ICP profile or a wave of GSTIN data landing.
+      if (body?.all === true || req.query?.all === "1") {
+        const r = await scoreAllCustomers(svc, ctx.tenantId, { limit: 1000 });
+        await recordAudit(ctx, { action: "customer_icp_scored_all", objectType: "customer", objectId: null, after: { scored: r.scored, tiers: r.tiers } });
+        return json(res, 200, { rescored: true, ...r });
+      }
       const customerId = body?.customer_id || req.query?.customer_id;
       if (!customerId) return json(res, 400, { error: { message: "customer_id required" } });
       const r = await computeAndPersistIcp(svc, ctx.tenantId, customerId);

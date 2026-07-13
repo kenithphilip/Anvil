@@ -4,6 +4,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { safeAwait } from "../_lib/safe-thenable.js";
 import { validateGstin } from "../_lib/gstin.js";
+import { computeAndPersistIcp } from "../_lib/icp-compute.js";
 
 // Best-effort parser that pulls structured fields out of a multi-line
 // address blob. The intake dialog gives us free-text; the
@@ -201,6 +202,14 @@ export default async function handler(req, res) {
         await svc.from("customers").update({ parent_customer_id: null }).eq("tenant_id", ctx.tenantId).eq("id", customer.id);
         customer.parent_customer_id = null;
       }
+
+      // Re-score ICP fit (P3): firmographic fields (gstin/state/country/type/
+      // parent) may have just changed, so refresh the score. Best-effort -- a
+      // scoring failure must never block the customer save.
+      try {
+        const icp = await computeAndPersistIcp(svc, ctx.tenantId, customer.id);
+        if (icp) { customer.icp_score = icp.score; customer.icp_tier = icp.tier; }
+      } catch { /* non-fatal: ICP refresh is opportunistic */ }
 
       // Mirror bill_to / ship_to into customer_locations so the
       // e-invoice handler's JOIN finds the address fields. The text

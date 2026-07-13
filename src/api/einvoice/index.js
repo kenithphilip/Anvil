@@ -13,6 +13,9 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { safeFetch } from "../_lib/safe-fetch.js";
+import { placeOfSupply, splitTax, isUnionTerritory } from "../_lib/gst.js";
+
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 const STATUSES = new Set(["DRAFT", "PENDING_GSTN", "GENERATED", "CANCELLED", "REJECTED"]);
 const GSTN_API_URL = process.env.GSTN_API_URL || "";
@@ -49,18 +52,77 @@ const buildSellerDtls = (tenantSettings, override) => {
   return { block };
 };
 
-const composePayload = (order, customer, sellerDtls) => {
+// Derive TranDtls.SupTyp / RegRev from explicit flags on the order/customer,
+// else infer: a foreign buyer -> export (EXPWP when IGST is charged under
+// payment, else EXPWOP under LUT); domestic -> B2B. Beats the old hardcoded
+// "B2B" which mislabelled every export/SEZ/RCM invoice. SEZ/RCM still need an
+// explicit flag (docs/GST_COVERAGE_ROADMAP.md); we honour it when present.
+const deriveSupplyContext = (order, customer, so, igstVal) => {
+  const explicit = so.supTyp || so.supply_type || order.supply_type || (customer && customer.gst_supply_type);
+  const regRev = (so.reverse_charge ?? order.reverse_charge ?? (customer && customer.reverse_charge)) ? "Y" : "N";
+  if (explicit) return { supTyp: String(explicit).toUpperCase(), regRev };
+  const country = String((customer && customer.country) || "").toUpperCase();
+  const isForeign = country && country !== "IN" && country !== "INDIA";
+  if (isForeign) return { supTyp: igstVal > 0 ? "EXPWP" : "EXPWOP", regRev };
+  return { supTyp: "B2B", regRev };
+};
+
+// Compose the NIC e-invoice JSON. The CGST/SGST/IGST split is COMPUTED from the
+// seller-vs-buyer place of supply + each line's gst_pct (via _lib/gst.js) --
+// previously it read li.*Amt / so.*Total fields that nothing ever wrote, so the
+// tax split serialized as all zeros. Cess is now included; totals are summed
+// from the computed per-line amounts.
+export const composePayload = (order, customer, sellerDtls) => {
   const so = (order.result && order.result.salesOrder) || {};
   const lineItems = so.lineItems || [];
+  const sellerState = (sellerDtls && sellerDtls.Stcd) || null;
+  const buyerState = (customer && customer.state_code) || null;
+  const kind = placeOfSupply(sellerState, buyerState);   // intrastate | interstate
+  const ut = isUnionTerritory(buyerState);
+
+  let assVal = 0, cgstVal = 0, sgstVal = 0, igstVal = 0, cesVal = 0, totVal = 0;
+
+  const ItemList = lineItems.map((li, i) => {
+    const qty = Number(li.qty ?? li.quantity) || 0;
+    const rate = Number(li.rate ?? li.unitPrice) || 0;
+    const taxable = round2(Number(li.amount) || (qty * rate));
+    const gstPct = Number(li.gst_pct ?? li.gstRate ?? li.rate_of_duty_pct) || 0;
+    const cessPct = Number(li.cess_pct ?? li.cessRate) || 0;
+    const split = splitTax(taxable, gstPct, kind, { unionTerritory: ut });
+    const cgst = split.cgst;
+    // The NIC schema has no separate UTGST field; an intra-UT supply reports
+    // the UTGST amount in SgstAmt (same value, rate/2).
+    const sgst = round2(split.sgst + split.utgst);
+    const igst = split.igst;
+    const cess = round2((taxable * cessPct) / 100);
+    const totItemVal = round2(taxable + cgst + sgst + igst + cess);
+
+    assVal += taxable; cgstVal += cgst; sgstVal += sgst; igstVal += igst; cesVal += cess; totVal += totItemVal;
+
+    return {
+      SlNo: String(i + 1),
+      PrdDesc: li.itemName || li.tallyItemName || li.partNumber || "",
+      IsServc: "N",
+      HsnCd: li.hsnCode || li.hsn || li.hsn_sac || "",
+      Qty: qty,
+      Unit: li.uom || "NOS",
+      UnitPrice: rate,
+      TotAmt: taxable,
+      AssAmt: taxable,
+      GstRt: gstPct,
+      IgstAmt: igst,
+      CgstAmt: cgst,
+      SgstAmt: sgst,
+      CesAmt: cess,
+      TotItemVal: totItemVal,
+    };
+  });
+
+  const { supTyp, regRev } = deriveSupplyContext(order, customer, so, igstVal);
+
   return {
     Version: "1.1",
-    TranDtls: {
-      TaxSch: "GST",
-      SupTyp: "B2B",
-      RegRev: "N",
-      EcmGstin: null,
-      IgstOnIntra: "N",
-    },
+    TranDtls: { TaxSch: "GST", SupTyp: supTyp, RegRev: regRev, EcmGstin: null, IgstOnIntra: "N" },
     DocDtls: {
       Typ: "INV",
       No: order.po_number || ("ORD-" + String(order.id).slice(0, 8)),
@@ -68,36 +130,22 @@ const composePayload = (order, customer, sellerDtls) => {
     },
     SellerDtls: sellerDtls,
     BuyerDtls: {
-      Gstin: customer ? (customer.gstin || "") : "",
+      Gstin: (customer && customer.gstin) || "",
       LglNm: customer ? (customer.customer_name || customer.customer_key) : "",
-      Pos: customer ? (customer.state_code || "") : "",
-      Addr1: customer && customer.address_line1 ? customer.address_line1 : "",
-      Loc: customer ? (customer.city || "") : "",
+      Pos: buyerState || "",
+      Addr1: (customer && customer.address_line1) || "",
+      Loc: (customer && customer.city) || "",
       Pin: customer && customer.pincode ? Number(customer.pincode) : null,
-      Stcd: customer ? (customer.state_code || "") : "",
+      Stcd: buyerState || "",
     },
-    ItemList: lineItems.map((li, i) => ({
-      SlNo: String(i + 1),
-      PrdDesc: li.itemName || li.tallyItemName || li.partNumber || "",
-      IsServc: "N",
-      HsnCd: li.hsnCode || "",
-      Qty: Number(li.qty) || 0,
-      Unit: li.uom || "NOS",
-      UnitPrice: Number(li.rate) || 0,
-      TotAmt: Number(li.amount) || 0,
-      AssAmt: Number(li.amount) || 0,
-      GstRt: Number(li.cgst || 0) + Number(li.sgst || 0) || Number(li.igst || 0),
-      IgstAmt: Number(li.igstAmt || 0),
-      CgstAmt: Number(li.cgstAmt || 0),
-      SgstAmt: Number(li.sgstAmt || 0),
-      TotItemVal: Number(li.totalWithGst || li.amount || 0),
-    })),
+    ItemList,
     ValDtls: {
-      AssVal: Number(so.subTotal) || 0,
-      IgstVal: Number(so.igstTotal) || 0,
-      CgstVal: Number(so.cgstTotal) || 0,
-      SgstVal: Number(so.sgstTotal) || 0,
-      TotInvVal: Number(so.grandTotal) || 0,
+      AssVal: round2(assVal),
+      CgstVal: round2(cgstVal),
+      SgstVal: round2(sgstVal),
+      IgstVal: round2(igstVal),
+      CesVal: round2(cesVal),
+      TotInvVal: round2(totVal || (Number(so.grandTotal) || 0)),
     },
   };
 };
@@ -209,8 +257,8 @@ export default async function handler(req, res) {
         customer_id: order.data.customer_id || null,
         customer_gstin: customer ? customer.gstin : null,
         seller_gstin: sellerResult.block.Gstin,
-        taxable_value: Number(so.subTotal) || null,
-        total_value: Number(so.grandTotal) || null,
+        taxable_value: payload.ValDtls.AssVal || (Number(so.subTotal) || null),
+        total_value: payload.ValDtls.TotInvVal || (Number(so.grandTotal) || null),
         currency: body.currency || "INR",
         status: "DRAFT",
         payload,

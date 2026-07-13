@@ -546,9 +546,9 @@ export const Shell: React.FC<ShellProps> = ({
         ))}
       </div>
 
-      <button type="button" className="head-search" onClick={onCmdK} aria-label="Open search (Cmd+K)">
+      <button type="button" className="head-search" onClick={onCmdK} aria-label="Global search (Cmd+K)">
         {Icon.search}
-        <span>Search orders, customers, items, jobs…</span>
+        <span>Global search</span>
         <kbd>⌘K</kbd>
       </button>
 
@@ -610,6 +610,8 @@ export const Shell: React.FC<ShellProps> = ({
                   className={`nav-item ${route === item.id ? "active" : ""}`}
                   onClick={() => onRoute?.(item.id)}
                   aria-current={route === item.id ? "page" : undefined}
+                  title={item.label}
+                  aria-label={item.label}
                 >
                   <span className="nav-icon">{item.icon}</span>
                   <span className="nav-label">{item.label}</span>

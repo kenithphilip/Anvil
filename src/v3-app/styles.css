@@ -217,6 +217,18 @@ button { cursor: pointer; }
    numbers. Hide them when collapsed; the expanded rail still shows them. */
 [data-rail="collapsed"] .nav-badge { display: none; }
 [data-rail="collapsed"] .brand .name { display: none; }
+/* Collapsed footer: the avatar + name/role block can't fit in 56px and got
+   clipped by .app-side{overflow:hidden}, crushing the gear -- the ONLY control
+   that re-expands the rail. Hide the identity block and center the gear so it
+   stays clickable. */
+[data-rail="collapsed"] .side-foot { justify-content: center; padding: 10px 0; }
+[data-rail="collapsed"] .side-foot .av,
+[data-rail="collapsed"] .side-foot > div { display: none; }
+/* The Settings popover (which holds the Sidebar collapse/expand toggle) is a
+   220px absolute child of .app-side, so overflow:hidden clipped it inside the
+   56px rail -- leaving no way to re-expand. position:fixed escapes the clip and
+   anchors it just right of the rail near the gear. */
+[data-rail="collapsed"] .settings-menu { position: fixed; left: 60px; right: auto; bottom: 12px; }
 
 .app-head {
   grid-area: head;
@@ -324,7 +336,7 @@ button { cursor: pointer; }
   margin-left: auto;
   text-align: left;
 }
-.head-search > span { flex: 1; text-align: left; }
+.head-search > span { flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .head-search kbd {
   font-family: var(--mono);
   font-size: 10px;

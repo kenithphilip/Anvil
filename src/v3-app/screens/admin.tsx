@@ -7,6 +7,7 @@ import { RBAC, MATRIX, ACTIONS } from "../lib/rbac";
 import { Prefs } from "../lib/preferences";
 import { PricingProfilesAdmin } from "../components/PricingProfilesAdmin";
 import { NavVisibilityAdmin } from "../components/NavVisibilityAdmin";
+import { IcpProfileEditor } from "../components/IcpProfileEditor";
 import { OptionListEditor } from "../components/OptionListEditor";
 
 // ============================================================
@@ -55,6 +56,7 @@ const ADMIN_CRUD_TABS = [
   { id: "voice",     label: "Voice" },
   { id: "chat",      label: "Chat channels" },
   { id: "settings",  label: "Settings" },
+  { id: "icp",       label: "ICP profile" },
   { id: "holidays",  label: "Holidays" },
   { id: "leadtimes", label: "Lead times" },
   { id: "fx",        label: "FX rates" },
@@ -82,7 +84,7 @@ const ADMIN_TAB_GROUPS: { label: string; ids: string[] }[] = [
   { label: "ERP connectors", ids: ["netsuite", "tally", "sage_x3", "ifs", "oracle_fusion", "ramco", "jde", "plex", "jobboss", "oracle_ebs", "proalpha", "plm"] },
   { label: "Channels", ids: ["voice", "chat"] },
   { label: "Sales & quotes", ids: ["settings", "holidays", "leadtimes", "fx", "thresh", "doc_templates", "terms_packs"] },
-  { label: "Master data", ids: ["locations", "contracts", "items", "item_fields", "vendor_codes", "customer_parts"] },
+  { label: "Master data", ids: ["locations", "contracts", "items", "item_fields", "vendor_codes", "customer_parts", "icp"] },
   { label: "Pricing & freight", ids: ["pricing", "pricing_profiles", "freight"] },
   { label: "AI & diagnostics", ids: ["docai_cost", "diag"] },
 ];
@@ -2083,6 +2085,7 @@ const WiredAdminCRUD = () => {
         )}
 
         {active === "navigation" && <NavVisibilityAdmin />}
+        {active === "icp" && <IcpProfileEditor />}
 
         {active === "billing" && (
           <>

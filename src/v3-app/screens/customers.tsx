@@ -104,6 +104,7 @@ const WiredCustomers = () => {
     []
   );
   const [query, setQuery] = useState("");
+  const [icpFilter, setIcpFilter] = useState("all");
   const [selectedId, setSelectedId] = useState<string | null>(customerIdFromHash());
   // Audit P9.3: per-customer refresh-health spinner.
   const [refreshingHealthId, setRefreshingHealthId] = useState<string | null>(null);
@@ -203,7 +204,15 @@ const WiredCustomers = () => {
   const profilesById = (list.data && list.data.profiles) || {};
   const selectedProfile = selectedCustomer ? profilesById[selectedCustomer.id] || null : null;
 
+  // ICP tiers actually present in the data (tenant rubrics are configurable,
+  // so we don't hardcode A/B/C) + an "unscored" bucket.
+  const icpTiers: string[] = Array.from(new Set<string>((rows as any[]).map((r: any) => String(r?.icp_tier || ""))))
+    .filter((t) => t !== "").sort();
+
   const filtered = rows.filter((r) => {
+    if (icpFilter !== "all") {
+      if (icpFilter === "unscored" ? r.icp_tier != null : r.icp_tier !== icpFilter) return false;
+    }
     if (!query) return true;
     const q = query.toLowerCase();
     return (
@@ -228,6 +237,12 @@ const WiredCustomers = () => {
             style={{ width: 240, height: 28 }}
             aria-label="Search customers"
           />
+          <select className="select" value={icpFilter} onChange={(ev) => setIcpFilter(ev.target.value)}
+                  title="Filter by ICP tier" aria-label="Filter by ICP tier" style={{ height: 28 }}>
+            <option value="all">ICP: all</option>
+            {icpTiers.map((t) => <option key={t} value={t}>ICP {t}</option>)}
+            <option value="unscored">ICP: unscored</option>
+          </select>
           <Btn icon kind="ghost" sm onClick={list.reload} title="Refresh">{Icon.cycle}</Btn>
           {(canApply || canSubmit) && <Btn sm kind="primary" onClick={() => setShowNew(true)}>{Icon.plus} New customer</Btn>}
         </>}

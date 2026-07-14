@@ -139,6 +139,7 @@ import ewayBillsExtract         from "./eway_bills/extract.js";
 import ewayBillsExpire          from "./eway_bills/expire.js";
 
 import deliveryPromise         from "./delivery/promise.js";
+import delaysScan              from "./delays/scan.js";
 import logisticsConsolidations from "./logistics/consolidations.js";
 import logisticsFreightBids     from "./logistics/freight_bids.js";
 
@@ -886,6 +887,7 @@ const STATIC_ROUTES = {
   "/eway_bills/expire":             ewayBillsExpire,
 
   "/delivery/promise":              deliveryPromise,
+  "/delays/scan":                   delaysScan,
   "/logistics/consolidations":      logisticsConsolidations,
   "/logistics/freight_bids":        logisticsFreightBids,
   "/deploys":                       deploysIndex,

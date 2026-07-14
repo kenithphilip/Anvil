@@ -106,21 +106,44 @@ export const flagToException = (flag, rule, tenantId, nowIso) => {
   };
 };
 
-// Insert only if no open row with the same (rule_kind, fingerprint) exists.
+// Insert only if no open row with the same (rule_kind, fingerprint) exists;
+// when one does, ratchet its severity UP if this tick computed a higher band
+// (so an exception that ages past 2x SLA actually escalates — the persisted
+// severity is what the notifier reads). Concurrency: a partial unique index
+// (migration 162) backs the dedup, so a racing tick that loses gets 23505 and
+// is treated as skipped rather than inserting a duplicate.
 const upsertException = async (svc, row) => {
   const fingerprint = row.detail?.fingerprint;
   if (fingerprint) {
     const existing = await svc.from("logistics_exceptions")
-      .select("id")
+      .select("id, severity")
       .eq("tenant_id", row.tenant_id)
       .eq("rule_kind", row.rule_kind)
       .eq("status", "open")
       .filter("detail->>fingerprint", "eq", fingerprint)
-      .maybeSingle();
-    if (existing.data) return { skipped: true, id: existing.data.id };
+      .order("created_at", { ascending: true })
+      .limit(1);
+    if (existing.error) return { error: existing.error.message };
+    const cur = existing.data && existing.data[0];
+    if (cur) {
+      // Aging escalation: never downgrade; bump only when strictly higher.
+      if ((RANK[row.severity] || 0) > (RANK[cur.severity] || 0)) {
+        const upd = await svc.from("logistics_exceptions")
+          .update({ severity: row.severity, updated_at: new Date().toISOString() })
+          .eq("tenant_id", row.tenant_id)
+          .eq("id", cur.id);
+        if (upd.error) return { error: upd.error.message };
+        return { skipped: true, escalated: true, id: cur.id };
+      }
+      return { skipped: true, id: cur.id };
+    }
   }
   const ins = await svc.from("logistics_exceptions").insert(row).select("id").single();
-  if (ins.error) return { error: ins.error.message };
+  if (ins.error) {
+    // Lost the race with a concurrent tick against the partial unique index.
+    if (ins.error.code === "23505") return { skipped: true, id: null };
+    return { error: ins.error.message };
+  }
   return { id: ins.data.id };
 };
 

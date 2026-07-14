@@ -4,8 +4,34 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  DEFAULT_MONITOR_RULES, mergeRules, rulesToSlas, severityFor, flagToException,
+  DEFAULT_MONITOR_RULES, mergeRules, rulesToSlas, severityFor, flagToException, __test,
 } from "../api/_lib/logistics/monitor.js";
+
+// Minimal chainable Supabase stub: the SELECT chain ends in .limit() (awaited),
+// UPDATE ends in .eq() (awaited), INSERT ends in .single(). Captures the update
+// payload + insert row so the ratchet behaviour is observable.
+function mockSvc({ existingRow, captures }) {
+  return {
+    from() {
+      const state = { op: null };
+      const builder = {
+        select() { state.op = state.op || "select"; return builder; },
+        insert(row) { state.op = "insert"; captures.insert = row; return builder; },
+        update(p) { state.op = "update"; captures.update = p; return builder; },
+        eq() { return builder; },
+        filter() { return builder; },
+        order() { return builder; },
+        limit() { return builder; },
+        single() { return Promise.resolve({ data: { id: "new-id" }, error: null }); },
+        then(resolve) {
+          if (state.op === "update") return resolve({ error: null });
+          return resolve({ data: existingRow ? [existingRow] : [], error: null });
+        },
+      };
+      return builder;
+    },
+  };
+}
 
 const NOW = "2026-07-14T00:00:00.000Z";
 
@@ -84,5 +110,35 @@ describe("flagToException", () => {
   it("leaves sla_target_at null when the rule has no sla_hours", () => {
     const row = flagToException(flag, { active: true, severity: "info" }, "t1", NOW);
     expect(row.sla_target_at).toBe(null);
+  });
+});
+
+describe("upsertException — aging escalation + dedup", () => {
+  const row = (severity) => ({
+    tenant_id: "t1", rule_kind: "po_source_country", severity,
+    detail: { fingerprint: "po_source_country:po-1" },
+  });
+  it("ratchets an open row's severity UP when this tick is higher", async () => {
+    const captures = {};
+    const svc = mockSvc({ existingRow: { id: "e1", severity: "warn" }, captures });
+    const r = await __test.upsertException(svc, row("critical"));
+    expect(r).toMatchObject({ skipped: true, escalated: true, id: "e1" });
+    expect(captures.update).toMatchObject({ severity: "critical" });
+    expect(captures.insert).toBeUndefined(); // no duplicate row
+  });
+  it("never downgrades an already-higher open row", async () => {
+    const captures = {};
+    const svc = mockSvc({ existingRow: { id: "e1", severity: "critical" }, captures });
+    const r = await __test.upsertException(svc, row("warn"));
+    expect(r).toMatchObject({ skipped: true, id: "e1" });
+    expect(r.escalated).toBeUndefined();
+    expect(captures.update).toBeUndefined();
+  });
+  it("inserts a fresh row when none is open", async () => {
+    const captures = {};
+    const svc = mockSvc({ existingRow: null, captures });
+    const r = await __test.upsertException(svc, row("warn"));
+    expect(r).toMatchObject({ id: "new-id" });
+    expect(captures.insert).toMatchObject({ rule_kind: "po_source_country", severity: "warn" });
   });
 });

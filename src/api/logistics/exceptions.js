@@ -18,9 +18,16 @@ export default async function handler(req, res) {
   try {
     const ctx = await resolveContext(req);
     const url = new URL(req.url, "http://_");
-    const segments = url.pathname.split("/").filter(Boolean);
-    const id = segments[3];
-    const action = segments[4];
+    // Under the Vercel rewrite, req.url is /api/dispatch?_p=logistics/exceptions/<id>/<action>,
+    // so url.pathname is only "/api/dispatch". Resolve the route from the _p
+    // splat (production) or the pathname (tests/local), and prefer the
+    // router-injected req.query.id for the id. Anchor on the "exceptions"
+    // segment so the id/action are found regardless of the /api prefix.
+    const routePath = url.searchParams.get("_p") || url.pathname;
+    const segs = routePath.split("/").filter(Boolean);
+    const exIdx = segs.lastIndexOf("exceptions");
+    const id = (req.query && req.query.id) || (exIdx >= 0 ? segs[exIdx + 1] : undefined);
+    const action = exIdx >= 0 ? segs[exIdx + 2] : undefined;
     const svc = serviceClient();
 
     if (req.method === "GET" && !id) {

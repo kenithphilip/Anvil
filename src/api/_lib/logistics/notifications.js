@@ -108,10 +108,19 @@ export const dispatchLogisticsNotifications = async (svc, tenantId) => {
     }
 
     if (touched) {
-      await svc.from("logistics_exceptions")
-        .update({ detail: { ...(e.detail || {}), notified: already }, updated_at: new Date().toISOString() })
-        .eq("tenant_id", tenantId)
-        .eq("id", e.id);
+      // Best-effort like the notify calls above: a persist failure must not
+      // abort the remaining exceptions for this tenant. (Not persisting the
+      // notified flags risks a duplicate alert next tick, which is preferable
+      // to dropping every later exception in the loop.)
+      try {
+        const { error: persistErr } = await svc.from("logistics_exceptions")
+          .update({ detail: { ...(e.detail || {}), notified: already }, updated_at: new Date().toISOString() })
+          .eq("tenant_id", tenantId)
+          .eq("id", e.id);
+        if (persistErr) console.warn("[logistics-notify] persist failed for", e.id, persistErr.message);
+      } catch (err) {
+        console.warn("[logistics-notify] persist threw for", e.id, err?.message || err);
+      }
     }
   }
 

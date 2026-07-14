@@ -73,6 +73,13 @@ create index if not exists logistics_exceptions_tenant_status_idx
   on logistics_exceptions (tenant_id, status);
 create index if not exists logistics_exceptions_tenant_kind_status_idx
   on logistics_exceptions (tenant_id, rule_kind, status);
+-- Enforce at most one OPEN exception per (tenant, kind, fingerprint) so the
+-- monitor's read-then-insert dedup is race-safe: a concurrent/retried tick that
+-- loses hits 23505 and is treated as skipped by upsertException(). Partial so a
+-- resolved row never blocks a fresh recurrence.
+create unique index if not exists logistics_exceptions_open_fingerprint_uq
+  on logistics_exceptions (tenant_id, rule_kind, (detail->>'fingerprint'))
+  where status = 'open';
 
 alter table logistics_exceptions enable row level security;
 drop policy if exists "logistics_exceptions_all" on logistics_exceptions;

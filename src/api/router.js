@@ -362,6 +362,7 @@ import supplierRfqVendors      from "./supplier_rfq/vendors.js";
 import analyticsWinloss        from "./analytics/winloss.js";
 import analyticsRefresh        from "./analytics/refresh.js";
 import analyticsFunnel         from "./analytics/funnel.js";
+import analyticsOtd            from "./analytics/otd.js";
 
 import catalogSearch           from "./catalog/search.js";
 import catalogSynonyms         from "./catalog/synonyms.js";
@@ -604,6 +605,7 @@ const STATIC_ROUTES = {
   "/analytics/winloss":             analyticsWinloss,
   "/analytics/refresh":             analyticsRefresh,
   "/analytics/funnel":              analyticsFunnel,
+  "/analytics/otd":                 analyticsOtd,
   "/catalog/search":                catalogSearch,
   "/catalog/synonyms":              catalogSynonyms,
   "/catalog/alternatives":          catalogAlternatives,

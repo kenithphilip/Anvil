@@ -185,3 +185,74 @@ describe("scan summary", () => {
     expect(out.delays[0].severity).toBe("high");
   });
 });
+
+describe("outbound (customer-facing) rules", () => {
+  const inDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+  const agoDays = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+
+  it("flags dispatch_overdue: approved order, no shipment, past SLA", () => {
+    const out = scan({
+      orders: [{ id: "o1", po_number: "PO-1", status: "APPROVED", updated_at: daysAgo(5) }],
+      shipments: [], slas: null,
+    });
+    const f = out.delays.find((d) => d.kind === "dispatch_overdue");
+    expect(f).toBeTruthy();
+    expect(f.ref_type).toBe("order");
+    expect(f.order_id).toBe("o1");
+  });
+
+  it("does NOT flag dispatch_overdue once a shipment exists for the order", () => {
+    const out = scan({
+      orders: [{ id: "o1", status: "APPROVED", updated_at: daysAgo(5) }],
+      shipments: [{ id: "s1", order_id: "o1", status: "PLANNED" }], slas: null,
+    });
+    expect(out.delays.find((d) => d.kind === "dispatch_overdue")).toBeUndefined();
+  });
+
+  it("flags customer_delivery_overdue when committed date passed and not delivered", () => {
+    const out = scan({
+      orders: [{ id: "o1", po_number: "PO-1", status: "EXPORTED_TO_TALLY", committed_delivery_date: agoDays(4) }],
+      shipments: [{ id: "s1", order_id: "o1", status: "IN_TRANSIT" }], slas: null,
+    });
+    const f = out.delays.find((d) => d.kind === "customer_delivery_overdue");
+    expect(f).toBeTruthy();
+    expect(f.severity).toBe("high");     // 4d overdue >= dispatch_overdue(3)
+    expect(f.elapsed_days).toBe(4);
+  });
+
+  it("flags customer_delivery_at_risk inside the risk window", () => {
+    const out = scan({
+      orders: [{ id: "o1", status: "APPROVED", committed_delivery_date: inDays(2) }],
+      shipments: [{ id: "s1", order_id: "o1", status: "PLANNED" }], slas: null,
+    });
+    const f = out.delays.find((d) => d.kind === "customer_delivery_at_risk");
+    expect(f).toBeTruthy();
+    expect(f.severity).toBe("medium");   // 2 days out
+  });
+
+  it("does NOT flag delivery rules once the order has a dated DELIVERED shipment", () => {
+    const out = scan({
+      orders: [{ id: "o1", status: "APPROVED", committed_delivery_date: agoDays(4) }],
+      shipments: [{ id: "s1", order_id: "o1", status: "DELIVERED", customer_delivery_date: agoDays(1) }], slas: null,
+    });
+    expect(out.delays.find((d) => d.kind.startsWith("customer_delivery"))).toBeUndefined();
+  });
+
+  it("STILL flags overdue when a DELIVERED shipment has no delivery date (consistent with OTD)", () => {
+    // A dateless DELIVERED shipment must not silently suppress the overdue flag
+    // AND escape the OTD denominator — the two subsystems agree on "delivered".
+    const out = scan({
+      orders: [{ id: "o1", status: "FAILED_TALLY_IMPORT", committed_delivery_date: agoDays(4) }],
+      shipments: [{ id: "s1", order_id: "o1", status: "DELIVERED", customer_delivery_date: null }], slas: null,
+    });
+    expect(out.delays.find((d) => d.kind === "customer_delivery_overdue")).toBeTruthy();
+  });
+
+  it("does NOT flag at_risk/overdue for orders with no commitment", () => {
+    const out = scan({
+      orders: [{ id: "o1", status: "APPROVED", committed_delivery_date: null, updated_at: daysAgo(1) }],
+      shipments: [{ id: "s1", order_id: "o1", status: "PLANNED" }], slas: null,
+    });
+    expect(out.delays.find((d) => d.kind.startsWith("customer_delivery"))).toBeUndefined();
+  });
+});

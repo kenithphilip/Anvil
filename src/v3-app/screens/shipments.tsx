@@ -255,8 +255,24 @@ const WiredShipmentsCRUD = () => {
                 <input id="sh-pod" className="input" value={form.port_of_discharge} onChange={(ev) => setForm({ ...form, port_of_discharge: ev.target.value })} />
               </div>
               <div>
+                <label htmlFor="sh-ready" className="label">Ready date</label>
+                <input id="sh-ready" type="date" className="input mono" value={(form.ready_date || "").slice(0, 10)} onChange={(ev) => setForm({ ...form, ready_date: ev.target.value })} />
+              </div>
+              <div>
+                <label htmlFor="sh-sail" className="label">Sailing / departure date</label>
+                <input id="sh-sail" type="date" className="input mono" value={(form.vessel_sailing_date || "").slice(0, 10)} onChange={(ev) => setForm({ ...form, vessel_sailing_date: ev.target.value })} />
+              </div>
+              <div>
                 <label htmlFor="sh-eta" className="label">ETA (port arrival)</label>
                 <input id="sh-eta" type="date" className="input mono" value={(form.port_arrival_date || "").slice(0, 10)} onChange={(ev) => setForm({ ...form, port_arrival_date: ev.target.value })} />
+              </div>
+              <div>
+                <label htmlFor="sh-whr" className="label">Warehouse receipt date</label>
+                <input id="sh-whr" type="date" className="input mono" value={(form.warehouse_receipt_date || "").slice(0, 10)} onChange={(ev) => setForm({ ...form, warehouse_receipt_date: ev.target.value })} />
+              </div>
+              <div>
+                <label htmlFor="sh-cdd" className="label">Customer delivery date (actual)</label>
+                <input id="sh-cdd" type="date" className="input mono" value={(form.customer_delivery_date || "").slice(0, 10)} onChange={(ev) => setForm({ ...form, customer_delivery_date: ev.target.value })} />
               </div>
               <div>
                 <label htmlFor="sh-order" className="label">Order id (optional)</label>

@@ -32,6 +32,8 @@ const APPROVE_INPUTS = [
   "vendor_code", "dispatch_mode", "registration_serial_no",
   "incoterm_code", "delivery_terms", "delivery_point_contact_id",
   "template_id",
+  // Logistics P3: the date promised to the customer (drives outbound OTD).
+  "committed_delivery_date",
 ];
 
 const buildPatch = (body) => {

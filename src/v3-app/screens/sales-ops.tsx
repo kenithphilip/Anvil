@@ -26,9 +26,13 @@ const SalesOpsCockpit = () => {
   }, []);
   // ICP fit distribution across the customer base (are we winning ideal ones?).
   const customers = useFetch(async () => { const r: any = await ObaraBackend?.customers?.list?.(); return r || null; }, []);
+  // Customer on-time-delivery (Logistics P3).
+  const otd = useFetch(async () => { const r: any = await ObaraBackend?.analytics?.otd?.(); return r || null; }, []);
 
   const loading = funnel.loading || winloss.loading || forecast.loading;
-  const reloadAll = () => { funnel.reload(); winloss.reload(); forecast.reload(); customers.reload(); };
+  const reloadAll = () => { funnel.reload(); winloss.reload(); forecast.reload(); customers.reload(); otd.reload(); };
+  const otdData: any = otd.data || {};
+  const otdChipKind = (p: number) => (p >= 95 ? "good" : p >= 85 ? "warn" : "bad");
 
   // ICP tier mix (A/B/C/Out/Unscored), tolerant of custom tenant tier labels.
   const custRows: any[] = Array.isArray(customers.data) ? customers.data : (customers.data?.customers || customers.data?.rows || []);
@@ -118,6 +122,25 @@ const SalesOpsCockpit = () => {
         </Card>
 
         <div className="row" style={{ gap: 12, marginTop: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+          {/* Customer on-time delivery (P3) */}
+          <Card title="On-time delivery" eyebrow={otdData.total_delivered ? `${otdData.total_delivered} delivered · last ${otdData.window_days}d` : "committed vs actual"} style={{ flex: "1 1 240px", minWidth: 220 }} flush>
+            <div style={{ padding: 16 }}>
+              {otdData.otd_pct == null ? (
+                <div className="mono-sm" style={{ color: "var(--ink-3)" }}>No committed + delivered orders yet.</div>
+              ) : (
+                <>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                    <span style={{ fontSize: 28, fontWeight: 700 }}>{otdData.otd_pct}%</span>
+                    <Chip k={otdChipKind(otdData.otd_pct)}>on time</Chip>
+                  </div>
+                  <div className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 6 }}>
+                    {otdData.on_time} on time · {otdData.late} late{otdData.open_committed ? ` · ${otdData.open_committed} open` : ""}
+                  </div>
+                </>
+              )}
+            </div>
+          </Card>
+
           {/* ICP fit distribution */}
           <Card title="ICP fit" eyebrow={`${icpDist.scored}/${icpDist.total} customers scored`} style={{ flex: "1 1 280px", minWidth: 240 }} flush>
             {icpDist.total === 0 ? (

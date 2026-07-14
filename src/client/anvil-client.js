@@ -1630,6 +1630,14 @@
     addBid: async (payload) => apiFetch("/api/logistics/freight_bids", { method: "POST", body: payload }),
     awardBid: async (id) => apiFetch("/api/logistics/freight_bids", { method: "POST", body: { action: "award", id } }),
     deleteBid: async (id) => apiFetch("/api/logistics/freight_bids?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    // P1 logistics monitor: config-driven delay/SLA exceptions + escalation.
+    getMonitorRules: async () => apiFetch("/api/admin/logistics_monitor_rules"),
+    saveMonitorRule: async (payload) => apiFetch("/api/admin/logistics_monitor_rules", { method: "POST", body: payload }),
+    setMonitorEnabled: async (enabled) => apiFetch("/api/admin/logistics_monitor_rules", { method: "POST", body: { logistics_monitor_enabled: enabled } }),
+    listExceptions: async (params) => apiFetch("/api/logistics/exceptions" + (params ? "?" + new URLSearchParams(params).toString() : "")),
+    ackException: async (id) => apiFetch("/api/logistics/exceptions/" + encodeURIComponent(id) + "/ack", { method: "POST" }),
+    resolveException: async (id, note) => apiFetch("/api/logistics/exceptions/" + encodeURIComponent(id) + "/resolve", { method: "POST", body: { note } }),
+    suppressException: async (id, note) => apiFetch("/api/logistics/exceptions/" + encodeURIComponent(id) + "/suppress", { method: "POST", body: { note } }),
   };
 
   const api = {

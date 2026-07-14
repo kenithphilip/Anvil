@@ -142,6 +142,9 @@ import deliveryPromise         from "./delivery/promise.js";
 import delaysScan              from "./delays/scan.js";
 import logisticsConsolidations from "./logistics/consolidations.js";
 import logisticsFreightBids     from "./logistics/freight_bids.js";
+import logisticsExceptions      from "./logistics/exceptions.js";
+import adminLogisticsMonitorRules from "./admin/logistics_monitor_rules.js";
+import logisticsMonitorTick     from "./cron/logistics-monitor-tick.js";
 
 // SOC 2 CC8.1 change log: production deploy events.
 import deploysIndex            from "./deploys/index.js";
@@ -890,6 +893,9 @@ const STATIC_ROUTES = {
   "/delays/scan":                   delaysScan,
   "/logistics/consolidations":      logisticsConsolidations,
   "/logistics/freight_bids":        logisticsFreightBids,
+  "/logistics/exceptions":          logisticsExceptions,
+  "/admin/logistics_monitor_rules": adminLogisticsMonitorRules,
+  "/cron/logistics-monitor-tick":   logisticsMonitorTick,
   "/deploys":                       deploysIndex,
 
   "/documents":                     documentsIndex,
@@ -1064,6 +1070,9 @@ const DYNAMIC_ROUTES = [
   { prefix: "/inventory/exceptions/", suffix: "/ack",      handler: inventoryExceptions, param: "id" },
   { prefix: "/inventory/exceptions/", suffix: "/resolve",  handler: inventoryExceptions, param: "id" },
   { prefix: "/inventory/exceptions/", suffix: "/suppress", handler: inventoryExceptions, param: "id" },
+  { prefix: "/logistics/exceptions/", suffix: "/ack",      handler: logisticsExceptions, param: "id" },
+  { prefix: "/logistics/exceptions/", suffix: "/resolve",  handler: logisticsExceptions, param: "id" },
+  { prefix: "/logistics/exceptions/", suffix: "/suppress", handler: logisticsExceptions, param: "id" },
   // PATCH /inventory/allocations/<id>.
   { prefix: "/inventory/allocations/", handler: inventoryAllocations, param: "id" },
   // PATCH /inventory/suppliers/<id>.

@@ -1,6 +1,6 @@
 # Logistics Operations — architecture map & extension design
 
-**Status:** P0 shipped (this doc + two dead-monitor fixes). P1–P5 designed, not built.
+**Status:** P0 + P1 shipped. P2–P5 designed, not built.
 **Owner:** Joel. **Primary rule:** extend the existing platform; do not rebuild. Every phase is additive-only (new tables + `add column if not exists`) and preserves existing APIs, workflows, permissions, and UI patterns.
 
 The manufacturer is an OEM-serving industrial supplier, **not** a logistics company. The goal is operational excellence: no shipment misses a committed date, lead times are watched, bottlenecks are detected automatically, and stakeholders get actionable alerts *before* a delay — with minimal manual follow-up.
@@ -93,12 +93,13 @@ Each phase is independently shippable and additive-only. P0 is done; the rest ar
 - **Not yet armed:** nothing creates a `delivery_eta_check` goal. Arming (e.g. on `source_pos` SUPPLIER_ACK) is P1/P2.
 - *Affected:* router, one agent handler, its test. *DB:* none. *Gates:* typecheck, cold-import, dead-handler 0, write-path 0, 34 tests.
 
-### P1 · Logistics Monitor + SLA/escalation spine (the keystone)
-The generic machinery every later alert rides on.
-- **DB:** `monitor_rules` (tenant config: kind, thresholds jsonb, severity, active) + `sla_clocks` (object_type/id, sla_target_at, first_response_at, breached_at, resolved_at). Add logistics `exception_kind` values to the `inventory_exceptions` CHECK (or a parallel `logistics_exceptions`).
-- **API:** a generic evaluator modeled on `approval-evaluator.js`; a cron monitor registered in `cron/tick.js` **and** the external scheduler; convert `agents/run.js` `escalate` from processing_events-only into real delivery via `notifyAdmins` + a `communications` row.
-- **Workflow:** rules become configurable (meets "avoid hardcoded logic"); SLA breaches emit escalations to owners.
-- **Migration:** additive; new tables need RLS + tenant policy + the `.eq(tenant_id)` discipline.
+### P1 · Logistics Monitor + SLA/escalation spine (the keystone) — **SHIPPED**
+The generic machinery every later alert rides on. Migration **162**.
+- **DB:** `logistics_monitor_rules` (tenant config: rule_kind, threshold_days, sla_hours, severity, escalate_roles, active) + `logistics_exceptions` (detector output with the SLA clock folded on: sla_target_at / first_response_at / breached_at / resolved_at + status lifecycle + fingerprint dedup) + `tenant_settings.logistics_monitor_enabled` (OFF by default). Both RLS'd.
+- **API/libs:** `_lib/logistics/monitor.js` reuses the tested `delays/scan.js` rules with the tenant's configured SLAs, persists idempotent fingerprint-deduped exceptions, opens SLA clocks, ages severity up past 2× SLA, and `markBreaches`. `_lib/logistics/notifications.js` fans high-severity + breached rows to bell + email via the existing rails, recipients from `escalate_roles`. `GET/POST /admin/logistics_monitor_rules`, `GET/PATCH /logistics/exceptions`, `GET /cron/logistics-monitor-tick` (registered in `cron/tick.js` ALWAYS + needs the external cron-job.org entry). Defaults in `DEFAULT_MONITOR_RULES` so an un-configured tenant still works.
+- **Escalation:** `agents/run.js` `escalate` now writes the `processing_events` row **and** calls `notifyAdmins(escalate_roles)` — agent escalations reach a human.
+- **UI:** admin **Logistics monitor** editor (enable flag + per-kind rule rows) + a **Monitored exceptions** panel on the Delays screen (SLA/breach chips + ack/resolve).
+- **Deferred kinds** (schema-ready): `grn_overdue` → P2, `dispatch_overdue`/`delivery_at_risk` → P3, `qc_overdue`/`customs_delay` → P5.
 
 ### P2 · GRN-first (close the inbound receipt loop)
 Highest downstream unblock in one build.

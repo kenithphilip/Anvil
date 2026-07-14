@@ -63,8 +63,10 @@ const sevFor = (elapsed, sla) => {
   return "low";
 };
 
-// Build flag rows from the four data sources.
-const scan = ({ sourcePos, internalSos, shipments, slas }) => {
+// Build flag rows from the four data sources. Exported so the persistent,
+// config-driven logistics monitor (_lib/logistics/monitor.js) can reuse the
+// exact same rule logic instead of duplicating it.
+export const scan = ({ sourcePos, internalSos, shipments, slas }) => {
   const delays = [];
   const sla = { ...DEFAULT_SLAS, ...(slas || {}) };
 

@@ -18,6 +18,7 @@ import { applyCors, handlePreflight, json } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { dispatch, KNOWN_GOAL_TYPES } from "./_handlers/index.js";
 import { safeFetch } from "../_lib/safe-fetch.js";
+import { notifyAdmins } from "../_lib/notifications.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const HOURS = 60 * 60 * 1000;
@@ -97,9 +98,11 @@ const executeAction = async (svc, goal, step) => {
     return { result: "ok" };
   }
   if (step.action === "escalate") {
-    // Escalation surface today: write a processing_event tagged for the
-    // owner. UIs can subscribe / poll. Real notification (email + Slack)
-    // arrives once the comms-provider work in Phase A+ ships.
+    // Escalation surface: write a processing_event (kept as the audit/timeline
+    // record) AND deliver a real in-app notification to the responsible roles
+    // so a human is actually told. Roles come from the goal config
+    // (escalate_roles), defaulting to admin. Best-effort: a notify failure must
+    // not fail the escalation.
     await svc.from("processing_events").insert({
       tenant_id: goal.tenant_id,
       case_id: goal.object_id,
@@ -109,7 +112,20 @@ const executeAction = async (svc, goal, step) => {
       detail: { goal_id: goal.id, goal_type: goal.goal_type, payload: step.action_payload },
       severity: "warn",
     });
-    return { result: "ok", result_detail: "escalation event recorded" };
+    try {
+      const roles = Array.isArray(goal.config?.escalate_roles) && goal.config.escalate_roles.length
+        ? goal.config.escalate_roles : ["admin"];
+      const reason = step.action_payload?.reason ? "Reason: " + step.action_payload.reason : "An agent goal needs attention.";
+      await notifyAdmins(svc, goal.tenant_id, {
+        kind: "agent_escalation",
+        title: "Agent escalation: " + (goal.goal_type || "goal"),
+        body: reason,
+        object_type: goal.object_type,
+        object_id: goal.object_id,
+        link_route: "agents",
+      }, { roles, dedupKey: "agent_esc:" + goal.id });
+    } catch (_) { /* best-effort: notification must not break escalation */ }
+    return { result: "ok", result_detail: "escalation event recorded + notified" };
   }
   if (step.action === "send_email") {
     // Draft the row at status=queued. The reaper at the end of the

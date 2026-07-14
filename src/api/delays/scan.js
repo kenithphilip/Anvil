@@ -19,6 +19,14 @@
 //                                ETA but no shipment row references
 //                                it (the ready date "got lost").
 //
+// Outbound (customer-facing) families (P3), driven by `orders`:
+//   6. dispatch_overdue          Order approved/ready to ship but no
+//                                shipment booked inside SLA.
+//   7. customer_delivery_overdue Committed delivery date passed with
+//                                no delivered shipment.
+//   8. customer_delivery_at_risk Committed date approaching (within
+//                                the risk window), not yet delivered.
+//
 // SLA defaults are honest: PO source-country = 14d, PO local = 7d,
 // work order = 5d, ready-date wait = 7d. Each rule emits a flag
 // with severity (high if past 2x SLA), elapsed_days, and a clear
@@ -38,7 +46,13 @@ const DEFAULT_SLAS = {
   po_local_supplier: 7,         // domestic supplier ack window
   work_order_manufacturing: 5,  // approved -> dispatched
   ready_date_wait: 7,           // ack -> ready_date populated
+  // Outbound (customer-facing) SLAs (P3).
+  dispatch_overdue: 3,          // order ready-to-ship -> shipment booked
+  delivery_risk_window: 3,      // days before committed date to warn "at risk"
 };
+
+// Order statuses that are past-approval and expected to ship.
+const READY_TO_SHIP = new Set(["APPROVED", "EXPORTED_TO_TALLY", "RECONCILED"]);
 
 // Rough domestic vs foreign classifier. country is free-text on
 // source_pos.country; treat IN / India / blank as local. Anything
@@ -66,7 +80,7 @@ const sevFor = (elapsed, sla) => {
 // Build flag rows from the four data sources. Exported so the persistent,
 // config-driven logistics monitor (_lib/logistics/monitor.js) can reuse the
 // exact same rule logic instead of duplicating it.
-export const scan = ({ sourcePos, internalSos, shipments, slas }) => {
+export const scan = ({ sourcePos, internalSos, shipments, orders, slas }) => {
   const delays = [];
   const sla = { ...DEFAULT_SLAS, ...(slas || {}) };
 
@@ -181,6 +195,72 @@ export const scan = ({ sourcePos, internalSos, shipments, slas }) => {
     });
   });
 
+  // Outbound (customer-facing) rules (P3). Map order coverage from shipments.
+  const shippedOrderIds = new Set();
+  const deliveredOrderIds = new Set();
+  (shipments || []).forEach((sh) => {
+    if (!sh.order_id) return;
+    shippedOrderIds.add(sh.order_id);
+    // "Delivered" requires a delivered status AND a real delivery date -- the
+    // same definition computeOtd() uses. A DELIVERED shipment with a null
+    // customer_delivery_date keeps flagging overdue (surfacing the missing date)
+    // and stays consistently out of the OTD denominator.
+    if ((sh.status === "DELIVERED" || sh.status === "POD_RECEIVED")
+        && sh.customer_delivery_date && Number.isFinite(Date.parse(sh.customer_delivery_date))) {
+      deliveredOrderIds.add(sh.order_id);
+    }
+  });
+  // committed_delivery_date is a DB date (parses to UTC midnight); normalize
+  // "today" to UTC midnight too so the day diff is whole days, not off-by-one
+  // from the current time of day.
+  const todayMs = Date.parse(new Date().toISOString().slice(0, 10));
+
+  (orders || []).forEach((o) => {
+    const label = o.po_number || o.reference || ("ORD-" + String(o.id).slice(0, 8));
+
+    // Rule 6: dispatch overdue — order ready to ship, no shipment booked, past SLA.
+    if (READY_TO_SHIP.has(o.status) && !shippedOrderIds.has(o.id)) {
+      const elapsed = daysSince(o.updated_at || o.created_at);
+      if (elapsed != null && elapsed >= sla.dispatch_overdue) {
+        delays.push({
+          kind: "dispatch_overdue",
+          severity: sevFor(elapsed, sla.dispatch_overdue),
+          ref_type: "order", ref_id: o.id, ref_label: label,
+          supplier: null, country: null, customer_id: o.customer_id || null, order_id: o.id,
+          elapsed_days: elapsed, sla_days: sla.dispatch_overdue,
+          detail: "Order " + label + " approved " + elapsed + "d ago, no shipment booked (SLA " + sla.dispatch_overdue + "d)",
+        });
+      }
+    }
+
+    // Rules 7 / 8: customer delivery overdue / at risk. Needs a commitment and
+    // no delivered shipment yet.
+    const committed = o.committed_delivery_date ? Date.parse(o.committed_delivery_date) : null;
+    if (committed != null && Number.isFinite(committed) && !deliveredOrderIds.has(o.id)) {
+      const daysToCommitted = Math.floor((committed - todayMs) / 86400000);
+      if (daysToCommitted < 0) {
+        const overdue = -daysToCommitted;
+        delays.push({
+          kind: "customer_delivery_overdue",
+          severity: overdue >= sla.dispatch_overdue ? "high" : "medium",
+          ref_type: "order", ref_id: o.id, ref_label: label,
+          supplier: null, country: null, customer_id: o.customer_id || null, order_id: o.id,
+          elapsed_days: overdue, sla_days: 0,
+          detail: "Order " + label + " committed " + o.committed_delivery_date + " is " + overdue + "d overdue, not delivered",
+        });
+      } else if (daysToCommitted <= sla.delivery_risk_window) {
+        delays.push({
+          kind: "customer_delivery_at_risk",
+          severity: daysToCommitted <= 1 ? "high" : "medium",
+          ref_type: "order", ref_id: o.id, ref_label: label,
+          supplier: null, country: null, customer_id: o.customer_id || null, order_id: o.id,
+          elapsed_days: daysToCommitted, sla_days: sla.delivery_risk_window,
+          detail: "Order " + label + " due " + o.committed_delivery_date + " in " + daysToCommitted + "d, no delivered shipment",
+        });
+      }
+    }
+  });
+
   // Sort by severity then elapsed.
   const sevRank = { high: 0, medium: 1, low: 2 };
   delays.sort((a, b) => {
@@ -206,7 +286,7 @@ export default async function handler(req, res) {
     requirePermission(ctx, "read");
     const svc = serviceClient();
 
-    const [poRes, isoRes, shRes] = await Promise.all([
+    const [poRes, isoRes, shRes, ordRes] = await Promise.all([
       svc.from("source_pos")
          .select("id, order_id, reference, supplier, country, status, acknowledged_eta, created_at, updated_at")
          .eq("tenant_id", ctx.tenantId)
@@ -220,19 +300,31 @@ export default async function handler(req, res) {
          .order("approved_at", { ascending: true })
          .limit(500),
       svc.from("shipments")
-         .select("id, source_po_id, ready_date, status")
+         .select("id, source_po_id, order_id, ready_date, customer_delivery_date, status")
          .eq("tenant_id", ctx.tenantId)
          .limit(1000),
+      // Outbound: orders in a post-approval state that still owe the customer a
+      // delivery (incl. FAILED_TALLY_IMPORT -- an approved order whose export
+      // failed still carries a live commitment). Excludes DRAFT/PENDING_REVIEW
+      // (pre-commitment) and BLOCKED/CANCELLED/DUPLICATE/REUSED (void/held).
+      svc.from("orders")
+         .select("id, po_number, customer_id, status, committed_delivery_date, created_at, updated_at")
+         .eq("tenant_id", ctx.tenantId)
+         .in("status", ["APPROVED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED"])
+         .order("updated_at", { ascending: true })
+         .limit(500),
     ]);
 
     if (poRes.error) throw new Error(poRes.error.message);
     if (isoRes.error) throw new Error(isoRes.error.message);
     if (shRes.error) throw new Error(shRes.error.message);
+    if (ordRes.error) throw new Error(ordRes.error.message);
 
     const out = scan({
       sourcePos: poRes.data || [],
       internalSos: isoRes.data || [],
       shipments: shRes.data || [],
+      orders: ordRes.data || [],
       slas: null,
     });
 

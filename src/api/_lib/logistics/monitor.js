@@ -30,6 +30,10 @@ export const DEFAULT_MONITOR_RULES = [
   { rule_kind: "work_order_manufacturing", label: "Work order not dispatched to mfg", active: true, severity: "warn", threshold_days: 5,    sla_hours: 24, escalate_roles: ["procurement", "admin"] },
   { rule_kind: "ready_date_missing",      label: "Ack'd PO without ready date / ETA", active: true, severity: "info", threshold_days: 7,    sla_hours: 48, escalate_roles: ["procurement", "admin"] },
   { rule_kind: "ready_date_orphan",       label: "Supplier ETA on no shipment plan",  active: true, severity: "info", threshold_days: null, sla_hours: 72, escalate_roles: ["procurement", "admin"] },
+  // Outbound (customer-facing) families (P3). Owned by sales, so escalate there.
+  { rule_kind: "dispatch_overdue",          label: "Order approved, no shipment booked", active: true, severity: "warn", threshold_days: 3,    sla_hours: 24, escalate_roles: ["sales_manager", "admin"] },
+  { rule_kind: "customer_delivery_at_risk", label: "Customer delivery at risk",          active: true, severity: "warn", threshold_days: 3,    sla_hours: 24, escalate_roles: ["sales_manager", "admin"] },
+  { rule_kind: "customer_delivery_overdue", label: "Customer delivery overdue",          active: true, severity: "bad",  threshold_days: null, sla_hours: 8,  escalate_roles: ["sales_manager", "admin"] },
 ];
 
 const SEVERITIES = ["info", "warn", "bad", "critical"];
@@ -62,6 +66,8 @@ export const rulesToSlas = (ruleMap) => {
   put("po_local_supplier", "po_local_supplier");
   put("work_order_manufacturing", "work_order_manufacturing");
   put("ready_date_missing", "ready_date_wait");
+  put("dispatch_overdue", "dispatch_overdue");
+  put("customer_delivery_at_risk", "delivery_risk_window");
   return slas;
 };
 
@@ -155,7 +161,7 @@ export const detectAllLogistics = async (svc, tenantId) => {
   const ruleMap = mergeRules(rulesRes.data || []);
   const slas = rulesToSlas(ruleMap);
 
-  const [poRes, isoRes, shRes] = await Promise.all([
+  const [poRes, isoRes, shRes, ordRes] = await Promise.all([
     svc.from("source_pos")
       .select("id, order_id, reference, supplier, country, status, acknowledged_eta, created_at, updated_at")
       .eq("tenant_id", tenantId)
@@ -169,18 +175,27 @@ export const detectAllLogistics = async (svc, tenantId) => {
       .order("approved_at", { ascending: true })
       .limit(500),
     svc.from("shipments")
-      .select("id, source_po_id, ready_date, status")
+      .select("id, source_po_id, order_id, ready_date, customer_delivery_date, status")
       .eq("tenant_id", tenantId)
       .limit(1000),
+    // Post-approval orders that still owe a delivery (incl. FAILED_TALLY_IMPORT).
+    svc.from("orders")
+      .select("id, po_number, customer_id, status, committed_delivery_date, created_at, updated_at")
+      .eq("tenant_id", tenantId)
+      .in("status", ["APPROVED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED"])
+      .order("updated_at", { ascending: true })
+      .limit(500),
   ]);
   if (poRes.error) throw new Error("source_pos: " + poRes.error.message);
   if (isoRes.error) throw new Error("internal_sales_orders: " + isoRes.error.message);
   if (shRes.error) throw new Error("shipments: " + shRes.error.message);
+  if (ordRes.error) throw new Error("orders: " + ordRes.error.message);
 
   const { delays } = scan({
     sourcePos: poRes.data || [],
     internalSos: isoRes.data || [],
     shipments: shRes.data || [],
+    orders: ordRes.data || [],
     slas,
   });
 

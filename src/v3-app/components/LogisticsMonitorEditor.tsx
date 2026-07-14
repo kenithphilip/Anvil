@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip } from "../lib/primitives";
-import { ObaraBackend } from "../lib/api";
+import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 
 // Admin editor for the tenant's logistics monitor rules (Logistics Ops P1):
@@ -29,7 +29,7 @@ export const LogisticsMonitorEditor: React.FC = () => {
 
   const load = () => {
     setErr(null);
-    Promise.resolve(ObaraBackend?.logistics?.getMonitorRules?.())
+    Promise.resolve(AnvilBackend?.logistics?.getMonitorRules?.())
       .then((r: any) => {
         const rs: Rule[] = (r?.rules || []).map((x: any) => ({ ...x, _roles: (x.escalate_roles || []).join(", ") }));
         setRules(rs);
@@ -46,7 +46,7 @@ export const LogisticsMonitorEditor: React.FC = () => {
   const toggleEnabled = async (next: boolean) => {
     setBusy("flag"); setErr(null); setFlash(null);
     try {
-      const r: any = await ObaraBackend?.logistics?.setMonitorEnabled?.(next);
+      const r: any = await AnvilBackend?.logistics?.setMonitorEnabled?.(next);
       setEnabled(!!r?.logistics_monitor_enabled);
       setFlash(next ? "Logistics monitor enabled" : "Logistics monitor disabled");
     } catch (e: any) { setErr(e?.message || String(e)); }
@@ -66,7 +66,7 @@ export const LogisticsMonitorEditor: React.FC = () => {
         sla_hours: r.sla_hours === null || r.sla_hours === undefined || (r.sla_hours as any) === "" ? null : Number(r.sla_hours),
         escalate_roles: String(r._roles || "").split(",").map((x) => x.trim()).filter(Boolean),
       };
-      const saved: any = await ObaraBackend?.logistics?.saveMonitorRule?.(payload);
+      const saved: any = await AnvilBackend?.logistics?.saveMonitorRule?.(payload);
       if (saved?.rule) {
         setRule(i, { ...saved.rule, _roles: (saved.rule.escalate_roles || []).join(", ") });
         setIsDefault(false);

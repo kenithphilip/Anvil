@@ -3,7 +3,7 @@
 // Lists communications (email / WhatsApp / Slack drafts and sends)
 // for an order or source PO. Powers the ThreadDrawer's
 // communications timeline. The client called
-// `ObaraBackend.communications.list(orderId)` but no endpoint
+// `AnvilBackend.communications.list(orderId)` but no endpoint
 // existed, so the drawer's comms panel was silently empty.
 //
 // Query params:

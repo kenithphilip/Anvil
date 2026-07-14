@@ -1,6 +1,6 @@
 # Logistics Operations — architecture map & extension design
 
-**Status:** P0 + P1 + P2 shipped. P3–P5 designed, not built.
+**Status:** P0 + P1 + P2 + P3 (core) shipped. P3b + P4 + P5 designed, not built.
 **Owner:** Joel. **Primary rule:** extend the existing platform; do not rebuild. Every phase is additive-only (new tables + `add column if not exists`) and preserves existing APIs, workflows, permissions, and UI patterns.
 
 The manufacturer is an OEM-serving industrial supplier, **not** a logistics company. The goal is operational excellence: no shipment misses a committed date, lead times are watched, bottlenecks are detected automatically, and stakeholders get actionable alerts *before* a delay — with minimal manual follow-up.
@@ -109,10 +109,13 @@ Highest downstream unblock in one build. **No migration** (columns existed).
 - **Unblocks (data now flows):** inventory in-transit→on-hand, the `supplier_delay` "material overdue" detector, and the AP 3-way match (its GRN input was seed-only).
 - **Deferred (tracked):** true transactional atomicity + an idempotency key so a retry can't double-count — both need an RPC/migration, so out of P2's no-migration scope. Also warehouse bin/put-away, and arming `delivery_eta_check` on ack.
 
-### P3 · Outbound delivery commitment + customer OTD
-The "no shipment misses committed delivery dates" headline.
-- **DB:** order-level `committed_date`/`promised_date` (or `order_commitments`); a fulfillment link on `order_schedule_lines` (status + `dispatched_shipment_id`).
-- **API/Workflow:** persist `delivery/promise` output; reconcile schedule lines ↔ `shipments`; an outbound "customer-delivery-at-risk" scan (new `delays/scan` rule family); fix the `shipments.tsx` field drift so actual/committed dates can be captured; an OTD cockpit card.
+### P3 · Outbound delivery commitment + customer OTD (core) — **SHIPPED**
+The "no shipment misses its committed delivery date" headline. Migration 163.
+- **DB:** `orders.committed_delivery_date` (the date promised to the customer; orders had no delivery date). Partial index on committed rows.
+- **Scan (the P1 payoff):** `delays/scan.js` gains three OUTBOUND families driven by `orders` — `dispatch_overdue` (approved, no shipment booked past SLA), `customer_delivery_overdue` (committed passed, no DELIVERED/POD shipment), `customer_delivery_at_risk` (committed within the risk window). Because the P1 monitor reuses `scan()`, they flow into both the Delays screen AND the config monitor (SLA + escalation to sales_manager/admin) with zero new monitor code. Added to `DEFAULT_MONITOR_RULES` + `rulesToSlas`. Date-only committed dates are compared at UTC midnight to avoid an off-by-one.
+- **OTD:** pure `_lib/logistics/otd.js` (`computeOtd`: on-time = delivered ≤ committed over settled orders; open commitments counted separately) behind `GET /api/analytics/otd`; an OTD card on the sales-ops cockpit.
+- **Capture:** committed date on the SO-workspace header editor (+ orders PATCH allow-list); `shipments.tsx` gains the missing actual-date inputs (ready / sailing / warehouse / **customer_delivery_date**) so OTD has actuals — the `/sales/shipments` write already accepted them.
+- **Deferred to P3b:** per-line `order_schedule_lines` fulfillment (`fulfillment_status` + `dispatched_shipment_id`) + `schedule_line_overdue` + schedule↔shipment reconciliation.
 
 ### P4 · Shipment legs + carrier master + ETA-vs-actual
 - **DB:** child `shipment_legs` (copy the `source_po_events` append-only pattern) with per-leg carrier/mode/ETA/actual; add `tracking_no`/`bill_of_lading`/`awb`/`container_no`; add RAIL to the mode enum + normalize vocab.

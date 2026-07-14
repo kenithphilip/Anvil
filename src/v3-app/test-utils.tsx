@@ -1,7 +1,7 @@
 // Shared test scaffolding for Vitest.
 //
 // Every screen test imports `mountScreen(ScreenComponent)` which:
-// - stubs `window.ObaraBackend` with a method dispatcher that returns
+// - stubs `window.AnvilBackend` with a method dispatcher that returns
 //   benign defaults (empty arrays / objects) so screens render their
 //   loaded-empty state instead of crashing on a missing backend.
 // - stubs `window.localStorage` access via vitest's jsdom default.
@@ -15,14 +15,14 @@ import { render } from "@testing-library/react";
 
 // Recursive empty-default proxy. Any property access returns either
 // another proxy (for namespaces like `orders`) or a function that
-// returns Promise.resolve([]). Screens that call `ObaraBackend?.orders?.list?.()`
+// returns Promise.resolve([]). Screens that call `AnvilBackend?.orders?.list?.()`
 // get `[]` and render their empty state.
 const makeEmptyProxy = (overrides = {}) => new Proxy({}, {
   get: (target, prop) => {
     if (Object.prototype.hasOwnProperty.call(overrides, prop)) {
       return overrides[prop];
     }
-    if (prop === Symbol.toPrimitive) return () => "[ObaraBackendStub]";
+    if (prop === Symbol.toPrimitive) return () => "[AnvilBackendStub]";
     if (prop === "then") return undefined;
     if (typeof prop === "string") {
       // Treat it as a namespace/method dispatcher.
@@ -58,7 +58,7 @@ export const stubBackend = (overrides = {}) => {
     ...overrides,
   };
   // Wrap unknown access in a recursive empty proxy so screens that
-  // call ObaraBackend.foo.bar.baz don't crash on undefined.
+  // call AnvilBackend.foo.bar.baz don't crash on undefined.
   return new Proxy(stub, {
     get(target, prop) {
       if (prop in target) return target[prop];
@@ -79,9 +79,9 @@ export const installBackend = (overrides?: Record<string, unknown>) => {
   if (typeof window === "undefined") return undefined;
   const stub = stubBackend(overrides);
   // Both names point at the same stub; the lib/api.ts proxy reads
-  // AnvilBackend first then falls back to ObaraBackend, so the test
+  // AnvilBackend first then falls back to AnvilBackend, so the test
   // has to set both for the override to win.
-  (window as any).ObaraBackend = stub;
+  (window as any).AnvilBackend = stub;
   (window as any).AnvilBackend = stub;
   return stub;
 };

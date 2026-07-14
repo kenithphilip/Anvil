@@ -9,11 +9,11 @@
 // 2. Builds a (windowName -> finalFilePath) map.
 // 3. For each route, transforms the legacy file content:
 //    - Add explicit ESM imports for React hooks, primitives, icons,
-//      helpers, RBAC, Prefs, ObaraBackend.
+//      helpers, RBAC, Prefs, AnvilBackend.
 //    - Drop top-level helper redefinitions (lib/helpers.js owns them).
 //    - Drop the `const { useState: useStateW, ... } = React;` shim and
 //      rename usages back to plain useState/useEffect/useMemo.
-//    - Rewrite globals: window.ObaraBackend -> ObaraBackend, etc.
+//    - Rewrite globals: window.AnvilBackend -> AnvilBackend, etc.
 //    - Replace the trailing `window.X = Wired...;` with default export.
 //
 // 4. Writes the result to src/v3-app/screens/<routeFile>.
@@ -175,7 +175,7 @@ const transform = (rawText, windowName, localName) => {
 
   for (const h of HELPER_NAMES) text = stripHelperBlock(text, h);
 
-  text = text.replace(/\bwindow\.ObaraBackend\b/g, "ObaraBackend");
+  text = text.replace(/\bwindow\.AnvilBackend\b/g, "AnvilBackend");
   text = text.replace(/\bwindow\.RBAC\b/g, "RBAC");
   text = text.replace(/\bwindow\.Prefs\b/g, "Prefs");
   text = text.replace(/\bwindow\.NAV\b/g, "NAV");
@@ -199,7 +199,7 @@ const transform = (rawText, windowName, localName) => {
   const usedHelpers = detectIdentifiers(text, HELPER_NAMES);
 
   const usesIcon = /\bIcon\.[A-Za-z]/.test(text);
-  const usesObara = /\bObaraBackend\b/.test(text);
+  const usesObara = /\bAnvilBackend\b/.test(text);
   const usesRBAC = /\bRBAC\b/.test(text);
   const usesPrefs = /\bPrefs\b/.test(text);
   const usesNav = /\bNAV\b/.test(text);
@@ -216,7 +216,7 @@ const transform = (rawText, windowName, localName) => {
   if (usedHelpers.length) imports.push(`import { ${usedHelpers.join(", ")} } from "../lib/helpers.js";`);
   if (usedPrim.length) imports.push(`import { ${usedPrim.join(", ")} } from "../lib/primitives.jsx";`);
   if (usesIcon) imports.push(`import { Icon } from "../lib/icons.jsx";`);
-  if (usesObara) imports.push(`import { ObaraBackend } from "../lib/api.js";`);
+  if (usesObara) imports.push(`import { AnvilBackend } from "../lib/api.js";`);
   if (usesRBAC) imports.push(`import { RBAC } from "../lib/rbac.js";`);
   if (usesPrefs) imports.push(`import { Prefs } from "../lib/preferences.js";`);
   if (usesNav || usesRoles) {

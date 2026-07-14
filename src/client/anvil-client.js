@@ -64,7 +64,7 @@
   // close) under the new `anvil:` prefix. We continue to mirror to
   // localStorage under both prefixes during the transition window
   // because 43 v3 screens read the legacy key inline. Once those
-  // screens are migrated to call `ObaraBackend.getSession()` we can
+  // screens are migrated to call `AnvilBackend.getSession()` we can
   // drop the localStorage write and the supply-chain JS exfiltration
   // surface goes away.
   //
@@ -438,6 +438,7 @@
     funnel:   async (q) => apiFetch("/api/analytics/funnel" + (q ? "?" + new URLSearchParams(q).toString() : "")),
     opsKpis:  async (q) => apiFetch("/api/analytics/ops_kpis" + (q ? "?" + new URLSearchParams(q).toString() : "")),
     pipeline: async (q) => apiFetch("/api/analytics/pipeline" + (q ? "?" + new URLSearchParams(q).toString() : "")),
+    otd:      async (q) => apiFetch("/api/analytics/otd" + (q ? "?" + new URLSearchParams(q).toString() : "")),
   };
 
   const supplierRfq = {
@@ -615,7 +616,7 @@
     // OCR evidence rows for a document. Returns the per-token bboxes
     // the documents-detail overlay paints on top of the source image.
     // The Mistral OCR pipeline (/api/documents/ocr, exposed as
-    // ObaraBackend.ocr.run below) populates these; an empty `rows`
+    // AnvilBackend.ocr.run below) populates these; an empty `rows`
     // array means OCR has not yet been run on this document.
     evidence: async (id) => apiFetch("/api/documents/" + id + "/evidence"),
     // List documents for the tenant. Powers the Documents library
@@ -1855,12 +1856,12 @@
   };
 
   // Canonical name post-rebrand. The old name stays as a writable
-  // alias so any consumer that grabbed `window.ObaraBackend`
+  // alias so any consumer that grabbed `window.AnvilBackend`
   // (102 call sites across screens + scripts at the rename time)
   // keeps working without an import change, and tests that swap
-  // `window.ObaraBackend` for a stub keep working too. Both globals
+  // `window.AnvilBackend` for a stub keep working too. Both globals
   // point at the same object, so a write to one is a write to both.
   global.AnvilBackend = api;
-  global.ObaraBackend = api;
+  global.AnvilBackend = api;
   global.storage = buildHybridStorage();
 })(typeof window !== "undefined" ? window : globalThis);

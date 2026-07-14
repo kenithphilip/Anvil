@@ -9,7 +9,7 @@
 // 2. window.* references that point at things the v3-app no longer
 //    provides. window.notify*, window.location, window.history, etc.
 //    are legitimate. window.showOpsModal / runOpsAction / Icon / NAV /
-//    ObaraBackend / RBAC / Prefs / cytoscape / XLSX / JSZip are NOT.
+//    AnvilBackend / RBAC / Prefs / cytoscape / XLSX / JSZip are NOT.
 // 3. Direct CDN <script> assumptions (window.cytoscape, etc.) without a
 //    local fallback or comment explaining the runtime contract.
 // 4. JSX self-references using shadowed names (a `const X = () => {}`
@@ -62,7 +62,7 @@ const REQUIRES_IMPORT = {
   ROLES: "../lib/nav",
   RBAC: "../lib/rbac",
   Prefs: "../lib/preferences",
-  ObaraBackend: "../lib/api",
+  AnvilBackend: "../lib/api",
   storage: "../lib/api",
   // No legacy unified-app surface. Screens that use these are broken.
   // The audit reports them so we can rewrite or delete the call site.

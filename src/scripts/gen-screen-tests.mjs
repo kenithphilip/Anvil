@@ -1,7 +1,7 @@
 // Generate one smoke test per screen under src/v3-app/screens/.
 //
 // The smoke is intentionally minimal. Each test:
-// 1. Installs a stubbed ObaraBackend + RBAC role.
+// 1. Installs a stubbed AnvilBackend + RBAC role.
 // 2. Imports the screen module.
 // 3. Renders it and asserts the document has SOME content (no crash).
 // 4. Runs the loaded -> empty branch one micro-task later.

@@ -1,7 +1,7 @@
-// Verify every `ObaraBackend.<ns>.<method>` call site in the converted
+// Verify every `AnvilBackend.<ns>.<method>` call site in the converted
 // screens corresponds to a real method on the legacy anvil-client.
 //
-// The Vite ObaraBackend Proxy returns undefined for missing methods, so
+// The Vite AnvilBackend Proxy returns undefined for missing methods, so
 // optional-chained calls silently no-op. That's safe but it means a
 // typo in a method name produces a button that does nothing rather than
 // a runtime error. This audit catches those silent dead clicks.
@@ -50,9 +50,9 @@ for (let i = 0; i < lines.length; i++) {
 }
 
 // The legacy file ends with `const api = { customers, orders, ... }`
-// then `global.AnvilBackend = api; global.ObaraBackend = api;`. We
+// then `global.AnvilBackend = api; global.AnvilBackend = api;`. We
 // walk the `const api = {` block with a brace counter to find the
-// matching `};` (the previous regex anchored on `global.ObaraBackend`
+// matching `};` (the previous regex anchored on `global.AnvilBackend`
 // immediately after the block, which broke when the brand-cleanup
 // commit inserted a comment between the two).
 const apiAliases = {}; // public namespace key -> internal const name
@@ -84,7 +84,7 @@ const apiAliases = {}; // public namespace key -> internal const name
   }
 }
 
-// Resolve `ObaraBackend.<key>.<method>` -> `<aliasedNamespace>.<method>`.
+// Resolve `AnvilBackend.<key>.<method>` -> `<aliasedNamespace>.<method>`.
 const resolveMethod = (nsKey, method) => {
   const internalNs = apiAliases[nsKey];
   if (!internalNs) return false;
@@ -108,8 +108,8 @@ const isInFallbackChain = (text, idx) => {
 const findings = [];
 for (const f of screens) {
   const text = fs.readFileSync(path.join(SCREENS, f), "utf8");
-  // Match ObaraBackend?.ns?.method?. or ObaraBackend.ns.method
-  const re = /ObaraBackend(?:\?)?\.\s*([A-Za-z_$][\w$]*)\s*(?:\?)?\s*\.\s*([A-Za-z_$][\w$]*)/g;
+  // Match AnvilBackend?.ns?.method?. or AnvilBackend.ns.method
+  const re = /AnvilBackend(?:\?)?\.\s*([A-Za-z_$][\w$]*)\s*(?:\?)?\s*\.\s*([A-Za-z_$][\w$]*)/g;
   for (const m of text.matchAll(re)) {
     const [, ns, method] = m;
     if (resolveMethod(ns, method)) continue;
@@ -127,7 +127,7 @@ const unique = findings.filter((f) => {
   return true;
 });
 
-console.log("\nObaraBackend method audit");
+console.log("\nAnvilBackend method audit");
 console.log("─".repeat(70));
 console.log(`Known top-level namespaces: ${Object.keys(apiAliases).sort().join(", ")}`);
 console.log("─".repeat(70));
@@ -140,7 +140,7 @@ let total = 0;
 for (const file of Object.keys(byFile).sort()) {
   console.log(`\n${file}`);
   for (const f of byFile[file]) {
-    console.log(`  ObaraBackend.${f.ns}.${f.method}() — namespace or method missing`);
+    console.log(`  AnvilBackend.${f.ns}.${f.method}() — namespace or method missing`);
     total++;
   }
 }

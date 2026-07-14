@@ -77,7 +77,7 @@ const MonitoredExceptions: React.FC = () => {
   const load = async () => {
     setLoading(true); setErr(null);
     try {
-      const r: any = await ObaraBackend?.logistics?.listExceptions?.({ status: "open" });
+      const r: any = await AnvilBackend?.logistics?.listExceptions?.({ status: "open" });
       setRows(r?.exceptions || []);
     } catch (e: any) { setErr(e?.message || String(e)); }
     finally { setLoading(false); }
@@ -87,8 +87,8 @@ const MonitoredExceptions: React.FC = () => {
   const act = async (id: string, kind: "ack" | "resolve") => {
     setBusy(id);
     try {
-      if (kind === "ack") await ObaraBackend?.logistics?.ackException?.(id);
-      else await ObaraBackend?.logistics?.resolveException?.(id, "");
+      if (kind === "ack") await AnvilBackend?.logistics?.ackException?.(id);
+      else await AnvilBackend?.logistics?.resolveException?.(id, "");
       await load();
     } catch (e: any) { setErr(e?.message || String(e)); }
     finally { setBusy(null); }

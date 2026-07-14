@@ -1,12 +1,12 @@
 // ESM facade over src/client/anvil-client.js.
 //
 // The client is an IIFE that attaches `window.AnvilBackend` (and
-// the legacy alias `window.ObaraBackend`) plus `window.storage`.
+// the legacy alias `window.AnvilBackend`) plus `window.storage`.
 // Importing here runs the IIFE for its side effect.
 //
-// `ObaraBackend` is exposed as a Proxy that forwards every access to the
+// `AnvilBackend` is exposed as a Proxy that forwards every access to the
 // CURRENT `window.AnvilBackend`. Tests can swap `window.AnvilBackend`
-// for a stub between renders, and screens that imported `ObaraBackend`
+// for a stub between renders, and screens that imported `AnvilBackend`
 // from this module pick up the swap on the next access. We export both
 // names so a future search-and-replace can tidy the screens without a
 // runtime change.
@@ -21,14 +21,14 @@ export type AnvilBackendShape = Record<string, any> & {
   getConfig?: () => { url?: string; tenantId?: string };
   setSession?: (session: unknown) => void;
 };
-// Alias kept so the existing screens that import { ObaraBackendShape }
+// Alias kept so the existing screens that import { AnvilBackendShape }
 // keep typechecking. New code should reference AnvilBackendShape.
-export type ObaraBackendShape = AnvilBackendShape;
+export type AnvilBackendShape = AnvilBackendShape;
 
 declare global {
   interface Window {
     AnvilBackend?: AnvilBackendShape;
-    ObaraBackend?: AnvilBackendShape;
+    AnvilBackend?: AnvilBackendShape;
     storage?: unknown;
     notify?: (...args: any[]) => unknown;
     notifySuccess?: (...args: any[]) => unknown;
@@ -51,7 +51,7 @@ declare global {
 
 const cur = (): AnvilBackendShape | undefined =>
   (typeof window !== "undefined"
-    ? (window.AnvilBackend || window.ObaraBackend)
+    ? (window.AnvilBackend || window.AnvilBackend)
     : undefined);
 
 const handler: ProxyHandler<object> = {
@@ -73,9 +73,9 @@ const handler: ProxyHandler<object> = {
 };
 
 // New canonical name. The legacy export stays for the 102 call sites
-// that already import { ObaraBackend } from "../lib/api".
+// that already import { AnvilBackend } from "../lib/api".
 export const AnvilBackend = new Proxy({}, handler) as AnvilBackendShape;
-export const ObaraBackend = AnvilBackend;
+export const AnvilBackend = AnvilBackend;
 export const storage = (typeof window !== "undefined" ? (window as any).storage : undefined);
 
 export default AnvilBackend;

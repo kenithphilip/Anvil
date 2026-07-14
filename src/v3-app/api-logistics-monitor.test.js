@@ -63,6 +63,8 @@ describe("rulesToSlas", () => {
       po_local_supplier: 7,
       work_order_manufacturing: 5,
       ready_date_wait: 9,
+      dispatch_overdue: 3,
+      delivery_risk_window: 3,
     });
   });
   it("omits a knob when its threshold is null (orphan has none)", () => {

@@ -228,7 +228,7 @@ const WiredSourcePOs = () => {
     setReceiveNote("");
     setReceiveErr(null);
     try {
-      const r: any = await ObaraBackend?.sourcePos?.getReceiving?.(po.id);
+      const r: any = await AnvilBackend?.sourcePos?.getReceiving?.(po.id);
       setReceiveLines(Array.isArray(r?.lines) ? r.lines : []);
     } catch (err: any) {
       setReceiveErr(err);
@@ -245,7 +245,7 @@ const WiredSourcePOs = () => {
     setReceiveBusy(true);
     setReceiveErr(null);
     try {
-      const res: any = await ObaraBackend?.sourcePos?.receive?.(receivePo.id, { lines, note: receiveNote || null });
+      const res: any = await AnvilBackend?.sourcePos?.receive?.(receivePo.id, { lines, note: receiveNote || null });
       const msg = res?.fully_received ? "Received in full → RECEIVED" : "Partial receipt recorded";
       window.notifySuccess?.("Goods received", msg);
       closeReceive();

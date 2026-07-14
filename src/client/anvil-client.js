@@ -1259,6 +1259,9 @@
     create: async (payload) => apiFetch("/api/source_pos", { method: "POST", body: payload }),
     update: async (id, patch) => apiFetch("/api/source_pos/" + encodeURIComponent(id), { method: "PATCH", body: patch }),
     ack: async (sourcePoId, ack) => apiFetch("/api/source_pos/ack", { method: "POST", body: { sourcePoId, ack } }),
+    // P2 GRN: outstanding lines + prior receipts, and record a goods receipt.
+    getReceiving: async (id) => apiFetch("/api/source_pos/" + encodeURIComponent(id) + "/receive"),
+    receive: async (id, payload) => apiFetch("/api/source_pos/" + encodeURIComponent(id) + "/receive", { method: "POST", body: payload }),
     scorecard: async (params) => {
       const qs = new URLSearchParams(params || {}).toString();
       return apiFetch("/api/source_pos/scorecard" + (qs ? "?" + qs : ""));

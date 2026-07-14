@@ -72,6 +72,13 @@ const WiredSourcePOs = () => {
   const [ackForm, setAckForm] = uS({ acked_unit_price: "", acked_eta_date: "", acked_qty: "", notes: "" });
   const [submitting, setSubmitting] = uS(false);
   const [submitErr, setSubmitErr] = uS(null);
+  // P2 GRN: receive modal state.
+  const [receivePo, setReceivePo] = uS<any>(null);
+  const [receiveLines, setReceiveLines] = uS<any[]>([]);
+  const [receiveInputs, setReceiveInputs] = uS<Record<string, string>>({});
+  const [receiveNote, setReceiveNote] = uS("");
+  const [receiveBusy, setReceiveBusy] = uS(false);
+  const [receiveErr, setReceiveErr] = uS<any>(null);
   const [bump, setBump] = uS(0);
 
   // Creation form state. `creating` is the toggle that decides
@@ -177,6 +184,7 @@ const WiredSourcePOs = () => {
   }, [rows]);
 
   const openAck = (po) => {
+    setReceivePo(null);   // mutual exclusion: opening ack fully closes any receive panel
     setAckPo(po);
     setAckForm({
       acked_unit_price: po.total_foreign != null ? String(po.total_foreign)
@@ -215,6 +223,44 @@ const WiredSourcePOs = () => {
       window.notifyError?.("Ack failed", err?.message || String(err));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const openReceive = async (po: any) => {
+    setAckPo(null);
+    setReceivePo(po);
+    setReceiveLines([]);
+    setReceiveInputs({});
+    setReceiveNote("");
+    setReceiveErr(null);
+    try {
+      const r: any = await ObaraBackend?.sourcePos?.getReceiving?.(po.id);
+      setReceiveLines(Array.isArray(r?.lines) ? r.lines : []);
+    } catch (err: any) {
+      setReceiveErr(err);
+    }
+  };
+  const closeReceive = () => { setReceivePo(null); setReceiveErr(null); };
+
+  const submitReceive = async () => {
+    if (!receivePo) return;
+    const lines = Object.entries(receiveInputs)
+      .map(([line_index, v]) => ({ line_index: Number(line_index), received_qty: Number(v) }))
+      .filter((l) => Number.isFinite(l.received_qty) && l.received_qty > 0);
+    if (!lines.length) { setReceiveErr({ message: "Enter a received quantity on at least one line." }); return; }
+    setReceiveBusy(true);
+    setReceiveErr(null);
+    try {
+      const res: any = await ObaraBackend?.sourcePos?.receive?.(receivePo.id, { lines, note: receiveNote || null });
+      const msg = res?.fully_received ? "Received in full → RECEIVED" : "Partial receipt recorded";
+      window.notifySuccess?.("Goods received", msg);
+      closeReceive();
+      reload();
+    } catch (err: any) {
+      setReceiveErr(err);
+      window.notifyError?.("Receive failed", err?.message || String(err));
+    } finally {
+      setReceiveBusy(false);
     }
   };
 
@@ -385,7 +431,10 @@ const WiredSourcePOs = () => {
                       <td className="r mono">{spoFmtValue(po.total_foreign != null ? po.total_foreign : (po.total_inr != null ? po.total_inr : po.total_landed_inr), ccy)}</td>
                       <td className="mono-sm">{spoFmtDate(po.acknowledged_eta)}</td>
                       <td><Chip k={chip.k}>{chip.label}</Chip></td>
-                      <td><Btn sm onClick={(ev) => { ev.stopPropagation(); openAck(po); }}>ack {Icon.arrowR}</Btn></td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        <Btn sm onClick={(ev) => { ev.stopPropagation(); openAck(po); }}>ack {Icon.arrowR}</Btn>{" "}
+                        <Btn sm kind="ghost" onClick={(ev) => { ev.stopPropagation(); openReceive(po); }}>receive</Btn>
+                      </td>
                     </tr>
                   );
                 })}
@@ -451,6 +500,57 @@ const WiredSourcePOs = () => {
                   <Btn sm kind="primary" disabled={submitting} onClick={submitAck}>{submitting ? "Saving…" : "Submit ack"}</Btn>
                 </div>
               </div>
+            </Card>
+          ) : receivePo ? (
+            <Card title={`Receive goods · ${receivePo.reference || receivePo.id?.slice(0, 8) || ""}`} eyebrow={receivePo.supplier || "record a GRN"}
+                  right={<Btn sm kind="ghost" onClick={closeReceive} title="Close">{Icon.x}</Btn>}>
+              {receiveErr && (
+                <div className="mono-sm" style={{ color: "var(--rust)", marginBottom: 8 }}>{String(receiveErr.message || receiveErr)}</div>
+              )}
+              {receiveLines.length === 0 ? (
+                <div className="mono-sm" style={{ color: "var(--ink-4)" }}>
+                  No relational lines to receive against. (Only source POs released with line detail can be received here.)
+                </div>
+              ) : (
+                <>
+                  <table className="tbl" style={{ fontSize: 12 }}>
+                    <thead><tr>
+                      <th>#</th><th>Part</th><th className="r">Ordered</th><th className="r">Received</th><th className="r">Outstanding</th><th className="r">Receive now</th>
+                    </tr></thead>
+                    <tbody>
+                      {receiveLines.map((ln: any) => {
+                        const ordered = Number(ln.qty) || 0;
+                        const got = Number(ln.received_qty) || 0;
+                        const outstanding = Math.max(0, ordered - got);
+                        return (
+                          <tr key={ln.line_index}>
+                            <td className="mono">{ln.line_index}</td>
+                            <td>{ln.part_no || "—"}</td>
+                            <td className="r mono">{ordered}</td>
+                            <td className="r mono">{got}</td>
+                            <td className="r mono">{outstanding}</td>
+                            <td className="r">
+                              <input className="input mono" type="number" min="0" step="any"
+                                     value={receiveInputs[String(ln.line_index)] ?? ""}
+                                     placeholder={String(outstanding)}
+                                     onChange={(ev) => setReceiveInputs((m) => ({ ...m, [String(ln.line_index)]: ev.target.value }))}
+                                     style={{ width: 90, height: 28 }} />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <div style={{ marginTop: 10 }}>
+                    <label htmlFor="spo-grn-note" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Note (optional)</label>
+                    <input id="spo-grn-note" className="input" value={receiveNote} onChange={(ev) => setReceiveNote(ev.target.value)} style={{ width: "100%", height: 30 }} />
+                  </div>
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+                    <Btn sm kind="ghost" onClick={closeReceive}>Cancel</Btn>
+                    <Btn sm kind="primary" disabled={receiveBusy} onClick={submitReceive}>{receiveBusy ? "Recording…" : "Record receipt"}</Btn>
+                  </div>
+                </>
+              )}
             </Card>
           ) : (
             <Card title="Supplier scorecards" eyebrow="A/B/C grades">

@@ -1,6 +1,6 @@
 # Logistics Operations — architecture map & extension design
 
-**Status:** P0 + P1 shipped. P2–P5 designed, not built.
+**Status:** P0 + P1 + P2 shipped. P3–P5 designed, not built.
 **Owner:** Joel. **Primary rule:** extend the existing platform; do not rebuild. Every phase is additive-only (new tables + `add column if not exists`) and preserves existing APIs, workflows, permissions, and UI patterns.
 
 The manufacturer is an OEM-serving industrial supplier, **not** a logistics company. The goal is operational excellence: no shipment misses a committed date, lead times are watched, bottlenecks are detected automatically, and stakeholders get actionable alerts *before* a delay — with minimal manual follow-up.
@@ -101,11 +101,13 @@ The generic machinery every later alert rides on. Migration **162**.
 - **UI:** admin **Logistics monitor** editor (enable flag + per-kind rule rows) + a **Monitored exceptions** panel on the Delays screen (SLA/breach chips + ack/resolve).
 - **Deferred kinds** (schema-ready): `grn_overdue` → P2, `dispatch_overdue`/`delivery_at_risk` → P3, `qc_overdue`/`customs_delay` → P5.
 
-### P2 · GRN-first (close the inbound receipt loop)
-Highest downstream unblock in one build.
-- **API:** `POST /source_pos/:id/receive` writes `received_qty`/`received_at` per line + populates `ap_goods_receipts`; flips header status to RECEIVED via the existing guard + `source_po_events`.
-- **Unblocks:** OTD, material-not-inwarded detection, the AP 3-way match, in-transit→on-hand decrement.
-- **DB:** none required (columns exist); optional `grn` view. **Reuse:** DocAI ack pipeline for a delivery-note/BOE PDF.
+### P2 · GRN-first (close the inbound receipt loop) — **SHIPPED**
+Highest downstream unblock in one build. **No migration** (columns existed).
+- **API:** `GET/POST /source_pos/:id/receive`. Model: `ap_goods_receipts` is the **immutable ledger**; `source_po_lines.received_qty` is a **projection = sum of the ledger**. POST validates + builds GRN lines (`applyReceipt`), writes the GRN row **first**, then re-projects `received_qty` from the full ledger (`projectReceipt`), then — when every ordered line is met — flips the PO to `RECEIVED` (reusing `ALLOWED_TRANSITIONS`) with a `source_po_events` row. Partial receipts accumulate; over-receipts flagged; bad inputs rejected per-line. Pure math in `_lib/logistics/receiving.js`, unit-tested. Reads the PO id from `req.query.id` (not `req.url`).
+- **Join key:** GRN `po_line_ref`, PO `payload.lineItems[].partNumber`, and `ap_invoice_lines.po_line_ref` all key on **part number** — `ap/match.js` was fixed to read PO lines from `payload.lineItems` (they were never at `line_items`) and to key `poByRef` on part number, so received qty actually reaches the 3-way match.
+- **UI:** a **Receive** action + modal on the source-pos screen (per-line outstanding-qty inputs + note); `openAck`/`openReceive` are mutually exclusive.
+- **Unblocks (data now flows):** inventory in-transit→on-hand, the `supplier_delay` "material overdue" detector, and the AP 3-way match (its GRN input was seed-only).
+- **Deferred (tracked):** true transactional atomicity + an idempotency key so a retry can't double-count — both need an RPC/migration, so out of P2's no-migration scope. Also warehouse bin/put-away, and arming `delivery_eta_check` on ack.
 
 ### P3 · Outbound delivery commitment + customer OTD
 The "no shipment misses committed delivery dates" headline.

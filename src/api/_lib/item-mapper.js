@@ -123,6 +123,65 @@ const descriptionMatches = (long, short) => {
 // the lines in memory. Single read per table; cheap for orders
 // up to ~200 lines.
 //
+// CM 2.4 blocked-fuzzy tier, factored out so the LIVE mapper and the pure test
+// seam (__mapLinesPure) share ONE implementation and it can never go dead in one
+// but not the other (which is exactly how it was dead in production before).
+// Blocks by blockingKey, ranks the block by compositeScore (Jaro-Winkler part-no
+// + Jaccard 3-gram description + Metaphone), top scorer >= threshold wins.
+// Catches typos in part numbers and rephrased descriptions the substring tier
+// misses. Returns the matched item_master row, or null.
+export const fuzzyBlockedMatch = (line, imAll) => {
+  if (!Array.isArray(imAll) || !imAll.length) return null;
+  const lineKey = blockingKey({
+    partNo: line.partNumber || line.partNo || line.sku || "",
+    description: line.description || line.name || line.item || "",
+  });
+  let bestScore = 0;
+  let bestRow = null;
+  for (const row of imAll) {
+    const rowKey = blockingKey({ partNo: row.part_no, description: row.description || row.print_name || row.alias });
+    if (rowKey !== lineKey) continue;
+    const s = compositeScore(line, row);
+    if (s > bestScore) { bestScore = s; bestRow = row; }
+  }
+  return (bestRow && bestScore >= FUZZY_BLOCK_THRESHOLD) ? bestRow : null;
+};
+
+// UOM normalization + pack conversion via the tenant's uom_aliases
+// (raw_uom -> canonical_uom + conversion_factor + tally_uom). Returns the
+// canonical / Tally uom, the factor to base (stock) units, the base-unit qty,
+// and a mismatch flag (the line's uom differs from the item's stock uom with NO
+// alias to reconcile them -- e.g. customer ordered "BOX" but the item stocks in
+// "NOS" and no BOX->NOS factor exists). This is ADDITIVE metadata for
+// stock/Tally/procurement + an operator warning; it NEVER mutates the priced
+// qty/rate/amount, which are the customer's contract (rate is per their uom).
+export const resolveLineUom = (rawUom, qty, matchUom, aliasMap) => {
+  const raw = rawUom != null ? String(rawUom).trim() : "";
+  const alias = raw && aliasMap ? aliasMap.get(norm(raw)) : null;
+  const canonical = (alias && alias.canonical_uom) || raw || matchUom || null;
+  const factorRaw = alias && alias.conversion_factor != null ? Number(alias.conversion_factor) : 1;
+  const factor = Number.isFinite(factorRaw) && factorRaw > 0 ? factorRaw : 1;
+  // qty==null / undefined / "" -> not provided -> base_qty null (Number(null) is
+  // 0, which would otherwise masquerade as a real zero quantity).
+  const q = qty == null || qty === "" ? NaN : Number(qty);
+  const base_qty = Number.isFinite(q) ? Math.round(q * factor * 1e6) / 1e6 : null;
+  // Canonicalize the ITEM's stock uom through the SAME alias map before
+  // comparing -- tenants often alias several raw units to one canonical (e.g.
+  // Nos/Pcs/Box-500 -> "EA") while item_master.uom stays "Nos". Comparing the
+  // line's canonical against the raw item uom would then false-flag nearly every
+  // line. Mismatch means: the two do not share a canonical (no conversion path).
+  const itemAlias = matchUom != null && aliasMap ? aliasMap.get(norm(String(matchUom))) : null;
+  const itemCanonical = (itemAlias && itemAlias.canonical_uom) || matchUom || null;
+  const mismatch = !!(itemCanonical && canonical && norm(canonical) !== norm(itemCanonical));
+  return {
+    canonical_uom: canonical || null,
+    tally_uom: (alias && alias.tally_uom) || canonical || matchUom || null,
+    uom_conversion_factor: factor,
+    base_qty,
+    uom_mismatch: mismatch,
+  };
+};
+
 // CM 1.4: opts.context (default 'sales_order') gates the tier-1
 // customer_part lookup against item_customer_parts.applies_to.
 // Purchase-order / manufacturing contexts pass context='purchase_order'
@@ -188,6 +247,8 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opt
   let imByAlias = new Map();
   let imBySpec = new Map();
   let imById = new Map();
+  // UOM normalization / pack conversion table (raw_uom -> canonical + factor).
+  const uomAliasMap = new Map();
   // Also pull every item_master row for description-based fuzzy
   // matching (last-resort tier). Cap the scan at a reasonable
   // ceiling so a 50k-row master doesn't blow the request.
@@ -241,6 +302,16 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opt
     }
   } catch (_) { /* best-effort */ }
 
+  // UOM aliases: raw_uom -> canonical_uom + conversion_factor + tally_uom.
+  try {
+    const ua = await svc.from("uom_aliases")
+      .select("raw_uom, canonical_uom, tally_uom, conversion_factor")
+      .eq("tenant_id", tenantId);
+    if (ua && !ua.error && Array.isArray(ua.data)) {
+      for (const r of ua.data) if (r.raw_uom) uomAliasMap.set(norm(r.raw_uom), r);
+    }
+  } catch (_) { /* best-effort */ }
+
   // Resolve per line.
   return lines.map((line) => {
     const candidates = lineCandidates(line);
@@ -277,6 +348,12 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opt
         const im = imByAlias.get(code);
         if (im) { match = im; matchVia = "item_master.alias"; break; }
       }
+    }
+    if (!match) {
+      // CM 2.4 typo-tolerant tier (shared with the pure seam). Scored, so it
+      // runs BEFORE the looser unscored substring tier below.
+      const fm = fuzzyBlockedMatch(line, imAll);
+      if (fm) { match = fm; matchVia = "item_master.fuzzy_blocked"; }
     }
     if (!match) {
       // Last-resort description fuzzy match. Anchors mappings
@@ -337,6 +414,9 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opt
         stock_group: match.stock_group || null,
         specification_code: match.specification_code || null,
         match_via: matchVia,
+        // UOM: canonical/base-unit metadata + a mismatch warning. Priced qty/
+        // rate/amount are left untouched (they are the customer's contract).
+        ...resolveLineUom(line.uom || line.unit, line.qty != null ? line.qty : line.quantity, match.uom, uomAliasMap),
       },
     };
   });
@@ -353,6 +433,7 @@ export const __mapLinesPure = (
     imBySpec = new Map(),
     imById = new Map(),
     imAll = [],
+    uomAliasMap = new Map(),
   } = {},
 ) => {
   return lines.map((line) => {
@@ -387,31 +468,10 @@ export const __mapLinesPure = (
         if (im) { match = im; matchVia = "item_master.alias"; break; }
       }
     }
-    // CM 2.4 tier: blocked fuzzy. Compute a blocking key for the
-    // line; only score against items that share the same block.
-    // Within the block we rank by compositeScore (Jaro-Winkler
-    // over partno + Jaccard 3-grams over description + Metaphone
-    // exact match). Top scorer above FUZZY_BLOCK_THRESHOLD wins.
-    // This catches typos in partno and rephrased descriptions
-    // that the substring-based description_fuzzy tier (below)
-    // would miss, without scanning every item.
-    if (!match && Array.isArray(imAll) && imAll.length) {
-      const lineKey = blockingKey({
-        partNo: line.partNumber || line.partNo || line.sku || "",
-        description: line.description || line.name || line.item || "",
-      });
-      let bestScore = 0;
-      let bestRow = null;
-      for (const row of imAll) {
-        const rowKey = blockingKey({ partNo: row.part_no, description: row.description || row.print_name || row.alias });
-        if (rowKey !== lineKey) continue;
-        const s = compositeScore(line, row);
-        if (s > bestScore) { bestScore = s; bestRow = row; }
-      }
-      if (bestRow && bestScore >= FUZZY_BLOCK_THRESHOLD) {
-        match = bestRow;
-        matchVia = "item_master.fuzzy_blocked";
-      }
+    // CM 2.4 blocked-fuzzy tier (shared with the live mapper via one helper).
+    if (!match) {
+      const fm = fuzzyBlockedMatch(line, imAll);
+      if (fm) { match = fm; matchVia = "item_master.fuzzy_blocked"; }
     }
     if (!match) {
       const desc = line.description || line.name || line.item || "";
@@ -442,6 +502,7 @@ export const __mapLinesPure = (
         hsn_sac: match.hsn_sac || null,
         uom: match.uom || null,
         match_via: matchVia,
+        ...resolveLineUom(line.uom || line.unit, line.qty != null ? line.qty : line.quantity, match.uom, uomAliasMap),
       },
     };
   });

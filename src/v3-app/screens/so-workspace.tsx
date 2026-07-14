@@ -858,9 +858,18 @@ const WiredSOWorkspace = () => {
       // no override, so an operator stuck with a wrong auto-map could
       // not re-pick. Offer a "change" link (same picker as the manual
       // path) when lines are editable.
+      // Fuzzy tiers are lower-confidence than exact/customer_part, so tone them
+      // as a warning; and surface a UOM mismatch (line uom != item stock uom
+      // with no conversion) so a "5 BOX = 50 NOS" case is never silent.
+      const isFuzzy = String(mi.match_via || "").includes("fuzzy");
       return (
         <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 2 }}>
-          <Chip k="info">{(mi.match_via || "auto").replace(/_/g, " ")}: {mi.part_no}</Chip>
+          <Chip k={isFuzzy ? "warn" : "info"}>{(mi.match_via || "auto").replace(/_/g, " ")}: {mi.part_no}</Chip>
+          {mi.uom_mismatch && (
+            <span title={`Line UOM differs from the item stock UOM (${mi.uom || "?"}); no conversion on file`}>
+              <Chip k="bad">UOM ?</Chip>
+            </span>
+          )}
           {canEditLines && (
             <button
               type="button"

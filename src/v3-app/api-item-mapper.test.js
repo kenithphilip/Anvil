@@ -4,7 +4,7 @@
 // item_master.alias) without touching a DB.
 
 import { describe, it, expect } from "vitest";
-import { __mapLinesPure } from "../api/_lib/item-mapper.js";
+import { __mapLinesPure, resolveLineUom, fuzzyBlockedMatch } from "../api/_lib/item-mapper.js";
 
 const masterRow = (overrides) => ({
   id: "im-1", part_no: "THB-L1-70B-2", alias: "BEND ADAPTER",
@@ -302,5 +302,63 @@ describe("mapLinesToItemMaster: CM 1.4 applies_to context gate", () => {
     };
     await mapLinesToItemMaster(svc, "t1", "c1", [{ partNumber: "X" }], { context: "quote" });
     expect(capturedContext).toEqual(["quote"]);
+  });
+});
+
+describe("resolveLineUom (pack conversion + mismatch flag)", () => {
+  const boxToNos = new Map([["BOX", { canonical_uom: "NOS", conversion_factor: 10, tally_uom: "NOS" }]]);
+  it("converts to base units via the alias factor and does NOT flag a mismatch", () => {
+    const r = resolveLineUom("BOX", 5, "NOS", boxToNos);
+    expect(r).toEqual({ canonical_uom: "NOS", tally_uom: "NOS", uom_conversion_factor: 10, base_qty: 50, uom_mismatch: false });
+  });
+  it("flags a mismatch when the line uom differs from the item's stock uom with NO alias to reconcile", () => {
+    const r = resolveLineUom("BOX", 5, "NOS", new Map());
+    expect(r.uom_mismatch).toBe(true);
+    expect(r.base_qty).toBe(5);           // factor defaults to 1
+    expect(r.canonical_uom).toBe("BOX");
+  });
+  it("no mismatch when line uom equals the item uom; base_qty passes through", () => {
+    expect(resolveLineUom("NOS", 3, "NOS", new Map())).toMatchObject({ uom_mismatch: false, base_qty: 3 });
+  });
+  it("tolerates a null/blank qty (base_qty null)", () => {
+    expect(resolveLineUom("NOS", null, "NOS", new Map()).base_qty).toBe(null);
+  });
+  // The real seed aliases Nos/Pcs/Box-500 all to canonical "EA" while
+  // item_master.uom stays "Nos" -- the item uom must be canonicalized too, or
+  // every discrete line false-flags a mismatch.
+  it("does NOT flag when line and item both normalize to the same canonical", () => {
+    const m = new Map([
+      ["NOS", { canonical_uom: "EA", conversion_factor: 1 }],
+      ["PCS", { canonical_uom: "EA", conversion_factor: 1 }],
+      ["BOX-500", { canonical_uom: "EA", conversion_factor: 500 }],
+    ]);
+    expect(resolveLineUom("Nos", 5, "Nos", m).uom_mismatch).toBe(false);   // the false positive the review caught
+    expect(resolveLineUom("Pcs", 5, "Nos", m).uom_mismatch).toBe(false);   // different raw, same canonical
+    expect(resolveLineUom("Box-500", 2, "Nos", m)).toMatchObject({ uom_mismatch: false, base_qty: 1000 }); // reconciled by factor
+  });
+  it("still flags a genuinely unreconcilable pairing (Kg vs Nos->EA)", () => {
+    const m = new Map([["NOS", { canonical_uom: "EA", conversion_factor: 1 }]]);
+    expect(resolveLineUom("Kg", 5, "Nos", m).uom_mismatch).toBe(true);
+  });
+});
+
+describe("__mapLinesPure stamps UOM metadata onto _mapped_item", () => {
+  it("carries canonical_uom / base_qty / uom_mismatch through a match", () => {
+    const im = masterRow({ uom: "NOS" });
+    const out = __mapLinesPure(
+      [{ partNumber: "THB-L1-70B-2", uom: "BOX", qty: 4 }],
+      { imByCode: new Map([["THB-L1-70B-2", im]]),
+        uomAliasMap: new Map([["BOX", { canonical_uom: "NOS", conversion_factor: 10, tally_uom: "NOS" }]]) },
+    );
+    expect(out[0]._mapped_item).toMatchObject({ canonical_uom: "NOS", base_qty: 40, uom_mismatch: false });
+    // Priced fields are never touched.
+    expect(out[0].qty).toBe(4);
+    expect(out[0].uom).toBe("BOX");
+  });
+});
+
+describe("fuzzyBlockedMatch helper (shared by live + pure)", () => {
+  it("returns null when the master pool is empty", () => {
+    expect(fuzzyBlockedMatch({ partNumber: "X", description: "y z" }, [])).toBe(null);
   });
 });

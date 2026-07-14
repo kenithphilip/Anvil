@@ -60,10 +60,14 @@ const matchOne = async (svc, tenantId, apInvoiceId, tolerances) => {
   let qtyMismatch = 0;
   let receiptShort = 0;
 
-  const poLines = po?.line_items || po?.lines || [];
+  // Source PO lines live at payload.lineItems (keyed by partNumber); the
+  // legacy line_items/lines are almost always empty. Key poByRef on the part
+  // number so it joins to ap_invoice_lines.po_line_ref (= partNumber) and the
+  // goods-receipt lines (po_line_ref = part_no) — all three sides join on part.
+  const poLines = po?.payload?.lineItems || po?.line_items || po?.lines || [];
   const poByRef = new Map();
   for (const pl of poLines) {
-    poByRef.set(String(pl.line_no || pl.line || pl.po_line_ref || pl.id), pl);
+    poByRef.set(String(pl.partNumber || pl.part_no || pl.line_no || pl.line || pl.po_line_ref || pl.id), pl);
   }
 
   for (const il of (lines.data || [])) {

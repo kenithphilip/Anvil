@@ -265,6 +265,7 @@ import sourcePosById           from "./source_pos/[id].js";
 import sourcePosAck            from "./source_pos/ack.js";
 import sourcePosAckExtract     from "./source_pos/ack_extract.js";
 import sourcePosAckAccept      from "./source_pos/ack_accept.js";
+import sourcePosReceive        from "./source_pos/receive.js";
 import sourcePosIndex          from "./source_pos/index.js";
 import sourcePosScorecard      from "./source_pos/scorecard.js";
 
@@ -1140,6 +1141,7 @@ const DYNAMIC_ROUTES = [
   // matcher catches them first.
   { prefix: "/source_pos/",  suffix: "/ack_extract", handler: sourcePosAckExtract, param: "id" },
   { prefix: "/source_pos/",  suffix: "/ack_accept",  handler: sourcePosAckAccept,  param: "id" },
+  { prefix: "/source_pos/",  suffix: "/receive",     handler: sourcePosReceive,   param: "id" },
   // "/source_pos/<id>"
   { prefix: "/source_pos/",  handler: sourcePosById,  param: "id" },
   // "/spare_matrix/<id>" -> full matrix read / bulk save / delete.

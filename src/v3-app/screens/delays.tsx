@@ -61,6 +61,83 @@ const refRoute = (f: DelayFlag): string => {
   return "#/home";
 };
 
+const monSevChip = (s: string) => (
+  <Chip k={s === "critical" || s === "bad" ? "bad" : s === "warn" ? "warn" : "ghost"}>{s}</Chip>
+);
+
+// Persistent, SLA-tracked exceptions raised by the logistics monitor cron
+// (distinct from the on-demand scan above). Config-driven; enabled + tuned in
+// Admin -> Logistics monitor. Supports ack (captures first response) + resolve.
+const MonitoredExceptions: React.FC = () => {
+  const [rows, setRows] = useState<any[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true); setErr(null);
+    try {
+      const r: any = await ObaraBackend?.logistics?.listExceptions?.({ status: "open" });
+      setRows(r?.exceptions || []);
+    } catch (e: any) { setErr(e?.message || String(e)); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const act = async (id: string, kind: "ack" | "resolve") => {
+    setBusy(id);
+    try {
+      if (kind === "ack") await ObaraBackend?.logistics?.ackException?.(id);
+      else await ObaraBackend?.logistics?.resolveException?.(id, "");
+      await load();
+    } catch (e: any) { setErr(e?.message || String(e)); }
+    finally { setBusy(null); }
+  };
+
+  const now = Date.now();
+  const breachedCount = rows.filter((e) => e.breached_at).length;
+
+  return (
+    <Card title="Monitored exceptions" eyebrow={`persistent · SLA-tracked${breachedCount ? ` · ${breachedCount} breached` : ""}`}
+          right={<Btn icon kind="ghost" sm onClick={load} title="Refresh">{Icon.cycle}</Btn>} flush style={{ marginTop: 12 }}>
+      {err && <Banner kind="bad" title="Monitor">{err}</Banner>}
+      {loading ? (
+        <div className="body" style={{ padding: 16 }}>Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="body" style={{ padding: 18, textAlign: "center", color: "var(--ink-3)" }}>
+          No open monitored exceptions. Enable + configure the monitor in Admin → Logistics monitor.
+        </div>
+      ) : (
+        <table className="tbl">
+          <thead><tr>
+            <th>Reference</th><th>Kind</th><th>Severity</th><th>SLA</th><th className="r">Elapsed</th><th>Detail</th><th />
+          </tr></thead>
+          <tbody>
+            {rows.map((e) => {
+              const breached = !!e.breached_at;
+              const overdueSoon = e.sla_target_at && !breached && new Date(e.sla_target_at).getTime() < now;
+              return (
+                <tr key={e.id}>
+                  <td className="mono">{e.ref_label || (e.object_id ? String(e.object_id).slice(0, 8) : "—")}</td>
+                  <td><Chip k="info">{e.rule_kind}</Chip></td>
+                  <td>{monSevChip(e.severity)}</td>
+                  <td>{breached ? <Chip k="bad">breached</Chip> : e.sla_target_at ? <Chip k={overdueSoon ? "warn" : "ghost"}>{new Date(e.sla_target_at).toLocaleDateString()}</Chip> : "—"}</td>
+                  <td className="r mono">{e.detail?.elapsed_days != null ? e.detail.elapsed_days + "d" : "—"}</td>
+                  <td className="mono-sm" style={{ color: "var(--ink-2)" }}>{e.detail?.detail_text || ""}</td>
+                  <td>
+                    <Btn sm kind="ghost" disabled={busy === e.id} onClick={() => act(e.id, "ack")}>ack</Btn>{" "}
+                    <Btn sm disabled={busy === e.id} onClick={() => act(e.id, "resolve")}>resolve</Btn>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </Card>
+  );
+};
+
 const Delays: React.FC = () => {
   const [tab, setTab] = useState("all");
   const [data, setData] = useState<{ delays: DelayFlag[]; summary: { total: number; byKind: Record<string, number> } } | null>(null);
@@ -188,6 +265,7 @@ const Delays: React.FC = () => {
             </table>
           )}
         </Card>
+        <MonitoredExceptions />
       </div>
     </>
   );

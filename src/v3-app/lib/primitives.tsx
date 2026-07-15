@@ -19,10 +19,13 @@ export interface BtnProps {
   title?: string;
   style?: CSSProperties;
   "aria-label"?: string;
+  "aria-haspopup"?: boolean | "menu" | "listbox" | "dialog" | "true";
+  "aria-expanded"?: boolean;
 }
 
 export const Btn: React.FC<BtnProps> = ({
-  children, kind, sm, lg, icon, full, onClick, disabled, type = "button", className = "", title, style, "aria-label": ariaLabel,
+  children, kind, sm, lg, icon, full, onClick, disabled, type = "button", className = "", title, style,
+  "aria-label": ariaLabel, "aria-haspopup": ariaHaspopup, "aria-expanded": ariaExpanded,
 }) => {
   const cls = ["btn", kind, sm && "sm", lg && "lg", icon && "icon", full && "full", className].filter(Boolean).join(" ");
   // For icon-only buttons (no visible text), fall back to `title` as
@@ -33,7 +36,8 @@ export const Btn: React.FC<BtnProps> = ({
   // explicitly overridden.
   const accessibleName = ariaLabel ?? (icon ? title : undefined);
   return (
-    <button type={type} className={cls} onClick={onClick} disabled={disabled} title={title} aria-label={accessibleName} style={style}>
+    <button type={type} className={cls} onClick={onClick} disabled={disabled} title={title}
+            aria-label={accessibleName} aria-haspopup={ariaHaspopup} aria-expanded={ariaExpanded} style={style}>
       {children}
     </button>
   );
@@ -120,6 +124,12 @@ export const WSTabs: React.FC<WSTabsProps> = ({ tabs, active, onChange }) => {
     const target = (ev.currentTarget.parentElement?.children?.[next] as HTMLElement | undefined);
     target?.focus?.();
   };
+  // Roving tabindex needs a keyboard entry point even when `active` is not one
+  // of the rendered tabs (e.g. a caller surfaces a subset of tabs and folds the
+  // rest behind a menu). Fall back to the first tab so the tablist never leaves
+  // the Tab order.
+  const activeIdx = tabs.findIndex((t) => t.id === active);
+  const rovingIdx = activeIdx >= 0 ? activeIdx : 0;
   return (
     <div className="ws-tabs" role="tablist">
       {tabs.map((t, i) => {
@@ -132,7 +142,7 @@ export const WSTabs: React.FC<WSTabsProps> = ({ tabs, active, onChange }) => {
             id={`ws-tab-${t.id}`}
             aria-selected={isActive}
             aria-controls={`ws-tabpanel-${t.id}`}
-            tabIndex={isActive ? 0 : -1}
+            tabIndex={i === rovingIdx ? 0 : -1}
             className={`ws-tab ${isActive ? "active" : ""}`}
             onClick={() => onChange?.(t.id)}
             onKeyDown={(ev) => onKey(ev, i)}
@@ -467,18 +477,22 @@ export const Menu: React.FC<{
   return (
     <div ref={wrap} style={{ position: "relative", display: "inline-block" }}>
       <Btn kind={kind} sm={sm} disabled={disabled} title={title}
-           onClick={() => setOpen((o) => !o)} aria-label={typeof label === "string" ? label : title}>
+           onClick={() => setOpen((o) => !o)} aria-label={typeof label === "string" ? label : title}
+           aria-haspopup={true} aria-expanded={open}>
         {label}
       </Btn>
       {open && (
-        <div role="menu" style={{
+        // Plain focusable native-button list: fully keyboard/SR accessible via
+        // Tab + Escape, with no role="menu" APG contract (arrow-key roaming) to
+        // half-implement. A disclosure, not a WAI-ARIA menu widget.
+        <div style={{
           position: "absolute", top: "calc(100% + 4px)", zIndex: 400, minWidth: 190,
           ...(align === "right" ? { right: 0 } : { left: 0 }),
           background: "var(--paper)", border: "1px solid var(--hairline)", borderRadius: 8,
           boxShadow: "0 8px 24px rgba(0,0,0,0.18)", padding: 4, maxHeight: "70vh", overflowY: "auto",
         }}>
           {items.map((it, i) => (
-            <button key={i} type="button" role="menuitem" disabled={it.disabled}
+            <button key={i} type="button" disabled={it.disabled}
               onClick={() => { setOpen(false); it.onClick?.(); }}
               style={{
                 display: "block", width: "100%", textAlign: "left", padding: "6px 10px", border: "none",

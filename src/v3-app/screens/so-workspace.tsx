@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ageLabel, stageOf, draftLabel } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Prov, Steps, Stream, WSTabs, WSTitle, fmtINR, fmtUSD } from "../lib/primitives";
+import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Menu, Prov, Skeleton, Steps, Stream, WSTabs, WSTitle, fmtINR, fmtUSD } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
@@ -298,7 +298,7 @@ const WiredSOWorkspace = () => {
     return (
       <>
         <WSTitle eyebrow="Sales Orders · Workspace" title="Loading…" meta={orderId.slice(0, 8)} />
-        <div className="ws-content"><Card><div className="body">Loading order…</div></Card></div>
+        <div className="ws-content"><Card><div className="body"><Skeleton rows={5} /></div></Card></div>
       </>
     );
   }
@@ -1610,36 +1610,18 @@ const WiredSOWorkspace = () => {
           </div>
         </div>
         <div className="row gap-sm" style={{ width: "100%", flexWrap: "wrap", alignItems: "center" }}>
-          {customerEmail && (
-            <Btn sm kind="ghost" onClick={() => window.location.href = `mailto:${customerEmail}?subject=${encodeURIComponent(o.po_number || o.quote_number || "Order update")}`}>
-              {Icon.send} email customer
-            </Btn>
-          )}
-          <Btn sm kind="ghost"
-               onClick={() => downloadQuotePdf(o)}
-               title="Render a branded PDF of the quote and download it">
-            {Icon.download} quote PDF
-          </Btn>
-          {["APPROVED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED"].includes(o.status) && (
-            <Btn sm kind="ghost"
-                 onClick={() => downloadVoucherPdf(o)}
-                 title="Render the ERP-format sales-order voucher (Tally style, with GST split)">
-              {Icon.download} ERP voucher
-            </Btn>
-          )}
-          <Btn sm kind="ghost"
-               onClick={() => createInvoiceForOrder(o)}
-               title="Draft a new invoice templated from this order">
-            {Icon.plus} new invoice
-          </Btn>
-          <Btn sm kind="ghost"
-               onClick={() => shareQuotePdf(o)}
-               title="Generate a 7-day signed share link to the quote PDF">
-            {Icon.send} share link
-          </Btn>
-          <Btn sm kind="ghost" onClick={() => exportAuditPack(o)} title="Bundle PO + quote + result + signed evidence URLs into a JSON download">
-            {Icon.download} audit pack
-          </Btn>
+          {/* Secondary document / export actions folded behind one control so
+              the workflow CTAs (extraction / validation / approve / push) are
+              not competing with 6 same-weight utility buttons. */}
+          <Menu label={<>{Icon.download} Documents</>} align="left" items={[
+            ...(customerEmail ? [{ label: "Email customer", onClick: () => { window.location.href = `mailto:${customerEmail}?subject=${encodeURIComponent(o.po_number || o.quote_number || "Order update")}`; } }] : []),
+            { label: "Quote PDF", onClick: () => downloadQuotePdf(o) },
+            ...(["APPROVED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED"].includes(o.status)
+              ? [{ label: "ERP voucher", onClick: () => downloadVoucherPdf(o) }] : []),
+            { label: "New invoice", onClick: () => createInvoiceForOrder(o) },
+            { label: "Share link (7-day)", onClick: () => shareQuotePdf(o) },
+            { label: "Audit pack", onClick: () => exportAuditPack(o) },
+          ]} />
           <span style={{ flex: 1 }} />
           <Btn sm kind="ghost"
                disabled={!canCancel || busy || o.status === "CANCELLED"}
@@ -1732,7 +1714,29 @@ const WiredSOWorkspace = () => {
         </div>
       </div>
 
-      <WSTabs tabs={tabs} active={tab} onChange={setTab} />
+      {(() => {
+        // Surface the operator/money-path tabs; fold diagnostic + secondary
+        // tabs behind a single "More" control (all still fully functional --
+        // only the selector changes; content still switches on `tab`).
+        const PRIMARY = ["recon", "header", "margin", "review", "approval", "tally"];
+        const primaryTabs = tabs.filter((t) => PRIMARY.includes(t.id));
+        const moreTabs = tabs.filter((t) => !PRIMARY.includes(t.id));
+        const activeMore = moreTabs.find((t) => t.id === tab);
+        return (
+          <div className="row" style={{ alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <WSTabs tabs={primaryTabs} active={tab} onChange={setTab} />
+            {moreTabs.length > 0 && (
+              <Menu sm kind={activeMore ? "info" : "ghost"}
+                    label={<>{activeMore ? String(activeMore.label) : "More"} ▾</>}
+                    items={moreTabs.map((t) => ({
+                      label: <>{t.label}{t.count != null ? ` (${t.count})` : ""}</>,
+                      onClick: () => setTab(t.id),
+                      active: tab === t.id,
+                    }))} />
+            )}
+          </div>
+        );
+      })()}
 
       {/* Phase B2: live extraction progress strip. Renders only
           while busy is true (an extraction or related job is in

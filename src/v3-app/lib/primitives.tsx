@@ -429,3 +429,68 @@ export const Modal: React.FC<ModalProps> & ModalSubcomponents = Object.assign(Mo
   Footer: ModalFooter,
   Header: ModalHeader,
 });
+
+// Loading placeholder using the existing `.skel` shimmer (styles.css). Replaces
+// bare "Loading…" text so a list feels like it is filling in, not stalling.
+// `rows` renders a small stack of bars; `width` sizes a single bar.
+export const Skeleton: React.FC<{ rows?: number; width?: number | string; tall?: boolean; style?: CSSProperties }> = ({ rows = 1, width, tall, style }) => {
+  if (rows <= 1) {
+    return <div className={["skel", tall && "tall"].filter(Boolean).join(" ")} style={{ width, ...style }} aria-hidden="true" />;
+  }
+  return (
+    <div aria-hidden="true" style={style}>
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="skel row" style={{ width: i === rows - 1 ? "70%" : "100%" }} />
+      ))}
+    </div>
+  );
+};
+
+// Lightweight overflow / kebab menu: a trigger button + a click-outside dropdown
+// (mirrors the Shell popover pattern). Used to fold secondary actions or tabs
+// behind a single control so the default view shows only the primary ones.
+export interface MenuItem { label: ReactNode; onClick?: () => void; disabled?: boolean; active?: boolean; danger?: boolean; }
+export const Menu: React.FC<{
+  label: ReactNode; items: MenuItem[]; align?: "left" | "right";
+  kind?: Kind; sm?: boolean; disabled?: boolean; title?: string;
+}> = ({ label, items, align = "right", kind = "ghost", sm, disabled, title }) => {
+  const [open, setOpen] = React.useState(false);
+  const wrap = React.useRef<HTMLDivElement | null>(null);
+  React.useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
+    const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onEsc);
+    return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onEsc); };
+  }, [open]);
+  return (
+    <div ref={wrap} style={{ position: "relative", display: "inline-block" }}>
+      <Btn kind={kind} sm={sm} disabled={disabled} title={title}
+           onClick={() => setOpen((o) => !o)} aria-label={typeof label === "string" ? label : title}>
+        {label}
+      </Btn>
+      {open && (
+        <div role="menu" style={{
+          position: "absolute", top: "calc(100% + 4px)", zIndex: 400, minWidth: 190,
+          ...(align === "right" ? { right: 0 } : { left: 0 }),
+          background: "var(--paper)", border: "1px solid var(--hairline)", borderRadius: 8,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.18)", padding: 4, maxHeight: "70vh", overflowY: "auto",
+        }}>
+          {items.map((it, i) => (
+            <button key={i} type="button" role="menuitem" disabled={it.disabled}
+              onClick={() => { setOpen(false); it.onClick?.(); }}
+              style={{
+                display: "block", width: "100%", textAlign: "left", padding: "6px 10px", border: "none",
+                background: it.active ? "var(--hairline)" : "transparent",
+                color: it.danger ? "var(--rust)" : "var(--ink-1)", borderRadius: 6,
+                cursor: it.disabled ? "default" : "pointer", fontSize: 13, opacity: it.disabled ? 0.5 : 1,
+              }}>
+              {it.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};

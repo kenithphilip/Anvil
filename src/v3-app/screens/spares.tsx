@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { fmtINRShort, useFetch } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
+import { Banner, Btn, Card, Chip, Menu, Skeleton, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { ObaraBackend } from "../lib/api";
 import { matchSpares, SPARE_PRESETS, isConsumableCol, nameMatchCandidates, type SpareBomItem } from "../lib/spare-match";
@@ -560,11 +560,11 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       {/* Toolbar */}
       {!recView && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {/* Primary matrix-building actions kept loud; secondary/utility +
+              destructive actions folded behind one "More" control. */}
           <Btn sm onClick={() => { setShowAddRow(true); setShowAddCol(false); }}>{Icon.plus} Row</Btn>
           <Btn sm onClick={() => { setShowAddCol(true); setShowAddRow(false); }}>{Icon.plus} Spare column</Btn>
-          <Btn sm kind="ghost" onClick={() => setShowConfig(true)}>{Icon.settings} Configure cols</Btn>
           <Btn sm kind="ghost" onClick={onAutoFill} disabled={busyAuto}>{busyAuto ? "…" : <>{Icon.bolt} Auto-fill</>}</Btn>
-          <Btn sm kind="ghost" onClick={() => fileRef.current?.click()}>{Icon.upload} Import</Btn>
           <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,.tsv,.txt,.json" style={{ display: "none" }} onChange={(e) => onImportFile(e.target.files?.[0])} />
           <div style={{ position: "relative" }}>
             <Btn sm kind="ghost" onClick={() => setShowExport((s) => !s)}>{Icon.download} Export {Icon.caret}</Btn>
@@ -577,8 +577,12 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
             )}
           </div>
           <div style={{ flex: 1 }} />
-          <Btn sm kind="ghost" onClick={onSyncRecommended} disabled={busySync}>{busySync ? "…" : <>{Icon.cycle} Sync recommended</>}</Btn>
-          <Btn sm kind="ghost" onClick={onDeleteMatrix} className="">{Icon.x} Delete</Btn>
+          <Menu sm label={<>More ▾</>} align="right" items={[
+            { label: <>{Icon.settings} Configure columns</>, onClick: () => setShowConfig(true) },
+            { label: <>{Icon.upload} Import file…</>, onClick: () => fileRef.current?.click() },
+            { label: <>{Icon.cycle} Sync recommended</>, onClick: onSyncRecommended, disabled: busySync },
+            { label: <>{Icon.x} Delete matrix</>, onClick: onDeleteMatrix, danger: true },
+          ]} />
         </div>
       )}
 
@@ -605,7 +609,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
           {importErr ? (
             <Banner kind="bad" icon={Icon.alert} title="Could not parse file"><span className="mono-sm">{importErr}</span></Banner>
           ) : !importPreview ? (
-            <div className="body" style={{ color: "var(--ink-3)" }}>Loading…</div>
+            <div className="body"><Skeleton rows={3} /></div>
           ) : (
             <div style={{ overflow: "auto", maxHeight: 280 }}>
               <table className="tbl">

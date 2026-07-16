@@ -33,9 +33,20 @@ export default async function handler(req, res) {
       requirePermission(ctx, "admin");
       const body = await readBody(req);
       if (!body.customer_id) return json(res, 400, { error: { message: "customer_id required" } });
+      // Generalized asset model (migration 173): asset_class discriminator +
+      // attributes bag. Backward-compatible -- bodies that omit both (the
+      // existing tree editor + XLSX importer) default to welding_gun/{}, and
+      // the DB trigger mirrors the typed welding columns into attributes for
+      // welding_gun rows regardless of what is sent here.
+      const asset_class = typeof body.asset_class === "string" && body.asset_class.trim()
+        ? body.asset_class.trim() : "welding_gun";
+      const attributes = body.attributes && typeof body.attributes === "object" && !Array.isArray(body.attributes)
+        ? body.attributes : {};
       const row = {
         tenant_id: ctx.tenantId,
         customer_id: body.customer_id,
+        asset_class,
+        attributes,
         customer_location_id: body.customer_location_id || null,
         plant_name: body.plant_name || null,
         line_name: body.line_name || null,

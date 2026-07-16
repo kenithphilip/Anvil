@@ -6,9 +6,10 @@ import { AnvilBackend } from "../lib/api";
 
 // ============================================================
 // ANVIL v3 — wired Equipment hierarchy
-// Plant > Line > Zone > Station > Gun + installed parts editor.
-// Reads via AnvilBackend.admin.listEquipment, writes via
-// upsertEquipment/deleteEquipment. Reached at #/items?view=equipment.
+// Plant > Line > Zone > Station > Asset (welding gun or any other
+// asset class) + installed parts editor. Reads via
+// AnvilBackend.admin.listEquipment, writes via upsertEquipment/
+// deleteEquipment. Reached at #/items?view=equipment.
 // ============================================================
 
 const equipmentRowsOf = (resp) => {
@@ -18,6 +19,53 @@ const equipmentRowsOf = (resp) => {
   if (Array.isArray(resp.rows)) return resp.rows;
   return [];
 };
+
+// ── Generalized asset model (migration 173) ───────────────────────────────────
+// equipment_hierarchy carries asset_class + attributes (jsonb). welding_gun keeps
+// its typed welding columns (robot/gun/timer/atd), which a DB trigger mirrors into
+// attributes; other classes store their fields in the attributes bag. The editor
+// branches on class: welding rows edit the typed fields, others edit a name +
+// key/value attributes. Existing welding data + the XLSX importer are unaffected.
+const ASSET_CLASSES = ["welding_gun", "robot", "pump", "motor", "cnc_machine", "conveyor", "hydraulic_unit", "sensor", "generic"];
+const isWelding = (cls) => (cls || "welding_gun") === "welding_gun";
+const classLabel = (cls) => String(cls || "welding_gun").replace(/_/g, " ");
+// Leaf label: gun_no for welding, else the attribute name (falling back sensibly).
+const assetLabelOf = (r) => {
+  if (isWelding(r?.asset_class)) return r?.gun_no || "(no gun)";
+  const a = r?.attributes || {};
+  return a.name || a.tag || r?.station_name || (r?.id ? String(r.id).slice(0, 8) : "(asset)");
+};
+// Non-welding display name lives in attributes.name.
+const attrNameOf = (r) => (isWelding(r?.asset_class) ? "" : String((r?.attributes || {}).name || ""));
+// attributes object -> [{k,v}] pairs for the editor (name is shown separately).
+const attrsToPairs = (attributes) => Object.entries(attributes || {})
+  .filter(([k]) => k !== "name")
+  .map(([k, v]) => ({ k, v: typeof v === "string" ? v : JSON.stringify(v) }));
+// Seed the attributes editor. Welding rows keep their fields in typed columns
+// (attributes is a derived mirror), so we start the editor empty for them --
+// reclassifying a gun to another class then starts from a clean bag rather than
+// prefilling gun_no/robot_no as generic attributes.
+const seedAttrs = (seedRow) => (isWelding(seedRow?.asset_class) ? [] : attrsToPairs(seedRow?.attributes));
+// One place that builds the edit draft (used by init, reset, and dirty-check).
+const makeDraft = (node, seedRow) => ({
+  id: seedRow?.id || null,
+  asset_class: seedRow?.asset_class || node?.asset_class || "welding_gun",
+  customer_id: seedRow?.customer_id || node?.customer_id || "",
+  customer_location_id: seedRow?.customer_location_id || node?.customer_location_id || "",
+  plant_name: seedRow?.plant_name || node?.plant_name || "",
+  line_name: seedRow?.line_name || node?.line_name || "",
+  zone_name: seedRow?.zone_name || node?.zone_name || "",
+  station_name: seedRow?.station_name || node?.station_name || "",
+  robot_make: seedRow?.robot_make || "",
+  robot_no: seedRow?.robot_no || "",
+  gun_no: seedRow?.gun_no || "",
+  gun_type: seedRow?.gun_type || "",
+  qty: seedRow?.qty != null ? seedRow.qty : 1,
+  timer_model: seedRow?.timer_model || "",
+  atd_model: seedRow?.atd_model || "",
+  notes: seedRow?.notes || "",
+  asset_name: attrNameOf(seedRow),
+});
 
 // Compose a tree from the flat list. Each gun row is a leaf; we group up the
 // parent levels by the textual path keys. Non-gun rows in the corpus carry a
@@ -49,7 +97,7 @@ const buildEquipmentTree = (rows, customersById) => {
     const zn = ln.zones.get(zone);
     const stn = r.station_name || "(no station)";
     if (!zn.stations.has(stn)) zn.stations.set(stn, { kind: "station", id: `${zn.id}/${stn}`, customer_id: cid, customer_location_id: r.customer_location_id || null, plant_name: plant, line_name: line, zone_name: zone, station_name: stn, label: stn, guns: [] });
-    zn.stations.get(stn).guns.push({ kind: "gun", id: r.id, label: r.gun_no || "(no gun)", row: r });
+    zn.stations.get(stn).guns.push({ kind: "asset", id: r.id, label: assetLabelOf(r), row: r });
   });
   // Convert maps to arrays, sorted alphabetically by label.
   const sortByLabel = (a: any, b: any) => String(a.label).localeCompare(String(b.label));
@@ -76,7 +124,7 @@ const buildEquipmentTree = (rows, customersById) => {
 
 // Single tree row with chevron, label, hover actions.
 const EquipTreeRow = ({ node, depth, expanded, onToggle, onSelect, selected, onAddChild, onEdit, onDelete }) => {
-  const hasChildren = node.kind !== "gun" && Array.isArray(node.children) && node.children.length > 0;
+  const hasChildren = node.kind !== "asset" && Array.isArray(node.children) && node.children.length > 0;
   const isOpen = !!expanded[node.id];
   const isSelected = selected === node.id;
   const onKeyDown = (ev) => {
@@ -89,10 +137,12 @@ const EquipTreeRow = ({ node, depth, expanded, onToggle, onSelect, selected, onA
     if (ev.key === "ArrowRight" && hasChildren && !isOpen) { ev.preventDefault(); onToggle(node.id); return; }
     if (ev.key === "ArrowLeft" && hasChildren && isOpen) { ev.preventDefault(); onToggle(node.id); return; }
   };
-  const kindLabel = {
-    customer: "customer", location: "loc", plant: "plant", line: "line",
-    zone: "zone", station: "station", gun: "gun",
-  }[node.kind] || node.kind;
+  const kindLabel = node.kind === "asset"
+    ? (isWelding(node.row?.asset_class) ? "gun" : classLabel(node.row?.asset_class))
+    : ({
+        customer: "customer", location: "loc", plant: "plant", line: "line",
+        zone: "zone", station: "station",
+      }[node.kind] || node.kind);
   return (
     <div
       role="treeitem"
@@ -113,20 +163,20 @@ const EquipTreeRow = ({ node, depth, expanded, onToggle, onSelect, selected, onA
         {hasChildren ? (isOpen ? Icon.caret : Icon.caretR) : null}
       </span>
       <span className="mono-sm" style={{ color: "var(--ink-4)", textTransform: "uppercase", fontSize: 9.5, minWidth: 56 }}>{kindLabel}</span>
-      <span className={node.kind === "gun" ? "mono" : ""} style={{ flex: 1, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>
+      <span className={node.kind === "asset" ? "mono" : ""} style={{ flex: 1, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>
         {node.label}
       </span>
-      {node.kind !== "gun" && Array.isArray(node.children) && (
+      {node.kind !== "asset" && Array.isArray(node.children) && (
         <span className="mono-sm" style={{ color: "var(--ink-4)", fontSize: 10 }}>{node.children.length}</span>
       )}
       <span className="eq-row-act" style={{ display: "flex", gap: 4, opacity: isSelected ? 1 : 0.0 }} onClick={(e) => e.stopPropagation()}>
-        {node.kind === "gun" && (
+        {node.kind === "asset" && (
           <Btn icon kind="ghost" sm onClick={() => onEdit(node)} title="Edit">{Icon.wrench}</Btn>
         )}
-        {node.kind !== "gun" && (
-          <Btn icon kind="ghost" sm onClick={() => onAddChild(node)} title="Add gun">{Icon.plus}</Btn>
+        {node.kind !== "asset" && (
+          <Btn icon kind="ghost" sm onClick={() => onAddChild(node)} title="Add asset">{Icon.plus}</Btn>
         )}
-        {node.kind === "gun" && (
+        {node.kind === "asset" && (
           <Btn icon kind="ghost" sm onClick={() => onDelete(node)} title="Delete">{Icon.x}</Btn>
         )}
       </span>
@@ -154,89 +204,53 @@ const EquipTree = ({ tree, expanded, onToggle, onSelect, selected, onAddChild, o
 
 // Right pane: edit form for the selected gun + installed parts table.
 const EquipmentDetail = ({ node, customers, locations, onSave, onDelete, onCancel, busy }) => {
-  const isGun = node?.kind === "gun";
-  const seedRow = isGun ? node.row : null;
-  const [draft, setDraft] = useState(() => ({
-    id: seedRow?.id || null,
-    customer_id: seedRow?.customer_id || node?.customer_id || "",
-    customer_location_id: seedRow?.customer_location_id || node?.customer_location_id || "",
-    plant_name: seedRow?.plant_name || node?.plant_name || "",
-    line_name: seedRow?.line_name || node?.line_name || "",
-    zone_name: seedRow?.zone_name || node?.zone_name || "",
-    station_name: seedRow?.station_name || node?.station_name || "",
-    robot_make: seedRow?.robot_make || "",
-    robot_no: seedRow?.robot_no || "",
-    gun_no: seedRow?.gun_no || "",
-    gun_type: seedRow?.gun_type || "",
-    qty: seedRow?.qty != null ? seedRow.qty : 1,
-    timer_model: seedRow?.timer_model || "",
-    atd_model: seedRow?.atd_model || "",
-    notes: seedRow?.notes || "",
-  }));
+  const isAsset = node?.kind === "asset";
+  const seedRow = isAsset ? node.row : null;
+  const [draft, setDraft] = useState(() => makeDraft(node, seedRow));
   const [parts, setParts] = useState(() => (seedRow?.installed_parts || []).map((p) => ({ ...p })));
-  // Reset draft + parts whenever the selected node changes.
+  const [attrs, setAttrs] = useState(() => seedAttrs(seedRow));
+  // Reset draft + parts + attributes whenever the selected node changes.
   useEffect(() => {
-    setDraft({
-      id: seedRow?.id || null,
-      customer_id: seedRow?.customer_id || node?.customer_id || "",
-      customer_location_id: seedRow?.customer_location_id || node?.customer_location_id || "",
-      plant_name: seedRow?.plant_name || node?.plant_name || "",
-      line_name: seedRow?.line_name || node?.line_name || "",
-      zone_name: seedRow?.zone_name || node?.zone_name || "",
-      station_name: seedRow?.station_name || node?.station_name || "",
-      robot_make: seedRow?.robot_make || "",
-      robot_no: seedRow?.robot_no || "",
-      gun_no: seedRow?.gun_no || "",
-      gun_type: seedRow?.gun_type || "",
-      qty: seedRow?.qty != null ? seedRow.qty : 1,
-      timer_model: seedRow?.timer_model || "",
-      atd_model: seedRow?.atd_model || "",
-      notes: seedRow?.notes || "",
-    });
+    setDraft(makeDraft(node, seedRow));
     setParts((seedRow?.installed_parts || []).map((p) => ({ ...p })));
+    setAttrs(seedAttrs(seedRow));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [node?.id]);
 
+  // Normalize the class ONCE so render, validation, and save cannot disagree --
+  // e.g. a trailing space in the free-text input must not flip the welding flag
+  // between render (which picks the editor) and save (which builds the payload).
+  const assetClass = String(draft.asset_class || "welding_gun").trim() || "welding_gun";
+  const welding = isWelding(assetClass);
+
   const dirty = useMemo(() => {
-    const cur = JSON.stringify(draft);
-    const orig = JSON.stringify({
-      id: seedRow?.id || null,
-      customer_id: seedRow?.customer_id || node?.customer_id || "",
-      customer_location_id: seedRow?.customer_location_id || node?.customer_location_id || "",
-      plant_name: seedRow?.plant_name || node?.plant_name || "",
-      line_name: seedRow?.line_name || node?.line_name || "",
-      zone_name: seedRow?.zone_name || node?.zone_name || "",
-      station_name: seedRow?.station_name || node?.station_name || "",
-      robot_make: seedRow?.robot_make || "",
-      robot_no: seedRow?.robot_no || "",
-      gun_no: seedRow?.gun_no || "",
-      gun_type: seedRow?.gun_type || "",
-      qty: seedRow?.qty != null ? seedRow.qty : 1,
-      timer_model: seedRow?.timer_model || "",
-      atd_model: seedRow?.atd_model || "",
-      notes: seedRow?.notes || "",
-    });
-    if (cur !== orig) return true;
-    const partsCur = JSON.stringify(parts);
+    if (JSON.stringify(draft) !== JSON.stringify(makeDraft(node, seedRow))) return true;
     const partsOrig = JSON.stringify((seedRow?.installed_parts || []).map((p) => ({ ...p })));
-    return partsCur !== partsOrig;
-  }, [draft, parts, seedRow, node?.id]);
+    if (JSON.stringify(parts) !== partsOrig) return true;
+    if (JSON.stringify(attrs) !== JSON.stringify(seedAttrs(seedRow))) return true;
+    return false;
+  }, [draft, parts, attrs, seedRow, node]);
 
   const set = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
   const setPart = (idx, k, v) => setParts((arr) => arr.map((p, i) => (i === idx ? { ...p, [k]: v } : p)));
   const removePart = (idx) => setParts((arr) => arr.filter((_, i) => i !== idx));
   const addPart = () => setParts((arr) => [...arr, { part_no: "", description: "", installed_qty: 1, is_critical: false }]);
+  const setAttr = (idx, k, v) => setAttrs((arr) => arr.map((a, i) => (i === idx ? { ...a, [k]: v } : a)));
+  const removeAttr = (idx) => setAttrs((arr) => arr.filter((_, i) => i !== idx));
+  const addAttr = () => setAttrs((arr) => [...arr, { k: "", v: "" }]);
 
   const validationError = useMemo(() => {
     if (!draft.customer_id) return "Customer is required.";
-    if (isGun && !draft.gun_no) return "Gun number is required for a gun row.";
+    if (!String(draft.asset_class || "").trim()) return "Asset class is required.";
+    if (isAsset && welding && !draft.gun_no) return "Gun number is required for a welding gun.";
+    if (isAsset && !welding && !String(draft.asset_name || "").trim()) return "Asset name is required.";
     if (draft.qty != null && draft.qty !== "" && Number.isNaN(Number(draft.qty))) return "Quantity must be numeric.";
     for (let i = 0; i < parts.length; i += 1) {
       const p = parts[i];
       if (p.part_no && Number.isNaN(Number(p.installed_qty))) return `Part #${i + 1}: installed qty must be numeric.`;
     }
     return null;
-  }, [draft, parts, isGun]);
+  }, [draft, parts, isAsset, welding]);
 
   const filteredLocations = useMemo(() => {
     if (!draft.customer_id) return [];
@@ -245,22 +259,39 @@ const EquipmentDetail = ({ node, customers, locations, onSave, onDelete, onCance
 
   const handleSave = () => {
     if (validationError) return;
+    // Reuse the single normalized class/flag so the saved payload matches the
+    // editor the user actually saw (see assetClass/welding above).
+    const cls = assetClass;
+    const w = welding;
+    // For non-welding classes, build the attributes bag from the Name field +
+    // the key/value editor. For welding_gun we omit attributes and let the DB
+    // trigger mirror the typed columns, and we null out the welding fields for
+    // other classes so a reclassified asset does not carry stale gun data.
+    let attributes;
+    if (!w) {
+      attributes = {};
+      const nm = String(draft.asset_name || "").trim();
+      if (nm) attributes.name = nm;
+      attrs.forEach(({ k, v }) => { const key = String(k || "").trim(); if (key) attributes[key] = v; });
+    }
     onSave({
       equipment: {
         id: draft.id,
+        asset_class: cls,
+        ...(w ? {} : { attributes }),
         customer_id: draft.customer_id,
         customer_location_id: draft.customer_location_id || null,
         plant_name: draft.plant_name || null,
         line_name: draft.line_name || null,
         zone_name: draft.zone_name || null,
         station_name: draft.station_name || null,
-        robot_make: draft.robot_make || null,
-        robot_no: draft.robot_no || null,
-        gun_no: draft.gun_no || null,
-        gun_type: draft.gun_type || null,
+        robot_make: w ? (draft.robot_make || null) : null,
+        robot_no: w ? (draft.robot_no || null) : null,
+        gun_no: w ? (draft.gun_no || null) : null,
+        gun_type: w ? (draft.gun_type || null) : null,
         qty: draft.qty != null && draft.qty !== "" ? Number(draft.qty) : 1,
-        timer_model: draft.timer_model || null,
-        atd_model: draft.atd_model || null,
+        timer_model: w ? (draft.timer_model || null) : null,
+        atd_model: w ? (draft.atd_model || null) : null,
         notes: draft.notes || null,
       },
       installed_parts: parts.filter((p) => p.part_no).map((p) => ({
@@ -281,7 +312,7 @@ const EquipmentDetail = ({ node, customers, locations, onSave, onDelete, onCance
   const handleDelete = () => {
     if (!seedRow?.id) return;
     const partsCount = (seedRow.installed_parts || []).length;
-    const msg = `Delete gun ${seedRow.gun_no || seedRow.id.slice(0, 8)}? This removes ${partsCount} installed part${partsCount === 1 ? "" : "s"}.`;
+    const msg = `Delete ${classLabel(seedRow.asset_class)} ${assetLabelOf(seedRow)}? This removes ${partsCount} installed part${partsCount === 1 ? "" : "s"}.`;
     if (window.confirm(msg)) onDelete(seedRow.id);
   };
 
@@ -295,8 +326,10 @@ const EquipmentDetail = ({ node, customers, locations, onSave, onDelete, onCance
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <Card title={isGun ? `Gun ${seedRow?.gun_no || ""}` : `New ${node?.kind || "row"}`}
-            eyebrow={isGun ? "edit" : "add child"}
+      <Card title={isAsset
+              ? `${welding ? "Gun" : classLabel(draft.asset_class)} ${welding ? (seedRow?.gun_no || "") : (draft.asset_name || "")}`.trim()
+              : `New ${node?.kind || "row"}`}
+            eyebrow={seedRow?.id ? "edit" : "add"}
             right={<>
               {dirty && <Chip k="warn">unsaved</Chip>}
               {validationError && <span className="mono-sm" style={{ color: "var(--rust-2)" }}>{validationError}</span>}
@@ -310,6 +343,12 @@ const EquipmentDetail = ({ node, customers, locations, onSave, onDelete, onCance
               ))}
             </select>
           ))}
+          {fld("Asset class *", (
+            <>
+              <input className="input mono" list="eq-asset-classes" value={draft.asset_class} onChange={(e) => set("asset_class", e.target.value)} placeholder="welding_gun" aria-label="Asset class" />
+              <datalist id="eq-asset-classes">{ASSET_CLASSES.map((c) => <option key={c} value={c} />)}</datalist>
+            </>
+          ), welding ? undefined : "Non-welding class — edit its fields as attributes below.")}
           {fld("Location", (
             <select className="select" value={draft.customer_location_id || ""} onChange={(e) => set("customer_location_id", e.target.value)} aria-label="Location" disabled={!draft.customer_id}>
               <option value="">(no location)</option>
@@ -317,6 +356,9 @@ const EquipmentDetail = ({ node, customers, locations, onSave, onDelete, onCance
                 <option key={l.id} value={l.id}>{l.location_code} {l.plant_name ? `· ${l.plant_name}` : ""}</option>
               ))}
             </select>
+          ))}
+          {fld("Qty", (
+            <input className="input mono" type="number" min="0" step="1" value={draft.qty} onChange={(e) => set("qty", e.target.value)} aria-label="Qty" />
           ))}
           {fld("Plant name", (
             <input className="input" value={draft.plant_name} onChange={(e) => set("plant_name", e.target.value)} aria-label="Plant name" />
@@ -330,28 +372,52 @@ const EquipmentDetail = ({ node, customers, locations, onSave, onDelete, onCance
           {fld("Station name", (
             <input className="input" value={draft.station_name} onChange={(e) => set("station_name", e.target.value)} aria-label="Station name" />
           ))}
-          {fld("Robot make", (
-            <input className="input mono" value={draft.robot_make} onChange={(e) => set("robot_make", e.target.value)} aria-label="Robot make" />
-          ))}
-          {fld("Robot no", (
-            <input className="input mono" value={draft.robot_no} onChange={(e) => set("robot_no", e.target.value)} aria-label="Robot no" />
-          ))}
-          {fld("Gun no" + (isGun ? " *" : ""), (
-            <input className="input mono" value={draft.gun_no} onChange={(e) => set("gun_no", e.target.value)} placeholder="WGC-K6133-IND" aria-label="Gun no" />
-          ))}
-          {fld("Gun type", (
-            <input className="input mono" value={draft.gun_type} onChange={(e) => set("gun_type", e.target.value)} aria-label="Gun type" />
-          ))}
-          {fld("Qty", (
-            <input className="input mono" type="number" min="0" step="1" value={draft.qty} onChange={(e) => set("qty", e.target.value)} aria-label="Qty" />
-          ))}
-          {fld("Timer model", (
-            <input className="input mono" value={draft.timer_model} onChange={(e) => set("timer_model", e.target.value)} aria-label="Timer model" />
-          ))}
-          {fld("ATD model", (
-            <input className="input mono" value={draft.atd_model} onChange={(e) => set("atd_model", e.target.value)} aria-label="ATD model" />
-          ))}
         </div>
+
+        {welding ? (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+            {fld("Robot make", (
+              <input className="input mono" value={draft.robot_make} onChange={(e) => set("robot_make", e.target.value)} aria-label="Robot make" />
+            ))}
+            {fld("Robot no", (
+              <input className="input mono" value={draft.robot_no} onChange={(e) => set("robot_no", e.target.value)} aria-label="Robot no" />
+            ))}
+            {fld("Gun no *", (
+              <input className="input mono" value={draft.gun_no} onChange={(e) => set("gun_no", e.target.value)} placeholder="WGC-K6133-IND" aria-label="Gun no" />
+            ))}
+            {fld("Gun type", (
+              <input className="input mono" value={draft.gun_type} onChange={(e) => set("gun_type", e.target.value)} aria-label="Gun type" />
+            ))}
+            {fld("Timer model", (
+              <input className="input mono" value={draft.timer_model} onChange={(e) => set("timer_model", e.target.value)} aria-label="Timer model" />
+            ))}
+            {fld("ATD model", (
+              <input className="input mono" value={draft.atd_model} onChange={(e) => set("atd_model", e.target.value)} aria-label="ATD model" />
+            ))}
+          </div>
+        ) : (
+          <div style={{ marginTop: 10 }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span className="mono-sm" style={{ color: "var(--ink-3)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.04 }}>Name *</span>
+              <input className="input" value={draft.asset_name} onChange={(e) => set("asset_name", e.target.value)} placeholder={`${classLabel(draft.asset_class)} tag / name`} aria-label="Asset name" />
+            </label>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12, marginBottom: 4 }}>
+              <span className="mono-sm" style={{ color: "var(--ink-3)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.04 }}>Attributes</span>
+              <Btn sm kind="ghost" onClick={addAttr}>{Icon.plus} Add attribute</Btn>
+            </div>
+            {attrs.length === 0 ? (
+              <div className="fieldnote">No attributes yet. Add class-specific fields (e.g. serial, rating, model).</div>
+            ) : (
+              attrs.map((a, i) => (
+                <div key={i} style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center" }}>
+                  <input className="input mono" style={{ flex: "0 0 38%" }} placeholder="key" value={a.k} onChange={(e) => setAttr(i, "k", e.target.value)} aria-label={`Attribute ${i + 1} key`} />
+                  <input className="input" style={{ flex: 1 }} placeholder="value" value={a.v} onChange={(e) => setAttr(i, "v", e.target.value)} aria-label={`Attribute ${i + 1} value`} />
+                  <Btn icon kind="ghost" sm onClick={() => removeAttr(i)} title="Remove attribute">{Icon.x}</Btn>
+                </div>
+              ))
+            )}
+          </div>
+        )}
         <label style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 10 }}>
           <span className="mono-sm" style={{ color: "var(--ink-3)", fontSize: 10.5, textTransform: "uppercase" }}>Notes</span>
           <textarea className="input" rows={2} value={draft.notes} onChange={(e) => set("notes", e.target.value)} aria-label="Notes" />
@@ -471,9 +537,9 @@ const WiredEquipmentHierarchy = () => {
   );
 
   const totals = useMemo(() => {
-    const guns = flatEquipment.filter((r) => r.gun_no).length;
+    const assets = flatEquipment.length;
     const cust = new Set(flatEquipment.map((r) => r.customer_id).filter(Boolean)).size;
-    return { guns, cust };
+    return { assets, cust };
   }, [flatEquipment]);
 
   const onToggle = (id) => setExpanded((e) => ({ ...e, [id]: !e[id] }));
@@ -482,14 +548,17 @@ const WiredEquipmentHierarchy = () => {
     setSelectedNode(node);
   };
   const onAddChild = (node) => {
-    // Build a synthetic "new gun" node prefilled with the parent context.
+    // Build a synthetic "new asset" node prefilled with the parent context.
+    // Defaults to welding_gun so the existing gun workflow is unchanged; the
+    // editor lets you switch the asset class.
     const parent = node;
     setSelectedId(`new:${parent.id}`);
     setSelectedNode({
-      kind: "gun",
+      kind: "asset",
       id: null,
-      label: "(new gun)",
+      label: "(new asset)",
       row: null,
+      asset_class: "welding_gun",
       customer_id: parent.customer_id,
       customer_location_id: parent.customer_location_id || null,
       plant_name: parent.plant_name || "",
@@ -591,11 +660,11 @@ const WiredEquipmentHierarchy = () => {
       <WSTitle
         eyebrow="Data · Items · Equipment hierarchy"
         title="Equipment hierarchy"
-        meta={`${totals.guns} gun${totals.guns === 1 ? "" : "s"} across ${totals.cust} customer${totals.cust === 1 ? "" : "s"}`}
+        meta={`${totals.assets} asset${totals.assets === 1 ? "" : "s"} across ${totals.cust} customer${totals.cust === 1 ? "" : "s"}`}
         right={<>
           <Btn icon kind="ghost" sm onClick={() => { equipment.reload(); customersList.reload(); locationsList.reload(); }} title="Refresh">{Icon.cycle}</Btn>
           <Btn sm kind="primary" onClick={() => onAddChild({ kind: "root", id: "root", customer_id: filter || "", customer_location_id: null, plant_name: "", line_name: "", zone_name: "", station_name: "" })}>
-            {Icon.plus} New gun
+            {Icon.plus} New asset
           </Btn>
         </>}
       />
@@ -614,7 +683,7 @@ const WiredEquipmentHierarchy = () => {
             </div>
             {tree.length === 0 ? (
               <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-                {filter ? "No equipment for the selected customer." : "No equipment yet. Click \"New gun\" to add one."}
+                {filter ? "No equipment for the selected customer." : "No equipment yet. Click \"New asset\" to add one."}
               </div>
             ) : (
               <EquipTree
@@ -645,7 +714,7 @@ const WiredEquipmentHierarchy = () => {
             ) : (
               <Card>
                 <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-                  Select a gun in the tree to edit it, or click <span className="mono">+</span> on a folder to add a new gun under it.
+                  Select an asset in the tree to edit it, or click <span className="mono">+</span> on a folder to add a new asset under it.
                 </div>
               </Card>
             )}

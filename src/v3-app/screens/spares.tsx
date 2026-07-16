@@ -605,13 +605,18 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
 
   const onFeedToQuote = async () => {
     if (!draft.id) return;
+    // Pre-validate so the operator gets a clear message instead of a raw 400.
+    if (!draft.customer_id) {
+      window.notifyError?.("Set a customer first", "Link a customer to this spare matrix before feeding a quote.");
+      return;
+    }
     const feedable = (draft.recommended || []).filter((r) => Number(r.recommended_qty) > 0);
     // If rows are checked, feed only those; else feed all with qty > 0.
     const chosen = selRec.size ? feedable.filter((r) => selRec.has(r.id)) : feedable;
     if (!chosen.length) {
       window.notifyError?.("Nothing to quote", selRec.size
         ? "None of the checked rows have a recommended qty > 0."
-        : "Check the rows to quote (or set a recommended qty > 0).");
+        : "Check the rows to quote (or set a recommended qty > 0 on at least one spare).");
       return;
     }
     // Infer the group so spares & consumables land on SEPARATE quotes.
@@ -622,19 +627,15 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       : "selected";
     setBusyFeed(true);
     try {
-      const res = await AnvilBackend.spareMatrix.toQuote(draft.id, { row_ids: chosen.map((r) => r.id), group });
+      // force:true -> each push creates a NEW, system-numbered draft quote from
+      // the CURRENT selection, instead of accreting into one reused draft.
+      const res = await AnvilBackend.spareMatrix.toQuote(draft.id, {
+        row_ids: chosen.map((r) => r.id), group, customer_id: draft.customer_id, force: true,
+      });
       const q = res && res.quote;
       if (!q || !q.id) throw new Error("Quote was not created");
-      // Reflect the new quote_ref locally so the sheet shows the link.
-      if (res.quote_number || q.quote_number) {
-        const ref = q.quote_number || res.quote_number;
-        const fedIds = new Set(chosen.map((r) => r.id));
-        const next = { ...draft, recommended: (draft.recommended || []).map((r) => fedIds.has(r.id) ? { ...r, quote_ref: ref, quote_id: q.id } : r) };
-        setDraft(next);
-        onChange(next);
-      }
       window.notifySuccess?.(
-        res.reused ? `Updated ${group === "all" ? "" : group + " "}draft quote` : `Created ${group === "all" ? "" : group + " "}draft quote`,
+        `Created ${group === "all" ? "" : group + " "}quote`,
         `${q.quote_number || "Quote"} · ${res.fed} line(s) · price it in the quote drawer.`,
       );
       window.location.hash = `#/quotes?id=${encodeURIComponent(q.id)}&tab=lines`;
@@ -649,7 +650,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
     const rec = draft.recommended || [];
     if (!rec.length) { window.notifyError?.("Nothing to export", "Recompile the recommended sheet first."); return; }
     const filename = `RecommendedSpares_${(draft.name || "untitled").replace(/[^A-Za-z0-9_-]+/g, "_")}`;
-    const cols = ["sr_no", "description", "part_no", "gun_number", "installed_qty", "recommended_min", "recommended_max", "recommended_qty", "priority", "item_type", "customer_part_no", "lead_time_days", "remarks", "quote_ref", "po_ref"];
+    const cols = ["sr_no", "description", "part_no", "gun_number", "installed_qty", "recommended_min", "recommended_max", "recommended_qty", "priority", "item_type", "customer_part_no", "lead_time_days", "remarks"];
     const aoa = [cols, ...rec.map((r) => cols.map((c) => (r[c] != null ? r[c] : "")))];
     if (format === "csv") return smDownload(filename + ".csv", "text/csv", smAoaToDelim(aoa, ","));
     if (format === "tsv") return smDownload(filename + ".tsv", "text/tab-separated-values", smAoaToDelim(aoa, "\t"));
@@ -870,8 +871,8 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                 <Btn sm kind="ghost" onClick={() => setSelRec(new Set((draft.recommended || []).map((r) => r.id)))}>All</Btn>
                 {selRec.size > 0 && <Btn sm kind="ghost" onClick={() => setSelRec(new Set())}>None</Btn>}
                 <Btn sm kind="primary" onClick={onFeedToQuote} disabled={busyFeed || busySync}
-                     title={selRec.size ? "Feed the checked rows into their own draft quote (spares / consumables grouped separately)" : "Feed all rows with a recommended qty > 0 into a draft quote"}>
-                  {busyFeed ? "…" : <>{Icon.doc} Feed to quote{selRec.size ? ` (${selRec.size})` : ""}</>}
+                     title={selRec.size ? "Push the checked rows to a NEW draft quote (spares / consumables grouped separately)" : "Push all rows with a recommended qty > 0 to a NEW draft quote"}>
+                  {busyFeed ? "…" : <>{Icon.doc} Push to quote{selRec.size ? ` (${selRec.size})` : ""}</>}
                 </Btn>
                 <Btn sm kind="ghost" onClick={() => onExportRecommended("csv")}>CSV</Btn>
                 <Btn sm kind="ghost" onClick={() => onExportRecommended("tsv")}>TSV</Btn>
@@ -897,7 +898,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                     { label: "Max", cls: "r", title: "Suggested maximum stock — auto from installed qty + type" },
                     { label: "Recommended", cls: "r" },
                     { label: "Priority" }, { label: "Type" }, { label: "Customer Part No" },
-                    { label: "Lead Time" }, { label: "Remarks" }, { label: "Quote Ref" }, { label: "PO Ref" },
+                    { label: "Lead Time" }, { label: "Remarks" },
                   ].map((h, i) => (
                     <th key={i} className={h.cls || ""} title={h.title}
                         style={{ ...(h.style || {}), position: "sticky", top: 0, zIndex: 2, background: "var(--paper-3)" }}>
@@ -940,8 +941,6 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                       <td><input className="input mono" value={r.customer_part_no || ""} onChange={(e) => onRecEdit(r.id, "customer_part_no", e.target.value)} style={{ height: 26, fontSize: 11.5, padding: "0 6px", minWidth: 120 }} /></td>
                       <td><input className="input mono" value={r.lead_time_days || ""} onChange={(e) => onRecEdit(r.id, "lead_time_days", e.target.value)} style={{ height: 26, fontSize: 11.5, padding: "0 6px", width: 90 }} /></td>
                       <td><input className="input mono" value={r.remarks || ""} onChange={(e) => onRecEdit(r.id, "remarks", e.target.value)} style={{ height: 26, fontSize: 11.5, padding: "0 6px", minWidth: 120 }} /></td>
-                      <td className="mono-sm" style={{ color: "var(--ink-3)" }}>{r.quote_ref || ""}</td>
-                      <td className="mono-sm" style={{ color: "var(--ink-3)" }}>{r.po_ref || ""}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -42,8 +42,22 @@ export default async function handler(req, res) {
     if (head.error) throw new Error(head.error.message);
     if (!head.data) return json(res, 404, { error: { message: "Matrix not found" } });
     const matrix = head.data;
-    if (!matrix.customer_id) {
+    // Customer resolves from the matrix, or a caller-supplied fallback so a
+    // matrix created without a linked customer can still feed a quote (the
+    // frontend offers a picker). This is the usual cause of the "Bad Request".
+    const bodyCustomerId = typeof body.customer_id === "string" && body.customer_id ? body.customer_id : null;
+    const customerId = matrix.customer_id || bodyCustomerId;
+    if (!customerId) {
       return json(res, 400, { error: { message: "Set a customer on the spare matrix before feeding a quote." } });
+    }
+    // A caller-supplied fallback customer MUST belong to this tenant — never
+    // trust a raw body customer_id, or a quote could reference another tenant's
+    // customer. The matrix's own customer_id is already tenant-scoped.
+    if (!matrix.customer_id && bodyCustomerId) {
+      const chk = await svc.from("customers").select("id")
+        .eq("tenant_id", ctx.tenantId).eq("id", bodyCustomerId).maybeSingle();
+      if (chk.error) throw new Error(chk.error.message);
+      if (!chk.data) return json(res, 400, { error: { message: "Selected customer not found in this tenant." } });
     }
 
     // Recommended rows worth quoting.
@@ -111,14 +125,14 @@ export default async function handler(req, res) {
       let validityDays = 30;
       const cust = await svc.from("customers")
         .select("currency, default_quote_validity_days")
-        .eq("tenant_id", ctx.tenantId).eq("id", matrix.customer_id).maybeSingle();
+        .eq("tenant_id", ctx.tenantId).eq("id", customerId).maybeSingle();
       if (!cust.error && cust.data) {
         if (cust.data.currency) currency = cust.data.currency;
         if (cust.data.default_quote_validity_days != null) validityDays = Number(cust.data.default_quote_validity_days);
       }
       quoteNumber = await generateQuoteNumber(svc, ctx.tenantId);
       const insertPayload = {
-        tenant_id: ctx.tenantId, customer_id: matrix.customer_id, opportunity_id: null,
+        tenant_id: ctx.tenantId, customer_id: customerId, opportunity_id: null,
         source_matrix_id: id, quote_number: quoteNumber, version: 1, status: "DRAFT", currency,
         ...totals, validity_days: validityDays, expires_at: null,
         notes: (groupRaw !== "all" ? (groupRaw.charAt(0).toUpperCase() + groupRaw.slice(1) + " — ") : "") + "spares for " + (matrix.name || matrix.project_name || "matrix"),
@@ -152,11 +166,12 @@ export default async function handler(req, res) {
     const linesUp = await svc.from("quote_lines").insert(lineRows).select("*");
     if (linesUp.error) throw new Error(linesUp.error.message);
 
-    // Link the fed recommended rows back to the quote.
+    // Link the fed recommended rows back to the quote (quote_id only; the
+    // quote_ref/po_ref columns are being retired from the matrix UI).
     const fedIds = feedRows.map((r) => r.id).filter(Boolean);
     if (fedIds.length) {
       const back = await svc.from("recommended_spares")
-        .update({ quote_id: quote.id, quote_ref: quoteNumber, updated_at: new Date().toISOString() })
+        .update({ quote_id: quote.id, updated_at: new Date().toISOString() })
         .eq("tenant_id", ctx.tenantId).eq("matrix_id", id).in("id", fedIds);
       if (back.error) throw new Error(back.error.message);
     }

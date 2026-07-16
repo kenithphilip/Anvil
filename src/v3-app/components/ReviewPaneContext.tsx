@@ -8,7 +8,11 @@
 //   - status: "pending" | "confirmed" | "flagged" per field path
 //   - confirmAll(paths): bulk "mark all correct"
 //   - submitCorrection(...): persist an operator correction to
-//     /api/docai/correction (writes learned_corrections + rlhf)
+//     /api/docai/correction (writes extraction_corrections + rlhf_feedback,
+//     and promotes into customer_field_overrides after two matching values,
+//     which primes the next extraction). NOTE: the confirmed/flagged STATUS is
+//     local-only and is not persisted or learned from — only a typed corrected
+//     value feeds the loop.
 //   - config (extractionRunId, canCorrect) the provider is given once,
 //     read by every FieldRow without prop drilling.
 //

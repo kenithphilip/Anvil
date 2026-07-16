@@ -49,7 +49,13 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return json(res, 405, { error: { message: "Method not allowed" } });
   try {
     const ctx = await resolveContext(req);
-    requirePermission(ctx, "approve");
+    // Typing the correct extracted value is an edit, not an approval: any
+    // line-editor (write) may persist a correction. Previously this required
+    // "approve", so a plain operator's recon-cell edits + Review corrections
+    // were silently rejected (the recon EditableCell fires this on blur). The
+    // downstream promotion into customer_field_overrides still needs TWO
+    // matching corrections, which remains the safety bar on the learning loop.
+    requirePermission(ctx, "write");
     const body = await readBody(req);
     if (!body?.extraction_run_id || !body?.field_path) {
       return json(res, 400, { error: { message: "extraction_run_id and field_path required" } });

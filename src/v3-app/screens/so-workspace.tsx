@@ -90,6 +90,10 @@ const WiredSOWorkspace = () => {
   const orderId = hashQuery.get("id");
   const initialTab = hashQuery.get("tab") || "recon";
   const [tab, setTab] = u(initialTab);
+  // When the operator clicks a flagged field in the recon provenance card, we
+  // jump to the Review tab AND preselect that field so they land on the exact
+  // row to correct (no hunting across tabs).
+  const [reviewFocusField, setReviewFocusField] = u<string | null>(null);
 
   e(() => {
     if (!orderId) { setOrder({ data: null, loading: false, error: new Error("no order id in URL") }); return; }
@@ -1429,21 +1433,23 @@ const WiredSOWorkspace = () => {
   // counts, and an expandable list of every flagged field so the
   // operator knows where to look before approving.
   const ExtractionQualityCard: React.FC = () => {
-    const [open, setOpen] = React.useState(false);
     if (!extractionRun) return null;
     const s = extractionIndex.summary;
     const issues: IssueEntry[] = extractionIndex.allIssues;
     const confPct = s.confidence != null ? Math.round(s.confidence * 100) + "%" : "—";
     const sevChip = (sev: string) =>
       <Chip k={sev === "error" ? "bad" : sev === "warn" ? "warn" : "ghost"}>{sev}</Chip>;
+    // Jump to the Review tab and land on a specific flagged field to correct it.
+    const openInReview = (field?: string) => { if (field) setReviewFocusField(field); setTab("review"); };
     return (
       <Card
         title="Extraction quality"
         eyebrow="docai provenance · validators · anomalies"
         right={issues.length
-          ? <Btn sm kind="ghost" onClick={() => setOpen((v) => !v)}>
-              {open ? "hide" : `${issues.length} flagged field${issues.length === 1 ? "" : "s"}`}
-            </Btn>
+          ? <span className="row" style={{ gap: 6, alignItems: "center" }}>
+              <Chip k="warn">{issues.length} flagged</Chip>
+              <Btn sm kind="ghost" onClick={() => openInReview()} title="Review + correct these fields against the source document">Open in Review</Btn>
+            </span>
           : <Chip k="good">clean</Chip>}
       >
         <KPIRow cols={4}>
@@ -1457,13 +1463,23 @@ const WiredSOWorkspace = () => {
                d={`${s.anomalies.error} blocker${s.anomalies.error === 1 ? "" : "s"}`}
                dKind={s.anomalies.error ? "down" : ""} />
         </KPIRow>
-        {open && issues.length > 0 && (
+        {/* Flagged fields are ALWAYS visible now (no collapse), so the operator
+            sees where to look before approving. Each Field is a shortcut that
+            jumps to the Review tab and preselects that field to correct. */}
+        {issues.length > 0 && (
           <table className="tbl">
             <thead><tr><th>Field</th><th>Check</th><th>Severity</th><th>Detail</th></tr></thead>
             <tbody>
               {issues.slice(0, 100).map((iss, n) => (
                 <tr key={iss.field + ":" + iss.code + ":" + n}>
-                  <td className="mono-sm">{iss.field}</td>
+                  <td>
+                    <button type="button" className="link-btn mono-sm"
+                            style={{ background: "none", border: "none", padding: 0, color: "var(--accent, var(--ink-1))", cursor: "pointer", textDecoration: "underline", textAlign: "left" }}
+                            onClick={() => openInReview(iss.field)}
+                            title="Open this field in Review to verify / correct it">
+                      {iss.field}
+                    </button>
+                  </td>
                   <td className="mono-sm">{iss.kind === "anomaly" ? "anomaly" : "validator"} · {iss.code}</td>
                   <td>{sevChip(iss.severity)}</td>
                   <td>{iss.message || "—"}</td>
@@ -2098,7 +2114,12 @@ const WiredSOWorkspace = () => {
             docId={sourceDocId}
             evidenceByField={o.evidence_by_field || {}}
             extractionRunId={o.preflight_payload?.extraction_run_id || null}
-            canCorrect={canApprove}
+            // Any line-editor (so.write) can type + persist a correction; the
+            // recon per-line cells already allow this, so the Review corrector
+            // should match (both feed the same per-customer learning loop).
+            canCorrect={canWrite}
+            focusField={reviewFocusField}
+            onFocusHandled={() => setReviewFocusField(null)}
           />
         )}
 

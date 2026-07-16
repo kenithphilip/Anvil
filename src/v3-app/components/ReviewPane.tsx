@@ -467,12 +467,26 @@ interface ReviewPaneProps {
   // current role may persist corrections (approve permission).
   extractionRunId?: string | null;
   canCorrect?: boolean;
+  // Deep-link target: when set (e.g. from the recon provenance card), the pane
+  // preselects + scrolls to this field path so the operator lands on the exact
+  // row to correct. onFocusHandled lets the parent clear it after consumption.
+  focusField?: string | null;
+  onFocusHandled?: () => void;
 }
 
-const ReviewPaneInner: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) => {
+const ReviewPaneInner: React.FC<ReviewPaneProps> = ({ docId, evidenceByField, focusField, onFocusHandled }) => {
   const doc = useSignedDoc(docId);
   const evidenceRows = useDocumentEvidence(docId);
   const { counts, confirmAll, selectedField, setSelectedField, setFieldStatus } = useReviewPaneSelection();
+
+  // Deep-link: when the parent passes a focusField (e.g. the operator clicked a
+  // flagged field on the recon provenance card), preselect it so its row scrolls
+  // into view and highlights, then clear the parent's pointer.
+  useEffect(() => {
+    if (!focusField) return;
+    setSelectedField(focusField);
+    onFocusHandled?.();
+  }, [focusField, setSelectedField, onFocusHandled]);
 
   // Group + stable-sort fields once per render. Sorted alphabetically
   // within each group so the operator can predict where a field will

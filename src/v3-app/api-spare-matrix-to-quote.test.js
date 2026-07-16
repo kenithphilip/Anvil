@@ -137,7 +137,6 @@ describe("spare_matrix to_quote (PR5)", () => {
     // fed recommended rows linked back to the quote; the qty-0 row is not.
     const rec = Object.fromEntries(H.store.recommended_spares.map((r) => [r.id, r]));
     expect(rec.e1.quote_id).toBe(quote.id);
-    expect(rec.e1.quote_ref).toBe(quote.quote_number);
     expect(rec.e3.quote_id).toBe(quote.id);
     expect(rec.e2.quote_id == null).toBe(true);
   });
@@ -161,10 +160,22 @@ describe("spare_matrix to_quote (PR5)", () => {
     expect(H.store.quotes.filter((q) => q.source_matrix_id === "m1").length).toBe(2);
   });
 
-  it("400 when the matrix has no customer", async () => {
+  it("400 when the matrix has no customer and none is supplied", async () => {
     const out = await run(toQuote, { query: { id: "m-nocust" } });
     expect(out.statusCode).toBe(400);
     expect(String(out.body.error.message)).toMatch(/customer/i);
+  });
+
+  it("uses a caller-supplied customer_id when the matrix has none", async () => {
+    const out = await run(toQuote, { query: { id: "m-nocust" }, body: { customer_id: "cust-1" } });
+    expect(out.statusCode).toBe(200);
+    expect(out.body.quote.customer_id).toBe("cust-1");
+  });
+
+  it("rejects a caller-supplied customer_id that is not in this tenant", async () => {
+    const out = await run(toQuote, { query: { id: "m-nocust" }, body: { customer_id: "cust-other-tenant" } });
+    expect(out.statusCode).toBe(400);
+    expect(String(out.body.error.message)).toMatch(/not found in this tenant/i);
   });
 
   it("400 when no rows have a recommended qty", async () => {

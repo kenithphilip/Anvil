@@ -34,6 +34,7 @@ import {
   calibrateStageProbabilities, explodePipelineThroughBom,
 } from "../_lib/inventory/pipeline-demand.js";
 import { planForItem, addWeeks } from "../_lib/inventory/net-req.js";
+import { reliabilityFloor } from "../_lib/inventory/reliability.js";
 
 // Phase 3.5: per-class default service level when item.service_level
 // is null. Mirrors docs/INVENTORY_PLANNING_DESIGN.md section 2.9.
@@ -113,8 +114,9 @@ const DEFAULT_HORIZON = 12;
 // History assembly: walk orders + order_schedule_lines and bucket
 // the consumed qty per (part_no, week_start). Returns
 // Map<part_no, Map<weekKey, qty>>.
-const buildHistory = async (svc, tenantId, parts) => {
+const buildHistory = async (svc, tenantId, parts, reliabilityOn = false) => {
   const out = new Map(parts.map((p) => [p, new Map()]));
+  const failureTotals = new Map(); // part_no -> total replaced_qty over the window (step 4b)
   // Use schedule_lines (relational, structured) when present;
   // otherwise the engine treats the order's line_items JSONB.
   const sched = await svc.from("order_schedule_lines")
@@ -130,7 +132,31 @@ const buildHistory = async (svc, tenantId, parts) => {
     if (!map) continue;
     map.set(wk, (map.get(wk) || 0) + (Number(row.scheduled_qty) || 0));
   }
-  return out;
+  // Step 4b (GATED): blend field consumption from failure_events into the SAME
+  // per-part weekly map (byte-for-byte the schedule bucketing), and accumulate
+  // per-part replacement totals for the reliability floor. Off by default, so
+  // buildHistory returns the exact schedule-only history for existing tenants.
+  // See docs/RELIABILITY_DEMAND_DESIGN.md.
+  if (reliabilityOn) {
+    const fe = await svc.from("failure_events")
+      .select("part_no, replaced_qty, failed_at, event_type")
+      .eq("tenant_id", tenantId)
+      .gte("failed_at", addWeeks(isoWeekStart(new Date()), -HISTORY_WEEKS))
+      .in("part_no", parts)
+      .in("event_type", ["breakdown", "replacement"]); // consumption events only
+    if (fe.error) throw new Error("history/failure_events: " + fe.error.message);
+    for (const row of (fe.data || [])) {
+      const qty = Number(row.replaced_qty) || 0;
+      if (qty <= 0) continue; // no part replaced -> pure reliability signal, no demand
+      const wk = isoWeekStart(row.failed_at);
+      if (!wk) continue;
+      const map = out.get(row.part_no);
+      if (!map) continue;
+      map.set(wk, (map.get(wk) || 0) + qty);
+      failureTotals.set(row.part_no, (failureTotals.get(row.part_no) || 0) + qty);
+    }
+  }
+  return { history: out, failureTotals };
 };
 
 // -------------------------------------------------------------------
@@ -233,6 +259,9 @@ const planTenant = async (svc, tenantId) => {
   if (settings.error) throw new Error("settings: " + settings.error.message);
   const cfg = settings.data;
   if (!cfg.inventory_planning_enabled) return { tenant_id: tenantId, skipped: true };
+  // Step 4b master switch (default false). Gates the failure_events consumption
+  // blend + the reliability safety-stock floor, so this feature lands dark.
+  const reliabilityOn = !!cfg.reliability_demand_enabled;
 
   const items = await svc.from("item_master")
     .select("part_no, item_type, default_supplier_id, service_level, holding_cost_pct_override, coverage_period_weeks, default_lead_days, moq, pack_size, rounding_rule, purchase_price, demand_class, pinned_model, conformal_coverage, conformal_method_override")
@@ -269,7 +298,7 @@ const planTenant = async (svc, tenantId) => {
   const horizonWeeks = cfg.inventory_forecast_horizon_weeks || DEFAULT_HORIZON;
   const today = isoWeekStart(new Date());
   const weeks = Array.from({ length: horizonWeeks }, (_, i) => addWeeks(today, i));
-  const history = await buildHistory(svc, tenantId, parts);
+  const { history, failureTotals } = await buildHistory(svc, tenantId, parts, reliabilityOn);
   const calibration = await buildStageCalibration(svc, tenantId);
   const pipeline = await buildPipeline(svc, tenantId, weeks, calibration);
 
@@ -381,6 +410,16 @@ const planTenant = async (svc, tenantId) => {
     // Phase 3.5: project-equivalent floor reads from
     // equipment_installed_parts.recommended_qty_180d (doc 2.3.3).
     const projectEquivalentQty = await projectEquivalentForPart(svc, tenantId, item.part_no);
+    // Step 4b (gated): reliability safety-stock floor from field failures. 0 when
+    // the flag is off, so this leaves the max() unchanged for existing tenants.
+    const relFloor = reliabilityOn
+      ? reliabilityFloor({
+          totalReplacedQty: failureTotals.get(item.part_no) || 0,
+          windowWeeks: HISTORY_WEEKS,
+          leadTimeWeeks,
+          alpha,
+        })
+      : 0;
     const ss = safetyStock({
       alpha,
       demandMean: baselineMean,
@@ -390,6 +429,7 @@ const planTenant = async (svc, tenantId) => {
       demandClass: cls.class,
       avg4w: histArr.slice(-4).reduce((s, v) => s + v, 0) / 4,
       projectEquivalentQty,
+      reliabilityFloor: relFloor,
     });
 
     // Bet 3: conformal-prediction safety stock. Replaces the
@@ -443,8 +483,11 @@ const planTenant = async (svc, tenantId) => {
       cpSafetyStock = cpInfo.calibration_residuals_count < 26
         ? Math.max(cpBand, ss.breakdown.stat_ss)
         : cpBand;
-      // Always retain the project floor as outermost lower bound.
-      cpSafetyStock = Math.max(cpSafetyStock, ss.breakdown.project_floor);
+      // Always retain the project floor + reliability floor (step 4b) as
+      // outermost lower bounds, so both apply for conformal tenants too. Both
+      // are 0 unless their feature is on, so this is unchanged for existing
+      // tenants. See docs/RELIABILITY_DEMAND_DESIGN.md (override-safe).
+      cpSafetyStock = Math.max(cpSafetyStock, ss.breakdown.project_floor, ss.breakdown.reliability_floor);
       // Stamp the per-period interval on the forecast rows. The
       // band on the forecast chart should be per-period, not
       // LTD-cumulative.

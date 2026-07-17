@@ -203,6 +203,128 @@ const EquipTree = ({ tree, expanded, onToggle, onSelect, selected, onAddChild, o
 };
 
 // Right pane: edit form for the selected gun + installed parts table.
+// Reliability step 4a: in-field failure / replacement event log for one asset
+// instance. Additive -- reads/writes only failure_events via AnvilBackend.
+const EVENT_TYPE_OPTIONS = ["breakdown", "replacement", "pm", "inspection"];
+// LOCAL calendar date (not UTC) -- toISOString().slice(0,10) would pre-fill
+// yesterday for 00:00-05:30 IST (night shift), silently misdating the event.
+const localToday = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const emptyEventForm = () => ({
+  failed_at: localToday(),
+  event_type: "breakdown",
+  part_no: "",
+  failure_mode: "",
+  replaced_qty: "",
+  downtime_hours: "",
+  notes: "",
+});
+
+const AssetFailureEvents = ({ equipmentId, parts }) => {
+  const events = useFetch(
+    () => (AnvilBackend?.failureEvents?.list?.({ equipment_id: equipmentId }) || Promise.resolve({ events: [] })),
+    [equipmentId]
+  );
+  const [form, setForm] = useState(emptyEventForm);
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const rows = events.data?.events || events.data || [];
+  const partOptions: string[] = Array.from(new Set(((parts || []) as any[]).map((p) => String(p.part_no || "")).filter(Boolean)));
+  const fmtDate = (s) => (s ? String(s).slice(0, 10) : "");
+
+  const log = async () => {
+    setBusy(true);
+    try {
+      await AnvilBackend.failureEvents.create({
+        equipment_id: equipmentId,
+        failed_at: form.failed_at || null,
+        event_type: form.event_type,
+        part_no: form.part_no || null,
+        failure_mode: form.failure_mode || null,
+        replaced_qty: form.replaced_qty !== "" ? Number(form.replaced_qty) : null,
+        downtime_hours: form.downtime_hours !== "" ? Number(form.downtime_hours) : null,
+        notes: form.notes || null,
+      });
+      window.notifySuccess?.("Logged", "Failure / replacement event recorded.");
+      setForm(emptyEventForm());
+      events.reload();
+    } catch (err) {
+      window.notifyError?.(err.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const efld = (label: string, ctrl: React.ReactNode, span?: boolean) => (
+    <label style={{ display: "flex", flexDirection: "column", gap: 3, ...(span ? { gridColumn: "1 / -1" } : {}) }}>
+      <span className="mono-sm" style={{ color: "var(--ink-3)", fontSize: 10 }}>{label}</span>
+      {ctrl}
+    </label>
+  );
+
+  return (
+    <Card title="Failures & replacements" eyebrow={`${rows.length} event${rows.length === 1 ? "" : "s"}`} flush>
+      <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--hairline-2)", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, alignItems: "end" }}>
+        {efld("Date", (
+          <input className="input" type="date" value={form.failed_at} onChange={(e) => set("failed_at", e.target.value)} aria-label="Event date" />
+        ))}
+        {efld("Type", (
+          <select className="select" value={form.event_type} onChange={(e) => set("event_type", e.target.value)} aria-label="Event type">
+            {EVENT_TYPE_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        ))}
+        {efld("Part no", (
+          <>
+            <input className="input mono" list="fe-part-options" value={form.part_no} onChange={(e) => set("part_no", e.target.value)} placeholder="(optional)" aria-label="Event part no" />
+            <datalist id="fe-part-options">{partOptions.map((p) => <option key={p} value={p} />)}</datalist>
+          </>
+        ))}
+        {efld("Failure mode", (
+          <input className="input" value={form.failure_mode} onChange={(e) => set("failure_mode", e.target.value)} placeholder="(optional)" aria-label="Failure mode" />
+        ))}
+        {efld("Replaced qty", (
+          <input className="input mono" type="number" min="0" step="1" value={form.replaced_qty} onChange={(e) => set("replaced_qty", e.target.value)} aria-label="Replaced qty" />
+        ))}
+        {efld("Downtime (h)", (
+          <input className="input mono" type="number" min="0" step="0.1" value={form.downtime_hours} onChange={(e) => set("downtime_hours", e.target.value)} aria-label="Downtime hours" />
+        ))}
+        {efld("Notes", (
+          <input className="input" value={form.notes} onChange={(e) => set("notes", e.target.value)} placeholder="(optional)" aria-label="Event notes" />
+        ), true)}
+        <div style={{ gridColumn: "1 / -1" }}>
+          <Btn sm kind="primary" disabled={busy} onClick={log}>{busy ? "Logging…" : "Log event"}</Btn>
+        </div>
+      </div>
+      {rows.length === 0 ? (
+        <div className="body" style={{ padding: 14, textAlign: "center", color: "var(--ink-3)" }}>
+          No failures or replacements logged for this asset yet.
+        </div>
+      ) : (
+        <table className="tbl">
+          <thead><tr>
+            <th>Date</th><th>Type</th><th>Part</th><th>Mode</th><th className="r">Qty</th><th className="r">Downtime</th><th>Notes</th>
+          </tr></thead>
+          <tbody>
+            {rows.map((ev) => (
+              <tr key={ev.id}>
+                <td className="mono-sm">{fmtDate(ev.failed_at)}</td>
+                <td>{ev.event_type}</td>
+                <td className="mono-sm">{ev.part_no || "—"}</td>
+                <td>{ev.failure_mode || "—"}</td>
+                <td className="r mono-sm">{ev.replaced_qty != null ? ev.replaced_qty : "—"}</td>
+                <td className="r mono-sm">{ev.downtime_hours != null ? ev.downtime_hours : "—"}</td>
+                <td style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.notes || ""}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Card>
+  );
+};
+
 const EquipmentDetail = ({ node, customers, locations, onSave, onDelete, onCancel, busy }) => {
   const isAsset = node?.kind === "asset";
   const seedRow = isAsset ? node.row : null;
@@ -470,6 +592,8 @@ const EquipmentDetail = ({ node, customers, locations, onSave, onDelete, onCance
           </table>
         )}
       </Card>
+
+      {seedRow?.id && <AssetFailureEvents equipmentId={seedRow.id} parts={parts} />}
     </div>
   );
 };

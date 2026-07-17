@@ -259,6 +259,7 @@ import spareMatrixById         from "./spare_matrix/[id].js";
 import spareMatrixRecomputeRec from "./spare_matrix/recompute_recommended.js";
 import spareMatrixRecommended  from "./spare_matrix/recommended.js";
 import spareMatrixToQuote      from "./spare_matrix/to_quote.js";
+import failureEventsIndex      from "./failure_events/index.js";
 
 import tallyAmend              from "./tally/amend.js";
 import tallyMasters            from "./tally/masters.js";
@@ -1003,6 +1004,7 @@ const STATIC_ROUTES = {
   "/spare_matrix/opportunities":    spareMatrixOpportunities,
   "/spare_matrix/recommend":        spareMatrixRecommend,
   "/spare_matrix":                  spareMatrixIndex,
+  "/failure_events":                failureEventsIndex,
 
   "/tally/amend":                   tallyAmend,
   "/tally/masters":                 tallyMasters,

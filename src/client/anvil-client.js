@@ -1338,6 +1338,13 @@
     toQuote: async (id, payload) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/to_quote", { method: "POST", body: payload || {} }),
   };
 
+  // Reliability step 4a: in-field failure / replacement event stream, keyed to
+  // an asset instance (equipment_id). list({ equipment_id | part_no }).
+  const failureEvents = {
+    list: async (params) => apiFetch("/api/failure_events" + (params && Object.keys(params).length ? "?" + new URLSearchParams(params).toString() : "")),
+    create: async (payload) => apiFetch("/api/failure_events", { method: "POST", body: payload || {} }),
+  };
+
   const sales = {
     listLeads: async (params) => apiFetch("/api/sales/leads" + (params ? "?" + new URLSearchParams(params).toString() : "")),
     createLead: async (payload) => apiFetch("/api/sales/leads", { method: "POST", body: payload }),
@@ -1737,6 +1744,7 @@
     salesHistory,
     security,
     spareMatrix,
+    failureEvents,
     admin,
     sales,
     service,

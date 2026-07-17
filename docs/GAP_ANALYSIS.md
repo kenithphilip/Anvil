@@ -1,7 +1,7 @@
 # Anvil, Gap Analysis and Roadmap
 
 Date: 2026-05-04
-Scope: codebase audit of `Anvil-main`, 11-company competitive scan, gap matrix, prioritized roadmap, consolidation plan for Smartbase / Korso / Lumari.
+Scope: codebase audit of `Anvil-main`, 14-company competitive scan (11 original + 3 added 2026-07-17: Docket, Faction, Canals), gap matrix, prioritized roadmap, consolidation plan for Smartbase / Korso / Lumari.
 
 > **Superseded.** This is the original internal gap analysis. The current
 > source of truth, including a competitor-mapped 18-month plan and the
@@ -324,6 +324,82 @@ Integrations: not surfaced.
 Maturity: YC S22, hiring fullstack + applied-AI roles.
 
 Relevance to Anvil: **none for QTC.** Raven is a different problem class (plant-floor OEE / downtime / safety) — not quote-to-cash. Including it as a competitor is a category error from the user's reference list. The only interesting overlap is operator-assist UI patterns, which Anvil could borrow for the v3 home/inbox screens.
+
+---
+
+### Additions — 2026-07-17
+
+Three companies added for future reference. Detail below is from each company's own site (limited public depth; `?` in the matrix = not surfaced).
+
+### 3.12 Docket — `docket.io`
+
+One-liner: "From customer request to quote, automated."
+
+ICP: Manufacturing sales + application/technical-engineering teams — industrial automation, electrical power, building products, high-tech electronics, medical/life sciences.
+
+Capability surface: natural-language product configuration matched against catalogs + technical specs; **real-time engineering validation against compliance standards** (ATEX, SIL, PED, UL, IEC, FDA, ISO 13485, EU MDR); automated proposal/quote generation from validated configs; reasons over technical drawings, application notes, and regulatory documents rather than just querying a DB.
+
+Integrations: ERPs, CRMs, PLM systems, technical document repositories (specific systems not named on site).
+
+Differentiators: **compliance-aware CPQ with engineering validation** — collapses quote cycles from weeks to minutes with compliance-first recommendations.
+
+Maturity: US (Palo Alto); positioned as an always-on AI agent for manufacturing sales.
+
+Relevance to Anvil: overlaps the **quote / product-configuration** surface and BOM-accuracy-at-quote-time. Docket's edge over Anvil: standards-validated CPQ is a real capability Anvil lacks. Docket's gap vs Anvil: it stops at the quote — no forecast→BOM preorder, no procurement / logistics / finance chain, no India compliance rails. Treat compliance-CPQ as a **feature gap to note**, not a wedge threat.
+
+### 3.13 Faction — `faction.ai`
+
+One-liner: "AI for the most ambitious manufacturers and distributors" / "Quote faster. Source smarter. Get paid."
+
+ICP: mid-market to enterprise distributors + manufacturers.
+
+Capability surface: quoting (email/PDF → quote), order entry (multi-format → ERP), **dynamic pricing optimization**, product-data enrichment + standardization, **procurement automation (PO generation + reconciliation)**, **AP/AR automation**, AI chatbot for product search + order tracking, **24/7 voice AI agents on live ERP data**. Claims 95%+ product-match accuracy, ~12% gross-margin expansion.
+
+Integrations: **Epicor, SAP, Oracle NetSuite, Infor.**
+
+Differentiators: breadth — the widest full-chain automation in the set (quote → order → price → procure → AP/AR) with voice + live-ERP grounding.
+
+Maturity: US / global; polished multi-ERP positioning.
+
+Relevance to Anvil: **the most direct new full-QTC competitor.** It spans the same doc-in→action-out chain as Anvil AND adds dynamic pricing + AR ("get paid"), reaching into Anvil's pricing + finance-rails ambitions. Faction's gap vs Anvil: **reactive** procurement (PO gen + reconcile, no forecast→BOM cascade), and generic AP/AR (no Tally deep-reconcile, GST/e-invoice/e-way, TReDS, TDS/SAP-AP). Highest-priority new threat on the crowded cluster; does not touch the forecast→BOM wedge or the India rails.
+
+### 3.14 Canals — `canals.ai`
+
+One-liner: "AI That Keeps Material Moving."
+
+ICP: distributors, manufacturers, contractors in construction + industrial supply (electrical, plumbing, HVAC, mechanical, industrial/MRO, lumber, building materials); 100+ distributors claimed.
+
+Capability surface: sales-order entry + quote generation from emails/PDFs/**handwritten notes/voicemails**, touchless **AP** invoice processing, **PO + receipt tracking with discrepancy flagging**, **part-number conversion across product lists**, AI chatbot for customer inquiries. ML trained on industry complexity, **no templates / no per-customer setup**.
+
+Integrations: major ERPs (not individually named on site).
+
+Differentiators: template-free self-improving matching; multi-format intake incl. handwriting + voicemail; cross-catalog part-number conversion.
+
+Maturity: US / global; 100+ distributor logos claimed.
+
+Relevance to Anvil: overlaps order-entry + RFQ→quote, PO/receipt discrepancy flagging (mirrors Anvil's logistics receiving / GRN), and notably **part-number conversion**, which overlaps Anvil's `item_master` matcher — reinforcing that cross-catalog matching is commoditizing. Canals' gap vs Anvil: reactive order processing, no forecast, distribution/construction vertical (not manufacturer BOM/spares depth), no India rails.
+
+#### New-entrants at a glance
+
+Compact matrix for the 3 additions (same legend as §5: **F** full · **P** partial · **N** none · **?** not surfaced). Kept separate from the 11-column §5 tables since public detail is thin.
+
+| Dimension                              | Anvil | Docket | Faction | Canals |
+|----------------------------------------|-------|--------|---------|--------|
+| Multi-format intake (email/PDF)        | F     | F      | F       | F      |
+| Handwritten / voicemail intake         | P     | ?      | ?       | F      |
+| Voice AI agent                         | N     | N      | F       | P      |
+| SKU / part-number matching             | F     | F      | F       | F      |
+| AI quote drafting                      | F     | F      | F       | F      |
+| CPQ engineering / compliance validation| N     | **F**  | N       | N      |
+| Order entry → ERP                      | F     | ?      | F       | F      |
+| Dynamic pricing optimization           | P     | N      | **F**   | N      |
+| Supplier PO / procurement              | F     | N      | F       | P      |
+| **Forecast→BOM preorder (the wedge)**  | **F** | N      | N       | N      |
+| AP / AR / "get paid"                   | F     | N      | F       | P      |
+| **India rails (Tally / GST / e-invoice)** | **F** | N   | N       | N      |
+| Named ERP breadth                      | 16+Tally | unnamed | Epicor/SAP/NetSuite/Infor | unnamed |
+
+The two bold rows are the ones no entrant contests. Docket's bold cell (compliance-CPQ) is the one capability Anvil should note as a gap.
 
 ---
 

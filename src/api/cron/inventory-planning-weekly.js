@@ -35,6 +35,7 @@ import {
 } from "../_lib/inventory/pipeline-demand.js";
 import { planForItem, addWeeks } from "../_lib/inventory/net-req.js";
 import { reliabilityFloor } from "../_lib/inventory/reliability.js";
+import { denseHistory, sparseHistory } from "../_lib/inventory/history.js";
 
 // Phase 3.5: per-class default service level when item.service_level
 // is null. Mirrors docs/INVENTORY_PLANNING_DESIGN.md section 2.9.
@@ -262,6 +263,10 @@ const planTenant = async (svc, tenantId) => {
   // Step 4b master switch (default false). Gates the failure_events consumption
   // blend + the reliability safety-stock floor, so this feature lands dark.
   const reliabilityOn = !!cfg.reliability_demand_enabled;
+  // Dense-history cadence fix (default false). Gates the corrected weekly-grid
+  // assembly (fixes Croston/SBA/TSB interval distortion). Lands dark -- see
+  // migration 176. Lowers forecasts for intermittent parts, so pilot first.
+  const denseHistoryOn = !!cfg.inventory_dense_history_enabled;
 
   const items = await svc.from("item_master")
     .select("part_no, item_type, default_supplier_id, service_level, holding_cost_pct_override, coverage_period_weeks, default_lead_days, moq, pack_size, rounding_rule, purchase_price, demand_class, pinned_model, conformal_coverage, conformal_method_override")
@@ -374,10 +379,11 @@ const planTenant = async (svc, tenantId) => {
   for (const item of items.data) {
     // Convert history map to chronological array.
     const histMap = history.get(item.part_no) || new Map();
-    const histKeys = Array.from(histMap.keys()).sort();
-    const histArr = histKeys.map((k) => histMap.get(k) || 0);
-    // Pad to HISTORY_WEEKS if shorter (zeros fill).
-    while (histArr.length < HISTORY_WEEKS) histArr.unshift(0);
+    // Dense weekly grid (real interior/trailing zeros) when enabled; else the
+    // original sparse-then-left-pad path (migration 176). Both length HISTORY_WEEKS.
+    const histArr = denseHistoryOn
+      ? denseHistory(histMap, today, HISTORY_WEEKS)
+      : sparseHistory(histMap, HISTORY_WEEKS);
 
     const cls = classifyDemand(histArr);
     const forecaster = item.pinned_model
@@ -579,7 +585,10 @@ const planTenant = async (svc, tenantId) => {
     // which is what NEXCP / Split CP need). Idempotent on the
     // (tenant, part, week_start) unique key.
     if (conformalOn && histArr.length > 0) {
-      const lastWeekKey = histKeys[histKeys.length - 1];
+      // Newest-week key aligned with histArr[last], layout-aware: under the dense
+      // grid the last slot is `today`; under the sparse path it is the max map key
+      // (identical to the original sorted-keys tail, which moved into history.js).
+      const lastWeekKey = denseHistoryOn ? today : (Array.from(histMap.keys()).sort().pop() || null);
       const lastActual = histArr[histArr.length - 1];
       if (lastWeekKey) {
         await svc.from("conformal_calibration_residuals").upsert(

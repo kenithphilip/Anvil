@@ -331,6 +331,15 @@ describe("Bet 3 - source contract", () => {
     expect(cronSrc).toMatch(/conformal_used/);
   });
 
+  it("step 4b reliability floor is folded into the conformal re-max (override-safe)", () => {
+    // Regression guard: the conformal path must re-max the reliability floor, not
+    // just the project floor -- otherwise the floor is silently dropped for
+    // tenants with BOTH inventory_conformal_enabled and reliability_demand_enabled.
+    expect(cronSrc).toMatch(/reliability_demand_enabled/);
+    expect(cronSrc).toMatch(/reliabilityFloor\(/);
+    expect(cronSrc).toMatch(/Math\.max\(cpSafetyStock,\s*ss\.breakdown\.project_floor,\s*ss\.breakdown\.reliability_floor\)/);
+  });
+
   it("planning cron writes a fresh residual on each run", () => {
     expect(cronSrc).toMatch(/conformal_calibration_residuals/);
     expect(cronSrc).toMatch(/upsert/);

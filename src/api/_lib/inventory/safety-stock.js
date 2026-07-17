@@ -96,7 +96,7 @@ export const ssProjectFloor = ({ avg4w, projectEquivalentQty }) => {
 // based on demand class.
 export const safetyStock = ({
   alpha, demandMean, demandSigma, leadTimeMean, leadTimeSigma,
-  demandClass, avg4w = 0, projectEquivalentQty = 0,
+  demandClass, avg4w = 0, projectEquivalentQty = 0, reliabilityFloor = 0,
 }) => {
   const lt = ltdStats({ demandMean, demandSigma, leadTimeMean, leadTimeSigma });
   const useGamma = demandClass === "intermittent" || demandClass === "lumpy";
@@ -104,12 +104,18 @@ export const safetyStock = ({
     ? ssGamma({ alpha, ltdMean: lt.ltdMean, ltdSigma: lt.ltdSigma })
     : ssNormal({ alpha, ltdSigma: lt.ltdSigma });
   const floor = ssProjectFloor({ avg4w, projectEquivalentQty });
+  // Step 4b: a reliability floor (buffer for failure-arrival variability, from
+  // failure_events) is a third max() candidate. Defaults 0, so callers that do
+  // not pass it are unchanged. Non-double-counting: it only raises SS when it
+  // exceeds the statistical + project candidates. See RELIABILITY_DEMAND_DESIGN.md.
+  const relFloor = Math.max(0, Number(reliabilityFloor) || 0);
   return {
-    ss: Math.max(statSS, floor),
+    ss: Math.max(statSS, floor, relFloor),
     breakdown: {
       formula: useGamma ? "gamma_quantile" : "normal_z",
       stat_ss: statSS,
       project_floor: floor,
+      reliability_floor: relFloor,
       ltd_mean: lt.ltdMean,
       ltd_sigma: lt.ltdSigma,
       z: z(alpha),

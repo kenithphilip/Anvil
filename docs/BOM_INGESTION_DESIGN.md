@@ -51,7 +51,7 @@ tab is a capable BOM ingester. Salient behavior:
 | Engineering spec | `item_specifications` (drawing_no, material, gun_number, source_country, …) | `105_*.sql:302` |
 | Customer part numbers | `item_customer_parts` (customer ↔ part number) | `105_*.sql:345` |
 | Custom fields | `item_field_definitions` / `item_field_values` / `items_full_v` | `105_*.sql:380` |
-| Spare matrix | `spare_recommendations`, `installed_base`, `/api/spare_matrix/*` | `005_*.sql`, `src/api/spare_matrix/*` |
+| Spare matrix | `spare_recommendations`, `/api/spare_matrix/*` | `005_*.sql`, `src/api/spare_matrix/*` |
 | BOM API | `/api/bom` GET/POST/DELETE on `bill_of_materials` | `src/api/bom/index.js` |
 | Import UI | `src/v3-app/screens/bom-import.tsx` (multi-file XLSX/CSV, origin guess, diff) | `src/v3-app/screens/bom-import.tsx` |
 
@@ -482,8 +482,8 @@ build / verify / lint / test`).
 2. `item_type` default for imported parts - leave null, or map from
    level (top→`assembly`/`GUN`, leaf→`SPARE`/`COMPONENT`)? Tenant
    override via registry?
-3. Should `bom_assets` link to `installed_base.gun_model` (so installed
-   base + spare scoring align on the asset), or stay independent in v1?
+3. ~~Should `bom_assets` link to `installed_base.gun_model`?~~ Moot —
+   `installed_base` was dropped (mig 177, not derivable); `bom_assets` stays independent.
 4. Revision strategy: keep every revision as a distinct asset row
    (history), or overwrite in place? (Default proposed: keep, unique on
    `(asset_code, revision)`.)

@@ -386,11 +386,7 @@ begin
   -- Contracts (cascades to contract_lines).
   delete from contracts                where tenant_id = default_tenant and notes like 'Seed contract:%';
 
-  -- Installed base.
-  delete from installed_base           where tenant_id = default_tenant and notes in (
-    'MG Halol BIW.','MG Haryana.','Tata Pune.','NRD Plant 1+2.','NRD heavy cells.',
-    'RN India.','ATI fixture.','X3 launch fixture.','Globex DE.','日本工業 横浜.'
-  );
+  -- Installed base removed 2026-07 (table dropped in migration 177).
 
   -- Equipment installed parts (FK cascade from equipment_hierarchy).
   delete from equipment_installed_parts where equipment_id in (

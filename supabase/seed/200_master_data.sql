@@ -10,7 +10,7 @@
  *   aliases (active/pending/deprecated), UOM normalisation rules,
  *   a 3-level BOM, tally inventory, catalog synonyms / alternatives,
  *   private-label items, vendors, the NRD-shaped equipment hierarchy
- *   for two customers + installed parts + installed_base counts,
+ *   for two customers + installed parts,
  *   contracts (every type × every status), contract_lines,
  *   payment_milestones, blanket_release_drawdown, engineering_specs.
  *
@@ -679,32 +679,11 @@ begin
 end $eqp$;
 
 -- ───────────────────────────────────────────────────────────────────
--- 13. INSTALLED_BASE  --  10 rows: deployed gun-model counts
+-- 13. INSTALLED_BASE  --  REMOVED 2026-07: table dropped (migration 177);
+--     was demo-only + non-load-bearing (only echoed by spare_matrix/kit.js).
 -- ───────────────────────────────────────────────────────────────────
-do $ib$
-declare
-  default_tenant uuid := '00000000-0000-0000-0000-000000000001';
-  mg uuid; tata uuid; jbm uuid; rn uuid; ati uuid; nippon uuid; globex uuid;
-begin
-  select id into mg     from customers where tenant_id = default_tenant and customer_key = 'MG_MOTOR_INDIA';
-  select id into tata   from customers where tenant_id = default_tenant and customer_key = 'TATA_MOTORS_PV_PUNE';
-  select id into jbm    from customers where tenant_id = default_tenant and customer_key = 'NRD_AUTO_PLANT_1';
-  select id into rn     from customers where tenant_id = default_tenant and customer_key = 'ALAP';
-  select id into ati    from customers where tenant_id = default_tenant and customer_key = 'ANVIL_TEST_INDUSTRIES';
-  select id into nippon from customers where tenant_id = default_tenant and customer_key = 'NIPPON_KOGYO';
-  select id into globex from customers where tenant_id = default_tenant and customer_key = 'GLOBEX_MFG_GMBH';
-
-  if mg     is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, mg,     'X2C-X-MEDIUM',     12, (now() - interval '720 days')::date, 'MG Halol BIW.')   on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
-  if mg     is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, mg,     'X2C-X-LARGE',       4, (now() - interval '720 days')::date, 'MG Haryana.')      on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
-  if tata   is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, tata,   'X2C-X-MEDIUM',     18, (now() - interval '600 days')::date, 'Tata Pune.')       on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
-  if jbm    is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, jbm,    'X2C-X-LARGE',      24, (now() - interval '600 days')::date, 'NRD Plant 1+2.')   on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
-  if jbm    is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, jbm,    'X2C-X-EXTRA-LARGE', 6, (now() - interval '500 days')::date, 'NRD heavy cells.') on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
-  if rn     is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, rn,     'X2C-X-MEDIUM',     16, (now() - interval '500 days')::date, 'RN India.')        on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
-  if ati    is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, ati,    'X2C-X-MEDIUM',      8, (now() - interval '300 days')::date, 'ATI fixture.')     on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
-  if ati    is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, ati,    'X3-X-MEDIUM',       2, (now() - interval '40 days')::date,  'X3 launch fixture.') on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
-  if globex is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, globex, 'X2C-X-LARGE',       4, (now() - interval '200 days')::date, 'Globex DE.')       on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
-  if nippon is not null then insert into installed_base (tenant_id, customer_id, gun_model, installed_qty, installed_at, notes) values (default_tenant, nippon, 'X2C-X-MEDIUM',      6, (now() - interval '200 days')::date, '日本工業 横浜.')        on conflict (tenant_id, customer_id, gun_model) do nothing; end if;
-end $ib$;
+-- (installed_base seed removed 2026-07 — table dropped in migration
+--  177_drop_installed_base.sql; was demo-only + non-load-bearing.)
 
 -- ───────────────────────────────────────────────────────────────────
 -- 14. CONTRACTS  --  16 rows: 4 contract_type × 4 status

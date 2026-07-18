@@ -131,7 +131,7 @@ Reference data the rest of the seed pivots around.
   `vendors` (8 incl. one inactive).
 - `equipment_hierarchy`: full Plant -> Line -> Zone -> Station ->
   Robot -> Gun chain for MG Halol and NRD Plant 1 (12 nodes).
-- `equipment_installed_parts` (32), `installed_base` (10).
+- `equipment_installed_parts` (32).
 - `contracts`: 16 rows covering every `contract_type` x every
   `status` (4 x 4). `contract_lines` (3 per contract = 48).
 - `payment_milestones` (7), `blanket_release_drawdown` (12 = 3 per

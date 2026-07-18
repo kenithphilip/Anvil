@@ -155,9 +155,6 @@ Unique (tenant_id, supplier). Tracks `on_time_pct`, `price_accuracy_pct`, `respo
 ### order_amendments
 `amendment_type in (qty, price, date, line_added, line_removed, mixed)`. Status: detected | approved | rejected | applied.
 
-### installed_base
-Per customer, gun model, qty installed.
-
 ### spare_recommendations
 Unique (tenant_id, part_no, customer_id). `criticality_score`, `recommended_qty`, `reason jsonb`.
 

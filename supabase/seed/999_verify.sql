@@ -388,7 +388,6 @@ with probes(screen, qty_min, query) as (values
   ('contracts',                      1, 'select count(*) as c from contracts'),
   ('engineering-specs',              1, 'select count(*) as c from engineering_specs'),
   ('equipment',                      1, 'select count(*) as c from equipment_hierarchy'),
-  ('installed-base',                 1, 'select count(*) as c from installed_base'),
   ('leads',                          1, 'select count(*) as c from leads'),
   ('opportunities',                  1, 'select count(*) as c from opportunities'),
   ('projects',                       1, 'select count(*) as c from projects'),

@@ -23,10 +23,14 @@ copies of one thing (an easy misread the compat analysis slightly overstated):
 1. **`equipment_installed_parts` is the canonical INSTALLED_BASE** — the Part × Asset-instance hinge
    between the design/type world (`item_master` = PRODUCT) and the physical/instance world
    (`equipment_hierarchy` = ASSET). It already plays this role for inventory planning.
-2. **`equipment_hierarchy` is the canonical asset-instance registry.** "Customer C has N guns of model M"
-   is a **derived COUNT** over `equipment_hierarchy` gun instances — so `installed_base` (005) is
-   **redundant** and is hereby **deprecated**. It is not dropped yet (its one reader, `kit.js`, still uses
-   it, and some tenants may hold `installed_base` rows without matching `equipment_hierarchy` instances).
+2. **`equipment_hierarchy` is the canonical asset-instance registry**, so `installed_base` (005) is
+   **redundant**. It was **deprecated** (mig 170) and then **dropped** (mig 177, 2026-07).
+   > **Correction (2026-07).** An earlier draft claimed "Customer C has N guns of model M" is a *derived
+   > COUNT over `equipment_hierarchy`*. Recon disproved that: `equipment_hierarchy` has **no `gun_model`
+   > column** (`gun_type` is `'servo'`/NULL and `gun_no` is an asset tag — different namespaces), the
+   > correct aggregate would be `SUM(qty)` not `COUNT(*)`, and the table holds ~0 prod rows. `installed_base`
+   > was **not derivable**. It was also demo-only (no app writer) and non-load-bearing (its one reader
+   > `kit.js` merely *echoed* it in a response field consumed by no UI), so it was simply removed.
 3. **`recommended_spares.installed_qty` is a derived worksheet aggregate, not a source of truth.** It is a
    per-matrix COUNT for the operator's sheet and must not be treated as installed-base data. When the spare
    matrix is later linked to `equipment_hierarchy`, this count should be *sourced* from
@@ -37,17 +41,21 @@ copies of one thing (an easy misread the compat analysis slightly overstated):
 - **Nothing at runtime.** Only `COMMENT ON` annotations record the decision in the catalog (migration 170),
   and this doc records the rationale. No `kit.js` change, no table drop, no data migration.
 
-## Deferred consolidation (a later step, not this one)
+## Consolidation — DONE (2026-07, migration 177)
 
-To actually collapse to one source of truth (chosen scope was *document-only*):
-1. Repoint `kit.js` to derive gun-model counts from `equipment_hierarchy`, keeping an `installed_base`
-   fallback so no tenant loses kit prediction.
-2. Backfill `equipment_hierarchy` gun instances from any `installed_base` rows that lack them.
-3. Drop `installed_base` (005) once no reader remains.
+The originally-planned "derive gun-model counts from `equipment_hierarchy` → backfill → drop" sequence was
+**invalidated by recon**: `installed_base` is **not derivable** from `equipment_hierarchy` (see the
+correction above). The same recon showed it was safe to simply **remove**, because it was demo-only and
+non-load-bearing:
 
-This is deliberately **not** done here because it is a destructive, data-shape-risky migration; it should be
-its own reviewed change once multi-asset (non-welding) usage makes `equipment_hierarchy` the universal
-registry.
+1. Removed the `installed_base` read + the dead `installed` echo from `spare_matrix/kit.js` (the spare-kit
+   recommendation is built entirely from `spare_recommendations`; no UI consumed the echo).
+2. `drop table if exists installed_base` (migration 177) — no reader remained; the RLS policies drop with it.
+3. Removed the demo seed rows (`seed/200_master_data.sql`), the teardown delete (`seed/900_teardown.sql`),
+   and the verify COUNT (`seed/999_verify.sql`).
+
+The canonical installed-base is `equipment_installed_parts` (part × instance grain), which answers a
+*different* question than `installed_base` did; nothing was migrated between them.
 
 ## Why it matters (the bridge)
 

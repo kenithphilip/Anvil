@@ -1,0 +1,23 @@
+-- 177_drop_installed_base.sql
+--
+-- Completes the installed_base consolidation (docs/INSTALLED_BASE_CANONICAL.md).
+-- installed_base (mig 005, customer x gun_model -> installed_qty) was a demo-only,
+-- unmaintained table: NO application writer (only seed inserts), and its single
+-- reader (spare_matrix/kit.js) only ECHOED it in a response field consumed by no
+-- UI -- the spare-kit recommendation is built entirely from spare_recommendations.
+--
+-- Recon confirmed it is NOT derivable from equipment_hierarchy (no gun_model
+-- column -- gun_type is 'servo'/NULL and gun_no is an asset tag, both a different
+-- namespace than the gun_model string; the correct aggregate is SUM(qty) not
+-- COUNT(*); and equipment_hierarchy holds ~0 rows in prod). The canonical
+-- installed-base is equipment_installed_parts (a different, part x instance grain),
+-- not a derived view. The kit.js read is removed in the SAME change, so no reader
+-- remains. Dropping the table also drops its RLS policies; nothing FKs to it.
+--
+-- The 10 demo seed rows (seed/200_master_data.sql), the teardown delete
+-- (seed/900_teardown.sql), and the verify COUNT (seed/999_verify.sql) are removed
+-- alongside so seed runs stay consistent with the dropped table.
+--
+-- Idempotent. Applied manually -- merged != applied.
+
+drop table if exists installed_base;

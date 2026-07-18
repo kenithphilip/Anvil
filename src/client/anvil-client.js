@@ -1345,6 +1345,16 @@
     create: async (payload) => apiFetch("/api/failure_events", { method: "POST", body: payload || {} }),
   };
 
+  // Reliability step 4c: FMECA criticality (severity x occurrence x detection -> rpn).
+  const fmeca = {
+    listCatalog: async () => apiFetch("/api/fmeca?view=catalog"),
+    suggest: async (params) => apiFetch("/api/fmeca?view=suggest" + (params && Object.keys(params).length ? "&" + new URLSearchParams(params).toString() : "")),
+    list: async (params) => apiFetch("/api/fmeca" + (params && Object.keys(params).length ? "?" + new URLSearchParams(params).toString() : "")),
+    upsertMode: async (payload) => apiFetch("/api/fmeca", { method: "POST", body: { kind: "mode", ...(payload || {}) } }),
+    upsert: async (payload) => apiFetch("/api/fmeca", { method: "POST", body: { kind: "fmeca", ...(payload || {}) } }),
+    remove: async (id) => apiFetch("/api/fmeca?id=" + encodeURIComponent(id), { method: "DELETE" }),
+  };
+
   const sales = {
     listLeads: async (params) => apiFetch("/api/sales/leads" + (params ? "?" + new URLSearchParams(params).toString() : "")),
     createLead: async (payload) => apiFetch("/api/sales/leads", { method: "POST", body: payload }),
@@ -1745,6 +1755,7 @@
     security,
     spareMatrix,
     failureEvents,
+    fmeca,
     admin,
     sales,
     service,

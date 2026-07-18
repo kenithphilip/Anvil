@@ -57,6 +57,10 @@ const LEAD_MULT_MAX = 2.0;      // ...long-lead imports up to 2x.
 const DEFAULT_LEAD_DAYS = 56;   // unknown lead -> baseline (so v1 numbers hold).
 // Criticality (0..100 from recommend.js) adds up to +CRIT_WEIGHT safety stock.
 const CRIT_WEIGHT = 0.5;
+// Step 4c (gated): FMECA RPN (0..1000 = S*O*D) adds up to +FMECA_WEIGHT more,
+// applied in the same spots as crit. Only passed when fmeca_minmax_enabled, so
+// callers that omit `rpn` are byte-identical to before.
+const FMECA_WEIGHT = 0.5;
 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -79,23 +83,26 @@ export const parseLeadDays = (s) => {
 // when available, CRITICALITY (0..100). installed_qty is the exposure /
 // population; the wear class (bulk vs expensive) sets the base consumption
 // ratio. With unknown lead + no criticality this reduces to the v1 numbers.
-export const computeMinMax = ({ installed_qty, item_type, description, lead_time_days, criticality_score } = {}) => {
+export const computeMinMax = ({ installed_qty, item_type, description, lead_time_days, criticality_score, rpn } = {}) => {
   const inst = Math.max(0, Math.floor(Number(installed_qty) || 0));
   const policy = classifyPolicy({ item_type, description });
   const leadDays = parseLeadDays(lead_time_days) || DEFAULT_LEAD_DAYS;
   const leadMult = clamp(leadDays / LEAD_BASELINE_DAYS, LEAD_MULT_MIN, LEAD_MULT_MAX);
   const critNorm = criticality_score != null ? clamp(Number(criticality_score) / 100, 0, 1) : 0;
   const critMult = 1 + CRIT_WEIGHT * critNorm;
-  const basis = { lead_days: leadDays, lead_mult: round2(leadMult), crit_mult: round2(critMult), policy };
+  // FMECA RPN augment (gated by the caller): null -> rpnMult 1.0 -> unchanged.
+  const rpnNorm = rpn != null ? clamp(Number(rpn) / 1000, 0, 1) : 0;
+  const rpnMult = 1 + FMECA_WEIGHT * rpnNorm;
+  const basis = { lead_days: leadDays, lead_mult: round2(leadMult), crit_mult: round2(critMult), rpn_mult: round2(rpnMult), policy };
   if (inst === 0) return { recommended_min: 0, recommended_max: 0, policy, basis };
   if (policy === "bulk") {
-    const min = Math.max(1, Math.ceil(inst * BULK_MIN_MULT * leadMult * critMult));
+    const min = Math.max(1, Math.ceil(inst * BULK_MIN_MULT * leadMult * critMult * rpnMult));
     const max = Math.max(min, Math.ceil(inst * BULK_MAX_MULT * leadMult));
     return { recommended_min: min, recommended_max: max, policy, basis };
   }
-  // expensive: stays low (capped) but a long lead / high criticality can
-  // nudge it from 1 toward the cap.
-  const min = clamp(Math.ceil(inst * EXP_MIN_PER * leadMult * critMult), 1, EXP_MAX_CAP);
-  const max = clamp(Math.ceil(inst * EXP_MAX_PER * leadMult * critMult), min, EXP_MAX_CAP);
+  // expensive: stays low (capped) but a long lead / high criticality / high RPN
+  // can nudge it from 1 toward the cap.
+  const min = clamp(Math.ceil(inst * EXP_MIN_PER * leadMult * critMult * rpnMult), 1, EXP_MAX_CAP);
+  const max = clamp(Math.ceil(inst * EXP_MAX_PER * leadMult * critMult * rpnMult), min, EXP_MAX_CAP);
   return { recommended_min: min, recommended_max: max, policy, basis };
 };

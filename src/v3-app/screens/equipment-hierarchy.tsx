@@ -227,6 +227,10 @@ const AssetFailureEvents = ({ equipmentId, parts }) => {
     () => (AnvilBackend?.failureEvents?.list?.({ equipment_id: equipmentId }) || Promise.resolve({ events: [] })),
     [equipmentId]
   );
+  // FMECA catalog (step 4c) backs a datalist so failure modes are entered
+  // consistently with the FMECA taxonomy instead of freeform-only.
+  const modeCatalog = useFetch(() => (AnvilBackend?.fmeca?.listCatalog?.() || Promise.resolve({ modes: [] })), []);
+  const modeOptions: string[] = ((modeCatalog.data?.modes || []) as any[]).map((m) => String(m.label || "")).filter(Boolean);
   const [form, setForm] = useState(emptyEventForm);
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -282,7 +286,10 @@ const AssetFailureEvents = ({ equipmentId, parts }) => {
           </>
         ))}
         {efld("Failure mode", (
-          <input className="input" value={form.failure_mode} onChange={(e) => set("failure_mode", e.target.value)} placeholder="(optional)" aria-label="Failure mode" />
+          <>
+            <input className="input" list="fe-mode-options" value={form.failure_mode} onChange={(e) => set("failure_mode", e.target.value)} placeholder="(optional)" aria-label="Failure mode" />
+            <datalist id="fe-mode-options">{modeOptions.map((m) => <option key={m} value={m} />)}</datalist>
+          </>
         ))}
         {efld("Replaced qty", (
           <input className="input mono" type="number" min="0" step="1" value={form.replaced_qty} onChange={(e) => set("replaced_qty", e.target.value)} aria-label="Replaced qty" />
@@ -787,6 +794,7 @@ const WiredEquipmentHierarchy = () => {
         meta={`${totals.assets} asset${totals.assets === 1 ? "" : "s"} across ${totals.cust} customer${totals.cust === 1 ? "" : "s"}`}
         right={<>
           <Btn icon kind="ghost" sm onClick={() => { equipment.reload(); customersList.reload(); locationsList.reload(); }} title="Refresh">{Icon.cycle}</Btn>
+          <Btn sm kind="ghost" onClick={() => { window.location.hash = "#/fmeca"; }} title="FMECA criticality (severity × occurrence × detection → RPN)">FMECA</Btn>
           <Btn sm kind="primary" onClick={() => onAddChild({ kind: "root", id: "root", customer_id: filter || "", customer_location_id: null, plant_name: "", line_name: "", zone_name: "", station_name: "" })}>
             {Icon.plus} New asset
           </Btn>

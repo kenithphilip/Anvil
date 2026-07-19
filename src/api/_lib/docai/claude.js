@@ -40,7 +40,7 @@ import { parseSchemaAligned } from "./parse.js";
 
 export const isConfigured = (_settings) => !!process.env.ANTHROPIC_API_KEY;
 
-const SYSTEM_PROMPT = [
+export const SYSTEM_PROMPT = [
   "You are a purchase-order / RFQ extractor for a B2B manufacturing platform serving Indian and international customers.",
   "",
   "WHAT 'CUSTOMER' MEANS",
@@ -261,7 +261,7 @@ const SUPPLIER_ACK_TOOL = {
 // `ship_to_address`, `po_number`, `po_date`); we keep the prompt
 // guidance verbose so the model preserves PR #27's "M/s." prefix
 // stripping and verbatim payment-terms behaviour.
-const TOOL_DEFINITION = {
+export const TOOL_DEFINITION = {
   name: "extract_purchase_order",
   description: "Return the classification + structured customer + line-items extracted from the document.",
   input_schema: {

@@ -75,6 +75,21 @@ const PdfPagePreview: React.FC<PdfPagePreviewProps> = ({
   const [containerWidth, setContainerWidth] = useState<number>(0);
   const [numPages, setNumPages] = useState<number>(0);
   const [loadError, setLoadError] = useState<Error | null>(null);
+  const { selectedField } = useReviewPaneSelection();
+
+  // Scroll the selected field's bbox into view. Lets a click on a
+  // recon line row (or a header field) jump the PDF to that region
+  // without the operator hunting for it. No-op when the field has no
+  // rendered rect (e.g. its page has not painted yet, or the line has
+  // no usable evidence geometry).
+  useEffect(() => {
+    if (!selectedField || !containerRef.current) return;
+    const safe = selectedField.replace(/["\\]/g, "\\$&");
+    const el = containerRef.current.querySelector(`[data-field-path="${safe}"]`);
+    if (el && typeof (el as HTMLElement).scrollIntoView === "function") {
+      (el as HTMLElement).scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }, [selectedField]);
 
   // Measure container width so pages render at fit-to-width by
   // default. Re-measures on container resize via ResizeObserver

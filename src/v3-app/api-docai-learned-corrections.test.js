@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import {
   flattenNormalized,
   diffNormalized,
+  classifyDiff,
   recordCorrections,
   suggestOverrides,
   __test,
@@ -177,5 +178,33 @@ describe("suggestOverrides", () => {
 
   it("returns [] when no svc", async () => {
     expect(await suggestOverrides(null, { tenantId: "t" })).toEqual([]);
+  });
+});
+
+describe("classifyDiff", () => {
+  it("classifies add / remove / replace kinds", () => {
+    expect(classifyDiff("lines[0].qty", null, 10).diff_kind).toBe("add");
+    expect(classifyDiff("lines[0].qty", 10, null).diff_kind).toBe("remove");
+    expect(classifyDiff("lines[0].qty", 10, 12).diff_kind).toBe("replace");
+  });
+  it("flags critical fields + removals as high severity", () => {
+    expect(classifyDiff("customer.gstin", "A", "B").severity).toBe("high");
+    expect(classifyDiff("customer.name", "A", "B").severity).toBe("high");
+    expect(classifyDiff("lines[0].rate", 5, null).severity).toBe("high"); // removal
+  });
+  it("treats a whitespace/case-only shift as low severity", () => {
+    expect(classifyDiff("lines[0].description", "Weld  GUN", "weld gun").severity).toBe("low");
+  });
+  it("defaults a plain value replace to medium", () => {
+    expect(classifyDiff("lines[0].rate", 5, 6).severity).toBe("medium");
+  });
+  it("matches diffNormalized for the same single change", () => {
+    const diffs = diffNormalized(
+      { lines: [{ partNumber: "X" }] },
+      { lines: [{ partNumber: "Y" }] },
+    );
+    const single = classifyDiff("lines[0].partNumber", "X", "Y");
+    expect(diffs[0].diff_kind).toBe(single.diff_kind);
+    expect(diffs[0].severity).toBe(single.severity);
   });
 });

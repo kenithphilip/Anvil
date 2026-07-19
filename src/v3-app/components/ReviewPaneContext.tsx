@@ -8,7 +8,8 @@
 //   - status: "pending" | "confirmed" | "flagged" per field path
 //   - confirmAll(paths): bulk "mark all correct"
 //   - submitCorrection(...): persist an operator correction to
-//     /api/docai/correction (writes learned_corrections + rlhf)
+//     /api/docai/correction (records extraction_corrections +
+//     learned_corrections + an rlhf_feedback row)
 //   - config (extractionRunId, canCorrect) the provider is given once,
 //     read by every FieldRow without prop drilling.
 //

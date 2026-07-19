@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ageLabel, stageOf, draftLabel } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Prov, Steps, Stream, WSTabs, WSTitle, fmtINR, fmtUSD } from "../lib/primitives";
 import { Icon } from "../lib/icons";
@@ -12,9 +12,46 @@ import {
   IssueEntry,
 } from "../lib/field-sources";
 import { ItemMasterPicker, PickedItem } from "../components/ItemMasterPicker";
-import ReviewPane from "../components/ReviewPane";
+import { ReviewDocPane, ReviewFieldsPane } from "../components/ReviewPane";
+import { ReviewPaneSelectionProvider, useReviewPaneSelection } from "../components/ReviewPaneContext";
+import type { EvidenceBbox } from "../components/PdfPagePreview";
 import { computeLineTotals, TAX_AMOUNT_KEYS, AUX_AMOUNT_KEYS, COMPONENT_LABEL } from "../lib/line-totals";
 import { ExtractionProgress } from "../components/ExtractionProgress";
+
+// Line-reconciliation table body, mounted inside the unified reconcile
+// view's ReviewPaneSelectionProvider so a row click drives the shared
+// field selection (which highlights + scrolls the PO PDF to that line's
+// evidence, and vice-versa). Kept as a child component because it must
+// call useReviewPaneSelection; the row renderer + head/footer are passed
+// in so the parent keeps its closures over order state.
+const RECON_INTERACTIVE = new Set(["INPUT", "SELECT", "TEXTAREA", "BUTTON", "A", "OPTION"]);
+const ReconLinesTable: React.FC<{
+  lines: any[];
+  head: React.ReactNode;
+  footer: React.ReactNode;
+  renderRow: (ln: any, i: number, sel: { selected: boolean; onSelect: (e: React.MouseEvent) => void }) => React.ReactNode;
+}> = ({ lines, head, footer, renderRow }) => {
+  const { selectedField, setSelectedField } = useReviewPaneSelection();
+  return (
+    <table className="tbl">
+      {head}
+      <tbody>
+        {lines.map((ln, i) => {
+          const fp = "lines[" + i + "]";
+          const onSelect = (e: React.MouseEvent) => {
+            // A click on an editable cell (input/select/button) should
+            // edit, not toggle the row selection.
+            const tag = ((e.target as HTMLElement)?.tagName || "").toUpperCase();
+            if (RECON_INTERACTIVE.has(tag)) return;
+            setSelectedField(selectedField === fp ? null : fp);
+          };
+          return renderRow(ln, i, { selected: selectedField === fp, onSelect });
+        })}
+      </tbody>
+      {footer}
+    </table>
+  );
+};
 
 // ============================================================
 // ANVIL v3 — wired SO Workspace
@@ -101,8 +138,92 @@ const WiredSOWorkspace = () => {
     return new URLSearchParams(q || "");
   })();
   const orderId = hashQuery.get("id");
-  const initialTab = hashQuery.get("tab") || "recon";
+  const rawTab = hashQuery.get("tab") || "recon";
+  // The former standalone "Review" (PDF) tab is merged into the unified
+  // reconcile view, so a legacy ?tab=review deep-link opens Reconcile.
+  const initialTab = rawTab === "review" ? "recon" : rawTab;
   const [tab, setTab] = u(initialTab);
+  // Unified reconcile layout: pdf | split | lines. Persisted per-browser;
+  // defaults to split on wide viewports and lines on narrow ones so a
+  // small screen is not cramped by the side-by-side.
+  const [reconView, setReconView] = u<"pdf" | "split" | "lines">(() => {
+    try {
+      const saved = typeof localStorage !== "undefined" ? localStorage.getItem("anvil:recon-view") : null;
+      if (saved === "pdf" || saved === "split" || saved === "lines") return saved;
+    } catch (_) { /* ignore */ }
+    const wide = typeof window !== "undefined" && window.innerWidth >= 1100;
+    return wide ? "split" : "lines";
+  });
+  e(() => {
+    try { if (typeof localStorage !== "undefined") localStorage.setItem("anvil:recon-view", reconView); } catch (_) { /* ignore */ }
+  }, [reconView]);
+  // Lazy-mount latch for the PO pane. Narrow screens default to the
+  // "lines" view and must not pay the pdfjs + signed-URL + evidence cost
+  // for a pane hidden by CSS; but once the operator has shown it we keep
+  // it mounted across toggles so PDF scroll/zoom/page survive. A ref
+  // (mutated during render) rather than state: flipping it must not
+  // itself trigger a render.
+  const docPaneEverShownRef = useRef(reconView !== "lines");
+  if (reconView !== "lines") docPaneEverShownRef.current = true;
+  // The workspace title is sticky (top:0, opaque) in the same scroll
+  // container as the pinned PO pane, so the pane must pin BELOW it.
+  // Measure the title's real height (it wraps responsively) into a CSS
+  // var the .recon-doc sticky offset reads.
+  const titleRef = useRef<HTMLDivElement | null>(null);
+  e(() => {
+    const el = titleRef.current;
+    if (!el) return;
+    const host = el.parentElement as HTMLElement | null;
+    const apply = () => { if (host) host.style.setProperty("--recon-sticky-top", (el.offsetHeight + 8) + "px"); };
+    apply();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [order.data]);
+  // Synthetic bbox rows for the PO PDF overlay, one per line that
+  // carries usable evidence geometry (from stampEvidenceOnLines during
+  // extraction). Keyed `lines[i]` so a recon row click highlights +
+  // scrolls the PDF to that line, and vice-versa. Prefers normalised
+  // (0..1) coordinates; a line without geometry simply gets no rect.
+  // Memoised: a fresh array identity every render would cascade through
+  // ReviewDocPane's evidence memo and repaint every PDF overlay on each
+  // keystroke in a recon cell.
+  const lineEvidence: EvidenceBbox[] = useMemo(() => {
+    const src: any[] = linesDraft ?? ((order.data as any)?.result?.salesOrder?.lineItems || []);
+    const out: EvidenceBbox[] = [];
+    src.forEach((ln: any, i: number) => {
+      const ev = ln && ln._evidence;
+      const norm = ev && Array.isArray(ev.bbox_norm) ? ev.bbox_norm : null;
+      if (!norm || norm.length < 4) return;
+      const [x0, y0, x1, y1] = norm.map((n: any) => Number(n));
+      if (![x0, y0, x1, y1].every((n) => Number.isFinite(n))) return;
+      out.push({
+        id: "line-" + i,
+        page_number: Number(ev.page) || 1,
+        field_path: "lines[" + i + "]",
+        value: ln.partNumber || ln.itemCode || ln.description || null,
+        confidence: ev.confidence != null ? Number(ev.confidence) : null,
+        bbox: { x0, y0, x1, y1, page_width: 1, page_height: 1 },
+      });
+    });
+    return out;
+  }, [linesDraft, order.data]);
+  // Reflect the active tab in the URL (?tab=) without firing a
+  // hashchange, so refresh / shared links reopen the same tab. The
+  // route id + orderId are unchanged, so the router does not re-resolve.
+  e(() => {
+    if (typeof window === "undefined" || !orderId) return;
+    try {
+      const h = window.location.hash || "";
+      const qIdx = h.indexOf("?");
+      const base = qIdx >= 0 ? h.slice(0, qIdx) : h;
+      const params = new URLSearchParams(qIdx >= 0 ? h.slice(qIdx + 1) : "");
+      if (params.get("tab") === tab) return;
+      params.set("tab", tab);
+      window.history.replaceState(null, "", base + "?" + params.toString());
+    } catch (_) { /* ignore */ }
+  }, [tab, orderId]);
 
   e(() => {
     if (!orderId) { setOrder({ data: null, loading: false, error: new Error("no order id in URL") }); return; }
@@ -469,6 +590,10 @@ const WiredSOWorkspace = () => {
     const docs = Array.isArray(o.documents) ? o.documents : [];
     return docs[0]?.id || null;
   })();
+  // With no PO attached the reconcile layout is forced to "lines"; the
+  // view toggle + split class must follow this, not the raw persisted
+  // preference, or the highlight lies about what is rendered.
+  const activeReconView = sourceDocId ? reconView : "lines";
 
   // POST an extraction_jobs row so the cron worker drains the full
   // document chunk-by-chunk (no 60s single-request ceiling). Used by
@@ -969,7 +1094,7 @@ const WiredSOWorkspace = () => {
     );
   };
 
-  const reconRow = (ln: any, i: number) => {
+  const reconRow = (ln: any, i: number, sel?: { selected: boolean; onSelect: (e: React.MouseEvent) => void }) => {
     // Single source of truth for taxable / tax / line total. The
     // helper picks one of three paths depending on what the line
     // carries (explicit per-component amounts, gst_pct legacy
@@ -998,7 +1123,22 @@ const WiredSOWorkspace = () => {
           ? <Chip k="ghost">total</Chip>
           : null;
     const mainRow = (
-      <tr key={"row-" + i}>
+      <tr
+        key={"row-" + i}
+        className={"recon-row" + (sel?.selected ? " is-active" : "")}
+        onClick={sel?.onSelect}
+        // Keyboard path to the row -> PDF cross-highlight: Tab to the
+        // row, Enter/Space toggles selection. Guarded to the row itself
+        // so keys inside the editable cells are untouched.
+        tabIndex={sel ? 0 : undefined}
+        aria-selected={sel ? sel.selected : undefined}
+        onKeyDown={sel ? (e) => {
+          if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
+            e.preventDefault();
+            sel.onSelect(e as unknown as React.MouseEvent);
+          }
+        } : undefined}
+      >
         <td className="mono">{i + 1}</td>
         <td>
           <EditableCell line={ln} i={i} canonicalKey="description" type="text" placeholder="description" />
@@ -1583,25 +1723,13 @@ const WiredSOWorkspace = () => {
     );
   };
 
-  // Review-tab count: number of distinct field paths the extractor
-  // has cited. Surfaces the "X fields extracted" signal on the tab
-  // strip without needing to open the tab. Falls back to null (no
-  // badge) for orders that haven't been through extraction yet.
-  const reviewFieldCount = o.evidence_by_field
-    ? Object.keys(o.evidence_by_field as Record<string, unknown>).length
-    : 0;
-
   const tabs = [
-    { id: "recon", label: "Reconciliation", count: findings.length || null },
+    // The PO PDF (formerly the standalone "Review" tab) is now
+    // side-by-side with the line grid inside this Reconcile tab.
+    { id: "recon", label: "Reconcile", count: findings.length || null },
     { id: "header", label: "Header fields" },
     { id: "margin", label: "Margin cockpit" },
     { id: "why", label: "Why" },
-    // Phase A of the operator-facing extraction review surface. New
-    // read-only tab that side-by-sides the source document and the
-    // extracted-field list (`evidence_by_field`). The existing
-    // "Evidence" tab is unchanged and continues to render the raw
-    // audit table; "Review" is the operator-friendly visual.
-    { id: "review", label: "Review", count: reviewFieldCount || null },
     { id: "evidence", label: "Evidence" },
     { id: "approval", label: "Approval" },
     { id: "tally", label: "Tally" },
@@ -1641,7 +1769,7 @@ const WiredSOWorkspace = () => {
           push to Tally -- stay reachable while the operator scrolls
           a long reconciliation table. Other screens that use the
           plain .ws-title primitive are unaffected. */}
-      <div className="ws-title ws-title-sticky" style={{ alignItems: "stretch", flexDirection: "column", gap: 10 }}>
+      <div ref={titleRef} className="ws-title ws-title-sticky" style={{ alignItems: "stretch", flexDirection: "column", gap: 10 }}>
         <div className="row gap-sm" style={{ width: "100%", minWidth: 0, flexWrap: "wrap", alignItems: "center" }}>
           <div style={{ minWidth: 0, flex: "1 1 auto", overflow: "hidden" }}>
             <div className="h-eyebrow">Sales Orders · Workspace</div>
@@ -1981,8 +2109,59 @@ const WiredSOWorkspace = () => {
             without bouncing back to the intake screen. The intake
             now carries this block onto orders.result.salesOrder.customer
             so it survives the round trip. */}
-        {tab === "recon" && o.result?.salesOrder?.customer && (
-          <Card title="Customer · from PO header" eyebrow="extracted by docai">
+        {tab === "recon" && (
+          // key={o.id}: the workspace does NOT remount when switching
+          // orders in place (#/so?id=A -> id=B), so without the key the
+          // selection + per-field confirm/flag state from order A would
+          // leak onto order B's fields.
+          <ReviewPaneSelectionProvider
+            key={o.id}
+            extractionRunId={o.preflight_payload?.extraction_run_id || null}
+            canCorrect={canApprove}
+          >
+            <div className="recon-toolbar">
+              <div className="recon-view-toggle" role="group" aria-label="Reconcile layout">
+                {([["pdf", "PDF"], ["split", "Split"], ["lines", "Lines"]] as const).map(([v, label]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    className={"recon-view-btn" + (activeReconView === v ? " is-active" : "")}
+                    aria-pressed={activeReconView === v}
+                    disabled={!sourceDocId && v !== "lines"}
+                    onClick={() => setReconView(v)}
+                    title={v === "pdf" ? "PO document only" : v === "lines" ? "Line grid only" : "PO document beside the line grid"}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <span className="mono-sm recon-toolbar-hint" style={{ color: "var(--ink-3)" }}>
+                {sourceDocId
+                  ? "Click a line to locate it on the PO; click a box on the PO to jump to the field."
+                  : "No PO file attached to this order — line grid only."}
+              </span>
+            </div>
+            <div className={"recon-split recon-view-" + activeReconView}>
+              {sourceDocId && (reconView !== "lines" || docPaneEverShownRef.current) && (
+                <div className="recon-doc">
+                  <ReviewDocPane docId={sourceDocId} extraEvidence={lineEvidence} />
+                </div>
+              )}
+              <div className="recon-right">
+                {o.evidence_by_field && Object.keys(o.evidence_by_field as Record<string, unknown>).length > 0 && (
+                  <details className="recon-fields">
+                    <summary className="recon-fields-summary mono-sm">
+                      Header fields · {Object.keys(o.evidence_by_field as Record<string, unknown>).length} extracted (customer / order / totals)
+                    </summary>
+                    <ReviewFieldsPane
+                      evidenceByField={o.evidence_by_field || {}}
+                      groups={["customer", "order", "totals", "seller", "other"]}
+                      keyboardNav={false}
+                    />
+                  </details>
+                )}
+                {o.result?.salesOrder?.customer && (
+                  <Card title="Customer · from PO header" eyebrow="extracted by docai">
             <KV rows={[
               ["Name",        o.result.salesOrder.customer.name || "—"],
               ["GSTIN",       (o.result.salesOrder.customer.gstin || "").toUpperCase() || "—"],
@@ -1995,11 +2174,10 @@ const WiredSOWorkspace = () => {
               ["Ship to",     o.result.salesOrder.customer.ship_to_address
                               || o.result.salesOrder.customer.bill_to_address || "—"],
             ]} />
-          </Card>
-        )}
-        {tab === "recon" && <ExtractionQualityCard />}
-        {tab === "recon" && (
-          <Card flush>
+                  </Card>
+                )}
+                <ExtractionQualityCard />
+                <Card flush>
             <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--hairline-2)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               <span className="h2">Line reconciliation</span>
               <span className="mono-sm">{draftLines.length} line{draftLines.length === 1 ? "" : "s"} · {findings.length} issue{findings.length === 1 ? "" : "s"}</span>
@@ -2104,8 +2282,10 @@ const WiredSOWorkspace = () => {
                 const auxTotal = perLine.reduce((s, t) => s + t.aux, 0);
                 const grandWithTax = round2(taxableTotal + taxTotal + auxTotal);
                 return (
-                  <table className="tbl">
-                    <thead><tr>
+                  <ReconLinesTable
+                    lines={draftLines}
+                    renderRow={reconRow}
+                    head={<thead><tr>
                       <th style={{ width: 28 }}>#</th>
                       <th>Item</th>
                       <th>UoM</th>
@@ -2117,9 +2297,8 @@ const WiredSOWorkspace = () => {
                       <th className="r">Tax ₹</th>
                       <th className="r">Line ₹</th>
                       <th>Issues</th>
-                    </tr></thead>
-                    <tbody>{draftLines.map(reconRow)}</tbody>
-                    <tfoot>
+                    </tr></thead>}
+                    footer={<tfoot>
                       <tr style={{ background: "var(--paper-2)" }}>
                         <td colSpan={7} className="r mono" style={{ paddingTop: 8 }}>
                           <span style={{ color: "var(--ink-3)" }}>subtotal · taxable</span>
@@ -2157,12 +2336,15 @@ const WiredSOWorkspace = () => {
                           </td>
                         </tr>
                       )}
-                    </tfoot>
-                  </table>
+                    </tfoot>}
+                  />
                 );
               })()
             )}
-          </Card>
+                </Card>
+              </div>
+            </div>
+          </ReviewPaneSelectionProvider>
         )}
 
         {tab === "header" && (
@@ -2233,15 +2415,6 @@ const WiredSOWorkspace = () => {
               </div>
             )}
           </Card>
-        )}
-
-        {tab === "review" && (
-          <ReviewPane
-            docId={sourceDocId}
-            evidenceByField={o.evidence_by_field || {}}
-            extractionRunId={o.preflight_payload?.extraction_run_id || null}
-            canCorrect={canApprove}
-          />
         )}
 
         {tab === "evidence" && (

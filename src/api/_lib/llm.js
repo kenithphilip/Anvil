@@ -25,6 +25,7 @@
 
 import { callAnthropic } from "./anthropic.js";
 import { callGemini, extractTextFromGemini, parseStructuredGemini } from "./gemini.js";
+import { callOpenRouter } from "./openrouter.js";
 
 const norm = (s) => String(s || "").trim().toLowerCase();
 const featureEnv = (feature) => (feature ? process.env["LLM_PROVIDER_" + String(feature).toUpperCase()] : null);
@@ -39,8 +40,11 @@ const providerOf = (settings, feature) => {
   return { perFeature: norm(perFeature) || null, tenantDefault: norm(settings.llm_provider) || null };
 };
 
+const KNOWN_PROVIDERS = new Set(["claude", "gemini", "openrouter"]);
+
 // Precedence: explicit > per-tenant per-feature > env per-feature >
-// per-tenant default > env global > "claude".
+// per-tenant default > env global > "claude". Unknown strings collapse to
+// "claude" so a typo can never route somewhere unexpected.
 export const resolveProvider = (feature, explicit, settings) => {
   const s = providerOf(settings, feature) || {};
   const pick = norm(explicit)
@@ -49,7 +53,7 @@ export const resolveProvider = (feature, explicit, settings) => {
     || s.tenantDefault
     || norm(process.env.LLM_PROVIDER)
     || "claude";
-  return pick === "gemini" ? "gemini" : "claude";
+  return KNOWN_PROVIDERS.has(pick) ? pick : "claude";
 };
 
 // tenantId -> { at, row } cache (per serverless instance, 60s TTL).
@@ -72,8 +76,19 @@ const loadLlmSettings = async (svc, tenantId) => {
   }
 };
 
-const providerConfigured = (p) =>
-  (p === "gemini" ? !!process.env.GEMINI_API_KEY : !!process.env.ANTHROPIC_API_KEY);
+export const providerConfigured = (p) =>
+  p === "gemini" ? !!process.env.GEMINI_API_KEY
+    : p === "openrouter" ? !!process.env.OPENROUTER_API_KEY
+      : !!process.env.ANTHROPIC_API_KEY;
+
+// First configured provider other than `p`, in a stable preference order.
+// Used for the no-key fallback and (opt-in) live failover.
+const PROVIDER_ORDER = ["claude", "gemini", "openrouter"];
+const otherConfigured = (p) => PROVIDER_ORDER.find((q) => q !== p && providerConfigured(q)) || null;
+
+// Retryable upstream failures worth failing over on: network (0), rate limit
+// (429), and 5xx. 4xx (other than 429) are the caller's fault -> no retry.
+const isRetryable = (status) => status === 0 || status === 429 || (status >= 500 && status < 600);
 
 // Anthropic tool input_schema -> Gemini responseSchema (OpenAPI subset):
 // strip keys Gemini's schema validator rejects.
@@ -116,27 +131,59 @@ const normalizeGemini = (r) => {
   };
 };
 
-export const callLLM = async ({ feature, provider, settings, tools, response_schema, ...rest }) => {
-  // P2: per-tenant provider config (cached). Callers pass tenantId + svc;
-  // an explicit `settings` skips the fetch.
-  const tenantSettingsRow = settings || await loadLlmSettings(rest.svc, rest.tenantId);
-  let p = resolveProvider(feature, provider, tenantSettingsRow);
-  if (!providerConfigured(p)) {
-    const other = p === "gemini" ? "claude" : "gemini";
-    if (providerConfigured(other)) p = other;
+const normalizeOpenRouter = (r) => {
+  const choice = r.ok ? (r.data && r.data.choices && r.data.choices[0]) || null : null;
+  const msg = choice ? choice.message || null : null;
+  let structured = null;
+  const call = msg && Array.isArray(msg.tool_calls) ? msg.tool_calls[0] : null;
+  if (call && call.function && call.function.arguments) {
+    try { structured = JSON.parse(call.function.arguments); } catch (_e) { structured = null; }
   }
+  return {
+    ok: r.ok, status: r.status, provider: "openrouter", model: r.model, tier: r.tier,
+    text: (msg && msg.content) || "",
+    structured,
+    toolInput: () => structured,
+    raw: r.data, error: r.error,
+  };
+};
+
+// Dispatch to one provider and return the normalized result.
+const dispatchTo = async (p, { tools, response_schema, rest }) => {
   if (p === "gemini") {
     const gopts = { ...rest };
     if (Array.isArray(tools) && tools.length && tools[0].input_schema) {
-      // Translate the (single) structured-output tool into a responseSchema.
       gopts.response_schema = toGeminiSchema(tools[0].input_schema);
     } else if (response_schema) {
       gopts.response_schema = response_schema;
     }
     return normalizeGemini(await callGemini(gopts));
   }
+  if (p === "openrouter") {
+    return normalizeOpenRouter(await callOpenRouter({ ...rest, tools }));
+  }
   return normalizeClaude(await callAnthropic({ ...rest, tools, response_schema }));
 };
 
+export const callLLM = async ({ feature, provider, settings, tools, response_schema, ...rest }) => {
+  // P2: per-tenant provider config (cached). Callers pass tenantId + svc;
+  // an explicit `settings` skips the fetch.
+  const tenantSettingsRow = settings || await loadLlmSettings(rest.svc, rest.tenantId);
+  let p = resolveProvider(feature, provider, tenantSettingsRow);
+  if (!providerConfigured(p)) {
+    const alt = otherConfigured(p);
+    if (alt) p = alt;
+  }
+  const first = await dispatchTo(p, { tools, response_schema, rest });
+
+  // Opt-in live failover (LLM_FAILOVER=1): on a retryable upstream error, try
+  // the next configured provider ONCE. Off by default -> behaviour unchanged.
+  if (first.ok || process.env.LLM_FAILOVER !== "1" || !isRetryable(first.status)) return first;
+  const alt = otherConfigured(p);
+  if (!alt) return first;
+  const second = await dispatchTo(alt, { tools, response_schema, rest });
+  return second.ok ? { ...second, failed_over_from: p } : first;
+};
+
 // Exported for tests.
-export const __test__ = { toGeminiSchema, normalizeClaude, normalizeGemini };
+export const __test__ = { toGeminiSchema, normalizeClaude, normalizeGemini, normalizeOpenRouter, isRetryable, otherConfigured };

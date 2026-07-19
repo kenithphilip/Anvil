@@ -61,7 +61,7 @@ const findByExternalId = async (svc, tenantId, vendorIdField, externalId) => {
   return r.data || null;
 };
 
-const findByGstin = async (svc, tenantId, gstin) => {
+export const findByGstin = async (svc, tenantId, gstin) => {
   const k = String(gstin || "").trim().toUpperCase();
   if (!k || k.length < 15) return null;
   const r = await svc.from("customers")

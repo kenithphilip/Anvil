@@ -120,6 +120,7 @@ import customersChangeRequests  from "./customers/change_requests.js";
 import customersDuplicates      from "./customers/duplicates.js";
 import customersMerge           from "./customers/merge.js";
 import customerLocationsIndex   from "./customer_locations/index.js";
+import locationsIndex           from "./locations/index.js";
 // Phase 7.3: customer health score (Haiku per-customer + cron drain).
 import customersHealthScore     from "./customers/health_score.js";
 
@@ -882,6 +883,7 @@ const STATIC_ROUTES = {
   "/customers/duplicates":          customersDuplicates,
   "/customers/merge":               customersMerge,
   "/customer_locations":            customerLocationsIndex,
+  "/locations":                     locationsIndex,
   "/customers/health_score":        customersHealthScore,
 
   "/credit_notes":                  creditNotesIndex,

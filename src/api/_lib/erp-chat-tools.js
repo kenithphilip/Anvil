@@ -14,6 +14,8 @@
 
 import { serviceClient } from "./supabase.js";
 import { createProposal } from "./action-proposals.js";
+import { validateGstin, gstinStateCode } from "./gstin.js";
+import { searchItemsHybrid } from "./hybrid-item-search.js";
 
 const limit = (n) => Math.max(1, Math.min(50, Number(n || 25)));
 
@@ -400,6 +402,77 @@ const TOOLS = {
         items: items.data || [],
         synonym_matches: synItems,
         source: "item_master+catalog_synonyms",
+      };
+    },
+  },
+
+  // ── Grounding / verification tools (SO processing). Read-only; each wraps
+  // Anvil data + logic that already exists so the operator copilot (or a
+  // scoped MCP agent) can verify a customer or resolve a line against the
+  // catalog on demand — the same signals the deterministic extraction
+  // grounding pass uses. See docs/ANVIL_MCP_SO_TOOLS_DESIGN.md.
+  verify_customer_gstin: {
+    scope: "read.customers",
+    description: "Validate a GSTIN (format + Mod-36 checksum) and resolve it to a known customer in this tenant's registry. Returns the match, the GSTIN-derived state code, and a verdict: known_customer / valid_unknown / invalid.",
+    parameters: { type: "object", properties: { gstin: { type: "string", description: "15-character GSTIN" } }, required: ["gstin"] },
+    run: async (svc, tenantId, args) => {
+      const v = validateGstin(String(args?.gstin || "").trim());
+      if (!v.ok) return { valid: false, verdict: "invalid", reason: v.code || "invalid", message: v.message || null, source: "gstin" };
+      const r = await svc.from("customers")
+        .select("id, customer_name, state_code")
+        .eq("tenant_id", tenantId).eq("gstin", v.normalized).limit(1).maybeSingle();
+      const matched = r.error ? null : (r.data || null);
+      return {
+        valid: true,
+        normalized: v.normalized,
+        state_code: gstinStateCode(v.normalized),
+        matched: matched ? { id: matched.id, customer_name: matched.customer_name } : null,
+        verdict: matched ? "known_customer" : "valid_unknown",
+        source: "gstin+customers",
+      };
+    },
+  },
+
+  resolve_item: {
+    scope: "read.inventory",
+    description: "Resolve a PO line (part number or free-text description) to ranked item_master candidates using hybrid lexical + semantic search. Use for reconciliation when the literal ilike catalog_lookup misses. Returns candidates with scores.",
+    parameters: { type: "object", properties: { query: { type: "string", description: "part_no or line description" }, limit: { type: "integer", default: 10 } }, required: ["query"] },
+    run: async (svc, tenantId, args) => {
+      const q = String(args?.query || "").trim();
+      if (!q) return { error: "query required" };
+      const rows = await searchItemsHybrid(svc, { tenantId, queryText: q, matchCount: limit(args?.limit) });
+      return { rows: rows || [], source: "item_master_hybrid" };
+    },
+  },
+
+  lookup_customer_parts: {
+    scope: "read.customers",
+    description: "List a customer's known part aliases (item_customer_parts): their customer_part_number mapped to the canonical item_master part_no. Grounds line matching for repeat customers.",
+    parameters: { type: "object", properties: { customer_id: { type: "string" }, query: { type: "string", description: "optional filter on customer_part_number" }, limit: { type: "integer", default: 25 } }, required: ["customer_id"] },
+    run: async (svc, tenantId, args) => {
+      const customerId = String(args?.customer_id || "").trim();
+      if (!customerId) return { error: "customer_id required" };
+      let q = svc.from("item_customer_parts")
+        .select("customer_part_number, customer_part_description, item_id, is_primary")
+        .eq("tenant_id", tenantId).eq("customer_id", customerId);
+      if (args?.query) q = q.ilike("customer_part_number", `%${args.query}%`);
+      const r = await q.limit(limit(args?.limit));
+      const rows = r.data || [];
+      const ids = [...new Set(rows.map((x) => x.item_id).filter(Boolean))];
+      let byId = new Map();
+      if (ids.length) {
+        const im = await svc.from("item_master").select("id, part_no").eq("tenant_id", tenantId).in("id", ids);
+        byId = new Map((im.data || []).map((x) => [x.id, x.part_no]));
+      }
+      return {
+        rows: rows.map((x) => ({
+          customer_part_number: x.customer_part_number,
+          customer_part_description: x.customer_part_description,
+          canonical_part_no: byId.get(x.item_id) || null,
+          item_id: x.item_id,
+          is_primary: x.is_primary,
+        })),
+        source: "item_customer_parts",
       };
     },
   },

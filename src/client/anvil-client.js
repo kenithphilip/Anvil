@@ -1336,6 +1336,8 @@
     bulkFillRecommended: async (id, opts) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/recommended", { method: "PATCH", body: { bulk: { source: (opts && opts.source) || "max", only_blank: !!(opts && opts.only_blank) } } }),
     // PR5: feed the recommended sheet into a DRAFT quote (unpriced).
     toQuote: async (id, payload) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/to_quote", { method: "POST", body: payload || {} }),
+    // Scan every gun's BOM in the matrix and propose new spare-category columns.
+    suggestColumns: async (id) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/suggest_columns"),
   };
 
   // Reliability step 4a: in-field failure / replacement event stream, keyed to

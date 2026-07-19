@@ -226,13 +226,13 @@ const buildBodyBlock = ({ hints, bytes, mime, url }) => {
   if (bytes && isPdfBytes(bytes)) {
     return {
       mode: "pdf_document",
-      block: { type: "document", source: { type: "base64", media_type: "application/pdf", data: bytes.toString("base64") } },
+      block: { type: "document", source: { type: "base64", media_type: "application/pdf", data: Buffer.from(bytes).toString("base64") } },
     };
   }
   if (bytes && isImageMime(mime)) {
     return {
       mode: "image",
-      block: { type: "image", source: { type: "base64", media_type: String(mime), data: bytes.toString("base64") } },
+      block: { type: "image", source: { type: "base64", media_type: String(mime), data: Buffer.from(bytes).toString("base64") } },
     };
   }
   if (bytes) {

@@ -483,12 +483,19 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     bodyBlock = { type: "text", text: "DOCUMENT:\n" + String(hints.bodyText).slice(0, 50_000) };
   } else if (bytes && isPdfBytes(bytes)) {
     mode = "pdf_document";
+    // Buffer.from(bytes) is required: chunked extraction passes each
+    // chunk as a Uint8Array (pdf-lib's PDFDocument.save() output), and
+    // Uint8Array.prototype.toString("base64") ignores the arg and
+    // returns comma-joined byte values ("37,80,68,..."), which the
+    // Anthropic API rejects as "Invalid base64 data". Buffer.from()
+    // encodes both a Buffer (small-PDF download path) and a Uint8Array
+    // (chunk path) correctly.
     bodyBlock = {
       type: "document",
       source: {
         type: "base64",
         media_type: "application/pdf",
-        data: bytes.toString("base64"),
+        data: Buffer.from(bytes).toString("base64"),
       },
     };
   } else if (bytes && isImageMime(mime)) {
@@ -498,7 +505,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       source: {
         type: "base64",
         media_type: String(mime),
-        data: bytes.toString("base64"),
+        data: Buffer.from(bytes).toString("base64"),
       },
     };
   } else if (bytes) {

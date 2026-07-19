@@ -7,11 +7,35 @@
 // re-renders do not recreate Suspense boundaries.
 //
 // Adding a route: write src/v3-app/screens/<id>.jsx with a default export,
-// register a `lazy(() => import("./screens/<id>"))` here, and slot it
+// register a `lazyReload(() => import("./screens/<id>"))` here, and slot it
 // into the matching resolver. Screens not yet ported to the Vite app fall
 // back to a stub that links the user to the legacy `/v3.html` route.
 
 import React, { lazy } from "react";
+
+// Recover from a stale code-split chunk after a deploy. A failed dynamic import
+// on an already-open tab almost always means the chunk hash changed under it
+// (Vite re-hashes chunks every deploy, and the old file is gone). Reload ONCE to
+// fetch the fresh index.html + asset graph; guard against reload loops with a 10s
+// sessionStorage window so a genuinely-missing chunk still surfaces to the
+// ErrorBoundary instead of looping.
+const lazyReload = (factory: () => Promise<any>) =>
+  lazy(() =>
+    factory().catch((err) => {
+      try {
+        if (typeof window !== "undefined" && typeof sessionStorage !== "undefined") {
+          const KEY = "anvil:chunk-reload-at";
+          const last = Number(sessionStorage.getItem(KEY) || 0);
+          if (!last || Date.now() - last > 10000) {
+            sessionStorage.setItem(KEY, String(Date.now()));
+            window.location.reload();
+            return new Promise(() => {}); // hold the render while the page reloads
+          }
+        }
+      } catch (_) { /* sessionStorage/window unavailable -> fall through */ }
+      throw err;
+    })
+  );
 
 // One lazy component per screen file. Vite emits one chunk per entry.
 const screens = {
@@ -22,101 +46,101 @@ const screens = {
   // every role lands on the wired engineer home, which is data-driven
   // and correct for all roles. Role-tailored widgets (manager approvals
   // queue, admin diagnostics) are tracked as a migration follow-up.
-  home:               lazy(() => import("./screens/home")),
-  intake:             lazy(() => import("./screens/intake")),
-  soList:             lazy(() => import("./screens/orders")),
-  soWorkspace:        lazy(() => import("./screens/so-workspace")),
-  soIntake:           lazy(() => import("./screens/so-intake")),
-  soHistory:          lazy(() => import("./screens/so-history")),
-  internal:           lazy(() => import("./screens/internal-sos")),
-  approvals:          lazy(() => import("./screens/approvals")),
+  home:               lazyReload(() => import("./screens/home")),
+  intake:             lazyReload(() => import("./screens/intake")),
+  soList:             lazyReload(() => import("./screens/orders")),
+  soWorkspace:        lazyReload(() => import("./screens/so-workspace")),
+  soIntake:           lazyReload(() => import("./screens/so-intake")),
+  soHistory:          lazyReload(() => import("./screens/so-history")),
+  internal:           lazyReload(() => import("./screens/internal-sos")),
+  approvals:          lazyReload(() => import("./screens/approvals")),
   // Sales
-  leads:              lazy(() => import("./screens/leads")),
-  opps:               lazy(() => import("./screens/opps")),
-  salesOps:           lazy(() => import("./screens/sales-ops")),
-  projects:           lazy(() => import("./screens/projects")),
-  shipments:          lazy(() => import("./screens/shipments")),
+  leads:              lazyReload(() => import("./screens/leads")),
+  opps:               lazyReload(() => import("./screens/opps")),
+  salesOps:           lazyReload(() => import("./screens/sales-ops")),
+  projects:           lazyReload(() => import("./screens/projects")),
+  shipments:          lazyReload(() => import("./screens/shipments")),
   // Procurement
-  spo:                lazy(() => import("./screens/source-pos")),
-  spares:             lazy(() => import("./screens/spares")),
+  spo:                lazyReload(() => import("./screens/source-pos")),
+  spares:             lazyReload(() => import("./screens/spares")),
   // Inventory-planning module (Phase 3).
-  inventoryPlanning:    lazy(() => import("./screens/inventory-planning")),
-  inventoryPlans:       lazy(() => import("./screens/inventory-plans")),
-  inventoryExceptions:  lazy(() => import("./screens/inventory-exceptions")),
-  inventoryItem:        lazy(() => import("./screens/inventory-item")),
-  inventoryAllocations: lazy(() => import("./screens/inventory-allocations")),
-  inventorySuppliers:   lazy(() => import("./screens/inventory-suppliers")),
+  inventoryPlanning:    lazyReload(() => import("./screens/inventory-planning")),
+  inventoryPlans:       lazyReload(() => import("./screens/inventory-plans")),
+  inventoryExceptions:  lazyReload(() => import("./screens/inventory-exceptions")),
+  inventoryItem:        lazyReload(() => import("./screens/inventory-item")),
+  inventoryAllocations: lazyReload(() => import("./screens/inventory-allocations")),
+  inventorySuppliers:   lazyReload(() => import("./screens/inventory-suppliers")),
   // P4: freight consolidation + LCL/FCL bidding.
-  logistics:            lazy(() => import("./screens/logistics")),
-  supplierRfq:          lazy(() => import("./screens/supplier-rfq")),
+  logistics:            lazyReload(() => import("./screens/logistics")),
+  supplierRfq:          lazyReload(() => import("./screens/supplier-rfq")),
   // Bet 7: BRSR value-chain reporting.
-  brsrSupplier:         lazy(() => import("./screens/brsr-supplier")),
-  brsrBuyerDashboard:   lazy(() => import("./screens/brsr-buyer-dashboard")),
-  brsrDisclosureDetail: lazy(() => import("./screens/brsr-disclosure-detail")),
+  brsrSupplier:         lazyReload(() => import("./screens/brsr-supplier")),
+  brsrBuyerDashboard:   lazyReload(() => import("./screens/brsr-buyer-dashboard")),
+  brsrDisclosureDetail: lazyReload(() => import("./screens/brsr-disclosure-detail")),
   // Bet 2: format-template marketplace.
-  marketplace:          lazy(() => import("./screens/marketplace")),
+  marketplace:          lazyReload(() => import("./screens/marketplace")),
   // Service
-  svcVisits:          lazy(() => import("./screens/service-visits")),
-  amc:                lazy(() => import("./screens/amc")),
-  car:                lazy(() => import("./screens/car")),
+  svcVisits:          lazyReload(() => import("./screens/service-visits")),
+  amc:                lazyReload(() => import("./screens/amc")),
+  car:                lazyReload(() => import("./screens/car")),
   // Finance
-  tallyPush:          lazy(() => import("./screens/tally-push")),
-  tallyMasters:       lazy(() => import("./screens/tally-masters")),
-  tallyReconcile:     lazy(() => import("./screens/tally-reconcile")),
-  einvoice:           lazy(() => import("./screens/einvoice")),
-  invoices:           lazy(() => import("./screens/invoices")),
+  tallyPush:          lazyReload(() => import("./screens/tally-push")),
+  tallyMasters:       lazyReload(() => import("./screens/tally-masters")),
+  tallyReconcile:     lazyReload(() => import("./screens/tally-reconcile")),
+  einvoice:           lazyReload(() => import("./screens/einvoice")),
+  invoices:           lazyReload(() => import("./screens/invoices")),
   // Bet 6: TReDS receivables loop (sandbox).
-  treds:              lazy(() => import("./screens/treds")),
+  treds:              lazyReload(() => import("./screens/treds")),
   // Audit P10 (May 2026): frontend for the quotes-as-first-class
   // object backend that shipped in 068_quotes_object.sql + the
   // /api/quotes/{index,convert,expire,pdf,send} endpoints.
-  quotes:             lazy(() => import("./screens/quotes")),
-  cost:               lazy(() => import("./screens/cost")),
+  quotes:             lazyReload(() => import("./screens/quotes")),
+  cost:               lazyReload(() => import("./screens/cost")),
   // Audit P8.5: new screens for the P7.5 / P7.6 / P7.7 surfaces.
-  creditNotes:        lazy(() => import("./screens/credit-notes")),
-  recurringInvoices:  lazy(() => import("./screens/recurring-invoices")),
-  ewayBills:          lazy(() => import("./screens/eway-bills")),
+  creditNotes:        lazyReload(() => import("./screens/credit-notes")),
+  recurringInvoices:  lazyReload(() => import("./screens/recurring-invoices")),
+  ewayBills:          lazyReload(() => import("./screens/eway-bills")),
   // Data
-  customers:          lazy(() => import("./screens/customers")),
-  items:              lazy(() => import("./screens/items")),
-  bomImport:          lazy(() => import("./screens/bom-import")),
-  gunsViewer:         lazy(() => import("./screens/guns-viewer")),
-  equipmentHierarchy: lazy(() => import("./screens/equipment-hierarchy")),
-  fmeca:              lazy(() => import("./screens/fmeca")),
-  warehouses:         lazy(() => import("./screens/warehouses")),
-  jbmImporter:        lazy(() => import("./screens/jbm-importer")),
-  graph:              lazy(() => import("./screens/graph")),
-  forecasts:          lazy(() => import("./screens/forecasts")),
+  customers:          lazyReload(() => import("./screens/customers")),
+  items:              lazyReload(() => import("./screens/items")),
+  bomImport:          lazyReload(() => import("./screens/bom-import")),
+  gunsViewer:         lazyReload(() => import("./screens/guns-viewer")),
+  equipmentHierarchy: lazyReload(() => import("./screens/equipment-hierarchy")),
+  fmeca:              lazyReload(() => import("./screens/fmeca")),
+  warehouses:         lazyReload(() => import("./screens/warehouses")),
+  jbmImporter:        lazyReload(() => import("./screens/jbm-importer")),
+  graph:              lazyReload(() => import("./screens/graph")),
+  forecasts:          lazyReload(() => import("./screens/forecasts")),
   // Quality
-  evals:              lazy(() => import("./screens/evals")),
-  studio:             lazy(() => import("./screens/studio")),
-  anomaly:            lazy(() => import("./screens/anomaly")),
+  evals:              lazyReload(() => import("./screens/evals")),
+  studio:             lazyReload(() => import("./screens/studio")),
+  anomaly:            lazyReload(() => import("./screens/anomaly")),
   // Wave 4.1: operator review queue for low-confidence / anomaly /
   // parse-failed docai extractions.
-  extractionReview:   lazy(() => import("./screens/extraction-review")),
-  duplicates:         lazy(() => import("./screens/duplicates")),
+  extractionReview:   lazyReload(() => import("./screens/extraction-review")),
+  duplicates:         lazyReload(() => import("./screens/duplicates")),
   // Audit P9.5: customer-level duplicate-merge screen.
-  customerDuplicates: lazy(() => import("./screens/customer-duplicates")),
-  agents:             lazy(() => import("./screens/agents")),
+  customerDuplicates: lazyReload(() => import("./screens/customer-duplicates")),
+  agents:             lazyReload(() => import("./screens/agents")),
   // Comms & Security
-  comms:              lazy(() => import("./screens/comms")),
-  email:              lazy(() => import("./screens/email")),
-  security:           lazy(() => import("./screens/security")),
+  comms:              lazyReload(() => import("./screens/comms")),
+  email:              lazyReload(() => import("./screens/email")),
+  security:           lazyReload(() => import("./screens/security")),
   // DEFERRED_ROADMAP §1: voice AI (May 2026).
-  voice:              lazy(() => import("./screens/voice")),
+  voice:              lazyReload(() => import("./screens/voice")),
   // Admin
-  audit:              lazy(() => import("./screens/audit")),
-  admin:              lazy(() => import("./screens/admin")),
+  audit:              lazyReload(() => import("./screens/audit")),
+  admin:              lazyReload(() => import("./screens/admin")),
   // Auth + onboarding (no nav entry)
-  connect:            lazy(() => import("./screens/connect")),
-  onboarding:         lazy(() => import("./screens/onboarding")),
-  landing:            lazy(() => import("./screens/landing")),
-  signin:             lazy(() => import("./screens/signin")),
-  resetPassword:      lazy(() => import("./screens/reset-password")),
-  documents:          lazy(() => import("./screens/documents")),
-  pipelineKanban:     lazy(() => import("./screens/pipeline-kanban")),
-  delays:             lazy(() => import("./screens/delays")),
-  formatGuide:        lazy(() => import("./screens/format-guide")),
+  connect:            lazyReload(() => import("./screens/connect")),
+  onboarding:         lazyReload(() => import("./screens/onboarding")),
+  landing:            lazyReload(() => import("./screens/landing")),
+  signin:             lazyReload(() => import("./screens/signin")),
+  resetPassword:      lazyReload(() => import("./screens/reset-password")),
+  documents:          lazyReload(() => import("./screens/documents")),
+  pipelineKanban:     lazyReload(() => import("./screens/pipeline-kanban")),
+  delays:             lazyReload(() => import("./screens/delays")),
+  formatGuide:        lazyReload(() => import("./screens/format-guide")),
 };
 
 // Resolver per top-level nav id. Each receives `{ params, role }` where

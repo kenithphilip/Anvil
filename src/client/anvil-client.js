@@ -1347,6 +1347,13 @@
     create: async (payload) => apiFetch("/api/failure_events", { method: "POST", body: payload || {} }),
   };
 
+  // MEIO step 4d (Phase A): internal stocking-location (warehouse) master.
+  const locations = {
+    list: async () => apiFetch("/api/locations"),
+    upsert: async (payload) => apiFetch("/api/locations", { method: "POST", body: payload || {} }),
+    remove: async (id) => apiFetch("/api/locations?id=" + encodeURIComponent(id), { method: "DELETE" }),
+  };
+
   // Reliability step 4c: FMECA criticality (severity x occurrence x detection -> rpn).
   const fmeca = {
     listCatalog: async () => apiFetch("/api/fmeca?view=catalog"),
@@ -1757,6 +1764,7 @@
     security,
     spareMatrix,
     failureEvents,
+    locations,
     fmeca,
     admin,
     sales,

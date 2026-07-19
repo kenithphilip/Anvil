@@ -144,7 +144,15 @@ const ENTITY = {
           item_external_id: String(r.item_id || r.inv_mast_uid),
           warehouse: r.location_id || "",
           quantity_on_hand: r.qty_on_hand != null ? Number(r.qty_on_hand) : null,
-          quantity_available: r.qty_allocated != null ? Number(r.qty_allocated) : null,
+          // Available = on-hand minus allocated. This column previously
+          // stored qty_allocated verbatim (the opposite meaning), so a
+          // fully-allocated item looked fully available. P21's
+          // InventoryQuantity view has no single "available" field, so we
+          // derive it from the two quantities it does return; may be
+          // negative when an item is over-allocated (kept signed on purpose).
+          quantity_available: (r.qty_on_hand != null || r.qty_allocated != null)
+            ? Number(r.qty_on_hand || 0) - Number(r.qty_allocated || 0)
+            : null,
           base_uom: r.base_uom || null,
           raw: r, synced_at: new Date().toISOString(),
         }, { onConflict: "tenant_id,item_external_id,warehouse" });
@@ -156,6 +164,8 @@ const ENTITY = {
 };
 
 const ENTITY_NAMES = Object.keys(ENTITY);
+
+export { ENTITY }; // exported for unit tests of the entity upsert mappers
 
 const reverseSyncSalesOrders = async (svc, tenantId, settings) => {
   const orders = await svc.from("orders").select("id, result")

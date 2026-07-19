@@ -195,7 +195,13 @@ const ENTITY = {
           plant_external_id: r.Plant ? String(r.Plant) : null,
           storage_location: r.StorageLocation || null,
           quantity_on_hand: r.MatlWrhsStkQtyInMatlBaseUnit != null ? Number(r.MatlWrhsStkQtyInMatlBaseUnit) : null,
-          quantity_unrestricted: r.MaterialBaseUnit != null ? Number(r.MaterialBaseUnit) : null,
+          // MaterialBaseUnit is the unit-of-measure code (e.g. "EA"), not
+          // a quantity — it was being coerced with Number(...) and stored
+          // here (yielding NaN -> null). The MaterialStock entity exposes
+          // one warehouse-stock quantity (captured as quantity_on_hand),
+          // qualified by stock TYPE rather than a separate unrestricted
+          // figure, so we do not fabricate one. The UoM lives in base_uom.
+          quantity_unrestricted: null,
           base_uom: r.MaterialBaseUnit || null,
           raw: r,
           synced_at: new Date().toISOString(),
@@ -208,6 +214,8 @@ const ENTITY = {
 };
 
 const ENTITY_NAMES = Object.keys(ENTITY);
+
+export { ENTITY }; // exported for unit tests of the entity upsert mappers
 
 const reverseSyncSalesOrders = async (svc, tenantId, settings) => {
   const orders = await svc.from("orders")

@@ -12,18 +12,36 @@
 // row (kind='erp_mismatch') if two sources disagree by more than a
 // configured tolerance (10% relative or 5 units absolute).
 
+// (source key, mirror table, part-no column, on-hand column).
+//
+// The columns MUST match what each connector's sync writes into its
+// mirror table (see src/api/<vendor>/sync.js and the connector
+// migrations). Every structured-ERP entry here was previously wrong
+// (imagined column names like item_id / available_physical), so those
+// sources silently contributed 0 on-hand — or, once the mirror tables
+// existed, crashed the whole refresh with "column does not exist".
+// api-inventory-positions-columns.test.js pins these against the
+// migrations so drift is caught at CI time, not in production.
+//
+// on-hand column: `quantity_on_hand` (the gross physical balance) for
+// every structured ERP. It is populated uniformly by every sync, and
+// the union row nets it against Anvil's own `inventory_allocations`
+// below — so reading a vendor "available" column would double-count
+// reservations (and two vendors mis-populate it: SAP puts a UoM in
+// quantity_unrestricted, P21 puts allocated qty in quantity_available).
+// Tally has no separate on-hand column; its `available_qty` IS the
+// balance, so it stays as-is.
 const ERP_SOURCES = [
-  // (source key, mirror table, part-no column, on-hand column).
-  // Tally lives on stock_item_name (text), all the others key on a
-  // structured part_no/sku column.
-  { source: "tally",         table: "tally_inventory",            part: "stock_item_name",   onHand: "available_qty" },
-  { source: "netsuite",      table: "netsuite_inventory_balances", part: "internal_id",       onHand: "quantity_available" },
-  { source: "sap",           table: "sap_inventory_balances",      part: "material_no",       onHand: "unrestricted_qty" },
-  { source: "d365",          table: "d365_inventory_balances",     part: "item_id",           onHand: "available_physical" },
-  { source: "acumatica",     table: "acu_inventory_balances",      part: "inventory_id",      onHand: "qty_available" },
-  { source: "p21",           table: "p21_inventory_balances",      part: "item_id",           onHand: "qty_on_hand" },
-  { source: "sxe",           table: "sxe_inventory_balances",      part: "product_no",        onHand: "qty_available" },
+  { source: "tally",     table: "tally_inventory",             part: "stock_item_name",      onHand: "available_qty" },
+  { source: "netsuite",  table: "netsuite_inventory_balances", part: "item_netsuite_id",     onHand: "quantity_on_hand" },
+  { source: "sap",       table: "sap_inventory_balances",      part: "material_external_id", onHand: "quantity_on_hand" },
+  { source: "d365",      table: "d365_inventory_balances",     part: "product_external_id",  onHand: "quantity_on_hand" },
+  { source: "acumatica", table: "acu_inventory_balances",      part: "item_external_id",     onHand: "quantity_on_hand" },
+  { source: "p21",       table: "p21_inventory_balances",      part: "item_external_id",     onHand: "quantity_on_hand" },
+  { source: "sxe",       table: "sxe_inventory_balances",      part: "item_external_id",     onHand: "quantity_on_hand" },
 ];
+
+export { ERP_SOURCES };
 
 // Lower-cased trimmed key so Tally's "Bearing 6204 (Pune)" matches
 // item_master.part_no "BEARING-6204" via a case-insensitive lookup.
@@ -37,9 +55,16 @@ const readSource = async (svc, tenantId, source) => {
   const select = `${source.part}, ${source.onHand}`;
   const r = await svc.from(source.table).select(select).eq("tenant_id", tenantId);
   if (r.error) {
-    // Missing tables (older deployments) are not fatal.
-    if (/relation .* does not exist/i.test(r.error.message || "")) return new Map();
-    throw new Error(`positions/${source.source}: ${r.error.message}`);
+    const msg = r.error.message || "";
+    // A missing table (older deployment) or a mismatched column (schema
+    // drift for THIS source) must not take down the whole refresh — the
+    // other ERP sources should still reconcile. Skip this source with a
+    // warning; the columns test guards against the drift landing at all.
+    if (/relation .* does not exist/i.test(msg) || /column .* does not exist/i.test(msg) || r.error.code === "42703") {
+      try { console.warn(`[positions] skipping source ${source.source}: ${msg}`); } catch (_) { /* noop */ }
+      return new Map();
+    }
+    throw new Error(`positions/${source.source}: ${msg}`);
   }
   const map = new Map();
   for (const row of (r.data || [])) {

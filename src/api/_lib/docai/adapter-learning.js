@@ -50,14 +50,25 @@ const decayWeight = (run, now) => {
   return Math.pow(0.5, ageDays / HALF_LIFE_DAYS);
 };
 
-// Score one adapter: weighted-mean (ok-rate * mean-confidence).
-// Returns null when below MIN_OBSERVATIONS so the caller can
-// fall through to the static order.
-const scoreOne = (adapterRuns, now) => {
+// Score one adapter: weighted-mean (ok-rate * mean-confidence), optionally
+// times a correction factor. Returns null when below MIN_OBSERVATIONS so the
+// caller can fall through to the static order.
+//
+// correctionAware (dark, opt-in): self-reported confidence is not the same as
+// correctness. An adapter can return ok=true with 0.9 confidence yet the
+// operator edits five fields. When each ok run carries a `correction_count`
+// (operator edits from extraction_corrections), we multiply by
+// 1 / (1 + meanCorrectionsPerOkRun) — 0 edits -> factor 1.0, ~3 edits -> 0.25 —
+// so the ranking optimizes the TRUE objective (fewest operator corrections),
+// not the model's self-assessment. meanCorr is over OK runs only; a failed run
+// has nothing to correct and is already penalized via okRate.
+const scoreOne = (adapterRuns, now, correctionAware = false) => {
   if (!Array.isArray(adapterRuns) || adapterRuns.length < MIN_OBSERVATIONS) return null;
   let weightSum = 0;
   let okSum = 0;
   let confSum = 0;
+  let okWeightSum = 0;
+  let corrSum = 0;
   for (const run of adapterRuns) {
     const w = decayWeight(run, now);
     weightSum += w;
@@ -65,19 +76,33 @@ const scoreOne = (adapterRuns, now) => {
     okSum += (isOk ? 1 : 0) * w;
     const conf = isOk ? Number(run.confidence_overall) || 0 : 0;
     confSum += conf * w;
+    if (isOk) {
+      okWeightSum += w;
+      corrSum += (Number(run.correction_count) || 0) * w;
+    }
   }
   if (weightSum === 0) return null;
   const okRate = okSum / weightSum;
   const meanConf = confSum / weightSum;
-  return okRate * meanConf;
+  let correctionFactor = 1;
+  if (correctionAware && okWeightSum > 0) {
+    const meanCorr = corrSum / okWeightSum;
+    correctionFactor = 1 / (1 + meanCorr);
+  }
+  return okRate * meanConf * correctionFactor;
 };
 
 // Public: get the reordered adapter list for a (tenant,
 // customer) pair. Adapters with insufficient observations sit
 // at their default position; adapters with scores get sorted by
 // score desc and moved to the front.
-export const rankAdaptersForCustomer = async ({ svc, tenantId, customerId, defaultOrder = DEFAULT_ORDER }) => {
-  const key = cacheKey(tenantId, customerId);
+export const rankAdaptersForCustomer = async ({
+  svc, tenantId, customerId, defaultOrder = DEFAULT_ORDER,
+  // Dark by default: only folds operator-correction rate into the score when
+  // explicitly enabled (env or caller). Off -> byte-identical + no extra query.
+  correctionAware = process.env.ADAPTER_LEARNING_CORRECTION_AWARE === "1",
+} = {}) => {
+  const key = cacheKey(tenantId, customerId) + (correctionAware ? ":ca" : "");
   const cached = cache.get(key);
   const now = Date.now();
   if (cached && cached.expires > now) return cached.order;
@@ -86,13 +111,29 @@ export const rankAdaptersForCustomer = async ({ svc, tenantId, customerId, defau
   let runs = [];
   try {
     const r = await svc.from("extraction_runs")
-      .select("adapter_used, status, confidence_overall, created_at")
+      .select("id, adapter_used, status, confidence_overall, created_at")
       .eq("tenant_id", tenantId)
       .eq("customer_id", customerId)
       .gt("created_at", since)
       .limit(500);
     if (!r.error && Array.isArray(r.data)) runs = r.data;
   } catch (_e) { /* tolerate; fall back to default */ }
+
+  // Attach per-run operator-correction counts (only when correction-aware).
+  if (correctionAware && runs.length) {
+    const runIds = runs.map((x) => x.id).filter(Boolean);
+    const counts = new Map();
+    try {
+      const c = await svc.from("extraction_corrections")
+        .select("extraction_run_id")
+        .eq("tenant_id", tenantId)
+        .in("extraction_run_id", runIds);
+      for (const row of (c.data || [])) {
+        counts.set(row.extraction_run_id, (counts.get(row.extraction_run_id) || 0) + 1);
+      }
+    } catch (_e) { /* tolerate; degrade to confidence-only scoring */ }
+    for (const run of runs) run.correction_count = counts.get(run.id) || 0;
+  }
 
   const byAdapter = new Map();
   for (const run of runs) {
@@ -102,7 +143,7 @@ export const rankAdaptersForCustomer = async ({ svc, tenantId, customerId, defau
   }
   const scored = [];
   for (const [adapter, list] of byAdapter) {
-    const s = scoreOne(list, now);
+    const s = scoreOne(list, now, correctionAware);
     if (s != null) scored.push({ adapter, score: s, observations: list.length });
   }
   scored.sort((a, b) => b.score - a.score);

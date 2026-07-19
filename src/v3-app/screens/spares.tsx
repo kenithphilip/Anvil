@@ -204,6 +204,8 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const [saveState, setSaveState] = uM("idle"); // idle | dirty | saving | saved | error
   const [showAddRow, setShowAddRow] = uM(false);
   const [showAddCol, setShowAddCol] = uM(false);
+  const [showSuggest, setShowSuggest] = uM(false);
+  const [bomGun, setBomGun] = uM(null);
   const [showConfig, setShowConfig] = uM(false);
   const [showImport, setShowImport] = uM(false);
   const [importPreview, setImportPreview] = uM(null);
@@ -717,6 +719,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
           <Btn sm onClick={() => { setShowAddRow(true); setShowAddCol(false); }}>{Icon.plus} Row</Btn>
           <Btn sm onClick={() => { setShowAddCol(true); setShowAddRow(false); }}>{Icon.plus} Spare column</Btn>
+          <Btn sm kind="ghost" onClick={() => setShowSuggest(true)} title="Scan every gun's BOM and suggest spare columns to add">Suggest columns</Btn>
           <Btn sm kind="ghost" onClick={() => setShowConfig(true)}>{Icon.settings} Configure cols</Btn>
           <Btn sm kind="ghost" onClick={onAutoFill} disabled={busyAuto}>{busyAuto ? "…" : <>{Icon.bolt} Auto-fill</>}</Btn>
           <Btn sm kind="ghost" onClick={() => fileRef.current?.click()}>{Icon.upload} Import</Btn>
@@ -749,6 +752,12 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
           <SMAddColForm onAdd={onAddCol} onClose={() => setShowAddCol(false)} existing={draft.cols || []} guns={(draft.rows || []).map((r) => r.gun_no).filter(Boolean)} />
         </Card>
       )}
+      {/* Suggest columns by scanning every gun's BOM */}
+      {showSuggest && !recView && (
+        <SuggestColsPanel matrixId={draft.id} onAdd={onAddCol} onClose={() => setShowSuggest(false)} />
+      )}
+      {/* Gun BOM drill-down drawer */}
+      {bomGun && <GunBomDrawer gunNo={bomGun} onClose={() => setBomGun(null)} />}
 
       {/* Import preview */}
       {showImport && !recView && (
@@ -780,13 +789,21 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       {/* Worksheet grid */}
       {!recView && (
         <Card flush>
-          {((draft.rows || []).length === 0 || (draft.cols || []).length === 0) ? (
+          {(draft.rows || []).length === 0 ? (
             <div className="body" style={{ padding: 24, textAlign: "center", color: "var(--ink-3)" }}>
-              {(draft.rows || []).length === 0 ? "No rows yet — click " : "No spare columns yet — click "}
-              <span style={{ color: "var(--ink)" }}>{(draft.rows || []).length === 0 ? "+ Row" : "+ Spare column"}</span> to start.
+              No rows yet — click <span style={{ color: "var(--ink)" }}>+ Row</span> or <span style={{ color: "var(--ink)" }}>Import</span> to start.
             </div>
           ) : (
-            <div style={{ overflow: "auto", maxHeight: "60vh" }}>
+            <>
+              {/* Rows exist but no spare columns yet (e.g. an import of gun rows
+                  only): still show the gun rows + a hint, instead of hiding them
+                  behind a "no spare columns" empty state. */}
+              {(draft.cols || []).length === 0 && (
+                <div className="body" style={{ padding: "8px 12px", background: "var(--paper-2)", borderBottom: "1px solid var(--hairline-2)", color: "var(--ink-3)", fontSize: 12 }}>
+                  {(draft.rows || []).length} row{(draft.rows || []).length === 1 ? "" : "s"} imported. No spare columns yet — click <span style={{ color: "var(--ink)" }}>+ Spare column</span> to enter part numbers per gun, then <span style={{ color: "var(--ink)" }}>Auto-fill</span>.
+                </div>
+              )}
+              <div style={{ overflow: "auto", maxHeight: "60vh" }}>
               <table className="tbl" style={{ minWidth: "100%" }}>
                 <thead>
                   <tr>
@@ -808,12 +825,15 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                   {(draft.rows || []).map((r) => (
                     <tr key={r.id}>
                       <td className="mono" style={{ position: "sticky", left: 0, background: "var(--paper)", zIndex: 1 }}>
-                        <input
-                          className="input mono"
-                          value={r.gun_no || ""}
-                          onChange={(e) => onRowMetaChange(r.id, "gun_no", e.target.value)}
-                          style={{ height: 26, fontSize: 11.5, padding: "0 6px", minWidth: 90 }}
-                        />
+                        <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
+                          <input
+                            className="input mono"
+                            value={r.gun_no || ""}
+                            onChange={(e) => onRowMetaChange(r.id, "gun_no", e.target.value)}
+                            style={{ height: 26, fontSize: 11.5, padding: "0 6px", minWidth: 78 }}
+                          />
+                          <Btn sm kind="ghost" onClick={() => r.gun_no && setBomGun(r.gun_no)} disabled={!r.gun_no} title="View this gun's full BOM">BOM</Btn>
+                        </div>
                       </td>
                       {SM_STATION_COLS.map((sc) => (
                         <td key={sc.key} className={sc.num ? "r mono" : "mono"}>
@@ -846,6 +866,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                 </tbody>
               </table>
             </div>
+            </>
           )}
           <div style={{ padding: "8px 12px", borderTop: "1px solid var(--hairline-2)", display: "flex", gap: 12, fontSize: 11 }} className="mono-sm">
             <span style={{ color: "var(--ink-3)" }}>{(draft.rows || []).length} rows · {(draft.cols || []).length} cols · {totalCells} cells</span>
@@ -1047,6 +1068,123 @@ const SMAddRowForm = ({ onAdd, onCancel }) => {
 // matches each gun's BOM parts into these categories. Suggestions are drawn
 // from the actual BOM descriptions of the guns already in this matrix (so
 // you only see categories/parts that exist), plus the familiar presets.
+// Gun BOM drill-down: fetch a gun's full BOM (bom_lines via bom.assetByCode) and
+// show ALL data points, so an operator can scan parts before configuring columns.
+const GUN_BOM_FIELDS: { k: string; label: string; num?: boolean; wide?: boolean }[] = [
+  { k: "seq_no", label: "#", num: true }, { k: "level", label: "Lv", num: true },
+  { k: "part_no", label: "Part #" }, { k: "part_name", label: "Description", wide: true },
+  { k: "supplier_part_no", label: "Supplier P/N" }, { k: "material", label: "Material" },
+  { k: "size", label: "Size" }, { k: "qty", label: "Qty", num: true }, { k: "uom", label: "UOM" },
+  { k: "side", label: "Side" }, { k: "std_category", label: "Category" }, { k: "is_spare", label: "Spare?" },
+  { k: "remarks", label: "Remarks", wide: true },
+];
+const GunBomDrawer = ({ gunNo, onClose }) => {
+  const data = useFetch(() => (AnvilBackend?.bom?.assetByCode ? AnvilBackend.bom.assetByCode(gunNo) : Promise.resolve(null)), [gunNo]);
+  const asset = (data.data as any)?.asset || null;
+  const lines: any[] = (data.data as any)?.lines || [];
+  const projects: any[] = (data.data as any)?.projects || [];
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 50, display: "flex", justifyContent: "flex-end" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(940px, 94vw)", height: "100%", background: "var(--paper)", boxShadow: "-8px 0 24px rgba(0,0,0,0.18)", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--hairline)", display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <div className="mono-sm" style={{ color: "var(--ink-3)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.04 }}>Gun BOM</div>
+            <div className="mono" style={{ fontSize: 15, fontWeight: 600 }}>{gunNo}</div>
+          </div>
+          <Btn icon kind="ghost" sm onClick={onClose} title="Close">{Icon.x}</Btn>
+        </div>
+        <div style={{ overflow: "auto", flex: 1, padding: "12px 16px" }}>
+          {data.loading && !data.data ? (
+            <div className="body" style={{ color: "var(--ink-3)" }}>Loading BOM…</div>
+          ) : (!asset && !lines.length) ? (
+            <Banner kind="info">No BOM found for gun <b>{gunNo}</b>. Import it via <b>Import BOM</b> — the gun code must match a BOM asset code.</Banner>
+          ) : (
+            <>
+              {asset && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px,1fr))", gap: 8, marginBottom: 14 }}>
+                  {([["Asset code", asset.asset_code], ["Name", asset.name], ["Revision", asset.revision], ["Drawing", asset.drawing_no], ["Type", asset.asset_type], ["Source", asset.source_country], ["Approval", asset.approval_status], ["Lines", String(lines.length)]] as [string, any][]).map(([k, v]) => (
+                    <div key={k}><div className="mono-sm" style={{ color: "var(--ink-3)", fontSize: 10 }}>{k}</div><div className="mono-sm">{v || "—"}</div></div>
+                  ))}
+                </div>
+              )}
+              <div style={{ overflow: "auto" }}>
+                <table className="tbl" style={{ minWidth: "100%" }}>
+                  <thead><tr>{GUN_BOM_FIELDS.map((f) => <th key={f.k} className={f.num ? "r" : ""}>{f.label}</th>)}</tr></thead>
+                  <tbody>
+                    {lines.map((l, i) => (
+                      <tr key={l.id || i}>
+                        {GUN_BOM_FIELDS.map((f) => (
+                          <td key={f.k} className={f.num ? "r mono-sm" : "mono-sm"} style={f.wide ? { maxWidth: 240, whiteSpace: "normal" } : undefined}>
+                            {f.k === "is_spare" ? (l.is_spare ? "Y" : "") : (l[f.k] != null && l[f.k] !== "" ? String(l[f.k]) : "—")}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {projects.length > 0 && (
+                <div style={{ marginTop: 14, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <span className="mono-sm" style={{ color: "var(--ink-3)", fontSize: 10.5, textTransform: "uppercase" }}>Where used:</span>
+                  {projects.map((p, i) => <Chip key={i} k="info">{p.project_code || p.project_name || p.project_id}</Chip>)}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Suggest columns: scan every gun's BOM and propose new spare-column headers.
+const SuggestColsPanel = ({ matrixId, onAdd, onClose }) => {
+  const data = useFetch(() => (matrixId && AnvilBackend?.spareMatrix?.suggestColumns ? AnvilBackend.spareMatrix.suggestColumns(matrixId) : Promise.resolve({ suggestions: [] })), [matrixId]);
+  const [picked, setPicked] = useState<Record<string, boolean>>({});
+  const suggestions: any[] = (data.data as any)?.suggestions || [];
+  const note = (data.data as any)?.note;
+  const scanned = (data.data as any)?.scanned_guns || 0;
+  const toggle = (name) => setPicked((p) => ({ ...p, [name]: !p[name] }));
+  const addPicked = () => {
+    const chosen = suggestions.filter((s) => picked[s.col_name]);
+    if (!chosen.length) { window.notifyError?.("Nothing selected", "Tick one or more suggested columns."); return; }
+    chosen.forEach((s) => onAdd(s.col_name, s.col_type));
+    window.notifySuccess?.("Columns added", `${chosen.length} spare column${chosen.length === 1 ? "" : "s"} added. Click Auto-fill to populate parts.`);
+    onClose();
+  };
+  return (
+    <Card title="Suggested spare columns" eyebrow={data.loading && !data.data ? "scanning every gun's BOM…" : `${suggestions.length} candidate${suggestions.length === 1 ? "" : "s"} from ${scanned} gun BOM${scanned === 1 ? "" : "s"}`}
+          right={<>
+            <Btn sm kind="ghost" onClick={onClose}>Close</Btn>
+            <Btn sm kind="primary" onClick={addPicked} disabled={!suggestions.length}>Add selected</Btn>
+          </>}>
+      {data.loading && !data.data ? (
+        <div className="body" style={{ padding: 12, color: "var(--ink-3)" }}>Scanning every gun's BOM…</div>
+      ) : note ? (
+        <Banner kind="info">{note}</Banner>
+      ) : suggestions.length === 0 ? (
+        <div className="body" style={{ padding: 12, color: "var(--ink-3)" }}>No new column suggestions — every BOM category is already a column, or the guns have no categorized BOM parts.</div>
+      ) : (
+        <table className="tbl">
+          <thead><tr><th style={{ width: 30 }}></th><th>Column header</th><th>Type</th><th className="r">Guns</th><th className="r">Parts</th><th>Sample parts</th></tr></thead>
+          <tbody>
+            {suggestions.map((s) => (
+              <tr key={s.col_name} style={{ cursor: "pointer" }} onClick={() => toggle(s.col_name)}>
+                <td><input type="checkbox" checked={!!picked[s.col_name]} onChange={() => toggle(s.col_name)} onClick={(e) => e.stopPropagation()} aria-label={`Pick ${s.col_name}`} /></td>
+                <td className="mono">{s.col_name}</td>
+                <td><Chip k={s.col_type === "consumable" ? "warn" : "info"}>{s.col_type}</Chip></td>
+                <td className="r mono-sm">{s.gun_count}</td>
+                <td className="r mono-sm">{s.part_count}</td>
+                <td className="mono-sm" style={{ maxWidth: 340, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--ink-3)" }}>{(s.sample_parts || []).slice(0, 4).join(" · ")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Card>
+  );
+};
+
 const SMAddColForm = ({ onAdd, onClose, existing, guns }) => {
   const { useState: uF, useRef: rF, useEffect: eF } = React;
   const [name, setName] = uF("");

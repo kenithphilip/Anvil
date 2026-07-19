@@ -780,13 +780,21 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       {/* Worksheet grid */}
       {!recView && (
         <Card flush>
-          {((draft.rows || []).length === 0 || (draft.cols || []).length === 0) ? (
+          {(draft.rows || []).length === 0 ? (
             <div className="body" style={{ padding: 24, textAlign: "center", color: "var(--ink-3)" }}>
-              {(draft.rows || []).length === 0 ? "No rows yet — click " : "No spare columns yet — click "}
-              <span style={{ color: "var(--ink)" }}>{(draft.rows || []).length === 0 ? "+ Row" : "+ Spare column"}</span> to start.
+              No rows yet — click <span style={{ color: "var(--ink)" }}>+ Row</span> or <span style={{ color: "var(--ink)" }}>Import</span> to start.
             </div>
           ) : (
-            <div style={{ overflow: "auto", maxHeight: "60vh" }}>
+            <>
+              {/* Rows exist but no spare columns yet (e.g. an import of gun rows
+                  only): still show the gun rows + a hint, instead of hiding them
+                  behind a "no spare columns" empty state. */}
+              {(draft.cols || []).length === 0 && (
+                <div className="body" style={{ padding: "8px 12px", background: "var(--paper-2)", borderBottom: "1px solid var(--hairline-2)", color: "var(--ink-3)", fontSize: 12 }}>
+                  {(draft.rows || []).length} row{(draft.rows || []).length === 1 ? "" : "s"} imported. No spare columns yet — click <span style={{ color: "var(--ink)" }}>+ Spare column</span> to enter part numbers per gun, then <span style={{ color: "var(--ink)" }}>Auto-fill</span>.
+                </div>
+              )}
+              <div style={{ overflow: "auto", maxHeight: "60vh" }}>
               <table className="tbl" style={{ minWidth: "100%" }}>
                 <thead>
                   <tr>
@@ -846,6 +854,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                 </tbody>
               </table>
             </div>
+            </>
           )}
           <div style={{ padding: "8px 12px", borderTop: "1px solid var(--hairline-2)", display: "flex", gap: 12, fontSize: 11 }} className="mono-sm">
             <span style={{ color: "var(--ink-3)" }}>{(draft.rows || []).length} rows · {(draft.cols || []).length} cols · {totalCells} cells</span>

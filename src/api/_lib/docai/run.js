@@ -65,6 +65,9 @@ import {
   __consts as marketplaceConsts,
 } from "./marketplace.js";
 import { applyOverrides, loadOverrides, recordOverrideUsage } from "./overrides.js";
+import { computeGstinPin } from "./grounding.js";
+import { validateGstin, gstinStateCode } from "../gstin.js";
+import { findByGstin } from "../customer-canonicalizer.js";
 import { voteAcrossAdapters } from "./voter.js";
 import { validateExtraction } from "./validators.js";
 import { recordEvent } from "../audit.js";
@@ -891,6 +894,46 @@ export const runExtractionPipeline = async (params) => {
         });
       }
     } catch (_e) { /* don't break the run */ }
+  }
+
+  // 6a2. Grounding verifier — Phase 1: pin customer identity from a valid,
+  // registry-known GSTIN. Dark-launched via tenant_settings.grounding_verify_enabled.
+  // Deterministic, fill-blanks-only, never clobbers an operator-visible value;
+  // records the matched customer_id + any flags so the workspace can act on it.
+  // See docs/EXTRACTION_GROUNDING_DESIGN.md.
+  if (settings?.grounding_verify_enabled && out?.ok && out.normalized?.customer?.gstin) {
+    try {
+      const gv = validateGstin(out.normalized.customer.gstin);
+      const matched = gv.ok ? await findByGstin(svc, ctx.tenantId, gv.normalized) : null;
+      const pin = computeGstinPin({
+        extractedCustomer: out.normalized.customer,
+        matchedCustomer: matched,
+        gstinValidation: gv,
+        stateFromGstin: gv.ok ? gstinStateCode(gv.normalized) : null,
+      });
+      // computeGstinPin only emits patch keys for fields it treats as blank
+      // (null / empty / whitespace), so apply directly. Re-guarding here with
+      // a stricter non-trim check would leave a whitespace value in place yet
+      // still floor its confidence below.
+      for (const [k, v] of Object.entries(pin.patch)) {
+        out.normalized.customer[k] = v;
+      }
+      out.confidences = { ...(out.confidences || {}) };
+      for (const [fp, floor] of Object.entries(pin.confidenceFloors)) {
+        if (Number(out.confidences[fp] || 0) < floor) out.confidences[fp] = floor;
+      }
+      for (const [fp, cap] of Object.entries(pin.confidenceCaps)) {
+        const cur = out.confidences[fp] == null ? 1 : Number(out.confidences[fp]);
+        if (cur > cap) out.confidences[fp] = cap;
+      }
+      if (pin.matched_customer_id || pin.flags.length) {
+        await recordRunEvent("docai_gstin_grounding", {
+          matched_customer_id: pin.matched_customer_id,
+          filled: Object.keys(pin.patch),
+          flags: pin.flags,
+        });
+      }
+    } catch (_e) { /* never break the run */ }
   }
 
   // 6b. Tenant-identity scrub (May 2026 audit fix). Strip any

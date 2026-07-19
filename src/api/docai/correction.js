@@ -1,12 +1,15 @@
 // POST /api/docai/correction
 // Body: { extraction_run_id, field_path, original_value, corrected_value, reason? }
 //
-// Records an operator-correction. When 50+ corrections accumulate
-// for a (tenant, customer, field), the per-customer prompt-overrides
-// bundle on tenant_settings is rebuilt so the next Claude-fallback
-// extraction includes those examples as few-shot context. Also
-// writes an rlhf_feedback row (surface=intake) so the existing
-// reward aggregation picks it up.
+// Records an operator-correction. Three learning paths fire from here:
+//   1. learned_corrections (via recordCorrections) — read by
+//      customer-hints to prime the NEXT extraction's prompt. This
+//      writer was missing, so that half of the loop never fired.
+//   2. customer_field_overrides (via promoteCorrectionIfStable) — a
+//      forward rule applied by the pipeline once two corrections agree.
+//   3. tenant_settings.docai_prompt_overrides — a per-customer Claude
+//      few-shot bundle rebuilt once 50+ corrections accumulate.
+// Also writes an rlhf_feedback row (surface=intake) for reward aggregation.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
@@ -15,6 +18,7 @@ import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings, updateTenantSettings } from "../_lib/stripe-client.js";
 import { safeFire } from "../_lib/safe-thenable.js";
 import { promoteCorrectionIfStable } from "../_lib/docai/overrides.js";
+import { classifyDiff, recordCorrections, stableEqual } from "../_lib/docai/learned-corrections.js";
 
 const REBUILD_THRESHOLD = 50;
 const MAX_EXAMPLES_PER_FIELD = 5;
@@ -62,6 +66,9 @@ export default async function handler(req, res) {
     if (run.error) throw new Error(run.error.message);
     if (!run.data) return json(res, 404, { error: { message: "extraction_run not found" } });
     const customerId = body?.customer_id || run.data.customer_id;
+    // Actor id is ctx.user.id (ctx.userId is undefined in this codebase),
+    // so the correction and rlhf rows were recording a null author.
+    const actorId = ctx.user?.id || ctx.userId || null;
 
     const ins = await svc.from("extraction_corrections").insert({
       tenant_id: ctx.tenantId,
@@ -71,9 +78,34 @@ export default async function handler(req, res) {
       original_value: body.original_value ?? null,
       corrected_value: body.corrected_value ?? null,
       reason: body.reason || null,
-      user_id: ctx.userId || null,
+      user_id: actorId,
     }).select("id").single();
     if (ins.error) throw new Error(ins.error.message);
+
+    // Close the active-learning loop. learned_corrections is what
+    // customer-hints reads to inject "previously corrected" examples
+    // into the NEXT extraction's prompt, but it had no production
+    // writer until here. Best-effort + only on a real change (skip a
+    // no-op "correction" that matches the model). Idempotent upsert on
+    // (tenant, run, field_path).
+    {
+      const mv = body.original_value ?? null;
+      const ov = body.corrected_value ?? null;
+      // stableEqual is the same no-op test diffNormalized uses (numeric
+      // tolerance + trim), so a formatting-only "correction" (12 -> "12.00",
+      // trailing whitespace) is not learned as if the model were wrong.
+      if (!stableEqual(mv, ov)) {
+        const { diff_kind, severity } = classifyDiff(body.field_path, mv, ov);
+        safeFire(
+          recordCorrections(
+            svc,
+            { tenantId: ctx.tenantId, customerId, extractionRunId: body.extraction_run_id, createdBy: actorId },
+            { diffs: [{ field_path: body.field_path, model_value: mv, operator_value: ov, diff_kind, severity }] },
+          ),
+          "learned_corrections",
+        );
+      }
+    }
 
     // RLHF feedback row so the existing aggregator picks this up.
     // safeFire: best-effort, labelled so a failure surfaces in stderr.
@@ -86,7 +118,7 @@ export default async function handler(req, res) {
       corrected_output: { value: body.corrected_value },
       rating: -1,
       comment: body.reason || "operator correction",
-      user_id: ctx.userId || null,
+      user_id: actorId,
     }), "rlhf_feedback");
 
     await recordAudit(ctx, {

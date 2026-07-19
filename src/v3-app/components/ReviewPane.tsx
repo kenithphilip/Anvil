@@ -469,10 +469,61 @@ interface ReviewPaneProps {
   canCorrect?: boolean;
 }
 
-const ReviewPaneInner: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) => {
+// Stable colour function shared by the PDF overlay + field list so
+// each bbox adopts the same hue as its field-list group.
+const colourForFieldGroup = (fieldPath: string) =>
+  `var(${FIELD_GROUPS[groupForFieldPath(fieldPath)].cssVar})`;
+
+const GROUP_ORDER: FieldGroupId[] = ["customer", "order", "lines", "totals", "seller", "other"];
+
+// Left pane: the source-document preview (PDF via PdfPagePreview with
+// bbox overlays, image, or download fallback). Exported so the SO
+// Workspace's unified reconcile view can mount the PDF next to the line
+// grid; `extraEvidence` lets that caller inject synthetic per-line bbox
+// rows (field_path "lines[i]") on top of the fetched header evidence.
+export const ReviewDocPane: React.FC<{
+  docId: string | null | undefined;
+  extraEvidence?: EvidenceBbox[];
+}> = ({ docId, extraEvidence }) => {
   const doc = useSignedDoc(docId);
-  const evidenceRows = useDocumentEvidence(docId);
+  const fetched = useDocumentEvidence(docId);
+  const evidenceRows = useMemo(
+    () => (extraEvidence && extraEvidence.length ? [...fetched, ...extraEvidence] : fetched),
+    [fetched, extraEvidence],
+  );
+  const colourForField = useCallback(colourForFieldGroup, []);
+  return (
+    <div className="rp-pane rp-pane-doc">
+      <header className="rp-pane-header">
+        <span className="h-eyebrow">Source document</span>
+        {doc.filename && <span className="mono-sm" style={{ color: "var(--ink-3)" }}>{doc.filename}</span>}
+      </header>
+      <div className="rp-pane-body rp-pane-body-doc">
+        <DocumentPreview
+          doc={doc}
+          evidenceRows={evidenceRows}
+          colourForField={colourForField}
+        />
+      </div>
+    </div>
+  );
+};
+
+// Right pane: the extracted-field list, grouped, with the verify bar,
+// "mark all correct", and keyboard nav. Exported so the unified
+// reconcile view can render it as a collapsible header-field strip:
+//   - `groups` restricts which groups appear (the workspace shows
+//     everything except "lines", which the reconciliation grid owns).
+//   - `keyboardNav` (default true) is disabled there so J/K/Y/N do not
+//     hijack keys while the operator edits line cells.
+export const ReviewFieldsPane: React.FC<{
+  evidenceByField: EvidenceByField | null | undefined;
+  groups?: FieldGroupId[];
+  keyboardNav?: boolean;
+  emptyHint?: React.ReactNode;
+}> = ({ evidenceByField, groups, keyboardNav = true, emptyHint }) => {
   const { counts, confirmAll, selectedField, setSelectedField, setFieldStatus } = useReviewPaneSelection();
+  const visibleGroups = groups && groups.length ? groups : GROUP_ORDER;
 
   // Group + stable-sort fields once per render. Sorted alphabetically
   // within each group so the operator can predict where a field will
@@ -484,34 +535,35 @@ const ReviewPaneInner: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) 
     const map = evidenceByField || {};
     for (const [path, entry] of Object.entries(map)) {
       if (!entry) continue;
-      buckets[groupForFieldPath(path)].push([path, entry as EvidenceEntry]);
+      const g = groupForFieldPath(path);
+      if (!visibleGroups.includes(g)) continue;
+      buckets[g].push([path, entry as EvidenceEntry]);
     }
     (Object.keys(buckets) as FieldGroupId[]).forEach((g) =>
       buckets[g].sort(([a], [b]) => a.localeCompare(b))
     );
     return buckets;
-  }, [evidenceByField]);
+  }, [evidenceByField, visibleGroups]);
 
   const totalFields = useMemo(
     () => (Object.values(grouped) as Array<Array<unknown>>).reduce((s, arr) => s + arr.length, 0),
     [grouped]
   );
 
-  // Flat list of every field path, for the verification progress
-  // counter + the "mark all correct" bulk action.
+  // Flat list of every visible field path, for the verification
+  // progress counter + the "mark all correct" bulk action.
   const allPaths = useMemo(
     () => (Object.values(grouped) as Array<Array<[string, EvidenceEntry]>>).flatMap((arr) => arr.map(([p]) => p)),
     [grouped]
   );
   const c = counts(allPaths);
 
-  // Phase D: keyboard navigation. Mounts only while the Review tab is
-  // open (this component unmounts on tab change), so the listener is
-  // naturally scoped. Ignored while the operator is typing in the
-  // inline corrector. J/K (or arrows) move a cursor through the field
-  // list; Y/N confirm/flag the cursor row; Cmd/Ctrl+Enter marks all
-  // correct; Escape clears the cursor.
+  // Keyboard navigation. Ignored while the operator is typing in an
+  // input/textarea/select. J/K (or arrows) move a cursor through the
+  // field list; Y/N confirm/flag the cursor row; Cmd/Ctrl+Enter marks
+  // all correct; Escape clears the cursor.
   useEffect(() => {
+    if (!keyboardNav) return;
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       const tag = (t?.tagName || "").toUpperCase();
@@ -532,91 +584,69 @@ const ReviewPaneInner: React.FC<ReviewPaneProps> = ({ docId, evidenceByField }) 
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [allPaths, selectedField, setSelectedField, setFieldStatus, confirmAll]);
-
-  // Stable colour function passed to the PDF overlay so each bbox
-  // adopts the same hue as the corresponding field-list group.
-  const colourForField = useCallback(
-    (fieldPath: string) => `var(${FIELD_GROUPS[groupForFieldPath(fieldPath)].cssVar})`,
-    [],
-  );
+  }, [keyboardNav, allPaths, selectedField, setSelectedField, setFieldStatus, confirmAll]);
 
   return (
-    <div className="rp-grid">
-      {/* Left: source document preview. */}
-      <div className="rp-pane rp-pane-doc">
-        <header className="rp-pane-header">
-          <span className="h-eyebrow">Source document</span>
-          {doc.filename && <span className="mono-sm" style={{ color: "var(--ink-3)" }}>{doc.filename}</span>}
-        </header>
-        <div className="rp-pane-body rp-pane-body-doc">
-          <DocumentPreview
-            doc={doc}
-            evidenceRows={evidenceRows}
-            colourForField={colourForField}
-          />
-        </div>
-      </div>
-
-      {/* Right: extracted-field list, grouped. */}
-      <div className="rp-pane rp-pane-fields">
-        <header className="rp-pane-header">
-          <span className="h-eyebrow">Extracted fields</span>
-          <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
-            {totalFields} {totalFields === 1 ? "field" : "fields"}
+    <div className="rp-pane rp-pane-fields">
+      <header className="rp-pane-header">
+        <span className="h-eyebrow">Extracted fields</span>
+        <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+          {totalFields} {totalFields === 1 ? "field" : "fields"}
+        </span>
+      </header>
+      {totalFields > 0 && (
+        <div className="rp-verify-bar">
+          <div className="rp-verify-progress" aria-hidden="true">
+            <span
+              className="rp-verify-progress-fill"
+              style={{ width: `${c.total ? Math.round((c.confirmed / c.total) * 100) : 0}%` }}
+            />
+          </div>
+          <span className="mono-sm rp-verify-count">
+            {c.confirmed}/{c.total} confirmed{c.flagged ? ` · ${c.flagged} flagged` : ""}
           </span>
-        </header>
-        {totalFields > 0 && (
-          <div className="rp-verify-bar">
-            <div className="rp-verify-progress" aria-hidden="true">
-              <span
-                className="rp-verify-progress-fill"
-                style={{ width: `${c.total ? Math.round((c.confirmed / c.total) * 100) : 0}%` }}
-              />
-            </div>
-            <span className="mono-sm rp-verify-count">
-              {c.confirmed}/{c.total} confirmed{c.flagged ? ` · ${c.flagged} flagged` : ""}
-            </span>
-            <button
-              type="button"
-              className="btn ghost sm"
-              disabled={c.pending === 0}
-              onClick={() => confirmAll(allPaths)}
-              title="Mark every still-pending field as correct"
-            >
-              {Icon.check} mark all correct
-            </button>
+          <button
+            type="button"
+            className="btn ghost sm"
+            disabled={c.pending === 0}
+            onClick={() => confirmAll(allPaths)}
+            title="Mark every still-pending field as correct"
+          >
+            {Icon.check} mark all correct
+          </button>
+          {keyboardNav && (
             <span className="mono-sm rp-kbd-hint" title="Keyboard: J/K move · Y confirm · N flag · ⌘↵ all">
               J/K · Y · N
             </span>
-          </div>
-        )}
-        <div className="rp-pane-body">
-          {totalFields === 0 ? (
-            <div className="mono-sm" style={{ color: "var(--ink-3)", padding: 16 }}>
-              No extracted fields yet. Once extraction runs, every
-              recognised field appears here with its source page and a
-              confidence score.
-            </div>
-          ) : (
-            <>
-              <FieldGroupSection group="customer" entries={grouped.customer} />
-              <FieldGroupSection group="order"    entries={grouped.order} />
-              <FieldGroupSection group="lines"    entries={grouped.lines} />
-              <FieldGroupSection group="totals"   entries={grouped.totals} />
-              <FieldGroupSection group="seller"   entries={grouped.seller} />
-              <FieldGroupSection group="other"    entries={grouped.other} />
-            </>
           )}
         </div>
+      )}
+      <div className="rp-pane-body">
+        {totalFields === 0 ? (
+          <div className="mono-sm" style={{ color: "var(--ink-3)", padding: 16 }}>
+            {emptyHint || "No extracted fields yet. Once extraction runs, every recognised field appears here with its source page and a confidence score."}
+          </div>
+        ) : (
+          visibleGroups.map((g) => (
+            <FieldGroupSection key={g} group={g} entries={grouped[g]} />
+          ))
+        )}
       </div>
     </div>
   );
 };
 
+// Standalone composition of the two panes with its own provider. The
+// SO Workspace's unified Reconcile tab composes the named ReviewDocPane
+// + ReviewFieldsPane under its own provider instead; this default stays
+// as the self-contained side-by-side (and is what the ReviewPane.*
+// test suites exercise, covering both panes through one entry point).
 const ReviewPane: React.FC<ReviewPaneProps> = (props) => (
   <ReviewPaneSelectionProvider canCorrect={!!props.canCorrect} extractionRunId={props.extractionRunId ?? null}>
-    <ReviewPaneInner {...props} />
+    <div className="rp-grid">
+      <ReviewDocPane docId={props.docId} />
+      <ReviewFieldsPane evidenceByField={props.evidenceByField} />
+    </div>
   </ReviewPaneSelectionProvider>
 );
 

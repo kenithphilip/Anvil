@@ -47,7 +47,11 @@ export const flattenNormalized = (norm) => {
   return out;
 };
 
-const stableEqual = (a, b) => {
+// Exported: the canonical no-op test for corrections. Numeric values
+// compare with a 0.5-paise tolerance; strings compare trimmed. Used by
+// diffNormalized here and by the single-field /api/docai/correction
+// gate so both paths agree on what counts as "unchanged".
+export const stableEqual = (a, b) => {
   // Normalize numeric / string equality + null handling.
   if (a == null && b == null) return true;
   if (a == null || b == null) return false;
@@ -71,26 +75,42 @@ const stableEqual = (a, b) => {
 //     field (gstin, customer.name, classification).
 //   - 'medium' on numeric-field replaces.
 //   - 'low' on minor whitespace / case shifts.
+const CRITICAL_FIELDS = new Set(["customer.gstin", "customer.name", "customer.bill_to_address", "classification"]);
+
+// Classify a single field change into { diff_kind, severity }. Shared
+// by diffNormalized (batch) and the single-field /api/docai/correction
+// path so a one-off operator correction is scored identically to one
+// derived from a full payload diff.
+//   diff_kind: "add" (model null -> value), "remove" (value -> null),
+//              "replace" (value -> different value).
+//   severity : "high" on critical fields or any removal; "low" on a
+//              case/whitespace-only shift; "medium" otherwise.
+export const classifyDiff = (fieldPath, modelValue, operatorValue) => {
+  const mv = modelValue == null ? null : modelValue;
+  const ov = operatorValue == null ? null : operatorValue;
+  let diff_kind;
+  if (mv == null && ov != null) diff_kind = "add";
+  else if (mv != null && ov == null) diff_kind = "remove";
+  else diff_kind = "replace";
+  let severity = "medium";
+  if (CRITICAL_FIELDS.has(fieldPath) || (mv != null && ov == null)) severity = "high";
+  else if (typeof mv === "string" && typeof ov === "string"
+    && mv.toLowerCase().replace(/\s+/g, " ").trim() === ov.toLowerCase().replace(/\s+/g, " ").trim()) {
+    severity = "low";
+  }
+  return { diff_kind, severity };
+};
+
 export const diffNormalized = (model, operator) => {
   const m = flattenNormalized(model);
   const o = flattenNormalized(operator);
   const allKeys = new Set([...Object.keys(m), ...Object.keys(o)]);
   const diffs = [];
-  const CRITICAL = new Set(["customer.gstin", "customer.name", "customer.bill_to_address", "classification"]);
   for (const key of allKeys) {
     const mv = m[key] == null ? null : m[key];
     const ov = o[key] == null ? null : o[key];
     if (stableEqual(mv, ov)) continue;
-    let diff_kind;
-    if (mv == null && ov != null) diff_kind = "add";
-    else if (mv != null && ov == null) diff_kind = "remove";
-    else diff_kind = "replace";
-    let severity = "medium";
-    if (CRITICAL.has(key) || (mv != null && ov == null)) severity = "high";
-    else if (typeof mv === "string" && typeof ov === "string"
-      && mv.toLowerCase().replace(/\s+/g, " ").trim() === ov.toLowerCase().replace(/\s+/g, " ").trim()) {
-      severity = "low";
-    }
+    const { diff_kind, severity } = classifyDiff(key, mv, ov);
     diffs.push({
       field_path: key,
       model_value: mv,

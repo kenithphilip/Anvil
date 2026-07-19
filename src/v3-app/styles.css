@@ -1474,6 +1474,70 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   border-radius: var(--r-2);
 }
 
+/* ── Unified reconcile view (SO Workspace -> "Reconcile" tab) ──
+ * PO PDF (ReviewDocPane) side-by-side with the line-reconciliation
+ * grid, sharing one ReviewPaneSelectionProvider so a row click links
+ * to the PDF bbox and vice-versa. A PDF | Split | Lines toggle
+ * collapses either side without unmounting the other. */
+.recon-toolbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.recon-view-toggle {
+  display: inline-flex; flex-shrink: 0;
+  border: 1px solid var(--hairline-2); border-radius: var(--r-2); overflow: hidden;
+}
+.recon-view-btn {
+  padding: 4px 12px; font: inherit; font-size: 12px;
+  background: var(--paper); color: var(--ink-2);
+  border: 0; border-left: 1px solid var(--hairline-2); cursor: pointer;
+}
+.recon-view-btn:first-child { border-left: 0; }
+.recon-view-btn.is-active { background: var(--ink); color: var(--paper); }
+.recon-view-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.recon-toolbar-hint { flex: 1 1 auto; min-width: 0; }
+.recon-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 12px; align-items: start;
+}
+.recon-split.recon-view-pdf,
+.recon-split.recon-view-lines { grid-template-columns: minmax(0, 1fr); }
+.recon-view-pdf .recon-right { display: none; }
+.recon-view-lines .recon-doc { display: none; }
+/* Pin the PO while the operator scrolls a long line grid. The pane
+   caps its own height and scrolls internally, so it stays < viewport.
+   --recon-sticky-top is measured from the workspace's sticky title
+   (opaque, top:0, in the same scroll container) so the pane pins BELOW
+   it instead of sliding underneath. */
+.recon-doc { position: sticky; top: var(--recon-sticky-top, 8px); min-width: 0; }
+.recon-doc .rp-pane {
+  min-height: min(70vh, 700px);
+  /* Fit inside the viewport below the sticky title, with breathing room. */
+  max-height: calc(100vh - var(--recon-sticky-top, 8px) - 20px);
+}
+.recon-right { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.recon-fields {
+  border: 1px solid var(--hairline); border-radius: var(--r-2);
+  background: var(--paper);
+}
+.recon-fields-summary {
+  padding: 8px 12px; cursor: pointer; color: var(--ink-2); user-select: none;
+}
+.recon-fields[open] .recon-fields-summary { border-bottom: 1px solid var(--hairline-2); }
+.recon-fields .rp-pane-fields { border: 0; max-height: 46vh; }
+.recon-row { cursor: pointer; }
+.recon-row.is-active > td {
+  background: var(--paper-2);
+  box-shadow: inset 2px 0 0 var(--accent-2);
+}
+@media (max-width: 1100px) {
+  .recon-split,
+  .recon-split.recon-view-split { grid-template-columns: minmax(0, 1fr); }
+  .recon-doc { position: static; }
+  .recon-view-split .recon-doc { margin-bottom: 12px; }
+}
+
 /* Selectable card list (e.g., order mode picker).
  * Auto-fit floor of 200px keeps each card readable; on a 320px
  * viewport that means a single column, on a 800px viewport three

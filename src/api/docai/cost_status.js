@@ -346,6 +346,7 @@ export default async function handler(req, res) {
       marker:        !!process.env.MARKER_ENDPOINT,
       mistral_ocr:   !!process.env.MISTRAL_API_KEY,
       llamaparse:    !!process.env.LLAMAPARSE_API_KEY || !!process.env.LLAMA_CLOUD_API_KEY,
+      openrouter:    !!process.env.OPENROUTER_API_KEY,
     };
     // Per-tenant key presence (without revealing the key itself).
     const tenantHasKey = {

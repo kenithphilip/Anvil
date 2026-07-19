@@ -23,6 +23,7 @@ import * as marker from "./marker.js";
 import * as gemini from "./gemini.js";
 import * as office from "./office.js";
 import * as llamaparse from "./llamaparse.js";
+import * as openrouterAdapter from "./openrouter.js";
 import { allowedToCall, recordCall } from "../cost_guard.js";
 import { serviceClient } from "../supabase.js";
 import { rankAdaptersForCustomer } from "./adapter-learning.js";
@@ -41,6 +42,10 @@ const ADAPTERS = {
   // Opt-in (issue #210): OFF by default — not in the default provider
   // order and skipped unless the tenant configures a LlamaCloud key.
   llamaparse,
+  // Opt-in: OFF by default — not in the default provider order and skipped
+  // unless OPENROUTER_API_KEY is set + the tenant adds it to
+  // docai_provider_order (or picks it via the engine picker). Text-first.
+  openrouter: openrouterAdapter,
 };
 
 // Registered adapter names — the single source of truth for validating a

@@ -226,5 +226,3 @@ export const refreshPositions = async (svc, tenantId, asOf = null) => {
     mismatches: mismatchExceptions.length,
   };
 };
-
-export { ERP_SOURCES };

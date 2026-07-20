@@ -1002,18 +1002,31 @@ const WiredSOIntake = () => {
       // preview + customer, and the operator can re-run from the
       // workspace.
       if (largePo && doc?.id) {
+        // Fail-CLOSED: a swallowed enqueue error used to look identical to
+        // success, so a large PO would sit "extracting in background" forever
+        // with no job. Check resp.ok and tell the operator to re-run from the
+        // workspace if the job wasn't created. The draft is still usable (it
+        // has the page-1 preview + customer), so this warns, never blocks.
+        let enqueued = false;
         try {
           const cfg: any = (AnvilBackend as any)?.getConfig?.() || {};
           const session: any = (AnvilBackend as any)?.getSession?.() || null;
           const headers: any = { "Content-Type": "application/json" };
           if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
           if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
-          await fetch(cfg.url.replace(/\/+$/, "") + "/api/orders/extraction_jobs", {
+          const resp = await fetch(cfg.url.replace(/\/+$/, "") + "/api/orders/extraction_jobs", {
             method: "POST",
             headers,
             body: JSON.stringify({ order_id: newId, document_id: doc.id, source_filename: doc?.filename || "po.pdf" }),
           });
-        } catch (_) { /* non-fatal; workspace re-run can retry */ }
+          enqueued = resp.ok;
+        } catch (_) { enqueued = false; }
+        if (!enqueued) {
+          window.notifyWarn?.(
+            "Background extraction not queued",
+            "The full line-item extraction didn't start. Open the order and click Run extraction to retry.",
+          );
+        }
       }
       // Auto-reconcile the received PO against the customer's quotes so the
       // SO is priced + verified with NO manual quote-picking. Skip for large

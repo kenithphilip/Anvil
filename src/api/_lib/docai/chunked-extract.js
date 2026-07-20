@@ -271,31 +271,20 @@ export const chunkedExtract = async (args) => {
     duration_ms: chunkResult.duration_ms,
   });
 
-  const chunkResults = [];
+  // Sync chunk extraction runs in bounded-concurrency WAVES rather than one
+  // long sequential loop, so wall-clock ≈ the slowest chunk per wave instead
+  // of the sum. That is what lets a 20-40 page PO finish inside the 60s
+  // function ceiling (vercel.json api/dispatch maxDuration) instead of being
+  // shunted to the cron-dependent background worker. Concurrency is modest to
+  // stay within provider rate limits; results are written by index so merge
+  // order is preserved regardless of completion order.
+  const concurrency = Math.max(1, Number(opts.chunkConcurrency || process.env.DOCAI_SYNC_CHUNK_CONCURRENCY || 4));
+  const chunkResults = new Array(chunkResult.chunks.length);
   let budgetBreachedAt = null;
-  for (const ch of chunkResult.chunks) {
-    // Wave 1.4: if the per-extraction cost cap was already breached
-    // by a prior chunk, the remaining chunks are skipped entirely.
-    // This is the chunk-level circuit breaker; the dispatcher's
-    // wouldExceed() handles the per-adapter case inside a chunk.
-    if (runCost && runCost.hasExceeded()) {
-      budgetBreachedAt = ch.index;
-      chunkResults.push({
-        ok: false,
-        reason: "over_run_budget",
-        error: "per-extraction cost cap reached",
-        accumulated_cost_usd: runCost.totalUsd,
-        cap_usd: runCost.cap,
-        lines: [], customer: null, confidences: {}, attempts: [],
-      });
-      emit(eventSink, {
-        stage: "chunk_skipped_over_budget",
-        chunk_index: ch.index,
-        accumulated_cost_usd: runCost.totalUsd,
-        cap_usd: runCost.cap,
-      });
-      continue;
-    }
+
+  // Extract one chunk. Always resolves (a thrown adapter becomes a stub) so a
+  // single bad chunk can never reject the whole wave and zero the PO.
+  const runChunk = async (ch) => {
     emit(eventSink, {
       stage: "chunk_started",
       chunk_index: ch.index,
@@ -327,7 +316,6 @@ export const chunkedExtract = async (args) => {
         },
         runCost,
       });
-      chunkResults.push(out);
       emit(eventSink, {
         stage: "chunk_done",
         chunk_index: ch.index,
@@ -338,12 +326,10 @@ export const chunkedExtract = async (args) => {
         duration_ms: Date.now() - tChunk,
         adapter_used: out.adapter_used || null,
       });
+      return out;
     } catch (e) {
-      // Best-effort: a failed chunk leaves a stub result so the
-      // merger doesn't lose chunk-ordering. Operator can re-run
-      // extraction (Phase D adds the partial-resume path so
-      // only the failed chunk re-runs).
-      chunkResults.push({ ok: false, reason: "adapter_threw", error: e?.message || String(e), lines: [], customer: null, confidences: {}, attempts: [] });
+      // Best-effort: a failed chunk leaves a stub result so the merger doesn't
+      // lose chunk-ordering. Operator can re-run extraction.
       emit(eventSink, {
         stage: "chunk_failed",
         chunk_index: ch.index,
@@ -352,7 +338,38 @@ export const chunkedExtract = async (args) => {
         error: e?.message || String(e),
         duration_ms: Date.now() - tChunk,
       });
+      return { ok: false, reason: "adapter_threw", error: e?.message || String(e), lines: [], customer: null, confidences: {}, attempts: [] };
     }
+  };
+
+  for (let i = 0; i < chunkResult.chunks.length; i += concurrency) {
+    // Wave 1.4 circuit breaker, now at wave granularity: if the per-extraction
+    // cost cap is already blown, skip every remaining chunk. Over-spend is
+    // bounded to at most one in-flight wave.
+    if (runCost && runCost.hasExceeded()) {
+      budgetBreachedAt = chunkResult.chunks[i].index;
+      for (let k = i; k < chunkResult.chunks.length; k++) {
+        const ch = chunkResult.chunks[k];
+        chunkResults[k] = {
+          ok: false,
+          reason: "over_run_budget",
+          error: "per-extraction cost cap reached",
+          accumulated_cost_usd: runCost.totalUsd,
+          cap_usd: runCost.cap,
+          lines: [], customer: null, confidences: {}, attempts: [],
+        };
+        emit(eventSink, {
+          stage: "chunk_skipped_over_budget",
+          chunk_index: ch.index,
+          accumulated_cost_usd: runCost.totalUsd,
+          cap_usd: runCost.cap,
+        });
+      }
+      break;
+    }
+    const wave = chunkResult.chunks.slice(i, i + concurrency);
+    const waveOut = await Promise.all(wave.map(runChunk));
+    waveOut.forEach((out, j) => { chunkResults[i + j] = out; });
   }
 
   emit(eventSink, { stage: "merging_results", chunk_count: chunkResult.chunks.length });

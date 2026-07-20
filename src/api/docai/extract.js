@@ -26,18 +26,18 @@ import { withEngineOverride } from "../_lib/docai/index.js";
 import { safeFetch } from "../_lib/safe-fetch.js";
 import { probePdfPageCount } from "../_lib/docai/pdf-chunker.js";
 
-// Above this page count a synchronous extraction (TOC profiler +
-// ceil(pages/5) sequential LLM chunk calls) risks exceeding Vercel's
-// 60-second function ceiling and timing out with nothing returned --
-// the failure operators hit on long MMIL POs (e.g. P250432276, 23pp).
-// For PDFs over this size we extract ONLY page 1 synchronously (the
-// customer header + a first-page preview, which stays well under 60s)
-// and signal `large_pdf` so the caller enqueues the full N-page
-// extraction on the background worker (cron/extraction_jobs.js, which
-// drains chunks across 5-minute ticks and has no single-request
-// ceiling up to BACKGROUND_MAX_TOTAL_PAGES=500). Short POs (<=12pp)
-// keep the existing single-request sync path unchanged.
-const BACKGROUND_PAGE_THRESHOLD = 12;
+// Above this page count a synchronous extraction is shunted to page-1-only +
+// the background worker. It used to be 12 because chunks ran SEQUENTIALLY
+// (ceil(pages/5) back-to-back LLM calls blew the 60s function ceiling on a
+// ~23pp PO). chunked-extract now runs chunks in bounded-concurrency WAVES, so
+// wall-clock is ~the slowest chunk per wave, not the sum — a 40pp PO is ~2-3
+// waves and finishes well inside 60s. Raised to 40 so the common multi-page
+// PO (13-21pp Mahindra POs, etc.) extracts ALL lines synchronously in one
+// request instead of stranding on the cron-dependent background path. Beyond
+// 40pp we still down-scope to page 1 + enqueue the full N-page background job
+// (cron/extraction_jobs.js, up to BACKGROUND_MAX_TOTAL_PAGES=500). Override
+// per deployment via DOCAI_BACKGROUND_PAGE_THRESHOLD.
+const BACKGROUND_PAGE_THRESHOLD = Math.max(1, Number(process.env.DOCAI_BACKGROUND_PAGE_THRESHOLD) || 40);
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;

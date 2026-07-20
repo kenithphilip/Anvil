@@ -142,6 +142,45 @@ describe("chunkedExtract", () => {
     expect(failed).toBeTruthy();
     expect(failed.error).toContain("upstream timeout");
   });
+
+  it("runs chunks concurrently but merges them in chunk order", async () => {
+    // Chunk 0 resolves LAST; the merged lines must still be in chunk order,
+    // proving results are placed by index, not completion order.
+    const bytes = await makePdf(12); // 3 chunks @ 5pp
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    dispatchExtract.mockImplementation(async ({ hints }) => {
+      const i = hints.chunk_index;
+      if (i === 0) await sleep(25);
+      return ok({ lines: [{ partNumber: "P" + i }] });
+    });
+    const out = await chunkedExtract({
+      source: { bytes, mime: "application/pdf" },
+      opts: { maxPagesPerChunk: 5, chunkConcurrency: 4 },
+    });
+    expect(out.chunk_count).toBe(3);
+    expect(out.lines.map((l) => l.partNumber)).toEqual(["P0", "P1", "P2"]);
+  });
+
+  it("stops launching waves once the per-extraction budget is blown", async () => {
+    const bytes = await makePdf(15); // 3 chunks @ 5pp
+    let calls = 0;
+    let exceeded = false;
+    dispatchExtract.mockImplementation(async ({ hints }) => {
+      calls++; exceeded = true; // budget blown after the first chunk runs
+      return ok({ lines: [{ partNumber: "P" + hints.chunk_index }] });
+    });
+    const runCost = { hasExceeded: () => exceeded, totalUsd: 1.2, cap: 1.0 };
+    const events = [];
+    const out = await chunkedExtract({
+      source: { bytes, mime: "application/pdf" },
+      runCost,
+      opts: { maxPagesPerChunk: 5, chunkConcurrency: 1, eventSink: (e) => events.push(e) },
+    });
+    expect(out.chunk_count).toBe(3);
+    expect(calls).toBe(1); // only chunk 0 dispatched; remaining waves skipped
+    expect(out.budget_breached_at_chunk).not.toBeNull();
+    expect(events.some((e) => e.stage === "chunk_skipped_over_budget")).toBe(true);
+  });
 });
 
 describe("mergeChunkResults", () => {

@@ -7,16 +7,18 @@
 // with nothing returned (no customer, no lines). The background worker
 // only triggered above 60 pages, leaving a 12-60pp dead zone.
 //
-// Fix: for PDFs over BACKGROUND_PAGE_THRESHOLD (12) the endpoint runs
-// a page-1-only sync extraction (customer header + preview, fast) and
-// returns large_pdf=true so the caller enqueues the full background
-// job. Short PDFs are unchanged.
+// Fix history: chunk extraction now runs in bounded-concurrency waves, so the
+// sync path handles many more pages inside the 60s ceiling. BACKGROUND_PAGE_
+// THRESHOLD was therefore raised from 12 to 40 — a 13-40pp PO (the common
+// multi-page Mahindra PO) extracts ALL lines synchronously instead of
+// down-scoping to page 1 + the cron-dependent background worker. Only >40pp
+// still down-scopes to page-1-only + large_pdf.
 //
 // These tests assert:
-//   1. >12pp  -> large_pdf true, total_pages set, pipeline got
-//                hints.keepPages = [1]
-//   2. <=12pp -> large_pdf false, no keepPages down-scoping
-//   3. body.no_background -> never down-scoped (the cron worker path)
+//   1. >40pp  -> large_pdf true, total_pages set, pipeline got keepPages=[1]
+//   2. 13-40pp-> large_pdf false, full sync path (the regression fix)
+//   3. <=12pp -> large_pdf false, no keepPages down-scoping
+//   4. body.no_background -> never down-scoped (the cron worker path)
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -79,16 +81,25 @@ beforeEach(() => {
 });
 
 describe("docai/extract large-PDF routing", () => {
-  it("down-scopes a >12-page PDF to page 1 and flags large_pdf", async () => {
-    h.pageCount = 23;
+  it("down-scopes a >40-page PDF to page 1 and flags large_pdf", async () => {
+    h.pageCount = 45;
     const { res, parsed } = await run({ bytes_base64: pdfBytesB64, mime: "application/pdf", source_filename: "po.pdf" });
     expect(res.statusCode).toBe(200);
     expect(parsed.large_pdf).toBe(true);
-    expect(parsed.total_pages).toBe(23);
+    expect(parsed.total_pages).toBe(45);
     expect(h.pipelineCalls).toHaveLength(1);
     expect(h.pipelineCalls[0].hints.keepPages).toEqual([1]);
     // customer still detected from the page-1 header
     expect(parsed.normalized.customer.name).toMatch(/Meridian/);
+  });
+
+  it("extracts a 13-40pp PO fully on the sync path (regression: no page-1 down-scope)", async () => {
+    // A 23-page PO (e.g. P250432276) used to down-scope to page 1 + background;
+    // with concurrent-wave chunking it now extracts ALL pages synchronously.
+    h.pageCount = 23;
+    const { parsed } = await run({ bytes_base64: pdfBytesB64, mime: "application/pdf", source_filename: "po.pdf" });
+    expect(parsed.large_pdf).toBe(false);
+    expect(h.pipelineCalls[0].hints.keepPages).toBeUndefined();
   });
 
   it("leaves a <=12-page PDF on the full sync path (no down-scope)", async () => {

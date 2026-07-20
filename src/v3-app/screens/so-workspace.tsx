@@ -25,13 +25,44 @@ import { ExtractionProgress } from "../components/ExtractionProgress";
 // call useReviewPaneSelection; the row renderer + head/footer are passed
 // in so the parent keeps its closures over order state.
 const RECON_INTERACTIVE = new Set(["INPUT", "SELECT", "TEXTAREA", "BUTTON", "A", "OPTION"]);
+// Hover tooltip pairing what was EXTRACTED from the PO against what it was
+// MAPPED to in the item master, so an operator can hover any line and see the
+// full detail — the part parsed out of a prefixed description, the buyer's SAP
+// code, and the resolved canonical part. Rendered as a native title (newlines
+// render as tooltip line breaks) so it works on every cell with no positioning.
+export const mappingTitle = (ln: any): string => {
+  const g = (...ks: string[]) => { for (const k of ks) { const v = ln?.[k]; if (v != null && String(v).trim() !== "") return String(v); } return null; };
+  const part = g("partNumber", "part_no", "itemCode");
+  const sap = g("customerItemCode", "customer_item_code");
+  const custPart = g("customer_part_number", "customerPartNumber");
+  const desc = g("raw_description", "description");
+  const ex = [
+    part && "part (ours): " + part,
+    sap && "buyer SAP / item code: " + sap,
+    custPart && "customer part: " + custPart,
+    desc && "description: " + (desc.length > 90 ? desc.slice(0, 90) + "…" : desc),
+  ].filter(Boolean);
+  const mi = ln?._mapped_item;
+  const mapped = mi
+    ? [
+        "via: " + (mi.match_via || "?"),
+        mi.part_no && "canonical part_no: " + mi.part_no,
+        mi.print_name && "name: " + mi.print_name,
+        mi.hsn_sac && "HSN/SAC: " + mi.hsn_sac,
+        mi.confidence_pct != null && "confidence: " + mi.confidence_pct + "%",
+      ].filter(Boolean)
+    : ["— not yet mapped to the item master —"];
+  return "EXTRACTED FROM PO\n" + (ex.length ? ex.join("\n") : "(no codes on this line)")
+    + "\n\nMAPPED TO ITEM MASTER\n" + mapped.join("\n");
+};
+
 const ReconLinesTable: React.FC<{
   lines: any[];
   head: React.ReactNode;
   footer: React.ReactNode;
-  renderRow: (ln: any, i: number, sel: { selected: boolean; onSelect: (e: React.MouseEvent) => void }) => React.ReactNode;
+  renderRow: (ln: any, i: number, sel: { selected: boolean; onSelect: (e: React.MouseEvent) => void; onHover: () => void; onLeave: () => void }) => React.ReactNode;
 }> = ({ lines, head, footer, renderRow }) => {
-  const { selectedField, setSelectedField } = useReviewPaneSelection();
+  const { selectedField, setSelectedField, setHoveredField } = useReviewPaneSelection();
   return (
     <table className="tbl">
       {head}
@@ -45,7 +76,11 @@ const ReconLinesTable: React.FC<{
             if (RECON_INTERACTIVE.has(tag)) return;
             setSelectedField(selectedField === fp ? null : fp);
           };
-          return renderRow(ln, i, { selected: selectedField === fp, onSelect });
+          // Hover the row -> highlight the matching PDF bbox (parity with the
+          // field rows; previously the grid was click-only).
+          const onHover = () => setHoveredField(fp);
+          const onLeave = () => setHoveredField(null);
+          return renderRow(ln, i, { selected: selectedField === fp, onSelect, onHover, onLeave });
         })}
       </tbody>
       {footer}
@@ -1282,7 +1317,7 @@ const WiredSOWorkspace = () => {
     );
   };
 
-  const reconRow = (ln: any, i: number, sel?: { selected: boolean; onSelect: (e: React.MouseEvent) => void }) => {
+  const reconRow = (ln: any, i: number, sel?: { selected: boolean; onSelect: (e: React.MouseEvent) => void; onHover?: () => void; onLeave?: () => void }) => {
     // Order-scoped props every EditableCell needs (the cell components
     // are module-scope now, so these are threaded in rather than
     // closed over). A fresh object per render is fine — EditableCell's
@@ -1320,6 +1355,8 @@ const WiredSOWorkspace = () => {
         key={"row-" + i}
         className={"recon-row" + (sel?.selected ? " is-active" : "")}
         onClick={sel?.onSelect}
+        onMouseEnter={sel?.onHover}
+        onMouseLeave={sel?.onLeave}
         // Keyboard path to the row -> PDF cross-highlight: Tab to the
         // row, Enter/Space toggles selection. Guarded to the row itself
         // so keys inside the editable cells are untouched.
@@ -1333,11 +1370,16 @@ const WiredSOWorkspace = () => {
         } : undefined}
       >
         <td className="mono">{i + 1}</td>
-        <td>
+        <td title={mappingTitle(ln)}>
           <EditableCell {...cellProps} line={ln} i={i} canonicalKey="description" type="text" placeholder="description" />
           <div style={{ marginTop: 2 }}>
             <EditableCell {...cellProps} line={ln} i={i} canonicalKey="itemCode" type="text" placeholder="part / SKU" />
           </div>
+          {(ln.customerItemCode || ln.customer_item_code) && (
+            <div style={{ marginTop: 2 }}>
+              <Chip k="ghost">SAP {ln.customerItemCode || ln.customer_item_code}</Chip>
+            </div>
+          )}
           {mapAffordance(ln, i)}
         </td>
         <td><EditableCell {...cellProps} line={ln} i={i} canonicalKey="uom" type="text" placeholder="Nos" /></td>

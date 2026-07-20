@@ -1,7 +1,7 @@
 // Unit tests for the Document AI v2 dispatcher.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { dispatchExtract, buildPromptOverrides, withEngineOverride, ADAPTER_NAMES } from "../api/_lib/docai/index.js";
+import { dispatchExtract, buildPromptOverrides, withEngineOverride, ADAPTER_NAMES, ensureLlmFallbacks } from "../api/_lib/docai/index.js";
 import * as reducto from "../api/_lib/docai/reducto.js";
 import * as azureDI from "../api/_lib/docai/azure_di.js";
 import * as unstructured from "../api/_lib/docai/unstructured.js";
@@ -66,6 +66,36 @@ describe("docai / per-run engine override (SO workspace picker)", () => {
   it("is case/space tolerant on the engine name", () => {
     const out = withEngineOverride({ docai_provider_order: [] }, "  LlamaParse ");
     expect(out.docai_provider_order).toEqual(["llamaparse"]);
+  });
+});
+
+describe("docai / provider self-heal (ensureLlmFallbacks)", () => {
+  // A keyed engine, for the isConfigured stub.
+  const keyed = (...names) => (n) => names.includes(n);
+
+  it("appends a configured LLM to a stale gemini-less order so it can't dead-end", () => {
+    // The exact failing shape: only Claude is in the order (and it 5xx's);
+    // Gemini has a key but isn't listed. Self-heal makes Gemini reachable.
+    const out = ensureLlmFallbacks(["reducto", "azure_di", "unstructured", "claude"], keyed("gemini", "claude"));
+    expect(out).toEqual(["reducto", "azure_di", "unstructured", "claude", "gemini"]);
+    expect(out.indexOf("gemini")).toBe(out.length - 1); // appended at the END
+  });
+
+  it("does not duplicate an LLM already in the order", () => {
+    expect(ensureLlmFallbacks(["gemini", "docling"], keyed("gemini", "claude"))).toEqual(["gemini", "docling", "claude"]);
+  });
+
+  it("respects a no-key exclusion — never appends an unconfigured engine", () => {
+    // Nothing keyed -> nothing appended (a residency/cost exclusion via no key
+    // is honoured).
+    expect(ensureLlmFallbacks(["reducto", "claude"], keyed())).toEqual(["reducto", "claude"]);
+    // Only gemini keyed -> only gemini appended, not claude/llamaparse.
+    expect(ensureLlmFallbacks(["reducto"], keyed("gemini"))).toEqual(["reducto", "gemini"]);
+  });
+
+  it("tolerates a null/empty order", () => {
+    expect(ensureLlmFallbacks(null, keyed("gemini"))).toEqual(["gemini"]);
+    expect(ensureLlmFallbacks([], keyed())).toEqual([]);
   });
 });
 

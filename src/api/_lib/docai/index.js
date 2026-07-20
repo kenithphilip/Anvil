@@ -65,6 +65,26 @@ export const withEngineOverride = (settings, provider) => {
   return { ...settings, docai_provider_order: [eng, ...rest] };
 };
 
+// LLM extractors that must always be reachable so a stale / broken provider
+// order cannot dead-end extraction (returning no customer + no lines).
+export const LLM_FALLBACK_ADAPTERS = ["gemini", "claude", "llamaparse"];
+
+// Self-heal a provider order by appending any CONFIGURED LLM extractor that
+// isn't already in it, at the END. The tenant's chosen order still wins — a
+// fallback only runs if every ordered engine skips or fails. Two failure
+// classes this fixes: (1) a legacy order that predates Gemini so only a
+// since-broken engine (e.g. Claude 5xx-ing) is configured — the loop now falls
+// through to Gemini; (2) an order whose listed engines are all unconfigured.
+// Only KEYED adapters are appended, so a deliberate exclusion made by not
+// setting an API key (e.g. for data-residency) is respected.
+export const ensureLlmFallbacks = (order, isConfigured) => {
+  const out = Array.isArray(order) ? [...order] : [];
+  for (const name of LLM_FALLBACK_ADAPTERS) {
+    if (!out.includes(name) && isConfigured(name)) out.push(name);
+  }
+  return out;
+};
+
 const guessSourceType = ({ filename, mime, bytes }) => {
   const f = (filename || "").toLowerCase();
   if (f.endsWith(".xlsx") || f.endsWith(".xlsm") || f.endsWith(".xls")) return "xlsx";
@@ -277,6 +297,10 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
       }
     } catch (_e) { /* fall back to bias-adjusted or static order on any error */ }
   }
+  // Self-heal: guarantee a configured LLM extractor is reachable so a stale
+  // provider order (e.g. a legacy gemini-less order whose only configured
+  // engine is a 5xx-ing Claude) can't dead-end with no customer + no lines.
+  order = ensureLlmFallbacks(order, (n) => !!ADAPTERS[n]?.isConfigured?.(settings));
   const attempts = [];
   let last = null;
   // Materialise an svc reference once so per-iteration cost-guard

@@ -1900,12 +1900,15 @@ const WiredSOWorkspace = () => {
               reconciliation tab populates. */}
           {/* Per-run engine picker: retry THIS order with a specific
               extraction engine (e.g. llamaparse for a complex table)
-              without changing the tenant default in Admin. "" = default. */}
+              without changing the tenant default in Admin. "" = default.
+              NOT gated on `busy` — an operator must be able to pick a
+              different engine even while a slow/stuck run is in flight; only
+              the run button below is busy-gated. */}
           <select
             className="input"
             aria-label="extraction engine"
             value={extractEngine}
-            disabled={!canWrite || busy || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
+            disabled={!canWrite || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
             onChange={(e) => setExtractEngine(e.target.value)}
             title="Which engine runs extraction for this order (this run only). Default uses the tenant provider order."
             style={{ minWidth: 130 }}>
@@ -2307,7 +2310,7 @@ const WiredSOWorkspace = () => {
                     className="input"
                     aria-label="extraction engine"
                     value={extractEngine}
-                    disabled={!canWrite || busy || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
+                    disabled={!canWrite || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
                     onChange={(e) => setExtractEngine(e.target.value)}
                     style={{ minWidth: 140 }}>
                     <option value="">engine: default</option>

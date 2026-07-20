@@ -90,7 +90,7 @@ describe("chunkedExtract", () => {
     const events = [];
     const out = await chunkedExtract({
       source: { bytes, mime: "application/pdf" },
-      opts: { eventSink: (e) => events.push(e), maxPagesPerChunk: 5 },
+      opts: { eventSink: (e) => events.push(e), maxPagesPerChunk: 5, pageThreshold: 6 },
     });
     expect(out.chunked).toBe(true);
     expect(out.chunk_count).toBe(3);
@@ -131,7 +131,7 @@ describe("chunkedExtract", () => {
     const events = [];
     const out = await chunkedExtract({
       source: { bytes, mime: "application/pdf" },
-      opts: { eventSink: (e) => events.push(e), maxPagesPerChunk: 5 },
+      opts: { eventSink: (e) => events.push(e), maxPagesPerChunk: 5, pageThreshold: 6 },
     });
     expect(out.chunked).toBe(true);
     expect(out.chunk_count).toBe(2);
@@ -155,7 +155,7 @@ describe("chunkedExtract", () => {
     });
     const out = await chunkedExtract({
       source: { bytes, mime: "application/pdf" },
-      opts: { maxPagesPerChunk: 5, chunkConcurrency: 4 },
+      opts: { maxPagesPerChunk: 5, chunkConcurrency: 4, pageThreshold: 6 },
     });
     expect(out.chunk_count).toBe(3);
     expect(out.lines.map((l) => l.partNumber)).toEqual(["P0", "P1", "P2"]);
@@ -174,7 +174,7 @@ describe("chunkedExtract", () => {
     const out = await chunkedExtract({
       source: { bytes, mime: "application/pdf" },
       runCost,
-      opts: { maxPagesPerChunk: 5, chunkConcurrency: 1, eventSink: (e) => events.push(e) },
+      opts: { maxPagesPerChunk: 5, chunkConcurrency: 1, eventSink: (e) => events.push(e), pageThreshold: 6 },
     });
     expect(out.chunk_count).toBe(3);
     expect(calls).toBe(1); // only chunk 0 dispatched; remaining waves skipped

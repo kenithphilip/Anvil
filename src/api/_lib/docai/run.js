@@ -792,10 +792,16 @@ export const runExtractionPipeline = async (params) => {
     const chunkEventSink = (e) => {
       recordRunEvent("docai_chunk_" + e.stage, e);
     };
-    // Profiler kicks in above this page count. Below it, the
-    // extractor reads every page; the cost of one bonus LLM
-    // round-trip to triage isn't worth it on a 5-page PO.
-    const PROFILER_PAGE_THRESHOLD = 10;
+    // Profiler kicks in above this page count. Below it we skip page-triage
+    // AND (with the matching CHUNK_PAGE_THRESHOLD) send the WHOLE document in a
+    // single LLM call. That single-shot path is what makes multi-page tables
+    // extract correctly: profiling+chunking splits a line-item table across
+    // chunks, and a chunk that starts mid-table has no column header, so the
+    // model returns 0 lines for it (the exact 13-21pp Mahindra-PO regression:
+    // customer detected, lineItems: []). Raised 10 -> 25 so common multi-page
+    // POs read every page in one context; only genuinely large docs get
+    // triaged + chunked. Env-overridable.
+    const PROFILER_PAGE_THRESHOLD = Math.max(1, Number(process.env.DOCAI_PROFILER_PAGE_THRESHOLD) || 25);
     let keepPages = hints.keepPages || null;
     let profileResult = null;
     const isPdf = (sourceType === "pdf" || mime === "application/pdf");

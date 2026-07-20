@@ -263,6 +263,8 @@ import spareMatrixToQuote      from "./spare_matrix/to_quote.js";
 import spareMatrixSuggestCols  from "./spare_matrix/suggest_columns.js";
 import failureEventsIndex      from "./failure_events/index.js";
 import fmecaIndex              from "./fmeca/index.js";
+import receiptsIndex           from "./receipts/index.js";
+import receiptsExtract         from "./receipts/extract.js";
 
 import tallyAmend              from "./tally/amend.js";
 import tallyMasters            from "./tally/masters.js";
@@ -1010,6 +1012,8 @@ const STATIC_ROUTES = {
   "/spare_matrix":                  spareMatrixIndex,
   "/failure_events":                failureEventsIndex,
   "/fmeca":                         fmecaIndex,
+  "/receipts":                      receiptsIndex,
+  "/receipts/extract":              receiptsExtract,
 
   "/tally/amend":                   tallyAmend,
   "/tally/masters":                 tallyMasters,

@@ -561,6 +561,14 @@
     reviewDecide:    async (payload) => apiFetch("/api/docai/review_queue", { method: "POST", body: payload }),
   };
 
+  // Customer GRN/SRN receipts (Delivery-to-Cash P0).
+  const receipts = {
+    list:    async (q) => apiFetch("/api/receipts" + (q ? "?" + new URLSearchParams(q).toString() : "")),
+    create:  async (payload) => apiFetch("/api/receipts", { method: "POST", body: payload }),
+    remove:  async (id) => apiFetch("/api/receipts?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    extract: async (payload) => apiFetch("/api/receipts/extract", { method: "POST", body: payload }),
+  };
+
   const claudeCall = async (payload) => apiFetch("/api/claude/messages", { method: "POST", body: payload });
 
   const documents = {
@@ -1718,6 +1726,7 @@
     mcp,
     inbound,
     docai,
+    receipts,
     claudeCall,
     documents,
     orders,

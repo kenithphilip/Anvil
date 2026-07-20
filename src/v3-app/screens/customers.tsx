@@ -6,6 +6,7 @@ import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 import { CustomerContactsPanel } from "../components/CustomerContactsPanel";
 import { CustomerHierarchyPanel } from "../components/CustomerHierarchyPanel";
+import { CustomerExtractionLearning } from "../components/CustomerExtractionLearning";
 
 // Create-customer modal. Customers usually auto-register from orders/email/
 // BOM. Admins apply directly; everyone else submits for approval. The parent
@@ -387,6 +388,10 @@ const WiredCustomers = () => {
                 </div>
               </>
             )}
+            <div className="divider" />
+            <div style={{ marginTop: 10 }}>
+              <CustomerExtractionLearning customerId={selectedCustomer.id} />
+            </div>
             <div className="divider" />
             <div style={{ marginTop: 10 }}>
               <CustomerHierarchyPanel

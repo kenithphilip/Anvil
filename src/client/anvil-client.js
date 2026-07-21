@@ -660,6 +660,10 @@
           bytes_base64: bytesB64,
           customer_id: o.customer_id || null,
           source_id: o.source_id || null,
+          // PDM P1c: document kind. Defaults to 'po' server-side when
+          // omitted; the assembly-drawing flow passes 'assembly_bom' so the
+          // adapter runs the drawing extractor instead of the PO schema.
+          kind: o.kind || undefined,
           // Phase 3.6 observability: pass order_id so the
           // extract handler can key processing_events by case
           // for the workspace's Activity timeline + Pipeline
@@ -1184,6 +1188,10 @@
     // BOM ingestion (Phase 1): asset + lines import deriving item_master
     // + bill_of_materials, with provenance + project linkage.
     importBom: async (payload) => apiFetch("/api/bom/import", { method: "POST", body: payload }),
+    // PDM P1b/P1c: ingest an assembly-drawing extraction into the BOM. Pass
+    // { run_id } for a dry-run preview of the mapped asset+lines+warnings;
+    // add { commit: true } to persist it via the same importBom chain.
+    fromDrawing: async (payload) => apiFetch("/api/bom/from-drawing", { method: "POST", body: payload }),
     assets: async (params) => {
       const qs = new URLSearchParams(params || {}).toString();
       return apiFetch("/api/bom/assets" + (qs ? "?" + qs : ""));

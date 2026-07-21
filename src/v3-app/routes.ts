@@ -104,6 +104,7 @@ const screens = {
   customers:          lazyReload(() => import("./screens/customers")),
   items:              lazyReload(() => import("./screens/items")),
   bomImport:          lazyReload(() => import("./screens/bom-import")),
+  bomFromDrawing:     lazyReload(() => import("./screens/bom-from-drawing")),
   gunsViewer:         lazyReload(() => import("./screens/guns-viewer")),
   equipmentHierarchy: lazyReload(() => import("./screens/equipment-hierarchy")),
   fmeca:              lazyReload(() => import("./screens/fmeca")),
@@ -202,6 +203,7 @@ export const RESOLVERS = {
   items:       ({ params }) => {
     const view = params.get("view");
     if (view === "import")     return screens.bomImport;
+    if (view === "drawing")    return screens.bomFromDrawing;
     if (view === "guns")       return screens.gunsViewer;
     if (view === "equipment")  return screens.equipmentHierarchy;
     if (view === "jbm-import") return screens.jbmImporter;

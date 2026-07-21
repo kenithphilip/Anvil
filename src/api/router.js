@@ -212,6 +212,7 @@ import inventoryCronConformal   from "./cron/conformal-calibration-weekly.js";
 import tallyReconcileCron       from "./cron/tally-reconcile.js";
 import driftMeterCron           from "./cron/drift-meter.js";
 import driftReportCron          from "./cron/drift-report.js";
+import evalQualityAlertCron     from "./cron/eval_quality_alert.js";
 
 import masterDataGraph         from "./master_data/graph.js";
 
@@ -657,6 +658,7 @@ const STATIC_ROUTES = {
   "/cron/tally-reconcile":           tallyReconcileCron,
   "/cron/drift-meter":               driftMeterCron,
   "/cron/drift-report":              driftReportCron,
+  "/cron/eval_quality_alert":        evalQualityAlertCron,
   "/edi/inbound":                   ediInbound,
   "/edi/outbound":                  ediOutbound,
   "/edi/partners":                  ediPartners,

@@ -5,34 +5,23 @@ screen handler that performs a mutation. Run `npm run audit:write-paths`
 to refresh.
 
 Summary:
-- OK:   40
+- OK:   18
 - INFO: 0
-- WARN: 0
+- WARN: 8
 - FAIL: 0
 
 | Severity | Screen | Handler | Mutation | API handler | Reason |
 |----------|--------|---------|----------|-------------|--------|
-| OK | src/v3-app/screens/studio.tsx | `saveProfile` | customers.upsert upsert | src/api/customers/index.js [ok] | ok |
-| OK | src/v3-app/screens/source-pos.tsx | `submitCreate` | sourcePos.create create | src/api/source_pos/index.js [ok] | ok |
-| OK | src/v3-app/screens/source-pos.tsx | `submitAck` | sourcePos.ack ack | src/api/source_pos/ack.js [ok] | ok |
-| OK | src/v3-app/screens/so-workspace.tsx | `pushToTally` | tally.push push | src/api/tally/push.js [ok] | ok |
-| OK | src/v3-app/screens/so-workspace.tsx | `cancelOrder` | orders.update update | src/api/orders/index.js [ok] | ok |
-| OK | src/v3-app/screens/so-workspace.tsx | `approveOrder` | orders.update update | src/api/orders/index.js [ok] | ok |
-| OK | src/v3-app/screens/so-intake.tsx | `submitNewCustomer` | customers.upsert upsert | src/api/customers/index.js [ok] | ok |
-| OK | src/v3-app/screens/so-intake.tsx | `onContinue` | orders.create create | src/api/orders/index.js [ok] | ok |
-| OK | src/v3-app/screens/recurring-invoices.tsx | `createSchedule` | billingRecurring.create create | src/api/billing/recurring.js [ok] | ok |
-| OK | src/v3-app/screens/eway-bills.tsx | `createDraft` | ewayBills.create create | src/api/eway_bills/index.js [ok] | ok |
-| OK | src/v3-app/screens/email.tsx | `promote` | orders.create create | src/api/orders/index.js [ok] | ok |
-| OK | src/v3-app/screens/credit-notes.tsx | `createDraft` | creditNotes.create create | src/api/credit_notes/index.js [ok] | ok |
-| OK | src/v3-app/screens/bom-import.tsx | `doImportAll` | bom.upsert upsert | src/api/bom/index.js [ok] | ok |
-| OK | src/v3-app/screens/admin.tsx | `submitThreshold` | admin.upsertApprovalThreshold upsertApprovalThreshold | src/api/admin/access_requests.js [ok] | ok |
-| OK | src/v3-app/screens/admin.tsx | `submitLocation` | admin.upsertCustomerLocation upsertCustomerLocation | src/api/admin/access_requests.js [ok] | ok |
-| OK | src/v3-app/screens/admin.tsx | `submitItem` | admin.upsertItemMaster upsertItemMaster | src/api/admin/access_requests.js [ok] | ok |
-| OK | src/v3-app/screens/admin.tsx | `submitContract` | admin.upsertContract upsertContract | src/api/admin/access_requests.js [ok] | ok |
+| WARN | src/v3-app/screens/admin.tsx | `submitThreshold` | /api/admin/quote_approvals?type=thresholds POST | /api/admin/quote_approvals?type=thresholds (POST) | not awaited |
+| WARN | src/v3-app/screens/admin.tsx | `submitLocation` | /api/admin/customer_locations POST | /api/admin/customer_locations (POST) | not awaited |
+| WARN | src/v3-app/screens/admin.tsx | `submitItem` | /api/admin/item_master POST | /api/admin/item_master (POST) | not awaited |
+| WARN | src/v3-app/screens/admin.tsx | `submitContract` | /api/admin/contracts POST | /api/admin/contracts (POST) | not awaited |
+| WARN | src/v3-app/screens/admin.tsx | `savePack` | /api/admin/customer_terms/pack POST | /api/admin/customer_terms/pack (POST) | no list reload |
+| WARN | src/v3-app/screens/admin.tsx | `saveClause` | /api/admin/customer_terms/clause POST | /api/admin/customer_terms/clause (POST) | no list reload |
+| WARN | src/v3-app/screens/admin.tsx | `onAddLeadTime` | /api/admin/lead_times?type= POST | /api/admin/lead_times?type= (POST) | not awaited |
+| WARN | src/v3-app/screens/admin.tsx | `onAddHoliday` | /api/admin/holidays POST | /api/admin/holidays (POST) | not awaited |
 | OK | src/v3-app/screens/admin.tsx | `saveProfile` | /api/auth/profile PATCH | /api/auth/profile (PATCH) | ok |
-| OK | src/v3-app/screens/admin.tsx | `refreshFx` | fx.refresh refresh | src/api/fx/rates.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `onVoiceSave` | /api/voice/configure POST | /api/voice/configure (POST) | ok |
-| OK | src/v3-app/screens/admin.tsx | `onTallyRetryNow` | tally.retry retry | src/api/tally/retry.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `onSageX3SyncNow` | /api/sage_x3/sync POST | /api/sage_x3/sync (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onSageX3RetryNow` | /api/sage_x3/retry POST | /api/sage_x3/retry (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onSageX3Connect` | /api/sage_x3/connect POST | /api/sage_x3/connect (POST) | ok |
@@ -44,11 +33,8 @@ Summary:
 | OK | src/v3-app/screens/admin.tsx | `onOracleFusionSyncNow` | /api/oracle_fusion/sync POST | /api/oracle_fusion/sync (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onOracleFusionRetryNow` | /api/oracle_fusion/retry POST | /api/oracle_fusion/retry (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onOracleFusionConnect` | /api/oracle_fusion/connect POST | /api/oracle_fusion/connect (POST) | ok |
-| OK | src/v3-app/screens/admin.tsx | `onNsRetryNow` | netsuite.retry retry | src/api/netsuite/retry.js [ok] | ok |
 | OK | src/v3-app/screens/admin.tsx | `onIfsSyncNow` | /api/ifs/sync POST | /api/ifs/sync (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onIfsRetryNow` | /api/ifs/retry POST | /api/ifs/retry (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onIfsConnect` | /api/ifs/connect POST | /api/ifs/connect (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onChatSave` | /api/inbound/chat/configure POST | /api/inbound/chat/configure (POST) | ok |
 | OK | src/v3-app/screens/admin.tsx | `onAddMember` | /api/admin/members POST | /api/admin/members (POST) | ok |
-| OK | src/v3-app/screens/admin.tsx | `onAddLeadTime` | admin.upsertLeadTime upsertLeadTime | src/api/admin/access_requests.js [ok] | ok |
-| OK | src/v3-app/screens/admin.tsx | `onAddHoliday` | admin.upsertHoliday upsertHoliday | src/api/admin/access_requests.js [ok] | ok |

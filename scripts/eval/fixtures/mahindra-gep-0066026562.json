@@ -1,0 +1,22 @@
+{
+  "id": "mahindra-gep-0066026562",
+  "description": "Mahindra GEP/Ariba PO — a SAP 'Item Number' column plus OUR part embedded behind a descriptive prefix. Golden = the human-verified truth; normalized = a representative pipeline extract that should still resolve every field.",
+  "expected": {
+    "poNumber": "0066026562",
+    "customer": "MAHINDRA & MAHINDRA LTD",
+    "lineItems": [
+      { "partNo": "TWS-092-90-2", "qty": 100, "rate": 425 },
+      { "partNo": "TWS-092-91-0", "qty": 50, "rate": 380 }
+    ]
+  },
+  "normalized": {
+    "classification": "po",
+    "customer": { "name": "MAHINDRA & MAHINDRA LTD", "po_number": "0066026562", "gstin": "27AAACM3025E1ZZ" },
+    "stated_line_count": 2,
+    "lines": [
+      { "partNumber": "TWS-092-90-2", "customerItemCode": "A12060OBAR010003", "quantity": 100, "unitPrice": 425, "raw_description": "OBARA STD SHANK TWS-092-90-2" },
+      { "partNumber": "TWS-092-91-0", "customerItemCode": "A12060OBAR010004", "quantity": 50, "unitPrice": 380, "raw_description": "OBARA STD SHANK TWS-092-91-0" }
+    ]
+  },
+  "baseline_score": 1.0
+}

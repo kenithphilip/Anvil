@@ -1,0 +1,20 @@
+{
+  "id": "mahindra-etc1-3200231847",
+  "description": "Mahindra ETC1 PO — blank Part-No column; OUR part is the first token of the Description cell. Exercises part-from-description extraction.",
+  "expected": {
+    "poNumber": "3200231847",
+    "customer": "MAHINDRA ELECTRIC MOBILITY LIMITED",
+    "lineItems": [
+      { "partNo": "TNA-16-04-10-2", "qty": 200, "rate": 55 }
+    ]
+  },
+  "normalized": {
+    "classification": "po",
+    "customer": { "name": "MAHINDRA ELECTRIC MOBILITY LIMITED", "po_number": "3200231847" },
+    "stated_line_count": 1,
+    "lines": [
+      { "partNumber": "TNA-16-04-10-2", "quantity": 200, "unitPrice": 55, "raw_description": "TNA-16-04-10-2 CARBIDE INSERT — refer table 1" }
+    ]
+  },
+  "baseline_score": 1.0
+}

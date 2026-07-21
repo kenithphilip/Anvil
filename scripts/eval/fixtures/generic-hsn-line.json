@@ -1,0 +1,20 @@
+{
+  "id": "generic-hsn-line",
+  "description": "A standard single-line PO with an HSN code and a decimal rate — exercises hsn matching + the numeric tolerance path.",
+  "expected": {
+    "poNumber": "PO-77",
+    "customer": "ACME PVT LTD",
+    "lineItems": [
+      { "partNo": "BRG-6204", "qty": 10, "rate": 120.5, "hsn": "8482" }
+    ]
+  },
+  "normalized": {
+    "classification": "po",
+    "customer": { "name": "ACME PVT LTD", "po_number": "PO-77" },
+    "stated_line_count": 1,
+    "lines": [
+      { "partNumber": "BRG-6204", "quantity": 10, "unitPrice": 120.5, "hsn": "8482", "description": "DEEP GROOVE BALL BEARING" }
+    ]
+  },
+  "baseline_score": 1.0
+}

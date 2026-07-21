@@ -23,6 +23,7 @@
     "format": "prettier --write \"**/*.{js,mjs,jsx,json,md,sql}\"",
     "test": "vitest run",
     "test:watch": "vitest",
+    "eval:golden": "node scripts/eval/golden-gate.mjs",
     "predeploy": "npm run build && npm run check && npm run verify && npm run audit:systemic"
   },
   "dependencies": {

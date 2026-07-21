@@ -67,6 +67,12 @@ export const buildQuoteLineRow = (tenantId, quoteId, raw) => {
     supplier_id: raw.supplier_id || null,
     remark: raw.remark || null,
   };
+  // CM P2b (migration 182): carry the buyer SAP item code + verbatim
+  // raw description when a producer supplies them (e.g. a PO->quote
+  // path). Included ONLY when present so existing writers produce
+  // byte-identical rows and pre-migration deployments are unaffected.
+  if (raw.customer_item_code != null) row.customer_item_code = raw.customer_item_code || null;
+  if (raw.raw_description != null) row.raw_description = raw.raw_description || null;
   for (const k of NUMERIC_KEYS) {
     if (k in raw) row[k] = raw[k] == null || raw[k] === "" ? null : Number(raw[k]);
   }

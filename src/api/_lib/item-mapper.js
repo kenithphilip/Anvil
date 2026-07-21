@@ -12,6 +12,11 @@
 //
 // Resolution order per line (first match wins):
 //
+//   0. item_customer_parts row matching (customer_id,
+//      customer_item_code) — the buyer's SAP item code (CM P2b).
+//      Most authoritative automatic tier: a machine-generated
+//      code an operator (or a prior confirm) tied to our item, so
+//      it outranks the generic candidate grab-bag below. Zero LLM.
 //   1. item_customer_parts row matching (customer_id,
 //      customer_part_number) when customer_id is known. Most
 //      authoritative; the operator has explicitly recorded the
@@ -62,6 +67,29 @@ export const lineCandidates = (line) => {
     line.customer_part_number,
     line.tallyItemName,
     line.itemName,
+  ]) {
+    const n = norm(v);
+    if (n && !out.includes(n)) out.push(n);
+  }
+  return out;
+};
+
+// Extract the buyer's SAP-generated item code from a line. This is
+// line.customerItemCode (PR #272) — the machine code SAP-driven
+// buyers (Mahindra GEP/Ariba) print alongside a descriptive part
+// label, e.g. code "A12060OBAR010003" next to "OBARA STD SHANK
+// TWS-092-90-2". Kept in a DEDICATED slot (not merged into
+// lineCandidates) so it never pollutes the item_master part_no /
+// alias scan; it resolves ONLY against item_customer_parts.
+// customer_item_code in tier-0. Exported so the recon write-back
+// (orders/[id].js) captures the same code the resolver matches on,
+// keeping the read and write sides of the flywheel symmetric.
+export const lineSapCandidates = (line) => {
+  if (!line) return [];
+  const out = [];
+  for (const v of [
+    line.customerItemCode,
+    line.customer_item_code,
   ]) {
     const n = norm(v);
     if (n && !out.includes(n)) out.push(n);
@@ -138,7 +166,12 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opt
   for (const ln of lines) {
     for (const c of lineCandidates(ln)) allCodes.add(c);
   }
-  if (!allCodes.size) return lines;
+  // Buyer SAP codes for tier-0 (CM P2b). Harvested separately from
+  // `codes` so they never widen the item_master part_no/alias scan.
+  const sapCodeSet = new Set();
+  for (const ln of lines) for (const s of lineSapCandidates(ln)) sapCodeSet.add(s);
+  const sapCodes = [...sapCodeSet];
+  if (!allCodes.size && !sapCodes.length) return lines;
   const codes = [...allCodes];
 
   // Per-customer override table: best authority on what part
@@ -180,6 +213,34 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opt
     } catch (_) { /* best-effort */ }
   }
 
+  // Tier-0 lookup table (CM P2b): buyer SAP code -> canonical item
+  // via item_customer_parts.customer_item_code. Read separately from
+  // cpMap so a 42703 on a pre-migration DB (column not yet applied)
+  // degrades this tier to a no-op without breaking the tier-1 read.
+  let sapMap = new Map(); // sapCode(uppercase) -> { item_id, customer_part_description }
+  if (customerId && sapCodes.length) {
+    try {
+      const sp = await svc.from("item_customer_parts")
+        .select("item_id, customer_item_code, customer_part_description, applies_to, valid_to, confirmed_at")
+        .eq("tenant_id", tenantId)
+        .eq("customer_id", customerId)
+        .in("customer_item_code", sapCodes)
+        .contains("applies_to", [context]);
+      if (sp && !sp.error && Array.isArray(sp.data)) {
+        const active = sp.data.filter((row) => row.valid_to == null);
+        active.sort((a, b) => {
+          const ta = a?.confirmed_at ? Date.parse(a.confirmed_at) : 0;
+          const tb = b?.confirmed_at ? Date.parse(b.confirmed_at) : 0;
+          return tb - ta;
+        });
+        for (const row of active) {
+          const key = norm(row.customer_item_code);
+          if (key && !sapMap.has(key)) sapMap.set(key, row);
+        }
+      }
+    } catch (_) { /* best-effort; column may not exist pre-migration */ }
+  }
+
   // item_master by part_no / alias / specification_code. We pull
   // every plausible hit in one query so the per-line loop runs
   // entirely in memory.
@@ -196,20 +257,25 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opt
   for (const ln of lines) for (const s of lineSpecCandidates(ln)) specCodes.add(s);
   const specs = [...specCodes];
   try {
-    const im = await svc.from("item_master")
-      .select("id, part_no, description, hsn_sac, uom, source_country, sgst_rate, cgst_rate, igst_rate, alias, print_name, gst_applicable, taxability_type, type_of_supply, rate_of_duty_pct, stock_group, specification_code")
-      .eq("tenant_id", tenantId)
-      .or(
-        "part_no.in.(" + codes.map((c) => `"${c.replace(/"/g, '""')}"`).join(",") + ")"
-        + ",alias.in.(" + codes.map((c) => `"${c.replace(/"/g, '""')}"`).join(",") + ")"
-        + (specs.length ? ",specification_code.in.(" + specs.map((c) => `"${c.replace(/"/g, '""')}"`).join(",") + ")" : "")
-      );
-    if (im && !im.error && Array.isArray(im.data)) {
-      for (const row of im.data) {
-        imById.set(row.id, row);
-        if (row.part_no) imByCode.set(norm(row.part_no), row);
-        if (row.alias) imByAlias.set(norm(row.alias), row);
-        if (row.specification_code) imBySpec.set(norm(row.specification_code), row);
+    // Only run the part_no/alias/spec scan when there are generic
+    // candidates or spec codes to match; a SAP-only line (tier-0)
+    // would otherwise build a malformed empty `.in.()` predicate.
+    if (codes.length || specs.length) {
+      const im = await svc.from("item_master")
+        .select("id, part_no, description, hsn_sac, uom, source_country, sgst_rate, cgst_rate, igst_rate, alias, print_name, gst_applicable, taxability_type, type_of_supply, rate_of_duty_pct, stock_group, specification_code")
+        .eq("tenant_id", tenantId)
+        .or(
+          (codes.length ? "part_no.in.(" + codes.map((c) => `"${c.replace(/"/g, '""')}"`).join(",") + ")"
+            + ",alias.in.(" + codes.map((c) => `"${c.replace(/"/g, '""')}"`).join(",") + ")" : "")
+          + (specs.length ? (codes.length ? "," : "") + "specification_code.in.(" + specs.map((c) => `"${c.replace(/"/g, '""')}"`).join(",") + ")" : "")
+        );
+      if (im && !im.error && Array.isArray(im.data)) {
+        for (const row of im.data) {
+          imById.set(row.id, row);
+          if (row.part_no) imByCode.set(norm(row.part_no), row);
+          if (row.alias) imByAlias.set(norm(row.alias), row);
+          if (row.specification_code) imBySpec.set(norm(row.specification_code), row);
+        }
       }
     }
     // Description-fallback pool: tenants typically have hundreds
@@ -223,8 +289,13 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opt
       imAll = imDesc.data;
     }
     // Also pull item_master rows referenced by item_customer_parts
-    // (their item_id may not be in the part_no / alias hit set).
-    const cpItemIds = [...cpMap.values()].map((r) => r.item_id).filter((id) => id && !imById.has(id));
+    // (their item_id may not be in the part_no / alias hit set) —
+    // from both the customer_part (tier-1) and SAP-code (tier-0) maps.
+    const extraIdSet = new Set();
+    for (const r of [...cpMap.values(), ...sapMap.values()]) {
+      if (r.item_id && !imById.has(r.item_id)) extraIdSet.add(r.item_id);
+    }
+    const cpItemIds = [...extraIdSet];
     if (cpItemIds.length) {
       const im2 = await svc.from("item_master")
         .select("id, part_no, description, hsn_sac, uom, source_country, sgst_rate, cgst_rate, igst_rate, alias, print_name, gst_applicable, taxability_type, type_of_supply, rate_of_duty_pct, stock_group, specification_code")
@@ -246,13 +317,27 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opt
     let match = null;
     let matchVia = null;
     let customerPartDesc = null;
-    for (const code of candidates) {
-      const cp = cpMap.get(code);
+    // Tier 0 (CM P2b): buyer SAP item code -> canonical item. Most
+    // authoritative automatic tier; runs before the generic
+    // customer_part candidates so an exact machine code wins.
+    for (const code of lineSapCandidates(line)) {
+      const cp = sapMap.get(code);
       if (cp && imById.has(cp.item_id)) {
         match = imById.get(cp.item_id);
-        matchVia = "customer_part";
+        matchVia = "customer_item_code";
         customerPartDesc = cp.customer_part_description || null;
         break;
+      }
+    }
+    if (!match) {
+      for (const code of candidates) {
+        const cp = cpMap.get(code);
+        if (cp && imById.has(cp.item_id)) {
+          match = imById.get(cp.item_id);
+          matchVia = "customer_part";
+          customerPartDesc = cp.customer_part_description || null;
+          break;
+        }
       }
     }
     if (!match) {
@@ -332,6 +417,7 @@ export const __mapLinesPure = (
   lines,
   {
     cpMap = new Map(),
+    sapMap = new Map(),
     imByCode = new Map(),
     imByAlias = new Map(),
     imBySpec = new Map(),
@@ -344,13 +430,25 @@ export const __mapLinesPure = (
     let match = null;
     let matchVia = null;
     let customerPartDesc = null;
-    for (const code of candidates) {
-      const cp = cpMap.get(code);
+    // Tier 0 (CM P2b): buyer SAP item code -> canonical item.
+    for (const code of lineSapCandidates(line)) {
+      const cp = sapMap.get(code);
       if (cp && imById.has(cp.item_id)) {
         match = imById.get(cp.item_id);
-        matchVia = "customer_part";
+        matchVia = "customer_item_code";
         customerPartDesc = cp.customer_part_description || null;
         break;
+      }
+    }
+    if (!match) {
+      for (const code of candidates) {
+        const cp = cpMap.get(code);
+        if (cp && imById.has(cp.item_id)) {
+          match = imById.get(cp.item_id);
+          matchVia = "customer_part";
+          customerPartDesc = cp.customer_part_description || null;
+          break;
+        }
       }
     }
     if (!match) {

@@ -33,6 +33,29 @@ describe("buildQuoteLineRow supplier_id", () => {
   });
 });
 
+// CM P2b (migration 182): buildQuoteLineRow can carry the buyer SAP
+// item code + verbatim raw description forward, but ONLY when a
+// producer supplies them — so existing writers (which never pass
+// them) produce byte-identical rows and pre-migration deployments
+// are unaffected.
+describe("buildQuoteLineRow CM P2b dual-code columns", () => {
+  it("carries customer_item_code + raw_description when supplied", () => {
+    const row = buildQuoteLineRow("t-1", "q-1", {
+      line_index: 0, part_no: "P1",
+      customer_item_code: "A12060OBAR010003",
+      raw_description: "OBARA STD SHANK TWS-092-90-2",
+    });
+    expect(row.customer_item_code).toBe("A12060OBAR010003");
+    expect(row.raw_description).toBe("OBARA STD SHANK TWS-092-90-2");
+  });
+
+  it("omits both keys entirely when not supplied (byte-identical to pre-P2b)", () => {
+    const row = buildQuoteLineRow("t-1", "q-1", { line_index: 0, part_no: "P1" });
+    expect("customer_item_code" in row).toBe(false);
+    expect("raw_description" in row).toBe(false);
+  });
+});
+
 describe("convert carries supplier_id to the sales order", () => {
   it("maps quote_lines.supplier_id onto the SO line items", () => {
     const { salesOrder } = buildSalesOrderFromLines(

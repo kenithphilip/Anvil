@@ -272,6 +272,14 @@ const WiredEvalsCRUD = () => {
     .sort((a, b) => b._failure - a._failure)
     .slice(0, 20);
 
+  // CM P4: the operator-corrected defect rate (DPMO / sigma) from the dashboard
+  // `quality` block. Six-sigma thresholds on DPMO colour the numbers.
+  const quality = data.quality && data.quality.available ? data.quality : null;
+  const escapeRate = quality && quality.escape_rate != null ? Number(quality.escape_rate) : null;
+  const dpmo = quality && quality.dpmo != null ? Number(quality.dpmo) : null;
+  const sigma = quality && quality.sigma != null ? Number(quality.sigma) : null;
+  const dpmoColor = (d: number | null) => d == null ? "var(--ink)" : d <= 233 ? "var(--sage)" : d <= 6210 ? "var(--amber-2)" : "var(--rust)";
+
   return (
     <>
       <WSTitle
@@ -316,6 +324,21 @@ const WiredEvalsCRUD = () => {
           <KPI lbl="Avg accuracy" v={avgAccuracy != null ? avgAccuracy.toFixed(3) : "—"} d="weighted" />
           <KPI lbl="Drift" v={drift != null ? drift.toFixed(2) : "—"} d="vs baseline" dKind={drift != null && drift > 0.05 ? "down" : ""} />
         </KPIRow>
+
+        {quality && (
+          <KPIRow cols={3}>
+            <KPI lbl="Corrected-defect rate"
+                 v={<span style={{ color: dpmoColor(dpmo) }}>{escapeRate != null ? `${(escapeRate * 100).toFixed(3)}%` : "—"}</span>}
+                 d={`${quality.defects}/${Number(quality.opportunities).toLocaleString("en-IN")} shipped fields · ${quality.window_days}d`}
+                 dKind={escapeRate != null && escapeRate > 0.00621 ? "down" : "up"} />
+            <KPI lbl="DPMO"
+                 v={<span style={{ color: dpmoColor(dpmo) }}>{dpmo != null ? Math.round(dpmo).toLocaleString("en-IN") : "—"}</span>}
+                 d="defects / million opps" />
+            <KPI lbl="Sigma level"
+                 v={<span style={{ color: dpmoColor(dpmo) }}>{sigma != null ? `${sigma.toFixed(2)}σ` : "—"}</span>}
+                 d="operator-corrected · caught only" />
+          </KPIRow>
+        )}
 
         <div style={{ display: "flex", gap: 12, alignItems: "center", margin: "8px 0" }}>
           <div className="tabs">

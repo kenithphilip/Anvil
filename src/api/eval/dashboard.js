@@ -4,6 +4,7 @@
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
+import { computeExtractionQuality } from "./quality.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -40,12 +41,26 @@ export default async function handler(req, res) {
     });
     const suiteSummary = Object.values(accuracyBySuite).map((s) => ({ ...s, avg_score: s.runs ? s.score_sum / s.runs : 0 }));
     const trend = (runs.data || []).slice(0, 30).map((r) => ({ created_at: r.created_at, total_score: Number(r.total_score) || 0, suite: r.suite })).reverse();
+
+    // CM P4: the operator-corrected defect rate (DPMO / sigma) over a window,
+    // from live extraction_runs + extraction_corrections. Best-effort: a query
+    // failure (e.g. an un-migrated deploy) degrades to available:false rather
+    // than 500ing the whole dashboard.
+    let quality = null;
+    try {
+      const days = Math.min(365, Math.max(1, Number(req.query.days) || 90));
+      quality = await computeExtractionQuality(svc, { tenantId: ctx.tenantId, days });
+    } catch (e) {
+      quality = { available: false, reason: (e && e.message) || String(e) };
+    }
+
     return json(res, 200, {
       runs: runs.data,
       caseResults: cases.data,
       suiteSummary,
       fieldStats: Object.values(fieldStats).map((f) => ({ ...f, accuracy: f.pass + f.fail === 0 ? 0 : f.pass / (f.pass + f.fail) })),
       trend,
+      quality,
     });
   } catch (err) {
     sendError(res, err);

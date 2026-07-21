@@ -81,6 +81,13 @@ export const normalizedToScorable = (normalized) => {
   if (cust.po_number !== undefined && cust.po_number !== null) out.poNumber = cust.po_number;
   if (cust.po_date !== undefined && cust.po_date !== null) out.poDate = cust.po_date;
   if (cust.name !== undefined && cust.name !== null) out.customer = cust.name;
+  // Grand total, when the post-processed normalized carries a totals object.
+  // salesOrderToScorable emits grandTotal and scoreCase scores it, so without
+  // this a golden that captured a grand total would false-fail on re-score
+  // (actual.grandTotal undefined). The raw adapter normalized has no totals,
+  // so this only fires on the post-processed shape — correct either way.
+  const grandTotal = numOrUndef(n.grandTotal !== undefined ? n.grandTotal : (n.totals && n.totals.grand_total));
+  if (grandTotal !== undefined) out.grandTotal = grandTotal;
   const lines = Array.isArray(n.lines) ? n.lines : [];
   out.lineItems = lines.map(lineToScorable);
   // The PO's own declared count (P3) rides along so a completeness/recall

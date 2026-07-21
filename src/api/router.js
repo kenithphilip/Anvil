@@ -158,6 +158,7 @@ import evalCases               from "./eval/cases.js";
 import evalDashboard           from "./eval/dashboard.js";
 import evalRun                 from "./eval/run.js";
 import evalRescore             from "./eval/rescore.js";
+import evalReplay              from "./eval/replay.js";
 
 import eventsIndex             from "./events/index.js";
 import findingsIndex           from "./findings/index.js";
@@ -916,6 +917,7 @@ const STATIC_ROUTES = {
   "/eval/dashboard":                evalDashboard,
   "/eval/run":                      evalRun,
   "/eval/rescore":                  evalRescore,
+  "/eval/replay":                   evalReplay,
 
   "/events":                        eventsIndex,
   "/findings":                      findingsIndex,

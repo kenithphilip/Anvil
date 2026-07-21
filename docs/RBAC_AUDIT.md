@@ -243,6 +243,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/eval/agent_eval.js | admin |
 | src/api/eval/cases.js | read, write, admin |
 | src/api/eval/dashboard.js | read |
+| src/api/eval/replay.js | write |
 | src/api/eval/rescore.js | write |
 | src/api/eval/run.js | write |
 | src/api/events/index.js | read, write |

@@ -120,6 +120,9 @@ describe("gemini / extract end-to-end (with mocked HTTP)", () => {
     expect(out.normalized.lines).toHaveLength(1);
     expect(out.confidences.overall).toBeCloseTo(0.91, 2);
     expect(out.mode).toBe("pdf_document");
+    // CM: the resolved prompt version is stamped on the result (default v1).
+    expect(out.prompt_version).toBe("v1");
+    expect(out.prompt_version_source).toBeTruthy();
     if (saved) process.env.GEMINI_API_KEY = saved;
   });
 

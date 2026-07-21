@@ -36,14 +36,19 @@ const REGISTRY = {
     {
       version: "v1",
       status: "active",
-      traffic_weight: 0.70,
-      description: "Original (May 2025) PO extractor system prompt.",
+      traffic_weight: 1.0,
+      description: "Current PO extractor prompt (claude.js SYSTEM_PROMPT / gemini.js PO_SYSTEM_PROMPT). The one prompt actually shipped.",
     },
     {
+      // Retired: this row never carried real prompt content — it was placeholder
+      // A/B scaffolding. Kept (not deleted) so historical runs + forceVersion
+      // resolve. To ship a REAL v2: add its {system, tool} to PO_PROMPT_VERSIONS
+      // in claude.js + gemini.js, then flip status to 'canary' (small %) or
+      // 'active' with a traffic_weight.
       version: "v2",
-      status: "active",
-      traffic_weight: 0.30,
-      description: "Tighter line-item table prompts; added few-shot for SAP layouts (Bet 4 Nov 2025).",
+      status: "retired",
+      traffic_weight: 0,
+      description: "Placeholder (never shipped). Add content in the adapters before activating.",
     },
   ],
   supplier_ack_extractor: [

@@ -102,6 +102,7 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
   const caseResults = [];
   const skipped = [];
   const modelsSeen = {};
+  const promptsSeen = {};
   let recallSum = 0;
   let recallN = 0;
   const settingsCache = new Map();
@@ -158,6 +159,8 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
     if (lineRecall != null) { recallSum += lineRecall; recallN++; }
     const model = out.selected_model || "unknown";
     modelsSeen[model] = (modelsSeen[model] || 0) + 1;
+    const promptVer = out.prompt_version || "unknown";
+    promptsSeen[promptVer] = (promptsSeen[promptVer] || 0) + 1;
     caseResults.push({
       case_id: gc.case_id,
       ...scored,
@@ -166,6 +169,7 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
       line_recall: lineRecall,
       model,
       model_selection_reason: out.model_selection_reason || null,
+      prompt_version: out.prompt_version || null,
       cost_usd: runCost && typeof runCost.totalUsd === "number" ? runCost.totalUsd : null,
     });
   }
@@ -176,6 +180,11 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
   const modelVersion = Object.keys(modelsSeen).length > 1
     ? "live-replay:mixed:" + (dominant ? dominant[0] : "?")
     : "live-replay:" + (dominant ? dominant[0] : "?");
+  // Now that adapters stamp the prompt version, attribute the replay to the
+  // actual prompt used — this is what lets replay catch a PROMPT regression,
+  // not just a model one.
+  const domPrompt = Object.entries(promptsSeen).sort((a, b) => b[1] - a[1])[0];
+  const promptVersion = "live-replay:" + (domPrompt ? domPrompt[0] : "unknown");
 
   const { runId, score, persistErrors, attestation } = await attestAndPersistRun(svc, {
     tenantId,
@@ -183,7 +192,7 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
     totalPass,
     totalFail,
     caseResults,
-    promptVersion: "live-replay",
+    promptVersion,
     modelVersion,
     pipelineVersion: EVAL_PIPELINE_VERSION_FALLBACK,
     serverVerified: true,

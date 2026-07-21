@@ -18,6 +18,7 @@ import { callGemini, extractTextFromGemini, parseStructuredGemini, stopReasonFro
 import { parseSchemaAligned } from "./parse.js";
 import { selectGeminiModel } from "./model_selector.js";
 import { coerceStatedLineCount } from "./claude.js";
+import { resolvePromptVersion } from "./prompt-versions.js";
 
 const apiKey = (settings) => {
   if (settings?.docai_gemini_api_key_enc && settings?.docai_creds_iv) {
@@ -286,7 +287,13 @@ const normalizeSupplierAck = (out) => ({
   },
 });
 
-export const extract = async ({ url, bytes, filename: _filename, mime, settings, hints }) => {
+// Prompt-version registry -> content (kept in lockstep with claude.js). v1 is
+// the CURRENT prompt; ship a real v2 by adding its { system, schema } here +
+// activating its prompt-versions.js row.
+const PO_PROMPT_VERSIONS = { v1: { system: PO_SYSTEM_PROMPT, schema: PO_SCHEMA } };
+const SUPPLIER_ACK_PROMPT_VERSIONS = { v1: { system: SUPPLIER_ACK_SYSTEM_PROMPT, schema: SUPPLIER_ACK_SCHEMA } };
+
+export const extract = async ({ url, bytes, filename: _filename, mime, settings, hints, customerId }) => {
   const key = apiKey(settings);
   // Carry a `reason` on every early bail so extraction_runs records
   // a precise status_reason instead of the orchestrator's
@@ -297,8 +304,20 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
 
   const expectedKind = hints?.expectedKind || "po";
   const isSupplierAck = expectedKind === "supplier_ack";
-  const systemPrompt = isSupplierAck ? SUPPLIER_ACK_SYSTEM_PROMPT : PO_SYSTEM_PROMPT;
-  const schema = isSupplierAck ? SUPPLIER_ACK_SCHEMA : PO_SCHEMA;
+  // Resolve the prompt VERSION, then use its system+schema. v1 == current, so
+  // behaviour is unchanged; the resolved version is stamped on the result.
+  const promptName = isSupplierAck ? "supplier_ack_extractor" : "po_extractor";
+  const versionMap = isSupplierAck ? SUPPLIER_ACK_PROMPT_VERSIONS : PO_PROMPT_VERSIONS;
+  const resolvedPrompt = resolvePromptVersion(promptName, {
+    tenantId,
+    customerId,
+    pin: settings?.docai_prompt_pins?.[promptName],
+    forceVersion: hints?.forcePromptVersion,
+  });
+  const promptVersion = resolvedPrompt && versionMap[resolvedPrompt.version] ? resolvedPrompt.version : "v1";
+  const promptVersionSource = resolvedPrompt?.source || "default";
+  const systemPrompt = versionMap[promptVersion].system;
+  const schema = versionMap[promptVersion].schema;
 
   const built = buildBodyBlock({ hints, bytes, mime, url });
   if (!built) {
@@ -499,6 +518,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     confidences,
     selected_model: selection.model,
     model_selection_reason: selection.reason,
+    prompt_version: promptVersion,
+    prompt_version_source: promptVersionSource,
     parse_method: parseMethod,
     parse_repairs: parseRepairs,
     parse_retries: parseRetries,

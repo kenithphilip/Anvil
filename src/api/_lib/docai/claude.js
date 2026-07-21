@@ -27,6 +27,7 @@
 
 import { callAnthropic } from "../anthropic.js";
 import { selectClaudeModel } from "./model_selector.js";
+import { resolvePromptVersion } from "./prompt-versions.js";
 import { parseSchemaAligned } from "./parse.js";
 
 // Per-call model selection delegates to the deterministic
@@ -470,7 +471,14 @@ const isPdfBytes = (b) => {
 };
 const isImageMime = (m) => /^image\//i.test(String(m || ""));
 
-export const extract = async ({ url, bytes, filename: _filename, mime, settings, hints, promptOverrides }) => {
+// Prompt-version registry -> content. v1 is the CURRENT prompt, so default
+// behaviour is unchanged. Ship a real v2 by adding its { system, tool } here and
+// flipping its prompt-versions.js row to canary/active — traffic then A/B-splits
+// and every run records which version it used (extraction_runs.prompt_version).
+const PO_PROMPT_VERSIONS = { v1: { system: SYSTEM_PROMPT, tool: TOOL_DEFINITION } };
+const SUPPLIER_ACK_PROMPT_VERSIONS = { v1: { system: SUPPLIER_ACK_SYSTEM_PROMPT, tool: SUPPLIER_ACK_TOOL } };
+
+export const extract = async ({ url, bytes, filename: _filename, mime, settings, hints, promptOverrides, customerId }) => {
   // Every early failure return below carries a `reason` so the
   // extraction_runs row records WHY claude bailed. Without it the
   // orchestrator falls back to status_reason='fail_unknown', which
@@ -483,8 +491,24 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
 
   const expectedKind = hints?.expectedKind || "po";
   const isSupplierAck = expectedKind === "supplier_ack";
-  const activePrompt = isSupplierAck ? SUPPLIER_ACK_SYSTEM_PROMPT : SYSTEM_PROMPT;
-  const activeTool = isSupplierAck ? SUPPLIER_ACK_TOOL : TOOL_DEFINITION;
+  // Resolve the prompt VERSION (tenant pin > force > A/B split > default), then
+  // use that version's system+tool. v1 == the current prompt, so behaviour is
+  // unchanged; the resolved version is stamped on the result for per-prompt
+  // accuracy tracking + live-replay prompt-regression attribution.
+  const promptName = isSupplierAck ? "supplier_ack_extractor" : "po_extractor";
+  const versionMap = isSupplierAck ? SUPPLIER_ACK_PROMPT_VERSIONS : PO_PROMPT_VERSIONS;
+  const resolvedPrompt = resolvePromptVersion(promptName, {
+    tenantId,
+    customerId,
+    pin: settings?.docai_prompt_pins?.[promptName],
+    forceVersion: hints?.forcePromptVersion,
+  });
+  // Fall back to v1 content when the resolved version has none (e.g. a retired
+  // placeholder forced in a test); stamp the version whose CONTENT was used.
+  const promptVersion = resolvedPrompt && versionMap[resolvedPrompt.version] ? resolvedPrompt.version : "v1";
+  const promptVersionSource = resolvedPrompt?.source || "default";
+  const activePrompt = versionMap[promptVersion].system;
+  const activeTool = versionMap[promptVersion].tool;
   const activeToolName = isSupplierAck ? "extract_supplier_ack" : "extract_purchase_order";
 
   // Deterministic model pick based on extraction context. The
@@ -792,6 +816,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     reason,
     selected_model: selection.model,
     model_selection_reason: selection.reason,
+    prompt_version: promptVersion,
+    prompt_version_source: promptVersionSource,
     normalized: {
       classification: out.classification || null,
       customer: out.customer || null,

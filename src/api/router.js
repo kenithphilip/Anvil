@@ -157,6 +157,7 @@ import emailInbound            from "./email/inbound.js";
 import evalCases               from "./eval/cases.js";
 import evalDashboard           from "./eval/dashboard.js";
 import evalRun                 from "./eval/run.js";
+import evalRescore             from "./eval/rescore.js";
 
 import eventsIndex             from "./events/index.js";
 import findingsIndex           from "./findings/index.js";
@@ -914,6 +915,7 @@ const STATIC_ROUTES = {
   "/eval/cases":                    evalCases,
   "/eval/dashboard":                evalDashboard,
   "/eval/run":                      evalRun,
+  "/eval/rescore":                  evalRescore,
 
   "/events":                        eventsIndex,
   "/findings":                      findingsIndex,

@@ -5,6 +5,7 @@ import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { evaluateApprovalsForOrder } from "../_lib/approval-evaluator.js";
 import { lineCandidates, lineSapCandidates } from "../_lib/item-mapper.js";
 import { upsertCustomerPart } from "../_lib/item-customer-parts.js";
+import { promoteApprovedOrder } from "../eval/promote.js";
 
 const APPROVE_INPUTS = [
   "status", "approval", "payload_hash", "result",
@@ -235,6 +236,31 @@ export default async function handler(req, res) {
       } catch (e) {
         // eslint-disable-next-line no-console
         console.warn("[orders/[id] item-map write-back] failed: " + (e && e.message));
+      }
+
+      // CM P4: harvest every approval into the golden set. An APPROVED order
+      // with a matching payload_hash is human-verified ground truth — snapshot
+      // it into a golden eval_case so the accuracy harness measures the
+      // pipeline against real corrected output. Best-effort: never block the
+      // approval. Routes to the shared regression corpus (EVAL_GOLDEN_TENANT_ID)
+      // when configured, else the order's own tenant.
+      if (data.status === "APPROVED" && data.approval && data.payload_hash) {
+        try {
+          const targetTenantId = process.env.EVAL_GOLDEN_TENANT_ID || ctx.tenantId;
+          const promo = await promoteApprovedOrder(svc, data, { targetTenantId });
+          if (promo.promoted) {
+            await recordEvent(ctx, {
+              caseId: id,
+              eventType: "eval_golden_promoted",
+              objectType: "order",
+              objectId: id,
+              detail: { case_id: promo.case_id, tenant_id: promo.tenant_id },
+            });
+          }
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.warn("[orders/[id] eval-promote] failed: " + (e && e.message));
+        }
       }
 
       // Return-for-correction audit shape (migration 104). When the

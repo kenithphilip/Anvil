@@ -167,6 +167,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/bom/index.js | read, write |
 | src/api/bom/parse.js | read |
 | src/api/bom/source_formats.js | read, admin |
+| src/api/bom/where_used.js | read |
 | src/api/brsr/buyer/dashboard.js | read |
 | src/api/brsr/buyer/export.js | admin |
 | src/api/brsr/disclosure.js | read, admin |

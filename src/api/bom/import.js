@@ -4,7 +4,8 @@
 //                  metadata? },
 //         lines: [{ part_no, part_name?, supplier_part_no?, supplier_id?,
 //                   material?, size?, qty?, uom?, level?, seq_no?, side?,
-//                   std_category?, is_spare?, remarks?, raw? }],
+//                   std_category?, is_spare?, balloon_no?, find_no?,
+//                   remarks?, raw? }],
 //         project_id?, file_name? }
 //
 // Ingests an as-imported BOM (Phase 1, see docs/BOM_INGESTION_DESIGN.md):
@@ -29,6 +30,10 @@ import { deriveStructure, computeDiff, itemCandidates } from "../_lib/bom-ingest
 const LINE_FIELDS = [
   "level", "part_no", "part_name", "supplier_part_no", "supplier_id",
   "material", "size", "qty", "uom", "side", "std_category", "is_spare", "remarks",
+  // PDM P0 (migration 183): the assembly drawing's balloon/find number — the
+  // customer-facing spare identity. Persisted when the caller (a BOM import or a
+  // future assembly-drawing extractor) supplies it.
+  "balloon_no", "find_no",
 ];
 
 export default async function handler(req, res) {
@@ -115,7 +120,16 @@ export default async function handler(req, res) {
         return row;
       });
     for (let i = 0; i < rows.length; i += 100) {
-      const ins = await svc.from("bom_lines").insert(rows.slice(i, i + 100));
+      const batch = rows.slice(i, i + 100);
+      let ins = await svc.from("bom_lines").insert(batch);
+      // PDM P0: balloon_no/find_no (migration 183) may not be applied yet on a
+      // given deployment. Strip them and retry once so a BOM import that carries
+      // balloon numbers doesn't hard-fail on a stale schema cache.
+      if (ins.error && (ins.error.code === "42703" || ins.error.code === "PGRST204"
+          || /balloon_no|find_no|schema cache/i.test(ins.error.message || ""))) {
+        const stripped = batch.map((r) => { const c = { ...r }; delete c.balloon_no; delete c.find_no; return c; });
+        ins = await svc.from("bom_lines").insert(stripped);
+      }
       if (ins.error) throw new Error("bom_lines insert: " + ins.error.message);
     }
 

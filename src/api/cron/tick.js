@@ -63,6 +63,7 @@ import proalphaSync     from "../proalpha/sync.js";
 import proalphaRetry    from "../proalpha/retry.js";
 // Phase 6 cron entries: agent eval (weekly) + prospecting (every tick).
 import agentEval        from "../eval/agent_eval.js";
+import evalRescore      from "../eval/rescore.js";
 import prospectingRun   from "../prospecting/run.js";
 import plmSync          from "../plm/sync.js";
 import pushSend         from "../push/send.js";
@@ -200,11 +201,14 @@ export default async function handler(req, res) {
       ]);
     }
 
-    // ON minute=5 (hourly off-peak): agent eval harness.
+    // ON minute=5 (hourly off-peak): agent eval harness + golden-set re-score.
+    // The re-score measures live extraction accuracy vs the human-verified
+    // golden corpus (EVAL_GOLDEN_TENANT_ID); it no-ops cheaply when unset.
     let groupAgentEval = [];
     if (ranAgentEval) {
       groupAgentEval = await runCronGroup([
         { name: "eval/agent_eval", fn: agentEval, opts: { path: "/api/eval/agent_eval" } },
+        { name: "eval/rescore", fn: evalRescore, opts: { path: "/api/eval/rescore", method: "POST", body: {} } },
       ]);
     }
 

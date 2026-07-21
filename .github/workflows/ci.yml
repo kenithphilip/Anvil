@@ -21,3 +21,4 @@ jobs:
       - run: npm run verify
       - run: test -f public/index.html
       - run: npm test -- --run
+      - run: npm run eval:golden

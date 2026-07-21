@@ -43,11 +43,16 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | `comms` | `rw` | `rw` | `r` | `r` | `rw` | `` | `r` |
 | `connect` | `rw` | `rw` | `rw` | `rw` | `rw` | `rw` | `rw` |
 | `cost` | `r` | `rw` | `r` | `rw` | `rw` | `` | `r` |
+| `credit-notes` | `r` | `rw` | `` | `rwa` | `rwa` | `` | `r` |
+| `customer-duplicates` | `r` | `r` | `r` | `r` | `rw` | `` | `r` |
 | `customers` | `rw` | `rw` | `r` | `r` | `rw` | `r` | `r` |
+| `delays` | `r` | `r` | `rw` | `r` | `r` | `r` | `r` |
 | `duplicates` | `r` | `r` | `r` | `r` | `rw` | `` | `r` |
 | `einvoice` | `r` | `r` | `` | `rw` | `rw` | `` | `r` |
 | `email` | `r` | `rw` | `r` | `r` | `rw` | `` | `r` |
 | `evals` | `r` | `r` | `` | `` | `rw` | `` | `r` |
+| `eway-bills` | `r` | `r` | `r` | `rwa` | `rwa` | `r` | `r` |
+| `extraction-review` | `rw` | `rw` | `r` | `` | `rw` | `rw` | `r` |
 | `forecasts` | `r` | `r` | `r` | `rw` | `rw` | `` | `r` |
 | `format-guide` | `r` | `r` | `r` | `r` | `r` | `r` | `r` |
 | `graph` | `r` | `r` | `r` | `r` | `r` | `` | `r` |
@@ -62,25 +67,34 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | `inventory-suppliers` | `r` | `r` | `rwa` | `r` | `rwa` | `` | `r` |
 | `invoices` | `r` | `rw` | `` | `rwa` | `rwa` | `` | `r` |
 | `items` | `r` | `r` | `rw` | `r` | `rw` | `r` | `r` |
+| `items-import` | `rw` | `rw` | `rw` | `r` | `rw` | `r` | `r` |
 | `leads` | `rw` | `rw` | `` | `r` | `r` | `` | `r` |
+| `logistics` | `r` | `r` | `rwa` | `r` | `rwa` | `r` | `r` |
 | `marketplace` | `r` | `r` | `r` | `r` | `rwa` | `r` | `r` |
 | `onboarding` | `rw` | `rw` | `rw` | `rw` | `rw` | `rw` | `rw` |
 | `opps` | `rw` | `rw` | `` | `r` | `r` | `` | `r` |
+| `pipeline-kanban` | `rw` | `rw` | `` | `r` | `r` | `` | `r` |
 | `projects` | `rw` | `rw` | `r` | `r` | `r` | `` | `r` |
+| `quotes` | `rw` | `rwa` | `r` | `r` | `rwa` | `r` | `r` |
+| `recurring-invoices` | `r` | `rw` | `` | `rwa` | `rwa` | `` | `r` |
+| `sales-ops` | `r` | `r` | `r` | `r` | `r` | `` | `r` |
 | `security` | `` | `` | `` | `` | `x` | `` | `` |
 | `shipments` | `rw` | `rw` | `rw` | `r` | `r` | `r` | `r` |
 | `so` | `rw` | `rw` | `r` | `r` | `r` | `r` | `r` |
 | `spares` | `rw` | `r` | `rw` | `r` | `r` | `` | `r` |
 | `spo` | `r` | `r` | `rwa` | `r` | `r` | `` | `r` |
 | `studio` | `r` | `rw` | `` | `` | `rw` | `` | `r` |
+| `supplier-rfq` | `r` | `rw` | `rwa` | `r` | `rwa` | `` | `r` |
 | `svc-visits` | `r` | `r` | `` | `` | `r` | `rw` | `r` |
 | `tally` | `r` | `r` | `r` | `rwa` | `rw` | `` | `r` |
 | `treds` | `` | `r` | `` | `rwa` | `rwa` | `` | `r` |
+| `voice` | `r` | `rw` | `r` | `r` | `rw` | `rw` | `r` |
 
 ## API handlers and their permission levels
 
 | Handler | Levels |
 |---------|--------|
+| src/api/_lib/connector-fieldmap.js | read, admin |
 | src/api/aa/consent.js | read, admin |
 | src/api/acumatica/connect.js | admin |
 | src/api/acumatica/diagnostics.js | read |
@@ -91,6 +105,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/acumatica/sync.js | admin |
 | src/api/admin/access_requests.js | admin |
 | src/api/admin/access_review.js | admin |
+| src/api/admin/composition_material_lines.js | read, write |
 | src/api/admin/contracts.js | read, admin |
 | src/api/admin/customer_locations.js | read, admin |
 | src/api/admin/customer_terms.js | read, admin |
@@ -110,18 +125,27 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/admin/item_master.js | read, admin |
 | src/api/admin/item_reference.js | read |
 | src/api/admin/item_specifications.js | read, admin |
+| src/api/admin/item_usage.js | read |
 | src/api/admin/lead_times.js | read, admin |
+| src/api/admin/llm_settings.js | read, approve |
 | src/api/admin/lost_reasons.js | read, admin |
+| src/api/admin/material_price_references.js | read, write |
 | src/api/admin/members.js | read, admin |
+| src/api/admin/nav_settings.js | read, approve |
 | src/api/admin/notifications.js | read, admin |
 | src/api/admin/order_line_tax_components.js | read, write |
 | src/api/admin/price_composition_lines.js | read, write |
+| src/api/admin/pricing_profile_bindings.js | read, admin |
+| src/api/admin/pricing_profiles.js | read, admin |
 | src/api/admin/quote_approvals.js | read, admin, write |
 | src/api/admin/quote_lines.js | read, write |
+| src/api/admin/quote_settings.js | read, approve |
 | src/api/admin/tenant_pricing_settings.js | read, admin |
 | src/api/agents/goals.js | read, write |
 | src/api/agents/handle_replies.js | approve |
 | src/api/aliases/index.js | read, write |
+| src/api/analytics/funnel.js | read |
+| src/api/analytics/ops_kpis.js | read |
 | src/api/analytics/refresh.js | approve |
 | src/api/analytics/winloss.js | read |
 | src/api/anomaly/explain.js | read |
@@ -137,7 +161,12 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/billing/stripe/connect_onboard.js | admin |
 | src/api/billing/stripe/connect_status.js | read |
 | src/api/billing/usage.js | read |
+| src/api/bom/asset_projects.js | write |
+| src/api/bom/assets.js | read |
+| src/api/bom/import.js | write |
 | src/api/bom/index.js | read, write |
+| src/api/bom/parse.js | read |
+| src/api/bom/source_formats.js | read, admin |
 | src/api/brsr/buyer/dashboard.js | read |
 | src/api/brsr/buyer/export.js | admin |
 | src/api/brsr/disclosure.js | read, admin |
@@ -154,6 +183,8 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/communications/list.js | read |
 | src/api/communications/missing_doc.js | write |
 | src/api/communications/send.js | approve |
+| src/api/copilot/confirm.js | approve |
+| src/api/copilot/proposals.js | read |
 | src/api/cost/breakdown.js | read |
 | src/api/cost/margin_history.js | read |
 | src/api/cost/simulator.js | read |
@@ -162,6 +193,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/cron/drift-report.js | admin |
 | src/api/cron/tally-reconcile.js | approve |
 | src/api/customer_locations/index.js | read |
+| src/api/customers/change_requests.js | read, write, approve |
 | src/api/customers/contacts.js | read, write, approve |
 | src/api/customers/duplicates.js | read |
 | src/api/customers/health_score.js | read, approve |
@@ -181,6 +213,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/docai/correction.js | approve |
 | src/api/docai/cost_status.js | read |
 | src/api/docai/extract.js | write |
+| src/api/docai/review_queue.js | read, write |
 | src/api/docai/route.js | read |
 | src/api/docai/runs.js | read |
 | src/api/docai/usage.js | read |
@@ -210,14 +243,18 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/eval/agent_eval.js | admin |
 | src/api/eval/cases.js | read, write, admin |
 | src/api/eval/dashboard.js | read |
+| src/api/eval/rescore.js | write |
 | src/api/eval/run.js | write |
 | src/api/events/index.js | read, write |
 | src/api/eway_bills/extract.js | write |
 | src/api/eway_bills/index.js | read, write, admin |
+| src/api/failure_events/index.js | read, write |
 | src/api/findings/index.js | write |
+| src/api/fmeca/index.js | read, write |
 | src/api/forecast/index.js | read, admin |
 | src/api/fx/rates.js | read, write |
 | src/api/ifs/connect.js | admin |
+| src/api/ifs/diagnostics.js | read, admin |
 | src/api/ifs/health.js | read |
 | src/api/ifs/push.js | approve |
 | src/api/ifs/retry.js | admin |
@@ -246,19 +283,27 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/invoices/[id].js | read, write |
 | src/api/invoices/extract.js | write |
 | src/api/invoices/index.js | read, write |
+| src/api/invoices/payment.js | approve |
 | src/api/invoices/pdf.js | read |
 | src/api/invoices/send.js | write |
 | src/api/jde/connect.js | admin |
+| src/api/jde/diagnostics.js | read, admin |
 | src/api/jde/health.js | read |
 | src/api/jde/push.js | approve |
 | src/api/jde/retry.js | admin |
 | src/api/jde/sync.js | admin |
 | src/api/jobboss/connect.js | admin |
+| src/api/jobboss/diagnostics.js | read, admin |
 | src/api/jobboss/health.js | read |
 | src/api/jobboss/push.js | approve |
 | src/api/jobboss/retry.js | admin |
 | src/api/jobboss/sync.js | admin |
 | src/api/kb/ask.js | read |
+| src/api/locations/index.js | read, write |
+| src/api/logistics/consolidations.js | read, write |
+| src/api/logistics/freight_bids.js | read, write |
+| src/api/mapping/resolve.js | read |
+| src/api/mapping/workspace.js | read |
 | src/api/marketplace/imports.js | read, admin |
 | src/api/marketplace/list.js | read |
 | src/api/marketplace/publish.js | admin |
@@ -275,25 +320,38 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/netsuite/push.js | approve |
 | src/api/netsuite/retry.js | admin |
 | src/api/netsuite/sync.js | admin |
+| src/api/operator_actions/advance.js | write |
+| src/api/operator_actions/evidence.js | write |
+| src/api/operator_actions/index.js | read, write |
+| src/api/operator_actions/reconcile.js | write, approve |
 | src/api/opportunities/line_items.js | read, write |
 | src/api/oracle_ebs/connect.js | admin |
+| src/api/oracle_ebs/diagnostics.js | read, admin |
 | src/api/oracle_ebs/health.js | read |
 | src/api/oracle_ebs/push.js | approve |
 | src/api/oracle_ebs/retry.js | admin |
 | src/api/oracle_ebs/sync.js | admin |
 | src/api/oracle_fusion/connect.js | admin |
+| src/api/oracle_fusion/diagnostics.js | read, admin |
 | src/api/oracle_fusion/health.js | read |
 | src/api/oracle_fusion/push.js | approve |
 | src/api/oracle_fusion/retry.js | admin |
 | src/api/oracle_fusion/sync.js | admin |
 | src/api/orders/[id].js | read, write, approve, admin |
+| src/api/orders/cost_summary.js | read |
+| src/api/orders/extraction_jobs_id.js | read, write |
+| src/api/orders/extraction_jobs.js | read, write |
+| src/api/orders/extraction_status.js | read |
 | src/api/orders/index.js | read, write |
 | src/api/orders/pipeline_state.js | read |
 | src/api/orders/print_jobs.js | read, approve |
+| src/api/orders/reconcile_quotes.js | write |
 | src/api/orders/reconcile.js | approve |
 | src/api/orders/schedule_lines.js | read, write, admin |
+| src/api/orders/so_pdf.js | read |
 | src/api/orders/suggest_mappings.js | read |
 | src/api/orders/traveler.js | approve |
+| src/api/orders/voucher_pdf.js | read |
 | src/api/p21/connect.js | admin |
 | src/api/p21/diagnostics.js | read |
 | src/api/p21/field_map.js | read, admin |
@@ -302,6 +360,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/p21/retry.js | admin |
 | src/api/p21/sync.js | admin |
 | src/api/plex/connect.js | admin |
+| src/api/plex/diagnostics.js | read, admin |
 | src/api/plex/health.js | read |
 | src/api/plex/push.js | approve |
 | src/api/plex/retry.js | admin |
@@ -311,6 +370,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/plm/sync.js | read, admin |
 | src/api/portal/tokens.js | read, approve, admin |
 | src/api/proalpha/connect.js | admin |
+| src/api/proalpha/diagnostics.js | read, admin |
 | src/api/proalpha/health.js | read |
 | src/api/proalpha/push.js | approve |
 | src/api/proalpha/retry.js | admin |
@@ -326,14 +386,18 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/quotes/pdf.js | read |
 | src/api/quotes/send.js | approve |
 | src/api/ramco/connect.js | admin |
+| src/api/ramco/diagnostics.js | read, admin |
 | src/api/ramco/health.js | read |
 | src/api/ramco/push.js | approve |
 | src/api/ramco/retry.js | admin |
 | src/api/ramco/sync.js | admin |
+| src/api/receipts/extract.js | write |
+| src/api/receipts/index.js | read, write |
 | src/api/rlhf/aggregate.js | approve |
 | src/api/rlhf/dataset.js | approve |
 | src/api/rlhf/feedback.js | read |
 | src/api/sage_x3/connect.js | admin |
+| src/api/sage_x3/diagnostics.js | read, admin |
 | src/api/sage_x3/health.js | read |
 | src/api/sage_x3/push.js | approve |
 | src/api/sage_x3/retry.js | admin |
@@ -368,15 +432,23 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/sourcing/network/handoff.js | write |
 | src/api/sourcing/network/listings.js | read, write |
 | src/api/sourcing/network/search.js | read |
+| src/api/spare_matrix/[id].js | read, write |
+| src/api/spare_matrix/index.js | read, write |
 | src/api/spare_matrix/kit.js | read |
 | src/api/spare_matrix/obsolete.js | read |
 | src/api/spare_matrix/opportunities.js | read |
 | src/api/spare_matrix/recommend.js | write |
+| src/api/spare_matrix/recommended.js | write |
+| src/api/spare_matrix/recompute_recommended.js | write |
+| src/api/spare_matrix/suggest_columns.js | read |
+| src/api/spare_matrix/to_quote.js | write |
 | src/api/supplier_rfq/award.js | approve |
+| src/api/supplier_rfq/customer_ref.js | approve |
 | src/api/supplier_rfq/index.js | read, approve, admin |
 | src/api/supplier_rfq/matrix.js | read |
 | src/api/supplier_rfq/quote.js | approve |
 | src/api/supplier_rfq/send.js | approve |
+| src/api/supplier_rfq/sync_composition.js | write |
 | src/api/supplier_rfq/vendors.js | read, approve, admin |
 | src/api/sxe/connect.js | admin |
 | src/api/sxe/diagnostics.js | read |

@@ -38,10 +38,15 @@ import { chunkPdf, probePdfPageCount, DEFAULT_MAX_PAGES_PER_CHUNK, SYNC_MAX_TOTA
 import { dispatchExtract } from "./index.js";
 import { detectSpanningTables, planHeaderReplication } from "./cross-page-tables.js";
 
-// Page threshold above which we engage the chunker. Documents
-// at or below this run the single-shot path (cheaper, lower
-// latency on the common case).
-export const CHUNK_PAGE_THRESHOLD = 6;
+// Page threshold above which we engage the chunker. Documents at or below this
+// run the SINGLE-SHOT path — the whole PDF in one LLM call — which is what lets
+// a multi-page line-item table extract correctly (chunking splits the table so
+// a mid-table chunk has no column header and returns 0 lines). Raised 6 -> 25
+// so a common 13-21pp PO reads every page in one context; keep it in step with
+// run.js PROFILER_PAGE_THRESHOLD. Only genuinely large docs chunk. Modern
+// vision LLMs (Gemini native-PDF 1M ctx; Claude 200k) handle 25pp in one call
+// well under the 60s ceiling. Env-overridable.
+export const CHUNK_PAGE_THRESHOLD = Math.max(1, Number(process.env.DOCAI_CHUNK_PAGE_THRESHOLD) || 25);
 
 // Emit a per-stage event to processing_events. Best-effort. The
 // caller (run.js) owns the tenant + case context and passes it

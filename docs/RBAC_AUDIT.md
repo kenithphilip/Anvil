@@ -191,6 +191,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/credit_notes/index.js | read, write, approve |
 | src/api/cron/drift-meter.js | admin |
 | src/api/cron/drift-report.js | admin |
+| src/api/cron/eval_quality_alert.js | read |
 | src/api/cron/tally-reconcile.js | approve |
 | src/api/customer_locations/index.js | read |
 | src/api/customers/change_requests.js | read, write, approve |

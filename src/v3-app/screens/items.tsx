@@ -53,6 +53,7 @@ const WiredItems = () => {
         meta="parts · aliases · stock · bills of material"
         right={<>
           <Btn sm kind="primary" onClick={() => { window.location.hash = "#/items?view=import"; }}>{Icon.plus} Import BOM</Btn>
+          <Btn sm kind="ghost" onClick={() => { window.location.hash = "#/items?view=drawing"; }}>{Icon.upload} From drawing</Btn>
           <Btn sm kind="ghost"><span className="mono-sm">tenant: {lsGet("v3_tenant_code") || "TENANT"}</span></Btn>
         </>}
       />

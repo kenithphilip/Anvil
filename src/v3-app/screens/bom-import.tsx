@@ -504,6 +504,7 @@ const WiredBomImport = () => {
         title="Import Bill of Materials"
         meta="multi-file · xlsx / xls / csv / tsv / txt / zip · origin auto-detected"
         right={<>
+          <Btn sm kind="ghost" onClick={() => (window.location.hash = "#/items?view=drawing")}>{Icon.upload} from drawing</Btn>
           <Btn sm kind="ghost" onClick={() => (window.location.hash = "#/items")}>{Icon.arrowL} back to Items</Btn>
         </>}
       />

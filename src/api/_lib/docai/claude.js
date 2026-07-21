@@ -177,6 +177,13 @@ export const SYSTEM_PROMPT = [
   "and shred every per-unit amount. If the document prints 8 S.No values you must return exactly 8",
   "lines[] entries; if it prints 32 you must return exactly 32.",
   "",
+  "Also set stated_line_count = the total number of line items the PO DECLARES it has: a printed total",
+  "('Total items: 190', 'No. of items', 'Total no. of lines') if one exists, else the HIGHEST S.No / Line /",
+  "Item serial printed anywhere in the table across ALL pages -- even for rows you could not read. This is",
+  "the document's own count and is independent of how many lines[] you return; report it truthfully even",
+  "when it exceeds the number of lines you extracted (that gap is a signal we rely on). null only when the",
+  "document prints no total and no serial numbers.",
+  "",
   "When you encounter an MMIL-style PO (header 'HYUNDAI MOTOR INDIA LTD', vendor_code labelled 'TH...'),",
   "specifically extract per-block: partNumber from row 1 col 2 (e.g. 'GD544202503060009'), description",
   "from row 2 col 2 (e.g. 'ATD NS HEAD ASSY'), specification from row 3 col 2 (e.g. 'AS2-0061'),",
@@ -281,6 +288,15 @@ const SUPPLIER_ACK_TOOL = {
 // `ship_to_address`, `po_number`, `po_date`); we keep the prompt
 // guidance verbose so the model preserves PR #27's "M/s." prefix
 // stripping and verbatim payment-terms behaviour.
+// CM P3: coerce the model's declared line count to a trustworthy
+// positive integer (or null). Rounds, rejects zero/negative/NaN so
+// the line_count_shortfall detector never fires on a garbage count.
+// Exported so gemini.js stays in lockstep and tests can pin it.
+export const coerceStatedLineCount = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+};
+
 export const TOOL_DEFINITION = {
   name: "extract_purchase_order",
   description: "Return the classification + structured customer + line-items extracted from the document.",
@@ -355,6 +371,10 @@ export const TOOL_DEFINITION = {
             others_amount:  { type: ["number", "null"] },
           },
         },
+      },
+      stated_line_count: {
+        type: ["integer", "null"],
+        description: "The total number of DISTINCT line items the PO DOCUMENT ITSELF declares it contains — read it from a printed total ('Total items: 190', 'No. of items', 'Total line items', 'Total no. of lines') OR, absent that, the HIGHEST serial / S.No printed in the line-item table across ALL pages, INCLUDING rows you could not fully extract. This is the document's own DECLARED count, independent of how many entries you actually returned in `lines` — never just count your own output. null only when the document prints neither a total nor serial numbers.",
       },
     },
     required: ["classification", "confidence", "customer", "lines"],
@@ -776,6 +796,10 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       classification: out.classification || null,
       customer: out.customer || null,
       lines,
+      // CM P3: the PO's own declared line count (for the
+      // line_count_shortfall completeness detector). Coerced to a
+      // positive integer or null; never trust a zero/negative.
+      stated_line_count: coerceStatedLineCount(out.stated_line_count),
     },
     confidences,
     parse_method: parseMethod,

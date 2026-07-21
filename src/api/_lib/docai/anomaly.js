@@ -264,6 +264,38 @@ const checkTotals = (normalized) => {
   return issues;
 };
 
+// CM P3: line-count completeness — the single highest-value
+// missing detector. When the PO DECLARES more line items than
+// extraction returned (the silent "6 of 190 lines" failure that
+// looks complete), raise a blocking finding so the run is forced
+// into the review queue instead of shipping short. Deterministic:
+// compares the model-reported normalized.stated_line_count (the
+// PO's own printed total / highest serial) against lines.length.
+//   opts.lineCountShortfallEnabled === false -> disabled.
+//   opts.lineCountShortfallSlack (default 0) -> tolerated gap;
+//     0 means any shortfall blocks.
+const checkLineCountShortfall = (normalized, opts = {}) => {
+  if (opts.lineCountShortfallEnabled === false) return [];
+  const declared = numberOrNull(normalized?.stated_line_count);
+  // Only fire on a trustworthy declaration of at least 2. A PO that
+  // declares 1 item and yields 0 is already caught by the run-level
+  // empty_lines path; and a null/zero declaration is no signal.
+  if (declared == null || declared < 2) return [];
+  const extracted = Array.isArray(normalized?.lines) ? normalized.lines.length : 0;
+  const slackRaw = Number(opts.lineCountShortfallSlack);
+  const slack = Number.isFinite(slackRaw) ? Math.max(0, slackRaw) : 0;
+  if (extracted >= declared - slack) return [];
+  const short = declared - extracted;
+  return [{
+    code: "line_count_shortfall",
+    severity: "error",
+    path: "lines",
+    actual: extracted,
+    expected: declared,
+    detail: "PO declares " + declared + " line items; extraction returned " + extracted + " (short by " + short + ")",
+  }];
+};
+
 const checkCurrencyConsistency = (normalized) => {
   if (!normalized) return null;
   const headerCurr = normalized.customer?.currency;
@@ -316,6 +348,7 @@ export const detectAnomalies = (normalized, opts = {}) => {
   const currIssue = checkCurrencyConsistency(normalized);
   if (currIssue) anomalies.push(currIssue);
   anomalies.push(...checkTotals(normalized));
+  anomalies.push(...checkLineCountShortfall(normalized, opts));
 
   const summary = { error: 0, warn: 0, info: 0, total: anomalies.length };
   for (const a of anomalies) {
@@ -330,4 +363,4 @@ export const detectAnomalies = (normalized, opts = {}) => {
   };
 };
 
-export const __test = { lineArithmetic, linePriceSanity, lineQtySanity, lineHsnSanity, lineGstSanity, checkTotals, KNOWN_GST_SLABS };
+export const __test = { lineArithmetic, linePriceSanity, lineQtySanity, lineHsnSanity, lineGstSanity, checkTotals, checkLineCountShortfall, KNOWN_GST_SLABS };

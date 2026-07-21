@@ -1051,6 +1051,11 @@ export const runExtractionPipeline = async (params) => {
   const anomalyOpts = {
     maxUnitPrice: settings?.docai_anomaly_max_unit_price_inr,
     minUnitPrice: settings?.docai_anomaly_min_unit_price_inr,
+    // CM P3: line-count completeness gate. Enabled by default;
+    // set docai_line_count_shortfall_enabled=false to silence, or
+    // docai_line_count_shortfall_slack=N to tolerate a small gap.
+    lineCountShortfallEnabled: settings?.docai_line_count_shortfall_enabled !== false,
+    lineCountShortfallSlack: settings?.docai_line_count_shortfall_slack,
   };
   const anomalyReport = detectAnomalies(out?.normalized || null, anomalyOpts);
   if (anomalyReport.summary.total > 0) {

@@ -2,20 +2,23 @@ import React, { useRef, useState } from "react";
 import { Banner, Btn, Card, Chip, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { extractAssemblyFromDxf } from "../lib/dxf-assembly";
 
 // ============================================================
-// ANVIL v3 — BOM from Drawing (PDM P1c)
-// Upload a gun/asset ASSEMBLY drawing (PDF or image) → extract its title
-// block + balloon-keyed parts list via DocAI (kind='assembly_bom') → review
-// the mapped { asset, lines } + completeness warnings → commit to the BOM
-// (bom_assets + bom_lines + item_master + bill_of_materials) via the SAME
-// derivation chain an XLSX import uses. Extraction is reviewed BEFORE it
-// mutates the BOM: a wrong parts list corrupts spare ordering, so the screen
-// never auto-commits — the operator confirms.
+// ANVIL v3 — BOM from Drawing (PDM P1c + P2)
+// Upload a gun/asset ASSEMBLY drawing → extract its title block + balloon-keyed
+// parts list → review the mapped { asset, lines } + completeness warnings →
+// commit to the BOM (bom_assets + bom_lines + item_master + bill_of_materials)
+// via the SAME derivation chain an XLSX import uses. Extraction is reviewed
+// BEFORE it mutates the BOM: a wrong parts list corrupts spare ordering, so the
+// screen never auto-commits — the operator confirms.
 //
-// Backend: documents.extract(file, {kind:'assembly_bom'}) -> run_id + normalized,
-// then bom.fromDrawing({run_id[, commit:true, asset overrides]}) (P1b). Mounted
-// by routes.ts as items?view=drawing.
+// Two source paths, one review UI:
+//   • PDF / image  → LLM (P1c): documents.extract(file,{kind:'assembly_bom'})
+//     -> run_id, then bom.fromDrawing({run_id}) preview / commit (P1b).
+//   • DXF (native CAD) → deterministic (P2): parsed client-side (dxf-assembly),
+//     no LLM, committed via bom.importBom. DWG is binary -> export as DXF first.
+// Mounted by routes.ts as items?view=drawing.
 // ============================================================
 
 type Warning = { code: string; message: string; [k: string]: unknown };
@@ -34,7 +37,8 @@ type PreviewAsset = {
   drawing_no: string | null;
 };
 type Preview = {
-  run_id: string;
+  source: "llm" | "dxf";
+  run_id: string | null;         // llm path only; dxf has no extraction_run
   confidence_overall: number | null;
   asset: PreviewAsset;
   lines: PreviewLine[];
@@ -45,6 +49,7 @@ type Preview = {
     extracted_line_count: number;
     importable_line_count: number;
     dropped_no_part_no: number;
+    method?: string;
   };
 };
 
@@ -55,6 +60,8 @@ const REASON_COPY: Record<string, string> = {
   image_pdf_no_text: "The drawing is an image with no text layer and could not be read. A higher-resolution scan may help.",
   low_confidence: "The extractor was not confident in this drawing. Review carefully before committing.",
   model_refused: "The extractor could not process this file.",
+  dwg_unsupported: "DWG is a binary CAD format that can't be read directly. Export the drawing as DXF from your CAD system, then drop the .dxf here.",
+  no_parts_list: "No parts list could be read from this DXF. If the table is drawn as free-hand text, export a PDF and drop that instead — it uses the AI reader.",
 };
 
 const WARN_KIND: Record<string, "warn" | "bad" | "info"> = {
@@ -84,11 +91,51 @@ const BomFromDrawing = () => {
     setAssetCode(""); setRevision(""); setAssetName("");
   };
 
+  const applyPreview = (p: Preview) => {
+    setPreview(p);
+    setAssetCode(p.asset.asset_code || "");
+    setRevision(p.asset.revision || "");
+    setAssetName(p.asset.name || "");
+    setPhase("preview");
+  };
+
   const runExtraction = async (f: File) => {
     setFile(f);
     setPhase("extracting");
     setPreview(null); setFailure(null); setCommitted(null);
+    const ext = (f.name.split(".").pop() || "").toLowerCase();
+
+    // DWG is binary and needs an out-of-process converter (LibreDWG/ODA) we
+    // can't run in the browser or a serverless function. Steer to DXF.
+    if (ext === "dwg") {
+      setFailure({ status: "dwg_unsupported", reason: "dwg_unsupported" });
+      setPhase("idle");
+      return;
+    }
+
     try {
+      // ── DXF: deterministic, parsed client-side (no LLM) ──────────────
+      if (ext === "dxf") {
+        const text = await f.text();
+        const x = extractAssemblyFromDxf(text);
+        if (!x.ok) {
+          setFailure({ status: "dxf_no_parts", reason: "no_parts_list" });
+          setPhase("idle");
+          return;
+        }
+        applyPreview({
+          source: "dxf",
+          run_id: null,
+          confidence_overall: x.confidence,
+          asset: { asset_code: x.asset.asset_code, name: x.asset.name, revision: x.asset.revision, drawing_no: x.asset.drawing_no },
+          lines: x.lines,
+          warnings: x.warnings,
+          meta: x.meta,
+        });
+        return;
+      }
+
+      // ── PDF / image: LLM extraction (P1c) ────────────────────────────
       const ex: any = await AnvilBackend?.documents?.extract?.(f, { kind: "assembly_bom" });
       if (!ex) throw new Error("Extraction backend not configured");
       if (ex.status !== "ok") {
@@ -104,19 +151,15 @@ const BomFromDrawing = () => {
         setPhase("idle");
         return;
       }
-      const p: Preview = {
+      applyPreview({
+        source: "llm",
         run_id: pv.run_id,
         confidence_overall: ex.confidence_overall ?? null,
         asset: pv.asset,
         lines: pv.lines || [],
         warnings: pv.warnings || [],
         meta: pv.meta,
-      };
-      setPreview(p);
-      setAssetCode(p.asset.asset_code || "");
-      setRevision(p.asset.revision || "");
-      setAssetName(p.asset.name || "");
-      setPhase("preview");
+      });
     } catch (err: any) {
       window.notifyError?.("Extraction failed", String(err?.message || err));
       setFailure({ status: "error", reason: String(err?.message || err) });
@@ -142,15 +185,39 @@ const BomFromDrawing = () => {
     if (!preview || !canCommit) return;
     setPhase("committing");
     try {
-      const resp: any = await AnvilBackend?.bom?.fromDrawing?.({
-        run_id: preview.run_id,
-        commit: true,
-        asset_code: assetCode.trim(),
-        revision: revision.trim(),
-        asset_name: assetName.trim() || undefined,
-      });
+      let resp: any;
+      if (preview.source === "dxf") {
+        // Deterministic path: no extraction_run, so commit straight through the
+        // shared /api/bom/import chain (the same chain from-drawing calls).
+        const lines = preview.lines
+          .filter((l) => l.part_no)
+          .map((l) => ({
+            part_no: l.part_no, part_name: l.part_name, qty: l.qty,
+            material: l.material, is_spare: l.is_spare, balloon_no: l.balloon_no, level: 1,
+          }));
+        resp = await AnvilBackend?.bom?.importBom?.({
+          asset: {
+            asset_code: assetCode.trim(),
+            name: assetName.trim() || undefined,
+            revision: revision.trim(),
+            drawing_no: preview.asset.drawing_no || undefined,
+            source_format: "assembly_dxf",
+          },
+          lines,
+          file_name: file?.name || undefined,
+          source_format: "assembly_dxf",
+        });
+      } else {
+        resp = await AnvilBackend?.bom?.fromDrawing?.({
+          run_id: preview.run_id,
+          commit: true,
+          asset_code: assetCode.trim(),
+          revision: revision.trim(),
+          asset_name: assetName.trim() || undefined,
+        });
+      }
       if (!resp || resp.ok === false) {
-        const msg = (resp && (resp.bom_import_error || resp.message)) || "Commit failed";
+        const msg = (resp && (resp.bom_import_error || resp.message || (resp.error && resp.error.message))) || "Commit failed";
         window.notifyError?.("Could not commit to BOM", String(msg));
         setPhase("preview");
         return;
@@ -187,7 +254,7 @@ const BomFromDrawing = () => {
       <WSTitle
         eyebrow="Data · Items · BOM from Drawing"
         title="Extract BOM from an assembly drawing"
-        meta="pdf / image · title block + parts list · review before commit"
+        meta="pdf / image (AI) · dxf (deterministic) · review before commit"
         right={<>
           <Btn sm kind="ghost" onClick={() => (window.location.hash = "#/items?view=import")}>{Icon.upload} XLSX import</Btn>
           <Btn sm kind="ghost" onClick={() => (window.location.hash = "#/items")}>{Icon.arrowL} back to Items</Btn>
@@ -211,9 +278,9 @@ const BomFromDrawing = () => {
           >
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
               <span style={{ width: 32, height: 32, display: "grid", placeItems: "center", color: "var(--ink-2)" }}>{Icon.upload}</span>
-              <div className="h2" style={{ margin: 0 }}>Drag a PDF or image of the assembly (GA) drawing here</div>
+              <div className="h2" style={{ margin: 0 }}>Drag a PDF, image, or DXF of the assembly (GA) drawing here</div>
               <div className="mono-sm" style={{ color: "var(--ink-3)" }}>
-                The parts list is read by its balloon numbers. Only the customer-facing assembly drawing is used here — never a part drawing.
+                A DXF is read deterministically (no AI); a PDF or image goes through the AI reader. The parts list is keyed by its balloon numbers. Only the customer-facing assembly drawing is used here — never a part drawing.
               </div>
               <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center" }}>
                 <Btn sm kind="primary" onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}>
@@ -226,7 +293,7 @@ const BomFromDrawing = () => {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*"
+              accept=".pdf,.png,.jpg,.jpeg,.webp,.dxf,.dwg,application/pdf,image/*"
               style={{ display: "none" }}
               onChange={onPick}
             />
@@ -247,6 +314,7 @@ const BomFromDrawing = () => {
             title="Review the extracted BOM"
             eyebrow="step 2"
             right={<>
+              <Chip k="info">{preview.source === "dxf" ? "DXF · deterministic" : "AI reader"}</Chip>
               {conf != null && <Chip k={conf >= 0.85 ? "good" : conf >= 0.7 ? "warn" : "bad"}>confidence {Math.round(conf * 100)}%</Chip>}
               <Chip k="ghost">{importableCount} of {preview.meta.extracted_line_count} importable</Chip>
             </>}

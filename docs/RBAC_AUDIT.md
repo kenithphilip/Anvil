@@ -317,6 +317,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/master_data/graph.js | read |
 | src/api/mcp/tokens.js | read, admin |
 | src/api/mcp/usage.js | read |
+| src/api/metrics/index.js | read |
 | src/api/netsuite/connect.js | admin |
 | src/api/netsuite/diagnostics.js | read |
 | src/api/netsuite/field_map.js | read, admin |

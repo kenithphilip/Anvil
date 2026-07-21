@@ -116,6 +116,98 @@ const ensureEvalTables = async (svc) => {
   try { await svc.rpc("exec_sql", { sql }); } catch (_) { /* exec_sql may not exist; tables may already be present */ }
 };
 
+// Sign + persist a scored run (eval_runs + eval_case_results) with HMAC
+// attestation. Extracted so both the caller-asserted POST /api/eval/run and
+// the pipeline-driven POST /api/eval/rescore (server_verified=true) share the
+// exact same persistence + migration-113 fallback. Returns
+// { runId, score, hmac, persistErrors, attestation }.
+export const attestAndPersistRun = async (svc, params) => {
+  const {
+    tenantId, suite, totalPass, totalFail, caseResults,
+    promptVersion, modelVersion, pipelineVersion, serverVerified,
+  } = params;
+  const score = totalPass + totalFail === 0 ? 0 : totalPass / (totalPass + totalFail);
+  const caseIds = caseResults.map((cr) => cr.case_id);
+  const { hmac } = signEvalRun({
+    suite, passed: totalPass, failed: totalFail, total_score: score,
+    prompt_version: promptVersion,
+    model_version: modelVersion,
+    pipeline_version: pipelineVersion,
+    case_ids: caseIds,
+  });
+
+  let runId = null;
+  const persistErrors = [];
+  try {
+    const run = await svc.from("eval_runs").insert({
+      tenant_id: tenantId,
+      suite,
+      passed: totalPass,
+      failed: totalFail,
+      total_score: score,
+      attestation_hmac: hmac,
+      prompt_version: promptVersion,
+      model_version: modelVersion,
+      pipeline_version: pipelineVersion,
+      server_verified: serverVerified,
+    }).select("id").single();
+    if (run.error) {
+      // Migration 113 may not yet have applied on every deployment. Retry
+      // without the new columns so legacy deployments keep scoring; note the
+      // skipped attestation so the dashboard can render an "unverified" badge.
+      if (run.error.code === "42703" || /column .* does not exist/i.test(run.error.message)) {
+        const retry = await svc.from("eval_runs").insert({
+          tenant_id: tenantId,
+          suite,
+          passed: totalPass,
+          failed: totalFail,
+          total_score: score,
+        }).select("id").single();
+        if (retry.error) persistErrors.push({ stage: "eval_runs_insert_retry", message: retry.error.message });
+        else {
+          runId = retry.data.id;
+          persistErrors.push({ stage: "eval_attestation_skipped", message: "migration 113 not applied yet; HMAC computed but not persisted" });
+        }
+      } else {
+        persistErrors.push({ stage: "eval_runs_insert", message: run.error.message });
+      }
+    } else {
+      runId = run.data.id;
+    }
+    if (runId) {
+      const rows = caseResults.map((cr) => ({
+        tenant_id: tenantId,
+        run_id: runId,
+        case_id: cr.case_id,
+        passed: cr.pass,
+        failed: cr.fail,
+        score: cr.score,
+        checks: cr.checks,
+      }));
+      if (rows.length) {
+        const ins = await svc.from("eval_case_results").insert(rows);
+        if (ins.error) persistErrors.push({ stage: "eval_case_results_insert", message: ins.error.message });
+      }
+    }
+  } catch (e) {
+    persistErrors.push({ stage: "eval_persist_exception", message: e.message });
+  }
+
+  return {
+    runId,
+    score,
+    hmac,
+    persistErrors,
+    attestation: {
+      hmac,
+      prompt_version: promptVersion,
+      model_version: modelVersion,
+      pipeline_version: pipelineVersion,
+      server_verified: serverVerified,
+    },
+  };
+};
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);
@@ -152,91 +244,26 @@ export default async function handler(req, res) {
     if (skipped.length === cases.length && cases.length > 0) {
       return json(res, 400, { error: { message: "every case missing expected or actual. nothing scored." }, skipped });
     }
-    const score = totalPass + totalFail === 0 ? 0 : totalPass / (totalPass + totalFail);
 
-    // Phase 1 F3: sign the run with HMAC-SHA-256 over a canonical
-    // receipt. server_verified=true is reserved for the
-    // pipeline-invoked path (caller passes document_source_id);
-    // legacy caller-asserted runs still record but mark
-    // server_verified=false so the dashboard can render an
-    // "unverified" badge for them.
-    const promptVersion = String(body.prompt_version || EVAL_PROMPT_VERSION_FALLBACK);
-    const modelVersion = String(body.model_version || "unspecified");
-    const pipelineVersion = String(body.pipeline_version || EVAL_PIPELINE_VERSION_FALLBACK);
-    const serverVerified = !!body.server_verified;
-    const caseIds = caseResults.map((cr) => cr.case_id);
-    const { hmac } = signEvalRun({
-      suite, passed: totalPass, failed: totalFail, total_score: score,
-      prompt_version: promptVersion,
-      model_version: modelVersion,
-      pipeline_version: pipelineVersion,
-      case_ids: caseIds,
+    // Sign + persist. server_verified=true is reserved for the pipeline-driven
+    // path (/api/eval/rescore); caller-asserted runs here record verified=false.
+    const { runId, score, persistErrors, attestation } = await attestAndPersistRun(svc, {
+      tenantId: ctx.tenantId,
+      suite,
+      totalPass,
+      totalFail,
+      caseResults,
+      promptVersion: String(body.prompt_version || EVAL_PROMPT_VERSION_FALLBACK),
+      modelVersion: String(body.model_version || "unspecified"),
+      pipelineVersion: String(body.pipeline_version || EVAL_PIPELINE_VERSION_FALLBACK),
+      serverVerified: !!body.server_verified,
     });
-
-    let runId = null;
-    const persistErrors = [];
-    try {
-      const run = await svc.from("eval_runs").insert({
-        tenant_id: ctx.tenantId,
-        suite,
-        passed: totalPass,
-        failed: totalFail,
-        total_score: score,
-        attestation_hmac: hmac,
-        prompt_version: promptVersion,
-        model_version: modelVersion,
-        pipeline_version: pipelineVersion,
-        server_verified: serverVerified,
-      }).select("id").single();
-      if (run.error) {
-        // Migration 113 may not yet have applied on every
-        // deployment. Retry without the new columns so legacy
-        // deployments keep scoring; mark the attestation in
-        // persistErrors so the dashboard knows the receipt was
-        // computed but not stored.
-        if (run.error.code === "42703" || /column .* does not exist/i.test(run.error.message)) {
-          const retry = await svc.from("eval_runs").insert({
-            tenant_id: ctx.tenantId,
-            suite,
-            passed: totalPass,
-            failed: totalFail,
-            total_score: score,
-          }).select("id").single();
-          if (retry.error) persistErrors.push({ stage: "eval_runs_insert_retry", message: retry.error.message });
-          else {
-            runId = retry.data.id;
-            persistErrors.push({ stage: "eval_attestation_skipped", message: "migration 113 not applied yet; HMAC computed but not persisted" });
-          }
-        } else {
-          persistErrors.push({ stage: "eval_runs_insert", message: run.error.message });
-        }
-      } else {
-        runId = run.data.id;
-      }
-      if (runId) {
-        const rows = caseResults.map((cr) => ({
-          tenant_id: ctx.tenantId,
-          run_id: runId,
-          case_id: cr.case_id,
-          passed: cr.pass,
-          failed: cr.fail,
-          score: cr.score,
-          checks: cr.checks,
-        }));
-        if (rows.length) {
-          const ins = await svc.from("eval_case_results").insert(rows);
-          if (ins.error) persistErrors.push({ stage: "eval_case_results_insert", message: ins.error.message });
-        }
-      }
-    } catch (e) {
-      persistErrors.push({ stage: "eval_persist_exception", message: e.message });
-    }
 
     await recordAudit(ctx, {
       action: "eval_run",
       objectType: "eval_suite",
       objectId: suite,
-      detail: "pass=" + totalPass + " fail=" + totalFail + " score=" + score.toFixed(3) + " verified=" + serverVerified,
+      detail: "pass=" + totalPass + " fail=" + totalFail + " score=" + score.toFixed(3) + " verified=" + attestation.server_verified,
     });
 
     return json(res, 200, {
@@ -245,13 +272,7 @@ export default async function handler(req, res) {
       totals: { pass: totalPass, fail: totalFail, score },
       cases: caseResults,
       persistErrors,
-      attestation: {
-        hmac,
-        prompt_version: promptVersion,
-        model_version: modelVersion,
-        pipeline_version: pipelineVersion,
-        server_verified: serverVerified,
-      },
+      attestation,
     });
   } catch (err) {
     sendError(res, err);

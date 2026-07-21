@@ -22,6 +22,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { computeTotals, generateQuoteNumber, buildQuoteLineRow } from "../quotes/_lib/quote-build.js";
+import { loadSupersessionMap, resolveReplacement } from "../_lib/part-supersession.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -80,18 +81,29 @@ export default async function handler(req, res) {
         : "No rows to quote. Set a recommended quantity (> 0) on at least one spare first." } });
     }
 
+    // CM PDM P0b: reroute superseded spares to their active replacement so a
+    // quote never orders a discontinued part. obsolete_parts(part_no ->
+    // replacement_part_no); the substitution is recorded on the line + surfaced.
+    const supMap = await loadSupersessionMap(svc, ctx.tenantId);
+    const effective = feedRows.map((r) => resolveReplacement(supMap, r.part_no));
+
     // Build line_items JSONB (unpriced) from the recommended rows.
-    const lineItems = feedRows.map((r) => ({
-      partNumber: r.part_no || null,
-      description: r.description
-        || [r.item_type, r.part_no].filter(Boolean).join(" ")
-        || null,
-      quantity: Number(r.recommended_qty) || 0,
-      uom: "Nos",
-      unitPrice: 0,                       // priced downstream in price_composition
-      gstRate: 0,
-      customerPartNumber: r.customer_part_no || null,
-    }));
+    const lineItems = feedRows.map((r, idx) => {
+      const eff = effective[idx];
+      const pn = eff.part_no || r.part_no || null;
+      return {
+        partNumber: pn,
+        description: (r.description
+          || [r.item_type, pn].filter(Boolean).join(" ")
+          || null),
+        quantity: Number(r.recommended_qty) || 0,
+        uom: "Nos",
+        unitPrice: 0,                     // priced downstream in price_composition
+        gstRate: 0,
+        customerPartNumber: r.customer_part_no || null,
+        ...(eff.superseded ? { supersededFrom: eff.from } : {}),
+      };
+    });
     const totals = computeTotals(lineItems);
 
     // Re-feed is IDEMPOTENT: if a DRAFT quote already exists for this matrix
@@ -156,12 +168,13 @@ export default async function handler(req, res) {
     if (delLines.error) throw new Error(delLines.error.message);
     const lineRows = feedRows.map((r, i) => buildQuoteLineRow(ctx.tenantId, quote.id, {
       line_index: i,
-      part_no: r.part_no || null,
+      part_no: effective[i].part_no || r.part_no || null,
       description: lineItems[i].description,
       uom: "Nos",
       customer_part_number: r.customer_part_no || null,
       qty: Number(r.recommended_qty) || 0,
       listed_unit_price: 0,
+      ...(effective[i].superseded ? { remark: "Replaces obsolete " + effective[i].from } : {}),
     }));
     const linesUp = await svc.from("quote_lines").insert(lineRows).select("*");
     if (linesUp.error) throw new Error(linesUp.error.message);
@@ -176,14 +189,21 @@ export default async function handler(req, res) {
       if (back.error) throw new Error(back.error.message);
     }
 
+    const supersededCount = effective.filter((e) => e.superseded).length;
     await recordAudit(ctx, {
       action: "spare_matrix_to_quote",
       objectType: "quote",
       objectId: quote.id,
-      detail: quoteNumber + " :: " + feedRows.length + " spare line(s) from matrix " + id + (reused ? " (re-synced draft)" : " (new draft)"),
+      detail: quoteNumber + " :: " + feedRows.length + " spare line(s) from matrix " + id
+        + (supersededCount ? " (" + supersededCount + " rerouted to replacement)" : "")
+        + (reused ? " (re-synced draft)" : " (new draft)"),
     });
 
-    return json(res, 200, { quote, lines: linesUp.data || [], fed: feedRows.length, reused });
+    const superseded = effective
+      .map((e, i) => (e.superseded ? { from: e.from, to: e.part_no, qty: Number(feedRows[i].recommended_qty) || 0 } : null))
+      .filter(Boolean);
+
+    return json(res, 200, { quote, lines: linesUp.data || [], fed: feedRows.length, reused, superseded });
   } catch (err) {
     sendError(res, err);
   }

@@ -66,4 +66,12 @@ describe("resolvePromptVersion", () => {
     const out = resolvePromptVersion("ocr_postprocess", { tenantId: "t1" });
     expect(out.version).toBe("v1");
   });
+
+  it("po_extractor resolves to the active v1 for all real traffic (v2 is retired)", () => {
+    // v2 carries no prompt content, so it's retired: the active split is v1 only.
+    for (const c of ["c1", "c2", "c3", "abc", "xyz-9"]) {
+      expect(resolvePromptVersion("po_extractor", { tenantId: "t1", customerId: c }).version).toBe("v1");
+    }
+    expect(__test.REGISTRY.po_extractor.find((r) => r.version === "v2").status).toBe("retired");
+  });
 });

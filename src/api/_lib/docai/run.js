@@ -1147,6 +1147,10 @@ export const runExtractionPipeline = async (params) => {
     voter_used: !!voted,
     selected_model: out?.selected_model || (voted ? "voter" : null),
     model_selection_reason: out?.model_selection_reason || (voted ? "voter_aggregate" : null),
+    // CM: which prompt VERSION produced this run (extraction_runs.prompt_version,
+    // migration 124). Lets the eval dashboard chart accuracy-by-prompt-version
+    // and lets live-replay attribute a regression to a prompt change.
+    prompt_version: out?.prompt_version || null,
     parse_method: parseMethod,
     parse_repairs: parseRepairs,
     parse_retries: parseRetries,

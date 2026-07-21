@@ -189,6 +189,7 @@ export const mergeChunkResults = (chunkResults, chunks) => {
     adapter_used: adapterUsed,
     selected_model: selectedModel,
     model_selection_reason: modelSelectionReason,
+    prompt_version: mostCommon(chunkResults.map((r) => r.prompt_version).filter(Boolean)) || null,
     ...(failReason ? { reason: failReason } : {}),
     ...(failError ? { error: failError } : {}),
     latency_ms: latencyMs,

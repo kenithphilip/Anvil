@@ -29,6 +29,10 @@ import catalogEmbed     from "../catalog/embed.js";
 // Bet 5: monthly drift report. Runs every day; the handler
 // short-circuits on days other than the 1st of the month.
 import driftReportCron  from "./drift-report.js";
+// CM P4: live-model replay of the golden corpus. OPT-IN + cost-bounded — only
+// scheduled when EVAL_REPLAY_ENABLED is set (it burns real LLM calls). Gets a
+// wide per-handler timeout since each case re-runs the model.
+import evalReplay       from "../eval/replay.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -53,6 +57,11 @@ export default async function handler(req, res) {
       // Bet 5: monthly drift-reconciliation report. Idempotent;
       // self-skips on non-month-start days.
       { name: "drift-report",      fn: driftReportCron,  opts: { path: "/api/cron/drift-report" } },
+      // CM P4: live-model replay — opt-in via EVAL_REPLAY_ENABLED. Wide timeout
+      // because each golden case re-runs the model; the handler caps case count.
+      ...(process.env.EVAL_REPLAY_ENABLED
+        ? [{ name: "eval/replay", fn: evalReplay, opts: { path: "/api/eval/replay", method: "POST", body: {}, timeoutMs: 55000 } }]
+        : []),
     ]);
     const okCount = results.filter((r) => r.ok).length;
     const errCount = results.filter((r) => !r.ok).length;

@@ -62,6 +62,12 @@ describe("normalizedToScorable", () => {
       stated_line_count: 10,
     });
   });
+
+  it("emits grandTotal from a totals object (so a golden with grandTotal doesn't false-fail)", () => {
+    expect(normalizedToScorable({ customer: {}, lines: [], totals: { grand_total: 248500 } }).grandTotal).toBe(248500);
+    // no totals -> no grandTotal key (scoreCase then skips the check)
+    expect(normalizedToScorable({ customer: {}, lines: [] })).not.toHaveProperty("grandTotal");
+  });
 });
 
 describe("scoreCase precision + non-reuse matching (P4)", () => {

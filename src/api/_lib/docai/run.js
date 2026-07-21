@@ -1082,7 +1082,13 @@ export const runExtractionPipeline = async (params) => {
     // it explicitly instead of silently recording status_reason='ok'.
     status = "failed";
     statusReason = "non_ack";
-  } else if (lines.length === 0 && (kind === "po" || kind === "rfq")) {
+  } else if (out.normalized?.classification === "non_drawing" && kind === "assembly_bom") {
+    // CM PDM P1a: the assembly-BOM classifier rejected the document
+    // (it was a PO, a lone part drawing, a photo). Surface it instead
+    // of recording a green run with an empty parts list.
+    status = "failed";
+    statusReason = "non_drawing";
+  } else if (lines.length === 0 && (kind === "po" || kind === "rfq" || kind === "assembly_bom")) {
     const conf = out.confidence_overall;
     if (textLayer?.status === "image_only" && !ocrLayerUsed) {
       status = "failed"; statusReason = "image_pdf_no_text";

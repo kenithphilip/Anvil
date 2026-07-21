@@ -6,7 +6,7 @@
 //   bytes_base64?: string, mime?: string,
 //   document_id?: uuid, customer_id?: uuid, hints?: object,
 //   inbound_email_id?: uuid, order_id?: uuid,
-//   kind?: 'po'|'rfq'|'supplier_ack'|'invoice'|'eway_bill',
+//   kind?: 'po'|'rfq'|'supplier_ack'|'invoice'|'eway_bill'|'assembly_bom',
 //   vote?: boolean
 // }
 //

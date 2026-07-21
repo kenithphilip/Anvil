@@ -42,6 +42,7 @@ export const upsertCustomerPart = async (svc, params) => {
     itemId,
     customerId,
     customerPartNumber,
+    customerItemCode = null,
     customerPartDescription = null,
     customerProject = null,
     validFrom = null,
@@ -65,6 +66,10 @@ export const upsertCustomerPart = async (svc, params) => {
   if (!normPart) {
     throw new Error("upsertCustomerPart: customer_part_number is empty after trim");
   }
+  // CM P2b: the buyer's SAP item code, kept in a distinct column.
+  const cic = customerItemCode != null && String(customerItemCode).trim()
+    ? String(customerItemCode).trim()
+    : null;
 
   // Read existing row (if any) so we can apply the priority rule.
   const existing = await svc
@@ -103,6 +108,28 @@ export const upsertCustomerPart = async (svc, params) => {
       .neq("customer_part_number", normPart);
   }
 
+  // CM P2b: honour the SAP-code invariant (migration 182 partial
+  // unique index: one ACTIVE row per (tenant, customer,
+  // customer_item_code)). If this SAP code is already active under a
+  // DIFFERENT item, supersede that prior mapping (stamp valid_to)
+  // before we write the new one, mirroring the mig-129 supersession
+  // workflow for customer_part_number. Best-effort + guarded: a
+  // 42703 on a pre-migration DB (column absent) must not abort the
+  // write, which then falls back to the pre-P2b behaviour.
+  if (cic) {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      await svc
+        .from("item_customer_parts")
+        .update({ valid_to: today })
+        .eq("tenant_id", tenantId)
+        .eq("customer_id", customerId)
+        .eq("customer_item_code", cic)
+        .is("valid_to", null)
+        .neq("item_id", itemId);
+    } catch (_) { /* column may not exist pre-migration; degrade */ }
+  }
+
   const row = {
     tenant_id: tenantId,
     item_id: itemId,
@@ -119,6 +146,10 @@ export const upsertCustomerPart = async (svc, params) => {
     confirmed_at: confirmedAt,
     confirmed_by: confirmedBy,
   };
+  // Only include the SAP column when we actually have a code, so
+  // existing callers produce byte-identical rows and pre-migration
+  // deployments (column absent) are unaffected.
+  if (cic) row.customer_item_code = cic;
 
   // When inserting (no prev), keep created_by on first write only.
   // When updating, do NOT change the original created_by; refresh
@@ -137,6 +168,10 @@ export const upsertCustomerPart = async (svc, params) => {
       confirmed_at: row.confirmed_at || prev.confirmed_at,
       confirmed_by: row.confirmed_by || prev.confirmed_by,
     };
+    // CM P2b: backfill the SAP code onto an existing row (only when
+    // supplied, so the column stays absent from the patch for
+    // pre-P2b callers / pre-migration deployments).
+    if (cic) patch.customer_item_code = cic;
     const upd = await svc
       .from("item_customer_parts")
       .update(patch)

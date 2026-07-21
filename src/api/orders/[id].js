@@ -3,7 +3,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { evaluateApprovalsForOrder } from "../_lib/approval-evaluator.js";
-import { lineCandidates } from "../_lib/item-mapper.js";
+import { lineCandidates, lineSapCandidates } from "../_lib/item-mapper.js";
 import { upsertCustomerPart } from "../_lib/item-customer-parts.js";
 
 const APPROVE_INPUTS = [
@@ -186,7 +186,13 @@ export default async function handler(req, res) {
             if (!mi || !mi.id) continue;
             if (mi.match_via !== "manual" && mi.match_via !== "llm_suggest") continue;
             const cands = lineCandidates(line);
-            const customerPart = cands.find((c) => c && c.length);
+            // CM P2b: the buyer's SAP item code (line.customerItemCode),
+            // captured distinctly so tier-0 can auto-resolve future POs.
+            const sapCode = lineSapCandidates(line).find((c) => c && c.length) || null;
+            // Prefer a real buyer part label for the PK slot; fall back
+            // to the SAP code so a SAP-only line (blank part column) is
+            // still learnable.
+            const customerPart = cands.find((c) => c && c.length) || sapCode;
             if (!customerPart) continue;
             try {
               await upsertCustomerPart(svc, {
@@ -194,7 +200,8 @@ export default async function handler(req, res) {
                 itemId: mi.id,
                 customerId,
                 customerPartNumber: customerPart,
-                customerPartDescription: line.description || line.name || null,
+                customerItemCode: sapCode,
+                customerPartDescription: line.raw_description || line.description || line.name || null,
                 createdVia: mi.match_via,
                 createdBy: actor,
                 confidencePct: mi.confidence_pct != null

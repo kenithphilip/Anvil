@@ -244,6 +244,79 @@ describe("__mapLinesPure: Meridian PO scenarios", () => {
   });
 });
 
+// CM P2b: tier-0 resolve-by-SAP-code. The buyer's SAP item code
+// (line.customerItemCode) resolves against item_customer_parts.
+// customer_item_code BEFORE any other tier — the dual-code flywheel's
+// zero-LLM auto-mapping of future POs from SAP-driven buyers.
+describe("__mapLinesPure: CM P2b tier-0 SAP item code", () => {
+  const im = masterRow({});
+
+  it("resolves a buyer SAP item code via customer_item_code (zero LLM)", () => {
+    // Mahindra GEP/Ariba line: SAP code + a descriptive part label
+    // that embeds our part behind a prefix. The SAP code is the key.
+    const out = __mapLinesPure([
+      {
+        customerItemCode: "A12060OBAR010003",
+        partNumber: "OBARA STD SHANK TWS-092-90-2",
+        description: "OBARA STD SHANK",
+      },
+    ], {
+      sapMap: new Map([["A12060OBAR010003", { item_id: "im-1", customer_part_description: "Mahindra SAP code" }]]),
+      imById: new Map([[im.id, im]]),
+    });
+    expect(out[0]._mapped_item.match_via).toBe("customer_item_code");
+    expect(out[0]._mapped_item.part_no).toBe("THB-L1-70B-2");
+    expect(out[0]._mapped_item.customer_part_description).toBe("Mahindra SAP code");
+  });
+
+  it("tier-0 SAP code outranks a competing tier-1 customer_part match", () => {
+    const sapItem = masterRow({ id: "im-sap", part_no: "SAP-ITEM" });
+    const cpItem = masterRow({ id: "im-cp", part_no: "CP-ITEM" });
+    const out = __mapLinesPure([
+      { customerItemCode: "SAPX", partNumber: "CPX" },
+    ], {
+      sapMap: new Map([["SAPX", { item_id: "im-sap" }]]),
+      cpMap: new Map([["CPX", { item_id: "im-cp" }]]),
+      imById: new Map([["im-sap", sapItem], ["im-cp", cpItem]]),
+    });
+    expect(out[0]._mapped_item.match_via).toBe("customer_item_code");
+    expect(out[0]._mapped_item.part_no).toBe("SAP-ITEM");
+  });
+
+  it("falls through to the normal tiers when the SAP code is unknown", () => {
+    const out = __mapLinesPure([
+      { customerItemCode: "UNKNOWN-SAP", partNumber: "THB-L1-70B-2" },
+    ], {
+      sapMap: new Map([["A-DIFFERENT-CODE", { item_id: "im-1" }]]),
+      imByCode: new Map([["THB-L1-70B-2", im]]),
+      imById: new Map([[im.id, im]]),
+    });
+    expect(out[0]._mapped_item.match_via).toBe("item_master.part_no");
+  });
+
+  it("resolves the snake-case customer_item_code alias too", () => {
+    const out = __mapLinesPure([
+      { customer_item_code: "A12060OBAR010003" },
+    ], {
+      sapMap: new Map([["A12060OBAR010003", { item_id: "im-1" }]]),
+      imById: new Map([[im.id, im]]),
+    });
+    expect(out[0]._mapped_item.match_via).toBe("customer_item_code");
+  });
+
+  it("does not tier-0 match when the mapped item is absent from imById", () => {
+    // sapMap points at an item we couldn't load; tier-0 must not
+    // fabricate a match, it falls through (here to null).
+    const out = __mapLinesPure([
+      { customerItemCode: "A12060OBAR010003" },
+    ], {
+      sapMap: new Map([["A12060OBAR010003", { item_id: "im-missing" }]]),
+      imById: new Map([[im.id, im]]),
+    });
+    expect(out[0]._mapped_item).toBeNull();
+  });
+});
+
 // CM 1.4: sales-order-only enforcement. The DB-aware
 // mapLinesToItemMaster() filters item_customer_parts.applies_to
 // based on opts.context. We verify the surface contract here

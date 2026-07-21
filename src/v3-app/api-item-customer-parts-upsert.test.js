@@ -24,7 +24,9 @@ const TENANT = "00000000-0000-0000-0000-0000000000aa";
 const ITEM = "00000000-0000-0000-0000-0000000000ee";
 const CUST = "00000000-0000-0000-0000-0000000000bb";
 const ACTOR = "00000000-0000-0000-0000-0000000000cc";
+const OTHER_ITEM = "00000000-0000-0000-0000-0000000000ff";
 const PART = "GD544202603190008";
+const SAP = "A12060OBAR010003";
 
 const makeSvc = (tables) => {
   const buildQuery = (table) => {
@@ -36,6 +38,7 @@ const makeSvc = (tables) => {
       select: () => builder,
       eq: (col, val) => { rows = rows.filter((r) => String(r[col]) === String(val)); return builder; },
       neq: (col, val) => { rows = rows.filter((r) => String(r[col]) !== String(val)); return builder; },
+      is: (col, val) => { rows = rows.filter((r) => (r[col] === undefined ? null : r[col]) === val); return builder; },
       ilike: (col, val) => {
         const pat = String(val).toLowerCase();
         rows = rows.filter((r) => String(r[col] || "").toLowerCase() === pat);
@@ -179,6 +182,71 @@ describe("upsertCustomerPart", () => {
       tenantId: TENANT, itemId: ITEM, customerId: CUST,
       customerPartNumber: "   ", createdVia: "manual",
     })).rejects.toThrow(/empty after trim/);
+  });
+
+  // CM P2b: the buyer SAP item code is persisted in its own column
+  // and honours the one-active-item-per-(customer,SAP-code) invariant.
+  it("persists customer_item_code on insert", async () => {
+    const svc = makeSvc({ item_customer_parts: [] });
+    const { row, action } = await upsertCustomerPart(svc, {
+      tenantId: TENANT, itemId: ITEM, customerId: CUST,
+      customerPartNumber: PART, customerItemCode: SAP,
+      createdVia: "manual", createdBy: ACTOR,
+    });
+    expect(action).toBe("insert");
+    expect(row.customer_item_code).toBe(SAP);
+    expect(svc._tables.item_customer_parts[0].customer_item_code).toBe(SAP);
+  });
+
+  it("omits customer_item_code entirely when no SAP code is supplied", async () => {
+    const svc = makeSvc({ item_customer_parts: [] });
+    const { row } = await upsertCustomerPart(svc, {
+      tenantId: TENANT, itemId: ITEM, customerId: CUST,
+      customerPartNumber: PART, createdVia: "manual",
+    });
+    expect("customer_item_code" in row).toBe(false);
+  });
+
+  it("supersedes a prior active mapping when the same SAP code moves to a new item", async () => {
+    const svc = makeSvc({
+      item_customer_parts: [{
+        tenant_id: TENANT, item_id: OTHER_ITEM, customer_id: CUST,
+        customer_part_number: "OLDPART", customer_item_code: SAP,
+        valid_to: null, is_primary: false, created_via: "llm_suggest",
+      }],
+    });
+    const { action } = await upsertCustomerPart(svc, {
+      tenantId: TENANT, itemId: ITEM, customerId: CUST,
+      customerPartNumber: "NEWPART", customerItemCode: SAP,
+      createdVia: "manual", createdBy: ACTOR,
+    });
+    expect(action).toBe("insert");
+    const rows = svc._tables.item_customer_parts;
+    const prior = rows.find((r) => r.item_id === OTHER_ITEM);
+    const fresh = rows.find((r) => r.item_id === ITEM);
+    // Prior SAP->OTHER_ITEM mapping retired (valid_to stamped) so the
+    // mig-182 partial unique index permits the new active row.
+    expect(prior.valid_to).not.toBeNull();
+    expect(fresh.customer_item_code).toBe(SAP);
+    expect(fresh.valid_to == null).toBe(true);
+  });
+
+  it("does not supersede the same item re-confirming its own SAP code", async () => {
+    const svc = makeSvc({
+      item_customer_parts: [{
+        tenant_id: TENANT, item_id: ITEM, customer_id: CUST,
+        customer_part_number: PART, customer_item_code: SAP,
+        valid_to: null, is_primary: false, created_via: "manual",
+      }],
+    });
+    await upsertCustomerPart(svc, {
+      tenantId: TENANT, itemId: ITEM, customerId: CUST,
+      customerPartNumber: PART, customerItemCode: SAP,
+      createdVia: "manual", createdBy: ACTOR,
+    });
+    // The one existing row (same item) stays active — .neq(item_id)
+    // excludes it from supersession.
+    expect(svc._tables.item_customer_parts[0].valid_to == null).toBe(true);
   });
 });
 

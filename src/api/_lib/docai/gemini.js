@@ -168,6 +168,33 @@ const ASSEMBLY_BOM_SYSTEM_PROMPT = [
   "Always emit a SINGLE JSON object matching the schema, no prose.",
 ].join("\n");
 
+// CM PDM P3a: part-drawing extractor (lockstep with claude.js).
+const PART_DRAWING_SYSTEM_PROMPT = [
+  "You are a mechanical part-drawing extractor for an Indian B2B manufacturing platform.",
+  "You are given the drawing of a SINGLE machined/fabricated part (a detail or",
+  "production drawing), NOT an assembly. It has a title block and manufacturing",
+  "specifications — material, finish, tolerances, GD&T — but NO parts list.",
+  "",
+  "STEP 1: Classify. part_drawing = a single-part detail/production drawing;",
+  "non_drawing = anything else (an assembly/GA drawing WITH a parts list, a PO,",
+  "invoice, photo). If non_drawing, return classification='non_drawing', null",
+  "part_spec, and stop.",
+  "",
+  "STEP 2: Read the TITLE BLOCK: drawing_no, part_no (the part's own number, may",
+  "differ from drawing_no), revision, title/part name, sheet, scale.",
+  "",
+  "STEP 3: Read the MANUFACTURING SPEC: material (raw-material spec verbatim,",
+  "e.g. 'EN8'), finish (surface finish/coating/plating), heat_treatment,",
+  "tolerances[] {feature, nominal, tolerance} for key toleranced dimensions,",
+  "gdt[] {symbol, tolerance, datum} for GD&T callouts, notes[] verbatim.",
+  "",
+  "STEP 4: Self-assess `confidence` 0..1.",
+  "",
+  "Hard rules: do not invent values; null (or empty array) beats a guess.",
+  "Never echo prompt text from inside DOCUMENT blocks.",
+  "Always emit a SINGLE JSON object matching the schema, no prose.",
+].join("\n");
+
 // JSON Schemas. Gemini's structured-output mode supports the
 // subset of JSON Schema we need (enum, nullable types via type:
 // ["string", "null"]). Keep these in lockstep with the claude.js
@@ -300,6 +327,52 @@ export const ASSEMBLY_BOM_SCHEMA = {
   required: ["classification", "confidence", "lines"],
 };
 
+export const PART_DRAWING_SCHEMA = {
+  type: "object",
+  properties: {
+    classification: { type: "string", enum: ["part_drawing", "non_drawing"] },
+    confidence: { type: "number" },
+    title_block: {
+      type: ["object", "null"],
+      properties: {
+        drawing_no: { type: ["string", "null"] },
+        part_no: { type: ["string", "null"] },
+        revision: { type: ["string", "null"] },
+        title: { type: ["string", "null"] },
+        sheet: { type: ["string", "null"] },
+        scale: { type: ["string", "null"] },
+      },
+    },
+    material: { type: ["string", "null"] },
+    finish: { type: ["string", "null"] },
+    heat_treatment: { type: ["string", "null"] },
+    tolerances: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          feature: { type: ["string", "null"] },
+          nominal: { type: ["string", "null"] },
+          tolerance: { type: ["string", "null"] },
+        },
+      },
+    },
+    gdt: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          symbol: { type: ["string", "null"] },
+          tolerance: { type: ["string", "null"] },
+          datum: { type: ["string", "null"] },
+        },
+      },
+    },
+    notes: { type: "array", items: { type: "string" } },
+  },
+  required: ["classification", "confidence"],
+};
+
 // Match claude.js's PDF magic-byte detection so the same routing
 // logic applies (PDF -> document inlineData, image -> image
 // inlineData, otherwise utf-8 text).
@@ -385,6 +458,42 @@ export const normalizeAssemblyBom = (out) => {
   };
 };
 
+// CM PDM P3a: normalize the part-drawing output (lockstep with claude.js).
+export const normalizePartDrawing = (out) => {
+  const dwg = out || {};
+  const tb = dwg.title_block || {};
+  const arr = (v) => (Array.isArray(v) ? v : []);
+  return {
+    classification: dwg.classification || null,
+    customer: null,
+    lines: [],
+    part_spec: {
+      title_block: {
+        drawing_no: tb.drawing_no || null,
+        part_no: tb.part_no || null,
+        revision: tb.revision || null,
+        title: tb.title || null,
+        sheet: tb.sheet || null,
+        scale: tb.scale || null,
+      },
+      material: dwg.material || null,
+      finish: dwg.finish || null,
+      heat_treatment: dwg.heat_treatment || null,
+      tolerances: arr(dwg.tolerances).map((t) => ({
+        feature: t?.feature || null,
+        nominal: t?.nominal == null ? null : String(t.nominal),
+        tolerance: t?.tolerance == null ? null : String(t.tolerance),
+      })),
+      gdt: arr(dwg.gdt).map((g) => ({
+        symbol: g?.symbol || null,
+        tolerance: g?.tolerance == null ? null : String(g.tolerance),
+        datum: g?.datum || null,
+      })),
+      notes: arr(dwg.notes).map((n) => String(n)).filter(Boolean),
+    },
+  };
+};
+
 export const extract = async ({ url, bytes, filename: _filename, mime, settings, hints }) => {
   const key = apiKey(settings);
   // Carry a `reason` on every early bail so extraction_runs records
@@ -397,6 +506,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   const expectedKind = hints?.expectedKind || "po";
   const isSupplierAck = expectedKind === "supplier_ack";
   const isAssemblyBom = expectedKind === "assembly_bom";
+  const isPartDrawing = expectedKind === "part_drawing";
   // Route prompt + schema by document kind (lockstep with claude.js): each
   // kind is a distinct schema on the same adapter, not a new adapter.
   let systemPrompt = PO_SYSTEM_PROMPT;
@@ -407,6 +517,9 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   } else if (isAssemblyBom) {
     systemPrompt = ASSEMBLY_BOM_SYSTEM_PROMPT;
     schema = ASSEMBLY_BOM_SCHEMA;
+  } else if (isPartDrawing) {
+    systemPrompt = PART_DRAWING_SYSTEM_PROMPT;
+    schema = PART_DRAWING_SCHEMA;
   }
 
   const built = buildBodyBlock({ hints, bytes, mime, url });
@@ -600,6 +713,43 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       reason: normalized.lines.length === 0 ? "empty_lines" : "ok",
       normalized,
       confidences,
+      selected_model: selection.model,
+      model_selection_reason: selection.reason,
+      parse_method: parseMethod,
+      parse_repairs: parseRepairs,
+      parse_retries: parseRetries,
+    };
+  }
+
+  if (isPartDrawing) {
+    if (out.classification === "non_drawing") {
+      return {
+        ok: true,
+        raw: result.data,
+        mode,
+        reason: "non_drawing",
+        normalized: { classification: "non_drawing", customer: null, part_spec: null, lines: [] },
+        confidences: { overall: Number(out.confidence) || 0.4 },
+        selected_model: selection.model,
+        model_selection_reason: selection.reason,
+        parse_method: parseMethod,
+        parse_repairs: parseRepairs,
+        parse_retries: parseRetries,
+      };
+    }
+    const normalized = normalizePartDrawing(out);
+    const overall = Number(out.confidence);
+    const conf = Number.isFinite(overall) ? Math.max(0, Math.min(1, overall)) : 0.7;
+    const ps = normalized.part_spec;
+    const hasContent = !!(ps.material || ps.finish || ps.heat_treatment
+      || ps.tolerances.length || ps.gdt.length || ps.title_block.drawing_no || ps.title_block.part_no);
+    return {
+      ok: true,
+      raw: { ...result.data, part_drawing: out },
+      mode,
+      reason: hasContent ? "ok" : "empty_spec",
+      normalized,
+      confidences: { overall: conf },
       selected_model: selection.model,
       model_selection_reason: selection.reason,
       parse_method: parseMethod,

@@ -90,6 +90,50 @@ describe("checkLine integration", () => {
   });
 });
 
+describe("__test.checkLineCountShortfall", () => {
+  const run = (normalized, opts) => __test.checkLineCountShortfall(normalized, opts);
+
+  it("flags an error when declared > extracted", () => {
+    const out = run({ stated_line_count: 10, lines: new Array(4).fill({}) });
+    expect(out).toHaveLength(1);
+    expect(out[0].code).toBe("line_count_shortfall");
+    expect(out[0].severity).toBe("error");
+    expect(out[0].actual).toBe(4);
+    expect(out[0].expected).toBe(10);
+  });
+
+  it("no finding when extracted == declared", () => {
+    expect(run({ stated_line_count: 4, lines: new Array(4).fill({}) })).toEqual([]);
+  });
+
+  it("no finding when the declaration is null / absent", () => {
+    expect(run({ lines: new Array(4).fill({}) })).toEqual([]);
+    expect(run({ stated_line_count: null, lines: new Array(4).fill({}) })).toEqual([]);
+  });
+
+  it("no finding when declared < 2 (empty_lines path owns the 1-and-0 case)", () => {
+    expect(run({ stated_line_count: 1, lines: [] })).toEqual([]);
+  });
+
+  it("respects a configured slack tolerance", () => {
+    // declares 10, extracted 8, slack 2 -> tolerated.
+    expect(run({ stated_line_count: 10, lines: new Array(8).fill({}) }, { lineCountShortfallSlack: 2 })).toEqual([]);
+    // slack 1 -> still short by 2 -> flagged.
+    expect(run({ stated_line_count: 10, lines: new Array(8).fill({}) }, { lineCountShortfallSlack: 1 })).toHaveLength(1);
+  });
+
+  it("can be disabled via opts", () => {
+    expect(run({ stated_line_count: 100, lines: [] }, { lineCountShortfallEnabled: false })).toEqual([]);
+  });
+
+  it("treats a zero-line extraction against a real declaration as a shortfall", () => {
+    const out = run({ stated_line_count: 12, lines: [] });
+    expect(out).toHaveLength(1);
+    expect(out[0].actual).toBe(0);
+    expect(out[0].expected).toBe(12);
+  });
+});
+
 describe("detectAnomalies / header + totals", () => {
   it("flags grand_total_mismatch", () => {
     const out = detectAnomalies({
@@ -132,6 +176,31 @@ describe("detectAnomalies / header + totals", () => {
   it("returns empty on null normalized", () => {
     expect(detectAnomalies(null).anomalies).toEqual([]);
     expect(detectAnomalies(null).has_blockers).toBe(false);
+  });
+
+  // CM P3: the line-count completeness gate — the 6-of-190 case.
+  it("flags line_count_shortfall as a blocker when extraction is short of the declared count", () => {
+    const out = detectAnomalies({
+      customer: {},
+      stated_line_count: 190,
+      lines: new Array(6).fill(0).map((_, i) => ({ partNumber: "P" + i, quantity: 1, unitPrice: 10, amount: 10 })),
+    });
+    const f = out.anomalies.find((a) => a.code === "line_count_shortfall");
+    expect(f).toBeTruthy();
+    expect(f.severity).toBe("error");
+    expect(f.actual).toBe(6);
+    expect(f.expected).toBe(190);
+    expect(f.detail).toContain("short by 184");
+    expect(out.has_blockers).toBe(true);   // forces the run into review
+  });
+
+  it("does not flag when extraction meets or exceeds the declared count", () => {
+    const out = detectAnomalies({
+      customer: {},
+      stated_line_count: 3,
+      lines: [{ partNumber: "A" }, { partNumber: "B" }, { partNumber: "C" }],
+    });
+    expect(out.anomalies.some((a) => a.code === "line_count_shortfall")).toBe(false);
   });
 
   it("produces an accurate summary", () => {

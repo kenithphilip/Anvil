@@ -17,6 +17,7 @@ import { decryptField } from "../secrets.js";
 import { callGemini, extractTextFromGemini, parseStructuredGemini, stopReasonFromGemini } from "../gemini.js";
 import { parseSchemaAligned } from "./parse.js";
 import { selectGeminiModel } from "./model_selector.js";
+import { coerceStatedLineCount } from "./claude.js";
 
 const apiKey = (settings) => {
   if (settings?.docai_gemini_api_key_enc && settings?.docai_creds_iv) {
@@ -95,6 +96,11 @@ const PO_SYSTEM_PROMPT = [
   "  cgst_amount, sgst_amount, igst_amount, utgst_amount, cess_amount, excise_amount, ed_cess_amount,",
   "  tooling_amount, p_and_f_amount, others_amount.",
   "When CGST + SGST are both present they should be roughly equal; IGST is mutually exclusive with CGST/SGST.",
+  "",
+  "stated_line_count = the number of line items the PO DECLARES it has: a printed total ('Total items: 190',",
+  "'No. of items') if present, else the HIGHEST S.No / serial printed in the table across ALL pages, even for",
+  "rows you could not read. Report it truthfully even when it exceeds the number of lines you extracted -- that",
+  "gap is a signal we rely on. null only when no total and no serials are printed.",
   "",
   "STEP 3: Self-assess `confidence`:",
   "  0.95  every field has a clear printed source AND name appears in bill_to_address",
@@ -188,6 +194,10 @@ const PO_SCHEMA = {
           others_amount: { type: ["number", "null"] },
         },
       },
+    },
+    stated_line_count: {
+      type: ["integer", "null"],
+      description: "Total line items the PO DECLARES it has: a printed total ('Total items: 190', 'No. of items') or, absent that, the HIGHEST S.No / serial printed in the table across ALL pages, INCLUDING rows you could not extract. The document's own declared count, independent of how many `lines` you returned — never just count your own output. null only when no total and no serials are printed.",
     },
   },
   required: ["classification", "confidence", "customer", "lines"],
@@ -483,6 +493,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       classification: out.classification || null,
       customer: out.customer || null,
       lines,
+      // CM P3: PO's own declared line count (lockstep with claude.js).
+      stated_line_count: coerceStatedLineCount(out.stated_line_count),
     },
     confidences,
     selected_model: selection.model,

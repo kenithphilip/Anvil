@@ -11,6 +11,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { resolveGunAssets } from "../_lib/gun-asset-link.js";
 
 const HEADER_FIELDS = ["customer_id", "project_name", "name", "drawing_base_url", "notes"];
 const COL_FIELDS = ["col_name", "category", "position", "locked"];
@@ -99,11 +100,22 @@ export default async function handler(req, res) {
       }
 
       if (Array.isArray(body.rows)) {
+        // CM PDM P0c: resolve each gun_no -> the canonical bom_assets.id once,
+        // at save, so spare_matrix_rows.bom_asset_id becomes the durable
+        // authoritative link (instead of re-matching gun_no strings on every
+        // spare lookup). Only fills the FK when the row doesn't already carry
+        // one; best-effort so a save never fails on the enrichment.
+        const gunNos = body.rows.map((r) => r && r.gun_no).filter(Boolean);
+        const gunAssetMap = await resolveGunAssets(svc, ctx.tenantId, gunNos);
         await reconcile(svc, "spare_matrix_rows", ctx.tenantId, id, body.rows, (r, i) => {
           const row = { tenant_id: ctx.tenantId, matrix_id: id, position: r.position != null ? r.position : i };
           if (r.id) row.id = r.id;
           for (const f of ROW_TEXT) if (f in r) row[f] = r[f] || null;
           for (const f of ROW_NUM) if (f in r) row[f] = numOrNull(r[f]);
+          if (row.bom_asset_id == null && row.gun_no) {
+            const resolved = gunAssetMap.get(String(row.gun_no).trim().toUpperCase());
+            if (resolved) row.bom_asset_id = resolved;
+          }
           row.spare_values = r.spare_values && typeof r.spare_values === "object" ? r.spare_values : {};
           row.updated_at = new Date().toISOString();
           return row;

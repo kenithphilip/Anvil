@@ -163,6 +163,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/billing/usage.js | read |
 | src/api/bom/asset_projects.js | write |
 | src/api/bom/assets.js | read |
+| src/api/bom/from_drawing.js | write |
 | src/api/bom/import.js | write |
 | src/api/bom/index.js | read, write |
 | src/api/bom/parse.js | read |

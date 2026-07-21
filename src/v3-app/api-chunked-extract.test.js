@@ -25,12 +25,23 @@ const makePdf = async (pages) => {
   return doc.save();
 };
 
-const ok = (overrides) => ({
-  ok: true, adapter_used: "claude", latency_ms: 100, classification: "po",
-  customer: { name: "ACME Pvt Ltd" }, lines: [{ partNumber: "X-1", quantity: 1 }],
-  confidences: { customer: 0.9, lines: 0.85 }, confidence_overall: 0.87, attempts: [],
-  ...overrides,
-});
+// A dispatchExtract result. Production nests classification/customer/lines
+// under `.normalized`; overrides targeting those route into normalized, the
+// rest (adapter_used, confidence_overall, selected_model, reason, attempts…)
+// stay top level.
+const ok = (overrides = {}) => {
+  const { classification, customer, lines, ...rest } = overrides;
+  return {
+    ok: true, adapter_used: "claude", latency_ms: 100,
+    confidences: { customer: 0.9, lines: 0.85 }, confidence_overall: 0.87, attempts: [],
+    normalized: {
+      classification: classification !== undefined ? classification : "po",
+      customer: customer !== undefined ? customer : { name: "ACME Pvt Ltd" },
+      lines: lines !== undefined ? lines : [{ partNumber: "X-1", quantity: 1 }],
+    },
+    ...rest,
+  };
+};
 
 beforeEach(() => { vi.clearAllMocks(); });
 
@@ -94,10 +105,10 @@ describe("chunkedExtract", () => {
     });
     expect(out.chunked).toBe(true);
     expect(out.chunk_count).toBe(3);
-    expect(out.lines.length).toBe(3);
-    expect(out.lines.map((l) => l.partNumber)).toEqual(["X-1", "X-2", "X-3"]);
-    expect(out.lines[0]._chunk_index).toBe(0);
-    expect(out.lines[0]._chunk_page_start).toBe(1);
+    expect(out.normalized.lines.length).toBe(3);
+    expect(out.normalized.lines.map((l) => l.partNumber)).toEqual(["X-1", "X-2", "X-3"]);
+    expect(out.normalized.lines[0]._chunk_index).toBe(0);
+    expect(out.normalized.lines[0]._chunk_page_start).toBe(1);
     expect(dispatchExtract).toHaveBeenCalledTimes(3);
     // Events: chunking_started -> chunking_complete -> chunk_started/done x3 -> merging_results -> done
     const stages = events.map((e) => e.stage);
@@ -136,7 +147,7 @@ describe("chunkedExtract", () => {
     expect(out.chunked).toBe(true);
     expect(out.chunk_count).toBe(2);
     // First chunk's line still present even though chunk 2 failed.
-    expect(out.lines.length).toBe(1);
+    expect(out.normalized.lines.length).toBe(1);
     expect(out.ok).toBe(true); // at least one chunk succeeded
     const failed = events.find((e) => e.stage === "chunk_failed");
     expect(failed).toBeTruthy();
@@ -158,7 +169,7 @@ describe("chunkedExtract", () => {
       opts: { maxPagesPerChunk: 5, chunkConcurrency: 4, pageThreshold: 6 },
     });
     expect(out.chunk_count).toBe(3);
-    expect(out.lines.map((l) => l.partNumber)).toEqual(["P0", "P1", "P2"]);
+    expect(out.normalized.lines.map((l) => l.partNumber)).toEqual(["P0", "P1", "P2"]);
   });
 
   it("stops launching waves once the per-extraction budget is blown", async () => {
@@ -187,7 +198,25 @@ describe("mergeChunkResults", () => {
   it("returns a single chunk's result unchanged when there is only one", () => {
     const r = ok();
     const m = mergeChunkResults([r], [{ pageStart: 1, pageEnd: 3, pageCount: 3 }]);
-    expect(m.lines).toEqual(r.lines);
+    expect(m.normalized.lines).toEqual(r.normalized.lines);
+  });
+
+  // Regression guard: a MULTI-chunk merge must return lines/customer/
+  // classification NESTED under `.normalized` — the same shape dispatchExtract
+  // (passthrough + single-chunk) returns and run.js reads via out.normalized.*.
+  // The merge previously returned them at top level while reading r.lines
+  // (flat) from nested chunk results, so every >1-chunk PO came back with zero
+  // lines / null customer in production.
+  it("returns a nested `.normalized` shape and reads lines from nested chunk results", () => {
+    const m = mergeChunkResults(
+      [ok({ lines: [{ partNumber: "A" }], customer: { name: "ACME" } }), ok({ lines: [{ partNumber: "B" }] })],
+      [{ pageCount: 1, pageStart: 1, pageEnd: 1 }, { pageCount: 1, pageStart: 2, pageEnd: 2 }],
+    );
+    expect(m.lines).toBeUndefined();          // NOT top level anymore
+    expect(m.normalized).toBeDefined();
+    expect(m.normalized.lines.map((l) => l.partNumber)).toEqual(["A", "B"]);
+    expect(m.normalized.customer).toEqual({ name: "ACME" });
+    expect(m.normalized.classification).toBe("po");
   });
 
   it("picks po classification over non_po when any chunk found one", () => {
@@ -195,7 +224,7 @@ describe("mergeChunkResults", () => {
       [ok({ classification: "non_po" }), ok({ classification: "po" }), ok({ classification: "non_po" })],
       [{ pageCount: 3 }, { pageCount: 3 }, { pageCount: 3 }],
     );
-    expect(m.classification).toBe("po");
+    expect(m.normalized.classification).toBe("po");
   });
 
   it("weights confidence by chunk page count", () => {
@@ -227,7 +256,10 @@ describe("mergeChunkResults", () => {
   // Observability: when EVERY chunk fails, the merge must surface the real
   // reason + model instead of collapsing to fail_unknown / model — (the
   // black box operators hit on the 7-page P250432265 PO).
-  const fail = (o) => ({ ok: false, lines: [], customer: null, confidences: {}, attempts: [], ...o });
+  const fail = (o = {}) => {
+    const { lines, customer, classification, ...rest } = o;
+    return { ok: false, normalized: { classification: classification ?? null, customer: customer ?? null, lines: lines || [] }, confidences: {}, attempts: [], ...rest };
+  };
 
   it("propagates the underlying reason + selected_model when all chunks fail", () => {
     const m = mergeChunkResults(

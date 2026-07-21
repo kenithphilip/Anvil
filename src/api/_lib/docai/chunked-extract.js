@@ -103,8 +103,14 @@ const mostCommon = (xs) => {
 // Merge per-chunk dispatchExtract outputs into the single
 // normalised shape the rest of run.js expects.
 export const mergeChunkResults = (chunkResults, chunks) => {
+  // Each chunk result is a dispatchExtract result whose lines / customer /
+  // classification live UNDER `.normalized` (the same shape the passthrough +
+  // single-chunk paths return and run.js reads via out.normalized.*). normOf
+  // reads that nested shape, tolerating a flat fallback so a stray flat result
+  // can never silently zero the whole merge.
+  const normOf = (r) => (r && r.normalized) || r || {};
   if (!chunkResults.length) {
-    return { ok: false, reason: "no_chunks", error: "no_chunks", lines: [], customer: null, confidences: {}, attempts: [] };
+    return { ok: false, reason: "no_chunks", error: "no_chunks", normalized: { classification: null, customer: null, lines: [] }, confidences: {}, attempts: [] };
   }
   if (chunkResults.length === 1) {
     return { ...chunkResults[0] };
@@ -115,12 +121,12 @@ export const mergeChunkResults = (chunkResults, chunks) => {
   // Classification: prefer "po" if any chunk found one; else fall
   // back to the most-common label so a 70-page doc that's mostly
   // T&C does not get mis-classified as non_po by majority vote.
-  const classifications = chunkResults.map((r) => r?.classification || null).filter(Boolean);
+  const classifications = chunkResults.map((r) => normOf(r).classification || null).filter(Boolean);
   const classification = classifications.includes("po") ? "po"
     : classifications.includes("rfq") ? "rfq"
       : mostCommon(classifications) || null;
   // Customer: first non-null. Tenant scrub still runs in run.js.
-  const customer = chunkResults.find((r) => r && r.customer)?.customer || null;
+  const customer = chunkResults.map((r) => normOf(r).customer).find((c) => c) || null;
   // Lines: concatenate in chunk order, tagging each with the
   // source chunk so a downstream debugger can see which page
   // range produced it.
@@ -128,7 +134,7 @@ export const mergeChunkResults = (chunkResults, chunks) => {
   for (let i = 0; i < chunkResults.length; i++) {
     const r = chunkResults[i];
     const ch = chunks[i] || {};
-    for (const line of (r.lines || [])) {
+    for (const line of (normOf(r).lines || [])) {
       lines.push({ ...line, _chunk_index: i, _chunk_page_start: ch.pageStart, _chunk_page_end: ch.pageEnd });
     }
   }
@@ -186,9 +192,12 @@ export const mergeChunkResults = (chunkResults, chunks) => {
     ...(failReason ? { reason: failReason } : {}),
     ...(failError ? { error: failError } : {}),
     latency_ms: latencyMs,
-    classification,
-    customer,
-    lines,
+    // Return the SAME nested shape as dispatchExtract (passthrough +
+    // single-chunk) so run.js's out.normalized.* reads work uniformly. Before
+    // this, the multi-chunk merge returned lines/customer at top level, so
+    // run.js read out.normalized.lines === undefined and every >1-chunk PO
+    // came back with zero lines / null customer.
+    normalized: { classification, customer, lines },
     confidences,
     confidence_overall: confidenceOverall,
     attempts,
@@ -343,7 +352,7 @@ export const chunkedExtract = async (args) => {
         error: e?.message || String(e),
         duration_ms: Date.now() - tChunk,
       });
-      return { ok: false, reason: "adapter_threw", error: e?.message || String(e), lines: [], customer: null, confidences: {}, attempts: [] };
+      return { ok: false, reason: "adapter_threw", error: e?.message || String(e), normalized: { classification: null, customer: null, lines: [] }, confidences: {}, attempts: [] };
     }
   };
 
@@ -388,7 +397,7 @@ export const chunkedExtract = async (args) => {
     chunk_count: chunkResult.chunks.length,
     duration_ms: Date.now() - t0,
     ok: !!merged.ok,
-    line_count: merged.lines?.length || 0,
+    line_count: merged.normalized?.lines?.length ?? merged.lines?.length ?? 0,
     budget_breached_at_chunk: budgetBreachedAt,
   });
   return merged;

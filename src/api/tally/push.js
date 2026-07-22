@@ -25,6 +25,7 @@ import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { tallyPush, tallyResolveCompany, tallyIsRecoverable } from "../_lib/tally-client.js";
 import { resolveSalesVoucherType } from "../_lib/tally-voucher-type.js";
 import { buildSalesVoucherXml, isPlaceholderXml } from "../_lib/tally-build-voucher.js";
+import { firstUnresolvedBlocker } from "../_lib/blocking-findings.js";
 
 const idempotencyKey = (gstin, poNumber, payloadHash) =>
   [String(gstin || ""), String(poNumber || ""), String(payloadHash || "")].join("|");
@@ -89,6 +90,12 @@ export default async function handler(req, res) {
     const expected = order.payload_hash || order.approval.payloadHash;
     if (body.payloadHash && expected && body.payloadHash !== expected) {
       return json(res, 409, { error: { message: "Payload hash mismatch with approved order" } });
+    }
+    // CM P3b: Tally inlines its own approval check (it does not use the shared
+    // requireApprovedOrder guard), so mirror the unresolved-blocker refusal here.
+    const blocker = firstUnresolvedBlocker(order.rule_findings);
+    if (blocker) {
+      return json(res, 409, { error: { code: "ORDER_HAS_UNRESOLVED_BLOCKER", message: "Order has an unresolved blocking finding (" + blocker.code + "): " + (blocker.detail || "extraction incomplete") + " Resolve it before pushing.", finding: blocker } });
     }
 
     // F1 second half: compose the voucher XML server-side when

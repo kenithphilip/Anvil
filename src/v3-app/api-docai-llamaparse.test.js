@@ -3,18 +3,20 @@
 // extract() call shape (which caught the real "expand: markdown_full" bug that
 // made every live run 422 -> llamaparse:failed).
 
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeAll, vi } from "vitest";
 import * as llamaparse from "../api/_lib/docai/llamaparse.js";
+import { encryptField, newIv } from "../api/_lib/secrets.js";
 
 const { parseMarkdownTable, normalizeFromMarkdown, scoreConfidence, markdownOf, tier } = llamaparse.__test__;
 
+beforeAll(() => { process.env.ANVIL_SECRETS_KEY = "0".repeat(64); });   // for the encrypted-key test
 afterEach(() => {
   delete process.env.LLAMA_CLOUD_API_KEY;
   delete process.env.LLAMAPARSE_API_KEY;
   delete process.env.LLAMAPARSE_TIER;
 });
 
-describe("llamaparse adapter — gating (off by default, env-keyed like claude)", () => {
+describe("llamaparse adapter — gating (per-tenant key first, then env)", () => {
   it("isConfigured is false with no key set", () => {
     expect(llamaparse.isConfigured({})).toBe(false);
     expect(llamaparse.isConfigured(null)).toBe(false);
@@ -26,6 +28,12 @@ describe("llamaparse adapter — gating (off by default, env-keyed like claude)"
   it("isConfigured falls back to LLAMA_CLOUD_API_KEY (legacy configs)", () => {
     process.env.LLAMA_CLOUD_API_KEY = "legacy";
     expect(llamaparse.isConfigured({})).toBe(true);
+  });
+  it("reads the per-tenant encrypted key (docai_llamacloud_api_key_enc) first, no env needed (#210)", () => {
+    const iv = newIv();
+    const settings = { docai_llamacloud_api_key_enc: encryptField("llx-tenant", iv), docai_creds_iv: iv };
+    expect(llamaparse.isConfigured(settings)).toBe(true);            // env unset
+    expect(llamaparse.__test__.apiKey(settings)).toBe("llx-tenant"); // decrypts the tenant key
   });
   it("extract fails soft when no key is set", async () => {
     const r = await llamaparse.extract({ bytes: Buffer.from("x") });

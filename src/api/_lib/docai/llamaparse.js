@@ -6,27 +6,36 @@
 // switchable in place of the Claude-vision extractor / Mistral OCR — NOT the
 // reasoning-LLM abstraction (llm.js), which it cannot serve.
 //
-// Keyed EXACTLY like claude/gemini: a single server env var, no per-tenant
-// config entity, no encryption. It's just another selectable engine — add
-// "llamaparse" to docai_provider_order (Admin > Document AI) and set the key.
-// OFF by default (not in the default order; no key => isConfigured() false =>
+// Keyed like the other DocAI adapters: a PER-TENANT encrypted key first
+// (docai_llamacloud_api_key_enc, set in Admin > AI & diagnostics > DocAI
+// providers, issue #210), then the server env var. It's just another selectable
+// engine — add "llamaparse" to docai_provider_order and set the key. OFF by
+// default (not in the default order; no key => isConfigured() false =>
 // dispatcher skips it).
 //
-// ENV: LLAMAPARSE_API_KEY (primary; the var the deployment sets). Falls back to
-// LLAMA_CLOUD_API_KEY for older configs. Tier via LLAMAPARSE_TIER
-// (fast|balanced|agentic|agentic_plus); default "agentic" (best accuracy).
+// KEY: tenant docai_llamacloud_api_key_enc (shared docai_creds_iv envelope),
+// else LLAMAPARSE_API_KEY (the var the deployment sets), else LLAMA_CLOUD_API_KEY
+// for older configs. Tier via LLAMAPARSE_TIER (fast|balanced|agentic|
+// agentic_plus); default "agentic" (best accuracy).
 //
 // DATA RESIDENCY: LlamaCloud is US/EU only. Enabling it sends document content
-// to a US/EU SaaS — a deployment choice made by whoever sets the env key, same
-// as choosing Gemini or Claude.
+// to a US/EU SaaS — a deliberate opt-in (the Admin panel shows a DPDPA warning).
 
 import { safeFetch } from "../safe-fetch.js";
+import { decryptField } from "../secrets.js";
 
-const apiKey = () => process.env.LLAMAPARSE_API_KEY || process.env.LLAMA_CLOUD_API_KEY || null;
+// Per-tenant key (encrypted, shared docai_creds_iv) first, then env vars.
+const apiKey = (settings) => {
+  if (settings?.docai_llamacloud_api_key_enc && settings?.docai_creds_iv) {
+    try { const k = decryptField(settings.docai_llamacloud_api_key_enc, settings.docai_creds_iv); if (k) return k; }
+    catch (_e) { /* fall through to env */ }
+  }
+  return process.env.LLAMAPARSE_API_KEY || process.env.LLAMA_CLOUD_API_KEY || null;
+};
 const tier = () => process.env.LLAMAPARSE_TIER || "agentic";
 
-// Config is purely the presence of the env key (mirrors claude.js/gemini.js).
-export const isConfigured = (_settings) => !!apiKey();
+// Config is the presence of a tenant OR env key (mirrors gemini/unstructured).
+export const isConfigured = (settings) => !!apiKey(settings);
 
 // ── canonical mapping: markdown table -> line items ─────────────────
 export const parseMarkdownTable = (md) => {
@@ -93,9 +102,9 @@ export const markdownOf = (result) => {
   return "";
 };
 
-export const extract = async ({ url, bytes, filename, mime }) => {
-  const key = apiKey();
-  if (!key) return { ok: false, reason: "no_api_key", error: "LLAMAPARSE_API_KEY not set" };
+export const extract = async ({ url, bytes, filename, mime, settings }) => {
+  const key = apiKey(settings);
+  if (!key) return { ok: false, reason: "no_api_key", error: "LlamaParse key not set (tenant docai_llamacloud_api_key_enc or LLAMAPARSE_API_KEY env)" };
   try {
     let fileBytes = bytes;
     if (!fileBytes && url) {

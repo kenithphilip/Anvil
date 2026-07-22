@@ -126,6 +126,45 @@ describe("copilot safe actions - create_lead", () => {
   });
 });
 
+describe("copilot safe actions - acknowledge_inventory_exception (P2a)", () => {
+  const seedExc = (status = "open") => {
+    tables.inventory_exceptions = [{ id: "exc-1", tenant_id: T1, part_no: "SHANK-A", exception_kind: "stockout_imminent", severity: "critical", status }];
+  };
+
+  it("propose builds a preview + token and changes nothing", async () => {
+    seedExc();
+    const out = await dispatchErpChatTool(T1, "acknowledge_inventory_exception", { exception_id: "exc-1" }, { userId: U1 });
+    expect(out.proposed).toBe(true);
+    expect(out.preview).toMatchObject({ exception_id: "exc-1", severity: "critical", exception_kind: "stockout_imminent" });
+    expect(tables.action_proposals).toHaveLength(1);
+    expect(tables.inventory_exceptions[0].status).toBe("open"); // unchanged
+  });
+
+  it("confirm flips the exception to acknowledged + stamps the actor", async () => {
+    seedExc();
+    const out = await dispatchErpChatTool(T1, "acknowledge_inventory_exception", { exception_id: "exc-1" }, { userId: U1 });
+    const r = await confirm(out.confirm_token, { tenantId: T1, user: { id: U1 } });
+    expect(r._status).toBe(200);
+    expect(r._json.result.exception.status).toBe("acknowledged");
+    expect(tables.inventory_exceptions[0]).toMatchObject({ status: "acknowledged", acknowledged_by: U1 });
+    expect(tables.action_proposals[0].status).toBe("consumed");
+  });
+
+  it("refuses to propose acknowledging an already-acknowledged exception", async () => {
+    seedExc("acknowledged");
+    const out = await dispatchErpChatTool(T1, "acknowledge_inventory_exception", { exception_id: "exc-1" }, { userId: U1 });
+    expect(out.error).toMatch(/already acknowledged/);
+    expect(tables.action_proposals).toBeUndefined();
+  });
+
+  it("MCP default-deny: a read-only token cannot propose the write", async () => {
+    seedExc();
+    const out = await dispatchErpChatTool(T1, "acknowledge_inventory_exception", { exception_id: "exc-1" }, { scopes: ["read.inventory"], userId: U1 });
+    expect(out.error).toMatch(/scope not allowed/);
+    expect(tables.action_proposals).toBeUndefined();
+  });
+});
+
 describe("MCP default-deny for write tools", () => {
   it("a token without the write scope cannot call create_lead", async () => {
     const out = await dispatchErpChatTool(T1, "create_lead", { company_name: "Acme" }, { scopes: ["read.orders"], userId: U1 });

@@ -637,6 +637,39 @@ const TOOLS = {
       return { proposed: true, action: "create_lead", preview, confirm_token: p.confirm_token, expires_at: p.expires_at, note: "No lead created yet. Confirm in the app to execute." };
     },
   },
+  // GenAI copilot P2a: acknowledge an OPEN inventory exception. Pairs with the
+  // read_inventory_exceptions tool + inventory_exceptions_open metric — the
+  // copilot surfaces open exceptions, then can propose triaging one. Propose-
+  // only: it builds a preview + confirm_token and changes nothing until an
+  // approver confirms.
+  acknowledge_inventory_exception: {
+    scope: "write.inventory",
+    description: "Propose acknowledging an OPEN inventory exception (marks it triaged). Does NOT change anything - returns a preview + confirm_token; a human confirms in the app to execute.",
+    parameters: {
+      type: "object",
+      properties: { exception_id: { type: "string", description: "the inventory_exceptions.id to acknowledge" } },
+      required: ["exception_id"],
+    },
+    run: async (svc, tenantId, args, ctx2) => {
+      const id = String(args?.exception_id || "").trim();
+      if (!id) return { error: "exception_id required" };
+      const ex = await svc.from("inventory_exceptions")
+        .select("id, part_no, exception_kind, severity, status")
+        .eq("tenant_id", tenantId).eq("id", id).maybeSingle();
+      if (ex.error) return { error: ex.error.message };
+      if (!ex.data) return { error: "exception not found" };
+      if (ex.data.status !== "open") return { error: "exception is already " + ex.data.status };
+      const preview = {
+        action: "acknowledge_inventory_exception",
+        exception_id: id,
+        part_no: ex.data.part_no,
+        exception_kind: ex.data.exception_kind,
+        severity: ex.data.severity,
+      };
+      const p = await createProposal(svc, { tenantId, userId: ctx2?.userId, action: "acknowledge_inventory_exception", args: { exception_id: id }, preview });
+      return { proposed: true, action: "acknowledge_inventory_exception", preview, confirm_token: p.confirm_token, expires_at: p.expires_at, note: "Nothing changed yet. Confirm in the app to acknowledge." };
+    },
+  },
   draft_and_send_comms: {
     scope: "write.comms",
     description: "Propose drafting and sending a customer message (email/whatsapp/slack/teams). Does NOT send - returns the drafted message preview and a confirm_token; a human must confirm in the app to send.",

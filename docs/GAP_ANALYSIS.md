@@ -401,6 +401,36 @@ Compact matrix for the 3 additions (same legend as §5: **F** full · **P** part
 
 The two bold rows are the ones no entrant contests. Docket's bold cell (compliance-CPQ) is the one capability Anvil should note as a gap.
 
+### Additions — 2026-07-22 (adjacent-learn-only: revenue intelligence + sales productivity)
+
+Two US SaaS-sales tools reviewed at the user's request. **Neither is a competitor** — both serve quota-carrying B2B *software*-sales teams on top of Salesforce, a different problem class from Anvil's India-manufacturing transactional order flow (like Raven §3.11, they are adjacent-learn-only). The value is UX/AI *patterns* Anvil should borrow for its GenAI copilot, forecast, and sales-ops cockpit — not features to match. Do **not** chase their enterprise-SaaS-sales core (rep coaching, multi-threading, CRM-hygiene-for-its-own-sake); Anvil's users are ops/procurement, not quota-carrying AEs.
+
+### 3.15 Backstory.ai — `backstory.ai/solutions/revenue-decisions` (adjacent-learn-only)
+
+One-liner: "Straight answers grounded in what's actually happening" — evidence-based revenue intelligence.
+
+ICP: CROs / VP-Sales, RevOps, sales managers in enterprise SaaS sales.
+
+Capability surface: auto-captures all customer comms (email/meetings/calls/chat) and matches them to deals + accounts; AI insights engine (deal momentum/risk, single-threaded-deal + stakeholder-coverage gaps, expansion signals); dashboards (pipeline health, rep-behavior patterns, **forecast-variance waterfall**); NL Q&A where **every answer shows the underlying conversations/data** (a defensible, not asserted, forecast).
+
+Differentiators: evidence-grounded reasoning (drill to source), passive capture (no rep workflow change), business-specific training, transparent AI.
+
+Relevance to Anvil: **borrow 3 patterns.** (1) **Evidence-grounded / defensible answers** — harden Ask Anvil + the metric-catalog provenance contract so a plant-head/CFO gets a *defensible* forecast with drill-to-evidence, not just a number (directly strengthens the forecast→BOM wedge / BET 1). (2) **Forecast-variance waterfall** — a concrete cockpit / inventory-planning UI to explain the QoQ change in raw-material demand (new opps, won/lost, probability shifts, BOM edits). (3) **Passive activity capture → order/account timeline with risk signals** (a PO at risk of a delivery slip, a quote stalling), built on Anvil's shipped WhatsApp/email/comms inbound. Its rep-coaching / multi-threading core is irrelevant to Anvil.
+
+### 3.16 Scratchpad — `scratchpad.com/use-cases` (adjacent-learn-only)
+
+One-liner: "Remove admin work. Execute flawlessly. Win more deals."
+
+ICP: sales + ops leaders on Salesforce.
+
+Capability surface: AI auto-drafts CRM updates and **backfills fields**, post-call follow-up email drafting, instant call coaching with custom prompts, deal assessment vs a sales methodology, **closed-lost reason capture**, one-click exec summaries, and **sales→post-sales handoff** packets. Deep Salesforce integration.
+
+Differentiators: adoption without forced compliance ("built into how we run deals … without adding more work").
+
+Relevance to Anvil: **borrow 3 patterns.** (1) Validates + extends Anvil's shipped **GenOps propose→confirm** loop — auto-draft order acknowledgements / quote follow-ups / field-backfills as safe actions. (2) **Closed-lost / won-pattern capture** — a real Anvil analytics GAP: capture quote-lost reasons + order-won patterns to feed the sales-ops cockpit. (3) **One-click exec + handoff summaries** — a cockpit exec summary + an order→production/logistics handoff summary via GenAI. Design principle: meet ops users inside their workflow; don't force compliance.
+
+**Net (both):** the transferable value is a **defensible, evidence-grounded, admin-removing UX** layered on Anvil's copilot + forecast + cockpit — not their enterprise-SaaS-sales product. Concrete items folded into §6 (Important) and parked in the backlog (memory `backlog_revenue_intel_ux`).
+
 ---
 
 ## 4. Cross-cutting themes from the competitor scan
@@ -570,6 +600,16 @@ Grouped by severity for buying-decision impact.
 26. **i18n + multi-currency display layer beyond INR/USD.** Roadmap item.
 
 27. **Anvil rebrand cleanup.** `obara-client.js`, `obara-documents` bucket name, `obara-ops-v11.1.html` legacy, inline copy. Today the codebase's name is "Obara India sales-ops execution layer" verbatim in `package.json` description.
+
+### From the 2026-07-22 revenue-intelligence scan (Backstory.ai / Scratchpad — §3.15–3.16)
+
+These are UX/AI patterns to *borrow*, not competitors to match. Ranked by leverage on Anvil's actual users (ops/procurement, not AEs):
+
+28. **Evidence-grounded, defensible answers (Backstory).** Every copilot/forecast answer should drill to its source rows. Anvil's metric-catalog answer contract (`{value, unit, provenance, as_of}`) is the seam — surface the provenance in Ask Anvil and the cockpit so a plant-head/CFO gets a *defensible* forecast, not an asserted number. Highest leverage: it's what turns the forecast→BOM wedge into a board-credible story.
+29. **Forecast-variance waterfall (Backstory).** A cockpit / inventory-planning view that decomposes the QoQ change in raw-material net demand into drivers (new opps, won/lost, probability shifts, BOM edits). Directly extends `explodePipelineThroughBom` output; makes "buy before the shortage" explainable.
+30. **Closed-lost / won-pattern capture (Scratchpad).** A genuine analytics gap — capture quote-lost reasons + order-won patterns as first-class fields feeding the sales-ops cockpit. Cheap, high-signal, no new infra.
+31. **One-click exec + handoff summaries (Scratchpad).** GenAI exec summary on the cockpit; an order→production/logistics handoff packet. Reuses the copilot + GenOps propose→confirm loop already shipped.
+32. **Passive activity capture → order/account timeline with risk signals (Backstory).** Auto-match inbound comms (WhatsApp/email — already ingested) to orders/accounts and surface risk (a PO at risk of delivery slip, a quote stalling). Extends the shipped inbound pattern; feeds the cockpit's "what needs attention."
 
 ---
 

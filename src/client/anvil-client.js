@@ -1222,6 +1222,14 @@
 
   // Copilot safe actions (PR2): list pending proposals, confirm (execute)
   // or cancel a proposed write action created by a write.* copilot tool.
+  // GenAI copilot P0a: the governed Metric Catalog. list() enumerates
+  // available metrics; query() computes one (returns value + unit +
+  // provenance + as_of) — the same governed number chat/MCP return.
+  const metrics = {
+    list: async () => apiFetch("/api/metrics"),
+    query: async (metricId, opts) => apiFetch("/api/metrics", { method: "POST", body: { metric_id: metricId, ...(opts || {}) } }),
+  };
+
   const copilot = {
     proposals: async () => apiFetch("/api/copilot/proposals"),
     confirm: async (confirmToken) => apiFetch("/api/copilot/confirm", { method: "POST", body: { confirm_token: confirmToken } }),
@@ -1772,6 +1780,7 @@
     marketplace,
     bom,
     copilot,
+    metrics,
     operatorActions,
     profileVersions,
     sourcePos,

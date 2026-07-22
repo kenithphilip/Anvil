@@ -16,6 +16,7 @@ import { serviceClient } from "./supabase.js";
 import { createProposal } from "./action-proposals.js";
 import { validateGstin, gstinStateCode } from "./gstin.js";
 import { searchItemsHybrid } from "./hybrid-item-search.js";
+import { listMetrics, computeMetric } from "./metrics/catalog.js";
 
 const limit = (n) => Math.max(1, Math.min(50, Number(n || 25)));
 
@@ -474,6 +475,37 @@ const TOOLS = {
         })),
         source: "item_customer_parts",
       };
+    },
+  },
+
+  // ── read.analytics: governed Metric Catalog (GenAI copilot P0a) ──────
+  // The model does NOT do free-form analytics — it picks a metric_id from
+  // the catalog and the server runs the reviewed, tenant-scoped query. Every
+  // answer carries its value + unit + provenance ("how computed") + as_of, so
+  // it is consistent and auditable. list_metrics first to discover ids.
+  list_metrics: {
+    scope: "read.analytics",
+    description: "List the governed business metrics available in the Anvil Metric Catalog (id, label, unit, domain). Call this first, then query_metric with a metric_id.",
+    parameters: { type: "object", properties: {} },
+    run: async (_svc, _tenantId, _args) => ({ metrics: listMetrics(), source: "metric_catalog" }),
+  },
+  query_metric: {
+    scope: "read.analytics",
+    description: "Compute one governed business metric (revenue, AR outstanding/overdue, quote acceptance rate, cycle times, counts…) from the Anvil Metric Catalog. Returns { value, unit, provenance, as_of, breakdown? }. NEVER invent a number — only catalog metrics. Use list_metrics to see valid metric_id values.",
+    parameters: {
+      type: "object",
+      properties: {
+        metric_id: { type: "string", description: "a metric id from list_metrics, e.g. ar_overdue, revenue_accepted, quote_acceptance_rate" },
+        window_days: { type: "integer", description: "look-back window for windowed metrics (default 90, max 365); ignored by AR metrics" },
+      },
+      required: ["metric_id"],
+    },
+    run: async (svc, tenantId, args) => {
+      try {
+        return await computeMetric(svc, tenantId, args?.metric_id, { window_days: args?.window_days });
+      } catch (e) {
+        return { error: e?.message || "metric error", available: e?.available || listMetrics().map((m) => m.id) };
+      }
     },
   },
 

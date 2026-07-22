@@ -92,6 +92,32 @@ export const computePipelineDemand = ({
   return out;
 };
 
+// Committed demand from future sales-order schedule lines. Same output shape
+// as computePipelineDemand (Map<part_no, Map<weekStart, qty>>) so it can be
+// BOM-exploded by the SAME explodePipelineThroughBom — a confirmed SO for a
+// finished good then cascades into its raw-material / component demand, exactly
+// like the probability-weighted pipeline. No probability: a scheduled qty is
+// firm demand. Rows without a part_no or a valid date are dropped.
+//
+// Inputs:
+//   scheduleRows: [{ part_no, scheduled_qty, scheduled_date }] (future rows only;
+//                 the caller filters scheduled_date >= today)
+export const computeCommittedDemand = (scheduleRows) => {
+  const out = new Map();
+  for (const row of (scheduleRows || [])) {
+    const partNo = row && row.part_no;
+    if (!partNo) continue;
+    const weekKey = isoWeekStart(row.scheduled_date);
+    if (!weekKey) continue;
+    const qty = Number(row.scheduled_qty) || 0;
+    if (qty <= 0) continue;
+    if (!out.has(partNo)) out.set(partNo, new Map());
+    const bucket = out.get(partNo);
+    bucket.set(weekKey, (bucket.get(weekKey) || 0) + qty);
+  }
+  return out;
+};
+
 // P2 (BOM-explode demand): cascade finished-good pipeline demand down
 // the bill of materials into the raw materials / sub-components it
 // consumes. The probability weighting already happened upstream (each

@@ -15,6 +15,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { consumeProposal, cancelProposal, setProposalResult } from "../_lib/action-proposals.js";
 import { sendCommunication } from "../_lib/comms-send.js";
+import { enqueueTallyVoucher } from "../_lib/tally-enqueue.js";
 
 // Execute a consumed proposal's bound action. Throws on failure.
 const executeAction = async (svc, ctx, proposal) => {
@@ -76,6 +77,16 @@ const executeAction = async (svc, ctx, proposal) => {
     if (upd.error) throw new Error(upd.error.message);
     await recordAudit(ctx, { action: "inventory_exception_acknowledged", objectType: "inventory_exception", objectId: upd.data.id, after: upd.data, detail: "copilot confirm" });
     return { exception: upd.data };
+  }
+
+  if (action === "post_tally_voucher") {
+    // Enqueue-only: build the voucher + insert a pending tally_retry_queue row.
+    // The proven tally/retry cron does the actual bridge POST — no external
+    // financial call happens here in the confirm handler.
+    const r = await enqueueTallyVoucher(svc, ctx, { orderId: args.order_id, voucherType: args.voucher_type || null });
+    if (!r.ok) throw new Error(r.code + ": " + r.message);
+    await recordAudit(ctx, { action: "tally_voucher_enqueued", objectType: "order", objectId: r.order_id, detail: "copilot confirm · " + r.voucher_type + " · " + r.voucher_no });
+    return r;
   }
 
   throw new Error("Unsupported action: " + action);

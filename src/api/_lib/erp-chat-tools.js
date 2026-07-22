@@ -670,6 +670,35 @@ const TOOLS = {
       return { proposed: true, action: "acknowledge_inventory_exception", preview, confirm_token: p.confirm_token, expires_at: p.expires_at, note: "Nothing changed yet. Confirm in the app to acknowledge." };
     },
   },
+  post_tally_voucher: {
+    scope: "write.erp",
+    description: "Propose posting an APPROVED sales order to Tally as a voucher. Does NOT push - returns a preview + confirm_token; on confirm it is ENQUEUED (the Tally cron does the actual bridge post). The order must be approved.",
+    parameters: {
+      type: "object",
+      properties: {
+        order_id: { type: "string", description: "the orders.id to push" },
+        voucher_type: { type: "string", description: "optional Tally voucher type override (e.g. 'Sales', 'SalesOrder'); default from the company" },
+      },
+      required: ["order_id"],
+    },
+    run: async (svc, tenantId, args, ctx2) => {
+      const oid = String(args?.order_id || "").trim();
+      if (!oid) return { error: "order_id required" };
+      const o = await svc.from("orders").select("id, po_number, status, approval, tally_status").eq("tenant_id", tenantId).eq("id", oid).maybeSingle();
+      if (o.error) return { error: o.error.message };
+      if (!o.data) return { error: "order not found" };
+      if (!o.data.approval || !o.data.approval.payloadHash) return { error: "order is not approved yet — approve it before pushing to Tally" };
+      const preview = {
+        action: "post_tally_voucher",
+        order_id: oid,
+        po_number: o.data.po_number,
+        voucher_type: args?.voucher_type || "(company default)",
+        current_tally_status: o.data.tally_status || "not_pushed",
+      };
+      const p = await createProposal(svc, { tenantId, userId: ctx2?.userId, action: "post_tally_voucher", args: { order_id: oid, voucher_type: args?.voucher_type || null }, preview });
+      return { proposed: true, action: "post_tally_voucher", preview, confirm_token: p.confirm_token, expires_at: p.expires_at, note: "Nothing pushed yet. Confirm in the app to enqueue the Tally voucher." };
+    },
+  },
   draft_and_send_comms: {
     scope: "write.comms",
     description: "Propose drafting and sending a customer message (email/whatsapp/slack/teams). Does NOT send - returns the drafted message preview and a confirm_token; a human must confirm in the app to send.",

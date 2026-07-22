@@ -365,6 +365,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/p21/push.js | approve |
 | src/api/p21/retry.js | admin |
 | src/api/p21/sync.js | admin |
+| src/api/pdm/raw_material.js | read, write |
 | src/api/plex/connect.js | admin |
 | src/api/plex/diagnostics.js | read, admin |
 | src/api/plex/health.js | read |

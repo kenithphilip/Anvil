@@ -111,6 +111,7 @@ import commsSend               from "./communications/send.js";
 import copilotConfirm          from "./copilot/confirm.js";
 import copilotProposals        from "./copilot/proposals.js";
 import metricsCatalog          from "./metrics/index.js";
+import pdmRawMaterial          from "./pdm/raw_material.js";
 
 import costBreakdown           from "./cost/breakdown.js";
 import costMarginHistory       from "./cost/margin_history.js";
@@ -883,6 +884,7 @@ const STATIC_ROUTES = {
   "/copilot/confirm":               copilotConfirm,
   "/copilot/proposals":             copilotProposals,
   "/metrics":                       metricsCatalog,
+  "/pdm/raw-material":              pdmRawMaterial,
 
   "/cost/breakdown":                costBreakdown,
   "/cost/margin_history":           costMarginHistory,

@@ -4,7 +4,7 @@
 // raw materials / components, multiplying by per-unit BOM quantities.
 
 import { describe, it, expect } from "vitest";
-import { explodePipelineThroughBom } from "../api/_lib/inventory/pipeline-demand.js";
+import { explodePipelineThroughBom, computeCommittedDemand } from "../api/_lib/inventory/pipeline-demand.js";
 
 const wk = "2026-06-08";
 const mk = (entries) => new Map(entries.map(([p, q]) => [p, new Map([[wk, q]])]));
@@ -81,5 +81,47 @@ describe("explodePipelineThroughBom", () => {
     ]);
     expect(out.exploded).toBeGreaterThan(0);
     expect(Number.isFinite(qtyOf(p, "B"))).toBe(true);
+  });
+});
+
+describe("computeCommittedDemand (future SO schedule lines → part×week)", () => {
+  it("buckets scheduled_qty by part_no and ISO week", () => {
+    const out = computeCommittedDemand([
+      { part_no: "GUN", scheduled_qty: 4, scheduled_date: "2026-06-10" }, // in week 2026-06-08
+      { part_no: "GUN", scheduled_qty: 6, scheduled_date: "2026-06-11" }, // same week -> summed
+      { part_no: "ATD", scheduled_qty: 3, scheduled_date: "2026-06-10" },
+    ]);
+    expect(qtyOf(out, "GUN")).toBe(10);
+    expect(qtyOf(out, "ATD")).toBe(3);
+  });
+
+  it("drops rows with no part_no, non-positive qty, or bad date", () => {
+    const out = computeCommittedDemand([
+      { part_no: null, scheduled_qty: 5, scheduled_date: "2026-06-10" },
+      { part_no: "X", scheduled_qty: 0, scheduled_date: "2026-06-10" },
+      { part_no: "Y", scheduled_qty: 5, scheduled_date: "not-a-date" },
+    ]);
+    expect(out.size).toBe(0);
+  });
+
+  it("handles null / empty input", () => {
+    expect(computeCommittedDemand(null).size).toBe(0);
+    expect(computeCommittedDemand([]).size).toBe(0);
+  });
+});
+
+describe("gap ②: a confirmed SO explodes committed demand into raw material", () => {
+  it("cascades committed finished-good demand down the BOM like the pipeline", () => {
+    // A confirmed order schedules 5 GUN for delivery. GUN consumes 2 STEEL + 1 ELEC.
+    const committed = computeCommittedDemand([
+      { part_no: "GUN", scheduled_qty: 5, scheduled_date: "2026-06-10" },
+    ]);
+    explodePipelineThroughBom(committed, [
+      { parent_part_no: "GUN", child_part_no: "STEEL", qty: 2 },
+      { parent_part_no: "GUN", child_part_no: "ELEC", qty: 1 },
+    ]);
+    expect(qtyOf(committed, "GUN")).toBe(5);    // the ordered finished good
+    expect(qtyOf(committed, "STEEL")).toBe(10); // raw material now has firm committed demand
+    expect(qtyOf(committed, "ELEC")).toBe(5);
   });
 });

@@ -30,7 +30,7 @@ import {
 } from "../_lib/inventory/conformal.js";
 import { estimateLeadTime } from "../_lib/inventory/lead-time.js";
 import {
-  computePipelineDemand, isoWeekStart, STAGE_PROBABILITY_DEFAULTS,
+  computePipelineDemand, computeCommittedDemand, isoWeekStart, STAGE_PROBABILITY_DEFAULTS,
   calibrateStageProbabilities, explodePipelineThroughBom,
 } from "../_lib/inventory/pipeline-demand.js";
 import { planForItem, addWeeks } from "../_lib/inventory/net-req.js";
@@ -320,6 +320,20 @@ const planTenant = async (svc, tenantId) => {
   if (bomRows.error) throw new Error("bom: " + bomRows.error.message);
   const bomExplosion = explodePipelineThroughBom(pipeline, bomRows.data || []);
 
+  // Committed demand from future sales-order schedule lines, built ONCE for the
+  // whole tenant and BOM-EXPLODED like the pipeline — so a confirmed SO for a
+  // finished good cascades into its raw-material / component demand (parity with
+  // the probability-weighted pipeline). Previously committed was read per-part
+  // inside the item loop and never exploded, so live orders never drove
+  // raw-material procurement. Inert for tenants without schedule lines or a BOM.
+  const schedRows = await svc.from("order_schedule_lines")
+    .select("part_no, scheduled_qty, scheduled_date")
+    .eq("tenant_id", tenantId)
+    .gte("scheduled_date", today);
+  if (schedRows.error) throw new Error("order_schedule_lines: " + schedRows.error.message);
+  const committed = computeCommittedDemand(schedRows.data || []);
+  explodePipelineThroughBom(committed, bomRows.data || []);
+
   // Pre-fetch the opportunity pairs for top-opp attribution.
   const oppsForAttribution = await svc.from("opportunities")
     .select("id, opportunity_name, stage, probability")
@@ -513,23 +527,13 @@ const planTenant = async (svc, tenantId) => {
       reorder_point: effectiveSS + leadTimeWeeks * baselineMean,
     }).eq("tenant_id", tenantId).eq("part_no", item.part_no);
 
-    // Forecast decomposition by week.
+    // Forecast decomposition by week. Both streams are read from the global,
+    // BOM-exploded maps built above (committed + pipeline), so a component /
+    // raw-material part receives demand cascaded from its parent finished goods.
     const pipelineByWeek = pipeline.get(item.part_no) || new Map();
+    const committedByWeek = committed.get(item.part_no) || new Map();
     const forecastByWeek = new Map();
     const forecastDecompByWeek = new Map();
-    // Committed = upcoming order_schedule_lines (we treat any
-    // future schedule_line qty as committed demand).
-    const committedScan = await svc.from("order_schedule_lines")
-      .select("scheduled_qty, scheduled_date")
-      .eq("tenant_id", tenantId)
-      .eq("part_no", item.part_no)
-      .gte("scheduled_date", today);
-    const committedByWeek = new Map();
-    for (const row of (committedScan.data || [])) {
-      const wk = isoWeekStart(row.scheduled_date);
-      if (!wk) continue;
-      committedByWeek.set(wk, (committedByWeek.get(wk) || 0) + (Number(row.scheduled_qty) || 0));
-    }
     for (const wk of weeks) {
       const c = committedByWeek.get(wk) || 0;
       const p = pipelineByWeek.get(wk) || 0;

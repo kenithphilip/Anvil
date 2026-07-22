@@ -87,6 +87,22 @@ const NewCustomerModal: React.FC<{ onClose: () => void; onSubmit: (payload: any)
             )}
           </div>
 
+          {gst?.existing?.length > 0 && (() => {
+            const exact = gst.existing.find((e: any) => e.match === "gstin");
+            const c = exact || gst.existing[0];
+            const openIt = () => { window.location.hash = "#/customers?id=" + c.id; onClose(); };
+            return (
+              <Banner kind={exact ? "bad" : "warn"} icon={Icon.alert} title={exact ? "This GSTIN already exists" : "Same PAN — possible duplicate"}>
+                <span className="mono-sm">
+                  {exact
+                    ? <>Registered to <span className="pri">{c.customer_name}</span>. </>
+                    : <><span className="pri">{c.customer_name}</span> shares this PAN (a different state branch{c.state_code ? ": " + c.state_code : ""}). </>}
+                  <a onClick={openIt} style={{ color: "var(--accent)", cursor: "pointer" }}>Open it</a> instead of creating a duplicate.
+                </span>
+              </Banner>
+            );
+          })()}
+
           <div><div className="label">customer name *</div><input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Comet Motors Ltd." /></div>
           <div><div className="label">customer key (optional)</div><input className="input mono" value={key} onChange={(e) => setKey(e.target.value)} placeholder="auto from name if blank" /></div>
           <div><div className="label">currency (optional)</div><input className="input mono" value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} placeholder="INR" maxLength={3} /></div>

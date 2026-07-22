@@ -62,6 +62,31 @@ describe("computeGstinPin", () => {
     expect(r.matched_customer_id).toBeNull();
   });
 
+  it("flags a same-PAN sister-state customer instead of 'unknown' (P4), advisory only", () => {
+    const r = computeGstinPin({
+      extractedCustomer: { gstin: VALID.normalized, name: "Acme (MH)", state_code: "" },
+      matchedCustomer: null,
+      gstinValidation: VALID,               // PAN AAACA1234B
+      stateFromGstin: "27",
+      panCandidates: [{ id: "c-7", customer_name: "Acme (KA)", gstin: "29AAACA1234B1ZX", state_code: "29" }],
+    });
+    const codes = r.flags.map((f) => f.code);
+    expect(codes).toContain("gstin_same_pan_customer");
+    expect(codes).not.toContain("gstin_valid_unknown_customer");
+    expect(r.flags.find((f) => f.code === "gstin_same_pan_customer").candidates[0]).toMatchObject({ id: "c-7", state_code: "29" });
+    expect(r.matched_customer_id).toBeNull();   // never auto-matches a different GSTIN
+    expect(r.patch.state_code).toBe("27");      // still derives the PO's own state
+  });
+
+  it("ignores a PAN candidate that is the exact GSTIN (falls back to 'unknown')", () => {
+    const r = computeGstinPin({
+      extractedCustomer: { gstin: VALID.normalized, name: "X", state_code: "" },
+      matchedCustomer: null, gstinValidation: VALID, stateFromGstin: "27",
+      panCandidates: [{ id: "c-1", gstin: VALID.normalized, state_code: "27" }],
+    });
+    expect(r.flags.map((f) => f.code)).toContain("gstin_valid_unknown_customer");
+  });
+
   it("pins a blank name from the registry match and corroborates the GSTIN", () => {
     const r = computeGstinPin({
       extractedCustomer: { gstin: VALID.normalized, name: "", state_code: "", payment_terms: "" },

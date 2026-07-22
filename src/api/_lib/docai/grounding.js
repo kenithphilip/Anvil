@@ -55,7 +55,7 @@ const CONF = {
 // Returns:
 //   { patch, confidenceFloors, confidenceCaps, flags, matched_customer_id }
 // `patch` is fill-blanks-only (the caller must not overwrite non-blank values).
-export const computeGstinPin = ({ extractedCustomer, matchedCustomer, gstinValidation, stateFromGstin }) => {
+export const computeGstinPin = ({ extractedCustomer, matchedCustomer, gstinValidation, stateFromGstin, panCandidates }) => {
   const cust = extractedCustomer || {};
   const patch = {};
   const confidenceFloors = {};
@@ -79,10 +79,24 @@ export const computeGstinPin = ({ extractedCustomer, matchedCustomer, gstinValid
     confidenceFloors["customer.state_code"] = CONF.state_from_gstin;
   }
 
-  // 2. Valid GSTIN, but not in the registry -> a new customer. Clean signal
-  //    for the operator to create one; no pin.
+  // 2. Valid GSTIN, no EXACT customer. Before treating it as brand new, check
+  //    for a SAME-PAN customer (issue #186 P4): the same legal entity is often
+  //    already on file under a sister-state registration, so a PO from a new
+  //    state branch shouldn't spawn a duplicate. Advisory — a different GSTIN is
+  //    a different party, so we flag the candidates for the operator, we do NOT
+  //    auto-match. No PAN candidates -> a genuinely new customer.
   if (!matchedCustomer) {
-    flags.push({ code: "gstin_valid_unknown_customer", detail: gstinValidation.normalized });
+    const same = (Array.isArray(panCandidates) ? panCandidates : [])
+      .filter((c) => c && String(c.gstin || "").toUpperCase() !== gstinValidation.normalized);
+    if (same.length) {
+      flags.push({
+        code: "gstin_same_pan_customer",
+        detail: gstinValidation.normalized,
+        candidates: same.slice(0, 5).map((c) => ({ id: c.id, customer_name: c.customer_name, gstin: c.gstin, state_code: c.state_code })),
+      });
+    } else {
+      flags.push({ code: "gstin_valid_unknown_customer", detail: gstinValidation.normalized });
+    }
     return { patch, confidenceFloors, confidenceCaps, flags, matched_customer_id: null };
   }
 

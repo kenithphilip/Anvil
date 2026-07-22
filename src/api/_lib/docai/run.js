@@ -67,7 +67,7 @@ import {
 import { applyOverrides, loadOverrides, recordOverrideUsage } from "./overrides.js";
 import { computeGstinPin } from "./grounding.js";
 import { validateGstin, gstinStateCode } from "../gstin.js";
-import { findByGstin } from "../customer-canonicalizer.js";
+import { findByGstin, findCustomersByPan } from "../customer-canonicalizer.js";
 import { voteAcrossAdapters } from "./voter.js";
 import { validateExtraction } from "./validators.js";
 import { recordEvent } from "../audit.js";
@@ -911,11 +911,17 @@ export const runExtractionPipeline = async (params) => {
     try {
       const gv = validateGstin(out.normalized.customer.gstin);
       const matched = gv.ok ? await findByGstin(svc, ctx.tenantId, gv.normalized) : null;
+      // P4: no exact GSTIN match -> look for a same-PAN (sister-state) customer
+      // so the intake recognises the same legal entity instead of duplicating it.
+      const panCandidates = (gv.ok && !matched)
+        ? await findCustomersByPan(svc, ctx.tenantId, gv.normalized.slice(2, 12))
+        : [];
       const pin = computeGstinPin({
         extractedCustomer: out.normalized.customer,
         matchedCustomer: matched,
         gstinValidation: gv,
         stateFromGstin: gv.ok ? gstinStateCode(gv.normalized) : null,
+        panCandidates,
       });
       // computeGstinPin only emits patch keys for fields it treats as blank
       // (null / empty / whitespace), so apply directly. Re-guarding here with

@@ -25,6 +25,7 @@ export type MatrixRow = Record<Role, MatrixCell>;
 // '' (empty) means hidden / blocked.
 export const MATRIX: Record<string, MatrixRow> = {
   home:        { sales_engineer: "r",   sales_manager: "r",  procurement: "r",  finance: "r",   admin: "r",  operator: "r",  viewer: "r" },
+  ask:         { sales_engineer: "r",   sales_manager: "r",  procurement: "r",  finance: "r",   admin: "r",  operator: "r",  viewer: "r" },
   intake:      { sales_engineer: "rw",  sales_manager: "rw", procurement: "r",  finance: "r",   admin: "r",  operator: "r",  viewer: "r" },
   quotes:      { sales_engineer: "rw",  sales_manager: "rwa",procurement: "r",  finance: "r",   admin: "rwa",operator: "r",  viewer: "r" },
   so:          { sales_engineer: "rw",  sales_manager: "rw", procurement: "r",  finance: "r",   admin: "r",  operator: "r",  viewer: "r" },

@@ -17,6 +17,7 @@ export const NAV: NavGroup[] = [
     items: [
       // Badges are populated live from telemetry. See lib/telemetry.ts.
       { id: "home",      label: "My Day",        icon: Icon.bolt },
+      { id: "ask",       label: "Ask Anvil",     icon: Icon.brain },
       { id: "intake",    label: "Inbox",         icon: Icon.inbox },
       { id: "quotes",    label: "Quotes",        icon: Icon.doc },
       { id: "so",        label: "Sales Orders",  icon: Icon.layers },

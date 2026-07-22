@@ -35,6 +35,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | `amc` | `r` | `r` | `` | `` | `rw` | `rw` | `r` |
 | `anomaly` | `r` | `r` | `r` | `r` | `rw` | `` | `r` |
 | `approvals` | `r` | `rwa` | `` | `rwa` | `rwa` | `` | `r` |
+| `ask` | `r` | `r` | `r` | `r` | `r` | `r` | `r` |
 | `audit` | `r` | `r` | `r` | `r` | `rw` | `` | `r` |
 | `brsr-buyer-dashboard` | `` | `r` | `r` | `rwa` | `rwa` | `` | `r` |
 | `brsr-disclosure-detail` | `` | `r` | `r` | `r` | `rwa` | `` | `r` |

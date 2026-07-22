@@ -47,6 +47,7 @@ const screens = {
   // and correct for all roles. Role-tailored widgets (manager approvals
   // queue, admin diagnostics) are tracked as a migration follow-up.
   home:               lazyReload(() => import("./screens/home")),
+  askAnvil:           lazyReload(() => import("./screens/ask-anvil")),
   intake:             lazyReload(() => import("./screens/intake")),
   soList:             lazyReload(() => import("./screens/orders")),
   soWorkspace:        lazyReload(() => import("./screens/so-workspace")),
@@ -148,6 +149,7 @@ const screens = {
 // `params` is a URLSearchParams view of the hash query.
 export const RESOLVERS = {
   home:        () => screens.home,
+  ask:         () => screens.askAnvil,
   intake:      () => screens.intake,
   so:          ({ params }) => {
     const view = params.get("view");

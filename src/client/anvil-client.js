@@ -1230,6 +1230,15 @@
     query: async (metricId, opts) => apiFetch("/api/metrics", { method: "POST", body: { metric_id: metricId, ...(opts || {}) } }),
   };
 
+  // PDM D2: raw-material determination + persist. determine() dry-runs the
+  // verdict (make -> material/form/stock; buy -> null) for review; save()
+  // persists the reviewed verdict into the recipe + BOM + procurement_type.
+  const pdm = {
+    determineRawMaterial: async (payload) => apiFetch("/api/pdm/raw-material", { method: "POST", body: payload }),
+    saveRawMaterial: async (finishedPartNo, verdict) =>
+      apiFetch("/api/pdm/raw-material", { method: "POST", body: { finished_part_no: finishedPartNo, verdict, commit: true } }),
+  };
+
   const copilot = {
     proposals: async () => apiFetch("/api/copilot/proposals"),
     confirm: async (confirmToken) => apiFetch("/api/copilot/confirm", { method: "POST", body: { confirm_token: confirmToken } }),
@@ -1781,6 +1790,7 @@
     bom,
     copilot,
     metrics,
+    pdm,
     operatorActions,
     profileVersions,
     sourcePos,

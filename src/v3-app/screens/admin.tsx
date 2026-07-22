@@ -3767,6 +3767,7 @@ const WiredAdminCRUD = () => {
           <>
             <DocAICostPanel />
             <LlmProviderCard />
+            <DocaiProvidersPanel />
           </>
         )}
 
@@ -5393,6 +5394,78 @@ const LlmProviderCard: React.FC = () => {
         <div className="mono-sm" style={{ color: "var(--ink-3)" }}>
           Gemini needs <b>GEMINI_API_KEY</b> set on the server. The copilot + KB assistant stay on Claude regardless (not yet routed). Precedence: per-feature &gt; env &gt; tenant default &gt; Claude.
         </div>
+      </div>
+    </Card>
+  );
+};
+
+// Issue #210: per-tenant DocAI provider keys (BYOK). Enter an API key per
+// provider; it's encrypted at rest (shared docai_creds_iv) and adapters use the
+// tenant key first, then the env var. External providers carry a residency
+// warning — routing Indian POs to a US/EU SaaS is DPDPA exposure.
+type DocaiProviderRow = { id: string; label: string; external: boolean; region: string; key_present: boolean };
+const DocaiProvidersPanel: React.FC = () => {
+  const [providers, setProviders] = useState<DocaiProviderRow[]>([]);
+  const [order, setOrder] = useState<string[] | null>(null);
+  const [secretsOk, setSecretsOk] = useState(true);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  const load = async () => {
+    try {
+      const r: any = await (AnvilBackend as any)?.docai?.providerKeys?.();
+      if (r?.providers) { setProviders(r.providers); setOrder(r.provider_order || null); setSecretsOk(r.secrets_configured !== false); }
+    } catch (_e) { /* panel is optional */ }
+  };
+  useEffect(() => { load(); }, []);
+
+  const saveKey = async (id: string, clear = false) => {
+    const val = clear ? null : (drafts[id] || "").trim();
+    if (!clear && !val) { window.notifyError?.("Enter a key", "Type the API key, then Save."); return; }
+    setSavingId(id);
+    try {
+      const resp: any = await (AnvilBackend as any)?.docai?.saveProviderKeys?.({ keys: { [id]: clear ? null : val } });
+      if (!resp || resp.error) { window.notifyError?.("Save failed", (resp && resp.error && resp.error.message) || "could not store the key"); }
+      else { window.notifySuccess?.(clear ? "Key cleared" : "Key saved", id); setDrafts((d) => ({ ...d, [id]: "" })); await load(); }
+    } catch (err: any) { window.notifyError?.("Save failed", String(err?.message || err)); }
+    setSavingId(null);
+  };
+
+  return (
+    <Card title="DocAI providers · bring-your-own-key" eyebrow="AI · per-tenant credentials">
+      {!secretsOk && (
+        <Banner kind="bad" icon={Icon.alert} title="Secret storage not configured">
+          <span className="mono-sm">ANVIL_SECRETS_KEY is not set on this deployment — provider keys can't be stored.</span>
+        </Banner>
+      )}
+      <Banner kind="warn" icon={Icon.alert} title="Data residency (DPDPA)">
+        <span className="mono-sm">External providers send document contents — GSTINs, prices, part IP — outside India. Enable one only with customer consent; the in-house pipeline stays the default.</span>
+      </Banner>
+      <table className="tbl" style={{ marginTop: 10 }}>
+        <thead><tr><th>Provider</th><th>Region</th><th>API key</th><th style={{ width: 130 }}></th></tr></thead>
+        <tbody>
+          {providers.map((p) => (
+            <tr key={p.id}>
+              <td><span className="pri">{p.label}</span></td>
+              <td><Chip k={p.external ? "warn" : "good"}>{p.external ? "external · " + p.region : p.region}</Chip></td>
+              <td>
+                <input type="password" className="input mono" style={{ width: 240 }}
+                  value={drafts[p.id] || ""} onChange={(e) => setDrafts((d) => ({ ...d, [p.id]: e.target.value }))}
+                  placeholder={p.key_present ? "•••••••• set — type to replace" : "enter API key"} aria-label={p.label + " API key"} />
+              </td>
+              <td>
+                <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                  <Btn sm kind="primary" disabled={savingId === p.id || !secretsOk} onClick={() => saveKey(p.id)}>{savingId === p.id ? "…" : "Save"}</Btn>
+                  {p.key_present && <Btn sm kind="ghost" disabled={savingId === p.id} onClick={() => saveKey(p.id, true)}>Clear</Btn>}
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 8 }}>
+        Keys are encrypted at rest and never shown again. Adapters use the tenant key first, then the env var.
+        {order && order.length ? " · Provider order: " + order.join(" → ") : ""}
       </div>
     </Card>
   );

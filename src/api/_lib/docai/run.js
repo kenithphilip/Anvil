@@ -1082,10 +1082,11 @@ export const runExtractionPipeline = async (params) => {
     // it explicitly instead of silently recording status_reason='ok'.
     status = "failed";
     statusReason = "non_ack";
-  } else if (out.normalized?.classification === "non_drawing" && kind === "assembly_bom") {
-    // CM PDM P1a: the assembly-BOM classifier rejected the document
-    // (it was a PO, a lone part drawing, a photo). Surface it instead
-    // of recording a green run with an empty parts list.
+  } else if (out.normalized?.classification === "non_drawing" && (kind === "assembly_bom" || kind === "part_drawing")) {
+    // CM PDM P1a/P3a: the drawing classifier rejected the document (it was a
+    // PO, a photo, or the wrong kind of drawing). Surface it instead of
+    // recording a green run with an empty payload. part_drawing has no parts
+    // list, so it deliberately skips the empty-lines gate below.
     status = "failed";
     statusReason = "non_drawing";
   } else if (lines.length === 0 && (kind === "po" || kind === "rfq" || kind === "assembly_bom")) {

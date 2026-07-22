@@ -154,7 +154,9 @@ const ASSEMBLY_BOM_SYSTEM_PROMPT = [
   "the customer-facing spare identity, verbatim), part_number (child part/drawing",
   "no), description, quantity (QTY / NO. OFF, a number), material (per-row if a",
   "column exists), is_spare (true ONLY when the row is explicitly marked a spare/",
-  "wear/recommended-spare part).",
+  "wear/recommended-spare part), bought_out (true when marked BOUGHT-OUT /",
+  "purchased / OEM / standard / catalog, e.g. a 'BOP' column or a standard item",
+  "like a bearing/fastener/seal; else false).",
   "",
   "STEP 4: stated_line_count = the HIGHEST balloon/item number printed across ALL",
   "sheets, INCLUDING rows you could not read. Never just count your own output.",
@@ -187,6 +189,12 @@ const PART_DRAWING_SYSTEM_PROMPT = [
   "e.g. 'EN8'), finish (surface finish/coating/plating), heat_treatment,",
   "tolerances[] {feature, nominal, tolerance} for key toleranced dimensions,",
   "gdt[] {symbol, tolerance, datum} for GD&T callouts, notes[] verbatim.",
+  "",
+  "STEP 3b: dimensions (the raw-stock ENVELOPE, in mm, numeric only — drop Ø/mm/",
+  "tolerances): diameter+length for a turned part; length+width+thickness for a",
+  "plate; length+width+height for a block. Leave the rest null. bought_out = true",
+  "only if the drawing marks the item purchased/OEM/standard (rare on a detail",
+  "drawing); else false.",
   "",
   "STEP 4: Self-assess `confidence` 0..1.",
   "",
@@ -319,6 +327,7 @@ export const ASSEMBLY_BOM_SCHEMA = {
           quantity: { type: ["number", "null"] },
           material: { type: ["string", "null"] },
           is_spare: { type: ["boolean", "null"] },
+          bought_out: { type: ["boolean", "null"] },
         },
       },
     },
@@ -346,6 +355,17 @@ export const PART_DRAWING_SCHEMA = {
     material: { type: ["string", "null"] },
     finish: { type: ["string", "null"] },
     heat_treatment: { type: ["string", "null"] },
+    dimensions: {
+      type: ["object", "null"],
+      properties: {
+        diameter: { type: ["string", "null"] },
+        length: { type: ["string", "null"] },
+        width: { type: ["string", "null"] },
+        height: { type: ["string", "null"] },
+        thickness: { type: ["string", "null"] },
+      },
+    },
+    bought_out: { type: ["boolean", "null"] },
     tolerances: {
       type: "array",
       items: {
@@ -452,6 +472,7 @@ export const normalizeAssemblyBom = (out) => {
           unitPrice: null, uom: null, hsn: null, gst_pct: null,
           material: l?.material || null,
           is_spare: l?.is_spare ?? null,
+          bought_out: l?.bought_out ?? null,
         }))
       : [],
     stated_line_count: coerceStatedLineCount(out.stated_line_count),
@@ -463,6 +484,15 @@ export const normalizePartDrawing = (out) => {
   const dwg = out || {};
   const tb = dwg.title_block || {};
   const arr = (v) => (Array.isArray(v) ? v : []);
+  const dim = (v) => {
+    if (v == null) return null;
+    const m = String(v).match(/-?\d+(?:\.\d+)?/);
+    const n = m ? Number(m[0]) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  const dd = dwg.dimensions || {};
+  const dimensions = { diameter: dim(dd.diameter), length: dim(dd.length), width: dim(dd.width), height: dim(dd.height), thickness: dim(dd.thickness) };
+  const hasDim = Object.values(dimensions).some((x) => x != null);
   return {
     classification: dwg.classification || null,
     customer: null,
@@ -479,6 +509,8 @@ export const normalizePartDrawing = (out) => {
       material: dwg.material || null,
       finish: dwg.finish || null,
       heat_treatment: dwg.heat_treatment || null,
+      dimensions: hasDim ? dimensions : null,
+      bought_out: dwg.bought_out === true,
       tolerances: arr(dwg.tolerances).map((t) => ({
         feature: t?.feature || null,
         nominal: t?.nominal == null ? null : String(t.nominal),

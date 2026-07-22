@@ -43,6 +43,15 @@ describe("assembly_bom tool schema (claude, source of truth)", () => {
     expect(lineProps.is_spare.type).toContain("boolean");
   });
 
+  it("captures a bought_out flag per row (Slice B: for the make/buy gate)", () => {
+    expect(lineProps.bought_out.type).toContain("boolean");
+    const out = claudeNormalize({
+      classification: "assembly_bom", confidence: 0.9,
+      lines: [{ balloon_no: "1", part_number: "P1", quantity: 1, bought_out: true }],
+    });
+    expect(out.lines[0].bought_out).toBe(true);
+  });
+
   it("carries stated_line_count so the completeness gate can catch dropped rows", () => {
     expect(props.stated_line_count.type).toContain("integer");
     expect(props.stated_line_count.type).toContain("null");

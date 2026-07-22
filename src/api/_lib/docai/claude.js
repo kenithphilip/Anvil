@@ -323,6 +323,9 @@ export const ASSEMBLY_BOM_SYSTEM_PROMPT = [
   "  - material      per-row material if the table has a material column",
   "  - is_spare      true ONLY when the table explicitly marks the row as a",
   "                  spare / wear / recommended-spare part; else false.",
+  "  - bought_out    true when the row is marked BOUGHT-OUT / purchased / OEM /",
+  "                  standard / catalog (a 'BOP' or 'std part' column/note, or a",
+  "                  standard item like a bearing / fastener / seal); else false.",
   "",
   "STEP 4: stated_line_count = the parts list's own declared item count: the",
   "HIGHEST balloon/item number printed in the table across ALL sheets, INCLUDING",
@@ -372,6 +375,7 @@ export const ASSEMBLY_BOM_TOOL = {
             quantity: { type: ["number", "null"] },
             material: { type: ["string", "null"] },
             is_spare: { type: ["boolean", "null"] },
+            bought_out: { type: ["boolean", "null"] },
           },
         },
       },
@@ -415,7 +419,22 @@ export const PART_DRAWING_SYSTEM_PROMPT = [
   "                     e.g. {symbol:'position', tolerance:'0.1', datum:'A-B'}",
   "  - notes[]          general / manufacturing notes verbatim",
   "",
-  "STEP 4: Self-assess `confidence` 0..1 the same way as the PO extractor.",
+  "STEP 4: Read the OVERALL DIMENSIONS (the raw-stock envelope, in mm) — the",
+  "biggest extent of the part, used to pick the raw material size. Report only",
+  "the numeric value (drop 'Ø', 'mm', tolerances):",
+  "  - dimensions.diameter  the largest outer diameter, if the part is round/turned",
+  "  - dimensions.length    the overall length",
+  "  - dimensions.width     overall width (for a non-round / prismatic part)",
+  "  - dimensions.height    overall height, for a block-like part",
+  "  - dimensions.thickness overall thickness, for a plate / sheet part",
+  "Set diameter+length for a turned part; length+width+thickness for a plate;",
+  "length+width+height for a block. Leave the rest null.",
+  "",
+  "STEP 5: bought_out — true ONLY if the drawing explicitly marks the item as",
+  "purchased / bought-out / OEM / standard / catalog (rare on a detail drawing;",
+  "a detail drawing usually means the part is MADE). Else false.",
+  "",
+  "STEP 6: Self-assess `confidence` 0..1 the same way as the PO extractor.",
   "",
   "Hard rules:",
   "  - Do not invent values. null (or an empty array) is preferred to a guess.",
@@ -447,6 +466,18 @@ export const PART_DRAWING_TOOL = {
       material: { type: ["string", "null"] },
       finish: { type: ["string", "null"] },
       heat_treatment: { type: ["string", "null"] },
+      dimensions: {
+        type: ["object", "null"],
+        additionalProperties: false,
+        properties: {
+          diameter: { type: ["string", "null"] },
+          length: { type: ["string", "null"] },
+          width: { type: ["string", "null"] },
+          height: { type: ["string", "null"] },
+          thickness: { type: ["string", "null"] },
+        },
+      },
+      bought_out: { type: ["boolean", "null"] },
       tolerances: {
         type: "array",
         items: {
@@ -684,6 +715,7 @@ export const normalizeAssemblyBom = (toolInput) => {
           gst_pct: null,
           material: l?.material || null,
           is_spare: l?.is_spare ?? null,
+          bought_out: l?.bought_out ?? null,
         }))
       : [],
     stated_line_count: coerceStatedLineCount(dwg.stated_line_count),
@@ -698,6 +730,17 @@ export const normalizePartDrawing = (toolInput) => {
   const dwg = toolInput || {};
   const tb = dwg.title_block || {};
   const arr = (v) => (Array.isArray(v) ? v : []);
+  // Overall dimensions to positive numbers (mm) — the model may return "Ø25",
+  // "110 mm", "25.4"; keep only the leading numeric value, drop symbols/units.
+  const dim = (v) => {
+    if (v == null) return null;
+    const m = String(v).match(/-?\d+(?:\.\d+)?/);
+    const n = m ? Number(m[0]) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  const d = dwg.dimensions || {};
+  const dimensions = { diameter: dim(d.diameter), length: dim(d.length), width: dim(d.width), height: dim(d.height), thickness: dim(d.thickness) };
+  const hasDim = Object.values(dimensions).some((x) => x != null);
   return {
     classification: dwg.classification || null,
     customer: null,
@@ -714,6 +757,8 @@ export const normalizePartDrawing = (toolInput) => {
       material: dwg.material || null,
       finish: dwg.finish || null,
       heat_treatment: dwg.heat_treatment || null,
+      dimensions: hasDim ? dimensions : null,
+      bought_out: dwg.bought_out === true,
       tolerances: arr(dwg.tolerances).map((t) => ({
         feature: t?.feature || null,
         nominal: t?.nominal == null ? null : String(t.nominal),

@@ -163,3 +163,20 @@ export const determineRawMaterial = (input = {}) => {
     warnings,
   };
 };
+
+// Bridge: run the determination directly on a normalized part_drawing
+// `part_spec` (from the docai extractor). Feeds the extracted material +
+// overall dimensions + bought_out flag straight into the gate.
+export const rawMaterialFromPartSpec = (partSpec, opts = {}) => {
+  const ps = partSpec || {};
+  const tb = ps.title_block || {};
+  return determineRawMaterial({
+    material: ps.material,
+    dimensions: ps.dimensions || {},
+    is_bought_out: ps.bought_out === true,
+    description: tb.title || null,
+    part_no: tb.part_no || tb.drawing_no || null,
+    allowanceMm: opts.allowanceMm,
+    yieldPct: opts.yieldPct,
+  });
+};

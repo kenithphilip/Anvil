@@ -15,6 +15,7 @@ import {
   PART_DRAWING_SCHEMA,
   normalizePartDrawing as geminiNormalize,
 } from "../api/_lib/docai/gemini.js";
+import { rawMaterialFromPartSpec } from "../api/_lib/pdm/raw-material-infer.js";
 
 const props = PART_DRAWING_TOOL.input_schema.properties;
 
@@ -118,9 +119,66 @@ describe("gemini stays in lockstep with claude", () => {
       confidence: 0.8,
       title_block: { drawing_no: "D-1", part_no: "P-1" },
       material: "SS304",
+      dimensions: { diameter: "Ø25", length: "110 mm" },
+      bought_out: false,
       tolerances: [{ feature: "od", nominal: 10, tolerance: "g6" }],
       gdt: [], notes: ["note"],
     };
     expect(geminiNormalize(input)).toEqual(claudeNormalize(input));
+  });
+});
+
+// Slice B: the extraction now captures the raw-stock envelope + a make/buy flag.
+describe("part_drawing dimensions + bought_out (Slice B)", () => {
+  it("schema exposes a dimensions envelope + bought_out", () => {
+    expect(props.dimensions.properties).toMatchObject({
+      diameter: expect.anything(), length: expect.anything(), width: expect.anything(), height: expect.anything(), thickness: expect.anything(),
+    });
+    expect(props.bought_out.type).toContain("boolean");
+    expect(String(PART_DRAWING_SYSTEM_PROMPT).toLowerCase()).toMatch(/dimension|envelope|diameter/);
+    expect(String(PART_DRAWING_SYSTEM_PROMPT).toLowerCase()).toMatch(/bought.?out|purchased|standard/);
+  });
+
+  it("normalize coerces the envelope to positive numbers (mm) + a boolean bought_out", () => {
+    const out = claudeNormalize({
+      classification: "part_drawing", confidence: 0.9,
+      title_block: { part_no: "SHANK-A", title: "Weld shank" },
+      material: "CrCu",
+      dimensions: { diameter: "Ø25", length: "110 mm", width: null, height: "0", thickness: "abc" },
+      bought_out: null,
+    });
+    expect(out.part_spec.dimensions).toEqual({ diameter: 25, length: 110, width: null, height: null, thickness: null });
+    expect(out.part_spec.bought_out).toBe(false); // null -> false
+  });
+
+  it("nulls the dimensions object when nothing numeric was read", () => {
+    const out = claudeNormalize({ classification: "part_drawing", confidence: 0.5, dimensions: { diameter: "n/a" } });
+    expect(out.part_spec.dimensions).toBeNull();
+  });
+});
+
+// The bridge: extraction -> the raw-material determination engine, with the gate.
+describe("rawMaterialFromPartSpec (extraction -> engine)", () => {
+  it("a machined part_spec (material + dims) yields a make recipe with stock size", () => {
+    const out = claudeNormalize({
+      classification: "part_drawing", confidence: 0.9,
+      title_block: { part_no: "SHANK-A", title: "Weld gun shank" },
+      material: "CrCu", dimensions: { diameter: "25", length: "110" }, bought_out: false,
+    });
+    const v = rawMaterialFromPartSpec(out.part_spec, { allowanceMm: 3 });
+    expect(v.procurement_type).toBe("make");
+    expect(v.recipe).toMatchObject({ material: "CuCrZr", form: "rod" });
+    expect(v.recipe.stock_dims).toEqual({ diameter: 31, length: 113 });
+  });
+
+  it("a part_spec flagged bought_out returns NO recipe (the gate holds through the bridge)", () => {
+    const out = claudeNormalize({
+      classification: "part_drawing", confidence: 0.9,
+      title_block: { part_no: "BRG-6204", title: "Ball bearing" },
+      material: "SS304", dimensions: { diameter: "20", length: "14" }, bought_out: true,
+    });
+    const v = rawMaterialFromPartSpec(out.part_spec);
+    expect(v.procurement_type).toBe("buy");
+    expect(v.recipe).toBeNull();
   });
 });

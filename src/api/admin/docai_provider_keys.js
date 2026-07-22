@@ -13,6 +13,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings, updateTenantSettings } from "../_lib/stripe-client.js";
 import { encryptField, newIv, isSecretsConfigured } from "../_lib/secrets.js";
+import { ADAPTER_NAMES } from "../_lib/docai/index.js";
 
 // Provider registry. `external` + `region` drive the residency warning in the
 // UI — enabling a US/EU provider sends Indian customer POs (GSTINs, prices,
@@ -95,8 +96,10 @@ export default async function handler(req, res) {
       }
 
       if (Array.isArray(body?.provider_order)) {
-        // Keep only recognised provider ids; order is advisory routing config.
-        updates.docai_provider_order = body.provider_order.filter((id) => BY_ID.has(id));
+        // provider_order holds ADAPTER names (llamaparse/claude/gemini/reducto/…),
+        // which differ from the key-provider ids (e.g. the LlamaCloud KEY feeds
+        // the "llamaparse" adapter). Validate against the real adapter registry.
+        updates.docai_provider_order = body.provider_order.filter((id) => ADAPTER_NAMES.includes(id));
       }
 
       if (!Object.keys(updates).length) {

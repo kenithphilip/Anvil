@@ -73,6 +73,23 @@ export const findByGstin = async (svc, tenantId, gstin) => {
   return r.data || null;
 };
 
+// Find existing customers that share a PAN (issue #186 P2 dedup). A GSTIN is
+// state(2) + PAN(10) + entity(1) + Z + checksum, so the same PAN across GSTINs
+// is the SAME legal entity registered in different states — a strong "this is
+// probably already a customer" signal, whether or not the exact GSTIN matches.
+// LIKE '__<PAN>%' : two state chars, the PAN, then the rest. PAN is [A-Z0-9]
+// only, so it carries no LIKE metacharacters.
+export const findCustomersByPan = async (svc, tenantId, pan) => {
+  const p = String(pan || "").trim().toUpperCase();
+  if (p.length !== 10) return [];
+  const r = await svc.from("customers")
+    .select("id, customer_key, customer_name, gstin, state_code")
+    .eq("tenant_id", tenantId)
+    .ilike("gstin", "__" + p + "%")
+    .limit(20);
+  return r.data || [];
+};
+
 const findByCanonicalName = async (svc, tenantId, name) => {
   const canon = canonicaliseName(name);
   if (!canon || canon.length < 3) return null;

@@ -13,6 +13,18 @@ import { serviceClient } from "../_lib/supabase.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { validateGstin, gstinStateCode, STATE_CODES } from "../_lib/gstin.js";
 import { lookupGstinRegistry } from "../_lib/gst-provider.js";
+import { findCustomersByPan } from "../_lib/customer-canonicalizer.js";
+
+// Classify existing same-PAN customers into an exact-GSTIN duplicate vs a
+// same-entity (different-state-branch) match. Pure + exported for tests.
+export const classifyExisting = (rows, gstin) => (rows || []).map((c) => ({
+  id: c.id,
+  customer_key: c.customer_key,
+  customer_name: c.customer_name,
+  gstin: c.gstin,
+  state_code: c.state_code,
+  match: String(c.gstin || "").trim().toUpperCase() === String(gstin || "").toUpperCase() ? "gstin" : "pan",
+}));
 
 // Everything derivable from the GSTIN itself, no API. Pure + exported for tests.
 // Verification is monotone: format ⊇ state ⊇ checksum (validateGstin fails at
@@ -53,12 +65,18 @@ export default async function handler(req, res) {
     if (!raw) return json(res, 400, { error: { message: "gstin required" } });
 
     // ── Structural validation + derivation (no API) ──────────────────
-    const result = { ...deriveGstinFields(raw), registry: null, registry_status: "skipped" };
+    const result = { ...deriveGstinFields(raw), registry: null, registry_status: "skipped", existing: [] };
 
-    // ── Registry half (pluggable provider; default-deny) ─────────────
-    // Only worth a lookup when the GSTIN is structurally sound.
+    // Only worth touching the DB / provider when the GSTIN is structurally sound.
     if (result.valid) {
       const svc = serviceClient();
+
+      // ── Dedup (P2): surface existing customers by exact GSTIN or shared PAN
+      // BEFORE the operator creates a duplicate.
+      const dupRows = await findCustomersByPan(svc, ctx.tenantId, result.pan);
+      result.existing = classifyExisting(dupRows, result.gstin);
+
+      // ── Registry half (pluggable provider; default-deny) ─────────────
       const settings = await tenantSettings(svc, ctx.tenantId);
       const reg = await lookupGstinRegistry(result.gstin, settings);
       if (reg.ok) { result.registry = reg.data; result.registry_status = "ok"; }

@@ -84,6 +84,46 @@ describe("explodePipelineThroughBom", () => {
   });
 });
 
+describe("make/buy guard: a bought-out part is terminal (Slice D)", () => {
+  it("a buy part receives part-level demand but is NOT cascaded into raw material", () => {
+    // GUN(make) → BOUGHT_SUB(buy) ×1 → INNER ×5. INNER must stay null.
+    const p = mk([["GUN", 10]]);
+    explodePipelineThroughBom(p, [
+      { parent_part_no: "GUN", child_part_no: "BOUGHT_SUB", qty: 1 },
+      { parent_part_no: "BOUGHT_SUB", child_part_no: "INNER", qty: 5 },
+    ], 8, { buyParts: new Set(["BOUGHT_SUB"]) });
+    expect(qtyOf(p, "BOUGHT_SUB")).toBe(10); // bought whole — demanded at part level
+    expect(qtyOf(p, "INNER")).toBeNull();    // never exploded into its innards
+  });
+
+  it("a make sibling still explodes normally alongside a guarded buy part", () => {
+    const p = mk([["GUN", 10]]);
+    explodePipelineThroughBom(p, [
+      { parent_part_no: "GUN", child_part_no: "BOUGHT_SUB", qty: 1 },
+      { parent_part_no: "BOUGHT_SUB", child_part_no: "INNER", qty: 5 },
+      { parent_part_no: "GUN", child_part_no: "STEEL", qty: 2 }, // made -> raw material
+    ], 8, { buyParts: new Set(["BOUGHT_SUB"]) });
+    expect(qtyOf(p, "INNER")).toBeNull();
+    expect(qtyOf(p, "STEEL")).toBe(20);
+  });
+
+  it("a buy ROOT is not exploded at all", () => {
+    const p = mk([["BOUGHT", 4]]);
+    explodePipelineThroughBom(p, [{ parent_part_no: "BOUGHT", child_part_no: "X", qty: 2 }], 8, { buyParts: new Set(["BOUGHT"]) });
+    expect(qtyOf(p, "BOUGHT")).toBe(4);
+    expect(qtyOf(p, "X")).toBeNull();
+  });
+
+  it("without buyParts, behaviour is unchanged (everything cascades)", () => {
+    const p = mk([["GUN", 10]]);
+    explodePipelineThroughBom(p, [
+      { parent_part_no: "GUN", child_part_no: "SUB", qty: 1 },
+      { parent_part_no: "SUB", child_part_no: "INNER", qty: 5 },
+    ]);
+    expect(qtyOf(p, "INNER")).toBe(50);
+  });
+});
+
 describe("computeCommittedDemand (future SO schedule lines → part×week)", () => {
   it("buckets scheduled_qty by part_no and ISO week", () => {
     const out = computeCommittedDemand([

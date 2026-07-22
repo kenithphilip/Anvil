@@ -318,7 +318,15 @@ const planTenant = async (svc, tenantId) => {
     .select("parent_part_no, child_part_no, qty")
     .eq("tenant_id", tenantId);
   if (bomRows.error) throw new Error("bom: " + bomRows.error.message);
-  const bomExplosion = explodePipelineThroughBom(pipeline, bomRows.data || []);
+
+  // Make/buy guard: BOUGHT-OUT parts are terminals of the explosion — they get
+  // part-level demand but are never cascaded into raw material (we buy them
+  // whole). Load the tenant's buy parts once and pass to every explosion so a
+  // bought-out sub-assembly / component never inflates raw-material forecasts.
+  const buyPartsQ = await svc.from("item_master")
+    .select("part_no").eq("tenant_id", tenantId).eq("procurement_type", "buy");
+  const buyParts = new Set((buyPartsQ.data || []).map((r) => r.part_no).filter(Boolean));
+  const bomExplosion = explodePipelineThroughBom(pipeline, bomRows.data || [], 8, { buyParts });
 
   // Committed demand from future sales-order schedule lines, built ONCE for the
   // whole tenant and BOM-EXPLODED like the pipeline — so a confirmed SO for a
@@ -332,7 +340,7 @@ const planTenant = async (svc, tenantId) => {
     .gte("scheduled_date", today);
   if (schedRows.error) throw new Error("order_schedule_lines: " + schedRows.error.message);
   const committed = computeCommittedDemand(schedRows.data || []);
-  explodePipelineThroughBom(committed, bomRows.data || []);
+  explodePipelineThroughBom(committed, bomRows.data || [], 8, { buyParts });
 
   // Pre-fetch the opportunity pairs for top-opp attribution.
   const oppsForAttribution = await svc.from("opportunities")

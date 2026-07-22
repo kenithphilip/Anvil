@@ -113,6 +113,10 @@ export async function importBom({ svc, ctx, tenantId, asset, lines, projectId = 
   // ── 3. item_master: ensure every part exists; fill gaps only ──────
   const candidates = itemCandidates(lines, assemblies, asset.source_country);
   let itemsUpserted = 0;
+  // Parts the drawing marked BOUGHT-OUT (Slice B/D): stamp procurement_type='buy'
+  // on the NEW item so the planner's explosion guard never cascades them into
+  // raw material. Enrichment only — we never overwrite an existing row's choice.
+  const buyPartNos = new Set((lines || []).filter((l) => l && l.bought_out === true).map((l) => l.part_no).filter(Boolean));
   if (candidates.length) {
     const partNos = candidates.map((c) => c.part_no);
     const existingItemsQ = await svc.from("item_master")
@@ -133,6 +137,7 @@ export async function importBom({ svc, ctx, tenantId, asset, lines, projectId = 
           source_country: c.source_country || null,
           is_assembly: !!c.is_assembly,
           data_source: "imported",
+          ...(buyPartNos.has(c.part_no) ? { procurement_type: "buy" } : {}),
         });
       } else if (c.is_assembly && !ex.is_assembly) {
         // Safe enrichment only: never clobber operator-set fields.
@@ -145,8 +150,9 @@ export async function importBom({ svc, ctx, tenantId, asset, lines, projectId = 
       const batch = toInsert.slice(i, i + 100);
       let ins = await svc.from("item_master").insert(batch);
       if (ins.error) {
-        // Pre-105 deployments may lack data_source/is_assembly; retry without them.
-        const stripped = batch.map(({ data_source, is_assembly, ...r }) => r);
+        // Pre-105 deployments may lack data_source/is_assembly; pre-185 lack
+        // procurement_type. Retry without the optional columns.
+        const stripped = batch.map(({ data_source, is_assembly, procurement_type, ...r }) => r);
         ins = await svc.from("item_master").insert(stripped);
         if (ins.error) throw new Error("item_master insert: " + ins.error.message);
       }

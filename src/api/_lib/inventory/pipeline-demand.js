@@ -133,13 +133,20 @@ export const computeCommittedDemand = (scheduleRows) => {
 // Inputs:
 //   pipeline: Map<part_no, Map<weekStart, qty>>  (from computePipelineDemand)
 //   bomRows:  [{ parent_part_no, child_part_no, qty }]  (one tenant's BOM)
+//   opts.buyParts: optional Set<part_no> of BOUGHT-OUT parts. A buy part is a
+//     TERMINAL of the explosion — it still receives demand from its parent
+//     (you buy that many of the part), but it is NOT cascaded into its own
+//     children/raw material (you purchase it whole). This is the defensive
+//     guard that stops raw-material demand from being fabricated for parts we
+//     don't machine, independent of whether a stray recipe exists.
 // Returns { exploded } — count of (root → descendant) edges applied.
 //
 // Inert when bomRows is empty: existing tenants without a BOM are
 // unaffected.
-export const explodePipelineThroughBom = (pipeline, bomRows, maxDepth = 8) => {
+export const explodePipelineThroughBom = (pipeline, bomRows, maxDepth = 8, opts = {}) => {
   const rows = Array.isArray(bomRows) ? bomRows : [];
   if (!rows.length || !pipeline || pipeline.size === 0) return { exploded: 0 };
+  const buyParts = opts && opts.buyParts instanceof Set ? opts.buyParts : null;
 
   const children = new Map();
   for (const r of rows) {
@@ -162,6 +169,9 @@ export const explodePipelineThroughBom = (pipeline, bomRows, maxDepth = 8) => {
     while (stack.length) {
       const node = stack.pop();
       if (node.depth >= maxDepth) continue;
+      // Defensive make/buy guard: a bought-out part is terminal — it keeps the
+      // demand its parent added, but we never cascade it into raw material.
+      if (buyParts && buyParts.has(node.part)) continue;
       const kids = children.get(node.part);
       if (!kids) continue;
       for (const k of kids) {

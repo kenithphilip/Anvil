@@ -64,6 +64,20 @@ const executeAction = async (svc, ctx, proposal) => {
     };
   }
 
+  if (action === "acknowledge_inventory_exception") {
+    if (!args.exception_id) throw new Error("exception_id required");
+    // Only an OPEN exception can be acknowledged (the .eq("status","open")
+    // makes a double-ack a no-op that surfaces as an error, not a silent flip).
+    const upd = await svc.from("inventory_exceptions")
+      .update({ status: "acknowledged", acknowledged_by: ctx.user?.id || null, acknowledged_at: new Date().toISOString() })
+      .eq("tenant_id", ctx.tenantId).eq("id", args.exception_id).eq("status", "open")
+      .select("id, part_no, exception_kind, severity, status")
+      .single();
+    if (upd.error) throw new Error(upd.error.message);
+    await recordAudit(ctx, { action: "inventory_exception_acknowledged", objectType: "inventory_exception", objectId: upd.data.id, after: upd.data, detail: "copilot confirm" });
+    return { exception: upd.data };
+  }
+
   throw new Error("Unsupported action: " + action);
 };
 

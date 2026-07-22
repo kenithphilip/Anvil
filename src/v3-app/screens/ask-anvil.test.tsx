@@ -7,6 +7,10 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { fireEvent, waitFor } from "@testing-library/react";
 import { installBackend, installRbac, renderScreen } from "../test-utils";
 
+// canApprove reads getRole() -> localStorage, which is flaky in local jsdom
+// (passes in CI). Force approver so the P2a confirm affordance is deterministic.
+vi.mock("../lib/rbac", () => ({ canApprove: () => true }));
+
 const CATALOG = [
   { id: "ar_overdue", label: "Overdue AR", unit: "currency", domain: "finance", description: "overdue balance" },
   { id: "quote_acceptance_rate", label: "Quote acceptance rate", unit: "percent", domain: "sales" },
@@ -72,5 +76,52 @@ describe("AskAnvil", () => {
     await waitFor(() => expect(getByText("Overdue AR")).toBeTruthy());
     fireEvent.click(getByText("Overdue AR"));
     await waitFor(() => expect(getByText(/Couldn't answer that/i)).toBeTruthy());
+  });
+});
+
+describe("AskAnvil — GenOps (P2a inline propose → confirm)", () => {
+  const PROPOSAL = {
+    id: "p1", action: "acknowledge_inventory_exception",
+    preview: { action: "acknowledge_inventory_exception", part_no: "SHANK-A", severity: "critical" },
+    confirm_token: "tok1", expires_at: "2026-07-22T12:00:00Z",
+  };
+  const backend = (over = {}) => ({
+    metrics: { list: vi.fn(async () => ({ metrics: CATALOG })), query: vi.fn() },
+    erpChat: { send: vi.fn() },
+    copilot: { proposals: vi.fn(async () => ({ proposals: [PROPOSAL] })), confirm: vi.fn(async () => ({ ok: true, action: PROPOSAL.action, result: {} })), cancel: vi.fn(async () => ({ ok: true, cancelled: true })), ...over },
+  });
+
+  it("surfaces a pending action as an inline confirm card with its preview", async () => {
+    installBackend(backend());
+    const mod = await import("./ask-anvil");
+    const { getByText } = renderScreen(mod.default);
+    await waitFor(() => expect(getByText(/Pending actions/i)).toBeTruthy());
+    expect(getByText(/Acknowledge inventory exception/i)).toBeTruthy();
+    expect(getByText(/SHANK-A/)).toBeTruthy(); // preview rendered, nothing executed
+  });
+
+  it("confirm runs the action through copilot.confirm and clears the card", async () => {
+    const confirm = vi.fn(async () => ({ ok: true, action: PROPOSAL.action, result: {} }));
+    installBackend(backend({ confirm }));
+    const mod = await import("./ask-anvil");
+    const { getByText, getByRole, queryByText } = renderScreen(mod.default);
+    await waitFor(() => expect(getByText(/Acknowledge inventory exception/i)).toBeTruthy());
+    fireEvent.click(getByRole("button", { name: /confirm/i }));
+    await waitFor(() => expect(confirm).toHaveBeenCalledWith("tok1"));
+    await waitFor(() => expect(queryByText(/Pending actions/i)).toBeNull()); // card cleared
+    expect(getByText(/executed/i)).toBeTruthy(); // success entry in the feed
+  });
+
+  it("cancel discards the proposal via copilot.cancel without executing", async () => {
+    const cancel = vi.fn(async () => ({ ok: true, cancelled: true }));
+    const confirm = vi.fn();
+    installBackend(backend({ cancel, confirm }));
+    const mod = await import("./ask-anvil");
+    const { getByText, getByRole, queryByText } = renderScreen(mod.default);
+    await waitFor(() => expect(getByText(/Acknowledge inventory exception/i)).toBeTruthy());
+    fireEvent.click(getByRole("button", { name: /cancel/i }));
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith("tok1"));
+    expect(confirm).not.toHaveBeenCalled();
+    await waitFor(() => expect(queryByText(/Pending actions/i)).toBeNull());
   });
 });

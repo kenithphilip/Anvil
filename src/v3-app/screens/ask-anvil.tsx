@@ -2,15 +2,20 @@ import React, { useEffect, useRef, useState } from "react";
 import { Banner, Btn, Card, Chip, WSTitle, fmtINR } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { canApprove } from "../lib/rbac";
 
 // ============================================================
-// ANVIL v3 — Ask Anvil (GenAI copilot P0b)
+// ANVIL v3 — Ask Anvil (GenAI copilot P0b + P2a)
 // The front door to the copilot. Two ways to ask, one trust contract:
 //   • pick a governed metric  -> AnvilBackend.metrics.query() -> an answer
 //     card with the number + unit + provenance ("how computed") + as_of +
 //     a breakdown chart. Deterministic, no LLM — the Metric Catalog (P0a).
 //   • free-text question       -> AnvilBackend.erpChat.send() -> the agentic
-//     tool-use assistant (which can also call the same governed metrics).
+//     tool-use assistant, which can also PROPOSE an action (create a lead,
+//     send a reminder, acknowledge an exception). GenOps (P2a): proposed
+//     actions surface here as INLINE confirm/cancel cards — propose→confirm→
+//     execute, approver-gated + audited (AnvilBackend.copilot.*). Nothing
+//     mutates until a human confirms.
 // Every answer is tenant-scoped and shows how it was derived. Mounted by
 // routes.ts as the top-level `ask` route.
 // ============================================================
@@ -22,6 +27,10 @@ type MetricAnswer = {
   breakdown?: Array<Record<string, unknown>>; provenance?: string; source?: string;
 };
 type Citation = { source: string; tool?: string };
+type Proposal = {
+  id: string; action: string; preview?: Record<string, unknown>;
+  confirm_token: string; created_by?: string; expires_at?: string; created_at?: string;
+};
 type Entry =
   | { kind: "q"; text: string }
   | { kind: "metric"; answer: MetricAnswer }
@@ -29,6 +38,14 @@ type Entry =
   | { kind: "error"; message: string };
 
 const WINDOWS = [30, 90, 365];
+
+const ACTION_LABELS: Record<string, string> = {
+  create_lead: "Create lead",
+  draft_and_send_comms: "Send message",
+  acknowledge_inventory_exception: "Acknowledge inventory exception",
+};
+const labelForAction = (action: string): string =>
+  ACTION_LABELS[action] || String(action || "action").replace(/_/g, " ");
 
 const fmtValue = (unit: string, value: number | null): string => {
   if (value == null) return "—";
@@ -100,7 +117,17 @@ const AskAnvil = () => {
   const [windowDays, setWindowDays] = useState(90);
   const [busy, setBusy] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [actingOn, setActingOn] = useState<string | null>(null); // confirm_token being confirmed/cancelled
   const feedRef = useRef<HTMLDivElement | null>(null);
+  const isApprover = canApprove("approvals"); // approver roles (sales_manager/finance/admin)
+
+  const refreshProposals = async () => {
+    try {
+      const resp: any = await AnvilBackend?.copilot?.proposals?.();
+      if (resp && Array.isArray(resp.proposals)) setProposals(resp.proposals);
+    } catch (_) { /* proposals optional */ }
+  };
 
   useEffect(() => {
     let live = true;
@@ -109,6 +136,7 @@ const AskAnvil = () => {
         const resp: any = await AnvilBackend?.metrics?.list?.();
         if (live && resp && Array.isArray(resp.metrics)) setMetrics(resp.metrics);
       } catch (_) { /* catalog optional; free-text still works */ }
+      if (live) await refreshProposals();
     })();
     return () => { live = false; };
   }, []);
@@ -143,10 +171,38 @@ const AskAnvil = () => {
       } else {
         if (resp.session_id) setSessionId(resp.session_id);
         append({ kind: "text", content: resp.content || "(no answer)", citations: Array.isArray(resp.citations) ? resp.citations : [] });
+        // the assistant may have PROPOSED an action this turn — surface it inline.
+        await refreshProposals();
       }
     } catch (err: any) {
       append({ kind: "error", message: String(err?.message || err) });
     } finally { setBusy(false); }
+  };
+
+  const confirmProposal = async (p: Proposal) => {
+    if (actingOn) return;
+    setActingOn(p.confirm_token);
+    try {
+      const resp: any = await AnvilBackend?.copilot?.confirm?.(p.confirm_token);
+      if (!resp || resp.ok === false) {
+        append({ kind: "error", message: (resp && ((resp.error && resp.error.message) || resp.error)) || "Could not execute that action" });
+      } else {
+        append({ kind: "text", content: "✓ Done — " + labelForAction(p.action) + " executed.", citations: [] });
+      }
+    } catch (err: any) {
+      append({ kind: "error", message: String(err?.message || err) });
+    } finally {
+      setActingOn(null);
+      setProposals((arr) => arr.filter((x) => x.confirm_token !== p.confirm_token));
+    }
+  };
+
+  const cancelProposal = async (p: Proposal) => {
+    if (actingOn) return;
+    setActingOn(p.confirm_token);
+    try { await AnvilBackend?.copilot?.cancel?.(p.confirm_token); } catch (_) { /* best-effort */ }
+    setActingOn(null);
+    setProposals((arr) => arr.filter((x) => x.confirm_token !== p.confirm_token));
   };
 
   const inputStyle: React.CSSProperties = {
@@ -199,6 +255,48 @@ const AskAnvil = () => {
             </div>
           )}
         </Card>
+
+        {/* ── Pending actions (GenOps: propose → confirm → execute) ── */}
+        {proposals.length > 0 && (
+          <Card
+            title="Pending actions"
+            eyebrow="review before it runs"
+            right={<Chip k="warn">{proposals.length} awaiting confirm</Chip>}
+          >
+            {!isApprover && (
+              <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 8 }}>
+                Confirming an action needs an approver role — a manager, finance, or admin can run these.
+              </div>
+            )}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {proposals.map((p) => (
+                <div key={p.confirm_token} style={{ padding: 12, borderRadius: 10, border: "1px solid var(--hairline)", background: "var(--paper-2)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                    <span className="pri" style={{ fontWeight: 600 }}>{labelForAction(p.action)}</span>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <Btn sm kind="primary" disabled={!isApprover || actingOn === p.confirm_token} onClick={() => confirmProposal(p)}>
+                        {actingOn === p.confirm_token ? "Running…" : <>{Icon.check} Confirm</>}
+                      </Btn>
+                      <Btn sm kind="ghost" disabled={actingOn === p.confirm_token} onClick={() => cancelProposal(p)}>{Icon.x} Cancel</Btn>
+                    </div>
+                  </div>
+                  {p.preview && (
+                    <div className="mono-sm" style={{ marginTop: 8, color: "var(--ink-2)", display: "flex", flexWrap: "wrap", gap: 10 }}>
+                      {Object.entries(p.preview)
+                        .filter(([k]) => k !== "action")
+                        .map(([k, v]) => (
+                          <span key={k}><span style={{ color: "var(--ink-4)" }}>{k.replace(/_/g, " ")}:</span> {String(v ?? "—")}</span>
+                        ))}
+                    </div>
+                  )}
+                  <div className="mono-sm" style={{ marginTop: 6, color: "var(--ink-4)" }}>
+                    Nothing changes until you confirm{p.expires_at ? " · expires " + new Date(p.expires_at).toLocaleTimeString() : ""}.
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
 
         {/* ── Conversation ───────────────────────────────────── */}
         <Card title="Answers" eyebrow="conversation" flush>

@@ -61,6 +61,16 @@ describe("mapAssemblyBomToImport — lines", () => {
     expect(lines[1]).toMatchObject({ part_no: "TIP-9", qty: 4, is_spare: false, balloon_no: "2" });
   });
 
+  it("carries the bought_out flag through to the import line (Slice D make/buy)", () => {
+    const n = { ...NORM, lines: [
+      { balloon_no: "1", partNumber: "SHANK-A", quantity: 2, bought_out: false },
+      { balloon_no: "3", partNumber: "BRG-6204", description: "bearing", quantity: 1, bought_out: true },
+    ] };
+    const { lines } = mapAssemblyBomToImport(n);
+    expect(lines[0].bought_out).toBe(false);
+    expect(lines[1].bought_out).toBe(true);
+  });
+
   it("keeps (does not drop) rows without a part number but reports them", () => {
     const n = {
       ...NORM,

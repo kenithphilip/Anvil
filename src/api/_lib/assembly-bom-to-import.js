@@ -64,6 +64,7 @@ export const mapAssemblyBomToImport = (normalized, overrides = {}) => {
     qty: l?.quantity ?? null,
     material: trimOrNull(l?.material),
     is_spare: l?.is_spare ?? null,
+    bought_out: l?.bought_out ?? null,
     balloon_no: trimOrNull(l?.balloon_no),
     level: 1,
     uom: null,

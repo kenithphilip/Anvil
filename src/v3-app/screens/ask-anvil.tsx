@@ -43,6 +43,7 @@ const ACTION_LABELS: Record<string, string> = {
   create_lead: "Create lead",
   draft_and_send_comms: "Send message",
   acknowledge_inventory_exception: "Acknowledge inventory exception",
+  post_tally_voucher: "Post Tally voucher",
 };
 const labelForAction = (action: string): string =>
   ACTION_LABELS[action] || String(action || "action").replace(/_/g, " ");

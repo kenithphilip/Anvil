@@ -19,10 +19,11 @@ describe("NAV", () => {
     // + 3 other orphans (customer-duplicates, pipeline-kanban, voice)
     // + 1 Wave 4.1 extraction-review (under Quality)
     // + 1 P4 logistics freight-bidding (under Procurement)
-    // + 1 sales-ops cockpit (under Sales).
+    // + 1 sales-ops cockpit (under Sales)
+    // + 1 GenAI copilot "Ask Anvil" (under Workflows).
     const ids = NAV.flatMap((g) => g.items.map((i) => i.id));
-    expect(ids.length).toBe(54);
-    expect(new Set(ids).size).toBe(54);
+    expect(ids.length).toBe(55);
+    expect(new Set(ids).size).toBe(55);
   });
   it("each item has id + label + icon", () => {
     for (const group of NAV) {

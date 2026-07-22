@@ -734,6 +734,9 @@
   const customers = {
     list: async () => apiFetch("/api/customers"),
     upsert: async (payload) => apiFetch("/api/customers", { method: "POST", body: payload }),
+    // Issue #186: validate + derive (state code / PAN / validity) from a GSTIN,
+    // and fetch the registry (name/address) when a GST provider is configured.
+    gstLookup: async (gstin) => apiFetch("/api/customers/gst_lookup", { method: "POST", body: { gstin } }),
     // Customer data entry with approval: write-roles submit a change request;
     // approvers decide; on approve it applies to the customer master.
     listChangeRequests: async (params) => {

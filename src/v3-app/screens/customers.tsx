@@ -17,13 +17,42 @@ const NewCustomerModal: React.FC<{ onClose: () => void; onSubmit: (payload: any)
   const [gstin, setGstin] = useState("");
   const [currency, setCurrency] = useState("");
   const [busy, setBusy] = useState(false);
+  const [gst, setGst] = useState<any>(null);       // gst_lookup result
+  const [looking, setLooking] = useState(false);
+
+  // Issue #186: validate + derive state code / PAN from the GSTIN (no API), and
+  // prefill name/address from the GST registry when a provider is configured.
+  const doGstLookup = async () => {
+    const g = gstin.trim();
+    if (!g) { window.notifyError?.("Enter a GSTIN", "Type the 15-char GSTIN, then Fetch."); return; }
+    setLooking(true);
+    try {
+      const r: any = await AnvilBackend?.customers?.gstLookup?.(g);
+      setGst(r || null);
+      if (r?.gstin) setGstin(r.gstin);                              // normalized upper-case
+      const reg = r?.registry;
+      if (reg && (reg.legal_name || reg.trade_name) && !name.trim()) setName(reg.trade_name || reg.legal_name);
+      if (r?.state_code && !currency.trim()) setCurrency("INR");    // an Indian GSTIN implies INR
+      if (r && !r.valid) window.notifyWarn?.("GSTIN not valid", r.validation_message || "Check the number.");
+    } catch (err: any) {
+      window.notifyError?.("Lookup failed", String(err?.message || err));
+    } finally { setLooking(false); }
+  };
+
   const submit = async () => {
     if (!name.trim()) { window.notifyError?.("Name required", "Enter a customer name."); return; }
     setBusy(true);
     try {
-      await onSubmit({ customer_name: name.trim(), customer_key: key.trim() || undefined, gstin: gstin.trim() || undefined, currency: currency.trim() || undefined });
+      await onSubmit({
+        customer_name: name.trim(), customer_key: key.trim() || undefined,
+        gstin: gstin.trim() || undefined, currency: currency.trim() || undefined,
+        state_code: gst?.valid ? gst.state_code : undefined,
+        billing_address: gst?.registry?.address || undefined,
+      });
     } finally { setBusy(false); }
   };
+
+  const tick = (ok: boolean) => (ok ? Icon.check : Icon.x);
   return (
     <div className="cmdk-bg" onClick={onClose} role="dialog" aria-modal="true" aria-label="New customer">
       <div className="drawer" onClick={(e) => e.stopPropagation()} style={{ width: 460, maxHeight: "80vh" }}>
@@ -33,9 +62,33 @@ const NewCustomerModal: React.FC<{ onClose: () => void; onSubmit: (payload: any)
         </div>
         <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
           {!apply && <div className="mono-sm" style={{ color: "var(--ink-4)" }}>This will be submitted for approval before it is created.</div>}
-          <div><div className="label">customer name *</div><input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Comet Motors Ltd." /></div>
+
+          <div>
+            <div className="label">GSTIN (auto-fills the rest)</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input className="input mono" style={{ flex: 1 }} value={gstin} onChange={(e) => { setGstin(e.target.value.toUpperCase()); setGst(null); }}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); doGstLookup(); } }} placeholder="29ABCDE1234F1Z5" aria-label="GSTIN" />
+              <Btn sm kind="primary" disabled={looking || !gstin.trim()} onClick={doGstLookup}>{looking ? "…" : "Fetch"}</Btn>
+            </div>
+            {gst && (
+              <div className="mono-sm" style={{ marginTop: 6, color: "var(--ink-3)", display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                <Chip k={gst.valid ? "good" : "bad"}>{gst.valid ? "valid" : "invalid"}</Chip>
+                {gst.state_name && <span>state: <span className="pri">{gst.state_name}</span> ({gst.state_code})</span>}
+                {gst.pan && <span>PAN: <span className="pri">{gst.pan}</span></span>}
+                <span style={{ display: "inline-flex", gap: 6 }}>
+                  <span title="format">{tick(gst.verification?.format)}fmt</span>
+                  <span title="state">{tick(gst.verification?.state)}state</span>
+                  <span title="checksum">{tick(gst.verification?.checksum)}sum</span>
+                </span>
+                {gst.registry_status && gst.registry_status !== "ok" && gst.valid && (
+                  <span style={{ color: "var(--ink-4)" }}>registry: {gst.registry_status === "not_configured" ? "no provider — enter name manually" : gst.registry_status}</span>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div><div className="label">customer name *</div><input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Comet Motors Ltd." /></div>
           <div><div className="label">customer key (optional)</div><input className="input mono" value={key} onChange={(e) => setKey(e.target.value)} placeholder="auto from name if blank" /></div>
-          <div><div className="label">GSTIN (optional)</div><input className="input mono" value={gstin} onChange={(e) => setGstin(e.target.value)} placeholder="29ABCDE1234F1Z5" /></div>
           <div><div className="label">currency (optional)</div><input className="input mono" value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} placeholder="INR" maxLength={3} /></div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <Btn sm kind="ghost" onClick={onClose}>Cancel</Btn>

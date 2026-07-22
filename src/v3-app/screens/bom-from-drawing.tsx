@@ -256,6 +256,7 @@ const BomFromDrawing = () => {
         title="Extract BOM from an assembly drawing"
         meta="pdf / image (AI) · dxf (deterministic) · review before commit"
         right={<>
+          <Btn sm kind="ghost" onClick={() => (window.location.hash = "#/items?view=material")}>{Icon.layers} Part → Raw material</Btn>
           <Btn sm kind="ghost" onClick={() => (window.location.hash = "#/items?view=import")}>{Icon.upload} XLSX import</Btn>
           <Btn sm kind="ghost" onClick={() => (window.location.hash = "#/items")}>{Icon.arrowL} back to Items</Btn>
         </>}

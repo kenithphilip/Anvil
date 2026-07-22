@@ -342,3 +342,105 @@ describe("runExtractionPipeline / happy path", () => {
     expect(result.validatorSummary.error).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe("runExtractionPipeline / empty-lines auto-escalation (Mahindra PO fix)", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  const emptyPoFirstPass = {
+    ok: true,
+    adapter_used: "claude",
+    confidence_overall: 0.95,                         // confidently wrong: 0.95 > 0.7
+    confidences: { overall: 0.95 },
+    normalized: {
+      classification: "po",
+      customer: { name: "MAHINDRA & MAHINDRA LTD", gstin: "27AAACM3025E1ZZ", currency: "INR" },
+      lines: [],
+      stated_line_count: 45,
+    },
+    raw: {},
+    attempts: [{ adapter: "claude", status: "ok" }],
+    mode: "pdf_document",
+    selected_model: "claude-haiku-4-5-20251001",
+    model_selection_reason: "default_cost_optimised", // cheap tier -> eligible to escalate
+  };
+
+  it("re-extracts once at the generation tier when a cheap-tier PO returns a header but zero lines", async () => {
+    const dispatcher = await import("../api/_lib/docai/index.js");
+    dispatcher.dispatchExtract
+      .mockResolvedValueOnce(emptyPoFirstPass)
+      .mockResolvedValueOnce({
+        ...emptyPoFirstPass,
+        confidence_overall: 0.9,
+        confidences: { overall: 0.9 },
+        normalized: {
+          ...emptyPoFirstPass.normalized,
+          lines: Array.from({ length: 45 }, (_, i) => ({ partNumber: "P" + i, quantity: 1, unitPrice: 100 })),
+        },
+        selected_model: "claude-sonnet-4-5",
+        model_selection_reason: "escalate_quality",
+      });
+
+    const svc = buildSvc(makeStorage());
+    const result = await runExtractionPipeline({
+      ctx: { tenantId: "t1", userId: "u1" },
+      svc, settings: {},
+      bytes: Buffer.from("%PDF-1.4 fake"),
+      filename: "po.pdf", mime: "application/pdf",
+      sourceType: "pdf", customerId: "c1",
+      kind: "po",
+    });
+
+    expect(dispatcher.dispatchExtract).toHaveBeenCalledTimes(2);   // escalated exactly once
+    expect(result.status).toBe("ok");
+    expect(result.statusReason).toBe("ok");
+    expect(result.normalized.lines).toHaveLength(45);              // adopted the stronger run
+    // The retry must carry escalate:true so claude.js picks the generation tier.
+    expect(dispatcher.dispatchExtract.mock.calls[1][0].hints.escalate).toBe(true);
+  });
+
+  it("does NOT retry when the first pass already returned lines", async () => {
+    const dispatcher = await import("../api/_lib/docai/index.js");   // default mock returns 1 line
+    const result = await runExtractionPipeline({
+      ctx: { tenantId: "t1", userId: "u1" },
+      svc: buildSvc(makeStorage()), settings: {},
+      bytes: Buffer.from("%PDF-1.4 fake"),
+      filename: "po.pdf", mime: "application/pdf",
+      sourceType: "pdf", customerId: "c1", kind: "po",
+    });
+    expect(dispatcher.dispatchExtract).toHaveBeenCalledTimes(1);
+    expect(result.normalized.lines).toHaveLength(1);
+  });
+
+  it("does NOT retry an empty PO that already used the generation tier (nothing to escalate to)", async () => {
+    const dispatcher = await import("../api/_lib/docai/index.js");
+    dispatcher.dispatchExtract.mockResolvedValueOnce({
+      ...emptyPoFirstPass,
+      selected_model: "claude-sonnet-4-5",
+      model_selection_reason: "po_multipage",           // already generation
+    });
+    const result = await runExtractionPipeline({
+      ctx: { tenantId: "t1", userId: "u1" },
+      svc: buildSvc(makeStorage()), settings: {},
+      bytes: Buffer.from("%PDF-1.4 fake"),
+      filename: "po.pdf", mime: "application/pdf",
+      sourceType: "pdf", customerId: "c1", kind: "po",
+    });
+    expect(dispatcher.dispatchExtract).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("failed");
+    expect(result.statusReason).toBe("empty_lines");
+  });
+
+  it("respects the docai_empty_lines_escalation=false opt-out", async () => {
+    const dispatcher = await import("../api/_lib/docai/index.js");
+    dispatcher.dispatchExtract.mockResolvedValueOnce(emptyPoFirstPass);
+    const result = await runExtractionPipeline({
+      ctx: { tenantId: "t1", userId: "u1" },
+      svc: buildSvc(makeStorage()), settings: { docai_empty_lines_escalation: false },
+      bytes: Buffer.from("%PDF-1.4 fake"),
+      filename: "po.pdf", mime: "application/pdf",
+      sourceType: "pdf", customerId: "c1", kind: "po",
+    });
+    expect(dispatcher.dispatchExtract).toHaveBeenCalledTimes(1);   // opt-out honored
+    expect(result.status).toBe("failed");
+  });
+});

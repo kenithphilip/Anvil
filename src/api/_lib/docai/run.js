@@ -69,6 +69,7 @@ import { computeGstinPin } from "./grounding.js";
 import { validateGstin, gstinStateCode } from "../gstin.js";
 import { findByGstin, findCustomersByPan } from "../customer-canonicalizer.js";
 import { voteAcrossAdapters } from "./voter.js";
+import { shouldEscalateEmptyLines } from "./model_selector.js";
 import { validateExtraction } from "./validators.js";
 import { recordEvent } from "../audit.js";
 import { buildTenantIdentity, scrubCustomerOfTenantIdentity } from "./tenant-scrub.js";
@@ -860,6 +861,47 @@ export const runExtractionPipeline = async (params) => {
         reason: profileResult.reason,
         used: !!keepPages,
       };
+    }
+
+    // Auto-escalation retry (empty-PO-lines). A PO/RFQ that returns a customer
+    // header but ZERO lines on a cheaper-than-generation model is the
+    // cheap-model-choke signature (the 13-21pp Mahindra PO: customer detected,
+    // lineItems []). Retry ONCE at the generation tier before giving up.
+    // shouldEscalateEmptyLines bounds this so a genuine non-PO, a hard parse
+    // failure, or an already-strong first model never trigger a wasted second
+    // call; the shared runCost cap still governs the extra spend.
+    if (shouldEscalateEmptyLines({ out, kind, settings })) {
+      await recordRunEvent("docai_empty_lines_escalation_started", {
+        first_model: out.selected_model || null,
+        first_reason: out.model_selection_reason || null,
+        stated_line_count: out.normalized?.stated_line_count ?? null,
+      });
+      const escalated = await chunkedExtract({
+        source: dispatchSource,
+        settings: { ...settings, tenant_id: ctx.tenantId },
+        customerId,
+        hints: { ...dispatchHints, escalate: true },
+        runCost,
+        opts: { eventSink: chunkEventSink, keepPages },
+      }).catch((err) => ({ ok: false, error: err?.message || String(err) }));
+      const escalatedLines = Array.isArray(escalated?.normalized?.lines) ? escalated.normalized.lines.length : 0;
+      const adopted = !!(escalated?.ok && escalatedLines > 0);
+      await recordRunEvent("docai_empty_lines_escalation_done", {
+        escalated_model: escalated?.selected_model || null,
+        escalated_reason: escalated?.model_selection_reason || null,
+        lines_after: escalatedLines,
+        adopted,
+      });
+      if (adopted) {
+        // Keep the profiler annotation; record what we escalated from so the
+        // diagnostics tab can show "haiku returned 0 -> sonnet recovered N".
+        if (out.toc_profile) escalated.toc_profile = out.toc_profile;
+        escalated.escalated_from = {
+          model: out.selected_model || null,
+          reason: out.model_selection_reason || null,
+        };
+        out = escalated;
+      }
     }
   }
 

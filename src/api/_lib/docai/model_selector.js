@@ -50,6 +50,14 @@ const VERY_LONG_DOC_CHAR_THRESHOLD = Number(
 const HEAVY_INVOICE_LINE_THRESHOLD = Number(
   process.env.MODEL_SELECTOR_HEAVY_INVOICE_LINES || 20
 );
+// Multi-page POs/RFQs carry line-item tables that span pages; the cheap
+// (preflight) tier reads the header on page 1 and gives up on a dense table
+// on later pages, returning a customer but zero lines (the Mahindra-PO
+// empty-lines failure). A PO with several pages is worth the generation tier
+// up front. Tunable so an operator can shift the curve without a code change.
+const PO_MULTIPAGE_PAGE_THRESHOLD = Number(
+  process.env.MODEL_SELECTOR_PO_MULTIPAGE_PAGES || 4
+);
 
 // Compute a coarse "lineCount" hint when the caller didn't pass
 // one explicitly. Useful when a template fills the customer
@@ -66,6 +74,20 @@ const ocrFedThePrompt = (ctx) => {
 };
 
 const charCount = (ctx) => Number(ctx?.textLayer?.char_count || 0);
+
+// Best-effort page count from whichever deterministic layer ran (L1 text or
+// L2 OCR). Used to route multi-page POs to the generation tier.
+const pageCountFromCtx = (ctx) =>
+  Number(ctx?.textLayer?.page_count || ctx?.ocrLayer?.page_count || 0);
+
+// Reason strings that mean "the first pass used a cheaper-than-generation
+// tier" — i.e. there is a stronger model to escalate TO. Used by
+// shouldEscalateEmptyLines to bound the reactive retry.
+const CHEAP_TIER_REASONS = new Set([
+  "default_cost_optimised",
+  "supplier_ack_short",
+  "eway_bill_structured",
+]);
 
 // Public: pick a Claude model + tier + reason for the given
 // extraction context. Pure function; no I/O.
@@ -98,7 +120,12 @@ export const selectClaudeModel = (ctx = {}) => {
   if (ocrFedThePrompt(ctx)) {
     return { model: CLAUDE_TIERS.generation, tier: "generation", reason: "ocr_derived_text" };
   }
-  // 3c. Long documents need better reasoning context.
+  // 3c. Multi-page POs/RFQs carry line tables the cheap tier drops. Route to
+  // the generation tier up front (the Mahindra-PO empty-lines failure).
+  if ((ctx.kind === "po" || ctx.kind === "rfq") && pageCountFromCtx(ctx) >= PO_MULTIPAGE_PAGE_THRESHOLD) {
+    return { model: CLAUDE_TIERS.generation, tier: "generation", reason: "po_multipage" };
+  }
+  // 3d. Long documents need better reasoning context.
   if (charCount(ctx) > LONG_DOC_CHAR_THRESHOLD) {
     return { model: CLAUDE_TIERS.generation, tier: "generation", reason: "long_document" };
   }
@@ -131,10 +158,41 @@ export const selectGeminiModel = (ctx = {}) => {
   if (ocrFedThePrompt(ctx)) {
     return { model: GEMINI_TIERS.reasoning, tier: "reasoning", reason: "ocr_derived_text" };
   }
+  if ((ctx.kind === "po" || ctx.kind === "rfq") && pageCountFromCtx(ctx) >= PO_MULTIPAGE_PAGE_THRESHOLD) {
+    return { model: GEMINI_TIERS.reasoning, tier: "reasoning", reason: "po_multipage" };
+  }
   if (charCount(ctx) > VERY_LONG_DOC_CHAR_THRESHOLD) {
     return { model: GEMINI_TIERS.reasoning, tier: "reasoning", reason: "very_long_document" };
   }
   return { model: GEMINI_TIERS.preflight, tier: "preflight", reason: "default_cost_optimised" };
+};
+
+// Reactive escalation: after a first extraction pass, decide whether an
+// empty-lines PO/RFQ result warrants ONE retry at the generation tier. This is
+// the safety net behind selectClaudeModel's po_multipage rule — it catches
+// cheap-model chokes the up-front page-count heuristic missed (a 2-3 page PO
+// with a dense table, or a doc whose page_count wasn't available at selection).
+//
+// Pure. Bounded so it can never blow up cost:
+//   - PO/RFQ kinds only
+//   - the first pass succeeded (ok) and DID engage with the document — it
+//     pulled a customer header and did not classify it non_po — so we never
+//     burn a second call on a genuine non-PO or a hard parse failure
+//   - lines came back EMPTY
+//   - the first pass used a cheaper-than-generation tier (there is a stronger
+//     model to escalate TO), inferred from model_selection_reason
+//   - opt-out via settings.docai_empty_lines_escalation === false
+// Because the retry runs at the generation tier, its reason ("escalate_quality")
+// is not in CHEAP_TIER_REASONS, so a still-empty retry cannot re-trigger.
+export const shouldEscalateEmptyLines = ({ out, kind, settings } = {}) => {
+  if (settings?.docai_empty_lines_escalation === false) return false;
+  if (kind !== "po" && kind !== "rfq") return false;
+  if (!out || !out.ok) return false;
+  const lines = Array.isArray(out.normalized?.lines) ? out.normalized.lines : [];
+  if (lines.length > 0) return false;
+  if (!out.normalized?.customer) return false;
+  if (out.normalized?.classification === "non_po") return false;
+  return CHEAP_TIER_REASONS.has(out.model_selection_reason);
 };
 
 // Provider-agnostic dispatcher used by the cost-status panel +
@@ -150,4 +208,5 @@ export const __consts__ = {
   LONG_DOC_CHAR_THRESHOLD,
   VERY_LONG_DOC_CHAR_THRESHOLD,
   HEAVY_INVOICE_LINE_THRESHOLD,
+  PO_MULTIPAGE_PAGE_THRESHOLD,
 };

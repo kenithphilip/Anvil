@@ -200,6 +200,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/customers/change_requests.js | read, write, approve |
 | src/api/customers/contacts.js | read, write, approve |
 | src/api/customers/duplicates.js | read |
+| src/api/customers/gst_lookup.js | read |
 | src/api/customers/health_score.js | read, approve |
 | src/api/customers/index.js | read, write |
 | src/api/customers/merge.js | admin |

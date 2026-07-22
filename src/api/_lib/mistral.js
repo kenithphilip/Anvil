@@ -1,4 +1,16 @@
 import { safeFetch } from "./safe-fetch.js";
+import { decryptField } from "./secrets.js";
+
+// Issue #210: per-tenant Mistral key first (docai_mistral_api_key_enc, shared
+// docai_creds_iv envelope, set via the admin DocAI-Providers panel), else the
+// MISTRAL_API_KEY env var. opts.settings carries the tenant settings row.
+const resolveMistralKey = (opts) => {
+  const s = opts && opts.settings;
+  if (s && s.docai_mistral_api_key_enc && s.docai_creds_iv) {
+    try { const k = decryptField(s.docai_mistral_api_key_enc, s.docai_creds_iv); if (k) return k; } catch (_e) { /* fall through to env */ }
+  }
+  return process.env.MISTRAL_API_KEY || null;
+};
 // Mistral OCR client.
 // Wraps https://docs.mistral.ai/capabilities/document/ for Vercel functions.
 // Returns normalized pages with bounding boxes per text block.
@@ -48,8 +60,8 @@ const REALTIME_OCR_URL = "https://api.mistral.ai/v1/ocr";
 const BATCH_OCR_URL    = "https://api.mistral.ai/v1/ocr/batch";
 
 export const ocrDocument = async ({ buffer, filename, mimeType, opts }) => {
-  const apiKey = process.env.MISTRAL_API_KEY;
-  if (!apiKey) throw new Error("MISTRAL_API_KEY env var is not set");
+  const apiKey = resolveMistralKey(opts);
+  if (!apiKey) throw new Error("Mistral API key not set (tenant docai_mistral_api_key_enc or MISTRAL_API_KEY env)");
   const model = (opts && opts.model)
     || process.env.MISTRAL_OCR_MODEL
     || DEFAULT_OCR_MODEL;

@@ -122,6 +122,7 @@ import customersProfileVersions from "./customers/profile_versions.js";
 import customersContacts        from "./customers/contacts.js";
 import customersChangeRequests  from "./customers/change_requests.js";
 import customersGstLookup        from "./customers/gst_lookup.js";
+import docaiProviderKeys         from "./admin/docai_provider_keys.js";
 import customersDuplicates      from "./customers/duplicates.js";
 import customersMerge           from "./customers/merge.js";
 import customerLocationsIndex   from "./customer_locations/index.js";
@@ -785,6 +786,7 @@ const STATIC_ROUTES = {
   "/admin/customer_locations":      adminCustomerLocations,
   "/admin/diagnostics":             adminDiagnostics,
   "/admin/docai_settings":          adminDocaiSettings,
+  "/admin/docai_provider_keys":     docaiProviderKeys,
   "/admin/llm_settings":            adminLlmSettings,
   "/admin/nav_settings":            adminNavSettings,
   "/admin/quote_settings":          adminQuoteSettings,

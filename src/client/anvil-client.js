@@ -554,6 +554,10 @@
     // values; updateSettings PATCHes a partial.
     getSettings:    async () => apiFetch("/api/admin/docai_settings"),
     updateSettings: async (patch) => apiFetch("/api/admin/docai_settings", { method: "PATCH", body: patch }),
+    // Issue #210: per-tenant DocAI provider keys (encrypted) + provider order.
+    // providerKeys() returns key_present booleans only (never the key).
+    providerKeys:     async () => apiFetch("/api/admin/docai_provider_keys"),
+    saveProviderKeys: async (payload) => apiFetch("/api/admin/docai_provider_keys", { method: "POST", body: payload }),
     // Wave 4.1 operator review queue. listReviewQueue returns
     // { queue, summary }; reviewDecide triages one row with an
     // action of "claim" | "resolve" | "reopen".

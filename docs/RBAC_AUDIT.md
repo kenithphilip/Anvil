@@ -112,6 +112,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/admin/customer_terms.js | read, admin |
 | src/api/admin/customer_vendor_codes.js | read, admin |
 | src/api/admin/diagnostics.js | admin |
+| src/api/admin/docai_provider_keys.js | admin |
 | src/api/admin/docai_settings.js | read, approve |
 | src/api/admin/document_templates.js | read, admin |
 | src/api/admin/equipment.js | read, admin |

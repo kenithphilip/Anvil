@@ -195,6 +195,7 @@ const getOrExtractOcrLayer = async ({ svc, tenantId, documentId, bytes, mime, fi
   // delta is invisible.
   const ocrOpts = {
     batch: settings?.docai_mistral_ocr_batch !== false,
+    settings,   // #210: lets the Mistral client read the per-tenant OCR key
   };
   const layer = await extractOcrLayer({ buffer: bytes, filename, mimeType: mime, opts: ocrOpts });
   try {

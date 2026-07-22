@@ -53,6 +53,27 @@ const fetchOrders = async (svc, tenantId, since) => {
 
 const isCancelled = (s) => String(s || "").toUpperCase() === "CANCELLED";
 
+// P1a domain fetchers (columns verified against the migrations + endpoints).
+// An opportunity is OPEN when its stage is not one of the terminal three
+// (matches opportunities.js TERMINAL_STAGES + forecast/index.js aggregate()).
+const TERMINAL_STAGES = ["CLOSE_WON", "CLOSE_LOST", "REGRETTED"];
+const isOpenOpp = (stage) => !TERMINAL_STAGES.includes(String(stage || "").toUpperCase());
+const fetchOpportunities = async (svc, tenantId) => {
+  const r = await svc.from("opportunities").select("stage, amount_inr, probability, ai_probability").eq("tenant_id", tenantId);
+  if (r.error) throw new Error("opportunities: " + r.error.message);
+  return r.data || [];
+};
+const fetchInventoryExceptions = async (svc, tenantId) => {
+  const r = await svc.from("inventory_exceptions").select("status, severity, exception_kind").eq("tenant_id", tenantId);
+  if (r.error) throw new Error("inventory_exceptions: " + r.error.message);
+  return r.data || [];
+};
+const fetchScorecards = async (svc, tenantId) => {
+  const r = await svc.from("supplier_scorecards").select("supplier, on_time_pct").eq("tenant_id", tenantId);
+  if (r.error) throw new Error("supplier_scorecards: " + r.error.message);
+  return r.data || [];
+};
+
 // ── the catalog ──────────────────────────────────────────────────────
 export const METRICS = [
   // ---- Finance / AR (aging considers ALL outstanding invoices) ----
@@ -159,6 +180,65 @@ export const METRICS = [
     params: ["window_days"],
     fetch: (svc, t, p) => fetchOrders(svc, t, sinceIso(p.nowMs, p.windowDays)),
     reduce: (orders) => ({ value: (orders || []).length, provenance: "count(orders with created_at in window)" }),
+  },
+  // ---- Sales pipeline (opportunities; open = stage not terminal) ----
+  {
+    id: "open_opportunity_value", label: "Open pipeline value", domain: "sales", unit: "currency",
+    description: "Total value of open opportunities (stage not won/lost/regretted).",
+    params: [],
+    fetch: fetchOpportunities,
+    reduce: (opps) => {
+      const open = (opps || []).filter((o) => isOpenOpp(o.stage));
+      const value = round2(open.reduce((s, o) => s + (Number(o.amount_inr) || 0), 0));
+      return { value, count: open.length, provenance: "sum(amount_inr) over opportunities whose stage is not CLOSE_WON/CLOSE_LOST/REGRETTED" };
+    },
+  },
+  {
+    id: "weighted_pipeline_value", label: "Probability-weighted pipeline", domain: "sales", unit: "currency",
+    description: "Open pipeline weighted by each opportunity's win probability (AI probability when scored, else the operator's).",
+    params: [],
+    fetch: fetchOpportunities,
+    reduce: (opps) => {
+      const open = (opps || []).filter((o) => isOpenOpp(o.stage));
+      const value = round2(open.reduce((s, o) => {
+        const raw = Number(o.ai_probability != null ? o.ai_probability : o.probability);
+        const pct = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : 0;
+        return s + (Number(o.amount_inr) || 0) * (pct / 100);
+      }, 0));
+      return { value, count: open.length, provenance: "sum(amount_inr × coalesce(ai_probability, probability)/100) over open opportunities" };
+    },
+  },
+  {
+    id: "open_opportunities", label: "Open opportunities", domain: "sales", unit: "count",
+    description: "Number of open opportunities (stage not terminal).",
+    params: [],
+    fetch: fetchOpportunities,
+    reduce: (opps) => ({ value: (opps || []).filter((o) => isOpenOpp(o.stage)).length, provenance: "count(opportunities whose stage is not terminal)" }),
+  },
+  // ---- Inventory / procurement ----
+  {
+    id: "inventory_exceptions_open", label: "Open inventory exceptions", domain: "inventory", unit: "count",
+    description: "Open inventory exceptions (stockout imminent, below reorder point, supplier delay…), by severity.",
+    params: [],
+    fetch: fetchInventoryExceptions,
+    reduce: (rows) => {
+      const open = (rows || []).filter((r) => String(r.status) === "open");
+      const breakdown = ["critical", "bad", "warn", "info"]
+        .map((label) => ({ label, count: open.filter((r) => String(r.severity) === label).length }))
+        .filter((b) => b.count > 0);
+      return { value: open.length, breakdown, provenance: "count(inventory_exceptions where status = 'open'), tenant-scoped" };
+    },
+  },
+  {
+    id: "supplier_on_time_rate", label: "Supplier on-time rate", domain: "procurement", unit: "percent",
+    description: "Average on-time delivery % across your suppliers' current scorecards.",
+    params: [],
+    fetch: fetchScorecards,
+    reduce: (rows) => {
+      const vals = (rows || []).map((r) => Number(r.on_time_pct)).filter((n) => Number.isFinite(n));
+      const value = vals.length ? Math.round((vals.reduce((s, n) => s + n, 0) / vals.length) * 10) / 10 : 0;
+      return { value, count: vals.length, provenance: "avg(on_time_pct) over supplier_scorecards (current snapshot), tenant-scoped" };
+    },
   },
 ];
 

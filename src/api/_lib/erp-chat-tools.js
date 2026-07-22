@@ -509,6 +509,98 @@ const TOOLS = {
     },
   },
 
+  // ── P1a: more read-only domain tools (columns verified) ──────────────
+  search_opportunities: {
+    scope: "read.pipeline",
+    description: "Search the sales pipeline (opportunities). Filter by stage, customer, or open_only (still in play). Returns name, stage, amount_inr, and win probability (operator + AI).",
+    parameters: {
+      type: "object",
+      properties: {
+        stage: { type: "string", description: "e.g. QUALIFICATION, RFQ, NEGOTIATION_REVIEW, CLOSE_WON, CLOSE_LOST" },
+        open_only: { type: "boolean", description: "only opportunities not yet won/lost/regretted" },
+        customer_id: { type: "string" },
+        limit: { type: "integer", default: 25 },
+      },
+    },
+    run: async (svc, tenantId, args) => {
+      let q = svc.from("opportunities")
+        .select("id, opportunity_name, customer_id, stage, amount_inr, probability, ai_probability, close_date")
+        .eq("tenant_id", tenantId);
+      if (args?.stage) q = q.eq("stage", String(args.stage).toUpperCase());
+      if (args?.open_only) q = q.not("stage", "in", "(CLOSE_WON,CLOSE_LOST,REGRETTED)");
+      if (args?.customer_id) q = q.eq("customer_id", args.customer_id);
+      const r = await q.order("updated_at", { ascending: false }).limit(limit(args?.limit));
+      if (r.error) return { error: r.error.message };
+      return { rows: r.data || [], source: "opportunities" };
+    },
+  },
+  read_inventory_exceptions: {
+    scope: "read.inventory",
+    description: "List inventory exceptions (stockout_imminent, below_reorder_point, supplier_delay, demand_spike…). Defaults to OPEN exceptions; severity is one of info/warn/bad/critical.",
+    parameters: {
+      type: "object",
+      properties: {
+        status: { type: "string", description: "open | acknowledged | resolved | suppressed | all (default open)" },
+        severity: { type: "string", description: "info | warn | bad | critical" },
+        part_no: { type: "string" },
+        limit: { type: "integer", default: 25 },
+      },
+    },
+    run: async (svc, tenantId, args) => {
+      let q = svc.from("inventory_exceptions")
+        .select("id, part_no, exception_kind, severity, status, detail, created_at")
+        .eq("tenant_id", tenantId);
+      const status = args?.status || "open";
+      if (status !== "all") q = q.eq("status", status);
+      if (args?.severity) q = q.eq("severity", args.severity);
+      if (args?.part_no) q = q.eq("part_no", args.part_no);
+      const r = await q.order("created_at", { ascending: false }).limit(limit(args?.limit));
+      if (r.error) return { error: r.error.message };
+      return { rows: r.data || [], source: "inventory_exceptions" };
+    },
+  },
+  supplier_scorecard: {
+    scope: "read.suppliers",
+    description: "Supplier performance scorecards: on_time_pct, price_accuracy_pct, response_time_hours, ack counts. One current snapshot per supplier (identified by name).",
+    parameters: {
+      type: "object",
+      properties: {
+        supplier: { type: "string", description: "optional supplier-name filter (partial match)" },
+        limit: { type: "integer", default: 25 },
+      },
+    },
+    run: async (svc, tenantId, args) => {
+      let q = svc.from("supplier_scorecards")
+        .select("supplier, country, on_time_pct, price_accuracy_pct, response_time_hours, total_acks, variance_count, last_updated")
+        .eq("tenant_id", tenantId);
+      if (args?.supplier) q = q.ilike("supplier", `%${args.supplier}%`);
+      const r = await q.order("on_time_pct", { ascending: false }).limit(limit(args?.limit));
+      if (r.error) return { error: r.error.message };
+      return { rows: r.data || [], source: "supplier_scorecards" };
+    },
+  },
+  list_demand_forecast: {
+    scope: "read.inventory",
+    description: "Upcoming per-part demand forecast by week (committed + pipeline + baseline, with p50/p90/p95 quantiles). This is the INVENTORY demand forecast — distinct from the sales pipeline forecast.",
+    parameters: {
+      type: "object",
+      properties: {
+        part_no: { type: "string" },
+        limit: { type: "integer", default: 50 },
+      },
+    },
+    run: async (svc, tenantId, args) => {
+      const today = new Date().toISOString().slice(0, 10);
+      let q = svc.from("demand_forecasts")
+        .select("part_no, week_start, forecast_committed, forecast_pipeline, forecast_baseline, forecast_total, quantile_50, quantile_90, quantile_95, model_name")
+        .eq("tenant_id", tenantId).gte("week_start", today);
+      if (args?.part_no) q = q.eq("part_no", args.part_no);
+      const r = await q.order("week_start", { ascending: true }).limit(limit(args?.limit));
+      if (r.error) return { error: r.error.message };
+      return { rows: r.data || [], source: "demand_forecasts" };
+    },
+  },
+
   // ── write.* tools (PR2): propose-only. They NEVER execute on first
   // call - they create an action_proposals row and return a preview +
   // single-use confirm_token. A human confirms via POST /api/copilot/

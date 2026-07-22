@@ -121,6 +121,42 @@ describe("computeMetric — the answer contract", () => {
   });
 });
 
+describe("P1a domain reducers (opportunities / inventory / suppliers)", () => {
+  const opps = [
+    { stage: "RFQ", amount_inr: 1000, probability: 40, ai_probability: 60 },        // open; ai-weighted 600
+    { stage: "QUALIFICATION", amount_inr: 500, probability: 20, ai_probability: null }, // open; operator-weighted 100
+    { stage: "CLOSE_WON", amount_inr: 2000, probability: 100, ai_probability: 100 },  // terminal -> excluded
+    { stage: "CLOSE_LOST", amount_inr: 800, probability: 0 },                          // terminal -> excluded
+  ];
+  it("open_opportunity_value sums open opps only", () => {
+    expect(reduceOf("open_opportunity_value", opps).value).toBe(1500);
+  });
+  it("weighted_pipeline_value uses ai_probability when set, else operator probability", () => {
+    expect(reduceOf("weighted_pipeline_value", opps).value).toBe(700); // 1000*.6 + 500*.2
+  });
+  it("open_opportunities counts non-terminal stages", () => {
+    expect(reduceOf("open_opportunities", opps).value).toBe(2);
+  });
+
+  it("inventory_exceptions_open counts status=open with a severity breakdown", () => {
+    const rows = [
+      { status: "open", severity: "critical", exception_kind: "stockout_imminent" },
+      { status: "open", severity: "warn", exception_kind: "below_reorder_point" },
+      { status: "resolved", severity: "bad" },
+      { status: "acknowledged", severity: "critical" },
+    ];
+    const r = reduceOf("inventory_exceptions_open", rows);
+    expect(r.value).toBe(2);
+    expect(r.breakdown).toEqual([{ label: "critical", count: 1 }, { label: "warn", count: 1 }]);
+  });
+
+  it("supplier_on_time_rate averages on_time_pct (already 0-100)", () => {
+    const r = reduceOf("supplier_on_time_rate", [{ supplier: "Acme", on_time_pct: 90 }, { supplier: "Beta", on_time_pct: 80 }]);
+    expect(r.value).toBe(85);
+    expect(r.count).toBe(2);
+  });
+});
+
 describe("copilot tools", () => {
   it("registers query_metric + list_metrics under read.analytics", () => {
     const names = erpChatTools().map((t) => t.name);
@@ -129,5 +165,18 @@ describe("copilot tools", () => {
     expect(erpChatToolScope("list_metrics")).toBe("read.analytics");
     // read.analytics is a read scope, so default MCP tokens (read.*) can call it
     expect("read.analytics".startsWith("read.")).toBe(true);
+  });
+
+  it("registers the P1a domain tools with read scopes", () => {
+    const names = erpChatTools().map((t) => t.name);
+    expect(names).toEqual(expect.arrayContaining(["search_opportunities", "read_inventory_exceptions", "supplier_scorecard", "list_demand_forecast"]));
+    expect(erpChatToolScope("search_opportunities")).toBe("read.pipeline");
+    expect(erpChatToolScope("read_inventory_exceptions")).toBe("read.inventory");
+    expect(erpChatToolScope("supplier_scorecard")).toBe("read.suppliers");
+    expect(erpChatToolScope("list_demand_forecast")).toBe("read.inventory");
+    // every P1a tool scope is a read scope (default-granted to MCP tokens)
+    for (const n of ["search_opportunities", "read_inventory_exceptions", "supplier_scorecard", "list_demand_forecast"]) {
+      expect(erpChatToolScope(n).startsWith("read.")).toBe(true);
+    }
   });
 });

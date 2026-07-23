@@ -8,6 +8,9 @@ const H = vi.hoisted(() => ({ resp: null, captured: null }));
 vi.mock("../api/_lib/openrouter.js", () => ({
   callOpenRouter: vi.fn(async (opts) => { H.captured = opts; return H.resp; }),
   pickOpenRouterModel: (o) => o || "test/model",
+  // The adapter resolves the key through the shared helper, which accepts the
+  // canonical OPENROUTER_API_KEY or the `open_router` alias the deployment sets.
+  openRouterApiKey: () => process.env.OPENROUTER_API_KEY || process.env.open_router || null,
 }));
 
 const { isConfigured, extract } = await import("../api/_lib/docai/openrouter.js");

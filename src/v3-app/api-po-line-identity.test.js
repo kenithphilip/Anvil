@@ -7,14 +7,16 @@
 // "A12060OBAR010003" in a separate "Item Number" column.
 
 import { describe, it, expect } from "vitest";
-import { splitPartFromDescription, repairLinePartCode, repairPartCodes, looksLikePartCode } from "../api/_lib/docai/part-split.js";
+import { splitPartFromDescription, repairLinePartCode, repairPartCodes, looksLikePartCode, brandTokensFromTenantName, __test__ } from "../api/_lib/docai/part-split.js";
 import { classifyColumns } from "../api/_lib/docai/table-columns.js";
 import { computeOrderPayloadHash, canonicalOrderPayload } from "../api/_lib/payload-hash.js";
 import { unmappedVoucherLines, computeLineTax, buildSalesVoucherXml } from "../api/_lib/tally-build-voucher.js";
 
 // ── Item 3: deterministic part/description split ───────────────────────────
 describe("part-split (real lines from PO 0066026562)", () => {
-  const opts = { brandTokens: ["OBARA"] };
+  // Brand + noise vocabulary is per-tenant config, exactly as run.js supplies
+  // it — nothing entity-specific is baked into the module.
+  const opts = { brandTokens: ["OBARA"], stopWords: ["STD"] };
 
   it.each([
     ["OBARA STD SHANK TWS-092-90-2",      "TWS-092-90-2",   "SHANK"],
@@ -27,7 +29,8 @@ describe("part-split (real lines from PO 0066026562)", () => {
   });
 
   it("keeps ASSY / FIXED / MOV. — this master distinguishes SHUNT from SHUNT ASSY", () => {
-    // Stripping them as boilerplate would collapse genuinely different items.
+    // Stripping them as boilerplate would collapse genuinely different items,
+    // which is why the module ships with an EMPTY default vocabulary.
     expect(splitPartFromDescription("OBARA SHUNT ASSY 403S0K2652", opts).description).toBe("SHUNT ASSY");
     expect(splitPartFromDescription("OBARA FIXED HOLDER X-TB0029-3", opts).description).toBe("FIXED HOLDER");
   });
@@ -62,6 +65,43 @@ describe("part-split (real lines from PO 0066026562)", () => {
     }, opts);
     expect(repaired).toBe(1);
     expect(normalized.lines[1].partNumber).toBe("P-009");
+  });
+});
+
+// ── Multi-entity: the same code must serve any tenant on the platform ──────
+describe("part-split is entity-agnostic", () => {
+  it("ships with NO built-in vocabulary — an unconfigured tenant strips nothing", () => {
+    // Guards against anyone re-seeding the stop-list with words that are noise
+    // for one entity and meaningful SKU qualifiers for another.
+    expect(__test__.DEFAULT_STOP_WORDS.size).toBe(0);
+    expect(splitPartFromDescription("ACME STD WIDGET AB-100-1", {}))
+      .toEqual({ partNumber: "AB-100-1", description: "ACME STD WIDGET" });
+  });
+
+  it("derives the brand token from ANY tenant's registered name", () => {
+    expect(brandTokensFromTenantName("OBARA INDIA PRIVATE LIMITED")).toEqual(["OBARA"]);
+    expect(brandTokensFromTenantName("Faith Automation Systems & Tooling Private Limited")).toEqual(["FAITH"]);
+    expect(brandTokensFromTenantName("Zeta Werke GmbH")).toEqual(["ZETA"]);
+    expect(brandTokensFromTenantName("Pvt Ltd")).toEqual([]);   // nothing but legal form
+    expect(brandTokensFromTenantName("")).toEqual([]);
+  });
+
+  it("splits a DIFFERENT entity's part formats with only its own config", () => {
+    const acme = { brandTokens: brandTokensFromTenantName("Acme Tooling Pvt Ltd"), stopWords: ["GRADE"] };
+    expect(splitPartFromDescription("ACME GRADE BUSHING BSH/44/9", acme))
+      .toEqual({ partNumber: "BSH/44/9", description: "BUSHING" });
+    expect(splitPartFromDescription("ACME COUPLING CPL9931X", acme))
+      .toEqual({ partNumber: "CPL9931X", description: "COUPLING" });
+  });
+
+  it("recognises codes by SHAPE, not by any entity's known prefixes", () => {
+    for (const code of ["AB-100-1", "X-HD0420-3", "TNA-16-04-10-1", "CPL9931X", "BSH/44/9"]) {
+      expect(looksLikePartCode(code)).toBe(true);
+    }
+    // Unit tokens must never be mistaken for a code.
+    for (const notCode of ["NOS", "PCS", "EACH", "WIDGET"]) {
+      expect(looksLikePartCode(notCode)).toBe(false);
+    }
   });
 });
 

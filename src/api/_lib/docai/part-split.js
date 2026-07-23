@@ -1,16 +1,21 @@
 // Deterministic part-code / description split.
 //
-// The extraction prompt already tells the model to pull our part code out of a
-// prefixed description ("OBARA STD SHANK TWS-092-90-2" -> "TWS-092-90-2",
-// claude.js rule (c)). But the split lived ENTIRELY inside the LLM: there was
-// no post-processor anywhere, and validators.js only warns when a line has
+// Many OEM buyers print the seller's part code INSIDE a descriptive phrase
+// rather than in its own column, e.g. "<BRAND> <GRADE> <NOUN> <CODE>". The
+// extraction prompt already asks the model to pull the code out (claude.js
+// rule (c)), but the split lived ENTIRELY inside the LLM: there was no
+// post-processor anywhere, and validators.js only warns when a line has
 // NEITHER a partNumber nor a description — never that partNumber is a whole
 // sentence. So when the model returned the uncut cell, nothing noticed, and
 // two things then went wrong downstream:
 //
+// ENTITY-AGNOSTIC BY CONSTRUCTION: no brand, customer or part-format literal
+// appears in this module. Codes are recognised by SHAPE, the brand token comes
+// from the tenant record, and noise words come from tenant/customer config.
+//
 //   1. customer-hints.js derives "customer part-number prefixes" from
 //      line.partNumber with /^([A-Za-z]{2,5})/. A failed split teaches it
-//      "OBARA", which it injects into the NEXT extraction's prompt — the
+//      the BRAND token, which it injects into the NEXT extraction's prompt — the
 //      failure reinforces itself.
 //   2. orders/[id].js writes line.partNumber verbatim into
 //      item_customer_parts.customer_part_number, burning the whole sentence in
@@ -20,18 +25,17 @@
 // result is auditable and re-runnable rather than a coin-flip on model mood.
 //
 // SCOPE: this recovers the CODE. It deliberately does not try to produce the
-// canonical description ("SHANK") — that is master data. Once partNumber
+// canonical description (the catalogue noun) — that is master data. Once partNumber
 // resolves against item_master the canonical name comes from there; inventing
 // it by string surgery means re-deriving a stop-list for every new OEM prefix.
 
 // A part code: alphanumeric groups joined by hyphens/slashes, containing at
-// least one digit and at least one separator (TWS-092-90-2, X-HD0420-3,
-// TNA-16-04-10-1, 403S0K2652 is deliberately NOT matched here — see below).
+// least one digit and at least one separator (e.g. AAA-092-90-2, X-HD0420-3).
+// A solid run with no separator is handled by SOLID_CODE below.
 const HYPHENATED_CODE = /^[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)+$/;
 
-// A solid alphanumeric code with digits and at least one letter, length >= 5
-// (403S0K2652, PLTB000004). Looser, so it is only used when no hyphenated
-// candidate exists.
+// A solid alphanumeric code with digits and at least one letter, length >= 5.
+// Looser, so it only applies when no hyphenated candidate exists.
 const SOLID_CODE = /^(?=.*\d)(?=.*[A-Za-z])[A-Za-z0-9]{5,}$/;
 
 const isCodeToken = (t) => HYPHENATED_CODE.test(t) || SOLID_CODE.test(t);
@@ -39,15 +43,49 @@ const isCodeToken = (t) => HYPHENATED_CODE.test(t) || SOLID_CODE.test(t);
 // Tokens that are never a part code even though they look codey.
 const NEVER_CODE = new Set(["NOS", "PCS", "EACH", "SET", "KG", "MM", "NO"]);
 
-// Default noise words — deliberately MINIMAL. It is tempting to strip
-// "ASSY"/"FIXED"/"MOV." as boilerplate, but this tenant's item master
-// distinguishes "SHUNT" from "SHUNT ASSY" and "FIXED HOLDER" from
-// "MOV. HOLDER" — they are different items, so dropping those tokens destroys
-// real information. Only a grade marker is stripped by default.
-// Tenant-specific additions belong in customer_format_profiles, not here.
-const DEFAULT_STOP_WORDS = new Set(["STD"]);
+// Noise words are TENANT DATA, not code.
+//
+// This module must work for any entity on the platform, so it ships with an
+// EMPTY default vocabulary. The only token stripped without configuration is
+// the tenant's own brand, and that is derived from the tenant record at call
+// time (see opts.brandTokens) rather than hardcoded here.
+//
+// The temptation is to seed this with "grade" words like STD / ASSY / FIXED /
+// TYPE. Resist it: whether such a token is noise is entity-specific. One
+// observed manufacturer's item master distinguishes "SHUNT" from "SHUNT ASSY"
+// and "FIXED HOLDER" from "MOV. HOLDER" — they are different SKUs, so
+// stripping those would silently merge distinct items. Another entity may
+// genuinely treat them as boilerplate.
+//
+// Per-tenant values arrive via opts.stopWords (settings.docai_part_split_stopwords);
+// per-customer values belong on customer_format_profiles, since two customers
+// of the same seller often print different prefixes.
+const DEFAULT_STOP_WORDS = new Set();
 
 const tokenize = (s) => String(s || "").trim().split(/\s+/).filter(Boolean);
+
+// Legal-form words carried by company names in most jurisdictions. Stripped
+// only when deriving a brand token, never from a description.
+const LEGAL_FORM_TOKENS = new Set([
+  "PRIVATE", "PVT", "LIMITED", "LTD", "LLP", "PLC", "INC", "LLC", "CO", "COMPANY",
+  "CORP", "CORPORATION", "GMBH", "AG", "SA", "SRL", "BV", "NV", "OY", "AB", "AS", "PTE",
+]);
+
+// Public: derive the brand token(s) to strip from a line description, from the
+// TENANT's own registered name. Entity-agnostic: a seller's own brand is the
+// one prefix that is reliably noise on their own parts, and it is data we
+// already hold rather than a literal in code.
+//
+// Returns at most the leading meaningful token ("OBARA INDIA PRIVATE LIMITED"
+// -> ["OBARA"], "Faith Automation Systems Pvt Ltd" -> ["FAITH"]). Deliberately
+// conservative: taking every token would strip words like "TOOLING" or
+// "AUTOMATION" that may be genuine description nouns for that entity.
+export const brandTokensFromTenantName = (name) => {
+  const t = tokenize(name)
+    .map((x) => x.replace(/[.,&]/g, "").toUpperCase())
+    .filter((x) => x.length >= 2 && !LEGAL_FORM_TOKENS.has(x));
+  return t.length ? [t[0]] : [];
+};
 
 // Public: does this value look like a bare part code (vs a sentence)?
 export const looksLikePartCode = (v) => {

@@ -70,7 +70,7 @@ import { validateGstin, gstinStateCode } from "../gstin.js";
 import { findByGstin, findCustomersByPan } from "../customer-canonicalizer.js";
 import { voteAcrossAdapters } from "./voter.js";
 import { shouldEscalateEmptyLines } from "./model_selector.js";
-import { repairPartCodes } from "./part-split.js";
+import { repairPartCodes, brandTokensFromTenantName } from "./part-split.js";
 import { validateExtraction } from "./validators.js";
 import { recordEvent } from "../audit.js";
 import { buildTenantIdentity, scrubCustomerOfTenantIdentity } from "./tenant-scrub.js";
@@ -1062,9 +1062,13 @@ export const runExtractionPipeline = async (params) => {
   // Untouched when the model already returned a bare code.
   if (out?.normalized && settings?.docai_part_split !== false) {
     try {
-      const brandTokens = [];
-      const tName = (settings?.tenant_display_name || settings?.tally_company_name || "").trim();
-      if (tName) brandTokens.push(tName.split(/\s+/)[0]);
+      // Brand + noise vocabulary is per-TENANT data, never hardcoded: the
+      // brand comes from the tenant's own registered name, extra noise words
+      // from tenant settings. Nothing here is specific to any one entity.
+      const brandTokens = [
+        ...brandTokensFromTenantName(settings?.tenant_display_name || settings?.tally_company_name || ""),
+        ...(Array.isArray(settings?.docai_part_split_brand_tokens) ? settings.docai_part_split_brand_tokens : []),
+      ];
       const { normalized: repairedNorm, repaired } = repairPartCodes(out.normalized, {
         brandTokens,
         stopWords: Array.isArray(settings?.docai_part_split_stopwords) ? settings.docai_part_split_stopwords : [],

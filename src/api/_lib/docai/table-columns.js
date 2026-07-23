@@ -3,11 +3,11 @@
 // adapters previously carried the same two bugs independently.
 //
 // THE BUG THIS FIXES. Both used `/(part|sku|item|catalog)/` to find the part
-// column and `/(desc|name)/` to find the description. On a Mahindra PO whose
-// header is
+// column and `/(desc|name)/` to find the description. On an OEM PO whose header
+// is
 //     Line | Item Number | Service Parent Name | Item Description | ...
-// "Item Number" matches `item` FIRST, so partNumber became Mahindra's OWN SAP
-// code (A12060OBAR010003) instead of ours; and "Service Parent Name" matches
+// "Item Number" matches `item` FIRST, so partNumber became the BUYER's own SAP
+// code instead of the seller's; and "Service Parent Name" matches
 // `name` before "Item Description" ever gets a look. Both adapters sit AHEAD
 // of claude in the default provider order, so whenever they are configured
 // they silently produce the exact inverse of the dual-code design.

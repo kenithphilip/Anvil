@@ -224,6 +224,42 @@ const AskAnvil = () => {
         const resp: any = await AnvilBackend?.metrics?.list?.();
         if (live && resp && Array.isArray(resp.metrics)) setMetrics(resp.metrics);
       } catch (_) { /* catalog optional; free-text still works */ }
+
+      // Restore the most recent conversation. Every turn is already persisted
+      // to erp_chat_messages and /api/erp_chat/sessions has served it all
+      // along — this screen just never asked, so a reload looked like the
+      // history had been lost. Best-effort: a failure here leaves an empty
+      // feed, exactly as before, and never blocks asking a new question.
+      try {
+        const list: any = await AnvilBackend?.erpChat?.sessions?.();
+        const latest = Array.isArray(list?.sessions) ? list.sessions[0] : null;
+        if (live && latest?.id) {
+          const full: any = await AnvilBackend?.erpChat?.session?.(latest.id);
+          const msgs: any[] = Array.isArray(full?.messages) ? full.messages : [];
+          const restored: Entry[] = [];
+          for (const m of msgs) {
+            if (m.role === "user") restored.push({ kind: "q", text: m.content });
+            else if (m.role === "assistant") {
+              restored.push({
+                kind: "text",
+                content: m.content || "",
+                citations: Array.isArray(m.citations) ? m.citations : [],
+                // Partial diagnostics reconstructed from the persisted row —
+                // still tokenless. The per-tool trace is only on live turns.
+                diagnostics: (m.model || m.tokens_in != null)
+                  ? { model: m.model, tokens_in: m.tokens_in, tokens_out: m.tokens_out, latency_ms: m.latency_ms }
+                  : undefined,
+              });
+            }
+            // 'tool' rows are the internal trace, not conversation.
+          }
+          if (live && restored.length) {
+            setEntries(restored);
+            setSessionId(latest.id);   // continue the same thread
+          }
+        }
+      } catch (_) { /* history is a convenience, never a blocker */ }
+
       if (live) await refreshProposals();
     })();
     return () => { live = false; };

@@ -20,6 +20,33 @@ import { listMetrics, computeMetric } from "./metrics/catalog.js";
 
 const limit = (n) => Math.max(1, Math.min(50, Number(n || 25)));
 
+// Status filters must be CASE-INSENSITIVE.
+//
+// `orders.status` is stored uppercase ('CANCELLED') but the UI chips — and
+// therefore the way an operator phrases a question — are lowercase, so the
+// model passes status:'cancelled'. A raw .eq() matched nothing, and the
+// assistant then reported "0 cancelled orders" and rationalised it as "there
+// are genuinely none". Live data at the time: 15 CANCELLED out of 17 orders.
+// Confidently wrong is far worse than an error.
+//
+// ilike with no wildcards is an exact match that ignores case, so it makes NO
+// assumption about how any given mirror table cases its own values — safer
+// than force-uppercasing, since the ERP mirrors carry vendor casing.
+const eqStatus = (q, col, value) => (value == null || value === "" ? q : q.ilike(col, String(value).trim()));
+
+// A page of rows plus the TRUE total for the filter.
+//
+// Counting used to mean rows.length, but every search caps at 50 (limit()),
+// so any "how many …" question silently answered with the page size once a
+// tenant crossed that. { count: "exact" } returns the real total in the same
+// round trip; the model gets total_count alongside the sample.
+const withTotal = (r, extra = {}) => ({
+  rows: r.data || [],
+  total_count: typeof r.count === "number" ? r.count : (r.data || []).length,
+  returned: (r.data || []).length,
+  ...extra,
+});
+
 // The orders table stores SO totals + currency inside the `result`
 // JSONB (result.salesOrder.grandTotal / .currency), NOT as top-level
 // columns — selecting `total_value` / `currency` / `tally_status`
@@ -46,7 +73,7 @@ const mapOrderRow = (o) => {
 const TOOLS = {
   search_orders: {
     scope: "read.orders",
-    description: "Search Anvil orders by po_number, quote_number, customer name, or status. Returns id, status, totals.",
+    description: "Search Anvil orders by po_number, quote_number, customer name, or status. Status matching is case-insensitive. Returns `rows` (a page, capped) plus `total_count` — the TRUE number of matches. Always use total_count to answer \"how many\"; never count rows.",
     parameters: {
       type: "object",
       properties: {
@@ -56,14 +83,14 @@ const TOOLS = {
       },
     },
     run: async (svc, tenantId, args) => {
-      let q = svc.from("orders").select("id, quote_number, po_number, status, result, customer_id, created_at");
+      let q = svc.from("orders").select("id, quote_number, po_number, status, result, customer_id, created_at", { count: "exact" });
       q = q.eq("tenant_id", tenantId);
-      if (args?.status) q = q.eq("status", args.status);
+      q = eqStatus(q, "status", args?.status);
       if (args?.query) {
         q = q.or(`quote_number.ilike.%${args.query}%,po_number.ilike.%${args.query}%`);
       }
       const r = await q.order("created_at", { ascending: false }).limit(limit(args?.limit));
-      return { rows: (r.data || []).map(mapOrderRow), source: "orders" };
+      return withTotal({ ...r, data: (r.data || []).map(mapOrderRow) }, { source: "orders" });
     },
   },
 
@@ -79,12 +106,12 @@ const TOOLS = {
       },
     },
     run: async (svc, tenantId, args) => {
-      let q = svc.from("invoices").select("id, invoice_number, issue_date, due_date, currency, grand_total, paid_amount, status, customer_id");
+      let q = svc.from("invoices").select("id, invoice_number, issue_date, due_date, currency, grand_total, paid_amount, status, customer_id", { count: "exact" });
       q = q.eq("tenant_id", tenantId);
-      if (args?.status) q = q.eq("status", args.status);
+      q = eqStatus(q, "status", args?.status);
       if (args?.query) q = q.ilike("invoice_number", `%${args.query}%`);
       const r = await q.order("issue_date", { ascending: false }).limit(limit(args?.limit));
-      return { rows: r.data || [], source: "invoices" };
+      return withTotal(r, { source: "invoices" });
     },
   },
 
@@ -106,11 +133,11 @@ const TOOLS = {
     description: "Search NetSuite mirror table of open sales orders.",
     parameters: { type: "object", properties: { query: { type: "string" }, status: { type: "string" }, limit: { type: "integer", default: 25 } } },
     run: async (svc, tenantId, args) => {
-      let q = svc.from("netsuite_open_orders").select("*").eq("tenant_id", tenantId);
-      if (args?.status) q = q.eq("status", args.status);
+      let q = svc.from("netsuite_open_orders").select("*", { count: "exact" }).eq("tenant_id", tenantId);
+      q = eqStatus(q, "status", args?.status);
       if (args?.query) q = q.ilike("order_number", `%${args.query}%`);
       const r = await q.order("ordered_at", { ascending: false }).limit(limit(args?.limit));
-      return { rows: r.data || [], source: "netsuite_open_orders" };
+      return withTotal(r, { source: "netsuite_open_orders" });
     },
   },
 
@@ -119,11 +146,11 @@ const TOOLS = {
     description: "Search SAP S/4HANA mirror table of sales orders.",
     parameters: { type: "object", properties: { query: { type: "string" }, status: { type: "string" }, limit: { type: "integer", default: 25 } } },
     run: async (svc, tenantId, args) => {
-      let q = svc.from("sap_sales_orders").select("*").eq("tenant_id", tenantId);
-      if (args?.status) q = q.eq("status", args.status);
+      let q = svc.from("sap_sales_orders").select("*", { count: "exact" }).eq("tenant_id", tenantId);
+      q = eqStatus(q, "status", args?.status);
       if (args?.query) q = q.ilike("external_id", `%${args.query}%`);
       const r = await q.order("ordered_at", { ascending: false }).limit(limit(args?.limit));
-      return { rows: r.data || [], source: "sap_sales_orders" };
+      return withTotal(r, { source: "sap_sales_orders" });
     },
   },
 
@@ -132,11 +159,11 @@ const TOOLS = {
     description: "Search Dynamics 365 mirror sales orders.",
     parameters: { type: "object", properties: { query: { type: "string" }, status: { type: "string" }, limit: { type: "integer", default: 25 } } },
     run: async (svc, tenantId, args) => {
-      let q = svc.from("d365_sales_orders").select("*").eq("tenant_id", tenantId);
-      if (args?.status) q = q.eq("status", args.status);
+      let q = svc.from("d365_sales_orders").select("*", { count: "exact" }).eq("tenant_id", tenantId);
+      q = eqStatus(q, "status", args?.status);
       if (args?.query) q = q.ilike("external_id", `%${args.query}%`);
       const r = await q.order("ordered_at", { ascending: false }).limit(limit(args?.limit));
-      return { rows: r.data || [], source: "d365_sales_orders" };
+      return withTotal(r, { source: "d365_sales_orders" });
     },
   },
 
@@ -145,11 +172,11 @@ const TOOLS = {
     description: "Search Acumatica mirror sales orders.",
     parameters: { type: "object", properties: { query: { type: "string" }, status: { type: "string" }, limit: { type: "integer", default: 25 } } },
     run: async (svc, tenantId, args) => {
-      let q = svc.from("acu_sales_orders").select("*").eq("tenant_id", tenantId);
-      if (args?.status) q = q.eq("status", args.status);
+      let q = svc.from("acu_sales_orders").select("*", { count: "exact" }).eq("tenant_id", tenantId);
+      q = eqStatus(q, "status", args?.status);
       if (args?.query) q = q.ilike("external_id", `%${args.query}%`);
       const r = await q.order("ordered_at", { ascending: false }).limit(limit(args?.limit));
-      return { rows: r.data || [], source: "acu_sales_orders" };
+      return withTotal(r, { source: "acu_sales_orders" });
     },
   },
 
@@ -316,7 +343,7 @@ const TOOLS = {
       }
       if (!customerId) return { error: "customer not found" };
       const [orders, invoices] = await Promise.all([
-        svc.from("orders").select("id, quote_number, po_number, status, result, customer_id, created_at")
+        svc.from("orders").select("id, quote_number, po_number, status, result, customer_id, created_at", { count: "exact" })
           .eq("tenant_id", tenantId).eq("customer_id", customerId)
           .gte("created_at", since).order("created_at", { ascending: false }).limit(50),
         svc.from("invoices").select("id, invoice_number, issue_date, grand_total, paid_amount, status, currency")

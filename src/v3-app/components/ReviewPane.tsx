@@ -481,6 +481,53 @@ const GROUP_ORDER: FieldGroupId[] = ["customer", "order", "lines", "totals", "se
 // Workspace's unified reconcile view can mount the PDF next to the line
 // grid; `extraEvidence` lets that caller inject synthetic per-line bbox
 // rows (field_path "lines[i]") on top of the fetched header evidence.
+// Download the source document.
+//
+// The signed URL is cross-origin (Supabase storage), and a plain
+// `<a download>` is IGNORED cross-origin — the browser navigates to the file
+// instead of saving it, losing the real filename. So fetch the bytes and hand
+// the browser a same-origin blob, which keeps `download` (and the filename)
+// working. Falls back to opening the signed URL when the fetch is refused
+// (expired signature, CORS), which still gets the operator the file.
+const DownloadDocButton: React.FC<{ url: string | null; filename: string | null }> = ({ url, filename }) => {
+  const [busy, setBusy] = useState(false);
+  const onDownload = useCallback(async () => {
+    if (!url || busy) return;
+    setBusy(true);
+    let href: string | null = null;
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const blob = await r.blob();
+      href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = filename || "document";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (_e) {
+      window.open(url, "_blank", "noopener,noreferrer");
+    } finally {
+      if (href) URL.revokeObjectURL(href);
+      setBusy(false);
+    }
+  }, [url, filename, busy]);
+
+  if (!url) return null;
+  return (
+    <button
+      type="button"
+      className="btn ghost sm"
+      onClick={onDownload}
+      disabled={busy}
+      title={"Download " + (filename || "source document")}
+    >
+      {busy ? "Downloading…" : "Download"}
+    </button>
+  );
+};
+
 export const ReviewDocPane: React.FC<{
   docId: string | null | undefined;
   extraEvidence?: EvidenceBbox[];
@@ -497,6 +544,9 @@ export const ReviewDocPane: React.FC<{
       <header className="rp-pane-header">
         <span className="h-eyebrow">Source document</span>
         {doc.filename && <span className="mono-sm" style={{ color: "var(--ink-3)" }}>{doc.filename}</span>}
+        <span style={{ marginLeft: "auto" }}>
+          <DownloadDocButton url={doc.url} filename={doc.filename} />
+        </span>
       </header>
       <div className="rp-pane-body rp-pane-body-doc">
         <DocumentPreview

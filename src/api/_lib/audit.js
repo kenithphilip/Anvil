@@ -86,6 +86,15 @@ export const recordAudit = async (ctx, payload) => {
   }
 };
 
+// processing_events columns are EXACTLY: tenant_id, case_id, event_type,
+// object_type, object_id, detail, duration_ms, created_at (001_init.sql:343).
+// There is NO `severity` column and never was. Nine direct inserts across the
+// agents / voice / inbound handlers used to pass one as a top-level key, which
+// PostgREST rejects (PGRST204) — so every one of those events was silently
+// dropped, including the inbound-complaint handler. Severity now rides inside
+// `detail`, which costs nothing (both readers already select `detail`, and the
+// diagnostics tab renders it) and needs no migration. If you want a severity
+// here, put it in `detail` — do not add a top-level key.
 export const recordEvent = async (ctx, payload) => {
   if (!ctx || !ctx.tenantId) {
     // eslint-disable-next-line no-console

@@ -92,8 +92,8 @@ const handleStatusRequest = async (svc, msg) => {
       channel: msg.channel,
       sender_handle: msg.sender_handle,
       text: typeof msg.text_body === "string" ? msg.text_body.slice(0, 800) : null,
+      severity: "info",
     },
-    severity: "info",
   });
   return {
     ok: true,

@@ -220,7 +220,16 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
           promptOverrides: buildPromptOverrides(settings, customerId),
         });
         const conf = overallConfidence(fb.confidences);
-        attempts.push({ adapter: adapterName, status: fb.ok ? "ok" : "failed", ms: Date.now() - tStart, confidence: conf });
+        attempts.push({
+          adapter: adapterName,
+          status: fb.ok ? "ok" : "failed",
+          ms: Date.now() - tStart,
+          confidence: conf,
+          ...(fb.ok ? {} : {
+            ...(fb.reason ? { reason: fb.reason } : {}),
+            ...(fb.error ? { error: String(fb.error).slice(0, 500) } : {}),
+          }),
+        });
         if (fb.ok) {
           return { adapter_used: adapterName, latency_ms: Date.now() - tStart, ...fb, confidence_overall: conf, attempts };
         }
@@ -377,11 +386,21 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
     const fallbackThreshold = Number.isFinite(Number(settings?.docai_fallback_confidence))
       ? Number(settings.docai_fallback_confidence)
       : 0.85;
+    // Carry the adapter's OWN reason/error onto the attempt. Without this a
+    // failed adapter records only {adapter, status, ms, confidence} — and since
+    // the run-level `error` is overwritten by whichever adapter ran LAST, an
+    // earlier failure left no trace anywhere. That is exactly how a 47-second
+    // Claude failure on PO 0066026562 became undiagnosable: the only surviving
+    // error belonged to LlamaParse, three adapters later.
     attempts.push({
       adapter: adapterName,
       status: out.ok ? (conf != null && conf < fallbackThreshold ? "low_confidence" : "ok") : "failed",
       ms: latency_ms,
       confidence: conf,
+      ...(out.ok ? {} : {
+        ...(out.reason ? { reason: out.reason } : {}),
+        ...(out.error ? { error: String(out.error).slice(0, 500) } : {}),
+      }),
     });
     // Telemetry: record the call against today's counter so
     // /api/docai/usage shows live usage and the guard locks the

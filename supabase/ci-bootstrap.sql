@@ -48,10 +48,24 @@ end $$;
 -- ── auth schema (GoTrue) ───────────────────────────────────────────────────
 create schema if not exists auth;
 
+-- Mirrors the columns of Supabase's real auth.users that the migrations read
+-- (email, raw_user_meta_data, last_sign_in_at — e.g. 042_access_approvals.sql
+-- selects u.last_sign_in_at), plus the adjacent standard columns so a future
+-- migration touching one doesn't fail this job for a shim gap rather than a
+-- genuine bug.
 create table if not exists auth.users (
   id uuid primary key default gen_random_uuid(),
   email text,
-  created_at timestamptz not null default now()
+  phone text,
+  raw_user_meta_data jsonb not null default '{}'::jsonb,
+  raw_app_meta_data jsonb not null default '{}'::jsonb,
+  last_sign_in_at timestamptz,
+  email_confirmed_at timestamptz,
+  confirmed_at timestamptz,
+  banned_until timestamptz,
+  deleted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 -- Referenced inside policy expressions; must exist at CREATE POLICY time.

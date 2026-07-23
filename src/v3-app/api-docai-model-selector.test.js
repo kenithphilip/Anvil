@@ -14,7 +14,7 @@
 //   7. default cost-optimised (preflight)
 
 import { describe, it, expect } from "vitest";
-import { selectClaudeModel, selectGeminiModel, selectModelForProvider, __consts__ } from "../api/_lib/docai/model_selector.js";
+import { selectClaudeModel, selectGeminiModel, selectModelForProvider, shouldEscalateEmptyLines, __consts__ } from "../api/_lib/docai/model_selector.js";
 
 describe("selectClaudeModel / priority order", () => {
   it("tenant pin wins over every rule", () => {
@@ -207,5 +207,101 @@ describe("selectModelForProvider", () => {
     const out = selectModelForProvider("openai", { kind: "po", settings: {} });
     expect(out.reason).toBe("unknown_provider");
     expect(out.model).toBeNull();
+  });
+});
+
+describe("selectClaudeModel / multi-page PO rule (Mahindra empty-lines fix)", () => {
+  it("bumps a multi-page PO to the generation tier up front", () => {
+    const out = selectClaudeModel({
+      kind: "po",
+      textLayer: { char_count: 4000, page_count: 13, status: "has_text" },
+      settings: {},
+    });
+    expect(out.tier).toBe("generation");
+    expect(out.reason).toBe("po_multipage");
+  });
+
+  it("uses the OCR-layer page count as a fallback when OCR didn't feed the prompt", () => {
+    const out = selectClaudeModel({
+      kind: "rfq",
+      ocrLayer: { status: "skipped", page_count: 6 },
+      settings: {},
+    });
+    expect(out.tier).toBe("generation");
+    expect(out.reason).toBe("po_multipage");
+  });
+
+  it("keeps a short single-page PO on the cheap tier", () => {
+    const out = selectClaudeModel({
+      kind: "po",
+      textLayer: { char_count: 4000, page_count: 2, status: "has_text" },
+      settings: {},
+    });
+    expect(out.tier).toBe("preflight");
+    expect(out.reason).toBe("default_cost_optimised");
+  });
+
+  it("does not apply the multi-page rule to non-PO kinds", () => {
+    const out = selectClaudeModel({
+      kind: "supplier_ack",
+      textLayer: { char_count: 4000, page_count: 13, status: "has_text" },
+      settings: {},
+    });
+    expect(out.reason).toBe("supplier_ack_short");
+  });
+
+  it("gemini also bumps multi-page POs to the reasoning tier", () => {
+    const out = selectGeminiModel({
+      kind: "po",
+      textLayer: { char_count: 4000, page_count: 13 },
+      settings: {},
+    });
+    expect(out.tier).toBe("reasoning");
+    expect(out.reason).toBe("po_multipage");
+  });
+});
+
+describe("shouldEscalateEmptyLines / reactive retry predicate", () => {
+  const emptyPoOut = {
+    ok: true,
+    selected_model: "claude-haiku-4-5-20251001",
+    model_selection_reason: "default_cost_optimised",
+    normalized: { classification: "po", customer: { name: "MAHINDRA & MAHINDRA LTD" }, lines: [], stated_line_count: 45 },
+  };
+
+  it("fires for a cheap-tier PO that returned a header but zero lines", () => {
+    expect(shouldEscalateEmptyLines({ out: emptyPoOut, kind: "po", settings: {} })).toBe(true);
+  });
+
+  it("does NOT fire when lines were extracted", () => {
+    const out = { ...emptyPoOut, normalized: { ...emptyPoOut.normalized, lines: [{ description: "x" }] } };
+    expect(shouldEscalateEmptyLines({ out, kind: "po", settings: {} })).toBe(false);
+  });
+
+  it("does NOT fire when the model already used the generation tier (nothing to escalate to)", () => {
+    const out = { ...emptyPoOut, model_selection_reason: "po_multipage" };
+    expect(shouldEscalateEmptyLines({ out, kind: "po", settings: {} })).toBe(false);
+  });
+
+  it("does NOT fire on a genuine non-PO (no wasted second call)", () => {
+    const out = { ...emptyPoOut, normalized: { ...emptyPoOut.normalized, classification: "non_po" } };
+    expect(shouldEscalateEmptyLines({ out, kind: "po", settings: {} })).toBe(false);
+  });
+
+  it("does NOT fire when the model never engaged (no customer header)", () => {
+    const out = { ...emptyPoOut, normalized: { ...emptyPoOut.normalized, customer: null } };
+    expect(shouldEscalateEmptyLines({ out, kind: "po", settings: {} })).toBe(false);
+  });
+
+  it("does NOT fire on a failed extraction", () => {
+    expect(shouldEscalateEmptyLines({ out: { ok: false }, kind: "po", settings: {} })).toBe(false);
+  });
+
+  it("respects the docai_empty_lines_escalation=false opt-out", () => {
+    expect(shouldEscalateEmptyLines({ out: emptyPoOut, kind: "po", settings: { docai_empty_lines_escalation: false } })).toBe(false);
+  });
+
+  it("only applies to po/rfq kinds", () => {
+    expect(shouldEscalateEmptyLines({ out: emptyPoOut, kind: "invoice", settings: {} })).toBe(false);
   });
 });

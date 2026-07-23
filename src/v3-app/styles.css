@@ -1824,6 +1824,18 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .tbl td.r { text-align: right; }
 .tbl td .pri { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 
+/* Pipeline Diagnostics tables are a debugging surface: the failure reason,
+ * adapter chain, and event detail MUST be fully legible, so opt them out of
+ * the global 24ch ellipsis clamp above. (An overflow-x wrapper alone can't
+ * rescue them — max-width:24ch clips the cell regardless of scroll room.) */
+.diag .tbl td {
+  max-width: 480px;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: break-word;
+}
+
 /* Wrap every table in a horizontally-scrollable container by default.
  * Cards used as table shells are already `.card.flush`; add overflow-x
  * there too so wide tables can scroll on narrow viewports without

@@ -2772,7 +2772,7 @@ const PipelineDiagnostics: React.FC<{
   const adapterChain = data.adapter_chain || [];
 
   return (
-    <>
+    <div className="diag">
       {/* Top-line summary banner */}
       {latest ? (
         <Banner
@@ -2789,6 +2789,19 @@ const PipelineDiagnostics: React.FC<{
               ? " · " + new Date(latest.finished_at).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" })
               : ""}
           </span>
+          {/* The smoking gun for an empty-lines failure: the PO's own declared
+              line count vs what we extracted. Shown whenever they disagree. */}
+          {latest.extracted_line_count === 0 && (
+            <div className="body" style={{ marginTop: 6 }}>
+              {latest.stated_line_count
+                ? <>This PO declares <b>{latest.stated_line_count}</b> line item{latest.stated_line_count === 1 ? "" : "s"} but extraction returned <b>0</b>. </>
+                : <>Extraction returned <b>0</b> line items. </>}
+              The pipeline already auto-retries once on a stronger model when a PO
+              comes back with a header but no lines; a run still showing 0 means
+              even that retry read no table — the document likely needs OCR or a
+              manual line entry. See the escalation events below.
+            </div>
+          )}
         </Banner>
       ) : (
         <Banner kind="info" icon={Icon.info} title="No extraction runs yet">
@@ -2872,6 +2885,9 @@ const PipelineDiagnostics: React.FC<{
                   : "no issues")
               : "(no validator run yet)"],
             ["Extraction kind", latest?.extraction_kind || "po"],
+            ["Lines declared / extracted", latest
+              ? (latest.stated_line_count ?? "—") + " declared · " + (latest.extracted_line_count ?? "—") + " extracted"
+              : "—"],
             ["LLM model used", latest?.selected_model
               ? latest.selected_model + (latest.model_selection_reason
                   ? " (reason: " + latest.model_selection_reason + ")"
@@ -2894,6 +2910,7 @@ const PipelineDiagnostics: React.FC<{
             No extraction_runs row found for this order's source document.
           </div>
         ) : (
+          <div style={{ overflowX: "auto" }}>
           <table className="tbl">
             <thead><tr>
               <th>Started</th>
@@ -2903,6 +2920,7 @@ const PipelineDiagnostics: React.FC<{
               <th>Adapter</th>
               <th>Model</th>
               <th className="r">Conf</th>
+              <th className="r">Lines</th>
               <th>Layers</th>
               <th>Validator</th>
               <th>Attempts</th>
@@ -2929,7 +2947,7 @@ const PipelineDiagnostics: React.FC<{
                     </td>
                     <td className="mono-sm">{r.extraction_kind || "po"}</td>
                     <td><Chip k={r.status === "ok" ? "good" : r.status === "low_confidence" ? "warn" : "bad"}>{r.status}</Chip></td>
-                    <td>
+                    <td title={r.status_reason || ""}>
                       <Chip k={reasonTone(r.status_reason || "")}>
                         {REASON_LABELS[r.status_reason] || r.status_reason || "—"}
                       </Chip>
@@ -2939,9 +2957,12 @@ const PipelineDiagnostics: React.FC<{
                       {r.selected_model || "—"}
                     </td>
                     <td className="r mono">{r.confidence_overall != null ? Number(r.confidence_overall).toFixed(2) : "—"}</td>
+                    <td className="r mono" title="declared → extracted">
+                      {(r.stated_line_count ?? "?") + " → " + (r.extracted_line_count ?? "?")}
+                    </td>
                     <td className="mono-sm">{layerBadges || "L4"}</td>
                     <td className="mono-sm">{vText}</td>
-                    <td className="mono-sm">
+                    <td className="mono-sm" title={Array.isArray(r.adapter_attempts) ? r.adapter_attempts.map((a: any) => a.adapter + ":" + a.status).join(" · ") : ""}>
                       {Array.isArray(r.adapter_attempts)
                         ? r.adapter_attempts.map((a: any) => a.adapter + ":" + a.status).join(" · ")
                         : "—"}
@@ -2951,6 +2972,7 @@ const PipelineDiagnostics: React.FC<{
               })}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
 
@@ -2970,7 +2992,7 @@ const PipelineDiagnostics: React.FC<{
                   <td><Chip k={r.status === "completed" ? "good" : r.status === "running" ? "info" : "bad"}>{r.status}</Chip></td>
                   <td className="r mono">{r.page_count ?? "—"}</td>
                   <td className="r mono">{r.evidence_count ?? "—"}</td>
-                  <td className="mono-sm" style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.error || "—"}</td>
+                  <td className="mono-sm" style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.error || ""}>{r.error || "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -2997,7 +3019,7 @@ const PipelineDiagnostics: React.FC<{
                   <td className="mono-sm">{new Date(ev.created_at).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</td>
                   <td className="mono">{ev.event_type}</td>
                   <td className="mono-sm">{ev.object_type}{ev.object_id ? "/" + String(ev.object_id).slice(0, 8) : ""}</td>
-                  <td className="mono-sm" style={{ maxWidth: 480, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <td className="mono-sm" style={{ maxWidth: 480, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={JSON.stringify(ev.detail)}>
                     {JSON.stringify(ev.detail).slice(0, 200)}
                   </td>
                 </tr>
@@ -3024,7 +3046,7 @@ const PipelineDiagnostics: React.FC<{
           </details>
         </Card>
       )}
-    </>
+    </div>
   );
 };
 

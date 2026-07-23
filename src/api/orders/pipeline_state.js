@@ -97,11 +97,23 @@ export default async function handler(req, res) {
         .eq("source_id", sourceDocId)
         .order("started_at", { ascending: false })
         .limit(10);
-      extractionRuns = (runsResp.data || []).map((r) => ({
-        ...r,
-        raw_extract: previewJson(r.raw_extract),
-        normalized_extract: previewJson(r.normalized_extract),
-      }));
+      extractionRuns = (runsResp.data || []).map((r) => {
+        // Derive declared-vs-extracted line counts from the FULL normalized
+        // payload before previewJson truncates it. This is the smoking gun for
+        // an empty-lines failure: "PO declares 45, extraction returned 0".
+        const norm = r.normalized_extract || null;
+        const extractedLineCount = Array.isArray(norm?.lines) ? norm.lines.length : null;
+        const statedLineCount = Number.isFinite(Number(norm?.stated_line_count))
+          ? Number(norm.stated_line_count)
+          : null;
+        return {
+          ...r,
+          stated_line_count: statedLineCount,
+          extracted_line_count: extractedLineCount,
+          raw_extract: previewJson(r.raw_extract),
+          normalized_extract: previewJson(r.normalized_extract),
+        };
+      });
     }
 
     // 3b. L1 text-layer cache for this document. Phase A: lets the
@@ -219,6 +231,8 @@ export default async function handler(req, res) {
         extraction_kind: extractionRuns[0].extraction_kind || "po",
         selected_model: extractionRuns[0].selected_model || null,
         model_selection_reason: extractionRuns[0].model_selection_reason || null,
+        stated_line_count: extractionRuns[0].stated_line_count,
+        extracted_line_count: extractionRuns[0].extracted_line_count,
       } : null,
     });
   } catch (err) { sendError(res, err); }

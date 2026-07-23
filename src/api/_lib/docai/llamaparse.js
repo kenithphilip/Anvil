@@ -15,7 +15,7 @@
 //
 // KEY: tenant docai_llamacloud_api_key_enc (shared docai_creds_iv envelope),
 // else LLAMAPARSE_API_KEY (the var the deployment sets), else LLAMA_CLOUD_API_KEY
-// for older configs. Tier via LLAMAPARSE_TIER (fast|balanced|agentic|
+// for older configs. Tier via LLAMAPARSE_TIER (fast|cost_effective|agentic|
 // agentic_plus); default "agentic" (best accuracy).
 //
 // DATA RESIDENCY: LlamaCloud is US/EU only. Enabling it sends document content
@@ -33,6 +33,18 @@ const apiKey = (settings) => {
   return process.env.LLAMAPARSE_API_KEY || process.env.LLAMA_CLOUD_API_KEY || null;
 };
 const tier = () => process.env.LLAMAPARSE_TIER || "agentic";
+
+// LlamaParse v2 requires BOTH tier and version — sending `tier` alone is
+// rejected with:
+//   400 Invalid configuration: 1 validation error for
+//   LlamaParseMultipartConfiguration / version / Field required
+// which is exactly how this adapter was failing in production.
+//
+// "latest" tracks the current stable release. Pin a dated version
+// ("2026-01-08", "2025-12-31", …) via LLAMAPARSE_VERSION for reproducible
+// parses — worth doing once a version is validated against the golden set,
+// because "latest" can change parsing behaviour underneath you.
+const parseVersion = () => process.env.LLAMAPARSE_VERSION || "latest";
 
 // Config is the presence of a tenant OR env key (mirrors gemini/unstructured).
 export const isConfigured = (settings) => !!apiKey(settings);
@@ -127,6 +139,7 @@ export const extract = async ({ url, bytes, filename, mime, settings }) => {
     const result = await client.parsing.parse({
       upload_file: uploadable,
       tier: tier(),
+      version: parseVersion(),
       expand: ["markdown"],
     });
     const md = markdownOf(result);
@@ -156,4 +169,4 @@ export const extract = async ({ url, bytes, filename, mime, settings }) => {
 };
 
 // Exported for tests (pure mapping, no network).
-export const __test__ = { parseMarkdownTable, normalizeFromMarkdown, scoreConfidence, markdownOf, tier, apiKey };
+export const __test__ = { parseMarkdownTable, normalizeFromMarkdown, scoreConfidence, markdownOf, tier, parseVersion, apiKey };

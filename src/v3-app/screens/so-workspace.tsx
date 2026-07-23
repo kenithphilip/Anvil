@@ -2758,6 +2758,15 @@ const PipelineDiagnostics: React.FC<{
     adapter_threw: "Extractor crashed · see attempts for the error",
     fail_unknown: "Unknown failure",
   };
+  // An attempt now carries the adapter's own reason/error (dispatchExtract used
+  // to drop both, so a failed adapter showed "claude:failed" and nothing else —
+  // and the run-level error belonged to whichever adapter ran last). Show the
+  // reason inline; keep the full message in the tooltip.
+  const attemptLabel = (a: any) =>
+    a.adapter + ":" + a.status + (a.reason ? "(" + a.reason + ")" : "");
+  const attemptDetail = (a: any) =>
+    attemptLabel(a) + (a.error ? " — " + a.error : "");
+
   const reasonTone = (r: string): "good" | "info" | "warn" | "bad" =>
     r === "ok" ? "good"
     : r === "low_confidence" ? "warn"
@@ -2962,9 +2971,9 @@ const PipelineDiagnostics: React.FC<{
                     </td>
                     <td className="mono-sm">{layerBadges || "L4"}</td>
                     <td className="mono-sm">{vText}</td>
-                    <td className="mono-sm" title={Array.isArray(r.adapter_attempts) ? r.adapter_attempts.map((a: any) => a.adapter + ":" + a.status).join(" · ") : ""}>
+                    <td className="mono-sm" title={Array.isArray(r.adapter_attempts) ? r.adapter_attempts.map(attemptDetail).join("\n") : ""}>
                       {Array.isArray(r.adapter_attempts)
-                        ? r.adapter_attempts.map((a: any) => a.adapter + ":" + a.status).join(" · ")
+                        ? r.adapter_attempts.map(attemptLabel).join(" · ")
                         : "—"}
                     </td>
                   </tr>

@@ -3081,6 +3081,11 @@ const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = ({ orde
   }, [order.id, order.updated_at]);
   const [reference, setReference] = React.useState<any>({ incoterms: [], contacts: [] });
   const [busy, setBusy] = React.useState(false);
+  // Progressive disclosure: only fields that carry a value or were auto-filled
+  // (OCR / customer) show by default; empty optional fields sit behind a
+  // "+ add" row so this reads like a review surface, not an ERP data-entry wall.
+  const [revealed, setRevealed] = React.useState<Set<string>>(new Set());
+  const reveal = (k: string) => setRevealed((s) => { const n = new Set(s); n.add(k); return n; });
 
   React.useEffect(() => {
     let cancelled = false;
@@ -3131,7 +3136,10 @@ const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = ({ orde
       for (const k of HEADER_KEYS) {
         if ((draft[k] || "") !== (order[k] || "")) {
           anyChanged = true;
-          if (headerSourcesNext[k] === "ocr") headerSourcesNext[k] = "human";
+          // An operator override clears any auto-fill provenance (OCR or the
+          // customer-master default) so the pill drops and the next reviewer
+          // sees it's now human-set.
+          if (headerSourcesNext[k] === "ocr" || headerSourcesNext[k] === "customer") headerSourcesNext[k] = "human";
         }
       }
       const patch: any = {
@@ -3168,78 +3176,128 @@ const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = ({ orde
   // operator-set. Stored under result.salesOrder._header_field_sources
   // so no schema migration is required.
   const headerSources: Record<string, string> = (order.result?.salesOrder?._header_field_sources) || {};
-  const fieldOcr = (key: string, persistedValue: any, draftValue: any) =>
-    headerSources[key] === "ocr" && (persistedValue || "") === (draftValue || "")
-      ? <Chip k="ghost">OCR</Chip>
-      : null;
+  // Provenance pill: only while the operator hasn't overridden the value
+  // (persisted === draft). "ocr" = auto-detected from the PO at intake;
+  // "customer" = inherited from the customer master (never typed here).
+  const fieldSourcePill = (key: string, persistedValue: any, draftValue: any) => {
+    if ((persistedValue || "") !== (draftValue || "")) return null;
+    const src = headerSources[key];
+    if (src === "ocr") return <Chip k="ghost">OCR</Chip>;
+    if (src === "customer") return <Chip k="info">from customer</Chip>;
+    return null;
+  };
 
   const labelWithPill = (text: string, key: string, persistedValue: any, draftValue: any) => (
     <label className="mono-sm" style={{ color: "var(--ink-3)", display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
       <span>{text}</span>
-      {fieldOcr(key, persistedValue, draftValue)}
+      {fieldSourcePill(key, persistedValue, draftValue)}
     </label>
   );
+
+  // A field shows by default only if it carries a value, was auto-filled
+  // (OCR / customer), or the operator explicitly revealed it. Empty optional
+  // fields collapse into the "+ add" row so this reads as a review surface.
+  const HIDEABLE: Array<{ key: string; label: string }> = [
+    { key: "dispatch_mode", label: "Dispatch mode" },
+    { key: "incoterm_code", label: "Incoterm" },
+    { key: "vendor_code", label: "Vendor code" },
+    { key: "delivery_point_contact_id", label: "Delivery contact" },
+    { key: "registration_serial_no", label: "Registration serial no" },
+    { key: "delivery_terms", label: "Terms of delivery" },
+  ];
+  const show = (k: string) => {
+    const v = draft[k];
+    return (v != null && v !== "") || !!headerSources[k] || revealed.has(k);
+  };
+  const hidden = HIDEABLE.filter((f) => !show(f.key));
 
   return (
     <Card title="Order header fields" eyebrow="dispatch . terms . vendor mapping . delivery contact">
       <Banner kind="info">
-        These fields apply to the whole order: the SO PDF, the Tally
-        voucher, and the customer ack copy them verbatim. Values with
-        an <Chip k="ghost">OCR</Chip> pill were auto-detected from
-        the PO at intake. Edit any field to override; saving clears
-        the OCR pill so the next reviewer can see the override.
+        Whole-order fields the SO PDF, Tally voucher, and customer ack copy
+        verbatim. An <Chip k="ghost">OCR</Chip> pill = auto-detected from the
+        PO; <Chip k="info">from customer</Chip> = inherited from the customer
+        master. Only fields with a value show — use <b>+ add</b> for the rest.
       </Banner>
       <div className="row" style={{ gap: 14, flexWrap: "wrap", marginTop: 12 }}>
-        <div style={{ flex: "1 1 220px" }}>
-          {labelWithPill("Dispatch mode", "dispatch_mode", order.dispatch_mode, draft.dispatch_mode)}
-          <select className="select" value={draft.dispatch_mode} onChange={(e) => setDraft({ ...draft, dispatch_mode: e.target.value })}>
-            <option value="">Not set</option>
-            <option value="By Ocean">By Ocean</option>
-            <option value="By Air">By Air</option>
-            <option value="By Road">By Road</option>
-            <option value="By Rail">By Rail</option>
-            <option value="By Courier">By Courier</option>
-            <option value="Self Pickup">Self Pickup</option>
-          </select>
-        </div>
-        <div style={{ flex: "1 1 220px" }}>
-          {labelWithPill("Incoterm", "incoterm_code", order.incoterm_code, draft.incoterm_code)}
-          <select className="select" value={draft.incoterm_code} onChange={(e) => setDraft({ ...draft, incoterm_code: e.target.value })}>
-            <option value="">Not set</option>
-            {(reference.incoterms || []).map((c: any) => (
-              <option key={c.code} value={c.code}>{c.code} . {c.label}</option>
-            ))}
-          </select>
-        </div>
-        <div style={{ flex: "1 1 220px" }}>
-          {labelWithPill("Registration serial no", "registration_serial_no", order.registration_serial_no, draft.registration_serial_no)}
-          <input className="input mono" value={draft.registration_serial_no} onChange={(e) => setDraft({ ...draft, registration_serial_no: e.target.value })} />
-        </div>
-        <div style={{ flex: "1 1 220px" }}>
-          {labelWithPill("Vendor code (as buyer refers to us)", "vendor_code", order.vendor_code, draft.vendor_code)}
-          <input className="input mono" value={draft.vendor_code} onChange={(e) => setDraft({ ...draft, vendor_code: e.target.value })} placeholder="e.g., TH1M" />
-        </div>
-        <div style={{ flex: "1 1 220px" }}>
-          {labelWithPill("Delivery point contact", "delivery_point_contact_id", order.delivery_point_contact_id, draft.delivery_point_contact_id)}
-          <select className="select" value={draft.delivery_point_contact_id || ""} onChange={(e) => setDraft({ ...draft, delivery_point_contact_id: e.target.value })}>
-            <option value="">Not set</option>
-            {(reference.contacts || []).map((c: any) => (
-              <option key={c.id} value={c.id}>{c.full_name || c.email || c.id?.slice(0, 8)}</option>
-            ))}
-          </select>
-        </div>
+        {show("dispatch_mode") && (
+          <div style={{ flex: "1 1 220px" }}>
+            {labelWithPill("Dispatch mode", "dispatch_mode", order.dispatch_mode, draft.dispatch_mode)}
+            <select className="select" value={draft.dispatch_mode} onChange={(e) => setDraft({ ...draft, dispatch_mode: e.target.value })}>
+              <option value="">Not set</option>
+              <option value="By Ocean">By Ocean</option>
+              <option value="By Air">By Air</option>
+              <option value="By Road">By Road</option>
+              <option value="By Rail">By Rail</option>
+              <option value="By Courier">By Courier</option>
+              <option value="Self Pickup">Self Pickup</option>
+            </select>
+          </div>
+        )}
+        {show("incoterm_code") && (
+          <div style={{ flex: "1 1 220px" }}>
+            {labelWithPill("Incoterm", "incoterm_code", order.incoterm_code, draft.incoterm_code)}
+            <select className="select" value={draft.incoterm_code} onChange={(e) => setDraft({ ...draft, incoterm_code: e.target.value })}>
+              <option value="">Not set</option>
+              {(reference.incoterms || []).map((c: any) => (
+                <option key={c.code} value={c.code}>{c.code} . {c.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        {show("vendor_code") && (
+          <div style={{ flex: "1 1 220px" }}>
+            {labelWithPill("Vendor code (as buyer refers to us)", "vendor_code", order.vendor_code, draft.vendor_code)}
+            <input className="input mono" value={draft.vendor_code} onChange={(e) => setDraft({ ...draft, vendor_code: e.target.value })} placeholder="e.g., TH1M" />
+          </div>
+        )}
+        {show("delivery_point_contact_id") && (
+          <div style={{ flex: "1 1 220px" }}>
+            {labelWithPill("Delivery point contact", "delivery_point_contact_id", order.delivery_point_contact_id, draft.delivery_point_contact_id)}
+            <select className="select" value={draft.delivery_point_contact_id || ""} onChange={(e) => setDraft({ ...draft, delivery_point_contact_id: e.target.value })}>
+              <option value="">Not set</option>
+              {(reference.contacts || []).map((c: any) => (
+                <option key={c.id} value={c.id}>{c.full_name || c.email || c.id?.slice(0, 8)}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        {show("registration_serial_no") && (
+          <div style={{ flex: "1 1 220px" }}>
+            {labelWithPill("Registration serial no", "registration_serial_no", order.registration_serial_no, draft.registration_serial_no)}
+            <input className="input mono" value={draft.registration_serial_no} onChange={(e) => setDraft({ ...draft, registration_serial_no: e.target.value })} />
+          </div>
+        )}
       </div>
-      <div style={{ marginTop: 12 }}>
-        {labelWithPill("Terms of delivery (free text)", "delivery_terms", order.delivery_terms, draft.delivery_terms)}
-        <textarea className="input" rows={3} style={{ width: "100%" }} value={draft.delivery_terms} onChange={(e) => setDraft({ ...draft, delivery_terms: e.target.value })} placeholder="e.g., Door delivery during business hours. Wooden box must remain dry." />
-      </div>
+      {show("delivery_terms") && (
+        <div style={{ marginTop: 12 }}>
+          {labelWithPill("Terms of delivery (free text)", "delivery_terms", order.delivery_terms, draft.delivery_terms)}
+          <textarea className="input" rows={3} style={{ width: "100%" }} value={draft.delivery_terms} onChange={(e) => setDraft({ ...draft, delivery_terms: e.target.value })} placeholder="e.g., Door delivery during business hours. Wooden box must remain dry." />
+        </div>
+      )}
+      {hidden.length > 0 && (
+        <div className="row" style={{ gap: 6, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
+          <span className="mono-sm" style={{ color: "var(--ink-4)" }}>+ add</span>
+          {hidden.map((f) => (
+            <Btn key={f.key} sm kind="ghost" onClick={() => reveal(f.key)}>{f.label}</Btn>
+          ))}
+        </div>
+      )}
       <div className="row" style={{ justifyContent: "flex-end", marginTop: 14 }}>
         <Btn sm kind="primary" disabled={busy} onClick={save}>{busy ? "Saving..." : "Save header"}</Btn>
       </div>
 
-      <div style={{ marginTop: 18, borderTop: "1px solid var(--hairline-2)", paddingTop: 14 }}>
-        <OrderLineTaxComponents orderId={order.id} lines={order.result?.salesOrder?.lineItems || []} />
-      </div>
+      {/* Power-user surface: per-line tax + charge decomposition. Collapsed by
+          default (GST is usually derivable / carried on lines) so it doesn't
+          clutter the common path. */}
+      <details style={{ marginTop: 18, borderTop: "1px solid var(--hairline-2)", paddingTop: 14 }}>
+        <summary className="mono-sm" style={{ cursor: "pointer", color: "var(--ink-3)" }}>
+          Advanced · per-line tax &amp; charges
+        </summary>
+        <div style={{ marginTop: 12 }}>
+          <OrderLineTaxComponents orderId={order.id} lines={order.result?.salesOrder?.lineItems || []} />
+        </div>
+      </details>
     </Card>
   );
 };

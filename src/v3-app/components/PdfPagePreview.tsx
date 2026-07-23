@@ -202,7 +202,12 @@ const PdfPageWithOverlay: React.FC<PdfPageWithOverlayProps> = ({
         pageNumber={pageNumber}
         width={width}
         scale={scale}
-        renderTextLayer={false}
+        // Text layer ON so the operator can select/copy text out of the PO
+        // (part numbers, GSTINs, addresses) instead of retyping them. Without
+        // it react-pdf paints only a canvas and the cursor has nothing to grab.
+        // The bbox overlay is pointer-events:none (individual rects opt back
+        // in), so the highlight and the selection coexist.
+        renderTextLayer
         renderAnnotationLayer={false}
         onRenderSuccess={onRenderSuccess}
       />
@@ -234,7 +239,13 @@ const PdfPageWithOverlay: React.FC<PdfPageWithOverlayProps> = ({
                 className={"rp-bbox-rect" + (isActive ? " is-active" : "")}
                 style={{ stroke: colour }}
                 data-field-path={fp || undefined}
-                pointerEvents={fp ? "all" : "none"}
+                // "stroke", not "all": the rect sits ABOVE the text layer, so
+                // capturing its whole interior would swallow the mousedown that
+                // starts a text selection — the operator could not select the
+                // very line the highlight points at. Limiting hit-testing to
+                // the outline keeps hover/click on the box while leaving the
+                // text underneath selectable. (Fill is transparent anyway.)
+                pointerEvents={fp ? "stroke" : "none"}
                 onMouseEnter={() => fp && setHoveredField(fp)}
                 onMouseLeave={() => fp && setHoveredField(null)}
                 onClick={() => fp && setSelectedField(fp === selectedField ? null : fp)}

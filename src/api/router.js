@@ -294,6 +294,7 @@ import whatsappSend            from "./whatsapp/send.js";
 import quotesPdf               from "./quotes/pdf.js";
 import quotesIndex             from "./quotes/index.js";
 import quotesSend              from "./quotes/send.js";
+import quotesIngest            from "./quotes/ingest.js";
 import quotesConvert           from "./quotes/convert.js";
 import quotesExpire            from "./quotes/expire.js";
 import agentsHandleReplies     from "./agents/handle_replies.js";
@@ -862,6 +863,7 @@ const STATIC_ROUTES = {
   "/quotes/pdf":                    quotesPdf,
   "/quotes":                        quotesIndex,
   "/quotes/send":                   quotesSend,
+  "/quotes/ingest":                 quotesIngest,
   "/quotes/convert":                quotesConvert,
   "/quotes/expire":                 quotesExpire,
   "/agents/handle_replies":         agentsHandleReplies,

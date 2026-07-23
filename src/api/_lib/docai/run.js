@@ -46,7 +46,7 @@ import { dispatchExtract } from "./index.js";
 import { chunkedExtract } from "./chunked-extract.js";
 import { profileDocument } from "./toc-profiler.js";
 import { probePdfPageCount } from "./pdf-chunker.js";
-import { extractTextLayer, contentHash } from "./text_layer.js";
+import { extractTextLayer, extractTextBlocks, contentHash } from "./text_layer.js";
 import { extractOcrLayer } from "./ocr_layer.js";
 import { applyTemplate, buildTemplate } from "./templates.js";
 import { createRunCostAccumulator } from "./run-cost.js";
@@ -1050,19 +1050,39 @@ export const runExtractionPipeline = async (params) => {
     } catch (_e) { /* scrub is best-effort */ }
   }
 
-  // 6d. Wave 4.3: stamp bbox evidence per line. When the OCR
-  // layer carried per-block bboxes, match each extracted line to
-  // the OCR block it most likely came from and stamp
-  // line._evidence = { page, bbox, score }. Pure mutation; the
-  // UI uses this for click-to-highlight on the document preview.
+  // 6d. Wave 4.3: stamp bbox evidence per line — match each extracted line to
+  // the document block it most likely came from and stamp
+  // line._evidence = { page, bbox, bbox_norm, score }. The UI uses this for
+  // the hover/click-to-highlight overlay on the document preview.
+  //
+  // Geometry source (fixed 2026-07-23): prefer OCR blocks, else fall back to
+  // the PDF's own text layer. Previously this ran ONLY when an OCR layer
+  // existed — but OCR only runs when the text layer FAILED, so an ordinary
+  // digital PO produced no geometry and the overlay silently rendered
+  // nothing. extractTextBlocks reads glyph positions straight from the PDF,
+  // which needs no OCR and covers exactly that majority case.
   let evidenceCount = 0;
-  if (ocrLayer && out?.normalized) {
+  let evidenceSource = null;
+  if (out?.normalized) {
     try {
-      evidenceCount = stampEvidenceOnLines(out.normalized, ocrLayer);
-      if (evidenceCount > 0) {
-        await recordRunEvent("docai_bbox_evidence_stamped", { count: evidenceCount });
+      let geometry = ocrLayer && Array.isArray(ocrLayer.raw_pages) && ocrLayer.raw_pages.length
+        ? ocrLayer
+        : null;
+      if (geometry) evidenceSource = "ocr_layer";
+      if (!geometry && bytes) {
+        geometry = await extractTextBlocks({ bytes });
+        if (geometry) evidenceSource = "text_layer";
       }
-    } catch (_e) { /* best-effort */ }
+      if (geometry) {
+        evidenceCount = stampEvidenceOnLines(out.normalized, geometry);
+        if (evidenceCount > 0) {
+          await recordRunEvent("docai_bbox_evidence_stamped", {
+            count: evidenceCount,
+            source: evidenceSource,
+          });
+        }
+      }
+    } catch (_e) { /* best-effort: geometry must never break a run */ }
   }
 
   // 6c. Wave 2.4: detect non-Latin scripts per line so the UI can

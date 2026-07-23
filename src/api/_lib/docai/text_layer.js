@@ -51,6 +51,10 @@
 //     error: string | null
 //   }
 
+// Structural page-tree read (pdf-lib). Used only to recover page_count when
+// text extraction fails — see probePageCount in extractTextLayer.
+import { probePdfPageCount } from "./pdf-chunker.js";
+
 const USABLE_TEXT_THRESHOLD = 200;        // chars below this -> route to OCR
 const PER_PAGE_TEXT_THRESHOLD = 30;       // chars below this -> page is "image-only"
 const MAX_BODY_TEXT_BYTES = 200_000;      // hard ceiling: claude.js trims to 50K anyway
@@ -141,10 +145,28 @@ const trimBodyText = (s) => {
 // so cache lookups stay close to their use-site).
 export const extractTextLayer = async ({ bytes, mime }) => {
   const t0 = Date.now();
-  const baseFail = (status, error) => ({
+
+  // A PDF whose TEXT is unreadable still has a parseable PAGE TREE. Some
+  // generators (SAP / Ariba / GEP purchase orders) defeat unpdf entirely, and
+  // reporting page_count: 0 on that failure made the model selector blind:
+  // page_count is the only pre-extraction size signal it has (the po_multipage
+  // rule), so a 13-page 45-line PO looked like a 0-page doc and went to the
+  // cheap tier, which returned a header and zero lines. Probe the count
+  // structurally instead. Lazy + best-effort: only runs on the failure path
+  // (the success path already has a real count from unpdf), and never throws.
+  const probePageCount = async () => {
+    if (!bytes || !bytes.length) return 0;
+    try {
+      return Number(await probePdfPageCount(bytes)) || 0;
+    } catch (_e) {
+      return 0;
+    }
+  };
+
+  const baseFail = async (status, error) => ({
     ok: false,
     status,
-    page_count: 0,
+    page_count: await probePageCount(),
     char_count: 0,
     body_text: null,
     page_breakdown: [],
@@ -155,17 +177,17 @@ export const extractTextLayer = async ({ bytes, mime }) => {
   });
 
   if (!bytes || !bytes.length) {
-    return baseFail("extract_failed", "no bytes provided");
+    return await baseFail("extract_failed", "no bytes provided");
   }
   // L1 only handles PDFs. Image-only files (PNG, JPG) skip L1
   // entirely; the dispatcher routes them straight to L2 OCR.
   if (!isPdfBytes(bytes) && mime !== "application/pdf") {
-    return baseFail("extract_failed", "not a pdf");
+    return await baseFail("extract_failed", "not a pdf");
   }
 
   const unpdf = await loadUnpdf();
   if (!unpdf) {
-    return baseFail("extract_failed", "unpdf not installed");
+    return await baseFail("extract_failed", "unpdf not installed");
   }
 
   // unpdf exposes `extractText(buffer, opts) -> { totalPages, text }`
@@ -182,7 +204,7 @@ export const extractTextLayer = async ({ bytes, mime }) => {
     const doc = await getDocumentProxy(arr);
     result = await extractText(doc, { mergePages: false });
   } catch (err) {
-    return baseFail("extract_failed", err?.message || "unpdf threw");
+    return await baseFail("extract_failed", err?.message || "unpdf threw");
   }
 
   // Older unpdf returns `{ totalPages, text }`. `text` may be
@@ -196,7 +218,7 @@ export const extractTextLayer = async ({ bytes, mime }) => {
     // Single-page or merged result. Treat as one page.
     pageTexts = [rawText];
   } else {
-    return baseFail("extract_failed", "unpdf returned unexpected shape");
+    return await baseFail("extract_failed", "unpdf returned unexpected shape");
   }
 
   const pageBreakdown = summarisePages(pageTexts);

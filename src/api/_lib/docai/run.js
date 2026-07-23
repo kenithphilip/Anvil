@@ -134,6 +134,32 @@ const findRecentRunByContentHash = async ({
 
 // Cache miss + insert for the L1 text layer. Mirrors the helper
 // the legacy extract.js had; moved here so all callers share it.
+// Repair a blind page_count on a layer (cached or fresh). Rows written before
+// the structural-probe fix — and any row from a failed extraction — carry
+// page_count 0, which blinds the model selector's po_multipage rule on a
+// RE-run of an existing document (the cache is hit, so text_layer.js never
+// runs again). Probe the page tree and heal the row in place, one time per
+// document. Best-effort: never throws, never blocks the run.
+const healLayerPageCount = async ({ svc, tenantId, layer, bytes, documentId, hash }) => {
+  if (!layer || Number(layer.page_count) > 0 || !bytes?.length) return layer;
+  let pages = 0;
+  try {
+    pages = Number(await probePdfPageCount(bytes)) || 0;
+  } catch (_e) {
+    return layer;                       // not a PDF / unparseable — leave as-is
+  }
+  if (!pages) return layer;
+  layer.page_count = pages;
+  try {
+    let q = svc.from("extraction_text_layer").update({ page_count: pages }).eq("tenant_id", tenantId);
+    if (documentId && isUuid(documentId)) q = q.eq("document_id", documentId);
+    else if (hash) q = q.eq("content_hash", hash);
+    else return layer;
+    await q;
+  } catch (_e) { /* swallow — the in-memory heal is what the selector needs */ }
+  return layer;
+};
+
 const getOrExtractTextLayer = async ({ svc, tenantId, documentId, bytes, mime }) => {
   if (!bytes) return { layer: null, cached: false, hash: null };
   const hash = await contentHash(bytes).catch(() => null);
@@ -141,13 +167,19 @@ const getOrExtractTextLayer = async ({ svc, tenantId, documentId, bytes, mime })
     if (documentId && isUuid(documentId)) {
       const r = await svc.from("extraction_text_layer")
         .select("*").eq("tenant_id", tenantId).eq("document_id", documentId).maybeSingle();
-      if (r?.data) return { layer: rowToLayer(r.data, "text"), cached: true, hash };
+      if (r?.data) {
+        const layer = await healLayerPageCount({ svc, tenantId, layer: rowToLayer(r.data, "text"), bytes, documentId, hash });
+        return { layer, cached: true, hash };
+      }
     }
     if (hash) {
       const r = await svc.from("extraction_text_layer")
         .select("*").eq("tenant_id", tenantId).eq("content_hash", hash)
         .is("document_id", null).maybeSingle();
-      if (r?.data) return { layer: rowToLayer(r.data, "text"), cached: true, hash };
+      if (r?.data) {
+        const layer = await healLayerPageCount({ svc, tenantId, layer: rowToLayer(r.data, "text"), bytes, documentId: null, hash });
+        return { layer, cached: true, hash };
+      }
     }
   } catch (_e) { /* fall through */ }
   const layer = await extractTextLayer({ bytes, mime });

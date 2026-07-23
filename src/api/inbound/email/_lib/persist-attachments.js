@@ -149,8 +149,10 @@ export const persistOneAttachment = async (svc, { tenantId, emailId, attachment 
       event_type: "inbound_av_scan_unresolved",
       object_type: "document",
       object_id: documentId,
-      detail: { filename, scan_status: scanStatus, reason: scanReason },
-      severity: scanStatus === "quarantined" ? "warn" : "info",
+      detail: {
+        filename, scan_status: scanStatus, reason: scanReason,
+        severity: scanStatus === "quarantined" ? "warn" : "info",
+      },
     });
   }
 

@@ -97,8 +97,7 @@ const handleDeliveryQuery = async (svc, email) => {
     event_type: "inbound_delivery_query",
     object_type: "inbound_email",
     object_id: email.id,
-    detail: { from: email.from_address, subject: email.subject },
-    severity: "info",
+    detail: { from: email.from_address, subject: email.subject, severity: "info" },
   });
   return { kind: "operator_event" };
 };
@@ -110,8 +109,7 @@ const handleComplaint = async (svc, email) => {
     event_type: "inbound_complaint",
     object_type: "inbound_email",
     object_id: email.id,
-    detail: { from: email.from_address, subject: email.subject },
-    severity: "warn",
+    detail: { from: email.from_address, subject: email.subject, severity: "warn" },
   });
   return { kind: "operator_event_warn" };
 };

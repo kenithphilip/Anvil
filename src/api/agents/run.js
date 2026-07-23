@@ -106,8 +106,7 @@ const executeAction = async (svc, goal, step) => {
       event_type: "agent_escalation",
       object_type: goal.object_type,
       object_id: goal.object_id,
-      detail: { goal_id: goal.id, goal_type: goal.goal_type, payload: step.action_payload },
-      severity: "warn",
+      detail: { goal_id: goal.id, goal_type: goal.goal_type, payload: step.action_payload, severity: "warn" },
     });
     return { result: "ok", result_detail: "escalation event recorded" };
   }
@@ -231,8 +230,8 @@ const executeAction = async (svc, goal, step) => {
             callee: step.action_payload.to,
             agent_goal_id: goal.id,
             db_error: insCall.error.message,
+            severity: "warn",
           },
-          severity: "warn",
         });
         return {
           result: "ok",

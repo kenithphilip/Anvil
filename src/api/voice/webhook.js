@@ -113,8 +113,7 @@ const finaliseCall = async (svc, callRow, payload) => {
         event_type: "voice_action_enqueue_failed",
         object_type: "voice_call",
         object_id: callRow.id,
-        detail: { action, error: ins.error.message, raw_action: a },
-        severity: "warn",
+        detail: { action, error: ins.error.message, raw_action: a, severity: "warn" },
       });
     }
   }

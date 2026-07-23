@@ -93,6 +93,9 @@ export default async function handler(req, res) {
     let loop = 0;
     let totalLatency = 0;
     let totalTokensIn = 0; let totalTokensOut = 0;
+    // Per-turn diagnostics trace (see the tool loop below). Built entirely
+    // from metadata the turn already emits — no extra model calls.
+    const toolTrace = [];
     while (loop < MAX_LOOPS) {
       loop += 1;
       const t0 = Date.now();
@@ -127,11 +130,28 @@ export default async function handler(req, res) {
       // Run each tool, attach a tool_result block, push assistant + user messages.
       const toolResults = [];
       for (const tc of toolCalls) {
+        const tToolStart = Date.now();
         const result = await dispatchErpChatTool(ctx.tenantId, tc.name, tc.input || {}, { userId: ctx.user?.id });
         toolResults.push({ type: "tool_result", tool_use_id: tc.id, content: JSON.stringify(result) });
         if (result?.source) {
           citations.push({ source: result.source, tool: tc.name });
         }
+        // Diagnostics trace. Everything here is metadata the turn ALREADY
+        // produced — the tool name the model chose, the arguments it bound,
+        // the table the tool read, how many rows came back. Recording it costs
+        // no additional model call, which is the constraint: the panel must
+        // never itself consume tokens to explain a turn.
+        toolTrace.push({
+          loop,
+          name: tc.name,
+          args: tc.input || {},
+          source: result?.source || null,
+          rows: Array.isArray(result?.rows) ? result.rows.length : null,
+          ok: !result?.error,
+          error: result?.error ? String(result.error).slice(0, 200) : null,
+          proposed: !!result?.proposed,
+          ms: Date.now() - tToolStart,
+        });
         await svc.from("erp_chat_messages").insert({
           tenant_id: ctx.tenantId,
           session_id: sessionId,
@@ -172,6 +192,21 @@ export default async function handler(req, res) {
       content: assistantText,
       citations,
       stats: { loops: loop, latency_ms: totalLatency, tokens_in: totalTokensIn, tokens_out: totalTokensOut },
+      // Pipeline diagnostics for THIS prompt. Deliberately assembled from
+      // metadata the turn already produced (the provider's own usage counters,
+      // the tool calls the model issued, the tables those tools read), so the
+      // panel is free: it never triggers an additional model call to describe
+      // itself. `schema_refs` is the distinct set of internal tables this
+      // answer actually stands on.
+      diagnostics: {
+        model: MODEL,
+        loops: loop,
+        latency_ms: totalLatency,
+        tokens_in: totalTokensIn,
+        tokens_out: totalTokensOut,
+        tools: toolTrace,
+        schema_refs: Array.from(new Set(toolTrace.map((t) => t.source).filter(Boolean))).sort(),
+      },
     });
   } catch (err) { sendError(res, err); }
 }

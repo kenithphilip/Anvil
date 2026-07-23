@@ -34,13 +34,15 @@ describe("part-location prompt rules", () => {
     expect(prompt.toLowerCase()).toMatch(/part-?no column|part no column|column is blank|blank/);
     expect(prompt.toLowerCase()).toContain("description");
   });
-  it("tells the model to strip a descriptive prefix (OBARA STD SHANK -> the code)", () => {
-    expect(prompt).toMatch(/TWS-092-90-2/);   // the worked example
+  it("tells the model to strip a descriptive prefix (<BRAND> <GRADE> <NOUN> <CODE> -> the code)", () => {
+    // The worked example must stay SYNTHETIC: a real seller's part format here
+    // biases extraction toward that one tenant's catalogue.
+    expect(prompt).toMatch(/AB-1042-7/);      // the worked example
     expect(prompt.toLowerCase()).toContain("prefix");
   });
   it("no longer hard-anchors the part to column 2 as the only pattern", () => {
-    // the MMIL col-2 example must be explicitly scoped as an example only
-    expect(prompt.toLowerCase()).toMatch(/mmil example only|do not assume the part is in column 2/);
+    // the col-2 layout must be explicitly scoped as ONE example only
+    expect(prompt.toLowerCase()).toMatch(/one example layout only|do not assume the part is in column 2/);
   });
   it("names customerItemCode + raw_description in the field guidance", () => {
     expect(prompt).toContain("customerItemCode");

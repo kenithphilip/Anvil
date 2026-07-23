@@ -321,6 +321,22 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
   for (const adapterName of order) {
     const adapter = ADAPTERS[adapterName];
     if (!adapter) continue;
+    // RUN DEADLINE. The serverless function has a hard ceiling (60s on the
+    // current plan). Starting an LLM call we cannot finish is the worst
+    // outcome: the platform kills the function mid-flight, so run.js never
+    // reaches its final UPDATE — the row stays status='running' forever with
+    // no attempts and no error, AND the provider call is still billed. Stop
+    // BEFORE the next adapter instead, so the run always returns and records a
+    // real, diagnosable status. Observed on PO 0066026562: a 47s Claude call
+    // left two runs permanently stuck.
+    if (hints?.deadlineAt && Date.now() >= hints.deadlineAt) {
+      attempts.push({
+        adapter: adapterName,
+        status: "skipped_deadline",
+        reason: "run_budget_exhausted",
+      });
+      continue;
+    }
     if (!adapter.isConfigured(settings)) {
       attempts.push({ adapter: adapterName, status: "skipped_not_configured" });
       continue;

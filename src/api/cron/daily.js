@@ -33,6 +33,7 @@ import driftReportCron  from "./drift-report.js";
 // reads; self-guards on sample size + a 24h dedup. Disable via
 // EVAL_QUALITY_ALERT_DISABLED.
 import evalQualityAlert from "./eval_quality_alert.js";
+import extractionReaper from "./extraction_reaper.js";
 // CM P4: live-model replay of the golden corpus. OPT-IN + cost-bounded — only
 // scheduled when EVAL_REPLAY_ENABLED is set (it burns real LLM calls). Gets a
 // wide per-handler timeout since each case re-runs the model.
@@ -64,6 +65,8 @@ export default async function handler(req, res) {
       // CM P4: extraction-quality alert — raises the admin bell when the
       // operator-corrected DPMO breaches threshold. Self-guards on sample size.
       { name: "eval/quality_alert", fn: evalQualityAlert, opts: { path: "/api/cron/eval_quality_alert" } },
+      // Backstop for runs stranded at status='running' by a killed function.
+      { name: "docai/extraction_reaper", fn: extractionReaper, opts: { path: "/api/cron/extraction_reaper" } },
       // CM P4: live-model replay — opt-in via EVAL_REPLAY_ENABLED. Wide timeout
       // because each golden case re-runs the model; the handler caps case count.
       ...(process.env.EVAL_REPLAY_ENABLED

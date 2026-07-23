@@ -323,7 +323,22 @@ const runAllAdaptersInParallel = async ({ source, settings, customerId, hints, r
 //   vote       boolean: run all adapters in parallel + vote
 //   hints      extra hints to merge in
 //   recordEvents whether to write processing_events (default true)
+// Wall-clock budget for one extraction run, kept BELOW the serverless
+// function ceiling (vercel.json pins api/dispatch.js to maxDuration 60, the
+// cap on the current plan). The pipeline stops dispatching new LLM calls once
+// this is spent, leaving headroom to finalise the extraction_runs row.
+//
+// Without it the platform kills the function mid-call: run.js never reaches
+// its final UPDATE, so the row stays status='running' for ever with no
+// attempts and no error, and the provider call is billed anyway. Two runs on
+// PO 0066026562 were stuck exactly this way after the text layer started
+// working and pushed Claude onto the slower generation tier (a 47s call
+// inside a 60s ceiling).
+const RUN_BUDGET_MS = Math.max(5_000, Number(process.env.DOCAI_RUN_BUDGET_MS) || 45_000);
+
 export const runExtractionPipeline = async (params) => {
+  const runStartedAtMs = Date.now();
+  const deadlineAt = runStartedAtMs + RUN_BUDGET_MS;
   const {
     ctx, svc, settings,
     bytes = null, url = null, filename = null, mime = null,
@@ -684,6 +699,10 @@ export const runExtractionPipeline = async (params) => {
   }
 
   const dispatchHints = { ...hints };
+  // Threaded to dispatchExtract, which refuses to START an adapter once the
+  // budget is spent (recording skipped_deadline) rather than being killed
+  // mid-call and leaving the run row stranded at status='running'.
+  dispatchHints.deadlineAt = deadlineAt;
   if (customerHint?.rendered) {
     dispatchHints.customerHint = customerHint;
   }
@@ -902,7 +921,16 @@ export const runExtractionPipeline = async (params) => {
     // shouldEscalateEmptyLines bounds this so a genuine non-PO, a hard parse
     // failure, or an already-strong first model never trigger a wasted second
     // call; the shared runCost cap still governs the extra spend.
-    if (shouldEscalateEmptyLines({ out, kind, settings })) {
+    // The retry is a SECOND full LLM call, so it is the single most likely
+    // thing to blow the run budget. Skip it when there is no time rather than
+    // starting a call the function will be killed during — a stranded
+    // status='running' row is strictly worse than an honest empty_lines.
+    if (shouldEscalateEmptyLines({ out, kind, settings }) && Date.now() >= deadlineAt) {
+      await recordRunEvent("docai_empty_lines_escalation_skipped", {
+        reason: "run_budget_exhausted",
+        elapsed_ms: Date.now() - runStartedAtMs,
+      });
+    } else if (shouldEscalateEmptyLines({ out, kind, settings })) {
       await recordRunEvent("docai_empty_lines_escalation_started", {
         first_model: out.selected_model || null,
         first_reason: out.model_selection_reason || null,

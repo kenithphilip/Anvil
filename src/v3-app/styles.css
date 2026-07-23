@@ -4683,3 +4683,40 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
    single non-breaking inline-block prevents the wrap from happening
    between them. */
 .lp-h1-segment { display: inline-block; }
+
+/* ── Markdown body (Ask Anvil assistant answers) ───────────────────────────
+   The assistant replies in Markdown. Rendered via lib/markdown.ts, which
+   escapes all input before emitting this fixed tag set — so these selectors
+   are the complete surface. Everything is token-driven, so it tracks both
+   themes with no separate dark-mode block. */
+.md-body > *:first-child { margin-top: 0; }
+.md-body > *:last-child  { margin-bottom: 0; }
+.md-body p { margin: 0 0 8px; line-height: 1.55; }
+.md-body h3, .md-body h4, .md-body h5, .md-body h6 {
+  margin: 12px 0 6px; font-size: 14px; font-weight: 650; color: var(--ink);
+}
+.md-body ul, .md-body ol { margin: 0 0 8px; padding-left: 20px; }
+.md-body li { margin: 2px 0; line-height: 1.5; }
+.md-body strong { font-weight: 650; color: var(--ink); }
+.md-body code {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px; padding: 1px 5px; border-radius: 4px;
+  background: var(--paper); border: 1px solid var(--hairline-2); color: var(--ink-2);
+}
+.md-body pre {
+  margin: 0 0 8px; padding: 10px; border-radius: 8px; overflow-x: auto;
+  background: var(--paper); border: 1px solid var(--hairline-2);
+}
+.md-body pre code { padding: 0; border: 0; background: none; }
+.md-body a { color: var(--accent-2); text-decoration: underline; }
+
+/* Wide tables scroll INSIDE the bubble rather than stretching the chat. */
+.md-table-wrap { overflow-x: auto; margin: 0 0 8px; }
+.md-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.md-table th, .md-table td {
+  border: 1px solid var(--hairline-2); padding: 6px 9px;
+  text-align: left; vertical-align: top; white-space: nowrap;
+}
+.md-table th { background: var(--paper); font-weight: 650; color: var(--ink-2); }
+/* Figures line up for comparison. */
+.md-table td { font-variant-numeric: tabular-nums; }

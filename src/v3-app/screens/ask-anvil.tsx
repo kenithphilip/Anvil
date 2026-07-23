@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Banner, Btn, Card, Chip, WSTitle, fmtINR } from "../lib/primitives";
 import { Icon } from "../lib/icons";
+import { renderMarkdown } from "../lib/markdown";
 import { AnvilBackend } from "../lib/api";
 import { canApprove } from "../lib/rbac";
 
@@ -31,10 +32,24 @@ type Proposal = {
   id: string; action: string; preview?: Record<string, unknown>;
   confirm_token: string; created_by?: string; expires_at?: string; created_at?: string;
 };
+// Per-prompt pipeline diagnostics. Every field is metadata the turn ALREADY
+// produced (the provider's own usage counters, the tool calls the model issued,
+// the tables those tools read), so rendering this costs no extra model call.
+type AskToolCall = {
+  loop: number; name: string; args?: Record<string, any>;
+  source?: string | null; rows?: number | null;
+  ok?: boolean; error?: string | null; proposed?: boolean; ms?: number;
+};
+type AskDiagnostics = {
+  model?: string; loops?: number; latency_ms?: number;
+  tokens_in?: number; tokens_out?: number;
+  tools?: AskToolCall[]; schema_refs?: string[];
+};
+
 type Entry =
   | { kind: "q"; text: string }
   | { kind: "metric"; answer: MetricAnswer }
-  | { kind: "text"; content: string; citations?: Citation[] }
+  | { kind: "text"; content: string; citations?: Citation[]; diagnostics?: AskDiagnostics }
   | { kind: "error"; message: string };
 
 const WINDOWS = [30, 90, 365];
@@ -111,6 +126,78 @@ const MetricCard: React.FC<{ a: MetricAnswer }> = ({ a }) => {
   );
 };
 
+// Per-prompt pipeline diagnostics: which model answered, what it spent, which
+// tools it chose, and which internal tables the answer actually stands on.
+//
+// Deliberately FREE: every value here is metadata the turn already emitted, so
+// opening this panel never triggers another model call. Collapsed by default —
+// it is an audit affordance, not the answer.
+const AskDiagnosticsPanel: React.FC<{ d: AskDiagnostics }> = ({ d }) => {
+  const tools = Array.isArray(d.tools) ? d.tools : [];
+  const refs = Array.isArray(d.schema_refs) ? d.schema_refs : [];
+  const tokens = (d.tokens_in || 0) + (d.tokens_out || 0);
+  return (
+    <details style={{ marginTop: 10, borderTop: "1px solid var(--hairline-2)", paddingTop: 8 }}>
+      <summary className="mono-sm" style={{ cursor: "pointer", color: "var(--ink-3)" }}>
+        pipeline diagnostics
+        {d.model ? " · " + d.model : ""}
+        {tokens ? " · " + tokens.toLocaleString("en-IN") + " tok" : ""}
+        {d.latency_ms ? " · " + (d.latency_ms / 1000).toFixed(1) + "s" : ""}
+      </summary>
+
+      <div className="mono-sm" style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 10, color: "var(--ink-2)" }}>
+        <span><span style={{ color: "var(--ink-4)" }}>model:</span> {d.model || "—"}</span>
+        <span><span style={{ color: "var(--ink-4)" }}>loops:</span> {d.loops ?? "—"}</span>
+        <span><span style={{ color: "var(--ink-4)" }}>tokens in/out:</span> {(d.tokens_in ?? 0).toLocaleString("en-IN")} / {(d.tokens_out ?? 0).toLocaleString("en-IN")}</span>
+        <span><span style={{ color: "var(--ink-4)" }}>latency:</span> {d.latency_ms != null ? d.latency_ms + "ms" : "—"}</span>
+      </div>
+
+      {refs.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <div className="mono-sm" style={{ color: "var(--ink-4)", marginBottom: 4 }}>schema data points this answer stands on</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {refs.map((r) => <Chip key={r} k="ghost">{r}</Chip>)}
+          </div>
+        </div>
+      )}
+
+      {tools.length > 0 && (
+        <div style={{ marginTop: 10, overflowX: "auto" }}>
+          <table className="tbl">
+            <thead><tr><th>#</th><th>Tool</th><th>Bound variables</th><th>Table</th><th className="r">Rows</th><th className="r">ms</th></tr></thead>
+            <tbody>
+              {tools.map((t, j) => {
+                const args = t.args && Object.keys(t.args).length
+                  ? Object.entries(t.args).map(([k, v]) => k + "=" + String(v)).join(" · ")
+                  : "—";
+                return (
+                  <tr key={j}>
+                    <td className="mono-sm">{t.loop}</td>
+                    <td className="mono-sm">
+                      {t.name}
+                      {t.proposed ? <> <Chip k="warn">proposed</Chip></> : null}
+                      {t.ok === false ? <> <Chip k="bad">failed</Chip></> : null}
+                    </td>
+                    <td className="mono-sm" title={args}>{args}</td>
+                    <td className="mono-sm">{t.source || "—"}</td>
+                    <td className="r mono">{t.rows ?? "—"}</td>
+                    <td className="r mono">{t.ms ?? "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {!tools.length && (
+        <div className="mono-sm" style={{ marginTop: 8, color: "var(--ink-4)" }}>
+          Answered without calling a tool — no internal data was read for this turn.
+        </div>
+      )}
+    </details>
+  );
+};
+
 const AskAnvil = () => {
   const [metrics, setMetrics] = useState<MetricDef[]>([]);
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -171,7 +258,7 @@ const AskAnvil = () => {
         append({ kind: "error", message: (resp && resp.error && resp.error.message) || "The assistant is unavailable right now. Try a governed metric above." });
       } else {
         if (resp.session_id) setSessionId(resp.session_id);
-        append({ kind: "text", content: resp.content || "(no answer)", citations: Array.isArray(resp.citations) ? resp.citations : [] });
+        append({ kind: "text", content: resp.content || "(no answer)", citations: Array.isArray(resp.citations) ? resp.citations : [], diagnostics: resp.diagnostics || undefined });
         // the assistant may have PROPOSED an action this turn — surface it inline.
         await refreshProposals();
       }
@@ -312,7 +399,14 @@ const AskAnvil = () => {
             ) : entries.map((e, i) => {
               if (e.kind === "q") {
                 return (
-                  <div key={i} style={{ alignSelf: "flex-end", maxWidth: "80%", padding: "8px 12px", borderRadius: 12, background: "var(--accent)", color: "#fff", fontSize: 14 }}>
+                  // --on-accent, NOT #fff. --accent is a bright lime (#C8FF2B)
+                  // in both themes, so white text on it measures 1.18:1 —
+                  // WCAG AA needs 4.5:1 for body text, i.e. it was effectively
+                  // unreadable. --on-accent (#15171A) is pinned dark in both
+                  // themes for exactly this reason and measures 15.22:1; every
+                  // other accent surface (.btn.live, .chip.live, .nav-badge.live)
+                  // already uses it. This bubble was the one hardcoded exception.
+                  <div key={i} style={{ alignSelf: "flex-end", maxWidth: "80%", padding: "8px 12px", borderRadius: 12, background: "var(--accent)", color: "var(--on-accent)", fontSize: 14 }}>
                     {e.text}
                   </div>
                 );
@@ -324,12 +418,22 @@ const AskAnvil = () => {
               // text
               return (
                 <div key={i} style={{ alignSelf: "stretch", padding: 12, borderRadius: 12, background: "var(--paper-2)", border: "1px solid var(--hairline-2)" }}>
-                  <div style={{ whiteSpace: "pre-wrap", fontSize: 14, color: "var(--ink)" }}>{e.content}</div>
+                  {/* The model answers in Markdown. This used to render as
+                      plain pre-wrap text, so tables arrived as rows of pipes
+                      and **bold** kept its asterisks. renderMarkdown escapes
+                      every character BEFORE emitting its own tags, so model
+                      output can never inject live HTML. */}
+                  <div
+                    className="md-body"
+                    style={{ fontSize: 14, color: "var(--ink)" }}
+                    dangerouslySetInnerHTML={{ __html: renderMarkdown(e.content) }}
+                  />
                   {e.citations && e.citations.length > 0 && (
                     <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
                       {e.citations.map((c, j) => <Chip key={j} k="ghost">{c.source}</Chip>)}
                     </div>
                   )}
+                  {e.diagnostics && <AskDiagnosticsPanel d={e.diagnostics} />}
                 </div>
               );
             })}

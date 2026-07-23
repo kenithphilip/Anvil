@@ -343,6 +343,91 @@ describe("runExtractionPipeline / happy path", () => {
   });
 });
 
+describe("runExtractionPipeline / blind page_count heal (SAP text-layer gap)", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  // A document whose text layer failed (SAP / Ariba / GEP POs defeat unpdf)
+  // cached page_count: 0. On a RE-run the cache is hit, so text_layer.js never
+  // runs again and the selector stays blind — its po_multipage rule reads
+  // page_count. run.js therefore probes the page tree and heals the row.
+  const build5PagePdf = async () => {
+    const { PDFDocument } = await import("pdf-lib");
+    const doc = await PDFDocument.create();
+    for (let i = 0; i < 5; i++) doc.addPage();
+    return Buffer.from(await doc.save());
+  };
+
+  const seedCachedLayer = (storage, row) => {
+    const baseRead = storage.read.bind(storage);
+    storage.read = (ctx) => (ctx.table === "extraction_text_layer" ? [row] : baseRead(ctx));
+    return storage;
+  };
+
+  it("recovers the real page count from a cached row that says 0 pages", async () => {
+    const dispatcher = await import("../api/_lib/docai/index.js");
+    const storage = seedCachedLayer(makeStorage(), {
+      tenant_id: "t1", document_id: null, content_hash: "fixture_hash",
+      text_status: "extract_failed", page_count: 0, char_count: 0,
+      body_text: null, page_breakdown: [], extractor: "unpdf",
+    });
+    await runExtractionPipeline({
+      ctx: { tenantId: "t1", userId: "u1" },
+      svc: buildSvc(storage), settings: {},
+      bytes: await build5PagePdf(),
+      filename: "po.pdf", mime: "application/pdf",
+      sourceType: "pdf", customerId: "c1",
+      kind: "po",
+    });
+
+    // The hint the model selector reads must carry the real page count.
+    const hints = dispatcher.dispatchExtract.mock.calls.at(-1)[0].hints;
+    expect(hints.textLayer.page_count).toBe(5);
+    // and the blind cache row is repaired so the next run pays nothing.
+    const healed = (storage.tables.get("extraction_text_layer") || [])
+      .find((r) => r.page_count === 5);
+    expect(healed).toBeTruthy();
+  });
+
+  it("leaves a healthy cached page_count untouched (no redundant probe)", async () => {
+    const dispatcher = await import("../api/_lib/docai/index.js");
+    const storage = seedCachedLayer(makeStorage(), {
+      tenant_id: "t1", document_id: null, content_hash: "fixture_hash",
+      text_status: "has_text", page_count: 3, char_count: 900,
+      body_text: "PO Number: PO-AAA-100", page_breakdown: [], extractor: "unpdf",
+    });
+    await runExtractionPipeline({
+      ctx: { tenantId: "t1", userId: "u1" },
+      svc: buildSvc(storage), settings: {},
+      bytes: await build5PagePdf(),          // 5 real pages, but cache says 3
+      filename: "po.pdf", mime: "application/pdf",
+      sourceType: "pdf", customerId: "c1",
+      kind: "po",
+    });
+    const hints = dispatcher.dispatchExtract.mock.calls.at(-1)[0].hints;
+    expect(hints.textLayer.page_count).toBe(3);
+  });
+
+  it("stays fail-soft when the bytes are not a parseable PDF", async () => {
+    const dispatcher = await import("../api/_lib/docai/index.js");
+    const storage = seedCachedLayer(makeStorage(), {
+      tenant_id: "t1", document_id: null, content_hash: "fixture_hash",
+      text_status: "extract_failed", page_count: 0, char_count: 0,
+      body_text: null, page_breakdown: [], extractor: "unpdf",
+    });
+    const result = await runExtractionPipeline({
+      ctx: { tenantId: "t1", userId: "u1" },
+      svc: buildSvc(storage), settings: {},
+      bytes: Buffer.from("%PDF-1.4 not really a pdf"),
+      filename: "po.pdf", mime: "application/pdf",
+      sourceType: "pdf", customerId: "c1",
+      kind: "po",
+    });
+    expect(result.runId).toMatch(/^run-/);   // no throw; run completes
+    const hints = dispatcher.dispatchExtract.mock.calls.at(-1)[0].hints;
+    expect(hints.textLayer.page_count).toBe(0);
+  });
+});
+
 describe("runExtractionPipeline / empty-lines auto-escalation (Mahindra PO fix)", () => {
   beforeEach(() => { vi.clearAllMocks(); });
 

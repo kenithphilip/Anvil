@@ -21,6 +21,7 @@
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
+import { reapStaleRuns } from "../_lib/docai/reap-stale-runs.js";
 
 // Truncate a JSONB blob to a preview-friendly size; keeps the panel
 // from blowing up the wire format when raw_extract is huge.
@@ -81,6 +82,12 @@ export default async function handler(req, res) {
     // template_used, voter_used, overrides_applied, field_provenance,
     // extraction_kind). validator_issues + validator_summary already
     // came in with Phase A.
+    // Resolve any run stranded at status='running' by a killed function BEFORE
+    // reading, so the operator sees an honest "timed_out" instead of a spinner
+    // that never resolves. Best-effort and tenant-scoped; only rows older than
+    // the stale cutoff are touched, so a genuinely in-flight run is untouched.
+    await reapStaleRuns(svc, { tenantId: ctx.tenantId });
+
     let extractionRuns = [];
     if (sourceDocId) {
       const runsResp = await svc.from("extraction_runs")

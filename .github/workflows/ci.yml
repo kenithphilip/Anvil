@@ -22,3 +22,34 @@ jobs:
       - run: test -f public/index.html
       - run: npm test -- --run
       - run: npm run eval:golden
+
+  # Applies every migration, in order, to a throwaway Postgres. The rest of CI
+  # runs against a MOCKED Supabase, so no migration SQL was ever parsed or
+  # executed before this job existed — which is how migration 186 merged with a
+  # `name[] = text[]` comparison that cannot run on any Postgres. Uses the
+  # pgvector image because the schema needs the `vector` extension.
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: anvil_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Apply supabase/migrations to a fresh database
+        env:
+          PGPASSWORD: postgres
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGDATABASE: anvil_ci
+        run: bash scripts/db/apply-migrations.sh

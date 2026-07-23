@@ -20,7 +20,9 @@ begin
    where c.conrelid = 'composition_material_lines'::regclass
      and c.contype = 'u'
      and (
-       select array_agg(a.attname order by a.attname)
+       -- attname is `name`, not `text`; without the cast this comparison is
+       -- `name[] = text[]`, which has no operator (42883) and aborts the migration.
+       select array_agg(a.attname::text order by a.attname::text)
          from unnest(c.conkey) k
          join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k
      ) = array['composition_line_index','quote_id','seq','tenant_id'];

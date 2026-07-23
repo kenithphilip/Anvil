@@ -6,6 +6,7 @@ import { evaluateApprovalsForOrder } from "../_lib/approval-evaluator.js";
 import { lineCandidates, lineSapCandidates } from "../_lib/item-mapper.js";
 import { upsertCustomerPart } from "../_lib/item-customer-parts.js";
 import { promoteApprovedOrder } from "../eval/promote.js";
+import { computeOrderPayloadHash } from "../_lib/payload-hash.js";
 
 const APPROVE_INPUTS = [
   "status", "approval", "payload_hash", "result",
@@ -159,6 +160,28 @@ export default async function handler(req, res) {
         patch.approval = null;
         patch.approval_expires_at = null;
         patch.approval_actions = [];
+      }
+
+      // Stamp orders.payload_hash so a SCANNED PO can be approved at all.
+      // Approve refuses without approval.payloadHash, and the workspace reads
+      // it from this column — but it was only ever written on the quote path,
+      // so an order created from a scanned PO could never be approved and
+      // therefore never reach Tally.
+      //
+      // Scanned POs (no quote_id): keep it current on every content edit and
+      // on send-for-review, so the stored hash always describes the order as
+      // it stands. Quote-derived orders: only fill a MISSING hash — the value
+      // carried over from quotes/send.js identifies the exact quote the
+      // customer accepted, and overwriting it would break that linkage.
+      const movingToReview = body.status === "PENDING_REVIEW" && prev.status !== "PENDING_REVIEW";
+      const resultEdited = "result" in body;
+      if (movingToReview || resultEdited) {
+        const isQuoteDerived = !!prev.quote_id;
+        if (!isQuoteDerived || !prev.payload_hash) {
+          const nextResult = resultEdited ? body.result : prev.result;
+          const hash = computeOrderPayloadHash({ ...prev, result: nextResult });
+          if (hash) patch.payload_hash = hash;
+        }
       }
 
       const { data, error } = await svc.from("orders").update(patch).eq("tenant_id", ctx.tenantId).eq("id", id).select("*").single();

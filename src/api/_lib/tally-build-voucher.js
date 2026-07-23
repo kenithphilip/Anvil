@@ -82,7 +82,14 @@ export const computeLineTax = (line, kind) => {
   const qty = num(line.qty || line.quantity, 0);
   const rate = num(line.rate || line.unitPrice, 0);
   const taxable = round2(qty * rate);
-  const gst_pct = num(line.gst_pct ?? line.gstRate ?? line.rate_of_duty_pct, 0);
+  // `_mapped_item.rate_of_duty_pct` is the canonical rate from item_master.
+  // The resolver backfills only hsn/uom onto the line, so without this the
+  // master's GST rate never reached the voucher and a line whose PO omitted
+  // the rate was taxed at 0%.
+  const gst_pct = num(
+    line.gst_pct ?? line.gstRate ?? line.rate_of_duty_pct ?? line._mapped_item?.rate_of_duty_pct,
+    0,
+  );
   const cess_pct = num(line.cess_pct ?? line.cessRate, 0);
   const cess = round2((taxable * cess_pct) / 100);
   let cgst = 0;
@@ -107,9 +114,41 @@ export const computeLineTax = (line, kind) => {
   };
 };
 
-const stockItemName = (line) =>
-  line.tallyItemName || line.itemName || line.description || line.itemCode
-  || line.partNumber || line.sku || "Item";
+// The Tally STOCKITEMNAME. Order matters and used to be actively wrong:
+// `description` came THIRD, and `tallyItemName`/`itemName`/`itemCode`/`sku`
+// are read here but written NOWHERE in the codebase — so every real line fell
+// through to `description`, i.e. the buyer's prose. Mahindra's
+// "OBARA STD SHANK TWS-092-90-2" went into the books as a stock item name.
+//
+// The canonical identity is on `_mapped_item`, which the item-master resolver
+// stamps at order create — and which this builder previously never read at
+// all, discarding the entire tier-0 mapping at the last inch.
+//
+// part_no BEFORE print_name deliberately: print_name is a display label and is
+// NOT unique (many distinct parts share "SHANK"), so it would collide in
+// Tally; part_no is the unique key. If a tenant's Tally names stock items
+// differently, `tallyItemName` is the explicit per-line override hook.
+const stockItemName = (line) => {
+  const m = line._mapped_item || null;
+  return line.tallyItemName
+    || (m && (m.part_no || m.print_name))
+    || line.itemName || line.itemCode || line.partNumber || line.sku
+    // Buyer prose is a LAST resort, never the default.
+    || line.description
+    || "Item";
+};
+
+// Lines that would enter Tally with no canonical identity. Used to refuse the
+// build rather than post prose (or a wrong item) into someone's books.
+export const unmappedVoucherLines = (lines) =>
+  (Array.isArray(lines) ? lines : [])
+    .map((l, i) => ({ i, l }))
+    .filter(({ l }) => !l?.tallyItemName && !l?._mapped_item)
+    .map(({ i, l }) => ({
+      line_no: i + 1,
+      partNumber: l?.partNumber ?? null,
+      description: l?.description ?? null,
+    }));
 
 const lineUom = (line) => line.uom || line.unit || "Nos";
 
@@ -197,6 +236,24 @@ export const buildSalesVoucherXml = ({ order, company, customer, voucherNo }) =>
   if (!order) throw new Error("order required");
   if (!company) throw new Error("company required");
   const lines = (order.result?.salesOrder?.lineItems) || [];
+
+  // Refuse to build a voucher for a line with no canonical identity. Tally
+  // keys inventory on the stock-item NAME, so an unmapped line either creates
+  // a junk item from the buyer's prose or silently matches the WRONG item —
+  // and you find out at stocktake. Previously every line was mapped
+  // unconditionally with no check, no throw and no skip.
+  const unmapped = unmappedVoucherLines(lines);
+  if (unmapped.length) {
+    const err = new Error(
+      "Cannot build a Tally voucher: " + unmapped.length + " line(s) are not mapped to the item master — "
+      + unmapped.slice(0, 5).map((u) => "#" + u.line_no + " " + (u.partNumber || u.description || "(blank)")).join("; ")
+      + (unmapped.length > 5 ? "; …" : "")
+      + ". Map them in the recon table (or set tallyItemName) before pushing.",
+    );
+    err.code = "TALLY_UNMAPPED_LINES";
+    err.unmapped = unmapped;
+    throw err;
+  }
   const kind = placeOfSupplyKind(company, customer);
   const voucherType = resolveSalesVoucherType(company);
   const vtXml = toTallyXmlName(voucherType);

@@ -70,6 +70,7 @@ import { validateGstin, gstinStateCode } from "../gstin.js";
 import { findByGstin, findCustomersByPan } from "../customer-canonicalizer.js";
 import { voteAcrossAdapters } from "./voter.js";
 import { shouldEscalateEmptyLines } from "./model_selector.js";
+import { repairPartCodes } from "./part-split.js";
 import { validateExtraction } from "./validators.js";
 import { recordEvent } from "../audit.js";
 import { buildTenantIdentity, scrubCustomerOfTenantIdentity } from "./tenant-scrub.js";
@@ -1049,6 +1050,30 @@ export const runExtractionPipeline = async (params) => {
         });
       }
     } catch (_e) { /* never break the run */ }
+  }
+
+  // 6a3. Deterministic part-code repair. The prompt asks the model to pull our
+  // code out of a prefixed description ("OBARA STD SHANK TWS-092-90-2" ->
+  // "TWS-092-90-2"), but that split lived entirely inside the LLM with no
+  // post-processor and no validator — so an uncut cell flowed straight through
+  // into item_customer_parts as a lookup key and into customer-hints as a
+  // learned "prefix", where it reinforced itself on the next run. This repairs
+  // the line deterministically so the outcome is auditable and re-runnable.
+  // Untouched when the model already returned a bare code.
+  if (out?.normalized && settings?.docai_part_split !== false) {
+    try {
+      const brandTokens = [];
+      const tName = (settings?.tenant_display_name || settings?.tally_company_name || "").trim();
+      if (tName) brandTokens.push(tName.split(/\s+/)[0]);
+      const { normalized: repairedNorm, repaired } = repairPartCodes(out.normalized, {
+        brandTokens,
+        stopWords: Array.isArray(settings?.docai_part_split_stopwords) ? settings.docai_part_split_stopwords : [],
+      });
+      if (repaired > 0) {
+        out.normalized = repairedNorm;
+        await recordRunEvent("docai_part_codes_repaired", { count: repaired });
+      }
+    } catch (_e) { /* never break a run over a cosmetic repair */ }
   }
 
   // 6b. Tenant-identity scrub (May 2026 audit fix). Strip any

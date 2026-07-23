@@ -45,7 +45,7 @@ const PO_SYSTEM_PROMPT = [
   "NOT the supplier (the recipient of the PO).",
   "Common multi-party patterns where the LLM picks the wrong entity:",
   "  Summit Automation Pvt Ltd buys Northwind-brand spares for a Meridian customer site -> customer is Summit Automation.",
-  "  A Tier-2 supplier buys SKF bearings to assemble into a Tata line -> customer is the Tier-2 supplier.",
+  "  A Tier-2 supplier buys SKF bearings to assemble into a Comet Motors line -> customer is the Tier-2 supplier.",
   "If you find yourself returning a famous brand or end-customer name, re-read the bill-to block.",
   "",
   "STEP 1: Classify. Decide one of:",
@@ -81,8 +81,8 @@ const PO_SYSTEM_PROMPT = [
   "Each line: partNumber, customerItemCode, description, raw_description, specification, quantity, unitPrice, ...",
   "partNumber = OUR part/SKU. The part is NOT always in a 'Part No' column - find it: (a) the Part-No column",
   "if populated; (b) if BLANK, the part-code token on the first line of the Description cell (e.g.",
-  "'TNA-16-04-10-2', ignoring boilerplate lines like 'Refer Table 1...'); (c) if the description has a",
-  "descriptive prefix, the embedded code, e.g. 'OBARA STD SHANK TWS-092-90-2' -> 'TWS-092-90-2'. Never null",
+  "'BRG-16-04-10-2', ignoring boilerplate lines like 'Refer Table 1...'); (c) if the description has a",
+  "descriptive prefix, the embedded code, e.g. 'ACME STD BUSHING AB-1042-7' -> 'AB-1042-7'. Never null",
   "just because a labelled Part-No column is empty. customerItemCode = the BUYER's own item/material/SAP code",
   "from a dedicated 'Item Number'/'Material'/'SAP Code' column (e.g. 'A12060OBAR010003'), distinct from OUR",
   "partNumber - capture BOTH when present. raw_description = the Description cell VERBATIM, uncut (for audit).",
@@ -238,7 +238,7 @@ const PO_SCHEMA = {
       items: {
         type: "object",
         properties: {
-          partNumber: { type: ["string", "null"], description: "OUR part number. Parse from the description when the Part-No column is blank; strip descriptive prefixes ('OBARA STD SHANK TWS-092-90-2' -> 'TWS-092-90-2'). Never null just because a labelled column is empty." },
+          partNumber: { type: ["string", "null"], description: "OUR part number. Parse from the description when the Part-No column is blank; strip descriptive prefixes ('ACME STD BUSHING AB-1042-7' -> 'AB-1042-7'). Never null just because a labelled column is empty." },
           customerItemCode: { type: ["string", "null"], description: "The BUYER's own item/material/SAP code from a dedicated column (e.g. 'A12060OBAR010003'); distinct from partNumber (ours). Null if no such column." },
           description: { type: ["string", "null"] },
           raw_description: { type: ["string", "null"], description: "The Description cell VERBATIM, uncut - audit source for the part parse." },

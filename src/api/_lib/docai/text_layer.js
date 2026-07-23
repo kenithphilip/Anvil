@@ -68,6 +68,23 @@ const isPdfBytes = (b) => {
   return b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46;
 };
 
+// unpdf REJECTS a Node Buffer outright ("Please provide binary data as
+// `Uint8Array`, rather than `Buffer`"). Node's Buffer extends Uint8Array, so
+// the obvious `bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)`
+// is TRUE for a Buffer and hands the Buffer straight through — which is why
+// L1 was failing with extract_failed on effectively every PDF, forcing the
+// pipeline onto the paid OCR fallback and leaving char_count at 0 (so the
+// selector's long-document rule could never fire either).
+// Returns a COPY, deliberately. pdf.js transfers (detaches) the ArrayBuffer it
+// is handed, so a zero-copy view would leave the caller's `bytes` detached for
+// every later consumer — the geometry pass would silently get nothing, and
+// worse, run.js reuses the same `bytes` for the LLM call afterwards. The copy
+// costs one document-sized allocation per call and keeps callers isolated.
+const toUint8 = (bytes) => {
+  if (!bytes) return null;
+  return new Uint8Array(bytes);
+};
+
 // SHA-256 of bytes for the cache key when no document_id is known
 // (e.g. inline-attachment runs from inbound email). Uses Node's
 // built-in crypto so it's available in the Vercel serverless
@@ -197,7 +214,7 @@ export const extractTextLayer = async ({ bytes, mime }) => {
   let result;
   try {
     const { extractText, getDocumentProxy } = unpdf;
-    const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const arr = toUint8(bytes);
     // getDocumentProxy gives us a pdfjs document we can extract from
     // page-by-page. The returned `text` is `string[]` (one per page)
     // when `mergePages: false`.
@@ -247,4 +264,102 @@ export const TEXT_LAYER_THRESHOLDS = {
   usable: USABLE_TEXT_THRESHOLD,
   perPage: PER_PAGE_TEXT_THRESHOLD,
   bodyTextBytes: MAX_BODY_TEXT_BYTES,
+};
+
+// ───────────────────────────────────────────────────────────────────────────
+// Text-layer GEOMETRY, for the evidence-highlight overlay.
+//
+// A digital PDF already knows where every glyph sits, so the click/hover
+// highlight never needed OCR. It was wired to OCR bboxes anyway, and OCR only
+// runs when this text layer FAILS — so on an ordinary digital PO no geometry
+// was ever produced and the overlay silently rendered nothing.
+//
+// Emits the same shape the OCR layer does, so bbox-evidence.js can index
+// either without caring which produced it:
+//   { raw_pages: [{ index, width, height, blocks: [{ text, bbox, confidence }] }] }
+//
+// Coordinates are absolute page units with a TOP-LEFT origin, matching OCR
+// output and CSS overlay positioning. pdf.js reports text in PDF user space
+// (origin BOTTOM-left), so y is flipped here — getting this backwards renders
+// every highlight mirrored down the page.
+// ───────────────────────────────────────────────────────────────────────────
+
+const GEOM_MAX_PAGES = 40;          // bound work on very long documents
+const GEOM_MAX_BLOCKS_PER_PAGE = 500;
+
+// Group glyph runs sharing a baseline into one line-level block. Per-item
+// boxes are too granular to match against an extracted line: a description
+// like "OBARA STD SHANK TWS-092-90-2" arrives as several runs, and matching
+// on a 3-character fragment would anchor the highlight to the wrong cell.
+const groupItemsIntoLines = (items, pageHeight) => {
+  const rows = [];
+  for (const it of items) {
+    const t = it.transform;
+    if (!Array.isArray(t) || t.length < 6) continue;
+    const x = Number(t[4]);
+    const baseline = Number(t[5]);
+    const w = Number(it.width) || 0;
+    const h = Number(it.height) || Math.abs(Number(t[3])) || 0;
+    if (!Number.isFinite(x) || !Number.isFinite(baseline)) continue;
+    const tol = Math.max(2, h * 0.6);
+    let row = rows.find((r) => Math.abs(r.baseline - baseline) <= tol);
+    if (!row) {
+      row = { baseline, minX: x, maxX: x + w, minY: baseline, maxY: baseline + h, parts: [] };
+      rows.push(row);
+    }
+    row.minX = Math.min(row.minX, x);
+    row.maxX = Math.max(row.maxX, x + w);
+    row.minY = Math.min(row.minY, baseline);
+    row.maxY = Math.max(row.maxY, baseline + h);
+    row.parts.push({ x, str: it.str });
+  }
+  return rows
+    .map((r) => {
+      const text = r.parts.sort((a, b) => a.x - b.x).map((p) => p.str).join(" ").replace(/\s+/g, " ").trim();
+      if (!text) return null;
+      // Flip PDF (bottom-left) -> UI (top-left).
+      const y0 = pageHeight - r.maxY;
+      const y1 = pageHeight - r.minY;
+      return { text, bbox: [r.minX, y0, r.maxX, y1], confidence: 1 };
+    })
+    .filter(Boolean)
+    .slice(0, GEOM_MAX_BLOCKS_PER_PAGE);
+};
+
+// Public: per-page line boxes for a digital PDF, or null when the document
+// has no usable text layer (a scan) or unpdf is unavailable. Best-effort —
+// never throws, so a geometry failure can't break an extraction run.
+export const extractTextBlocks = async ({ bytes, maxPages = GEOM_MAX_PAGES } = {}) => {
+  if (!bytes || !bytes.length) return null;
+  if (!isPdfBytes(bytes)) return null;
+  const unpdf = await loadUnpdf();
+  if (!unpdf?.getDocumentProxy) return null;
+
+  let doc;
+  try {
+    doc = await unpdf.getDocumentProxy(toUint8(bytes));
+  } catch (_e) {
+    return null;
+  }
+
+  const rawPages = [];
+  const total = Math.min(Number(doc?.numPages) || 0, maxPages);
+  for (let i = 1; i <= total; i++) {
+    try {
+      const page = await doc.getPage(i);
+      const viewport = page.getViewport({ scale: 1 });
+      const width = Number(viewport?.width) || 0;
+      const height = Number(viewport?.height) || 0;
+      if (!(width > 0) || !(height > 0)) continue;
+      const content = await page.getTextContent();
+      const items = (content?.items || []).filter(
+        (it) => it && typeof it.str === "string" && it.str.trim(),
+      );
+      if (!items.length) continue;
+      const blocks = groupItemsIntoLines(items, height);
+      if (blocks.length) rawPages.push({ index: i - 1, width, height, blocks });
+    } catch (_e) { /* skip the page; a partial index still highlights */ }
+  }
+
+  return rawPages.length ? { raw_pages: rawPages, source: "text_layer" } : null;
 };

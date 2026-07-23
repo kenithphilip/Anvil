@@ -8,10 +8,16 @@
 // document preview: tap a line in the recon table, the
 // corresponding bbox glows on the PDF/image preview.
 //
-// Today the OCR layer persists bboxes on extraction_ocr_layer
-// (page_breakdown[].blocks[].bbox) but the LLM stage doesn't
-// thread them through to normalized.lines. This module
-// post-processes a successful extraction and decorates each
+// GEOMETRY SOURCE (fixed 2026-07-23). This used to read OCR blocks only, and
+// the overlay consequently never rendered, for two independent reasons:
+//   1. OCR only runs when the L1 text layer FAILED (run.js's wantsOcr gate), so
+//      an ordinary digital PO has no OCR layer and nothing was ever stamped.
+//   2. bbox_norm was read but never COMPUTED anywhere, and the UI discards any
+//      evidence without it — so even OCR'd documents highlighted nothing.
+// Now the index is source-agnostic (OCR blocks OR text-layer boxes from
+// extractTextBlocks) and normalises coordinates itself.
+//
+// This module post-processes a successful extraction and decorates each
 // extracted line with the best-matching bbox by:
 //
 //   1. Collecting every OCR block on every page with its bbox.
@@ -40,25 +46,56 @@ const significantTokens = (s) => {
     .filter((t) => t.length >= 3 && !STOP_TOKENS.has(t));
 };
 
-// Build a flat block list { page, blockIndex, text, bbox } from
-// the OCR layer's page_breakdown shape (which carries page-level
-// blocks). The dispatcher already keeps this on the in-memory
-// ocrLayer object; raw_pages carries the per-block bbox.
-export const buildBlockIndex = (ocrLayer) => {
+// Normalise an absolute [x0,y0,x1,y1] box to 0..1 against the page size.
+//
+// This has to exist here because NOTHING upstream ever produced bbox_norm:
+// mistral.js emits `bbox` + page width/height and never a normalised copy, so
+// buildBlockIndex's old `b.bbox_norm || null` was null for every block. The UI
+// requires normalised coords (so-workspace.tsx checks Array.isArray(bbox_norm)
+// and bails otherwise), which is why the highlight overlay never rendered even
+// on documents that DID go through OCR.
+//
+// Coordinates are top-left origin, matching both OCR output and CSS overlay
+// positioning. A box already in 0..1 is passed through untouched.
+export const normaliseBbox = (bbox, pageWidth, pageHeight) => {
+  if (!Array.isArray(bbox) || bbox.length < 4) return null;
+  const nums = bbox.slice(0, 4).map(Number);
+  if (!nums.every(Number.isFinite)) return null;
+  const [ax, ay, bx, by] = nums;
+  const x0 = Math.min(ax, bx), x1 = Math.max(ax, bx);
+  const y0 = Math.min(ay, by), y1 = Math.max(ay, by);
+  const w = Number(pageWidth), h = Number(pageHeight);
+  // Already normalised (every coord within the unit square) — pass through, so
+  // a provider that returns fractions isn't divided by the page size again.
+  if (x1 <= 1 && y1 <= 1) return [x0, y0, x1, y1];
+  if (!(w > 0) || !(h > 0)) return null;
+  const clamp = (n) => Math.min(1, Math.max(0, n));
+  return [clamp(x0 / w), clamp(y0 / h), clamp(x1 / w), clamp(y1 / h)];
+};
+
+// Build a flat block list { page, blockIndex, text, bbox } from a layer's
+// raw_pages shape: [{ index, width, height, blocks: [{ text, bbox }] }].
+//
+// Source-agnostic on purpose. The OCR layer supplies this, and so does the L1
+// text layer via extractTextBlocks() — which matters because OCR only runs
+// when the text layer FAILED, so on an ordinary digital PO there is no OCR
+// layer at all and this was the reason no evidence was ever stamped.
+export const buildBlockIndex = (layer) => {
   const blocks = [];
-  if (!ocrLayer) return blocks;
-  const pages = Array.isArray(ocrLayer.raw_pages) ? ocrLayer.raw_pages : [];
+  if (!layer) return blocks;
+  const pages = Array.isArray(layer.raw_pages) ? layer.raw_pages : [];
   pages.forEach((p, pIdx) => {
     const pageNum = Number.isFinite(p?.index) ? Number(p.index) + 1 : pIdx + 1;
     const blockArr = Array.isArray(p?.blocks) ? p.blocks : [];
     blockArr.forEach((b, bIdx) => {
       if (!b?.bbox || !b?.text) return;
+      const bbox = b.bbox.slice ? b.bbox.slice(0, 4) : b.bbox;
       blocks.push({
         page: pageNum,
         blockIndex: bIdx,
         text: String(b.text),
-        bbox: b.bbox.slice ? b.bbox.slice(0, 4) : b.bbox,
-        bbox_norm: b.bbox_norm || null,
+        bbox,
+        bbox_norm: b.bbox_norm || normaliseBbox(bbox, p?.width, p?.height),
         confidence: Number(b.confidence) || null,
       });
     });
@@ -106,9 +143,9 @@ export const findEvidenceForLine = (line, blockIndex) => {
 // the count of lines that got evidence stamped. Pure mutation;
 // safe to call on the normalized object that's about to be
 // persisted on extraction_runs.normalized_extract.
-export const stampEvidenceOnLines = (normalized, ocrLayer) => {
-  if (!normalized?.lines || !ocrLayer) return 0;
-  const blocks = buildBlockIndex(ocrLayer);
+export const stampEvidenceOnLines = (normalized, layer) => {
+  if (!normalized?.lines || !layer) return 0;
+  const blocks = buildBlockIndex(layer);
   if (!blocks.length) return 0;
   let stamped = 0;
   for (const line of normalized.lines) {

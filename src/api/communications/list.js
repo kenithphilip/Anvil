@@ -29,7 +29,7 @@ export default async function handler(req, res) {
     const limit = Math.max(1, Math.min(500, Number(req.query.limit || 100)));
 
     let q = svc.from("communications")
-      .select("id, order_id, source_po_id, direction, channel, thread_id, from_addr, to_addr, subject, body, status, created_at, updated_at")
+      .select("id, order_id, source_po_id, object_type, object_id, customer_id, document_type, direction, channel, thread_id, from_addr, to_addr, cc_addrs, subject, body, status, provider, sent_at, created_at, updated_at")
       .eq("tenant_id", ctx.tenantId)
       .order("created_at", { ascending: false })
       .limit(limit);

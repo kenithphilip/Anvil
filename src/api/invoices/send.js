@@ -14,6 +14,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { renderInvoice } from "../_lib/pdf-renderer.js";
 import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "../_lib/storage.js";
+import { commsRow } from "../_lib/comms-row.js";
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -144,7 +145,7 @@ export default async function handler(req, res) {
     // immediately call /api/communications/send to fire it. The agent
     // runner's reaper (Phase 3) will also fire any leftover queued
     // rows on its next tick.
-    const draft = await svc.from("communications").insert({
+    const draft = await svc.from("communications").insert(commsRow({
       tenant_id: ctx.tenantId,
       object_type: "invoice",
       object_id: invQ.data.id,
@@ -160,7 +161,7 @@ export default async function handler(req, res) {
         portal_token_id: portal?.id || null,
         portal_url: portal?.url || null,
       },
-    }).select("*").single();
+    })).select("*").single();
     if (draft.error) throw new Error("comm draft: " + draft.error.message);
 
     // Flip the invoice to sent if it was draft.

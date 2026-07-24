@@ -7,6 +7,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
+import { commsRow } from "../_lib/comms-row.js";
 
 const TEMPLATES = {
   order_received: {
@@ -53,7 +54,7 @@ export default async function handler(req, res) {
     const subject = body.subject || (tpl ? fill(tpl.subject, vars) : "(draft)");
     const draftBody = body.body || (tpl ? fill(tpl.body, vars) : "");
     const svc = serviceClient();
-    const insert = await svc.from("communications").insert({
+    const insert = await svc.from("communications").insert(commsRow({
       tenant_id: ctx.tenantId,
       order_id: body.orderId || null,
       source_po_id: body.sourcePoId || null,
@@ -65,7 +66,7 @@ export default async function handler(req, res) {
       body: draftBody,
       status: "draft",
       template_code: body.templateCode,
-    }).select("*").single();
+    })).select("*").single();
     if (insert.error) throw new Error(insert.error.message);
     await recordAudit(ctx, { action: "comm_draft", objectType: "communication", objectId: insert.data.id, detail: body.templateCode });
     if (body.orderId) await recordEvent(ctx, { caseId: body.orderId, eventType: "draft_email_created", objectType: "communication", objectId: insert.data.id, detail: { template: body.templateCode } });

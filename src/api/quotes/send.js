@@ -27,6 +27,7 @@ import { renderQuote } from "../_lib/pdf-renderer.js";
 import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "../_lib/storage.js";
 import { upsertCustomerPart } from "../_lib/item-customer-parts.js";
 import { belowFloorLines } from "../_lib/quote-margin.js";
+import { commsRow } from "../_lib/comms-row.js";
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PORTAL_TOKEN_TTL_DAYS = 30;
@@ -440,7 +441,7 @@ export default async function handler(req, res) {
     }
 
     // Queue the email.
-    const draft = await svc.from("communications").insert({
+    const draft = await svc.from("communications").insert(commsRow({
       tenant_id: ctx.tenantId,
       object_type: "quote",
       object_id: quote.id,
@@ -458,7 +459,7 @@ export default async function handler(req, res) {
         portal_url: portal?.url || null,
         payload_hash: payloadHash,
       },
-    }).select("*").single();
+    })).select("*").single();
     if (draft.error) throw new Error("comm draft: " + draft.error.message);
 
     await recordAudit(ctx, {

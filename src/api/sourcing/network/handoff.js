@@ -15,6 +15,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../../_li
 import { resolveContext, requirePermission } from "../../_lib/auth.js";
 import { serviceClient } from "../../_lib/supabase.js";
 import { recordAudit } from "../../_lib/audit.js";
+import { commsRow } from "../../_lib/comms-row.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -74,7 +75,7 @@ export default async function handler(req, res) {
     // see the draft in their Comms inbox.
     let communicationId = null;
     if (peerSettings?.network_contact_email) {
-      const { data: comm } = await svc.from("communications").insert({
+      const { data: comm } = await svc.from("communications").insert(commsRow({
         tenant_id: listing.tenant_id,             // owned by the listing tenant
         channel: "email",
         recipient: peerSettings.network_contact_email,
@@ -88,7 +89,7 @@ export default async function handler(req, res) {
         ].join("\n"),
         status: "queued",
         external_ref: { network_query_id: query.id, network_listing_id: listing.id },
-      }).select("id").single();
+      })).select("id").single();
       communicationId = comm?.id || null;
     }
 

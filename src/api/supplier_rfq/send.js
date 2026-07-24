@@ -9,6 +9,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { commsRow } from "../_lib/comms-row.js";
 
 const buildRfqEmail = ({ rfq, lines, vendor, customerRef, customerName }) => {
   const linesText = lines.map((l) => `${l.line_no}. ${l.part_number || ""} ${l.description || ""} qty=${l.quantity || 0}${l.uom ? " " + l.uom : ""}${l.target_price ? " target=" + l.target_price : ""}${l.spec ? " spec=" + l.spec : ""}`).join("\n");
@@ -90,7 +91,7 @@ export default async function handler(req, res) {
       if (inv.error) throw new Error(inv.error.message);
       // Hand off to comms to actually send. We write a draft
       // communications row; the existing send wiring picks it up.
-      await svc.from("communications").insert({
+      const commIns = await svc.from("communications").insert(commsRow({
         tenant_id: ctx.tenantId,
         channel: "email",
         recipient: v.contact_email,
@@ -99,7 +100,11 @@ export default async function handler(req, res) {
         status: "queued",
         ref_type: "supplier_rfq",
         ref_id: rfq.id,
-      }).then(() => {}).then(() => undefined, () => undefined);
+      }));
+      // Errors were swallowed here (.then(()=>undefined, ()=>undefined)), so a
+      // rejected insert silently dropped the invitation email. Surface it on
+      // the per-vendor result instead of losing it.
+      if (commIns?.error) out.push({ vendor_id: v.id, invitation_id: inv.data.id, ok: false, error: commIns.error.message });
       out.push({ vendor_id: v.id, invitation_id: inv.data.id, ok: true });
     }
     await svc.from("supplier_rfqs").update({ status: "sent" })

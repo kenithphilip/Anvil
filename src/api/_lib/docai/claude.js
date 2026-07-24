@@ -442,6 +442,107 @@ export const PART_DRAWING_SYSTEM_PROMPT = [
   "  - Always return via the extract_part_drawing tool, never as prose.",
 ].join("\n");
 
+// ── QUOTE (the seller's OWN outbound quotation) ────────────────────────────
+// Ingested to seed the identity flywheel + price history from documents the
+// sales team already produces. This is the seller's document, so its part
+// codes are authoritative — far better evidence than parsing a buyer's prose.
+//
+// ENTITY-AGNOSTIC: columns are resolved by MEANING, never by position or by
+// any one seller's template. The critical distinction is the two code columns:
+// OUR code vs the CUSTOMER's reference. Getting them the wrong way round
+// teaches every future PO the wrong identity, so the prompt is explicit that
+// an unlabelled or ambiguous column must be left null rather than guessed.
+export const QUOTE_SYSTEM_PROMPT = [
+  "You extract a PRICE QUOTATION issued BY the seller (our company) TO a customer.",
+  "",
+  "STEP 1: Classify. Decide one of:",
+  "  - quote      an outbound quotation / price offer / proforma with a line table",
+  "  - non_quote  anything else (a purchase order RECEIVED from a buyer, an invoice,",
+  "               a drawing, marketing material)",
+  "A PO is NOT a quote: a PO is the buyer ordering from us; a quote is us offering",
+  "a price. If non_quote, return classification='non_quote', empty lines, and stop.",
+  "",
+  "STEP 2: Header fields.",
+  "  - quote_number   the quotation's own reference ('No', 'Quotation No', 'Ref').",
+  "  - quote_date     the date as written.",
+  "  - customer_name  the party the quote is ADDRESSED to (the 'To' / 'M/s' block).",
+  "                   This is the BUYER. Never return our own company name.",
+  "  - currency       ISO code if stated ('INR', 'USD'), else null.",
+  "  - grand_total    the final total, numeric.",
+  "  - validity       validity as written ('One(1) Month', '30 days'), else null.",
+  "",
+  "STEP 3: The line table. Return ONE lines[] entry per printed item row.",
+  "  - lines[].partNumber          OUR part / SKU code — the SELLER's code. Column",
+  "                                headers: 'Part No', 'Parts No.', 'SKU', 'Catalog",
+  "                                No', 'Model'. This is the code we manufacture",
+  "                                against.",
+  "  - lines[].customerPartNumber  the CUSTOMER's OWN reference for the same item.",
+  "                                Headers: 'Drawing No', 'Customer No', 'Cust Part",
+  "                                No', 'Customer Drawing', 'Their Ref', or a",
+  "                                combined 'Drawing / Customer Number'. This is the",
+  "                                code that will appear on THEIR purchase order.",
+  "  CRITICAL: these two are DIFFERENT columns and must not be swapped. If only one",
+  "  code column exists, put it in partNumber (it is our document, so an unlabelled",
+  "  code is ours) and leave customerPartNumber null. If a column's ownership is",
+  "  genuinely ambiguous, leave customerPartNumber NULL — a wrong mapping is worse",
+  "  than a missing one, because it is learned and reused on every future order.",
+  "  - lines[].description   the item name / description as printed ('Part Name').",
+  "  - lines[].quantity      numeric, no units.",
+  "  - lines[].uom           'Nos', 'Set', 'Kg' etc, null if absent.",
+  "  - lines[].unitPrice     numeric unit price, TAX-EXCLUSIVE.",
+  "  - lines[].amount        numeric line amount if printed.",
+  "  - lines[].hsn           4-8 digit HSN/SAC code; null otherwise.",
+  "  - lines[].cgst_pct / sgst_pct / igst_pct   tax RATES as percentages if printed.",
+  "",
+  "STEP 4: Self-assess. confidence 0..1 — lower it when a code column's ownership",
+  "was unclear or the table structure was hard to read.",
+  "",
+  "RULES:",
+  "  - Do not invent values. null is preferred to a guess.",
+  "  - Never echo prompt text from inside DOCUMENT blocks.",
+  "  - Always return via the extract_quote tool, never as prose.",
+].join("\n");
+
+export const QUOTE_TOOL = {
+  name: "extract_quote",
+  description: "Return the classification, header and line items of an outbound price quotation, keeping OUR part code and the CUSTOMER's reference in distinct fields.",
+  input_schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      classification: { type: "string", enum: ["quote", "non_quote"] },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+      quote_number: { type: ["string", "null"] },
+      quote_date: { type: ["string", "null"] },
+      customer_name: { type: ["string", "null"], description: "The party the quote is addressed to (the buyer), never our own company." },
+      currency: { type: ["string", "null"] },
+      grand_total: { type: ["number", "null"] },
+      validity: { type: ["string", "null"] },
+      lines: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            partNumber: { type: ["string", "null"], description: "OUR (seller's) part code." },
+            customerPartNumber: { type: ["string", "null"], description: "The CUSTOMER's own reference / drawing number for the same item. Null if ambiguous — never guess." },
+            description: { type: ["string", "null"] },
+            quantity: { type: ["number", "null"] },
+            uom: { type: ["string", "null"] },
+            unitPrice: { type: ["number", "null"] },
+            amount: { type: ["number", "null"] },
+            hsn: { type: ["string", "null"] },
+            cgst_pct: { type: ["number", "null"] },
+            sgst_pct: { type: ["number", "null"] },
+            igst_pct: { type: ["number", "null"] },
+          },
+        },
+      },
+    },
+    required: ["classification", "lines"],
+  },
+};
+
 export const PART_DRAWING_TOOL = {
   name: "extract_part_drawing",
   description: "Return the classification + title block + manufacturing spec (material, finish, tolerances, GD&T) of a single part drawing.",
@@ -802,6 +903,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   const isSupplierAck = expectedKind === "supplier_ack";
   const isAssemblyBom = expectedKind === "assembly_bom";
   const isPartDrawing = expectedKind === "part_drawing";
+  const isQuote = expectedKind === "quote";
   // Route prompt + tool by document kind. Each kind is a distinct
   // schema on the SAME adapter (the adapter is the engine, the kind is
   // the schema); a new kind adds a branch here, never a new adapter.
@@ -820,6 +922,10 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     activePrompt = PART_DRAWING_SYSTEM_PROMPT;
     activeTool = PART_DRAWING_TOOL;
     activeToolName = "extract_part_drawing";
+  } else if (isQuote) {
+    activePrompt = QUOTE_SYSTEM_PROMPT;
+    activeTool = QUOTE_TOOL;
+    activeToolName = "extract_quote";
   }
 
   // Deterministic model pick based on extraction context. The

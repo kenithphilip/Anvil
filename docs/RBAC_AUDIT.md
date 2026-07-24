@@ -393,6 +393,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/quotes/convert.js | approve |
 | src/api/quotes/expire.js | approve |
 | src/api/quotes/index.js | read, write, approve |
+| src/api/quotes/ingest.js | write |
 | src/api/quotes/pdf.js | read |
 | src/api/quotes/send.js | approve |
 | src/api/ramco/connect.js | admin |

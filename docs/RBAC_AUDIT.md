@@ -183,6 +183,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/catalog/search.js | read |
 | src/api/catalog/synonyms.js | read, approve |
 | src/api/claude/messages.js | read, write, admin |
+| src/api/comms/routing.js | read, write |
 | src/api/communications/draft.js | write |
 | src/api/communications/list.js | read |
 | src/api/communications/missing_doc.js | write |

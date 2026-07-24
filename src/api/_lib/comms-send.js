@@ -11,6 +11,7 @@
 import { recordAudit, recordEvent } from "./audit.js";
 import { decryptChatCreds } from "./inbound-chat.js";
 import { safeFetch } from "./safe-fetch.js";
+import { resolveAttachments } from "./comms-attachments.js";
 
 const PROVIDER_URL = process.env.COMMS_PROVIDER_URL;
 const PROVIDER_TOKEN = process.env.COMMS_PROVIDER_TOKEN;
@@ -18,11 +19,18 @@ const SENDGRID_KEY = process.env.SENDGRID_API_KEY;
 const SENDGRID_FROM = process.env.SENDGRID_FROM_EMAIL;
 const SENDGRID_FROM_NAME = process.env.SENDGRID_FROM_NAME || "Anvil";
 
-const sendViaSendGrid = async ({ to, subject, body, from }) => {
+const sendViaSendGrid = async ({ to, cc, bcc, replyTo, subject, body, from, attachments }) => {
   if (!SENDGRID_KEY || !SENDGRID_FROM) return null;
   const fromAddress = from || SENDGRID_FROM;
+  const addrs = (list) => (Array.isArray(list) ? list : []).filter(Boolean).map((email) => ({ email }));
+  // One personalization carrying to + cc + bcc: this is what makes a dispatch
+  // register go TO stores with purchase/accounts visibly in CC. Previously the
+  // payload was `to` only, so routing had nowhere to land.
+  const personalization = { to: addrs([to]) };
+  if (addrs(cc).length) personalization.cc = addrs(cc);
+  if (addrs(bcc).length) personalization.bcc = addrs(bcc);
   const payload = {
-    personalizations: [{ to: [{ email: to }] }],
+    personalizations: [personalization],
     from: { email: fromAddress, name: SENDGRID_FROM_NAME },
     subject: subject || "(no subject)",
     content: [
@@ -30,6 +38,15 @@ const sendViaSendGrid = async ({ to, subject, body, from }) => {
       { type: "text/html", value: (body || "").replace(/\n/g, "<br/>") },
     ],
   };
+  if (replyTo) payload.reply_to = { email: replyTo };
+  if (Array.isArray(attachments) && attachments.length) {
+    payload.attachments = attachments.map((a) => ({
+      filename: a.filename,
+      type: a.type,
+      content: a.content_base64,
+      disposition: "attachment",
+    }));
+  }
   try {
     const resp = await safeFetch("https://api.sendgrid.com/v3/mail/send", {
       method: "POST",
@@ -119,6 +136,27 @@ export const sendCommunication = async (svc, ctx, commId) => {
 
   let providerResult = null;
   let lastError = null;
+
+  // Resolve attachments BEFORE choosing a provider. Failures are reported, not
+  // thrown — but a document that was REQUESTED and could not be attached is a
+  // hard failure: silently mailing a dispatch register without its register is
+  // worse than not sending. (An over-cap set clears `attachments` and reports
+  // too_large, which lands here the same way.)
+  const att = await resolveAttachments(svc, ctx.tenantId, row.data.attachments);
+  if (att.errors.length) {
+    await svc.from("communications").update({
+      status: "failed",
+      updated_at: new Date().toISOString(),
+      metadata: { ...(row.data.metadata || {}), attachment_errors: att.errors },
+    }).eq("tenant_id", ctx.tenantId).eq("id", commId);
+    return {
+      communication: { ...row.data, status: "failed" },
+      configured: false,
+      error: "attachment_unresolved: " + att.errors.map((e) => e.reason).join(", "),
+      attachment_errors: att.errors,
+    };
+  }
+
   const chatChannels = new Set(["whatsapp", "slack", "teams"]);
   if (chatChannels.has(row.data.channel)) {
     try {
@@ -128,7 +166,14 @@ export const sendCommunication = async (svc, ctx, commId) => {
     } catch (err) { lastError = err.message; }
   }
   if (!providerResult) {
-    try { providerResult = await sendViaSendGrid({ to: row.data.to_addr, subject: row.data.subject, body: row.data.body, from: row.data.from_addr }); }
+    try {
+      providerResult = await sendViaSendGrid({
+        to: row.data.to_addr,
+        cc: row.data.cc_addrs, bcc: row.data.bcc_addrs, replyTo: row.data.reply_to,
+        subject: row.data.subject, body: row.data.body, from: row.data.from_addr,
+        attachments: att.attachments,
+      });
+    }
     catch (err) { lastError = err.message; }
   }
   if (!providerResult) {

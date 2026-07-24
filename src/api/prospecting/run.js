@@ -16,6 +16,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { commsRow } from "../_lib/comms-row.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -76,7 +77,7 @@ const runForCampaign = async (svc, tenantId, campaign) => {
     const subject = renderTemplate(campaign.template_subject, target);
     const body = renderTemplate(campaign.template_body, target);
     // Draft + dispatch via the existing communications surface.
-    await svc.from("communications").insert({
+    await svc.from("communications").insert(commsRow({
       tenant_id: tenantId,
       to_address: target.email,
       to_name: target.display_name || null,
@@ -86,7 +87,7 @@ const runForCampaign = async (svc, tenantId, campaign) => {
       status: "queued",
       origin: "prospecting",
       origin_ref: { campaign_id: campaign.id, target_id: target.id },
-    });
+    }));
     await svc.from("prospecting_targets").update({
       status: "sent",
       sent_at: new Date().toISOString(),

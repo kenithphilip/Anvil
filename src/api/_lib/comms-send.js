@@ -138,11 +138,16 @@ export const sendCommunication = async (svc, ctx, commId) => {
 
   const configured = !!providerResult;
   const errorMsg = configured && !providerResult.ok ? "Provider " + providerResult.provider + " returned " + providerResult.status : null;
-  const newStatus = !configured ? "sent" : (providerResult.ok ? "sent" : "failed");
+  // NOT "sent". With no provider configured nothing was transmitted, so
+  // recording `sent` (and stamping sent_at) was a lie — and any analytics built
+  // on status='sent' would have been measuring fiction. `queued` is honest: the
+  // row is ready and a human or a later provider can pick it up. The parallel
+  // reaper in agents/run.js:337-341 was already fixed for exactly this bug.
+  const newStatus = !configured ? "queued" : (providerResult.ok ? "sent" : "failed");
 
   const updated = await svc.from("communications").update({
     status: newStatus,
-    sent_at: new Date().toISOString(),
+    sent_at: newStatus === "sent" ? new Date().toISOString() : null,
     metadata: {
       ...(row.data.metadata || {}),
       provider: providerResult?.provider || "manual",

@@ -18,6 +18,7 @@ import { applyCors, handlePreflight, json } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { dispatch, KNOWN_GOAL_TYPES } from "./_handlers/index.js";
 import { safeFetch } from "../_lib/safe-fetch.js";
+import { commsRow } from "../_lib/comms-row.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const HOURS = 60 * 60 * 1000;
@@ -144,7 +145,7 @@ const executeAction = async (svc, goal, step) => {
       sent_by: null,
       metadata: { agent_goal_id: goal.id, payload: step.action_payload },
     };
-    const ins = await svc.from("communications").insert(draft).select("id").maybeSingle();
+    const ins = await svc.from("communications").insert(commsRow(draft)).select("id").maybeSingle();
     if (ins.error) return { result: "error", result_detail: ins.error.message, error: ins.error.message };
     return { result: "ok", result_detail: "queued comm " + (ins.data?.id || "") };
   }

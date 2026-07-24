@@ -64,11 +64,54 @@ keys (`docai_*_api_key_enc`, migration 187). OAuth tokens follow this pattern.
 ### The gaps
 
 1. **No Microsoft Graph / Outlook / MSAL anywhere.** The only Microsoft surface
-   is a Teams inbound webhook (`src/api/inbound/teams/webhook.js`).
+   is a Teams inbound webhook (`src/api/inbound/teams/webhook.js`) — and the
+   Teams *send* path is a stub that returns `ok:true` while transmitting
+   nothing (`_lib/comms-send.js:90`). A comment at
+   `src/api/cron/drift-report.js:104-106` claims "Anvil already has SendGrid /
+   Postmark / Microsoft Graph adapters wired" — **that is false**; only
+   SendGrid, Twilio/WhatsApp, Slack and a generic webhook exist.
 2. **`comms-send.js` cannot attach a file.** Five of the six document types
-   *are* attachments. This blocks everything else.
-3. **No contact functions, no routing, no To/CC** (see §1).
+   *are* attachments. This blocks everything else. Note the `communications`
+   table **already has an `attachments jsonb` column**
+   (`005_close_remaining_gaps.sql:36`) with **zero writers and zero readers** —
+   the storage exists, the plumbing was never built.
+3. **No contact functions, no routing, no To/CC** (see §1). There are no
+   `cc`/`bcc` columns at all, and the SendGrid payload
+   (`_lib/comms-send.js:24-32`) sends `personalizations[0].to` — a single
+   recipient, no cc, no attachments, no reply-to.
 4. **No dispatched quantity at line grain** — see §4, the one real data gap.
+
+### The rail is not sound enough to build on as-is
+
+A full audit of the outbound path found the `communications` table is defined
+once (`005_close_remaining_gaps.sql:22-43`) and **never altered**, yet **twelve
+writers use six mutually-incompatible schemas**. Only three conform.
+
+The rest insert columns that do not exist (`object_type`, `object_id`, `kind`,
+`sent_by`, `to_address`, `recipient`, `body_html`, `template_kind`, `meta`,
+`origin_ref`, `external_ref`) and statuses the CHECK constraint rejects
+(`queued`, `manual`, `pending_send`). Verified examples: `quotes/send.js:443`
+and `invoices/send.js:147` both write four phantom columns, an invalid status,
+and **omit the NOT NULL `direction`**. Several are wrapped in swallowed
+catches, so they fail silently.
+
+Three consequences that matter before any new feature lands on this rail:
+
+- **`GET /api/communications` is broken.** `communications/list.js:32` selects
+  `updated_at`, which does not exist → PostgREST 400 on every call. The comms
+  timeline it was built for has always been empty.
+- **A send with no provider configured is recorded as `sent`.**
+  `_lib/comms-send.js:141`: `const newStatus = !configured ? "sent" : …`, and
+  `sent_at` is stamped. Nothing was transmitted. The parallel reaper in
+  `agents/run.js:337-341` was explicitly fixed for this exact bug; the path the
+  copilot and `/api/communications/send` use still lies. **Any analytics built
+  on `status='sent'` would be measuring fiction.**
+- **Two send cores.** `agents/run.js:255-296` re-implements SendGrid + webhook
+  inline with no chat channels and different status semantics.
+
+**Therefore item 0 in the build plan is a schema + writer reconciliation.** It
+is unglamorous, it is not what was asked for, and skipping it means the routing
+matrix and the analytics both sit on a table whose contents are unreliable.
 
 ---
 
@@ -241,7 +284,8 @@ Smallest first. Each item is independently useful; nothing waits on Outlook.
 
 | # | Item | Touches | Why |
 |---|---|---|---|
-| 1 | **Attachments in `comms-send.js`** | `_lib/comms-send.js`, `communications` (+`attachments` jsonb) | Nothing else works without it. Unblocks quote / invoice / PoD immediately. |
+| **0** | **Reconcile the `communications` schema + its 12 writers** | migration (add `cc`/`bcc`/`customer_id`/`document_type`/`updated_at`/`provider_message_id`, widen the status CHECK), all 12 writers, `communications/list.js`, `_lib/comms-send.js:141` | **Prerequisite.** 9 of 12 writers insert phantom columns; the list endpoint 400s; a send with no provider is recorded as `sent`. Routing and analytics both sit on this table — build on it unreconciled and the analytics measure fiction. |
+| 1 | **Attachments in `comms-send.js`** | `_lib/comms-send.js` (the `attachments` column already exists, unused) | Nothing else works without it. Unblocks quote / invoice / PoD immediately. |
 | 2 | **Contact functions + routing matrix + resolver** | new migration, `customer_contacts`, new `_lib/comms-routing.js`, admin UI | The actual ask. Pure resolver ⇒ To/CC is testable. |
 | 3 | **Payment statement with GRN** | new renderer over `customer_receipts` + `invoices` | Data already exists; commercially the highest-value email. |
 | 4 | **Service report renderer** | `service_visits`, `closure_reports` | Straightforward once 1–2 land; watch the internal-field leak. |

@@ -70,18 +70,29 @@ export default async function handler(req, res) {
       const norm = normaliseSections(body?.sections);
       if (norm.error) return json(res, 400, { error: { message: norm.error } });
 
+      const customerId = body?.customer_id || null;
       const row = {
         tenant_id: ctx.tenantId,
-        customer_id: body?.customer_id || null,
+        customer_id: customerId,
         name: body?.name ? String(body.name) : "Default",
         sections: norm.sections,
         include_parts: body?.include_parts !== false,
         is_active: true,
         updated_at: new Date().toISOString(),
       };
-      const up = await svc.from("service_report_templates")
-        .upsert(row, { onConflict: "tenant_id,customer_id" })
-        .select("*").single();
+      // Manual upsert. The uniqueness is a PARTIAL index (one per customer, one
+      // tenant-default), which supabase-js `onConflict` cannot target — and a
+      // plain onConflict on (tenant_id, customer_id) would never match the
+      // customer_id-NULL default row anyway (NULL is distinct in a conflict
+      // target). So find-then-update/insert, matching NULL with `.is`.
+      let existQ = svc.from("service_report_templates").select("id").eq("tenant_id", ctx.tenantId);
+      existQ = customerId ? existQ.eq("customer_id", customerId) : existQ.is("customer_id", null);
+      const existing = await existQ.maybeSingle();
+
+      const up = existing?.data?.id
+        ? await svc.from("service_report_templates").update(row)
+            .eq("tenant_id", ctx.tenantId).eq("id", existing.data.id).select("*").single()
+        : await svc.from("service_report_templates").insert(row).select("*").single();
       if (up.error) throw new Error(up.error.message);
       await recordAudit(ctx, {
         action: "service_report_template_saved",

@@ -76,10 +76,20 @@ create table if not exists service_report_templates (
   include_parts boolean not null default true,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  -- One template per (tenant, customer); the customer-null row is the default.
-  unique (tenant_id, customer_id)
+  updated_at timestamptz not null default now()
 );
+
+-- Uniqueness as TWO partial indexes, not a table-level unique(tenant_id,
+-- customer_id): a plain unique treats NULL as distinct, so it would NOT stop a
+-- tenant accumulating multiple default (customer_id NULL) rows — the very row
+-- that must be singular. These enforce: at most one template per (tenant,
+-- customer), AND at most one tenant-default per tenant.
+create unique index if not exists service_report_templates_customer_uk
+  on service_report_templates (tenant_id, customer_id)
+  where customer_id is not null;
+create unique index if not exists service_report_templates_default_uk
+  on service_report_templates (tenant_id)
+  where customer_id is null;
 
 create index if not exists service_report_templates_idx
   on service_report_templates (tenant_id, customer_id) where is_active;

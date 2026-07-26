@@ -208,6 +208,46 @@ despatched on 12 Mar under LR 4471" — cannot be produced today.
 **Which applies depends on what SCM actually enters in Tally.** That answer
 determines whether the dispatch register is a two-day feature or a two-week one.
 
+### RESOLVED — option (a). Joel confirmed the ERP delivery-note entry carries
+the per-line despatched quantity, so we mirror it rather than add a capture
+screen (which would be double entry). **Shipped:**
+
+- `dispatch_lines` (migration 193) — one row per despatched PO line, keyed to
+  `order_id` + `line_index` (the 0-based ordinal into
+  `orders.result.salesOrder.lineItems[]`, the same per-line key the rest of the
+  schema uses), with `part_no`, `dispatched_qty`, `dispatch_date`, `lr_number`,
+  `carrier`, `invoice_number`, `shipment_id`. Idempotent on a single-column
+  `source_ref` (voucher id + line ref) via a **partial** unique index — the same
+  null-safe pattern as the service-report template fix, not a null-blind
+  composite.
+- `_lib/dispatch-register.js` — the pure builder. The **ordered** side is the PO
+  line items (never `order_schedule_lines`, which is the one-to-many delivery
+  schedule and would double-count). Matches a despatch to its PO line by
+  `line_index`, else `part_no`; an unmatched despatch is still shown; a line with
+  nothing despatched is "awaited"; and with no line grain at all it degrades to
+  one row per shipment. Fail-safe column visibility.
+- `comms/dispatch_register.js` — GET assemble / POST draft via `commsRow`, routed
+  to `dispatch_register` (stores = TO, purchase + accounts = CC). Unions
+  `invoices` + `einvoices` (the India GST path) for the invoice column.
+- `comms/dispatch_lines.js` + `_lib/dispatch-lines.js` — the generic ingest
+  writer (normalises importer vocabulary, idempotent upsert). This is the
+  redundancy path so the register is never hostage to the ERP connector.
+
+**Follow-ups (graceful degradations until built):**
+
+- **Tally `/delivery_notes` reverse-pull** — a new sync entity (modelled on
+  `syncPayments`) that calls `upsertDispatchLines()`. Blocked on the on-prem
+  bridge exposing the delivery-note voucher lines. Until then the generic ingest
+  endpoint (CSV / manual / portal) feeds the same table.
+- **Per-customer routing seed + new-customer hook** — `comms_routing_rules` needs
+  a per-customer row to get the stores=TO / purchase+accounts=CC split; without
+  it the resolver degrades to the function fallback (delivers, no CC split).
+- **`eway_bills` LR/transporter join** — for an LR number on the shipment-header
+  fallback (`shipments` has no LR field).
+- **Optional per-tenant/customer layout template table** — the builder already
+  takes a `template` (column set + labels + visibility); a table would persist
+  it. Falls back to `DEFAULT_COLUMNS` today.
+
 ---
 
 ## 5. Outlook / Microsoft Graph
@@ -289,15 +329,15 @@ Smallest first. Each item is independently useful; nothing waits on Outlook.
 | 2 | **Contact functions + routing matrix + resolver** | new migration, `customer_contacts`, new `_lib/comms-routing.js`, admin UI | The actual ask. Pure resolver ⇒ To/CC is testable. |
 | 3 | **Payment statement with GRN** | new renderer over `customer_receipts` + `invoices` | Data already exists; commercially the highest-value email. |
 | 4 | **Service report renderer** | `service_visits`, `closure_reports` | Straightforward once 1–2 land; watch the internal-field leak. |
-| 5 | **Dispatch register** | ERP sync or capture screen (§4) + renderer | **Blocked on the §4 decision.** |
+| 5 | **Dispatch register** | `dispatch_lines` (193) + builder + endpoint + ingest | **Shipped (option a).** Tally `/delivery_notes` pull is the one follow-up. |
 | 6 | **Outlook/Graph provider** | new `_lib/providers/graph.js`, tenant OAuth settings | Swaps in behind the provider interface; 1–5 do not depend on it. |
 | 7 | **Comms analytics** | metric catalog, cockpit | Needs 1–2 to have produced data first. |
 | 8 | **Marketing path** | separate path + consent/suppression | Deliberately last, deliberately separate. |
 
 ### Decisions for Joel, not code
 
-- **Does SCM's Tally entry contain per-line despatch quantities?** Determines
-  §4 (a) vs (b), and the size of item 5.
+- ~~**Does SCM's Tally entry contain per-line despatch quantities?**~~
+  **RESOLVED: yes.** → option (a), item 5 shipped (see §4).
 - **Shared mailbox or send-as-the-rep?** Changes the Graph scopes and consent
   screen.
 - **Message-body retention** under DPDPA — store bodies, or reference by

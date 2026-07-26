@@ -276,6 +276,61 @@ are retained in `communications.body` or only referenced by `conversationId`,
 and the retention window. This is a decision to make deliberately rather than
 inherit by default.
 
+### SHIPPED — the send provider. **Reused, not duplicated:** migration 028
+already added the Azure app-registration columns to `tenant_settings` for the
+*inbound* Graph integration (`graph_tenant_id`, `graph_client_id`,
+`graph_client_secret_enc`, `graph_creds_iv`, `graph_mailbox`) — the same app and
+mailbox that receives replies. The send provider reuses them (and is the first to
+actually store the client secret encrypted; inbound left it a TODO).
+
+- **`_lib/graph-client.js`** — authorization-code flow. Pure builders
+  (`buildAuthorizeUrl`, `buildGraphMessage`) + HMAC `signState`/`verifyState`
+  (tenant-bound, expiring — CSRF-safe with no session) + `graphAccessToken`
+  (lazy refresh-and-persist) + `sendViaGraph`. Sends via **create-draft-then-send**
+  because a bare `sendMail` returns 202 with no ids; the draft-create response
+  carries `conversationId` + `internetMessageId`.
+- **Token storage** — migration 194 adds only the token bundle
+  (`graph_access_token_enc`/`graph_refresh_token_enc`/`graph_token_iv`/
+  `graph_token_expires_at`/`graph_connected_at`) under a **second IV** so the
+  hourly refresh never re-encrypts the client secret.
+- **`comms/graph.js`** (admin: config / status / disconnect) + **`comms/graph_callback.js`**
+  (public; validates the signed state instead of a session, exchanges the code,
+  persists encrypted tokens). All outbound HTTP via `safeFetch`; no secret or
+  provider body ever reaches a log, error, or response.
+- **`comms-send.js`** — `sendViaGraph` runs before SendGrid, gated on the tenant
+  being connected; persists `conversationId`→`thread_id`, `internetMessageId`→
+  `provider_message_id`.
+
+**Security posture** (independently critiqued): CSRF state signed with
+`ANVIL_SECRETS_KEY` + `timingSafeEqual` + expiry; Azure directory id validated
+against URL-path injection; sender mailbox `encodeURIComponent`-d; redirect URI
+from `PUBLIC_APP_URL`/`GRAPH_REDIRECT_URI` only (never a request header);
+connect refuses to run without `ANVIL_SECRETS_KEY` (no plaintext refresh tokens).
+
+**Follow-ups (documented, none blocking a send):**
+
+- **Close the reply loop.** Storing `conversationId`/`internetMessageId` is
+  necessary but not sufficient: inbound still threads on the RFC Message-ID chain,
+  and `inbound/email/webhook.js` `handleGraph` is a stub that never fetches the
+  message. A Graph-fetch worker that reads a reply's `conversationId`/`in_reply_to`
+  and joins `communications` on `thread_id`/`provider_message_id` is what actually
+  attributes a reply to the originating outbound.
+- **Refresh scheduler.** Refresh is lazy on-send; a tenant that sends nothing for
+  the refresh-token lifetime silently falls back to SendGrid. A cron (the
+  `sap/sync.js` precedent) would keep long-idle connections alive.
+- **Refresh concurrency.** Last-write-wins on the shared row — safe *because the
+  app is a confidential client* (rotated refresh tokens stay valid). A conditional
+  update on `graph_token_expires_at` would harden it.
+- **Scopes.** `Mail.ReadWrite` grants full-mailbox access (the price of
+  draft-based threading-id capture); scoped to the one sender mailbox. Narrowing
+  to `Mail.Send`-only would drop threading ids.
+- **Admin UI** for entering the app registration + a Connect button, and the
+  **DPDPA compliance decision** above.
+
+**Ops** — set `PUBLIC_APP_URL`, `ANVIL_SECRETS_KEY` (64 hex), the SPA origin in
+`ALLOWED_ORIGINS`; register `<PUBLIC_APP_URL>/api/comms/graph/callback` as the
+Azure redirect URI; **apply migration 194 manually** (merged ≠ applied).
+
 ---
 
 ## 6. Marketing must not ride the transactional path
@@ -330,7 +385,7 @@ Smallest first. Each item is independently useful; nothing waits on Outlook.
 | 3 | **Payment statement with GRN** | new renderer over `customer_receipts` + `invoices` | Data already exists; commercially the highest-value email. |
 | 4 | **Service report renderer** | `service_visits`, `closure_reports` | Straightforward once 1–2 land; watch the internal-field leak. |
 | 5 | **Dispatch register** | `dispatch_lines` (193) + builder + endpoint + ingest | **Shipped (option a).** Tally `/delivery_notes` pull is the one follow-up. |
-| 6 | **Outlook/Graph provider** | new `_lib/providers/graph.js`, tenant OAuth settings | Swaps in behind the provider interface; 1–5 do not depend on it. |
+| 6 | **Outlook/Graph provider** | `_lib/graph-client.js` + `comms/graph.js` + callback (194) | **Shipped.** Auth-code flow, reuses 028 config cols; reply-loop join is the follow-up. |
 | 7 | **Comms analytics** | metric catalog, cockpit | Needs 1–2 to have produced data first. |
 | 8 | **Marketing path** | separate path + consent/suppression | Deliberately last, deliberately separate. |
 

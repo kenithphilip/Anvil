@@ -12,6 +12,7 @@ import { recordAudit, recordEvent } from "./audit.js";
 import { decryptChatCreds } from "./inbound-chat.js";
 import { safeFetch } from "./safe-fetch.js";
 import { resolveAttachments } from "./comms-attachments.js";
+import { graphIsConnected, graphAccessToken, sendViaGraph } from "./graph-client.js";
 
 const PROVIDER_URL = process.env.COMMS_PROVIDER_URL;
 const PROVIDER_TOKEN = process.env.COMMS_PROVIDER_TOKEN;
@@ -165,6 +166,29 @@ export const sendCommunication = async (svc, ctx, commId) => {
       });
     } catch (err) { lastError = err.message; }
   }
+
+  // Graph (Outlook) is preferred for email when the tenant has connected it: the
+  // mail lands in the sender's own Sent Items and we get conversationId +
+  // internetMessageId for real threading. Loaded lazily; falls through to
+  // SendGrid when Graph is not connected or the token refresh fails.
+  let graphSettings = null;
+  if (!providerResult && !chatChannels.has(row.data.channel)) {
+    try {
+      const st = await svc.from("tenant_settings").select("*").eq("tenant_id", ctx.tenantId).maybeSingle();
+      graphSettings = st.data ? { ...st.data, tenant_id: ctx.tenantId } : null;
+    } catch (_e) { graphSettings = null; }
+    if (graphIsConnected(graphSettings)) {
+      try {
+        const { accessToken, sender } = await graphAccessToken(svc, graphSettings);
+        providerResult = await sendViaGraph({
+          accessToken, sender,
+          to: row.data.to_addr, cc: row.data.cc_addrs, bcc: row.data.bcc_addrs,
+          subject: row.data.subject, body: row.data.body, attachments: att.attachments,
+        });
+      } catch (err) { lastError = err.message; }
+    }
+  }
+
   if (!providerResult) {
     try {
       providerResult = await sendViaSendGrid({
@@ -190,7 +214,7 @@ export const sendCommunication = async (svc, ctx, commId) => {
   // reaper in agents/run.js:337-341 was already fixed for exactly this bug.
   const newStatus = !configured ? "queued" : (providerResult.ok ? "sent" : "failed");
 
-  const updated = await svc.from("communications").update({
+  const update = {
     status: newStatus,
     sent_at: newStatus === "sent" ? new Date().toISOString() : null,
     metadata: {
@@ -201,7 +225,17 @@ export const sendCommunication = async (svc, ctx, commId) => {
       provider_error: errorMsg,
       last_error: lastError,
     },
-  }).eq("id", commId).select("*").single();
+  };
+  // Real threading from Graph: store the conversationId + internetMessageId so a
+  // reply CAN be attributed to this exact message. The inbound join that closes
+  // that loop (match a reply's conversationId/in_reply_to back to this row) is a
+  // follow-up — inbound currently threads on the RFC Message-ID chain. Only set
+  // when present; never clobber an existing thread.
+  if (providerResult?.provider) update.provider = providerResult.provider;
+  if (providerResult?.internetMessageId) update.provider_message_id = providerResult.internetMessageId;
+  if (providerResult?.conversationId && !row.data.thread_id) update.thread_id = providerResult.conversationId;
+
+  const updated = await svc.from("communications").update(update).eq("id", commId).select("*").single();
   if (updated.error) throw new Error(updated.error.message);
 
   await recordAudit(ctx, {

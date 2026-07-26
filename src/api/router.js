@@ -301,6 +301,8 @@ import commsServiceReport      from "./comms/service_report.js";
 import commsServiceReportTpl   from "./comms/service_report_template.js";
 import commsDispatchRegister   from "./comms/dispatch_register.js";
 import commsDispatchLines      from "./comms/dispatch_lines.js";
+import commsGraph              from "./comms/graph.js";
+import commsGraphCallback      from "./comms/graph_callback.js";
 import quotesConvert           from "./quotes/convert.js";
 import quotesExpire            from "./quotes/expire.js";
 import agentsHandleReplies     from "./agents/handle_replies.js";
@@ -876,6 +878,8 @@ const STATIC_ROUTES = {
   "/comms/service_report_template": commsServiceReportTpl,
   "/comms/dispatch_register":       commsDispatchRegister,
   "/comms/dispatch_lines":          commsDispatchLines,
+  "/comms/graph":                   commsGraph,
+  "/comms/graph/callback":          commsGraphCallback,
   "/quotes/convert":                quotesConvert,
   "/quotes/expire":                 quotesExpire,
   "/agents/handle_replies":         agentsHandleReplies,

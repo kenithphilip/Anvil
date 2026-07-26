@@ -42,6 +42,14 @@ export default async function handler(req, res) {
         field_engineer: ctx.user ? ctx.user.id : null,
         status: STATUSES.has(body.status) ? body.status : "PLANNED",
         notes: body.notes || null,
+        // Service-report fields (migration 191). report_number + support_type
+        // are cross-cutting columns; everything form-specific goes in
+        // report_fields (a template describes it) so a new field needs no
+        // migration and the report adapts per tenant + per customer.
+        report_number: body.report_number || null,
+        support_type: body.support_type || null,
+        report_fields: (body.report_fields && typeof body.report_fields === "object") ? body.report_fields : {},
+        customer_contact_id: body.customer_contact_id || null,
       };
       const { data, error } = await svc.from("service_visits").insert(row).select("*").single();
       if (error) throw new Error(error.message);
@@ -53,7 +61,7 @@ export default async function handler(req, res) {
       const body = await readBody(req);
       if (!body.id) return json(res, 400, { error: { message: "id required" } });
       const patch = {};
-      const allowed = ["status","check_in_at","check_out_at","observation","possible_cause","action_taken","followup_action","notes","line_or_station","purpose"];
+      const allowed = ["status","check_in_at","check_out_at","observation","possible_cause","action_taken","followup_action","notes","line_or_station","purpose","report_number","support_type","report_fields","customer_contact_id"];
       for (const k of allowed) if (body[k] !== undefined) patch[k] = body[k];
       if (body.checkin) { patch.status = "CHECKED_IN"; patch.check_in_at = new Date().toISOString(); }
       if (body.checkout) { patch.status = "CHECKED_OUT"; patch.check_out_at = new Date().toISOString(); }

@@ -297,6 +297,8 @@ import quotesSend              from "./quotes/send.js";
 import quotesIngest            from "./quotes/ingest.js";
 import commsRouting            from "./comms/routing.js";
 import commsPaymentStatement   from "./comms/payment_statement.js";
+import commsServiceReport      from "./comms/service_report.js";
+import commsServiceReportTpl   from "./comms/service_report_template.js";
 import quotesConvert           from "./quotes/convert.js";
 import quotesExpire            from "./quotes/expire.js";
 import agentsHandleReplies     from "./agents/handle_replies.js";
@@ -868,6 +870,8 @@ const STATIC_ROUTES = {
   "/quotes/ingest":                 quotesIngest,
   "/comms/routing":                 commsRouting,
   "/comms/payment_statement":       commsPaymentStatement,
+  "/comms/service_report":          commsServiceReport,
+  "/comms/service_report_template": commsServiceReportTpl,
   "/quotes/convert":                quotesConvert,
   "/quotes/expire":                 quotesExpire,
   "/agents/handle_replies":         agentsHandleReplies,

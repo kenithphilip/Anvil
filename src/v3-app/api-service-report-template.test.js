@@ -14,11 +14,15 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ENDPOINT = readFileSync(join(HERE, "..", "api", "comms", "service_report_template.js"), "utf8");
-const MIGRATION = readFileSync(join(HERE, "..", "..", "supabase", "migrations", "191_service_report.sql"), "utf8");
+const MIGRATION = readFileSync(join(HERE, "..", "..", "supabase", "migrations", "192_service_report_template_default_unique.sql"), "utf8");
 
-describe("migration enforces one tenant-default", () => {
-  it("uses partial unique indexes, not a null-blind table constraint", () => {
-    expect(MIGRATION).not.toMatch(/unique \(tenant_id, customer_id\)\s*\n\s*\)/);
+describe("migration 192 fixes uniqueness with partial indexes", () => {
+  it("drops the null-blind constraint by its column set", () => {
+    // Discovered by columns (name is auto-generated), like migration 186.
+    expect(MIGRATION).toMatch(/array\['customer_id','tenant_id'\]/);
+    expect(MIGRATION).toMatch(/drop constraint/);
+  });
+  it("creates the two partial unique indexes", () => {
     expect(MIGRATION).toMatch(/service_report_templates_default_uk[\s\S]*where customer_id is null/);
     expect(MIGRATION).toMatch(/service_report_templates_customer_uk[\s\S]*where customer_id is not null/);
   });

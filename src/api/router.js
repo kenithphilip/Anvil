@@ -299,6 +299,8 @@ import commsRouting            from "./comms/routing.js";
 import commsPaymentStatement   from "./comms/payment_statement.js";
 import commsServiceReport      from "./comms/service_report.js";
 import commsServiceReportTpl   from "./comms/service_report_template.js";
+import commsDispatchRegister   from "./comms/dispatch_register.js";
+import commsDispatchLines      from "./comms/dispatch_lines.js";
 import quotesConvert           from "./quotes/convert.js";
 import quotesExpire            from "./quotes/expire.js";
 import agentsHandleReplies     from "./agents/handle_replies.js";
@@ -872,6 +874,8 @@ const STATIC_ROUTES = {
   "/comms/payment_statement":       commsPaymentStatement,
   "/comms/service_report":          commsServiceReport,
   "/comms/service_report_template": commsServiceReportTpl,
+  "/comms/dispatch_register":       commsDispatchRegister,
+  "/comms/dispatch_lines":          commsDispatchLines,
   "/quotes/convert":                quotesConvert,
   "/quotes/expire":                 quotesExpire,
   "/agents/handle_replies":         agentsHandleReplies,

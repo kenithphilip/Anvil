@@ -186,28 +186,32 @@ describe("communications reducers (item 7)", () => {
     { document_type: "dispatch_register", direction: "outbound", status: "sent", created_at: daysAgo(5) },
     { document_type: "dispatch_register", direction: "outbound", status: "queued", created_at: daysAgo(4) },
     { document_type: "payment_reminder", direction: "outbound", status: "sent", created_at: daysAgo(3) },
+    { document_type: "ar_reminder", direction: "outbound", status: "queued", created_at: daysAgo(3) },   // AR agent dunning
     { document_type: "service_report", direction: "outbound", status: "failed", created_at: daysAgo(2) },
     { document_type: "quote_email", direction: "outbound", status: "replied", created_at: daysAgo(1) },
+    { document_type: "supplier_rfq", direction: "outbound", status: "sent", created_at: daysAgo(1) },     // NOT customer-facing
+    { document_type: "quote_email", direction: "outbound", status: "draft", created_at: daysAgo(1) },     // draft -> excluded
   ];
 
-  it("comms_sent counts messages with a per-type breakdown", () => {
+  it("comms_sent counts customer-facing, non-draft messages with a per-type breakdown", () => {
     const r = reduceOf("comms_sent", comms);
-    expect(r.value).toBe(5);
-    expect(r.breakdown).toEqual({ dispatch_register: 2, payment_reminder: 1, service_report: 1, quote_email: 1 });
+    expect(r.value).toBe(6);           // supplier_rfq + the draft quote are excluded
+    expect(r.breakdown).toEqual({ dispatch_register: 2, payment_reminder: 1, ar_reminder: 1, service_report: 1, quote_email: 1 });
+    expect(r.breakdown.supplier_rfq).toBeUndefined();
   });
 
-  it("comms_delivery_rate = sent+replied over attempted (surfaces queued/failed)", () => {
+  it("comms_delivery_rate = sent+replied over attempted (surfaces queued/failed, customer-only)", () => {
     const r = reduceOf("comms_delivery_rate", comms);
-    expect(r.value).toBe(60);          // 3 delivered (2 sent + 1 replied) of 5 attempted
-    expect(r).toMatchObject({ count: 3, denominator: 5 });
+    expect(r.value).toBe(50);          // 3 delivered (2 sent + 1 replied) of 6 attempted (supplier_rfq + draft excluded)
+    expect(r).toMatchObject({ count: 3, denominator: 6 });
   });
 
   it("dispatch_register_cadence counts only dispatch registers", () => {
     expect(reduceOf("dispatch_register_cadence", comms).value).toBe(2);
   });
 
-  it("payment_followups_sent counts only payment reminders", () => {
-    expect(reduceOf("payment_followups_sent", comms).value).toBe(1);
+  it("payment_followups_sent counts BOTH manual reminders and AR-agent dunning", () => {
+    expect(reduceOf("payment_followups_sent", comms).value).toBe(2);  // payment_reminder + ar_reminder
   });
 
   it("routing_coverage = distinct customers with an active rule / total customers", () => {
@@ -234,7 +238,7 @@ describe("communications reducers (item 7)", () => {
   it("computeMetric wires a windowed comms metric end to end", async () => {
     const svc = makeSvc({ communications: comms });
     const ans = await computeMetric(svc, "t1", "comms_sent", { window_days: 30 }, NOW);
-    expect(ans).toMatchObject({ metric_id: "comms_sent", unit: "count", domain: "communications", value: 5, window_days: 30 });
+    expect(ans).toMatchObject({ metric_id: "comms_sent", unit: "count", domain: "communications", value: 6, window_days: 30 });
     expect(ans.breakdown.dispatch_register).toBe(2);
   });
 

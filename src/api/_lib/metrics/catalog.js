@@ -95,6 +95,19 @@ const fetchRoutingCoverage = async (svc, tenantId) => {
   if (customers.error) throw new Error("customers: " + customers.error.message);
   return { rules: rules.data || [], customers: customers.data || [] };
 };
+// The customer-FACING document types. `communications` also carries supplier
+// RFQs, prospecting outreach, inventory/system notifications, and agent
+// messages — none of which are customer communications, so the customer-comms
+// metrics filter to this set (a customer_id filter would be wrong: quote/invoice
+// emails set object_id, not customer_id). ar_reminder = the autonomous AR
+// agent's dunning; payment_reminder = the manual statement — both are follow-ups.
+const CUSTOMER_COMMS_TYPES = new Set([
+  "dispatch_register", "payment_reminder", "ar_reminder", "service_report",
+  "quote_email", "invoice_email",
+]);
+const PAYMENT_COMMS_TYPES = new Set(["payment_reminder", "ar_reminder"]);
+// "Issued" = handed to the send path (queued or sent), i.e. not a saved draft.
+const isIssued = (c) => c.status !== "draft";
 
 // ── the catalog ──────────────────────────────────────────────────────
 export const METRICS = [
@@ -268,28 +281,29 @@ export const METRICS = [
   // (every writer is outbound). They unblock with the Graph reply-loop join —
   // shipping them now would measure fiction (always 0 replies).
   {
-    id: "comms_sent", label: "Customer messages sent", domain: "communications", unit: "count",
-    description: "Outbound customer communications created in the window, broken down by document type.",
+    id: "comms_sent", label: "Customer messages issued", domain: "communications", unit: "count",
+    description: "Customer-facing outbound messages in the window (queued or sent; excludes drafts and non-customer traffic like supplier RFQs / notifications), broken down by document type.",
     params: ["window_days"],
     fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
     reduce: (rows) => {
-      const list = rows || [];
+      const list = (rows || []).filter((c) => CUSTOMER_COMMS_TYPES.has(c.document_type) && isIssued(c));
       const breakdown = {};
-      for (const c of list) { const k = c.document_type || "other"; breakdown[k] = (breakdown[k] || 0) + 1; }
-      return { value: list.length, breakdown, provenance: "count(communications with direction='outbound' and created_at in window), grouped by document_type" };
+      for (const c of list) breakdown[c.document_type] = (breakdown[c.document_type] || 0) + 1;
+      return { value: list.length, breakdown, provenance: "count(outbound customer-facing communications not in draft, created in window), grouped by document_type" };
     },
   },
   {
-    id: "comms_delivery_rate", label: "Message delivery rate", domain: "communications", unit: "percent",
-    description: "Share of attempted outbound messages (in window) that actually sent, vs. stuck queued or failed. A low rate usually means no send provider is configured.",
+    id: "comms_delivery_rate", label: "Customer message delivery rate", domain: "communications", unit: "percent",
+    description: "Share of attempted customer messages (in window) that actually sent, vs. stuck queued or failed. A low rate usually means no send provider is configured.",
     params: ["window_days"],
     fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
     reduce: (rows) => {
-      const attempted = (rows || []).filter((c) => ["sent", "replied", "queued", "failed"].includes(c.status));
+      const cust = (rows || []).filter((c) => CUSTOMER_COMMS_TYPES.has(c.document_type));
+      const attempted = cust.filter((c) => ["sent", "replied", "queued", "failed"].includes(c.status));
       const delivered = attempted.filter((c) => c.status === "sent" || c.status === "replied").length;
       const value = attempted.length ? Math.round((delivered / attempted.length) * 1000) / 10 : 0;
       return { value, count: delivered, denominator: attempted.length,
-        provenance: "count(status in {sent,replied}) ÷ count(status in {sent,replied,queued,failed}) × 100, outbound, in window" };
+        provenance: "count(status in {sent,replied}) ÷ count(status in {sent,replied,queued,failed}) × 100, over customer-facing outbound in window" };
     },
   },
   {
@@ -298,18 +312,18 @@ export const METRICS = [
     params: ["window_days"],
     fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
     reduce: (rows) => ({
-      value: (rows || []).filter((c) => c.document_type === "dispatch_register").length,
-      provenance: "count(communications with document_type='dispatch_register', outbound, in window)",
+      value: (rows || []).filter((c) => c.document_type === "dispatch_register" && isIssued(c)).length,
+      provenance: "count(communications with document_type='dispatch_register', outbound, not draft, in window)",
     }),
   },
   {
     id: "payment_followups_sent", label: "Payment follow-ups sent", domain: "communications", unit: "count",
-    description: "Payment statements / reminders sent to customers in the window.",
+    description: "Payment reminders sent to customers in the window — both the manual statement (payment_reminder) and the autonomous AR agent's dunning (ar_reminder).",
     params: ["window_days"],
     fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
     reduce: (rows) => ({
-      value: (rows || []).filter((c) => c.document_type === "payment_reminder").length,
-      provenance: "count(communications with document_type='payment_reminder', outbound, in window)",
+      value: (rows || []).filter((c) => PAYMENT_COMMS_TYPES.has(c.document_type) && isIssued(c)).length,
+      provenance: "count(communications with document_type in {payment_reminder,ar_reminder}, outbound, not draft, in window)",
     }),
   },
   {

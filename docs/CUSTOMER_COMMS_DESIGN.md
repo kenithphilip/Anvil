@@ -388,8 +388,10 @@ later increment — deliberately not in the first build.
 `time_to_first_response`. Both need inbound thread linkage, and **no inbound row
 lands in `communications`** (every writer is outbound). They unblock with the
 same Graph reply-loop join called out in §5 — shipping them now would report a
-permanent "0 replies." `ar_overdue` (already in the catalog) covers the
-GRN-aged open-AR side; `payment_followups_sent` adds the *activity* view.
+permanent "0 replies." The §7 "open follow-ups **aged from GRN date**" view is
+also deferred: today `ar_overdue` ages by invoice **due_date**, not
+`customer_receipts.receipt_date`, so the GRN-anchored aging isn't built yet.
+`payment_followups_sent` adds the follow-up *activity* view in the meantime.
 
 ---
 

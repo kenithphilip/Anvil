@@ -180,3 +180,68 @@ describe("copilot tools", () => {
     }
   });
 });
+
+describe("communications reducers (item 7)", () => {
+  const comms = [
+    { document_type: "dispatch_register", direction: "outbound", status: "sent", created_at: daysAgo(5) },
+    { document_type: "dispatch_register", direction: "outbound", status: "queued", created_at: daysAgo(4) },
+    { document_type: "payment_reminder", direction: "outbound", status: "sent", created_at: daysAgo(3) },
+    { document_type: "service_report", direction: "outbound", status: "failed", created_at: daysAgo(2) },
+    { document_type: "quote_email", direction: "outbound", status: "replied", created_at: daysAgo(1) },
+  ];
+
+  it("comms_sent counts messages with a per-type breakdown", () => {
+    const r = reduceOf("comms_sent", comms);
+    expect(r.value).toBe(5);
+    expect(r.breakdown).toEqual({ dispatch_register: 2, payment_reminder: 1, service_report: 1, quote_email: 1 });
+  });
+
+  it("comms_delivery_rate = sent+replied over attempted (surfaces queued/failed)", () => {
+    const r = reduceOf("comms_delivery_rate", comms);
+    expect(r.value).toBe(60);          // 3 delivered (2 sent + 1 replied) of 5 attempted
+    expect(r).toMatchObject({ count: 3, denominator: 5 });
+  });
+
+  it("dispatch_register_cadence counts only dispatch registers", () => {
+    expect(reduceOf("dispatch_register_cadence", comms).value).toBe(2);
+  });
+
+  it("payment_followups_sent counts only payment reminders", () => {
+    expect(reduceOf("payment_followups_sent", comms).value).toBe(1);
+  });
+
+  it("routing_coverage = distinct customers with an active rule / total customers", () => {
+    const rules = [
+      { customer_id: "c1", is_active: true },
+      { customer_id: "c1", is_active: true },   // dup -> counted once
+      { customer_id: "c2", is_active: false },  // inactive -> excluded
+      { customer_id: "c3", is_active: true },
+    ];
+    const customers = [{ id: "c1" }, { id: "c2" }, { id: "c3" }, { id: "c4" }];
+    const r = reduceOf("routing_coverage", { rules, customers });
+    expect(r.value).toBe(50);          // c1 + c3 of 4 customers
+    expect(r).toMatchObject({ count: 2, denominator: 4 });
+  });
+
+  it("comms metrics are listed with the communications domain + valid units", () => {
+    const comm = listMetrics().filter((m) => m.domain === "communications");
+    expect(comm.map((m) => m.id)).toEqual(expect.arrayContaining([
+      "comms_sent", "comms_delivery_rate", "dispatch_register_cadence", "payment_followups_sent", "routing_coverage",
+    ]));
+    expect(comm.every((m) => ["count", "percent"].includes(m.unit))).toBe(true);
+  });
+
+  it("computeMetric wires a windowed comms metric end to end", async () => {
+    const svc = makeSvc({ communications: comms });
+    const ans = await computeMetric(svc, "t1", "comms_sent", { window_days: 30 }, NOW);
+    expect(ans).toMatchObject({ metric_id: "comms_sent", unit: "count", domain: "communications", value: 5, window_days: 30 });
+    expect(ans.breakdown.dispatch_register).toBe(2);
+  });
+
+  it("computeMetric wires the two-table routing_coverage (no window)", async () => {
+    const svc = makeSvc({ comms_routing_rules: [{ customer_id: "c1", is_active: true }], customers: [{ id: "c1" }, { id: "c2" }] });
+    const ans = await computeMetric(svc, "t1", "routing_coverage", {}, NOW);
+    expect(ans).toMatchObject({ metric_id: "routing_coverage", unit: "percent", value: 50 });
+    expect(ans.window_days).toBeUndefined();
+  });
+});

@@ -431,6 +431,22 @@ Relevance to Anvil: **borrow 3 patterns.** (1) Validates + extends Anvil's shipp
 
 **Net (both):** the transferable value is a **defensible, evidence-grounded, admin-removing UX** layered on Anvil's copilot + forecast + cockpit — not their enterprise-SaaS-sales product. Concrete items folded into §6 (Important) and parked in the backlog (memory `backlog_revenue_intel_ux`).
 
+### Additions — 2026-07-27 (adjacent-learn-only: drawing intelligence)
+
+One drawing-intelligence tool reviewed at the user's request. **Not a sales-ops competitor** — it operates on the *engineering-drawing QA* step, not the order/procurement flow. It is adjacent to Anvil's own **drawing extraction + PDM** line (memory `project_drawing_extraction_pdm`; PRs #288–293 extract part/assembly CAD drawings into BOM/item data for spare ordering). Hera does drawing → *review*; Anvil does drawing → *data*. The value is capability + positioning patterns for Anvil's extraction pipeline, not features to match.
+
+### 3.17 Hera — `manufacturingintelligence.org` (adjacent-learn-only)
+
+One-liner: "The physical economy runs on drawings. Review takes days. Hera takes minutes." Automated engineering-drawing review (by GIM Corp, YC-backed).
+
+ICP: manufacturing engineering + quality teams who review technical drawings before parts ship.
+
+Capability surface: a "Design Intelligence" console that runs four checks on a technical drawing in minutes — **GD&T conformance**, **code compliance**, **tolerance-stack analysis**, and **drawing-integrity verification** — validating GD&T callouts, datums, and tolerances against **ASME Y14.5-2018, ASME BPVC, B31, and AWS** standards.
+
+Differentiators: deep GD&T/standards parsing (callouts + datums + tolerances, not just OCR); standards-conformance as the value prop; the days→minutes time-compression wedge.
+
+Relevance to Anvil: **learn, don't chase.** (1) **Deeper drawing parse** — Anvil's drawing extraction reads part/assembly data for BOM/spare ordering; Hera shows the depth achievable on the *same artifact* (GD&T callouts, datums, tolerance stacks) that Anvil's P2/P3 (DXF/DWG, part_drawing) could mine for richer item attributes. (2) **Standards-conformance as a manufacturing-credibility signal** — the ASME/AWS framing is a trust cue Anvil can echo where it touches engineering data. (3) **Same days→minutes wedge** Anvil uses for PO extraction, applied to a different artifact — validates the time-compression pitch. Do **not** build engineering-drawing QA/GD&T review: Anvil's wedge is order/procurement flow + forecast→BOM, and drawing QA is a different buyer (design/quality, not ops/procurement).
+
 ---
 
 ## 4. Cross-cutting themes from the competitor scan

@@ -371,6 +371,28 @@ for free, rather than building a parallel reporting stack.
 Engagement (opens / clicks / bounces) needs provider webhooks and is a separable
 later increment — deliberately not in the first build.
 
+### SHIPPED — five governed comms metrics in the existing catalog
+(`src/api/_lib/metrics/catalog.js`, `domain: "communications"`). They inherit the
+`{value, unit, provenance, as_of}` contract and appear in Ask Anvil's
+`query_metric`/`list_metrics` tools for free — no parallel reporting stack.
+
+| Metric | Unit | What it measures |
+|---|---|---|
+| `comms_sent` | count | Outbound messages in the window, **broken down by document_type**. |
+| `comms_delivery_rate` | percent | `sent`+`replied` ÷ attempted — surfaces messages **stuck `queued` because no provider is configured** (the false-`sent` bug's analytics twin). |
+| `dispatch_register_cadence` | count | Dispatch registers proactively sent — are we informing them, or do they chase us? |
+| `payment_followups_sent` | count | Payment reminders sent in the window. |
+| `routing_coverage` | percent | Distinct customers with an active routing rule ÷ all customers — the coverage gap the routing matrix is meant to close. |
+
+**Deliberately deferred (would measure fiction today):** `reply_rate` and
+`time_to_first_response`. Both need inbound thread linkage, and **no inbound row
+lands in `communications`** (every writer is outbound). They unblock with the
+same Graph reply-loop join called out in §5 — shipping them now would report a
+permanent "0 replies." The §7 "open follow-ups **aged from GRN date**" view is
+also deferred: today `ar_overdue` ages by invoice **due_date**, not
+`customer_receipts.receipt_date`, so the GRN-anchored aging isn't built yet.
+`payment_followups_sent` adds the follow-up *activity* view in the meantime.
+
 ---
 
 ## 8. Build plan
@@ -386,7 +408,7 @@ Smallest first. Each item is independently useful; nothing waits on Outlook.
 | 4 | **Service report renderer** | `service_visits`, `closure_reports` | Straightforward once 1–2 land; watch the internal-field leak. |
 | 5 | **Dispatch register** | `dispatch_lines` (193) + builder + endpoint + ingest | **Shipped (option a).** Tally `/delivery_notes` pull is the one follow-up. |
 | 6 | **Outlook/Graph provider** | `_lib/graph-client.js` + `comms/graph.js` + callback (194) | **Shipped.** Auth-code flow, reuses 028 config cols; reply-loop join is the follow-up. |
-| 7 | **Comms analytics** | metric catalog, cockpit | Needs 1–2 to have produced data first. |
+| 7 | **Comms analytics** | 5 metrics in `_lib/metrics/catalog.js` (`communications` domain) | **Shipped.** Reply-rate/TTFR deferred to the inbound-join follow-up. |
 | 8 | **Marketing path** | separate path + consent/suppression | Deliberately last, deliberately separate. |
 
 ### Decisions for Joel, not code

@@ -74,6 +74,41 @@ const fetchScorecards = async (svc, tenantId) => {
   return r.data || [];
 };
 
+// Communications (item 7). OUTBOUND only: every writer inserts outbound, and
+// filtering here keeps the counts honest if inbound rows ever land in the table.
+const fetchCommunications = async (svc, tenantId, since) => {
+  let q = svc.from("communications")
+    .select("document_type, direction, status, created_at, customer_id")
+    .eq("tenant_id", tenantId).eq("direction", "outbound");
+  if (since) q = q.gte("created_at", since);
+  const r = await q;
+  if (r.error) throw new Error("communications: " + r.error.message);
+  return r.data || [];
+};
+// Routing coverage needs two tables; fetch returns both for a pure reduce.
+const fetchRoutingCoverage = async (svc, tenantId) => {
+  const [rules, customers] = await Promise.all([
+    svc.from("comms_routing_rules").select("customer_id, is_active").eq("tenant_id", tenantId),
+    svc.from("customers").select("id").eq("tenant_id", tenantId),
+  ]);
+  if (rules.error) throw new Error("comms_routing_rules: " + rules.error.message);
+  if (customers.error) throw new Error("customers: " + customers.error.message);
+  return { rules: rules.data || [], customers: customers.data || [] };
+};
+// The customer-FACING document types. `communications` also carries supplier
+// RFQs, prospecting outreach, inventory/system notifications, and agent
+// messages — none of which are customer communications, so the customer-comms
+// metrics filter to this set (a customer_id filter would be wrong: quote/invoice
+// emails set object_id, not customer_id). ar_reminder = the autonomous AR
+// agent's dunning; payment_reminder = the manual statement — both are follow-ups.
+const CUSTOMER_COMMS_TYPES = new Set([
+  "dispatch_register", "payment_reminder", "ar_reminder", "service_report",
+  "quote_email", "invoice_email",
+]);
+const PAYMENT_COMMS_TYPES = new Set(["payment_reminder", "ar_reminder"]);
+// "Issued" = handed to the send path (queued or sent), i.e. not a saved draft.
+const isIssued = (c) => c.status !== "draft";
+
 // ── the catalog ──────────────────────────────────────────────────────
 export const METRICS = [
   // ---- Finance / AR (aging considers ALL outstanding invoices) ----
@@ -238,6 +273,70 @@ export const METRICS = [
       const vals = (rows || []).map((r) => Number(r.on_time_pct)).filter((n) => Number.isFinite(n));
       const value = vals.length ? Math.round((vals.reduce((s, n) => s + n, 0) / vals.length) * 10) / 10 : 0;
       return { value, count: vals.length, provenance: "avg(on_time_pct) over supplier_scorecards (current snapshot), tenant-scoped" };
+    },
+  },
+  // ---- Communications (item 7) — per docs/CUSTOMER_COMMS_DESIGN.md §7 ----
+  // Reply rate + time-to-first-response are DELIBERATELY not here: they need
+  // inbound thread linkage, and no inbound row lands in `communications` today
+  // (every writer is outbound). They unblock with the Graph reply-loop join —
+  // shipping them now would measure fiction (always 0 replies).
+  {
+    id: "comms_sent", label: "Customer messages issued", domain: "communications", unit: "count",
+    description: "Customer-facing outbound messages in the window (queued or sent; excludes drafts and non-customer traffic like supplier RFQs / notifications), broken down by document type.",
+    params: ["window_days"],
+    fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
+    reduce: (rows) => {
+      const list = (rows || []).filter((c) => CUSTOMER_COMMS_TYPES.has(c.document_type) && isIssued(c));
+      const breakdown = {};
+      for (const c of list) breakdown[c.document_type] = (breakdown[c.document_type] || 0) + 1;
+      return { value: list.length, breakdown, provenance: "count(outbound customer-facing communications not in draft, created in window), grouped by document_type" };
+    },
+  },
+  {
+    id: "comms_delivery_rate", label: "Customer message delivery rate", domain: "communications", unit: "percent",
+    description: "Share of attempted customer messages (in window) that actually sent, vs. stuck queued or failed. A low rate usually means no send provider is configured.",
+    params: ["window_days"],
+    fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
+    reduce: (rows) => {
+      const cust = (rows || []).filter((c) => CUSTOMER_COMMS_TYPES.has(c.document_type));
+      const attempted = cust.filter((c) => ["sent", "replied", "queued", "failed"].includes(c.status));
+      const delivered = attempted.filter((c) => c.status === "sent" || c.status === "replied").length;
+      const value = attempted.length ? Math.round((delivered / attempted.length) * 1000) / 10 : 0;
+      return { value, count: delivered, denominator: attempted.length,
+        provenance: "count(status in {sent,replied}) ÷ count(status in {sent,replied,queued,failed}) × 100, over customer-facing outbound in window" };
+    },
+  },
+  {
+    id: "dispatch_register_cadence", label: "Dispatch registers sent", domain: "communications", unit: "count",
+    description: "Dispatch registers proactively sent to customers in the window — whether we inform them of despatches or they chase us.",
+    params: ["window_days"],
+    fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
+    reduce: (rows) => ({
+      value: (rows || []).filter((c) => c.document_type === "dispatch_register" && isIssued(c)).length,
+      provenance: "count(communications with document_type='dispatch_register', outbound, not draft, in window)",
+    }),
+  },
+  {
+    id: "payment_followups_sent", label: "Payment follow-ups sent", domain: "communications", unit: "count",
+    description: "Payment reminders sent to customers in the window — both the manual statement (payment_reminder) and the autonomous AR agent's dunning (ar_reminder).",
+    params: ["window_days"],
+    fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
+    reduce: (rows) => ({
+      value: (rows || []).filter((c) => PAYMENT_COMMS_TYPES.has(c.document_type) && isIssued(c)).length,
+      provenance: "count(communications with document_type in {payment_reminder,ar_reminder}, outbound, not draft, in window)",
+    }),
+  },
+  {
+    id: "routing_coverage", label: "Customers with comms routing configured", domain: "communications", unit: "percent",
+    description: "Share of customers with at least one active comms routing rule. Low coverage means most customers fall back to the primary contact instead of the right function (stores / accounts).",
+    params: [],
+    fetch: (svc, t) => fetchRoutingCoverage(svc, t),
+    reduce: ({ rules, customers }) => {
+      const configured = new Set((rules || []).filter((r) => r.is_active !== false && r.customer_id).map((r) => r.customer_id));
+      const total = (customers || []).length;
+      const value = total ? Math.round((configured.size / total) * 1000) / 10 : 0;
+      return { value, count: configured.size, denominator: total,
+        provenance: "count(distinct customer_id in comms_routing_rules where is_active) ÷ count(customers) × 100" };
     },
   },
 ];

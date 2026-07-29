@@ -48,7 +48,89 @@ Scope: codebase audit of `Anvil-main`, 14-company competitive scan (11 original 
 
 ---
 
+## 0. Refresh — 2026-07-29 (read this first)
+
+**The May-2026 audit below is now substantially out of date, and its central
+thesis is inverted.** It described a system "strong on the front half, thin on
+the back half, with zero non-Tally ERP connectors." That is no longer true. All
+figures verified against current code (`supabase/migrations`, `src/api/router.js`,
+`src/v3-app/screens`, `src/api/_lib/*client*.js`).
+
+**Scale, then vs. now:**
+
+| | May 2026 (below) | 2026-07-29 |
+|---|---|---|
+| SQL migrations | 10 | **195** |
+| Routed API endpoints | ~80 | **454** |
+| v3 screens | 35 | **157** |
+| Named ERP / accounting connectors | Tally (+NetSuite in flight) | **17** |
+
+**The "critical gaps" (§6 #1–#6) are essentially all closed:**
+
+- **ERP breadth (was "the single most important gap").** 17 connectors now exist:
+  Tally, NetSuite, SAP S/4HANA, Microsoft Dynamics 365, Acumatica, Oracle EBS,
+  Oracle Fusion, IFS, JD Edwards, Infor SX.e, Epicor Prophet-21, Epicor Eclipse,
+  ProAlpha, Ramco, Plex, JobBoss, Sage X3 (`src/api/_lib/*-client.js` + per-ERP
+  route groups). Depth varies (push vs. bidirectional sync) — that's the remaining
+  work, not presence.
+- **Back-half (order→cash) is built:** generic `invoices` + GSTN `einvoices`,
+  AR aging (`_lib/ops-kpis.js`), a GRN-aware payment statement, and **payment
+  rails** (Stripe Connect + Razorpay).
+- **Autonomous agents:** `agents/run.js` is a goal-driven loop (`ar_collect`,
+  quote-chase, `handle_replies`) with an append-only step audit + a queued-comms
+  reaper.
+- **E-signature:** DocuSign (`src/api/esign/*` + `_lib/docusign-client.js`, migration 023).
+- **ERP sync (not just push):** several connectors do scheduled pulls, not only
+  one-way voucher push.
+
+**Also new since May (whole modules the doc doesn't mention):**
+
+- **Customer-communications suite (design items 0–8 + reply-loop):**
+  function-based routing matrix, Outlook/Microsoft-Graph + SendGrid providers,
+  dispatch register, template-driven service report, GRN payment statement, five
+  governed comms-analytics metrics, a structurally-separate marketing path
+  (consent/suppression/unsubscribe), and inbound reply attribution. See
+  `docs/CUSTOMER_COMMS_DESIGN.md`.
+- **GenAI copilot / "real-time ERP-query chat" (was gap #10, Axal's wedge):**
+  `copilot/`, `erp_chat/`, an **MCP server** (`mcp/server.js` + scoped tokens),
+  and a **governed metric catalog** (`_lib/metrics/catalog.js`, ~24 metrics) with
+  a `{value, unit, provenance, as_of}` contract.
+- **Customer-facing portal (was gap #12):** `portal/` — view quotes/orders/
+  invoices, accept a quote, pay, reorder, invoice PDF, token-scoped access.
+- **Multi-channel inbound (was gaps #7/#8/#9):** email, WhatsApp, Slack, Teams,
+  and **voice** (`voice/` — webhook, outbound, consent, DND, handoff).
+- **Drawing extraction + PDM, Logistics Ops, Spare-Intelligence bridge, generalized
+  BOM ingestion** — all post-May.
+
+**What is genuinely still open (the real 2026-07-29 gaps):**
+
+1. **ERP connector DEPTH + marketing-site proof** — many are push-first; deepen to
+   bidirectional master/inventory/AR sync, and actually list them publicly.
+2. **De-Obara cleanup** — branding + customer IP/PII still throughout the repo (a
+   real credibility + compliance risk; the one §2 claim that still holds).
+3. **Compliance posture** — SOC 2 / ISO 27001 / data-residency for enterprise
+   vendor-security review (deal-unblockers).
+4. **Comms follow-ups** — GRN-aged AR view, Graph-reply retry worker, admin UIs
+   (Graph connect, marketing-consent capture), the DPDPA retention decision.
+5. **Handwritten-PO extraction + an RLHF/edit-feedback loop** (the eval harness is
+   the foundation; the closed loop isn't built).
+6. **Front-end maintainability** — a few mega screens (`admin.tsx` ~6k lines).
+7. **Forecast→BOM raw-material preorder** (the north-star wedge) — still the
+   highest-leverage differentiator to finish.
+
+**Everything from `---` onward is the preserved May-2026 snapshot** (matrices +
+competitor research remain useful); read its "missing/partial/gap" claims through
+the corrections above. The per-competitor section has been kept current (§3.12–3.19).
+
+---
+
 ## 1. Executive summary
+
+> **Amended — see §0 (2026-07-29).** This summary's "thin back half / zero
+> non-Tally ERP" thesis no longer holds: the back half (invoicing, AR, payment
+> rails), 17 ERP connectors, autonomous agents, e-sign, a customer portal, a
+> GenAI copilot, and the customer-comms suite have all shipped. The text below is
+> the May-2026 snapshot.
 
 Anvil today is **a serious, multi-tenant, India-anchored sales-ops execution system** wearing the marketing skin of a generic AI-native quote-to-cash platform. The codebase is mature: 80 serverless functions, 72 Postgres tables, 35 wired React/TS screens, multi-tier model routing, prompt-injection firewall, PII redaction, Tally + GSTN integrations, and a real audit trail on every action. It is not a marketing prototype.
 
@@ -119,6 +201,13 @@ The following are wired end-to-end:
 - **Audit and processing events on every business action.** `_lib/audit.js` is called from nearly every endpoint. The communications timeline merge in SOWorkspace.Activity proves it.
 
 ### What is partial, stubbed, or known-flaky
+
+> **Mostly superseded (§0, 2026-07-29).** Most items below are now shipped:
+> non-Tally ERP connectors (17 of them), payment collection (Stripe + Razorpay),
+> autonomous agents, a real SendGrid **and** Outlook/Graph comms provider, quote
+> PDF, e-signature, and a customer-facing portal. The still-accurate items are the
+> De-Obara branding/PII cleanup and some role-tailored-dashboard / mobile polish.
+> Read the rest as a May-2026 snapshot.
 
 Per `docs/ROADMAP.md` and code spot-checks:
 
@@ -479,7 +568,7 @@ Relevance to Anvil: **watch, low signal.** The "run existing processes with inte
 
 Five things the competitors collectively prove are now table stakes:
 
-1. **Named ERP integrations on the marketing site.** Mercura lists 11. Pactle lists 7. Avent lists 6. Anvil's website lists Tally. This is the most credibility-damaging visible gap.
+1. **Named ERP integrations on the marketing site.** Mercura lists 11. Pactle lists 7. Avent lists 6. Anvil's website lists Tally. This is the most credibility-damaging visible gap. — **_Update (§0, 2026-07-29): the code gap is closed — 17 connectors now exist. What remains is (a) deepening several from push to bidirectional sync and (b) actually listing them on the marketing site._**
 
 2. **An "AI agents" frame, not "AI-powered" or "AI-assisted."** Every YC25 entrant uses agent language explicitly. Mercura, Avent, Arzana, Soff, Korso, Lumari, Comena, Axal all market specific named agents or agent workflows. Anvil's marketing-site copy uses agent language but the implementation has no autonomous agent loop.
 
@@ -535,6 +624,13 @@ Legend: **F** = full / production, **P** = partial / has the bones but not all o
 
 ### ERP / integrations breadth
 
+> **Amended (§0, 2026-07-29).** The Anvil column below is a May snapshot. Current
+> Anvil connector coverage is **F** for NetSuite, SAP S/4HANA, Dynamics 365,
+> Acumatica, Oracle EBS, Oracle Fusion, IFS, JD Edwards, Infor SX.e, Epicor
+> Prophet-21, Epicor Eclipse, ProAlpha, Ramco, Plex, JobBoss, Sage X3 (+ Tally,
+> GSTN), plus Stripe **and** Razorpay payment rails, DocuSign e-sign, and Slack +
+> Teams. Depth varies (push vs. bidirectional).
+
 | System            | Anvil | Pactle | Mercura | Arzana | Comena | Axal | Soff | Avent | Korso | Smartbase | Lumari |
 |-------------------|-------|--------|---------|--------|--------|------|------|-------|-------|-----------|--------|
 | Tally (India)     | F     | N      | N       | N      | N      | N    | N    | N     | N     | N         | N      |
@@ -580,6 +676,13 @@ Legend: **F** = full / production, **P** = partial / has the bones but not all o
 ---
 
 ## 6. Gap analysis — what Anvil is missing
+
+> **Superseded by §0 (2026-07-29).** Critical gaps #1–#6 and important gaps
+> #7/#9/#10/#11/#12/#13/#18 are now **built** (17 ERP connectors, invoicing, AR +
+> dunning agent, payment rails, autonomous agent loop, e-sign, customer portal,
+> copilot/real-time-ERP chat, multi-channel inbound incl. voice, comms provider
+> integrations). The list below is the May-2026 snapshot; the **current** open
+> gaps are enumerated in §0 ("What is genuinely still open"). Retained for history.
 
 Grouped by severity for buying-decision impact.
 
@@ -697,6 +800,14 @@ The most likely failure mode of this roadmap is over-rotating toward generic CPQ
 ---
 
 ## 9. Roadmap
+
+> **Amended (§0, 2026-07-29).** The entire "Now (next 8 weeks)" block below has
+> **shipped**, and much of "Next" too (ERP connectors, e-sign, portal, WhatsApp,
+> real-time ERP chat, comms provider). The **current** roadmap seed is §0's "What
+> is genuinely still open" — ERP-sync depth + public listing, De-Obara cleanup,
+> SOC 2/ISO, the comms follow-ups, handwritten-PO + RLHF loop, front-end
+> maintainability, and finishing the **forecast→BOM raw-material preorder** wedge.
+> The tables below are the May-2026 plan, retained for history.
 
 Effort sizes are calendar weeks for a small (2–4 engineer) team, not commitments. Sequencing is dependency-driven.
 

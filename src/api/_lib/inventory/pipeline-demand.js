@@ -286,6 +286,55 @@ export const topContributingOpps = (pairs, partNo, attributionIndex = null, cali
     .map((o) => ({ ...o, qty: round(o.qty), expected_qty: round(o.expected_qty) }));
 };
 
+// PR3 (Demand Story hero): assemble the causal story for ONE opportunity —
+// finished-good lines (× win-prob) → BOM-exploded raw materials → the draft
+// procurement plans it drove. Pure; reuses the engine functions above so the
+// numbers reconcile with the weekly planner. The endpoint just supplies the rows.
+export const buildDemandStory = ({ opp, lines = [], bomRows = [], buyParts = null, plans = [] } = {}) => {
+  const round = (x) => Math.round((Number(x) || 0) * 1000) / 1000;
+  const bp = buyParts instanceof Set ? buyParts : null;
+  const probability = resolveOpportunityProbability(opp);
+
+  const finishedMap = new Map();
+  const finished_goods = [];
+  for (const l of (lines || [])) {
+    if (!l || !l.part_no) continue;
+    const qty = Number(l.qty) || 0;
+    const expected = qty * probability;
+    finished_goods.push({ part_no: l.part_no, qty, expected_qty: round(expected) });
+    if (expected > 0) finishedMap.set(l.part_no, (finishedMap.get(l.part_no) || 0) + expected);
+  }
+
+  const W = "total";
+  const pipeline = new Map();
+  for (const [p, q] of finishedMap) pipeline.set(p, new Map([[W, q]]));
+  explodePipelineThroughBom(pipeline, bomRows, 8, { buyParts: bp });
+  const attributionIndex = buildBomAttributionIndex(bomRows, 8, { buyParts: bp });
+  const finishedSet = new Set(finishedMap.keys());
+  const raw_materials = [];
+  for (const [part, weeks] of pipeline) {
+    if (finishedSet.has(part)) continue;
+    const total = weeks.get(W) || 0;
+    if (total <= 0) continue;
+    const via = (attributionIndex.get(part) || []).filter((a) => finishedSet.has(a.root)).map((a) => a.path.join(" → "));
+    raw_materials.push({ part_no: part, expected_qty: round(total), via });
+  }
+  raw_materials.sort((a, b) => b.expected_qty - a.expected_qty);
+
+  const contributing_plans = (plans || [])
+    .filter((p) => Array.isArray(p?.rationale?.top_opps) && p.rationale.top_opps.some((o) => o.opp_id === opp?.id))
+    .map((p) => ({ id: p.id, part_no: p.part_no, recommended_qty: p.recommended_qty, status: p.status, expected_arrival_date: p.expected_arrival_date }));
+
+  return {
+    opportunity: {
+      id: opp?.id, opportunity_name: opp?.opportunity_name, stage: opp?.stage,
+      probability: round(probability), operator_probability: opp?.probability,
+      ai_probability: opp?.ai_probability, close_date: opp?.close_date, customer_id: opp?.customer_id,
+    },
+    finished_goods, raw_materials, contributing_plans,
+  };
+};
+
 // Convenience: roll up the pipeline-demand map into a flat array of
 // (part_no, week_start, qty) triples for upsert into demand_forecasts.
 export const flattenPipelineDemand = (mapByPart) => {

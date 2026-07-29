@@ -67,6 +67,7 @@ const screens = {
   // Inventory-planning module (Phase 3).
   inventoryPlanning:    lazyReload(() => import("./screens/inventory-planning")),
   inventoryPlans:       lazyReload(() => import("./screens/inventory-plans")),
+  demandStory:          lazyReload(() => import("./screens/demand-story")),
   inventoryExceptions:  lazyReload(() => import("./screens/inventory-exceptions")),
   inventoryItem:        lazyReload(() => import("./screens/inventory-item")),
   inventoryAllocations: lazyReload(() => import("./screens/inventory-allocations")),
@@ -171,6 +172,7 @@ export const RESOLVERS = {
   // Inventory-planning module (Phase 3).
   "inventory-planning":   () => screens.inventoryPlanning,
   "inventory-plans":      () => screens.inventoryPlans,
+  "demand-story":         () => screens.demandStory,
   "inventory-exceptions": () => screens.inventoryExceptions,
   "inventory-item":       () => screens.inventoryItem,
   "inventory-allocations":() => screens.inventoryAllocations,

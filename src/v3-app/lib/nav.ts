@@ -50,6 +50,7 @@ export const NAV: NavGroup[] = [
       // rows landed in Phase 2.
       { id: "inventory-planning",   label: "Inventory Planning", icon: Icon.cycle },
       { id: "inventory-plans",      label: "Planned POs",        icon: Icon.cal },
+      { id: "demand-story",         label: "Demand Story",       icon: Icon.bolt },
       { id: "inventory-exceptions", label: "Stock Exceptions",   icon: Icon.alert },
       { id: "inventory-allocations",label: "Allocations",        icon: Icon.lock },
       { id: "inventory-suppliers",  label: "Suppliers",          icon: Icon.briefcase },

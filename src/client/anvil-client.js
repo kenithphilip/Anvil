@@ -1057,6 +1057,7 @@
     },
     forecastRuns: async (limit) => apiFetch("/api/inventory/forecast_runs" + (limit ? "?limit=" + limit : "")),
     forecastRun: async (id) => apiFetch("/api/inventory/forecast_runs?id=" + encodeURIComponent(id)),
+    demandStory: async (opportunityId) => apiFetch("/api/inventory/demand_story?opportunity_id=" + encodeURIComponent(opportunityId)),
     plans: {
       list: async (params) => {
         const qs = new URLSearchParams(params || {}).toString();

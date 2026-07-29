@@ -20,10 +20,11 @@ describe("NAV", () => {
     // + 1 Wave 4.1 extraction-review (under Quality)
     // + 1 P4 logistics freight-bidding (under Procurement)
     // + 1 sales-ops cockpit (under Sales)
-    // + 1 GenAI copilot "Ask Anvil" (under Workflows).
+    // + 1 GenAI copilot "Ask Anvil" (under Workflows)
+    // + 1 moat Bet 1 demand-story (under Procurement).
     const ids = NAV.flatMap((g) => g.items.map((i) => i.id));
-    expect(ids.length).toBe(55);
-    expect(new Set(ids).size).toBe(55);
+    expect(ids.length).toBe(56);
+    expect(new Set(ids).size).toBe(56);
   });
   it("each item has id + label + icon", () => {
     for (const group of NAV) {

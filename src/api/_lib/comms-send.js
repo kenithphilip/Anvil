@@ -133,7 +133,8 @@ const sendViaGenericWebhook = async ({ to, subject, body, from }) => {
 export const sendCommunication = async (svc, ctx, commId) => {
   const row = await svc.from("communications").select("*").eq("tenant_id", ctx.tenantId).eq("id", commId).single();
   if (row.error || !row.data) return { notFound: true };
-  if (row.data.status === "sent") return { idempotent: true, communication: row.data };
+  // 'replied' is terminal too (the reply-loop flips a sent row to replied) — never resend it.
+  if (row.data.status === "sent" || row.data.status === "replied") return { idempotent: true, communication: row.data };
   // Marketing has its OWN send path (_lib/marketing-send.js): consent +
   // suppression + unsubscribe + a separate sender identity. The transactional
   // sender must NEVER (re)send a marketing row — that would use the transactional

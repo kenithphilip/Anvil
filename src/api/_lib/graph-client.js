@@ -265,4 +265,46 @@ export const sendViaGraph = async ({ accessToken, sender, to, cc, bcc, subject, 
   }
 };
 
+// ── inbound: fetch one message (the reply-loop) ──────────────────────────────
+const headerValue = (headers, name) => {
+  const target = String(name).toLowerCase();
+  for (const h of headers || []) {
+    if (String(h.name || "").toLowerCase() === target) return String(h.value || "").trim();
+  }
+  return null;
+};
+const stripHtml = (html) => (html ? String(html).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : null);
+
+// Fetch one message by id and return the fields the reply-loop needs —
+// conversationId + internetMessageId + the In-Reply-To header. Returns null on
+// any failure so the caller can leave a stub for a retry. NOTE: internetMessageId
+// and the In-Reply-To header are BOTH kept in their raw `<...>` form so the join
+// (communications.provider_message_id = reply's In-Reply-To) matches.
+export const fetchGraphMessage = async (accessToken, mailbox, messageId) => {
+  const mbox = encodeURIComponent(String(mailbox || ""));
+  const id = encodeURIComponent(String(messageId || ""));
+  const select = "id,conversationId,internetMessageId,subject,from,receivedDateTime,body,internetMessageHeaders";
+  try {
+    const resp = await safeFetch(GRAPH + "/users/" + mbox + "/messages/" + id + "?$select=" + select, {
+      headers: { Authorization: "Bearer " + accessToken },
+    });
+    if (!resp.ok) return null;
+    const m = await resp.json();
+    const isHtml = m.body?.contentType === "html" || m.body?.contentType === "HTML";
+    return {
+      graph_id: m.id || messageId,
+      conversationId: m.conversationId || null,
+      internetMessageId: m.internetMessageId || null,     // "<...>" as Graph returns it
+      inReplyTo: headerValue(m.internetMessageHeaders, "in-reply-to"),
+      references: headerValue(m.internetMessageHeaders, "references"),
+      subject: m.subject || null,
+      from: m.from?.emailAddress?.address || null,
+      fromName: m.from?.emailAddress?.name || null,
+      receivedAt: m.receivedDateTime || null,
+      bodyText: isHtml ? stripHtml(m.body?.content) : (m.body?.content || null),
+      bodyHtml: isHtml ? (m.body?.content || null) : null,
+    };
+  } catch (_e) { return null; }
+};
+
 export const graphSecretsReady = () => isSecretsConfigured();

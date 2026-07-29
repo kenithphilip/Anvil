@@ -231,8 +231,9 @@ describe("communications reducers (item 7)", () => {
     const comm = listMetrics().filter((m) => m.domain === "communications");
     expect(comm.map((m) => m.id)).toEqual(expect.arrayContaining([
       "comms_sent", "comms_delivery_rate", "dispatch_register_cadence", "payment_followups_sent", "routing_coverage",
+      "comms_reply_rate", "time_to_first_response_median",   // unblocked by the Graph reply-loop
     ]));
-    expect(comm.every((m) => ["count", "percent"].includes(m.unit))).toBe(true);
+    expect(comm.every((m) => ["count", "percent", "days"].includes(m.unit))).toBe(true);
   });
 
   it("computeMetric wires a windowed comms metric end to end", async () => {

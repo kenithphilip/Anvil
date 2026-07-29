@@ -309,12 +309,20 @@ connect refuses to run without `ANVIL_SECRETS_KEY` (no plaintext refresh tokens)
 
 **Follow-ups (documented, none blocking a send):**
 
-- **Close the reply loop.** Storing `conversationId`/`internetMessageId` is
-  necessary but not sufficient: inbound still threads on the RFC Message-ID chain,
-  and `inbound/email/webhook.js` `handleGraph` is a stub that never fetches the
-  message. A Graph-fetch worker that reads a reply's `conversationId`/`in_reply_to`
-  and joins `communications` on `thread_id`/`provider_message_id` is what actually
-  attributes a reply to the originating outbound.
+- **Close the reply loop — SHIPPED.** `handleGraph` (`inbound/email/webhook.js`)
+  now fetches each notified message via `fetchGraphMessage` (the tenant's own
+  token) and calls `attributeReply` (`_lib/graph-reply.js`), which finds the
+  originating outbound by `thread_id=conversationId` (else
+  `provider_message_id=In-Reply-To`, both kept in `<...>` form so they match),
+  flips it to `status='replied'` + stamps `metadata.replied_at` (matching by the
+  precise In-Reply-To first, then conversationId; first reply wins the clock), and
+  back-links the inbound email to the customer/order. This unblocks the reply
+  metrics in §7. The public webhook now **fails closed on `clientState`**: it only
+  performs the privileged Graph fetch when the notification's `clientState`
+  matches the stored subscription secret (**migration 195**, `graph_client_state`,
+  applied manually) — otherwise it writes the benign stub, so a forged
+  notification can't make the server read an arbitrary mailbox message. Remaining:
+  a retry worker for when the inline fetch fails (a stub is left behind).
 - **Refresh scheduler.** Refresh is lazy on-send; a tenant that sends nothing for
   the refresh-token lifetime silently falls back to SendGrid. A cron (the
   `sap/sync.js` precedent) would keep long-idle connections alive.
@@ -418,14 +426,16 @@ later increment — deliberately not in the first build.
 | `payment_followups_sent` | count | Payment reminders sent in the window. |
 | `routing_coverage` | percent | Distinct customers with an active routing rule ÷ all customers — the coverage gap the routing matrix is meant to close. |
 
-**Deliberately deferred (would measure fiction today):** `reply_rate` and
-`time_to_first_response`. Both need inbound thread linkage, and **no inbound row
-lands in `communications`** (every writer is outbound). They unblock with the
-same Graph reply-loop join called out in §5 — shipping them now would report a
-permanent "0 replies." The §7 "open follow-ups **aged from GRN date**" view is
-also deferred: today `ar_overdue` ages by invoice **due_date**, not
-`customer_receipts.receipt_date`, so the GRN-anchored aging isn't built yet.
-`payment_followups_sent` adds the follow-up *activity* view in the meantime.
+**Reply metrics — NOW SHIPPED** (the §5 reply-loop join landed): `comms_reply_rate`
+(replied ÷ sent+replied) and `time_to_first_response_median` (median
+`metadata.replied_at − sent_at`). They read the `status='replied'` +
+`metadata.replied_at` that `attributeReply` stamps, so they report real data (0
+until Graph is connected and a reply arrives — honest, not fiction).
+
+**Still deferred:** the §7 "open follow-ups **aged from GRN date**" view — today
+`ar_overdue` ages by invoice **due_date**, not `customer_receipts.receipt_date`,
+so the GRN-anchored aging isn't built yet. `payment_followups_sent` adds the
+follow-up *activity* view in the meantime.
 
 ---
 
@@ -441,7 +451,7 @@ Smallest first. Each item is independently useful; nothing waits on Outlook.
 | 3 | **Payment statement with GRN** | new renderer over `customer_receipts` + `invoices` | Data already exists; commercially the highest-value email. |
 | 4 | **Service report renderer** | `service_visits`, `closure_reports` | Straightforward once 1–2 land; watch the internal-field leak. |
 | 5 | **Dispatch register** | `dispatch_lines` (193) + builder + endpoint + ingest | **Shipped (option a).** Tally `/delivery_notes` pull is the one follow-up. |
-| 6 | **Outlook/Graph provider** | `_lib/graph-client.js` + `comms/graph.js` + callback (194) | **Shipped.** Auth-code flow, reuses 028 config cols; reply-loop join is the follow-up. |
+| 6 | **Outlook/Graph provider** | `_lib/graph-client.js` + `comms/graph.js` + callback (194) | **Shipped.** Auth-code flow, reuses 028 config cols. Reply-loop join now shipped too (`_lib/graph-reply.js`). |
 | 7 | **Comms analytics** | 5 metrics in `_lib/metrics/catalog.js` (`communications` domain) | **Shipped.** Reply-rate/TTFR deferred to the inbound-join follow-up. |
 | 8 | **Marketing path** | `_lib/marketing-send.js` + `marketing/{send,unsubscribe}.js` | **Shipped.** Separate sender + consent + suppression + unsubscribe; the "never blocks transactional" invariant is a test. |
 

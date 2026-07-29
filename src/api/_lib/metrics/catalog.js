@@ -78,7 +78,7 @@ const fetchScorecards = async (svc, tenantId) => {
 // filtering here keeps the counts honest if inbound rows ever land in the table.
 const fetchCommunications = async (svc, tenantId, since) => {
   let q = svc.from("communications")
-    .select("document_type, direction, status, created_at, customer_id")
+    .select("document_type, direction, status, created_at, sent_at, customer_id, metadata")
     .eq("tenant_id", tenantId).eq("direction", "outbound");
   if (since) q = q.gte("created_at", since);
   const r = await q;
@@ -337,6 +337,41 @@ export const METRICS = [
       const value = total ? Math.round((configured.size / total) * 1000) / 10 : 0;
       return { value, count: configured.size, denominator: total,
         provenance: "count(distinct customer_id in comms_routing_rules where is_active) ÷ count(customers) × 100" };
+    },
+  },
+  // Reply metrics — unblocked by the Graph reply-loop join (_lib/graph-reply.js):
+  // an inbound reply now flips its originating outbound row to status='replied'
+  // and stamps metadata.replied_at, so these read real data (0 until Graph is
+  // connected + a reply arrives — honest, not fiction).
+  {
+    id: "comms_reply_rate", label: "Customer reply rate", domain: "communications", unit: "percent",
+    description: "Share of customer messages sent in the window that received a reply (attributed via Graph conversationId / In-Reply-To).",
+    params: ["window_days"],
+    fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
+    reduce: (rows) => {
+      const cust = (rows || []).filter((c) => CUSTOMER_COMMS_TYPES.has(c.document_type) && (c.status === "sent" || c.status === "replied"));
+      const replied = cust.filter((c) => c.status === "replied").length;
+      const value = cust.length ? Math.round((replied / cust.length) * 1000) / 10 : 0;
+      return { value, count: replied, denominator: cust.length,
+        provenance: "count(status='replied') ÷ count(status in {sent,replied}) × 100, customer-facing outbound in window" };
+    },
+  },
+  {
+    id: "time_to_first_response_median", label: "Median time to first reply (days)", domain: "communications", unit: "days",
+    description: "Median days from sending a customer message to the customer's first reply, over replied messages in the window.",
+    params: ["window_days"],
+    fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
+    reduce: (rows) => {
+      const durs = [];
+      for (const c of rows || []) {
+        if (c.status !== "replied" || !CUSTOMER_COMMS_TYPES.has(c.document_type)) continue;
+        const repliedAt = c.metadata?.replied_at;
+        if (!repliedAt || !c.sent_at) continue;
+        const d = (Date.parse(repliedAt) - Date.parse(c.sent_at)) / 86400000;
+        if (Number.isFinite(d) && d >= 0) durs.push(d);
+      }
+      return { value: Math.round(median(durs) * 10) / 10, count: durs.length,
+        provenance: "median(metadata.replied_at − sent_at in days) over replied customer-facing outbound in window" };
     },
   },
 ];

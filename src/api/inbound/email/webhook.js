@@ -31,6 +31,8 @@ import { serviceClient } from "../../_lib/supabase.js";
 import { recordAudit } from "../../_lib/audit.js";
 import { buildInboundEmailRow, ingestInboundEmail } from "../../_lib/inbound-email.js";
 import { safeFire } from "../../_lib/safe-thenable.js";
+import { graphAccessToken, fetchGraphMessage, graphIsConnected } from "../../_lib/graph-client.js";
+import { attributeReply } from "../../_lib/graph-reply.js";
 
 const readRaw = (req) => new Promise((resolve, reject) => {
   let data = "";
@@ -52,6 +54,17 @@ const headersAsMap = (headers) => {
   const map = {};
   for (const h of headers || []) map[String(h.Name || "").toLowerCase()] = h.Value;
   return map;
+};
+
+// Timing-safe check of a Graph notification's clientState against the stored
+// subscription secret. Fails closed: no secret / no value / mismatch -> false.
+const clientStateOk = (expected, provided) => {
+  if (!expected || !provided) return false;
+  try {
+    const a = Buffer.from(String(expected));
+    const b = Buffer.from(String(provided));
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch (_e) { return false; }
 };
 
 const handlePostmark = async (svc, raw, body, req) => {
@@ -128,35 +141,68 @@ const handleGraph = async (svc, body, req) => {
   if (validationToken) {
     return { status: 200, body: validationToken, contentType: "text/plain" };
   }
-  // For real notifications, the body has `value: [...]` with
-  // resource ids; per-message we'd need to fetch via Graph using
-  // the subscription's client credentials. We persist the
-  // notification as a stub row so the parse step (or a follow-up
-  // Graph-fetch worker) can complete the ingestion.
+  // For real notifications, the body has `value: [...]` with resource ids. We
+  // fetch each message via Graph (the tenant's own OAuth token), ingest the full
+  // inbound row, and ATTRIBUTE the reply back to the outbound communication that
+  // prompted it (thread_id=conversationId / provider_message_id=In-Reply-To).
+  // If the fetch fails we still write a stub so a retry can complete it.
   const notifs = Array.isArray(body?.value) ? body.value : [];
   let processed = 0;
+  let attributed = 0;
   for (const n of notifs) {
     const subscriptionId = n.subscriptionId;
-    const tenantQ = await svc.from("tenant_settings")
-      .select("tenant_id")
-      .eq("graph_subscription_id", subscriptionId)
-      .maybeSingle();
-    if (!tenantQ.data?.tenant_id) continue;
-    const tenantId = tenantQ.data.tenant_id;
-    // Stub row: minimal fields so the parse step picks it up.
+    const tset = await svc.from("tenant_settings").select("*")
+      .eq("graph_subscription_id", subscriptionId).maybeSingle();
+    const settings = tset.data;
+    if (!settings?.tenant_id) continue;
+    const tenantId = settings.tenant_id;
+    const graphMessageId = n.resourceData?.id || null;
+
+    // AUTHENTICITY GATE (fail closed): only fetch the message — a privileged call
+    // with the tenant's mailbox token — when the notification's clientState
+    // matches the stored subscription secret. No secret configured, or a
+    // mismatch, means we do NOT fetch (write the benign stub only), so a forged
+    // notification can never make us read an arbitrary message.
+    const trusted = clientStateOk(settings.graph_client_state, n.clientState);
+
+    // Fetch the actual message (conversationId + internetMessageId + In-Reply-To).
+    let fetched = null;
+    if (trusted && graphMessageId && graphIsConnected(settings)) {
+      try {
+        const { accessToken, sender } = await graphAccessToken(svc, { ...settings });
+        fetched = await fetchGraphMessage(accessToken, sender || settings.graph_mailbox, graphMessageId);
+      } catch (_e) { fetched = null; }
+    }
+
     const row = buildInboundEmailRow({
       tenantId,
       provider: "graph",
-      message_id: n.resourceData?.id || null,
-      from_address: null,
-      subject: "(graph notification, fetch pending)",
-      body_text: null,
+      // Dedup on the stable Graph id — present on BOTH the fetched and stub paths,
+      // so at-least-once redelivery (or a stub-then-fetch retry) never doubles.
+      message_id: graphMessageId,
+      in_reply_to: fetched?.inReplyTo || null,
+      references_chain: fetched?.references ? fetched.references.split(/\s+/).filter(Boolean) : null,
+      from_address: fetched?.from || null,
+      from_name: fetched?.fromName || null,
+      subject: fetched?.subject || "(graph notification, fetch pending)",
+      body_text: fetched?.bodyText || null,
+      body_html: fetched?.bodyHtml || null,
     });
     row.status = "received";
-    await ingestInboundEmail(svc, row);
+    const ing = await ingestInboundEmail(svc, row);
     processed += 1;
+
+    if (fetched && (fetched.conversationId || fetched.inReplyTo)) {
+      const r = await attributeReply(svc, tenantId, {
+        conversationId: fetched.conversationId,
+        inReplyTo: fetched.inReplyTo,
+        receivedAt: fetched.receivedAt,
+        inboundEmailId: ing?.id || null,
+      });
+      if (r.matched) attributed += 1;
+    }
   }
-  return { status: 202, body: { processed } };
+  return { status: 202, body: { processed, attributed } };
 };
 
 export default async function handler(req, res) {

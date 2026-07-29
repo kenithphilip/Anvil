@@ -308,6 +308,11 @@ const reapQueuedCommsForTenant = async (svc, tenantId) => {
   let fired = 0;
   let errors = 0;
   for (const row of queued.data || []) {
+    // Marketing has its OWN send path (_lib/marketing-send.js): consent +
+    // suppression + unsubscribe + a separate sender identity. The transactional
+    // reaper must never send it — doing so would use the transactional sender
+    // and skip the marketing gates. Leave the row for the marketing path.
+    if (row.document_type === "marketing") continue;
     if (!row.to_addr) {
       // Cannot send without a recipient; flip to failed so the
       // operator can fix it.

@@ -303,6 +303,8 @@ import commsDispatchRegister   from "./comms/dispatch_register.js";
 import commsDispatchLines      from "./comms/dispatch_lines.js";
 import commsGraph              from "./comms/graph.js";
 import commsGraphCallback      from "./comms/graph_callback.js";
+import marketingSend           from "./marketing/send.js";
+import marketingUnsubscribe    from "./marketing/unsubscribe.js";
 import quotesConvert           from "./quotes/convert.js";
 import quotesExpire            from "./quotes/expire.js";
 import agentsHandleReplies     from "./agents/handle_replies.js";
@@ -880,6 +882,8 @@ const STATIC_ROUTES = {
   "/comms/dispatch_lines":          commsDispatchLines,
   "/comms/graph":                   commsGraph,
   "/comms/graph/callback":          commsGraphCallback,
+  "/marketing/send":                marketingSend,
+  "/marketing/unsubscribe":         marketingUnsubscribe,
   "/quotes/convert":                quotesConvert,
   "/quotes/expire":                 quotesExpire,
   "/agents/handle_replies":         agentsHandleReplies,

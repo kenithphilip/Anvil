@@ -350,6 +350,38 @@ not a convention. Add `marketing_consent` + `consent_source` +
 `consent_recorded_at` to `customer_contacts`; absence of consent means no
 marketing, and no effect on anything else.
 
+### SHIPPED — a structurally separate marketing path
+
+- **`_lib/marketing-send.js`** — the ONLY place the marketing gates live. Its own
+  sender identity (`MARKETING_FROM_EMAIL`, never the rep's mailbox), its own
+  provider call, and consent + suppression + unsubscribe enforced here. The
+  transactional path (`comms-send.js`) imports nothing from it and never reads
+  `prospecting_suppressions` / `marketing_consent` — that's the structural
+  guarantee, asserted by a test.
+- **`marketing/send.js`** (admin) — sends only to `marketing_consent = true`
+  contacts of a customer; logs each with `document_type='marketing'`.
+- **`marketing/unsubscribe.js`** (public) — an HMAC(`tenant_id`,`email`) token
+  (no lookup table); **GET renders a confirm page and does not mutate**
+  (prefetch-safe), **POST performs** the unsubscribe (the RFC 8058 one-click
+  target). Adds a *marketing* suppression only.
+- Every marketing email carries an unsubscribe footer + `List-Unsubscribe` /
+  `List-Unsubscribe-Post` headers.
+- **The transactional reaper (`agents/run.js`) skips `document_type='marketing'`**,
+  and `prospecting/run.js` now sends through the marketing path — so marketing
+  can never be sent by the transactional sender.
+
+**The invariant is a test** (`api-marketing-path.test.js`): a non-consented,
+suppressed contact still receives a `payment_reminder`, while the same contact
+gets no marketing.
+
+**No migration** — `marketing_consent` (190) + `prospecting_suppressions` (057)
+already exist; the unsubscribe token is stateless HMAC.
+
+**Follow-ups:** a marketing-consent capture UI on the contact record; a
+double-opt-in flow if required by region; opens/clicks via provider webhooks
+(separable, §7 note). **Ops:** set `MARKETING_FROM_EMAIL` (a distinct sender)
+and `PUBLIC_APP_URL` for the unsubscribe links.
+
 ---
 
 ## 7. Analytics
@@ -409,7 +441,7 @@ Smallest first. Each item is independently useful; nothing waits on Outlook.
 | 5 | **Dispatch register** | `dispatch_lines` (193) + builder + endpoint + ingest | **Shipped (option a).** Tally `/delivery_notes` pull is the one follow-up. |
 | 6 | **Outlook/Graph provider** | `_lib/graph-client.js` + `comms/graph.js` + callback (194) | **Shipped.** Auth-code flow, reuses 028 config cols; reply-loop join is the follow-up. |
 | 7 | **Comms analytics** | 5 metrics in `_lib/metrics/catalog.js` (`communications` domain) | **Shipped.** Reply-rate/TTFR deferred to the inbound-join follow-up. |
-| 8 | **Marketing path** | separate path + consent/suppression | Deliberately last, deliberately separate. |
+| 8 | **Marketing path** | `_lib/marketing-send.js` + `marketing/{send,unsubscribe}.js` | **Shipped.** Separate sender + consent + suppression + unsubscribe; the "never blocks transactional" invariant is a test. |
 
 ### Decisions for Joel, not code
 

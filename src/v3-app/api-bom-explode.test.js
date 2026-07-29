@@ -4,7 +4,7 @@
 // raw materials / components, multiplying by per-unit BOM quantities.
 
 import { describe, it, expect } from "vitest";
-import { explodePipelineThroughBom, computeCommittedDemand, buildBomAttributionIndex, topContributingOpps, computePipelineDemand, resolveOpportunityProbability } from "../api/_lib/inventory/pipeline-demand.js";
+import { explodePipelineThroughBom, computeCommittedDemand, buildBomAttributionIndex, topContributingOpps, computePipelineDemand, resolveOpportunityProbability, buildDemandStory } from "../api/_lib/inventory/pipeline-demand.js";
 
 const wk = "2026-06-08";
 const mk = (entries) => new Map(entries.map(([p, q]) => [p, new Map([[wk, q]])]));
@@ -276,5 +276,32 @@ describe("resolveOpportunityProbability — ai_probability blend max(operator, a
     const out = topContributingOpps(pairs, "GUN", null);
     expect(out[0].probability).toBeCloseTo(0.9, 6);     // blended, not the 0.3 operator value
     expect(out[0].expected_qty).toBeCloseTo(9, 6);      // 10 * 0.9
+  });
+});
+
+describe("buildDemandStory (moat Bet 1 hero endpoint core)", () => {
+  it("tells the opp → finished → raw → plans story, reconciled with the engine", () => {
+    const opp = { id: "op1", opportunity_name: "Acme Q3", stage: "RFQ", probability: 0.3 };
+    const lines = [{ part_no: "GUN", qty: 10 }];
+    const bomRows = bom([["GUN", "STEEL", 3]]);
+    const plans = [
+      { id: "pl1", part_no: "STEEL", recommended_qty: 9, status: "draft", expected_arrival_date: "2026-08-01",
+        rationale: { top_opps: [{ opp_id: "op1" }] } },
+      { id: "pl2", part_no: "BOLT", recommended_qty: 5, status: "draft",
+        rationale: { top_opps: [{ opp_id: "other" }] } }, // different opp -> excluded
+    ];
+    const story = buildDemandStory({ opp, lines, bomRows, buyParts: new Set(), plans });
+
+    expect(story.opportunity).toMatchObject({ id: "op1", probability: 0.3 });
+    expect(story.finished_goods).toEqual([{ part_no: "GUN", qty: 10, expected_qty: 3 }]);
+    expect(story.raw_materials).toEqual([{ part_no: "STEEL", expected_qty: 9, via: ["GUN → STEEL"] }]);
+    expect(story.contributing_plans.map((p) => p.id)).toEqual(["pl1"]); // only the plan referencing op1
+  });
+
+  it("degrades gracefully: no lines / no BOM yields empty sections, not an error", () => {
+    const story = buildDemandStory({ opp: { id: "x", stage: "RFQ" }, lines: [], bomRows: [], plans: [] });
+    expect(story.finished_goods).toEqual([]);
+    expect(story.raw_materials).toEqual([]);
+    expect(story.contributing_plans).toEqual([]);
   });
 });

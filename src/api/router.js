@@ -180,6 +180,7 @@ import inventoryPositions       from "./inventory/positions.js";
 import inventoryForecasts       from "./inventory/forecasts.js";
 import inventoryForecastRuns    from "./inventory/forecast_runs.js";
 import inventoryPlans           from "./inventory/plans.js";
+import inventoryDemandStory     from "./inventory/demand_story.js";
 import inventoryExceptions      from "./inventory/exceptions.js";
 import inventoryAllocations     from "./inventory/allocations.js";
 import inventoryExplain         from "./inventory/explain.js";
@@ -971,6 +972,7 @@ const STATIC_ROUTES = {
   "/inventory/forecasts":           inventoryForecasts,
   "/inventory/forecast_runs":       inventoryForecastRuns,
   "/inventory/plans":               inventoryPlans,
+  "/inventory/demand_story":        inventoryDemandStory,
   "/inventory/exceptions":          inventoryExceptions,
   "/inventory/allocations":         inventoryAllocations,
   "/inventory/explain":             inventoryExplain,

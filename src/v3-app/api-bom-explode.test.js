@@ -4,7 +4,7 @@
 // raw materials / components, multiplying by per-unit BOM quantities.
 
 import { describe, it, expect } from "vitest";
-import { explodePipelineThroughBom, computeCommittedDemand, buildBomAttributionIndex, topContributingOpps, computePipelineDemand } from "../api/_lib/inventory/pipeline-demand.js";
+import { explodePipelineThroughBom, computeCommittedDemand, buildBomAttributionIndex, topContributingOpps, computePipelineDemand, resolveOpportunityProbability } from "../api/_lib/inventory/pipeline-demand.js";
 
 const wk = "2026-06-08";
 const mk = (entries) => new Map(entries.map(([p, q]) => [p, new Map([[wk, q]])]));
@@ -245,5 +245,36 @@ describe("attribution reconciles with real demand (no fabrication)", () => {
     const attributed = top.reduce((s, o) => s + o.expected_qty, 0);
     expect(steelDemand).toBe(9);
     expect(attributed).toBeCloseTo(steelDemand, 6); // attribution == real demand, not invented
+  });
+});
+
+describe("resolveOpportunityProbability — ai_probability blend max(operator, ai/100)", () => {
+  it("CRITICAL: ai_probability is 0..100, divided by 100 (no 100x inflation)", () => {
+    const p = resolveOpportunityProbability({ stage: "RFQ", ai_probability: 60 });
+    expect(p).toBeCloseTo(0.6, 6);   // 60 -> 0.6, NOT 60
+    expect(p).toBeLessThanOrEqual(1);
+  });
+  it("takes the max of operator and ai/100 (ai can only raise)", () => {
+    expect(resolveOpportunityProbability({ probability: 0.3, ai_probability: 90 })).toBeCloseTo(0.9, 6); // ai wins
+    expect(resolveOpportunityProbability({ probability: 0.8, ai_probability: 50 })).toBeCloseTo(0.8, 6); // operator wins
+  });
+  it("blends ai over the STAGE DEFAULT when operator probability is unset", () => {
+    // RFQ default 0.30; ai 70 -> 0.70
+    expect(resolveOpportunityProbability({ stage: "RFQ", ai_probability: 70 })).toBeCloseTo(0.7, 6);
+    // ai below the default -> default wins
+    expect(resolveOpportunityProbability({ stage: "RFQ", ai_probability: 10 })).toBeCloseTo(0.3, 6);
+  });
+  it("degrades cleanly when ai_probability is absent / null / out of range", () => {
+    expect(resolveOpportunityProbability({ probability: 0.4 })).toBe(0.4);
+    expect(resolveOpportunityProbability({ probability: 0.4, ai_probability: null })).toBe(0.4);
+    expect(resolveOpportunityProbability({ probability: 0.4, ai_probability: 150 })).toBe(0.4); // >100 ignored
+    expect(resolveOpportunityProbability({ stage: "RFQ" })).toBeCloseTo(0.3, 6);
+  });
+  it("flows through topContributingOpps: an AI-scored opp is weighted higher", () => {
+    const pairs = [{ opp: { id: "o1", stage: "RFQ", probability: 0.3, ai_probability: 90, opportunity_name: "hot" },
+                     lines: [{ part_no: "GUN", qty: 10 }] }];
+    const out = topContributingOpps(pairs, "GUN", null);
+    expect(out[0].probability).toBeCloseTo(0.9, 6);     // blended, not the 0.3 operator value
+    expect(out[0].expected_qty).toBeCloseTo(9, 6);      // 10 * 0.9
   });
 });

@@ -189,7 +189,7 @@ const buildStageCalibration = async (svc, tenantId) => {
 // Pipeline demand: read opportunities + opportunity_line_items.
 const buildPipeline = async (svc, tenantId, weeks, calibration) => {
   const opps = await svc.from("opportunities")
-    .select("id, stage, probability, close_date")
+    .select("id, stage, probability, ai_probability, close_date")
     .eq("tenant_id", tenantId)
     .not("stage", "in", "(CLOSE_LOST,REGRETTED)");
   if (opps.error) throw new Error("pipeline/opportunities: " + opps.error.message);
@@ -335,7 +335,7 @@ const planTenant = async (svc, tenantId) => {
 
   // Pre-fetch the opportunity pairs for top-opp attribution.
   const oppsForAttribution = await svc.from("opportunities")
-    .select("id, opportunity_name, stage, probability")
+    .select("id, opportunity_name, stage, probability, ai_probability")
     .eq("tenant_id", tenantId)
     .not("stage", "in", "(CLOSE_LOST,REGRETTED)");
   const oppIds = (oppsForAttribution.data || []).map((o) => o.id);
@@ -653,7 +653,7 @@ const planTenant = async (svc, tenantId) => {
       packSize: item.pack_size || 1,
       roundingRule: item.rounding_rule || "ceil",
       serviceLevel: alpha,
-      topOpps: topContributingOpps(oppPairs, item.part_no, bomAttributionIndex),
+      topOpps: topContributingOpps(oppPairs, item.part_no, bomAttributionIndex, calibration),
       hysteresisStreak: 1,
     });
     if (planResult.plan) {

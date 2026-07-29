@@ -192,6 +192,91 @@ export const explodePipelineThroughBom = (pipeline, bomRows, maxDepth = 8, opts 
   return { exploded };
 };
 
+// PR1 (BOM-traced opportunity attribution): the INVERSE of the explosion.
+// For each descendant part, the finished-good ANCESTOR parts whose demand
+// cascades into it, with the cumulative BOM multiplier and the BOM path — the
+// same edges explodePipelineThroughBom walks. Lets a procurement plan for a raw
+// material (e.g. STEEL) credit the opportunities that sell the finished good
+// (e.g. GUN) consuming it, so the plan's "why?" rail is non-empty for exploded
+// plans (before this it showed zero contributing opportunities).
+//
+// Descendants only (never self); direct part_no matches are the caller's job.
+// Mirrors explodePipelineThroughBom's inputs + terminality: a buy part receives
+// attribution from its parent but is not cascaded further.
+// Returns Map<descendant_part_no, [{ root, mult, path: [root..descendant] }]>.
+export const buildBomAttributionIndex = (bomRows, maxDepth = 8, opts = {}) => {
+  const rows = Array.isArray(bomRows) ? bomRows : [];
+  const buyParts = opts && opts.buyParts instanceof Set ? opts.buyParts : null;
+  const children = new Map();
+  for (const r of rows) {
+    if (!r || !r.parent_part_no || !r.child_part_no) continue;
+    const a = children.get(r.parent_part_no) || [];
+    a.push({ child: r.child_part_no, qty: Number(r.qty) || 0 });
+    children.set(r.parent_part_no, a);
+  }
+  const index = new Map();
+  if (children.size === 0) return index;
+  for (const root of children.keys()) {
+    const stack = [{ part: root, mult: 1, depth: 0, seen: new Set([root]), path: [root] }];
+    while (stack.length) {
+      const node = stack.pop();
+      if (node.depth >= maxDepth) continue;
+      if (buyParts && buyParts.has(node.part)) continue; // terminal, exactly like the explosion
+      const kids = children.get(node.part);
+      if (!kids) continue;
+      for (const k of kids) {
+        const m = node.mult * k.qty;
+        if (!(m > 0)) continue;
+        const path = [...node.path, k.child];
+        if (!index.has(k.child)) index.set(k.child, []);
+        index.get(k.child).push({ root, mult: m, path });
+        if (!node.seen.has(k.child)) {
+          const seen = new Set(node.seen); seen.add(k.child);
+          stack.push({ part: k.child, mult: m, depth: node.depth + 1, seen, path });
+        }
+      }
+    }
+  }
+  return index;
+};
+
+// PR1: the top-N opportunities contributing to a part's demand, for the
+// procurement plan's "why?" rationale. Credits BOTH opportunities that sell the
+// part directly AND — via the attribution index — opportunities that sell a
+// finished good whose BOM consumes the part (× the cumulative BOM multiplier,
+// stamping the BOM path in `via`). Pure. The probability pick matches the
+// engine's inline default (operator probability else stage default); wiring in
+// calibration / ai_probability is a separate change.
+export const topContributingOpps = (pairs, partNo, attributionIndex = null, n = 3) => {
+  const byOpp = new Map();
+  const credit = (opp, qtyOfSource, mult, path) => {
+    if (!(qtyOfSource > 0) || !(mult > 0)) return;
+    const prob = typeof opp?.probability === "number" ? opp.probability : (STAGE_PROBABILITY_DEFAULTS[opp?.stage] || 0);
+    const partQty = qtyOfSource * mult;
+    const expected = partQty * prob;
+    if (!(expected > 0)) return;
+    const cur = byOpp.get(opp.id) || {
+      opp_id: opp.id, opportunity_name: opp.opportunity_name, stage: opp.stage,
+      qty: 0, probability: prob, expected_qty: 0, via: [],
+    };
+    cur.qty += partQty;
+    cur.expected_qty += expected;
+    if (path && path.length > 1) { const p = path.join(" → "); if (!cur.via.includes(p)) cur.via.push(p); }
+    byOpp.set(opp.id, cur);
+  };
+  const ancestors = attributionIndex ? (attributionIndex.get(partNo) || []) : [];
+  for (const { opp, lines } of (pairs || [])) {
+    const sumFor = (target) => (lines || []).reduce((s, l) => s + (l.part_no === target ? (Number(l.qty) || 0) : 0), 0);
+    credit(opp, sumFor(partNo), 1, null);                                    // direct sale of partNo
+    for (const { root, mult, path } of ancestors) credit(opp, sumFor(root), mult, path); // finished good that consumes partNo
+  }
+  const round = (x) => Math.round(x * 1000) / 1000;
+  return [...byOpp.values()]
+    .sort((a, b) => b.expected_qty - a.expected_qty)
+    .slice(0, n)
+    .map((o) => ({ ...o, qty: round(o.qty), expected_qty: round(o.expected_qty) }));
+};
+
 // Convenience: roll up the pipeline-demand map into a flat array of
 // (part_no, week_start, qty) triples for upsert into demand_forecasts.
 export const flattenPipelineDemand = (mapByPart) => {

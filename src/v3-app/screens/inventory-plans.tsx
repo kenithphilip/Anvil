@@ -262,6 +262,9 @@ const InventoryPlansScreen: React.FC = () => {
                         {o.opportunity_name || o.opp_id?.slice(0, 8)} ·
                         {" "}<Chip k="info">{o.stage}</Chip>{" "}
                         · qty {o.qty} × p {Math.round((o.probability || 0) * 100)}%
+                        {Array.isArray(o.via) && o.via.length > 0 && (
+                          <div style={{ opacity: 0.65, paddingLeft: 10 }}>via {o.via.join("; ")}</div>
+                        )}
                       </div>
                     ))}
                   </div>

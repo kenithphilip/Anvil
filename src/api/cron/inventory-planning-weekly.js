@@ -32,6 +32,7 @@ import { estimateLeadTime } from "../_lib/inventory/lead-time.js";
 import {
   computePipelineDemand, computeCommittedDemand, isoWeekStart, STAGE_PROBABILITY_DEFAULTS,
   calibrateStageProbabilities, explodePipelineThroughBom,
+  buildBomAttributionIndex, topContributingOpps,
 } from "../_lib/inventory/pipeline-demand.js";
 import { planForItem, addWeeks } from "../_lib/inventory/net-req.js";
 import { reliabilityFloor } from "../_lib/inventory/reliability.js";
@@ -232,25 +233,10 @@ const buildLeadTimeSamples = async (svc, tenantId, supplierId) => {
 };
 
 // -------------------------------------------------------------------
-// Top-N opportunity contributions for the rationale jsonb.
-const topOppsForPart = (pairs, partNo, n = 3) => {
-  const contrib = [];
-  for (const { opp, lines } of pairs) {
-    const totalQty = (lines || []).reduce((s, l) => s + (l.part_no === partNo ? (Number(l.qty) || 0) : 0), 0);
-    if (totalQty <= 0) continue;
-    const prob = typeof opp.probability === "number" ? opp.probability : (STAGE_PROBABILITY_DEFAULTS[opp.stage] || 0);
-    contrib.push({
-      opp_id: opp.id,
-      opportunity_name: opp.opportunity_name,
-      stage: opp.stage,
-      qty: totalQty,
-      probability: prob,
-      expected_qty: totalQty * prob,
-    });
-  }
-  contrib.sort((a, b) => b.expected_qty - a.expected_qty);
-  return contrib.slice(0, n);
-};
+// Top-N opportunity contributions for the rationale jsonb now come from the pure
+// topContributingOpps() in _lib/inventory/pipeline-demand.js, which also credits
+// opportunities whose finished good's BOM consumes an exploded raw-material part
+// (via buildBomAttributionIndex). See PR "BOM-traced opportunity attribution".
 
 // -------------------------------------------------------------------
 // Plan one tenant. Returns a summary suitable for the cron heartbeat.
@@ -327,6 +313,11 @@ const planTenant = async (svc, tenantId) => {
     .select("part_no").eq("tenant_id", tenantId).eq("procurement_type", "buy");
   const buyParts = new Set((buyPartsQ.data || []).map((r) => r.part_no).filter(Boolean));
   const bomExplosion = explodePipelineThroughBom(pipeline, bomRows.data || [], 8, { buyParts });
+
+  // BOM-traced opportunity attribution: built ONCE per tenant (outside the item
+  // loop) so an exploded raw-material plan can credit the finished-good
+  // opportunities that cascaded into it — same edges as the explosion above.
+  const bomAttributionIndex = buildBomAttributionIndex(bomRows.data || [], 8, { buyParts });
 
   // Committed demand from future sales-order schedule lines, built ONCE for the
   // whole tenant and BOM-EXPLODED like the pipeline — so a confirmed SO for a
@@ -662,7 +653,7 @@ const planTenant = async (svc, tenantId) => {
       packSize: item.pack_size || 1,
       roundingRule: item.rounding_rule || "ceil",
       serviceLevel: alpha,
-      topOpps: topOppsForPart(oppPairs, item.part_no),
+      topOpps: topContributingOpps(oppPairs, item.part_no, bomAttributionIndex),
       hysteresisStreak: 1,
     });
     if (planResult.plan) {

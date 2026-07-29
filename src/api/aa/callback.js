@@ -29,8 +29,8 @@ try {
   if (window.opener && !window.opener.closed) {
     window.opener.postMessage({ kind: 'aa-consent-complete', status: '${status}' }, '*');
   }
-} catch (_) {}
-setTimeout(function(){ try { window.close(); } catch (_) {} }, 800);
+} catch (_) { /* opener may be closed or cross-origin; nothing to notify */ }
+setTimeout(function(){ try { window.close(); } catch (_) { /* browsers block close() on non-script-opened windows */ } }, 800);
 </script>
 </body></html>`;
 

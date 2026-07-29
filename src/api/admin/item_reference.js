@@ -76,14 +76,14 @@ export default async function handler(req, res) {
         }
         incoterms = Object.values(byCode).filter((r) => r.is_active);
       }
-    } catch (_) {}
+    } catch (_) { /* optional reference lookup; if the table is absent/errors, incoterms degrades to [] */ }
 
     // Order line tax component codes (migration 106) for tax-decomp UI.
     let taxComponents = [];
     try {
       const tcRes = await svc.from("order_line_tax_component_codes").select("*").order("sort_order");
       if (!tcRes.error) taxComponents = (tcRes.data || []).filter((r) => r.is_active);
-    } catch (_) {}
+    } catch (_) { /* optional reference lookup; if the table is absent/errors, taxComponents degrades to [] */ }
 
     return json(res, 200, {
       uom_options: uomList,

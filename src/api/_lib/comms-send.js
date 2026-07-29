@@ -134,6 +134,13 @@ export const sendCommunication = async (svc, ctx, commId) => {
   const row = await svc.from("communications").select("*").eq("tenant_id", ctx.tenantId).eq("id", commId).single();
   if (row.error || !row.data) return { notFound: true };
   if (row.data.status === "sent") return { idempotent: true, communication: row.data };
+  // Marketing has its OWN send path (_lib/marketing-send.js): consent +
+  // suppression + unsubscribe + a separate sender identity. The transactional
+  // sender must NEVER (re)send a marketing row — that would use the transactional
+  // identity, drop the unsubscribe footer/headers, and skip the gates. Refuse it
+  // here so the guarantee holds at EVERY transactional entry point (the copilot
+  // path + POST /api/communications/send), not only the reaper.
+  if (row.data.document_type === "marketing") return { skipped: "marketing_row", communication: row.data };
 
   let providerResult = null;
   let lastError = null;

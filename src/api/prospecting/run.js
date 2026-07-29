@@ -12,11 +12,12 @@
 // Apollo) lives in `_lib/prospecting-providers.js`; this endpoint
 // is the dispatch loop.
 
-import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
+import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { commsRow } from "../_lib/comms-row.js";
+import { sendMarketing } from "../_lib/marketing-send.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -76,7 +77,23 @@ const runForCampaign = async (svc, tenantId, campaign) => {
     }
     const subject = renderTemplate(campaign.template_subject, target);
     const body = renderTemplate(campaign.template_body, target);
-    // Draft + dispatch via the existing communications surface.
+    // Send via the MARKETING path (separate sender + unsubscribe + suppression),
+    // NOT the transactional reaper. Marked document_type='marketing' so the
+    // transactional reaper skips the logged row.
+    //
+    // Cold prospecting's legal basis is admin approval + opt-out (suppression),
+    // not a recorded opt-in, so consent is asserted here. Recorded-consent
+    // marketing to EXISTING customers goes through /api/marketing/send instead.
+    const r = await sendMarketing(svc, tenantId, { to: target.email, subject, body, consented: true });
+    if (r.skipped === "no_provider") {
+      // MARKETING_FROM / SENDGRID not configured yet — leave the target APPROVED
+      // so it retries once ops wires the sender, rather than burning the queue.
+      continue;
+    }
+    if (r.skipped === "suppressed") {
+      await svc.from("prospecting_targets").update({ status: "unsubscribed" }).eq("id", target.id);
+      continue;
+    }
     await svc.from("communications").insert(commsRow({
       tenant_id: tenantId,
       to_address: target.email,
@@ -84,15 +101,18 @@ const runForCampaign = async (svc, tenantId, campaign) => {
       subject,
       body,
       channel: "email",
-      status: "queued",
+      document_type: "marketing",
+      status: r.ok ? "sent" : "failed",
+      sent_at: r.ok ? new Date().toISOString() : null,
       origin: "prospecting",
       origin_ref: { campaign_id: campaign.id, target_id: target.id },
+      meta: { marketing: true, provider: r.provider || null, skipped: r.skipped || null },
     }));
     await svc.from("prospecting_targets").update({
-      status: "sent",
-      sent_at: new Date().toISOString(),
+      status: r.ok ? "sent" : "error",
+      sent_at: r.ok ? new Date().toISOString() : null,
     }).eq("id", target.id);
-    sent += 1;
+    if (r.ok) sent += 1;
   }
   return { campaign_id: campaign.id, sent, remaining };
 };

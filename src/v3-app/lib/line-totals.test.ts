@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeLineTotals } from "./line-totals";
+import { computeLineTotals, LINE_ALIAS } from "./line-totals";
 
 describe("computeLineTotals", () => {
   it("Path 1: explicit per-unit tax components from a Meridian PO line", () => {
@@ -75,5 +75,17 @@ describe("computeLineTotals", () => {
     expect(t.qty).toBe(0);
     expect(t.rate).toBe(0);
     expect(t.lineTotal).toBe(0);
+  });
+});
+
+describe("LINE_ALIAS", () => {
+  it("maps canonical line-field keys to their historical aliases", () => {
+    expect(LINE_ALIAS.itemCode).toContain("partNumber");
+    expect(LINE_ALIAS.qty).toEqual(expect.arrayContaining(["qty", "quantity"]));
+    expect(LINE_ALIAS.rate).toContain("unitPrice");
+    // per-line tax components are identity maps
+    expect(LINE_ALIAS.cgst_amount).toEqual(["cgst_amount"]);
+    // every alias list starts with its own canonical key
+    for (const [key, aliases] of Object.entries(LINE_ALIAS)) expect(aliases[0]).toBe(key);
   });
 });

@@ -155,3 +155,28 @@ export const COMPONENT_LABEL: Record<keyof TaxBreakdown, string> = {
   p_and_f_amount: "P&F",
   others_amount: "Others",
 };
+
+// Canonical-key -> candidate line-field aliases. Used to read a line's value
+// under any of its historical field names (extractor + DB variants).
+export const LINE_ALIAS: Record<string, string[]> = {
+  itemCode: ["itemCode", "partNumber", "sku", "code"],
+  description: ["description", "name", "item"],
+  qty: ["qty", "quantity"],
+  rate: ["rate", "unitPrice"],
+  uom: ["uom", "unit"],
+  hsn: ["hsn", "hsn_sac", "hsnCode"],
+  gst_pct: ["gst_pct", "gstRate", "rate_of_duty_pct"],
+  // Per-line tax-component aliases. Each one is the per-unit amount
+  // (matching the Meridian PO column layout). Identity maps because the
+  // extractor and the DB use the same key.
+  cgst_amount:    ["cgst_amount"],
+  sgst_amount:    ["sgst_amount"],
+  igst_amount:    ["igst_amount"],
+  utgst_amount:   ["utgst_amount"],
+  cess_amount:    ["cess_amount"],
+  excise_amount:  ["excise_amount"],
+  ed_cess_amount: ["ed_cess_amount"],
+  tooling_amount: ["tooling_amount"],
+  p_and_f_amount: ["p_and_f_amount"],
+  others_amount:  ["others_amount"],
+};

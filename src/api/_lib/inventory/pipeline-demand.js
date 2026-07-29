@@ -45,15 +45,24 @@ const isoWeekStart = (d) => {
 //   3. Stage default from STAGE_PROBABILITY_DEFAULTS.
 //   4. 0 (unknown stage; ignore).
 export const resolveOpportunityProbability = (opp, calibration = null) => {
+  let base;
   if (typeof opp?.probability === "number" && opp.probability >= 0 && opp.probability <= 1) {
-    return opp.probability;
+    base = opp.probability;
+  } else {
+    const stage = opp?.stage;
+    if (calibration && typeof calibration[stage] === "number") base = calibration[stage];
+    else if (typeof STAGE_PROBABILITY_DEFAULTS[stage] === "number") base = STAGE_PROBABILITY_DEFAULTS[stage];
+    else base = 0;
   }
-  const stage = opp?.stage;
-  if (calibration && typeof calibration[stage] === "number") return calibration[stage];
-  if (typeof STAGE_PROBABILITY_DEFAULTS[stage] === "number") {
-    return STAGE_PROBABILITY_DEFAULTS[stage];
-  }
-  return 0;
+  // Blend the AI predictor when present. CRITICAL: ai_probability is stored
+  // 0..100 (NOT 0..1) — divide by 100 (a naive wire inflates demand ~100x).
+  // Policy: max(operator/default, ai) — the AI signal can only RAISE conviction,
+  // never silently suppress a deal the operator rated. It is sparse (populated
+  // only when an operator runs the Haiku predictor per opp), so absence degrades
+  // cleanly to the operator/default base.
+  const ai = Number(opp?.ai_probability);
+  const blended = (Number.isFinite(ai) && ai >= 0 && ai <= 100) ? Math.max(base, ai / 100) : base;
+  return Math.max(0, Math.min(1, blended));
 };
 
 // Compute pipeline demand for a list of (opportunity, lines) pairs.
@@ -244,14 +253,14 @@ export const buildBomAttributionIndex = (bomRows, maxDepth = 8, opts = {}) => {
 // procurement plan's "why?" rationale. Credits BOTH opportunities that sell the
 // part directly AND — via the attribution index — opportunities that sell a
 // finished good whose BOM consumes the part (× the cumulative BOM multiplier,
-// stamping the BOM path in `via`). Pure. The probability pick matches the
-// engine's inline default (operator probability else stage default); wiring in
-// calibration / ai_probability is a separate change.
-export const topContributingOpps = (pairs, partNo, attributionIndex = null, n = 3) => {
+// stamping the BOM path in `via`). Pure. The probability uses the SAME resolver
+// as the demand math (operator else calibration else stage default, blended with
+// ai_probability), so the rail reconciles with the plan quantities.
+export const topContributingOpps = (pairs, partNo, attributionIndex = null, calibration = null, n = 3) => {
   const byOpp = new Map();
   const credit = (opp, qtyOfSource, mult, path) => {
     if (!(qtyOfSource > 0) || !(mult > 0)) return;
-    const prob = typeof opp?.probability === "number" ? opp.probability : (STAGE_PROBABILITY_DEFAULTS[opp?.stage] || 0);
+    const prob = resolveOpportunityProbability(opp, calibration);
     const partQty = qtyOfSource * mult;
     const expected = partQty * prob;
     if (!(expected > 0)) return;

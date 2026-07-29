@@ -52,12 +52,20 @@ describe("THE INVARIANT — marketing gates never touch transactional", () => {
     const src = readApi("_lib/comms-send.js");
     expect(src).not.toMatch(/prospecting_suppressions/);
     expect(src).not.toMatch(/marketing_consent/);
-    expect(src).not.toMatch(/marketing-send/);   // does not import the marketing path
+    expect(src).not.toMatch(/import[^\n]*marketing-send/);   // does not IMPORT the marketing path
   });
 
   it("the transactional reaper skips document_type='marketing'", () => {
     const src = readApi("agents/run.js");
     expect(src).toMatch(/document_type === "marketing"/);
+  });
+
+  it("the transactional sendCommunication REFUSES a marketing row (every entry point, not just the reaper)", () => {
+    // POST /api/communications/send + the copilot path both reach
+    // sendCommunication; a failed marketing row must not be re-sent transactionally.
+    const src = readApi("_lib/comms-send.js");
+    expect(src).toMatch(/document_type === "marketing"/);
+    expect(src).toMatch(/skipped: "marketing_row"/);
   });
 });
 

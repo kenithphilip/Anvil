@@ -366,9 +366,11 @@ marketing, and no effect on anything else.
   target). Adds a *marketing* suppression only.
 - Every marketing email carries an unsubscribe footer + `List-Unsubscribe` /
   `List-Unsubscribe-Post` headers.
-- **The transactional reaper (`agents/run.js`) skips `document_type='marketing'`**,
-  and `prospecting/run.js` now sends through the marketing path — so marketing
-  can never be sent by the transactional sender.
+- **Every transactional entry point refuses `document_type='marketing'`** — both
+  the reaper (`agents/run.js`) and `sendCommunication` itself (which
+  `POST /api/communications/send` + the copilot path reach), so a failed marketing
+  row can never be re-sent with the transactional identity. `prospecting/run.js`
+  now sends through the marketing path.
 
 **The invariant is a test** (`api-marketing-path.test.js`): a non-consented,
 suppressed contact still receives a `payment_reminder`, while the same contact

@@ -77,7 +77,7 @@ const recordMagicLink = async (svc, email, outcome, ip, ua) => {
       ip: ip || null,
       user_agent: ua || null,
     });
-  } catch (_) {}
+  } catch (_) { /* best-effort auth-attempt audit; a logging failure must never block the sign-in flow */ }
 };
 
 const ipFromReq = (req) => {

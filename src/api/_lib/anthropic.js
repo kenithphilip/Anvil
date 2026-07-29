@@ -88,7 +88,7 @@ const redactText = (text, rules) => {
     try {
       const re = new RegExp(rule.pattern, "g");
       out = out.replace(re, rule.replacement || "[REDACTED]");
-    } catch (_) {}
+    } catch (_) { /* a malformed tenant-supplied regex is skipped so it can't break redaction of the built-in patterns + the other rules (that one rule's matches just go un-redacted) */ }
   });
   return out;
 };
@@ -171,7 +171,7 @@ const extractConfidenceFromContent = (data, override) => {
     const text = (data && data.content && data.content[0] && data.content[0].text) || "";
     const m = text.match(/<confidence>\s*([01](?:\.\d+)?)\s*<\/confidence>/i);
     if (m) return Math.max(0, Math.min(1, Number(m[1])));
-  } catch (_) {}
+  } catch (_) { /* confidence parse is best-effort; falls through to the stop_reason heuristics below */ }
   if (data && data.stop_reason === "max_tokens") return 0.4;
   if (data && data.stop_reason === "tool_use") return 0.85;
   return 1;

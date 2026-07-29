@@ -447,6 +447,32 @@ Differentiators: deep GD&T/standards parsing (callouts + datums + tolerances, no
 
 Relevance to Anvil: **learn, don't chase.** (1) **Deeper drawing parse** — Anvil's drawing extraction reads part/assembly data for BOM/spare ordering; Hera shows the depth achievable on the *same artifact* (GD&T callouts, datums, tolerance stacks) that Anvil's P2/P3 (DXF/DWG, part_drawing) could mine for richer item attributes. (2) **Standards-conformance as a manufacturing-credibility signal** — the ASME/AWS framing is a trust cue Anvil can echo where it touches engineering data. (3) **Same days→minutes wedge** Anvil uses for PO extraction, applied to a different artifact — validates the time-compression pitch. Do **not** build engineering-drawing QA/GD&T review: Anvil's wedge is order/procurement flow + forecast→BOM, and drawing QA is a different buyer (design/quality, not ops/procurement).
 
+### Additions — 2026-07-29 (adjacent-learn-only: process-plant document intelligence)
+
+Two more reviewed at the user's request. Operon is a **document-intelligence** adjacency (same class as Hera §3.17 and Anvil's own DocAI / drawing-extraction line); Bizmark is an early, content-light entry. Neither is a sales-ops competitor.
+
+### 3.18 Operon Solutions — `operonsolutions.com` (adjacent-learn-only)
+
+One-liner: "The context layer for process & manufacturing." AI plant-documentation intelligence (by Operon, YC-backed).
+
+ICP: process/manufacturing operators — chemical, oil & gas, cement, electronics — and EPC (engineering-procurement-construction) service providers.
+
+Capability surface: digitizes P&IDs, isometrics, and compliance records into a queryable **"typed plant graph"** connecting equipment + instruments across documents; AI symbol/tag recognition ("97%+ detection accuracy"); a knowledge **chat with source citation**; automated compliance-document generation (LDAR, MOC, HAZOP); agentic workflows over REST/GraphQL/SDK; cloud + on-prem.
+
+Differentiators: the typed cross-document graph as a reusable context layer; citation-grounded plant Q&A; compliance-doc automation for a regulated buyer.
+
+Relevance to Anvil: **learn, don't chase.** (1) **"Typed graph + cited chat"** is the same evidence-grounded pattern Anvil is hardening for Ask Anvil + the metric-catalog provenance contract — Operon validates the drill-to-source UX on engineering documents. (2) **Material take-offs for procurement** from digitized drawings is a genuine bridge into Anvil's forecast→BOM wedge (extracted plant items → spare/BOM demand). (3) **On-prem + SDK** posture is a reminder that process-industry buyers often require on-prem — relevant to Anvil's enterprise-readiness (compliance/CISO backlog). Do **not** build P&ID/plant-compliance tooling (LDAR/HAZOP): that's a different buyer (plant safety/operations, not sales-ops/procurement).
+
+### 3.19 Bizmark — `bizmark.ai` (adjacent-learn-only, early / thin)
+
+One-liner: "Every process, run with the intelligence you already have" — "Systems of Applied Intelligence for the Real Economy."
+
+ICP: not stated on the site.
+
+Capability surface: **content-light** — the public site describes a positioning (applied-intelligence over existing business data to optimize processes) but names no specific product, platform, or case study. Assessment is provisional pending more material.
+
+Relevance to Anvil: **watch, low signal.** The "run existing processes with intelligence you already have" framing rhymes with Anvil's copilot-over-your-own-ERP-data thesis, but with no disclosed product there's nothing concrete to learn or counter yet. Revisit if they ship specifics; do not act on this entry alone.
+
 ---
 
 ## 4. Cross-cutting themes from the competitor scan

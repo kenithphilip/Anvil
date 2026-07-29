@@ -20,7 +20,7 @@ afterEach(() => { globalThis.fetch = origFetch; vi.restoreAllMocks(); });
 
 describe("adminCrudFetch", () => {
   it("builds the URL (trailing slash stripped) + auth + tenant headers and returns JSON", async () => {
-    const spy = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ rows: [1] }) }));
+    const spy = vi.fn((_url: string, _init: any) => Promise.resolve({ ok: true, status: 200, json: async () => ({ rows: [1] }) }));
     globalThis.fetch = spy as any;
     const out = await adminCrudFetch("/api/admin/freight_rates");
     expect(out).toEqual({ rows: [1] });
@@ -32,7 +32,7 @@ describe("adminCrudFetch", () => {
   });
 
   it("stringifies a non-string body", async () => {
-    const spy = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }));
+    const spy = vi.fn((_url: string, _init: any) => Promise.resolve({ ok: true, status: 200, json: async () => ({}) }));
     globalThis.fetch = spy as any;
     await adminCrudFetch("/api/admin/x", { method: "POST", body: { a: 1 } as any });
     expect(spy.mock.calls[0][1].body).toBe('{"a":1}');

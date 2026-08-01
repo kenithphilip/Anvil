@@ -100,15 +100,23 @@ const mostCommon = (xs) => {
   return best;
 };
 
+// Read the normalised block out of a dispatchExtract / mergeChunkResults
+// result. classification / customer / lines live UNDER `.normalized` (the shape
+// run.js reads via out.normalized.*); this tolerates a flat fallback so a stray
+// flat or stub result can never silently zero a read.
+//
+// EXPORTED because a mergeChunkResults output is also consumed by the
+// background-job cron (cron/extraction_jobs.js). When mergeChunkResults was
+// changed to return the nested `normalized` shape, the cron was left reading a
+// flat `merged.lines` / `merged.customer` — which is `undefined` under the new
+// shape — so every chunked *background* PO wrote ZERO lines + null customer and
+// still marked the job 'completed'. Both readers MUST go through this accessor.
+export const normalizedResult = (r) => (r && r.normalized) || r || {};
+
 // Merge per-chunk dispatchExtract outputs into the single
 // normalised shape the rest of run.js expects.
 export const mergeChunkResults = (chunkResults, chunks) => {
-  // Each chunk result is a dispatchExtract result whose lines / customer /
-  // classification live UNDER `.normalized` (the same shape the passthrough +
-  // single-chunk paths return and run.js reads via out.normalized.*). normOf
-  // reads that nested shape, tolerating a flat fallback so a stray flat result
-  // can never silently zero the whole merge.
-  const normOf = (r) => (r && r.normalized) || r || {};
+  const normOf = normalizedResult;
   if (!chunkResults.length) {
     return { ok: false, reason: "no_chunks", error: "no_chunks", normalized: { classification: null, customer: null, lines: [] }, confidences: {}, attempts: [] };
   }

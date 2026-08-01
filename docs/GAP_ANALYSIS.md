@@ -562,6 +562,24 @@ Capability surface: **content-light** — the public site describes a positionin
 
 Relevance to Anvil: **watch, low signal.** The "run existing processes with intelligence you already have" framing rhymes with Anvil's copilot-over-your-own-ERP-data thesis, but with no disclosed product there's nothing concrete to learn or counter yet. Revisit if they ship specifics; do not act on this entry alone.
 
+### Additions — 2026-08-01 (field-service management: a thread to follow)
+
+Reviewed at the user's request, with a deliberate steer: **field service management (FSM) is an adjacency worth following, not dismissing.** FSM is structurally close to **maintenance management** — both revolve around *deploying the right engineer to the right job*, which is a constrained-planning problem (engineer **availability** × **geography/route** × **skill/certification match** × job **demand/priority/SLA** × **parts-on-hand**). That is the same optimization *family* Anvil already runs elsewhere — forecast→BOM procurement planning, spare/installed-base intelligence (FMECA/MEIO), and freight bidding — and it sits directly on top of Anvil's existing **Service** module (Service Visits, AMC Schedule, CAR reports). So this entry is filed as "learn + candidate expansion," not "don't chase."
+
+### 3.20 Kebra — `kebra.com` (adjacent — field-service thread to follow)
+
+One-liner: "AI-native field service." AI agents that automate the **back office** of field-service companies — turning a completed job into structured documentation, warranty recovery, invoicing, and follow-up.
+
+ICP: HVAC (and similar trades) field-service contractors — field technicians and service-company owners — looking to cut post-job admin.
+
+Capability surface: AI agents that (1) **structure job documentation** from field data (notes, photos, equipment models, diagnostics, parts used); (2) **recover warranty revenue** by auto-submitting claims to manufacturer portals (their demo shows a recovered Trane claim); (3) **QA the job** — flag missing info and prompt the tech to complete it before leaving site; (4) **sync back-office** — parts ordering/inventory, invoice creation, customer follow-up/upsell. Integrations: **ServiceTitan** (job management), **QuickBooks** (invoicing), manufacturer warranty portals, parts suppliers, email/SMS.
+
+Differentiators: an **AI-native post-job automation layer** that sits *on top of* the incumbent FSM system-of-record (ServiceTitan) rather than replacing it; **warranty-claim recovery** as a hard-dollar wedge; capture-at-the-truck QA so documentation is complete before the tech leaves.
+
+Maturity: early; narrow (HVAC back office); positions as AI-native. Note the scope boundary — **Kebra automates the back office; it does not own dispatch/scheduling** (ServiceTitan does). The dispatch-planning engine is the harder, more defensible part of FSM, and Kebra deliberately doesn't build it.
+
+Relevance to Anvil: **follow the thread — this is Anvil's Service module's future, not a QTC competitor.** Three concrete pulls: (1) **Engineer-deployment planning is the real prize.** Kebra sidesteps dispatch; Anvil should lean *into* it. Scheduling service/AMC engineers by availability × skill × route × SLA × spare-on-hand is the same constrained-assignment problem as forecast→BOM preorder and freight bidding — Anvil already has the planning substrate and the installed-base + spare-intelligence data (FMECA/MEIO, spare matrix) that make service demand *forecastable*, which pure FSM tools lack. That is a differentiated wedge: **maintenance/AMC → predicted service demand → engineer + spare-part deployment plan.** (2) **Capture-at-the-truck QA** — the "don't let the job close with missing data" pattern maps directly onto Anvil's Service Visit / CAR capture, and onto the same evidence-grounded, complete-before-commit ethos Anvil enforces on extraction. (3) **Warranty/entitlement recovery** connects to the parked support-desk / warranty-entitlement backlog — a hard-dollar reason to hold installed-base + service-history data that Anvil already stores. Do **not** clone Kebra's HVAC back-office niche; **do** treat FSM engineer-deployment planning as a candidate expansion of the Service module, powered by Anvil's forecasting + spare-intelligence spine.
+
 ---
 
 ## 4. Cross-cutting themes from the competitor scan

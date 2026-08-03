@@ -7,7 +7,8 @@
 // The matrix is the canonical source. See docs/RBAC.md for the human-
 // readable version. Tests live in rbac.test.js.
 
-export type Role =
+// The 7 base roles the MATRIX below is keyed by.
+export type BaseRole =
   | "sales_engineer"
   | "sales_manager"
   | "procurement"
@@ -16,10 +17,16 @@ export type Role =
   | "operator"
   | "viewer";
 
-export const ROLES: Role[] = ["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer"];
+// Design-team roles inherit a base sales role's matrix cells (DESIGN_BASE)
+// plus per-resource overrides (DESIGN_OVERRIDES), so the ~55-row MATRIX
+// stays keyed by the 7 base roles only — no per-row churn when a role is
+// added. Server-side, design roles are writers in api/_lib/auth.js.
+export type Role = BaseRole | "design_engineer" | "design_manager";
+
+export const ROLES: Role[] = ["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer", "design_engineer", "design_manager"];
 
 export type MatrixCell = string; // permission verbs r/w/a/x or empty
-export type MatrixRow = Record<Role, MatrixCell>;
+export type MatrixRow = Record<BaseRole, MatrixCell>;
 
 // r=read, w=write, a=approve, x=admin-only.
 // '' (empty) means hidden / blocked.
@@ -38,7 +45,7 @@ export const MATRIX: Record<string, MatrixRow> = {
   shipments:   { sales_engineer: "rw",  sales_manager: "rw", procurement: "rw", finance: "r",   admin: "r",  operator: "r",  viewer: "r" },
   spo:         { sales_engineer: "r",   sales_manager: "r",  procurement: "rwa",finance: "r",   admin: "r",  operator: "",   viewer: "r" },
   "supplier-rfq": { sales_engineer: "r", sales_manager: "rw", procurement: "rwa", finance: "r", admin: "rwa", operator: "", viewer: "r" },
-  spares:      { sales_engineer: "rw",  sales_manager: "r",  procurement: "rw", finance: "r",   admin: "r",  operator: "",   viewer: "r" },
+  spares:      { sales_engineer: "rw",  sales_manager: "rw", procurement: "rw", finance: "r",   admin: "r",  operator: "",   viewer: "r" },
   "svc-visits":{ sales_engineer: "r",   sales_manager: "r",  procurement: "",   finance: "",    admin: "r",  operator: "rw", viewer: "r" },
   amc:         { sales_engineer: "r",   sales_manager: "r",  procurement: "",   finance: "",    admin: "rw", operator: "rw", viewer: "r" },
   car:         { sales_engineer: "r",   sales_manager: "r",  procurement: "",   finance: "",    admin: "rw", operator: "rw", viewer: "r" },
@@ -140,10 +147,28 @@ export const setRole = (role: Role): void => {
   }
 };
 
+// A design role inherits a base sales role's cells...
+const DESIGN_BASE: Record<"design_engineer" | "design_manager", BaseRole> = {
+  design_engineer: "sales_engineer",
+  design_manager: "sales_manager",
+};
+// ...except where the design team's access differs: full write on the
+// spare matrix + item/drawing data (they own the gun/spare/drawing data).
+const DESIGN_OVERRIDES: Record<string, Partial<Record<Role, MatrixCell>>> = {
+  spares:         { design_engineer: "rw", design_manager: "rw" },
+  items:          { design_engineer: "rw", design_manager: "rw" },
+  "items-import": { design_engineer: "rw", design_manager: "rw" },
+};
+
 const cell = (navId: string): string => {
   const row = MATRIX[navId];
   if (!row) return "";
-  return row[getRole()] || "";
+  const role = getRole();
+  const override = DESIGN_OVERRIDES[navId]?.[role];
+  if (override !== undefined) return override;
+  // Design roles inherit their base sales role; base roles map to themselves.
+  const base: BaseRole = (DESIGN_BASE as Record<string, BaseRole>)[role] || (role as BaseRole);
+  return row[base] || "";
 };
 
 export const canRead = (navId: string): boolean => /[rwax]/.test(cell(navId));

@@ -45,6 +45,7 @@ describe("ROLES", () => {
     // collapse onto the same "SAL" badge in the header pill.
     expect(ROLES.map((r) => r.id)).toEqual([
       "sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer",
+      "design_engineer", "design_manager",
     ]);
     for (const r of ROLES) expect(r.short.length).toBeLessThanOrEqual(3);
     // Short labels must be unique so the user can tell roles apart.

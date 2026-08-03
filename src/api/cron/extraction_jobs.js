@@ -30,7 +30,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordEvent, recordAudit } from "../_lib/audit.js";
 import { chunkPdf, probePdfPageCount, BACKGROUND_MAX_TOTAL_PAGES } from "../_lib/docai/pdf-chunker.js";
 import { profileDocument } from "../_lib/docai/toc-profiler.js";
-import { mergeChunkResults } from "../_lib/docai/chunked-extract.js";
+import { mergeChunkResults, normalizedResult } from "../_lib/docai/chunked-extract.js";
 import { dispatchExtract } from "../_lib/docai/index.js";
 
 const LEASE_TTL_MS = 30 * 1000;
@@ -262,7 +262,9 @@ const advanceJob = async (svc, job) => {
       attempts: (chunkMeta.attempts || 0) + 1,
       status: chunkOk ? "done" : (chunkMeta.attempts + 1 >= MAX_CHUNK_ATTEMPTS ? "failed" : "retry"),
       adapter_used: chunkResult?.adapter_used || null,
-      line_count: Array.isArray(chunkResult?.lines) ? chunkResult.lines.length : 0,
+      // Per-chunk lines live under `.normalized` (dispatchExtract shape); read
+      // via the shared accessor so a flat read can't silently report 0.
+      line_count: (normalizedResult(chunkResult).lines || []).length,
       duration_ms: Date.now() - t0,
       completed_at: chunkOk ? new Date().toISOString() : null,
       last_error: chunkErr,
@@ -305,6 +307,12 @@ const advanceJob = async (svc, job) => {
     const chunkResults = job.partial_result?.chunk_results || [];
     const chunks = (job.chunk_status || []).map((c) => ({ pageStart: c.page_start, pageEnd: c.page_end, pageCount: c.page_count }));
     const merged = mergeChunkResults(chunkResults, chunks);
+    // mergeChunkResults returns the nested `normalized` shape (lines/customer
+    // under .normalized); read through the shared accessor. Reading flat
+    // `merged.lines`/`merged.customer` here is exactly what zero-lined every
+    // chunked background PO while the job still reported 'completed'.
+    const mergedNorm = normalizedResult(merged);
+    const mergedLines = Array.isArray(mergedNorm.lines) ? mergedNorm.lines : [];
     // Persist into the parent order: same shape as runExtraction
     // writes for the sync flow, so downstream code (recon table,
     // anomaly compute) consumes it identically.
@@ -314,8 +322,8 @@ const advanceJob = async (svc, job) => {
         const nextResult = { ...(ord.data?.result || {}) };
         nextResult.salesOrder = {
           ...(nextResult.salesOrder || {}),
-          lineItems: merged.lines || [],
-          customer: merged.customer || nextResult.salesOrder?.customer || null,
+          lineItems: mergedLines,
+          customer: mergedNorm.customer || nextResult.salesOrder?.customer || null,
         };
         const nextPreflight = {
           ...(ord.data?.preflight_payload || {}),
@@ -343,14 +351,14 @@ const advanceJob = async (svc, job) => {
     if (upd.error) throw new Error("job update (merge): " + upd.error.message);
     await emit(svc, tenantCtx, "docai_chunk_done", {
       job_id: job.id, order_id: orderId,
-      line_count: (merged.lines || []).length,
+      line_count: mergedLines.length,
       chunk_count: chunks.length,
     });
     await recordAudit({ tenantId: job.tenant_id }, {
       action: "extraction_job_completed",
       objectType: "extraction_job",
       objectId: job.id,
-      after: { line_count: (merged.lines || []).length, chunk_count: chunks.length },
+      after: { line_count: mergedLines.length, chunk_count: chunks.length },
     });
     return { job: upd.data, hasMore: false };
   }

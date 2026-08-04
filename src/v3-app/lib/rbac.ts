@@ -17,13 +17,14 @@ export type BaseRole =
   | "operator"
   | "viewer";
 
-// Design-team roles inherit a base sales role's matrix cells (DESIGN_BASE)
-// plus per-resource overrides (DESIGN_OVERRIDES), so the ~55-row MATRIX
-// stays keyed by the 7 base roles only — no per-row churn when a role is
-// added. Server-side, design roles are writers in api/_lib/auth.js.
-export type Role = BaseRole | "design_engineer" | "design_manager";
+// Extra roles inherit a base role's matrix cells (ROLE_INHERIT) plus per-resource
+// overrides (ROLE_OVERRIDES), so the ~55-row MATRIX stays keyed by the 7 base
+// roles only — no per-row churn when a role is added. Design roles inherit a
+// sales role (with write on gun/spare data); customer_support inherits the
+// read-only viewer. Server-side writer membership lives in api/_lib/auth.js.
+export type Role = BaseRole | "design_engineer" | "design_manager" | "customer_support";
 
-export const ROLES: Role[] = ["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer", "design_engineer", "design_manager"];
+export const ROLES: Role[] = ["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer", "design_engineer", "design_manager", "customer_support"];
 
 export type MatrixCell = string; // permission verbs r/w/a/x or empty
 export type MatrixRow = Record<BaseRole, MatrixCell>;
@@ -114,6 +115,8 @@ export const ACTIONS: Record<string, Role[]> = {
   "so.edit_after_approval":["admin"],
   "customer.edit_gstin":  ["sales_manager", "admin"],
   "customer.edit_profile":["sales_engineer", "sales_manager", "admin"],
+  // Share a spare matrix to the customer portal (generates a scoped portal link).
+  "spare_matrix.share":   ["sales_engineer", "sales_manager", "design_engineer", "design_manager", "customer_support", "admin"],
   "item.mark_obsolete":   ["procurement", "admin"],
   "spo.record_ack":       ["procurement", "admin"],
   "spo.mark_received":    ["procurement", "admin"],
@@ -147,14 +150,16 @@ export const setRole = (role: Role): void => {
   }
 };
 
-// A design role inherits a base sales role's cells...
-const DESIGN_BASE: Record<"design_engineer" | "design_manager", BaseRole> = {
+// Which base role each non-base role inherits its matrix cells from.
+const ROLE_INHERIT: Record<"design_engineer" | "design_manager" | "customer_support", BaseRole> = {
   design_engineer: "sales_engineer",
   design_manager: "sales_manager",
+  customer_support: "viewer",           // read-only across the app; sharing is a canDo() action, not a cell
 };
-// ...except where the design team's access differs: full write on the
-// spare matrix + item/drawing data (they own the gun/spare/drawing data).
-const DESIGN_OVERRIDES: Record<string, Partial<Record<Role, MatrixCell>>> = {
+// Per-resource overrides where an inheriting role's access differs from its base.
+// Design owns the gun/spare/drawing data (full write). customer_support needs no
+// override — read-only viewer access is exactly right for viewing spare matrices.
+const ROLE_OVERRIDES: Record<string, Partial<Record<Role, MatrixCell>>> = {
   spares:         { design_engineer: "rw", design_manager: "rw" },
   items:          { design_engineer: "rw", design_manager: "rw" },
   "items-import": { design_engineer: "rw", design_manager: "rw" },
@@ -164,10 +169,10 @@ const cell = (navId: string): string => {
   const row = MATRIX[navId];
   if (!row) return "";
   const role = getRole();
-  const override = DESIGN_OVERRIDES[navId]?.[role];
+  const override = ROLE_OVERRIDES[navId]?.[role];
   if (override !== undefined) return override;
-  // Design roles inherit their base sales role; base roles map to themselves.
-  const base: BaseRole = (DESIGN_BASE as Record<string, BaseRole>)[role] || (role as BaseRole);
+  // Inheriting roles map to their base; base roles map to themselves.
+  const base: BaseRole = (ROLE_INHERIT as Record<string, BaseRole>)[role] || (role as BaseRole);
   return row[base] || "";
 };
 

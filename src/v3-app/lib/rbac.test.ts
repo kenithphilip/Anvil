@@ -16,9 +16,9 @@ beforeEach(() => {
 });
 
 describe("ROLES + MATRIX shape", () => {
-  it("ROLES is the canonical role list (7 base + 2 design)", () => {
-    expect(ROLES.length).toBe(9);
-    for (const r of ["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer", "design_engineer", "design_manager"]) {
+  it("ROLES is the canonical role list (7 base + 2 design + customer_support)", () => {
+    expect(ROLES.length).toBe(10);
+    for (const r of ["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer", "design_engineer", "design_manager", "customer_support"]) {
       expect(ROLES).toContain(r);
     }
   });
@@ -94,6 +94,31 @@ describe("design roles inherit a base sales role + gun-data overrides", () => {
     expect(canWrite("spares")).toBe(true);
     expect(canWrite("items")).toBe(true);
     expect(canRead("admin")).toBe(false);
+  });
+});
+
+describe("customer_support role (read-only viewer + can share spare matrices)", () => {
+  beforeEach(() => setRole("customer_support"));
+  it("can VIEW the spare matrix + customers but cannot edit them (inherits viewer)", () => {
+    expect(canRead("spares")).toBe(true);
+    expect(canWrite("spares")).toBe(false);
+    expect(canRead("customers")).toBe(true);
+    expect(canRead("admin")).toBe(false);
+    expect(isAdmin()).toBe(false);
+  });
+  it("can perform the spare_matrix.share action", () => {
+    expect(canDo("spare_matrix.share")).toBe(true);
+  });
+});
+
+describe("spare_matrix.share action allowlist", () => {
+  it("allows sales, design, customer_support, admin — not viewer/procurement", () => {
+    for (const r of ["sales_engineer", "sales_manager", "design_engineer", "design_manager", "customer_support", "admin"]) {
+      setRole(r as any); expect(canDo("spare_matrix.share"), `${r} should share`).toBe(true);
+    }
+    for (const r of ["viewer", "procurement", "finance", "operator"]) {
+      setRole(r as any); expect(canDo("spare_matrix.share"), `${r} should NOT share`).toBe(false);
+    }
   });
 });
 

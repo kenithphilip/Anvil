@@ -30,8 +30,10 @@ if (ALLOW_ANONYMOUS && NODE_ENV === "production") {
 // operator-role users (service-visit and AMC handlers) got 403 on
 // every read endpoint that asked for "read" permission, despite the
 // frontend matrix granting them read across most pages.
-const VIEWER_ROLES   = new Set(["viewer", "sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "design_engineer", "design_manager"]);
-const WRITER_ROLES   = new Set(["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "design_engineer", "design_manager"]);
+const VIEWER_ROLES   = new Set(["viewer", "sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "design_engineer", "design_manager", "customer_support"]);
+// customer_support is read-only in the frontend matrix (inherits viewer) but a
+// server-side writer so it can create portal share links for a spare matrix.
+const WRITER_ROLES   = new Set(["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "design_engineer", "design_manager", "customer_support"]);
 const APPROVER_ROLES = new Set(["sales_manager", "finance", "admin"]);
 const ADMIN_ROLES    = new Set(["admin"]);
 

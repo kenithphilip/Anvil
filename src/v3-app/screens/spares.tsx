@@ -6,6 +6,7 @@ import { AnvilBackend } from "../lib/api";
 import { matchSpares, SPARE_PRESETS, isConsumableCol, nameMatchCandidates, type SpareBomItem } from "../lib/spare-match";
 import { lsGet } from "../lib/storage-keys";
 import { GunDrawingsPanel } from "../components/GunDrawingsPanel";
+import { RBAC } from "../lib/rbac";
 
 // ============================================================
 // ANVIL v3 — Spare Matrix Worksheet
@@ -213,6 +214,17 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const [importErr, setImportErr] = uM("");
   const [showExport, setShowExport] = uM(false);
   const [showDrawings, setShowDrawings] = uM(false);
+  const [shareLink, setShareLink] = uM<string | null>(null);
+  const [busyShare, setBusyShare] = uM(false);
+  const onShare = async () => {
+    if (!draft.id) return;
+    setBusyShare(true); setShareLink(null);
+    try {
+      const r = await AnvilBackend.spareMatrix.share(draft.id);
+      setShareLink(r?.url || r?.token || null);
+    } catch (e: any) { window.notifyError?.("Share", e?.message || String(e)); }
+    finally { setBusyShare(false); }
+  };
   const [recView, setRecView] = uM(false);
   const [busyAuto, setBusyAuto] = uM(false);
   const [busySync, setBusySync] = uM(false);
@@ -737,10 +749,22 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
             )}
           </div>
           {draft.id && <Btn sm kind="ghost" onClick={() => setShowDrawings(true)} title="Bulk-upload EG sheet / 2D / 3D drawings per gun">{Icon.doc} Drawings</Btn>}
+          {draft.id && RBAC.canDo("spare_matrix.share") && (
+            <Btn sm kind="ghost" onClick={onShare} disabled={busyShare} title="Share this matrix with the customer via the portal">{busyShare ? "…" : <>{Icon.link} Share</>}</Btn>
+          )}
           <div style={{ flex: 1 }} />
           <Btn sm kind="ghost" onClick={onSyncRecommended} disabled={busySync}>{busySync ? "…" : <>{Icon.cycle} Sync recommended</>}</Btn>
           <Btn sm kind="ghost" onClick={onDeleteMatrix} className="">{Icon.x} Delete</Btn>
         </div>
+      )}
+
+      {shareLink && (
+        <Banner kind="info">
+          Customer portal link (read-only, spares scope):{" "}
+          <span className="mono-sm" style={{ wordBreak: "break-all" }}>{shareLink}</span>{" "}
+          <Btn sm kind="ghost" onClick={() => { try { navigator.clipboard?.writeText(shareLink); } catch (_) { /* noop */ } }}>copy</Btn>
+          <Btn sm kind="ghost" onClick={() => setShareLink(null)}>dismiss</Btn>
+        </Banner>
       )}
 
       {showDrawings && draft.id && (

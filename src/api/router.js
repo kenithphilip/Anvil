@@ -365,6 +365,9 @@ import pushSend                from "./push/send.js";
 
 import portalTokens            from "./portal/tokens.js";
 import portalView              from "./portal/view.js";
+import portalAuthLogin         from "./portal/auth/login.js";
+import portalAuthInvite        from "./portal/auth/invite.js";
+import portalAuthMe            from "./portal/auth/me.js";
 import portalPay               from "./portal/pay.js";
 import portalReorder           from "./portal/reorder.js";
 import portalInvoicePdf        from "./portal/invoice_pdf.js";
@@ -614,6 +617,9 @@ const STATIC_ROUTES = {
   "/push/send":                     pushSend,
   "/portal/tokens":                 portalTokens,
   "/portal/view":                   portalView,
+  "/portal/auth/login":             portalAuthLogin,
+  "/portal/auth/invite":            portalAuthInvite,
+  "/portal/auth/me":                portalAuthMe,
   "/portal/pay":                    portalPay,
   "/portal/reorder":                portalReorder,
   "/portal/invoice_pdf":            portalInvoicePdf,

@@ -1,37 +1,27 @@
-// GET /api/portal/view?token=<...>&kind=<quotes|orders|invoices|summary>
+// GET /api/portal/view?kind=<summary|quotes|orders|invoices|spares|spare_matrix>
 //
-// Public-facing endpoint: no auth header required, the token is the
-// auth. Validates the token, logs the access, and returns the
-// corresponding read-only data scoped to that customer.
+// Read-only, customer-scoped portal data. DUAL-AUTH: a per-user SESSION (Bearer
+// header — the token is NOT in the URL) is preferred; a legacy ?token=... shared
+// link is still accepted during the migration. resolvePortalAccess resolves
+// either into a token-shaped object (tenant_id / customer_id / scopes).
 //
-// `summary` is always returned so the portal landing page can show
-// "Hi <customer>, you have N open quotes / orders / invoices".
+// `summary` powers the portal landing page ("you have N open quotes / orders /
+// invoices").
 
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
+import { resolvePortalAccess } from "../_lib/portal-auth.js";
 
-const logAccess = async (svc, tokenRow, req, status, path) => {
+const logAccess = async (svc, t, req, status, path) => {
   await svc.from("portal_access_log").insert({
-    tenant_id: tokenRow.tenant_id,
-    token_id: tokenRow.id,
+    tenant_id: t.tenant_id,
+    token_id: t.id || null,
+    portal_user_id: t.portal_user_id || null,
     ip: req.headers["x-forwarded-for"]?.split(",")[0] || null,
     user_agent: req.headers["user-agent"] || null,
     path,
     status,
   });
-};
-
-const validateToken = async (svc, token) => {
-  if (!token) return { error: { code: 401, message: "token required" } };
-  const r = await svc.from("portal_tokens").select("*").eq("token", token).maybeSingle();
-  if (r.error) return { error: { code: 500, message: r.error.message } };
-  const t = r.data;
-  if (!t) return { error: { code: 404, message: "token not found" } };
-  if (t.revoked_at) return { error: { code: 401, message: "token revoked" } };
-  if (t.expires_at && new Date(t.expires_at) < new Date()) {
-    return { error: { code: 401, message: "token expired" } };
-  }
-  return { token: t };
 };
 
 export default async function handler(req, res) {
@@ -40,12 +30,9 @@ export default async function handler(req, res) {
   try {
     if (req.method !== "GET") return json(res, 405, { error: { message: "Method not allowed" } });
     const url = new URL(req.url, "http://x");
-    const token = url.searchParams.get("token");
     const kind = url.searchParams.get("kind") || "summary";
     const svc = serviceClient();
-    const v = await validateToken(svc, token);
-    if (v.error) return json(res, v.error.code, { error: { message: v.error.message } });
-    const t = v.token;
+    const t = await resolvePortalAccess(req, svc);   // throws 401/403/404 on bad auth
     // 'spare_matrix' (single-matrix detail) is gated by the 'spares' scope too.
     const requiredScope = kind === "summary" ? "quotes" : (kind === "spare_matrix" ? "spares" : kind);
     if (!t.scopes.includes(requiredScope)) {
@@ -113,10 +100,13 @@ export default async function handler(req, res) {
       return json(res, 400, { error: { message: "unknown kind" } });
     }
 
-    await svc.from("portal_tokens").update({
-      last_used_at: new Date().toISOString(),
-      use_count: (t.use_count || 0) + 1,
-    }).eq("id", t.id);
+    // Legacy-token bookkeeping only; a session (t.id === null) has no token row.
+    if (t.id) {
+      await svc.from("portal_tokens").update({
+        last_used_at: new Date().toISOString(),
+        use_count: (t.use_count || 0) + 1,
+      }).eq("id", t.id);
+    }
     await logAccess(svc, t, req, 200, kind);
     return json(res, 200, payload);
   } catch (err) { sendError(res, err); }

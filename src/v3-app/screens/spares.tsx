@@ -7,6 +7,7 @@ import { matchSpares, SPARE_PRESETS, isConsumableCol, nameMatchCandidates, type 
 import { lsGet } from "../lib/storage-keys";
 import { GunDrawingsPanel } from "../components/GunDrawingsPanel";
 import { RBAC } from "../lib/rbac";
+import { buildBomNodes, isHierarchicalBom, collapsedAssemblies, visibleBomNodes } from "../lib/bom-tree";
 
 // ============================================================
 // ANVIL v3 — Spare Matrix Worksheet
@@ -1136,6 +1137,22 @@ const GunBomDrawer = ({ gunNo, onClose }) => {
   const asset = (data.data as any)?.asset || null;
   const lines: any[] = (data.data as any)?.lines || [];
   const projects: any[] = (data.data as any)?.projects || [];
+
+  // Assembly hierarchy from bom_lines.level (1=top) + seq order (see lib/bom-tree).
+  // Sub-assemblies start COLLAPSED so the operator drills in — "click gear case
+  // assy to open its subcomponents". Flat BOMs render as a plain list.
+  const nodes = useMemo(() => buildBomNodes(lines), [lines]);
+  const isHierarchical = useMemo(() => isHierarchicalBom(nodes), [nodes]);
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
+  const initedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (nodes.length && initedFor.current !== gunNo) { setCollapsed(collapsedAssemblies(nodes)); initedFor.current = gunNo; }
+  }, [nodes, gunNo]);
+  const toggle = (idx: number) => setCollapsed((s) => { const n = new Set(s); if (n.has(idx)) n.delete(idx); else n.add(idx); return n; });
+  const setAll = (collapseAll: boolean) => setCollapsed(collapseAll ? collapsedAssemblies(nodes) : new Set<number>());
+  const visible = useMemo(() => visibleBomNodes(nodes, collapsed), [nodes, collapsed]);
+  const rows = isHierarchical ? visible : nodes;
+
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 50, display: "flex", justifyContent: "center", alignItems: "center", padding: 20 }}>
       <div onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={"Gun BOM " + gunNo} style={{ width: "min(940px, 94vw)", maxHeight: "88vh", background: "var(--paper)", borderRadius: 12, boxShadow: "0 12px 40px rgba(0,0,0,0.28)", display: "flex", flexDirection: "column" }}>
@@ -1144,6 +1161,12 @@ const GunBomDrawer = ({ gunNo, onClose }) => {
             <div className="mono-sm" style={{ color: "var(--ink-3)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.04 }}>Gun BOM</div>
             <div className="mono" style={{ fontSize: 15, fontWeight: 600 }}>{gunNo}</div>
           </div>
+          {isHierarchical && (
+            <>
+              <Btn sm kind="ghost" onClick={() => setAll(false)} title="Expand every sub-assembly">Expand all</Btn>
+              <Btn sm kind="ghost" onClick={() => setAll(true)} title="Collapse to the top level">Collapse all</Btn>
+            </>
+          )}
           <Btn icon kind="ghost" sm onClick={onClose} title="Close">{Icon.x}</Btn>
         </div>
         <div style={{ overflow: "auto", flex: 1, padding: "12px 16px" }}>
@@ -1164,15 +1187,36 @@ const GunBomDrawer = ({ gunNo, onClose }) => {
                 <table className="tbl" style={{ minWidth: "100%" }}>
                   <thead><tr>{GUN_BOM_FIELDS.map((f) => <th key={f.k} className={f.num ? "r" : ""}>{f.label}</th>)}</tr></thead>
                   <tbody>
-                    {lines.map((l, i) => (
-                      <tr key={l.id || i}>
-                        {GUN_BOM_FIELDS.map((f) => (
-                          <td key={f.k} className={f.num ? "r mono-sm" : "mono-sm"} style={f.wide ? { maxWidth: 240, whiteSpace: "normal" } : undefined}>
-                            {f.k === "is_spare" ? (l.is_spare ? "Y" : "") : (l[f.k] != null && l[f.k] !== "" ? String(l[f.k]) : "—")}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
+                    {rows.map((n) => {
+                      const l = n.line;
+                      return (
+                        <tr key={l.id || n.idx}>
+                          {GUN_BOM_FIELDS.map((f) => {
+                            const val = f.k === "is_spare" ? (l.is_spare ? "Y" : "") : (l[f.k] != null && l[f.k] !== "" ? String(l[f.k]) : "—");
+                            // The Part # column carries the tree: indentation by level
+                            // + an expand/collapse toggle on sub-assemblies.
+                            if (f.k === "part_no" && isHierarchical) {
+                              return (
+                                <td key={f.k} className="mono-sm">
+                                  <span style={{ display: "inline-flex", alignItems: "center", gap: 3, paddingLeft: (n.level - 1) * 14 }}>
+                                    {n.hasChildren ? (
+                                      <button onClick={() => toggle(n.idx)} title={collapsed.has(n.idx) ? "Show subcomponents" : "Hide subcomponents"}
+                                        style={{ cursor: "pointer", border: "none", background: "none", color: "var(--ink-3)", width: 14, padding: 0, fontSize: 9, lineHeight: 1 }}>
+                                        {collapsed.has(n.idx) ? "▶" : "▼"}
+                                      </button>
+                                    ) : <span style={{ display: "inline-block", width: 14 }} />}
+                                    <span style={{ fontWeight: n.hasChildren ? 600 : 400 }}>{val}</span>
+                                  </span>
+                                </td>
+                              );
+                            }
+                            return (
+                              <td key={f.k} className={f.num ? "r mono-sm" : "mono-sm"} style={f.wide ? { maxWidth: 240, whiteSpace: "normal" } : undefined}>{val}</td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

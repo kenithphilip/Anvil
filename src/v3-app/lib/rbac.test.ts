@@ -16,9 +16,9 @@ beforeEach(() => {
 });
 
 describe("ROLES + MATRIX shape", () => {
-  it("ROLES is the canonical 7-role list", () => {
-    expect(ROLES.length).toBe(7);
-    for (const r of ["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer"]) {
+  it("ROLES is the canonical role list (7 base + 2 design)", () => {
+    expect(ROLES.length).toBe(9);
+    for (const r of ["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer", "design_engineer", "design_manager"]) {
       expect(ROLES).toContain(r);
     }
   });
@@ -66,12 +66,34 @@ describe("canRead / canWrite / canApprove for sales_manager", () => {
     expect(canWrite("so")).toBe(true);
     expect(canApprove("approvals")).toBe(true);
   });
+  it("can now WRITE the spare matrix (flipped from read-only for gun-data uploads)", () => {
+    expect(canWrite("spares")).toBe(true);
+  });
   it("cannot see admin or security", () => {
     expect(canRead("admin")).toBe(false);
     expect(canRead("security")).toBe(false);
   });
   it("isAdmin is false", () => {
     expect(isAdmin()).toBe(false);
+  });
+});
+
+describe("design roles inherit a base sales role + gun-data overrides", () => {
+  it("design_engineer inherits sales_engineer's cells but gets rw on spares/items", () => {
+    setRole("design_engineer");
+    // Override: full write on the spare-matrix + item/drawing data.
+    expect(canWrite("spares")).toBe(true);
+    expect(canWrite("items")).toBe(true);      // sales_engineer is read-only on items; design overrides to rw
+    // Inherited from sales_engineer: can read+write opportunities, cannot see admin.
+    expect(canWrite("opps")).toBe(true);
+    expect(canRead("admin")).toBe(false);
+    expect(isAdmin()).toBe(false);
+  });
+  it("design_manager inherits sales_manager and can write the spare matrix", () => {
+    setRole("design_manager");
+    expect(canWrite("spares")).toBe(true);
+    expect(canWrite("items")).toBe(true);
+    expect(canRead("admin")).toBe(false);
   });
 });
 

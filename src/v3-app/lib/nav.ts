@@ -145,6 +145,8 @@ export const ROLES: RoleEntry[] = [
   // Design team — uploads gun/spare data + drawings alongside sales.
   { id: "design_engineer", label: "Design Engineer", short: "DEN" },
   { id: "design_manager",  label: "Design Manager",  short: "DMG" },
+  // Customer support — views + shares spare matrices with customers.
+  { id: "customer_support", label: "Customer Support", short: "SUP" },
 ];
 
 // Build a breadcrumb from a nav id by walking NAV.

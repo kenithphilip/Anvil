@@ -1379,6 +1379,8 @@
     toQuote: async (id, payload) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/to_quote", { method: "POST", body: payload || {} }),
     // Scan every gun's BOM in the matrix and propose new spare-category columns.
     suggestColumns: async (id) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/suggest_columns"),
+    // Share a matrix with its customer via the portal (returns { token, url }).
+    share: async (id) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/share", { method: "POST", body: {} }),
     // Bulk gun-drawing upload (EG sheet / 2D / 3D). Files upload to storage via
     // documents.upload first; stage() filename-matches them to guns, update()
     // corrects a staged row, commit() finalizes. list() is the review/track feed.

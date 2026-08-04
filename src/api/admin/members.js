@@ -26,7 +26,7 @@ import { recordAudit } from "../_lib/audit.js";
 // asks for an approver almost always means the manager who
 // owns the approvals queue. A console.warn surfaces the remap
 // so we can sweep call sites before retiring the alias.
-const ALLOWED_ROLES = new Set(["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer", "design_engineer", "design_manager"]);
+const ALLOWED_ROLES = new Set(["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer", "design_engineer", "design_manager", "customer_support"]);
 const LEGACY_ROLE_REMAP = { approver: "sales_manager" };
 const normaliseRole = (rawRole, fallback) => {
   const role = rawRole == null ? null : String(rawRole);

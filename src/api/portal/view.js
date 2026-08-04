@@ -46,7 +46,9 @@ export default async function handler(req, res) {
     const v = await validateToken(svc, token);
     if (v.error) return json(res, v.error.code, { error: { message: v.error.message } });
     const t = v.token;
-    if (!t.scopes.includes(kind === "summary" ? "quotes" : kind)) {
+    // 'spare_matrix' (single-matrix detail) is gated by the 'spares' scope too.
+    const requiredScope = kind === "summary" ? "quotes" : (kind === "spare_matrix" ? "spares" : kind);
+    if (!t.scopes.includes(requiredScope)) {
       await logAccess(svc, t, req, 403, kind);
       return json(res, 403, { error: { message: "scope not allowed" } });
     }
@@ -83,6 +85,30 @@ export default async function handler(req, res) {
         .eq("tenant_id", t.tenant_id).eq("customer_id", t.customer_id)
         .order("issue_date", { ascending: false }).limit(50);
       payload = { invoices: r.data || [] };
+    } else if (kind === "spares") {
+      // List the customer's spare matrices (headers only). Detail via kind=spare_matrix.
+      const r = await svc.from("spare_matrix")
+        .select("id, name, project_name, updated_at")
+        .eq("tenant_id", t.tenant_id).eq("customer_id", t.customer_id)
+        .order("updated_at", { ascending: false }).limit(50);
+      payload = { spare_matrices: r.data || [] };
+    } else if (kind === "spare_matrix") {
+      // One matrix in full (read-only), ONLY if it belongs to this token's
+      // customer. Returns the spare-category columns, the per-gun rows, and the
+      // committed drawings (link + filename). Internal ids are not exposed.
+      const matrixId = url.searchParams.get("matrix_id");
+      if (!matrixId) return json(res, 400, { error: { message: "matrix_id required" } });
+      const m = await svc.from("spare_matrix")
+        .select("id, name, project_name, updated_at")
+        .eq("tenant_id", t.tenant_id).eq("customer_id", t.customer_id).eq("id", matrixId).maybeSingle();
+      if (m.error) throw new Error(m.error.message);
+      if (!m.data) { await logAccess(svc, t, req, 404, kind); return json(res, 404, { error: { message: "matrix not found" } }); }
+      const [cols, rows, draw] = await Promise.all([
+        svc.from("spare_matrix_columns").select("col_name, category, position").eq("tenant_id", t.tenant_id).eq("matrix_id", matrixId).order("position", { ascending: true }),
+        svc.from("spare_matrix_rows").select("sr_no, line, station_no, robot_no, gun_no, gun_type, l_qty, r_qty, timer, atd, qty, spare_values, position").eq("tenant_id", t.tenant_id).eq("matrix_id", matrixId).order("position", { ascending: true }),
+        svc.from("gun_drawings").select("gun_no, kind, format, original_filename, link_url").eq("tenant_id", t.tenant_id).eq("matrix_id", matrixId).eq("status", "committed"),
+      ]);
+      payload = { matrix: m.data, columns: cols.data || [], rows: rows.data || [], drawings: draw.data || [] };
     } else {
       return json(res, 400, { error: { message: "unknown kind" } });
     }

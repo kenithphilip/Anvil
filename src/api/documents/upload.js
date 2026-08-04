@@ -47,6 +47,12 @@ const ALLOWED_MIME = new Set([
   "application/msword",
   "application/json",
   "application/octet-stream",
+  // CAD drawings for the gun-drawing bulk upload: DWG/DXF (2D) + STEP (3D).
+  // Browsers often report these as octet-stream / empty; the explicit types
+  // cover browsers that do send a CAD mime so the upload isn't rejected.
+  "application/acad", "image/vnd.dwg", "application/dwg", "drawing/dwg",
+  "application/dxf", "image/vnd.dxf",
+  "application/step", "application/stp", "model/step", "application/p21", "model/x.step-3d",
 ]);
 
 const sanitizeName = (s) => String(s || "upload").replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);

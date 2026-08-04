@@ -5,6 +5,7 @@ import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 import { matchSpares, SPARE_PRESETS, isConsumableCol, nameMatchCandidates, type SpareBomItem } from "../lib/spare-match";
 import { lsGet } from "../lib/storage-keys";
+import { GunDrawingsPanel } from "../components/GunDrawingsPanel";
 
 // ============================================================
 // ANVIL v3 — Spare Matrix Worksheet
@@ -211,6 +212,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const [importPreview, setImportPreview] = uM(null);
   const [importErr, setImportErr] = uM("");
   const [showExport, setShowExport] = uM(false);
+  const [showDrawings, setShowDrawings] = uM(false);
   const [recView, setRecView] = uM(false);
   const [busyAuto, setBusyAuto] = uM(false);
   const [busySync, setBusySync] = uM(false);
@@ -734,10 +736,19 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
               </div>
             )}
           </div>
+          {draft.id && <Btn sm kind="ghost" onClick={() => setShowDrawings(true)} title="Bulk-upload EG sheet / 2D / 3D drawings per gun">{Icon.doc} Drawings</Btn>}
           <div style={{ flex: 1 }} />
           <Btn sm kind="ghost" onClick={onSyncRecommended} disabled={busySync}>{busySync ? "…" : <>{Icon.cycle} Sync recommended</>}</Btn>
           <Btn sm kind="ghost" onClick={onDeleteMatrix} className="">{Icon.x} Delete</Btn>
         </div>
+      )}
+
+      {showDrawings && draft.id && (
+        <GunDrawingsPanel
+          matrixId={draft.id}
+          guns={Array.from(new Set((draft.rows || []).map((r: any) => String(r.gun_no || "").trim()).filter(Boolean)))}
+          onClose={() => setShowDrawings(false)}
+        />
       )}
 
       {/* Add row */}

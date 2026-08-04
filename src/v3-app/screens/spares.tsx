@@ -216,6 +216,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const [showDrawings, setShowDrawings] = uM(false);
   const [shareLink, setShareLink] = uM<string | null>(null);
   const [busyShare, setBusyShare] = uM(false);
+  const [shareCopied, setShareCopied] = uM(false);
   const onShare = async () => {
     if (!draft.id) return;
     setBusyShare(true); setShareLink(null);
@@ -748,11 +749,15 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
               </div>
             )}
           </div>
-          {draft.id && <Btn sm kind="ghost" onClick={() => setShowDrawings(true)} title="Bulk-upload EG sheet / 2D / 3D drawings per gun">{Icon.doc} Drawings</Btn>}
+          <div style={{ flex: 1 }} />
+          {/* Matrix-level actions, grouped on the right and separated from the
+              grid-editing actions on the left. Drawings is a primary matrix
+              action, so it reads as a solid button rather than a ghost. */}
+          {draft.id && <Btn sm onClick={() => setShowDrawings(true)} title="Manage EG sheet / 2D / 3D drawings per gun">{Icon.doc} Drawings</Btn>}
           {draft.id && RBAC.canDo("spare_matrix.share") && (
             <Btn sm kind="ghost" onClick={onShare} disabled={busyShare} title="Share this matrix with the customer via the portal">{busyShare ? "…" : <>{Icon.link} Share</>}</Btn>
           )}
-          <div style={{ flex: 1 }} />
+          <span aria-hidden style={{ width: 1, alignSelf: "stretch", background: "var(--hairline-2)", margin: "0 2px" }} />
           <Btn sm kind="ghost" onClick={onSyncRecommended} disabled={busySync}>{busySync ? "…" : <>{Icon.cycle} Sync recommended</>}</Btn>
           <Btn sm kind="ghost" onClick={onDeleteMatrix} className="">{Icon.x} Delete</Btn>
         </div>
@@ -760,10 +765,21 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
 
       {shareLink && (
         <Banner kind="info">
-          Customer portal link (read-only, spares scope):{" "}
-          <span className="mono-sm" style={{ wordBreak: "break-all" }}>{shareLink}</span>{" "}
-          <Btn sm kind="ghost" onClick={() => { try { navigator.clipboard?.writeText(shareLink); } catch (_) { /* noop */ } }}>copy</Btn>
-          <Btn sm kind="ghost" onClick={() => setShareLink(null)}>dismiss</Btn>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600, whiteSpace: "nowrap" }}>Customer portal link</span>
+            <input
+              readOnly
+              value={shareLink}
+              onFocus={(e) => e.currentTarget.select()}
+              className="input mono-sm"
+              aria-label="Customer portal link"
+              style={{ flex: 1, minWidth: 240, height: 28, padding: "0 8px" }}
+            />
+            <Btn sm kind="primary" onClick={async () => {
+              try { await navigator.clipboard?.writeText(shareLink); setShareCopied(true); setTimeout(() => setShareCopied(false), 1500); } catch (_) { /* noop */ }
+            }}>{shareCopied ? "Copied ✓" : "Copy link"}</Btn>
+            <Btn sm kind="ghost" onClick={() => setShareLink(null)}>Dismiss</Btn>
+          </div>
         </Banner>
       )}
 
@@ -860,14 +876,16 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                   {(draft.rows || []).map((r) => (
                     <tr key={r.id}>
                       <td className="mono" style={{ position: "sticky", left: 0, background: "var(--paper)", zIndex: 1 }}>
-                        <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
-                          <input
-                            className="input mono"
-                            value={r.gun_no || ""}
-                            onChange={(e) => onRowMetaChange(r.id, "gun_no", e.target.value)}
-                            style={{ height: 26, fontSize: 11.5, padding: "0 6px", minWidth: 78 }}
-                          />
-                          <Btn sm kind="ghost" onClick={() => r.gun_no && setBomGun(r.gun_no)} disabled={!r.gun_no} title="View this gun's full BOM">BOM</Btn>
+                        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                          {/* Gun number is the row IDENTITY (the join key to the BOM
+                              and to the gun's drawings). It is LOCKED after import so
+                              a stray edit can't silently orphan those links; change a
+                              gun by re-importing the template. */}
+                          <span className="mono" title="Gun number — locked identity (re-import the template to change it)"
+                            style={{ fontSize: 11.5, minWidth: 78, padding: "0 6px", height: 26, display: "inline-flex", alignItems: "center", color: "var(--ink)", fontWeight: 600 }}>
+                            {r.gun_no || "—"}
+                          </span>
+                          <Btn sm onClick={() => r.gun_no && setBomGun(r.gun_no)} disabled={!r.gun_no} title="Open this gun's full BOM">{Icon.layers} BOM</Btn>
                         </div>
                       </td>
                       {SM_STATION_COLS.map((sc) => (
@@ -1119,8 +1137,8 @@ const GunBomDrawer = ({ gunNo, onClose }) => {
   const lines: any[] = (data.data as any)?.lines || [];
   const projects: any[] = (data.data as any)?.projects || [];
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 50, display: "flex", justifyContent: "flex-end" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(940px, 94vw)", height: "100%", background: "var(--paper)", boxShadow: "-8px 0 24px rgba(0,0,0,0.18)", display: "flex", flexDirection: "column" }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 50, display: "flex", justifyContent: "center", alignItems: "center", padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={"Gun BOM " + gunNo} style={{ width: "min(940px, 94vw)", maxHeight: "88vh", background: "var(--paper)", borderRadius: 12, boxShadow: "0 12px 40px rgba(0,0,0,0.28)", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--hairline)", display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ flex: 1 }}>
             <div className="mono-sm" style={{ color: "var(--ink-3)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.04 }}>Gun BOM</div>

@@ -37,6 +37,12 @@ export default defineConfig({
     sourcemap: true,
     target: "es2020",
     rollupOptions: {
+      // Two entries: the staff app (index.html) and the SEPARATE customer
+      // portal (portal.html) — the customer never loads staff code.
+      input: {
+        main: path.resolve(__dirname, "src/v3-app/index.html"),
+        portal: path.resolve(__dirname, "src/v3-app/portal.html"),
+      },
       output: {
         chunkFileNames: "assets/[name]-[hash].js",
         entryFileNames: "assets/[name]-[hash].js",

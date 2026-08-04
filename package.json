@@ -8,7 +8,7 @@
     "node": "20.x"
   },
   "scripts": {
-    "build": "rm -rf public/assets public/index.html public/v3-app && vite build",
+    "build": "rm -rf public/assets public/index.html public/portal.html public/v3-app && vite build",
     "dev": "vite",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "check": "for f in $(find api src/api -name '*.js' | sort); do node --check \"$f\" || exit 1; done && node --check src/client/anvil-client.js && npm run typecheck && npm run check:imports",

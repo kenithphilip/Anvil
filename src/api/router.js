@@ -272,6 +272,10 @@ import spareMatrixRecomputeRec from "./spare_matrix/recompute_recommended.js";
 import spareMatrixRecommended  from "./spare_matrix/recommended.js";
 import spareMatrixToQuote      from "./spare_matrix/to_quote.js";
 import spareMatrixSuggestCols  from "./spare_matrix/suggest_columns.js";
+import spareMatrixDrawingsStage  from "./spare_matrix/drawings/stage.js";
+import spareMatrixDrawingsList   from "./spare_matrix/drawings/list.js";
+import spareMatrixDrawingsUpdate from "./spare_matrix/drawings/update.js";
+import spareMatrixDrawingsCommit from "./spare_matrix/drawings/commit.js";
 import failureEventsIndex      from "./failure_events/index.js";
 import fmecaIndex              from "./fmeca/index.js";
 import receiptsIndex           from "./receipts/index.js";
@@ -1053,6 +1057,12 @@ const STATIC_ROUTES = {
   "/spare_matrix/obsolete":         spareMatrixObsolete,
   "/spare_matrix/opportunities":    spareMatrixOpportunities,
   "/spare_matrix/recommend":        spareMatrixRecommend,
+  // Bulk gun-drawing upload (EG/2D/3D) — static, so they resolve BEFORE the
+  // dynamic "/spare_matrix/<id>" route (which would else capture "drawings").
+  "/spare_matrix/drawings/stage":   spareMatrixDrawingsStage,
+  "/spare_matrix/drawings/list":    spareMatrixDrawingsList,
+  "/spare_matrix/drawings/update":  spareMatrixDrawingsUpdate,
+  "/spare_matrix/drawings/commit":  spareMatrixDrawingsCommit,
   "/spare_matrix":                  spareMatrixIndex,
   "/failure_events":                failureEventsIndex,
   "/fmeca":                         fmecaIndex,

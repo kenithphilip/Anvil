@@ -1379,6 +1379,15 @@
     toQuote: async (id, payload) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/to_quote", { method: "POST", body: payload || {} }),
     // Scan every gun's BOM in the matrix and propose new spare-category columns.
     suggestColumns: async (id) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/suggest_columns"),
+    // Bulk gun-drawing upload (EG sheet / 2D / 3D). Files upload to storage via
+    // documents.upload first; stage() filename-matches them to guns, update()
+    // corrects a staged row, commit() finalizes. list() is the review/track feed.
+    drawings: {
+      stage: async (payload) => apiFetch("/api/spare_matrix/drawings/stage", { method: "POST", body: payload || {} }),
+      list: async (params) => apiFetch("/api/spare_matrix/drawings/list" + (params && Object.keys(params).length ? "?" + new URLSearchParams(params).toString() : "")),
+      update: async (payload) => apiFetch("/api/spare_matrix/drawings/update", { method: "POST", body: payload || {} }),
+      commit: async (payload) => apiFetch("/api/spare_matrix/drawings/commit", { method: "POST", body: payload || {} }),
+    },
   };
 
   // Reliability step 4a: in-field failure / replacement event stream, keyed to

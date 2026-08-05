@@ -6,6 +6,7 @@ import { AnvilBackend } from "../lib/api";
 import { matchSpares, SPARE_PRESETS, isConsumableCol, nameMatchCandidates, type SpareBomItem } from "../lib/spare-match";
 import { lsGet } from "../lib/storage-keys";
 import { GunDrawingsPanel } from "../components/GunDrawingsPanel";
+import { SparePartPicker } from "../components/SparePartPicker";
 import { RBAC } from "../lib/rbac";
 import { buildBomNodes, isHierarchicalBom, collapsedAssemblies, visibleBomNodes } from "../lib/bom-tree";
 
@@ -215,6 +216,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const [importErr, setImportErr] = uM("");
   const [showExport, setShowExport] = uM(false);
   const [showDrawings, setShowDrawings] = uM(false);
+  const [pickCell, setPickCell] = uM<{ rowId: string; colName: string; gunNo: string } | null>(null);
   const [shareLink, setShareLink] = uM<string | null>(null);
   const [busyShare, setBusyShare] = uM(false);
   const [shareCopied, setShareCopied] = uM(false);
@@ -811,6 +813,17 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       {/* Gun BOM drill-down drawer */}
       {bomGun && <GunBomDrawer gunNo={bomGun} onClose={() => setBomGun(null)} />}
 
+      {/* Constrained part picker for a spare cell (sourced from the gun's BOM) */}
+      {pickCell && (
+        <SparePartPicker
+          gunNo={pickCell.gunNo}
+          category={pickCell.colName}
+          value={((draft.rows || []).find((r) => r.id === pickCell.rowId)?.values || {})[pickCell.colName] || ""}
+          onApply={(v) => onCellChange(pickCell.rowId, pickCell.colName, v)}
+          onClose={() => setPickCell(null)}
+        />
+      )}
+
       {/* Import preview */}
       {showImport && !recView && (
         <Card title="Import preview" eyebrow="review then commit"
@@ -900,18 +913,33 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                           />
                         </td>
                       ))}
-                      {(draft.cols || []).map((c) => (
-                        <td key={c.id} className="mono">
-                          <textarea
-                            className="input mono"
-                            value={(r.values || {})[c.col_name] || ""}
-                            onChange={(e) => onCellChange(r.id, c.col_name, e.target.value)}
-                            disabled={c.locked}
-                            rows={1}
-                            style={{ minHeight: 26, height: 26, padding: "4px 6px", fontSize: 11.5, resize: "vertical", width: "100%" }}
-                          />
-                        </td>
-                      ))}
+                      {(draft.cols || []).map((c) => {
+                        const cellVal = (r.values || {})[c.col_name] || "";
+                        // Locked columns are read-only. Otherwise the cell is no
+                        // longer free-text: clicking opens the part picker so the
+                        // value can only be a part from THIS gun's BOM (or an
+                        // explicitly-flagged manual entry) — closes the integrity
+                        // hole where any string could be typed as a part number.
+                        if (c.locked) {
+                          return (
+                            <td key={c.id} className="mono">
+                              <div className="mono-sm" style={{ padding: "4px 6px", minHeight: 26, fontSize: 11.5, whiteSpace: "pre-line", color: "var(--ink-3)" }}>{cellVal || "—"}</div>
+                            </td>
+                          );
+                        }
+                        return (
+                          <td key={c.id} className="mono">
+                            <button type="button"
+                              onClick={() => { if (r.gun_no) setPickCell({ rowId: r.id, colName: c.col_name, gunNo: String(r.gun_no) }); }}
+                              disabled={!r.gun_no}
+                              title={r.gun_no ? "Pick part(s) from this gun's BOM" : "Set the gun number first"}
+                              className="input mono"
+                              style={{ minHeight: 26, padding: "4px 6px", fontSize: 11.5, width: "100%", textAlign: "left", whiteSpace: "pre-line", cursor: r.gun_no ? "pointer" : "not-allowed", background: "var(--paper)", color: cellVal ? "var(--ink)" : "var(--ink-4)" }}>
+                              {cellVal || "＋ pick part"}
+                            </button>
+                          </td>
+                        );
+                      })}
                       <td>
                         <Btn icon sm kind="ghost" onClick={() => onRemoveRow(r.id)} title="Remove row">{Icon.x}</Btn>
                       </td>

@@ -231,6 +231,22 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const [shareLink, setShareLink] = uM<string | null>(null);
   const [busyShare, setBusyShare] = uM(false);
   const [shareCopied, setShareCopied] = uM(false);
+  // Non-destructive VIEW config: which spare columns are hidden from THIS view.
+  // Persisted per matrix in localStorage — it never touches the column DATA
+  // (spare_values / spare_matrix_columns stay intact), so hiding is reversible.
+  const [hiddenCols, setHiddenCols] = uM<Set<string>>(new Set());
+  const [showColMenu, setShowColMenu] = uM(false);
+  eM(() => {
+    try { const raw = localStorage.getItem("obara:v3_spare_hidden:" + (draft.id || "new")); setHiddenCols(new Set(raw ? JSON.parse(raw) : [])); }
+    catch (_) { setHiddenCols(new Set()); }
+  }, [draft.id]);
+  const persistHidden = (next: Set<string>) => {
+    setHiddenCols(next);
+    try { localStorage.setItem("obara:v3_spare_hidden:" + (draft.id || "new"), JSON.stringify([...next])); } catch (_) { /* noop */ }
+  };
+  const hideCol = (name: string) => { const n = new Set(hiddenCols); n.add(name); persistHidden(n); };
+  const showColByName = (name: string) => { const n = new Set(hiddenCols); n.delete(name); persistHidden(n); };
+  const visibleCols = mM(() => (draft.cols || []).filter((c: any) => !hiddenCols.has(c.col_name)), [draft.cols, hiddenCols]);
   const onShare = async () => {
     if (!draft.id) return;
     setBusyShare(true); setShareLink(null);
@@ -750,6 +766,29 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
           <Btn sm onClick={() => { setShowAddCol(true); setShowAddRow(false); }}>{Icon.plus} Spare column</Btn>
           <Btn sm kind="ghost" onClick={() => setShowSuggest(true)} title="Scan every gun's BOM and suggest spare columns to add">Suggest columns</Btn>
           <Btn sm kind="ghost" onClick={() => setShowConfig(true)}>{Icon.settings} Configure cols</Btn>
+          <div style={{ position: "relative" }}>
+            <Btn sm kind="ghost" onClick={() => setShowColMenu((s) => !s)} title="Show / hide spare columns — view only, no data is deleted">
+              {Icon.layers} Columns{hiddenCols.size ? ` (${hiddenCols.size} hidden)` : ""} {Icon.caret}
+            </Btn>
+            {showColMenu && (
+              <div style={{ position: "absolute", top: 30, left: 0, zIndex: 20, background: "var(--paper)", border: "1px solid var(--hairline)", borderRadius: 6, padding: 6, minWidth: 210, maxHeight: 340, overflow: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.12)" }}>
+                <div className="mono-sm" style={{ color: "var(--ink-3)", padding: "2px 6px 6px" }}>Show / hide columns (view only — data kept)</div>
+                {(draft.cols || []).length === 0
+                  ? <div className="mono-sm" style={{ padding: 6, color: "var(--ink-4)" }}>No spare columns yet.</div>
+                  : (draft.cols || []).map((c: any) => (
+                    <label key={c.id} className="cmdk-row" style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", cursor: "pointer", fontSize: 12, borderRadius: 4 }}>
+                      <input type="checkbox" checked={!hiddenCols.has(c.col_name)} onChange={(e) => e.target.checked ? showColByName(c.col_name) : hideCol(c.col_name)} />
+                      <span style={{ flex: 1 }}>{c.col_name}</span>
+                    </label>
+                  ))}
+                {hiddenCols.size > 0 && (
+                  <div style={{ borderTop: "1px solid var(--hairline-2)", marginTop: 4, paddingTop: 4, textAlign: "right" }}>
+                    <Btn sm kind="ghost" onClick={() => persistHidden(new Set())}>Show all</Btn>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
           <Btn sm kind="ghost" onClick={onAutoFill} disabled={busyAuto}>{busyAuto ? "…" : <>{Icon.bolt} Auto-fill</>}</Btn>
           <Btn sm kind="ghost" onClick={() => fileRef.current?.click()}>{Icon.upload} Import</Btn>
           <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,.tsv,.txt,.json" style={{ display: "none" }} onChange={(e) => onImportFile(e.target.files?.[0])} />
@@ -889,10 +928,14 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                     {SM_STATION_COLS.map((sc, si) => (
                       <th key={sc.key} className={sc.num ? "r" : ""} style={{ width: sc.w, minWidth: sc.w, position: "sticky", left: SM_FROZEN_LEFT[si + 1], top: 0, zIndex: 5, background: "var(--paper-3)", ...(si === SM_STATION_COLS.length - 1 ? { borderRight: "2px solid var(--hairline)" } : {}) }}>{sc.label}</th>
                     ))}
-                    {(draft.cols || []).map((c) => (
+                    {visibleCols.map((c) => (
                       <th key={c.id} style={{ minWidth: 120, position: "sticky", top: 0, zIndex: 3, background: "var(--paper-3)" }} title={c.col_type}>
-                        {c.locked && <span style={{ marginRight: 4, color: "var(--ink-4)" }}>{Icon.lock}</span>}
-                        {c.col_name}
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, width: "100%" }}>
+                          {c.locked && <span style={{ color: "var(--ink-4)" }}>{Icon.lock}</span>}
+                          <span style={{ flex: 1 }}>{c.col_name}</span>
+                          <button onClick={() => hideCol(c.col_name)} title="Hide this column from the view (data is kept)"
+                            style={{ border: "none", background: "none", cursor: "pointer", color: "var(--ink-4)", padding: 0, fontSize: 12, lineHeight: 1 }}>⊘</button>
+                        </span>
                       </th>
                     ))}
                     <th style={{ width: 28, position: "sticky", top: 0, zIndex: 3, background: "var(--paper-3)" }}></th>
@@ -926,7 +969,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                           />
                         </td>
                       ))}
-                      {(draft.cols || []).map((c) => {
+                      {visibleCols.map((c) => {
                         const cellVal = (r.values || {})[c.col_name] || "";
                         // Locked columns are read-only. Otherwise the cell is no
                         // longer free-text: clicking opens the part picker so the

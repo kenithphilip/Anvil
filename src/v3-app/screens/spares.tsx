@@ -187,6 +187,17 @@ const SM_STATION_COLS = [
   { key: "qty", label: "Qty", w: 52, num: true },
 ];
 const SM_NUM_ROW_FIELDS = new Set(["qty", "l_qty", "r_qty"]);
+
+// Frozen identity block: Gun + every station column stays pinned (sticky-left)
+// while only the spare-category columns scroll. SM_FROZEN_LEFT[0] is the Gun
+// column; SM_FROZEN_LEFT[i+1] is station column i's cumulative left offset.
+const SM_GUN_W = 156;
+const SM_FROZEN_LEFT: number[] = (() => {
+  const lefts = [0];
+  let acc = SM_GUN_W;
+  for (const c of SM_STATION_COLS) { lefts.push(acc); acc += c.w; }
+  return lefts;
+})();
 // Import header aliases for the station-identity columns.
 const SM_STATION_ALIASES = {
   line: ["line", "line name"],
@@ -872,44 +883,46 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
               <table className="tbl" style={{ minWidth: "100%" }}>
                 <thead>
                   <tr>
-                    {/* Corner cell: sticky on BOTH axes (top + left). */}
-                    <th style={{ minWidth: 110, position: "sticky", left: 0, top: 0, background: "var(--paper-3)", zIndex: 3 }}>Gun</th>
-                    {SM_STATION_COLS.map((sc) => (
-                      <th key={sc.key} className={sc.num ? "r" : ""} style={{ minWidth: sc.w, position: "sticky", top: 0, zIndex: 2, background: "var(--paper-3)" }}>{sc.label}</th>
+                    {/* Frozen identity block (Gun → Qty): sticky on BOTH axes so it
+                        stays pinned while the spare columns scroll horizontally. */}
+                    <th style={{ width: SM_GUN_W, minWidth: SM_GUN_W, position: "sticky", left: 0, top: 0, background: "var(--paper-3)", zIndex: 6 }}>Gun</th>
+                    {SM_STATION_COLS.map((sc, si) => (
+                      <th key={sc.key} className={sc.num ? "r" : ""} style={{ width: sc.w, minWidth: sc.w, position: "sticky", left: SM_FROZEN_LEFT[si + 1], top: 0, zIndex: 5, background: "var(--paper-3)", ...(si === SM_STATION_COLS.length - 1 ? { borderRight: "2px solid var(--hairline)" } : {}) }}>{sc.label}</th>
                     ))}
                     {(draft.cols || []).map((c) => (
-                      <th key={c.id} style={{ minWidth: 110, position: "sticky", top: 0, zIndex: 2, background: "var(--paper-3)" }} title={c.col_type}>
+                      <th key={c.id} style={{ minWidth: 120, position: "sticky", top: 0, zIndex: 3, background: "var(--paper-3)" }} title={c.col_type}>
                         {c.locked && <span style={{ marginRight: 4, color: "var(--ink-4)" }}>{Icon.lock}</span>}
                         {c.col_name}
                       </th>
                     ))}
-                    <th style={{ width: 28, position: "sticky", top: 0, zIndex: 2, background: "var(--paper-3)" }}></th>
+                    <th style={{ width: 28, position: "sticky", top: 0, zIndex: 3, background: "var(--paper-3)" }}></th>
                   </tr>
                 </thead>
                 <tbody>
                   {(draft.rows || []).map((r) => (
                     <tr key={r.id}>
-                      <td className="mono" style={{ position: "sticky", left: 0, background: "var(--paper)", zIndex: 1 }}>
-                        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      <td className="mono" style={{ position: "sticky", left: 0, background: "var(--paper)", zIndex: 2, width: SM_GUN_W, minWidth: SM_GUN_W, boxSizing: "border-box" }}>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                           {/* Gun number is the row IDENTITY (the join key to the BOM
                               and to the gun's drawings). It is LOCKED after import so
                               a stray edit can't silently orphan those links; change a
                               gun by re-importing the template. */}
                           <span className="mono" title="Gun number — locked identity (re-import the template to change it)"
-                            style={{ fontSize: 11.5, minWidth: 78, padding: "0 6px", height: 26, display: "inline-flex", alignItems: "center", color: "var(--ink)", fontWeight: 600 }}>
+                            style={{ fontSize: 11.5, padding: "0 2px", height: 26, display: "inline-flex", alignItems: "center", color: "var(--ink)", fontWeight: 600, whiteSpace: "nowrap" }}>
                             {r.gun_no || "—"}
                           </span>
                           <Btn sm onClick={() => r.gun_no && setBomGun(r.gun_no)} disabled={!r.gun_no} title="Open this gun's full BOM">{Icon.layers} BOM</Btn>
                         </div>
                       </td>
-                      {SM_STATION_COLS.map((sc) => (
-                        <td key={sc.key} className={sc.num ? "r mono" : "mono"}>
+                      {SM_STATION_COLS.map((sc, si) => (
+                        <td key={sc.key} className={sc.num ? "r mono" : "mono"}
+                          style={{ position: "sticky", left: SM_FROZEN_LEFT[si + 1], background: "var(--paper)", zIndex: 1, width: sc.w, minWidth: sc.w, boxSizing: "border-box", ...(si === SM_STATION_COLS.length - 1 ? { borderRight: "2px solid var(--hairline)" } : {}) }}>
                           <input
                             className="input mono"
                             type={sc.num ? "number" : "text"}
                             value={(r as any)[sc.key] != null ? (r as any)[sc.key] : ""}
                             onChange={(e) => onRowMetaChange(r.id, sc.key, e.target.value)}
-                            style={{ height: 26, fontSize: 11.5, padding: "0 6px", width: sc.num ? 52 : Math.max(72, sc.w), textAlign: sc.num ? "right" : "left" }}
+                            style={{ height: 26, fontSize: 11.5, padding: "0 4px", width: "100%", boxSizing: "border-box", textAlign: sc.num ? "right" : "left" }}
                           />
                         </td>
                       ))}
@@ -922,19 +935,20 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                         // hole where any string could be typed as a part number.
                         if (c.locked) {
                           return (
-                            <td key={c.id} className="mono">
-                              <div className="mono-sm" style={{ padding: "4px 6px", minHeight: 26, fontSize: 11.5, whiteSpace: "pre-line", color: "var(--ink-3)" }}>{cellVal || "—"}</div>
+                            <td key={c.id} className="mono" style={{ minWidth: 120, verticalAlign: "top" }}>
+                              <div className="mono-sm" style={{ padding: "4px 6px", minHeight: 26, fontSize: 11.5, whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: 1.3, color: "var(--ink-3)" }}>{cellVal || "—"}</div>
                             </td>
                           );
                         }
                         return (
-                          <td key={c.id} className="mono">
+                          <td key={c.id} className="mono" style={{ minWidth: 120, verticalAlign: "top" }}>
                             <button type="button"
                               onClick={() => { if (r.gun_no) setPickCell({ rowId: r.id, colName: c.col_name, gunNo: String(r.gun_no) }); }}
                               disabled={!r.gun_no}
                               title={r.gun_no ? "Pick part(s) from this gun's BOM" : "Set the gun number first"}
                               className="input mono"
-                              style={{ minHeight: 26, padding: "4px 6px", fontSize: 11.5, width: "100%", textAlign: "left", whiteSpace: "pre-line", cursor: r.gun_no ? "pointer" : "not-allowed", background: "var(--paper)", color: cellVal ? "var(--ink)" : "var(--ink-4)" }}>
+                              // Part numbers wrap (incl. long single tokens) instead of being clipped.
+                              style={{ minHeight: 26, height: "auto", padding: "4px 6px", fontSize: 11.5, width: "100%", textAlign: "left", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: 1.3, cursor: r.gun_no ? "pointer" : "not-allowed", background: "var(--paper)", color: cellVal ? "var(--ink)" : "var(--ink-4)" }}>
                               {cellVal || "＋ pick part"}
                             </button>
                           </td>

@@ -369,6 +369,18 @@ button { cursor: pointer; }
   flex-direction: column;
   z-index: 50;
 }
+/* Collapsed rail is only 56px wide and .app-side clips overflow, so the 220px
+   popover gets sliced to a right-edge sliver (only the value column shows —
+   "light / normal / collapsed", clipped). In collapsed mode, pin the menu to the
+   viewport instead: position:fixed escapes the sidebar's overflow:hidden without
+   un-clipping the footer, and it opens rightward over the content. */
+[data-rail="collapsed"] .settings-menu {
+  position: fixed;
+  left: 12px;
+  right: auto;
+  top: auto;
+  bottom: 48px;
+}
 .settings-menu-row {
   display: grid;
   grid-template-columns: 18px 1fr auto;

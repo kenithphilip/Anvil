@@ -1821,7 +1821,7 @@ const SMWorksheetTab = () => {
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: 14, alignItems: "start" }}>
+    <div style={{ display: "grid", gridTemplateColumns: "240px minmax(0, 1fr)", gap: 14, alignItems: "start" }}>
       {/* Left rail */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8, position: "sticky", top: 0 }}>
         <Btn kind="primary" sm full onClick={() => setShowNew(true)}>{Icon.plus} New matrix</Btn>
@@ -1863,8 +1863,11 @@ const SMWorksheetTab = () => {
         </Card>
       </div>
 
-      {/* Right pane */}
-      <div>
+      {/* Right pane. min-width:0 lets this grid column shrink below the wide
+          worksheet table's intrinsic width, so horizontal scroll is confined to
+          the grid's own overflow container (and the sticky freeze columns work)
+          instead of widening the whole page. */}
+      <div style={{ minWidth: 0 }}>
         {loadingActive ? (
           <Card><div className="body" style={{ padding: 24, color: "var(--ink-3)" }}>Loading matrix…</div></Card>
         ) : !active ? (

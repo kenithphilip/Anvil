@@ -51,6 +51,10 @@ export const drainQueue = async (svc, opts) => {
     processFn,
     failedStatusValue = "failed",
     errorColumn = "error",
+    // When set, scope the drain to a single tenant. The cron caller omits it
+    // (drains all tenants); a MANUAL admin drain must pass its own tenant so it
+    // can't run billable work across every tenant.
+    tenantId = null,
   } = opts || {};
 
   if (!table || !processFn) {
@@ -60,6 +64,7 @@ export const drainQueue = async (svc, opts) => {
   // Pick rows. We use either a status-column match or a
   // completed-flag match depending on the queue's shape.
   let q = svc.from(table).select(selectColumns);
+  if (tenantId) q = q.eq("tenant_id", tenantId);
   if (completedColumn) {
     q = q.eq(completedColumn, completedValue);
   } else {

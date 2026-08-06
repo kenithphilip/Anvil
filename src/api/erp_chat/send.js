@@ -65,7 +65,7 @@ export default async function handler(req, res) {
     if (!sessionId) {
       const ins = await svc.from("erp_chat_sessions").insert({
         tenant_id: ctx.tenantId,
-        user_id: ctx.userId || null,
+        user_id: ctx.user?.id || ctx.userId || null,   // actor id is ctx.user.id (ctx.userId is always undefined)
         title: body.content.slice(0, 60),
       }).select("id").single();
       if (ins.error) throw new Error(ins.error.message);

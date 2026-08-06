@@ -40,15 +40,19 @@ const ELIGIBLE_SOURCES = ["whatsapp_inbound", "email_inbound"];
 // but we don't try to filter on extraction_runs here (the join
 // shape gets unwieldy in Supabase JS); instead we filter
 // post-fetch.
-const fetchCandidates = async (svc, limit) => {
-  const docs = await svc
+const fetchCandidates = async (svc, limit, tenantId) => {
+  let q = svc
     .from("documents")
     .select(`
       id, tenant_id, storage_bucket, storage_path, filename, mime_type,
       sha256, classification, metadata, scan_status, created_at,
       order_documents!inner(order_id, role)
     `)
-    .eq("scan_status", "clean")
+    .eq("scan_status", "clean");
+  // A MANUAL (admin-triggered) drain must only touch the caller's tenant;
+  // the cron path passes no tenantId and legitimately drains all tenants.
+  if (tenantId) q = q.eq("tenant_id", tenantId);
+  const docs = await q
     .order("created_at", { ascending: true })
     .limit(limit * 2);
   if (docs.error) throw new Error("documents read: " + docs.error.message);
@@ -174,8 +178,8 @@ const runOne = async (svc, doc) => {
   };
 };
 
-const drainOnce = async (svc) => {
-  const docs = await fetchCandidates(svc, BATCH_SIZE);
+const drainOnce = async (svc, tenantId) => {
+  const docs = await fetchCandidates(svc, BATCH_SIZE, tenantId);
   const results = [];
   for (const doc of docs) {
     try {
@@ -214,7 +218,9 @@ export default async function handler(req, res) {
     }
     const ctx = await resolveContext(req);
     requirePermission(ctx, "approve");
-    const out = await drainOnce(svc);
+    // Scope the manual drain to the caller's tenant (was draining ALL tenants —
+    // billable DocAI across every tenant from one admin's click).
+    const out = await drainOnce(svc, ctx.tenantId);
     await recordAudit(ctx, {
       action: "auto_ocr_drain",
       objectType: "tenant",

@@ -89,7 +89,19 @@ export default async function handler(req, res) {
         created_by: actor,
       };
       const ins = await svc.from("extraction_jobs").insert(row).select("*").single();
-      if (ins.error) throw new Error(ins.error.message);
+      if (ins.error) {
+        // A concurrent request already created an in-flight job for this order
+        // (partial unique index extraction_jobs_one_inflight_per_order). Return
+        // that job instead of erroring, so a double-click can't double-process.
+        if (ins.error.code === "23505" || /duplicate key|unique constraint/i.test(ins.error.message)) {
+          const race = await svc.from("extraction_jobs").select("*")
+            .eq("tenant_id", ctx.tenantId).eq("order_id", body.order_id)
+            .in("status", ["queued", "profiling", "chunking", "extracting", "merging"])
+            .order("created_at", { ascending: false }).limit(1).maybeSingle();
+          if (race.data) return json(res, 200, { job: race.data, deduped: true });
+        }
+        throw new Error(ins.error.message);
+      }
       await recordAudit(ctx, {
         action: "extraction_job_created",
         objectType: "extraction_job",

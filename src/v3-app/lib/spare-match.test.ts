@@ -6,6 +6,8 @@ import {
   isCopperMaterial,
   isConsumableCol,
   stripVariant,
+  normalizeAssy,
+  suggestSpareColumns,
 } from "./spare-match";
 
 describe("nameIsCleanMatch", () => {
@@ -122,5 +124,74 @@ describe("stripVariant + MOVING/FIXED columns (PR3)", () => {
     expect(r["SHANK (FIXED)"].split("\n")).toContain("TWS-092-100-3");
     // Consumable copper filter still applies to the variant column.
     expect(r["SHANK (MOVING)"]).not.toContain("SS-SHANK");
+  });
+});
+
+describe("normalizeAssy — all assembly spellings", () => {
+  it("canonicalizes ASSEMBLY / ASSY / ASS'Y / ASSY. to ASSY", () => {
+    expect(normalizeAssy("GEAR CASE ASSEMBLY")).toBe("GEAR CASE ASSY");
+    expect(normalizeAssy("GEAR CASE ASS'Y")).toBe("GEAR CASE ASSY");
+    expect(normalizeAssy("GEAR CASE ASS’Y")).toBe("GEAR CASE ASSY");   // curly apostrophe
+    expect(normalizeAssy("GEAR CASE ASSY.")).toBe("GEAR CASE ASSY");
+    expect(normalizeAssy("gear case assy")).toBe("gear case ASSY");
+  });
+  it("leaves a plain base name and unrelated words alone", () => {
+    expect(normalizeAssy("GEAR CASE")).toBe("GEAR CASE");
+    expect(normalizeAssy("BRASSY BRACKET")).toBe("BRASSY BRACKET"); // no mid-word match
+  });
+});
+
+describe("nameIsCleanMatch — assembly variants", () => {
+  it("matches every assembly spelling to a canonical ASSY column", () => {
+    expect(nameIsCleanMatch("GEAR CASE ASSEMBLY", "GEAR CASE ASSY")).toBe(true);
+    expect(nameIsCleanMatch("GEAR CASE ASS'Y", "GEAR CASE ASSY")).toBe(true);
+    expect(nameIsCleanMatch("GEAR CASE ASSY 250 RH", "GEAR CASE ASSY")).toBe(true);
+  });
+  it("keeps GEAR CASE distinct from GEAR CASE ASSY", () => {
+    expect(nameIsCleanMatch("GEAR CASE", "GEAR CASE ASSY")).toBe(false);   // base is not the assembly
+    expect(nameIsCleanMatch("GEAR CASE ASSY", "GEAR CASE")).toBe(false);   // assembly is not the base
+  });
+});
+
+describe("matchSpares — GEAR CASE vs GEAR CASE ASSY (+ ASSEMBLY spelling)", () => {
+  const bom = [
+    { part_no: "GC-1", part_name: "GEAR CASE", material: "SS", size: "" },
+    { part_no: "GCA-1", part_name: "GEAR CASE ASSEMBLY", material: "SS", size: "" },
+    { part_no: "GCA-2", part_name: "GEAR CASE ASS'Y", material: "SS", size: "" },
+  ];
+  it("routes the base part to GEAR CASE and the assemblies to GEAR CASE ASSY", () => {
+    const r = matchSpares(bom, ["GEAR CASE", "GEAR CASE ASSY"]);
+    expect(r["GEAR CASE"].split("\n")).toEqual(["GC-1"]);                 // assemblies excluded
+    expect(r["GEAR CASE ASSY"].split("\n").sort()).toEqual(["GCA-1", "GCA-2"]);
+  });
+});
+
+describe("suggestSpareColumns — preset-aware + copper-critical", () => {
+  it("detects assemblies (any spelling), separates base vs assy, ranks copper first", () => {
+    const perGun = [
+      { gun: "G1", lines: [
+        { part_no: "GC-1", part_name: "GEAR CASE", material: "SS" },
+        { part_no: "GCA-1", part_name: "2 GEAR CASE ASS'Y", material: "SS" }, // numbered + ass'y
+        { part_no: "TIP-1", part_name: "CAP TIP 16", material: "CuCrZr" },    // copper consumable preset
+        { part_no: "CU-9", part_name: "CONTACT PLATE", material: "Beryllium Copper" }, // copper, NON-preset
+      ] },
+    ];
+    const s = suggestSpareColumns(perGun, []);
+    const byName = Object.fromEntries(s.map((x) => [x.col_name, x]));
+    expect(byName["GEAR CASE ASSY"]).toBeTruthy();          // canonicalized from "2 GEAR CASE ASS'Y"
+    expect(byName["GEAR CASE"]).toBeTruthy();               // kept distinct
+    expect(byName["GEAR CASE ASSY"].col_type).toBe("spare");
+    // Copper non-preset part surfaces as a CRITICAL consumable column.
+    expect(byName["CONTACT PLATE"]).toBeTruthy();
+    expect(byName["CONTACT PLATE"].col_type).toBe("consumable");
+    expect(byName["CONTACT PLATE"].critical).toBe(true);
+    // A copper consumable preset is critical too.
+    expect(byName["CAP TIP"].critical).toBe(true);
+    // Critical rows sort ahead of non-critical spares.
+    expect(s[0].critical).toBe(true);
+  });
+  it("suppresses categories that are already columns", () => {
+    const perGun = [{ gun: "G1", lines: [{ part_no: "A-1", part_name: "ARM ASSY", material: "SS" }] }];
+    expect(suggestSpareColumns(perGun, ["ARM ASSY"]).find((x) => x.col_name === "ARM ASSY")).toBeUndefined();
   });
 });

@@ -271,7 +271,6 @@ import spareMatrixById         from "./spare_matrix/[id].js";
 import spareMatrixRecomputeRec from "./spare_matrix/recompute_recommended.js";
 import spareMatrixRecommended  from "./spare_matrix/recommended.js";
 import spareMatrixToQuote      from "./spare_matrix/to_quote.js";
-import spareMatrixSuggestCols  from "./spare_matrix/suggest_columns.js";
 import spareMatrixShare        from "./spare_matrix/share.js";
 import spareMatrixDrawingsStage  from "./spare_matrix/drawings/stage.js";
 import spareMatrixDrawingsList   from "./spare_matrix/drawings/list.js";
@@ -1135,7 +1134,6 @@ const DYNAMIC_ROUTES = [
   { prefix: "/spare_matrix/", suffix: "/recompute_recommended", handler: spareMatrixRecomputeRec, param: "id" },
   { prefix: "/spare_matrix/", suffix: "/recommended",           handler: spareMatrixRecommended,  param: "id" },
   { prefix: "/spare_matrix/", suffix: "/to_quote",              handler: spareMatrixToQuote,      param: "id" },
-  { prefix: "/spare_matrix/", suffix: "/suggest_columns",       handler: spareMatrixSuggestCols,  param: "id" },
   { prefix: "/spare_matrix/", suffix: "/share",                 handler: spareMatrixShare,        param: "id" },
   { prefix: "/spare_matrix/", handler: spareMatrixById, param: "id" },
   // Invoices: /invoices/<id>. The static "/invoices" + "/invoices/pdf"

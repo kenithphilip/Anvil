@@ -1377,8 +1377,8 @@
     bulkFillRecommended: async (id, opts) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/recommended", { method: "PATCH", body: { bulk: { source: (opts && opts.source) || "max", only_blank: !!(opts && opts.only_blank) } } }),
     // PR5: feed the recommended sheet into a DRAFT quote (unpriced).
     toQuote: async (id, payload) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/to_quote", { method: "POST", body: payload || {} }),
-    // Scan every gun's BOM in the matrix and propose new spare-category columns.
-    suggestColumns: async (id) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/suggest_columns"),
+    // Column suggestion now runs client-side (preset-aware, copper-critical) in
+    // spares.tsx via suggestSpareColumns — no server round-trip.
     // Share a matrix with its customer via the portal (returns { token, url }).
     share: async (id) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/share", { method: "POST", body: {} }),
     // Bulk gun-drawing upload (EG sheet / 2D / 3D). Files upload to storage via

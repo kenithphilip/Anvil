@@ -44,6 +44,52 @@ const REQUIRED_ROLES = {
   admin: ADMIN_ROLES,
 };
 
+// ── Per-tenant domain mapping (Phase 0) ──────────────────────────────────
+// Resolve the request Host to a tenant, so a per-tenant domain/subdomain
+// (e.g. obara.anvil.app, or a custom vanity host) can scope the session
+// without the user typing a tenant UUID. Ships DARK: used only as a fallback
+// in resolveContext when no x-anvil-tenant header is present AND the resolved
+// tenant is one the user already belongs to — it never grants cross-tenant
+// access. See docs / PR: tenant domain mapping Phase 0.
+
+// The effective request host, lowercased, port stripped. Prefers the
+// x-forwarded-host the proxy (Vercel) sets over the raw Host header.
+export const hostFromReq = (req) => {
+  const raw = String((req && req.headers && (req.headers["x-forwarded-host"] || req.headers.host)) || "")
+    .split(",")[0].trim().toLowerCase();
+  return raw.replace(/:\d+$/, "");
+};
+
+// The leftmost subdomain label of a host, or "" when there isn't one (apex
+// domain, bare hostname, localhost, or an IP literal). Maps
+// <slug>.<app-domain> to a tenant by slug.
+export const subdomainLabel = (host) => {
+  const h = String(host || "").trim().toLowerCase();
+  if (!h || h === "localhost" || /^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return "";
+  const parts = h.split(".");
+  if (parts.length < 3) return "";   // need sub.domain.tld to have a subdomain
+  return parts[0];
+};
+
+// Look up the tenant a host maps to: first an explicit full-host `domain`
+// match (custom vanity domains), then the subdomain label against `slug`.
+// Best-effort — any error resolves to null so host resolution can never break
+// auth; the caller then falls back to the user's default tenant.
+export const resolveHostTenant = async (svc, req) => {
+  try {
+    const host = hostFromReq(req);
+    if (!host) return null;
+    const byDomain = await svc.from("tenants").select("id").ilike("domain", host).maybeSingle();
+    if (byDomain && byDomain.data && byDomain.data.id) return byDomain.data.id;
+    const label = subdomainLabel(host);
+    if (!label) return null;
+    const bySlug = await svc.from("tenants").select("id").eq("slug", label).maybeSingle();
+    return (bySlug && bySlug.data && bySlug.data.id) || null;
+  } catch (_) {
+    return null;
+  }
+};
+
 export const resolveContext = async (req) => {
   const headerAuth = (req.headers.authorization || req.headers.Authorization || "").trim();
   // Primary header is `x-anvil-tenant`; `x-obara-tenant` is accepted as a
@@ -90,7 +136,17 @@ export const resolveContext = async (req) => {
     err.status = 403;
     throw err;
   }
-  const tenantId = tenantHeader || allowed[0].tenant_id;
+  // Tenant precedence: explicit x-anvil-tenant header > per-tenant host
+  // (domain/subdomain) the user belongs to > the user's first membership.
+  // Host resolution can NEVER select a tenant the user isn't a member of —
+  // an unknown or non-member host simply falls through to allowed[0], so this
+  // is backward-compatible and ships dark until a tenant domain is populated.
+  let tenantId = tenantHeader;
+  if (!tenantId) {
+    const hostTenant = await resolveHostTenant(svc, req);
+    if (hostTenant && allowed.some((m) => m.tenant_id === hostTenant)) tenantId = hostTenant;
+  }
+  if (!tenantId) tenantId = allowed[0].tenant_id;
   const membership = allowed.find((m) => m.tenant_id === tenantId);
   if (!membership) {
     const err = new Error("User is not a member of tenant " + tenantId);

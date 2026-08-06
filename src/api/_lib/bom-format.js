@@ -78,7 +78,12 @@ export const BUILTIN_FORMATS = [
     quirks: { level_from_col: "std_category" },
   },
   {
-    key: "obara_india", label: "India (flat)", is_builtin: true, source_country: "O-INDIA",
+    // source_country is null, NOT "O-INDIA": obara_india is the priority-5
+    // detection FLOOR (it wins when no KR/CN/JP signal fires), so stamping it
+    // "O-INDIA" silently mis-attributed every signal-less foreign BOM to India.
+    // It keeps its rich column map as the floor, but origin is left unknown for
+    // the operator (or a positive signal) to set.
+    key: "obara_india", label: "India (flat)", is_builtin: true, source_country: null,
     column_map: {
       part_no: ["part no", "part no.", "part number", "partno", "part_no"],
       part_name: ["part name", "name", "description", "item name"],

@@ -149,6 +149,9 @@ export const isCopperMaterial = (mat?: string | null): boolean => {
   if (m.includes("BE14") || m.includes("BE25") || m.includes("BECU") || m.includes("BERYLLIUM") || /\bBE\d/.test(m)) return true;
   if (m.includes("CRCU") || m.includes("CR-CU") || m.includes("CHROMIUM COPPER")) return true;
   if (m.includes("COPPER")) return true;
+  // Dispersion-strengthened / electrode-class coppers that carry neither "CU"
+  // nor "COPPER" in the label.
+  if (m.includes("GLIDCOP") || m.includes("RWMA")) return true;
   return false;
 };
 
@@ -236,9 +239,14 @@ export const matchSpares = (
       });
     }
 
-    // Consumable columns: only copper-type material (unless the caller opts out,
-    // e.g. the column scan, which surfaces the category by name regardless).
-    if (!opts.skipMaterialFilter && isConsumableCol(col)) matches = matches.filter((p) => isCopperMaterial(p.material));
+    // Consumable columns: only copper-type material — BUT keep parts whose
+    // material is blank (legacy flat BOMs carry no material metadata; filtering
+    // them out silently emptied cap-tip/shank/shunt/electrode columns). A
+    // present, non-copper material still excludes the part. The column scan opts
+    // out of the filter entirely (surfaces the category by name).
+    if (!opts.skipMaterialFilter && isConsumableCol(col)) {
+      matches = matches.filter((p) => !String(p.material || "").trim() || isCopperMaterial(p.material));
+    }
 
     // dedup by part_no, preserve order
     const seen = new Set<string>();

@@ -3,8 +3,26 @@
 // order (item_customer_parts -> item_master.part_no ->
 // item_master.alias) without touching a DB.
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import { __mapLinesPure } from "../api/_lib/item-mapper.js";
+
+// Regression guard: the CM 2.4 blocked-fuzzy tier must run in the PRODUCTION
+// DB-backed mapLinesToItemMaster, not only in the test-only __mapLinesPure
+// helper (it was ported into prod after the audit found it never ran there).
+describe("mapLinesToItemMaster (prod) wires the fuzzy_blocked tier", () => {
+  it("the DB-backed function body contains the blocked-fuzzy tier", () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "api", "_lib", "item-mapper.js"), "utf8");
+    const start = src.indexOf("export const mapLinesToItemMaster");
+    const end = src.indexOf("export const __mapLinesPure");
+    const prodBody = src.slice(start, end > start ? end : src.length);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(prodBody).toContain("item_master.fuzzy_blocked");
+    expect(prodBody).toContain("FUZZY_BLOCK_THRESHOLD");
+  });
+});
 
 const masterRow = (overrides) => ({
   id: "im-1", part_no: "THB-L1-70B-2", alias: "BEND ADAPTER",

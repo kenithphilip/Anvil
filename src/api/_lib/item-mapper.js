@@ -362,6 +362,30 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opt
         if (im) { match = im; matchVia = "item_master.alias"; break; }
       }
     }
+    // CM 2.4 tier: blocked fuzzy. Compute a blocking key for the line; only
+    // score against items in the same block, ranked by compositeScore
+    // (Jaro-Winkler over partno + Jaccard 3-grams over description + Metaphone).
+    // Catches partno typos + rephrased descriptions the substring-based
+    // description_fuzzy tier misses, without scanning every item. Previously
+    // this ran ONLY in the test-only __mapLinesPure helper — never in prod.
+    if (!match && Array.isArray(imAll) && imAll.length) {
+      const lineKey = blockingKey({
+        partNo: line.partNumber || line.partNo || line.sku || "",
+        description: line.description || line.name || line.item || "",
+      });
+      let bestScore = 0;
+      let bestRow = null;
+      for (const row of imAll) {
+        const rowKey = blockingKey({ partNo: row.part_no, description: row.description || row.print_name || row.alias });
+        if (rowKey !== lineKey) continue;
+        const s = compositeScore(line, row);
+        if (s > bestScore) { bestScore = s; bestRow = row; }
+      }
+      if (bestRow && bestScore >= FUZZY_BLOCK_THRESHOLD) {
+        match = bestRow;
+        matchVia = "item_master.fuzzy_blocked";
+      }
+    }
     if (!match) {
       // Last-resort description fuzzy match. Anchors mappings
       // like "GUIDE ASSY" -> "Guide Assembly THB-L1-70B-2" when

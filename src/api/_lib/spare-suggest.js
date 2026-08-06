@@ -7,13 +7,27 @@ import { classifyItemType } from "./spare-minmax.js";
 // A word that starts a size / spec / quantity token -> stop the header there.
 const SIZE_TOKEN = /\d|^(mm|cm|m|inch|")$/i;
 
+// Leading level/seq numbering ("2 ", "2.1 ", "1) ", "-", "(3)") and any leading
+// non-ASCII (CJK/Hangul/Kana) prefix, stripped so a hierarchical or localized
+// assembly name — "2.齿轮箱 GEAR CASE ASSY", "① GEAR CASE ASSY", "기어 GEAR CASE
+// ASSY" — groups as "GEAR CASE ASSY". Mirrors the client nameMatchCandidates so
+// the "Suggest columns" scan detects the same spares the picker/auto-fill do.
+const LEAD_NUMBERING = /^[\s\d.()\-_]+/;
+const LEAD_NONASCII = /^[^\x20-\x7E]+/;
+const stripLeadNoise = (s) =>
+  String(s || "").replace(LEAD_NUMBERING, "").replace(LEAD_NONASCII, "").replace(LEAD_NUMBERING, "").trim();
+
 // Derive a candidate column header from a BOM line: prefer the imported
-// std_category; else the leading (non-size) words of part_name.
+// std_category (unless it is just a level number); else the leading (non-size)
+// words of part_name, after stripping leading numbering / non-ASCII noise.
 export const categoryOf = (line) => {
   const std = String((line && line.std_category) || "").trim();
-  if (std) return std.toUpperCase();
-  const name = String((line && line.part_name) || "").trim();
-  if (!name) return "";
+  // A pure-numeric std_category ("2", "2.1") is a BOM LEVEL, not a category —
+  // ignore it and derive from the name instead.
+  if (std && !/^\d+(\.\d+)*$/.test(std)) return std.toUpperCase();
+  const raw = String((line && line.part_name) || "").trim();
+  if (!raw) return "";
+  const name = stripLeadNoise(raw) || raw;   // if stripping empties it, keep raw
   const kept = [];
   for (const w of name.toUpperCase().split(/\s+/)) {
     if (SIZE_TOKEN.test(w)) break;   // stop at the first size/spec token

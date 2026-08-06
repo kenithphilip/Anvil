@@ -14,6 +14,28 @@ describe("categoryOf", () => {
     expect(categoryOf({ part_name: "SHANK (MOVING)" })).toBe("SHANK (MOVING)");
     expect(categoryOf({ part_name: "" })).toBe("");
   });
+  it("detects an assembly name (e.g. GEAR CASE ASSY)", () => {
+    expect(categoryOf({ part_name: "GEAR CASE ASSY" })).toBe("GEAR CASE ASSY");
+  });
+  it("strips a leading level/seq number so a hierarchical BOM row still groups", () => {
+    expect(categoryOf({ part_name: "2 GEAR CASE ASSY" })).toBe("GEAR CASE ASSY");
+    expect(categoryOf({ part_name: "2.1 GEAR CASE ASSY" })).toBe("GEAR CASE ASSY");
+    expect(categoryOf({ part_name: "(3) GEAR CASE ASSY" })).toBe("GEAR CASE ASSY");
+  });
+  it("strips a leading non-ASCII (CJK/Hangul) prefix", () => {
+    expect(categoryOf({ part_name: "齿轮箱 GEAR CASE ASSY" })).toBe("GEAR CASE ASSY");
+    expect(categoryOf({ part_name: "2.齿轮箱 GEAR CASE ASSY" })).toBe("GEAR CASE ASSY");
+  });
+  it("ignores a pure-numeric std_category (that is a LEVEL, not a category)", () => {
+    expect(categoryOf({ std_category: "2", part_name: "GEAR CASE ASSY" })).toBe("GEAR CASE ASSY");
+    expect(categoryOf({ std_category: "2.1", part_name: "SHANK 16MM" })).toBe("SHANK");
+  });
+  it("keeps a non-numeric std_category (import-authoritative grouping)", () => {
+    expect(categoryOf({ std_category: "GEAR CASE", part_name: "GEAR CASE ASSY" })).toBe("GEAR CASE");
+  });
+  it("keeps an all-CJK name rather than dropping the line", () => {
+    expect(categoryOf({ part_name: "齿轮箱总成" })).toBe("齿轮箱总成");
+  });
 });
 
 describe("suggestColumnsFromLines", () => {

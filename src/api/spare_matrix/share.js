@@ -10,7 +10,7 @@
 // customer_support, admin).
 
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import crypto from "node:crypto";
@@ -23,7 +23,11 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return json(res, 405, { error: { message: "Method not allowed" } });
   try {
     const ctx = await resolveContext(req);
-    requirePermission(ctx, "write");
+    // Sharing is gated by the specific action (not blanket write) so read-only
+    // customer_support can share while the action allow-list still bounds who
+    // else can — see SERVER_ACTIONS["spare_matrix.share"].
+    requirePermission(ctx, "read");
+    requireAction(ctx, "spare_matrix.share");
     const matrixId = req.query.id;
     if (!matrixId) return json(res, 400, { error: { message: "matrix id required" } });
 

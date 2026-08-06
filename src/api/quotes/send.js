@@ -20,7 +20,7 @@
 
 import crypto from "node:crypto";
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { renderQuote } from "../_lib/pdf-renderer.js";
@@ -156,6 +156,9 @@ export default async function handler(req, res) {
   try {
     const ctx = await resolveContext(req);
     requirePermission(ctx, "approve");
+    // Quotes are a sales_manager/admin action (see MATRIX.quotes); finance is
+    // read-only on quotes.
+    requireAction(ctx, "quotes.approve");
     const body = await readBody(req);
     if (!body?.id) return json(res, 400, { error: { message: "id required" } });
 

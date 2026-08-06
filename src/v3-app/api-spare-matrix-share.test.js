@@ -45,6 +45,8 @@ vi.mock("../api/_lib/audit.js", () => ({ recordAudit: async () => {}, recordEven
 vi.mock("../api/_lib/auth.js", () => ({
   resolveContext: async () => ({ tenantId: TENANT, user: { id: USER }, role: "customer_support" }),
   requirePermission: () => {},
+  // customer_support IS permitted to share (SERVER_ACTIONS["spare_matrix.share"]).
+  requireAction: () => {},
 }));
 
 import share from "../api/spare_matrix/share.js";

@@ -43,7 +43,7 @@ vi.mock("../api/_lib/tenancy.js", () => ({
   isAutoOnboardEnabled: () => false,
 }));
 
-const { hostFromReq, subdomainLabel, resolveHostTenant, resolveContext } = await import("../api/_lib/auth.js");
+const { hostFromReq, subdomainLabel, resolveHostTenant, resolveContext, requireAction, hasAction } = await import("../api/_lib/auth.js");
 
 const reqWith = (host, headers = {}) => ({ headers: { host, ...headers } });
 
@@ -120,5 +120,31 @@ describe("resolveContext — tenant precedence + membership guard", () => {
     currentSvc = makeSvc({ memberships: [{ tenant_id: "T-A", role: "admin", status: "approved" }] });
     const ctx = await resolveContext(reqWith("app.anvil.app", authed));
     expect(ctx.tenantId).toBe("T-A");
+  });
+});
+
+describe("requireAction — server-side fine-grained gating", () => {
+  const asRole = (role) => ({ role, anonymous: false });
+  it("allows a role in the action allow-list (and admin)", () => {
+    expect(() => requireAction(asRole("customer_support"), "spare_matrix.share")).not.toThrow();
+    expect(() => requireAction(asRole("admin"), "invoices.write")).not.toThrow();
+    expect(() => requireAction(asRole("sales_manager"), "quotes.approve")).not.toThrow();
+    expect(() => requireAction(asRole("finance"), "invoices.write")).not.toThrow();
+  });
+  it("blocks a role NOT in the allow-list", () => {
+    expect(() => requireAction(asRole("customer_support"), "invoices.write")).toThrow();
+    expect(() => requireAction(asRole("finance"), "quotes.approve")).toThrow();       // finance is read-only on quotes
+    expect(() => requireAction(asRole("operator"), "invoices.write")).toThrow();
+    expect(() => requireAction(asRole("sales_engineer"), "customer.edit_gstin")).toThrow();
+  });
+  it("blocks anonymous callers from any gated action", () => {
+    expect(() => requireAction({ anonymous: true, role: "admin" }, "spare_matrix.share")).toThrow();
+  });
+  it("is a no-op for an action not in SERVER_ACTIONS (coarse verb already ran)", () => {
+    expect(() => requireAction(asRole("viewer"), "some.unknown.action")).not.toThrow();
+  });
+  it("hasAction returns booleans", () => {
+    expect(hasAction(asRole("sales_manager"), "quotes.approve")).toBe(true);
+    expect(hasAction(asRole("finance"), "quotes.approve")).toBe(false);
   });
 });

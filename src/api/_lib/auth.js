@@ -31,9 +31,12 @@ if (ALLOW_ANONYMOUS && NODE_ENV === "production") {
 // every read endpoint that asked for "read" permission, despite the
 // frontend matrix granting them read across most pages.
 const VIEWER_ROLES   = new Set(["viewer", "sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "design_engineer", "design_manager", "customer_support"]);
-// customer_support is read-only in the frontend matrix (inherits viewer) but a
-// server-side writer so it can create portal share links for a spare matrix.
-const WRITER_ROLES   = new Set(["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "design_engineer", "design_manager", "customer_support"]);
+// customer_support is read-only server-side (it inherits the viewer matrix on
+// the client). Its ONE write — sharing a spare matrix to the customer portal —
+// is gated by the "spare_matrix.share" action (requireAction) rather than
+// blanket WRITER_ROLES membership, so it can no longer write to every other
+// endpoint (invoices, customers, quotes, …).
+const WRITER_ROLES   = new Set(["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "design_engineer", "design_manager"]);
 const APPROVER_ROLES = new Set(["sales_manager", "finance", "admin"]);
 const ADMIN_ROLES    = new Set(["admin"]);
 
@@ -193,6 +196,46 @@ export const requirePermission = (ctx, level) => {
   if (!required.has(ctx.role)) {
     const err = new Error("Role " + ctx.role + " is not allowed to perform " + level + " action");
     err.status = 403;
+    throw err;
+  }
+};
+
+// ── Fine-grained action gating ───────────────────────────────────────────
+// The coarse read/write/approve/admin verbs above are too broad for a handful
+// of sensitive actions: the client ACTIONS matrix (src/v3-app/lib/rbac.ts) and
+// the per-resource MATRIX restrict them further, but until now that was
+// enforced ONLY client-side. SERVER_ACTIONS mirrors the sensitive entries so the
+// server is the real gate. Enforced at the specific endpoints (share, invoices,
+// quotes convert/send, customer GSTIN). Kept in sync with rbac.ts by
+// src/scripts/audit-rbac.mjs.
+export const SERVER_ACTIONS = {
+  // Share a spare matrix to the customer portal — the ONE write customer_support
+  // is allowed (it is otherwise read-only). Mirrors rbac.ts ACTIONS.
+  "spare_matrix.share":  new Set(["sales_engineer", "sales_manager", "design_engineer", "design_manager", "customer_support", "admin"]),
+  // GSTIN edits are restricted (a bad GSTIN breaks e-invoice IRN / Tally lookup).
+  "customer.edit_gstin": new Set(["sales_manager", "admin"]),
+  // MATRIX.invoices: only sales_manager (rw), finance (rwa), admin (rwa) — NOT
+  // operator/procurement/customer_support/sales_engineer (r or hidden).
+  "invoices.write":      new Set(["sales_manager", "finance", "admin"]),
+  // MATRIX.quotes: sales_manager (rwa) + admin (rwa) approve/convert/send;
+  // finance is read-only on quotes (its approve power is invoices/tally).
+  "quotes.approve":      new Set(["sales_manager", "admin"]),
+};
+
+export const hasAction = (ctx, action) => {
+  const allow = SERVER_ACTIONS[action];
+  if (!allow) return true;                 // action not server-gated here
+  if (!ctx || ctx.anonymous) return false; // anonymous can never act
+  return allow.has(ctx.role) || ctx.role === "admin";
+};
+
+// Throwing gate for a fine-grained action. Call AFTER requirePermission (which
+// enforces the coarse verb + the anonymous hard-stop) so this only tightens.
+export const requireAction = (ctx, action) => {
+  if (!hasAction(ctx, action)) {
+    const err = new Error("Role " + (ctx && ctx.role) + " is not permitted to perform '" + action + "'");
+    err.status = 403;
+    err.code = "ACTION_FORBIDDEN";
     throw err;
   }
 };

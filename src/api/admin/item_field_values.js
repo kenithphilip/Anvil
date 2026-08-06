@@ -72,6 +72,12 @@ export default async function handler(req, res) {
       requirePermission(ctx, "admin");
       const body = await readBody(req);
       if (!body.item_id) return json(res, 400, { error: { message: "item_id required" } });
+      // Verify the item belongs to this tenant before attaching custom-field
+      // values to its UUID (defence-in-depth; the row is tenant-scoped, but this
+      // stops values being bound to a foreign item id).
+      const own = await svc.from("item_master").select("id").eq("id", body.item_id).eq("tenant_id", ctx.tenantId).maybeSingle();
+      if (own.error) throw new Error(own.error.message);
+      if (!own.data) return json(res, 404, { error: { message: "Item not found for this tenant" } });
 
       // Two shapes: single key (body.field_key + body.value) or bulk
       // (body.values map). Bulk lets the UI persist a whole tab in

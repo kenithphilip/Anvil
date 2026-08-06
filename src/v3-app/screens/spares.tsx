@@ -230,7 +230,6 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const [draft, setDraft] = uM(matrix);
   const [saveState, setSaveState] = uM("idle"); // idle | dirty | saving | saved | error
   const [showAddRow, setShowAddRow] = uM(false);
-  const [showAddCol, setShowAddCol] = uM(false);
   const [showSuggest, setShowSuggest] = uM(false);
   const [bomGun, setBomGun] = uM(null);
   const [showConfig, setShowConfig] = uM(false);
@@ -786,10 +785,9 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       {!recView && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-          <Btn sm onClick={() => { setShowAddRow(true); setShowAddCol(false); }}>{Icon.plus} Row</Btn>
-          <Btn sm onClick={() => { setShowAddCol(true); setShowAddRow(false); }}>{Icon.plus} Spare column</Btn>
+          <Btn sm onClick={() => setShowAddRow(true)}>{Icon.plus} Row</Btn>
           <Btn sm kind="ghost" onClick={() => setShowSuggest(true)} title="Scan every gun's BOM and suggest spare columns to add">Suggest columns</Btn>
-          <Btn sm kind="ghost" onClick={() => setShowConfig(true)}>{Icon.settings} Configure cols</Btn>
+          <Btn sm onClick={() => setShowConfig(true)} title="Add, rename, reorder, lock, or delete spare columns">{Icon.settings} Configure columns</Btn>
           <div style={{ position: "relative" }}>
             <Btn sm kind="ghost" onClick={() => setShowColMenu((s) => !s)} title="Show / hide columns (identity + spare) — view only, no data is deleted">
               {Icon.layers} Columns{hiddenCols.size ? ` (${hiddenCols.size} hidden)` : ""} {Icon.caret}
@@ -891,12 +889,6 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
           <SMAddRowForm onAdd={onAddRow} onCancel={() => setShowAddRow(false)} />
         </Card>
       )}
-      {/* Add col */}
-      {showAddCol && !recView && (
-        <Card>
-          <SMAddColForm onAdd={onAddCol} onClose={() => setShowAddCol(false)} existing={draft.cols || []} guns={(draft.rows || []).map((r) => r.gun_no).filter(Boolean)} />
-        </Card>
-      )}
       {/* Suggest columns by scanning every gun's BOM */}
       {showSuggest && !recView && (
         <SuggestColsPanel matrixId={draft.id} onAdd={onAddCol} onClose={() => setShowSuggest(false)} />
@@ -956,7 +948,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                   behind a "no spare columns" empty state. */}
               {(draft.cols || []).length === 0 && (
                 <div className="body" style={{ padding: "8px 12px", background: "var(--paper-2)", borderBottom: "1px solid var(--hairline-2)", color: "var(--ink-3)", fontSize: 12 }}>
-                  {(draft.rows || []).length} row{(draft.rows || []).length === 1 ? "" : "s"} imported. No spare columns yet — click <span style={{ color: "var(--ink)" }}>+ Spare column</span> to enter part numbers per gun, then <span style={{ color: "var(--ink)" }}>Auto-fill</span>.
+                  {(draft.rows || []).length} row{(draft.rows || []).length === 1 ? "" : "s"} imported. No spare columns yet — open <span style={{ color: "var(--ink)" }}>Configure columns</span> to add one, then <span style={{ color: "var(--ink)" }}>Auto-fill</span>.
                 </div>
               )}
               <div style={{ overflow: "auto", maxHeight: "60vh" }}>
@@ -1165,6 +1157,8 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       {showConfig && (
         <SMConfigColsModal
           cols={draft.cols || []}
+          onAddCol={onAddCol}
+          guns={(draft.rows || []).map((r) => r.gun_no).filter(Boolean)}
           onMove={onColMove}
           onLockToggle={onColLockToggle}
           onDelete={onColDelete}
@@ -1418,7 +1412,7 @@ const SuggestColsPanel = ({ matrixId, onAdd, onClose }) => {
   );
 };
 
-const SMAddColForm = ({ onAdd, onClose, existing, guns }) => {
+const SMAddColForm = ({ onAdd, onClose, existing, guns, embedded }: any) => {
   const { useState: uF, useRef: rF, useEffect: eF } = React;
   const [name, setName] = uF("");
   const [type, setType] = uF("spare");
@@ -1482,7 +1476,10 @@ const SMAddColForm = ({ onAdd, onClose, existing, guns }) => {
     const trimmed = String(name).trim().toUpperCase();
     if (!trimmed) return;
     onAdd(trimmed, type);
-    onClose();
+    // Embedded in the Configure modal: keep it open so several columns can be
+    // added in a row (input clears + refocuses). Standalone: close after adding.
+    if (embedded) { setName(""); ref.current?.focus(); }
+    else onClose?.();
   };
 
   // Datalist = matched presets + descriptions + all preset names (deduped).
@@ -1514,7 +1511,7 @@ const SMAddColForm = ({ onAdd, onClose, existing, guns }) => {
           </select>
         </div>
         <Btn sm type="submit" kind="primary">Add column</Btn>
-        <Btn sm kind="ghost" onClick={onClose}>Cancel</Btn>
+        {!embedded && <Btn sm kind="ghost" onClick={onClose}>Cancel</Btn>}
       </form>
 
       {/* BOM-based discovery lives in ONE place — the "Suggest columns" button,
@@ -1533,7 +1530,7 @@ const SMAddColForm = ({ onAdd, onClose, existing, guns }) => {
 };
 
 // ---------- Configure Cols modal ----------
-const SMConfigColsModal = ({ cols, onMove, onLockToggle, onDelete, onRename, onClose }) => {
+const SMConfigColsModal = ({ cols, onAddCol, guns, onMove, onLockToggle, onDelete, onRename, onClose }: any) => {
   const { useEffect: eM } = React;
   eM(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
@@ -1550,9 +1547,17 @@ const SMConfigColsModal = ({ cols, onMove, onLockToggle, onDelete, onRename, onC
           </div>
           <button className="btn icon sm ghost" style={{ marginLeft: "auto" }} onClick={onClose} aria-label="Close">{Icon.x}</button>
         </div>
-        <div style={{ padding: 16, overflow: "auto", flex: 1 }}>
+        <div style={{ padding: 16, overflow: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Add a column — the single place to add (was a separate "+ Spare
+              column" button). Stays open so several can be added in a row. */}
+          <div>
+            <div className="label" style={{ marginBottom: 6 }}>Add a column</div>
+            <SMAddColForm embedded onAdd={onAddCol} onClose={onClose} existing={cols} guns={guns} />
+          </div>
+          <div>
+            <div className="label" style={{ marginBottom: 6 }}>Existing columns</div>
           {cols.length === 0 ? (
-            <div className="body" style={{ color: "var(--ink-3)" }}>No columns yet.</div>
+            <div className="body" style={{ color: "var(--ink-3)" }}>No columns yet — add one above.</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {cols.map((c, ix) => (
@@ -1574,6 +1579,7 @@ const SMConfigColsModal = ({ cols, onMove, onLockToggle, onDelete, onRename, onC
               ))}
             </div>
           )}
+          </div>
         </div>
         <div style={{ padding: "12px 16px", borderTop: "1px solid var(--hairline)" }}>
           <Btn kind="primary" onClick={onClose} full>Done</Btn>

@@ -338,8 +338,10 @@ export const suggestSpareColumns = (
       const col_type: "spare" | "consumable" = b.presetType || (b.anyCopper ? "consumable" : "spare");
       return { col_name: b.col, col_type, gun_count: b.guns.size, part_count: b.parts.size, sample_parts: b.samples };
     })
-    // Ranked by reach across guns, then parts. (Parts common to every gun —
-    // typically the copper tips/caps — naturally rise to the top.)
-    .sort((a, b) => b.gun_count - a.gun_count || b.part_count - a.part_count)
-    .slice(0, 80);
+    // EVERY category in any gun's BOM is returned — no cap. A rare part on a
+    // single gun in a 100-gun matrix must still be selectable, so it can't be
+    // dropped by a reach-ranked cutoff. The panel adds a search box to keep the
+    // longer list navigable. Common parts first (quick pick), then alphabetical
+    // so the long tail of one-off parts is scannable.
+    .sort((a, b) => b.gun_count - a.gun_count || b.part_count - a.part_count || a.col_name.localeCompare(b.col_name));
 };

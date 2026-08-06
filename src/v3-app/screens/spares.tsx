@@ -786,7 +786,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
           <Btn sm onClick={() => setShowAddRow(true)}>{Icon.plus} Row</Btn>
-          <Btn sm kind="ghost" onClick={() => setShowSuggest(true)} title="Scan every gun's BOM and suggest spare columns to add">Suggest columns</Btn>
+          <Btn sm kind="ghost" onClick={() => setShowSuggest(true)} title="List every spare category in the guns' BOMs — add any you want, even parts on a single gun">Columns from BOM</Btn>
           <Btn sm onClick={() => setShowConfig(true)} title="Add, rename, reorder, lock, or delete spare columns">{Icon.settings} Configure columns</Btn>
           <div style={{ position: "relative" }}>
             <Btn sm kind="ghost" onClick={() => setShowColMenu((s) => !s)} title="Show / hide columns (identity + spare) — view only, no data is deleted">
@@ -1364,10 +1364,11 @@ const GunBomDrawer = ({ gunNo, onClose }) => {
   );
 };
 
-// Suggest columns: scan every gun's BOM and propose spare-column headers using
-// the SAME matcher as auto-fill (preset-aware), so what's suggested is what
-// auto-fill can populate. Copper wear parts are flagged CRITICAL consumables
-// even when they match no preset name.
+// Columns from BOM: scan every gun's BOM and list EVERY spare category (no cap)
+// using the SAME matcher as auto-fill (preset-aware), so what's offered is what
+// auto-fill can populate — and a rare part on a single gun in a big matrix is
+// still selectable. Copper parts are typed as consumables. Filter box + "select
+// all shown" keep the full list navigable.
 const SuggestColsPanel = ({ guns, existing, onAdd, onClose }: any) => {
   const gunList = useMemo(
     () => Array.from(new Set((guns || []).map((g: any) => String(g || "").trim()).filter(Boolean))) as string[],
@@ -1393,45 +1394,72 @@ const SuggestColsPanel = ({ guns, existing, onAdd, onClose }: any) => {
   }, [gunList.join("|"), existingNames.join("|")]);
 
   const suggestions = state.suggestions;
+  const [q, setQ] = useState("");
+  const filtered = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    if (!t) return suggestions;
+    return suggestions.filter((s) =>
+      s.col_name.toLowerCase().includes(t) || (s.sample_parts || []).some((p) => String(p).toLowerCase().includes(t)));
+  }, [suggestions, q]);
+  const pickedCount = useMemo(() => suggestions.filter((s) => picked[s.col_name]).length, [suggestions, picked]);
+  const allShownPicked = filtered.length > 0 && filtered.every((s) => picked[s.col_name]);
   const toggle = (name: string) => setPicked((p) => ({ ...p, [name]: !p[name] }));
+  const toggleAllShown = () => setPicked((p) => {
+    const next = { ...p }; const target = !allShownPicked;
+    filtered.forEach((s) => { next[s.col_name] = target; });
+    return next;
+  });
   const addPicked = () => {
     const chosen = suggestions.filter((s) => picked[s.col_name]);
-    if (!chosen.length) { window.notifyError?.("Nothing selected", "Tick one or more suggested columns."); return; }
+    if (!chosen.length) { window.notifyError?.("Nothing selected", "Tick one or more columns to add."); return; }
     chosen.forEach((s) => onAdd(s.col_name, s.col_type));
     window.notifySuccess?.("Columns added", `${chosen.length} spare column${chosen.length === 1 ? "" : "s"} added. Open Auto-fill to populate parts.`);
     onClose();
   };
   return (
-    <Card title="Suggested spare columns"
-          eyebrow={state.loading ? "scanning every gun's BOM…" : `${suggestions.length} candidate${suggestions.length === 1 ? "" : "s"} from ${gunList.length} gun BOM${gunList.length === 1 ? "" : "s"} · assemblies + copper consumables included`}
+    <Card title="Add spare columns from BOM"
+          eyebrow={state.loading
+            ? "scanning every gun's BOM…"
+            : `${suggestions.length} categor${suggestions.length === 1 ? "y" : "ies"} across ${gunList.length} gun BOM${gunList.length === 1 ? "" : "s"} · every category, incl. parts on a single gun`}
           right={<>
             <Btn sm kind="ghost" onClick={onClose}>Close</Btn>
-            <Btn sm kind="primary" onClick={addPicked} disabled={!suggestions.length}>Add selected</Btn>
+            <Btn sm kind="primary" onClick={addPicked} disabled={!pickedCount}>Add selected{pickedCount ? ` (${pickedCount})` : ""}</Btn>
           </>}>
       {state.loading ? (
         <div className="body" style={{ padding: 12, color: "var(--ink-3)" }}>Scanning every gun's BOM…</div>
       ) : !gunList.length ? (
-        <Banner kind="info">Add guns (rows) with imported BOMs first — then this scan proposes spare columns.</Banner>
+        <Banner kind="info">Add guns (rows) with imported BOMs first — then this lists every spare category to choose from.</Banner>
       ) : suggestions.length === 0 ? (
-        <div className="body" style={{ padding: 12, color: "var(--ink-3)" }}>No new column suggestions — every BOM category is already a column, or the guns have no BOM parts to categorize.</div>
+        <div className="body" style={{ padding: 12, color: "var(--ink-3)" }}>No categories to add — every BOM category is already a column, or the guns have no BOM parts.</div>
       ) : (
-        <table className="tbl">
-          <thead><tr><th style={{ width: 30 }}></th><th>Column header</th><th>Type</th><th className="r">Guns</th><th className="r">Parts</th><th>Sample parts</th></tr></thead>
-          <tbody>
-            {suggestions.map((s) => (
-              <tr key={s.col_name} style={{ cursor: "pointer" }} onClick={() => toggle(s.col_name)}>
-                <td><input type="checkbox" checked={!!picked[s.col_name]} onChange={() => toggle(s.col_name)} onClick={(e) => e.stopPropagation()} aria-label={`Pick ${s.col_name}`} /></td>
-                <td className="mono">{s.col_name}</td>
-                <td style={{ whiteSpace: "nowrap" }}>
-                  <Chip k={s.col_type === "consumable" ? "warn" : "info"}>{s.col_type}</Chip>
-                </td>
-                <td className="r mono-sm">{s.gun_count}</td>
-                <td className="r mono-sm">{s.part_count}</td>
-                <td className="mono-sm" style={{ maxWidth: 340, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--ink-3)" }}>{(s.sample_parts || []).slice(0, 4).join(" · ")}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 4px" }}>
+            <input className="input mono" placeholder="Filter categories or sample parts (e.g. LM GUIDE)…" value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: 1 }} />
+            <label className="mono-sm" style={{ display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", color: "var(--ink-3)" }}>
+              <input type="checkbox" checked={allShownPicked} onChange={toggleAllShown} /> select all shown
+            </label>
+          </div>
+          <div style={{ maxHeight: "52vh", overflow: "auto" }}>
+            <table className="tbl">
+              <thead><tr><th style={{ width: 30 }}></th><th>Column header</th><th>Type</th><th className="r">Guns</th><th className="r">Parts</th><th>Sample parts</th></tr></thead>
+              <tbody>
+                {filtered.map((s) => (
+                  <tr key={s.col_name} style={{ cursor: "pointer" }} onClick={() => toggle(s.col_name)}>
+                    <td><input type="checkbox" checked={!!picked[s.col_name]} onChange={() => toggle(s.col_name)} onClick={(e) => e.stopPropagation()} aria-label={`Pick ${s.col_name}`} /></td>
+                    <td className="mono">{s.col_name}</td>
+                    <td style={{ whiteSpace: "nowrap" }}><Chip k={s.col_type === "consumable" ? "warn" : "info"}>{s.col_type}</Chip></td>
+                    <td className="r mono-sm" title={s.gun_count === 1 ? "on a single gun — easy to miss without this list" : ""} style={s.gun_count === 1 ? { color: "var(--warn, #b45309)" } : undefined}>{s.gun_count}</td>
+                    <td className="r mono-sm">{s.part_count}</td>
+                    <td className="mono-sm" style={{ maxWidth: 340, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--ink-3)" }}>{(s.sample_parts || []).slice(0, 4).join(" · ")}</td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr><td colSpan={6} className="mono-sm" style={{ padding: 12, color: "var(--ink-4)" }}>No categories match “{q}”.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </Card>
   );
@@ -1539,15 +1567,15 @@ const SMAddColForm = ({ onAdd, onClose, existing, guns, embedded }: any) => {
         {!embedded && <Btn sm kind="ghost" onClick={onClose}>Cancel</Btn>}
       </form>
 
-      {/* BOM-based discovery lives in ONE place — the "Suggest columns" button,
-          which scans every gun's BOM and proposes columns to bulk-add. This form
+      {/* BOM-based discovery lives in ONE place — the "Columns from BOM" button,
+          which lists every category across the guns' BOMs to bulk-add. This form
           is just for adding a single column by hand; the input autocompletes
           from your guns' part descriptions + the known spare presets. */}
       <div className="label" style={{ color: "var(--ink-4)" }}>
         {loading
           ? "loading autocomplete from your guns…"
           : hasGuns
-            ? "Tip: use “Suggest columns” to auto-detect spare columns from every gun’s BOM."
+            ? "Tip: use “Columns from BOM” to pick from every category in your guns’ BOMs."
             : "Type a category name (autocompletes from the known spare presets)."}
       </div>
     </div>

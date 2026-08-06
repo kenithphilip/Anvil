@@ -197,4 +197,22 @@ describe("suggestSpareColumns — completeness (nothing important missed)", () =
     const one = [{ gun: "G1", lines: [{ part_no: "A-1", part_name: "ARM ASSY", material: "SS" }] }];
     expect(suggestSpareColumns(one, ["ARM ASSY"]).find((x) => x.col_name === "ARM ASSY")).toBeUndefined();
   });
+  it("never drops a rare part (1 gun in a big matrix) and applies no cap", () => {
+    // 100 guns: 99 share GEAR CASE ASSY; only gun-50 carries a special LM GUIDE.
+    const perGun = Array.from({ length: 100 }, (_v, i) => ({
+      gun: `G${i}`,
+      lines: i === 50
+        ? [{ part_no: `LMG-${i}`, part_name: "LM GUIDE 20", material: "SS" }]
+        : [{ part_no: `GCA-${i}`, part_name: "GEAR CASE ASSY", material: "SS" }],
+    }));
+    const s = suggestSpareColumns(perGun, []);
+    const lmg = s.find((x) => x.col_name === "LM GUIDE");
+    expect(lmg).toBeTruthy();          // the 1-gun rare part is still offered
+    expect(lmg!.gun_count).toBe(1);
+    expect(s.find((x) => x.col_name === "GEAR CASE ASSY")!.gun_count).toBe(99);
+  });
+  it("returns every distinct category — no truncation at scale", () => {
+    const perGun = [{ gun: "G1", lines: Array.from({ length: 120 }, (_v, i) => ({ part_no: `P${i}`, part_name: `SPECIALPART${i}`, material: "SS" })) }];
+    expect(suggestSpareColumns(perGun, []).length).toBe(120);   // all 120 one-off categories present
+  });
 });

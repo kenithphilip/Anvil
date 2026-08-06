@@ -178,7 +178,24 @@ export const GunDrawingsPanel: React.FC<{ matrixId: string; guns: string[]; onCl
                 <strong style={{ minWidth: 120 }}>{gun}</strong>
                 {ds.map((d) => d.link_url
                   ? <a key={d.id} href={d.link_url} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}><Chip k="good">{KIND_LABEL[d.kind]} ↗</Chip></a>
-                  : <Chip key={d.id} k="good">{KIND_LABEL[d.kind]} · {d.original_filename || "file"}</Chip>)}
+                  : (
+                    // File-backed drawing (EG PDF / 2D / uploaded 3D): fetch a
+                    // short-lived signed URL on demand and open it. Was an inert
+                    // chip — the feature's own files were unreachable.
+                    <button key={d.id} type="button" title="Open / download"
+                      onClick={async () => {
+                        if (!d.document_id) { window.notifyError?.("No file", "This drawing has no downloadable file."); return; }
+                        try {
+                          const resp: any = await AnvilBackend?.documents?.fetch?.(d.document_id);
+                          const url = resp?.downloadUrl || resp?.url;
+                          if (url) window.open(url, "_blank", "noopener,noreferrer");
+                          else window.notifyError?.("No file", "This drawing has no downloadable file.");
+                        } catch (e: any) { window.notifyError?.("Open failed", String((e && e.message) || e)); }
+                      }}
+                      style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}>
+                      <Chip k="good">{KIND_LABEL[d.kind]} · {d.original_filename || "file"} ↓</Chip>
+                    </button>
+                  ))}
               </div>
             ))}
         </Card>

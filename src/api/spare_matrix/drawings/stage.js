@@ -64,7 +64,11 @@ export default async function handler(req, res) {
         row_id: m.row_id || null,
         gun_no: m.gun_no || null,
         kind,
-        format: f.link_url && !m.format ? "link" : m.format || (f.link_url ? "link" : null),
+        // Decide file-vs-link by the PAYLOAD, not the filename: addLink sends a
+        // gun+'.step' filename for an external 3D URL, which made matchFile stamp
+        // format='step' on a link row. A row with a link_url and no document_id
+        // is a link, full stop.
+        format: (f.link_url && !f.document_id) ? "link" : (m.format || null),
         document_id: f.document_id || null,
         link_url: f.link_url || null,
         original_filename: f.filename || f.original_filename || null,

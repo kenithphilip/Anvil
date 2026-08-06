@@ -71,6 +71,13 @@ describe("mapSheet - India (flat)", () => {
     expect(out.lines).toHaveLength(2);
     expect(out.lines[0]).toMatchObject({ seq_no: 1, part_no: "A1", part_name: "Widget", qty: 2, material: "EN8", level: null });
   });
+  it("leaves source_country NULL (india is the floor — never auto-stamp a country)", () => {
+    // A signal-less English BOM maps via the obara_india floor for its rich
+    // column map, but its origin must stay unknown, not be mis-stamped India.
+    const out = mapSheet([["Part No", "Part Name", "Qty"], ["A1", "x", 1]], "BOM.xlsx", F);
+    expect(out.source_format).toBe("obara_india");
+    expect(out.asset.source_country).toBeNull();
+  });
 });
 
 describe("mapSheet - China (parts code + level)", () => {

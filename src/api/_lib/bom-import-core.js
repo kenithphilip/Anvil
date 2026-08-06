@@ -120,7 +120,7 @@ export async function importBom({ svc, ctx, tenantId, asset, lines, projectId = 
   if (candidates.length) {
     const partNos = candidates.map((c) => c.part_no);
     const existingItemsQ = await svc.from("item_master")
-      .select("part_no, is_assembly")
+      .select("part_no, is_assembly, source_country")
       .eq("tenant_id", tenantId).in("part_no", partNos);
     if (existingItemsQ.error) throw new Error("item_master read: " + existingItemsQ.error.message);
     const existing = new Map((existingItemsQ.data || []).map((r) => [r.part_no, r]));
@@ -139,11 +139,19 @@ export async function importBom({ svc, ctx, tenantId, asset, lines, projectId = 
           data_source: "imported",
           ...(buyPartNos.has(c.part_no) ? { procurement_type: "buy" } : {}),
         });
-      } else if (c.is_assembly && !ex.is_assembly) {
+      } else {
         // Safe enrichment only: never clobber operator-set fields.
-        const upd = await svc.from("item_master").update({ is_assembly: true })
-          .eq("tenant_id", tenantId).eq("part_no", c.part_no);
-        if (!upd.error) itemsUpserted += 1;
+        const patch = {};
+        if (c.is_assembly && !ex.is_assembly) patch.is_assembly = true;
+        // Correct the BOM-origin metadata when this import knows it and it
+        // differs — so re-importing a fixed BOM repairs a previously wrong (or
+        // missing) source_country (e.g. a KR/CN/JP part earlier stamped India).
+        if (c.source_country && c.source_country !== ex.source_country) patch.source_country = c.source_country;
+        if (Object.keys(patch).length) {
+          const upd = await svc.from("item_master").update(patch)
+            .eq("tenant_id", tenantId).eq("part_no", c.part_no);
+          if (!upd.error) itemsUpserted += 1;
+        }
       }
     }
     for (let i = 0; i < toInsert.length; i += 100) {

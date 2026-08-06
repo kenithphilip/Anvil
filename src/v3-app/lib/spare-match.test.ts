@@ -206,6 +206,13 @@ describe("suggestSpareColumns — completeness (nothing important missed)", () =
     const one = [{ gun: "G1", lines: [{ part_no: "A-1", part_name: "ARM ASSY", material: "SS" }] }];
     expect(suggestSpareColumns(one, ["ARM ASSY"]).find((x) => x.col_name === "ARM ASSY")).toBeUndefined();
   });
+  it("suggests only the BASE consumable, not the (MOVING)/(FIXED) side variants", () => {
+    const one = [{ gun: "G1", lines: [{ part_no: "SH-1", part_name: "SHANK 90", material: "CuCrZr" }] }];
+    const names = suggestSpareColumns(one, []).map((x) => x.col_name);
+    expect(names).toContain("SHANK");                 // base is suggested
+    expect(names).not.toContain("SHANK (MOVING)");    // variants are not (operator adds by hand)
+    expect(names).not.toContain("SHANK (FIXED)");
+  });
   it("never drops a rare part (1 gun in a big matrix) and applies no cap", () => {
     // 100 guns: 99 share GEAR CASE ASSY; only gun-50 carries a special LM GUIDE.
     const perGun = Array.from({ length: 100 }, (_v, i) => ({

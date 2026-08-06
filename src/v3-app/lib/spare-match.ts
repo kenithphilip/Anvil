@@ -298,7 +298,12 @@ export const suggestSpareColumns = (
   existing: string[] = [],
 ): SpareSuggestion[] => {
   const existingUp = new Set((existing || []).map((c) => stripVariant(String(c || "")).toUpperCase().trim()));
-  const presetNames = SPARE_PRESETS.map((p) => p.name);
+  // Suggest only BASE presets — skip the (MOVING)/(FIXED) side variants. Every
+  // variant matches the same parts as its base (via stripVariant), so including
+  // them surfaced three columns for one part (e.g. SHANK, SHANK (MOVING), SHANK
+  // (FIXED)) — confusing. The operator adds a moving/fixed split by hand when a
+  // gun actually needs both sides tracked separately.
+  const presetNames = SPARE_PRESETS.filter((p) => stripVariant(p.name) === p.name).map((p) => p.name);
   const presetType = new Map(SPARE_PRESETS.map((p) => [p.name.toUpperCase(), p.category === "Consumable" ? "consumable" : "spare"] as const));
 
   type Bucket = { col: string; presetType?: "spare" | "consumable"; guns: Set<string>; parts: Set<string>; samples: string[]; anyCopper: boolean };

@@ -3,7 +3,7 @@ import { fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
-import { matchSpares, SPARE_PRESETS, isConsumableCol, nameMatchCandidates, type SpareBomItem } from "../lib/spare-match";
+import { matchSpares, SPARE_PRESETS, isConsumableCol, nameMatchCandidates, suggestSpareColumns, type SpareBomItem, type SpareSuggestion } from "../lib/spare-match";
 import { lsGet } from "../lib/storage-keys";
 import { GunDrawingsPanel } from "../components/GunDrawingsPanel";
 import { SparePartPicker } from "../components/SparePartPicker";
@@ -188,16 +188,28 @@ const SM_STATION_COLS = [
 ];
 const SM_NUM_ROW_FIELDS = new Set(["qty", "l_qty", "r_qty"]);
 
-// Frozen identity block: Gun + every station column stays pinned (sticky-left)
-// while only the spare-category columns scroll. SM_FROZEN_LEFT[0] is the Gun
-// column; SM_FROZEN_LEFT[i+1] is station column i's cumulative left offset.
-const SM_GUN_W = 156;
-const SM_FROZEN_LEFT: number[] = (() => {
-  const lefts = [0];
+// Frozen identity block: Gun + every (visible) station column stays pinned
+// sticky-left while only the spare-category columns scroll. Excel-style freeze
+// panes need three things working together, or the frozen columns drift as you
+// scroll: (1) border-collapse:separate — sticky is unreliable under `collapse`;
+// (2) table-layout:fixed with an explicit <colgroup> so the RENDERED column
+// widths equal the declared widths; (3) the sticky `left` offsets computed from
+// those same widths. The cumulative offsets are derived per-render from the
+// VISIBLE station columns (station cols can be hidden), so hiding a column
+// re-packs the freeze block correctly. See smFrozen() in the pane.
+const SM_GUN_W = 172;   // Gun identity col — fits "SRTX-2C2195" + BOM button under fixed layout.
+const SM_SPARE_W = 150; // Fixed width per spare-category column (part numbers wrap within it).
+const SM_ACTION_W = 30; // Trailing remove-row column.
+// Compute the freeze block: each visible station's cumulative left offset (Gun
+// is always at 0, width SM_GUN_W) plus the total frozen-block width.
+const smFrozen = (visStations: any[]) => {
   let acc = SM_GUN_W;
-  for (const c of SM_STATION_COLS) { lefts.push(acc); acc += c.w; }
-  return lefts;
-})();
+  const stations = visStations.map((sc) => { const left = acc; acc += sc.w; return { ...sc, left }; });
+  return { stations, blockW: acc };
+};
+// Identity columns are hidden via the same hiddenCols set, namespaced "id:" so a
+// spare column literally named e.g. "line" can't collide with the station key.
+const SM_ID_PREFIX = "id:";
 // Import header aliases for the station-identity columns.
 const SM_STATION_ALIASES = {
   line: ["line", "line name"],
@@ -218,7 +230,6 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const [draft, setDraft] = uM(matrix);
   const [saveState, setSaveState] = uM("idle"); // idle | dirty | saving | saved | error
   const [showAddRow, setShowAddRow] = uM(false);
-  const [showAddCol, setShowAddCol] = uM(false);
   const [showSuggest, setShowSuggest] = uM(false);
   const [bomGun, setBomGun] = uM(null);
   const [showConfig, setShowConfig] = uM(false);
@@ -247,6 +258,15 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const hideCol = (name: string) => { const n = new Set(hiddenCols); n.add(name); persistHidden(n); };
   const showColByName = (name: string) => { const n = new Set(hiddenCols); n.delete(name); persistHidden(n); };
   const visibleCols = mM(() => (draft.cols || []).filter((c: any) => !hiddenCols.has(c.col_name)), [draft.cols, hiddenCols]);
+  // Identity (Gun→Qty) column visibility. Gun is the anchor and always shows;
+  // the station columns (Line…Qty) can be hidden via the Columns menu. Hidden
+  // stations are dropped from the freeze block AND the cumulative left offsets
+  // are recomputed so the remaining frozen columns stay pinned exactly.
+  const idHidden = (key: string) => hiddenCols.has(SM_ID_PREFIX + key);
+  const toggleIdCol = (key: string) => { const k = SM_ID_PREFIX + key; const n = new Set(hiddenCols); n.has(k) ? n.delete(k) : n.add(k); persistHidden(n); };
+  const visStations = mM(() => SM_STATION_COLS.filter((sc) => !hiddenCols.has(SM_ID_PREFIX + sc.key)), [hiddenCols]);
+  const frozen = mM(() => smFrozen(visStations), [visStations]);
+  const tableW = mM(() => frozen.blockW + SM_SPARE_W * visibleCols.length + SM_ACTION_W, [frozen, visibleCols]);
   const onShare = async () => {
     if (!draft.id) return;
     setBusyShare(true); setShareLink(null);
@@ -759,20 +779,37 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
         <Btn sm kind={recView ? "primary" : "ghost"} onClick={() => setRecView(true)}>Recommended Spares</Btn>
       </div>
 
-      {/* Toolbar */}
+      {/* Toolbar — two rows: grid-editing actions on top, matrix-level actions
+          (Drawings/Share/Sync/Delete) on their own row below so they stay put
+          instead of drifting to the far right edge of a wide sheet. */}
       {!recView && (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-          <Btn sm onClick={() => { setShowAddRow(true); setShowAddCol(false); }}>{Icon.plus} Row</Btn>
-          <Btn sm onClick={() => { setShowAddCol(true); setShowAddRow(false); }}>{Icon.plus} Spare column</Btn>
-          <Btn sm kind="ghost" onClick={() => setShowSuggest(true)} title="Scan every gun's BOM and suggest spare columns to add">Suggest columns</Btn>
-          <Btn sm kind="ghost" onClick={() => setShowConfig(true)}>{Icon.settings} Configure cols</Btn>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          <Btn sm onClick={() => setShowAddRow(true)}>{Icon.plus} Row</Btn>
+          <Btn sm kind="ghost" onClick={() => setShowSuggest(true)} title="List every spare category in the guns' BOMs — add any you want, even parts on a single gun">Columns from BOM</Btn>
+          <Btn sm onClick={() => setShowConfig(true)} title="Add, rename, reorder, lock, or delete spare columns">{Icon.settings} Configure columns</Btn>
           <div style={{ position: "relative" }}>
-            <Btn sm kind="ghost" onClick={() => setShowColMenu((s) => !s)} title="Show / hide spare columns — view only, no data is deleted">
+            <Btn sm kind="ghost" onClick={() => setShowColMenu((s) => !s)} title="Show / hide columns (identity + spare) — view only, no data is deleted">
               {Icon.layers} Columns{hiddenCols.size ? ` (${hiddenCols.size} hidden)` : ""} {Icon.caret}
             </Btn>
             {showColMenu && (
               <div style={{ position: "absolute", top: 30, left: 0, zIndex: 20, background: "var(--paper)", border: "1px solid var(--hairline)", borderRadius: 6, padding: 6, minWidth: 210, maxHeight: 340, overflow: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.12)" }}>
                 <div className="mono-sm" style={{ color: "var(--ink-3)", padding: "2px 6px 6px" }}>Show / hide columns (view only — data kept)</div>
+                {/* Identity columns (Gun → Qty). Gun is the identity anchor and
+                    always shows; the station columns can be hidden to declutter
+                    when the spare columns need the room. */}
+                <div className="mono-sm" style={{ color: "var(--ink-4)", padding: "4px 6px 2px", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.04 }}>Identity (Gun → Qty)</div>
+                <label className="cmdk-row" style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", fontSize: 12, borderRadius: 4, opacity: 0.55 }} title="Gun is the identity anchor — always shown">
+                  <input type="checkbox" checked readOnly disabled />
+                  <span style={{ flex: 1 }}>Gun</span>
+                </label>
+                {SM_STATION_COLS.map((sc) => (
+                  <label key={sc.key} className="cmdk-row" style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", cursor: "pointer", fontSize: 12, borderRadius: 4 }}>
+                    <input type="checkbox" checked={!idHidden(sc.key)} onChange={() => toggleIdCol(sc.key)} />
+                    <span style={{ flex: 1 }}>{sc.label}</span>
+                  </label>
+                ))}
+                <div className="mono-sm" style={{ color: "var(--ink-4)", padding: "8px 6px 2px", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.04, borderTop: "1px solid var(--hairline-2)", marginTop: 4 }}>Spare columns</div>
                 {(draft.cols || []).length === 0
                   ? <div className="mono-sm" style={{ padding: 6, color: "var(--ink-4)" }}>No spare columns yet.</div>
                   : (draft.cols || []).map((c: any) => (
@@ -802,17 +839,19 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
               </div>
             )}
           </div>
-          <div style={{ flex: 1 }} />
-          {/* Matrix-level actions, grouped on the right and separated from the
-              grid-editing actions on the left. Drawings is a primary matrix
-              action, so it reads as a solid button rather than a ghost. */}
-          {draft.id && <Btn sm onClick={() => setShowDrawings(true)} title="Manage EG sheet / 2D / 3D drawings per gun">{Icon.doc} Drawings</Btn>}
-          {draft.id && RBAC.canDo("spare_matrix.share") && (
-            <Btn sm kind="ghost" onClick={onShare} disabled={busyShare} title="Share this matrix with the customer via the portal">{busyShare ? "…" : <>{Icon.link} Share</>}</Btn>
-          )}
-          <span aria-hidden style={{ width: 1, alignSelf: "stretch", background: "var(--hairline-2)", margin: "0 2px" }} />
-          <Btn sm kind="ghost" onClick={onSyncRecommended} disabled={busySync}>{busySync ? "…" : <>{Icon.cycle} Sync recommended</>}</Btn>
-          <Btn sm kind="ghost" onClick={onDeleteMatrix} className="">{Icon.x} Delete</Btn>
+          </div>
+          {/* Row 2 — matrix-level actions on their own line below Export, so
+              they never drift to the far edge of a wide sheet (a navigation
+              hazard when the grid scrolls). Drawings is a primary action → solid. */}
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            {draft.id && <Btn sm onClick={() => setShowDrawings(true)} title="Manage EG sheet / 2D / 3D drawings per gun">{Icon.doc} Drawings</Btn>}
+            {draft.id && RBAC.canDo("spare_matrix.share") && (
+              <Btn sm kind="ghost" onClick={onShare} disabled={busyShare} title="Share this matrix with the customer via the portal">{busyShare ? "…" : <>{Icon.link} Share</>}</Btn>
+            )}
+            <span aria-hidden style={{ width: 1, alignSelf: "stretch", background: "var(--hairline-2)", margin: "0 2px" }} />
+            <Btn sm kind="ghost" onClick={onSyncRecommended} disabled={busySync}>{busySync ? "…" : <>{Icon.cycle} Sync recommended</>}</Btn>
+            <Btn sm kind="ghost" onClick={onDeleteMatrix} className="">{Icon.x} Delete</Btn>
+          </div>
         </div>
       )}
 
@@ -850,15 +889,9 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
           <SMAddRowForm onAdd={onAddRow} onCancel={() => setShowAddRow(false)} />
         </Card>
       )}
-      {/* Add col */}
-      {showAddCol && !recView && (
-        <Card>
-          <SMAddColForm onAdd={onAddCol} onClose={() => setShowAddCol(false)} existing={draft.cols || []} guns={(draft.rows || []).map((r) => r.gun_no).filter(Boolean)} />
-        </Card>
-      )}
       {/* Suggest columns by scanning every gun's BOM */}
       {showSuggest && !recView && (
-        <SuggestColsPanel matrixId={draft.id} onAdd={onAddCol} onClose={() => setShowSuggest(false)} />
+        <SuggestColsPanel guns={(draft.rows || []).map((r) => r.gun_no).filter(Boolean)} existing={draft.cols || []} onAdd={onAddCol} onClose={() => setShowSuggest(false)} />
       )}
       {/* Gun BOM drill-down drawer */}
       {bomGun && <GunBomDrawer gunNo={bomGun} onClose={() => setBomGun(null)} />}
@@ -915,18 +948,28 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                   behind a "no spare columns" empty state. */}
               {(draft.cols || []).length === 0 && (
                 <div className="body" style={{ padding: "8px 12px", background: "var(--paper-2)", borderBottom: "1px solid var(--hairline-2)", color: "var(--ink-3)", fontSize: 12 }}>
-                  {(draft.rows || []).length} row{(draft.rows || []).length === 1 ? "" : "s"} imported. No spare columns yet — click <span style={{ color: "var(--ink)" }}>+ Spare column</span> to enter part numbers per gun, then <span style={{ color: "var(--ink)" }}>Auto-fill</span>.
+                  {(draft.rows || []).length} row{(draft.rows || []).length === 1 ? "" : "s"} imported. No spare columns yet — open <span style={{ color: "var(--ink)" }}>Configure columns</span> to add one, then <span style={{ color: "var(--ink)" }}>Auto-fill</span>.
                 </div>
               )}
               <div style={{ overflow: "auto", maxHeight: "60vh" }}>
-              <table className="tbl" style={{ minWidth: "100%" }}>
+              {/* Excel-style freeze panes: border-collapse:separate (sticky is
+                  unreliable under `collapse`) + table-layout:fixed + an explicit
+                  <colgroup> + an explicit table width, so rendered widths equal
+                  the declared widths and the sticky-left offsets land exactly. */}
+              <table className="tbl" style={{ tableLayout: "fixed", borderCollapse: "separate", borderSpacing: 0, width: tableW, minWidth: tableW }}>
+                <colgroup>
+                  <col style={{ width: SM_GUN_W }} />
+                  {frozen.stations.map((sc) => <col key={sc.key} style={{ width: sc.w }} />)}
+                  {visibleCols.map((c) => <col key={c.id} style={{ width: SM_SPARE_W }} />)}
+                  <col style={{ width: SM_ACTION_W }} />
+                </colgroup>
                 <thead>
                   <tr>
                     {/* Frozen identity block (Gun → Qty): sticky on BOTH axes so it
                         stays pinned while the spare columns scroll horizontally. */}
-                    <th style={{ width: SM_GUN_W, minWidth: SM_GUN_W, position: "sticky", left: 0, top: 0, background: "var(--paper-3)", zIndex: 6 }}>Gun</th>
-                    {SM_STATION_COLS.map((sc, si) => (
-                      <th key={sc.key} className={sc.num ? "r" : ""} style={{ width: sc.w, minWidth: sc.w, position: "sticky", left: SM_FROZEN_LEFT[si + 1], top: 0, zIndex: 5, background: "var(--paper-3)", ...(si === SM_STATION_COLS.length - 1 ? { borderRight: "2px solid var(--hairline)" } : {}) }}>{sc.label}</th>
+                    <th style={{ position: "sticky", left: 0, top: 0, background: "var(--paper-3)", zIndex: 6, ...(frozen.stations.length === 0 ? { borderRight: "2px solid var(--hairline)" } : {}) }}>Gun</th>
+                    {frozen.stations.map((sc, si) => (
+                      <th key={sc.key} className={sc.num ? "r" : ""} style={{ position: "sticky", left: sc.left, top: 0, zIndex: 5, background: "var(--paper-3)", ...(si === frozen.stations.length - 1 ? { borderRight: "2px solid var(--hairline)" } : {}) }}>{sc.label}</th>
                     ))}
                     {visibleCols.map((c) => (
                       <th key={c.id} style={{ minWidth: 120, position: "sticky", top: 0, zIndex: 3, background: "var(--paper-3)" }} title={c.col_type}>
@@ -944,22 +987,22 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                 <tbody>
                   {(draft.rows || []).map((r) => (
                     <tr key={r.id}>
-                      <td className="mono" style={{ position: "sticky", left: 0, background: "var(--paper)", zIndex: 2, width: SM_GUN_W, minWidth: SM_GUN_W, boxSizing: "border-box" }}>
-                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <td className="mono" style={{ position: "sticky", left: 0, background: "var(--paper)", zIndex: 2, boxSizing: "border-box", overflow: "hidden", ...(frozen.stations.length === 0 ? { borderRight: "2px solid var(--hairline)" } : {}) }}>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", minWidth: 0 }}>
                           {/* Gun number is the row IDENTITY (the join key to the BOM
                               and to the gun's drawings). It is LOCKED after import so
                               a stray edit can't silently orphan those links; change a
                               gun by re-importing the template. */}
                           <span className="mono" title="Gun number — locked identity (re-import the template to change it)"
-                            style={{ fontSize: 11.5, padding: "0 2px", height: 26, display: "inline-flex", alignItems: "center", color: "var(--ink)", fontWeight: 600, whiteSpace: "nowrap" }}>
+                            style={{ fontSize: 11.5, padding: "0 2px", height: 26, display: "inline-flex", alignItems: "center", color: "var(--ink)", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
                             {r.gun_no || "—"}
                           </span>
                           <Btn sm onClick={() => r.gun_no && setBomGun(r.gun_no)} disabled={!r.gun_no} title="Open this gun's full BOM">{Icon.layers} BOM</Btn>
                         </div>
                       </td>
-                      {SM_STATION_COLS.map((sc, si) => (
+                      {frozen.stations.map((sc, si) => (
                         <td key={sc.key} className={sc.num ? "r mono" : "mono"}
-                          style={{ position: "sticky", left: SM_FROZEN_LEFT[si + 1], background: "var(--paper)", zIndex: 1, width: sc.w, minWidth: sc.w, boxSizing: "border-box", ...(si === SM_STATION_COLS.length - 1 ? { borderRight: "2px solid var(--hairline)" } : {}) }}>
+                          style={{ position: "sticky", left: sc.left, background: "var(--paper)", zIndex: 1, boxSizing: "border-box", ...(si === frozen.stations.length - 1 ? { borderRight: "2px solid var(--hairline)" } : {}) }}>
                           <input
                             className="input mono"
                             type={sc.num ? "number" : "text"}
@@ -1114,6 +1157,8 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       {showConfig && (
         <SMConfigColsModal
           cols={draft.cols || []}
+          onAddCol={onAddCol}
+          guns={(draft.rows || []).map((r) => r.gun_no).filter(Boolean)}
           onMove={onColMove}
           onLockToggle={onColLockToggle}
           onDelete={onColDelete}
@@ -1319,55 +1364,108 @@ const GunBomDrawer = ({ gunNo, onClose }) => {
   );
 };
 
-// Suggest columns: scan every gun's BOM and propose new spare-column headers.
-const SuggestColsPanel = ({ matrixId, onAdd, onClose }) => {
-  const data = useFetch(() => (matrixId && AnvilBackend?.spareMatrix?.suggestColumns ? AnvilBackend.spareMatrix.suggestColumns(matrixId) : Promise.resolve({ suggestions: [] })), [matrixId]);
+// Columns from BOM: scan every gun's BOM and list EVERY spare category (no cap)
+// using the SAME matcher as auto-fill (preset-aware), so what's offered is what
+// auto-fill can populate — and a rare part on a single gun in a big matrix is
+// still selectable. Copper parts are typed as consumables. Filter box + "select
+// all shown" keep the full list navigable.
+const SuggestColsPanel = ({ guns, existing, onAdd, onClose }: any) => {
+  const gunList = useMemo(
+    () => Array.from(new Set((guns || []).map((g: any) => String(g || "").trim()).filter(Boolean))) as string[],
+    [guns],
+  );
+  const existingNames = useMemo(
+    () => (existing || []).map((c: any) => (c && c.col_name != null ? c.col_name : c)).filter(Boolean),
+    [existing],
+  );
+  const [state, setState] = useState<{ loading: boolean; suggestions: SpareSuggestion[] }>({ loading: true, suggestions: [] });
   const [picked, setPicked] = useState<Record<string, boolean>>({});
-  const suggestions: any[] = (data.data as any)?.suggestions || [];
-  const note = (data.data as any)?.note;
-  const scanned = (data.data as any)?.scanned_guns || 0;
-  const toggle = (name) => setPicked((p) => ({ ...p, [name]: !p[name] }));
+  useEffect(() => {
+    let cancel = false;
+    if (!gunList.length) { setState({ loading: false, suggestions: [] }); return; }
+    setState((s) => ({ ...s, loading: true }));
+    (async () => {
+      const perGun = await Promise.all(gunList.map(async (gun) => ({ gun, lines: await smFetchLinesForGun(gun) })));
+      if (cancel) return;
+      setState({ loading: false, suggestions: suggestSpareColumns(perGun, existingNames) });
+    })().catch(() => { if (!cancel) setState({ loading: false, suggestions: [] }); });
+    return () => { cancel = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gunList.join("|"), existingNames.join("|")]);
+
+  const suggestions = state.suggestions;
+  const [q, setQ] = useState("");
+  const filtered = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    if (!t) return suggestions;
+    return suggestions.filter((s) =>
+      s.col_name.toLowerCase().includes(t) || (s.sample_parts || []).some((p) => String(p).toLowerCase().includes(t)));
+  }, [suggestions, q]);
+  const pickedCount = useMemo(() => suggestions.filter((s) => picked[s.col_name]).length, [suggestions, picked]);
+  const allShownPicked = filtered.length > 0 && filtered.every((s) => picked[s.col_name]);
+  const toggle = (name: string) => setPicked((p) => ({ ...p, [name]: !p[name] }));
+  const toggleAllShown = () => setPicked((p) => {
+    const next = { ...p }; const target = !allShownPicked;
+    filtered.forEach((s) => { next[s.col_name] = target; });
+    return next;
+  });
   const addPicked = () => {
     const chosen = suggestions.filter((s) => picked[s.col_name]);
-    if (!chosen.length) { window.notifyError?.("Nothing selected", "Tick one or more suggested columns."); return; }
+    if (!chosen.length) { window.notifyError?.("Nothing selected", "Tick one or more columns to add."); return; }
     chosen.forEach((s) => onAdd(s.col_name, s.col_type));
-    window.notifySuccess?.("Columns added", `${chosen.length} spare column${chosen.length === 1 ? "" : "s"} added. Click Auto-fill to populate parts.`);
+    window.notifySuccess?.("Columns added", `${chosen.length} spare column${chosen.length === 1 ? "" : "s"} added. Open Auto-fill to populate parts.`);
     onClose();
   };
   return (
-    <Card title="Suggested spare columns" eyebrow={data.loading && !data.data ? "scanning every gun's BOM…" : `${suggestions.length} candidate${suggestions.length === 1 ? "" : "s"} from ${scanned} gun BOM${scanned === 1 ? "" : "s"}`}
+    <Card title="Add spare columns from BOM"
+          eyebrow={state.loading
+            ? "scanning every gun's BOM…"
+            : `${suggestions.length} categor${suggestions.length === 1 ? "y" : "ies"} across ${gunList.length} gun BOM${gunList.length === 1 ? "" : "s"} · every category, incl. parts on a single gun`}
           right={<>
             <Btn sm kind="ghost" onClick={onClose}>Close</Btn>
-            <Btn sm kind="primary" onClick={addPicked} disabled={!suggestions.length}>Add selected</Btn>
+            <Btn sm kind="primary" onClick={addPicked} disabled={!pickedCount}>Add selected{pickedCount ? ` (${pickedCount})` : ""}</Btn>
           </>}>
-      {data.loading && !data.data ? (
+      {state.loading ? (
         <div className="body" style={{ padding: 12, color: "var(--ink-3)" }}>Scanning every gun's BOM…</div>
-      ) : note ? (
-        <Banner kind="info">{note}</Banner>
+      ) : !gunList.length ? (
+        <Banner kind="info">Add guns (rows) with imported BOMs first — then this lists every spare category to choose from.</Banner>
       ) : suggestions.length === 0 ? (
-        <div className="body" style={{ padding: 12, color: "var(--ink-3)" }}>No new column suggestions — every BOM category is already a column, or the guns have no categorized BOM parts.</div>
+        <div className="body" style={{ padding: 12, color: "var(--ink-3)" }}>No categories to add — every BOM category is already a column, or the guns have no BOM parts.</div>
       ) : (
-        <table className="tbl">
-          <thead><tr><th style={{ width: 30 }}></th><th>Column header</th><th>Type</th><th className="r">Guns</th><th className="r">Parts</th><th>Sample parts</th></tr></thead>
-          <tbody>
-            {suggestions.map((s) => (
-              <tr key={s.col_name} style={{ cursor: "pointer" }} onClick={() => toggle(s.col_name)}>
-                <td><input type="checkbox" checked={!!picked[s.col_name]} onChange={() => toggle(s.col_name)} onClick={(e) => e.stopPropagation()} aria-label={`Pick ${s.col_name}`} /></td>
-                <td className="mono">{s.col_name}</td>
-                <td><Chip k={s.col_type === "consumable" ? "warn" : "info"}>{s.col_type}</Chip></td>
-                <td className="r mono-sm">{s.gun_count}</td>
-                <td className="r mono-sm">{s.part_count}</td>
-                <td className="mono-sm" style={{ maxWidth: 340, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--ink-3)" }}>{(s.sample_parts || []).slice(0, 4).join(" · ")}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 4px" }}>
+            <input className="input mono" placeholder="Filter categories or sample parts (e.g. LM GUIDE)…" value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: 1 }} />
+            <label className="mono-sm" style={{ display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", color: "var(--ink-3)" }}>
+              <input type="checkbox" checked={allShownPicked} onChange={toggleAllShown} /> select all shown
+            </label>
+          </div>
+          <div style={{ maxHeight: "52vh", overflow: "auto" }}>
+            <table className="tbl">
+              <thead><tr><th style={{ width: 30 }}></th><th>Column header</th><th>Type</th><th className="r">Guns</th><th className="r">Parts</th><th>Sample parts</th></tr></thead>
+              <tbody>
+                {filtered.map((s) => (
+                  <tr key={s.col_name} style={{ cursor: "pointer" }} onClick={() => toggle(s.col_name)}>
+                    <td><input type="checkbox" checked={!!picked[s.col_name]} onChange={() => toggle(s.col_name)} onClick={(e) => e.stopPropagation()} aria-label={`Pick ${s.col_name}`} /></td>
+                    <td className="mono">{s.col_name}</td>
+                    <td style={{ whiteSpace: "nowrap" }}><Chip k={s.col_type === "consumable" ? "warn" : "info"}>{s.col_type}</Chip></td>
+                    <td className="r mono-sm" title={s.gun_count === 1 ? "on a single gun — easy to miss without this list" : ""} style={s.gun_count === 1 ? { color: "var(--warn, #b45309)" } : undefined}>{s.gun_count}</td>
+                    <td className="r mono-sm">{s.part_count}</td>
+                    <td className="mono-sm" style={{ maxWidth: 340, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--ink-3)" }}>{(s.sample_parts || []).slice(0, 4).join(" · ")}</td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr><td colSpan={6} className="mono-sm" style={{ padding: 12, color: "var(--ink-4)" }}>No categories match “{q}”.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </Card>
   );
 };
 
-const SMAddColForm = ({ onAdd, onClose, existing, guns }) => {
+const SMAddColForm = ({ onAdd, onClose, existing, guns, embedded }: any) => {
   const { useState: uF, useRef: rF, useEffect: eF } = React;
   const [name, setName] = uF("");
   const [type, setType] = uF("spare");
@@ -1426,15 +1524,15 @@ const SMAddColForm = ({ onAdd, onClose, existing, guns }) => {
     const preset = SPARE_PRESETS.find((p) => p.name === up);
     if (preset) setType(preset.category === "Consumable" ? "consumable" : "spare");
   };
-  const addCol = (colName, consumable) => {
-    onAdd(colName, consumable ? "consumable" : "spare");
-  };
   const submit = (e) => {
     e?.preventDefault();
     const trimmed = String(name).trim().toUpperCase();
     if (!trimmed) return;
     onAdd(trimmed, type);
-    onClose();
+    // Embedded in the Configure modal: keep it open so several columns can be
+    // added in a row (input clears + refocuses). Standalone: close after adding.
+    if (embedded) { setName(""); ref.current?.focus(); }
+    else onClose?.();
   };
 
   // Datalist = matched presets + descriptions + all preset names (deduped).
@@ -1466,44 +1564,26 @@ const SMAddColForm = ({ onAdd, onClose, existing, guns }) => {
           </select>
         </div>
         <Btn sm type="submit" kind="primary">Add column</Btn>
-        <Btn sm kind="ghost" onClick={onClose}>Cancel</Btn>
+        {!embedded && <Btn sm kind="ghost" onClick={onClose}>Cancel</Btn>}
       </form>
 
-      {/* Suggestions found in the guns currently in this matrix */}
-      {hasGuns && (
-        <div>
-          <div className="label" style={{ marginBottom: 4 }}>
-            {loading ? "scanning your guns…" : presetHits.filter((h) => !usedNames.has(h.name)).length ? "found in your guns" : "no preset categories matched your guns - use a preset or description below"}
-          </div>
-          {!loading && (
-            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-              {presetHits.filter((h) => !usedNames.has(h.name)).map((h) => (
-                <button key={h.name} type="button" className="chip" style={{ cursor: "pointer", fontSize: 10.5 }} title={h.consumable ? "consumable" : "spare"} onClick={() => addCol(h.name, h.consumable)}>
-                  {h.name} <span style={{ opacity: 0.6 }}>· {h.count}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Familiar preset categories (always available) */}
-      <div>
-        <div className="label" style={{ marginBottom: 4 }}>preset categories</div>
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-          {SPARE_PRESETS.filter((p) => !usedNames.has(p.name)).map((p) => (
-            <button key={p.name} type="button" className="chip ghost" style={{ cursor: "pointer", fontSize: 10.5 }} title={p.category} onClick={() => addCol(p.name, p.category === "Consumable")}>
-              {p.name}
-            </button>
-          ))}
-        </div>
+      {/* BOM-based discovery lives in ONE place — the "Columns from BOM" button,
+          which lists every category across the guns' BOMs to bulk-add. This form
+          is just for adding a single column by hand; the input autocompletes
+          from your guns' part descriptions + the known spare presets. */}
+      <div className="label" style={{ color: "var(--ink-4)" }}>
+        {loading
+          ? "loading autocomplete from your guns…"
+          : hasGuns
+            ? "Tip: use “Columns from BOM” to pick from every category in your guns’ BOMs."
+            : "Type a category name (autocompletes from the known spare presets)."}
       </div>
     </div>
   );
 };
 
 // ---------- Configure Cols modal ----------
-const SMConfigColsModal = ({ cols, onMove, onLockToggle, onDelete, onRename, onClose }) => {
+const SMConfigColsModal = ({ cols, onAddCol, guns, onMove, onLockToggle, onDelete, onRename, onClose }: any) => {
   const { useEffect: eM } = React;
   eM(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
@@ -1520,9 +1600,17 @@ const SMConfigColsModal = ({ cols, onMove, onLockToggle, onDelete, onRename, onC
           </div>
           <button className="btn icon sm ghost" style={{ marginLeft: "auto" }} onClick={onClose} aria-label="Close">{Icon.x}</button>
         </div>
-        <div style={{ padding: 16, overflow: "auto", flex: 1 }}>
+        <div style={{ padding: 16, overflow: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Add a column — the single place to add (was a separate "+ Spare
+              column" button). Stays open so several can be added in a row. */}
+          <div>
+            <div className="label" style={{ marginBottom: 6 }}>Add a column</div>
+            <SMAddColForm embedded onAdd={onAddCol} onClose={onClose} existing={cols} guns={guns} />
+          </div>
+          <div>
+            <div className="label" style={{ marginBottom: 6 }}>Existing columns</div>
           {cols.length === 0 ? (
-            <div className="body" style={{ color: "var(--ink-3)" }}>No columns yet.</div>
+            <div className="body" style={{ color: "var(--ink-3)" }}>No columns yet — add one above.</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {cols.map((c, ix) => (
@@ -1544,6 +1632,7 @@ const SMConfigColsModal = ({ cols, onMove, onLockToggle, onDelete, onRename, onC
               ))}
             </div>
           )}
+          </div>
         </div>
         <div style={{ padding: "12px 16px", borderTop: "1px solid var(--hairline)" }}>
           <Btn kind="primary" onClick={onClose} full>Done</Btn>

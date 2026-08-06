@@ -119,6 +119,14 @@ const COL_EXCLUSIONS: Record<string, string[]> = {
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+// Canonicalize every spelling of the assembly suffix to "ASSY" so a BOM part
+// named "GEAR CASE ASSEMBLY", "GEAR CASE ASS'Y" (straight or curly apostrophe),
+// or "GEAR CASE ASSY." all match the "GEAR CASE ASSY" column — while a plain
+// "GEAR CASE" stays distinct (no suffix to canonicalize). Applied to both the
+// part name and the column name before comparison, so the pair lines up.
+export const normalizeAssy = (s: string): string =>
+  String(s || "").replace(/\bASS(?:['’]?Y|EMBLY)\b\.?/gi, "ASSY");
+
 // A category column may carry a moving/fixed (or LH/RH) qualifier, e.g.
 // "SHANK (MOVING)" / "TIP BASE (FIXED)". BOM part names have no such
 // qualifier, so strip it to match on the base category.
@@ -175,8 +183,8 @@ const remainderIsSpecOnly = (remainder: string): boolean => {
 // candidate starts with keyword at a word boundary AND the remainder is
 // size/spec only (so "SHUNT COVER" does not match the "SHUNT" column).
 export const nameIsCleanMatch = (candidate: string, keyword: string): boolean => {
-  const c = String(candidate || "").trim();
-  const kw = String(keyword || "").trim();
+  const c = normalizeAssy(String(candidate || "").trim());
+  const kw = normalizeAssy(String(keyword || "").trim());
   if (!c || !kw) return false;
   if (c.length < kw.length) return false;
   if (c.slice(0, kw.length).toUpperCase() !== kw.toUpperCase()) return false;
@@ -187,8 +195,16 @@ export const nameIsCleanMatch = (candidate: string, keyword: string): boolean =>
 
 export interface SpareBomItem { part_no?: string | null; part_name?: string | null; material?: string | null; size?: string | null; }
 
-// matchSpares(bomItems, colNames) -> { colName: "pn1\npn2" }
-export const matchSpares = (bomItems: SpareBomItem[], colNames: string[]): Record<string, string> => {
+// matchSpares(bomItems, colNames, opts?) -> { colName: "pn1\npn2" }
+// opts.skipMaterialFilter: don't require copper material for consumable columns
+// (used by the column SCAN so a consumable category surfaces by name even when
+// the BOM has no material data; auto-fill leaves it off so the copper filter
+// still applies at fill time).
+export const matchSpares = (
+  bomItems: SpareBomItem[],
+  colNames: string[],
+  opts: { skipMaterialFilter?: boolean } = {},
+): Record<string, string> => {
   const result: Record<string, string> = {};
   (colNames || []).forEach((col) => {
     const base = stripVariant(col);
@@ -202,7 +218,9 @@ export const matchSpares = (bomItems: SpareBomItem[], colNames: string[]): Recor
       if (!p || !p.part_name) return false;
       const cands = nameMatchCandidates(p.part_name);
       if (!cands.some((c) => nameIsCleanMatch(c, base))) return false;
-      if (cands.some((c) => exclusions.some((re) => re.test(c)))) return false;
+      // Exclusions compare the assembly-normalized candidate so a "GEAR CASE
+      // ASSEMBLY"/"...ASS'Y" part is still kept out of the broad "GEAR CASE".
+      if (cands.some((c) => exclusions.some((re) => re.test(normalizeAssy(c))))) return false;
       return true;
     });
 
@@ -218,8 +236,9 @@ export const matchSpares = (bomItems: SpareBomItem[], colNames: string[]): Recor
       });
     }
 
-    // Consumable columns: only copper-type material
-    if (isConsumableCol(col)) matches = matches.filter((p) => isCopperMaterial(p.material));
+    // Consumable columns: only copper-type material (unless the caller opts out,
+    // e.g. the column scan, which surfaces the category by name regardless).
+    if (!opts.skipMaterialFilter && isConsumableCol(col)) matches = matches.filter((p) => isCopperMaterial(p.material));
 
     // dedup by part_no, preserve order
     const seen = new Set<string>();
@@ -229,4 +248,100 @@ export const matchSpares = (bomItems: SpareBomItem[], colNames: string[]): Recor
     result[col] = dedup.map((p) => p.part_no).join("\n");
   });
   return result;
+};
+
+// ------- Column scan (the "Suggest columns" engine) --------------------------
+// Preset-aware discovery of spare columns from a set of guns' BOM lines. Uses
+// the SAME matcher as auto-fill (so what's suggested is what auto-fill can
+// populate): known presets first (GEAR CASE ASSY, ARM ASSY, TIP, …), then a
+// generic category for anything left over. Copper parts are flagged as CRITICAL
+// consumables even when their name matches no preset — those are the electrode-
+// side wear parts an operator most needs to stock.
+
+export interface SpareSuggestion {
+  col_name: string;
+  col_type: "spare" | "consumable";
+  gun_count: number;
+  part_count: number;
+  sample_parts: string[];
+}
+
+// Generic category for a part that matched no preset: strip leading numbering /
+// CJK, canonicalize the assembly suffix, keep the leading non-spec words. Never
+// returns "" for a named part — so nothing is silently dropped from the scan.
+const genericCategory = (partName?: string | null): string => {
+  const cands = nameMatchCandidates(partName);
+  const base = normalizeAssy(String((cands.length ? cands[cands.length - 1] : partName) || "").trim()).toUpperCase();
+  if (!base) return "";
+  const kept: string[] = [];
+  for (const w of base.split(/\s+/)) {
+    // Skip a leading size/side token (16MM / LH / RH …); stop at a trailing one.
+    if (isSpecToken(w)) { if (kept.length) break; else continue; }
+    kept.push(w);
+    if (kept.length >= 4) break;
+  }
+  // Fallback: an all-size/side/CJK name still forms a bucket (pickable or
+  // ignorable) rather than vanishing from the suggestions.
+  return (kept.length ? kept.join(" ") : base.split(/\s+/).slice(0, 3).join(" ")).trim();
+};
+
+export const suggestSpareColumns = (
+  perGun: Array<{ gun: string; lines: SpareBomItem[] }>,
+  existing: string[] = [],
+): SpareSuggestion[] => {
+  const existingUp = new Set((existing || []).map((c) => stripVariant(String(c || "")).toUpperCase().trim()));
+  const presetNames = SPARE_PRESETS.map((p) => p.name);
+  const presetType = new Map(SPARE_PRESETS.map((p) => [p.name.toUpperCase(), p.category === "Consumable" ? "consumable" : "spare"] as const));
+
+  type Bucket = { col: string; presetType?: "spare" | "consumable"; guns: Set<string>; parts: Set<string>; samples: string[]; anyCopper: boolean };
+  const buckets = new Map<string, Bucket>();
+  const bump = (col: string, ptype: "spare" | "consumable" | undefined, gun: string, partNo: string, sample: string, copper: boolean) => {
+    const key = col.toUpperCase().trim();
+    if (!key || existingUp.has(key)) return;
+    const b = buckets.get(key) || { col, presetType: undefined, guns: new Set<string>(), parts: new Set<string>(), samples: [], anyCopper: false };
+    if (ptype) b.presetType = ptype;
+    b.guns.add(gun);
+    if (partNo) b.parts.add(partNo);
+    if (copper) b.anyCopper = true;
+    if (b.samples.length < 6 && sample && !b.samples.includes(sample)) b.samples.push(sample);
+    buckets.set(key, b);
+  };
+
+  for (const { gun, lines } of (perGun || [])) {
+    const items = lines || [];
+    const claimed = new Set<string>();
+    // 1) preset-aware — match by name (copper filter OFF so consumable presets
+    //    surface even without material data).
+    const matched = matchSpares(items, presetNames, { skipMaterialFilter: true });
+    for (const name of presetNames) {
+      const v = matched[name];
+      if (!v) continue;
+      for (const pn of v.split("\n").filter(Boolean)) {
+        claimed.add(pn);
+        const ln = items.find((l) => l && l.part_no === pn);
+        bump(name, presetType.get(name.toUpperCase()), gun, pn, (ln && ln.part_name) || pn, isCopperMaterial(ln && ln.material));
+      }
+    }
+    // 2) generic + copper-critical for everything a preset didn't claim.
+    for (const l of items) {
+      if (!l || !l.part_no || claimed.has(l.part_no)) continue;
+      const col = genericCategory(l.part_name);
+      if (!col) continue;
+      bump(col, undefined, gun, String(l.part_no), l.part_name || String(l.part_no), isCopperMaterial(l.material));
+    }
+  }
+
+  return Array.from(buckets.values())
+    .map((b) => {
+      // Preset type wins; otherwise a copper part is a consumable (electrode-side
+      // wear part), else a spare — so copper parts are never dropped or mistyped.
+      const col_type: "spare" | "consumable" = b.presetType || (b.anyCopper ? "consumable" : "spare");
+      return { col_name: b.col, col_type, gun_count: b.guns.size, part_count: b.parts.size, sample_parts: b.samples };
+    })
+    // EVERY category in any gun's BOM is returned — no cap. A rare part on a
+    // single gun in a 100-gun matrix must still be selectable, so it can't be
+    // dropped by a reach-ranked cutoff. The panel adds a search box to keep the
+    // longer list navigable. Common parts first (quick pick), then alphabetical
+    // so the long tail of one-off parts is scannable.
+    .sort((a, b) => b.gun_count - a.gun_count || b.part_count - a.part_count || a.col_name.localeCompare(b.col_name));
 };

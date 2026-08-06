@@ -36,8 +36,8 @@ describe("nameMatchCandidates", () => {
 });
 
 describe("isCopperMaterial", () => {
-  it("recognizes common copper alloys", () => {
-    ["CuCrZr", "CRCU", "CR-CU", "C1100", "BE14C", "Chromium Copper", "copper"].forEach((m) =>
+  it("recognizes common copper alloys (incl. GLIDCOP / RWMA electrode classes)", () => {
+    ["CuCrZr", "CRCU", "CR-CU", "C1100", "BE14C", "Chromium Copper", "copper", "GlidCop AL-15", "RWMA Class 2"].forEach((m) =>
       expect(isCopperMaterial(m)).toBe(true)
     );
   });
@@ -97,6 +97,15 @@ describe("matchSpares", () => {
       { part_no: "T-1", part_name: "TIP 1", material: "Copper", size: "1" },
     ];
     expect(matchSpares(dup, ["TIP"])["TIP"]).toBe("T-1");
+  });
+
+  it("keeps a blank-material part in a consumable column (legacy flat BOM has no material)", () => {
+    const flat = [{ part_no: "CT-1", part_name: "CAP TIP 16", material: "", size: "16" }];
+    expect(matchSpares(flat, ["CAP TIP"])["CAP TIP"].split("\n")).toContain("CT-1");
+  });
+  it("still excludes a present non-copper material from a consumable column", () => {
+    const ss = [{ part_no: "SS-1", part_name: "CAP TIP 16", material: "SS304", size: "16" }];
+    expect(matchSpares(ss, ["CAP TIP"])["CAP TIP"]).toBe("");
   });
 });
 

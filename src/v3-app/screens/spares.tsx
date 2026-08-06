@@ -286,8 +286,32 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const debounceRef = rM(null);
   const fileRef = rM(null);
 
-  // Sync external matrix → local draft when matrix.id changes
-  eM(() => { setDraft(matrix); setSaveState("idle"); }, [matrix.id]);
+  // Latest draft + saveState snapshot, so a pending (dirty, debounced) autosave
+  // can be FLUSHED before the matrix is switched or the pane unmounts. Without
+  // this the 1s debounce cleanup only clearTimeout()s and the last edits are
+  // silently dropped when the operator clicks another matrix within the window.
+  const latestRef = rM({ draft, saveState });
+  latestRef.current = { draft, saveState };
+  const flushPending = () => {
+    const { draft: d, saveState: s } = latestRef.current;
+    if (s !== "dirty" || !d || !d.id) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const out = { ...d, updated_at: new Date().toISOString() };
+    AnvilBackend.spareMatrix.update(out.id, toServer(out))
+      .then(() => onChange(out))
+      .catch((err) => window.notifyError?.("Save failed", String((err && err.message) || err)));
+  };
+
+  // Sync external matrix → local draft when matrix.id changes — flushing any
+  // pending edit of the OUTGOING matrix first.
+  eM(() => {
+    const prev = latestRef.current.draft;
+    if (prev && prev.id && prev.id !== matrix.id) flushPending();
+    setDraft(matrix); setSaveState("idle");
+  }, [matrix.id]);
+
+  // Flush on unmount too (navigating away mid-edit).
+  eM(() => () => { flushPending(); }, []);
 
   // Debounced autosave on draft change
   eM(() => {
@@ -405,19 +429,26 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const onColRename = (ix, name) => {
     const trimmed = String(name || "").trim();
     if (!trimmed) return;
-    dirty((d) => {
-      const old = (d.cols || [])[ix];
-      if (!old || old.col_name === trimmed) return d;
-      return {
-        ...d,
-        cols: (d.cols || []).map((c, i) => i === ix ? { ...c, col_name: trimmed } : c),
-        rows: (d.rows || []).map((r) => {
-          const v = { ...(r.values || {}) };
-          if (old.col_name in v) { v[trimmed] = v[old.col_name]; delete v[old.col_name]; }
-          return { ...r, values: v };
-        }),
-      };
-    });
+    const cols = draft.cols || [];
+    const old = cols[ix];
+    if (!old || old.col_name === trimmed) return;
+    // Reject a rename onto an existing column name. Without this guard the
+    // per-row `values[trimmed] = values[old]` below overwrote the OTHER
+    // column's cells and made two columns share one JSONB key — editing one
+    // edited both, and recompute double-counted installed_qty.
+    if (cols.some((c, i) => i !== ix && c.col_name === trimmed)) {
+      window.notifyError?.("Column exists", `A column named "${trimmed}" already exists — rename cancelled.`);
+      return;
+    }
+    dirty((d) => ({
+      ...d,
+      cols: (d.cols || []).map((c, i) => i === ix ? { ...c, col_name: trimmed } : c),
+      rows: (d.rows || []).map((r) => {
+        const v = { ...(r.values || {}) };
+        if (old.col_name in v) { v[trimmed] = v[old.col_name]; delete v[old.col_name]; }
+        return { ...r, values: v };
+      }),
+    }));
   };
 
   // ------- Auto-fill from BOMs ------------------------------------------
@@ -620,13 +651,17 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
     try {
       // Persist current worksheet edits, then recompute the Recommended
       // sheet server-side: installed_qty = COUNT of guns per (category,
-      // part). Human-edited fields are preserved by the server.
+      // part). Human-edited fields are preserved by the server. Cancel the
+      // pending debounced autosave first so it can't fire a torn/duplicate
+      // write over this one.
+      if (debounceRef.current) clearTimeout(debounceRef.current);
       await AnvilBackend.spareMatrix.update(draft.id, toServer(draft));
       const res = await AnvilBackend.spareMatrix.recomputeRecommended(draft.id);
       const rec = (res && res.recommended) || [];
       const next = { ...draft, recommended: rec };
       onChange(next);
       setDraft(next);
+      setSaveState("idle");   // edits just persisted; clear the dirty flag
       window.notifySuccess?.("Recommended spares recompiled", `${rec.length} parts · installed qty counted across guns.`);
     } catch (err) {
       window.notifyError?.("Recompile failed", String((err && err.message) || err));

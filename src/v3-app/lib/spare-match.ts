@@ -264,22 +264,25 @@ export interface SpareSuggestion {
   gun_count: number;
   part_count: number;
   sample_parts: string[];
-  critical: boolean;   // copper wear part or a consumable preset
 }
 
 // Generic category for a part that matched no preset: strip leading numbering /
-// CJK, canonicalize the assembly suffix, keep the leading non-spec words.
+// CJK, canonicalize the assembly suffix, keep the leading non-spec words. Never
+// returns "" for a named part — so nothing is silently dropped from the scan.
 const genericCategory = (partName?: string | null): string => {
   const cands = nameMatchCandidates(partName);
   const base = normalizeAssy(String((cands.length ? cands[cands.length - 1] : partName) || "").trim()).toUpperCase();
   if (!base) return "";
   const kept: string[] = [];
   for (const w of base.split(/\s+/)) {
-    if (isSpecToken(w)) break;         // stop at a size/side/number token (LH/RH/16MM/…)
+    // Skip a leading size/side token (16MM / LH / RH …); stop at a trailing one.
+    if (isSpecToken(w)) { if (kept.length) break; else continue; }
     kept.push(w);
     if (kept.length >= 4) break;
   }
-  return kept.join(" ").trim();
+  // Fallback: an all-size/side/CJK name still forms a bucket (pickable or
+  // ignorable) rather than vanishing from the suggestions.
+  return (kept.length ? kept.join(" ") : base.split(/\s+/).slice(0, 3).join(" ")).trim();
 };
 
 export const suggestSpareColumns = (
@@ -330,12 +333,13 @@ export const suggestSpareColumns = (
 
   return Array.from(buckets.values())
     .map((b) => {
-      // Preset type wins; otherwise a copper part => CRITICAL consumable, else spare.
+      // Preset type wins; otherwise a copper part is a consumable (electrode-side
+      // wear part), else a spare — so copper parts are never dropped or mistyped.
       const col_type: "spare" | "consumable" = b.presetType || (b.anyCopper ? "consumable" : "spare");
-      const critical = b.anyCopper || b.presetType === "consumable";
-      return { col_name: b.col, col_type, gun_count: b.guns.size, part_count: b.parts.size, sample_parts: b.samples, critical };
+      return { col_name: b.col, col_type, gun_count: b.guns.size, part_count: b.parts.size, sample_parts: b.samples };
     })
-    // Critical (copper / consumable) first, then by reach across guns/parts.
-    .sort((a, b) => Number(b.critical) - Number(a.critical) || b.gun_count - a.gun_count || b.part_count - a.part_count)
-    .slice(0, 60);
+    // Ranked by reach across guns, then parts. (Parts common to every gun —
+    // typically the copper tips/caps — naturally rise to the top.)
+    .sort((a, b) => b.gun_count - a.gun_count || b.part_count - a.part_count)
+    .slice(0, 80);
 };

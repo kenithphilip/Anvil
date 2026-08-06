@@ -1403,7 +1403,7 @@ const SuggestColsPanel = ({ guns, existing, onAdd, onClose }: any) => {
   };
   return (
     <Card title="Suggested spare columns"
-          eyebrow={state.loading ? "scanning every gun's BOM…" : `${suggestions.length} candidate${suggestions.length === 1 ? "" : "s"} from ${gunList.length} gun BOM${gunList.length === 1 ? "" : "s"} · copper wear parts flagged critical`}
+          eyebrow={state.loading ? "scanning every gun's BOM…" : `${suggestions.length} candidate${suggestions.length === 1 ? "" : "s"} from ${gunList.length} gun BOM${gunList.length === 1 ? "" : "s"} · assemblies + copper consumables included`}
           right={<>
             <Btn sm kind="ghost" onClick={onClose}>Close</Btn>
             <Btn sm kind="primary" onClick={addPicked} disabled={!suggestions.length}>Add selected</Btn>
@@ -1424,7 +1424,6 @@ const SuggestColsPanel = ({ guns, existing, onAdd, onClose }: any) => {
                 <td className="mono">{s.col_name}</td>
                 <td style={{ whiteSpace: "nowrap" }}>
                   <Chip k={s.col_type === "consumable" ? "warn" : "info"}>{s.col_type}</Chip>
-                  {s.critical ? <> <Chip k="bad">critical</Chip></> : null}
                 </td>
                 <td className="r mono-sm">{s.gun_count}</td>
                 <td className="r mono-sm">{s.part_count}</td>

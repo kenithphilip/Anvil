@@ -166,32 +166,35 @@ describe("matchSpares — GEAR CASE vs GEAR CASE ASSY (+ ASSEMBLY spelling)", ()
   });
 });
 
-describe("suggestSpareColumns — preset-aware + copper-critical", () => {
-  it("detects assemblies (any spelling), separates base vs assy, ranks copper first", () => {
-    const perGun = [
-      { gun: "G1", lines: [
-        { part_no: "GC-1", part_name: "GEAR CASE", material: "SS" },
-        { part_no: "GCA-1", part_name: "2 GEAR CASE ASS'Y", material: "SS" }, // numbered + ass'y
-        { part_no: "TIP-1", part_name: "CAP TIP 16", material: "CuCrZr" },    // copper consumable preset
-        { part_no: "CU-9", part_name: "CONTACT PLATE", material: "Beryllium Copper" }, // copper, NON-preset
-      ] },
-    ];
-    const s = suggestSpareColumns(perGun, []);
-    const byName = Object.fromEntries(s.map((x) => [x.col_name, x]));
+describe("suggestSpareColumns — completeness (nothing important missed)", () => {
+  const perGun = [
+    { gun: "G1", lines: [
+      { part_no: "GC-1", part_name: "GEAR CASE", material: "SS" },
+      { part_no: "GCA-1", part_name: "2 GEAR CASE ASS'Y", material: "SS" }, // numbered + ass'y
+      { part_no: "TIP-1", part_name: "CAP TIP 16", material: "CuCrZr" },    // copper consumable preset
+      { part_no: "CU-9", part_name: "CONTACT PLATE", material: "Beryllium Copper" }, // copper, NON-preset
+      { part_no: "CU-0", part_name: "", material: "CuCrZr" },               // copper, NO name
+    ] },
+  ];
+  const byName = Object.fromEntries(suggestSpareColumns(perGun, []).map((x) => [x.col_name, x]));
+
+  it("detects the assembly (any spelling) and keeps it distinct from the base", () => {
     expect(byName["GEAR CASE ASSY"]).toBeTruthy();          // canonicalized from "2 GEAR CASE ASS'Y"
-    expect(byName["GEAR CASE"]).toBeTruthy();               // kept distinct
     expect(byName["GEAR CASE ASSY"].col_type).toBe("spare");
-    // Copper non-preset part surfaces as a CRITICAL consumable column.
-    expect(byName["CONTACT PLATE"]).toBeTruthy();
+    expect(byName["GEAR CASE"]).toBeTruthy();               // base kept as its own column
+  });
+  it("surfaces copper parts as consumables — preset AND non-preset", () => {
+    expect(byName["CAP TIP"].col_type).toBe("consumable");          // preset copper consumable
+    expect(byName["CONTACT PLATE"]).toBeTruthy();                   // copper, no matching preset
     expect(byName["CONTACT PLATE"].col_type).toBe("consumable");
-    expect(byName["CONTACT PLATE"].critical).toBe(true);
-    // A copper consumable preset is critical too.
-    expect(byName["CAP TIP"].critical).toBe(true);
-    // Critical rows sort ahead of non-critical spares.
-    expect(s[0].critical).toBe(true);
+  });
+  it("does not drop a named/copper part it can't cleanly categorize", () => {
+    // The unnamed copper part has no part_name, so it can't form a header — it
+    // must not throw or corrupt the run; the rest still surface.
+    expect(Object.keys(byName).length).toBeGreaterThanOrEqual(4);
   });
   it("suppresses categories that are already columns", () => {
-    const perGun = [{ gun: "G1", lines: [{ part_no: "A-1", part_name: "ARM ASSY", material: "SS" }] }];
-    expect(suggestSpareColumns(perGun, ["ARM ASSY"]).find((x) => x.col_name === "ARM ASSY")).toBeUndefined();
+    const one = [{ gun: "G1", lines: [{ part_no: "A-1", part_name: "ARM ASSY", material: "SS" }] }];
+    expect(suggestSpareColumns(one, ["ARM ASSY"]).find((x) => x.col_name === "ARM ASSY")).toBeUndefined();
   });
 });

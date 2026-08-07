@@ -313,31 +313,59 @@ const advanceJob = async (svc, job) => {
     // chunked background PO while the job still reported 'completed'.
     const mergedNorm = normalizedResult(merged);
     const mergedLines = Array.isArray(mergedNorm.lines) ? mergedNorm.lines : [];
+
+    // Honor a mid-flight operator cancel: if the job was cancelled while this
+    // tick held the lease, don't write the order or mark it completed.
+    const cur = await svc.from("extraction_jobs").select("status").eq("id", job.id).maybeSingle();
+    if (cur.data && cur.data.status === "cancelled") return { job, hasMore: false };
+
+    // If EVERY chunk failed (merged.ok === false), FAIL the job — do NOT blank
+    // the order's existing line items and report it 'completed' (that turned a
+    // total extraction failure into a silently-empty order). A genuinely empty
+    // document still has merged.ok === true.
+    if (merged && merged.ok === false) {
+      const f = await svc.from("extraction_jobs")
+        .update({ status: "failed", result: merged, last_error: "all chunks failed to extract", completed_at: new Date().toISOString(), lease_until: null })
+        .eq("id", job.id).eq("status", "merging").select("*").maybeSingle();
+      if (f.error) throw new Error("job update (merge-fail): " + f.error.message);
+      await emit(svc, tenantCtx, "docai_extract_failed", { job_id: job.id, order_id: orderId, error: "all chunks failed" });
+      await recordAudit({ tenantId: job.tenant_id }, { action: "extraction_job_failed", objectType: "extraction_job", objectId: job.id, after: { reason: "all_chunks_failed" } });
+      return { job: (f.data || job), hasMore: false };
+    }
+
     // Persist into the parent order: same shape as runExtraction
     // writes for the sync flow, so downstream code (recon table,
     // anomaly compute) consumes it identically.
     if (orderId) {
-      try {
-        const ord = await svc.from("orders").select("result, preflight_payload").eq("tenant_id", job.tenant_id).eq("id", orderId).maybeSingle();
-        const nextResult = { ...(ord.data?.result || {}) };
-        nextResult.salesOrder = {
-          ...(nextResult.salesOrder || {}),
-          lineItems: mergedLines,
-          customer: mergedNorm.customer || nextResult.salesOrder?.customer || null,
-        };
-        const nextPreflight = {
-          ...(ord.data?.preflight_payload || {}),
-          adapter_used: merged.adapter_used || null,
-          confidence_overall: merged.confidence_overall || null,
-          last_extracted_at: new Date().toISOString(),
-          extraction_job_id: job.id,
-        };
-        await svc.from("orders")
-          .update({ result: nextResult, preflight_payload: nextPreflight })
-          .eq("tenant_id", job.tenant_id).eq("id", orderId);
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn("[cron/extraction_jobs] order writeback failed: " + (e?.message || e));
+      const ord = await svc.from("orders").select("result, preflight_payload").eq("tenant_id", job.tenant_id).eq("id", orderId).maybeSingle();
+      if (ord.error) throw new Error("order read (merge): " + ord.error.message);
+      const nextResult = { ...(ord.data?.result || {}) };
+      nextResult.salesOrder = {
+        ...(nextResult.salesOrder || {}),
+        lineItems: mergedLines,
+        customer: mergedNorm.customer || nextResult.salesOrder?.customer || null,
+      };
+      const nextPreflight = {
+        ...(ord.data?.preflight_payload || {}),
+        adapter_used: merged.adapter_used || null,
+        confidence_overall: merged.confidence_overall || null,
+        last_extracted_at: new Date().toISOString(),
+        extraction_job_id: job.id,
+      };
+      const wb = await svc.from("orders")
+        .update({ result: nextResult, preflight_payload: nextPreflight })
+        .eq("tenant_id", job.tenant_id).eq("id", orderId);
+      if (wb.error) {
+        // Do NOT swallow a writeback failure into 'completed' — that strands the
+        // order with un-written lines while the job claims success. Fail the job
+        // (extraction result preserved in job.result for recovery) so it is
+        // visible instead of silently wrong.
+        const f = await svc.from("extraction_jobs")
+          .update({ status: "failed", result: merged, last_error: "order writeback failed: " + wb.error.message, completed_at: new Date().toISOString(), lease_until: null })
+          .eq("id", job.id).eq("status", "merging").select("*").maybeSingle();
+        if (f.error) throw new Error("job update (writeback-fail): " + f.error.message);
+        await emit(svc, tenantCtx, "docai_extract_failed", { job_id: job.id, order_id: orderId, error: "writeback: " + wb.error.message });
+        return { job: (f.data || job), hasMore: false };
       }
     }
     const upd = await svc.from("extraction_jobs")
@@ -347,8 +375,11 @@ const advanceJob = async (svc, job) => {
         completed_at: new Date().toISOString(),
         lease_until: null,
       })
-      .eq("id", job.id).select("*").single();
+      .eq("id", job.id).eq("status", "merging").select("*").maybeSingle();
     if (upd.error) throw new Error("job update (merge): " + upd.error.message);
+    // A mid-flight cancel (or another worker) moved the status off 'merging'
+    // -> 0 rows updated; don't emit 'completed' for a job we didn't complete.
+    if (!upd.data) return { job, hasMore: false };
     await emit(svc, tenantCtx, "docai_chunk_done", {
       job_id: job.id, order_id: orderId,
       line_count: mergedLines.length,
@@ -392,12 +423,14 @@ export default async function handler(req, res) {
           if (!r.hasMore) break;
         } catch (e) {
           lastError = e?.message || String(e);
+          // Don't flip an operator-cancelled job to 'failed' (would resurrect it
+          // off 'cancelled'); leave terminal states alone.
           await svc.from("extraction_jobs").update({
             status: "failed",
             last_error: lastError,
             completed_at: new Date().toISOString(),
             lease_until: null,
-          }).eq("id", current.id);
+          }).eq("id", current.id).neq("status", "cancelled").neq("status", "completed");
           await emit(svc, { tenantId: current.tenant_id }, "docai_extract_failed", {
             job_id: current.id, order_id: current.order_id, error: lastError,
           });

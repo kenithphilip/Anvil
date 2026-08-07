@@ -55,8 +55,9 @@ const buildOrderRow = (email) => ({
     : "Inbound email matched no known customer; assign one before approval.",
 });
 
-const drainOnce = async (svc) => {
+const drainOnce = async (svc, tenantId) => {
   return drainQueue(svc, {
+    tenantId,   // null for cron (all tenants); set for a manual admin drain
     table: "inbound_emails",
     selectColumns:
       "id, tenant_id, thread_id, from_address, from_name, subject, body_text, attachments, received_at, priority_score, customer_id, customer_contact_id, linked_order_id, status",
@@ -138,7 +139,7 @@ export default async function handler(req, res) {
     }
     const ctx = await resolveContext(req);
     requirePermission(ctx, "approve");
-    const out = await drainOnce(svc);
+    const out = await drainOnce(svc, ctx.tenantId);   // manual drain -> caller's tenant only
     await recordAudit(ctx, {
       action: "inbound_email_drain",
       objectType: "tenant",

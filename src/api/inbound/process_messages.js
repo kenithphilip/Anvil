@@ -123,7 +123,7 @@ const dispatch = async (svc, msg) => {
   return handleOther(svc, msg);
 };
 
-const drainOnce = async (svc) => {
+const drainOnce = async (svc, tenantId) => {
   return drainQueue(svc, {
     table: "inbound_messages",
     selectColumns:
@@ -133,6 +133,7 @@ const drainOnce = async (svc) => {
     batchOrder: { column: "received_at", ascending: true },
     limit: BATCH_SIZE,
     processFn: (msg) => dispatch(svc, msg),
+    tenantId,   // null for cron (all tenants); set for a manual admin drain
   });
 };
 
@@ -153,7 +154,7 @@ export default async function handler(req, res) {
     }
     const ctx = await resolveContext(req);
     requirePermission(ctx, "approve");
-    const out = await drainOnce(svc);
+    const out = await drainOnce(svc, ctx.tenantId);   // manual drain -> caller's tenant only
     await recordAudit(ctx, {
       action: "inbound_chat_drain",
       objectType: "tenant",

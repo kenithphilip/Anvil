@@ -19,13 +19,15 @@ const QUOTES = [
   { opportunity_id: "opp3", customer_id: "c2", amount: 200000, status: "sent", sent_at: "2026-07-05T09:00:00Z", sent_by: "u2", version: 1 },
   { opportunity_id: "opp1", customer_id: "c1", amount: 999, status: "draft", sent_at: null, sent_by: "u1", version: 3 }, // not sent -> ignored
 ];
+// ord1 is attributed to opp1 (P2b: pure test reads order.opportunity_id; the
+// handler resolves it from quote_id 'gq1' -> quotes.opportunity_id 'opp1').
 const ORDERS = [
-  { status: "APPROVED", created_at: "2026-07-08T09:00:00Z", approved_at: "2026-07-12T09:00:00Z", customer_id: "c1" },
-  { status: "DRAFT", created_at: "2026-07-09T09:00:00Z", approved_at: null, customer_id: "c1" }, // not processed
+  { id: "ord1", opportunity_id: "opp1", quote_id: "gq1", status: "APPROVED", created_at: "2026-07-08T09:00:00Z", approved_at: "2026-07-12T09:00:00Z", customer_id: "c1" },
+  { id: "ord2", status: "DRAFT", created_at: "2026-07-09T09:00:00Z", approved_at: null, customer_id: "c1" }, // not processed
 ];
 const INVOICES = [
-  { status: "paid", grand_total: 500000, paid_amount: 500000, paid_at: "2026-07-20T09:00:00Z", issue_date: "2026-07-13T09:00:00Z", customer_id: "c1" },
-  { status: "sent", grand_total: 100000, paid_amount: 0, paid_at: null, issue_date: "2026-07-15T09:00:00Z", customer_id: "c1" }, // unpaid -> ignored
+  { status: "paid", order_id: "ord1", grand_total: 500000, paid_amount: 500000, paid_at: "2026-07-20T09:00:00Z", issue_date: "2026-07-13T09:00:00Z", customer_id: "c1" },
+  { status: "sent", order_id: "ord1", grand_total: 100000, paid_amount: 0, paid_at: null, issue_date: "2026-07-15T09:00:00Z", customer_id: "c1" }, // unpaid -> ignored
 ];
 
 describe("bucketKey", () => {
@@ -89,6 +91,24 @@ describe("computePipelineConversion (pure)", () => {
     expect(u2.won).toBe(0);
   });
 
+  it("attributed: quoted opp → processed order → paid (via order.opportunity_id)", () => {
+    const r = computePipelineConversion({ quotesSent: QUOTES, orders: ORDERS, invoices: INVOICES, opportunities: OPPS, granularity: "month", nowMs: NOW });
+    expect(r.attributed.quoted).toBe(3);
+    expect(r.attributed.ordered).toBe(1);   // opp1 got a processed order
+    expect(r.attributed.paid).toBe(1);      // opp1's order was paid
+    expect(r.attributed.order_conv_pct).toBe(33.3);
+    expect(r.attributed.paid_conv_pct).toBe(33.3);
+    expect(r.attributed.unattributed_processed_orders).toBe(0);
+  });
+
+  it("a processed order with no opportunity counts as unattributed, not mis-attributed", () => {
+    const orders = [...ORDERS, { id: "ordX", status: "APPROVED", created_at: "2026-07-02T00:00:00Z", approved_at: "2026-07-03T00:00:00Z", customer_id: "c9" }];
+    const r = computePipelineConversion({ quotesSent: QUOTES, orders, invoices: INVOICES, opportunities: OPPS, granularity: "month", nowMs: NOW });
+    expect(r.totals.orders_processed.count).toBe(2);
+    expect(r.attributed.ordered).toBe(1);   // still only opp1
+    expect(r.attributed.unattributed_processed_orders).toBe(1);
+  });
+
   it("empty input yields zeroed, well-formed output", () => {
     const r = computePipelineConversion({ quotesSent: [], orders: [], invoices: [], opportunities: [], granularity: "week" });
     expect(r.totals.quotes_sent).toEqual({ count: 0, value: 0 });
@@ -133,7 +153,13 @@ const run = async (query = {}) => {
 
 beforeEach(() => {
   const t = (rows) => rows.map((r) => ({ ...r, tenant_id: "t-1" }));
-  H.store = { opportunities: t(OPPS), opportunity_quotes: t(QUOTES), orders: t(ORDERS), invoices: t(INVOICES) };
+  H.store = {
+    opportunities: t(OPPS),
+    opportunity_quotes: t(QUOTES),          // P1 uploaded quote revisions ("quotes sent")
+    orders: t(ORDERS),
+    invoices: t(INVOICES),
+    quotes: t([{ id: "gq1", opportunity_id: "opp1" }]), // generated-quote link for P2b attribution
+  };
 });
 
 describe("GET /analytics/pipeline", () => {
@@ -145,6 +171,10 @@ describe("GET /analytics/pipeline", () => {
     expect(r.body.totals.quotes_sent.count).toBe(4);
     expect(r.body.cohort.quoted).toBe(3);
     expect(r.body.totals.paid.count).toBe(1);
+    // P2b: attribution resolved via orders.quote_id -> quotes.opportunity_id
+    expect(r.body.attributed.ordered).toBe(1);
+    expect(r.body.attributed.paid).toBe(1);
+    expect(r.body.attributed.unattributed_processed_orders).toBe(0);
   });
 
   it("a sales engineer is scoped to their own opportunities + their customers", async () => {

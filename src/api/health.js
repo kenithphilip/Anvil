@@ -16,6 +16,7 @@
 
 import { applyCors, handlePreflight, json } from "./_lib/cors.js";
 import { serviceClient } from "./_lib/supabase.js";
+import { emailConfigured, emailProvider } from "./_lib/mailer.js";
 
 const INTEGRATIONS = [
   { id: "anthropic",   env: ["ANTHROPIC_API_KEY"],                          label: "Anthropic Claude API" },
@@ -39,6 +40,10 @@ const INTEGRATIONS = [
   { id: "gstn",        env: ["GSTN_API_URL", "GSTN_API_KEY"],               label: "GSTN e-Invoice" },
   { id: "comms",       env: ["COMMS_PROVIDER_URL", "COMMS_PROVIDER_TOKEN"], label: "Comms provider (generic webhook)" },
   { id: "sendgrid",    env: ["SENDGRID_API_KEY", "SENDGRID_FROM_EMAIL"], label: "SendGrid (email send)" },
+  // Switchable transactional mailer (welcome / reset / quotes / dispatch /
+  // alerts). Configured when ANY provider (brevo|resend|sendgrid) + a from
+  // address is set — reports the active provider.
+  { id: "email_transactional", env: ["EMAIL_PROVIDER", "EMAIL_FROM"], label: "Transactional email (mailer)", check: emailConfigured, detail: () => ({ provider: emailProvider() }) },
   { id: "email",       env: ["EMAIL_INBOUND_TOKEN"],                        label: "Inbound email webhook" },
   { id: "fx",          env: ["FX_PROVIDER_URL"],                            label: "FX provider" },
   { id: "resend",      env: ["RESEND_API_KEY"],                             label: "Resend (magic links)" },
@@ -161,7 +166,8 @@ export default async function handler(req, res) {
     id: spec.id,
     label: spec.label,
     env: spec.env,
-    configured: spec.env.every((k) => !!process.env[k]),
+    configured: spec.check ? !!spec.check() : spec.env.every((k) => !!process.env[k]),
+    ...(spec.detail ? { detail: spec.detail() } : {}),
   }));
 
   const payload = {

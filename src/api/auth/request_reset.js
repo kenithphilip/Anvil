@@ -24,6 +24,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { serviceClient } from "../_lib/supabase.js";
 import { safeAwait } from "../_lib/safe-thenable.js";
 import { safeFetch } from "../_lib/safe-fetch.js";
+import { sendEmail } from "../_lib/mailer.js";
 import { createClient } from "@supabase/supabase-js";
 
 const RESET_RATE_LIMIT = Number(process.env.RESET_RATE_LIMIT || 5);
@@ -98,7 +99,6 @@ const checkRateLimit = async (svc, email) => {
 };
 
 const sendResetEmail = async ({ to, name, actionLink }) => {
-  if (!SENDGRID_KEY || !SENDGRID_FROM) return { provider: "manual", sent: false };
   const greeting = name ? `Hi ${name},\n\n` : "Hi,\n\n";
   const body = greeting +
     "We got a request to reset your Anvil password.\n\n" +
@@ -106,24 +106,11 @@ const sendResetEmail = async ({ to, name, actionLink }) => {
     actionLink + "\n\n" +
     "If you didn't request this, ignore the email. Your password stays unchanged.\n\n" +
     "Anvil security team";
-  try {
-    const resp = await safeFetch("https://api.sendgrid.com/v3/mail/send", {
-      method: "POST",
-      headers: { Authorization: "Bearer " + SENDGRID_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        personalizations: [{ to: [{ email: to }] }],
-        from: { email: SENDGRID_FROM, name: SENDGRID_FROM_NAME },
-        subject: "Reset your Anvil password",
-        content: [
-          { type: "text/plain", value: body },
-          { type: "text/html", value: body.replace(/\n/g, "<br/>") },
-        ],
-      }),
-    });
-    return { provider: "sendgrid", sent: resp.ok, status: resp.status };
-  } catch (err) {
-    return { provider: "sendgrid", sent: false, error: err.message };
-  }
+  // Switchable provider (Brevo/Resend/SendGrid via EMAIL_PROVIDER). skipped ==
+  // no provider configured -> report 'manual' so the handler logs the link.
+  const r = await sendEmail({ to, subject: "Reset your Anvil password", text: body });
+  if (r.skipped) return { provider: "manual", sent: false, error: r.reason };
+  return { provider: r.provider, sent: r.ok, status: r.status, error: r.ok ? undefined : r.detail };
 };
 
 export default async function handler(req, res) {
@@ -246,11 +233,11 @@ export default async function handler(req, res) {
       } catch (err) {
         lastError = err.message || lastError;
       }
-      if (actionLink && SENDGRID_KEY && SENDGRID_FROM) {
+      if (actionLink) {
         const sendResult = await sendResetEmail({ to: email, name: user.user_metadata?.name, actionLink });
         if (sendResult.sent) {
           delivered = true;
-          provider = "sendgrid";
+          provider = sendResult.provider;
         } else {
           lastError = sendResult.error || lastError;
         }
@@ -279,9 +266,10 @@ export default async function handler(req, res) {
       console.warn(
         "[auth/request_reset] no email delivered for " + email +
         " (provider=" + provider + ", error=" + (lastError || "no provider configured") + "). " +
-        "Configure Supabase SMTP in the project dashboard, or set " +
-        "SUPABASE_URL/SUPABASE_ANON_KEY (built-in SMTP) or " +
-        "SENDGRID_API_KEY/SENDGRID_FROM_EMAIL (manual fallback).",
+        "Configure Supabase SMTP in the project dashboard (fixes the reset + " +
+        "invite happy-path), or set the app mailer: EMAIL_PROVIDER=brevo|resend|" +
+        "sendgrid + its API key (BREVO_API_KEY / RESEND_API_KEY / SENDGRID_API_KEY) " +
+        "+ EMAIL_FROM (manual fallback).",
       );
       if (NODE_ENV !== "production" && actionLink) {
         // eslint-disable-next-line no-console

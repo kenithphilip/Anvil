@@ -1434,6 +1434,11 @@
     createOpportunityLine: async (payload) => apiFetch("/api/opportunities/line_items", { method: "POST", body: payload }),
     updateOpportunityLine: async (id, payload) => apiFetch("/api/opportunities/line_items?id=" + encodeURIComponent(id), { method: "PATCH", body: payload }),
     deleteOpportunityLine: async (id) => apiFetch("/api/opportunities/line_items?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    // Uploaded external quote revisions per opportunity (migration 203).
+    listOpportunityQuotes: async (opportunity_id) => apiFetch("/api/opportunities/quotes?opportunity_id=" + encodeURIComponent(opportunity_id)),
+    addOpportunityQuote: async (payload) => apiFetch("/api/opportunities/quotes", { method: "POST", body: payload }),
+    updateOpportunityQuote: async (id, payload) => apiFetch("/api/opportunities/quotes?id=" + encodeURIComponent(id), { method: "PATCH", body: payload }),
+    deleteOpportunityQuote: async (id) => apiFetch("/api/opportunities/quotes?id=" + encodeURIComponent(id), { method: "DELETE" }),
     // Audit P7.2: Haiku close-probability prediction.
     predictOpportunity: async (id) => apiFetch("/api/sales/predict_opportunity" + (id ? "?id=" + encodeURIComponent(id) : "")),
     repredictOpportunities: async () => apiFetch("/api/sales/predict_opportunity", { method: "POST" }),

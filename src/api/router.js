@@ -234,6 +234,7 @@ import salesInternalSo         from "./sales/internal_so.js";
 import salesLeads              from "./sales/leads.js";
 import salesOpportunities      from "./sales/opportunities.js";
 import opportunityLineItems    from "./opportunities/line_items.js";
+import opportunityQuotes       from "./opportunities/quotes.js";
 import operatorActions         from "./operator_actions/index.js";
 import operatorActionsAdvance  from "./operator_actions/advance.js";
 import operatorActionsEvidence from "./operator_actions/evidence.js";
@@ -1038,6 +1039,7 @@ const STATIC_ROUTES = {
   "/sales/leads":                   salesLeads,
   "/sales/opportunities":           salesOpportunities,
   "/opportunities/line_items":      opportunityLineItems,
+  "/opportunities/quotes":          opportunityQuotes,
   "/sales/projects":                salesProjects,
   "/sales/shipments":               salesShipments,
   "/sales/score_lead":              salesScoreLead,

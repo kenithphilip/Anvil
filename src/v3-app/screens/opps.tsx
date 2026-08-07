@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { ageLabel, fmtINRShort, useFetch, useHashParam } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTitle } from "../lib/primitives";
 import { OpportunityQuotesPanel } from "../components/OpportunityQuotesPanel";
+import { OpportunityQuoteRevisions } from "../components/OpportunityQuoteRevisions";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 
@@ -253,6 +254,9 @@ const WiredOpportunities = () => {
             <div className="divider" />
             <div style={{ marginTop: 10 }}>
               <OpportunityQuotesPanel opportunityId={selected.id} />
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <OpportunityQuoteRevisions opportunityId={selected.id} customerId={selected.customer_id} />
             </div>
           </Card>
         )}

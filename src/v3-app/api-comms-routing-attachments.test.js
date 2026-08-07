@@ -156,12 +156,17 @@ describe("attachments", () => {
   });
 });
 
-describe("the SendGrid payload actually carries cc/bcc + attachments", () => {
-  it("was `to` only before — routing had nowhere to land", () => {
-    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "api", "_lib", "comms-send.js"), "utf8");
-    expect(src).toMatch(/personalization\.cc = addrs\(cc\)/);
-    expect(src).toMatch(/personalization\.bcc = addrs\(bcc\)/);
-    expect(src).toMatch(/payload\.attachments = attachments\.map/);
-    expect(src).toMatch(/disposition: "attachment"/);
+describe("email payload carries cc/bcc + attachments (now via the shared mailer)", () => {
+  it("comms-send delegates to the switchable mailer, which carries cc/bcc + attachments", () => {
+    // Email routing moved into the provider-agnostic mailer (Brevo/Resend/
+    // SendGrid). comms-send delegates; the cc/bcc/attachment shaping — what
+    // makes a dispatch register land TO stores with purchase/accounts in CC —
+    // now lives in mailer.js and is exercised behaviourally by api-mailer.test.js.
+    const comms = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "api", "_lib", "comms-send.js"), "utf8");
+    expect(comms).toMatch(/sendEmail\(\{ to, cc, bcc, replyTo, subject, body, from, attachments \}\)/);
+    const mailer = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "api", "_lib", "mailer.js"), "utf8");
+    expect(mailer).toMatch(/payload\.cc = /);
+    expect(mailer).toMatch(/payload\.bcc = /);
+    expect(mailer).toMatch(/disposition: "attachment"/);
   });
 });

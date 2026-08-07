@@ -41,10 +41,12 @@ describe("auth/request_reset: dual email-delivery providers", () => {
   });
 
   it("logs a clear server-side warning when neither provider delivered", () => {
-    // The warning must name both env-var paths so operators know
-    // what to set.
-    expect(SRC).toMatch(/SUPABASE_URL.*SUPABASE_ANON_KEY/);
-    expect(SRC).toMatch(/SENDGRID_API_KEY.*SENDGRID_FROM_EMAIL/);
+    // The warning must name the delivery paths so operators know what to set:
+    // Supabase SMTP (fixes the invite + reset happy path) + the switchable app
+    // mailer (EMAIL_PROVIDER + a provider API key).
+    expect(SRC).toMatch(/Supabase SMTP/);
+    expect(SRC).toMatch(/EMAIL_PROVIDER/);
+    expect(SRC).toMatch(/BREVO_API_KEY|RESEND_API_KEY|SENDGRID_API_KEY/);
     expect(SRC).toMatch(/no email delivered for/);
   });
 

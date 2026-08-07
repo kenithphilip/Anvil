@@ -13,6 +13,7 @@ import { decryptChatCreds } from "./inbound-chat.js";
 import { safeFetch } from "./safe-fetch.js";
 import { resolveAttachments } from "./comms-attachments.js";
 import { graphIsConnected, graphAccessToken, sendViaGraph } from "./graph-client.js";
+import { sendEmail } from "./mailer.js";
 
 const PROVIDER_URL = process.env.COMMS_PROVIDER_URL;
 const PROVIDER_TOKEN = process.env.COMMS_PROVIDER_TOKEN;
@@ -20,45 +21,17 @@ const SENDGRID_KEY = process.env.SENDGRID_API_KEY;
 const SENDGRID_FROM = process.env.SENDGRID_FROM_EMAIL;
 const SENDGRID_FROM_NAME = process.env.SENDGRID_FROM_NAME || "Anvil";
 
+// Email now routes through the switchable provider mailer (Brevo / Resend /
+// SendGrid, selected by EMAIL_PROVIDER). Kept named sendViaSendGrid so the
+// dispatch chain below is untouched; returns null when no provider is
+// configured so the caller falls through to the generic webhook / manual path,
+// exactly as before. (The cc/bcc-in-one-personalization behaviour that makes a
+// dispatch register land TO stores with purchase/accounts in CC is preserved by
+// the mailer.)
 const sendViaSendGrid = async ({ to, cc, bcc, replyTo, subject, body, from, attachments }) => {
-  if (!SENDGRID_KEY || !SENDGRID_FROM) return null;
-  const fromAddress = from || SENDGRID_FROM;
-  const addrs = (list) => (Array.isArray(list) ? list : []).filter(Boolean).map((email) => ({ email }));
-  // One personalization carrying to + cc + bcc: this is what makes a dispatch
-  // register go TO stores with purchase/accounts visibly in CC. Previously the
-  // payload was `to` only, so routing had nowhere to land.
-  const personalization = { to: addrs([to]) };
-  if (addrs(cc).length) personalization.cc = addrs(cc);
-  if (addrs(bcc).length) personalization.bcc = addrs(bcc);
-  const payload = {
-    personalizations: [personalization],
-    from: { email: fromAddress, name: SENDGRID_FROM_NAME },
-    subject: subject || "(no subject)",
-    content: [
-      { type: "text/plain", value: body || "" },
-      { type: "text/html", value: (body || "").replace(/\n/g, "<br/>") },
-    ],
-  };
-  if (replyTo) payload.reply_to = { email: replyTo };
-  if (Array.isArray(attachments) && attachments.length) {
-    payload.attachments = attachments.map((a) => ({
-      filename: a.filename,
-      type: a.type,
-      content: a.content_base64,
-      disposition: "attachment",
-    }));
-  }
-  try {
-    const resp = await safeFetch("https://api.sendgrid.com/v3/mail/send", {
-      method: "POST",
-      headers: { Authorization: "Bearer " + SENDGRID_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const text = resp.ok ? "" : await resp.text();
-    return { provider: "sendgrid", status: resp.status, ok: resp.ok, detail: text.slice(0, 4000) };
-  } catch (err) {
-    return { provider: "sendgrid", status: 0, ok: false, detail: err.message || String(err) };
-  }
+  const r = await sendEmail({ to, cc, bcc, replyTo, subject, body, from, attachments });
+  if (r.skipped) return null;
+  return { provider: r.provider, status: r.status, ok: r.ok, detail: r.detail };
 };
 
 const sendViaChat = async (svc, tenantId, channel, { to, subject, body }) => {

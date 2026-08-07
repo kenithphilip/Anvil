@@ -398,6 +398,7 @@ import analyticsWinloss        from "./analytics/winloss.js";
 import analyticsRefresh        from "./analytics/refresh.js";
 import analyticsFunnel         from "./analytics/funnel.js";
 import analyticsOpsKpis        from "./analytics/ops_kpis.js";
+import analyticsPipeline       from "./analytics/pipeline.js";
 
 import catalogSearch           from "./catalog/search.js";
 import catalogSynonyms         from "./catalog/synonyms.js";
@@ -646,6 +647,7 @@ const STATIC_ROUTES = {
   "/analytics/refresh":             analyticsRefresh,
   "/analytics/funnel":              analyticsFunnel,
   "/analytics/ops_kpis":            analyticsOpsKpis,
+  "/analytics/pipeline":            analyticsPipeline,
   "/catalog/search":                catalogSearch,
   "/catalog/synonyms":              catalogSynonyms,
   "/catalog/alternatives":          catalogAlternatives,

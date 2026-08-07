@@ -437,6 +437,7 @@
     refresh:  async (payload) => apiFetch("/api/analytics/refresh", { method: "POST", body: payload || {} }),
     funnel:   async (q) => apiFetch("/api/analytics/funnel" + (q ? "?" + new URLSearchParams(q).toString() : "")),
     opsKpis:  async (q) => apiFetch("/api/analytics/ops_kpis" + (q ? "?" + new URLSearchParams(q).toString() : "")),
+    pipeline: async (q) => apiFetch("/api/analytics/pipeline" + (q ? "?" + new URLSearchParams(q).toString() : "")),
   };
 
   const supplierRfq = {

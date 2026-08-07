@@ -75,10 +75,10 @@ export default async function handler(req, res) {
       invP = Promise.resolve({ data: [], error: null });
     } else {
       let ordSel = svc.from("orders")
-        .select("status, created_at, approved_at, customer_id")
+        .select("id, status, created_at, approved_at, customer_id, quote_id")
         .eq("tenant_id", ctx.tenantId).gte("created_at", sinceIso);
       let invSel = svc.from("invoices")
-        .select("status, grand_total, paid_amount, paid_at, issue_date, customer_id")
+        .select("status, grand_total, paid_amount, paid_at, issue_date, customer_id, order_id")
         .eq("tenant_id", ctx.tenantId).eq("status", "paid").gte("paid_at", sinceIso);
       if (custScope) { ordSel = ordSel.in("customer_id", custScope); invSel = invSel.in("customer_id", custScope); }
       ordP = ordSel; invP = invSel;
@@ -87,9 +87,23 @@ export default async function handler(req, res) {
     const [qs, ord, inv] = await Promise.all([qsSel, ordP, invP]);
     for (const r of [qs, ord, inv]) if (r.error) throw new Error(r.error.message);
 
+    // P2b attribution: resolve each order's opportunity via the existing
+    // orders.quote_id -> quotes.opportunity_id join. Deliberately does NOT read
+    // the orders.opportunity_id column (migration 204) so the endpoint works
+    // whether or not that migration has been applied yet.
+    const orderRows = ord.data || [];
+    const quoteIds = [...new Set(orderRows.filter((o) => o.quote_id).map((o) => o.quote_id))];
+    let quoteOpp = new Map();
+    if (quoteIds.length) {
+      const qres = await svc.from("quotes").select("id, opportunity_id").eq("tenant_id", ctx.tenantId).in("id", quoteIds);
+      if (qres.error) throw new Error(qres.error.message);
+      quoteOpp = new Map((qres.data || []).map((q) => [q.id, q.opportunity_id || null]));
+    }
+    const orders = orderRows.map((o) => ({ ...o, opportunity_id: o.quote_id ? (quoteOpp.get(o.quote_id) || null) : null }));
+
     const report = computePipelineConversion({
       quotesSent: qs.data || [],
-      orders: ord.data || [],
+      orders,
       invoices: inv.data || [],
       opportunities,
       granularity,

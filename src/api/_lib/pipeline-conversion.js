@@ -81,24 +81,36 @@ export const computePipelineConversion = ({ quotesSent, orders, invoices, opport
     }
   }
 
+  // P2b attribution: order.opportunity_id is populated by the handler via the
+  // orders.quote_id -> quotes.opportunity_id join (source-agnostic here). A
+  // processed order with no opportunity (direct-PO / voice / whatsapp) is
+  // counted as unattributed rather than mis-attributed.
   let opCount = 0;
   const orderCycle = [];
+  const orderOppById = new Map();   // order id -> opportunity_id (for paid-invoice attribution)
+  const oppHasOrder = new Set();
+  let unattributedProcessed = 0;
   for (const o of orders || []) {
+    if (o.id) orderOppById.set(o.id, o.opportunity_id || null);
     if (!PROCESSED.has(String(o.status)) || !o.approved_at) continue;
     const key = bucketKey(o.approved_at, g);
     if (key) P(key).orders_processed_count += 1;
     opCount += 1;
+    if (o.opportunity_id) oppHasOrder.add(o.opportunity_id); else unattributedProcessed += 1;
     if (o.created_at) { const d = daysBetween(o.created_at, o.approved_at); if (d != null) orderCycle.push(d); }
   }
 
   let paidCount = 0, paidValue = 0;
   const arCycle = [];
+  const oppHasPaid = new Set();
   for (const inv of invoices || []) {
     if (String(inv.status) !== "paid" || !inv.paid_at) continue;
     const key = bucketKey(inv.paid_at, g);
     const v = num(inv.paid_amount) || num(inv.grand_total);
     if (key) { const p = P(key); p.paid_count += 1; p.paid_value += v; }
     paidCount += 1; paidValue += v;
+    const attribOpp = inv.order_id ? orderOppById.get(inv.order_id) : null;
+    if (attribOpp) oppHasPaid.add(attribOpp);
     if (inv.issue_date) { const d = daysBetween(inv.issue_date, inv.paid_at); if (d != null) arCycle.push(d); }
   }
 
@@ -128,6 +140,13 @@ export const computePipelineConversion = ({ quotesSent, orders, invoices, opport
   }
   stalled.sort((a, b) => b.age_days - a.age_days);
   const quotedOppCount = quotedOpps.size;
+
+  // ---- P2b: precise attributed conversion (quoted opp -> processed order -> paid) ----
+  let attrOrdered = 0, attrPaid = 0;
+  for (const oppId of quotedOpps.keys()) {
+    if (oppHasOrder.has(oppId)) attrOrdered += 1;
+    if (oppHasPaid.has(oppId)) attrPaid += 1;
+  }
 
   // ---- per-rep rollup (by the quote sender) ----
   const byRep = new Map();
@@ -160,9 +179,21 @@ export const computePipelineConversion = ({ quotesSent, orders, invoices, opport
       quote_to_won_pct: pct(won, quotedOppCount),  // of all quoted, share now won
     },
     conversion: {
-      orders_per_quote_pct: pct(opCount, qsCount),  // aggregate volume ratio (NOT cohort-attributed — see P2b)
+      orders_per_quote_pct: pct(opCount, qsCount),  // aggregate volume ratio (not cohort-attributed)
       paid_per_order_pct: pct(paidCount, opCount),
       value_realized_pct: pct(paidValue, qsValue),  // paid value vs quoted value
+    },
+    // P2b: of the opportunities quoted in the window, how many produced a
+    // processed order and a paid sale — attributed via orders.quote_id ->
+    // quotes.opportunity_id. unattributed_processed_orders = processed orders
+    // in-window with no opportunity (direct-PO), made visible not hidden.
+    attributed: {
+      quoted: quotedOppCount,
+      ordered: attrOrdered,
+      paid: attrPaid,
+      order_conv_pct: pct(attrOrdered, quotedOppCount),
+      paid_conv_pct: pct(attrPaid, quotedOppCount),
+      unattributed_processed_orders: unattributedProcessed,
     },
     stalled_buckets: stalledBuckets,
     stalled: stalled.slice(0, 100),

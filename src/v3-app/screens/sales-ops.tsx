@@ -53,6 +53,7 @@ const SalesOpsCockpit = () => {
   const pl: any = pipeline.data || {};
   const plTotals: any = pl.totals || {};
   const plCohort: any = pl.cohort || {};
+  const plAttr: any = pl.attributed || {};
   const plTrend: any[] = Array.isArray(pl.trend) ? pl.trend : [];
   const plStalled: any[] = Array.isArray(pl.stalled) ? pl.stalled : [];
 
@@ -93,6 +94,13 @@ const SalesOpsCockpit = () => {
           <KPI lbl="Sales completed" v={String(plTotals.paid?.count || 0)} d={`${fmtINRShort(plTotals.paid?.value || 0)} paid`} dKind={(plTotals.paid?.value || 0) > 0 ? "up" : ""} />
           <KPI lbl="Quote → won" v={pctOrDash(plCohort.quote_to_won_pct)} d={`${plCohort.won || 0}/${plCohort.quoted || 0} deals · win ${pctOrDash(plCohort.win_rate_pct)}`} dKind={plCohort.quote_to_won_pct != null ? (plCohort.quote_to_won_pct >= 25 ? "up" : "down") : ""} />
         </KPIRow>
+
+        {(plAttr.quoted || 0) > 0 && (
+          <div className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 2 }}>
+            <b>Attributed:</b> {plAttr.ordered}/{plAttr.quoted} quoted → order ({pctOrDash(plAttr.order_conv_pct)}) · {plAttr.paid} → paid ({pctOrDash(plAttr.paid_conv_pct)})
+            {plAttr.unattributed_processed_orders ? ` · ${plAttr.unattributed_processed_orders} order${plAttr.unattributed_processed_orders > 1 ? "s" : ""} unattributed (direct-PO)` : ""}
+          </div>
+        )}
 
         <div className="row" style={{ gap: 12, marginTop: 12, marginBottom: 4, flexWrap: "wrap", alignItems: "flex-start" }}>
           <Card title="Conversion trend" eyebrow={`quotes → orders → paid · by ${pl.granularity || granularity}`} style={{ flex: "2 1 460px", minWidth: 340 }} flush>

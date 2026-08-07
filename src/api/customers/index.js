@@ -1,5 +1,5 @@
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { safeAwait } from "../_lib/safe-thenable.js";
@@ -105,6 +105,10 @@ export default async function handler(req, res) {
       // IRN generation or Tally party lookup. Existing records are
       // not retroactively validated; only new writes.
       if (body.gstin && String(body.gstin).trim()) {
+        // GSTIN is restricted to sales_manager/admin (ACTIONS.customer.edit_gstin)
+        // — a wrong GSTIN breaks e-invoice IRN + Tally lookup. The UI hides the
+        // field from other roles; enforce it server-side too.
+        requireAction(ctx, "customer.edit_gstin");
         const v = validateGstin(body.gstin);
         if (!v.ok) {
           return json(res, 400, {

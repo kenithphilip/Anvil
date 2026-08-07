@@ -7,7 +7,7 @@
 //      Allocates an invoice_number atomically via next_invoice_number.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { nextInvoiceNumber, invoiceFromOrder } from "../_lib/invoicing.js";
@@ -41,6 +41,10 @@ export default async function handler(req, res) {
 
     if (req.method === "POST") {
       requirePermission(ctx, "write");
+      // MATRIX.invoices restricts creation to sales_manager/finance/admin — the
+      // coarse WRITER set also includes operator/procurement/sales_engineer, so
+      // enforce the resource action here too.
+      requireAction(ctx, "invoices.write");
       const body = await readBody(req);
       if (!body?.order_id) {
         return json(res, 400, { error: { message: "order_id required" } });

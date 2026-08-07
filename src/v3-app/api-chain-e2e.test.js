@@ -90,6 +90,7 @@ const H = vi.hoisted(() => {
 vi.mock("../api/_lib/auth.js", () => ({
   resolveContext: vi.fn(async () => ({ user: { id: "u-1" }, tenantId: "t-1", role: "admin" })),
   requirePermission: vi.fn(() => {}),
+  requireAction: vi.fn(() => {}),   // admin passes every fine-grained action
   hasPermission: vi.fn(() => true),
 }));
 vi.mock("../api/_lib/supabase.js", () => ({

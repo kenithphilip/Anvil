@@ -256,7 +256,7 @@ const WiredOpportunities = () => {
               <OpportunityQuotesPanel opportunityId={selected.id} />
             </div>
             <div style={{ marginTop: 10 }}>
-              <OpportunityQuoteRevisions opportunityId={selected.id} customerId={selected.customer_id} />
+              <OpportunityQuoteRevisions opportunityId={selected.id} customerId={selected.customer_id} opportunityAmount={selected.amount_inr ?? selected.value} />
             </div>
           </Card>
         )}

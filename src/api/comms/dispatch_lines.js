@@ -18,6 +18,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { upsertDispatchLines } from "../_lib/dispatch-lines.js";
+import { maybeAutoSendDispatchRegister } from "../_lib/dispatch-register-send.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -52,6 +53,13 @@ export default async function handler(req, res) {
         objectId: body?.order_id || null,
         detail: result.inserted + " inserted, " + result.updated + " updated" + (result.errors.length ? ", " + result.errors.length + " errored" : ""),
       });
+      // Auto-send the customer dispatch register on a NEW despatch, when the
+      // tenant has opted in (dark by default). Best-effort + fires only on
+      // freshly-inserted lines so a re-synced delivery note never re-mails. The
+      // helper never throws, so the ingest response is unaffected.
+      if (body?.order_id && result.inserted > 0) {
+        await maybeAutoSendDispatchRegister(svc, ctx, body.order_id);
+      }
       return json(res, 200, { ok: result.errors.length === 0, ...result });
     }
 

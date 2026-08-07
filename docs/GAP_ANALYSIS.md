@@ -120,7 +120,7 @@ figures verified against current code (`supabase/migrations`, `src/api/router.js
 
 **Everything from `---` onward is the preserved May-2026 snapshot** (matrices +
 competitor research remain useful); read its "missing/partial/gap" claims through
-the corrections above. The per-competitor section has been kept current (§3.12–3.19).
+the corrections above. The per-competitor section has been kept current (§3.12–3.24; §3.22–3.24 = Shielded, Naïve, Spaceflow, added 2026-08-07).
 
 ---
 
@@ -592,6 +592,54 @@ Maturity: very early (launched ~mid-2026, 3 launch partners, waitlist-gated), bu
 
 Relevance to Anvil: **none for QTC — a category error from the reference list** (same class as Raven §3.11's plant-floor OEE). Agency Tool is robotics DevOps/edge-fleet infrastructure; Anvil is quote-to-cash + procurement + forecasting for industrial sales-ops. There is no product, buyer, or data overlap. Two faint, transferable *patterns* only — do not act on this entry alone: (1) **staged-rollout governance** (fleet segmentation + role-based approval + version-convergence visibility + audit trail) is a clean template for any future Anvil deploy/rollout-governance surface, but Anvil is multi-tenant SaaS, not an edge-fleet operator, so the analogy is loose; (2) **offline-tolerant, resumable sync** over intermittent networks is genuinely relevant *if* Anvil ever builds field/edge data capture — which is exactly where the Kebra §3.20 field-service thread points (service engineers capturing job data at low-connectivity Indian industrial sites). That connectivity-resilience requirement is the one thread worth remembering; the OTA/robotics product itself is not a competitor.
 
+### 3.22 Shielded — `shieldedglobal.com` (adjacent-learn-only — risk-intelligence overlay)
+
+One-liner: "The Unified Intelligence Layer for Business Risk." Real-time risk intelligence that maps external events (tariffs, commodities, freight, FX, disruptions) to financial impact.
+
+ICP: ERP-using mid-market to enterprise firms exposed to tariff/commodity/freight/FX volatility, tailored to three verticals — Manufacturing & Defense (tariff exposure, BOM cost changes, program margin), Food & Beverage (ingredient/landed cost by SKU), Transportation & Logistics (fuel/freight volatility). US-centric (USMCA framing), not India-first.
+
+Capability surface: a **read-only sense-and-recommend overlay**. Ingests internal data (ERP export or spreadsheet) + external feeds and continuously maps drivers to margin change by supplier/SKU, BOM cost change, landed cost, and program margin. Outputs a "what changed / financial impact / priority action" feed, proactive alerts, duty/tariff + USMCA-exclusion calculations, and recommended mitigations (re-source, hedge, re-price). No quoting, no PO/SO extraction, no RFQ, no order processing — **not a system of action**.
+
+Integrations: "Connect ERP systems, spreadsheets, and external intelligence." None named; on-ramp is a spreadsheet export.
+
+Differentiators: a **cause-to-margin mapping engine** (external event → BOM cost → SKU/program margin, quantified with a time horizon); proactive alerts + recommended mitigations rather than a static dashboard; concrete tariff/duty + USMCA logic.
+
+Maturity: YC S26, backed by YC + Susa Ventures. No funding amount, logos, team size, or pricing disclosed; demo/login-gated. Seed-stage.
+
+Relevance to Anvil: partial adjacency, sitting one layer **above** Anvil's transactional core — a risk-intelligence overlay, not a QTC or procurement rival, so no overlap on extraction/quoting/RFQ/order processing. But the overlap lands squarely on **Anvil's moat**: Shielded's "external cost driver → BOM cost → margin impact, with alerts + re-source recs" is exactly the lens Anvil's forecasting-driven procurement + ocean-freight modules would benefit from — and Anvil already **owns** the BOM explosion, supplier data, and freight bids Shielded can only import from a static spreadsheet, so Anvil can compute this on **live** transactional data. **Verdict: LEARN-ONLY.** Take the cost-risk exposure lens — a live "landed-cost / margin-at-risk by BOM component and by opportunity" view driven by tariff/commodity/FX/freight deltas, with proactive alerts and a re-source/hedge recommendation, layered onto the forecast-to-preorder pipeline. Not a consolidation target (different category, US/tariff-centric, seed-stage); not yet a positioning threat.
+
+### 3.23 Naïve — `usenaive.ai` (category error — horizontal AI-agent infra, not QTC)
+
+One-liner: "Ship Apps. Agents. Companies. One prompt. One config file. All your infrastructure." Unified runtime/infra for AI agents.
+
+ICP: developers and AI engineers building agentic apps and "AI-native" businesses (automation agencies, autonomous content channels, solo builders wiring agents into Cursor/Claude Code). Buyer = the developer/founder; self-serve, 30k+ signups. **Not** sold to industrial sales/procurement/ops teams.
+
+Capability surface: a horizontal "autonomous company runtime" — agent cloud infra (Postgres/auth/storage/realtime/edge fns), a governance control plane (policy + audit logs + **hard spend caps enforced before a transaction**), scoped virtual cards + invoicing, a durable multi-agent runtime, 300+ model routing, per-agent KYC/KYB + automated US LLC/EIN formation, 100+ connectors, TypeScript IaC.
+
+Integrations: Stripe, Supabase, Vercel, QuickBooks, PostHog, Rippling, Brave + 100+ — dev/SaaS building blocks, **not** manufacturing ERPs (no Tally/SAP/Zoho/IndiaMART/CAD-PLM).
+
+Differentiators: giving each agent a real-world **legal + financial identity** (auto LLC/EIN, KYB, scoped cards) fused with a durable runtime and a pre-transaction governance plane. (Caveat: a community post alleges they forked a ~41k-star OSS project and stripped its license — an originality flag, noted not endorsed.)
+
+Maturity: YC Spring 2025; $28.5M Series A led by Nexus Venture Partners (~$32M total) with notable angels; ~10 FTEs; 30k+ developer customers. Well-funded but land-grab-stage infra.
+
+Relevance to Anvil: **Verdict: CATEGORY-ERROR.** Naïve is horizontal AI-agent infrastructure for developers — it competes with Vercel/Supabase/agent-ops infra, not with any part of Anvil's seller-side QTC, extraction, RFQ, spares, freight, or forecasting. Different buyer, job, and vertical; nothing to consolidate or defend against. The only tangency is Anvil-**as-a-customer**, not competitor: its governance pattern (policy + audit log + hard spend cap enforced *before* an agent transacts) is a clean reference for guardrails on Anvil's copilot/agents. Keep it **out** of the QTC/procurement matrix; LEARN-ONLY at most for agent governance.
+
+### 3.24 Spaceflow — `spaceflow.tech` (procurement-inverse, learn-only)
+
+One-liner: "Enterprise AI, without the transformation." A managed runtime for enterprise AI agents; procurement "AI employees" for the buy side.
+
+ICP: enterprises on heavily-customized legacy/on-prem systems (perpetual licenses, air-gapped) whose procurement teams do high-volume quote comparison + invoice-to-PO matching. Current logos are Turkish foodservice/enterprise (100+ locations); manufacturing, banking, defense named as target regulated verticals.
+
+Capability surface: the **buy-side** document loop end-to-end — read supplier emails; extract price/lead-time/MOQ from quotes, normalize units, rank responses; consolidate RFQ replies into comparison tables; draft POs with threshold approval routing; match supplier invoices to POs and contract prices line-by-line; vendor scorecards + late-delivery/shipment-delay alerts. Every action proposed, logged, human-approved. Claims: RFQ 4 days → <1 hour, 42% less maverick spend, 3× RFQ throughput, ~$120k/yr savings/deployment, "$400M annual supplier spend runs through Spaceflow."
+
+Integrations: ERP (explicitly **SAP ECC 6.0 with heavy Z-tables**), email, spreadsheets, documents, supplier portals; positions as **MCP-native**. Not a broad named-connector list — the pitch is adapting to one customer's customized stack, not connector breadth.
+
+Differentiators: **on-prem / customer-cloud deployment with model inference inside the customer boundary** ("your transactional data never travels"); a governance gateway with identity passthrough + immutable audit logging; learns existing custom tables/pricing/approval chains without re-implementation (targets decades-old ECC 6.0); remote install "in days"; framed as a managed agent runtime, not a point app.
+
+Maturity: YC S26; ~$1M raised, six-figure ARR; Turkish-founded, now SF; angels from Airbnb, Volvo Cars, Google, Encord, Sequoia. Named Turkish customers. Early but real, content-rich site (Security / Trust Center / KVKK).
+
+Relevance to Anvil: Spaceflow automates the **buy side** of the very RFQ → quote → PO → invoice loop Anvil runs on the **sell side** — the procurement inverse of Anvil's QTC. It mirrors Anvil's supplier-RFQ/quote-capture subsystem and KR/JP/CN supplier scorecard, but as the customer's own procurement cockpit, not a seller's tool, so it is **not** a head-to-head QTC rival. Anvil already does supplier RFQ, quote capture, and vendor scorecards; Spaceflow's genuine edge is **architectural** — on-prem/air-gapped deployment with in-boundary inference, a governance gateway, and immutable audit logging, which is exactly the **TISAX / enterprise-vendor-security posture Anvil's compliance/CISO backlog flags as a deal-unblocker**. **Verdict: LEARN-ONLY** (procurement-inverse, not a seller-side rival). Take the on-prem + governance-gateway + MCP-native managed-runtime deployment model for regulated/air-gapped buyers. **Watch:** if Spaceflow bolts a sell-side module onto the same runtime, it becomes a **THREAT** to Anvil's SAP-ECC-heavy Indian enterprise ICP.
+
 ---
 
 ## 4. Cross-cutting themes from the competitor scan
@@ -966,3 +1014,6 @@ After the post-implementation pass, the remaining open items in Now are:
 - Soff: https://soff.ai
 - Mercura: https://www.mercura.ai, https://mercura.io, ycombinator.com/companies/mercura, ycombinator.com/launches/Mun
 - Raven: https://startraven.com, ycombinator.com/companies/raven
+- Shielded: https://www.shieldedglobal.com, ycombinator.com/companies/shielded (YC S26, Susa Ventures)
+- Naïve: https://usenaive.ai, ycombinator.com/companies/naive, techcrunch.com/2026/08/06 ($28.5M Series A, Nexus)
+- Spaceflow: https://www.spaceflow.tech, ycombinator.com/companies/spaceflow-technologies-inc (YC S26)

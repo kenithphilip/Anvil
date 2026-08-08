@@ -246,6 +246,7 @@ import operatorActionsEvidence from "./operator_actions/evidence.js";
 import operatorActionsReconcile from "./operator_actions/reconcile.js";
 import salesProjects           from "./sales/projects.js";
 import salesShipments          from "./sales/shipments.js";
+import salesShipmentTracking   from "./sales/shipment_tracking.js";
 // Phase 7.1 + 7.2: lead scoring + opportunity probability.
 import salesScoreLead          from "./sales/score_lead.js";
 import salesPredictOpportunity from "./sales/predict_opportunity.js";
@@ -1058,6 +1059,7 @@ const STATIC_ROUTES = {
   "/opportunities/quotes":          opportunityQuotes,
   "/sales/projects":                salesProjects,
   "/sales/shipments":               salesShipments,
+  "/sales/shipment_tracking":       salesShipmentTracking,
   "/sales/score_lead":              salesScoreLead,
   "/sales/predict_opportunity":     salesPredictOpportunity,
 

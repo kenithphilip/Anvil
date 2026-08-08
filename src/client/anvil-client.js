@@ -1456,6 +1456,7 @@
     updateInternalSo: async (payload) => apiFetch("/api/sales/internal_so", { method: "PATCH", body: payload }),
     deleteInternalSo: async (id) => apiFetch("/api/sales/internal_so?id=" + encodeURIComponent(id), { method: "DELETE" }),
     listShipments: async (params) => apiFetch("/api/sales/shipments" + (params ? "?" + new URLSearchParams(params).toString() : "")),
+    shipmentTracking: async (params) => apiFetch("/api/sales/shipment_tracking" + (params ? "?" + new URLSearchParams(params).toString() : "")),
     createShipment: async (payload) => apiFetch("/api/sales/shipments", { method: "POST", body: payload }),
     updateShipment: async (payload) => apiFetch("/api/sales/shipments", { method: "PATCH", body: payload }),
     deleteShipment: async (id) => apiFetch("/api/sales/shipments?id=" + encodeURIComponent(id), { method: "DELETE" }),

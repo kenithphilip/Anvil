@@ -1297,6 +1297,53 @@ const GUN_BOM_FIELDS: { k: string; label: string; num?: boolean; wide?: boolean 
   { k: "side", label: "Side" }, { k: "std_category", label: "Category" }, { k: "is_spare", label: "Spare?" },
   { k: "remarks", label: "Remarks", wide: true },
 ];
+
+// Shortcut into the gun's uploaded EG / 2D / 3D drawings, resolved by gun_no
+// across matrices (drawings.list accepts gun_no). Reuses the drawing.download
+// gate: file rows -> signed URL via the gated endpoint, link rows -> open;
+// roles without drawing.download see a muted chip. Renders nothing when the gun
+// has no committed drawings, so it stays out of the way when there's nothing.
+const DRAWING_KIND_SHORT: Record<string, string> = { eg_sheet: "EG sheet", drawing_2d: "2D", drawing_3d: "3D" };
+const GunDrawingsInline = ({ gunNo }: { gunNo: string }) => {
+  const [ds, setDs] = useState<any[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let cancel = false;
+    setLoaded(false);
+    Promise.resolve(AnvilBackend?.spareMatrix?.drawings?.list?.({ gun_no: gunNo, status: "committed" }))
+      .then((r: any) => { if (!cancel) { setDs(r?.drawings || []); setLoaded(true); } })
+      .catch(() => { if (!cancel) { setDs([]); setLoaded(true); } });
+    return () => { cancel = true; };
+  }, [gunNo]);
+  if (!loaded || ds.length === 0) return null;
+  const canDownload = RBAC.canDo("drawing.download");
+  return (
+    <div style={{ marginTop: 12, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+      <span className="mono-sm" style={{ color: "var(--ink-3)", fontSize: 10.5, textTransform: "uppercase" }}>Drawings:</span>
+      {ds.map((d) => {
+        const label = DRAWING_KIND_SHORT[d.kind] || d.kind;
+        if (!canDownload) return <span key={d.id} title="Download not permitted for your role"><Chip k="ghost">{label}</Chip></span>;
+        return d.link_url
+          ? <a key={d.id} href={d.link_url} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}><Chip k="good">{label} ↗</Chip></a>
+          : (
+            <button key={d.id} type="button" title={d.original_filename || "Open / download"}
+              onClick={async () => {
+                try {
+                  const resp: any = await AnvilBackend?.spareMatrix?.drawings?.download?.(d.id);
+                  const url = resp?.downloadUrl || resp?.url;
+                  if (url) window.open(url, "_blank", "noopener,noreferrer");
+                  else window.notifyError?.("No file", "This drawing has no downloadable file.");
+                } catch (e: any) { window.notifyError?.("Download failed", String((e && e.message) || e)); }
+              }}
+              style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}>
+              <Chip k="good">{label} ↓</Chip>
+            </button>
+          );
+      })}
+    </div>
+  );
+};
+
 const GunBomDrawer = ({ gunNo, onClose }) => {
   const data = useFetch(() => (AnvilBackend?.bom?.assetByCode ? AnvilBackend.bom.assetByCode(gunNo) : Promise.resolve(null)), [gunNo]);
   const asset = (data.data as any)?.asset || null;
@@ -1388,9 +1435,14 @@ const GunBomDrawer = ({ gunNo, onClose }) => {
               {projects.length > 0 && (
                 <div style={{ marginTop: 14, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                   <span className="mono-sm" style={{ color: "var(--ink-3)", fontSize: 10.5, textTransform: "uppercase" }}>Where used:</span>
-                  {projects.map((p, i) => <Chip key={i} k="info">{p.project_code || p.project_name || p.project_id}</Chip>)}
+                  {projects.map((p, i) => (
+                    <Chip key={i} k="info">
+                      {(p.project_code || p.project_name || p.project_id)}{p.customer_name ? " · " + p.customer_name : ""}
+                    </Chip>
+                  ))}
                 </div>
               )}
+              <GunDrawingsInline gunNo={gunNo} />
             </>
           )}
         </div>

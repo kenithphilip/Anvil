@@ -277,6 +277,7 @@ import spareMatrixDrawingsStage  from "./spare_matrix/drawings/stage.js";
 import spareMatrixDrawingsList   from "./spare_matrix/drawings/list.js";
 import spareMatrixDrawingsUpdate from "./spare_matrix/drawings/update.js";
 import spareMatrixDrawingsCommit from "./spare_matrix/drawings/commit.js";
+import spareMatrixDrawingsDownload from "./spare_matrix/drawings/download.js";
 import failureEventsIndex      from "./failure_events/index.js";
 import fmecaIndex              from "./fmeca/index.js";
 import receiptsIndex           from "./receipts/index.js";
@@ -1073,6 +1074,7 @@ const STATIC_ROUTES = {
   "/spare_matrix/drawings/list":    spareMatrixDrawingsList,
   "/spare_matrix/drawings/update":  spareMatrixDrawingsUpdate,
   "/spare_matrix/drawings/commit":  spareMatrixDrawingsCommit,
+  "/spare_matrix/drawings/download": spareMatrixDrawingsDownload,
   "/spare_matrix":                  spareMatrixIndex,
   "/failure_events":                failureEventsIndex,
   "/fmeca":                         fmecaIndex,

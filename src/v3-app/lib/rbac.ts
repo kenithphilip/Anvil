@@ -117,6 +117,7 @@ export const ACTIONS: Record<string, Role[]> = {
   "customer.edit_profile":["sales_engineer", "sales_manager", "admin"],
   // Share a spare matrix to the customer portal (generates a scoped portal link).
   "spare_matrix.share":   ["sales_engineer", "sales_manager", "design_engineer", "design_manager", "customer_support", "admin"],
+  "drawing.download":     ["design_engineer", "design_manager", "sales_engineer", "sales_manager", "admin"],
   "item.mark_obsolete":   ["procurement", "admin"],
   "spo.record_ack":       ["procurement", "admin"],
   "spo.mark_received":    ["procurement", "admin"],

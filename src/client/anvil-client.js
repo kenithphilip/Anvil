@@ -1390,6 +1390,9 @@
       list: async (params) => apiFetch("/api/spare_matrix/drawings/list" + (params && Object.keys(params).length ? "?" + new URLSearchParams(params).toString() : "")),
       update: async (payload) => apiFetch("/api/spare_matrix/drawings/update", { method: "POST", body: payload || {} }),
       commit: async (payload) => apiFetch("/api/spare_matrix/drawings/commit", { method: "POST", body: payload || {} }),
+      // Download-controlled fetch of one drawing (gun_drawings.id) -> signed URL
+      // or external link. Server-gated by the `drawing.download` action.
+      download: async (id) => apiFetch("/api/spare_matrix/drawings/download?id=" + encodeURIComponent(id)),
     },
   };
 

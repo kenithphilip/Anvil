@@ -1,4 +1,4 @@
--- 163_order_committed_delivery.sql
+-- 207_order_committed_delivery.sql
 --
 -- Logistics Ops P3 (outbound OTD). Orders had no customer-facing delivery
 -- commitment (only po_date/quote_date); every "OTD" in the codebase measured

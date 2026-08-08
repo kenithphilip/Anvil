@@ -86,7 +86,7 @@ export const shipmentLatestDate = (r: any) => {
   return r.eta ? `ETA: ${String(r.eta).slice(0, 10)}` : "—";
 };
 
-const WiredShipmentsCRUD = () => {
+const WiredShipmentsCRUD = ({ viewToggle }: { viewToggle?: React.ReactNode } = {}) => {
   const { useState: u, useEffect: e } = React;
   const params = shipReadParams();
   const editId = params.get("id");
@@ -254,6 +254,7 @@ const WiredShipmentsCRUD = () => {
         title="Shipments"
         meta={`${list.rows.length} total · ${counts.IN_TRANSIT || 0} in transit · ${counts.EXCEPTION || 0} exceptions`}
         right={<>
+          {viewToggle}
           <Btn icon kind="ghost" sm onClick={reload} title="Refresh">{Icon.cycle}</Btn>
           <Btn sm kind="primary" onClick={() => window.location.hash = "#/shipments?new=1"}>{Icon.plus} New shipment</Btn>
         </>}
@@ -418,5 +419,205 @@ const WiredShipmentsCRUD = () => {
   );
 };
 
+// ============================================================
+// Account-owner tracker — "By project" view
+// Read-only lens over /api/sales/shipment_tracking that groups a caller's
+// imported-equipment shipments by project (opportunity), so a sales engineer
+// can follow delivery + commissioning without the logistics team's spreadsheet.
+// ============================================================
 
-export default WiredShipmentsCRUD;
+const LADDER_HOPS: Array<[string, string]> = [
+  ["Ready", "ready_date"],
+  ["Sailed", "vessel_sailing_date"],
+  ["India port", "port_arrival_date"],
+  ["Store", "warehouse_receipt_date"],
+  ["Customer", "customer_delivery_date"],
+];
+
+const ITEM_TYPE_CHIP: Record<string, { k: string; label: string }> = {
+  project: { k: "info", label: "Project material" },
+  spares: { k: "plum", label: "Spares" },
+  internal: { k: "ghost", label: "Internal" },
+  unknown: { k: "ghost", label: "Unclassified" },
+};
+
+const statusChipKind = (status: string) =>
+  status === "DELIVERED" || status === "POD_RECEIVED" ? "good"
+    : status === "EXCEPTION" ? "bad"
+      : status === "IN_TRANSIT" || status === "AT_PORT" ? "warn" : "ghost";
+
+// The delivery ladder as a row of hop pills; reached hops carry their date and
+// are highlighted, pending hops read as a faint placeholder.
+const ShipmentLadder = ({ s }: { s: any }) => (
+  <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+    {LADDER_HOPS.map(([label, key], i) => {
+      const v = s[key];
+      const reached = !!v;
+      return (
+        <React.Fragment key={key}>
+          {i > 0 && <span className="mono-sm" style={{ color: "var(--ink-4, var(--ink-3))" }}>›</span>}
+          <span
+            className="mono-sm"
+            title={label}
+            style={{
+              padding: "1px 7px", borderRadius: 6, whiteSpace: "nowrap",
+              border: "1px solid var(--hairline-2)",
+              background: reached ? "var(--good-bg, rgba(40,167,69,0.12))" : "transparent",
+              color: reached ? "var(--ink)" : "var(--ink-3)",
+              fontWeight: reached ? 600 : 400,
+            }}
+          >
+            {label}{reached ? " " + String(v).slice(0, 10) : ""}
+          </span>
+        </React.Fragment>
+      );
+    })}
+  </div>
+);
+
+const ViewToggle = ({ view, setView }: { view: string; setView: (v: "list" | "projects") => void }) => (
+  <div className="row" style={{ gap: 2 }} role="tablist" aria-label="Shipments view">
+    <Btn sm kind={view === "list" ? "primary" : "ghost"} onClick={() => setView("list")} aria-pressed={view === "list"}>Logistics list</Btn>
+    <Btn sm kind={view === "projects" ? "primary" : "ghost"} onClick={() => setView("projects")} aria-pressed={view === "projects"}>By project</Btn>
+  </div>
+);
+
+const trackerGroupKey = (r: any) => r.opportunity_id || (r.customer_id ? "cust:" + r.customer_id : "none");
+
+const ShipmentTracker = ({ viewToggle, onOpen }: { viewToggle?: React.ReactNode; onOpen: (id: string) => void }) => {
+  const [state, setState] = React.useState<{ rows: any[]; loading: boolean; error: any }>({ rows: [], loading: true, error: null });
+  const [mine, setMine] = React.useState(true);
+
+  const load = React.useCallback(() => {
+    setState((s) => ({ ...s, loading: true }));
+    const params: any = mine ? { mine: "1" } : undefined;
+    Promise.resolve(AnvilBackend?.sales?.shipmentTracking?.(params) || { shipments: [] })
+      .then((r: any) => setState({ rows: Array.isArray(r) ? r : (r?.shipments || []), loading: false, error: null }))
+      .catch((err: any) => setState({ rows: [], loading: false, error: err }));
+  }, [mine]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  // Group by project (opportunity), else by customer, else "Direct / unassigned".
+  const groups: Array<{ key: string; project: string; customer: string | null; owner: string | null; item_type: string; rows: any[] }> = [];
+  const byKey = new Map<string, number>();
+  for (const r of state.rows) {
+    const key = trackerGroupKey(r);
+    let idx = byKey.get(key);
+    if (idx == null) {
+      idx = groups.length;
+      byKey.set(key, idx);
+      groups.push({
+        key,
+        project: r.project_name || r.customer_name || "Direct / unassigned",
+        customer: r.customer_name || null,
+        owner: r.owner_name || null,
+        item_type: r.item_type || "unknown",
+        rows: [],
+      });
+    }
+    groups[idx].rows.push(r);
+  }
+
+  const total = state.rows.length;
+  const delivered = state.rows.filter((r) => r.status === "DELIVERED" || r.status === "POD_RECEIVED").length;
+  const inTransit = state.rows.filter((r) => r.status === "IN_TRANSIT" || r.status === "AT_PORT").length;
+
+  return (
+    <>
+      <WSTitle
+        eyebrow="Sales · Shipments"
+        title="Shipments by project"
+        meta={`${total} shipment${total === 1 ? "" : "s"} · ${inTransit} in transit · ${delivered} delivered`}
+        right={<>
+          {viewToggle}
+          <Btn sm kind={mine ? "primary" : "ghost"} onClick={() => setMine((m) => !m)} title="Toggle between only my projects and all">
+            {mine ? "My projects" : "All projects"}
+          </Btn>
+          <Btn icon kind="ghost" sm onClick={load} title="Refresh">{Icon.cycle}</Btn>
+        </>}
+      />
+      <div className="ws-content">
+        {state.error && (
+          <Banner kind="bad" icon={Icon.alert} title="Could not load tracking" action={<Btn sm onClick={load}>Retry</Btn>}>
+            <span className="mono-sm">{String(state.error?.message || state.error)}</span>
+          </Banner>
+        )}
+        {state.loading ? (
+          <Card><div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading tracking…</div></Card>
+        ) : groups.length === 0 ? (
+          <Card>
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+              {mine
+                ? "No shipments on your projects yet. Shipments link to a project via their order → opportunity owner."
+                : "No shipments yet."}
+            </div>
+          </Card>
+        ) : (
+          groups.map((g) => {
+            const it = ITEM_TYPE_CHIP[g.item_type] || ITEM_TYPE_CHIP.unknown;
+            return (
+              <Card
+                key={g.key}
+                title={g.project}
+                eyebrow={[g.customer, g.owner ? "owner: " + g.owner : null].filter(Boolean).join(" · ") || "unassigned"}
+                right={<Chip k={it.k as any}>{it.label}</Chip>}
+              >
+                <table className="tbl">
+                  <thead><tr>
+                    <th>Invoice / no.</th>
+                    <th>Mode</th>
+                    <th>Delivery ladder</th>
+                    <th>Lines</th>
+                    <th>Promised</th>
+                    <th>Status</th>
+                    <th style={{ width: 70 }}></th>
+                  </tr></thead>
+                  <tbody>
+                    {g.rows.map((r) => (
+                      <tr key={r.id}>
+                        <td className="mono-sm">
+                          <span className="pri">{r.shipper_invoice_no || r.shipment_number || (r.id ? r.id.slice(0, 8) : "—")}</span>
+                          {r.vessel_or_flight ? <div style={{ color: "var(--ink-3)" }}>{r.vessel_or_flight}</div> : null}
+                        </td>
+                        <td><Chip k={String(r.mode || "").toLowerCase() === "air" ? "live" : String(r.mode || "").toLowerCase() === "courier" ? "plum" : "info"}>{r.mode || "—"}</Chip></td>
+                        <td><ShipmentLadder s={r} /></td>
+                        <td className="mono-sm">{r.lines ? `${r.lines.received}/${r.lines.total}` : "—"}</td>
+                        <td className="mono-sm">{r.committed_delivery_date ? String(r.committed_delivery_date).slice(0, 10) : "—"}</td>
+                        <td><Chip k={statusChipKind(r.status) as any}>{(r.status || "PLANNED").toLowerCase().replace(/_/g, " ")}</Chip></td>
+                        <td>
+                          <Btn sm kind="ghost" onClick={() => onOpen(r.id)} title="Open in logistics editor">{Icon.eye}</Btn>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            );
+          })
+        )}
+      </div>
+    </>
+  );
+};
+
+// Top-level screen: toggles between the logistics-team CRUD list and the
+// account-owner "by project" tracker. The view is reflected in the hash so it
+// survives a refresh / deep link, without clobbering the CRUD's ?id / ?new.
+const ShipmentsScreen = () => {
+  const [view, setView] = React.useState<"list" | "projects">(
+    () => (shipReadParams().get("view") === "projects" ? "projects" : "list"),
+  );
+  const toggle = <ViewToggle view={view} setView={setView} />;
+  if (view === "projects") {
+    return (
+      <ShipmentTracker
+        viewToggle={toggle}
+        onOpen={(id: string) => { window.location.hash = `#/shipments?id=${id}`; setView("list"); }}
+      />
+    );
+  }
+  return <WiredShipmentsCRUD viewToggle={toggle} />;
+};
+
+export default ShipmentsScreen;

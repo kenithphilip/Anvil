@@ -27,9 +27,11 @@ const SalesOpsCockpit = () => {
   const ops = useFetch(async () => { const r: any = await AnvilBackend?.analytics?.opsKpis?.(); return r || null; }, []);
   const [granularity, setGranularity] = React.useState<"day" | "week" | "month">("week");
   const pipeline = useFetch(async () => { const r: any = await AnvilBackend?.analytics?.pipeline?.({ granularity }); return r || null; }, [granularity]);
+  // Customer on-time-delivery (Logistics P3): committed vs actual delivery date.
+  const otd = useFetch(async () => { const r: any = await AnvilBackend?.analytics?.otd?.(); return r || null; }, []);
 
-  const loading = funnel.loading || winloss.loading || forecast.loading || ops.loading || pipeline.loading;
-  const reloadAll = () => { funnel.reload(); winloss.reload(); forecast.reload(); ops.reload(); pipeline.reload(); };
+  const loading = funnel.loading || winloss.loading || forecast.loading || ops.loading || pipeline.loading || otd.loading;
+  const reloadAll = () => { funnel.reload(); winloss.reload(); forecast.reload(); ops.reload(); pipeline.reload(); otd.reload(); };
 
   const fd: any = funnel.data || {};
   const wl: any = winloss.data || {};
@@ -49,6 +51,8 @@ const SalesOpsCockpit = () => {
   const agingBuckets: any[] = Array.isArray(aging.buckets) ? aging.buckets : [];
   const repRev: any[] = Array.isArray(ok.revenue_by_rep) ? ok.revenue_by_rep : [];
   const dOrDash = (s: any) => (s && s.median != null ? `${s.median}d` : "—");
+  const otdData: any = otd.data || {};
+  const otdChipKind = (p: number): "good" | "warn" | "bad" => (p >= 95 ? "good" : p >= 85 ? "warn" : "bad");
 
   const pl: any = pipeline.data || {};
   const plTotals: any = pl.totals || {};
@@ -57,7 +61,7 @@ const SalesOpsCockpit = () => {
   const plTrend: any[] = Array.isArray(pl.trend) ? pl.trend : [];
   const plStalled: any[] = Array.isArray(pl.stalled) ? pl.stalled : [];
 
-  const anyError = funnel.error || winloss.error || forecast.error || ops.error || pipeline.error;
+  const anyError = funnel.error || winloss.error || forecast.error || ops.error || pipeline.error || otd.error;
 
   return (
     <>
@@ -189,6 +193,24 @@ const SalesOpsCockpit = () => {
 
         <div className="row" style={{ gap: 12, marginTop: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
           {/* Revenue leakage — lost reasons */}
+          {/* Customer on-time delivery (Logistics P3) */}
+          <Card title="On-time delivery" eyebrow={otdData.total_delivered ? `${otdData.total_delivered} delivered · last ${otdData.window_days}d` : "committed vs actual"} style={{ flex: "1 1 240px", minWidth: 220 }} flush>
+            <div style={{ padding: 16 }}>
+              {otdData.otd_pct == null ? (
+                <div className="mono-sm" style={{ color: "var(--ink-3)" }}>No committed + delivered orders yet.</div>
+              ) : (
+                <>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                    <span style={{ fontSize: 28, fontWeight: 700 }}>{otdData.otd_pct}%</span>
+                    <Chip k={otdChipKind(otdData.otd_pct)}>on time</Chip>
+                  </div>
+                  <div className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 6 }}>
+                    {otdData.on_time} on time · {otdData.late} late{otdData.open_committed ? ` · ${otdData.open_committed} open` : ""}
+                  </div>
+                </>
+              )}
+            </div>
+          </Card>
           <Card title="Lost reasons" eyebrow="last 90 days" style={{ flex: "1 1 320px", minWidth: 280 }} flush>
             {(wl.lost_reasons || []).length === 0 ? (
               <div className="body" style={{ padding: 16, color: "var(--ink-3)" }}>No losses recorded.</div>

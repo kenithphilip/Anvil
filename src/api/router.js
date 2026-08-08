@@ -144,8 +144,12 @@ import ewayBillsExtract         from "./eway_bills/extract.js";
 import ewayBillsExpire          from "./eway_bills/expire.js";
 
 import deliveryPromise         from "./delivery/promise.js";
+import delaysScan              from "./delays/scan.js";
 import logisticsConsolidations from "./logistics/consolidations.js";
 import logisticsFreightBids     from "./logistics/freight_bids.js";
+import logisticsExceptions      from "./logistics/exceptions.js";
+import adminLogisticsMonitorRules from "./admin/logistics_monitor_rules.js";
+import logisticsMonitorTick     from "./cron/logistics-monitor-tick.js";
 
 // SOC 2 CC8.1 change log: production deploy events.
 import deploysIndex            from "./deploys/index.js";
@@ -261,6 +265,7 @@ import sourcePosById           from "./source_pos/[id].js";
 import sourcePosAck            from "./source_pos/ack.js";
 import sourcePosAckExtract     from "./source_pos/ack_extract.js";
 import sourcePosAckAccept      from "./source_pos/ack_accept.js";
+import sourcePosReceive        from "./source_pos/receive.js";
 import sourcePosIndex          from "./source_pos/index.js";
 import sourcePosScorecard      from "./source_pos/scorecard.js";
 
@@ -401,6 +406,7 @@ import analyticsRefresh        from "./analytics/refresh.js";
 import analyticsFunnel         from "./analytics/funnel.js";
 import analyticsOpsKpis        from "./analytics/ops_kpis.js";
 import analyticsPipeline       from "./analytics/pipeline.js";
+import analyticsOtd            from "./analytics/otd.js";
 
 import catalogSearch           from "./catalog/search.js";
 import catalogSynonyms         from "./catalog/synonyms.js";
@@ -650,6 +656,7 @@ const STATIC_ROUTES = {
   "/analytics/funnel":              analyticsFunnel,
   "/analytics/ops_kpis":            analyticsOpsKpis,
   "/analytics/pipeline":            analyticsPipeline,
+  "/analytics/otd":                 analyticsOtd,
   "/catalog/search":                catalogSearch,
   "/catalog/synonyms":              catalogSynonyms,
   "/catalog/alternatives":          catalogAlternatives,
@@ -955,8 +962,12 @@ const STATIC_ROUTES = {
   "/eway_bills/expire":             ewayBillsExpire,
 
   "/delivery/promise":              deliveryPromise,
+  "/delays/scan":                   delaysScan,
   "/logistics/consolidations":      logisticsConsolidations,
   "/logistics/freight_bids":        logisticsFreightBids,
+  "/logistics/exceptions":          logisticsExceptions,
+  "/admin/logistics_monitor_rules": adminLogisticsMonitorRules,
+  "/cron/logistics-monitor-tick":   logisticsMonitorTick,
   "/deploys":                       deploysIndex,
 
   "/documents":                     documentsIndex,
@@ -1132,6 +1143,7 @@ const DYNAMIC_ROUTES = [
   // matcher catches them first.
   { prefix: "/source_pos/",  suffix: "/ack_extract", handler: sourcePosAckExtract, param: "id" },
   { prefix: "/source_pos/",  suffix: "/ack_accept",  handler: sourcePosAckAccept,  param: "id" },
+  { prefix: "/source_pos/",  suffix: "/receive",     handler: sourcePosReceive,   param: "id" },
   // "/source_pos/<id>"
   { prefix: "/source_pos/",  handler: sourcePosById,  param: "id" },
   // "/spare_matrix/<id>" -> full matrix read / bulk save / delete.
@@ -1157,6 +1169,9 @@ const DYNAMIC_ROUTES = [
   { prefix: "/inventory/exceptions/", suffix: "/ack",      handler: inventoryExceptions, param: "id" },
   { prefix: "/inventory/exceptions/", suffix: "/resolve",  handler: inventoryExceptions, param: "id" },
   { prefix: "/inventory/exceptions/", suffix: "/suppress", handler: inventoryExceptions, param: "id" },
+  { prefix: "/logistics/exceptions/", suffix: "/ack",      handler: logisticsExceptions, param: "id" },
+  { prefix: "/logistics/exceptions/", suffix: "/resolve",  handler: logisticsExceptions, param: "id" },
+  { prefix: "/logistics/exceptions/", suffix: "/suppress", handler: logisticsExceptions, param: "id" },
   // PATCH /inventory/allocations/<id>.
   { prefix: "/inventory/allocations/", handler: inventoryAllocations, param: "id" },
   // PATCH /inventory/suppliers/<id>.

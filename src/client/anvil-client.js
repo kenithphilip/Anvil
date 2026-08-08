@@ -64,7 +64,7 @@
   // close) under the new `anvil:` prefix. We continue to mirror to
   // localStorage under both prefixes during the transition window
   // because 43 v3 screens read the legacy key inline. Once those
-  // screens are migrated to call `ObaraBackend.getSession()` we can
+  // screens are migrated to call `AnvilBackend.getSession()` we can
   // drop the localStorage write and the supply-chain JS exfiltration
   // surface goes away.
   //
@@ -438,6 +438,7 @@
     funnel:   async (q) => apiFetch("/api/analytics/funnel" + (q ? "?" + new URLSearchParams(q).toString() : "")),
     opsKpis:  async (q) => apiFetch("/api/analytics/ops_kpis" + (q ? "?" + new URLSearchParams(q).toString() : "")),
     pipeline: async (q) => apiFetch("/api/analytics/pipeline" + (q ? "?" + new URLSearchParams(q).toString() : "")),
+    otd:      async (q) => apiFetch("/api/analytics/otd" + (q ? "?" + new URLSearchParams(q).toString() : "")),
   };
 
   const supplierRfq = {
@@ -615,7 +616,7 @@
     // OCR evidence rows for a document. Returns the per-token bboxes
     // the documents-detail overlay paints on top of the source image.
     // The Mistral OCR pipeline (/api/documents/ocr, exposed as
-    // ObaraBackend.ocr.run below) populates these; an empty `rows`
+    // AnvilBackend.ocr.run below) populates these; an empty `rows`
     // array means OCR has not yet been run on this document.
     evidence: async (id) => apiFetch("/api/documents/" + id + "/evidence"),
     // List documents for the tenant. Powers the Documents library
@@ -1307,6 +1308,9 @@
     create: async (payload) => apiFetch("/api/source_pos", { method: "POST", body: payload }),
     update: async (id, patch) => apiFetch("/api/source_pos/" + encodeURIComponent(id), { method: "PATCH", body: patch }),
     ack: async (sourcePoId, ack) => apiFetch("/api/source_pos/ack", { method: "POST", body: { sourcePoId, ack } }),
+    // P2 GRN: outstanding lines + prior receipts, and record a goods receipt.
+    getReceiving: async (id) => apiFetch("/api/source_pos/" + encodeURIComponent(id) + "/receive"),
+    receive: async (id, payload) => apiFetch("/api/source_pos/" + encodeURIComponent(id) + "/receive", { method: "POST", body: payload }),
     scorecard: async (params) => {
       const qs = new URLSearchParams(params || {}).toString();
       return apiFetch("/api/source_pos/scorecard" + (qs ? "?" + qs : ""));
@@ -1732,6 +1736,14 @@
     addBid: async (payload) => apiFetch("/api/logistics/freight_bids", { method: "POST", body: payload }),
     awardBid: async (id) => apiFetch("/api/logistics/freight_bids", { method: "POST", body: { action: "award", id } }),
     deleteBid: async (id) => apiFetch("/api/logistics/freight_bids?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    // P1 logistics monitor: config-driven delay/SLA exceptions + escalation.
+    getMonitorRules: async () => apiFetch("/api/admin/logistics_monitor_rules"),
+    saveMonitorRule: async (payload) => apiFetch("/api/admin/logistics_monitor_rules", { method: "POST", body: payload }),
+    setMonitorEnabled: async (enabled) => apiFetch("/api/admin/logistics_monitor_rules", { method: "POST", body: { logistics_monitor_enabled: enabled } }),
+    listExceptions: async (params) => apiFetch("/api/logistics/exceptions" + (params ? "?" + new URLSearchParams(params).toString() : "")),
+    ackException: async (id) => apiFetch("/api/logistics/exceptions/" + encodeURIComponent(id) + "/ack", { method: "POST" }),
+    resolveException: async (id, note) => apiFetch("/api/logistics/exceptions/" + encodeURIComponent(id) + "/resolve", { method: "POST", body: { note } }),
+    suppressException: async (id, note) => apiFetch("/api/logistics/exceptions/" + encodeURIComponent(id) + "/suppress", { method: "POST", body: { note } }),
   };
 
   const api = {
@@ -1844,12 +1856,12 @@
   };
 
   // Canonical name post-rebrand. The old name stays as a writable
-  // alias so any consumer that grabbed `window.ObaraBackend`
+  // alias so any consumer that grabbed `window.AnvilBackend`
   // (102 call sites across screens + scripts at the rename time)
   // keeps working without an import change, and tests that swap
-  // `window.ObaraBackend` for a stub keep working too. Both globals
+  // `window.AnvilBackend` for a stub keep working too. Both globals
   // point at the same object, so a write to one is a write to both.
   global.AnvilBackend = api;
-  global.ObaraBackend = api;
+  global.AnvilBackend = api;
   global.storage = buildHybridStorage();
 })(typeof window !== "undefined" ? window : globalThis);

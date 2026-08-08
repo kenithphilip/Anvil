@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useFetch, ageLabel } from "../lib/helpers";
+import { useFetch, ageLabel, useHashParam } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
@@ -76,9 +76,15 @@ const ItemMasterTab = () => {
   // Guard rail (2026-06): item-master edits are admin-only. Non-admins get a
   // read-only list + read-only detail drawer.
   const canEdit = RBAC.isAdmin();
+  // Deep-link filter (#/items?q=<part_no>) — e.g. an item picked from the ⌘K
+  // palette — seeds a local filter the operator can clear.
+  const qParam = useHashParam("q");
+  const [filter, setFilter] = useState(qParam || "");
+  useEffect(() => { setFilter(qParam || ""); }, [qParam]);
   const list = useFetch(
-    () => AnvilBackend?.admin?.listItemMaster?.() || itemFetch("/api/admin/item_master"),
-    []
+    () => AnvilBackend?.admin?.listItemMaster?.(filter ? { q: filter } : undefined)
+      || itemFetch("/api/admin/item_master" + (filter ? "?q=" + encodeURIComponent(filter) : "")),
+    [filter]
   );
   // Item-detail drawer state. null = closed, {} = create-new,
   // any other object = edit-existing. The drawer is responsible for
@@ -99,6 +105,12 @@ const ItemMasterTab = () => {
 
   return (
     <>
+      {filter && (
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <span className="mono-sm" style={{ color: "var(--ink-3)" }}>Filtered to “{filter}”</span>
+          <Btn sm kind="ghost" onClick={() => setFilter("")}>Clear</Btn>
+        </div>
+      )}
       {canEdit && (
         <div className="row" style={{ justifyContent: "flex-end", marginBottom: 8 }}>
           <Btn sm kind="primary" onClick={() => setEditing({})}>{Icon.plus} New item</Btn>

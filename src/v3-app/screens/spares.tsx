@@ -232,6 +232,17 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const [showAddRow, setShowAddRow] = uM(false);
   const [showSuggest, setShowSuggest] = uM(false);
   const [bomGun, setBomGun] = uM(null);
+  // Open a gun's BOM directly from a deep link (#/spares?gun=<code>) — e.g. from
+  // the ⌘K palette or the guns viewer. Reads on mount + on hashchange.
+  eM(() => {
+    const readGun = () => {
+      const m = /[?&]gun=([^&]+)/.exec(window.location.hash || "");
+      if (m && m[1]) setBomGun(decodeURIComponent(m[1]));
+    };
+    readGun();
+    window.addEventListener("hashchange", readGun);
+    return () => window.removeEventListener("hashchange", readGun);
+  }, []);
   const [showConfig, setShowConfig] = uM(false);
   const [showImport, setShowImport] = uM(false);
   const [importPreview, setImportPreview] = uM(null);

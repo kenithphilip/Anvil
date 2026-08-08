@@ -220,6 +220,10 @@ export const SERVER_ACTIONS = {
   // MATRIX.quotes: sales_manager (rwa) + admin (rwa) approve/convert/send;
   // finance is read-only on quotes (its approve power is invoices/tally).
   "quotes.approve":      new Set(["sales_manager", "admin"]),
+  // Downloading a gun drawing (EG sheet / 2D / 3D file, or its external link) is
+  // limited to design + sales roles + admin — data-download control. Other roles
+  // can see a drawing exists (list) but cannot pull the file/link. Mirrors rbac.ts.
+  "drawing.download":    new Set(["design_engineer", "design_manager", "sales_engineer", "sales_manager", "admin"]),
 };
 
 export const hasAction = (ctx, action) => {

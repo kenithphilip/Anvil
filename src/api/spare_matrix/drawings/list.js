@@ -4,7 +4,7 @@
 // committed set (per-gun EG/2D/3D), or the full upload track. Read-only.
 
 import { applyCors, handlePreflight, json, sendError } from "../../_lib/cors.js";
-import { resolveContext, requirePermission } from "../../_lib/auth.js";
+import { resolveContext, requirePermission, hasAction } from "../../_lib/auth.js";
 import { serviceClient } from "../../_lib/supabase.js";
 
 export default async function handler(req, res) {
@@ -25,7 +25,14 @@ export default async function handler(req, res) {
     const { data, error } = await q;
     if (error) throw new Error(error.message);
 
-    return json(res, 200, { drawings: data || [] });
+    // Data-download control: roles without `drawing.download` may see that a
+    // drawing exists (kind / gun / status) but not the file or external link.
+    // Belt-and-suspenders with the UI gate + the download endpoint's requireAction.
+    const canDownload = hasAction(ctx, "drawing.download");
+    const drawings = (data || []).map((r) =>
+      canDownload ? r : { ...r, document_id: null, link_url: null, original_filename: null, download_restricted: true });
+
+    return json(res, 200, { drawings });
   } catch (err) {
     sendError(res, err);
   }

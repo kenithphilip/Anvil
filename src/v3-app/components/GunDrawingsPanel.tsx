@@ -11,6 +11,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Btn, Card, Chip } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { canDo } from "../lib/rbac";
 
 const KINDS: { id: string; label: string; accept: string }[] = [
   { id: "eg_sheet",   label: "EG sheet (PDF)",     accept: ".pdf" },
@@ -49,6 +50,7 @@ export const GunDrawingsPanel: React.FC<{ matrixId: string; guns: string[]; onCl
   const staged = rows.filter((r) => r.status === "staged");
   const committed = rows.filter((r) => r.status === "committed");
   const needsReview = staged.filter((r) => !CLEAN.has(r.match_status));
+  const canDownload = canDo("drawing.download");   // data-download control
   const activeKind = KINDS.find((k) => k.id === kind)!;
 
   const onFiles = async (files: FileList | null) => {
@@ -176,26 +178,32 @@ export const GunDrawingsPanel: React.FC<{ matrixId: string; guns: string[]; onCl
             byGun.map(([gun, ds]) => (
               <div key={gun} className="mono-sm" style={{ padding: "5px 0", borderTop: "1px solid var(--hairline-2)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <strong style={{ minWidth: 120 }}>{gun}</strong>
-                {ds.map((d) => d.link_url
-                  ? <a key={d.id} href={d.link_url} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}><Chip k="good">{KIND_LABEL[d.kind]} ↗</Chip></a>
-                  : (
-                    // File-backed drawing (EG PDF / 2D / uploaded 3D): fetch a
-                    // short-lived signed URL on demand and open it. Was an inert
-                    // chip — the feature's own files were unreachable.
-                    <button key={d.id} type="button" title="Open / download"
-                      onClick={async () => {
-                        if (!d.document_id) { window.notifyError?.("No file", "This drawing has no downloadable file."); return; }
-                        try {
-                          const resp: any = await AnvilBackend?.documents?.fetch?.(d.document_id);
-                          const url = resp?.downloadUrl || resp?.url;
-                          if (url) window.open(url, "_blank", "noopener,noreferrer");
-                          else window.notifyError?.("No file", "This drawing has no downloadable file.");
-                        } catch (e: any) { window.notifyError?.("Open failed", String((e && e.message) || e)); }
-                      }}
-                      style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}>
-                      <Chip k="good">{KIND_LABEL[d.kind]} · {d.original_filename || "file"} ↓</Chip>
-                    </button>
-                  ))}
+                {ds.map((d) => {
+                  // Data-download control: roles without `drawing.download` see
+                  // that a drawing exists but cannot open the file or link. The
+                  // list endpoint also redacts the file/link for them.
+                  if (!canDownload) {
+                    return <span key={d.id} title="Download not permitted for your role"><Chip k="ghost">{KIND_LABEL[d.kind]}</Chip></span>;
+                  }
+                  return d.link_url
+                    ? <a key={d.id} href={d.link_url} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}><Chip k="good">{KIND_LABEL[d.kind]} ↗</Chip></a>
+                    : (
+                      // File-backed drawing (EG PDF / 2D / uploaded 3D): fetch a
+                      // short-lived signed URL via the gated endpoint and open it.
+                      <button key={d.id} type="button" title="Open / download"
+                        onClick={async () => {
+                          try {
+                            const resp: any = await AnvilBackend?.spareMatrix?.drawings?.download?.(d.id);
+                            const url = resp?.downloadUrl || resp?.url;
+                            if (url) window.open(url, "_blank", "noopener,noreferrer");
+                            else window.notifyError?.("No file", "This drawing has no downloadable file.");
+                          } catch (e: any) { window.notifyError?.("Download failed", String((e && e.message) || e)); }
+                        }}
+                        style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}>
+                        <Chip k="good">{KIND_LABEL[d.kind]} · {d.original_filename || "file"} ↓</Chip>
+                      </button>
+                    );
+                })}
               </div>
             ))}
         </Card>

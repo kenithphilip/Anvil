@@ -2,6 +2,35 @@ import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+// Pure workbook-normalization shared with the /api/sales/shipment_import handler
+// (the same module runs on both sides). Used here to parse the logistics sheet
+// client-side and pre-filter the huge line sheets before posting.
+import { parseSheets } from "../../api/_lib/shipment-import.js";
+
+// Lazy-load SheetJS the same way the BOM importer does (dynamic import keeps it
+// out of the main bundle and satisfies the CSP — no CDN <script>).
+let __xlsxPromise: any = null;
+const loadXLSX = (): Promise<any> => {
+  if (typeof window !== "undefined" && (window as any).XLSX?.read) return Promise.resolve((window as any).XLSX);
+  if (__xlsxPromise) return __xlsxPromise;
+  __xlsxPromise = import("xlsx").then((m: any) => {
+    const XLSX = (m && m.read) ? m : (m.default || m);
+    try { if (typeof window !== "undefined") (window as any).XLSX = XLSX; } catch (_) { /* noop */ }
+    return XLSX;
+  });
+  return __xlsxPromise;
+};
+
+// Read a workbook File into [{ name, rows(2D) }] sheets.
+const fileToSheets = async (file: File): Promise<Array<{ name: string; rows: any[][] }>> => {
+  const XLSX = await loadXLSX();
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: "array", cellDates: true });
+  return wb.SheetNames.map((name: string) => ({
+    name,
+    rows: XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false, defval: "" }),
+  }));
+};
 
 // ============================================================
 // ANVIL v3 — Shipments CRUD overlay
@@ -86,6 +115,134 @@ export const shipmentLatestDate = (r: any) => {
   return r.eta ? `ETA: ${String(r.eta).slice(0, 10)}` : "—";
 };
 
+const statusChipKind = (status: string) =>
+  status === "DELIVERED" || status === "POD_RECEIVED" ? "good"
+    : status === "EXCEPTION" ? "bad"
+      : status === "IN_TRANSIT" || status === "AT_PORT" ? "warn" : "ghost";
+
+const SummaryStat = ({ label, value, tone }: { label: string; value: any; tone?: string }) => (
+  <div style={{ minWidth: 92 }}>
+    <div className="mono-sm" style={{ color: "var(--ink-3)" }}>{label}</div>
+    <div style={{ fontSize: 20, fontWeight: 700, color: tone === "warn" ? "var(--warn, #b8860b)" : "var(--ink)" }}>{value ?? 0}</div>
+  </div>
+);
+
+// Import-from-workbook panel (Part C). Parses the logistics sheet client-side,
+// pre-filters the huge line sheets to the invoices in play, previews the exact
+// upsert plan (insert/update, project link, per-line receipts), then applies.
+const ShipmentImportPanel = ({ onClose, onApplied }: { onClose: () => void; onApplied: () => void }) => {
+  const [parsing, setParsing] = React.useState(false);
+  const [parsed, setParsed] = React.useState<{ pending: any[]; lines: any[]; fileNames: string[] } | null>(null);
+  const [preview, setPreview] = React.useState<any>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+
+  const onPick = async (fileList: FileList | null) => {
+    if (!fileList || !fileList.length) return;
+    setParsing(true); setErr(null); setPreview(null); setParsed(null);
+    try {
+      let sheets: any[] = [];
+      const fileNames: string[] = [];
+      for (const f of Array.from(fileList)) {
+        fileNames.push(f.name);
+        sheets = sheets.concat(await fileToSheets(f));
+      }
+      const { pending, lines } = parseSheets(sheets);
+      // The per-country line sheets carry years of history; only the rows whose
+      // invoice is in the pending set matter, so drop the rest before posting.
+      const pendInv = new Set(pending.map((p: any) => p.shipper_invoice_no));
+      const relevantLines = lines.filter((l: any) => pendInv.has(l.shipper_invoice_no));
+      setParsed({ pending, lines: relevantLines, fileNames });
+      if (!pending.length) {
+        setErr("No shipment rows found — expected a sheet with a 'Shipper Invoice No.' header (the Daily Shipment Reports / Pending sheet).");
+      }
+    } catch (e: any) { setErr(e?.message || String(e)); }
+    finally { setParsing(false); }
+  };
+
+  const call = async (mode: "preview" | "apply") =>
+    AnvilBackend?.sales?.shipmentImport?.({ mode, pending: parsed!.pending, lines: parsed!.lines });
+
+  const runPreview = async () => {
+    if (!parsed) return;
+    setBusy(true); setErr(null);
+    try { setPreview(await call("preview")); }
+    catch (e: any) { setErr(e?.message || String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const runApply = async () => {
+    if (!parsed) return;
+    setBusy(true); setErr(null);
+    try {
+      const r: any = await call("apply");
+      const s = r?.summary || {};
+      window.notifySuccess?.("Sheet imported", `${s.inserted || 0} new · ${s.updated || 0} updated · ${s.line_receipts_applied || 0} receipts`);
+      onApplied();
+    } catch (e: any) { setErr(e?.message || String(e)); window.notifyError?.("Import failed", e?.message || String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const s = preview?.summary;
+  return (
+    <Card title="Import from logistics sheet" eyebrow="upsert shipments from the daily workbook — no re-keying"
+          right={<Btn sm icon kind="ghost" onClick={onClose} aria-label="Close">{Icon.x}</Btn>}>
+      <Banner kind="info">
+        Drop the logistics team's <b>Daily Shipment Reports</b> (and, to link shipments to their project + mark
+        lines received, also the <b>In Transit Items Details</b>) workbook. Shipments match on invoice number.
+        Nothing is written until you press <b>Apply</b>.
+      </Banner>
+      <div className="row" style={{ gap: 10, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <input type="file" accept=".xlsx,.xls" multiple onChange={(e) => onPick(e.target.files)} disabled={parsing || busy} />
+        {parsing && <span className="mono-sm" style={{ color: "var(--ink-3)" }}>Parsing…</span>}
+      </div>
+      {err && <Banner kind="bad" icon={Icon.alert} title="Import problem"><span className="mono-sm">{err}</span></Banner>}
+      {parsed && (
+        <div className="mono-sm" style={{ marginTop: 10, color: "var(--ink-3)" }}>
+          Parsed {parsed.fileNames.join(", ")} → <b style={{ color: "var(--ink)" }}>{parsed.pending.length}</b> shipment row(s), <b style={{ color: "var(--ink)" }}>{parsed.lines.length}</b> matching line row(s).
+        </div>
+      )}
+      {parsed && !preview && (
+        <div className="row" style={{ gap: 8, marginTop: 12 }}>
+          <Btn kind="primary" disabled={busy || !parsed.pending.length} onClick={runPreview}>{busy ? "…" : "Preview"}</Btn>
+          <Btn kind="ghost" onClick={onClose}>Cancel</Btn>
+        </div>
+      )}
+      {preview && (
+        <>
+          <div className="row" style={{ gap: 16, marginTop: 14, flexWrap: "wrap" }}>
+            <SummaryStat label="Insert" value={s.to_insert} />
+            <SummaryStat label="Update" value={s.to_update} />
+            <SummaryStat label="Linked to project" value={s.linked_to_project} />
+            <SummaryStat label="Unlinked" value={s.unlinked} tone={s.unlinked ? "warn" : undefined} />
+            <SummaryStat label="Line receipts" value={s.line_receipts_matched} />
+          </div>
+          <table className="tbl" style={{ marginTop: 12 }}>
+            <thead><tr><th>Invoice</th><th>Action</th><th>Supplier · items</th><th>Ladder</th><th>Status</th><th>Project link</th></tr></thead>
+            <tbody>
+              {(preview.shipments || []).map((p: any) => (
+                <tr key={p.shipper_invoice_no}>
+                  <td className="mono-sm"><span className="pri">{p.shipper_invoice_no}</span></td>
+                  <td><Chip k={p.action === "insert" ? "good" : "info"}>{p.action}</Chip></td>
+                  <td className="mono-sm">{[p.preview?.supplier, p.preview?.items].filter(Boolean).join(" · ") || "—"}</td>
+                  <td className="mono-sm">{[["S", p.preview?.vessel_sailing_date], ["I", p.preview?.port_arrival_date], ["W", p.preview?.warehouse_receipt_date]].filter(([, d]) => d).map(([k, d]) => `${k}:${String(d).slice(5)}`).join(" ") || "—"}</td>
+                  <td><Chip k={statusChipKind(p.preview?.status) as any}>{String(p.preview?.status || "").toLowerCase().replace(/_/g, " ")}</Chip></td>
+                  <td className="mono-sm">{p.linked ? <Chip k="good">{p.matched_po_ref}</Chip> : <span style={{ color: "var(--ink-3)" }}>unlinked</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="row" style={{ gap: 8, marginTop: 12 }}>
+            <Btn kind="primary" disabled={busy} onClick={runApply}>{busy ? "Applying…" : `Apply — ${s.to_insert} new, ${s.to_update} updated`}</Btn>
+            <Btn kind="ghost" disabled={busy} onClick={() => setPreview(null)}>Back</Btn>
+            <Btn kind="ghost" disabled={busy} onClick={onClose}>Cancel</Btn>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+};
+
 const WiredShipmentsCRUD = ({ viewToggle }: { viewToggle?: React.ReactNode } = {}) => {
   const { useState: u, useEffect: e } = React;
   const params = shipReadParams();
@@ -97,6 +254,7 @@ const WiredShipmentsCRUD = ({ viewToggle }: { viewToggle?: React.ReactNode } = {
   const [editing, setEditing] = u(null);
   const [form, setForm] = u(null);
   const [busy, setBusy] = u(false);
+  const [importOpen, setImportOpen] = u(false);
 
   const reload = () => {
     setList((s) => ({ ...s, loading: true }));
@@ -255,6 +413,7 @@ const WiredShipmentsCRUD = ({ viewToggle }: { viewToggle?: React.ReactNode } = {
         meta={`${list.rows.length} total · ${counts.IN_TRANSIT || 0} in transit · ${counts.EXCEPTION || 0} exceptions`}
         right={<>
           {viewToggle}
+          <Btn sm kind="ghost" onClick={() => setImportOpen((v) => !v)} title="Import from the logistics team's daily workbook">{Icon.upload || Icon.plus} Import sheet</Btn>
           <Btn icon kind="ghost" sm onClick={reload} title="Refresh">{Icon.cycle}</Btn>
           <Btn sm kind="primary" onClick={() => window.location.hash = "#/shipments?new=1"}>{Icon.plus} New shipment</Btn>
         </>}
@@ -266,6 +425,13 @@ const WiredShipmentsCRUD = ({ viewToggle }: { viewToggle?: React.ReactNode } = {
           <Banner kind="bad" icon={Icon.alert} title="Could not load shipments" action={<Btn sm onClick={reload}>Retry</Btn>}>
             <span className="mono-sm">{String(list.error.message || list.error)}</span>
           </Banner>
+        )}
+
+        {importOpen && (
+          <ShipmentImportPanel
+            onClose={() => setImportOpen(false)}
+            onApplied={() => { setImportOpen(false); reload(); }}
+          />
         )}
 
         {form && (
@@ -440,11 +606,6 @@ const ITEM_TYPE_CHIP: Record<string, { k: string; label: string }> = {
   internal: { k: "ghost", label: "Internal" },
   unknown: { k: "ghost", label: "Unclassified" },
 };
-
-const statusChipKind = (status: string) =>
-  status === "DELIVERED" || status === "POD_RECEIVED" ? "good"
-    : status === "EXCEPTION" ? "bad"
-      : status === "IN_TRANSIT" || status === "AT_PORT" ? "warn" : "ghost";
 
 // The delivery ladder as a row of hop pills; reached hops carry their date and
 // are highlighted, pending hops read as a faint placeholder.

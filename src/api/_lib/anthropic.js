@@ -110,6 +110,36 @@ const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// A single retryable upstream (429 / 5xx / 529 overload) must never consume the
+// whole extraction run budget. Two guards, both defaulting to the historical
+// behaviour when the caller passes no deadline:
+//   - MAX_RETRY_SLEEP_MS caps every retry sleep (the Retry-After header path was
+//     previously UNCAPPED, so a 529 with "Retry-After: 30" slept 30s and starved
+//     the fallback providers — the exact cause of a real PO failure where Claude
+//     5xx'd and Gemini/LlamaParse were then skipped run_budget_exhausted).
+//   - When opts.deadlineAt (epoch ms) is set, each attempt is time-boxed to the
+//     remaining budget minus FALLBACK_RESERVE_MS, and we stop retrying once a
+//     retry+attempt would eat into that reserve — so a cheaper fallback provider
+//     downstream always gets a turn.
+const MAX_RETRY_SLEEP_MS = Number(process.env.ANTHROPIC_MAX_RETRY_SLEEP_MS || 8000);
+const FALLBACK_RESERVE_MS = Number(process.env.ANTHROPIC_FALLBACK_RESERVE_MS || 8000);
+const ATTEMPT_TIMEOUT_MS = Number(process.env.ANTHROPIC_TIMEOUT_MS || 15000);
+const MIN_ATTEMPT_MS = 2000;
+
+// Pure, exported for tests. Cap a retry sleep at MAX_RETRY_SLEEP_MS and, when a
+// run deadline is set, return null (= "don't retry") once sleeping would eat
+// into the fallback reserve. deadlineAt=0 disables the deadline guard.
+export const capRetrySleep = (baseMs, { deadlineAt = 0, now = Date.now(), reserveMs = FALLBACK_RESERVE_MS, maxSleepMs = MAX_RETRY_SLEEP_MS } = {}) => {
+  const wait = Math.min(maxSleepMs, Math.max(0, Number(baseMs) || 0));
+  if (deadlineAt && (deadlineAt - now - reserveMs) <= wait) return null;
+  return wait;
+};
+
+// Pure, exported for tests. Time-box one attempt to the remaining budget minus
+// the fallback reserve, capped at the normal ceiling. deadlineAt=0 => ceiling.
+export const attemptTimeout = ({ deadlineAt = 0, now = Date.now(), reserveMs = FALLBACK_RESERVE_MS, ceilingMs = ATTEMPT_TIMEOUT_MS } = {}) =>
+  (deadlineAt ? Math.min(ceilingMs, Math.max(0, deadlineAt - now - reserveMs)) : ceilingMs);
+
 // Bet 1 (May 2026): with Gemini 3 Flash now the docai hot path,
 // Sonnet 4.6 fires only as the confidence-fallback. Per Anthropic
 // pricing https://platform.claude.com/docs/en/about-claude/pricing :
@@ -249,22 +279,38 @@ export const callAnthropic = async (opts) => {
   if (opts.cache_ttl === "1h") headers["anthropic-beta"] = "extended-cache-ttl-2025-04-11";
   else if (process.env.ANTHROPIC_BETA_HEADER) headers["anthropic-beta"] = process.env.ANTHROPIC_BETA_HEADER;
 
+  // Optional run deadline (epoch ms) threaded from the docai pipeline. 0 => no
+  // deadline, and every guard below collapses to the historical behaviour.
+  const deadlineAt = Number(opts.deadlineAt) || 0;
+
   let lastErr = null;
   let primaryResp = null;
   let primaryData = null;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
+    // Time-box this attempt to the remaining budget (minus the fallback
+    // reserve), capped at the normal per-call timeout. No deadline => ceiling.
+    const attemptTimeoutMs = attemptTimeout({ deadlineAt });
+    if (deadlineAt && attemptTimeoutMs < MIN_ATTEMPT_MS) {
+      // Not enough budget left to even try without starving the fallback.
+      lastErr = lastErr || new Error("run budget exhausted before Anthropic call");
+      break;
+    }
     let upstream;
     try {
-      upstream = await safeFetch(ANTHROPIC_URL, { method: "POST", headers, body: JSON.stringify(upstreamPayload) });
+      upstream = await safeFetch(ANTHROPIC_URL, { method: "POST", headers, body: JSON.stringify(upstreamPayload), timeoutMs: attemptTimeoutMs });
     } catch (networkErr) {
       lastErr = new Error("Network error: " + networkErr.message);
-      if (attempt < 3) { await sleep(Math.min(8000, 600 * Math.pow(2, attempt - 1))); continue; }
+      const wait = attempt < 3 ? capRetrySleep(600 * Math.pow(2, attempt - 1), { deadlineAt }) : null;
+      if (wait != null) { await sleep(wait); continue; }
       break;
     }
     if (RETRYABLE.has(upstream.status) && attempt < 3) {
       const retryHdr = Number(upstream.headers.get("retry-after")) * 1000;
-      await sleep(Number.isFinite(retryHdr) && retryHdr > 0 ? retryHdr : Math.min(8000, 600 * Math.pow(2, attempt - 1)));
-      continue;
+      const base = Number.isFinite(retryHdr) && retryHdr > 0 ? retryHdr : 600 * Math.pow(2, attempt - 1);
+      const wait = capRetrySleep(base, { deadlineAt });
+      // wait == null => capped budget won't allow a retry; fall through and
+      // return this response so the ladder can move to a fallback immediately.
+      if (wait != null) { await sleep(wait); continue; }
     }
     primaryResp = upstream;
     const text = await upstream.text();
@@ -281,7 +327,14 @@ export const callAnthropic = async (opts) => {
 
   const confidence = extractConfidenceFromContent(primaryData, opts.confidenceHint);
 
-  if (allowFallback && primaryResp.ok && confidence < minConfidence && routedModel.tier !== "reasoning") {
+  // The low-confidence escalation is a SECOND full call. Under a run deadline it
+  // must obey the same reserve as the retry loop, or it could starve the
+  // downstream fallback provider the whole fix exists to protect. When there's
+  // no budget for it, keep the (low-confidence) primary result instead.
+  const fallbackTimeoutMs = attemptTimeout({ deadlineAt });
+  const fallbackHasBudget = !deadlineAt || fallbackTimeoutMs >= MIN_ATTEMPT_MS;
+
+  if (allowFallback && fallbackHasBudget && primaryResp.ok && confidence < minConfidence && routedModel.tier !== "reasoning") {
     const fallbackTier = routedModel.tier === "preflight" ? "generation" : "reasoning";
     const fallbackChoice = pickModel({ purpose, tier: fallbackTier });
     await safeAwait(svc.from("model_routing_log").insert({
@@ -299,7 +352,7 @@ export const callAnthropic = async (opts) => {
     }), "model_routing_log");
     const fallbackPayload = { ...upstreamPayload, model: fallbackChoice.model };
     const fallbackResp = await safeFetch(ANTHROPIC_URL, {
-      method: "POST", headers, body: JSON.stringify(fallbackPayload),
+      method: "POST", headers, body: JSON.stringify(fallbackPayload), timeoutMs: fallbackTimeoutMs,
     });
     const fallbackText = await fallbackResp.text();
     let fallbackData; try { fallbackData = JSON.parse(fallbackText); } catch (_) { fallbackData = primaryData; }

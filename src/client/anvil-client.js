@@ -1207,6 +1207,7 @@
     },
     asset: async (id) => apiFetch("/api/bom/assets?id=" + encodeURIComponent(id)),
     assetByCode: async (code) => apiFetch("/api/bom/assets?asset_code=" + encodeURIComponent(code)),
+    uploads: async (params) => apiFetch("/api/bom/uploads" + (params && Object.keys(params).length ? "?" + new URLSearchParams(params).toString() : "")),
     linkProject: async (payload) => apiFetch("/api/bom/asset_projects", { method: "POST", body: payload }),
     unlinkProject: async (assetId, projectId) =>
       apiFetch("/api/bom/asset_projects?asset_id=" + encodeURIComponent(assetId) + "&project_id=" + encodeURIComponent(projectId), { method: "DELETE" }),

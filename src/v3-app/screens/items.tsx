@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { useFetch } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
+import { useFetch, ageLabel } from "../lib/helpers";
+import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
@@ -43,6 +43,7 @@ const WiredItems = () => {
     { id: "inventory", label: "Inventory" },
     { id: "assets",    label: "Assets (BOMs)" },
     { id: "bom",       label: "BOM" },
+    { id: "uploads",   label: "Uploads" },
   ];
 
   return (
@@ -65,6 +66,7 @@ const WiredItems = () => {
         {tab === "inventory" && <ItemInventoryTab />}
         {tab === "assets" && <ItemAssetsTab />}
         {tab === "bom" && <ItemBomTab />}
+        {tab === "uploads" && <ItemUploadsTab />}
       </div>
     </>
   );
@@ -276,15 +278,107 @@ const ItemBomTab = () => {
         </tr></thead>
         <tbody>
           {rows.slice(0, 200).map((r) => (
-            <tr key={r.id || `${r.parent_item}-${r.child_item}`}>
-              <td className="mono"><span className="pri">{r.parent_item || r.parent || "—"}</span></td>
-              <td className="mono">{r.child_item || r.child || "—"}</td>
+            <tr key={r.id || `${r.parent_part_no}-${r.child_part_no}`}>
+              {/* /api/bom (bill_of_materials) returns parent_part_no/child_part_no;
+                  the old parent_item/child_item read the wrong field -> every row
+                  showed "—". Keep the legacy names as fallbacks. */}
+              <td className="mono"><span className="pri">{r.parent_part_no || r.parent_item || r.parent || "—"}</span></td>
+              <td className="mono">{r.child_part_no || r.child_item || r.child || "—"}</td>
               <td className="r mono">{r.qty != null ? Number(r.qty).toLocaleString("en-IN") : "—"}</td>
             </tr>
           ))}
         </tbody>
       </table>
     </Card>
+  );
+};
+
+// Uploads / storage / item-creation provenance for the Item Master area: how many
+// guns/BOMs were uploaded and by whom, parts ingested, items created, and storage
+// load. Backed by /api/bom/uploads (aggregates bom_import_events + bom_assets +
+// item_master + documents). Uploader ids resolve to names via admin.listMembers.
+const fmtBytes = (n: number) => {
+  const b = Number(n) || 0;
+  if (b < 1024) return b + " B";
+  const u = ["KB", "MB", "GB", "TB"]; let v = b / 1024, i = 0;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i += 1; }
+  return v.toFixed(v >= 10 || i === 0 ? 0 : 1) + " " + u[i];
+};
+
+const ItemUploadsTab = () => {
+  const up = useFetch(() => (AnvilBackend?.bom?.uploads ? AnvilBackend.bom.uploads() : Promise.resolve(null)), []);
+  const members = useFetch(() => (AnvilBackend?.admin?.listMembers ? AnvilBackend.admin.listMembers() : Promise.resolve(null)), []);
+  const nameOf = (id: string) => {
+    if (!id || id === "unknown") return "—";
+    const md: any = members.data;
+    const list: any[] = md?.members || (Array.isArray(md) ? md : []);
+    const m = (list || []).find((x: any) => x.user_id === id || x.id === id);
+    return m?.name || m?.full_name || m?.email || (id.length > 8 ? id.slice(0, 8) : id);
+  };
+
+  if (up.loading && !up.data) return <Card><div className="body">Loading uploads…</div></Card>;
+  if (up.error) {
+    return (
+      <Banner kind="bad" icon={Icon.alert} title="Could not load uploads"
+              action={<Btn sm onClick={up.reload}>Retry</Btn>}>
+        <span className="mono-sm">{String((up.error as any)?.message || up.error)}</span>
+      </Banner>
+    );
+  }
+
+  const d: any = up.data || {};
+  const k: any = d.kpis || {};
+  const byUploader: any[] = Array.isArray(d.by_uploader) ? d.by_uploader : [];
+  const recent: any[] = Array.isArray(d.recent) ? d.recent : [];
+
+  return (
+    <>
+      <KPIRow cols={4}>
+        <KPI lbl="Guns / BOMs uploaded" v={String(k.assets_uploaded || 0)} d={`${k.upload_events || 0} import events`} live={(k.assets_uploaded || 0) > 0} />
+        <KPI lbl="Parts ingested" v={Number(k.parts_ingested || 0).toLocaleString("en-IN")} d="BOM lines imported" />
+        <KPI lbl="Items created" v={Number(k.items_created || 0).toLocaleString("en-IN")} d={`${Number(k.items_imported || 0).toLocaleString("en-IN")} from import`} />
+        <KPI lbl="Storage" v={fmtBytes(k.storage_bytes || 0)} d={`${Number(k.documents || 0).toLocaleString("en-IN")} files`} live={(k.storage_bytes || 0) > 0} />
+      </KPIRow>
+
+      <div className="row" style={{ gap: 12, marginTop: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <Card title="By uploader" eyebrow="who uploaded what" style={{ flex: "1 1 340px", minWidth: 300 }} flush>
+          {byUploader.length === 0 ? <div className="body" style={{ padding: 16, color: "var(--ink-3)" }}>No uploads recorded.</div> : (
+            <table className="tbl" style={{ fontSize: 12 }}>
+              <thead><tr><th>Uploader</th><th className="r">Uploads</th><th className="r">Parts</th><th className="r">Last</th></tr></thead>
+              <tbody>
+                {byUploader.slice(0, 12).map((u, i) => (
+                  <tr key={i}>
+                    <td className="mono-sm">{nameOf(u.uploader_id)}</td>
+                    <td className="r mono">{u.uploads}</td>
+                    <td className="r mono">{Number(u.parts || 0).toLocaleString("en-IN")}</td>
+                    <td className="r mono-sm">{u.last_at ? ageLabel(u.last_at) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+
+        <Card title="Recent uploads" eyebrow="latest BOM imports" style={{ flex: "2 1 420px", minWidth: 320 }} flush>
+          {recent.length === 0 ? <div className="body" style={{ padding: 16, color: "var(--ink-3)" }}>No recent uploads.</div> : (
+            <table className="tbl" style={{ fontSize: 12 }}>
+              <thead><tr><th>File</th><th>Uploader</th><th className="r">Lines</th><th>Format</th><th className="r">When</th></tr></thead>
+              <tbody>
+                {recent.slice(0, 20).map((r, i) => (
+                  <tr key={i}>
+                    <td className="mono-sm" style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.file_name || "—"}</td>
+                    <td className="mono-sm">{nameOf(r.uploaded_by)}</td>
+                    <td className="r mono">{r.line_count ?? "—"}</td>
+                    <td className="mono-sm">{r.source_format || "—"}</td>
+                    <td className="r mono-sm">{r.created_at ? ageLabel(r.created_at) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      </div>
+    </>
   );
 };
 

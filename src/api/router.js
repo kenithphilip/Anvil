@@ -102,6 +102,7 @@ import bomSourceFormats        from "./bom/source_formats.js";
 import bomParse                from "./bom/parse.js";
 import bomWhereUsed            from "./bom/where_used.js";
 import bomFromDrawing          from "./bom/from_drawing.js";
+import bomUploads              from "./bom/uploads.js";
 import claudeMessages          from "./claude/messages.js";
 
 import commsDraft              from "./communications/draft.js";
@@ -916,6 +917,7 @@ const STATIC_ROUTES = {
   "/bom/parse":                      bomParse,
   "/bom/where-used":                 bomWhereUsed,
   "/bom/from-drawing":               bomFromDrawing,
+  "/bom/uploads":                    bomUploads,
   "/claude/messages":               claudeMessages,
 
   "/communications":                commsList,

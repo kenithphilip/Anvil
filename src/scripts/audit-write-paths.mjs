@@ -115,11 +115,11 @@ const fnSource = (src, fn) => {
 
 const detectMutation = (body) => {
   let m;
-  // Match both direct calls `AnvilBackend.orders.create(...)` AND
-  // indirect references like `const fn = AnvilBackend.sales.createShipment`
+  // Match both direct calls `ObaraBackend.orders.create(...)` AND
+  // indirect references like `const fn = ObaraBackend.sales.createShipment`
   // (which is the common shipments/leads/svc-visits pattern). A trailing
   // `(` is no longer required.
-  const obaraRe = /AnvilBackend\??\.\??([a-zA-Z_$][a-zA-Z0-9_$]*)\??\.\??([a-zA-Z_$][a-zA-Z0-9_$]*)/g;
+  const obaraRe = /ObaraBackend\??\.\??([a-zA-Z_$][a-zA-Z0-9_$]*)\??\.\??([a-zA-Z_$][a-zA-Z0-9_$]*)/g;
   while ((m = obaraRe.exec(body))) {
     if (MUTATION_VERBS.has(m[2])) return { kind: "obara", target: m[1] + "." + m[2], method: m[2] };
   }
@@ -158,7 +158,7 @@ const camelToSnake = (s) => s.replace(/[A-Z]/g, (c, i) => (i ? "_" : "") + c.toL
 // Split a camelCased identifier into a fallback path. `billingRecurring`
 // becomes `billing/recurring`, which lets the script find handlers
 // laid out as <topdir>/<file>.js when the client groups several
-// endpoints under one namespace (e.g. `AnvilBackend.billingRecurring.*`
+// endpoints under one namespace (e.g. `ObaraBackend.billingRecurring.*`
 // hitting `/api/billing/recurring.js`).
 const camelToPath = (s) => {
   const m = s.match(/^([a-z]+)([A-Z][a-zA-Z]*)$/);
@@ -237,10 +237,10 @@ const auditScreen = (filePath) => {
     const mut = detectMutation(body);
     if (!mut) continue;
 
-    // Match `await AnvilBackend...` and the wrapped `await (Obara... ||
+    // Match `await ObaraBackend...` and the wrapped `await (Obara... ||
     // fallback)` pattern admin.tsx uses. Allow optional leading parens
     // and negation between `await` and the mutation token.
-    const awaited = /\bawait\s+[(!]*\s*(AnvilBackend|apiFetch|adminCrudFetch|fetch)\b/.test(body);
+    const awaited = /\bawait\s+[(!]*\s*(ObaraBackend|apiFetch|adminCrudFetch|fetch)\b/.test(body);
     const success = containsAny(body, SUCCESS_TOKENS);
     const reloads = containsAny(body, RELOAD_TOKENS);
     const errored = containsAny(body, ERROR_TOKENS) && /\bcatch\b/.test(body);

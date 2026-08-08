@@ -1,2 +1,0 @@
-import{r as s}from"./client-JrPJbVF-.js";import{A as o}from"./main-BZg2G3G_.js";const c=()=>{const[a,t]=s.useState({configured:!1,loading:!0,error:null});return s.useEffect(()=>{let e=!1;return Promise.resolve(o?.health?.()).then(r=>{if(e)return;const l=(Array.isArray(r?.integrations)?r.integrations:[]).find(n=>n?.id==="tally");t({configured:!!l?.configured,loading:!1,error:null})}).catch(r=>{e||t({configured:!1,loading:!1,error:r})}),()=>{e=!0}},[]),a};export{c as u};
-//# sourceMappingURL=tally-status-BzuoxflD.js.map

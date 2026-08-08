@@ -7,6 +7,7 @@
 // higher-urgency notification even if first detection already notified.
 
 import { notifyAdmins } from "../notifications.js";
+import { commsRow } from "../comms-row.js";
 
 const RANK = { info: 1, warn: 2, bad: 3, critical: 4 };
 
@@ -72,7 +73,7 @@ export const dispatchLogisticsNotifications = async (svc, tenantId) => {
     // 2. Email on first detection of a high-severity exception.
     if (!already.email_at && isHigh) {
       try {
-        await svc.from("communications").insert({
+        await svc.from("communications").insert(commsRow({
           tenant_id: tenantId,
           direction: "outbound",
           channel: "email",
@@ -82,7 +83,7 @@ export const dispatchLogisticsNotifications = async (svc, tenantId) => {
           status: "queued",
           object_type: "logistics_exception",
           object_id: e.id,
-        });
+        }));
         already.email_at = new Date().toISOString();
         emailQueued += 1;
         touched = true;

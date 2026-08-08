@@ -63,9 +63,17 @@ export default async function handler(req, res) {
       const body = await readBody(req);
       if (!body.id) return json(res, 400, { error: { message: "id required" } });
       const patch = { updated_at: new Date().toISOString() };
-      const allowed = ["status","carrier","vessel_or_flight","shipper_invoice_no","ready_date","port_of_loading","port_of_discharge","vessel_sailing_date","port_arrival_date","warehouse_receipt_date","customer_delivery_date","pod_received","pod_document_id","asn_sent_at","remarks"];
+      const allowed = ["status","mode","order_id","source_po_id","internal_so_id","carrier","vessel_or_flight","shipper_invoice_no","ready_date","port_of_loading","port_of_discharge","vessel_sailing_date","port_arrival_date","warehouse_receipt_date","customer_delivery_date","pod_received","pod_document_id","asn_sent_at","remarks"];
       for (const k of allowed) if (body[k] !== undefined) patch[k] = body[k];
       if (patch.status && !STATUSES.has(patch.status)) return json(res, 400, { error: { message: "invalid status" } });
+      // `mode` is a Postgres enum — an invalid literal would 500. Drop it silently
+      // if it isn't a recognised mode rather than reject the whole PATCH.
+      if (patch.mode !== undefined && !MODES.has(patch.mode)) delete patch.mode;
+      // Normalise empty-string links/dates to NULL so the FK / date columns clear
+      // cleanly instead of failing on "".
+      for (const k of ["order_id","source_po_id","internal_so_id","ready_date","vessel_sailing_date","port_arrival_date","warehouse_receipt_date","customer_delivery_date"]) {
+        if (patch[k] === "") patch[k] = null;
+      }
       const { data, error } = await svc.from("shipments").update(patch).eq("tenant_id", ctx.tenantId).eq("id", body.id).select("*").single();
       if (error) throw new Error(error.message);
       await recordAudit(ctx, { action: "shipment_update", objectType: "shipment", objectId: body.id, after: patch });

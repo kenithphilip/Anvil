@@ -9,32 +9,81 @@ import { AnvilBackend } from "../lib/api";
 // of the read-only list in wired-shipments-b.jsx. Wins via load order.
 // ============================================================
 
-const SHIPMENT_MODES = ["sea", "air", "road", "courier"];
+// DB `shipment_mode` enum is upper-case (SEA/AIR/ROAD/COURIER). Sending a
+// lower-case value silently drops the column server-side (the API MODES set is
+// upper-case), which is the field-drift bug this form used to have.
+const SHIPMENT_MODES = ["SEA", "AIR", "ROAD", "COURIER"];
 const SHIPMENT_STATUSES = [
   "PLANNED", "READY", "IN_TRANSIT", "AT_PORT", "CLEARED",
   "DELIVERED", "POD_RECEIVED", "EXCEPTION",
 ];
 
+// Form keys are the real `shipments` column names 1:1, so `submit` can POST/PATCH
+// the form object directly with no name translation (the previous form used
+// vessel_name / eta / notes, none of which are columns — they were dropped on
+// every save). The date ladder mirrors the logistics team's tracker:
+//   ready_date (ETD @ source) → vessel_sailing_date (ATD @ source)
+//   → port_arrival_date (ATA @ India) → warehouse_receipt_date (ATA @ store)
+//   → customer_delivery_date (direct-to-customer / HSS delivery).
 const SHIPMENT_FORM_BLANK = () => ({
   shipment_number: "",
-  mode: "sea",
+  mode: "SEA",
   carrier: "",
-  vessel_name: "",
-  flight_number: "",
-  vehicle_number: "",
+  vessel_or_flight: "",
+  shipper_invoice_no: "",
   port_of_loading: "",
   port_of_discharge: "",
-  eta: "",
+  ready_date: "",
+  vessel_sailing_date: "",
+  port_arrival_date: "",
+  warehouse_receipt_date: "",
+  customer_delivery_date: "",
   status: "PLANNED",
   pod_received: false,
-  notes: "",
+  remarks: "",
   order_id: "",
+  source_po_id: "",
 });
+
+// Coerce a persisted row (which may carry legacy field names from before the
+// drift fix, or an already-correct row) into the form shape.
+export const shipmentToForm = (row: any) => {
+  const f: any = { ...SHIPMENT_FORM_BLANK(), ...row };
+  f.mode = String(row.mode || "SEA").toUpperCase();
+  // Legacy rows may have stashed a vessel under vessel_name; the ambiguous
+  // single `eta` maps to the estimated port-arrival hop.
+  if (!f.vessel_or_flight && (row.vessel_name || row.flight_number || row.vehicle_number)) {
+    f.vessel_or_flight = row.vessel_name || row.flight_number || row.vehicle_number;
+  }
+  if (!f.port_arrival_date && row.eta) f.port_arrival_date = row.eta;
+  if (!f.remarks && row.notes) f.remarks = row.notes;
+  for (const k of ["ready_date", "vessel_sailing_date", "port_arrival_date", "warehouse_receipt_date", "customer_delivery_date"]) {
+    f[k] = (f[k] || "").slice(0, 10);
+  }
+  return f;
+};
 
 const shipReadParams = () => {
   const hash = window.location.hash || "";
   const q = hash.split("?")[1];
   return new URLSearchParams(q || "");
+};
+
+// Show the furthest-along hop we have an actual date for, so the list reads as a
+// progress column instead of a single ambiguous ETA. Falls back to the legacy
+// `eta` for rows written before the delivery-ladder fields existed.
+export const shipmentLatestDate = (r: any) => {
+  const hops: Array<[string, any]> = [
+    ["Customer", r.customer_delivery_date],
+    ["Store", r.warehouse_receipt_date],
+    ["India", r.port_arrival_date],
+    ["Sailed", r.vessel_sailing_date],
+    ["Ready", r.ready_date],
+  ];
+  for (const [label, v] of hops) {
+    if (v) return `${label}: ${String(v).slice(0, 10)}`;
+  }
+  return r.eta ? `ETA: ${String(r.eta).slice(0, 10)}` : "—";
 };
 
 const WiredShipmentsCRUD = () => {
@@ -71,7 +120,7 @@ const WiredShipmentsCRUD = () => {
     if (editId) {
       const found = list.rows.find((r) => r.id === editId);
       if (found) {
-        setForm({ ...SHIPMENT_FORM_BLANK(), ...found });
+        setForm(shipmentToForm(found));
         setEditing(editId);
       }
       return;
@@ -231,7 +280,7 @@ const WiredShipmentsCRUD = () => {
               <div>
                 <label htmlFor="sh-mode" className="label">Mode</label>
                 <select id="sh-mode" className="select" value={form.mode} onChange={(ev) => setForm({ ...form, mode: ev.target.value })}>
-                  {SHIPMENT_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+                  {SHIPMENT_MODES.map((m) => <option key={m} value={m}>{m.charAt(0) + m.slice(1).toLowerCase()}</option>)}
                 </select>
               </div>
               <div>
@@ -245,13 +294,12 @@ const WiredShipmentsCRUD = () => {
                 </select>
               </div>
               <div>
-                <label htmlFor="sh-vessel" className="label">Vessel name</label>
-                <input id="sh-vessel" className="input mono" value={form.vessel_name} onChange={(ev) => setForm({ ...form, vessel_name: ev.target.value })} />
+                <label htmlFor="sh-vessel" className="label">Vessel / flight</label>
+                <input id="sh-vessel" className="input mono" value={form.vessel_or_flight} onChange={(ev) => setForm({ ...form, vessel_or_flight: ev.target.value })} placeholder="e.g., XIN MEI ZHOU" />
               </div>
               <div>
-                <label htmlFor="sh-flight" className="label">Flight / vehicle</label>
-                <input id="sh-flight" className="input mono" value={form.flight_number || form.vehicle_number || ""}
-                       onChange={(ev) => setForm({ ...form, flight_number: ev.target.value, vehicle_number: ev.target.value })} />
+                <label htmlFor="sh-inv" className="label">Shipper invoice no.</label>
+                <input id="sh-inv" className="input mono" value={form.shipper_invoice_no} onChange={(ev) => setForm({ ...form, shipper_invoice_no: ev.target.value })} placeholder="e.g., OK-CO-26-0166" />
               </div>
               <div>
                 <label htmlFor="sh-pol" className="label">Port of loading</label>
@@ -259,15 +307,40 @@ const WiredShipmentsCRUD = () => {
               </div>
               <div>
                 <label htmlFor="sh-pod" className="label">Port of discharge</label>
-                <input id="sh-pod" className="input" value={form.port_of_discharge} onChange={(ev) => setForm({ ...form, port_of_discharge: ev.target.value })} />
+                <input id="sh-pod" className="input" value={form.port_of_discharge} onChange={(ev) => setForm({ ...form, port_of_discharge: ev.target.value })} placeholder="e.g., Nhava Sheva" />
+              </div>
+              <div className="span-2">
+                <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 4 }}>Delivery ladder — source → India port → store → customer</div>
+                <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ flex: "1 1 150px" }}>
+                    <label htmlFor="sh-ready" className="label">Ready / ETD @ source</label>
+                    <input id="sh-ready" type="date" className="input mono" value={form.ready_date || ""} onChange={(ev) => setForm({ ...form, ready_date: ev.target.value })} />
+                  </div>
+                  <div style={{ flex: "1 1 150px" }}>
+                    <label htmlFor="sh-sail" className="label">Sailed / ATD @ source</label>
+                    <input id="sh-sail" type="date" className="input mono" value={form.vessel_sailing_date || ""} onChange={(ev) => setForm({ ...form, vessel_sailing_date: ev.target.value })} />
+                  </div>
+                  <div style={{ flex: "1 1 150px" }}>
+                    <label htmlFor="sh-arr" className="label">Arrived @ India port</label>
+                    <input id="sh-arr" type="date" className="input mono" value={form.port_arrival_date || ""} onChange={(ev) => setForm({ ...form, port_arrival_date: ev.target.value })} />
+                  </div>
+                  <div style={{ flex: "1 1 150px" }}>
+                    <label htmlFor="sh-whse" className="label">Received @ store</label>
+                    <input id="sh-whse" type="date" className="input mono" value={form.warehouse_receipt_date || ""} onChange={(ev) => setForm({ ...form, warehouse_receipt_date: ev.target.value })} />
+                  </div>
+                  <div style={{ flex: "1 1 150px" }}>
+                    <label htmlFor="sh-cust" className="label">Delivered @ customer</label>
+                    <input id="sh-cust" type="date" className="input mono" value={form.customer_delivery_date || ""} onChange={(ev) => setForm({ ...form, customer_delivery_date: ev.target.value })} />
+                  </div>
+                </div>
               </div>
               <div>
-                <label htmlFor="sh-eta" className="label">ETA</label>
-                <input id="sh-eta" type="date" className="input mono" value={(form.eta || "").slice(0, 10)} onChange={(ev) => setForm({ ...form, eta: ev.target.value })} />
+                <label htmlFor="sh-order" className="label">Order id (link)</label>
+                <input id="sh-order" className="input mono" placeholder="UUID — links to project / owner" value={form.order_id || ""} onChange={(ev) => setForm({ ...form, order_id: ev.target.value })} />
               </div>
               <div>
-                <label htmlFor="sh-order" className="label">Order id (optional)</label>
-                <input id="sh-order" className="input mono" placeholder="UUID" value={form.order_id || ""} onChange={(ev) => setForm({ ...form, order_id: ev.target.value })} />
+                <label htmlFor="sh-spo" className="label">Source PO id (link)</label>
+                <input id="sh-spo" className="input mono" placeholder="UUID — links to import PO lines" value={form.source_po_id || ""} onChange={(ev) => setForm({ ...form, source_po_id: ev.target.value })} />
               </div>
               <div className="span-2">
                 <label className="label">
@@ -277,8 +350,8 @@ const WiredShipmentsCRUD = () => {
                 </label>
               </div>
               <div className="span-2">
-                <label htmlFor="sh-notes" className="label">Notes</label>
-                <textarea id="sh-notes" className="input" rows={3} value={form.notes || ""} onChange={(ev) => setForm({ ...form, notes: ev.target.value })} />
+                <label htmlFor="sh-notes" className="label">Remarks</label>
+                <textarea id="sh-notes" className="input" rows={3} value={form.remarks || ""} onChange={(ev) => setForm({ ...form, remarks: ev.target.value })} />
               </div>
             </div>
             <div className="row" style={{ gap: 8, marginTop: 12 }}>
@@ -304,23 +377,25 @@ const WiredShipmentsCRUD = () => {
             <table className="tbl">
               <thead><tr>
                 <th>Number</th>
+                <th>Invoice</th>
                 <th>Mode</th>
-                <th>Carrier</th>
                 <th>Vessel · flight</th>
                 <th>Route</th>
-                <th>ETA</th>
+                <th>Next / last date</th>
                 <th>Status</th>
                 <th style={{ width: 200 }}></th>
               </tr></thead>
               <tbody>
-                {filtered.slice(0, 200).map((r) => (
+                {filtered.slice(0, 200).map((r) => {
+                  const modeLc = String(r.mode || "").toLowerCase();
+                  return (
                   <tr key={r.id}>
                     <td className="mono"><span className="pri">{r.shipment_number || (r.id ? r.id.slice(0, 12) : "—")}</span></td>
-                    <td><Chip k={r.mode === "air" ? "live" : r.mode === "courier" ? "plum" : "info"}>{r.mode || "—"}</Chip></td>
-                    <td className="mono-sm">{r.carrier || "—"}</td>
-                    <td className="mono-sm">{r.vessel_name || r.flight_number || r.vehicle_number || "—"}</td>
+                    <td className="mono-sm">{r.shipper_invoice_no || "—"}</td>
+                    <td><Chip k={modeLc === "air" ? "live" : modeLc === "courier" ? "plum" : "info"}>{r.mode || "—"}</Chip></td>
+                    <td className="mono-sm">{r.vessel_or_flight || r.vessel_name || r.flight_number || r.vehicle_number || "—"}</td>
                     <td className="mono-sm">{(r.port_of_loading || r.origin || "—") + " → " + (r.port_of_discharge || r.destination || "—")}</td>
-                    <td className="mono-sm">{(r.eta || "").slice(0, 10) || "—"}</td>
+                    <td className="mono-sm">{shipmentLatestDate(r)}</td>
                     <td><Chip k={r.status === "DELIVERED" || r.status === "POD_RECEIVED" ? "good" : r.status === "EXCEPTION" ? "bad" : r.status === "IN_TRANSIT" || r.status === "AT_PORT" ? "warn" : "ghost"}>{(r.status || "PLANNED").toLowerCase().replace(/_/g, " ")}</Chip></td>
                     <td>
                       <div className="row" style={{ gap: 4, justifyContent: "flex-end" }}>
@@ -332,7 +407,8 @@ const WiredShipmentsCRUD = () => {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           )}

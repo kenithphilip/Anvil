@@ -21,6 +21,7 @@ export const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = 
     delivery_terms: o.delivery_terms || "",
     vendor_code: o.vendor_code || "",
     delivery_point_contact_id: o.delivery_point_contact_id || "",
+    committed_delivery_date: (o.committed_delivery_date || "").slice(0, 10),
   });
   const [draft, setDraft] = React.useState<any>(buildDraft(order));
   // Audit fix May 2026: useState only runs its initialiser on the
@@ -80,6 +81,7 @@ export const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = 
       const HEADER_KEYS = [
         "dispatch_mode", "registration_serial_no", "incoterm_code",
         "delivery_terms", "vendor_code", "delivery_point_contact_id",
+        "committed_delivery_date",
       ];
       let anyChanged = false;
       for (const k of HEADER_KEYS) {
@@ -95,6 +97,7 @@ export const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = 
         delivery_terms: draft.delivery_terms || null,
         vendor_code: draft.vendor_code || null,
         delivery_point_contact_id: draft.delivery_point_contact_id || null,
+        committed_delivery_date: draft.committed_delivery_date || null,
       };
       if (anyChanged && Object.keys(headerSourcesNext).length) {
         patch.result = {
@@ -181,6 +184,11 @@ export const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = 
               <option key={c.id} value={c.id}>{c.full_name || c.email || c.id?.slice(0, 8)}</option>
             ))}
           </select>
+        </div>
+        <div style={{ flex: "1 1 220px" }}>
+          {labelWithPill("Committed delivery date", "committed_delivery_date", order.committed_delivery_date, draft.committed_delivery_date)}
+          <input className="input mono" type="date" value={draft.committed_delivery_date || ""} onChange={(e) => setDraft({ ...draft, committed_delivery_date: e.target.value })} />
+          <div className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 4 }}>Date we promised the customer. Feeds on-time-delivery (OTD) tracking.</div>
         </div>
       </div>
       <div style={{ marginTop: 12 }}>

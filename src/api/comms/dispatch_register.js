@@ -18,54 +18,15 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import {
-  buildDispatchRegister, renderDispatchRegisterText, isDispatchRegisterEmpty,
-  dispatchRegisterSubject, extractPoLines,
+  renderDispatchRegisterText, isDispatchRegisterEmpty, dispatchRegisterSubject,
 } from "../_lib/dispatch-register.js";
+import { assembleDispatchRegister } from "../_lib/dispatch-register-send.js";
 import { resolveForCustomer } from "../_lib/comms-routing.js";
 import { commsRow } from "../_lib/comms-row.js";
 import { sendCommunication } from "../_lib/comms-send.js";
 
-const assemble = async (svc, tenantId, orderId, template) => {
-  // `result` carries the authoritative PO line items (the ordered side).
-  const o = await svc.from("orders").select("id, po_number, po_date, customer_id, result")
-    .eq("tenant_id", tenantId).eq("id", orderId).maybeSingle();
-  if (o.error || !o.data) return null;
-  const order = o.data;
-
-  const [dispatch, ships, cust, invs, eInvs] = await Promise.all([
-    svc.from("dispatch_lines")
-      .select("id, line_index, part_no, description, dispatched_qty, uom, dispatch_date, lr_number, carrier, invoice_number, invoice_date")
-      .eq("tenant_id", tenantId).eq("order_id", orderId).order("dispatch_date", { ascending: true }),
-    svc.from("shipments")
-      .select("shipment_number, carrier, shipper_invoice_no, ready_date, vessel_sailing_date, warehouse_receipt_date, customer_delivery_date")
-      .eq("tenant_id", tenantId).eq("order_id", orderId),
-    order.customer_id
-      ? svc.from("customers").select("id, customer_name").eq("tenant_id", tenantId).eq("id", order.customer_id).maybeSingle()
-      : Promise.resolve({ data: null }),
-    svc.from("invoices").select("invoice_number, issue_date").eq("tenant_id", tenantId).eq("order_id", orderId),
-    // India GST invoices live in einvoices, not invoices. Union both so the
-    // invoice fallback is never blank for an India tenant.
-    svc.from("einvoices").select("invoice_number, invoice_date").eq("tenant_id", tenantId).eq("order_id", orderId),
-  ]);
-
-  const invoices = [
-    ...(invs.data || []).map((iv) => ({ invoice_number: iv.invoice_number, issue_date: iv.issue_date })),
-    ...(eInvs.data || []).map((iv) => ({ invoice_number: iv.invoice_number, issue_date: iv.invoice_date })),
-  ];
-
-  return {
-    order,
-    register: buildDispatchRegister({
-      order,
-      poLines: extractPoLines(order),
-      dispatchLines: dispatch.data || [],
-      shipments: ships.data || [],
-      customer: cust.data || {},
-      invoices,
-      template: template || null,
-    }),
-  };
-};
+// assembleDispatchRegister moved to _lib/dispatch-register-send.js so the manual
+// endpoint (below) and the auto-send path (comms/dispatch_lines) build it identically.
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -78,7 +39,7 @@ export default async function handler(req, res) {
       requirePermission(ctx, "read");
       const orderId = req.query?.order_id;
       if (!orderId) return json(res, 400, { error: { message: "order_id required" } });
-      const out = await assemble(svc, ctx.tenantId, orderId, null);
+      const out = await assembleDispatchRegister(svc, ctx.tenantId, orderId, null);
       if (!out) return json(res, 404, { error: { message: "Order not found" } });
       return json(res, 200, { ok: true, register: out.register });
     }
@@ -89,7 +50,7 @@ export default async function handler(req, res) {
       const orderId = body?.order_id;
       if (!orderId) return json(res, 400, { error: { message: "order_id required" } });
 
-      const out = await assemble(svc, ctx.tenantId, orderId, body?.template);
+      const out = await assembleDispatchRegister(svc, ctx.tenantId, orderId, body?.template);
       if (!out) return json(res, 404, { error: { message: "Order not found" } });
       if (isDispatchRegisterEmpty(out.register)) {
         return json(res, 200, { ok: true, register: out.register, drafted: false, reason: "nothing despatched yet" });

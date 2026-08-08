@@ -174,11 +174,15 @@ describe("renders + degrades gracefully", () => {
 });
 
 describe("the endpoint drafts via commsRow (the #334 guard covers it too)", () => {
-  it("uses commsRow + document_type dispatch_register + routing + einvoices union", () => {
+  it("uses commsRow + document_type dispatch_register + routing", () => {
     const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "api", "comms", "dispatch_register.js"), "utf8");
     expect(src).toMatch(/insert\(commsRow\(draft\)\)/);
     expect(src).toMatch(/document_type: "dispatch_register"/);
     expect(src).toMatch(/resolveForCustomer\(/);
+  });
+
+  it("register assembly (now shared with the auto-send path) unions einvoices + PO lines", () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "api", "_lib", "dispatch-register-send.js"), "utf8");
     expect(src).toMatch(/einvoices/);                 // India GST invoices unioned
     expect(src).toMatch(/extractPoLines\(order\)/);   // ordered side = PO lines
   });

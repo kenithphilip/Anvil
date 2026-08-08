@@ -17,8 +17,8 @@
 import { applyCors, handlePreflight, json } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { dispatch, KNOWN_GOAL_TYPES } from "./_handlers/index.js";
-import { safeFetch } from "../_lib/safe-fetch.js";
 import { commsRow } from "../_lib/comms-row.js";
+import { sendCommunication } from "../_lib/comms-send.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const HOURS = 60 * 60 * 1000;
@@ -247,75 +247,37 @@ const executeAction = async (svc, goal, step) => {
   return { result: "skipped", result_detail: "unknown action " + step.action };
 };
 
-// Send any communications row currently in status=queued. The
-// agent's send_email action drops rows here; this reaper actually
-// fires them. We resolve the provider the same way
-// /api/communications/send does (SendGrid first, generic webhook
-// second, manual fallback). Failures are persisted on the row's
-// metadata so the UI shows what happened.
-const SENDGRID_KEY = process.env.SENDGRID_API_KEY;
-const SENDGRID_FROM = process.env.SENDGRID_FROM_EMAIL;
-const SENDGRID_FROM_NAME = process.env.SENDGRID_FROM_NAME || "Anvil";
-const PROVIDER_URL = process.env.COMMS_PROVIDER_URL;
-const PROVIDER_TOKEN = process.env.COMMS_PROVIDER_TOKEN;
-
-const sendViaSendGrid = async ({ to, subject, body, from }) => {
-  if (!SENDGRID_KEY || !SENDGRID_FROM) return null;
-  const fromAddress = from || SENDGRID_FROM;
-  try {
-    const resp = await safeFetch("https://api.sendgrid.com/v3/mail/send", {
-      method: "POST",
-      headers: { Authorization: "Bearer " + SENDGRID_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        personalizations: [{ to: [{ email: to }] }],
-        from: { email: fromAddress, name: SENDGRID_FROM_NAME },
-        subject: subject || "(no subject)",
-        content: [
-          { type: "text/plain", value: body || "" },
-          { type: "text/html",  value: (body || "").replace(/\n/g, "<br/>") },
-        ],
-      }),
-    });
-    return { provider: "sendgrid", status: resp.status, ok: resp.ok };
-  } catch (err) {
-    return { provider: "sendgrid", status: 0, ok: false, detail: err.message };
-  }
-};
-
-const sendViaGenericWebhook = async ({ to, subject, body, from }) => {
-  if (!PROVIDER_URL) return null;
-  try {
-    const headers = { "Content-Type": "application/json" };
-    if (PROVIDER_TOKEN) headers["Authorization"] = "Bearer " + PROVIDER_TOKEN;
-    const resp = await safeFetch(PROVIDER_URL, {
-      method: "POST", headers, body: JSON.stringify({ to, subject, body, from }),
-    });
-    return { provider: "generic", status: resp.status, ok: resp.ok };
-  } catch (err) {
-    return { provider: "generic", status: 0, ok: false, detail: err.message };
-  }
-};
-
+// Reap: fire every queued communications row through the shared send core
+// (_lib/comms-send.js `sendCommunication`) so the SAME switchable mailer
+// (Brevo/Resend/SendGrid, per EMAIL_PROVIDER) or the tenant's connected
+// Outlook/Graph is used, cc/bcc + attachments are preserved, the row status +
+// audit (`comm_send`) + processing events are recorded, and the send stays
+// idempotent on already-sent rows. This replaces the old inline SendGrid path
+// here, which only sent `to` (dropping cc/bcc), never attached documents, and
+// bypassed the switchable mailer entirely — it was a parallel implementation of
+// comms-send's logic (see the note at comms-send.js:195).
 const reapQueuedCommsForTenant = async (svc, tenantId) => {
   const queued = await svc
     .from("communications")
-    .select("*")
+    .select("id, document_type, to_addr, metadata")
     .eq("tenant_id", tenantId)
     .eq("status", "queued")
     .order("created_at", { ascending: true })
     .limit(100);
   if (queued.error) return { fired: 0, errors: 1 };
+  // The reaper runs headless (cron, no request user); sendCommunication only
+  // needs the tenant on ctx (for the tenant-scoped queries + audit actor).
+  const ctx = { tenantId, user: null };
   let fired = 0;
   let errors = 0;
   for (const row of queued.data || []) {
-    // Marketing has its OWN send path (_lib/marketing-send.js): consent +
-    // suppression + unsubscribe + a separate sender identity. The transactional
-    // reaper must never send it — doing so would use the transactional sender
-    // and skip the marketing gates. Leave the row for the marketing path.
+    // Marketing has its OWN gated send path (_lib/marketing-send.js): consent +
+    // suppression + unsubscribe + a separate sender identity. sendCommunication
+    // refuses it too, but skip here to avoid the extra round-trip.
     if (row.document_type === "marketing") continue;
     if (!row.to_addr) {
-      // Cannot send without a recipient; flip to failed so the
-      // operator can fix it.
+      // Cannot send without a recipient; flip to failed so the operator can fix
+      // it (sendCommunication would otherwise leave it queued indefinitely).
       await svc.from("communications").update({
         status: "failed",
         metadata: { ...(row.metadata || {}), error: "no recipient" },
@@ -323,50 +285,13 @@ const reapQueuedCommsForTenant = async (svc, tenantId) => {
       errors++;
       continue;
     }
-    let result = null;
-    let lastError = null;
-    try { result = await sendViaSendGrid({ to: row.to_addr, subject: row.subject, body: row.body, from: row.from_addr }); }
-    catch (e) { lastError = e; }
-    if (!result) {
-      try { result = await sendViaGenericWebhook({ to: row.to_addr, subject: row.subject, body: row.body, from: row.from_addr }); }
-      catch (e) { lastError = e; }
-    }
-
-    // Audit fix (May 2026): when no provider is configured AND no
-    // attempt was made, do not flip the row to "sent". The previous
-    // code marked the comm sent regardless, so operators thought
-    // emails went out when nothing did. New semantics:
-    //   - provider returned ok=true       -> sent
-    //   - provider returned ok=false      -> failed
-    //   - no provider configured          -> queued (waiting for ops
-    //                                       to wire SendGrid or webhook)
-    //   - provider threw                  -> failed
-    const configured = !!result;
-    const newStatus = !configured
-      ? "queued"
-      : (result.ok ? "sent" : "failed");
-    await svc.from("communications").update({
-      status: newStatus,
-      sent_at: newStatus === "sent" ? new Date().toISOString() : row.sent_at || null,
-      metadata: {
-        ...(row.metadata || {}),
-        provider: result?.provider || (configured ? "manual" : "none"),
-        provider_status: result?.status || null,
-        last_error: lastError ? String(lastError.message || lastError).slice(0, 240) : null,
-        reaped_by: "agents/run",
-      },
-    }).eq("id", row.id);
-    if (newStatus === "sent") fired++;
-    else if (newStatus === "failed") errors++;
-    // queued doesn't count as fired or errored, the next reap retries.
-    // Audit so the meter sees it.
-    await svc.from("audit_events").insert({
-      tenant_id: tenantId,
-      action: "comm_send",
-      object_type: "communication",
-      object_id: row.id,
-      detail: (result?.provider || "manual") + "::" + newStatus,
-    });
+    // sendCommunication updates status (sent / failed / queued-when-unconfigured),
+    // records the audit + processing event, and is idempotent on sent/replied.
+    const r = await sendCommunication(svc, ctx, row.id);
+    const status = r?.communication?.status;
+    if (status === "sent" || r?.idempotent) fired++;
+    else if (status === "failed") errors++;
+    // queued (no provider configured) / skipped -> neither; the next reap retries.
   }
   return { fired, errors };
 };

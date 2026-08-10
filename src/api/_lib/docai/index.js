@@ -53,6 +53,21 @@ const ADAPTERS = {
 // engine X" picker) before it's trusted as a provider-order entry.
 export const ADAPTER_NAMES = Object.keys(ADAPTERS);
 
+// The order used when a tenant has NOT pinned docai_provider_order. Hoisted to
+// module scope and exported so read-only surfaces (the SO workspace pipeline
+// diagnostics card) can show the SAME chain the dispatcher will actually run.
+// It previously lived as a function-local const, which let the diagnostics
+// endpoint drift onto its own hardcoded legacy list — a NULL column then
+// rendered as though the tenant were pinned to a claude-first order that no
+// longer exists anywhere in this file. That cost real debugging hours.
+export const DEFAULT_PROVIDER_ORDER = ["gemini", "docling", "marker", "unstructured", "azure_di", "reducto", "claude"];
+
+// Is this adapter usable for this tenant? Mirrors the dispatcher's own gate
+// exactly, so a diagnostics surface cannot disagree with what will really run.
+// Safe to call anywhere: every adapter's key lookup wraps decryptField in
+// try/catch, so an unset ANVIL_SECRETS_KEY yields false rather than throwing.
+export const isAdapterConfigured = (name, settings) => !!ADAPTERS[name]?.isConfigured?.(settings);
+
 // Apply a caller's per-run engine override to a settings object WITHOUT
 // mutating tenant config: prepend the (validated) engine to the provider order
 // so it runs first, keeping the tenant's existing order as fallback. A blank
@@ -261,8 +276,7 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
   // through to the static default. The helper caches per
   // (tenant, customer) for 30 minutes so the per-call cost is at
   // most one Postgres select per cache window.
-  const defaultStaticOrder = ["gemini", "docling", "marker", "unstructured", "azure_di", "reducto", "claude"];
-  let order = settings?.docai_provider_order || defaultStaticOrder;
+  let order = settings?.docai_provider_order || DEFAULT_PROVIDER_ORDER;
   // Phase F #2: PDF metadata-driven adapter bias. Read /Producer
   // and /Creator from the input PDF; if they match a known
   // pattern (SAP, Tally, Microsoft Word, Adobe Acrobat, etc.),
@@ -309,7 +323,7 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
   // Self-heal: guarantee a configured LLM extractor is reachable so a stale
   // provider order (e.g. a legacy gemini-less order whose only configured
   // engine is a 5xx-ing Claude) can't dead-end with no customer + no lines.
-  order = ensureLlmFallbacks(order, (n) => !!ADAPTERS[n]?.isConfigured?.(settings));
+  order = ensureLlmFallbacks(order, (n) => isAdapterConfigured(n, settings));
   const attempts = [];
   let last = null;
   // Materialise an svc reference once so per-iteration cost-guard
@@ -448,5 +462,25 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
       attempts,
     };
   }
-  return { ...last, attempts };
+  // `last` is whichever adapter ran LAST, not the best one — so after a
+  // fall-through it is often a weak-but-ok result (LlamaParse returning zero
+  // lines at 0.4 confidence). run.js persists `error: out?.error || null`, so
+  // that weak result's empty error became the run's, and the REAL failures
+  // above it — a Gemini 400, a Claude timeout — survived only inside
+  // adapter_attempts. The run row then read "low confidence · review" with
+  // error NULL, which is how an all-providers-down outage looked like a soft
+  // parsing miss for hours. Lift the hard failures onto the run itself.
+  const adapterFailures = attempts
+    .filter((a) => a.status === "failed")
+    .map((a) => ({ adapter: a.adapter, reason: a.reason || null, error: a.error || null }));
+  if (!adapterFailures.length) return { ...last, attempts };
+  return {
+    ...last,
+    attempts,
+    adapter_failures: adapterFailures,
+    // Keep the winning adapter's own error when it has one; otherwise the run
+    // inherits a readable summary of what actually broke upstream of it.
+    error: last.error
+      || adapterFailures.map((f) => f.adapter + ": " + (f.error || f.reason || "failed")).join(" | ").slice(0, 500),
+  };
 };

@@ -22,6 +22,7 @@ import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { reapStaleRuns } from "../_lib/docai/reap-stale-runs.js";
+import { DEFAULT_PROVIDER_ORDER, ensureLlmFallbacks, isAdapterConfigured } from "../_lib/docai/index.js";
 
 // Truncate a JSONB blob to a preview-friendly size; keeps the panel
 // from blowing up the wire format when raw_extract is huge.
@@ -182,23 +183,39 @@ export default async function handler(req, res) {
     // existing tenant_settings columns to derive which adapters
     // would be tried. This catches the "no adapter configured"
     // root cause before the operator burns more credits.
+    // Select every column the adapters' isConfigured() actually reads, so the
+    // card below can call the REAL gate instead of guessing. Missing columns
+    // here silently render a configured adapter as unconfigured.
     const settingsResp = await svc.from("tenant_settings")
-      .select("docai_provider_order, anthropic_key_provider, mistral_api_key, reducto_api_key, azure_di_endpoint")
+      .select([
+        "docai_provider_order", "docai_creds_iv",
+        "docai_gemini_api_key_enc", "docai_reducto_api_key_enc",
+        "docai_azure_di_key_enc", "docai_azure_di_endpoint",
+        "docai_unstructured_api_key_enc", "docai_unstructured_endpoint",
+        "docai_docling_api_key_enc", "docai_docling_endpoint",
+        "docai_marker_api_key_enc", "docai_marker_endpoint", "docai_marker_mode",
+        "docai_llamacloud_api_key_enc",
+      ].join(", "))
       .eq("tenant_id", ctx.tenantId)
       .maybeSingle();
     const settings = settingsResp.data || {};
-    const adapterChain = settings.docai_provider_order
-      || ["reducto", "azure_di", "unstructured", "claude"];
-    // Best-effort surface of whether ENV/secret-side keys are set.
-    // This is a probe, not a guarantee: the actual isConfigured
-    // check happens server-side in each adapter on every dispatch.
+    // Show the chain the dispatcher will REALLY run: the tenant's pinned order
+    // if any, else the shared default, then the same LLM-fallback self-heal the
+    // dispatcher applies. This card used to hardcode its own legacy list and a
+    // three-name key probe that returned false for every other adapter, so a
+    // tenant with a NULL docai_provider_order was displayed as pinned to a
+    // claude-first order — a phantom misconfiguration that sent us chasing a
+    // provider-order bug that did not exist. Never re-derive this locally.
+    const adapterChain = ensureLlmFallbacks(
+      settings.docai_provider_order || DEFAULT_PROVIDER_ORDER,
+      (n) => isAdapterConfigured(n, settings),
+    );
     const adapterHealth = adapterChain.map((name) => ({
       name,
-      configured_hint:
-        name === "claude"   ? !!process.env.ANTHROPIC_API_KEY :
-        name === "reducto"  ? !!settings.reducto_api_key :
-        name === "azure_di" ? !!settings.azure_di_endpoint :
-        false,
+      configured_hint: isAdapterConfigured(name, settings),
+      // Surface whether the order is the tenant's own or the platform default,
+      // so "why is this the order?" is answerable from the card alone.
+      source: settings.docai_provider_order ? "tenant" : "default",
     }));
 
     return json(res, 200, {

@@ -15,11 +15,24 @@
 // than Claude Haiku.
 
 import { safeFetch } from "./safe-fetch.js";
-import { applyFirewall, redactMessages } from "./anthropic.js";
+import { applyFirewall, redactMessages, capRetrySleep, attemptTimeout } from "./anthropic.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Run-budget guards, mirroring callAnthropic (see anthropic.js). Without these
+// callGemini could run 3 attempts x 60s with an UNCAPPED retry-after sleep —
+// far past docai's 45s RUN_BUDGET_MS and past vercel.json's maxDuration of 60,
+// so the platform killed the function mid-flight and run.js never wrote its
+// final UPDATE. The row then sat at status='running' forever with no attempts
+// and no error, while the provider call was still billed. Gemini is FIRST in
+// the default provider order, so it is the likeliest adapter to strand a run.
+// deadlineAt=0 (every non-docai caller) collapses all of this to the previous
+// behaviour exactly.
+const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 60_000);
+const GEMINI_FALLBACK_RESERVE_MS = Number(process.env.GEMINI_FALLBACK_RESERVE_MS || 8000);
+const MIN_ATTEMPT_MS = 2000;
 
 // Bet 1 (May 2026): default Gemini bumped to 3 Flash. The 2.5
 // family is still env-pinnable for back-compat. Pricing per
@@ -161,10 +174,15 @@ export const callGemini = async ({
   // PO PDFs; lower values reduce token cost on simple POs but lose
   // fine-text legibility.
   media_resolution,
+  // Optional run deadline (epoch ms) threaded from the docai pipeline, exactly
+  // as callAnthropic takes it. 0 => no deadline and every guard below collapses
+  // to the historical behaviour.
+  deadlineAt: deadlineAtOpt,
 }) => {
   if (!apiKey) {
     return { ok: false, error: "GEMINI_API_KEY missing", status: 0 };
   }
+  const deadlineAt = Number(deadlineAtOpt) || 0;
   const { model } = pickGeminiModel({ tier, override: modelOverride });
 
   const firewalledSystem = applyFirewall(system);
@@ -204,20 +222,34 @@ export const callGemini = async ({
     "x-goog-api-key": apiKey,
   };
 
+  const retryOpts = { deadlineAt, reserveMs: GEMINI_FALLBACK_RESERVE_MS };
   let lastErr = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
+    // Time-box this attempt to the remaining run budget (minus the reserve that
+    // keeps a downstream adapter viable), capped at the normal ceiling.
+    const attemptTimeoutMs = attemptTimeout({ ...retryOpts, ceilingMs: GEMINI_TIMEOUT_MS });
+    if (deadlineAt && attemptTimeoutMs < MIN_ATTEMPT_MS) {
+      // Not enough budget left to try without starving the fallback — and
+      // starting a call we cannot finish is what strands the run.
+      lastErr = lastErr || new Error("run budget exhausted before Gemini call");
+      break;
+    }
     let resp;
     try {
-      resp = await safeFetch(url, { method: "POST", headers, body: JSON.stringify(body), timeoutMs: 60_000 });
+      resp = await safeFetch(url, { method: "POST", headers, body: JSON.stringify(body), timeoutMs: attemptTimeoutMs });
     } catch (err) {
       lastErr = err;
-      if (attempt < 3) { await sleep(Math.min(8000, 600 * Math.pow(2, attempt - 1))); continue; }
+      const wait = attempt < 3 ? capRetrySleep(600 * Math.pow(2, attempt - 1), retryOpts) : null;
+      if (wait != null) { await sleep(wait); continue; }
       return { ok: false, error: err.message || String(err), status: 0, model, tier };
     }
     if (RETRYABLE.has(resp.status) && attempt < 3) {
       const ra = Number(resp.headers.get("retry-after")) * 1000;
-      await sleep(Number.isFinite(ra) && ra > 0 ? ra : Math.min(8000, 600 * Math.pow(2, attempt - 1)));
-      continue;
+      const base = Number.isFinite(ra) && ra > 0 ? ra : 600 * Math.pow(2, attempt - 1);
+      // wait == null => the budget won't allow another round trip; fall through
+      // and return this response so the ladder moves on immediately.
+      const wait = capRetrySleep(base, retryOpts);
+      if (wait != null) { await sleep(wait); continue; }
     }
     const text = await resp.text();
     let parsed = null;

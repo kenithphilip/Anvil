@@ -114,7 +114,32 @@ export const markdownOf = (result) => {
   return "";
 };
 
-export const extract = async ({ url, bytes, filename, mime, settings }) => {
+// The LlamaCloud SDK's parse() polls to completion internally and exposes no
+// timeout or AbortSignal, so it is the ONE call in the whole extraction chain
+// with no upper bound. Left unbounded it outlives docai's 45s RUN_BUDGET_MS and
+// vercel.json's maxDuration of 60 — the function is killed mid-flight, run.js
+// never writes its final UPDATE, and the row sits at status='running' forever.
+// Race it against a timer so the adapter always returns something diagnosable.
+// The timer is unref'd (so a pending parse can't hold the lambda open) and
+// always cleared in finally (so a fast parse doesn't leak a handle).
+const withTimeout = (promise, ms, label) => {
+  let timer = null;
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(label + " timed out after " + ms + "ms")), ms);
+    if (typeof timer?.unref === "function") timer.unref();
+  });
+  return Promise.race([promise, timeout]).finally(() => { if (timer) clearTimeout(timer); });
+};
+
+// Budget for the SDK call: whatever the run has left minus a small reserve so
+// the dispatcher can still record the attempt, capped at the standalone
+// ceiling. No deadline (non-docai callers) => the ceiling.
+const LLAMAPARSE_TIMEOUT_MS = Number(process.env.LLAMAPARSE_TIMEOUT_MS || 45_000);
+const LLAMAPARSE_RESERVE_MS = 2000;
+export const parseBudgetMs = (deadlineAt, now = Date.now(), ceilingMs = LLAMAPARSE_TIMEOUT_MS) =>
+  (deadlineAt ? Math.min(ceilingMs, Math.max(0, deadlineAt - now - LLAMAPARSE_RESERVE_MS)) : ceilingMs);
+
+export const extract = async ({ url, bytes, filename, mime, settings, hints }) => {
   const key = apiKey(settings);
   if (!key) return { ok: false, reason: "no_api_key", error: "LlamaParse key not set (tenant docai_llamacloud_api_key_enc or LLAMAPARSE_API_KEY env)" };
   try {
@@ -136,14 +161,34 @@ export const extract = async ({ url, bytes, filename, mime, settings }) => {
     // markdown string comes back on result.markdown_full; markdownOf also
     // handles the structured result.markdown.pages[] shape.
     const uploadable = await toFile(fileBytes, filename || "document.pdf", { type: mime || "application/pdf" });
-    const result = await client.parsing.parse({
+    const deadlineAt = Number(hints?.deadlineAt) || 0;
+    const budgetMs = parseBudgetMs(deadlineAt);
+    // Only a real deadline can exhaust the budget; with none, the ceiling
+    // stands (so a deliberately small LLAMAPARSE_TIMEOUT_MS still runs).
+    if (deadlineAt && budgetMs < LLAMAPARSE_RESERVE_MS) {
+      return { ok: false, reason: "run_budget_exhausted", error: "no run budget left for a LlamaParse call" };
+    }
+    const result = await withTimeout(client.parsing.parse({
       upload_file: uploadable,
       tier: tier(),
       version: parseVersion(),
       expand: ["markdown"],
-    });
+    }), budgetMs, "LlamaParse parse");
     const md = markdownOf(result);
     const { lines } = normalizeFromMarkdown(md);
+    // Zero parsed line items is not a success. Returning ok:true here made this
+    // adapter the dispatcher's `last` result, so a run in which every real
+    // extractor had already hard-failed was reported as a soft "low confidence
+    // · review" with no error — masking the actual outage. An adapter that
+    // extracted nothing must fail so the errors above it stay visible.
+    if (!lines.length) {
+      return {
+        ok: false,
+        reason: "empty_lines",
+        error: "LlamaParse found no parsable line-item table (" + md.length + " chars of markdown)",
+        raw: { job_id: result?.job?.id || null, tier: tier(), markdown: md, chars: md.length },
+      };
+    }
     const overall = scoreConfidence(lines);
     const confidences = { overall };
     lines.forEach((_li, i) => { confidences["lines[" + i + "]"] = overall; });
@@ -151,16 +196,16 @@ export const extract = async ({ url, bytes, filename, mime, settings }) => {
     return {
       ok: true,
       // LlamaParse parses tables; it does not classify or read the customer
-      // header. When a line table is found we treat it as a PO (the reason
-      // it's selected for this flow); downstream customer matching can run
-      // off raw.markdown. Empty table => leave classification null.
+      // header. A line table having been found is the reason this adapter is
+      // selected for this flow, so we treat it as a PO; downstream customer
+      // matching can run off raw.markdown. (The empty case returned above.)
       normalized: {
-        classification: lines.length ? "po" : null,
+        classification: "po",
         customer: null,
         lines,
       },
       confidences,
-      reason: lines.length === 0 ? "empty_lines" : "ok",
+      reason: "ok",
       raw: { job_id: result?.job?.id || null, tier: tier(), markdown: md, chars: md.length },
     };
   } catch (err) {

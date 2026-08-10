@@ -158,4 +158,49 @@ describe("extract() — SDK call shape (regression: expand must be 'markdown', n
     expect(out.reason).toBe("adapter_threw");
     expect(out.error).toContain("422");
   });
+
+  // A parse that yields no line-item table is not a success. Returning ok:true
+  // here made this adapter the dispatcher's `last` result, so a run in which
+  // Gemini 400'd and Claude timed out was reported as a soft "low confidence ·
+  // review" with error NULL — the real outage vanished from the run row.
+  it("fails when no line-item table is found, instead of a weak success", async () => {
+    process.env.LLAMAPARSE_API_KEY = "llx-test";
+    mockSdk(async () => ({ markdown_full: "Some prose with no pipe table at all." }));
+    const { extract } = await import("../api/_lib/docai/llamaparse.js");
+    const out = await extract({ bytes: Buffer.from("%PDF-1.4"), filename: "po.pdf" });
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe("empty_lines");
+    expect(out.error).toContain("no parsable line-item table");
+    // The markdown is still persisted so an operator can see what came back.
+    expect(out.raw.chars).toBeGreaterThan(0);
+  });
+
+  // The SDK polls to completion with no timeout of its own, so an unbounded
+  // parse outlived the 45s run budget and vercel's 60s maxDuration — the
+  // function was killed and the run stayed status='running' forever.
+  it("bounds the SDK call so a hung parse cannot strand the run", async () => {
+    process.env.LLAMAPARSE_API_KEY = "llx-test";
+    process.env.LLAMAPARSE_TIMEOUT_MS = "60"; // read at module load, below
+    mockSdk(() => new Promise(() => {})); // never resolves
+    const { extract } = await import("../api/_lib/docai/llamaparse.js");
+    const out = await extract({ bytes: Buffer.from("%PDF-1.4"), filename: "po.pdf" });
+    delete process.env.LLAMAPARSE_TIMEOUT_MS;
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe("adapter_threw");
+    expect(out.error).toContain("timed out");
+  });
+
+  it("skips the call entirely when the run budget is already spent", async () => {
+    process.env.LLAMAPARSE_API_KEY = "llx-test";
+    const parse = mockSdk(async () => ({ markdown_full: MD }));
+    const { extract } = await import("../api/_lib/docai/llamaparse.js");
+    const out = await extract({
+      bytes: Buffer.from("%PDF-1.4"),
+      filename: "po.pdf",
+      hints: { deadlineAt: Date.now() + 100 },
+    });
+    expect(parse).not.toHaveBeenCalled();
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe("run_budget_exhausted");
+  });
 });

@@ -5,7 +5,7 @@
 // seller returns on receiving a customer PO (reproduces the Obara
 // P250432276 layout). Distinct from voucher_pdf.js (the post-tax ERP
 // sales voucher): body is ex-tax (Amount = Qty x Rate), with Cust Part
-// No (buyer item no), Part No (vendor + "(O/K)"), Due on, and a
+// No (buyer item no), Part No (vendor + its per-origin group marker), Due on, and a
 // "Batch : <PO#>" sub-row per line. Line data comes from
 // order.result.salesOrder.lineItems (populated by quote convert.js, or
 // by the Link-Quote enrichment for PO-first orders).
@@ -16,9 +16,32 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { renderSalesOrder } from "../_lib/pdf-renderer.js";
 import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "../_lib/storage.js";
+import { classifyOrigin } from "../_lib/pending-so/part-origin.js";
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
-const OK_SUFFIX = "(O/K)"; // fixed Obara marker appended to every vendor part on the SO
+
+// Obara group-origin marker appended to a vendor part on the SO PDF. This was a
+// hardcoded "(O/K)" on EVERY part, which mislabelled locally-made -I parts and
+// China/Japan imports as Korea. Derive it per part instead: prefer the
+// item-master-resolved source_country, else classify from the part/description
+// strings (pending-so/part-origin). A locally-made part already carries its own
+// "-I" suffix so nothing is appended; an unclassifiable part gets NO marker
+// rather than a wrong guess.
+const SOURCE_COUNTRY_MARKER = {
+  "O-KOREA": "(O/K)", "O-CHINA": "(O/C)", "O-JAPAN": "(O/J)",
+  "O-THAILAND": "(O/T)", "O-FRANCE": "(O/F)",
+};
+export const partOriginMarker = (line, partNo, description) => {
+  // Don't double-mark a part that already carries an origin marker.
+  if (/-I$/i.test(String(partNo || "")) || /\(\s*O\s*\//i.test(String(partNo || ""))) return "";
+  // 1. Item-master resolved origin (stamped by mapLinesToItemMaster) wins.
+  const mapped = line?._mapped_item?.source_country || line?.source_country || null;
+  if (mapped) return SOURCE_COUNTRY_MARKER[mapped] || ""; // O-INDIA / unknown vocab -> no marker
+  // 2. Else classify from the strings; only an import gets an (O/x) marker.
+  const v = classifyOrigin({ part_no: partNo, description });
+  return (v.origin === "import" && SOURCE_COUNTRY_MARKER[v.source_country]) || "";
+};
+
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const pick = (...vals) => vals.find((v) => v != null && v !== "");
 
@@ -47,7 +70,7 @@ const buildSalesOrderData = ({ order, customer, consigneeLoc, seller, contact, s
       description: pick(ln.description, ln.itemName) || "—",
       hsn: pick(ln.hsn, ln.hsn_sac) || "",
       custPartNo: pick(ln.customer_part_number, ln.cust_part_no, ln.customerPartNumber) || "",
-      partNo: partNo ? partNo + OK_SUFFIX : "",
+      partNo: partNo ? partNo + partOriginMarker(ln, partNo, pick(ln.description, ln.itemName)) : "",
       dueOn: fmtDate(dueByIndex.get(i) || soData.delivery_date || null),
       qty,
       uom: pick(ln.uom, ln.unit) || "No.",

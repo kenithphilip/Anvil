@@ -99,6 +99,51 @@ const mapSystem = (system) => {
 //                        force responseMimeType=application/json.
 //   - response_mime_type override responseMimeType (defaults to text/plain
 //                        when no schema supplied, application/json otherwise)
+// Gemini's generationConfig.responseSchema is an OpenAPI-3.0 Schema SUBSET, not
+// full JSON Schema. Our extraction schemas (docai/gemini.js, kept in lockstep
+// with claude.js) express a nullable field as a union `type: ["string","null"]`
+// — which Gemini rejects outright ("Invalid JSON payload ... Unknown name
+// 'type' ... Proto field is not repeating"), failing the whole call before it
+// runs. This converts to the subset Gemini accepts:
+//   - a nullable union `type: [T, "null"]`  ->  `type: T` + `nullable: true`
+//   - unknown JSON-Schema keywords (additionalProperties, $schema, $ref, …) are
+//     dropped so they can't 400 the request.
+// Recurses through properties + items. Pure + exported for tests.
+const GEMINI_SCHEMA_KEYS = new Set([
+  "type", "format", "description", "nullable", "enum", "items", "properties",
+  "required", "minItems", "maxItems", "minimum", "maximum", "propertyOrdering",
+]);
+export const toGeminiSchema = (schema) => {
+  if (Array.isArray(schema)) return schema.map(toGeminiSchema);
+  if (!schema || typeof schema !== "object") return schema;
+
+  const out = {};
+  // Collapse a nullable union to a scalar type + the `nullable` flag.
+  let type = schema.type;
+  let nullable = schema.nullable === true;
+  if (Array.isArray(type)) {
+    if (type.includes("null")) nullable = true;
+    type = type.find((t) => t !== "null") ?? null;
+  }
+  if (type != null) out.type = type;
+  if (nullable) out.nullable = true;
+
+  for (const [k, v] of Object.entries(schema)) {
+    if (k === "type" || k === "nullable") continue;   // handled above
+    if (!GEMINI_SCHEMA_KEYS.has(k)) continue;         // drop unsupported keywords
+    if (k === "properties" && v && typeof v === "object") {
+      out.properties = Object.fromEntries(
+        Object.entries(v).map(([pk, pv]) => [pk, toGeminiSchema(pv)]),
+      );
+    } else if (k === "items") {
+      out.items = toGeminiSchema(v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+};
+
 export const callGemini = async ({
   tenantId,
   apiKey,
@@ -137,7 +182,7 @@ export const callGemini = async ({
 
   if (response_schema) {
     body.generationConfig.responseMimeType = "application/json";
-    body.generationConfig.responseSchema = response_schema;
+    body.generationConfig.responseSchema = toGeminiSchema(response_schema);
   } else if (response_mime_type) {
     body.generationConfig.responseMimeType = response_mime_type;
   }

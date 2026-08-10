@@ -1086,6 +1086,9 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     tool_choice: { type: "tool", name: activeToolName },
     temperature: 0,
     cache_ttl: "1h",
+    // Run deadline from the pipeline so a retryable 5xx can't burn the whole
+    // budget and starve the Gemini/LlamaParse fallbacks below this adapter.
+    deadlineAt: hints?.deadlineAt || 0,
   });
 
   if (!result.ok) {

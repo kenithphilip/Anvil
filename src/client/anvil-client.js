@@ -1458,6 +1458,7 @@
     listShipments: async (params) => apiFetch("/api/sales/shipments" + (params ? "?" + new URLSearchParams(params).toString() : "")),
     shipmentTracking: async (params) => apiFetch("/api/sales/shipment_tracking" + (params ? "?" + new URLSearchParams(params).toString() : "")),
     shipmentImport: async (payload) => apiFetch("/api/sales/shipment_import", { method: "POST", body: payload }),
+    pendingSalesOrders: async (params) => apiFetch("/api/sales/pending_sales_orders" + (params ? "?" + new URLSearchParams(params).toString() : "")),
     createShipment: async (payload) => apiFetch("/api/sales/shipments", { method: "POST", body: payload }),
     updateShipment: async (payload) => apiFetch("/api/sales/shipments", { method: "PATCH", body: payload }),
     deleteShipment: async (id) => apiFetch("/api/sales/shipments?id=" + encodeURIComponent(id), { method: "DELETE" }),

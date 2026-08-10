@@ -248,6 +248,7 @@ import salesProjects           from "./sales/projects.js";
 import salesShipments          from "./sales/shipments.js";
 import salesShipmentTracking   from "./sales/shipment_tracking.js";
 import salesShipmentImport     from "./sales/shipment_import.js";
+import salesPendingSalesOrders from "./sales/pending_sales_orders.js";
 // Phase 7.1 + 7.2: lead scoring + opportunity probability.
 import salesScoreLead          from "./sales/score_lead.js";
 import salesPredictOpportunity from "./sales/predict_opportunity.js";
@@ -1062,6 +1063,7 @@ const STATIC_ROUTES = {
   "/sales/shipments":               salesShipments,
   "/sales/shipment_tracking":       salesShipmentTracking,
   "/sales/shipment_import":         salesShipmentImport,
+  "/sales/pending_sales_orders":    salesPendingSalesOrders,
   "/sales/score_lead":              salesScoreLead,
   "/sales/predict_opportunity":     salesPredictOpportunity,
 

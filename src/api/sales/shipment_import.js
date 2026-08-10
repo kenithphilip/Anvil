@@ -134,6 +134,21 @@ export default async function handler(req, res) {
       receipts.push({ id: line.id, received_qty: Number(l.qty) || Number(line.qty) || 0, received_at: l.receipt_date });
     }
 
+    // 5b. Inbound shipment lines — which parts each shipment carried. The
+    //     workbook's per-part rows are otherwise discarded after receipts are
+    //     stamped; persisting them (mig 209) lets the Pending-SO tracker pin the
+    //     ladder to a specific SO line even when a source PO splits across
+    //     several shipments. Grouped by pending invoice, deduped by part_no.
+    const linesByInvoice = new Map();
+    for (const l of lines) {
+      if (!pendInvoiceSet.has(l.shipper_invoice_no) || !l.part_no) continue;
+      if (!linesByInvoice.has(l.shipper_invoice_no)) linesByInvoice.set(l.shipper_invoice_no, new Map());
+      // Last row for a given (invoice, part) wins — a later sheet row is the
+      // fresher status. Avoids an ON CONFLICT double-touch in one upsert batch.
+      linesByInvoice.get(l.shipper_invoice_no).set(l.part_no.trim(), l);
+    }
+    const shipmentLinesMatched = [...linesByInvoice.values()].reduce((n, m) => n + m.size, 0);
+
     const summary = {
       pending_rows: pending.length,
       line_rows: lines.length,
@@ -142,6 +157,7 @@ export default async function handler(req, res) {
       linked_to_project: plan.filter((p) => p.linked).length,
       unlinked: plan.filter((p) => !p.linked).length,
       line_receipts_matched: receipts.length,
+      shipment_lines_matched: shipmentLinesMatched,
     };
 
     if (!apply) {
@@ -152,13 +168,14 @@ export default async function handler(req, res) {
 
     // 6. Apply. Insert new, patch existing (only fields the sheet provided, so an
     //    update never nulls a value the operator set by hand).
-    let inserted = 0, updated = 0, receiptsApplied = 0;
+    let inserted = 0, updated = 0, receiptsApplied = 0, shipmentLinesApplied = 0;
     for (const p of plan) {
       if (p.action === "insert") {
         const row = { tenant_id: tenantId, ...p.body };
         const { data, error } = await svc.from("shipments").insert(row).select("id").single();
         if (!error && data) {
           inserted += 1;
+          p.shipment_id = data.id;
           await recordAudit(ctx, { action: "shipment_import_insert", objectType: "shipment", objectId: data.id, after: row });
         }
       } else if (p.existing_id) {
@@ -168,6 +185,7 @@ export default async function handler(req, res) {
           .eq("tenant_id", tenantId).eq("id", p.existing_id);
         if (!error) {
           updated += 1;
+          p.shipment_id = p.existing_id;
           await recordAudit(ctx, { action: "shipment_import_update", objectType: "shipment", objectId: p.existing_id, after: patch });
         }
       }
@@ -178,8 +196,33 @@ export default async function handler(req, res) {
         .eq("tenant_id", tenantId).eq("id", r.id);
       if (!error) receiptsApplied += 1;
     }
+    // Persist the inbound per-part lines for each shipment we just upserted.
+    for (const p of plan) {
+      if (!p.shipment_id) continue;
+      const byPart = linesByInvoice.get(p.shipper_invoice_no);
+      if (!byPart || !byPart.size) continue;
+      const rows = [...byPart.values()].map((l) => {
+        const spoId = spoIdByRef.get(l.po_ref) || p.source_po_id || null;
+        const spoLine = spoId ? spoLineByKey.get(`${spoId}::${l.part_no.trim()}`) : null;
+        const qty = l.qty === "" || l.qty == null ? null : Number(l.qty);
+        return {
+          tenant_id: tenantId,
+          shipment_id: p.shipment_id,
+          source_po_id: spoId,
+          source_po_line_id: spoLine ? spoLine.id : null,
+          part_no: l.part_no,
+          description: l.description || null,
+          qty: Number.isFinite(qty) ? qty : null,
+          received_qty: l.receipt_date ? (Number.isFinite(qty) ? qty : 0) : 0,
+          receipt_date: l.receipt_date || null,
+          remark: l.remark || null,
+        };
+      });
+      const { error } = await svc.from("shipment_lines").upsert(rows, { onConflict: "shipment_id,part_no" });
+      if (!error) shipmentLinesApplied += rows.length;
+    }
 
-    return json(res, 200, { mode: "apply", summary: { ...summary, inserted, updated, line_receipts_applied: receiptsApplied } });
+    return json(res, 200, { mode: "apply", summary: { ...summary, inserted, updated, line_receipts_applied: receiptsApplied, shipment_lines_applied: shipmentLinesApplied } });
   } catch (err) {
     sendError(res, err);
   }

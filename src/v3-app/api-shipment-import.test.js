@@ -120,3 +120,31 @@ describe("normalizeLine + parseSheets", () => {
     expect(lines[0].po_ref).toBe("OIPOOK-260104-01-OK");
   });
 });
+
+// Column-drift guard for the inbound shipment_lines table (mig 209) that the
+// apply path upserts into. A renamed/absent column would silently drop the
+// per-part persistence — the exact Anvil screen<->API drift failure.
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
+describe("shipment_lines column-drift guard", () => {
+  const migDir = join(process.cwd(), "supabase", "migrations");
+  const allSql = readdirSync(migDir).filter((f) => f.endsWith(".sql"))
+    .map((f) => readFileSync(join(migDir, f), "utf8")).join("\n");
+  const tableBody = (t) => {
+    const m = allSql.match(new RegExp("create table(?:\\s+if not exists)?\\s+" + t + "\\s*\\(([\\s\\S]*?)\\n\\);", "i"));
+    return m ? m[1] : null;
+  };
+  const WRITES = ["tenant_id", "shipment_id", "source_po_id", "source_po_line_id", "part_no", "description", "qty", "received_qty", "receipt_date", "remark"];
+  it("shipment_lines table exists", () => {
+    expect(tableBody("shipment_lines")).toBeTruthy();
+  });
+  for (const col of WRITES) {
+    it(`shipment_lines.${col} is declared`, () => {
+      expect(new RegExp("\\b" + col + "\\b").test(tableBody("shipment_lines")), `missing ${col}`).toBe(true);
+    });
+  }
+  it("has the (shipment_id, part_no) upsert conflict target", () => {
+    expect(/unique\s*\(\s*shipment_id\s*,\s*part_no\s*\)/i.test(tableBody("shipment_lines"))).toBe(true);
+  });
+});

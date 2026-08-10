@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ageLabel, stageOf, draftLabel } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Prov, Steps, Stream, WSTabs, WSTitle, fmtINR, fmtUSD } from "../lib/primitives";
+import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Modal, Prov, Steps, Stream, WSTabs, WSTitle, fmtINR, fmtUSD } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
@@ -129,6 +129,11 @@ const WiredSOWorkspace = () => {
   const [scheduleBump, setScheduleBump] = u(0);
   const [tsv, setTsv] = u("");
   const [busy, setBusy] = u(false);
+  // Cancel confirmation. A native confirm() here silently returns false
+  // when the browser has suppressed dialogs ("don't allow more dialogs"),
+  // so clicking Cancel did nothing and the order looked un-cancellable.
+  // An in-app modal always shows and can't be blocked.
+  const [cancelOpen, setCancelOpen] = u(false);
   // Inline line-item editor state. Driven from the persisted lines
   // on the order; when null, the table renders the persisted values
   // directly. Once the operator changes a field, a draft is forked
@@ -511,9 +516,11 @@ const WiredSOWorkspace = () => {
   const canWrite = RBAC?.canDo?.("so.write") === true;
   const canAdmin = RBAC?.canDo?.("so.admin") === true;
 
+  // The actual cancel, run only after the in-app confirmation modal is
+  // accepted (no native confirm() — see cancelOpen above).
   const cancelOrder = async () => {
     if (!o?.id) return;
-    if (!confirm(`Cancel order ${draftLabel(o)}? This sets status to CANCELLED.`)) return;
+    setCancelOpen(false);
     setBusy(true);
     try {
       await AnvilBackend?.orders?.update?.(o.id, { status: "CANCELLED" });
@@ -1703,10 +1710,24 @@ const WiredSOWorkspace = () => {
           <span style={{ flex: 1 }} />
           <Btn sm kind="ghost"
                disabled={!canCancel || busy || o.status === "CANCELLED"}
-               onClick={cancelOrder}
+               onClick={() => setCancelOpen(true)}
                title={canCancel ? "Set order status to CANCELLED" : "needs sales_manager / admin"}>
             {Icon.x} cancel
           </Btn>
+          <Modal open={cancelOpen} onClose={() => setCancelOpen(false)} title="Cancel this sales order?">
+            <Modal.Body>
+              <p style={{ margin: 0 }}>
+                Set <b>{draftLabel(o)}</b>{o.po_number ? <> (PO {o.po_number})</> : null} to <b>CANCELLED</b>.
+              </p>
+              <p className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 8 }}>
+                It stops flowing through review, approval and Tally push. You can move it back to DRAFT later if needed.
+              </p>
+            </Modal.Body>
+            <Modal.Footer>
+              <Btn kind="ghost" onClick={() => setCancelOpen(false)}>Keep order</Btn>
+              <Btn kind="danger" disabled={busy} onClick={cancelOrder}>{busy ? "Cancelling…" : "Cancel order"}</Btn>
+            </Modal.Footer>
+          </Modal>
           {/* Run extraction: rescues orders stuck in DRAFT when the
               post-create OCR call from intake silently failed
               (ClamAV missing, transient network, etc.). Re-runs

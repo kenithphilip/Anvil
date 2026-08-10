@@ -27,8 +27,10 @@ describe("buildKeyUpdates", () => {
     const iv = newIv();
     const { patch, changed } = buildKeyUpdates({ mistral: "sk-mistral-123", gemini: "", nope: "x" }, iv);
 
-    // mistral -> encrypted buffer that decrypts back to the plaintext
-    expect(patch.docai_mistral_api_key_enc).toBeInstanceOf(Buffer);
+    // mistral -> a bytea '\x'-hex STRING (NOT a Buffer — a Buffer never lands in
+    // the bytea column through supabase-js) that decrypts back to the plaintext.
+    expect(typeof patch.docai_mistral_api_key_enc).toBe("string");
+    expect(patch.docai_mistral_api_key_enc.startsWith("\\x")).toBe(true);
     expect(decryptField(patch.docai_mistral_api_key_enc, iv)).toBe("sk-mistral-123");
     // gemini "" -> cleared
     expect(patch.docai_gemini_api_key_enc).toBeNull();

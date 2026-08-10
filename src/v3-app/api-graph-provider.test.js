@@ -73,7 +73,9 @@ describe("the authorize URL is well-formed and injection-safe", () => {
 describe("secret + tokens round-trip through the AES envelope", () => {
   it("encrypts and decrypts the client secret", () => {
     const enc = g.graphEncryptSecret({ client_secret: "super-secret" });
-    expect(enc.graph_client_secret_enc).toBeInstanceOf(Buffer);   // not plaintext
+    // Stored as a bytea '\x'-hex string (a Buffer never lands in bytea).
+    expect(typeof enc.graph_client_secret_enc).toBe("string");
+    expect(enc.graph_client_secret_enc.startsWith("\\x")).toBe(true);
     expect(g.graphDecryptSecret(enc)).toBe("super-secret");
   });
   it("encrypts and decrypts the access + refresh tokens under one iv", () => {

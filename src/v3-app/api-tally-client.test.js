@@ -20,8 +20,11 @@ describe("tally-client / token helpers", () => {
   it("encrypts the token when the master key is configured", () => {
     const cols = tallyEncryptedTokenColumns("super-secret");
     expect(cols.bridge_token).toBeNull();
-    expect(Buffer.isBuffer(cols.bridge_token_enc)).toBe(true);
-    expect(Buffer.isBuffer(cols.bridge_iv)).toBe(true);
+    // bytea '\x'-hex strings, not Buffers (a Buffer never lands in bytea).
+    expect(typeof cols.bridge_token_enc).toBe("string");
+    expect(cols.bridge_token_enc.startsWith("\\x")).toBe(true);
+    expect(typeof cols.bridge_iv).toBe("string");
+    expect(cols.bridge_iv.startsWith("\\x")).toBe(true);
   });
 
   it("returns nulls for a null token", () => {

@@ -12,7 +12,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings, updateTenantSettings } from "../_lib/stripe-client.js";
-import { encryptField, newIv, isSecretsConfigured } from "../_lib/secrets.js";
+import { encryptField, newIv, isSecretsConfigured, IV_LEN } from "../_lib/secrets.js";
 import { ADAPTER_NAMES } from "../_lib/docai/index.js";
 
 // Provider registry. `external` + `region` drive the residency warning in the
@@ -89,7 +89,11 @@ export default async function handler(req, res) {
         }
         const settings = await tenantSettings(svc, ctx.tenantId);
         let iv = toIvBuffer(settings?.docai_creds_iv);
-        if (!iv) { iv = newIv(); updates.docai_creds_iv = iv; }
+        // Regenerate when absent OR not exactly IV_LEN bytes — a pre-fix garbage
+        // IV (a JSON-serialised Buffer stored as bytea) coerces to the wrong
+        // length and would make createCipheriv throw. Nothing valid was ever
+        // stored under it, so a fresh IV loses nothing.
+        if (!iv || iv.length !== IV_LEN) { iv = newIv(); updates.docai_creds_iv = iv; }
         const { patch, changed } = buildKeyUpdates(body.keys, iv);
         Object.assign(updates, patch);
         changedKeys = changed;

@@ -19,7 +19,7 @@
 import crypto from "node:crypto";
 
 const ALGO = "aes-256-gcm";
-const IV_LEN = 12;
+export const IV_LEN = 12;
 const TAG_LEN = 16;
 
 const getMasterKey = () => {
@@ -36,18 +36,36 @@ export const isSecretsConfigured = () => {
   return !!(raw && raw.length === 64);
 };
 
-export const newIv = () => crypto.randomBytes(IV_LEN);
+// A stored bytea value MUST reach Postgres as a '\x'-hex STRING. supabase-js
+// JSON-serialises the request body, and a Node Buffer becomes
+// {"type":"Buffer","data":[...]} — which never lands in a bytea column (the
+// ciphertext is silently dropped / stored as garbage, so every provider key,
+// TOTP secret and ERP credential read back undecryptable). So the encryption
+// boundary EMITS '\x'-hex strings; decryptField already reads that exact form
+// back (PostgREST returns bytea reads as '\x'-hex too). Callers persist the
+// returned strings directly into the *_enc / *_iv bytea columns.
+const toBuf = (v) => {
+  if (Buffer.isBuffer(v)) return v;
+  if (typeof v === "string" && v.startsWith("\\x")) return Buffer.from(v.slice(2), "hex");
+  return Buffer.from(v);
+};
+const toByteaHex = (buf) => "\\x" + buf.toString("hex");
 
-// Encrypt a single string with the master key and a caller-supplied IV.
-// Returns Buffer (ciphertext || authTag). The IV is NOT embedded; the
-// caller persists it once for the whole bundle.
+// A fresh IV as a bytea '\x'-hex string (encryptField coerces it back to a
+// Buffer for the cipher). Persist it once per bundle alongside the fields.
+export const newIv = () => toByteaHex(crypto.randomBytes(IV_LEN));
+
+// Encrypt a single string with the master key and a caller-supplied IV (Buffer
+// or '\x'-hex string). Returns a bytea '\x'-hex string (ciphertext || authTag),
+// or null for empty input. The IV is NOT embedded; the caller persists it once
+// for the whole bundle.
 export const encryptField = (plaintext, iv) => {
   if (plaintext == null || plaintext === "") return null;
   const key = getMasterKey();
-  const cipher = crypto.createCipheriv(ALGO, key, iv);
+  const cipher = crypto.createCipheriv(ALGO, key, toBuf(iv));
   const ct = Buffer.concat([cipher.update(String(plaintext), "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return Buffer.concat([ct, tag]);
+  return toByteaHex(Buffer.concat([ct, tag]));
 };
 
 export const decryptField = (encBuf, iv) => {

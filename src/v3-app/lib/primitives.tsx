@@ -39,9 +39,20 @@ export const Btn: React.FC<BtnProps> = ({
   );
 };
 
-export interface ChipProps { children?: ReactNode; k?: Kind; lg?: boolean; }
-export const Chip: React.FC<ChipProps> = ({ children, k, lg }) => (
-  <span className={["chip", k, lg && "lg"].filter(Boolean).join(" ")}>{children}</span>
+/*
+ * `code` opts a chip out of the lowercase transform.
+ *
+ * .chip lowercases its content, which reads well for status words
+ * ("clean", "explicit", "ok") and is actively wrong for identifiers: a
+ * customer material number stored as GD544202507310053 rendered as
+ * gd544202507310053, and was reported as extraction having corrupted the
+ * data. It had not — but a panel whose job is to show what was captured
+ * must not silently rewrite it. Use `code` for part numbers, customer item
+ * codes, HSN, hashes and IDs.
+ */
+export interface ChipProps { children?: ReactNode; k?: Kind; lg?: boolean; code?: boolean; }
+export const Chip: React.FC<ChipProps> = ({ children, k, lg, code }) => (
+  <span className={["chip", k, lg && "lg", code && "code"].filter(Boolean).join(" ")}>{children}</span>
 );
 
 /*

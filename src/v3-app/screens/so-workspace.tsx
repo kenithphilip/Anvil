@@ -67,7 +67,7 @@ const ReconLinesTable: React.FC<{
 }> = ({ lines, head, footer, renderRow }) => {
   const { selectedField, setSelectedField, setHoveredField } = useReviewPaneSelection();
   return (
-    <table className="tbl">
+    <table className="tbl grid">
       {head}
       <tbody>
         {lines.map((ln, i) => {
@@ -1066,7 +1066,7 @@ const WiredSOWorkspace = () => {
         : "manual map";
       return (
         <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 2 }}>
-          <Chip k={tone}>{label}: {mi.part_no || "-"}</Chip>
+          <Chip k={tone} code>{label}: {mi.part_no || "-"}</Chip>
           {canEditLines && (
             <button
               type="button"
@@ -1085,7 +1085,7 @@ const WiredSOWorkspace = () => {
       // path) when lines are editable.
       return (
         <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 2 }}>
-          <Chip k="info">{(mi.match_via || "auto").replace(/_/g, " ")}: {mi.part_no}</Chip>
+          <Chip k="info" code>{(mi.match_via || "auto").replace(/_/g, " ")}: {mi.part_no}</Chip>
           {canEditLines && (
             <button
               type="button"
@@ -1103,7 +1103,7 @@ const WiredSOWorkspace = () => {
         <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3 }}>
           {sugg.map((s: any, j: number) => (
             <div key={j} style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
-              <Chip k="info">{s.part_no || "—"}</Chip>
+              <Chip k="info" code>{s.part_no || "—"}</Chip>
               <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
                 {Math.round(Number(s.confidence_pct) || 0)}%
               </span>
@@ -1197,9 +1197,16 @@ const WiredSOWorkspace = () => {
           <div style={{ marginTop: 2 }}>
             <EditableCell {...cellProps} line={ln} i={i} canonicalKey="itemCode" type="text" placeholder="part / SKU" />
           </div>
+          {/* The buyer's own code for this part. Rendered with <Chip code> so
+              the chip's lowercase transform does not rewrite an identifier on
+              screen, and with the caption in its own <span className="lbl">
+              so it cannot be read as characters appended to the code — both
+              halves of the Aug 2026 "it added characters and ignored case"
+              report. Labelled generically rather than "SAP": most tenants'
+              customers are not on SAP. */}
           {(ln.customerItemCode || ln.customer_item_code) && (
-            <div style={{ marginTop: 2 }}>
-              <Chip k="ghost">SAP {ln.customerItemCode || ln.customer_item_code}</Chip>
+            <div style={{ marginTop: 2 }} title="Customer part number — the buyer's own code for this item">
+              <Chip k="ghost" code><span className="lbl">cust p/n</span>{ln.customerItemCode || ln.customer_item_code}</Chip>
             </div>
           )}
           {mapAffordance(ln, i)}
@@ -1667,7 +1674,7 @@ const WiredSOWorkspace = () => {
               </h1>
               {o.order_mode && <Chip k={o.order_mode === "INTERNAL" ? "plum" : o.order_mode.startsWith("PROJECT") ? "info" : "ghost"}>{o.order_mode}</Chip>}
               <Chip k={st.k}>{st.label}</Chip>
-              {o.payload_hash && <Chip k="ghost">payload {String(o.payload_hash).slice(0, 8)}…</Chip>}
+              {o.payload_hash && <Chip k="ghost" code>payload {String(o.payload_hash).slice(0, 8)}…</Chip>}
             </div>
           </div>
         </div>

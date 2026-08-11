@@ -1214,6 +1214,16 @@ export const runExtractionPipeline = async (params) => {
     // docai_line_count_shortfall_slack=N to tolerate a small gap.
     lineCountShortfallEnabled: settings?.docai_line_count_shortfall_enabled !== false,
     lineCountShortfallSlack: settings?.docai_line_count_shortfall_slack,
+    // CM P0: money-completeness gate. Unlike the line-count gate above this
+    // reads the document's own printed total out of the text layer, so it
+    // still fires when a truncated response took stated_line_count down with
+    // the lines it was meant to police. bodyText is the L1/L2 text captured
+    // at :489 and is live here — no plumbing needed.
+    kind,
+    bodyText,
+    documentTotalCheckEnabled: settings?.docai_document_total_check_enabled !== false,
+    documentTotalErrorCoverage: settings?.docai_document_total_error_coverage,
+    documentTotalWarnCoverage: settings?.docai_document_total_warn_coverage,
   };
   const anomalyReport = detectAnomalies(out?.normalized || null, anomalyOpts);
   if (anomalyReport.summary.total > 0) {

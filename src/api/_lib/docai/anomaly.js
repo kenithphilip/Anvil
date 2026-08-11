@@ -296,6 +296,105 @@ const checkLineCountShortfall = (normalized, opts = {}) => {
   }];
 };
 
+// CM P0 (Aug 2026): the money-completeness guard.
+//
+// Every other detector in this file — checkLineCountShortfall above very much
+// included — consumes a number the MODEL wrote. That is fine until the model
+// truncates, because normalized.stated_line_count is emitted AFTER the line
+// array: the lines and the declaration that would have caught the missing
+// lines are lost in the same breath, so the detector no-ops and the run
+// reports "clean". On the incident: 1 extracted line worth 80,716.72 against
+// a PO printing 458,859.52 — 95% confidence, 0 anomalies, 0 validator errors.
+//
+// This check reads the document's PRINTED grand total straight out of the L1/L2
+// text layer (opts.bodyText) — evidence the extractor does not author — and
+// asks whether the lines we returned account for that money. Verified against
+// the incident document: its four real line totals sum to the printed grand
+// total exactly, so the comparison is arithmetic rather than heuristic.
+const DOC_TOTAL_RE = /(?:grand\s*total|total\s*amount|total\s*invoice\s*value|total\s*po\s*value|net\s*amount\s*payable|amount\s*payable|total\s*value)\s*(?:\([^)]{0,24}\))?\s*[:\-]?\s*(?:INR|Rs\.?|₹|USD|US\$|\$|EUR|€|JPY|KRW)?\s*([0-9][0-9,]{2,}(?:\.[0-9]{1,3})?)/gi;
+
+// The grand total is the largest labelled figure in the document: a PO that
+// prints per-section subtotals under the same words still yields the true
+// total as the maximum. Returns null when nothing is labelled -> check no-ops.
+const printedDocumentTotal = (text) => {
+  if (typeof text !== "string" || text.length < 20) return null;
+  let best = null;
+  for (const m of text.matchAll(DOC_TOTAL_RE)) {
+    const n = Number(String(m[1]).replace(/,/g, ""));
+    if (!Number.isFinite(n) || n <= 0) continue;
+    if (best == null || n > best) best = n;
+  }
+  return best;
+};
+
+const TAX_AMOUNT_KEYS = ["cgst_amount", "sgst_amount", "igst_amount", "utgst_amount", "cess_amount", "excise_amount", "ed_cess_amount"];
+const AUX_AMOUNT_KEYS = ["tooling_amount", "p_and_f_amount", "others_amount"];
+
+// Per-line gross. The tax/aux amounts on a PO line are PER UNIT (that is how
+// the stacked multi-row layouts print them: Ex-Price 34,202 + SGST 3,078.18 +
+// CGST 3,078.18 = Unit Price 40,358.36, x qty 2 = TotAmt 80,716.72), so they
+// are multiplied by qty alongside the rate. Falls back to gst_pct when no
+// explicit tax amounts were captured.
+const lineGross = (l) => {
+  const qty = numberOrNull(l?.quantity ?? l?.qty) ?? 0;
+  const rate = numberOrNull(l?.unitPrice ?? l?.rate) ?? 0;
+  const taxable = qty * rate;
+  let perUnit = 0;
+  let taxSeen = false;
+  for (const k of [...TAX_AMOUNT_KEYS, ...AUX_AMOUNT_KEYS]) {
+    const v = numberOrNull(l?.[k]);
+    if (v != null && v > 0) { perUnit += v; taxSeen = true; }
+  }
+  if (taxSeen) return { taxable, gross: taxable + qty * perUnit, taxSeen: true };
+  const pct = numberOrNull(l?.gst_pct);
+  if (pct != null && pct > 0) return { taxable, gross: taxable * (1 + pct / 100), taxSeen: true };
+  return { taxable, gross: taxable, taxSeen: false };
+};
+
+// When extraction captured no tax at all, the printed total is probably
+// tax-inclusive while our sum is not. Widen the ceiling past the highest
+// Indian slab (28%) so that case can never manufacture a blocker.
+const MAX_TAX_INFLATION = 1.30;
+
+//   opts.documentTotalCheckEnabled === false -> disabled.
+//   opts.documentTotalErrorCoverage (default 0.80) -> below this = error.
+//   opts.documentTotalWarnCoverage  (default 0.98) -> below this = warn.
+const checkDocumentTotalShortfall = (normalized, opts = {}) => {
+  if (opts.documentTotalCheckEnabled === false) return [];
+  if (opts.kind && opts.kind !== "po" && opts.kind !== "rfq") return [];
+  const printed = printedDocumentTotal(opts.bodyText);
+  if (printed == null) return [];
+  const lines = Array.isArray(normalized?.lines) ? normalized.lines : [];
+  // 0 lines already fails the run outright; don't double-report it.
+  if (!lines.length) return [];
+  let gross = 0;
+  let anyTax = false;
+  let anyMoney = false;
+  for (const l of lines) {
+    const t = lineGross(l);
+    gross += t.gross;
+    if (t.taxSeen) anyTax = true;
+    if (t.taxable > 0) anyMoney = true;
+  }
+  if (!anyMoney) return [];
+  const ceiling = anyTax ? gross : gross * MAX_TAX_INFLATION;
+  const coverage = ceiling / printed;
+  const errAt = numberOrNull(opts.documentTotalErrorCoverage) ?? 0.80;
+  const warnAt = numberOrNull(opts.documentTotalWarnCoverage) ?? 0.98;
+  if (coverage >= warnAt) return [];
+  const acct = Math.round(ceiling * 100) / 100;
+  return [{
+    code: "document_total_shortfall",
+    severity: coverage < errAt ? "error" : "warn",
+    path: "lines",
+    actual: acct,
+    expected: printed,
+    detail: "document prints a total of " + printed.toFixed(2) + " but the " + lines.length
+      + " extracted line" + (lines.length === 1 ? "" : "s") + " account for only " + acct.toFixed(2)
+      + " (" + (coverage * 100).toFixed(1) + "%) — line items are probably missing or mis-read",
+  }];
+};
+
 const checkCurrencyConsistency = (normalized) => {
   if (!normalized) return null;
   const headerCurr = normalized.customer?.currency;
@@ -349,6 +448,7 @@ export const detectAnomalies = (normalized, opts = {}) => {
   if (currIssue) anomalies.push(currIssue);
   anomalies.push(...checkTotals(normalized));
   anomalies.push(...checkLineCountShortfall(normalized, opts));
+  anomalies.push(...checkDocumentTotalShortfall(normalized, opts));
 
   const summary = { error: 0, warn: 0, info: 0, total: anomalies.length };
   for (const a of anomalies) {
@@ -363,4 +463,4 @@ export const detectAnomalies = (normalized, opts = {}) => {
   };
 };
 
-export const __test = { lineArithmetic, linePriceSanity, lineQtySanity, lineHsnSanity, lineGstSanity, checkTotals, checkLineCountShortfall, KNOWN_GST_SLABS };
+export const __test = { lineArithmetic, linePriceSanity, lineQtySanity, lineHsnSanity, lineGstSanity, checkTotals, checkLineCountShortfall, checkDocumentTotalShortfall, printedDocumentTotal, lineGross, KNOWN_GST_SLABS };

@@ -630,7 +630,12 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     system: systemBlocks,
     model: selection.model,
     temperature: 0,
-    max_tokens: 2000,
+    // 2000 truncated a real 4-line PO down to ONE line: each line carries
+    // ~20 tax/aux fields (cgst/sgst/igst/utgst/cess/excise/ed_cess/tooling/
+    // p_and_f/others...), so a dense multi-line PO blows a 2K budget long
+    // before the array closes. The truncated JSON was then REPAIRED into
+    // valid JSON downstream, so nothing noticed.
+    max_tokens: 8000,
     response_schema: schema,
     // Bet 1: Gemini 3 media_resolution knob. Per-tenant override
     // via tenant_settings.docai_gemini_media_resolution (default
@@ -680,6 +685,29 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       parse_retries: sap.retries,
     };
   }
+  // A truncated response is REPAIRED into valid JSON by parseSchemaAligned
+  // above, so a MAX_TOKENS stop is otherwise completely invisible: the run
+  // "succeeds" with however many lines fit the budget, and every downstream
+  // completeness check reads a model-authored field (stated_line_count) that
+  // was itself cut off — detector and evidence die together. stopReasonFromGemini
+  // was only ever consulted on the PARSE-FAILURE path below, never here.
+  // Observed: a 4-line PO truncated to 1, reported 95% confidence, 0 anomalies
+  // and "clean", against a document worth 6.7x the extracted total.
+  const stopReason = stopReasonFromGemini(result.data);
+  if (stopReason === "MAX_TOKENS") {
+    return {
+      ok: false,
+      status: result.status,
+      mode,
+      reason: "output_truncated",
+      error: "Gemini stopped at max_tokens; the response was truncated and would silently drop line items",
+      raw: result.data,
+      selected_model: selection.model,
+      model_selection_reason: selection.reason,
+      parse_method: sap.parse_method,
+    };
+  }
+
   const out = sap.value;
   const parseMethod = sap.parse_method;
   const parseRepairs = sap.repairs;

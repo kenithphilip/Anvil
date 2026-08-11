@@ -820,6 +820,9 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   font-family: var(--mono);
   font-size: 10px;
   font-weight: 500;
+  /* Identifier-bearing chips opt out via <Chip code> — see .chip.code
+     below. Lowercasing a part number or material code misrepresents
+     stored data. */
   text-transform: lowercase;
   letter-spacing: 0;
   border: 1px solid var(--hairline);
@@ -828,6 +831,9 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   border-radius: 2px;
   white-space: nowrap;
 }
+/* Identifiers render verbatim: part numbers, customer material codes, HSN,
+   hashes. Letter-spacing helps a long alphanumeric code stay legible. */
+.chip.code  { text-transform: none; letter-spacing: 0.01em; }
 .chip.live  { background: var(--accent);    color: var(--on-accent); border-color: var(--accent-2); font-weight: 600; }
 .chip.good  { background: var(--sage-3);    color: var(--sage-2); border-color: transparent; }
 .chip.warn  { background: var(--amber-3);   color: var(--amber-2); border-color: transparent; }
@@ -838,6 +844,11 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .chip.ghost { background: transparent; color: var(--ink-3); border-color: var(--hairline); }
 .chip.lg    { height: 24px; padding: 0 9px; font-size: 11px; }
 .chip .dot  { width: 5px; height: 5px; border-radius: 999px; background: currentColor; }
+/* Caption inside an identifier chip ("SAP <code>"). Rendered as its own
+   flex item, dimmer and letter-spaced, so the caption cannot be read as
+   part of the code beside it — an operator reported "SAP gd5442…" as the
+   extractor having ADDED characters to the buyer's material number. */
+.chip .lbl  { color: var(--ink-4); font-size: 9px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
 
 /* ── KV list ───────────────────────────────────────────── */
 .kv {
@@ -877,6 +888,17 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   color: var(--ink-2);
   vertical-align: middle;
 }
+/* Column separators for wide data tables (.tbl.grid).
+   Horizontal rules alone leave a numeric table — uom / qty / rate / hsn /
+   gst% / taxable — hard to scan: with nothing running vertically the eye
+   loses which header a figure sits under, which is exactly the complaint
+   on the line-item reconciliation table. Translucent rather than a solid
+   hairline so the rule blends over the tinted row states below
+   (hover / sel / row-flag / row-warn / row-live) instead of drawing a hard
+   cage across them. `+ td` so the first column gets no leading edge. */
+.tbl.grid thead th + th,
+.tbl.grid tbody td + td { border-left: 1px solid color-mix(in srgb, var(--ink) 9%, transparent); }
+
 .tbl tbody tr:hover td { background: var(--paper-2); }
 .tbl tbody tr.sel td { background: var(--paper-4); }
 .tbl tbody tr.row-flag td { background: rgba(162,58,31,0.06); }

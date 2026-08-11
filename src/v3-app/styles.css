@@ -1934,8 +1934,40 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 }
 
 /* Reduced-motion users: kill the animations the toast stack adds. */
+/* ── Loading state (components/LoadingState.tsx) ───────────
+   A 3x3 pixel grid + shimmering label + elapsed timer, for work
+   measured in tens of seconds (an extraction run is budgeted at 45s).
+   The cells animate on a per-cell delay set in JS so one keyframe
+   serves every variant.
+
+   The global prefers-reduced-motion rule below no-ops both keyframes:
+   the grid freezes at its dim base opacity and the label falls back to
+   flat --ink-3. The elapsed timer is JS and keeps ticking, so the wait
+   stays observable with zero motion. */
+.loading-state { display: inline-flex; align-items: center; gap: 10px; width: fit-content; }
+.px-grid { display: grid; grid-template-columns: repeat(3, 4px); gap: 1.5px; }
+.px-cell { width: 4px; height: 4px; background: var(--ink); border-radius: 1px; opacity: 0.15; }
+.px-grid.round .px-cell { border-radius: 999px; }
+@keyframes pixel-on { 0%, 100% { opacity: 0.15; } 50% { opacity: 1; } }
+
+.loading-label {
+  font-size: 13px; font-weight: 500; color: var(--ink-3);
+  background-image: linear-gradient(90deg, var(--ink-3) 35%, var(--ink) 50%, var(--ink-3) 65%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer-text 1.4s linear infinite;
+}
+@keyframes shimmer-text { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* Tabular figures so the tenths digit doesn't jitter the layout. */
+.loading-elapsed { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
+  /* background-clip:text with a transparent fill would render the label
+     invisible once the shimmer stops — restore a solid colour. */
+  .loading-label { -webkit-text-fill-color: var(--ink-2); color: var(--ink-2); }
 }
 
 /* High-contrast users: thicken the hairline so tables remain legible. */

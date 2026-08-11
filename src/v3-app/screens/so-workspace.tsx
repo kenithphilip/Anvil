@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { LoadingState } from "../components/LoadingState";
 import { ageLabel, stageOf, draftLabel } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Modal, Prov, Steps, Stream, WSTabs, WSTitle, fmtINR, fmtUSD } from "../lib/primitives";
 import { Icon } from "../lib/icons";
@@ -1774,6 +1775,13 @@ const WiredSOWorkspace = () => {
                }>
             {Icon.cycle} {busy ? "extracting…" : (extractEngine ? "run with " + extractEngine : "run extraction")}
           </Btn>
+          {/* An extraction run is budgeted at 45s inside a 60s platform
+              ceiling and routinely spends 9-30s inside one model call, so a
+              disabled button alone leaves the operator unable to tell a slow
+              run from a wedged one. The elapsed readout makes the wait
+              observable; it sits beside the button rather than inside it
+              because the button is too narrow for the grid + timer. */}
+          {busy && <LoadingState label="Extracting" variant="drive" />}
           {/* Run validation: scores the extracted lines against the
               anomaly rule library and persists findings into
               orders.rule_findings. The Validate step in the stepper

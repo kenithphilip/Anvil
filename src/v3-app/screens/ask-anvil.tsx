@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { LoadingState } from "../components/LoadingState";
 import { Banner, Btn, Card, Chip, WSTitle, fmtINR } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { renderMarkdown } from "../lib/markdown";
@@ -473,7 +474,10 @@ const AskAnvil = () => {
                 </div>
               );
             })}
-            {busy && <div className="mono-sm" style={{ color: "var(--ink-3)" }}>Thinking…</div>}
+            {/* A copilot answer can take tens of seconds (retrieval + model).
+                A static "Thinking…" gives no way to tell slow from wedged,
+                so show elapsed time alongside the shimmer. */}
+            {busy && <div style={{ padding: "4px 2px" }}><LoadingState label="Thinking" variant="dots" /></div>}
           </div>
 
           {/* ── Input ─────────────────────────────────────────── */}

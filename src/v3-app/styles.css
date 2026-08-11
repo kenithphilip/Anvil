@@ -535,12 +535,31 @@ button { cursor: pointer; }
 }
 .side-foot .av {
   width: 22px; height: 22px;
+  flex: 0 0 22px;          /* never let the name block squeeze the avatar oval */
   background: var(--paper-3);
   display: grid; place-items: center;
   font-size: 10px; font-weight: 600;
   color: var(--ink-2);
   border-radius: 2px;
 }
+/* Long names must ellipsis, not push the settings gear out of the rail. */
+.side-foot-id { overflow: hidden; }
+.side-foot-name,
+.side-foot-role { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-foot-name { font-size: 11px; font-family: var(--sans); color: var(--ink-2); font-weight: 600; }
+.side-foot-role { font-size: 10px; font-family: var(--mono); color: var(--ink-4); }
+
+/* Collapsed rail: 56px total, ~28px of content width after padding — an
+   avatar (22px) plus the name/role block plus the settings gear cannot sit
+   in one row, and they overlapped. Drop the identity text (the avatar's
+   initials + title carry it) and stack the avatar over the gear. */
+[data-rail="collapsed"] .side-foot {
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0;
+  justify-content: center;
+}
+[data-rail="collapsed"] .side-foot-id { display: none; }
 
 /* ── Workspace ─────────────────────────────────────────── */
 /*

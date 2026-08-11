@@ -636,6 +636,10 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     // via tenant_settings.docai_gemini_media_resolution (default
     // "high"). Lower values reduce token cost on simple POs.
     media_resolution: settings?.docai_gemini_media_resolution || "high",
+    // Run deadline from the pipeline. Gemini runs FIRST in the default order,
+    // so an unbounded call here is what strands the whole run: the platform
+    // kills the function mid-flight and run.js never writes a terminal status.
+    deadlineAt: hints?.deadlineAt || 0,
   });
 
   if (!result.ok) {

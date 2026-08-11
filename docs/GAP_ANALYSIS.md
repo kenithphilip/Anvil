@@ -640,6 +640,34 @@ Maturity: YC S26; ~$1M raised, six-figure ARR; Turkish-founded, now SF; angels f
 
 Relevance to Anvil: Spaceflow automates the **buy side** of the very RFQ → quote → PO → invoice loop Anvil runs on the **sell side** — the procurement inverse of Anvil's QTC. It mirrors Anvil's supplier-RFQ/quote-capture subsystem and KR/JP/CN supplier scorecard, but as the customer's own procurement cockpit, not a seller's tool, so it is **not** a head-to-head QTC rival. Anvil already does supplier RFQ, quote capture, and vendor scorecards; Spaceflow's genuine edge is **architectural** — on-prem/air-gapped deployment with in-boundary inference, a governance gateway, and immutable audit logging, which is exactly the **TISAX / enterprise-vendor-security posture Anvil's compliance/CISO backlog flags as a deal-unblocker**. **Verdict: LEARN-ONLY** (procurement-inverse, not a seller-side rival). Take the on-prem + governance-gateway + MCP-native managed-runtime deployment model for regulated/air-gapped buyers. **Watch:** if Spaceflow bolts a sell-side module onto the same runtime, it becomes a **THREAT** to Anvil's SAP-ECC-heavy Indian enterprise ICP.
 
+### Additions — 2026-08-11 (AI-native freight forwarding)
+
+One reviewed at the user's request. **`shieldedglobal.com` was also requested and is already covered above at §3.22** (reviewed 2026-08-01, verdict LEARN-ONLY — risk-intelligence overlay); re-reading it against the live site confirms that entry still holds, so it is not duplicated here.
+
+Derya is a different shape from everything else in this scan: it is not software Anvil competes with, it is a **service provider inside a market Anvil already builds a bidding module for**.
+
+### 3.25 Derya — `usederya.com` (adjacent — potential channel/integration, not a rival)
+
+One-liner: AI-native freight forwarding — booking, exporter→port, port→port with customs clearance, and final delivery to the importer, coordinated by AI agents.
+
+ICP: importers/exporters wanting a managed international shipment; also sells *to* freight forwarders (lead generation, deal sourcing) and to carriers (pre-qualified, fully-documented loads).
+
+Capability surface: FCL, LCL, and air freight; quote generation "within one business day"; carrier coordination; customs clearance; automated chasing of missing documentation; and **trade financing on shipments above $20,000**. Positions "AI agents in real time to coordinate tasks, answer questions, and maintain team alignment" across the traditional forwarding desk functions (sales, pricing, ops).
+
+Geography: Turkey-based with a partner network; corridors advertised include Sudan–Turkey, Malaysia–Turkey, Brazil–Ukraine. **Not an India-first lane set**, and not the KR/CN/JP group-subsidiary corridors Anvil's primary tenant imports on.
+
+Maturity: early; site is marketing-led, no pricing, no named enterprise logos, no public API/docs found. Treat capability claims as unverified.
+
+Relevance to Anvil: **this is the one entry in the scan that is plausibly a partner rather than a competitor, and the distinction is load-bearing.** Anvil's logistics P4 shipped a freight-bidding module — `freight_consolidations` / `freight_bids` (migration 145), `_lib/freight-consolidation.js` (`estimateContainers` + `consolidatePlans`), and `/api/logistics/consolidations` + `/api/logistics/freight_bids` (build/list/status, quote/award) — which solicits FCL/LCL bids **from forwarders**. Derya *is* a forwarder, on the sell side of that exact transaction. Anvil is the buyer's cockpit; Derya is a vendor Anvil's module would invite to bid.
+
+Three takeaways:
+
+1. **Channel, not chase.** If Derya (or any AI-native forwarder) exposes a quote API, it becomes a bid source for `freight_bids` — turning Anvil's award flow from "email the forwarders" into a live-rate comparison. Worth watching for a public API; there isn't one today.
+2. **The document-chasing pattern is the transferable idea.** "Automatically handles missing documentation" is the same rail Anvil already runs for POs (DocAI extract → validators → chase) applied to shipping docs — B/L, packing list, certificate of origin. Anvil's shipment stack (`shipments`, `shipment_lines` mig 209, `logistics_monitor` mig 206) captures the records but does **not** chase the documents; that gap is real and is Anvil's to close, independent of Derya.
+3. **Trade finance is a genuine adjacency, and out of scope.** Financing shipments >$20k sits beside Anvil's AR/collections line ([[project_payment_reality]]: OEMs paying via SAP AP bank transfer with TDS). Note it; do not build it.
+
+**Verdict: LEARN-ONLY, with a watch item.** No feature overlap — Derya moves cargo, Anvil runs quote-to-cash. Do **not** build forwarding operations. **Watch:** if Derya moves up-stack into shipper-side software (rate management, landed-cost, procurement-adjacent tooling), it stops being a channel and starts overlapping Anvil's logistics module — the same up-stack risk flagged for Spaceflow in §3.24.
+
 ---
 
 ## 4. Cross-cutting themes from the competitor scan

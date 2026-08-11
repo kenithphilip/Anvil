@@ -102,7 +102,7 @@ export const CustomerExtractionLearning: React.FC<{ customerId: string }> = ({ c
                           <td className="mono-sm" style={{ color: "var(--ink-4)" }}>{i + 1}</td>
                           <td className="mono-sm">
                             {part || "—"}
-                            {sap && <div><Chip k="ghost">SAP {sap}</Chip></div>}
+                            {sap && <div title="Customer part number — the buyer's own code for this item"><Chip k="ghost" code><span className="lbl">cust p/n</span>{sap}</Chip></div>}
                           </td>
                           <td className="mono-sm" style={{ maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{desc || "—"}</td>
                           <td className="mono-sm">

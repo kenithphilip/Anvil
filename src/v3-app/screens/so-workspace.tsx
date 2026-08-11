@@ -1197,9 +1197,16 @@ const WiredSOWorkspace = () => {
           <div style={{ marginTop: 2 }}>
             <EditableCell {...cellProps} line={ln} i={i} canonicalKey="itemCode" type="text" placeholder="part / SKU" />
           </div>
+          {/* The buyer's own code for this part. Rendered with <Chip code> so
+              the chip's lowercase transform does not rewrite an identifier on
+              screen, and with the caption in its own <span className="lbl">
+              so it cannot be read as characters appended to the code — both
+              halves of the Aug 2026 "it added characters and ignored case"
+              report. Labelled generically rather than "SAP": most tenants'
+              customers are not on SAP. */}
           {(ln.customerItemCode || ln.customer_item_code) && (
-            <div style={{ marginTop: 2 }}>
-              <Chip k="ghost" code><span className="lbl">SAP</span>{ln.customerItemCode || ln.customer_item_code}</Chip>
+            <div style={{ marginTop: 2 }} title="Customer part number — the buyer's own code for this item">
+              <Chip k="ghost" code><span className="lbl">cust p/n</span>{ln.customerItemCode || ln.customer_item_code}</Chip>
             </div>
           )}
           {mapAffordance(ln, i)}

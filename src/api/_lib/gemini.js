@@ -18,6 +18,10 @@ import { safeFetch } from "./safe-fetch.js";
 import { applyFirewall, redactMessages, capRetrySleep, attemptTimeout } from "./anthropic.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+
+// Gemini 3 family. Matches both the preview spelling ("gemini-3-flash-preview")
+// and the dotted stable one ("gemini-3.6-flash", "gemini-3.1-pro-preview").
+export const IS_GEMINI_3 = /gemini-3(?:[.-]|$)/i;
 const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -174,6 +178,20 @@ export const callGemini = async ({
   // PO PDFs; lower values reduce token cost on simple POs but lose
   // fine-text legibility.
   media_resolution,
+  // Gemini 3 reasoning depth: "LOW" | "MEDIUM" | "HIGH".
+  //
+  // Thinking tokens come out of the SAME maxOutputTokens budget as the answer,
+  // and Gemini 3 models think by DEFAULT (gemini-3.6-flash ships at MEDIUM).
+  // That is why a 13-page / 45-line PO truncated at max_tokens 8000 even though
+  // the line array alone needs only ~4,800 tokens: medium reasoning consumed
+  // the remainder and the JSON was cut mid-array.
+  //
+  // Undefined here so no existing caller changes behaviour — the docai
+  // extraction path opts in explicitly, because structured line-item
+  // extraction is mechanical (responseSchema carries the structure) and every
+  // token spent reasoning is a token not spent on a line item.
+  // Must NOT be combined with the legacy thinking_budget (Google returns 400).
+  thinking_level,
   // Optional run deadline (epoch ms) threaded from the docai pipeline, exactly
   // as callAnthropic takes it. 0 => no deadline and every guard below collapses
   // to the historical behaviour.
@@ -209,11 +227,26 @@ export const callGemini = async ({
   // count vs 2.5 Flash because 3 Flash treats every image at high
   // resolution unless told otherwise; we pin to the env default
   // ("high") to stay in the same cost band as 2.5 was.
+  //
+  // The family test was /3-/, which matches "gemini-3-flash-preview" but NOT
+  // "gemini-3.6-flash" (that reads "3.6-", with no "3-" substring). So this
+  // knob silently stopped applying the moment the deployment moved to
+  // gemini-3.6-flash. IS_GEMINI_3 matches both spellings.
   const resolvedMediaRes = media_resolution
     || process.env.GEMINI_MEDIA_RESOLUTION
     || "high";
-  if (resolvedMediaRes && /3-/.test(model)) {
+  if (resolvedMediaRes && IS_GEMINI_3.test(model)) {
     body.generationConfig.mediaResolution = resolvedMediaRes;
+  }
+
+  // Reasoning depth. See the thinking_level param doc above: Gemini 3 thinks by
+  // default and those tokens come out of maxOutputTokens, so on a long
+  // line-item table the reasoning crowds out the answer. Only sent when the
+  // caller asks for it, so existing callers are untouched.
+  if (thinking_level && IS_GEMINI_3.test(model)) {
+    body.generationConfig.thinkingConfig = {
+      thinkingLevel: String(thinking_level).toUpperCase(),
+    };
   }
 
   const url = GEMINI_BASE + "/" + encodeURIComponent(model) + ":generateContent";

@@ -1081,7 +1081,12 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     system: systemBlocks,
     purpose: "extraction",
     model: selection.model,
-    max_tokens: 2000,
+    // 2000 fits ~18 lines of PO_SCHEMA (21 fields/line, ~107 tokens/line);
+    // real POs run to 45+. Matched to the Gemini adapter's 8000 rather than
+    // raised further: at observed throughput a much larger generation cannot
+    // finish inside RUN_BUDGET_MS (45s) under the 60s function ceiling, so a
+    // bigger budget would just trade truncation for a stranded timeout.
+    max_tokens: 8000,
     tools: [activeTool],
     tool_choice: { type: "tool", name: activeToolName },
     temperature: 0,
@@ -1113,6 +1118,27 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   let parseMethod = "tool_use";
   let parseRepairs = [];
   let parseRetries = 0;
+  // A max_tokens stop mid-tool-call yields a PARTIAL tool_use block: the input
+  // object is present and shaped right, just missing however many line items
+  // did not fit. Accepting it silently is exactly the defect PR #406 fixed on
+  // the Gemini adapter — and this rung is where Gemini's honest
+  // output_truncated failure now falls through to, at a 4x tighter budget
+  // (max_tokens was 2000 = ~18 lines of PO_SCHEMA against POs of 45+).
+  // Fail loudly instead; the run records output_truncated and the operator
+  // sees a failure rather than a short voucher.
+  const stopReason = result.data?.stop_reason || null;
+  if (stopReason === "max_tokens") {
+    return {
+      ok: false,
+      status: result.status,
+      mode,
+      reason: "output_truncated",
+      error: "Claude stopped at max_tokens; the response was truncated and would silently drop line items",
+      raw: result.data,
+      selected_model: selection.model,
+      model_selection_reason: selection.reason,
+    };
+  }
   if (tool && tool.input) {
     out = tool.input;
   } else {

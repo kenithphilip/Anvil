@@ -35,6 +35,40 @@ describe("__test.printedDocumentTotal", () => {
   it("returns null when nothing is labelled (check must no-op, not guess)", () => {
     expect(__test.printedDocumentTotal("no totals here, just 12,345.67 floating")).toBeNull();
   });
+
+  // The original pattern required a qualifier ("grand total", "total amount")
+  // and so missed ordinary phrasings. Measured against a battery of realistic
+  // Indian PO labels it covered ~60%; on a miss the guard no-ops silently,
+  // which on the last line of defence means a short voucher with no warning.
+  // Each of these was a real miss.
+  it.each([
+    ["PO document text. Total: 99,000.00", 99000],
+    ["PO document text. PO Total: 45,000.00", 45000],
+    ["PO document text. Net Total : 12,345.00", 12345],
+    ["PO document text. Order Total: 8,900.50", 8900.5],
+    ["PO document text. Total Order Value: 5,00,000.00", 500000],
+    ["PO document text. Gross Total: 3,333.33", 3333.33],
+    ["PO document text. Total (INR): 6,666.66", 6666.66],
+    ["PO document text. Net Payable: 4,444.44", 4444.44],
+    ["PO document text. Total Purchase Order Value 2,25,000.00", 225000],
+  ])("reads %s", (text, expected) => {
+    expect(__test.printedDocumentTotal(text)).toBeCloseTo(expected, 2);
+  });
+
+  // A subtotal is NOT the grand total. Matching it would understate the
+  // document and fire false blockers on every PO that prints one.
+  it.each([
+    "Purchase order document. Sub Total: 2,222.22",
+    "Purchase order document. Subtotal: 2,222.22",
+    "Purchase order document. Sub-Total: 2,222.22",
+  ])("ignores a subtotal: %s", (text) => {
+    expect(__test.printedDocumentTotal(text)).toBeNull();
+  });
+
+  it("still takes the max, so a section total cannot beat the grand total", () => {
+    const t = "Line section.\nTotal: 80,716.72\nGrand Total: 458,859.52";
+    expect(__test.printedDocumentTotal(t)).toBe(458859.52);
+  });
   it("returns null on absent/short input", () => {
     expect(__test.printedDocumentTotal(null)).toBeNull();
     expect(__test.printedDocumentTotal("")).toBeNull();

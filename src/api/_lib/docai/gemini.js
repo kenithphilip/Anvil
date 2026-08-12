@@ -636,6 +636,15 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     // before the array closes. The truncated JSON was then REPAIRED into
     // valid JSON downstream, so nothing noticed.
     max_tokens: 8000,
+    // Structured line-item extraction is mechanical — responseSchema carries
+    // the structure, so deep reasoning buys little and costs line items.
+    // Gemini 3 thinks at MEDIUM by default and those tokens come out of
+    // max_tokens: a 45-line PO needs only ~4,800 tokens of JSON yet still
+    // truncated at 8000, because reasoning consumed the rest. Pinning low
+    // hands the budget back to the answer (and cuts latency, which matters
+    // against RUN_BUDGET_MS). Env-overridable per deployment; set
+    // GEMINI_THINKING_LEVEL="" to fall back to the model default.
+    thinking_level: process.env.GEMINI_THINKING_LEVEL ?? "low",
     response_schema: schema,
     // Bet 1: Gemini 3 media_resolution knob. Per-tenant override
     // via tenant_settings.docai_gemini_media_resolution (default

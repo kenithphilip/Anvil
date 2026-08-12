@@ -311,7 +311,28 @@ const checkLineCountShortfall = (normalized, opts = {}) => {
 // asks whether the lines we returned account for that money. Verified against
 // the incident document: its four real line totals sum to the printed grand
 // total exactly, so the comparison is arithmetic rather than heuristic.
-const DOC_TOTAL_RE = /(?:grand\s*total|total\s*amount|total\s*invoice\s*value|total\s*po\s*value|net\s*amount\s*payable|amount\s*payable|total\s*value)\s*(?:\([^)]{0,24}\))?\s*[:\-]?\s*(?:INR|Rs\.?|₹|USD|US\$|\$|EUR|€|JPY|KRW)?\s*([0-9][0-9,]{2,}(?:\.[0-9]{1,3})?)/gi;
+// Measured against 20 realistic Indian PO phrasings, the original pattern hit
+// 10/20. The misses were all ordinary: "Total:", "PO Total:", "Order Total:",
+// "Net Total:", "Total (INR):", "Gross Total:". On any of those the guard
+// no-ops silently — and it is the last line of defence, so a miss is a short
+// voucher nobody is warned about.
+//
+// The qualifier is now optional (`(?:grand|net|gross|po|order|...)?\s*total`),
+// which also lets a bare "Total" match. Two deliberate consequences:
+//   - "Sub Total" / "Subtotal" are EXCLUDED by a negative lookbehind. A
+//     subtotal is not the grand total, and matching it would understate the
+//     document and fire false blockers.
+//   - Bare "Total" is a weak label that can appear on a column header or a
+//     per-section line. That is safe here ONLY because printedDocumentTotal
+//     takes the MAXIMUM match in the document, so a section total can never
+//     beat the real grand total. Do not change that max() to a first-match.
+const DOC_TOTAL_RE = /(?<!sub[\s-]?)(?:(?:grand|net|gross|po|order|purchase\s*order|invoice)\s*)?total(?:\s*(?:amount|value|invoice\s*value|po\s*value|order\s*value|purchase\s*order\s*value|amount\s*payable))?\b|net\s*amount\s*payable\b|amount\s*payable\b|net\s*payable\b/gi;
+
+// Matched label -> the money figure that follows it. ANCHORED (^): the money
+// must come straight after the label, separated only by punctuation/currency.
+// Unanchored, prose like "no totals here, just 12,345.67" matched — the word
+// "total" plus any number later in the sentence.
+const MONEY_AFTER_LABEL_RE = /^\s*(?:\([^)]{0,24}\))?\s*[:\-]?\s*(?:INR|Rs\.?|₹|USD|US\$|\$|EUR|€|JPY|KRW)?\s*\(?\s*([0-9][0-9,]{2,}(?:\.[0-9]{1,3})?)/;
 
 // The grand total is the largest labelled figure in the document: a PO that
 // prints per-section subtotals under the same words still yields the true
@@ -319,8 +340,14 @@ const DOC_TOTAL_RE = /(?:grand\s*total|total\s*amount|total\s*invoice\s*value|to
 const printedDocumentTotal = (text) => {
   if (typeof text !== "string" || text.length < 20) return null;
   let best = null;
+  // Two-stage: find a total-ish LABEL, then read the money immediately after
+  // it. One combined pattern cannot express "optional qualifier + optional
+  // suffix" without the suffix alternation swallowing the number.
   for (const m of text.matchAll(DOC_TOTAL_RE)) {
-    const n = Number(String(m[1]).replace(/,/g, ""));
+    const after = text.slice(m.index + m[0].length, m.index + m[0].length + 48);
+    const money = after.match(MONEY_AFTER_LABEL_RE);
+    if (!money) continue;
+    const n = Number(String(money[1]).replace(/,/g, ""));
     if (!Number.isFinite(n) || n <= 0) continue;
     if (best == null || n > best) best = n;
   }

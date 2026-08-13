@@ -106,13 +106,23 @@ export const parseHtmlTables = (html) => {
   const tables = [];
   for (const tbl of String(html || "").match(/<table[\s\S]*?<\/table>/gi) || []) {
     const rows = [];
+    let sawHeaderRow = false;
     for (const tr of tbl.match(/<tr[\s\S]*?<\/tr>/gi) || []) {
       const cells = (tr.match(/<t[hd][\s\S]*?<\/t[hd]>/gi) || []).map(stripTags);
-      if (cells.length) rows.push(cells);
+      if (!cells.length) continue;
+      rows.push(cells);
+      if (/<th[\s>]/i.test(tr)) sawHeaderRow = true;
     }
+    // Synthesise a header from bare <th> ONLY when no <tr> carried one.
+    //
+    // The earlier rule compared the concatenated <th> list against row 0, which
+    // breaks on the real documents: their <thead> holds a `<th colspan="14">Line
+    // Details</th>` banner ABOVE the labels, so row 0 is that banner, the
+    // comparison fails, and a 15-wide synthetic header gets prepended in front
+    // of 14-wide data. Every column then reads one to the left — the parser
+    // returns confidently-shaped garbage instead of nothing, which is worse.
     const ths = (tbl.match(/<th[\s\S]*?<\/th>/gi) || []).map(stripTags);
-    const alreadyHasHeader = rows.length && rows[0].join("|") === ths.join("|");
-    if (ths.length && !alreadyHasHeader) rows.unshift(ths);
+    if (ths.length && !sawHeaderRow) rows.unshift(ths);
     // No <tr> anywhere: chunk the <td> stream by header width. Exact for a
     // rectangular table, which a rendered PO table is.
     if (rows.length <= 1 && ths.length) {
@@ -140,6 +150,46 @@ const headerScore = (row) => {
 const shapeKey = (row) => (row || []).map((c) => c.toLowerCase().replace(/[^a-z]/g, "")).join("|");
 const looksLikeDataRow = (row) => (row || []).some((c) => /^\d+(?:[.,]\d+)?$/.test(String(c).replace(/[,\s]/g, "")));
 
+// The header is the best-scoring row near the top, NOT row 0.
+//
+// Real pages open with a spanning banner — "Line Details", or the buyer's name
+// and GST repeated as a page header — which collapses to a single cell. Taking
+// row 0 blindly either mis-selects that banner or, worse, aligns the data to a
+// header that is one column too wide.
+//
+// The >=4 width test is what rejects a banner: a colspan cell is ONE cell no
+// matter how many columns it spans, and its prose can still contain "ORDER" or
+// "TOTAL" and score hits.
+const HEADER_SEARCH_ROWS = 5;
+const MIN_HEADER_WIDTH = 4;
+export const pickHeaderRow = (rows) => {
+  let best = -1, bestScore = 0;
+  for (let i = 0; i < Math.min(rows.length, HEADER_SEARCH_ROWS); i++) {
+    const row = rows[i] || [];
+    if (row.length < MIN_HEADER_WIDTH) continue;
+    const s = headerScore(row);
+    if (s > bestScore) { bestScore = s; best = i; }
+  }
+  return bestScore >= MIN_HEADER_HITS ? best : -1;
+};
+
+// Continuation pages wrap each row in spacer cells — a leading empty <td>, a
+// trailing one — so the row is wider than the header by exactly the padding
+// (16 cells against a 14-column header, in the document that motivated this).
+//
+// Trim empties from the ends until the widths match. Never trim a NON-empty
+// cell: that would silently drop a real value and shift everything after it.
+// A row that cannot be aligned returns null and is counted, not guessed at.
+export const alignRow = (row, width) => {
+  if (!Array.isArray(row)) return null;
+  if (row.length === width) return row;
+  if (row.length < width) return null;          // cannot invent missing cells
+  let a = 0, b = row.length;
+  while (b - a > width && String(row[a] ?? "").trim() === "") a++;
+  while (b - a > width && String(row[b - 1] ?? "").trim() === "") b--;
+  return b - a === width ? row.slice(a, b) : null;
+};
+
 // First regex that matches any column wins — lets us express preference order.
 const firstIdx = (header, res) => {
   for (const re of res) { const i = header.findIndex((c) => re.test(c)); if (i >= 0) return i; }
@@ -155,18 +205,31 @@ export const normalizeFromHtml = (html) => {
   const tables = parseHtmlTables(html);
   let header = null;
   const rows = [];
-  const diag = { tables: tables.length, matched: 0, continuation: 0, skipped: 0 };
+  const diag = { tables: tables.length, matched: 0, continuation: 0, skipped: 0, misaligned: 0 };
 
   for (const t of tables) {
-    if (headerScore(t[0]) >= MIN_HEADER_HITS && t.length > 1) {
-      if (!header) header = t[0];
+    const hi = pickHeaderRow(t);
+    if (hi >= 0 && t.length > hi + 1) {
+      if (!header) header = t[hi];
       const key = shapeKey(header);
-      // Continuation pages repeat the header; drop the repeats, keep the data.
-      for (const r of t.slice(1)) { if (shapeKey(r) !== key) rows.push(r); }
+      for (const r of t.slice(hi + 1)) {
+        if (shapeKey(r) === key) continue;                 // repeated header
+        const a = alignRow(r, header.length);
+        if (a) rows.push(a); else diag.misaligned++;
+      }
       diag.matched++;
-    } else if (header && t[0] && t[0].length === header.length && looksLikeDataRow(t[0])) {
-      rows.push(...t);           // continuation page that dropped its header
-      diag.continuation++;
+    } else if (header) {
+      // A table with NO column labels anywhere. On these documents that is the
+      // continuation shape: pages after the first carry only a spanning page
+      // banner, so there is nothing to score. Keep the rows that align to the
+      // active header and actually carry numbers; the tax summary and address
+      // blocks land here too and fail one of those two tests.
+      let kept = 0;
+      for (const r of t) {
+        const a = alignRow(r, header.length);
+        if (a && looksLikeDataRow(a)) { rows.push(a); kept++; }
+      }
+      if (kept) diag.continuation++; else diag.skipped++;
     } else {
       diag.skipped++;            // address block, tax summary, page furniture
     }
@@ -419,4 +482,4 @@ export const extract = async ({ url, bytes, filename, mime, settings, hints }) =
 };
 
 // Exported for tests (pure mapping, no network).
-export const __test__ = { parseMarkdownTable, normalizeFromMarkdown, normalizeFromHtml, parseHtmlTables, scoreConfidence, markdownOf, tier, parseVersion, apiKey };
+export const __test__ = { parseMarkdownTable, normalizeFromMarkdown, normalizeFromHtml, parseHtmlTables, pickHeaderRow, alignRow, scoreConfidence, markdownOf, tier, parseVersion, apiKey };

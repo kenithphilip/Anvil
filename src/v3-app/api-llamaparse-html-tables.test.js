@@ -183,3 +183,128 @@ describe("version pinning is tier-aware", () => {
     expect(__test__.parseVersion()).toBe("latest");
   });
 });
+
+// ── the shape the real document actually has ───────────────────────────────
+//
+// Everything above was written against fixtures I INVENTED, and they all passed
+// while the parser returned 1 garbage row out of 18 on the real thing. These
+// fixtures are traced from the stored raw_extract instead (identity replaced,
+// structure preserved), because the structure is where the bugs were:
+//
+//   page 1     <thead> opens with <th colspan="14">Line Details</th> ABOVE the
+//              real 14-cell label row
+//   pages 2-13 no column labels at all — the only <th> is a colspan="16" page
+//              banner, and every data row is 16 cells: blank + 14 + blank
+const REAL_TH = ["Line", "Item Number", "Service Parent Name", "Item Description", "Item Specification",
+  "Need By Date", "Start Date", "End Date", "Quantity", "UOM", "Unit Price", "Other Charges", "Taxes", "Line Total"];
+
+const realCells = (n) => [String(n), `AC${100000 + n}XX01`, "-", `ACME STD<br/>SHANK PN-${n}-90-2`, "-",
+  "3/31/2026", "-", "-", "1.00", "each", "1,000.80", "0.00", "180.14", "1,180.94"];
+
+const realPage1 = (n = 6) => `<table>
+  <thead>
+    <tr><th colspan="14">Line Details</th></tr>
+    <tr>${REAL_TH.map((h) => `<th>${h}</th>`).join("")}</tr>
+  </thead>
+  <tbody>${Array.from({ length: n }, (_, i) => `<tr>${realCells(i + 1).map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody>
+</table>`;
+
+// Banner is a single spanning cell containing multi-line prose — it collapses to
+// ONE cell however many columns it claims to span.
+const realPageN = (start, n = 3) => `<table>
+  <thead><tr><th colspan="16">ACME LTD
+PURCHASE ORDER / CONTRACT / SCHEDULING AGREEMENT
+<sub>Some Plant Address</sub>
+GST - 00XXXXX0000X0XX</th></tr></thead>
+  <tbody>
+    <tr><td colspan="16"></td></tr>
+    ${Array.from({ length: n }, (_, i) => `<tr><td></td>${realCells(start + i).map((c) => `<td>${c}</td>`).join("")}<td></td></tr>`).join("")}
+  </tbody>
+</table>`;
+
+const realDoc = (pages = 5) => realPage1() + "\n\n"
+  + Array.from({ length: pages - 1 }, (_, i) => realPageN(7 + i * 3)).join("\n\n");
+
+describe("the real document shape", () => {
+  it("recovers every line across the banner-only continuation pages", () => {
+    const r = normalizeFromHtml(realDoc(5));
+    expect(r.lines).toHaveLength(6 + 4 * 3);
+    expect(r.diag.matched).toBe(1);          // only page 1 carries labels
+    expect(r.diag.continuation).toBe(4);
+    expect(r.diag.misaligned).toBe(0);
+  });
+
+  it("does not shift columns when a colspan banner sits above the header", () => {
+    // The regression: the banner made row 0 mismatch, a 15-wide synthetic
+    // header was prepended, and every column read one to the left — producing
+    // customerItemCode "Service Parent Name" and quantity 0 for a real row.
+    const l = normalizeFromHtml(realDoc(2)).lines[0];
+    expect(l.customerItemCode).toBe("AC100001XX01");
+    expect(l.description).toBe("ACME STD SHANK PN-1-90-2");
+    expect(l.quantity).toBe(1);
+    expect(l.unitPrice).toBeCloseTo(1000.8, 2);
+    expect(l.line_total).toBeCloseTo(1180.94, 2);
+  });
+
+  it("never emits a header label as a data value", () => {
+    for (const l of normalizeFromHtml(realDoc(5)).lines) {
+      for (const h of REAL_TH) {
+        expect(l.customerItemCode).not.toBe(h);
+        expect(l.description).not.toBe(h);
+      }
+    }
+  });
+
+  it("strips the spacer cells rather than dropping the 16-wide rows", () => {
+    const r = normalizeFromHtml(realPage1(1) + "\n\n" + realPageN(2, 3));
+    expect(r.lines).toHaveLength(4);
+    expect(r.lines[3].customerItemCode).toBe("AC100004XX01");
+  });
+
+  it("still skips a tax summary that follows the line table", () => {
+    const tax = `<table><thead><tr><th>Tax</th><th>Rate</th><th>Amount</th></tr></thead>
+      <tbody><tr><td>CGST</td><td>9</td><td>82,136.77</td></tr></tbody></table>`;
+    const r = normalizeFromHtml(realDoc(3) + "\n\n" + tax);
+    expect(r.lines).toHaveLength(6 + 2 * 3);
+    expect(r.lines.some((l) => /CGST/i.test(l.description || ""))).toBe(false);
+  });
+});
+
+describe("pickHeaderRow", () => {
+  it("skips a single-cell banner and takes the label row below it", () => {
+    const rows = [["Line Details"], REAL_TH, realCells(1)];
+    expect(__test__.pickHeaderRow(rows)).toBe(1);
+  });
+
+  it("returns -1 when a table has no label row, so it can be treated as a continuation", () => {
+    expect(__test__.pickHeaderRow([["ACME LTD PURCHASE ORDER"], realCells(1)])).toBe(-1);
+  });
+
+  it("rejects a banner even when its prose scores hits", () => {
+    // "PURCHASE ORDER ... TOTAL AMOUNT" trips several HEADER_HINTS, but one
+    // spanning cell is still one cell.
+    expect(__test__.pickHeaderRow([["PURCHASE ORDER — TOTAL AMOUNT, QUANTITY AND ITEM DESCRIPTION"]])).toBe(-1);
+  });
+});
+
+describe("alignRow", () => {
+  it("trims a symmetric spacer pair", () => {
+    expect(__test__.alignRow(["", "a", "b", ""], 2)).toEqual(["a", "b"]);
+  });
+
+  it("trims a leading-only spacer", () => {
+    expect(__test__.alignRow(["", "a", "b"], 2)).toEqual(["a", "b"]);
+  });
+
+  it("refuses to trim a non-empty cell, because that silently drops data", () => {
+    expect(__test__.alignRow(["x", "a", "b"], 2)).toBeNull();
+  });
+
+  it("returns null rather than inventing cells for a too-narrow row", () => {
+    expect(__test__.alignRow(["a"], 2)).toBeNull();
+  });
+
+  it("passes an exact-width row straight through", () => {
+    expect(__test__.alignRow(["a", "b"], 2)).toEqual(["a", "b"]);
+  });
+});

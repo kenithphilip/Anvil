@@ -40,20 +40,29 @@ const tier = () => process.env.LLAMAPARSE_TIER || "agentic";
 //   LlamaParseMultipartConfiguration / version / Field required
 // which is exactly how this adapter was failing in production.
 //
-// "latest" tracks whatever LlamaParse currently ships — which means the OUTPUT
-// FORMAT can change with no deploy on our side. That is not hypothetical: the
-// agentic tier moved from pipe tables to <table> markup and this adapter
-// silently returned zero lines on documents it had parsed perfectly, for weeks.
+// "latest" tracks whatever LlamaParse currently ships, so the OUTPUT FORMAT can
+// change with no deploy on our side — and it did: the adapter returned zero
+// lines for weeks on documents it had parsed perfectly, because it only spoke
+// pipe tables. A silent behaviour change in a dependency is the worst kind, so
+// pin by default and bump deliberately.
 //
-// PIN THIS. Set LLAMAPARSE_VERSION to a dated release (the values your
-// LlamaCloud dashboard offers, e.g. "2026-01-08") once a version has been
-// validated, and re-validate deliberately when bumping. We deliberately do NOT
-// hardcode a date here: shipping a version string nobody has verified against
-// this account would trade a silent format change for a hard 400 on every
-// parse. Until it is pinned, normalizeFromMarkdown parses BOTH shapes and
-// parse_format below records which one actually matched, so the next format
-// change is visible in the run row instead of silent.
-const parseVersion = () => process.env.LLAMAPARSE_VERSION || "latest";
+// VERSIONS ARE PER TIER — a version string belongs to exactly one tier, and
+// pairing an agentic version with cost_effective is a validation error. Since
+// LLAMAPARSE_TIER is env-overridable, the pin has to follow the tier rather than
+// being one global constant. Values from the v2 API reference (the current
+// `latest` for each tier); the live list is GET /api/v2/parse/versions.
+const PINNED_VERSION_BY_TIER = {
+  fast: "2026-06-15",
+  cost_effective: "2026-06-26",
+  agentic: "2026-07-15",
+  agentic_plus: "2026-07-08",
+};
+
+// LLAMAPARSE_VERSION overrides (including back to "latest" if a pin ever needs
+// to be abandoned in a hurry). An unrecognised tier falls back to "latest"
+// rather than sending a version that belongs to a different tier.
+const parseVersion = () =>
+  process.env.LLAMAPARSE_VERSION || PINNED_VERSION_BY_TIER[tier()] || "latest";
 
 // Config is the presence of a tenant OR env key (mirrors gemini/unstructured).
 export const isConfigured = (settings) => !!apiKey(settings);
@@ -324,6 +333,40 @@ export const extract = async ({ url, bytes, filename, mime, settings, hints }) =
       tier: tier(),
       version: parseVersion(),
       expand: ["markdown"],
+      // We previously sent NO option groups at all and took every default,
+      // which is how the adapter ended up parsing an output shape nobody chose.
+      output_options: {
+        markdown: {
+          tables: {
+            // Deliberately HTML, not pipe tables. The API reference is
+            // explicit that markdown tables "cannot represent complex
+            // structures like merged cells" — and merged cells are exactly what
+            // these POs are made of (the stacked layout where one logical line
+            // spans four physical rows). Pipe tables would be easier to parse
+            // and would silently lose structure on the hardest documents, which
+            // is the wrong trade. normalizeFromHtml reads this shape.
+            //
+            // Set EXPLICITLY rather than inherited: the adapter previously sent
+            // no output_options at all, so the shape was whatever LlamaParse
+            // defaulted to, and normalizeFromMarkdown only spoke pipe. That
+            // mismatch returned zero lines on a perfectly parsed 13-page PO.
+            output_tables_as_markdown: false,
+            // A PO line-item table that spans 13 pages is ONE table. Without
+            // this, each page arrives as its own table and every continuation
+            // page after the first has no header row — which is precisely the
+            // regression that made chunked extraction return lineItems: [] and
+            // got CHUNK_PAGE_THRESHOLD raised from 10 to 25 (run.js). Letting
+            // LlamaParse stitch it server-side fixes the cause, not the symptom.
+            merge_continued_tables: true,
+          },
+        },
+      },
+      // Bound the job server-side to the same budget we bound the client to.
+      // Without this LlamaParse keeps working — and keeps billing — long after
+      // withTimeout has abandoned the call and the run has already failed.
+      processing_control: {
+        timeouts: { base_in_seconds: Math.max(10, Math.floor(budgetMs / 1000)) },
+      },
     }), budgetMs, "LlamaParse parse");
     const md = markdownOf(result);
     const norm = normalizeFromMarkdown(md);

@@ -57,9 +57,14 @@ describe("LlamaParse v2 requires tier AND version", () => {
   const saved = { ...process.env };
   afterEach(() => { process.env = { ...saved }; });
 
-  it("defaults version to 'latest' so the call is not rejected", () => {
+  // The invariant this test has always guarded is that SOME version is sent —
+  // omitting it 422s the whole parse. It used to be "latest"; that let
+  // LlamaParse change the output shape underneath us with no deploy, which it
+  // did. The default is now a tier-matched pin (see api-llamaparse-html-tables
+  // for the per-tier values); what must never happen is an empty version.
+  it("always sends a version, so the call is not rejected", () => {
     delete process.env.LLAMAPARSE_VERSION;
-    expect(llama.parseVersion()).toBe("latest");
+    expect(llama.parseVersion()).toBeTruthy();
   });
 
   it("honours a pinned dated version for reproducible parses", () => {

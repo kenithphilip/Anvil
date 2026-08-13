@@ -13,7 +13,7 @@
 // codes that api-docai-prompt-tenant-neutrality.test.js forbids appearing in
 // this repo.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { __test__ } from "../api/_lib/docai/llamaparse.js";
 
 const { normalizeFromMarkdown, normalizeFromHtml, parseHtmlTables } = __test__;
@@ -138,5 +138,48 @@ describe("normalizeFromMarkdown falls through to HTML", () => {
     const r = normalizeFromMarkdown("just prose, no tables at all, nothing to parse here");
     expect(r.lines).toHaveLength(0);
     expect(r.diag).toBeTruthy();
+  });
+});
+
+describe("version pinning is tier-aware", () => {
+  // A version string belongs to exactly one tier; pairing an agentic version
+  // with cost_effective is a validation error. LLAMAPARSE_TIER is
+  // env-overridable, so a single global pin would break the moment anyone
+  // changed tier. Values are the v2 API reference's current `latest` per tier.
+  const orig = process.env.LLAMAPARSE_TIER;
+  const origV = process.env.LLAMAPARSE_VERSION;
+  afterEach(() => {
+    if (orig === undefined) delete process.env.LLAMAPARSE_TIER; else process.env.LLAMAPARSE_TIER = orig;
+    if (origV === undefined) delete process.env.LLAMAPARSE_VERSION; else process.env.LLAMAPARSE_VERSION = origV;
+  });
+
+  it.each([
+    ["fast", "2026-06-15"],
+    ["cost_effective", "2026-06-26"],
+    ["agentic", "2026-07-15"],
+    ["agentic_plus", "2026-07-08"],
+  ])("%s pins to %s", (t, v) => {
+    process.env.LLAMAPARSE_TIER = t;
+    delete process.env.LLAMAPARSE_VERSION;
+    expect(__test__.parseVersion()).toBe(v);
+  });
+
+  it("defaults to the agentic pin, matching the default tier", () => {
+    delete process.env.LLAMAPARSE_TIER;
+    delete process.env.LLAMAPARSE_VERSION;
+    expect(__test__.tier()).toBe("agentic");
+    expect(__test__.parseVersion()).toBe("2026-07-15");
+  });
+
+  it("falls back to latest on an unknown tier rather than sending another tier's version", () => {
+    process.env.LLAMAPARSE_TIER = "not_a_tier";
+    delete process.env.LLAMAPARSE_VERSION;
+    expect(__test__.parseVersion()).toBe("latest");
+  });
+
+  it("LLAMAPARSE_VERSION still overrides, so a pin can be abandoned fast", () => {
+    process.env.LLAMAPARSE_TIER = "agentic";
+    process.env.LLAMAPARSE_VERSION = "latest";
+    expect(__test__.parseVersion()).toBe("latest");
   });
 });

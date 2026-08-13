@@ -245,7 +245,13 @@ export const callGemini = async ({
   // caller asks for it, so existing callers are untouched.
   if (thinking_level && IS_GEMINI_3.test(model)) {
     body.generationConfig.thinkingConfig = {
-      thinkingLevel: String(thinking_level).toUpperCase(),
+      // LOWERCASE. Google's REST reference documents the accepted values as
+      // "minimal" | "low" | "medium" | "high" and its curl example sends
+      // {"thinkingConfig": {"thinkingLevel": "low"}}. This was .toUpperCase()
+      // on first write, which risked a 400 on an unknown enum value — and a
+      // 400 here fails the request outright, so it would have broken EVERY
+      // extraction, not just the long ones this setting is aimed at.
+      thinkingLevel: String(thinking_level).toLowerCase(),
     };
   }
 

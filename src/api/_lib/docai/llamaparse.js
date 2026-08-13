@@ -40,10 +40,19 @@ const tier = () => process.env.LLAMAPARSE_TIER || "agentic";
 //   LlamaParseMultipartConfiguration / version / Field required
 // which is exactly how this adapter was failing in production.
 //
-// "latest" tracks the current stable release. Pin a dated version
-// ("2026-01-08", "2025-12-31", …) via LLAMAPARSE_VERSION for reproducible
-// parses — worth doing once a version is validated against the golden set,
-// because "latest" can change parsing behaviour underneath you.
+// "latest" tracks whatever LlamaParse currently ships — which means the OUTPUT
+// FORMAT can change with no deploy on our side. That is not hypothetical: the
+// agentic tier moved from pipe tables to <table> markup and this adapter
+// silently returned zero lines on documents it had parsed perfectly, for weeks.
+//
+// PIN THIS. Set LLAMAPARSE_VERSION to a dated release (the values your
+// LlamaCloud dashboard offers, e.g. "2026-01-08") once a version has been
+// validated, and re-validate deliberately when bumping. We deliberately do NOT
+// hardcode a date here: shipping a version string nobody has verified against
+// this account would trade a silent format change for a hard 400 on every
+// parse. Until it is pinned, normalizeFromMarkdown parses BOTH shapes and
+// parse_format below records which one actually matched, so the next format
+// change is visible in the run row instead of silent.
 const parseVersion = () => process.env.LLAMAPARSE_VERSION || "latest";
 
 // Config is the presence of a tenant OR env key (mirrors gemini/unstructured).
@@ -61,9 +70,151 @@ export const parseMarkdownTable = (md) => {
   return rows;
 };
 
+// ── HTML tables ────────────────────────────────────────────────────────────
+//
+// The agentic tier emits rich tables as <table> MARKUP inside the markdown, not
+// as pipe tables. A real 13-page PO came back as 51,613 characters containing
+// the complete line-item table — Line / Item Number / Item Description /
+// Quantity / UOM / Unit Price / Taxes / Line Total, every row present — and
+// parseMarkdownTable found ZERO pipe rows in it, so the adapter reported "no
+// parsable line-item table" on a document it had parsed perfectly.
+//
+// Nothing in Anvil changed. The adapter sends version: "latest" (see
+// parseVersion below), so LlamaParse changed what its output looks like
+// underneath us. Hence: parse BOTH shapes, and treat neither-shape-parsed as
+// the loud failure it is.
+const stripTags = (s) => String(s)
+  .replace(/<[^>]*>/g, " ")
+  .replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">")
+  .replace(/\s+/g, " ").trim();
+
+// Rows for every <table> in the document. Header recovery matters: emitters
+// differ on whether header cells sit inside a <tr>. Observed in production:
+// <thead> holds bare <th> while <tbody> rows are wrapped. A naive <tr> scan
+// therefore captures data rows but NO header, the first data row becomes row 0,
+// the column-label test fails, and the whole table is discarded.
+export const parseHtmlTables = (html) => {
+  const tables = [];
+  for (const tbl of String(html || "").match(/<table[\s\S]*?<\/table>/gi) || []) {
+    const rows = [];
+    for (const tr of tbl.match(/<tr[\s\S]*?<\/tr>/gi) || []) {
+      const cells = (tr.match(/<t[hd][\s\S]*?<\/t[hd]>/gi) || []).map(stripTags);
+      if (cells.length) rows.push(cells);
+    }
+    const ths = (tbl.match(/<th[\s\S]*?<\/th>/gi) || []).map(stripTags);
+    const alreadyHasHeader = rows.length && rows[0].join("|") === ths.join("|");
+    if (ths.length && !alreadyHasHeader) rows.unshift(ths);
+    // No <tr> anywhere: chunk the <td> stream by header width. Exact for a
+    // rectangular table, which a rendered PO table is.
+    if (rows.length <= 1 && ths.length) {
+      const tds = (tbl.match(/<td[\s\S]*?<\/td>/gi) || []).map(stripTags);
+      for (let i = 0; i + ths.length <= tds.length; i += ths.length) rows.push(tds.slice(i, i + ths.length));
+    }
+    if (rows.length) tables.push(rows);
+  }
+  return tables;
+};
+
+// Column labels that mark a table as the line-item table rather than the
+// vendor/address block or the tax summary that bracket it.
+const HEADER_HINTS = [
+  /\bpart\s*(no|number|code)?\b/i, /\bitem\s*(no|code|number)?\b/i, /\bdescription\b/i,
+  /\bq(ua)?nt(it)?y\b|\bqty\b/i, /\bunit\s*price\b|\brate\b/i, /\bamount\b|\bvalue\b|\btotal\b/i,
+  /\bhsn\b|\bsac\b/i, /\buom\b|\bu\/m\b/i, /\bs\.?\s*no\b|\bsl\.?\s*no\b|\bline\b/i,
+];
+// 3 hits, so a two-column address table that happens to contain "item" loses.
+const MIN_HEADER_HITS = 3;
+const headerScore = (row) => {
+  const joined = (row || []).join(" ");
+  return HEADER_HINTS.reduce((n, re) => n + (re.test(joined) ? 1 : 0), 0);
+};
+const shapeKey = (row) => (row || []).map((c) => c.toLowerCase().replace(/[^a-z]/g, "")).join("|");
+const looksLikeDataRow = (row) => (row || []).some((c) => /^\d+(?:[.,]\d+)?$/.test(String(c).replace(/[,\s]/g, "")));
+
+// First regex that matches any column wins — lets us express preference order.
+const firstIdx = (header, res) => {
+  for (const re of res) { const i = header.findIndex((c) => re.test(c)); if (i >= 0) return i; }
+  return -1;
+};
+const cellNum = (s) => {
+  const n = Number(String(s ?? "").replace(/[^\d.-]/g, ""));
+  return Number.isFinite(n) ? n : null;
+};
+const EMPTY_CELL = /^[-–—]$/;   // this layout writes an absent value as "-"
+
+export const normalizeFromHtml = (html) => {
+  const tables = parseHtmlTables(html);
+  let header = null;
+  const rows = [];
+  const diag = { tables: tables.length, matched: 0, continuation: 0, skipped: 0 };
+
+  for (const t of tables) {
+    if (headerScore(t[0]) >= MIN_HEADER_HITS && t.length > 1) {
+      if (!header) header = t[0];
+      const key = shapeKey(header);
+      // Continuation pages repeat the header; drop the repeats, keep the data.
+      for (const r of t.slice(1)) { if (shapeKey(r) !== key) rows.push(r); }
+      diag.matched++;
+    } else if (header && t[0] && t[0].length === header.length && looksLikeDataRow(t[0])) {
+      rows.push(...t);           // continuation page that dropped its header
+      diag.continuation++;
+    } else {
+      diag.skipped++;            // address block, tax summary, page furniture
+    }
+  }
+  if (!header) return { lines: [], diag };
+
+  // Order matters. A naive /desc|name/ matches "Service Parent Name" — which is
+  // "-" on every row of the observed layout — BEFORE "Item Description".
+  const itemIdx  = firstIdx(header, [/item\s*(no|code|number)/i]);
+  const descIdx  = firstIdx(header, [/item\s*desc/i, /^description$/i, /desc/i]);
+  const specIdx  = firstIdx(header, [/item\s*spec|specification/i]);
+  const partIdx  = firstIdx(header, [/part\s*(no|number|code)/i, /sku|material|catalog/i]);
+  const qtyIdx   = firstIdx(header, [/q(ua)?nt|qty/i]);
+  const priceIdx = firstIdx(header, [/unit\s*price/i, /^rate$/i, /^price$/i]);
+  const uomIdx   = firstIdx(header, [/uom|u\/m/i]);
+  const hsnIdx   = firstIdx(header, [/hsn|sac/i]);
+  // Money columns make completeness EXACT: sum(lineTotal) against the printed
+  // document total, with no per-unit tax reconstruction needed.
+  const taxIdx   = firstIdx(header, [/^taxes?$/i, /tax\s*amount/i]);
+  const totalIdx = firstIdx(header, [/line\s*total/i, /^total$/i, /^amount$/i]);
+
+  const pick = (r, i) => {
+    if (i < 0) return null;
+    const v = (r[i] ?? "").trim();
+    return !v || EMPTY_CELL.test(v) ? null : v;
+  };
+
+  const lines = [];
+  for (const r of rows) {
+    if (!r.length) continue;
+    const li = {
+      partNumber: pick(r, partIdx),
+      customerItemCode: pick(r, itemIdx),
+      description: pick(r, descIdx),
+      specification: pick(r, specIdx),
+      quantity: qtyIdx >= 0 ? cellNum(r[qtyIdx]) : null,
+      unitPrice: priceIdx >= 0 ? cellNum(r[priceIdx]) : null,
+      uom: pick(r, uomIdx),
+      hsn: pick(r, hsnIdx),
+      tax_amount: taxIdx >= 0 ? cellNum(r[taxIdx]) : null,
+      line_total: totalIdx >= 0 ? cellNum(r[totalIdx]) : null,
+    };
+    // Identity AND money, else it is page furniture, not a line item.
+    if ((li.partNumber || li.customerItemCode || li.description) &&
+        (li.quantity != null || li.unitPrice != null)) lines.push(li);
+  }
+  return { lines, diag };
+};
+
 export const normalizeFromMarkdown = (md) => {
   const rows = parseMarkdownTable(md);
-  if (rows.length < 2) return { lines: [] };
+  // No pipe table? Try HTML before giving up — the agentic tier emits <table>.
+  if (rows.length < 2) {
+    const html = normalizeFromHtml(md);
+    if (html.lines.length) return html;
+    return { lines: [], diag: html.diag };
+  }
   const header = rows[0].map((h) => h.toLowerCase());
   const idx = (re) => header.findIndex((h) => re.test(h));
   const partIdx = idx(/(part|sku|item|catalog|material)/);
@@ -175,7 +326,8 @@ export const extract = async ({ url, bytes, filename, mime, settings, hints }) =
       expand: ["markdown"],
     }), budgetMs, "LlamaParse parse");
     const md = markdownOf(result);
-    const { lines } = normalizeFromMarkdown(md);
+    const norm = normalizeFromMarkdown(md);
+    const { lines } = norm;
     // Zero parsed line items is not a success. Returning ok:true here made this
     // adapter the dispatcher's `last` result, so a run in which every real
     // extractor had already hard-failed was reported as a soft "low confidence
@@ -185,8 +337,18 @@ export const extract = async ({ url, bytes, filename, mime, settings, hints }) =
       return {
         ok: false,
         reason: "empty_lines",
-        error: "LlamaParse found no parsable line-item table (" + md.length + " chars of markdown)",
-        raw: { job_id: result?.job?.id || null, tier: tier(), markdown: md, chars: md.length },
+        error: "LlamaParse found no parsable line-item table (" + md.length + " chars of markdown"
+          + (norm.diag ? "; tables=" + norm.diag.tables + " matched=" + norm.diag.matched
+             + " skipped=" + norm.diag.skipped : "; no pipe rows and no <table> markup") + ")",
+        raw: {
+          job_id: result?.job?.id || null, tier: tier(), version: parseVersion(),
+          markdown: md, chars: md.length,
+          // Which table shape the parser actually found. A change here between
+          // runs is a LlamaParse output-format change, and is the single most
+          // useful thing to know when this adapter starts returning nothing.
+          parse_format: /<table/i.test(md) ? "html" : (/^\s*\|/m.test(md) ? "pipe" : "none"),
+          table_diag: norm.diag || null,
+        },
       };
     }
     const overall = scoreConfidence(lines);
@@ -214,4 +376,4 @@ export const extract = async ({ url, bytes, filename, mime, settings, hints }) =
 };
 
 // Exported for tests (pure mapping, no network).
-export const __test__ = { parseMarkdownTable, normalizeFromMarkdown, scoreConfidence, markdownOf, tier, parseVersion, apiKey };
+export const __test__ = { parseMarkdownTable, normalizeFromMarkdown, normalizeFromHtml, parseHtmlTables, scoreConfidence, markdownOf, tier, parseVersion, apiKey };

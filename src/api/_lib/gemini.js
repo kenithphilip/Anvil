@@ -22,6 +22,36 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 // Gemini 3 family. Matches both the preview spelling ("gemini-3-flash-preview")
 // and the dotted stable one ("gemini-3.6-flash", "gemini-3.1-pro-preview").
 export const IS_GEMINI_3 = /gemini-3(?:[.-]|$)/i;
+
+// mediaResolution is a protobuf ENUM, not a free string: the wire value must be
+// the full "MEDIA_RESOLUTION_*" name. Sending the bare word 400s the request:
+//
+//   Invalid value at 'generation_config.media_resolution'
+//   (...v1beta.GenerationConfig.MediaResolution), "high"
+//
+// Anvil stores the friendly word ("high") in tenant_settings and
+// GEMINI_MEDIA_RESOLUTION, and passed it through verbatim. That was latent for
+// as long as the family test was /3-/ — which does not match "gemini-3.6-flash"
+// — so the knob was never actually sent. Widening the regex to IS_GEMINI_3 made
+// it start applying, and Gemini began 400ing in ~100ms on EVERY call: not one
+// document, the whole primary adapter, silently demoted to the fallbacks.
+//
+// So translate at the wire edge rather than migrating the stored vocabulary.
+// Already-prefixed values pass through, which keeps the escape hatch open if an
+// operator sets the raw enum in env.
+const MEDIA_RESOLUTION_ENUM = {
+  low: "MEDIA_RESOLUTION_LOW",
+  medium: "MEDIA_RESOLUTION_MEDIUM",
+  high: "MEDIA_RESOLUTION_HIGH",
+  ultra_high: "MEDIA_RESOLUTION_ULTRA_HIGH",
+};
+export const toMediaResolutionEnum = (v) => {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+  if (/^MEDIA_RESOLUTION_[A-Z_]+$/.test(s)) return s;
+  return MEDIA_RESOLUTION_ENUM[s.toLowerCase()] || null;
+};
+
 const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -236,7 +266,19 @@ export const callGemini = async ({
     || process.env.GEMINI_MEDIA_RESOLUTION
     || "high";
   if (resolvedMediaRes && IS_GEMINI_3.test(model)) {
-    body.generationConfig.mediaResolution = resolvedMediaRes;
+    const mr = toMediaResolutionEnum(resolvedMediaRes);
+    // An unmappable word (typo in env, or a value some future admin build lets
+    // through) must NOT be forwarded — that is the 400 we are fixing. Omitting
+    // the field falls back to Google's own default, which is what shipped for
+    // every release before the knob started applying.
+    //
+    // ULTRA_HIGH is documented as per-PART only; at generationConfig level it is
+    // rejected. Dropping it here means a tenant configured that way gets a
+    // working extraction at the default resolution instead of a hard 400 on
+    // every document.
+    if (mr && mr !== "MEDIA_RESOLUTION_ULTRA_HIGH") {
+      body.generationConfig.mediaResolution = mr;
+    }
   }
 
   // Reasoning depth. See the thinking_level param doc above: Gemini 3 thinks by

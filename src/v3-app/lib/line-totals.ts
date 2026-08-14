@@ -114,7 +114,30 @@ export const computeLineTotals = (line: Record<string, unknown> | null | undefin
     return { qty, rate, taxable, tax, aux, lineTotal, source: "explicit", components };
   }
 
-  // Path 2: gst_pct legacy fast-path.
+  // Path 2: absolute per-line tax, read straight off a table column.
+  //
+  // A table parser reads "Taxes 180.14 | Line Total 1,180.94" off the page as
+  // ABSOLUTE per-line figures. Everything above models per-UNIT components,
+  // which is what an LLM reconstructs from a stacked layout — so multiplying
+  // these by qty would double-count. They are a separate path for that reason.
+  //
+  // This existed nowhere before, so llamaparse's tax column was silently
+  // dropped: a 44-line PO displayed Rs 15,15,691.80 (taxable only) against a
+  // printed Rs 18,25,261.52. Deliberately gated on taxTotal being present, so
+  // every line that lacks it keeps its previous behaviour exactly.
+  const taxTotal = Number(ln.taxTotal ?? 0) || 0;
+  if (taxTotal > 0) {
+    const printedTotal = Number(ln.lineTotal ?? 0) || 0;
+    const tax = round2(taxTotal);
+    // Trust the printed line total when the document gives one; anything it
+    // carries beyond taxable + tax is auxiliary cost (freight, tooling) rather
+    // than something to discard.
+    const lineTotal = printedTotal > 0 ? round2(printedTotal) : round2(taxable + tax);
+    const aux = printedTotal > 0 ? round2(Math.max(0, printedTotal - taxable - tax)) : 0;
+    return { qty, rate, taxable, tax, aux, lineTotal, source: "lineTotal", components: {} };
+  }
+
+  // Path 3: gst_pct legacy fast-path.
   const gstPct = Number(ln.gst_pct ?? ln.gstRate ?? ln.rate_of_duty_pct ?? 0) || 0;
   if (gstPct > 0) {
     const tax = round2((taxable * gstPct) / 100);

@@ -12,6 +12,7 @@ import { getRecent, clearRecent, type RecentItem } from "../lib/recent-items";
 import { AnvilBackend } from "../lib/api";
 import { Prefs } from "../lib/preferences";
 import { signOutAndRedirect } from "../lib/session";
+import { shortcutLabel, shortcutAria } from "../lib/platform";
 import type { NavGroup, RoleEntry, NavBadge } from "../lib/nav";
 import type { ShellTelemetry, BadgeMap } from "../lib/telemetry";
 
@@ -546,10 +547,10 @@ export const Shell: React.FC<ShellProps> = ({
         ))}
       </div>
 
-      <button type="button" className="head-search" onClick={onCmdK} aria-label="Open search (Cmd+K)">
+      <button type="button" className="head-search" onClick={onCmdK} aria-label={`Global search (${shortcutAria("K")})`}>
         {Icon.search}
-        <span>Search orders, customers, items, jobs…</span>
-        <kbd>⌘K</kbd>
+        <span>Global search</span>
+        <kbd>{shortcutLabel("K")}</kbd>
       </button>
 
       <button type="button" className="head-pill tenant" onClick={onTenant} title="Switch tenant" aria-label={`Switch tenant (current: ${tenant?.code || "TENANT"})`}>

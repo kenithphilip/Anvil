@@ -324,8 +324,24 @@ button { cursor: pointer; }
   margin-left: auto;
   text-align: left;
 }
-.head-search > span { flex: 1; text-align: left; }
+/* The label must never wrap. The container is a fixed 28px tall, so a label
+ * that wraps to two or three lines overflows the button instead of growing it
+ * — which is exactly what the old "Search orders, customers, items, jobs…"
+ * did at tablet widths. min-width:0 is required for the ellipsis: a flex item
+ * defaults to min-width:auto and refuses to shrink below its content. */
+.head-search > span {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* "Ctrl K" is wider than "⌘K" — hold the key cap at its natural width and let
+ * the label take the squeeze, never the other way round. */
 .head-search kbd {
+  flex: none;
+  white-space: nowrap;
   font-family: var(--mono);
   font-size: 10px;
   padding: 2px 5px;

@@ -34,6 +34,7 @@ import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useStat
 import { Banner, Chip } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { modKeyLabel } from "../lib/platform";
 import {
   ReviewPaneSelectionProvider,
   useReviewPaneSelection,
@@ -665,7 +666,7 @@ export const ReviewFieldsPane: React.FC<{
             {Icon.check} mark all correct
           </button>
           {keyboardNav && (
-            <span className="mono-sm rp-kbd-hint" title="Keyboard: J/K move · Y confirm · N flag · ⌘↵ all">
+            <span className="mono-sm rp-kbd-hint" title={`Keyboard: J/K move · Y confirm · N flag · ${modKeyLabel()}+Enter all`}>
               J/K · Y · N
             </span>
           )}

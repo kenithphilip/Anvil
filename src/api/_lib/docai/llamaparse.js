@@ -250,6 +250,12 @@ export const normalizeFromHtml = (html) => {
   // document total, with no per-unit tax reconstruction needed.
   const taxIdx   = firstIdx(header, [/^taxes?$/i, /tax\s*amount/i]);
   const totalIdx = firstIdx(header, [/line\s*total/i, /^total$/i, /^amount$/i]);
+  // The printed line number, when the document numbers its own rows. Purely
+  // opportunistic — plenty of layouts do not — but when it IS there it is an
+  // independent count of how many lines the document claims, which is the one
+  // signal that can catch a row the PARSER never saw. Must be matched after
+  // totalIdx so /^line\s*total/ cannot be stolen by /^line$/.
+  const lineNoIdx = firstIdx(header, [/^line$/i, /^line\s*(no|num|item)/i, /^s\.?\s*no/i, /^sl\.?\s*no/i]);
 
   const pick = (r, i) => {
     if (i < 0) return null;
@@ -258,9 +264,26 @@ export const normalizeFromHtml = (html) => {
   };
 
   const lines = [];
+  // CONSERVATION. Every data row the parser accepted must become a line, or we
+  // must be able to say how many did not. `rows` has already had headers and
+  // repeats removed, so anything dropped below is dropped by OUR guard, not by
+  // the document. Without this count a silent partial read is indistinguishable
+  // from a short PO.
+  let rowsConsidered = 0;
+  let rowsRejected = 0;
   for (const r of rows) {
     if (!r.length) continue;
+    rowsConsidered++;
     const li = {
+      // PROVENANCE. These values came from LABELLED COLUMNS in a table, not
+      // from prose an LLM interpreted. Downstream repair heuristics need to
+      // know the difference: in a structured table the columns are
+      // authoritative, and that includes their ABSENCE. There is no part-number
+      // column in this layout, so partNumber is legitimately null — mining the
+      // description for one produced "90-2" out of "...TWS-092-\n90-2", a
+      // fragment split across a cell line-wrap that is not a part number at all.
+      _source: "table_columns",
+      lineNo: lineNoIdx >= 0 ? cellNum(r[lineNoIdx]) : null,
       partNumber: pick(r, partIdx),
       customerItemCode: pick(r, itemIdx),
       description: pick(r, descIdx),
@@ -275,7 +298,14 @@ export const normalizeFromHtml = (html) => {
     // Identity AND money, else it is page furniture, not a line item.
     if ((li.partNumber || li.customerItemCode || li.description) &&
         (li.quantity != null || li.unitPrice != null)) lines.push(li);
+    else rowsRejected++;
   }
+  diag.rows_considered = rowsConsidered;
+  diag.rows_rejected = rowsRejected;
+  // Highest printed line number seen. On a numbered document this is what the
+  // page itself claims the line count to be.
+  const maxLineNo = lines.reduce((m, l) => (Number.isFinite(l.lineNo) && l.lineNo > m ? l.lineNo : m), 0);
+  if (maxLineNo > 0) diag.max_line_no = maxLineNo;
   return { lines, diag };
 };
 
@@ -471,10 +501,40 @@ export const extract = async ({ url, bytes, filename, mime, settings, hints }) =
         classification: "po",
         customer: null,
         lines,
+        // CONSERVATION, carried onto the SUCCESS path.
+        //
+        // These counters existed already and were emitted only when the parse
+        // FAILED — i.e. never at the moment they matter. A run that reports
+        // `ok` while having quietly dropped rows is exactly the case you cannot
+        // diagnose after the fact, and that is the case we hit: 44 of 45 lines,
+        // status ok, validator clean, and no way to tell whether the 45th was
+        // lost by LlamaParse or by us.
+        //
+        // stated_line_count is populated ONLY from a printed line number. It is
+        // deliberately not inferred from row counts, because a count derived
+        // from the same rows it is meant to police proves nothing.
+        parse_conservation: {
+          rows_considered: norm.diag?.rows_considered ?? null,
+          rows_rejected: norm.diag?.rows_rejected ?? null,
+          lines_emitted: lines.length,
+          tables_matched: norm.diag?.matched ?? null,
+          tables_skipped: norm.diag?.skipped ?? null,
+          rows_misaligned: norm.diag?.misaligned ?? null,
+          max_line_no: norm.diag?.max_line_no ?? null,
+        },
+        ...(norm.diag?.max_line_no ? { stated_line_count: norm.diag.max_line_no } : {}),
       },
       confidences,
       reason: "ok",
-      raw: { job_id: result?.job?.id || null, tier: tier(), markdown: md, chars: md.length },
+      raw: {
+        job_id: result?.job?.id || null, tier: tier(), markdown: md, chars: md.length,
+        // Same two fields the failure path records. A format change is only
+        // visible if we keep them when the parse SUCCEEDS too — by the time it
+        // starts failing, the run that first drifted is long gone.
+        version: parseVersion(),
+        parse_format: /<table/i.test(md) ? "html" : (/^\s*\|/m.test(md) ? "pipe" : "none"),
+        table_diag: norm.diag || null,
+      },
     };
   } catch (err) {
     return { ok: false, reason: "adapter_threw", error: String(err?.message || err) };

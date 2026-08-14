@@ -24,6 +24,7 @@ import * as gemini from "./gemini.js";
 import * as office from "./office.js";
 import * as llamaparse from "./llamaparse.js";
 import * as openrouterAdapter from "./openrouter.js";
+import { conformLines } from "./line-schema.js";
 import { allowedToCall, recordCall } from "../cost_guard.js";
 import { serviceClient } from "../supabase.js";
 import { rankAdaptersForCustomer } from "./adapter-learning.js";
@@ -405,6 +406,21 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
       continue;
     }
     const latency_ms = Date.now() - t0;
+    // Schema boundary. Every adapter's line vocabulary is reconciled with the
+    // canonical shape HERE, once, rather than each consumer guessing at the
+    // dialect in front of it. Before this, llamaparse's `line_total` +
+    // `tax_amount` reached computeLineTotals and the completeness guard, both
+    // of which read different names, and the whole tax column was silently
+    // dropped on a run that reported ok.
+    //
+    // Applied to every adapter, not just the one that misbehaved: the point is
+    // that adapter #11 cannot reintroduce this without CI saying so.
+    let schemaDiag = null;
+    if (out?.ok && out.normalized) {
+      const conformed = conformLines(out.normalized);
+      out.normalized = conformed.normalized;
+      schemaDiag = conformed.diag;
+    }
     const conf = overallConfidence(out.confidences);
     // Bet 1 (May 2026): confidence threshold is now per-tenant
     // (tenant_settings.docai_fallback_confidence, default 0.85).
@@ -431,6 +447,10 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
         ...(out.reason ? { reason: out.reason } : {}),
         ...(out.error ? { error: String(out.error).slice(0, 500) } : {}),
       }),
+      // Only present when the adapter spoke a dialect. An `unknown` key here
+      // is a field the adapter emitted that NOTHING downstream reads — the
+      // exact silent-loss shape that cost an entire tax column.
+      ...(schemaDiag ? { schema: schemaDiag } : {}),
     });
     // Telemetry: record the call against today's counter so
     // /api/docai/usage shows live usage and the guard locks the

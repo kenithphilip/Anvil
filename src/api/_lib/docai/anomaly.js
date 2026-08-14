@@ -373,6 +373,25 @@ const lineGross = (l) => {
     if (v != null && v > 0) { perUnit += v; taxSeen = true; }
   }
   if (taxSeen) return { taxable, gross: taxable + qty * perUnit, taxSeen: true };
+
+  // Absolute per-line figures, as a TABLE parser reads them off the page
+  // ("Taxes 180.14 | Line Total 1,180.94"). NOT multiplied by qty — the block
+  // above is per-unit, these are per-line, and conflating them double-counts.
+  //
+  // Their absence here is why this guard went silent on a PO that was short a
+  // whole line: llamaparse's tax column was invisible to it, so `taxSeen`
+  // stayed false, the MAX_TAX_INFLATION allowance meant for tax-less
+  // extractions was applied to a tax-inclusive printed total, and coverage
+  // came out at 107.95% against a document we had under-read by Rs 36,746.
+  const printedTotal = numberOrNull(l?.lineTotal);
+  const taxTotal = numberOrNull(l?.taxTotal);
+  if (printedTotal != null && printedTotal > 0) {
+    return { taxable, gross: printedTotal, taxSeen: taxTotal != null && taxTotal > 0 };
+  }
+  if (taxTotal != null && taxTotal > 0) {
+    return { taxable, gross: taxable + taxTotal, taxSeen: true };
+  }
+
   const pct = numberOrNull(l?.gst_pct);
   if (pct != null && pct > 0) return { taxable, gross: taxable * (1 + pct / 100), taxSeen: true };
   return { taxable, gross: taxable, taxSeen: false };
@@ -420,6 +439,80 @@ const checkDocumentTotalShortfall = (normalized, opts = {}) => {
       + " extracted line" + (lines.length === 1 ? "" : "s") + " account for only " + acct.toFixed(2)
       + " (" + (coverage * 100).toFixed(1) + "%) — line items are probably missing or mis-read",
   }];
+};
+
+// CONSERVATION: rows the parser accepted vs lines it emitted.
+//
+// The one completeness invariant that needs to know NOTHING about the
+// document. It does not require a printed total, a declared line count, or any
+// layout convention — only that a parser which accepted N data rows produced N
+// lines. Any gap is our defect, on any format, from any adapter, including
+// formats nobody has seen yet.
+//
+// That independence is the point. Every other detector in this file consumes
+// something the DOCUMENT or the MODEL supplied, so each has a blind spot the
+// document controls. This one has no such dependency.
+//
+// Its limit, stated plainly: it cannot see a row the parser never received.
+// A row LlamaParse itself failed to emit is invisible here — that is what
+// checkDocumentTotalShortfall and the printed line count are for. The three are
+// complementary and none subsumes the others.
+const checkParserConservation = (normalized, opts = {}) => {
+  if (opts.parserConservationEnabled === false) return [];
+  const c = normalized?.parse_conservation;
+  if (!c || typeof c !== "object") return [];
+  const considered = numberOrNull(c.rows_considered);
+  const emitted = numberOrNull(c.lines_emitted);
+  const misaligned = numberOrNull(c.rows_misaligned) ?? 0;
+  const out = [];
+
+  // Rows the parser could not align to the header. It refuses to guess at
+  // these rather than emit a column-shifted line, so they are a KNOWN loss —
+  // and a known loss must be reported, not swallowed.
+  if (misaligned > 0) {
+    out.push({
+      code: "parser_rows_misaligned",
+      severity: "warn",
+      path: "lines",
+      actual: emitted,
+      expected: (emitted ?? 0) + misaligned,
+      detail: misaligned + " table row" + (misaligned === 1 ? "" : "s")
+        + " could not be aligned to the header and were skipped rather than"
+        + " emitted with shifted columns — the document may carry line items this run does not",
+    });
+  }
+
+  if (considered != null && emitted != null && considered > emitted) {
+    const dropped = considered - emitted;
+    out.push({
+      code: "parser_conservation_gap",
+      severity: "warn",
+      path: "lines",
+      actual: emitted,
+      expected: considered,
+      detail: "parser accepted " + considered + " data row" + (considered === 1 ? "" : "s")
+        + " but emitted " + emitted + " line" + (emitted === 1 ? "" : "s")
+        + " (" + dropped + " dropped as page furniture) — verify none was a real line item",
+    });
+  }
+
+  // The document numbers its own rows and the highest number exceeds what we
+  // produced. Unlike the two above, this CAN catch a row the parser never saw.
+  const maxLineNo = numberOrNull(c.max_line_no);
+  if (maxLineNo != null && emitted != null && maxLineNo > emitted) {
+    out.push({
+      code: "printed_line_number_gap",
+      severity: "error",
+      path: "lines",
+      actual: emitted,
+      expected: maxLineNo,
+      detail: "the document numbers its line items up to " + maxLineNo
+        + " but extraction produced " + emitted
+        + " — " + (maxLineNo - emitted) + " printed line" + (maxLineNo - emitted === 1 ? "" : "s")
+        + " missing",
+    });
+  }
+  return out;
 };
 
 const checkCurrencyConsistency = (normalized) => {
@@ -476,6 +569,7 @@ export const detectAnomalies = (normalized, opts = {}) => {
   anomalies.push(...checkTotals(normalized));
   anomalies.push(...checkLineCountShortfall(normalized, opts));
   anomalies.push(...checkDocumentTotalShortfall(normalized, opts));
+  anomalies.push(...checkParserConservation(normalized, opts));
 
   const summary = { error: 0, warn: 0, info: 0, total: anomalies.length };
   for (const a of anomalies) {
@@ -490,4 +584,4 @@ export const detectAnomalies = (normalized, opts = {}) => {
   };
 };
 
-export const __test = { lineArithmetic, linePriceSanity, lineQtySanity, lineHsnSanity, lineGstSanity, checkTotals, checkLineCountShortfall, checkDocumentTotalShortfall, printedDocumentTotal, lineGross, KNOWN_GST_SLABS };
+export const __test = { lineArithmetic, linePriceSanity, lineQtySanity, lineHsnSanity, lineGstSanity, checkTotals, checkLineCountShortfall, checkDocumentTotalShortfall, checkParserConservation, printedDocumentTotal, lineGross, KNOWN_GST_SLABS };

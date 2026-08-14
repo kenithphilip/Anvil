@@ -134,6 +134,26 @@ export const splitPartFromDescription = (text, opts = {}) => {
 // line the model already split correctly is left untouched.
 export const repairLinePartCode = (line, opts = {}) => {
   if (!line || typeof line !== "object") return line;
+
+  // STRUCTURED COLUMNS ARE AUTHORITATIVE — INCLUDING WHEN THEY ARE ABSENT.
+  //
+  // This repair exists for PROSE: an LLM reading a stacked layout hands back
+  // "OBARA STD SHANK TWS-092-90-2" as one blob and the code has to be recovered
+  // from it. That is a reasonable guess about unstructured text.
+  //
+  // It is not a reasonable guess about a table. When a parser has read labelled
+  // columns, a missing partNumber means the DOCUMENT HAS NO PART-NUMBER COLUMN,
+  // not that the code is hiding in the description. Guessing anyway produced
+  // partNumber "90-2" from a description whose cell wrapped as
+  // "OBARA STD\nSHANK TWS-092-\n90-2" — the splitter took the last code-shaped
+  // token, which was the tail of a hyphenated code cut in half by the wrap.
+  // The result was a part number that matches nothing, and a description left
+  // holding the other half.
+  //
+  // A structured line with a real identifier already has one (customerItemCode
+  // from its own column). Leaving partNumber null is the honest answer.
+  if (line._source === "table_columns") return line;
+
   const current = line.partNumber;
   if (current != null && looksLikePartCode(current)) return line;
 

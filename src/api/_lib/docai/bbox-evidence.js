@@ -103,30 +103,64 @@ export const buildBlockIndex = (layer) => {
   return blocks;
 };
 
-// Score how well a line matches a block: count the number of
-// line's significant tokens that appear in the block's text.
-// Tiebreak by block confidence.
-const scoreLineBlock = (lineTokens, block) => {
-  if (!lineTokens.length || !block?.text) return { overlap: 0, conf: 0 };
+// Every string on a line that could identify it in the document.
+//
+// customerItemCode was MISSING from this list, which is most of why the
+// overlay was wrong: the list read `line.itemCode` and `line.customer_part_number`,
+// neither of which any adapter emits. The one genuinely unique string on the
+// row — "A12060OBAR010003" — was therefore never used, leaving only a
+// description that repeats verbatim across five consecutive lines.
+const lineIdentityText = (line) => [
+  line.partNumber, line.customerItemCode, line.itemCode,
+  line.customer_part_number, line.description,
+].filter(Boolean).join(" ");
+
+// Inverse document frequency over the block corpus.
+//
+// Plain overlap COUNTING is what let three generic words beat one unique code:
+// "obara std shank" (on every row of the page) scored 3, while the item code
+// that appears exactly once scored 1, so the common words won and every line in
+// the group collapsed onto the same block. Weighting by rarity inverts that —
+// a token occurring in one block is worth far more than one occurring in forty.
+const buildIdf = (blockIndex) => {
+  const df = new Map();
+  for (const b of blockIndex) {
+    for (const t of new Set(significantTokens(b.text))) df.set(t, (df.get(t) || 0) + 1);
+  }
+  const n = Math.max(1, blockIndex.length);
+  return (t) => Math.log((n + 1) / ((df.get(t) || 0) + 1)) + 1;
+};
+
+// Score = summed IDF of the line's tokens present in the block. `overlap` is
+// kept alongside as the raw count, because it is what the UI reports and what
+// the existing tests assert on.
+const scoreLineBlock = (lineTokens, block, idf) => {
+  if (!lineTokens.length || !block?.text) return { overlap: 0, weight: 0, conf: 0 };
   const blockTokens = new Set(significantTokens(block.text));
   let overlap = 0;
-  for (const t of lineTokens) if (blockTokens.has(t)) overlap++;
-  return { overlap, conf: Number(block.confidence) || 0 };
+  let weight = 0;
+  for (const t of lineTokens) {
+    if (!blockTokens.has(t)) continue;
+    overlap++;
+    weight += idf ? idf(t) : 1;
+  }
+  return { overlap, weight, conf: Number(block.confidence) || 0 };
 };
 
 // Find the best block for one line; returns the evidence object
 // or null when no block crosses the threshold.
-export const findEvidenceForLine = (line, blockIndex) => {
+export const findEvidenceForLine = (line, blockIndex, idf = null) => {
   if (!line || !blockIndex?.length) return null;
-  const lineText = [line.partNumber, line.itemCode, line.description, line.customer_part_number].filter(Boolean).join(" ");
-  const tokens = significantTokens(lineText);
+  const tokens = significantTokens(lineIdentityText(line));
   if (!tokens.length) return null;
+  const weigh = idf || buildIdf(blockIndex);
   let best = null;
   for (const b of blockIndex) {
-    const s = scoreLineBlock(tokens, b);
+    const s = scoreLineBlock(tokens, b, weigh);
     if (s.overlap < MIN_MATCH_TOKEN_OVERLAP) continue;
-    if (!best || s.overlap > best.overlap || (s.overlap === best.overlap && s.conf > best.conf)) {
-      best = { ...b, overlap: s.overlap, conf: s.conf };
+    if (!best || s.weight > best.weight
+      || (s.weight === best.weight && s.conf > best.conf)) {
+      best = { ...b, overlap: s.overlap, weight: s.weight, conf: s.conf };
     }
   }
   if (!best) return null;
@@ -135,6 +169,7 @@ export const findEvidenceForLine = (line, blockIndex) => {
     bbox: best.bbox,
     bbox_norm: best.bbox_norm,
     score: best.overlap,
+    weight: best.weight,
     confidence: best.conf,
   };
 };
@@ -147,13 +182,58 @@ export const stampEvidenceOnLines = (normalized, layer) => {
   if (!normalized?.lines || !layer) return 0;
   const blocks = buildBlockIndex(layer);
   if (!blocks.length) return 0;
+  const idf = buildIdf(blocks);
   let stamped = 0;
-  for (const line of normalized.lines) {
-    const ev = findEvidenceForLine(line, blocks);
-    if (ev) {
-      line._evidence = ev;
-      stamped++;
-    }
+
+  // ONE BLOCK BACKS AT MOST ONE LINE.
+  //
+  // This is the fix for the reported symptom. Independent per-line matching let
+  // six consecutive lines resolve to the identical bbox — click any of them and
+  // the same band highlights — because they tokenised identically and the tie
+  // broke to whichever block came first in document order. Nothing in the old
+  // code could notice that, since each line was matched in isolation.
+  //
+  // Assignment is global and greedy by weight: build every candidate pair,
+  // strongest first, and give each block to the single best-matching line.
+  // Lines left over get NO evidence, which is the honest outcome — a highlight
+  // pointing at another line's row is worse than no highlight, because the
+  // operator trusts it.
+  //
+  // Lines that already carry evidence from the PARSER are left alone: geometry
+  // read off the document beats geometry re-derived from its text, always.
+  const candidates = [];
+  normalized.lines.forEach((line, li) => {
+    if (line?._evidence?.source === "parser") { stamped++; return; }
+    const tokens = significantTokens(lineIdentityText(line || {}));
+    if (!tokens.length) return;
+    blocks.forEach((b, bi) => {
+      const s = scoreLineBlock(tokens, b, idf);
+      if (s.overlap < MIN_MATCH_TOKEN_OVERLAP) return;
+      candidates.push({ li, bi, ...s });
+    });
+  });
+
+  // Deterministic order: weight desc, then confidence, then document order — so
+  // the same document always produces the same overlay.
+  candidates.sort((a, b) => (b.weight - a.weight) || (b.conf - a.conf) || (a.bi - b.bi) || (a.li - b.li));
+
+  const takenLine = new Set();
+  const takenBlock = new Set();
+  for (const c of candidates) {
+    if (takenLine.has(c.li) || takenBlock.has(c.bi)) continue;
+    takenLine.add(c.li);
+    takenBlock.add(c.bi);
+    const b = blocks[c.bi];
+    normalized.lines[c.li]._evidence = {
+      page: b.page,
+      bbox: b.bbox,
+      bbox_norm: b.bbox_norm,
+      score: c.overlap,
+      weight: c.weight,
+      confidence: c.conf,
+      source: "text_match",
+    };
+    stamped++;
   }
   return stamped;
 };

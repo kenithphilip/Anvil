@@ -4,6 +4,7 @@ import { ageLabel, stageOf, draftLabel } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Modal, Prov, Steps, Stream, WSTabs, WSTitle, fmtINR, fmtUSD } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { BusyAction, busyLabel, busyVerb } from "../lib/busy-actions";
 import { RBAC } from "../lib/rbac";
 import { pushRecent } from "../lib/recent-items";
 import { amountInWords } from "../lib/amount-words";
@@ -21,6 +22,10 @@ import { ExtractionProgress } from "../components/ExtractionProgress";
 import { OrderHeaderEditor, OrderLineTaxComponents, TallyTab } from "../components/SOWorkspaceOrderPanels";
 import { PipelineDiagnostics } from "../components/PipelineDiagnostics";
 import { FieldPill, ProvenanceChip, ExtractionQualityCard, EditableCell } from "../components/SOWorkspaceReviewCells";
+import { ResizableTh } from "../components/ResizableTh";
+import {
+  ColumnWidths, loadWidths, saveWidths, resizeColumn, clearColumn, tableLayoutFor, widthStyle,
+} from "../lib/column-widths";
 import { AskAnvil } from "../components/AskAnvil";
 import { mergeExtractedLines } from "../lib/line-merge";
 import { varianceLineFromGap, outstandingGaps } from "../lib/variance-line";
@@ -63,15 +68,25 @@ export const mappingTitle = (ln: any): string => {
     + "\n\nMAPPED TO ITEM MASTER\n" + mapped.join("\n");
 };
 
+// Column identities for the reconciliation grid. Stable strings, not indexes:
+// a width stored against position 5 would land on a different column the moment
+// one is inserted.
+const RECON_TABLE_KEY = "so-recon";
+const RECON_COL_IDS = [
+  "n", "item", "uom", "qty", "rate", "hsn", "gst", "taxable", "tax", "line", "issues",
+] as const;
+
 const ReconLinesTable: React.FC<{
   lines: any[];
   head: React.ReactNode;
   footer: React.ReactNode;
+  /** "fixed" once a column has been dragged — see lib/column-widths.ts. */
+  layout?: "auto" | "fixed";
   renderRow: (ln: any, i: number, sel: { selected: boolean; onSelect: (e: React.MouseEvent) => void; onHover: () => void; onLeave: () => void }) => React.ReactNode;
-}> = ({ lines, head, footer, renderRow }) => {
+}> = ({ lines, head, footer, layout, renderRow }) => {
   const { selectedField, setSelectedField, setHoveredField } = useReviewPaneSelection();
   return (
-    <table className="tbl grid">
+    <table className="tbl grid" style={layout ? { tableLayout: layout } : undefined}>
       {head}
       <tbody>
         {lines.map((ln, i) => {
@@ -132,7 +147,25 @@ const WiredSOWorkspace = () => {
   const [bump, setBump] = u(0);
   const [scheduleBump, setScheduleBump] = u(0);
   const [tsv, setTsv] = u("");
-  const [busy, setBusy] = u(false);
+  // WHICH action is running, not merely THAT one is. Every stage button shared
+  // one boolean, so the loader read "Extracting" whatever you pressed and the
+  // extract button read "extracting…" while you were approving. Holding the
+  // action id lets each label tell the truth; the cross-locking of the other
+  // buttons is unchanged, because any non-null id is still truthy.
+  // Mirrors so-intake.tsx, which already stores a string here.
+  const [busy, setBusy] = u<BusyAction>(null);
+
+  // Operator-dragged column widths for the reconciliation grid. Auto table
+  // layout starves short columns — HSN/SAC ends up a couple of characters wide
+  // and the <input> inside scrolls its value out of sight instead of wrapping.
+  const [colw, setColw] = u<ColumnWidths>(() => loadWidths(RECON_TABLE_KEY, RECON_COL_IDS));
+  const onColResize = React.useCallback((id: string, startPx: number, deltaPx: number) => {
+    setColw((w) => { const next = resizeColumn(w, id, startPx, deltaPx); saveWidths(RECON_TABLE_KEY, next); return next; });
+  }, []);
+  const onColAutoFit = React.useCallback((id: string) => {
+    setColw((w) => { const next = clearColumn(w, id); saveWidths(RECON_TABLE_KEY, next); return next; });
+  }, []);
+  const resetCols = React.useCallback(() => { setColw({}); saveWidths(RECON_TABLE_KEY, {}); }, []);
   // Cancel confirmation. A native confirm() here silently returns false
   // when the browser has suppressed dialogs ("don't allow more dialogs"),
   // so clicking Cancel did nothing and the order looked un-cancellable.
@@ -525,7 +558,7 @@ const WiredSOWorkspace = () => {
   const cancelOrder = async () => {
     if (!o?.id) return;
     setCancelOpen(false);
-    setBusy(true);
+    setBusy("cancel");
     try {
       await AnvilBackend?.orders?.update?.(o.id, { status: "CANCELLED" });
       window.notifySuccess?.("Order cancelled", o.po_number || o.id.slice(0, 8));
@@ -533,7 +566,7 @@ const WiredSOWorkspace = () => {
     } catch (err) {
       window.notifyError?.("Cancel failed", err?.message || String(err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -551,7 +584,7 @@ const WiredSOWorkspace = () => {
       window.notifyError?.("Approve failed", "Order has no payload hash. Run 'send for review' first.");
       return;
     }
-    setBusy(true);
+    setBusy("approve");
     try {
       await AnvilBackend?.orders?.update?.(o.id, {
         status: "APPROVED",
@@ -562,7 +595,7 @@ const WiredSOWorkspace = () => {
     } catch (err: any) {
       window.notifyError?.("Approve failed", err?.message || String(err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -590,7 +623,7 @@ const WiredSOWorkspace = () => {
       window.notifyWarn?.("Reason required", "Add a one-line note so the operator knows what to fix.");
       return;
     }
-    setBusy(true);
+    setBusy("correct");
     try {
       await AnvilBackend?.orders?.update?.(o.id, {
         status: "DRAFT",
@@ -606,7 +639,7 @@ const WiredSOWorkspace = () => {
     } catch (err) {
       window.notifyError?.("Return-for-correction failed", err?.message || String(err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -675,7 +708,7 @@ const WiredSOWorkspace = () => {
       );
       return;
     }
-    setBusy(true);
+    setBusy("extract");
     try {
       // 1. Hit /api/docai/extract using the existing source_id
       //    plumbing. The endpoint accepts source_id as a docai
@@ -810,13 +843,13 @@ const WiredSOWorkspace = () => {
         window.notifyError?.("Extraction failed", message);
       }
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
   const sendForReview = async () => {
     if (!o?.id) return;
-    setBusy(true);
+    setBusy("review");
     try {
       await AnvilBackend?.orders?.update?.(o.id, { status: "PENDING_REVIEW" });
       window.notifySuccess?.("Sent for review", o.po_number || o.id.slice(0, 8));
@@ -824,7 +857,7 @@ const WiredSOWorkspace = () => {
     } catch (err: any) {
       window.notifyError?.("Could not advance status", err?.message || String(err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -854,7 +887,7 @@ const WiredSOWorkspace = () => {
       );
       return;
     }
-    setBusy(true);
+    setBusy("validate");
     try {
       // Audit fix May 2026: was using o.result.salesOrder which
       // is the persisted lines, ignoring any unsaved operator
@@ -884,13 +917,13 @@ const WiredSOWorkspace = () => {
     } catch (err: any) {
       window.notifyError?.("Validation failed", err?.message || String(err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
   const pushToTally = async () => {
     if (!o?.id) return;
-    setBusy(true);
+    setBusy("push");
     try {
       const result = await AnvilBackend?.tally?.push?.({ orderId: o.id });
       if (result?.error) {
@@ -902,7 +935,7 @@ const WiredSOWorkspace = () => {
     } catch (err) {
       window.notifyError?.("Tally push failed", err?.message || String(err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -975,7 +1008,7 @@ const WiredSOWorkspace = () => {
   // (price / qty / part / payment terms). Reloads the order via `bump`.
   const rerunReconcile = async (orderObj: any) => {
     if (!orderObj?.id) return;
-    setBusy(true);
+    setBusy("reconcile");
     try {
       const rep: any = await (AnvilBackend as any)?.orders?.reconcileQuotes?.(orderObj.id);
       const s = rep?.summary;
@@ -986,7 +1019,7 @@ const WiredSOWorkspace = () => {
     } catch (err: any) {
       window.notifyError?.("Reconcile failed", err?.message || String(err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -1413,7 +1446,7 @@ const WiredSOWorkspace = () => {
       window.notifyError?.("Nothing to add", "Paste rows like 2026-05-15<TAB>1200");
       return;
     }
-    setBusy(true);
+    setBusy("bulk_add");
     try {
       const resp = await AnvilBackend?.scheduleLines?.bulkCreate?.(orderId, rows);
       const inserted = resp?.inserted ?? rows.length;
@@ -1423,7 +1456,7 @@ const WiredSOWorkspace = () => {
     } catch (err) {
       window.notifyError?.("Bulk add failed", String(err?.message || err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -1432,7 +1465,7 @@ const WiredSOWorkspace = () => {
     if (!scheduleRows.length) return;
     const ok = window.confirm(`Delete ALL ${scheduleRows.length} schedule line${scheduleRows.length === 1 ? "" : "s"} for this order? This cannot be undone.`);
     if (!ok) return;
-    setBusy(true);
+    setBusy("clear_lines");
     try {
       const resp = await AnvilBackend?.scheduleLines?.clear?.(orderId);
       const deleted = resp?.deleted ?? scheduleRows.length;
@@ -1441,7 +1474,7 @@ const WiredSOWorkspace = () => {
     } catch (err) {
       window.notifyError?.("Clear failed", String(err?.message || err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -1452,7 +1485,7 @@ const WiredSOWorkspace = () => {
     // delete button silently dropped the line.
     const ok = window.confirm(`Delete schedule line for ${row.scheduled_date} (qty ${row.scheduled_qty})? This cannot be undone.`);
     if (!ok) return;
-    setBusy(true);
+    setBusy("delete_line");
     try {
       await AnvilBackend?.scheduleLines?.deleteOne?.(row.id);
       window.notifySuccess?.("Line deleted", `${row.scheduled_date} · qty ${row.scheduled_qty}`);
@@ -1460,7 +1493,7 @@ const WiredSOWorkspace = () => {
     } catch (err) {
       window.notifyError?.("Delete failed", String(err?.message || err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -1810,7 +1843,7 @@ const WiredSOWorkspace = () => {
           </Btn>
           <span style={{ flex: 1 }} />
           <Btn sm kind="ghost"
-               disabled={!canCancel || busy || o.status === "CANCELLED"}
+               disabled={!canCancel || !!busy || o.status === "CANCELLED"}
                onClick={() => setCancelOpen(true)}
                title={canCancel ? "Set order status to CANCELLED" : "needs sales_manager / admin"}>
             {Icon.x} cancel
@@ -1826,7 +1859,7 @@ const WiredSOWorkspace = () => {
             </Modal.Body>
             <Modal.Footer>
               <Btn kind="ghost" onClick={() => setCancelOpen(false)}>Keep order</Btn>
-              <Btn kind="danger" disabled={busy} onClick={cancelOrder}>{busy ? "Cancelling…" : "Cancel order"}</Btn>
+              <Btn kind="danger" disabled={!!busy} onClick={cancelOrder}>{busyVerb(busy, "cancel", "Cancel order")}</Btn>
             </Modal.Footer>
           </Modal>
           {/* Run extraction: rescues orders stuck in DRAFT when the
@@ -1855,7 +1888,7 @@ const WiredSOWorkspace = () => {
             ))}
           </select>
           <Btn sm kind="ghost"
-               disabled={!canWrite || busy || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
+               disabled={!canWrite || !!busy || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
                onClick={runExtraction}
                title={
                  !sourceDocId
@@ -1866,7 +1899,7 @@ const WiredSOWorkspace = () => {
                          ? "Re-run docai/extract with " + extractEngine + " (this run only)"
                          : "Re-run docai/extract against the attached PO")
                }>
-            {Icon.cycle} {busy ? "extracting…" : (extractEngine ? "run with " + extractEngine : "run extraction")}
+            {Icon.cycle} {busyVerb(busy, "extract", extractEngine ? "run with " + extractEngine : "run extraction")}
           </Btn>
           {/* An extraction run is budgeted at 45s inside a 60s platform
               ceiling and routinely spends 9-30s inside one model call, so a
@@ -1874,13 +1907,13 @@ const WiredSOWorkspace = () => {
               run from a wedged one. The elapsed readout makes the wait
               observable; it sits beside the button rather than inside it
               because the button is too narrow for the grid + timer. */}
-          {busy && <LoadingState label="Extracting" variant="drive" />}
+          {busy && <LoadingState label={busyLabel(busy)} variant="drive" />}
           {/* Run validation: scores the extracted lines against the
               anomaly rule library and persists findings into
               orders.rule_findings. The Validate step in the stepper
               lights as done once last_validated_at is stamped. */}
           <Btn sm kind="ghost"
-               disabled={!canWrite || busy || !o.customer_id || lines.length === 0 || o.status === "CANCELLED"}
+               disabled={!canWrite || !!busy || !o.customer_id || lines.length === 0 || o.status === "CANCELLED"}
                onClick={runValidation}
                title={
                  !o.customer_id
@@ -1889,13 +1922,13 @@ const WiredSOWorkspace = () => {
                      ? "Run extraction first; the rules score line items"
                      : "Score the order against the anomaly rule library"
                }>
-            {Icon.shield} {busy ? "validating…" : "run validation"}
+            {Icon.shield} {busyVerb(busy, "validate", "run validation")}
           </Btn>
           {/* Send for review: explicit DRAFT to PENDING_REVIEW
               transition for orders that have lines but no operator
               has flipped them out of DRAFT yet. */}
           <Btn sm kind="ghost"
-               disabled={!canWrite || busy || o.status !== "DRAFT"}
+               disabled={!canWrite || !!busy || o.status !== "DRAFT"}
                onClick={sendForReview}
                title={
                  o.status !== "DRAFT"
@@ -1910,7 +1943,7 @@ const WiredSOWorkspace = () => {
               to roles that can approve, and only before the order has
               been pushed to Tally. */}
           <Btn sm kind="ghost"
-               disabled={!canApprove || busy || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED" || o.status === "CANCELLED" || o.status === "DRAFT"}
+               disabled={!canApprove || !!busy || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED" || o.status === "CANCELLED" || o.status === "DRAFT"}
                onClick={requestCorrection}
                title={
                  canApprove
@@ -1920,16 +1953,16 @@ const WiredSOWorkspace = () => {
             {Icon.cycle} return for fix
           </Btn>
           <Btn sm kind="ghost"
-               disabled={!canApprove || busy || o.status === "APPROVED" || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED"}
+               disabled={!canApprove || !!busy || o.status === "APPROVED" || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED"}
                onClick={approveOrder}
                title={canApprove ? "Approve order" : "needs sales_manager / finance / admin"}>
             {Icon.shieldCheck} approve
           </Btn>
           <Btn sm kind="primary"
-               disabled={!canPushTally || busy || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED" || o.status === "CANCELLED"}
+               disabled={!canPushTally || !!busy || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED" || o.status === "CANCELLED"}
                onClick={pushToTally}
                title={canPushTally ? "Push the order payload to Tally" : "needs finance / admin"}>
-            {Icon.send} {busy ? "pushing…" : "push to Tally"}
+            {Icon.send} {busyVerb(busy, "push", "push to Tally")}
           </Btn>
         </div>
         <div className="row mono-sm" style={{ color: "var(--ink-3)", flexWrap: "wrap", gap: 8 }}>
@@ -1951,8 +1984,8 @@ const WiredSOWorkspace = () => {
           </Btn>
         );
         const reBtn = canReconcile ? (
-          <Btn sm kind="ghost" disabled={busy} onClick={() => rerunReconcile(o)} title="Re-fetch the customer's quotes and re-verify price, quantity + payment terms">
-            {Icon.cycle} {busy ? "reconciling…" : "reconcile"}
+          <Btn sm kind="ghost" disabled={!!busy} onClick={() => rerunReconcile(o)} title="Re-fetch the customer's quotes and re-verify price, quantity + payment terms">
+            {Icon.cycle} {busyVerb(busy, "reconcile", "reconcile")}
           </Btn>
         ) : null;
         if (!recon) {
@@ -2046,7 +2079,7 @@ const WiredSOWorkspace = () => {
           regardless of which tab the operator is on. */}
       {busy && o?.id && (
         <div style={{ padding: "8px 16px 0" }}>
-          <ExtractionProgress orderId={o.id} active={busy === true} />
+          <ExtractionProgress orderId={o.id} active={busy === "extract"} />
         </div>
       )}
 
@@ -2138,7 +2171,7 @@ const WiredSOWorkspace = () => {
             icon={Icon.alert}
             title="Extraction returned no line items"
             action={
-              <Btn sm kind="primary" disabled={!sourceDocId || busy} onClick={runExtraction}>
+              <Btn sm kind="primary" disabled={!sourceDocId || !!busy} onClick={runExtraction}>
                 {Icon.cycle} retry extraction
               </Btn>
             }
@@ -2310,7 +2343,7 @@ const WiredSOWorkspace = () => {
                     ))}
                   </select>
                   <Btn kind="primary"
-                       disabled={!canWrite || busy || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
+                       disabled={!canWrite || !!busy || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
                        onClick={runExtraction}
                        title={
                          !sourceDocId
@@ -2321,7 +2354,7 @@ const WiredSOWorkspace = () => {
                                  ? "Re-run docai/extract with " + extractEngine + " (this run only)"
                                  : "Re-run docai/extract against the attached PO")
                        }>
-                    {Icon.cycle} {busy ? "extracting…" : (extractEngine ? "run with " + extractEngine : "run extraction")}
+                    {Icon.cycle} {busyVerb(busy, "extract", extractEngine ? "run with " + extractEngine : "run extraction")}
                   </Btn>
                 </div>
               </div>
@@ -2342,21 +2375,35 @@ const WiredSOWorkspace = () => {
                 const auxTotal = perLine.reduce((s, t) => s + t.aux, 0);
                 const grandWithTax = round2(taxableTotal + taxTotal + auxTotal);
                 return (
+                  <>
+                  {/* Only offered once a column has actually been dragged —
+                      a reset for a layout nobody changed is noise. */}
+                  {Object.keys(colw).length > 0 && (
+                    <div className="row" style={{ justifyContent: "flex-end", marginBottom: 4 }}>
+                      <Btn sm kind="ghost" onClick={resetCols}
+                           title="Return every column to automatic width">
+                        reset column widths
+                      </Btn>
+                    </div>
+                  )}
                   <ReconLinesTable
                     lines={draftLines}
                     renderRow={reconRow}
+                    layout={tableLayoutFor(colw)}
                     head={<thead><tr>
                       <th style={{ width: 28 }}>#</th>
-                      <th>Item</th>
-                      <th>UoM</th>
-                      <th className="r">Qty</th>
-                      <th className="r">Rate</th>
-                      <th>HSN / SAC</th>
-                      <th className="r">GST %</th>
-                      <th className="r">Taxable ₹</th>
-                      <th className="r">Tax ₹</th>
-                      <th className="r">Line ₹</th>
-                      <th>Issues</th>
+                      {([
+                        ["item", "Item", ""], ["uom", "UoM", ""], ["qty", "Qty", "r"],
+                        ["rate", "Rate", "r"], ["hsn", "HSN / SAC", ""], ["gst", "GST %", "r"],
+                        ["taxable", "Taxable ₹", "r"], ["tax", "Tax ₹", "r"],
+                        ["line", "Line ₹", "r"], ["issues", "Issues", ""],
+                      ] as Array<[string, string, string]>).map(([id, label, cls]) => (
+                        <ResizableTh
+                          key={id} colId={id} className={cls || undefined}
+                          width={widthStyle(colw, id)}
+                          onResize={onColResize} onAutoFit={onColAutoFit}
+                        >{label}</ResizableTh>
+                      ))}
                     </tr></thead>}
                     footer={<tfoot>
                       <tr style={{ background: "var(--paper-2)" }}>
@@ -2398,6 +2445,7 @@ const WiredSOWorkspace = () => {
                       )}
                     </tfoot>}
                   />
+                  </>
                 );
               })()
             )}
@@ -2534,7 +2582,7 @@ const WiredSOWorkspace = () => {
                 <span className="mono-sm">{scheduleRows.length} row{scheduleRows.length === 1 ? "" : "s"}</span>
                 <span style={{ flex: 1 }} />
                 <Btn sm kind="ghost" onClick={() => setScheduleBump((n) => n + 1)} title="Refresh">{Icon.cycle} refresh</Btn>
-                <Btn sm kind="ghost" disabled={!scheduleRows.length || busy || !canAdmin} onClick={handleClearAll} title={canAdmin ? "Delete all schedule lines for this order" : "needs admin"}>
+                <Btn sm kind="ghost" disabled={!scheduleRows.length || !!busy || !canAdmin} onClick={handleClearAll} title={canAdmin ? "Delete all schedule lines for this order" : "needs admin"}>
                   {Icon.x} clear all
                 </Btn>
               </div>
@@ -2576,7 +2624,7 @@ const WiredSOWorkspace = () => {
                           <td><Chip k={stChip.k}>{stChip.label}</Chip></td>
                           <td className="mono-sm" style={{ color: "var(--ink-3)" }}>{r.remark || "—"}</td>
                           <td>
-                            <Btn sm kind="ghost" disabled={busy || !canAdmin} onClick={() => handleDeleteOne(r)} title={canAdmin ? "Delete this line" : "needs admin"}>
+                            <Btn sm kind="ghost" disabled={!!busy || !canAdmin} onClick={() => handleDeleteOne(r)} title={canAdmin ? "Delete this line" : "needs admin"}>
                               {Icon.x} delete
                             </Btn>
                           </td>
@@ -2608,7 +2656,7 @@ const WiredSOWorkspace = () => {
                   resize: "vertical",
                   boxSizing: "border-box",
                 }}
-                disabled={busy || !canWrite}
+                disabled={!!busy || !canWrite}
               />
               <div className="row" style={{ marginTop: 10, gap: 8, alignItems: "center" }}>
                 <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
@@ -2620,10 +2668,10 @@ const WiredSOWorkspace = () => {
                   })()}
                 </span>
                 <span style={{ flex: 1 }} />
-                <Btn sm kind="ghost" disabled={busy || !tsv.trim()} onClick={() => setTsv("")}>
+                <Btn sm kind="ghost" disabled={!!busy || !tsv.trim()} onClick={() => setTsv("")}>
                   {Icon.x} reset
                 </Btn>
-                <Btn sm kind="primary" disabled={busy || !tsv.trim() || !canWrite} onClick={handleBulkAdd} title={canWrite ? "" : "needs write permission"}>
+                <Btn sm kind="primary" disabled={!!busy || !tsv.trim() || !canWrite} onClick={handleBulkAdd} title={canWrite ? "" : "needs write permission"}>
                   {Icon.plus} bulk add
                 </Btn>
               </div>

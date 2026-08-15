@@ -123,6 +123,59 @@ const overallConfidence = (confidences) => {
   return vals.reduce((a, b) => a + b, 0) / vals.length;
 };
 
+// FAIR-SHARE BUDGET ALLOCATION.
+//
+// Every adapter shares ONE 45s run budget and each takes what it needs until
+// the budget is gone. The adapter that runs last gets whatever is left, which
+// on a large document is nothing usable. Observed on PO 0066026562, same
+// document and code, minutes apart:
+//
+//   gemini 29,520ms + claude   220ms + llamaparse 2,845ms -> ok, 44 lines
+//   gemini 26,558ms + claude 5,603ms + llamaparse 5,999ms -> llamaparse TIMED OUT
+//
+// The only difference is whether Claude's pre-call guard tripped or it actually
+// attempted. LlamaParse — the one adapter that parses that document — got 12s
+// in the first case and 6s in the second, and 6s was not enough. The outcome
+// was decided by upstream latency in an adapter that failed either way.
+//
+// Each adapter already reserves a FIXED tail (GEMINI_FALLBACK_RESERVE_MS and
+// ANTHROPIC_FALLBACK_RESERVE_MS, both 8s). Fixed is the bug: 8s is right when
+// one adapter follows and wrong when two do, because the reserve does not know
+// how many still have to run.
+//
+// So the DISPATCHER allocates, since it is the only place that knows the whole
+// order. Each adapter is handed a deadline that holds back MIN_ADAPTER_MS for
+// every configured adapter still queued behind it.
+//
+// THIS REDISTRIBUTES A FIXED BUDGET; IT DOES NOT CREATE TIME. Reserving for the
+// tail necessarily caps the head, and on a document where the primary genuinely
+// needs the whole 45s that is a real cost. Two things make the trade sound:
+// #418 means a capped-then-failed primary no longer discards a later success,
+// and an adapter that cannot get its floor is now SKIPPED explicitly rather
+// than started and timed out — a skip is diagnosable, a timeout burns the
+// budget it was given. The durable fix for genuinely large documents is
+// chunking, not allocation.
+const MIN_ADAPTER_MS = Number(process.env.DOCAI_MIN_ADAPTER_MS || 6000);
+
+// Never hold back more than this share of what remains, so a long tail of
+// configured-but-unlikely adapters cannot starve the primary. With the default
+// order that keeps the head's slice comfortably dominant.
+const MAX_RESERVE_FRACTION = Number(process.env.DOCAI_MAX_RESERVE_FRACTION || 0.5);
+
+export const allocateAdapterDeadline = ({ now, runDeadlineAt, queuedAfter }) => {
+  if (!runDeadlineAt) return null;                  // no run budget => unchanged
+  const remaining = runDeadlineAt - now;
+  if (remaining <= 0) return runDeadlineAt;
+  const queued = Math.max(0, Number(queuedAfter) || 0);
+  const wanted = queued * MIN_ADAPTER_MS;
+  const reserve = Math.min(wanted, Math.floor(remaining * MAX_RESERVE_FRACTION));
+  const slice = remaining - reserve;
+  // Below the floor there is no point starting: the adapter would consume its
+  // slice and time out. The caller skips instead.
+  if (slice < MIN_ADAPTER_MS) return null;
+  return now + slice;
+};
+
 // Rank two successful results. Used only when every adapter came in UNDER the
 // fallback threshold, so the loop has to choose rather than early-return.
 //
@@ -357,7 +410,7 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
   // "no limits" (legacy behaviour).
   let svc = null;
   try { svc = serviceClient(); } catch (_e) { svc = null; }
-  for (const adapterName of order) {
+  for (const [idx, adapterName] of order.entries()) {
     const adapter = ADAPTERS[adapterName];
     if (!adapter) continue;
     // RUN DEADLINE. The serverless function has a hard ceiling (60s on the
@@ -378,6 +431,25 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
     }
     if (!adapter.isConfigured(settings)) {
       attempts.push({ adapter: adapterName, status: "skipped_not_configured" });
+      continue;
+    }
+    // How many CONFIGURED adapters are still queued behind this one. Counting
+    // unconfigured ones would reserve time for adapters that never run and
+    // starve the ones that do.
+    const queuedAfter = order.slice(idx + 1)
+      .filter((n) => ADAPTERS[n] && isAdapterConfigured(n, settings)).length;
+    const adapterDeadlineAt = hints?.deadlineAt
+      ? allocateAdapterDeadline({ now: Date.now(), runDeadlineAt: hints.deadlineAt, queuedAfter })
+      : null;
+    // Below the floor, starting is worse than skipping: the adapter consumes
+    // its slice and times out, and the run records a timeout where it could
+    // have recorded a reason.
+    if (hints?.deadlineAt && !adapterDeadlineAt) {
+      attempts.push({
+        adapter: adapterName,
+        status: "skipped_deadline",
+        reason: "insufficient_budget_share",
+      });
       continue;
     }
     // Cost-guard: short-circuit when the operator's daily cap for
@@ -419,7 +491,10 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
         ...source,
         settings,
         customerId,
-        hints,
+        // Fair-share deadline: this adapter's slice, not the whole run budget.
+        // Holding back MIN_ADAPTER_MS per adapter still queued behind it is
+        // what stops the tail being handed 6s on a document that needs 12.
+        hints: adapterDeadlineAt ? { ...hints, deadlineAt: adapterDeadlineAt } : hints,
         promptOverrides: buildPromptOverrides(settings, customerId),
       });
     } catch (err) {

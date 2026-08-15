@@ -18,6 +18,7 @@
 // name via the `tablePrefix` argument so one runner serves all five.
 
 import { notifyAdmins } from "./notifications.js";
+import { firstUnresolvedBlocker } from "./blocking-findings.js";
 
 const BACKOFF_MIN = [1, 5, 15, 60, 240, 720];
 
@@ -211,6 +212,24 @@ export const requireApprovedOrder = (order, callerPayloadHash) => {
           message: "Provided payloadHash does not match the approved order's payload hash.",
           expected,
           provided: callerPayloadHash,
+        },
+      },
+    };
+  }
+  // CM P3b: refuse to push an order that still carries an unresolved blocking
+  // finding (e.g. a line-count shortfall — extracted 6 of 190 lines). Every ERP
+  // connector routes through this guard, so this one check hard-blocks the push
+  // fleet-wide. Cleared by re-extraction or an explicit operator resolve.
+  const blocker = firstUnresolvedBlocker(order.rule_findings);
+  if (blocker) {
+    return {
+      status: 409,
+      body: {
+        error: {
+          code: "ORDER_HAS_UNRESOLVED_BLOCKER",
+          message: "Order has an unresolved blocking finding (" + blocker.code + "): "
+            + (blocker.detail || "extraction incomplete") + " Resolve it before pushing to any ERP.",
+          finding: blocker,
         },
       },
     };

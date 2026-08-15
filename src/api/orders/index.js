@@ -4,6 +4,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { parsePoDate } from "../_lib/parse-date.js";
 import { mapLinesToItemMaster } from "../_lib/item-mapper.js";
+import { projectAnomaliesToFindings } from "../_lib/blocking-findings.js";
 
 const STATUS_VALUES = new Set(["DRAFT", "PENDING_REVIEW", "APPROVED", "BLOCKED", "DUPLICATE", "REUSED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED", "CANCELLED"]);
 
@@ -161,7 +162,28 @@ export default async function handler(req, res) {
           };
         } catch (_) { /* item map is best-effort */ }
       }
-      let { data, error } = await svc.from("orders").insert(orderRow(ctx, body)).select("*").single();
+      // CM P3b: project the extraction blocker(s) (line_count_shortfall) from
+      // the linked extraction_run onto the order's rule_findings so the
+      // push/approve gates can enforce them — the shortfall lives only on
+      // extraction_runs and would otherwise never reach the order. Best-effort;
+      // never blocks order creation.
+      let projectedBlockers = [];
+      const p3bRunId = body.preflight_payload && body.preflight_payload.extraction_run_id;
+      if (p3bRunId) {
+        try {
+          const rq = await svc.from("extraction_runs")
+            .select("anomalies, anomalies_has_blockers")
+            .eq("tenant_id", ctx.tenantId).eq("id", p3bRunId).maybeSingle();
+          if (rq && rq.data && rq.data.anomalies_has_blockers) projectedBlockers = projectAnomaliesToFindings(rq.data.anomalies);
+        } catch (_) { /* projection is best-effort */ }
+      }
+      const withBlockers = (r) => {
+        if (!projectedBlockers.length) return r;
+        const have = new Set((r.rule_findings || []).map((f) => f && (f.code || f.rule_id)));
+        r.rule_findings = [...(r.rule_findings || []), ...projectedBlockers.filter((f) => !have.has(f.code))];
+        return r;
+      };
+      let { data, error } = await svc.from("orders").insert(withBlockers(orderRow(ctx, body))).select("*").single();
       // PostgREST schema-cache miss (PGRST204) or Postgres
       // column-not-found (42703) on a migration 106 column.
       // Retry once with those columns stripped so the SO intake
@@ -175,7 +197,7 @@ export default async function handler(req, res) {
       )) {
         const cleanRow = orderRow(ctx, body);
         for (const k of MIG_106_HEADER_KEYS) delete cleanRow[k];
-        const retry = await svc.from("orders").insert(cleanRow).select("*").single();
+        const retry = await svc.from("orders").insert(withBlockers(cleanRow)).select("*").single();
         if (!retry.error) {
           data = retry.data;
           error = null;

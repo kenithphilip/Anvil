@@ -18,6 +18,32 @@
 
 const norm = (s) => String(s == null ? "" : s).toLowerCase().replace(/\s+/g, " ").trim();
 
+// Header labels only — NEVER data.
+//
+// The logistics workbook spells the same column three ways across its sheets:
+//
+//   Pending    "Shipper Invoice No."     <- letter O
+//   Completed  "Shipper Invoice N0."     <- DIGIT ZERO
+//   details    "Shipper Invoice N0."     <- digit zero
+//
+// classifySheet matches loosely on "shipper inv", so Completed and details were
+// correctly identified as shipment sheets — and then normalizePending looked
+// for "shipper invoice no", did not find it, and dropped EVERY row. 1,145 of
+// 1,718 rows in a real workbook went silently to zero.
+//
+// ONLY zero->o, and only between letters. That is the confusable actually
+// observed, and narrowness is the point: folding 1->l or 5->s as well would
+// rewrite a legitimate caption like "S5 Code" into "SS Code" and invent a
+// match that is not there. A missed alias shows up as a sheet reporting zero
+// rows, which parseSheets now reports; a WRONG alias silently maps the wrong
+// column, which nothing would catch.
+//
+// Headers only, never data — applying this to values would corrupt part
+// numbers, which is why it is a separate function from `norm`.
+// Preceded by a letter, not followed by another digit: catches "N0." and "N0"
+// while leaving "Zone 0" (space before) and "Bin 10" (digit before) alone.
+export const normHeader = (s) => norm(s).replace(/(?<=[a-z])0(?![0-9])/g, "o");
+
 // Labels that identify a real header row (vs the title/section rows above it).
 const HEADER_HINTS = [
   "shipper invoice", "shipper inv", "invoice no", "mode", "vessel", "forwarder",
@@ -46,7 +72,8 @@ export const detectHeaderRow = (rows, maxScan = 12) => {
 export const buildHeaderMap = (headerRow) => {
   const map = new Map();
   (headerRow || []).forEach((cell, idx) => {
-    const key = norm(cell);
+    // Folded, so "Shipper Invoice N0." and "Shipper Invoice No." are one key.
+    const key = normHeader(cell);
     if (!key) return;
     if (!map.has(key)) map.set(key, []);
     map.get(key).push(idx);
@@ -218,27 +245,62 @@ export const pendingToShipment = (n, links = {}) => ({
 
 // Turn an array of { name, rows } sheets into normalized pending + line rows.
 // Skips rows with no invoice (pending) / no part (lines).
+// How many cells carry something a person would call data. Booleans are Excel
+// checkbox artefacts, not values; whitespace is not content; a lone serial
+// number is a row number, not a row.
+const meaningfulCells = (row) => (row || []).reduce((n, c) => {
+  if (c == null || typeof c === "boolean") return n;
+  return String(c).trim() === "" ? n : n + 1;
+}, 0);
+
 export const parseSheets = (sheets) => {
   const pending = [];
   const lines = [];
+  // Per-sheet accounting. A sheet that CLASSIFIES as a shipment sheet and then
+  // yields zero rows is the failure mode this import already had and nobody
+  // saw: "Shipper Invoice N0." (digit zero) passed classifySheet's loose
+  // "shipper inv" test, missed normalizePending's exact alias, and 1,145 of
+  // 1,718 rows in a real workbook went silently to zero. Header folding fixes
+  // that instance; reporting fixes the class, because the next workbook will
+  // misspell a different column.
+  const diag = [];
   for (const sheet of (sheets || [])) {
     const rows = sheet?.rows;
     if (!Array.isArray(rows) || !rows.length) continue;
     const hdr = detectHeaderRow(rows);
     const map = buildHeaderMap(rows[hdr.index]);
     const kind = classifySheet(map);
-    if (kind === "ignore") continue;
+    if (kind === "ignore") {
+      diag.push({ sheet: sheet.name || null, kind, rows: rows.length, kept: 0, blank: 0, unrecognised: 0 });
+      continue;
+    }
+    let kept = 0;
+    let blank = 0;
+    let unrecognised = 0;
     for (let i = hdr.index + 1; i < rows.length; i++) {
       const row = rows[i];
-      if (!Array.isArray(row) || row.every((c) => c == null || String(c).trim() === "")) continue;
+      // Blank means "no content", not "no cells". The Pending sheet carries ~518
+      // pre-numbered placeholder rows that hold a serial number, some Excel
+      // checkbox `false` values and a stray space — nothing a human would call
+      // data. Counting them as unrecognised made a healthy sheet look broken,
+      // which is the opposite of what the accounting is for.
+      if (!Array.isArray(row) || meaningfulCells(row) < 2) { blank++; continue; }
       if (kind === "pending") {
         const n = normalizePending(row, map);
-        if (n.shipper_invoice_no) pending.push(n);
+        if (n.shipper_invoice_no) { pending.push(n); kept++; } else unrecognised++;
       } else {
         const n = normalizeLine(row, map);
-        if (n.part_no && n.po_ref) lines.push(n);
+        if (n.part_no && n.po_ref) { lines.push(n); kept++; } else unrecognised++;
       }
     }
+    diag.push({
+      sheet: sheet.name || null, kind, header_row: hdr.index,
+      rows: Math.max(0, rows.length - hdr.index - 1), kept, blank, unrecognised,
+      // The loud case: the sheet looked right and produced nothing.
+      ...(kept === 0 && unrecognised > 0
+        ? { warning: "classified as " + kind + " but every non-blank row was unrecognised — a column header probably does not match" }
+        : {}),
+    });
   }
-  return { pending, lines };
+  return { pending, lines, diag };
 };

@@ -6,6 +6,7 @@ import { AnvilBackend } from "../lib/api";
 // (the same module runs on both sides). Used here to parse the logistics sheet
 // client-side and pre-filter the huge line sheets before posting.
 import { parseSheets } from "../../api/_lib/shipment-import.js";
+import { detectHeaderRow, buildHeaderMap, classifySheet } from "../../api/_lib/shipment-import.js";
 
 // Lazy-load SheetJS the same way the BOM importer does (dynamic import keeps it
 // out of the main bundle and satisfies the CSP — no CDN <script>).
@@ -21,15 +22,63 @@ const loadXLSX = (): Promise<any> => {
   return __xlsxPromise;
 };
 
-// Read a workbook File into [{ name, rows(2D) }] sheets.
+// Read a workbook File into [{ name, rows(2D) }] sheets, TRIMMED.
+//
+// This used to post every sheet, every cell, over the sheet's full used range.
+// Excel over-reports that range badly on these workbooks, and `defval: ""`
+// materialises every empty cell in it — so a 646 KB file became a 47 MB POST
+// body against a 1 MB server limit, and the upload 413'd before the importer
+// ever saw the data. The smaller of the two real workbooks produced the LARGER
+// payload, which is the tell: it was shipping padding, not records.
+//
+// Three trims, in order of how much they save:
+//   1. drop sheets the importer would ignore anyway
+//   2. cut each row at the last column that actually holds something
+//   3. drop rows with nothing in them
+//
+// Raising the server limit instead would not work: Vercel caps a serverless
+// request at ~4.5 MB regardless.
+const lastMeaningfulIndex = (row: any[]): number => {
+  for (let i = row.length - 1; i >= 0; i--) {
+    const c = row[i];
+    // Booleans are Excel checkbox artefacts; whitespace is not content.
+    if (c == null || typeof c === "boolean") continue;
+    if (String(c).trim() !== "") return i;
+  }
+  return -1;
+};
+
+const trimSheet = (rows: any[][]): any[][] => {
+  let width = 0;
+  for (const r of rows) width = Math.max(width, lastMeaningfulIndex(r || []) + 1);
+  if (width === 0) return [];
+  const out: any[][] = [];
+  for (const r of rows) {
+    const row = (r || []).slice(0, width);
+    // Keep a row if anything in it survives the trim. Header rows and the
+    // section bands above them must survive — detectHeaderRow scans for them.
+    if (lastMeaningfulIndex(row) >= 0) out.push(row);
+  }
+  return out;
+};
+
 const fileToSheets = async (file: File): Promise<Array<{ name: string; rows: any[][] }>> => {
   const XLSX = await loadXLSX();
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: "array", cellDates: true });
-  return wb.SheetNames.map((name: string) => ({
-    name,
-    rows: XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false, defval: "" }),
-  }));
+  const out: Array<{ name: string; rows: any[][] }> = [];
+  for (const name of wb.SheetNames as string[]) {
+    const raw = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false, defval: "" });
+    const rows = trimSheet(raw as any[][]);
+    if (!rows.length) continue;
+    // Only send sheets the importer will actually read. classifySheet is the
+    // same function the server uses, so this cannot drop a sheet the server
+    // would have accepted.
+    const hdr = detectHeaderRow(rows);
+    if (classifySheet(buildHeaderMap(rows[hdr.index])) === "ignore") continue;
+    out.push({ name, rows });
+  }
+  return out;
 };
 
 // ============================================================

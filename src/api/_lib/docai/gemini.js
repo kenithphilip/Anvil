@@ -207,6 +207,37 @@ const PART_DRAWING_SYSTEM_PROMPT = [
 // subset of JSON Schema we need (enum, nullable types via type:
 // ["string", "null"]). Keep these in lockstep with the claude.js
 // tool definitions.
+// Flatten the nested `charges` group back to the flat per-unit keys.
+//
+// The schema nests them so an absent group costs one null instead of ten (see
+// PO_SCHEMA). Every consumer — computeLineTotals, the completeness guard's
+// lineGross, the Tally emitter — reads the FLAT keys, and the claude adapter
+// still produces them directly. Flattening here keeps the normalized shape
+// identical across adapters, so the nesting is purely a wire optimisation.
+//
+// A model that ignores the nesting and emits the flat keys anyway is handled:
+// existing flat values win, because they are what the model actually asserted.
+export const CHARGE_KEYS = [
+  "cgst_amount", "sgst_amount", "igst_amount", "utgst_amount",
+  "cess_amount", "excise_amount", "ed_cess_amount",
+  "tooling_amount", "p_and_f_amount", "others_amount",
+];
+
+export const flattenCharges = (line) => {
+  if (!line || typeof line !== "object") return line;
+  const c = line.charges;
+  if (c == null && !("charges" in line)) return line;
+  const out = { ...line };
+  delete out.charges;
+  if (c && typeof c === "object") {
+    for (const k of CHARGE_KEYS) {
+      // Never overwrite a value the model put at the top level.
+      if (out[k] == null && c[k] != null) out[k] = c[k];
+    }
+  }
+  return out;
+};
+
 const PO_SCHEMA = {
   type: "object",
   properties: {
@@ -248,18 +279,40 @@ const PO_SCHEMA = {
           uom: { type: ["string", "null"] },
           hsn: { type: ["string", "null"] },
           gst_pct: { type: ["number", "null"], description: "Consolidated GST percentage; only when per-component amounts are absent." },
-          // Per-unit tax components. Kept in lockstep with claude.js.
-          cgst_amount: { type: ["number", "null"] },
-          sgst_amount: { type: ["number", "null"] },
-          igst_amount: { type: ["number", "null"] },
-          utgst_amount: { type: ["number", "null"] },
-          cess_amount: { type: ["number", "null"] },
-          excise_amount: { type: ["number", "null"] },
-          ed_cess_amount: { type: ["number", "null"] },
-          // Per-unit auxiliary charges (tooling, P&F, miscellaneous).
-          tooling_amount: { type: ["number", "null"] },
-          p_and_f_amount: { type: ["number", "null"] },
-          others_amount: { type: ["number", "null"] },
+          // Per-unit tax + auxiliary charges, NESTED so the whole group can be
+          // one null.
+          //
+          // These were ten flat properties, and structured output fills every
+          // property in the schema whether or not the document has the field.
+          // On a PO that prints a single "Taxes" column, eleven of the twenty-one
+          // per-line fields came back null — 218 of 467 characters, 47% of every
+          // line, ~2,725 tokens across a 45-line PO spent transmitting nulls.
+          //
+          // That mattered because the answer alone needed 5,400-6,800 tokens
+          // against a max_tokens of 8,000, leaving a REASONING model (a 13-page
+          // PO selects gemini-3.1-pro) barely 2,000 tokens to think in. It ran
+          // out mid-array and the run failed on MAX_TOKENS.
+          //
+          // Nested, an absent group is `"charges":null` — 16 characters instead
+          // of ~180. The adapter flattens this back to the flat keys before
+          // anything downstream sees it, so computeLineTotals, lineGross and the
+          // claude adapter's shape are all unchanged.
+          charges: {
+            type: ["object", "null"],
+            description: "Per-UNIT tax and auxiliary amounts. Omit entirely (null) unless the document prints them per component; use gst_pct for a single consolidated rate.",
+            properties: {
+              cgst_amount: { type: ["number", "null"] },
+              sgst_amount: { type: ["number", "null"] },
+              igst_amount: { type: ["number", "null"] },
+              utgst_amount: { type: ["number", "null"] },
+              cess_amount: { type: ["number", "null"] },
+              excise_amount: { type: ["number", "null"] },
+              ed_cess_amount: { type: ["number", "null"] },
+              tooling_amount: { type: ["number", "null"] },
+              p_and_f_amount: { type: ["number", "null"] },
+              others_amount: { type: ["number", "null"] },
+            },
+          },
         },
       },
     },
@@ -635,12 +688,27 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     // p_and_f/others...), so a dense multi-line PO blows a 2K budget long
     // before the array closes. The truncated JSON was then REPAIRED into
     // valid JSON downstream, so nothing noticed.
-    max_tokens: 8000,
+    // 8000 was ~12% of what the model can emit — gemini-3.1-pro supports 64K
+    // output and the API DEFAULT is 8,192, which is where that number came
+    // from. Measured against a real 45-line PO the answer alone needs
+    // 5,400-6,800 tokens, leaving a reasoning model under 2,600 to think in;
+    // it ran out mid-array and the run failed on MAX_TOKENS.
+    //
+    // The earlier estimate in this file said "~4,800 tokens of JSON". That was
+    // low: 21 schema fields at 467 chars per line is 5,400-6,800.
+    //
+    // Raising the ceiling alone would NOT have fixed it — reaching 8,000 took
+    // 26-30s of a 45s RUN_BUDGET_MS, so a bigger budget just converts the
+    // truncation into a timeout. It is the nested `charges` group (PO_SCHEMA)
+    // that makes the answer smaller and therefore faster; this removes the
+    // artificial ceiling so a genuinely large PO is not capped on top of that.
+    //
+    // Costs nothing unless generated — output tokens bill per token produced.
+    max_tokens: Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 24000),
     // Structured line-item extraction is mechanical — responseSchema carries
     // the structure, so deep reasoning buys little and costs line items.
     // Gemini 3 thinks at MEDIUM by default and those tokens come out of
-    // max_tokens: a 45-line PO needs only ~4,800 tokens of JSON yet still
-    // truncated at 8000, because reasoning consumed the rest. Pinning low
+    // max_tokens. Pinning low
     // hands the budget back to the answer (and cuts latency, which matters
     // against RUN_BUDGET_MS). Env-overridable per deployment; set
     // GEMINI_THINKING_LEVEL="" to fall back to the model default.
@@ -847,7 +915,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     };
   }
 
-  const lines = Array.isArray(out.lines) ? out.lines : [];
+  const lines = (Array.isArray(out.lines) ? out.lines : []).map(flattenCharges);
   const overall = Number(out.confidence);
   const conf = Number.isFinite(overall) ? Math.max(0, Math.min(1, overall)) : 0.7;
   const confidences = { overall: conf };

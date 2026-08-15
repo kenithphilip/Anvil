@@ -523,6 +523,13 @@
     personas: async () => apiFetch("/api/agent/personas"),
   };
 
+  // The tenant's own registered identity — what customer-facing PDFs print as
+  // the seller. Migration 062 added the columns; nothing ever wrote them.
+  const sellerDetails = {
+    get:  async () => apiFetch("/api/admin/seller_details"),
+    save: async (patch) => apiFetch("/api/admin/seller_details", { method: "PATCH", body: patch }),
+  };
+
   const erpChat = {
     sessions:    async () => apiFetch("/api/erp_chat/sessions"),
     session:     async (id) => apiFetch("/api/erp_chat/sessions?id=" + encodeURIComponent(id) + "&messages=true"),
@@ -1798,6 +1805,7 @@
     edi,
     rlhf,
     agent,
+    sellerDetails,
     erpChat,
     mcp,
     inbound,

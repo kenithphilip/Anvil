@@ -4,6 +4,7 @@ import { Banner, Btn, Card, Chip, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 import { RBAC, MATRIX, ACTIONS } from "../lib/rbac";
+import { SellerDetailsPanel } from "../components/SellerDetailsPanel";
 import { lsGet, lsSet } from "../lib/storage-keys";
 import { Prefs } from "../lib/preferences";
 import { PricingProfilesAdmin } from "../components/PricingProfilesAdmin";
@@ -62,6 +63,7 @@ const ADMIN_CRUD_TABS = [
   { id: "plm",       label: "PLM" },
   { id: "voice",     label: "Voice" },
   { id: "chat",      label: "Chat channels" },
+  { id: "company",   label: "Company details" },
   { id: "settings",  label: "Settings" },
   { id: "holidays",  label: "Holidays" },
   { id: "leadtimes", label: "Lead times" },
@@ -2055,6 +2057,11 @@ const WiredAdminCRUD = () => {
         {active === "navigation" && <NavVisibilityAdmin />}
         {active === "logistics_monitor" && <LogisticsMonitorEditor />}
 
+        {/* The tenant's own registered identity. Its own component rather than
+            another 200 lines in this file, which is already ~4,000 long. */}
+        {active === "company" && (
+          <SellerDetailsPanel canEdit={!!(RBAC && RBAC.canDo && RBAC.canDo("so.approve")) || isAdmin} />
+        )}
         {active === "billing" && (
           <>
             <Card title="Outcome meter" eyebrow="what your tenant has actually done · billable units">

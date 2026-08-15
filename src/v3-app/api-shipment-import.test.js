@@ -5,7 +5,7 @@
 // orders — so everything is resolved by header LABEL, never position.
 
 import { describe, it, expect } from "vitest";
-import { detectHeaderRow, buildHeaderMap, classifySheet, normalizeMode, toDateStr, normalizePending, normalizeLine, deriveStatus, pendingToShipment, parseSheets, normHeader } from "../api/_lib/shipment-import.js";
+import { detectHeaderRow, buildHeaderMap, classifySheet, normalizeMode, toDateStr, normalizePending, normalizeLine, deriveStatus, pendingToShipment, parseSheets, normHeader, sheetCountry } from "../api/_lib/shipment-import.js";
 
 const PENDING_HEADER = [
   "Sr. No.", "Supplier Name", "Shipper Invoice No.", "Items Details", "Shipper Inv Date",
@@ -231,5 +231,120 @@ describe("per-sheet accounting", () => {
     expect(d.blank).toBe(2);
     expect(d.unrecognised).toBe(0);
     expect(d.warning).toBeUndefined();
+  });
+});
+
+// ── the country sheets, audited 2026-08-15 ────────────────────────────────
+//
+// The In Transit workbook is one sheet per source country and the sheets do not
+// agree with each other:
+//
+//   Japan     P/O | PART NO.     | DESCRIPTION | Q'TY | Net Weight
+//   China     P/O | DESCRIPTION  | Part Number | Net Weight | Q'TY
+//   Korea     P/O | DESCRIPTION  | Part Number | Q'TY | Net Weight
+//   Thailand  P/O | DESCRIPTION  | Part Number | Q'TY        (no Net Weight)
+//
+// Requiring part_no AND po_ref dropped 763 real rows: Thailand leaves Part
+// Number blank and puts the code in DESCRIPTION, Japan/Korea leave P/O blank,
+// China's P/O column carries free text ("Replacement items").
+
+describe("country sheets with different layouts", () => {
+  const sheet = (name, headers, rows) => ({ name, rows: [headers, ...rows] });
+  const JAPAN = ["P/O", "PART NO.", "DESCRIPTION", "Q'TY", "Net Weight", "Shipper Inv No."];
+  const THAI = ["P/O", "DESCRIPTION", "Part Number", "Q'TY", "Shipper Inv No."];
+
+  it("reads Japan's PART NO. and Thailand's Part Number alike", () => {
+    const out = parseSheets([
+      sheet("Japan", JAPAN, [["OIPOOJ-1", "NI110H-610", "TRANSFORMER", 1, "", "1600082-ID"]]),
+      sheet("Thailand", THAI, [["OIPOOT-1", "OIL SEAL", "SB36466", 50, "EX21-0002"]]),
+    ]);
+    expect(out.lines.map((l) => l.part_no)).toEqual(["NI110H-610", "SB36466"]);
+  });
+
+  it("keeps a row whose part number is blank and code sits in the description", () => {
+    // Thailand's 672. Real goods in transit — dropping them meant a customer
+    // asking about a Thai part got "no match" while the row sat in the sheet.
+    const out = parseSheets([sheet("Thailand", THAI, [["OIPOOT-1", "SB36466 OIL SEAL", "", 50, "EX21-0002"]])]);
+    expect(out.lines).toHaveLength(1);
+    expect(out.lines[0].description).toBe("SB36466 OIL SEAL");
+  });
+
+  it("does NOT mine a part number out of the description", () => {
+    // The trap #424 closed on the PO side: the splitter turned "TWS-092-90-2"
+    // into "90-2". A missing part number stays missing.
+    const out = parseSheets([sheet("Thailand", THAI, [["OIPOOT-1", "SB36466 OIL SEAL", "", 50, "EX21-0002"]])]);
+    expect(out.lines[0].part_no).toBeFalsy();
+  });
+
+  it("keeps a row whose P/O is blank but part is present", () => {
+    // Japan and Korea both do this.
+    const out = parseSheets([sheet("Korea", THAI, [["", "COUPLER", "KZ-1386", 20, "OK-CO-16-0075"]])]);
+    expect(out.lines).toHaveLength(1);
+    expect(out.lines[0].part_no).toBe("KZ-1386");
+  });
+
+  it("drops a row that identifies nothing", () => {
+    // Anchored to something, or it is not a line.
+    const out = parseSheets([sheet("Korea", THAI, [["", "", "", 20, ""]])]);
+    expect(out.lines).toHaveLength(0);
+  });
+
+  it("counts part-less rows so they are visible, not silent", () => {
+    const out = parseSheets([sheet("Thailand", THAI, [
+      ["OIPOOT-1", "SB36466 OIL SEAL", "", 50, "EX21-0002"],
+      ["OIPOOT-2", "GASKET", "GK-9", 2, "EX21-0002"],
+    ])]);
+    expect(out.diag[0].without_part_no).toBe(1);
+    expect(out.diag[0].kept).toBe(2);
+  });
+});
+
+describe("source country from the sheet name", () => {
+  it("maps the country sheets to ISO codes", () => {
+    expect(sheetCountry("Japan")).toBe("JP");
+    expect(sheetCountry("China")).toBe("CN");
+    expect(sheetCountry("Korea")).toBe("KR");
+    expect(sheetCountry("Thailand")).toBe("TH");
+    expect(sheetCountry("France")).toBe("FR");
+  });
+
+  it("stamps it on every line from that sheet", () => {
+    const out = parseSheets([{
+      name: "Korea",
+      rows: [["P/O", "DESCRIPTION", "Part Number", "Q'TY", "Shipper Inv No."],
+             ["OIPOOK-1", "TERMINAL", "4-ET6755", 10, "OK-CO-16-0075"]],
+    }]);
+    expect(out.lines[0].source_country).toBe("KR");
+  });
+
+  // An explicit list, not a guess: inferring a country from an arbitrary tab
+  // name would invent data.
+  it.each(["Sheet1", "Sheet2", "HSS Transit Shipment", "", null])("yields null for %p", (n) => {
+    expect(sheetCountry(n)).toBeNull();
+  });
+});
+
+describe("the High Seas Sale sheet", () => {
+  const HSS = {
+    name: "HSS Transit Shipment ",
+    rows: [
+      ["Customer Name", "Customer P/O", "DESCRIPTION", "Shipper Inv No.", "Mode", "POD", "BOE Status"],
+      ["ACME LTD", "PO-991", "4 guns", "OK-CO-26-0166", "SEA", "Nhava Sheva", "filed"],
+    ],
+  };
+
+  it("is recognised as its own kind rather than ignored", () => {
+    // 70 real rows used to vanish without comment.
+    expect(parseSheets([HSS]).diag[0].kind).toBe("hss");
+  });
+
+  it("warns that it is recognised but not imported", () => {
+    const d = parseSheets([HSS]).diag[0];
+    expect(d.warning).toMatch(/High Seas Sale/);
+    expect(d.unsupported).toBe(1);
+  });
+
+  it("contributes no lines — it has no part-level columns", () => {
+    expect(parseSheets([HSS]).lines).toHaveLength(0);
   });
 });

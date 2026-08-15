@@ -151,8 +151,17 @@ export const classifySheet = (headerMap) => {
   const hasPart = has("part no") || has("part number");
   const hasPO = has("p/o");
   const hasQty = has("q'ty") || has("qty");
-  // Line sheets are the per-part detail: P/O + part + qty.
-  if (hasPO && hasPart && hasQty) return "lines";
+  // High Seas Sale: customer-facing, sold in transit before customs clearance.
+  // Its own shape — Customer Name / Customer P/O / BOE status, no part column —
+  // so it can never satisfy the line test below. Named rather than lumped into
+  // "ignore" so 70 real rows stop disappearing without comment.
+  if (has("customer p/o") || has("boe status") || has("hss document")) return "hss";
+  // Line sheets are the per-part detail. Qty plus SOMETHING identifying: the
+  // country sheets disagree about which of P/O and part number is populated —
+  // Thailand leaves Part Number blank and puts the code in DESCRIPTION,
+  // Japan/Korea leave P/O blank — and requiring all three classified those
+  // sheets correctly only by luck.
+  if (hasQty && (hasPO || hasPart)) return "lines";
   // Pending is the shipment header: invoice + the arrival/departure ladder.
   if (hasInvoice && (has("ata") || has("port of discharge") || has("atd") || has("forwarder"))) return "pending";
   return "ignore";
@@ -245,6 +254,22 @@ export const pendingToShipment = (n, links = {}) => ({
 
 // Turn an array of { name, rows } sheets into normalized pending + line rows.
 // Skips rows with no invoice (pending) / no part (lines).
+// Origin from the sheet name. The workbook is one sheet per source country and
+// nothing else records it — `shipments` and `shipment_lines` have no origin
+// column of their own, so without this the KR/CN/JP corridor split is lost at
+// the door.
+//
+// An explicit list, not a guess: "Sheet1", "Sheet2" and "HSS Transit Shipment"
+// are not countries, and inferring one from an arbitrary tab name would invent
+// data. An unlisted sheet simply yields null.
+const SHEET_COUNTRY = {
+  japan: "JP", china: "CN", korea: "KR", "south korea": "KR",
+  thailand: "TH", france: "FR", germany: "DE", italy: "IT",
+  usa: "US", "united states": "US", taiwan: "TW", vietnam: "VN",
+  india: "IN", spain: "ES", uk: "GB", "united kingdom": "GB",
+};
+export const sheetCountry = (name) => SHEET_COUNTRY[norm(name)] || null;
+
 // How many cells carry something a person would call data. Booleans are Excel
 // checkbox artefacts, not values; whitespace is not content; a lone serial
 // number is a row number, not a row.
@@ -273,10 +298,17 @@ export const parseSheets = (sheets) => {
     if (kind === "ignore") {
       diag.push({ sheet: sheet.name || null, kind, rows: rows.length, kept: 0, blank: 0, unrecognised: 0 });
       continue;
+
     }
     let kept = 0;
     let blank = 0;
     let unrecognised = 0;
+    let unsupported = 0;
+    let partless = 0;
+    // The sheet NAME is the only place the origin appears. Read it for line
+    // sheets so a KR/CN/JP corridor is something you can slice by, instead of
+    // metadata the importer sees and drops.
+    const sourceCountry = kind === "lines" ? sheetCountry(sheet.name) : null;
     for (let i = hdr.index + 1; i < rows.length; i++) {
       const row = rows[i];
       // Blank means "no content", not "no cells". The Pending sheet carries ~518
@@ -288,14 +320,39 @@ export const parseSheets = (sheets) => {
       if (kind === "pending") {
         const n = normalizePending(row, map);
         if (n.shipper_invoice_no) { pending.push(n); kept++; } else unrecognised++;
-      } else {
+      } else if (kind === "lines") {
         const n = normalizeLine(row, map);
-        if (n.part_no && n.po_ref) { lines.push(n); kept++; } else unrecognised++;
+        // Keep a row that identifies WHAT (part or description) and anchors to
+        // SOMETHING (a P/O or a shipper invoice). Requiring part_no AND po_ref
+        // dropped 763 real rows across the country sheets — goods genuinely in
+        // transit — because the sheets disagree about which columns they fill.
+        //
+        // Deliberately NOT filled in by guessing: a missing part number stays
+        // null rather than being mined out of the description. That is the trap
+        // that turned "TWS-092-90-2" into "90-2" on the PO side.
+        const identifies = !!(n.part_no || n.description);
+        const anchors = !!(n.po_ref || n.shipper_invoice_no);
+        if (identifies && anchors) {
+          lines.push(sourceCountry ? { ...n, source_country: sourceCountry } : n);
+          kept++;
+          if (!n.part_no) partless++;
+        } else unrecognised++;
+      } else {
+        // A recognised-but-unsupported kind (hss). Counted, never silently lost.
+        unsupported++;
       }
     }
     diag.push({
       sheet: sheet.name || null, kind, header_row: hdr.index,
       rows: Math.max(0, rows.length - hdr.index - 1), kept, blank, unrecognised,
+      ...(sourceCountry ? { source_country: sourceCountry } : {}),
+      // Rows kept WITHOUT a part number — real goods, identified by description
+      // only. Surfaced so "why is this line missing a part?" has an answer.
+      ...(partless ? { without_part_no: partless } : {}),
+      ...(unsupported ? { unsupported } : {}),
+      ...(kind === "hss"
+        ? { warning: "High Seas Sale sheet recognised but not imported — it has no part-level columns. " + unsupported + " row(s) skipped." }
+        : {}),
       // The loud case: the sheet looked right and produced nothing.
       ...(kept === 0 && unrecognised > 0
         ? { warning: "classified as " + kind + " but every non-blank row was unrecognised — a column header probably does not match" }

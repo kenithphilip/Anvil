@@ -24,6 +24,14 @@ import { parseSheets, pendingToShipment } from "../_lib/shipment-import.js";
 
 const uniq = (arr) => [...new Set(arr.filter(Boolean))];
 
+// A line's identity: its part number when it has one, its description
+// otherwise. Mirrors shipment_lines.line_key (migration 211). The country
+// sheets disagree about which column carries the code — Thailand leaves Part
+// Number blank and puts it in DESCRIPTION — so 763 real rows have no part
+// number and must still dedupe on re-upload rather than duplicating.
+const lineKey = (l) => (String(l?.part_no ?? "").trim() || String(l?.description ?? "").trim() || null);
+
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);
@@ -45,8 +53,12 @@ export default async function handler(req, res) {
     // invoices actually being imported before sending. Falls back to parsing raw
     // { sheets } here (used by tests / smaller uploads).
     const preNormalized = Array.isArray(body?.pending) || Array.isArray(body?.lines);
-    const { pending, lines } = preNormalized
-      ? { pending: body.pending || [], lines: body.lines || [] }
+    // `diag` is the per-sheet accounting parseSheets returns — rows, kept,
+    // blank, unrecognised, plus a warning when a sheet classifies and yields
+    // nothing. Surfaced in the response so a workbook whose headers drift is
+    // visible on the first upload rather than after someone counts rows.
+    const { pending, lines, diag } = preNormalized
+      ? { pending: body.pending || [], lines: body.lines || [], diag: null }
       : parseSheets(body?.sheets);
     if (!pending.length && !lines.length) {
       return json(res, 400, { error: { message: "No shipment or line rows recognised in the uploaded sheets." } });
@@ -56,9 +68,42 @@ export default async function handler(req, res) {
     //    shipment (bounds the work to the shipments actually being imported).
     const pendInvoices = uniq(pending.map((p) => p.shipper_invoice_no));
     const pendInvoiceSet = new Set(pendInvoices);
+
+    // LINE ROWS RESOLVE AGAINST SHIPMENTS ALREADY IN THE DATABASE, not only
+    // those in this payload.
+    //
+    // Line persistence used to be gated on `pendInvoiceSet` alone, so uploading
+    // the per-part workbook without its summary in the SAME request silently
+    // discarded every row. That made the natural workflow — line items once,
+    // summary refreshed daily — quietly lossy: the operator saw a success and
+    // got nothing.
+    //
+    // Bounded by the invoices the lines actually mention, so this is one
+    // indexed lookup rather than a table scan.
+    const lineInvoices = uniq(lines.map((l) => l.shipper_invoice_no)).filter((inv) => !pendInvoiceSet.has(inv));
+    const existingShipmentByInvoice = new Map();
+    if (lineInvoices.length) {
+      // Chunked: a workbook can mention hundreds of invoices and a single
+      // `in` list is a URL, not a body.
+      for (let i = 0; i < lineInvoices.length; i += 200) {
+        const batch = lineInvoices.slice(i, i + 200);
+        const { data, error } = await svc.from("shipments")
+          .select("id, shipper_invoice_no, source_po_id")
+          .eq("tenant_id", tenantId).in("shipper_invoice_no", batch);
+        if (error) throw new Error("shipments lookup: " + error.message);
+        for (const r of (data || [])) existingShipmentByInvoice.set(r.shipper_invoice_no, r);
+      }
+    }
+    // Every invoice a line row can attach to: this payload's, plus what is
+    // already on file.
+    const knownInvoices = new Set([...pendInvoiceSet, ...existingShipmentByInvoice.keys()]);
+    // Lines naming an invoice that exists NOWHERE. Reported rather than
+    // dropped in silence — it means the summary for those shipments has not
+    // been uploaded yet, which is a thing an operator can act on.
+    const orphanInvoices = uniq(lines.map((l) => l.shipper_invoice_no)).filter((inv) => !knownInvoices.has(inv));
     const poRefsByInvoice = new Map();
     for (const l of lines) {
-      if (!pendInvoiceSet.has(l.shipper_invoice_no)) continue;
+      if (!knownInvoices.has(l.shipper_invoice_no)) continue;
       if (!poRefsByInvoice.has(l.shipper_invoice_no)) poRefsByInvoice.set(l.shipper_invoice_no, new Set());
       poRefsByInvoice.get(l.shipper_invoice_no).add(l.po_ref);
     }
@@ -126,9 +171,13 @@ export default async function handler(req, res) {
     const spoIdByRef = new Map([...spoByRef.entries()].map(([ref, s]) => [ref, s.id]));
     const receipts = [];
     for (const l of lines) {
-      if (!pendInvoiceSet.has(l.shipper_invoice_no) || !l.receipt_date) continue;
+      if (!knownInvoices.has(l.shipper_invoice_no) || !l.receipt_date) continue;
       const spoId = spoIdByRef.get(l.po_ref);
       if (!spoId) continue;
+      // A receipt can only be stamped against a source_po_line, which is keyed
+      // by part number. A description-only row has nothing to match on, so it
+      // is skipped here — it still lands in shipment_lines below.
+      if (!l.part_no) continue;
       const line = spoLineByKey.get(`${spoId}::${l.part_no.trim()}`);
       if (!line) continue;
       receipts.push({ id: line.id, received_qty: Number(l.qty) || Number(line.qty) || 0, received_at: l.receipt_date });
@@ -141,11 +190,12 @@ export default async function handler(req, res) {
     //     several shipments. Grouped by pending invoice, deduped by part_no.
     const linesByInvoice = new Map();
     for (const l of lines) {
-      if (!pendInvoiceSet.has(l.shipper_invoice_no) || !l.part_no) continue;
+      const key = lineKey(l);
+      if (!knownInvoices.has(l.shipper_invoice_no) || !key) continue;
       if (!linesByInvoice.has(l.shipper_invoice_no)) linesByInvoice.set(l.shipper_invoice_no, new Map());
       // Last row for a given (invoice, part) wins — a later sheet row is the
       // fresher status. Avoids an ON CONFLICT double-touch in one upsert batch.
-      linesByInvoice.get(l.shipper_invoice_no).set(l.part_no.trim(), l);
+      linesByInvoice.get(l.shipper_invoice_no).set(key, l);
     }
     const shipmentLinesMatched = [...linesByInvoice.values()].reduce((n, m) => n + m.size, 0);
 
@@ -158,6 +208,22 @@ export default async function handler(req, res) {
       unlinked: plan.filter((p) => !p.linked).length,
       line_receipts_matched: receipts.length,
       shipment_lines_matched: shipmentLinesMatched,
+      // Lines that attached to a shipment already on file rather than one in
+      // this upload — the whole point of decoupling the two workbooks.
+      lines_matched_to_existing: existingShipmentByInvoice.size,
+      // Lines naming an invoice that exists nowhere: their summary has not been
+      // uploaded yet. Named so the operator can fix it, not dropped in silence.
+      orphan_invoices: orphanInvoices.length,
+      orphan_invoice_sample: orphanInvoices.slice(0, 10),
+      // Kept without a part number — real goods identified by description only
+      // (Thailand's sheet leaves Part Number blank on 672 rows).
+      lines_without_part_no: lines.filter((l) => !l.part_no).length,
+      by_source_country: lines.reduce((acc, l) => {
+        if (!l.source_country) return acc;
+        acc[l.source_country] = (acc[l.source_country] || 0) + 1;
+        return acc;
+      }, {}),
+      sheets: diag || undefined,
     };
 
     if (!apply) {
@@ -196,29 +262,44 @@ export default async function handler(req, res) {
         .eq("tenant_id", tenantId).eq("id", r.id);
       if (!error) receiptsApplied += 1;
     }
-    // Persist the inbound per-part lines for each shipment we just upserted.
-    for (const p of plan) {
+    // Persist the inbound per-part lines.
+    //
+    // Targets are the shipments upserted above PLUS the ones already on file
+    // that these line rows name. Walking `plan` alone was the bug: a workbook
+    // uploaded without its summary matched nothing and wrote nothing, so
+    // "line items once, summary daily" silently lost every line.
+    const lineTargets = [
+      ...plan.filter((p) => p.shipment_id),
+      ...[...existingShipmentByInvoice.values()].map((r) => ({
+        shipment_id: r.id, shipper_invoice_no: r.shipper_invoice_no, source_po_id: r.source_po_id || null,
+      })),
+    ];
+    for (const p of lineTargets) {
       if (!p.shipment_id) continue;
       const byPart = linesByInvoice.get(p.shipper_invoice_no);
       if (!byPart || !byPart.size) continue;
       const rows = [...byPart.values()].map((l) => {
         const spoId = spoIdByRef.get(l.po_ref) || p.source_po_id || null;
-        const spoLine = spoId ? spoLineByKey.get(`${spoId}::${l.part_no.trim()}`) : null;
+        const spoLine = spoId && l.part_no ? spoLineByKey.get(`${spoId}::${l.part_no.trim()}`) : null;
         const qty = l.qty === "" || l.qty == null ? null : Number(l.qty);
         return {
           tenant_id: tenantId,
           shipment_id: p.shipment_id,
           source_po_id: spoId,
           source_po_line_id: spoLine ? spoLine.id : null,
-          part_no: l.part_no,
+          part_no: l.part_no || null,
           description: l.description || null,
+          source_country: l.source_country || null,
           qty: Number.isFinite(qty) ? qty : null,
           received_qty: l.receipt_date ? (Number.isFinite(qty) ? qty : 0) : 0,
           receipt_date: l.receipt_date || null,
           remark: l.remark || null,
         };
       });
-      const { error } = await svc.from("shipment_lines").upsert(rows, { onConflict: "shipment_id,part_no" });
+      // line_key, not part_no: the old target could not dedupe a row whose part
+      // number is null, because NULL never equals NULL in a unique index — every
+      // re-upload would have duplicated the 763 description-only rows.
+      const { error } = await svc.from("shipment_lines").upsert(rows, { onConflict: "shipment_id,line_key" });
       if (!error) shipmentLinesApplied += rows.length;
     }
 

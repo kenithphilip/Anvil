@@ -668,6 +668,52 @@ Three takeaways:
 
 **Verdict: LEARN-ONLY, with a watch item.** No feature overlap — Derya moves cargo, Anvil runs quote-to-cash. Do **not** build forwarding operations. **Watch:** if Derya moves up-stack into shipper-side software (rate management, landed-cost, procurement-adjacent tooling), it stops being a channel and starts overlapping Anvil's logistics module — the same up-stack risk flagged for Spaceflow in §3.24.
 
+### Additions — 2026-08-15 (logistics-planning stack elements)
+
+Two entries at the user's request, framed as **stack elements Anvil could plan logistics with**, rather than as rivals. `usederya.com` was already reviewed at §3.25 on 2026-08-11 and is not re-reviewed here; what follows adds Ekho Labs and then says how the two compose, because they sit at opposite ends of the same problem and only one of them is a decision layer.
+
+### 3.26 Ekho Labs — `ekholabs.com` (adjacent — upstream signal for Anvil's monitor)
+
+One-liner, verbatim from the site: **"The decision engine for disrupted freight."**
+
+What it does: ingests a claimed 10,000+ sources — sanctions registries, AIS, port feeds, weather models, union and congressional communications — and forecasts corridor disruption with a **median 12-day lead time**, then recommends specific actions: PO-level reroutes, carrier alternatives, booking windows.
+
+ICP: freight teams running ocean lanes through disrupted corridors; enterprise supply-chain leadership.
+
+Integration shape: **read-only API into the TMS/ERP you already run** — CargoWise, SAP TM, Oracle OTM, Descartes are named. SSO/SAML, "live in under 24 hours", no install. That posture matters more than the feature list: Ekho does not want to be your system of record, which is exactly the half Anvil already owns.
+
+Maturity: early. No pricing, no funding, no customer logos. One named advisor (Lenovo ISG's former COO) and one case study (Hamburg → Jeddah, March 2026). **Treat "10,000+ sources" and "12-day median" as marketing claims — neither is independently verifiable from the site.**
+
+Relevance to Anvil — and it is more direct than Derya's:
+
+1. **PO-level is Anvil's unit of work.** Ekho recommends reroutes *per purchase order*, not per container. Anvil already carries `shipments` + `shipment_lines` (migration 209) linked back to orders, so a PO-level disruption signal lands on a row Anvil already has. Most disruption tooling is lane-level and would not.
+2. **Anvil has the consumer already built, and it is switched off.** Migration 206 shipped a configuration-driven monitor with SLA/escalation: tenant-defined rules, a per-tenant cron detector, fingerprint-deduped `logistics_exceptions` each carrying its own SLA clock, alerts fanned to bell + email. Today its detector reads sources Anvil owns — source-PO ack, ready-date and work-order delays via `delays/scan.js`. **An external disruption feed is a new `rule_kind`, not a new subsystem.** The flag is `tenant_settings.logistics_monitor_enabled`, default off.
+3. **It closes the loop with the freight-bidding module.** `freight_consolidations` / `freight_bids` (migration 145) solicits FCL/LCL bids. A 12-day warning is only useful if you can act on it, and re-bidding a consolidation *is* the action. Signal → exception → re-bid is a path Anvil could complete end to end.
+
+Where it does **not** fit:
+
+- Its named integrations are enterprise TMS platforms. **Anvil is not a TMS and is not on that list**, so "read-only API into your stack" is a claim about SAP TM, not about Anvil. Any integration would be Anvil pulling from Ekho, and no public API docs were found.
+- Anvil's primary tenant imports on **KR/CN/JP group-subsidiary corridors**. Ekho's public evidence is a Middle East / Europe ocean lane. Corridor coverage is unverified for the lanes that actually matter here.
+- Disruption intelligence is a **data subscription with recurring cost**, sitting beside a compliance question about egress ([[backlog_compliance_ciso]]) — the same gate flagged for OpenRouter.
+
+**Verdict: LEARN-ONLY, with a concrete watch item.** Do not build disruption forecasting; ten thousand data sources is not a side quest. **Watch:** if Ekho publishes a public API and covers Asian corridors, it is the cheapest way to give Anvil's monitor a *predictive* rule alongside its current *reactive* ones — which is the difference between telling an operator a shipment is already late and telling them it will be.
+
+### How the two compose
+
+They are the opposite ends of one workflow, and neither is a competitor:
+
+| | what it is | where it sits | Anvil's side |
+|---|---|---|---|
+| **Ekho Labs** (§3.26) | decision engine — predicts disruption, recommends reroutes | *upstream* of the decision | consumer: a new `rule_kind` on the migration-206 monitor |
+| **Derya** (§3.25) | freight forwarder — actually moves the cargo | *downstream* of the decision | counterparty: a bid source for `freight_bids` (mig 145) |
+
+The honest read is that **Anvil is the middle layer and already owns it**: the records (`shipments`, `shipment_lines`), the exception spine with SLA clocks (mig 206), and the bidding module (mig 145). What it lacks is a predictive input at the front and live rates at the back. Both are integrations, not builds.
+
+Two cautions before treating this as a plan:
+
+- **Neither has a public API.** Both entries are watch items, and a watch item is not a roadmap line.
+- **Anvil's own monitor has never run in production** — `logistics_monitor_enabled` is default-false and, per [[backlog_sla_support_pm_mvp]], flipping it is 0 LOC. **Turning on the thing that already exists should precede shopping for something to feed it.**
+
 ---
 
 ## 4. Cross-cutting themes from the competitor scan
@@ -1043,5 +1089,7 @@ After the post-implementation pass, the remaining open items in Now are:
 - Mercura: https://www.mercura.ai, https://mercura.io, ycombinator.com/companies/mercura, ycombinator.com/launches/Mun
 - Raven: https://startraven.com, ycombinator.com/companies/raven
 - Shielded: https://www.shieldedglobal.com, ycombinator.com/companies/shielded (YC S26, Susa Ventures)
+- Derya: https://www.usederya.com (reviewed 2026-08-11; marketing-led, no pricing or public API found)
+- Ekho Labs: https://www.ekholabs.com (reviewed 2026-08-15; no pricing, funding or customer logos published)
 - Naïve: https://usenaive.ai, ycombinator.com/companies/naive, techcrunch.com/2026/08/06 ($28.5M Series A, Nexus)
 - Spaceflow: https://www.spaceflow.tech, ycombinator.com/companies/spaceflow-technologies-inc (YC S26)

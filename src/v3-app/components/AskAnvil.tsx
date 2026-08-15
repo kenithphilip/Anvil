@@ -19,11 +19,36 @@
 //    sends something.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AnvilBackend } from "../lib/api";
 import { renderMarkdown } from "../lib/markdown";
 import { suggestionsForOrder, type Suggestion } from "../lib/agent-suggestions";
 
 interface Persona { id: string; label: string; routes?: string[]; placeholder?: string }
+
+// Personas change when an operator flips a tenant flag — not within a session.
+// The SO workspace remounts this component as its data lands, and each mount
+// was re-fetching the same list. Cache the in-flight promise per tab so N
+// mounts cost one request.
+let personaCache: Promise<Persona[]> | null = null;
+const fetchPersonas = (): Promise<Persona[]> => {
+  if (!personaCache) {
+    personaCache = Promise.resolve()
+      .then(() => (AnvilBackend as any)?.agent?.personas?.())
+      .then((r: any) => (r?.personas || []) as Persona[])
+      .catch(() => {
+        // Do not cache a failure: a 401 during a token refresh would otherwise
+        // disable the surface for the rest of the session.
+        personaCache = null;
+        return [] as Persona[];
+      });
+  }
+  return personaCache;
+};
+
+// Test-only: the cache is module-level and would otherwise leak the first
+// test's answer into every later one.
+export const __resetPersonaCache = () => { personaCache = null; };
 interface Turn { role: "user" | "assistant"; text: string; tools?: string[] }
 
 interface Props {
@@ -53,10 +78,9 @@ export const AskAnvil: React.FC<Props> = ({ route, context, contextLine }) => {
     let alive = true;
     (async () => {
       try {
-        const r: any = await AnvilBackend?.agent?.personas?.();
+        const list = await fetchPersonas();
         if (!alive) return;
-        const match = (r?.personas || []).find((p: Persona) => (p.routes || []).includes(route));
-        setPersona(match || null);
+        setPersona(list.find((p) => (p.routes || []).includes(route)) || null);
       } catch { if (alive) setPersona(null); }
     })();
     return () => { alive = false; };
@@ -104,7 +128,22 @@ export const AskAnvil: React.FC<Props> = ({ route, context, contextLine }) => {
 
   if (!persona) return null;
 
-  return (
+  // PORTALLED TO <body> ON PURPOSE.
+  //
+  // position:fixed resolves against the nearest ancestor that establishes a
+  // containing block, and ANY non-`none` transform does that — including the
+  // identity matrix left behind by a finished animation. The v3 screen wrapper
+  // `.route-enter` carries exactly that, so rendering in place pinned the
+  // button to the bottom of the SCREEN CONTENT and let it scroll away instead
+  // of floating over the viewport.
+  //
+  // Fixing the wrapper would work until the next transform, filter or
+  // will-change lands anywhere above this component. A portal is immune to all
+  // of them, and it also puts the panel in a clean stacking context alongside
+  // the other overlays rather than inside whatever the screen happens to nest.
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <>
       {!open && (
         <button type="button" className="aa-fab" onClick={() => setOpen(true)}
@@ -172,6 +211,7 @@ export const AskAnvil: React.FC<Props> = ({ route, context, contextLine }) => {
           </form>
         </aside>
       )}
-    </>
+    </>,
+    document.body,
   );
 };

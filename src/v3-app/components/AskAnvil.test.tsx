@@ -8,12 +8,13 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
-import { AskAnvil } from "./AskAnvil";
+import { AskAnvil, __resetPersonaCache } from "./AskAnvil";
 
 const personas = vi.fn();
 const send = vi.fn();
 
 beforeEach(() => {
+  __resetPersonaCache();
   personas.mockReset();
   send.mockReset();
   (window as any).AnvilBackend = { agent: { personas }, erpChat: { send } };
@@ -27,26 +28,82 @@ const ctx = { anomalies: [{ code: "document_total_shortfall", severity: "warn", 
 describe("tenant gating", () => {
   it("renders nothing at all when the tenant has no personas", async () => {
     personas.mockResolvedValue({ personas: [] });
-    const { container } = render(<AskAnvil route="so" context={ctx} />);
+    render(<AskAnvil route="so" context={ctx} />);
     await waitFor(() => expect(personas).toHaveBeenCalled());
-    expect(container.innerHTML).toBe("");
+    expect(document.querySelector(".aa-fab")).toBeNull();
   });
 
   it("renders nothing when the endpoint fails — never fails open", async () => {
     personas.mockRejectedValue(new Error("403"));
-    const { container } = render(<AskAnvil route="so" context={ctx} />);
+    render(<AskAnvil route="so" context={ctx} />);
     await waitFor(() => expect(personas).toHaveBeenCalled());
-    expect(container.innerHTML).toBe("");
+    expect(document.querySelector(".aa-fab")).toBeNull();
   });
 
   it("renders nothing on a route the persona does not claim", async () => {
     personas.mockResolvedValue({ personas: [SO] });
-    const { container } = render(<AskAnvil route="spares" context={ctx} />);
+    render(<AskAnvil route="spares" context={ctx} />);
     await waitFor(() => expect(personas).toHaveBeenCalled());
-    expect(container.innerHTML).toBe("");
+    expect(document.querySelector(".aa-fab")).toBeNull();
   });
 
   it("shows the button once the tenant has the persona on this route", async () => {
+    personas.mockResolvedValue({ personas: [SO] });
+    render(<AskAnvil route="so" context={ctx} />);
+    expect(await screen.findByRole("button", { name: /ask anvil/i })).toBeTruthy();
+  });
+});
+
+describe("escaping a transformed ancestor", () => {
+  // THE BUG THIS FIXES. position:fixed resolves against the nearest ancestor
+  // that establishes a containing block, and ANY non-`none` transform does —
+  // including the identity matrix a finished animation leaves behind. The v3
+  // screen wrapper `.route-enter` carries exactly that, which pinned the button
+  // to the bottom of the screen CONTENT so it scrolled away instead of floating.
+  it("renders into document.body, not into the transformed subtree", async () => {
+    personas.mockResolvedValue({ personas: [SO] });
+    const { container } = render(
+      <div className="route-enter" style={{ transform: "translateZ(0)" }}>
+        <AskAnvil route="so" context={ctx} />
+      </div>,
+    );
+    await screen.findByRole("button", { name: /ask anvil/i });
+    // Present in the document...
+    expect(document.querySelector(".aa-fab")).toBeTruthy();
+    // ...but NOT inside the transformed wrapper, which is the whole point.
+    expect(container.querySelector(".aa-fab")).toBeNull();
+    expect(document.querySelector(".route-enter .aa-fab")).toBeNull();
+  });
+
+  it("puts the open panel outside that subtree too", async () => {
+    personas.mockResolvedValue({ personas: [SO] });
+    const { container } = render(
+      <div className="route-enter" style={{ transform: "translateZ(0)" }}>
+        <AskAnvil route="so" context={ctx} />
+      </div>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /ask anvil/i }));
+    expect(document.querySelector(".aa-panel")).toBeTruthy();
+    expect(container.querySelector(".aa-panel")).toBeNull();
+  });
+});
+
+describe("one fetch for many mounts", () => {
+  it("does not re-request personas when the screen remounts it", async () => {
+    personas.mockResolvedValue({ personas: [SO] });
+    const { unmount } = render(<AskAnvil route="so" context={ctx} />);
+    await screen.findByRole("button", { name: /ask anvil/i });
+    unmount();
+    render(<AskAnvil route="so" context={ctx} />);
+    await screen.findByRole("button", { name: /ask anvil/i });
+    expect(personas).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT cache a failure — a 401 mid-refresh must not disable the surface", async () => {
+    personas.mockRejectedValueOnce(new Error("401"));
+    const { unmount } = render(<AskAnvil route="so" context={ctx} />);
+    await waitFor(() => expect(personas).toHaveBeenCalledTimes(1));
+    unmount();
     personas.mockResolvedValue({ personas: [SO] });
     render(<AskAnvil route="so" context={ctx} />);
     expect(await screen.findByRole("button", { name: /ask anvil/i })).toBeTruthy();

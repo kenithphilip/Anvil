@@ -90,6 +90,10 @@ const CRON_HANDLER_BUDGETS = {
   "ramco/":         20000,
   "proalpha/":      20000,
   "tally/":         30000,
+  // The logistics monitor runs three phases (detect -> markBreaches -> notify)
+  // sequentially for every opted-in tenant. On the 20s default it was killed
+  // mid-detection, so the phases after it never ran at all.
+  "logistics/":     30000,
 };
 const DEFAULT_BUDGET_MS = 20000;
 export const cronHandlerBudgetMs = (name) => {

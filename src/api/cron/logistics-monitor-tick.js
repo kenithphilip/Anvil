@@ -47,6 +47,10 @@ export default async function handler(req, res) {
         const detection = await detectAllLogistics(svc, row.tenant_id);
         const breaches = await markBreaches(svc, row.tenant_id);
         const notif = await dispatchLogisticsNotifications(svc, row.tenant_id);
+        // detection now carries scanned counts, auto-resolved count, which
+        // populations hit their row cap, and the lookback window in force — so
+        // a first run can be inspected (GET the endpoint with the cron secret)
+        // before anyone trusts what it produced.
         summaries.push({ ...detection, breached: breaches.breached, notifications: notif });
       } catch (err) {
         summaries.push({ tenant_id: row.tenant_id, error: String(err?.message || err).slice(0, 400) });

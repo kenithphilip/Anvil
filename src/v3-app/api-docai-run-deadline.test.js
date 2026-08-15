@@ -28,7 +28,10 @@ const chainable = () => {
 
 vi.mock("../api/_lib/supabase.js", () => ({ serviceClient: () => chainable() }));
 vi.mock("../api/_lib/docai/adapter-learning.js", () => ({
-  rankAdaptersForCustomer: async ({ order }) => order,
+  // The real parameter is `defaultOrder`, not `order`. Destructuring the
+  // wrong name returned undefined, which the dispatcher then fed to
+  // ensureLlmFallbacks — collapsing the chain to just the LLM fallbacks.
+  rankAdaptersForCustomer: async ({ defaultOrder }) => defaultOrder,
 }));
 vi.mock("../api/_lib/docai/pdf-metadata.js", () => ({
   readPdfBias: async () => null,

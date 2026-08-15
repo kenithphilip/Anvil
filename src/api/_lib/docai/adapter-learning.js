@@ -28,7 +28,15 @@
 //     "one extra Postgres select" rather than a full window
 //     scan every PO.
 
-const DEFAULT_ORDER = ["docling", "marker", "unstructured", "reducto", "azure_di", "claude", "gemini"];
+// The canonical order, imported rather than re-declared. This module used to
+// carry its own copy that put gemini LAST, contradicting the dispatcher's
+// gemini-first order and migration 208's column default. It was only ever the
+// parameter default — the dispatcher always passes its own — which is what let
+// it drift unnoticed. A caller that omitted `defaultOrder` would have got the
+// wrong chain, silently.
+import { DEFAULT_PROVIDER_ORDER } from "./provider-order.js";
+
+const DEFAULT_ORDER = DEFAULT_PROVIDER_ORDER;
 const MIN_OBSERVATIONS = 5;
 const RECENT_WINDOW_DAYS = 90;
 const HALF_LIFE_DAYS = 30;

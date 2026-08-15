@@ -54,14 +54,13 @@ const ADAPTERS = {
 // engine X" picker) before it's trusted as a provider-order entry.
 export const ADAPTER_NAMES = Object.keys(ADAPTERS);
 
-// The order used when a tenant has NOT pinned docai_provider_order. Hoisted to
-// module scope and exported so read-only surfaces (the SO workspace pipeline
-// diagnostics card) can show the SAME chain the dispatcher will actually run.
-// It previously lived as a function-local const, which let the diagnostics
-// endpoint drift onto its own hardcoded legacy list — a NULL column then
-// rendered as though the tenant were pinned to a claude-first order that no
-// longer exists anywhere in this file. That cost real debugging hours.
-export const DEFAULT_PROVIDER_ORDER = ["gemini", "docling", "marker", "unstructured", "azure_di", "reducto", "claude"];
+// The order used when a tenant has NOT pinned docai_provider_order. Re-exported
+// from provider-order.js so read-only surfaces (the SO workspace pipeline
+// diagnostics card) keep importing it from here, while there is exactly ONE
+// definition. It previously lived here AND in adapter-learning.js with the two
+// disagreeing about where gemini belongs.
+export { DEFAULT_PROVIDER_ORDER } from "./provider-order.js";
+import { DEFAULT_PROVIDER_ORDER } from "./provider-order.js";
 
 // Is this adapter usable for this tenant? Mirrors the dispatcher's own gate
 // exactly, so a diagnostics surface cannot disagree with what will really run.

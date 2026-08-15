@@ -23,6 +23,7 @@ import { PipelineDiagnostics } from "../components/PipelineDiagnostics";
 import { FieldPill, ProvenanceChip, ExtractionQualityCard, EditableCell } from "../components/SOWorkspaceReviewCells";
 import { AskAnvil } from "../components/AskAnvil";
 import { mergeExtractedLines } from "../lib/line-merge";
+import { varianceLineFromGap, outstandingGaps } from "../lib/variance-line";
 
 // Line-reconciliation table body, mounted inside the unified reconcile
 // view's ReviewPaneSelectionProvider so a row click drives the shared
@@ -1990,6 +1991,42 @@ const WiredSOWorkspace = () => {
                 {lineFlags.length > 10 && <div>…and {lineFlags.length - 10} more</div>}
               </div>
             )}
+            {/* Quoted but NOT ordered. P3's reverse walk reports these; this
+                turns each into one click instead of a re-typed part number and
+                price. The line lands as quote_variance — "not on PO" in the
+                grid, refused by the Tally push — because the customer has not
+                ordered it. A gap already acted on stops offering itself, so a
+                second click cannot double-order. */}
+            {(() => {
+              const gaps = outstandingGaps(recon.quoted_not_ordered, draftLines);
+              if (!gaps.length) return null;
+              return (
+                <div className="mono-sm" style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid var(--hairline-2)" }}>
+                  <div style={{ marginBottom: 3 }}>
+                    <b>{gaps.length}</b> quoted line{gaps.length === 1 ? "" : "s"} not on this PO
+                    <span style={{ color: "var(--ink-3)" }}> — the customer has not ordered {gaps.length === 1 ? "it" : "them"}.</span>
+                  </div>
+                  {gaps.slice(0, 8).map((g: any, i: number) => (
+                    <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", padding: "1px 0" }}>
+                      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {g.part_no || "—"}
+                        {g.qty != null ? ` · ${g.qty}` : ""}
+                        {g.unit_price != null ? ` @ ${fmtINR(g.unit_price)}` : ""}
+                        {g.source_quote_number ? ` · ${g.source_quote_number}` : ""}
+                      </span>
+                      {canEditLines && (
+                        <Btn sm kind="ghost"
+                             onClick={() => { const seed = varianceLineFromGap(g); if (seed) onAddLine("quote_variance", seed); }}
+                             title="Add this as a variance line. It cannot be pushed to Tally until the customer amends the PO.">
+                          Add as variance
+                        </Btn>
+                      )}
+                    </div>
+                  ))}
+                  {gaps.length > 8 && <div style={{ color: "var(--ink-3)" }}>…and {gaps.length - 8} more</div>}
+                </div>
+              );
+            })()}
             {recon.quotes_used?.length ? (
               <div className="mono-sm" style={{ marginTop: 4, color: "var(--ink-3)" }}>
                 Priced from: {recon.quotes_used.map((q: any) => q.quote_number).filter(Boolean).join(", ")}

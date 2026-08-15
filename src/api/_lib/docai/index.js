@@ -123,6 +123,25 @@ const overallConfidence = (confidences) => {
   return vals.reduce((a, b) => a + b, 0) / vals.length;
 };
 
+// Rank two successful results. Used only when every adapter came in UNDER the
+// fallback threshold, so the loop has to choose rather than early-return.
+//
+// Lines first: a 0.82 result carrying 44 line items beats a 0.90 carrying none,
+// because confidence scores the fields that ARE there and says nothing about
+// the ones that are missing. Then confidence. Then line count, so a fuller
+// parse wins a tie. Equal on all three keeps the incumbent, which preserves the
+// tenant's provider order as the final tie-break.
+export const isBetterResult = (candidate, incumbent) => {
+  if (!candidate?.ok) return false;
+  if (!incumbent) return true;
+  const count = (r) => (Array.isArray(r?.normalized?.lines) ? r.normalized.lines.length : 0);
+  const conf = (r) => (Number.isFinite(r?.confidence_overall) ? r.confidence_overall : -1);
+  const ca = count(candidate), ci = count(incumbent);
+  if ((ca > 0) !== (ci > 0)) return ca > 0;
+  if (conf(candidate) !== conf(incumbent)) return conf(candidate) > conf(incumbent);
+  return ca > ci;
+};
+
 // Build the per-customer few-shot bundle for the Claude fallback.
 export const buildPromptOverrides = (settings, customerId) => {
   const all = settings?.docai_prompt_overrides || {};
@@ -326,7 +345,12 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
   // engine is a 5xx-ing Claude) can't dead-end with no customer + no lines.
   order = ensureLlmFallbacks(order, (n) => isAdapterConfigured(n, settings));
   const attempts = [];
-  let last = null;
+  // `best` is the strongest SUCCESSFUL result seen; `lastFailure` is only used
+  // when nothing succeeded. Keeping them apart is the whole point — a single
+  // `last` let a failure clobber a success (see the assignment below).
+  let best = null;
+  let lastFailure = null;
+  let salvagedRaw = null;
   // Materialise an svc reference once so per-iteration cost-guard
   // checks don't re-spawn the client. Best-effort: a missing
   // SUPABASE_URL leaves svc null and the guard treats that as
@@ -466,12 +490,38 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
     if (out.ok && (conf == null || conf >= fallbackThreshold)) {
       return { adapter_used: adapterName, latency_ms, ...out, confidence_overall: conf, attempts };
     }
-    last = { adapter_used: adapterName, latency_ms, ...out, confidence_overall: conf };
+    const candidate = { adapter_used: adapterName, latency_ms, ...out, confidence_overall: conf };
+    // KEEP THE BEST RESULT, NOT THE LAST ONE.
+    //
+    // `last` was reassigned on every iteration, so a LATER FAILURE overwrote an
+    // EARLIER SUCCESS. Observed in production: LlamaParse returned a complete
+    // parse at 0.82 — under the 0.85 fallback threshold, so the loop continued —
+    // then Gemini and Claude both died on "run budget exhausted", and Claude's
+    // failure became the run. The run persisted raw_extract: null,
+    // normalized_extract: null and reported `failed`, throwing away a working
+    // extraction AND the evidence needed to understand what happened.
+    //
+    // A successful extraction must survive anything that runs after it. Falling
+    // through to a fallback is an attempt to do BETTER, never a reason to
+    // discard what we already have.
+    if (out.ok) {
+      if (isBetterResult(candidate, best)) best = candidate;
+    } else {
+      lastFailure = candidate;
+    }
+    // Salvage geometry-bearing output from ANY adapter that produced it, even
+    // one that failed. LlamaParse's `empty_lines` failure carries the full
+    // markdown it parsed; losing that is what made the 6-lines-vs-44 question
+    // unanswerable after the fact.
+    if (out.raw && !salvagedRaw) salvagedRaw = { adapter: adapterName, raw: out.raw };
   }
   // Phase 3.6 observability (audit close): surface a structured
   // failure-reason so the operator can see why no adapter
   // contributed. Without this, the only signal was a 200 with
   // empty normalized + a notify-warn toast.
+  // A success outranks any failure that ran after it. `lastFailure` is only
+  // consulted when nothing succeeded at all.
+  const last = best || lastFailure;
   if (!last) {
     const allSkipped = attempts.length > 0
       && attempts.every((a) => a.status === "skipped_not_configured");
@@ -482,6 +532,13 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
       attempts,
     };
   }
+  // Salvage the parsed document from whichever adapter produced one, so a run
+  // that ends in failure still persists something to diagnose from. Never
+  // overwrites the chosen result's own raw, and records whose it is — mislabelled
+  // provenance would be worse than none.
+  const withSalvage = (r) => (r.raw || !salvagedRaw
+    ? r
+    : { ...r, raw: salvagedRaw.raw, raw_adapter: salvagedRaw.adapter });
   // `last` is whichever adapter ran LAST, not the best one — so after a
   // fall-through it is often a weak-but-ok result (LlamaParse returning zero
   // lines at 0.4 confidence). run.js persists `error: out?.error || null`, so
@@ -493,8 +550,8 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
   const adapterFailures = attempts
     .filter((a) => a.status === "failed")
     .map((a) => ({ adapter: a.adapter, reason: a.reason || null, error: a.error || null }));
-  if (!adapterFailures.length) return { ...last, attempts };
-  return {
+  if (!adapterFailures.length) return withSalvage({ ...last, attempts });
+  return withSalvage({
     ...last,
     attempts,
     adapter_failures: adapterFailures,
@@ -502,5 +559,5 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
     // inherits a readable summary of what actually broke upstream of it.
     error: last.error
       || adapterFailures.map((f) => f.adapter + ": " + (f.error || f.reason || "failed")).join(" | ").slice(0, 500),
-  };
+  });
 };

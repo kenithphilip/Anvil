@@ -86,6 +86,31 @@ export default async function handler(req, res) {
     if (!order.approval || !order.approval.payloadHash) {
       return json(res, 409, { error: { message: "Order has no approval bound to a payload hash" } });
     }
+    // A quote_variance line is one an operator added because the QUOTE owes it,
+    // not because the customer ordered it. Pushing it to Tally would create a
+    // voucher for goods the buyer never authorised on their PO — the commercial
+    // equivalent of invoicing for something nobody bought.
+    //
+    // Approval does not cover this: an approver can legitimately approve an
+    // order that carries a known variance, intending to chase a PO amendment.
+    // The gate belongs at the push, which is the point of no return.
+    //
+    // Resolution is either an amended PO (re-extraction turns the line into a
+    // normal extracted one) or removing the line. Both are operator acts.
+    const varianceLines = (order.result?.salesOrder?.lineItems || [])
+      .filter((l) => l && l._origin === "quote_variance");
+    if (varianceLines.length) {
+      return json(res, 409, {
+        error: {
+          message: varianceLines.length + " line" + (varianceLines.length === 1 ? " is" : "s are")
+            + " marked as owed under the quote but NOT on the customer's PO."
+            + " Push is blocked until the customer amends the PO, or the line is removed.",
+          code: "quote_variance_unresolved",
+          lines: varianceLines.map((l) => l.partNumber || l.itemCode || l.description || null),
+        },
+      });
+    }
+
     const expected = order.payload_hash || order.approval.payloadHash;
     if (body.payloadHash && expected && body.payloadHash !== expected) {
       return json(res, 409, { error: { message: "Payload hash mismatch with approved order" } });

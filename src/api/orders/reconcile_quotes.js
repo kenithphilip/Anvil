@@ -99,6 +99,10 @@ export default async function handler(req, res) {
         as_of: nowIso,
         summary: rec.summary,
         quotes_used: rec.quotes_used,
+        // Lines the customer was quoted and did NOT order. Surfaced so the
+        // operator can decide whether it is a deliberate partial order or an
+        // omission worth chasing a PO amendment for.
+        quoted_not_ordered: rec.quoted_not_ordered,
         ambiguous_parts: rec.ambiguous_parts,
         payment_terms: paymentTerms,
         flags: rec.flags,

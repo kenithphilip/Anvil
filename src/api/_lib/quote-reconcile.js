@@ -88,6 +88,10 @@ export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
   const quotesUsed = new Map();
   const summary = { total: 0, matched: 0, price_mismatch: 0, qty_note: 0, unmatched: 0 };
 
+  // Which quote part-keys the PO actually ordered. Anything left over is a
+  // line the customer was quoted and did NOT order — see below.
+  const orderedKeys = new Set();
+
   const lines = (orderLines || []).map((ln, i) => {
     summary.total += 1;
     const key = normPart(pick(ln.part_no, ln.partNumber, ln.itemCode));
@@ -110,6 +114,7 @@ export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
     if (priceMismatch) { verdict = "price_mismatch"; summary.price_mismatch += 1; }
     else { summary.matched += 1; if (qtyNote) summary.qty_note += 1; }
 
+    orderedKeys.add(key);
     quotesUsed.set(q._quote_id, {
       quote_id: q._quote_id, quote_number: q._quote_number,
       lines_matched: (quotesUsed.get(q._quote_id)?.lines_matched || 0) + 1,
@@ -145,9 +150,45 @@ export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
     return enriched;
   });
 
+  // THE REVERSE WALK: quoted, but never ordered.
+  //
+  // Everything above walks the PO and asks "was this quoted?". Nothing asked
+  // the other question — "was anything quoted that the PO does not contain?" —
+  // so a customer PO that is short against the agreed quote produced a clean
+  // reconciliation with no signal at all. The operator had to notice.
+  //
+  // This is deliberately NOT an error. A customer ordering part of a quote is
+  // ordinary commercial behaviour; only a human can say whether a gap is a
+  // deliberate partial order or an omission on the buyer's side. So it is
+  // reported and left for them to act on — and if they do act, the line they
+  // add is a quote_variance, which cannot be invoiced until the PO is amended.
+  const quotedNotOrdered = [];
+  const seenQuoteLine = new Set();
+  for (const q of quoteLines || []) {
+    const key = normPart(q.part_no);
+    if (!key || orderedKeys.has(key)) continue;
+    // One entry per part, not per quote revision: the same part quoted three
+    // times is one thing missing from the PO, not three.
+    if (seenQuoteLine.has(key)) continue;
+    seenQuoteLine.add(key);
+    quotedNotOrdered.push({
+      part_no: q.part_no || null,
+      description: q.description || null,
+      qty: num(q.qty),
+      unit_price: num(q.discounted_unit_price) != null ? num(q.discounted_unit_price) : num(q.listed_unit_price),
+      uom: q.uom || null,
+      hsn: q.hsn_sac || null,
+      customer_part_number: q.customer_part_number || null,
+      source_quote_id: q._quote_id || null,
+      source_quote_number: q._quote_number || null,
+    });
+  }
+  summary.quoted_not_ordered = quotedNotOrdered.length;
+
   return {
     lines,
     summary,
+    quoted_not_ordered: quotedNotOrdered,
     quotes_used: Array.from(quotesUsed.values()).sort((a, b) => b.lines_matched - a.lines_matched),
     ambiguous_parts: Array.from(ambiguous),
     // Exceptions the operator should look at (everything that isn't a clean match).

@@ -7,6 +7,7 @@ import { AnvilBackend } from "../lib/api";
 // client-side and pre-filter the huge line sheets before posting.
 import { parseSheets } from "../../api/_lib/shipment-import.js";
 import { detectHeaderRow, buildHeaderMap, classifySheet } from "../../api/_lib/shipment-import.js";
+import { planImportRequests, mergeSummaries } from "../lib/import-batches";
 import { PartTrackingSearch } from "../components/PartTrackingSearch";
 
 // Lazy-load SheetJS the same way the BOM importer does (dynamic import keeps it
@@ -185,6 +186,7 @@ const ShipmentImportPanel = ({ onClose, onApplied }: { onClose: () => void; onAp
   const [parsed, setParsed] = React.useState<{ pending: any[]; lines: any[]; fileNames: string[] } | null>(null);
   const [preview, setPreview] = React.useState<any>(null);
   const [busy, setBusy] = React.useState(false);
+  const [step, setStep] = React.useState<{ i: number; n: number } | null>(null);
   const [err, setErr] = React.useState<string | null>(null);
 
   const onPick = async (fileList: FileList | null) => {
@@ -198,27 +200,43 @@ const ShipmentImportPanel = ({ onClose, onApplied }: { onClose: () => void; onAp
         sheets = sheets.concat(await fileToSheets(f));
       }
       const { pending, lines } = parseSheets(sheets);
-      // The per-country line sheets carry years of history; only the rows whose
-      // invoice is in the pending set matter, so drop the rest before posting.
-      const pendInv = new Set(pending.map((p: any) => p.shipper_invoice_no));
-      const relevantLines = lines.filter((l: any) => pendInv.has(l.shipper_invoice_no));
-      setParsed({ pending, lines: relevantLines, fileNames });
-      if (!pending.length) {
-        setErr("No shipment rows found — expected a sheet with a 'Shipper Invoice No.' header (the Daily Shipment Reports / Pending sheet).");
+      // Every parsed line row is sent. This used to pre-filter to the invoices in
+      // the same upload's summary sheet, which made uploading the line workbook
+      // on its own a silent no-op and dropped line rows for any shipment already
+      // on file. The server resolves both cases; the payload is split instead.
+      setParsed({ pending, lines, fileNames });
+      if (!pending.length && !lines.length) {
+        setErr("Nothing recognised — expected the Daily Shipment Reports summary (a 'Shipper Invoice No.' column) or the In Transit Items Details per-part sheets.");
       }
     } catch (e: any) { setErr(e?.message || String(e)); }
     finally { setParsing(false); }
   };
 
-  const call = async (mode: "preview" | "apply") =>
-    AnvilBackend?.sales?.shipmentImport?.({ mode, pending: parsed!.pending, lines: parsed!.lines });
+  // A full line workbook is several megabytes against a 1 MB body cap, so one
+  // upload becomes a short sequence of requests. Sequential, not parallel: the
+  // first carries the shipment rows and the rest attach to what it created.
+  const call = async (mode: "preview" | "apply") => {
+    const reqs = planImportRequests(mode, parsed!.pending, parsed!.lines);
+    const results: any[] = [];
+    for (let i = 0; i < reqs.length; i++) {
+      if (reqs.length > 1) setStep({ i: i + 1, n: reqs.length });
+      results.push(await AnvilBackend?.sales?.shipmentImport?.(reqs[i]));
+    }
+    setStep(null);
+    return {
+      mode,
+      summary: mergeSummaries(results.map((r: any) => r?.summary)),
+      // Only the first request carries shipments, so only it returns a plan.
+      shipments: results[0]?.shipments || [],
+    };
+  };
 
   const runPreview = async () => {
     if (!parsed) return;
     setBusy(true); setErr(null);
     try { setPreview(await call("preview")); }
     catch (e: any) { setErr(e?.message || String(e)); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setStep(null); }
   };
 
   const runApply = async () => {
@@ -227,10 +245,10 @@ const ShipmentImportPanel = ({ onClose, onApplied }: { onClose: () => void; onAp
     try {
       const r: any = await call("apply");
       const s = r?.summary || {};
-      window.notifySuccess?.("Sheet imported", `${s.inserted || 0} new · ${s.updated || 0} updated · ${s.line_receipts_applied || 0} receipts`);
+      window.notifySuccess?.("Sheet imported", `${s.inserted || 0} new · ${s.updated || 0} updated · ${s.line_receipts_applied || 0} receipts · ${s.shipment_lines_applied || 0} part lines`);
       onApplied();
     } catch (e: any) { setErr(e?.message || String(e)); window.notifyError?.("Import failed", e?.message || String(e)); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setStep(null); }
   };
 
   const s = preview?.summary;
@@ -249,12 +267,22 @@ const ShipmentImportPanel = ({ onClose, onApplied }: { onClose: () => void; onAp
       {err && <Banner kind="bad" icon={Icon.alert} title="Import problem"><span className="mono-sm">{err}</span></Banner>}
       {parsed && (
         <div className="mono-sm" style={{ marginTop: 10, color: "var(--ink-3)" }}>
-          Parsed {parsed.fileNames.join(", ")} → <b style={{ color: "var(--ink)" }}>{parsed.pending.length}</b> shipment row(s), <b style={{ color: "var(--ink)" }}>{parsed.lines.length}</b> matching line row(s).
+          Parsed {parsed.fileNames.join(", ")} → <b style={{ color: "var(--ink)" }}>{parsed.pending.length}</b> shipment row(s), <b style={{ color: "var(--ink)" }}>{parsed.lines.length}</b> line row(s).
+          {parsed.lines.length > 0 && !parsed.pending.length && (
+            <> Lines attach to shipments already on file, matched on invoice number.</>
+          )}
+        </div>
+      )}
+      {step && (
+        <div className="mono-sm" style={{ marginTop: 8, color: "var(--ink-3)" }}>
+          {/* Tens of thousands of rows exceed one request; say so rather than
+              letting a multi-second upload look like a hang. */}
+          Uploading part {step.i} of {step.n}…
         </div>
       )}
       {parsed && !preview && (
         <div className="row" style={{ gap: 8, marginTop: 12 }}>
-          <Btn kind="primary" disabled={busy || !parsed.pending.length} onClick={runPreview}>{busy ? "…" : "Preview"}</Btn>
+          <Btn kind="primary" disabled={busy || (!parsed.pending.length && !parsed.lines.length)} onClick={runPreview}>{busy ? "…" : "Preview"}</Btn>
           <Btn kind="ghost" onClick={onClose}>Cancel</Btn>
         </div>
       )}
@@ -266,7 +294,23 @@ const ShipmentImportPanel = ({ onClose, onApplied }: { onClose: () => void; onAp
             <SummaryStat label="Linked to project" value={s.linked_to_project} />
             <SummaryStat label="Unlinked" value={s.unlinked} tone={s.unlinked ? "warn" : undefined} />
             <SummaryStat label="Line receipts" value={s.line_receipts_matched} />
+            <SummaryStat label="Part lines" value={s.shipment_lines_matched} />
           </div>
+          {/* Lines naming an invoice with no shipment anywhere. Previously these
+              were filtered out in the browser and never counted at all. */}
+          {s.orphan_invoices > 0 && (
+            <Banner kind="warn" icon={Icon.alert} title={`${s.orphan_invoices} invoice(s) in the line sheets have no shipment`}>
+              <span className="mono-sm">
+                Their part rows will not import until that shipment's summary row is uploaded.
+                {s.orphan_invoice_sample?.length ? <> e.g. {s.orphan_invoice_sample.join(", ")}</> : null}
+              </span>
+            </Banner>
+          )}
+          {s.lines_matched_to_existing > 0 && (
+            <div className="mono-sm" style={{ marginTop: 8, color: "var(--ink-3)" }}>
+              {s.lines_matched_to_existing} invoice(s) matched a shipment already on file.
+            </div>
+          )}
           <table className="tbl" style={{ marginTop: 12 }}>
             <thead><tr><th>Invoice</th><th>Action</th><th>Supplier · items</th><th>Ladder</th><th>Status</th><th>Project link</th></tr></thead>
             <tbody>
@@ -283,7 +327,12 @@ const ShipmentImportPanel = ({ onClose, onApplied }: { onClose: () => void; onAp
             </tbody>
           </table>
           <div className="row" style={{ gap: 8, marginTop: 12 }}>
-            <Btn kind="primary" disabled={busy} onClick={runApply}>{busy ? "Applying…" : `Apply — ${s.to_insert} new, ${s.to_update} updated`}</Btn>
+            <Btn kind="primary" disabled={busy} onClick={runApply}>
+              {busy ? (step ? `Applying ${step.i}/${step.n}…` : "Applying…")
+                : (s.to_insert || s.to_update)
+                  ? `Apply — ${s.to_insert} new, ${s.to_update} updated`
+                  : `Apply — ${s.shipment_lines_matched} part line(s)`}
+            </Btn>
             <Btn kind="ghost" disabled={busy} onClick={() => setPreview(null)}>Back</Btn>
             <Btn kind="ghost" disabled={busy} onClick={onClose}>Cancel</Btn>
           </div>

@@ -94,9 +94,24 @@ export default async function handler(req, res) {
         for (const r of (data || [])) existingShipmentByInvoice.set(r.shipper_invoice_no, r);
       }
     }
+    // A workbook's line rows exceed the 1 MB body cap, so the client sends them
+    // across several requests: shipments first, then line batches. From batch two
+    // onward `pending` is empty, and on a PREVIEW nothing has been written yet —
+    // so a line whose shipment is still only in batch one looks like an orphan.
+    // `known_invoices` is the client naming the invoices it is importing in this
+    // multi-request upload, ~14 bytes each rather than the whole pending row.
+    //
+    // It widens COUNTING only. Writing a line still requires a real shipment_id
+    // resolved from this payload's plan or from the database, so a declared
+    // invoice that never materialises persists nothing.
+    const declaredInvoices = new Set(uniq(body?.known_invoices || []).filter(Boolean));
     // Every invoice a line row can attach to: this payload's, plus what is
-    // already on file.
-    const knownInvoices = new Set([...pendInvoiceSet, ...existingShipmentByInvoice.keys()]);
+    // already on file, plus what the caller says is coming in a sibling request.
+    const knownInvoices = new Set([
+      ...pendInvoiceSet,
+      ...existingShipmentByInvoice.keys(),
+      ...declaredInvoices,
+    ]);
     // Lines naming an invoice that exists NOWHERE. Reported rather than
     // dropped in silence — it means the summary for those shipments has not
     // been uploaded yet, which is a thing an operator can act on.

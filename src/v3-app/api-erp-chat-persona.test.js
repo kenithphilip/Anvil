@@ -14,16 +14,26 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 let flagState = false;
 const sentTools = [];
 const sentSystems = [];
+const sentMessages = [];
 
 // Supabase query builders are THENABLE — the handler awaits them directly for
 // list reads and calls .single() for row reads, so the stub has to support both
 // or the message-history read resolves to a function and the handler dies with
 // "function is not iterable" long before the persona logic under test runs.
+// The handler persists the user turn, then reads the session history back and
+// sends THAT to the model. A stub returning empty history would make `messages`
+// empty and the "message stays clean" assertion vacuous — so echo the inserted
+// row, which is what the real read does.
+const inserted = [];
 const chainable = () => {
   const api = new Proxy({}, {
     get: (_t, prop) => {
-      if (prop === "then") return (resolve) => resolve({ data: [], error: null });
+      if (prop === "then") return (resolve) => resolve({ data: [...inserted], error: null });
       if (prop === "maybeSingle" || prop === "single") return async () => ({ data: { id: "s1" }, error: null });
+      if (prop === "insert") return (row) => {
+        if (row && row.role === "user") inserted.push({ role: "user", content: row.content });
+        return api;
+      };
       return () => api;
     },
   });
@@ -45,11 +55,18 @@ vi.mock("../api/_lib/cors.js", () => ({
   sendError: (res, err) => { res.__status = 500; res.__body = { error: { message: err.message } }; return res; },
 }));
 vi.mock("../api/_lib/audit.js", () => ({ recordAudit: async () => {} }));
+vi.mock("../api/_lib/agent-context.js", () => ({
+  loadPersonaContext: async (id, _svc, tenantId, recordId) =>
+    (recordId === "o1" && tenantId === "t1"
+      ? { text: "ORDER CONTEXT\n- PO number: 0066026562", poNumber: "0066026562", lineCount: 2 }
+      : null),
+}));
 // Capture what the model was actually handed.
 vi.mock("../api/_lib/anthropic.js", () => ({
-  callAnthropic: async ({ tools, system }) => {
+  callAnthropic: async ({ tools, system, messages }) => {
     sentTools.push(tools);
     sentSystems.push(system);
+    sentMessages.push(messages);
     return { ok: true, data: { content: [{ type: "text", text: "ok" }], usage: {} } };
   },
   attemptTimeout: () => 10000, applyFirewall: (x) => x, redactMessages: (x) => x, capRetrySleep: () => 0,
@@ -64,7 +81,7 @@ const call = async (body) => {
   return res;
 };
 
-beforeEach(() => { flagState = false; sentTools.length = 0; sentSystems.length = 0; vi.clearAllMocks(); });
+beforeEach(() => { flagState = false; sentTools.length = 0; sentSystems.length = 0; sentMessages.length = 0; inserted.length = 0; vi.clearAllMocks(); });
 
 describe("persona gating", () => {
   it("rejects a persona the tenant has not enabled, with 403", async () => {
@@ -129,6 +146,46 @@ describe("what the model is handed", () => {
     await call({ content: "hi", persona: "so", scopes: ["write.erp"] });
     const names = (sentTools[0] || []).map((t) => t.name);
     expect(names).not.toContain("post_tally_voucher");
+  });
+});
+
+describe("record context reaches the system prompt, not the message", () => {
+  it("folds the loaded order context into the system prompt", async () => {
+    flagState = true;
+    await call({ content: "what is the total?", persona: "so", record_id: "o1" });
+    expect(sentSystems[0]).toContain("Sales Order agent");
+    expect(sentSystems[0]).toContain("0066026562");
+  });
+
+  it("leaves the operator's message untouched", async () => {
+    flagState = true;
+    await call({ content: "what is the total?", persona: "so", record_id: "o1" });
+    // The message must carry ONLY what was typed — putting the PO number here
+    // is what the redaction rule ate.
+    const flat = JSON.stringify(sentMessages[0] || []);
+    expect(flat).toContain("what is the total?");
+    expect(flat).not.toContain("0066026562");
+  });
+
+  it("still answers without context when no record id is sent", async () => {
+    flagState = true;
+    const res = await call({ content: "hi", persona: "so" });
+    expect(res.__status).not.toBe(403);
+    expect(sentSystems[0]).toContain("Sales Order agent");
+    expect(sentSystems[0]).not.toContain("ORDER CONTEXT");
+  });
+
+  it("ignores a record id from another tenant rather than failing the turn", async () => {
+    flagState = true;
+    const res = await call({ content: "hi", persona: "so", record_id: "someone-elses-order" });
+    expect(res.__status).not.toBe(403);
+    expect(sentSystems[0]).not.toContain("ORDER CONTEXT");
+  });
+
+  it("never loads context without a persona", async () => {
+    flagState = true;
+    await call({ content: "hi", record_id: "o1" });
+    expect(sentSystems[0]).not.toContain("ORDER CONTEXT");
   });
 });
 

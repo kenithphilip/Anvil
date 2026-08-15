@@ -13,6 +13,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { erpChatTools, dispatchErpChatTool } from "../_lib/erp-chat-tools.js";
 import { resolvePersona } from "../_lib/agent-personas.js";
+import { loadPersonaContext } from "../_lib/agent-context.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { callAnthropic } from "../_lib/anthropic.js";
 
@@ -118,7 +119,23 @@ export default async function handler(req, res) {
     // this endpoint has always done, and why the SO persona has to pass its
     // scopes explicitly to stay read-only.
     const tools = persona ? erpChatTools({ scopes: persona.scopes }) : erpChatTools();
-    const systemPrompt = persona ? persona.system : SYSTEM;
+
+    // Record context goes in the SYSTEM prompt, never in the message.
+    //
+    // callAnthropic applies redactMessages() to messages and only
+    // applyFirewall() — a prepended header, no stripping — to the system. A PO
+    // number sent as message text was matched by a configured redaction rule
+    // and reached the model as "[redacted-phone]", so the agent could not tell
+    // which order it was looking at. Loading it here from OUR tables, scoped by
+    // tenant, sidesteps a filter that exists for untrusted user text and was
+    // never meant to police our own identifiers.
+    let personaContext = null;
+    if (persona && body.record_id) {
+      personaContext = await loadPersonaContext(persona.id, svc, ctx.tenantId, String(body.record_id));
+    }
+    const systemPrompt = persona
+      ? (personaContext ? persona.system + "\n\n" + personaContext.text : persona.system)
+      : SYSTEM;
     let messages = [...history];
     let assistantText = "";
     let citations = [];

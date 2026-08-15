@@ -56,11 +56,14 @@ interface Props {
   route: string;
   /** Signals the panel derives its suggested actions from. */
   context: Parameters<typeof suggestionsForOrder>[0];
-  /** Extra sentence prepended to the first message so the agent knows the record. */
-  contextLine?: string;
+  /** Record this panel is about. Sent as a STRUCTURED id, never as message text —
+   *  a PO number written into the message was matched by a redaction rule and
+   *  reached the model as "[redacted-phone]". The server loads the record from
+   *  its own tables and puts it in the system prompt, which is not redacted. */
+  recordId?: string | null;
 }
 
-export const AskAnvil: React.FC<Props> = ({ route, context, contextLine }) => {
+export const AskAnvil: React.FC<Props> = ({ route, context, recordId }) => {
   const [persona, setPersona] = useState<Persona | null>(null);
   const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -103,13 +106,13 @@ export const AskAnvil: React.FC<Props> = ({ route, context, contextLine }) => {
     setTurns((t) => [...t, { role: "user", text: content }]);
     setBusy(true);
     try {
-      // The record context rides on the FIRST turn only. Resending it every
-      // turn is what makes a panel like this expensive — the session already
-      // carries the history server-side.
-      const prefix = !sessionRef.current && contextLine ? contextLine + "\n\n" : "";
+      // record_id is sent on the FIRST turn only: the server folds it into the
+      // system prompt, and the session carries the history from then on.
+      // Resending it every turn would re-read the order for no benefit.
       const resp: any = await AnvilBackend?.erpChat?.send?.({
-        content: prefix + content,
+        content,
         persona: persona.id,
+        ...(!sessionRef.current && recordId ? { record_id: recordId } : {}),
         session_id: sessionRef.current || undefined,
       });
       if (resp?.session_id) sessionRef.current = resp.session_id;
@@ -124,7 +127,7 @@ export const AskAnvil: React.FC<Props> = ({ route, context, contextLine }) => {
     } finally {
       setBusy(false);
     }
-  }, [busy, persona, contextLine]);
+  }, [busy, persona, recordId]);
 
   if (!persona) return null;
 

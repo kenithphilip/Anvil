@@ -2564,7 +2564,7 @@ const WiredSOWorkspace = () => {
           next slice, once a second persona exists to justify the plumbing. */}
       <AskAnvil
         route="so"
-        contextLine={o.po_number ? `Context: I am looking at sales order PO ${o.po_number}.` : undefined}
+        recordId={o.id}
         context={{
           anomalies: (pipelineState?.data?.extraction_runs?.[0] as any)?.anomalies || null,
           findings,

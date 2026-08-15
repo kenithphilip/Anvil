@@ -145,23 +145,30 @@ describe("the panel", () => {
     expect(send.mock.calls[0][0]).toMatchObject({ persona: "so" });
   });
 
-  it("sends the record context once, not on every turn", async () => {
+  it("identifies the record with a STRUCTURED id, never inside the message text", async () => {
+    // The bug this replaces: a PO number written into the message was matched
+    // by a redaction rule and reached the model as "[redacted-phone]", so the
+    // agent could not tell which order it was looking at.
     send.mockResolvedValue({ content: "ok", session_id: "s1" });
     personas.mockResolvedValue({ personas: [SO] });
-    render(<AskAnvil route="so" context={ctx} contextLine="Context: PO 0066026562." />);
+    render(<AskAnvil route="so" context={ctx} recordId="d4227d84-2fd8-4d5b-b3b7-4041cc81799f" />);
     fireEvent.click(await screen.findByRole("button", { name: /ask anvil/i }));
-    const input = screen.getByLabelText("Ask Anvil");
 
-    fireEvent.change(input, { target: { value: "first" } });
+    fireEvent.change(screen.getByLabelText("Ask Anvil"), { target: { value: "what is the total?" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
-    expect(send.mock.calls[0][0].content).toContain("Context: PO 0066026562.");
+
+    const first = send.mock.calls[0][0];
+    expect(first.record_id).toBe("d4227d84-2fd8-4d5b-b3b7-4041cc81799f");
+    // The message carries ONLY what the operator typed.
+    expect(first.content).toBe("what is the total?");
+    expect(first.content).not.toMatch(/Context:/);
 
     fireEvent.change(screen.getByLabelText("Ask Anvil"), { target: { value: "second" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
-    // Resending the record every turn is what makes a panel like this expensive.
-    expect(send.mock.calls[1][0].content).not.toContain("Context: PO");
+    // The session carries it from here; re-reading the order every turn is waste.
+    expect(send.mock.calls[1][0].record_id).toBeUndefined();
     expect(send.mock.calls[1][0].session_id).toBe("s1");
   });
 

@@ -23,6 +23,10 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
+import {
+  ZOOM_FIT, ZOOM_MIN, ZOOM_MAX, scaleBy, zoomIn, zoomOut, zoomPercent,
+  touchDistance, touchMidpoint, wheelZoomFactor, anchoredScroll,
+} from "../lib/pdf-zoom";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { useReviewPaneSelection } from "./ReviewPaneContext";
@@ -58,8 +62,8 @@ export interface PdfPagePreviewProps {
    * `field_path` is matched against the right-pane field list via
    * ReviewPaneSelection for bidirectional highlighting. */
   evidenceRows?: EvidenceBbox[];
-  /** Optional zoom factor (1 = native width). Phase B exposes only
-   * fit-to-width via the parent; explicit zoom controls are Phase D. */
+  /** Base zoom factor (1 = fit-to-width). The viewer's own zoom control
+   * multiplies this, so a caller can still pin a starting scale. */
   scale?: number;
   /** Map a field path to a colour token (e.g. "var(--accent-2)").
    * The rect's stroke uses this; falls back to ink-4 when missing. */
@@ -76,6 +80,124 @@ const PdfPagePreview: React.FC<PdfPagePreviewProps> = ({
   const [numPages, setNumPages] = useState<number>(0);
   const [loadError, setLoadError] = useState<Error | null>(null);
   const { selectedField } = useReviewPaneSelection();
+
+  // Committed zoom — drives react-pdf's `scale`, so the page is re-rastered and
+  // stays sharp. `live` is the in-gesture CSS-transform multiplier, folded in
+  // when the gesture settles; rasterising once per pinch frame would stutter.
+  const [zoom, setZoom] = useState<number>(ZOOM_FIT);
+  const [live, setLive] = useState<number>(1);
+  const commitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const liveRef = useRef(1);
+  const zoomRef = useRef(ZOOM_FIT);
+  zoomRef.current = zoom;
+  liveRef.current = live;
+
+  const base = Number.isFinite(scale) && (scale as number) > 0 ? (scale as number) : 1;
+
+  // Keep whatever the operator was looking at under the pointer. Applied after
+  // paint, against the ratio the zoom actually moved by.
+  const anchorRef = useRef<{ x: number; y: number } | null>(null);
+  const applyAnchor = useCallback((ratio: number) => {
+    const el = containerRef.current;
+    const focal = anchorRef.current;
+    if (!el || !focal || ratio === 1) return;
+    const rect = el.getBoundingClientRect();
+    const next = anchoredScroll({ scrollLeft: el.scrollLeft, scrollTop: el.scrollTop }, rect, focal, ratio);
+    el.scrollLeft = next.scrollLeft;
+    el.scrollTop = next.scrollTop;
+  }, []);
+
+  // Fold the live transform into the committed scale once the gesture stops.
+  const scheduleCommit = useCallback(() => {
+    if (commitTimer.current) clearTimeout(commitTimer.current);
+    commitTimer.current = setTimeout(() => {
+      const l = liveRef.current;
+      if (l === 1) return;
+      const before = zoomRef.current;
+      const after = scaleBy(before, l);
+      setZoom(after);
+      setLive(1);
+      // The transform is dropped in the same commit that grows the layout box,
+      // so the net movement is after/before, not `l` — they differ whenever the
+      // clamp bit.
+      requestAnimationFrame(() => applyAnchor(after / before));
+    }, 160);
+  }, [applyAnchor]);
+
+  const nudge = useCallback((factor: number, focal?: { x: number; y: number }) => {
+    anchorRef.current = focal || null;
+    setLive((l) => {
+      const next = scaleBy(zoomRef.current * l, factor) / zoomRef.current;
+      return next;
+    });
+    scheduleCommit();
+  }, [scheduleCommit]);
+
+  // Buttons and keyboard commit immediately — a discrete step should land sharp
+  // rather than sit blurry for 160ms.
+  const stepTo = useCallback((next: number) => {
+    const before = zoomRef.current;
+    if (commitTimer.current) clearTimeout(commitTimer.current);
+    setLive(1);
+    setZoom(next);
+    anchorRef.current = null;
+    requestAnimationFrame(() => applyAnchor(next / before));
+  }, [applyAnchor]);
+
+  // Ctrl+wheel is the desktop pinch: a trackpad pinch reaches the browser as a
+  // ctrl-modified wheel on every OS, and Windows mouse users get it via
+  // ctrl+scroll. Registered natively because React's wheel listener is passive,
+  // and without preventDefault the browser zooms the whole page instead.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      nudge(wheelZoomFactor(e.deltaY, e.deltaMode), { x: e.clientX, y: e.clientY });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [nudge]);
+
+  // Two-finger pinch. touch-action on the container (styles.css) leaves one
+  // finger to pan and text-select as before, and hands us the second.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    let startDist = 0;
+    let startLive = 1;
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return;
+      startDist = touchDistance(e.touches[0], e.touches[1]);
+      startLive = liveRef.current;
+      anchorRef.current = touchMidpoint(e.touches[0], e.touches[1]);
+    };
+    const onMove = (e: TouchEvent) => {
+      if (e.touches.length !== 2 || !startDist) return;
+      e.preventDefault();
+      const ratio = touchDistance(e.touches[0], e.touches[1]) / startDist;
+      anchorRef.current = touchMidpoint(e.touches[0], e.touches[1]);
+      setLive(scaleBy(zoomRef.current * startLive, ratio) / zoomRef.current);
+    };
+    const onEnd = () => {
+      if (!startDist) return;
+      startDist = 0;
+      scheduleCommit();
+    };
+    el.addEventListener("touchstart", onStart, { passive: true });
+    el.addEventListener("touchmove", onMove, { passive: false });
+    el.addEventListener("touchend", onEnd, { passive: true });
+    el.addEventListener("touchcancel", onEnd, { passive: true });
+    return () => {
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchmove", onMove);
+      el.removeEventListener("touchend", onEnd);
+      el.removeEventListener("touchcancel", onEnd);
+    };
+  }, [scheduleCommit]);
+
+  useEffect(() => () => { if (commitTimer.current) clearTimeout(commitTimer.current); }, []);
 
   // Scroll the selected field's bbox into view. Lets a click on a
   // recon line row (or a header field) jump the PDF to that region
@@ -148,27 +270,62 @@ const PdfPagePreview: React.FC<PdfPagePreviewProps> = ({
     );
   }
 
+  const effective = base * zoom;
+  const atMin = zoom <= ZOOM_MIN + 1e-6;
+  const atMax = zoom >= ZOOM_MAX - 1e-6;
+
   return (
-    <div ref={containerRef} className="rp-pdf-container">
-      <Document
-        file={file}
-        options={docOptions}
-        onLoadSuccess={onDocumentLoadSuccess}
-        onLoadError={onDocumentLoadError}
-        loading={<div className="rp-pdf-loading mono-sm">Loading {filename || "PDF"}…</div>}
-        error={null /* handled via onLoadError above */}
-      >
-        {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNumber) => (
-          <PdfPageWithOverlay
-            key={pageNumber}
-            pageNumber={pageNumber}
-            width={containerWidth || undefined}
-            scale={scale}
-            evidence={evidenceByPage[pageNumber] || []}
-            colourForField={colourForField}
-          />
-        ))}
-      </Document>
+    <div className="rp-pdf-shell">
+      <div className="rp-pdf-zoombar" role="group" aria-label="Zoom">
+        <button
+          type="button" className="rp-zoom-btn" aria-label="Zoom out"
+          disabled={atMin} onClick={() => stepTo(zoomOut(zoom))}
+        >−</button>
+        {/* aria-live so the value is announced on change; a bare number would
+            read as "one hundred and fifty" with no unit. */}
+        <span className="rp-zoom-readout mono-sm" aria-live="polite">
+          {zoomPercent(zoom * live)}
+        </span>
+        <button
+          type="button" className="rp-zoom-btn" aria-label="Zoom in"
+          disabled={atMax} onClick={() => stepTo(zoomIn(zoom))}
+        >+</button>
+        <button
+          type="button" className="rp-zoom-btn rp-zoom-reset mono-sm"
+          aria-label="Reset zoom to fit width"
+          disabled={zoom === ZOOM_FIT && live === 1} onClick={() => stepTo(ZOOM_FIT)}
+        >Fit</button>
+      </div>
+      <div ref={containerRef} className="rp-pdf-container">
+        {/* The live gesture scales this wrapper. The overlay SVG is inside it,
+            so highlights track the page for free — and canvas.clientWidth is a
+            layout value that a transform does not change, so the measured
+            geometry the overlay is built from stays valid throughout. */}
+        <div
+          className="rp-pdf-zoomer"
+          style={live === 1 ? undefined : { transform: `scale(${live})`, transformOrigin: "top center" }}
+        >
+          <Document
+            file={file}
+            options={docOptions}
+            onLoadSuccess={onDocumentLoadSuccess}
+            onLoadError={onDocumentLoadError}
+            loading={<div className="rp-pdf-loading mono-sm">Loading {filename || "PDF"}…</div>}
+            error={null /* handled via onLoadError above */}
+          >
+            {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNumber) => (
+              <PdfPageWithOverlay
+                key={pageNumber}
+                pageNumber={pageNumber}
+                width={containerWidth || undefined}
+                scale={effective}
+                evidence={evidenceByPage[pageNumber] || []}
+                colourForField={colourForField}
+              />
+            ))}
+          </Document>
+        </div>
+      </div>
     </div>
   );
 };
@@ -186,15 +343,22 @@ const PdfPageWithOverlay: React.FC<PdfPageWithOverlayProps> = ({
 }) => {
   const { hoveredField, selectedField, setHoveredField, setSelectedField } = useReviewPaneSelection();
   const pageWrapRef = useRef<HTMLDivElement | null>(null);
-  const [renderedSize, setRenderedSize] = useState<{ w: number; h: number } | null>(null);
+  // Remember the scale the size was measured AT, not just the size. Changing
+  // `scale` re-keys the page and pdf.js rasterises asynchronously, so for a
+  // frame or two the canvas is already the new size while renderedSize still
+  // describes the old one — and the boxes visibly sit wrong. Scaling the SVG by
+  // scale/measuredAt bridges that window exactly, and collapses to 1 the moment
+  // the new measurement lands.
+  const [rendered, setRendered] = useState<{ w: number; h: number; at: number } | null>(null);
 
-  // After PDF.js paints the canvas, read its size so the overlay SVG
-  // matches exactly. Stored as state to trigger an overlay re-render.
   const onRenderSuccess = useCallback(() => {
     const canvas = pageWrapRef.current?.querySelector("canvas");
     if (!canvas) return;
-    setRenderedSize({ w: canvas.clientWidth, h: canvas.clientHeight });
-  }, []);
+    setRendered({ w: canvas.clientWidth, h: canvas.clientHeight, at: scale || 1 });
+  }, [scale]);
+
+  const renderedSize = rendered;
+  const drift = rendered ? (scale || 1) / (rendered.at || 1) : 1;
 
   return (
     <div className="rp-pdf-page-wrap" ref={pageWrapRef} data-page-number={pageNumber}>
@@ -214,8 +378,10 @@ const PdfPageWithOverlay: React.FC<PdfPageWithOverlayProps> = ({
       {renderedSize && evidence.length > 0 && (
         <svg
           className="rp-pdf-overlay"
-          width={renderedSize.w}
-          height={renderedSize.h}
+          // Rendered px follow the live scale; the viewBox stays in the units the
+          // rects below are computed in, so the geometry maths is untouched.
+          width={renderedSize.w * drift}
+          height={renderedSize.h * drift}
           viewBox={`0 0 ${renderedSize.w} ${renderedSize.h}`}
           aria-hidden="true"
         >

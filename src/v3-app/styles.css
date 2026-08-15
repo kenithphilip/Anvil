@@ -934,6 +934,44 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .tbl.grid thead th + th,
 .tbl.grid tbody td + td { border-left: 1px solid color-mix(in srgb, var(--ink) 9%, transparent); }
 
+/* Column resize handle. Sits on the header's trailing edge; invisible until the
+   header is hovered so the grid stays quiet at rest. Wider hit area than its
+   visible rule, because a 1px target is not draggable in practice. */
+.col-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  /* Above the neighbouring header so the drag starts on the intended column. */
+  z-index: 1;
+  touch-action: none; /* the drag is ours; do not let it scroll the pane */
+  user-select: none;
+}
+.tbl thead th:hover .col-resize-handle::after,
+.col-resize-handle:focus-visible::after {
+  content: "";
+  position: absolute;
+  top: 15%;
+  left: 3px;
+  width: 2px;
+  height: 70%;
+  border-radius: 1px;
+  background: var(--ink-4);
+}
+.col-resize-handle:focus-visible {
+  outline: 2px solid var(--accent, var(--ink-3));
+  outline-offset: -1px;
+}
+/* Under fixed layout an explicit width is authoritative, so long values must be
+   allowed to wrap rather than force the column back open. Header labels keep
+   their nowrap from .tbl thead th. */
+.tbl[style*="fixed"] tbody td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .tbl tbody tr:hover td { background: var(--paper-2); }
 .tbl tbody tr.sel td { background: var(--paper-4); }
 .tbl tbody tr.row-flag td { background: rgba(162,58,31,0.06); }
@@ -1498,6 +1536,48 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
    parent for the SVG overlay; pages stack vertically inside the
    container with a small gap so a multi-page PO has clear page
    boundaries. */
+/* Shell so the zoom bar can sit outside the scrolling area and stay put while
+   the page scrolls under it. */
+.rp-pdf-shell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.rp-pdf-zoombar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--paper-2, var(--paper));
+  border-bottom: 1px solid var(--hairline);
+  flex: 0 0 auto;
+}
+.rp-zoom-btn {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.rp-zoom-btn:hover:not(:disabled) { background: var(--paper-3); }
+.rp-zoom-btn:disabled { opacity: 0.4; cursor: default; }
+.rp-zoom-reset { font-size: 11px; }
+.rp-zoom-readout {
+  min-width: 44px;
+  text-align: center;
+  color: var(--ink-3);
+  /* Digits change every pinch frame; proportional figures would jitter the
+     buttons either side of this readout. */
+  font-variant-numeric: tabular-nums;
+}
 .rp-pdf-container {
   display: flex;
   flex-direction: column;
@@ -1507,7 +1587,20 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   background: var(--paper-3);
   width: 100%;
   height: 100%;
+  min-height: 0;
   overflow: auto;
+  /* Claim the pinch, leave panning to the browser. Without this the OS zooms
+     the whole page and the two-finger gesture never reaches the handler. */
+  touch-action: pan-x pan-y;
+}
+/* Transformed only during a live gesture; the committed zoom re-rasters the
+   page instead, so this carries no transform at rest and cannot blur it. */
+.rp-pdf-zoomer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  will-change: transform;
 }
 .rp-pdf-page-wrap {
   position: relative;

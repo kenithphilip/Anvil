@@ -65,12 +65,42 @@ WHEN minute === 0 (on the hour):
 
 ### `/api/cron/daily` (02:30 UTC, Vercel)
 
-Sequenced (independent, not time-sensitive):
+Fanned out in parallel by `runCronGroup` (`Promise.allSettled` with a
+per-handler timeout — independent, not time-sensitive, and one slow
+handler neither blocks nor starves the rest):
 
 - analytics/refresh (win/loss rollups)
 - fx/cron (FX rates)
 - service/amc_cron (AMC contract reminders)
 - rlhf/aggregate (RLHF reward rollups)
+- quotes/expire
+- billing/recurring
+- eway_bills/expire
+- catalog/embed (embedding indexer)
+- drift-report (self-skips except on the 1st of the month)
+- eval/quality_alert (DPMO breach → admin bell)
+- docai/extraction_reaper (runs stranded at `status='running'`)
+- logistics/monitor_daily — **backstop**, see below
+- eval/replay — only when `EVAL_REPLAY_ENABLED` is set
+
+#### Why the logistics monitor is registered twice
+
+`logistics-monitor-tick` is in tick.js's 5-min ALWAYS group *and* in the
+daily group. The 5-min group only runs if the external cron-job.org
+trigger is configured and live; Hobby tier forbids a sub-daily
+`vercel.json` schedule, so the daily path is the only cadence Vercel
+itself guarantees. The handler is idempotent — the detector dedups per
+(tenant, kind, object) and notifications track `detail.notified` — so the
+second path costs a no-op, and no tenant runs it at all unless
+`logistics_monitor_enabled` is on.
+
+It is registered under **`logistics/monitor_daily`**, not tick.js's
+`logistics/monitor`. Each name is a row in `cron_health`: reusing the
+5-min row would refresh it once a day against a 10-minute staleness bound
+— leaving it stale ~23h50m out of every 24h and pinning `/api/_healthz`
+at 503 — and would also mask a dead external trigger by making the 5-min
+row look freshly written. `logistics/monitor` keeps the 10-minute bound
+precisely so it still reports whether that trigger is alive.
 
 ## Setting up the external cron
 

@@ -5,10 +5,7 @@
 // orders — so everything is resolved by header LABEL, never position.
 
 import { describe, it, expect } from "vitest";
-import {
-  detectHeaderRow, buildHeaderMap, classifySheet, normalizeMode, toDateStr,
-  normalizePending, normalizeLine, deriveStatus, pendingToShipment, parseSheets,
-} from "../api/_lib/shipment-import.js";
+import { detectHeaderRow, buildHeaderMap, classifySheet, normalizeMode, toDateStr, normalizePending, normalizeLine, deriveStatus, pendingToShipment, parseSheets, normHeader } from "../api/_lib/shipment-import.js";
 
 const PENDING_HEADER = [
   "Sr. No.", "Supplier Name", "Shipper Invoice No.", "Items Details", "Shipper Inv Date",
@@ -146,5 +143,93 @@ describe("shipment_lines column-drift guard", () => {
   }
   it("has the (shipment_id, part_no) upsert conflict target", () => {
     expect(/unique\s*\(\s*shipment_id\s*,\s*part_no\s*\)/i.test(tableBody("shipment_lines"))).toBe(true);
+  });
+});
+
+// ── the real workbooks, 2026-08-15 ─────────────────────────────────────────
+//
+// A live upload of the logistics team's two workbooks failed, and the failure
+// had nothing to do with the data:
+//
+//   1. PAYLOAD. The frontend posted every sheet, every cell, across Excel's
+//      over-reported used range with defval "". A 646 KB file became a 47 MB
+//      POST against a 1 MB server limit and 413'd before the importer ran. The
+//      SMALLER workbook produced the LARGER body — it was shipping padding.
+//   2. A ONE-CHARACTER HEADER TYPO. The workbook spells the same column
+//      "Shipper Invoice No." on one sheet and "Shipper Invoice N0." — digit
+//      zero — on two others. classifySheet matches loosely on "shipper inv" so
+//      both sheets were accepted as shipment sheets; normalizePending then
+//      looked for the exact alias, missed it, and dropped EVERY row.
+//      1,145 of 1,718 rows went silently to zero.
+
+describe("header confusables", () => {
+  it("folds a digit zero back to o between letters", () => {
+    expect(normHeader("Shipper Invoice N0.")).toBe(normHeader("Shipper Invoice No."));
+  });
+
+  it("does not touch a zero that is not standing in for a letter", () => {
+    // Narrowness is the point: a WRONG fold silently maps the wrong column,
+    // and nothing downstream would catch that.
+    expect(normHeader("Zone 0")).toBe("zone 0");
+    expect(normHeader("Bin 10")).toBe("bin 10");
+    expect(normHeader("Gate 40")).toBe("gate 40");
+  });
+
+  it("leaves other confusables alone — S5 must not become SS", () => {
+    expect(normHeader("S5 Code")).toBe("s5 code");
+    expect(normHeader("Q1 2026")).toBe("q1 2026");
+  });
+
+  it("makes both spellings resolve to the same column", () => {
+    const a = buildHeaderMap(["Sr. No.", "Supplier Name", "Shipper Invoice No."]);
+    const b = buildHeaderMap(["Sr. No.", "Supplier Name", "Shipper Invoice N0."]);
+    expect([...a.keys()]).toEqual([...b.keys()]);
+  });
+});
+
+describe("per-sheet accounting", () => {
+  const pendingSheet = (invoiceHeader) => ({
+    name: "S",
+    rows: [
+      ["Obara India Pvt Ltd"], ["Date :", 46241], ["Basic Information"],
+      ["Sr. No.", "Supplier Name", invoiceHeader, "Items Details", "Mode", "Port of discharge", "Forwarder"],
+      [1, "O/KOREA", "OK-CO-26-0166", "4 guns", "SEA", "Nhava Sheva", "Neoways"],
+      [2, "O/CHINA", "GF-2561Y", "7 timers", "SEA", "Nhava Sheva", "EMU"],
+    ],
+  });
+
+  it("reports what each sheet contributed", () => {
+    const out = parseSheets([pendingSheet("Shipper Invoice No.")]);
+    expect(out.pending).toHaveLength(2);
+    const d = out.diag.find((x) => x.sheet === "S");
+    expect(d).toMatchObject({ kind: "pending", kept: 2, unrecognised: 0 });
+  });
+
+  it("parses the misspelled header too — the whole point of the fold", () => {
+    expect(parseSheets([pendingSheet("Shipper Invoice N0.")]).pending).toHaveLength(2);
+  });
+
+  // The failure mode that hid 1,145 rows: looked right, produced nothing.
+  it("WARNS when a sheet classifies but yields nothing", () => {
+    const broken = pendingSheet("Shipper Invoice No.");
+    broken.rows[4] = [1, "O/KOREA", "", "4 guns", "SEA", "Nhava Sheva", "Neoways"];
+    broken.rows[5] = [2, "O/CHINA", "", "7 timers", "SEA", "Nhava Sheva", "EMU"];
+    const d = parseSheets([broken]).diag.find((x) => x.sheet === "S");
+    expect(d.kept).toBe(0);
+    expect(d.unrecognised).toBe(2);
+    expect(d.warning).toMatch(/every non-blank row was unrecognised/);
+  });
+
+  it("counts placeholder rows as blank, not unrecognised", () => {
+    // The Pending sheet carries ~518 pre-numbered rows holding a serial, some
+    // Excel checkbox `false` values and a stray space. Calling those
+    // "unrecognised" made a healthy sheet look broken.
+    const s = pendingSheet("Shipper Invoice No.");
+    s.rows.push([21, "", "", "", false, "", " "]);
+    s.rows.push([22, "", "", "", false, "", " "]);
+    const d = parseSheets([s]).diag.find((x) => x.sheet === "S");
+    expect(d.blank).toBe(2);
+    expect(d.unrecognised).toBe(0);
+    expect(d.warning).toBeUndefined();
   });
 });

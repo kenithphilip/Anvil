@@ -22,6 +22,7 @@ import { OrderHeaderEditor, OrderLineTaxComponents, TallyTab } from "../componen
 import { PipelineDiagnostics } from "../components/PipelineDiagnostics";
 import { FieldPill, ProvenanceChip, ExtractionQualityCard, EditableCell } from "../components/SOWorkspaceReviewCells";
 import { AskAnvil } from "../components/AskAnvil";
+import { mergeExtractedLines } from "../lib/line-merge";
 
 // Line-reconciliation table body, mounted inside the unified reconcile
 // view's ReviewPaneSelectionProvider so a row click drives the shared
@@ -696,9 +697,27 @@ const WiredSOWorkspace = () => {
       //    so the workspace's reconciliation tab AND the "From PO"
       //    customer panel populate immediately.
       const nextResult = { ...(o.result || {}) };
+      const prevLines: any[] = Array.isArray(nextResult.salesOrder?.lineItems)
+        ? nextResult.salesOrder.lineItems : [];
+      // P0: a run that extracted NOTHING must not blank the order.
+      //
+      // This wrote `lineItems: lines` unconditionally, so a failed run replaced
+      // good data with an empty array — a real order lost 44 extracted lines
+      // that way. The guard immediately below already refuses to stamp
+      // extraction_run_id on an empty result "so the stepper does not
+      // green-light Extract"; the same reasoning was never applied to the lines
+      // themselves. The server's chunked path was hardened against this long
+      // ago ("do NOT blank the order's existing line items"); this synchronous
+      // path never was.
+      //
+      // P1: when the run DID extract, merge rather than replace. A fresh
+      // extraction is authoritative for what it extracted and says nothing
+      // about lines a human added, so operator entries are carried forward
+      // unless the extractor now reports them itself.
+      const merged = lines.length ? mergeExtractedLines(prevLines, lines) : null;
       nextResult.salesOrder = {
         ...(nextResult.salesOrder || {}),
-        lineItems: lines,
+        ...(merged ? { lineItems: merged.lines } : {}),
         customer: customer || nextResult.salesOrder?.customer || null,
       };
       // Bug fix May 2026 (stepper-lies report): only stamp
@@ -742,10 +761,26 @@ const WiredSOWorkspace = () => {
       }
       // 3. Best-effort OCR for the evidence bbox overlay.
       try { await (AnvilBackend as any)?.ocr?.run?.(sourceDocId, o.id); } catch (_) { /* surface in audit */ }
+      // Say what actually happened to the ORDER, not just what the run
+      // returned. "Returned no lines" while quietly keeping the previous ones
+      // would leave the operator unsure whether the grid is stale or fresh —
+      // and keeping them is the whole point of the guard above.
       const tone = lines.length === 0 ? "notifyWarn" : "notifySuccess";
+      const detail = lines.length === 0
+        ? (prevLines.length
+          ? "The " + prevLines.length + " line" + (prevLines.length === 1 ? "" : "s")
+            + " already on this order " + (prevLines.length === 1 ? "was" : "were") + " kept."
+          : "Nothing was extracted and the order has no lines.")
+        : lines.length + " line" + (lines.length === 1 ? "" : "s") + (adapter ? " (" + adapter + ")" : "")
+          + (merged && merged.preserved
+            ? " · " + merged.preserved + " manually added line" + (merged.preserved === 1 ? "" : "s") + " kept"
+            : "")
+          + (merged && merged.superseded
+            ? " · " + merged.superseded + " manual line" + (merged.superseded === 1 ? "" : "s") + " now extracted"
+            : "");
       window[tone]?.(
         lines.length === 0 ? "Extraction returned no lines" : "Extraction complete",
-        lines.length + " line" + (lines.length === 1 ? "" : "s") + (adapter ? " (" + adapter + ")" : ""),
+        detail,
       );
       setBump((n) => n + 1);
     } catch (err: any) {

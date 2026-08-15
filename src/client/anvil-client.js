@@ -525,6 +525,13 @@
 
   // The tenant's own registered identity — what customer-facing PDFs print as
   // the seller. Migration 062 added the columns; nothing ever wrote them.
+  // "Where is my part?" — searches shipment_lines and returns each match with
+  // its shipment's sailing/arrival/receipt ladder.
+  const partTracking = {
+    search: async (q, limit) => apiFetch("/api/sales/part_tracking?q=" + encodeURIComponent(q || "")
+      + (limit ? "&limit=" + encodeURIComponent(limit) : "")),
+  };
+
   const sellerDetails = {
     get:  async () => apiFetch("/api/admin/seller_details"),
     save: async (patch) => apiFetch("/api/admin/seller_details", { method: "PATCH", body: patch }),
@@ -1805,6 +1812,7 @@
     edi,
     rlhf,
     agent,
+    partTracking,
     sellerDetails,
     erpChat,
     mcp,

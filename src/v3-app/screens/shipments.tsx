@@ -7,6 +7,7 @@ import { AnvilBackend } from "../lib/api";
 // client-side and pre-filter the huge line sheets before posting.
 import { parseSheets } from "../../api/_lib/shipment-import.js";
 import { detectHeaderRow, buildHeaderMap, classifySheet } from "../../api/_lib/shipment-import.js";
+import { PartTrackingSearch } from "../components/PartTrackingSearch";
 
 // Lazy-load SheetJS the same way the BOM importer does (dynamic import keeps it
 // out of the main bundle and satisfies the CSP — no CDN <script>).
@@ -685,10 +686,15 @@ const ShipmentLadder = ({ s }: { s: any }) => (
   </div>
 );
 
-const ViewToggle = ({ view, setView }: { view: string; setView: (v: "list" | "projects") => void }) => (
+type ShipView = "list" | "projects" | "parts";
+
+const ViewToggle = ({ view, setView }: { view: string; setView: (v: ShipView) => void }) => (
   <div className="row" style={{ gap: 2 }} role="tablist" aria-label="Shipments view">
     <Btn sm kind={view === "list" ? "primary" : "ghost"} onClick={() => setView("list")} aria-pressed={view === "list"}>Logistics list</Btn>
     <Btn sm kind={view === "projects" ? "primary" : "ghost"} onClick={() => setView("projects")} aria-pressed={view === "projects"}>By project</Btn>
+    {/* The customer-facing question: "where is my part?". Reads shipment_lines,
+        which the workbook import has populated since #393 and nothing read. */}
+    <Btn sm kind={view === "parts" ? "primary" : "ghost"} onClick={() => setView("parts")} aria-pressed={view === "parts"}>Find a part</Btn>
   </div>
 );
 
@@ -815,10 +821,19 @@ const ShipmentTracker = ({ viewToggle, onOpen }: { viewToggle?: React.ReactNode;
 // account-owner "by project" tracker. The view is reflected in the hash so it
 // survives a refresh / deep link, without clobbering the CRUD's ?id / ?new.
 const ShipmentsScreen = () => {
-  const [view, setView] = React.useState<"list" | "projects">(
-    () => (shipReadParams().get("view") === "projects" ? "projects" : "list"),
-  );
+  const [view, setView] = React.useState<ShipView>(() => {
+    const v = shipReadParams().get("view");
+    return v === "projects" || v === "parts" ? v : "list";
+  });
   const toggle = <ViewToggle view={view} setView={setView} />;
+  if (view === "parts") {
+    return (
+      <div className="ws">
+        <div className="row" style={{ justifyContent: "flex-end", marginBottom: 8 }}>{toggle}</div>
+        <PartTrackingSearch />
+      </div>
+    );
+  }
   if (view === "projects") {
     return (
       <ShipmentTracker

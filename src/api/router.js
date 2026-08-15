@@ -110,6 +110,7 @@ import commsList               from "./communications/list.js";
 import commsMissingDoc         from "./communications/missing_doc.js";
 import commsSend               from "./communications/send.js";
 import copilotConfirm          from "./copilot/confirm.js";
+import agentPersonas          from "./agent/personas.js";
 import copilotProposals        from "./copilot/proposals.js";
 import metricsCatalog          from "./metrics/index.js";
 import pdmRawMaterial          from "./pdm/raw_material.js";
@@ -936,6 +937,7 @@ const STATIC_ROUTES = {
   "/communications/missing_doc":    commsMissingDoc,
   "/communications/send":           commsSend,
   "/copilot/confirm":               copilotConfirm,
+  "/agent/personas":                agentPersonas,
   "/copilot/proposals":             copilotProposals,
   "/metrics":                       metricsCatalog,
   "/pdm/raw-material":              pdmRawMaterial,

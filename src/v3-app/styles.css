@@ -4821,3 +4821,120 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .md-table th { background: var(--paper); font-weight: 650; color: var(--ink-2); }
 /* Figures line up for comparison. */
 .md-table td { font-variant-numeric: tabular-nums; }
+
+/* ==========================================================================
+   Ask Anvil — floating module-scoped agent surface (migration 210 flag).
+   Bottom-right was unoccupied; the overlay ladder tops out at 300 (CmdK,
+   ThreadDrawer), so the button sits at 290 and the panel at 300 rather than
+   inventing a new tier above them.
+   ========================================================================== */
+.aa-fab {
+  position: fixed; right: 20px; bottom: 20px; z-index: 290;
+  display: flex; align-items: center; gap: 8px;
+  height: 40px; padding: 0 15px 0 13px;
+  border: 1px solid var(--hairline); border-radius: 21px;
+  background: var(--ink); color: var(--paper);
+  font: 600 12.5px/1 var(--sans); cursor: pointer;
+  box-shadow: 0 8px 26px rgba(0,0,0,.18), 0 2px 5px rgba(0,0,0,.08);
+  transition: transform .16s ease;
+}
+.aa-fab:hover { transform: translateY(-1px); }
+.aa-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.aa-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+.aa-count {
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  background: var(--accent); color: var(--ink); border-radius: 9px; padding: 1px 6px;
+}
+
+.aa-panel {
+  position: fixed; right: 20px; bottom: 20px; z-index: 300;
+  width: min(392px, calc(100vw - 40px));
+  /* Capped so the panel can never grow past the viewport on a short window;
+     the message list scrolls inside instead of the page. */
+  max-height: min(620px, calc(100vh - 96px));
+  display: flex; flex-direction: column;
+  background: var(--paper); border: 1px solid var(--hairline); border-radius: 12px;
+  box-shadow: 0 14px 40px rgba(0,0,0,.2), 0 2px 6px rgba(0,0,0,.08);
+  overflow: hidden;
+}
+.aa-head {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 10px 12px; border-bottom: 1px solid var(--hairline); background: var(--paper-2);
+}
+.aa-avatar {
+  width: 26px; height: 26px; border-radius: 7px; flex: none;
+  background: var(--accent); color: var(--ink);
+  display: grid; place-items: center; font: 700 11px/1 var(--mono);
+}
+.aa-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.aa-name { font-size: 12.5px; font-weight: 650; }
+/* The read-only claim is load-bearing: it is the operator's assurance that
+   nothing here can change the order. It must never be truncated away. */
+.aa-scope { font-family: var(--mono); font-size: 9.5px; color: var(--ink-3); }
+.aa-x { border: 0; background: transparent; color: var(--ink-3); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 3px; }
+.aa-x:hover { color: var(--ink); }
+
+.aa-body { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 9px; }
+.aa-hello { margin: 0; font-size: 12.5px; color: var(--ink-3); line-height: 1.55; }
+.aa-msg { max-width: 92%; font-size: 12.8px; line-height: 1.5; }
+.aa-msg.aa-me {
+  align-self: flex-end; background: var(--paper-3); border: 1px solid var(--hairline);
+  border-radius: 11px 11px 3px 11px; padding: 6px 10px; white-space: pre-wrap;
+}
+.aa-msg.aa-ai { align-self: flex-start; color: var(--ink); }
+.aa-msg.aa-ai p:first-child { margin-top: 0; }
+.aa-msg.aa-ai p:last-child { margin-bottom: 0; }
+.aa-busy { color: var(--ink-3); font-style: italic; }
+.aa-trace {
+  font-family: var(--mono); font-size: 10px; color: var(--ink-3);
+  border: 1px solid var(--hairline); border-radius: 7px; padding: 4px 8px;
+  background: var(--paper-2); margin-bottom: 6px;
+}
+.aa-trace summary { cursor: pointer; list-style: none; }
+.aa-trace summary::-webkit-details-marker { display: none; }
+.aa-trace ol { margin: 5px 0 0; padding-left: 15px; line-height: 1.7; }
+.aa-err {
+  font-size: 12px; color: var(--bad, #B91C1C); background: var(--bad-soft, #FDECEC);
+  border: 1px solid var(--hairline); border-radius: 7px; padding: 7px 9px;
+}
+
+.aa-sugg { border-top: 1px solid var(--hairline); padding: 9px 12px; background: var(--paper-2); }
+.aa-sugg-lbl {
+  font-family: var(--mono); font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-3); margin-bottom: 6px;
+}
+.aa-sugg button {
+  display: block; width: 100%; text-align: left; margin-bottom: 5px;
+  border: 1px solid var(--hairline); border-radius: 7px; background: var(--paper);
+  color: var(--ink-2); font: inherit; font-size: 11.8px; line-height: 1.4;
+  padding: 6px 9px; cursor: pointer;
+}
+.aa-sugg button:last-child { margin-bottom: 0; }
+.aa-sugg button:hover { border-color: var(--ink-3); }
+.aa-src { display: block; font-family: var(--mono); font-size: 9px; color: var(--ink-3); margin-top: 2px; }
+.aa-sev { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.aa-sev-error { background: var(--bad, #B91C1C); }
+.aa-sev-warn  { background: var(--warn, #B45309); }
+.aa-sev-info  { background: var(--ink-3); }
+
+.aa-composer { border-top: 1px solid var(--hairline); padding: 9px 12px; display: flex; gap: 7px; align-items: center; }
+.aa-composer input {
+  flex: 1; min-width: 0; border: 1px solid var(--hairline); border-radius: 8px;
+  padding: 7px 10px; font: inherit; font-size: 12.5px; background: var(--paper); color: var(--ink);
+}
+.aa-send {
+  flex: none; border: 0; border-radius: 8px; background: var(--ink); color: var(--paper);
+  padding: 7px 12px; font: 600 12px/1.3 var(--sans); cursor: pointer;
+}
+.aa-send:disabled { opacity: .45; cursor: default; }
+
+/* On a phone the panel takes the width; the SO line grid is unusable behind a
+   floating card at that size anyway. */
+@media (max-width: 640px) {
+  .aa-panel { right: 8px; left: 8px; bottom: 8px; width: auto; max-height: calc(100vh - 76px); }
+  .aa-fab { right: 12px; bottom: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aa-fab { transition: none; }
+  .aa-fab:hover { transform: none; }
+}

@@ -12,6 +12,8 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { erpChatTools, dispatchErpChatTool } from "../_lib/erp-chat-tools.js";
+import { resolvePersona } from "../_lib/agent-personas.js";
+import { tenantSettings } from "../_lib/stripe-client.js";
 import { callAnthropic } from "../_lib/anthropic.js";
 
 // Audit P3.4: route the per-loop Anthropic call through
@@ -60,6 +62,24 @@ export default async function handler(req, res) {
     }
     const svc = serviceClient();
 
+    // Module persona (Ask Anvil). The client sends a NAME; the prompt and the
+    // scope list are looked up server-side, so a caller cannot supply either.
+    //
+    // A persona that is unknown, or whose tenant flag is off, is REJECTED
+    // rather than falling back to the default. Falling back would widen the
+    // tool set the caller explicitly asked to narrow — the opposite of what
+    // asking for a persona means. Sending no persona at all is still fine and
+    // behaves exactly as before, which is what the existing Ask Anvil screen
+    // does.
+    let persona = null;
+    if (body.persona) {
+      const settings = await tenantSettings(svc, ctx.tenantId);
+      persona = resolvePersona(body.persona, settings);
+      if (!persona) {
+        return json(res, 403, { error: { message: "persona not available for this tenant" } });
+      }
+    }
+
     // Resolve or create session.
     let sessionId = body.session_id;
     if (!sessionId) {
@@ -93,7 +113,12 @@ export default async function handler(req, res) {
     }
 
     // Tool-use loop.
-    const tools = erpChatTools();
+    // Scope filtering is what MAKES the persona. erpChatTools() with no
+    // argument returns every tool including the write ones — which is what
+    // this endpoint has always done, and why the SO persona has to pass its
+    // scopes explicitly to stay read-only.
+    const tools = persona ? erpChatTools({ scopes: persona.scopes }) : erpChatTools();
+    const systemPrompt = persona ? persona.system : SYSTEM;
     let messages = [...history];
     let assistantText = "";
     let citations = [];
@@ -110,7 +135,7 @@ export default async function handler(req, res) {
         tenantId: ctx.tenantId,
         userId: ctx.user?.id || null,
         messages,
-        system: SYSTEM,
+        system: systemPrompt,
         purpose: "extraction",
         model: MODEL,
         max_tokens: 2048,

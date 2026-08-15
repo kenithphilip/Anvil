@@ -517,6 +517,12 @@
     dataset:   async (q) => apiFetch("/api/rlhf/dataset" + (q ? "?" + new URLSearchParams(q).toString() : "")),
   };
 
+  // Ask Anvil module personas. Returns only what the tenant has enabled, so an
+  // empty list means the surface never renders. See migration 210.
+  const agent = {
+    personas: async () => apiFetch("/api/agent/personas"),
+  };
+
   const erpChat = {
     sessions:    async () => apiFetch("/api/erp_chat/sessions"),
     session:     async (id) => apiFetch("/api/erp_chat/sessions?id=" + encodeURIComponent(id) + "&messages=true"),
@@ -1791,6 +1797,7 @@
     esign,
     edi,
     rlhf,
+    agent,
     erpChat,
     mcp,
     inbound,

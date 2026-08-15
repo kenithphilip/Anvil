@@ -21,6 +21,7 @@ import { ExtractionProgress } from "../components/ExtractionProgress";
 import { OrderHeaderEditor, OrderLineTaxComponents, TallyTab } from "../components/SOWorkspaceOrderPanels";
 import { PipelineDiagnostics } from "../components/PipelineDiagnostics";
 import { FieldPill, ProvenanceChip, ExtractionQualityCard, EditableCell } from "../components/SOWorkspaceReviewCells";
+import { AskAnvil } from "../components/AskAnvil";
 
 // Line-reconciliation table body, mounted inside the unified reconcile
 // view's ReviewPaneSelectionProvider so a row click drives the shared
@@ -2552,6 +2553,24 @@ const WiredSOWorkspace = () => {
         initialQuery={pickerLineIdx !== null
           ? String((draftLines[pickerLineIdx]?.itemCode || draftLines[pickerLineIdx]?.partNumber || draftLines[pickerLineIdx]?.description || "")).slice(0, 60)
           : ""}
+      />
+
+      {/* Ask Anvil — floating, read-only Sales Order agent.
+          Renders NOTHING unless the tenant has so_agent_enabled (migration 210);
+          the component asks /api/agent/personas itself rather than this screen
+          threading a flag down. Mounted here rather than in the Shell because
+          the suggestions are derived from THIS order's anomalies and findings,
+          which only this screen holds. Promoting it to a global surface is the
+          next slice, once a second persona exists to justify the plumbing. */}
+      <AskAnvil
+        route="so"
+        contextLine={o.po_number ? `Context: I am looking at sales order PO ${o.po_number}.` : undefined}
+        context={{
+          anomalies: (pipelineState?.data?.extraction_runs?.[0] as any)?.anomalies || null,
+          findings,
+          lines: draftLines,
+          poNumber: o.po_number || null,
+        }}
       />
     </div>
   );

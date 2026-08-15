@@ -1,0 +1,124 @@
+// The floating surface renders only for a tenant that asked for it.
+//
+// The most important assertion in this file is the boring one: with the flag
+// off, NOTHING is in the DOM. Not a hidden button, not an aria-live region —
+// nothing. A client who has not bought this feature should not be able to tell
+// it exists.
+
+import React from "react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
+import { AskAnvil } from "./AskAnvil";
+
+const personas = vi.fn();
+const send = vi.fn();
+
+beforeEach(() => {
+  personas.mockReset();
+  send.mockReset();
+  (window as any).AnvilBackend = { agent: { personas }, erpChat: { send } };
+});
+afterEach(() => { cleanup(); vi.clearAllMocks(); });
+
+const SO = { id: "so", label: "Sales order agent", routes: ["so"], placeholder: "Ask about this order…" };
+
+const ctx = { anomalies: [{ code: "document_total_shortfall", severity: "warn", actual: 100, expected: 150 }], findings: [], lines: [], poNumber: "0066026562" };
+
+describe("tenant gating", () => {
+  it("renders nothing at all when the tenant has no personas", async () => {
+    personas.mockResolvedValue({ personas: [] });
+    const { container } = render(<AskAnvil route="so" context={ctx} />);
+    await waitFor(() => expect(personas).toHaveBeenCalled());
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("renders nothing when the endpoint fails — never fails open", async () => {
+    personas.mockRejectedValue(new Error("403"));
+    const { container } = render(<AskAnvil route="so" context={ctx} />);
+    await waitFor(() => expect(personas).toHaveBeenCalled());
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("renders nothing on a route the persona does not claim", async () => {
+    personas.mockResolvedValue({ personas: [SO] });
+    const { container } = render(<AskAnvil route="spares" context={ctx} />);
+    await waitFor(() => expect(personas).toHaveBeenCalled());
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("shows the button once the tenant has the persona on this route", async () => {
+    personas.mockResolvedValue({ personas: [SO] });
+    render(<AskAnvil route="so" context={ctx} />);
+    expect(await screen.findByRole("button", { name: /ask anvil/i })).toBeTruthy();
+  });
+});
+
+describe("the panel", () => {
+  const open = async () => {
+    personas.mockResolvedValue({ personas: [SO] });
+    render(<AskAnvil route="so" context={ctx} />);
+    fireEvent.click(await screen.findByRole("button", { name: /ask anvil/i }));
+  };
+
+  it("states plainly that it cannot change the order", async () => {
+    await open();
+    expect(screen.getByText(/cannot change this order/i)).toBeTruthy();
+  });
+
+  it("offers suggestions derived from the order's own checks", async () => {
+    await open();
+    expect(screen.getByText(/document_total_shortfall/)).toBeTruthy();
+  });
+
+  it("seeds the composer from a suggestion WITHOUT sending it", async () => {
+    await open();
+    fireEvent.click(screen.getByText(/document_total_shortfall/).closest("button")!);
+    const input = screen.getByLabelText("Ask Anvil") as HTMLInputElement;
+    expect(input.value).toMatch(/gap/i);
+    expect(send).not.toHaveBeenCalled();      // clicking a chip is not a send
+  });
+
+  it("sends with the persona id so the server can re-check the flag", async () => {
+    send.mockResolvedValue({ content: "Here is the answer.", session_id: "s1" });
+    await open();
+    const input = screen.getByLabelText("Ask Anvil");
+    fireEvent.change(input, { target: { value: "why is it short?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(send).toHaveBeenCalled());
+    expect(send.mock.calls[0][0]).toMatchObject({ persona: "so" });
+  });
+
+  it("sends the record context once, not on every turn", async () => {
+    send.mockResolvedValue({ content: "ok", session_id: "s1" });
+    personas.mockResolvedValue({ personas: [SO] });
+    render(<AskAnvil route="so" context={ctx} contextLine="Context: PO 0066026562." />);
+    fireEvent.click(await screen.findByRole("button", { name: /ask anvil/i }));
+    const input = screen.getByLabelText("Ask Anvil");
+
+    fireEvent.change(input, { target: { value: "first" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect(send.mock.calls[0][0].content).toContain("Context: PO 0066026562.");
+
+    fireEvent.change(screen.getByLabelText("Ask Anvil"), { target: { value: "second" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    // Resending the record every turn is what makes a panel like this expensive.
+    expect(send.mock.calls[1][0].content).not.toContain("Context: PO");
+    expect(send.mock.calls[1][0].session_id).toBe("s1");
+  });
+
+  it("surfaces the real error rather than a shrug", async () => {
+    send.mockRejectedValue(new Error("persona not available for this tenant"));
+    await open();
+    fireEvent.change(screen.getByLabelText("Ask Anvil"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "persona not available for this tenant");
+  });
+
+  it("closes back to the button", async () => {
+    await open();
+    fireEvent.click(screen.getByLabelText("Close Ask Anvil"));
+    expect(screen.getByRole("button", { name: /ask anvil/i })).toBeTruthy();
+  });
+});

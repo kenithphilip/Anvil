@@ -1228,7 +1228,36 @@ const WiredSOWorkspace = () => {
           }
         } : undefined}
       >
-        <td className="mono">{i + 1}</td>
+        <td className="mono">
+          {i + 1}
+          {/* A hand-added line must never be indistinguishable from one the
+              extractor read off the PO. "added" means the operator asserts the
+              document DOES say this and extraction missed it; "not on PO" means
+              it is owed under the quote and the customer has not ordered it —
+              which is why the second cannot be invoiced. */}
+          {ln._origin === "operator_recovered" && (
+            <div style={{ marginTop: 3 }} title="Added by an operator — not read from the PO">
+              <Chip k="warn">added</Chip>
+            </div>
+          )}
+          {ln._origin === "quote_variance" && (
+            <div style={{ marginTop: 3 }} title="Owed under the quote but NOT on the customer's PO — cannot be invoiced until the PO is amended">
+              <Chip k="bad">not on PO</Chip>
+            </div>
+          )}
+          {canEditLines && (
+            <div style={{ marginTop: 3 }}>
+              <button
+                type="button"
+                className="btn sm ghost"
+                style={{ padding: "0 5px", lineHeight: 1.5 }}
+                title={"Remove line " + (i + 1)}
+                aria-label={"Remove line " + (i + 1)}
+                onClick={(e) => { e.stopPropagation(); onRemoveLine(i); }}
+              >×</button>
+            </div>
+          )}
+        </td>
         <td title={mappingTitle(ln)}>
           <EditableCell {...cellProps} line={ln} i={i} canonicalKey="description" type="text" placeholder="description" />
           <div style={{ marginTop: 2 }}>
@@ -1464,6 +1493,33 @@ const WiredSOWorkspace = () => {
     && o.status !== "CANCELLED"
     && o.status !== "EXPORTED_TO_TALLY"
     && o.status !== "RECONCILED";
+
+  // Manual line entry. Extraction misses lines — LlamaParse handed back a
+  // shredded table and produced 6 of 45 on a live PO — and until now there was
+  // no way to put the missing one in by hand. The only route was re-running and
+  // hoping.
+  //
+  // Every added line is stamped _origin so it is never mistaken for something
+  // the extractor read off the document, and so mergeExtractedLines carries it
+  // through the next re-extraction instead of replacing it (see lib/line-merge).
+  const onAddLine = (origin: "operator_recovered" | "quote_variance" = "operator_recovered", seed: any = null) => {
+    const base = linesDraft ?? lines;
+    setLinesDraft([...base, {
+      _origin: origin,
+      _added_at: new Date().toISOString(),
+      description: null, itemCode: null, customerItemCode: null,
+      quantity: null, unitPrice: null, uom: null, hsn: null,
+      ...(seed || {}),
+    }]);
+  };
+
+  // Removing a line is only ever an operator act, so it is recorded the same
+  // way an edit is: the draft diverges and Save persists it. No line is removed
+  // from the server until the operator saves.
+  const onRemoveLine = (i: number) => {
+    const base = linesDraft ?? lines;
+    setLinesDraft(base.filter((_l: any, idx: number) => idx !== i));
+  };
 
   const onEditLine = (i: number, canonicalKey: string, value: any) => {
     const base = linesDraft ?? lines;
@@ -2139,9 +2195,20 @@ const WiredSOWorkspace = () => {
               <span className="mono-sm">{draftLines.length} line{draftLines.length === 1 ? "" : "s"} · {findings.length} issue{findings.length === 1 ? "" : "s"}</span>
               <span className="mono-sm" style={{ color: "var(--ink-3)", marginLeft: 4 }}>
                 <Chip k="ghost">OCR</Chip> = from PO &nbsp;·&nbsp;
-                <Chip k="info">edited</Chip> = operator override
+                <Chip k="info">edited</Chip> = operator override &nbsp;·&nbsp;
+                <Chip k="warn">added</Chip> = typed in, not extracted
               </span>
               <span style={{ flex: 1 }} />
+              {canEditLines && (
+                <Btn
+                  sm
+                  kind="ghost"
+                  onClick={() => onAddLine("operator_recovered")}
+                  title="Add a line the extractor missed. It is marked as operator-added and survives the next re-extraction."
+                >
+                  + Add line
+                </Btn>
+              )}
               {canEditLines && draftLines.some((ln) => !ln._mapped_item || !ln._mapped_item.id) && (
                 <Btn
                   sm

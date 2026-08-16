@@ -140,6 +140,10 @@ export const mergeSummaries = (summaries: any[]): any => {
     lines_matched_to_existing: sum("lines_matched_to_existing"),
     inserted: sum("inserted"),
     updated: sum("updated"),
+    // Rejected writes accumulate across batches, and the reasons are unioned so
+    // the operator sees a spread rather than only the first batch's.
+    failed_writes: sum("failed_writes"),
+    write_errors: list.flatMap((s) => s?.write_errors || []).slice(0, 5),
     by_source_country: country,
     sheets: head.sheets,
   };

@@ -152,3 +152,55 @@ describe("a lines-only upload is still accepted", () => {
     expect(res._status).toBe(400);
   });
 });
+
+// An apply in which every write was rejected reported success: both branches
+// were `if (!error)` with no else, so a constraint violation, an RLS denial or a
+// type mismatch was discarded without a counter, a log, or anything in the
+// response. Observed in production — the shipments table still held its original
+// 19 rows after an import that reported no error, and nothing could say why.
+describe("a rejected write is reported, not swallowed", () => {
+  const failing = (message, code) => ({
+    from(table) {
+      if (table === "shipments") {
+        // The write is now ONE upsert per 200 rows against the
+        // (tenant_id, shipper_invoice_no) unique index, not an insert per row.
+        const api = {
+          select: () => api, eq: () => api, in: () => api,
+          upsert: () => ({ select: () => Promise.resolve({ data: null, error: { message, code } }) }),
+          then: (fn) => Promise.resolve(fn({ data: [], error: null })),
+        };
+        return api;
+      }
+      return makeSvcTable();
+    },
+  });
+  const makeSvcTable = () => {
+    const api = {
+      select: () => api, eq: () => api, in: () => api,
+      insert: async () => ({ data: null, error: null }),
+      upsert: async () => ({ data: null, error: null }),
+      update: () => api,
+      then: (fn) => Promise.resolve(fn({ data: [], error: null })),
+    };
+    return api;
+  };
+
+  it("counts the failures and returns the reason", async () => {
+    vi.doMock("../api/_lib/supabase.js", () => ({ serviceClient: () => failing("null value in column \"tenant_id\"", "23502") }));
+    vi.resetModules();
+    const { default: h } = await import("../api/sales/shipment_import.js");
+    const req = { method: "POST", query: {}, _body: {
+      mode: "apply",
+      pending: [{ shipper_invoice_no: "OK-CO-26-0166", supplier: "Acme" }],
+      lines: [],
+    } };
+    const res = { setHeader() {}, _status: 0, _json: null };
+    await h(req, res);
+    expect(res._status).toBe(200);
+    expect(res._json.summary.failed_writes).toBe(1);
+    expect(res._json.summary.write_errors[0].message).toContain("tenant_id");
+    expect(res._json.summary.write_errors[0].code).toBe("23502");
+    expect(res._json.summary.inserted).toBe(0);
+    vi.doUnmock("../api/_lib/supabase.js");
+  });
+});

@@ -181,6 +181,53 @@ export const deriveStatus = (currentStatus, d) => {
   return "PLANNED";
 };
 
+// The ETA currently in force, as against the one first promised.
+//
+// The Pending sheet states a hop's ETA up to four ways: the original column, a
+// SECOND column with the identical header (which is why buildHeaderMap keeps
+// every occurrence), a "Delayed Shipment Update-…" column, and for the store a
+// "Revised ETA at store". Reading occurrence 0 gets the original and silently
+// ignores every revision — so a shipment that had slipped three weeks still
+// reported its first promise.
+//
+// Most-recently-revised wins. Store labels carry a generic alias alongside the
+// tenant-specific one so this works for a tenant whose warehouse is not named in
+// the header.
+const ETA_ALIASES = {
+  port: {
+    revised: ["delayed shipment update-eta @ indian port", "delayed shipment update eta @ indian port", "revised eta at indian port", "revised eta at port"],
+    base: ["eta @ indian port", "eta @ port"],
+  },
+  store: {
+    revised: ["delayed shipment update-eta @ obara store", "delayed shipment update eta @ obara store", "revised eta at store", "revised eta at obara store"],
+    base: ["eta @ obara store", "eta @ store"],
+  },
+};
+
+export const currentEta = (row, map, hop) => {
+  const a = ETA_ALIASES[hop];
+  if (!a) return "";
+  // One alias at a time, taking the first non-EMPTY value. `pick` returns as
+  // soon as a header MATCHES, so passing the whole list would stop at a
+  // "Delayed Shipment Update-…" column that exists but is blank — which is the
+  // normal state for a shipment that has not slipped — and the revision columns
+  // after it would never be consulted.
+  for (const alias of a.revised) {
+    const v = toDateStr(pick(row, map, [alias]));
+    if (v) return v;
+  }
+  // Second occurrence of the duplicated header is the revision column.
+  const second = toDateStr(pick(row, map, a.base, 1));
+  if (second) return second;
+  return toDateStr(pick(row, map, a.base, 0));
+};
+
+export const originalEta = (row, map, hop) => {
+  const a = ETA_ALIASES[hop];
+  if (!a) return "";
+  return toDateStr(pick(row, map, a.base, 0));
+};
+
 export const normalizePending = (row, map) => {
   const d = {
     etd_source: toDateStr(pick(row, map, ["etd @ source port", "etd"])),
@@ -189,6 +236,11 @@ export const normalizePending = (row, map) => {
     ata_india: toDateStr(pick(row, map, ["ata @ india", "ata @ indian port"])),
     eta_store: toDateStr(pick(row, map, ["revised eta at store", "eta @ obara store"], 0)),
     ata_store: toDateStr(pick(row, map, ["ata @ obara store"])),
+    // The promise as it stands today — what the observation log records. The
+    // fields above keep their original meaning so the remarks block, which
+    // labels them "(expected)" and "(promised)", still says what it always did.
+    eta_port_current: currentEta(row, map, "port"),
+    eta_store_current: currentEta(row, map, "store"),
   };
   return {
     shipper_invoice_no: pick(row, map, ["shipper invoice no", "shipper inv no", "invoice no"]),

@@ -40,9 +40,19 @@ const smReadAll = () => {
 // Component shape: { id, customer_id, project_name, name, updated_at,
 //   cols:[{id, col_name, col_type, locked}],
 //   rows:[{id, gun_no, qty, values:{col_name:parts}, +station fields}] }
-// Local ids (smUid) are React keys ONLY; toServer() OMITS child ids so a
-// save FULL-REPLACES columns+rows (safe: recommended_spares keys on
-// matrix_id+part_no+description, not on row/col ids — no id round-trip).
+// Child ids ROUND-TRIP. A row created in the browser carries a local smUid
+// ("mx_...") until the server gives it a uuid; from then on the uuid is sent
+// back so the server updates that row in place.
+//
+// toServer used to omit ids entirely, which made every autosave a full replace:
+// the server's reconcile() keeps rows whose id is in the payload, so an empty
+// id set meant DELETE EVERY ROW AND COLUMN, then re-insert with fresh uuids.
+// The comment here claimed that was safe because nothing keyed off row ids.
+// That was wrong — migration 197 has
+//   gun_drawings.row_id uuid references spare_matrix_rows(id) on delete set null
+// so every save nulled the link between a drawing and its gun row. The drawings
+// survived; which gun they belonged to did not. It also churned every id on
+// every keystroke-debounce and made two concurrent saves destructive.
 const fromHeader = (h) => ({
   id: h.id, customer_id: h.customer_id || null,
   project_name: h.project_name || "", name: h.name || "", updated_at: h.updated_at || null,
@@ -70,10 +80,17 @@ const fromServer = (full) => {
 };
 
 const numOrNull = (v) => (v === "" || v == null ? null : Number(v));
+// A server-assigned uuid, or undefined for a row that only exists in the
+// browser so far. smUid()s are "mx_"-prefixed and must never be sent as an id:
+// the column is uuid-typed, and inventing one would orphan the real row.
+const serverId = (id) =>
+  (typeof id === "string" && id && !id.startsWith("mx_")) ? id : undefined;
+
 const toServer = (matrix) => ({
   header: { customer_id: matrix.customer_id || null, project_name: matrix.project_name || null, name: matrix.name || null },
-  columns: (matrix.cols || []).map((c, i) => ({ col_name: c.col_name, category: c.col_type || null, locked: !!c.locked, position: i })),
+  columns: (matrix.cols || []).map((c, i) => ({ id: serverId(c.id), col_name: c.col_name, category: c.col_type || null, locked: !!c.locked, position: i })),
   rows: (matrix.rows || []).map((r, i) => ({
+    id: serverId(r.id),
     position: i,
     gun_no: r.gun_no || null,
     qty: numOrNull(r.qty),

@@ -204,3 +204,63 @@ describe("a rejected write is reported, not swallowed", () => {
     vi.doUnmock("../api/_lib/supabase.js");
   });
 });
+
+// The real workbook repeats invoice numbers — 1,013 distinct across 1,164 rows,
+// 151 appearing twice. The write is now ONE upsert per 200 rows with the invoice
+// as the conflict target, and two rows sharing a conflict key in one statement is
+// Postgres 21000, "ON CONFLICT DO UPDATE command cannot affect row a second
+// time", which fails the entire batch. The previous row-at-a-time loop tolerated
+// duplicates by writing the same shipment twice, last one winning.
+describe("duplicate invoice numbers in one workbook", () => {
+  const captured = { upserts: [] };
+  const svc = () => ({
+    from(table) {
+      if (table === "shipments") {
+        const api = {
+          select: () => api, eq: () => api, in: () => api, order: () => api, limit: () => api,
+          upsert: (rows) => { captured.upserts.push(rows); return { select: async () => ({
+            data: rows.map((r, i) => ({ id: "s" + i, shipper_invoice_no: r.shipper_invoice_no })), error: null }) }; },
+          then: (fn) => Promise.resolve(fn({ data: [], error: null })),
+        };
+        return api;
+      }
+      const api = {
+        select: () => api, eq: () => api, in: () => api, order: () => api, limit: () => api,
+        insert: async () => ({ data: null, error: null }),
+        upsert: async () => ({ data: null, error: null }),
+        update: () => api,
+        then: (fn) => Promise.resolve(fn({ data: [], error: null })),
+      };
+      return api;
+    },
+  });
+
+  it("folds repeats into ONE upsert row per invoice", async () => {
+    captured.upserts.length = 0;
+    vi.doMock("../api/_lib/supabase.js", () => ({ serviceClient: svc }));
+    vi.resetModules();
+    const { default: h } = await import("../api/sales/shipment_import.js");
+    const req = { method: "POST", query: {}, _body: { mode: "apply", lines: [], pending: [
+      { shipper_invoice_no: "DUP-1", vessel_or_flight: "FIRST VESSEL" },
+      { shipper_invoice_no: "DUP-1", vessel_or_flight: "SECOND VESSEL" },   // same invoice
+      { shipper_invoice_no: "UNIQ-2", vessel_or_flight: "OTHER" },
+    ] } };
+    const res = { setHeader() {}, _status: 0, _json: null };
+    await h(req, res);
+
+    expect(res._status).toBe(200);
+    const rows = captured.upserts.flat();
+    const invoices = rows.map((r) => r.shipper_invoice_no);
+    // Two rows, not three — and no invoice twice in one statement.
+    expect(new Set(invoices).size).toBe(invoices.length);
+    expect(invoices.sort()).toEqual(["DUP-1", "UNIQ-2"]);
+    // Last non-null value wins, matching the old loop's behaviour.
+    // (supplier is not a shipments column — it lands in remarks — so assert on
+    // one that is actually persisted.)
+    expect(rows.find((r) => r.shipper_invoice_no === "DUP-1").vessel_or_flight).toBe("SECOND VESSEL");
+    // Counted per shipment written, not per sheet row.
+    expect(res._json.summary.inserted).toBe(2);
+    expect(res._json.summary.failed_writes).toBe(0);
+    vi.doUnmock("../api/_lib/supabase.js");
+  });
+});

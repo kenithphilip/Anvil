@@ -276,15 +276,34 @@ export default async function handler(req, res) {
     // Merge each sheet's non-null fields ONTO the stored row. Preserves the
     // original semantics — an update never nulls a value the operator set by
     // hand — while letting the whole batch go up as one statement.
-    const rowsToWrite = [];
+    // DEDUPED BY INVOICE, because the upsert conflict target is the invoice.
+    //
+    // The real workbook repeats invoice numbers: 1,013 distinct across 1,164
+    // rows, 151 of them appearing twice. Two rows sharing a conflict key in one
+    // upsert is Postgres 21000 — "ON CONFLICT DO UPDATE command cannot affect
+    // row a second time" — which would fail the whole batch of 200. The previous
+    // row-at-a-time loop tolerated it by simply writing the same shipment twice,
+    // last one winning, so batching had to reproduce that: fold the repeats
+    // together here, last non-null value winning, exactly as before.
+    //
+    // Every plan entry for the invoice keeps a reference, so all of them receive
+    // the resulting shipment_id and the per-part lines still attach.
+    const byInvoice = new Map();
     for (const p of plan) {
-      const existing = p.existing_id ? existingByInvoice.get(p.shipper_invoice_no) : null;
-      const base = existing ? { ...existing } : { tenant_id: tenantId };
-      for (const [k, v] of Object.entries(p.body)) if (v !== null && v !== undefined) base[k] = v;
-      base.tenant_id = tenantId;
-      if (existing) base.updated_at = new Date().toISOString();
-      rowsToWrite.push({ plan: p, row: base });
+      const key = p.shipper_invoice_no;
+      if (!key) continue;              // no conflict target -> cannot be upserted
+      let slot = byInvoice.get(key);
+      if (!slot) {
+        const existing = p.existing_id ? existingByInvoice.get(key) : null;
+        slot = { plans: [], row: existing ? { ...existing } : { tenant_id: tenantId }, existing: !!existing };
+        byInvoice.set(key, slot);
+      }
+      for (const [k, v] of Object.entries(p.body)) if (v !== null && v !== undefined) slot.row[k] = v;
+      slot.row.tenant_id = tenantId;
+      if (slot.existing) slot.row.updated_at = new Date().toISOString();
+      slot.plans.push(p);
     }
+    const rowsToWrite = [...byInvoice.values()];
 
     const auditRows = [];
     for (let i = 0; i < rowsToWrite.length; i += 200) {
@@ -293,20 +312,23 @@ export default async function handler(req, res) {
         .upsert(batch.map((b) => b.row), { onConflict: "tenant_id,shipper_invoice_no" })
         .select("id, shipper_invoice_no");
       if (error) {
-        for (const b of batch) noteError(b.plan.action, b.plan.shipper_invoice_no, error);
+        for (const b of batch) noteError(b.existing ? "update" : "insert", b.plans[0].shipper_invoice_no, error);
         continue;
       }
       const idByInvoice = new Map((data || []).map((r) => [r.shipper_invoice_no, r.id]));
       for (const b of batch) {
-        const id = idByInvoice.get(b.plan.shipper_invoice_no);
-        if (!id) { noteError(b.plan.action, b.plan.shipper_invoice_no, { message: "upsert returned no id" }); continue; }
-        b.plan.shipment_id = id;
-        if (b.plan.action === "insert") inserted += 1; else updated += 1;
+        const invoice = b.plans[0].shipper_invoice_no;
+        const id = idByInvoice.get(invoice);
+        if (!id) { noteError(b.existing ? "update" : "insert", invoice, { message: "upsert returned no id" }); continue; }
+        // Every plan entry for this invoice gets the id, so the per-part lines
+        // attach whichever duplicate row they were matched against.
+        for (const p of b.plans) p.shipment_id = id;
+        if (b.existing) updated += 1; else inserted += 1;
         auditRows.push({
           tenant_id: tenantId,
           actor: ctx.user ? ctx.user.id : null,
           actor_role: ctx.role || null,
-          action: b.plan.action === "insert" ? "shipment_import_insert" : "shipment_import_update",
+          action: b.existing ? "shipment_import_update" : "shipment_import_insert",
           object_type: "shipment",
           object_id: id,
           after: b.row,
@@ -320,9 +342,11 @@ export default async function handler(req, res) {
       if (error) console.warn("[shipment-import] audit batch failed:", error.message);
     }
 
-    const failedWrites = plan.length - inserted - updated;
+    // Against DISTINCT invoices — the unit actually written — not plan rows,
+    // which repeat.
+    const failedWrites = rowsToWrite.length - inserted - updated;
     if (failedWrites > 0) {
-      console.warn(`[shipment-import] ${failedWrites}/${plan.length} shipment writes failed;`,
+      console.warn(`[shipment-import] ${failedWrites}/${rowsToWrite.length} shipment writes failed;`,
         writeErrors[0]?.message || "no error captured");
     }
 

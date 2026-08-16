@@ -3,7 +3,7 @@ import { fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
-import { matchSpares, SPARE_PRESETS, isConsumableCol, nameMatchCandidates, suggestSpareColumns, type SpareBomItem, type SpareSuggestion } from "../lib/spare-match";
+import { matchSpares, computeAutoFill, SPARE_PRESETS, isConsumableCol, nameMatchCandidates, suggestSpareColumns, type SpareBomItem, type SpareSuggestion } from "../lib/spare-match";
 import { lsGet } from "../lib/storage-keys";
 import { GunDrawingsPanel } from "../components/GunDrawingsPanel";
 import { SparePartPicker } from "../components/SparePartPicker";
@@ -497,35 +497,26 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
     }
     setBusyAuto(true);
     try {
-      const lockedCols = new Set((draft.cols || []).filter((c) => c.locked).map((c) => c.col_name));
+      const lockedCols = new Set<string>((draft.cols || []).filter((c) => c.locked).map((c) => String(c.col_name)));
       // Fetch each unique gun's rich BOM lines once.
       const linesByGun = new Map<string, SpareBomItem[]>();
       await Promise.all(guns.map(async (code: string) => {
         linesByGun.set(code.toUpperCase(), await smFetchLinesForGun(code));
       }));
-      let filled = 0;
-      let matchedGuns = 0;
-      let emptyGuns = 0;
-      dirty((d) => {
-        const names = (d.cols || []).map((c) => c.col_name);
-        const rows = (d.rows || []).map((r) => {
-          const lines = linesByGun.get(String(r.gun_no || "").toUpperCase()) || [];
-          if (!lines.length) { emptyGuns += 1; return r; }
-          const matched = matchSpares(lines, names);
-          const values = { ...(r.values || {}) };
-          let any = false;
-          names.forEach((col) => {
-            if (lockedCols.has(col)) return;
-            const val = matched[col];
-            if (val && values[col] !== val) { values[col] = val; filled += 1; any = true; }
-          });
-          if (any) matchedGuns += 1;
-          return { ...r, values };
-        });
-        return { ...d, rows };
-      });
-      const tail = emptyGuns ? ` ${emptyGuns} gun(s) had no imported BOM.` : "";
-      window.notifySuccess?.("Auto-fill complete", `${filled} cells filled across ${matchedGuns} gun(s).${tail}`);
+      // Computed PURELY, then applied — not counted inside a setDraft updater.
+      // React runs an updater during the following render, so the counters were
+      // read while still 0 and the toast always said "0 cells filled across 0
+      // gun(s)" however much it had filled in.
+      const base = latestRef.current?.draft || draft;
+      const outcome = computeAutoFill(
+        base.rows || [],
+        (base.cols || []).map((c) => c.col_name),
+        linesByGun,
+        lockedCols,
+      );
+      dirty((d) => ({ ...d, rows: outcome.rows }));
+      const tail = outcome.emptyGuns ? ` ${outcome.emptyGuns} gun(s) had no imported BOM.` : "";
+      window.notifySuccess?.("Auto-fill complete", `${outcome.filled} cells filled across ${outcome.matchedGuns} gun(s).${tail}`);
     } catch (err) {
       window.notifyError?.("Auto-fill failed", String(err.message || err));
     } finally {

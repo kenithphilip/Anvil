@@ -23,7 +23,8 @@ export type BusyAction =
   | "cancel"
   | "bulk_add"
   | "clear_lines"
-  | "delete_line";
+  | "delete_line"
+  | "resolve_finding";
 
 export const BUSY_ACTIONS: Record<Exclude<BusyAction, null>, { verb: string; label: string }> = {
   extract:     { verb: "extracting…",  label: "Extracting" },
@@ -37,6 +38,7 @@ export const BUSY_ACTIONS: Record<Exclude<BusyAction, null>, { verb: string; lab
   bulk_add:    { verb: "adding…",      label: "Adding lines" },
   clear_lines: { verb: "clearing…",    label: "Clearing lines" },
   delete_line: { verb: "deleting…",    label: "Deleting line" },
+  resolve_finding: { verb: "resolving…", label: "Resolving finding" },
 };
 
 /** Banner text for the running action. "Working" only if an id ever goes unmapped. */

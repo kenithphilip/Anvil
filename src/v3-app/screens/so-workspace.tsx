@@ -5,6 +5,9 @@ import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Modal, Prov, Steps, Stream, W
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 import { BusyAction, busyLabel, busyVerb } from "../lib/busy-actions";
+// The gate's own predicate, not a copy: a UI that disagreed with the server
+// about what blocks would offer a button that 409s, or hide the only way out.
+import { isUnresolvedBlocker as isBlockingFinding } from "../../api/_lib/blocking-findings.js";
 import { RBAC } from "../lib/rbac";
 import { pushRecent } from "../lib/recent-items";
 import { amountInWords } from "../lib/amount-words";
@@ -145,6 +148,13 @@ const WiredSOWorkspace = () => {
   const [cost, setCost] = u({ data: null, loading: true });
   const [schedule, setSchedule] = u({ data: [], loading: true, error: null });
   const [bump, setBump] = u(0);
+  // Inline editor for clearing a blocking finding. Declared HERE, with the
+  // other hooks: this component early-returns for the no-order / loading /
+  // error states further down, so a useState placed after them changes the hook
+  // count between renders ("Rendered more hooks than during the previous
+  // render") and takes the whole screen out.
+  const [resolvingCode, setResolvingCode] = u<string | null>(null);
+  const [resolveNote, setResolveNote] = u("");
   const [scheduleBump, setScheduleBump] = u(0);
   const [tsv, setTsv] = u("");
   // WHICH action is running, not merely THAT one is. Every stage button shared
@@ -552,6 +562,33 @@ const WiredSOWorkspace = () => {
   // pattern already used for canApprove / canPushTally below.
   const canWrite = RBAC?.canDo?.("so.write") === true;
   const canAdmin = RBAC?.canDo?.("so.admin") === true;
+
+  // Clearing a blocking finding.
+  //
+  // The server has had this escape hatch since the blocker was introduced —
+  // PATCH { resolve_finding: { code, note } }, permissioned on "approve",
+  // audited as order_finding_resolved, and documented as "the escape hatch that
+  // guarantees no stuck order". Nothing in the client ever called it. So an
+  // order carrying a line_count_shortfall could not be approved (409) and could
+  // not be unblocked from any screen: permanently trapped, with the 409 telling
+  // the operator to "resolve it first" and no way to do so.
+  //
+  // (The existing resolveFinding in SOWorkspaceOrderPanels is a different
+  // thing entirely — Tally drift findings via /api/tally/reconcile.)
+  const resolveBlocker = async (code: string) => {
+    if (!o?.id || !code) return;
+    setBusy("resolve_finding");
+    try {
+      await AnvilBackend?.orders?.update?.(o.id, {
+        resolve_finding: { code, note: resolveNote.trim() || null },
+      });
+      setResolvingCode(null); setResolveNote("");
+      window.notifySuccess?.("Finding resolved", `${code} cleared — the order can be approved.`);
+      setBump((b) => b + 1);
+    } catch (err: any) {
+      window.notifyError?.("Could not resolve", String(err?.message || err));
+    } finally { setBusy(null); }
+  };
 
   // The actual cancel, run only after the in-app confirmation modal is
   // accepted (no native confirm() — see cancelOpen above).
@@ -2517,7 +2554,39 @@ const WiredSOWorkspace = () => {
                     <b style={{ color: "var(--ink)" }}>{(f.code || f.rule_id || "finding").toUpperCase()}</b>
                     {f.line_index != null && <> · L{Number(f.line_index) + 1}</>}
                     {f.detail ? ` — ${f.detail}` : ""}
+                    {f.resolved === true && <> <Chip k="good">resolved</Chip></>}
                     {f.suggested_fix && <div style={{ marginTop: 4, color: "var(--ink-3)" }}>suggested fix · {f.suggested_fix}</div>}
+                    {isBlockingFinding(f) && (
+                      <div style={{ marginTop: 8 }}>
+                        {/* Gated on approve: the server requires it, and a
+                            button that always 403s is worse than none. */}
+                        {!canApprove ? (
+                          <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                            Blocks approval · needs an approver to clear
+                          </span>
+                        ) : resolvingCode === (f.code || f.rule_id) ? (
+                          <div className="row" style={{ gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                            <input
+                              className="input mono-sm" style={{ minWidth: 220, flex: 1 }}
+                              autoFocus placeholder="why is this safe to clear? (optional, kept in the audit trail)"
+                              value={resolveNote} onChange={(e) => setResolveNote(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === "Enter") resolveBlocker(f.code || f.rule_id); }}
+                            />
+                            <Btn sm kind="primary" disabled={!!busy}
+                                 onClick={() => resolveBlocker(f.code || f.rule_id)}>
+                              {busy === "resolve_finding" ? "resolving…" : "Confirm"}
+                            </Btn>
+                            <Btn sm kind="ghost" disabled={!!busy}
+                                 onClick={() => { setResolvingCode(null); setResolveNote(""); }}>Cancel</Btn>
+                          </div>
+                        ) : (
+                          <Btn sm kind="ghost" disabled={!!busy}
+                               onClick={() => { setResolvingCode(f.code || f.rule_id); setResolveNote(""); }}>
+                            Blocks approval — resolve…
+                          </Btn>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

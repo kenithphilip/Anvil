@@ -264,3 +264,72 @@ describe("duplicate invoice numbers in one workbook", () => {
     vi.doUnmock("../api/_lib/supabase.js");
   });
 });
+
+// Eleven requests returned 200 and not a single row was written.
+//
+// The upsert row for an EXISTING shipment was built by spreading the stored row,
+// which carries `id`. That makes the INSERT collide on the PRIMARY KEY, which
+// the declared conflict target (tenant_id, shipper_invoice_no) does not cover,
+// so the statement errors instead of updating. PostgREST also unions the keys it
+// finds across the array, so a batch mixing full stored rows with sheet-only new
+// rows NULLs columns the new rows never mentioned.
+describe("the upsert payload", () => {
+  const captured = { upserts: [] };
+  const existingRow = {
+    id: "existing-uuid", tenant_id: "00000000-0000-0000-0000-0000000000aa",
+    shipper_invoice_no: "OLD-1", vessel_or_flight: "STORED VESSEL",
+    port_of_discharge: "Nhava Sheva", created_at: "2026-01-01T00:00:00Z",
+  };
+  const svc = () => ({
+    from(table) {
+      if (table === "shipments") {
+        let sel = false;
+        const api = {
+          select: (cols) => { sel = String(cols || "").includes("*"); return api; },
+          eq: () => api, in: () => api, order: () => api, limit: () => api,
+          upsert: (rows) => { captured.upserts.push(rows); return { select: async () => ({
+            data: rows.map((r, i) => ({ id: "s" + i, shipper_invoice_no: r.shipper_invoice_no })), error: null }) }; },
+          then: (fn) => Promise.resolve(fn({ data: sel ? [existingRow] : [], error: null })),
+        };
+        return api;
+      }
+      const api = {
+        select: () => api, eq: () => api, in: () => api, order: () => api, limit: () => api,
+        insert: async () => ({ data: null, error: null }),
+        upsert: async () => ({ data: null, error: null }),
+        update: () => api,
+        then: (fn) => Promise.resolve(fn({ data: [], error: null })),
+      };
+      return api;
+    },
+  });
+
+  it("never sends id, and gives every row the same columns", async () => {
+    captured.upserts.length = 0;
+    vi.doMock("../api/_lib/supabase.js", () => ({ serviceClient: svc }));
+    vi.resetModules();
+    const { default: h } = await import("../api/sales/shipment_import.js");
+    const req = { method: "POST", query: {}, _body: { mode: "apply", lines: [], pending: [
+      { shipper_invoice_no: "OLD-1", vessel_or_flight: "NEW VESSEL" },  // matches the stored row
+      { shipper_invoice_no: "BRAND-NEW" },                              // sheet-only
+    ] } };
+    const res = { setHeader() {}, _status: 0, _json: null };
+    await h(req, res);
+
+    expect(res._status).toBe(200);
+    const rows = captured.upserts.flat();
+    expect(rows).toHaveLength(2);
+    // The fatal one.
+    for (const r of rows) expect(r).not.toHaveProperty("id");
+    for (const r of rows) expect(r).not.toHaveProperty("created_at");
+    // Uniform key set, so PostgREST cannot null a column by union.
+    const keysets = rows.map((r) => Object.keys(r).sort().join(","));
+    expect(new Set(keysets).size).toBe(1);
+    // The stored value survives where the sheet said nothing...
+    const old = rows.find((r) => r.shipper_invoice_no === "OLD-1");
+    expect(old.port_of_discharge).toBe("Nhava Sheva");
+    // ...and the sheet wins where it did.
+    expect(old.vessel_or_flight).toBe("NEW VESSEL");
+    vi.doUnmock("../api/_lib/supabase.js");
+  });
+});

@@ -16,6 +16,7 @@
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
+import { findUserByEmail } from "../_lib/auth-user-lookup.js";
 import { checkRateLimit, recordRateLimitAttempt } from "../_lib/rate-limit.js";
 
 const DEFAULT_REDIRECT = process.env.MAGIC_LINK_REDIRECT_URL || "";
@@ -41,12 +42,11 @@ const resolveTenantForEmail = async (svc, email) => {
   try {
     const lower = String(email || "").trim().toLowerCase();
     if (!lower) return null;
-    const { data: users } = await svc.auth.admin.listUsers({
-      filter: 'email.eq."' + lower + '"',
-      page: 1,
-      perPage: 1,
-    });
-    const user = users?.users?.[0];
+    // Was listUsers({ filter: ... }) — the SDK drops `filter` exactly as it
+    // drops `email`, so this resolved the first user in the project and the
+    // sign-in audit was attributed to their tenant.
+    const found = await findUserByEmail(svc, lower);
+    const user = found.exhaustive ? found.user : null;
     if (!user) return null;
     const r = await svc
       .from("tenant_members")

@@ -17,6 +17,7 @@
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
+import { findUserByEmail } from "../_lib/auth-user-lookup.js";
 import {
   ensureMembership,
   defaultTenantId,
@@ -62,14 +63,12 @@ export default async function handler(req, res) {
     // also reject, but its error message is opaque ("User already
     // registered"); we want a clear surface for the UI.
     //
-    // Audit follow-up (May 2026, regression of H11): switched from
-    // project-wide listUsers (perPage: 200, which silently dropped
-    // accounts past that limit and let duplicates through on busy
-    // deployments) to a single-row email-filtered lookup.
-    const existing = await svc.auth.admin.listUsers({ page: 1, perPage: 1, email });
-    if (existing.error) throw new Error("listUsers: " + existing.error.message);
-    const dup = (existing.data?.users || [])[0];
-    if (dup) {
+    // The SDK drops the `email` key, so this matched the FIRST USER IN THE
+    // PROJECT and every signup after the first got 409 — self-serve onboarding
+    // was dead. Only an exhaustive search may reject; otherwise fall through and
+    // let createUser be the authority, since it rejects a genuine duplicate.
+    const existing = await findUserByEmail(svc, email);
+    if (existing.exhaustive && existing.user) {
       return json(res, 409, { error: { message: "An account with that email already exists. Sign in instead." } });
     }
 

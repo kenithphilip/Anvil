@@ -22,6 +22,7 @@
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
+import { findUserByEmail } from "../_lib/auth-user-lookup.js";
 import { safeAwait } from "../_lib/safe-thenable.js";
 import { safeFetch } from "../_lib/safe-fetch.js";
 import { sendEmail } from "../_lib/mailer.js";
@@ -156,10 +157,14 @@ export default async function handler(req, res) {
     // instead of pulling every user across the project. The filter
     // pins the lookup to a single email; no cross-tenant data is
     // loaded into memory.
+    // The SDK drops the `email` key, so this resolved to the first user in the
+    // project: the reset was generated for, and audited against, the wrong
+    // account. The response is unchanged either way (always 200, to stop
+    // account enumeration), so only the audit row and the recipient move.
     let user = null;
     try {
-      const { data } = await svc.auth.admin.listUsers({ page: 1, perPage: 1, email });
-      user = (data?.users || [])[0] || null;
+      const found = await findUserByEmail(svc, email);
+      user = found.exhaustive ? found.user : null;
     } catch (_) { user = null; }
 
     if (!user) {

@@ -235,8 +235,19 @@ const WiredAdminCRUD = () => {
   const flashErr = (err) => setFlash({ kind: "bad", msg: String(err.message || err) });
 
   // Data fetchers
+  // adminCrudFetch, like every other fetcher on this screen.
+  //
+  // This was a raw `fetch("/api/admin/members")` with no Authorization or
+  // x-anvil-tenant header, so resolveContext 401'd it every time. The `r.ok ?
+  // ... : { members: [] }` swallowed the 401 into an empty list and the
+  // `.catch()` guaranteed the thunk never rejected — so useFetch never set
+  // `error`, the "Failed to load members" banner below could never render, and
+  // the admin saw a friendly "No members yet." forever. Everything hanging off a
+  // member row (change role, remove, resend invite) was unreachable with it.
+  //
+  // adminCrudFetch throws on non-2xx, which is what makes the banner work.
   const members = useFetch(
-    () => fetch("/api/admin/members").then((r) => r.ok ? r.json() : { members: [] }).catch(() => ({ members: [] })),
+    () => AnvilBackend?.admin?.listMembers?.() || adminCrudFetch("/api/admin/members"),
     []
   );
   const holidays = useFetch(

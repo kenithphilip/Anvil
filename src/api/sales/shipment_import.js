@@ -21,6 +21,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { parseSheets, pendingToShipment } from "../_lib/shipment-import.js";
+import { buildObservation } from "../_lib/logistics/eta-history.js";
 
 const uniq = (arr) => [...new Set(arr.filter(Boolean))];
 
@@ -164,6 +165,9 @@ export default async function handler(req, res) {
         order_id: link.order_id || null,
         source_po_id: link.source_po_id || null,
         body: body2,
+        // Kept for the ETA observation log below. Stripped from the preview
+        // response with `body` — it is import bookkeeping, not operator-facing.
+        normalized: n,
         preview: {
           supplier: n.supplier, items: n.items_text, mode: n.mode,
           vessel_or_flight: n.vessel_or_flight, bl_awb: n.bl_awb,
@@ -243,7 +247,7 @@ export default async function handler(req, res) {
 
     if (!apply) {
       // Strip the internal `body` from the preview payload; keep the readable bits.
-      const preview = plan.map(({ body: _b, ...rest }) => rest);
+      const preview = plan.map(({ body: _b, normalized: _n, ...rest }) => rest);
       return json(res, 200, { mode: "preview", summary, shipments: preview });
     }
 
@@ -271,6 +275,52 @@ export default async function handler(req, res) {
         }
       }
     }
+    // 6b. Record the promise, when it moved (Logistics P1, migration 212).
+    //
+    // `shipments` has no forward-looking ETA column, so the sheet's port/store
+    // ETAs were flattened into free-text remarks and every revision overwrote
+    // the last. Nobody could ask which shipments were slipping or by how much.
+    //
+    // A row is written ONLY when a promise changes, so re-importing the same
+    // workbook is free and every row is a real revision. The count and the slip
+    // are derived from this log rather than stored — the workbook's own
+    // "No. of Delays" is hand-maintained, and a mirrored counter is a number
+    // Anvil could never verify.
+    let etaObservations = 0;
+    const etaTargets = plan.filter((p) => p.shipment_id && p.normalized);
+    if (etaTargets.length) {
+      // Latest observation per shipment, in one read. The log only holds
+      // revisions, so this stays small even for a long-running tenant.
+      const latestByShipment = new Map();
+      const ids = etaTargets.map((p) => p.shipment_id);
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data, error } = await svc.from("shipment_eta_observations")
+          .select("shipment_id, eta_port, eta_store, observed_at")
+          .eq("tenant_id", tenantId)
+          .in("shipment_id", ids.slice(i, i + 200))
+          .order("observed_at", { ascending: true });
+        if (error) { console.warn("[shipment-import] eta history read failed:", error.message); break; }
+        // Ascending, so the last write per shipment wins.
+        for (const r of (data || [])) latestByShipment.set(r.shipment_id, r);
+      }
+      const newRows = [];
+      for (const p of etaTargets) {
+        const next = {
+          eta_port: p.normalized.eta_port_current || null,
+          eta_store: p.normalized.eta_store_current || null,
+        };
+        const obs = buildObservation(latestByShipment.get(p.shipment_id) || null, next, {
+          tenantId, shipmentId: p.shipment_id, source: "workbook_import",
+        });
+        if (obs) newRows.push(obs);
+      }
+      for (let i = 0; i < newRows.length; i += 200) {
+        const { error } = await svc.from("shipment_eta_observations").insert(newRows.slice(i, i + 200));
+        if (error) { console.warn("[shipment-import] eta history write failed:", error.message); break; }
+        etaObservations += newRows.slice(i, i + 200).length;
+      }
+    }
+
     for (const r of receipts) {
       const { error } = await svc.from("source_po_lines")
         .update({ received_qty: r.received_qty, received_at: r.received_at, updated_at: new Date().toISOString() })
@@ -318,7 +368,7 @@ export default async function handler(req, res) {
       if (!error) shipmentLinesApplied += rows.length;
     }
 
-    return json(res, 200, { mode: "apply", summary: { ...summary, inserted, updated, line_receipts_applied: receiptsApplied, shipment_lines_applied: shipmentLinesApplied } });
+    return json(res, 200, { mode: "apply", summary: { ...summary, inserted, updated, line_receipts_applied: receiptsApplied, shipment_lines_applied: shipmentLinesApplied, eta_observations: etaObservations } });
   } catch (err) {
     sendError(res, err);
   }

@@ -5,7 +5,7 @@
 // orders — so everything is resolved by header LABEL, never position.
 
 import { describe, it, expect } from "vitest";
-import { detectHeaderRow, buildHeaderMap, classifySheet, normalizeMode, toDateStr, normalizePending, normalizeLine, deriveStatus, pendingToShipment, parseSheets, normHeader, sheetCountry } from "../api/_lib/shipment-import.js";
+import { detectHeaderRow, buildHeaderMap, classifySheet, normalizeMode, toDateStr, normalizePending, normalizeLine, deriveStatus, pendingToShipment, parseSheets, normHeader, sheetCountry, currentEta, originalEta } from "../api/_lib/shipment-import.js";
 
 const PENDING_HEADER = [
   "Sr. No.", "Supplier Name", "Shipper Invoice No.", "Items Details", "Shipper Inv Date",
@@ -346,5 +346,56 @@ describe("the High Seas Sale sheet", () => {
 
   it("contributes no lines — it has no part-level columns", () => {
     expect(parseSheets([HSS]).lines).toHaveLength(0);
+  });
+});
+
+// The Pending sheet states each hop's ETA up to four ways: an original column, a
+// SECOND column with the identical header, a "Delayed Shipment Update-…", and
+// for the store a "Revised ETA at store". normalizePending read occurrence 0 —
+// the original — so a shipment that had slipped three weeks still reported the
+// date it was first promised, and the revisions went into a free-text blob.
+describe("current vs originally-promised ETA", () => {
+  const map = buildHeaderMap(PENDING_HEADER);
+
+  it("prefers the delayed-shipment-update column over both plain ones", () => {
+    const row = [...PENDING_ROW];
+    row[map.get(normHeader("delayed shipment update-eta @ indian port"))[0]] = "2026-08-22";
+    expect(currentEta(row, map, "port")).toBe("2026-08-22");
+    // ...and the original is still recoverable, which is what slip measures from.
+    expect(originalEta(row, map, "port")).toBe("2026-07-29");
+  });
+
+  it("falls back to the second occurrence of a duplicated header", () => {
+    // "ETA @ Indian Port" appears twice: expected, then revised.
+    const row = [...PENDING_ROW];
+    const idxs = map.get(normHeader("eta @ indian port"));
+    expect(idxs.length).toBeGreaterThan(1);
+    row[idxs[1]] = "2026-08-18";
+    expect(currentEta(row, map, "port")).toBe("2026-08-18");
+    expect(originalEta(row, map, "port")).toBe("2026-07-29");
+  });
+
+  it("falls back to the original when nothing has been revised", () => {
+    expect(currentEta(PENDING_ROW, map, "port")).toBe("2026-07-31");
+  });
+
+  it("prefers 'Revised ETA at store' for the store hop", () => {
+    const row = [...PENDING_ROW];
+    row[map.get(normHeader("revised eta at store"))[0]] = "2026-08-25";
+    expect(currentEta(row, map, "store")).toBe("2026-08-25");
+  });
+
+  it("exposes both on the normalized row without changing the old fields", () => {
+    // eta_india / eta_store keep their meaning: the remarks block labels them
+    // "(expected)" and "(promised)" and must keep saying what it always did.
+    const n = normalizePending(PENDING_ROW, map);
+    expect(n.eta_india).toBe("2026-07-29");
+    expect(n.eta_port_current).toBe("2026-07-31");
+    expect(n).toHaveProperty("eta_store_current");
+  });
+
+  it("returns empty for an unknown hop rather than guessing", () => {
+    expect(currentEta(PENDING_ROW, map, "moon")).toBe("");
+    expect(originalEta(PENDING_ROW, map, "moon")).toBe("");
   });
 });

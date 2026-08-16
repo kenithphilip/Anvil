@@ -21,7 +21,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { parseSheets, pendingToShipment } from "../_lib/shipment-import.js";
-import { buildObservation } from "../_lib/logistics/eta-history.js";
+import { buildObservation, resolvePromise } from "../_lib/logistics/eta-history.js";
 
 const uniq = (arr) => [...new Set(arr.filter(Boolean))];
 
@@ -287,6 +287,7 @@ export default async function handler(req, res) {
     // "No. of Delays" is hand-maintained, and a mirrored counter is a number
     // Anvil could never verify.
     let etaObservations = 0;
+    let etaDegraded = 0;
     const etaTargets = plan.filter((p) => p.shipment_id && p.normalized);
     if (etaTargets.length) {
       // Latest observation per shipment, in one read. The log only holds
@@ -305,12 +306,14 @@ export default async function handler(req, res) {
       }
       const newRows = [];
       for (const p of etaTargets) {
-        const next = {
-          eta_port: p.normalized.eta_port_current || null,
-          eta_store: p.normalized.eta_store_current || null,
-        };
+        // resolvePromise, not a direct read: a browser on a bundle cached from
+        // before this feature posts rows with no `eta_port_current` at all, and
+        // reading it directly recorded nothing while reporting success.
+        const next = resolvePromise(p.normalized);
+        if (next.degraded) etaDegraded += 1;
         const obs = buildObservation(latestByShipment.get(p.shipment_id) || null, next, {
-          tenantId, shipmentId: p.shipment_id, source: "workbook_import",
+          tenantId, shipmentId: p.shipment_id,
+          source: next.degraded ? "workbook_import_legacy" : "workbook_import",
         });
         if (obs) newRows.push(obs);
       }
@@ -368,7 +371,7 @@ export default async function handler(req, res) {
       if (!error) shipmentLinesApplied += rows.length;
     }
 
-    return json(res, 200, { mode: "apply", summary: { ...summary, inserted, updated, line_receipts_applied: receiptsApplied, shipment_lines_applied: shipmentLinesApplied, eta_observations: etaObservations } });
+    return json(res, 200, { mode: "apply", summary: { ...summary, inserted, updated, line_receipts_applied: receiptsApplied, shipment_lines_applied: shipmentLinesApplied, eta_observations: etaObservations, eta_observations_degraded: etaDegraded } });
   } catch (err) {
     sendError(res, err);
   }

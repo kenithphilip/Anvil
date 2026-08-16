@@ -36,6 +36,35 @@ const chronological = (rows) =>
     Date.parse(a.observed_at || 0) - Date.parse(b.observed_at || 0));
 
 /**
+ * The promise carried by a normalized pending row, and whether it is degraded.
+ *
+ * The frontend parses the workbook client-side and the server uses those rows
+ * AS-IS, so `eta_port_current` — added with this feature — only exists if the
+ * browser is running a current bundle. A tab opened before the deploy posts rows
+ * without it, and the naive read produced `{ null, null }`, `etaChanged` said
+ * "nothing moved", and the import recorded NOTHING while reporting success. A
+ * server-side feature silently gated on client-side freshness is a bad design,
+ * and this is the guard against it.
+ *
+ * The fallback fields predate this feature and carry the ORIGINAL promise
+ * (occurrence 0 of the duplicated headers). That is exactly right for a
+ * baseline, so an old client still seeds the log correctly — it just cannot
+ * detect revisions, because the field it reads never moves. Once the browser
+ * updates, the next import compares the real current ETA against that baseline
+ * and the revision surfaces.
+ *
+ * Presence of the KEY, not its value, decides: a current bundle always sets both
+ * keys, even to "" for a shipment with no ETA on the sheet.
+ */
+export const resolvePromise = (n) => {
+  const current = !!n && ("eta_port_current" in n || "eta_store_current" in n);
+  if (current) {
+    return { eta_port: n.eta_port_current || null, eta_store: n.eta_store_current || null, degraded: false };
+  }
+  return { eta_port: n?.eta_india || null, eta_store: n?.eta_store || null, degraded: true };
+};
+
+/**
  * Has the promise moved since the last observation?
  *
  * The write gate: a row is added only when this returns a change, so every row

@@ -19,7 +19,6 @@
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
-import { recordAudit } from "../_lib/audit.js";
 import { parseSheets, pendingToShipment } from "../_lib/shipment-import.js";
 import { buildObservation, resolvePromise } from "../_lib/logistics/eta-history.js";
 
@@ -136,8 +135,11 @@ export default async function handler(req, res) {
     // 3. Existing shipments by invoice -> update vs insert.
     const existingByInvoice = new Map();
     if (pendInvoices.length) {
+      // Full row, not just the id: the batched upsert below merges each sheet's
+      // non-null fields ONTO the stored row, which needs the stored values in
+      // hand. One read per 200 invoices replaces a read-modify-write per row.
       const { data: existing } = await svc.from("shipments")
-        .select("id, shipper_invoice_no").eq("tenant_id", tenantId).in("shipper_invoice_no", pendInvoices);
+        .select("*").eq("tenant_id", tenantId).in("shipper_invoice_no", pendInvoices);
       for (const s of (existing || [])) existingByInvoice.set(s.shipper_invoice_no, s);
     }
 
@@ -251,18 +253,19 @@ export default async function handler(req, res) {
       return json(res, 200, { mode: "preview", summary, shipments: preview });
     }
 
-    // 6. Apply. Insert new, patch existing (only fields the sheet provided, so an
-    //    update never nulls a value the operator set by hand).
-    let inserted = 0, updated = 0, receiptsApplied = 0, shipmentLinesApplied = 0;
-    // WHY a write failed, not merely that the count came back 0.
+    // 6. Apply — BATCHED.
     //
-    // Both branches were `if (!error)` with no else: every rejected row — a
-    // constraint violation, an RLS denial, a type mismatch — was discarded
-    // without a counter, a log, or anything in the response. An apply in which
-    // all 1,164 rows failed was indistinguishable from one that had nothing to
-    // do, and reported success either way. That is not a hypothetical: the
-    // shipments table still held its original 19 rows after an import that
-    // reported no error at all, and nothing in the payload could say why.
+    // This wrote one row at a time: an insert (or update) plus its own
+    // recordAudit insert, two sequential PostgREST round-trips per shipment. At
+    // ~0.5s a row that is ten minutes for a 1,145-row workbook against a 60s
+    // function ceiling, so the import had never once finished — observed live at
+    // HTTP 504 with 111 of 1,145 rows committed. The counters were honest; the
+    // request simply died before reaching the end of the loop.
+    //
+    // Now: one upsert per 200 rows against the (tenant_id, shipper_invoice_no)
+    // unique index (migration 213), and audit rows inserted in the same shape as
+    // recordAudit but as arrays. ~2,290 round-trips become ~18.
+    let inserted = 0, updated = 0, receiptsApplied = 0, shipmentLinesApplied = 0;
     const writeErrors = [];
     const noteError = (kind, invoice, error) => {
       if (writeErrors.length < 5) {
@@ -270,36 +273,59 @@ export default async function handler(req, res) {
       }
     };
 
+    // Merge each sheet's non-null fields ONTO the stored row. Preserves the
+    // original semantics — an update never nulls a value the operator set by
+    // hand — while letting the whole batch go up as one statement.
+    const rowsToWrite = [];
     for (const p of plan) {
-      if (p.action === "insert") {
-        const row = { tenant_id: tenantId, ...p.body };
-        const { data, error } = await svc.from("shipments").insert(row).select("id").single();
-        if (!error && data) {
-          inserted += 1;
-          p.shipment_id = data.id;
-          await recordAudit(ctx, { action: "shipment_import_insert", objectType: "shipment", objectId: data.id, after: row });
-        } else {
-          noteError("insert", p.shipper_invoice_no, error);
-        }
-      } else if (p.existing_id) {
-        const patch = { updated_at: new Date().toISOString() };
-        for (const [k, v] of Object.entries(p.body)) if (v !== null && v !== undefined) patch[k] = v;
-        const { error } = await svc.from("shipments").update(patch)
-          .eq("tenant_id", tenantId).eq("id", p.existing_id);
-        if (!error) {
-          updated += 1;
-          p.shipment_id = p.existing_id;
-          await recordAudit(ctx, { action: "shipment_import_update", objectType: "shipment", objectId: p.existing_id, after: patch });
-        } else {
-          noteError("update", p.shipper_invoice_no, error);
-        }
+      const existing = p.existing_id ? existingByInvoice.get(p.shipper_invoice_no) : null;
+      const base = existing ? { ...existing } : { tenant_id: tenantId };
+      for (const [k, v] of Object.entries(p.body)) if (v !== null && v !== undefined) base[k] = v;
+      base.tenant_id = tenantId;
+      if (existing) base.updated_at = new Date().toISOString();
+      rowsToWrite.push({ plan: p, row: base });
+    }
+
+    const auditRows = [];
+    for (let i = 0; i < rowsToWrite.length; i += 200) {
+      const batch = rowsToWrite.slice(i, i + 200);
+      const { data, error } = await svc.from("shipments")
+        .upsert(batch.map((b) => b.row), { onConflict: "tenant_id,shipper_invoice_no" })
+        .select("id, shipper_invoice_no");
+      if (error) {
+        for (const b of batch) noteError(b.plan.action, b.plan.shipper_invoice_no, error);
+        continue;
+      }
+      const idByInvoice = new Map((data || []).map((r) => [r.shipper_invoice_no, r.id]));
+      for (const b of batch) {
+        const id = idByInvoice.get(b.plan.shipper_invoice_no);
+        if (!id) { noteError(b.plan.action, b.plan.shipper_invoice_no, { message: "upsert returned no id" }); continue; }
+        b.plan.shipment_id = id;
+        if (b.plan.action === "insert") inserted += 1; else updated += 1;
+        auditRows.push({
+          tenant_id: tenantId,
+          actor: ctx.user ? ctx.user.id : null,
+          actor_role: ctx.role || null,
+          action: b.plan.action === "insert" ? "shipment_import_insert" : "shipment_import_update",
+          object_type: "shipment",
+          object_id: id,
+          after: b.row,
+        });
       }
     }
+    // Same rows recordAudit would have written, as arrays rather than one call
+    // per shipment — the audit was half the round-trips and half the timeout.
+    for (let i = 0; i < auditRows.length; i += 200) {
+      const { error } = await svc.from("audit_events").insert(auditRows.slice(i, i + 200));
+      if (error) console.warn("[shipment-import] audit batch failed:", error.message);
+    }
+
     const failedWrites = plan.length - inserted - updated;
     if (failedWrites > 0) {
       console.warn(`[shipment-import] ${failedWrites}/${plan.length} shipment writes failed;`,
         writeErrors[0]?.message || "no error captured");
     }
+
     // 6b. Record the promise, when it moved (Logistics P1, migration 212).
     //
     // `shipments` has no forward-looking ETA column, so the sheet's port/store

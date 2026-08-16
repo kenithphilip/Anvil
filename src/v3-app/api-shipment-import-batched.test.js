@@ -162,10 +162,11 @@ describe("a rejected write is reported, not swallowed", () => {
   const failing = (message, code) => ({
     from(table) {
       if (table === "shipments") {
+        // The write is now ONE upsert per 200 rows against the
+        // (tenant_id, shipper_invoice_no) unique index, not an insert per row.
         const api = {
           select: () => api, eq: () => api, in: () => api,
-          insert: () => ({ select: () => ({ single: async () => ({ data: null, error: { message, code } }) }) }),
-          update: () => ({ eq: () => ({ eq: () => ({ then: (fn) => Promise.resolve(fn({ data: null, error: { message, code } })) }) }) }),
+          upsert: () => ({ select: () => Promise.resolve({ data: null, error: { message, code } }) }),
           then: (fn) => Promise.resolve(fn({ data: [], error: null })),
         };
         return api;

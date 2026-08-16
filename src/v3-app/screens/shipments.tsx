@@ -245,7 +245,17 @@ const ShipmentImportPanel = ({ onClose, onApplied }: { onClose: () => void; onAp
     try {
       const r: any = await call("apply");
       const s = r?.summary || {};
-      window.notifySuccess?.("Sheet imported", `${s.inserted || 0} new · ${s.updated || 0} updated · ${s.line_receipts_applied || 0} receipts · ${s.shipment_lines_applied || 0} part lines`);
+      const summaryLine = `${s.inserted || 0} new · ${s.updated || 0} updated · ${s.line_receipts_applied || 0} receipts · ${s.shipment_lines_applied || 0} part lines`;
+      // An apply where every write was rejected used to report success: the
+      // counters read 0 and the errors were discarded server-side, so "imported"
+      // and "imported nothing, here is why" looked identical.
+      if (s.failed_writes > 0) {
+        const why = s.write_errors?.[0]?.message || "no reason reported";
+        setErr(`${s.failed_writes} shipment row(s) were rejected — ${why}`);
+        window.notifyError?.("Import incomplete", `${s.failed_writes} row(s) rejected · ${summaryLine}`);
+      } else {
+        window.notifySuccess?.("Sheet imported", summaryLine);
+      }
       onApplied();
     } catch (e: any) { setErr(e?.message || String(e)); window.notifyError?.("Import failed", e?.message || String(e)); }
     finally { setBusy(false); setStep(null); }

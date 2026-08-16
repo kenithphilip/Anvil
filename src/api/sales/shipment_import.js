@@ -254,6 +254,22 @@ export default async function handler(req, res) {
     // 6. Apply. Insert new, patch existing (only fields the sheet provided, so an
     //    update never nulls a value the operator set by hand).
     let inserted = 0, updated = 0, receiptsApplied = 0, shipmentLinesApplied = 0;
+    // WHY a write failed, not merely that the count came back 0.
+    //
+    // Both branches were `if (!error)` with no else: every rejected row — a
+    // constraint violation, an RLS denial, a type mismatch — was discarded
+    // without a counter, a log, or anything in the response. An apply in which
+    // all 1,164 rows failed was indistinguishable from one that had nothing to
+    // do, and reported success either way. That is not a hypothetical: the
+    // shipments table still held its original 19 rows after an import that
+    // reported no error at all, and nothing in the payload could say why.
+    const writeErrors = [];
+    const noteError = (kind, invoice, error) => {
+      if (writeErrors.length < 5) {
+        writeErrors.push({ kind, shipper_invoice_no: invoice, message: String(error?.message || error).slice(0, 300), code: error?.code || null });
+      }
+    };
+
     for (const p of plan) {
       if (p.action === "insert") {
         const row = { tenant_id: tenantId, ...p.body };
@@ -262,6 +278,8 @@ export default async function handler(req, res) {
           inserted += 1;
           p.shipment_id = data.id;
           await recordAudit(ctx, { action: "shipment_import_insert", objectType: "shipment", objectId: data.id, after: row });
+        } else {
+          noteError("insert", p.shipper_invoice_no, error);
         }
       } else if (p.existing_id) {
         const patch = { updated_at: new Date().toISOString() };
@@ -272,8 +290,15 @@ export default async function handler(req, res) {
           updated += 1;
           p.shipment_id = p.existing_id;
           await recordAudit(ctx, { action: "shipment_import_update", objectType: "shipment", objectId: p.existing_id, after: patch });
+        } else {
+          noteError("update", p.shipper_invoice_no, error);
         }
       }
+    }
+    const failedWrites = plan.length - inserted - updated;
+    if (failedWrites > 0) {
+      console.warn(`[shipment-import] ${failedWrites}/${plan.length} shipment writes failed;`,
+        writeErrors[0]?.message || "no error captured");
     }
     // 6b. Record the promise, when it moved (Logistics P1, migration 212).
     //
@@ -371,7 +396,9 @@ export default async function handler(req, res) {
       if (!error) shipmentLinesApplied += rows.length;
     }
 
-    return json(res, 200, { mode: "apply", summary: { ...summary, inserted, updated, line_receipts_applied: receiptsApplied, shipment_lines_applied: shipmentLinesApplied, eta_observations: etaObservations, eta_observations_degraded: etaDegraded } });
+    return json(res, 200, { mode: "apply", summary: { ...summary, inserted, updated, line_receipts_applied: receiptsApplied, shipment_lines_applied: shipmentLinesApplied, eta_observations: etaObservations, eta_observations_degraded: etaDegraded,
+      // Surfaced so an apply that wrote nothing says so, with a reason.
+      failed_writes: failedWrites, write_errors: writeErrors } });
   } catch (err) {
     sendError(res, err);
   }

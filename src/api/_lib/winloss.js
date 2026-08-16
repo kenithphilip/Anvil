@@ -13,6 +13,8 @@
 // Median response time = (first_decision_at - created_at) where
 // first_decision_at is the audit event for an approval / loss.
 
+import { orderGrandTotal } from "./order-value.js";
+
 const isWon = (s) => ["APPROVED","EXPORTED_TO_TALLY","SCHEDULED","DISPATCHED","RECONCILED","DONE"].includes(s);
 const isLost = (s) => ["LOST","REJECTED"].includes(s);
 const isExpired = (s) => s === "EXPIRED";
@@ -29,14 +31,41 @@ const median = (arr) => {
 
 export const refreshWinloss = async (svc, tenantId, { sinceDays = 90 } = {}) => {
   const since = new Date(Date.now() - sinceDays * 86400_000).toISOString();
+  // COLUMNS THAT ACTUALLY EXIST.
+  //
+  // This selected total_value, created_by, lost_reason_id and customer_tier —
+  // none of which are columns on `orders`. PostgREST rejects a select naming an
+  // unknown column, so the query errored, line 36 threw, and the nightly
+  // analytics refresh died on its first step every single run. Both
+  // analytics_winloss_daily and the funnel snapshots have therefore always been
+  // empty, and every report reading them shows zero.
+  //
+  //   total_value    -> orders holds no money at all; it lives in
+  //                     result.salesOrder (see _lib/order-value.js)
+  //   created_by     -> no such column; the sales rep is the linked
+  //                     OPPORTUNITY's owner_id
+  //   lost_reason_id -> the column is `lost_reason`, free text
+  //   customer_tier  -> not on orders; it already joins customers.tier below
   const orders = await svc.from("orders")
-    .select("id, status, total_value, created_at, customer_id, created_by, approval, lost_reason_id, customer_tier")
+    .select("id, status, created_at, customer_id, approval, lost_reason, opportunity_id, result")
     .eq("tenant_id", tenantId)
     .gte("created_at", since);
   if (orders.error) throw new Error(orders.error.message);
   const customers = await svc.from("customers").select("id, tier").eq("tenant_id", tenantId);
   if (customers.error) throw new Error(customers.error.message);
   const tierByCustomer = new Map((customers.data || []).map((c) => [c.id, c.tier || "standard"]));
+
+  // Rep + fallback value come from the opportunity the order was won from.
+  // Bounded by the opportunities these orders actually reference.
+  const oppIds = [...new Set((orders.data || []).map((o) => o.opportunity_id).filter(Boolean))];
+  const oppById = new Map();
+  for (let i = 0; i < oppIds.length; i += 200) {
+    const { data, error } = await svc.from("opportunities")
+      .select("id, owner_id, amount_inr")
+      .eq("tenant_id", tenantId).in("id", oppIds.slice(i, i + 200));
+    if (error) throw new Error("opportunities: " + error.message);
+    for (const r of (data || [])) oppById.set(r.id, r);
+  }
 
   // Day buckets keyed by (day | rep | tier).
   const dayBuckets = new Map();
@@ -49,8 +78,9 @@ export const refreshWinloss = async (svc, tenantId, { sinceDays = 90 } = {}) => 
     const day = dayOf(o.created_at);
     const month = monthOf(o.created_at);
     if (!day || !month) continue;
-    const tier = o.customer_tier || tierByCustomer.get(o.customer_id) || "standard";
-    const repId = o.created_by || null;
+    const opp = o.opportunity_id ? oppById.get(o.opportunity_id) : null;
+    const tier = tierByCustomer.get(o.customer_id) || "standard";
+    const repId = opp?.owner_id || null;
     const key = day + "|" + (repId || "") + "|" + tier;
     let b = dayBuckets.get(key);
     if (!b) {
@@ -63,12 +93,12 @@ export const refreshWinloss = async (svc, tenantId, { sinceDays = 90 } = {}) => 
       dayBuckets.set(key, b);
     }
     b.quotes_created += 1;
-    const value = Number(o.total_value || 0);
+    const value = orderGrandTotal(o, opp);
     if (isWon(o.status)) { b.quotes_won += 1; b.total_won_value += value; }
     else if (isLost(o.status)) {
       b.quotes_lost += 1; b.total_lost_value += value;
-      if (o.lost_reason_id) {
-        b.lost_reasons[o.lost_reason_id] = (b.lost_reasons[o.lost_reason_id] || 0) + 1;
+      if (o.lost_reason) {
+        b.lost_reasons[o.lost_reason] = (b.lost_reasons[o.lost_reason] || 0) + 1;
       }
     } else if (isExpired(o.status)) { b.quotes_expired += 1; }
     if (o.approval?.decided_at && o.created_at) {
@@ -99,14 +129,19 @@ export const refreshWinloss = async (svc, tenantId, { sinceDays = 90 } = {}) => 
   }
 
   // Upsert daily.
+  const writeErrors = [];
   let daysWritten = 0;
   for (const b of dayBuckets.values()) {
     const arr = responseTimes.get(b.day + "|" + (b.rep_id || "") + "|" + b.customer_tier);
     const med = median(arr || []);
-    await svc.from("analytics_winloss_daily").upsert({
+    // Counted only when it PERSISTED. This ignored the result entirely and
+    // returned the attempt count as days_written, so a refresh that wrote
+    // nothing reported a full run.
+    const { error } = await svc.from("analytics_winloss_daily").upsert({
       ...b,
       median_response_minutes: med,
     }, { onConflict: "tenant_id,day,rep_id,customer_tier" });
+    if (error) { writeErrors.push(error.message); continue; }
     daysWritten += 1;
   }
 
@@ -127,5 +162,14 @@ export const refreshWinloss = async (svc, tenantId, { sinceDays = 90 } = {}) => 
     monthsWritten += 1;
   }
 
-  return { tenant_id: tenantId, since_days: sinceDays, days_written: daysWritten, months_written: monthsWritten };
+  if (writeErrors.length) {
+    console.warn(`[winloss] ${writeErrors.length} rollup upsert(s) failed:`, writeErrors[0]);
+  }
+  return {
+    tenant_id: tenantId, since_days: sinceDays,
+    days_written: daysWritten, months_written: monthsWritten,
+    // Reported, not swallowed: a refresh that wrote nothing must not look
+    // identical to one that had nothing to write.
+    write_errors: writeErrors.length,
+  };
 };

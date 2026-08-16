@@ -79,24 +79,32 @@ export default async function handler(req, res) {
     }
     const trend = Array.from(trendMap.values()).sort((a, b) => a.day.localeCompare(b.day));
 
-    // Hydrate lost-reason names.
-    const reasonIds = Object.keys(lostReasons);
-    let reasonNames = {};
-    if (reasonIds.length) {
-      const lr = await svc.from("lost_reasons").select("id, label").in("id", reasonIds);
-      reasonNames = Object.fromEntries((lr.data || []).map((r) => [r.id, r.label]));
-    }
-    const lostReasonsHydrated = Object.entries(lostReasons).map(([id, count]) => ({
-      id, label: reasonNames[id] || id, count,
+    // Lost reasons are already human text.
+    //
+    // This queried a `lost_reasons` table that does not exist in any migration,
+    // took `lr.data || []` without checking the error, and fell back to showing
+    // the raw key — so the lookup was a guaranteed round-trip to nowhere. The
+    // rollup now keys on orders.lost_reason, which IS the label.
+    const lostReasonsHydrated = Object.entries(lostReasons).map(([label, count]) => ({
+      id: label, label, count,
     })).sort((a, b) => b.count - a.count);
 
     // Hydrate rep names.
+    //
+    // This did svc.from("auth.users"), which PostgREST cannot address — the auth
+    // schema is not exposed as a table — and swallowed the error, so every rep
+    // rendered as an 8-character uuid fragment. getUserById is the pattern the
+    // rest of the codebase uses (admin/members.js, _lib/tenancy.js): bounded by
+    // the number of reps, and it actually works.
     const repIds = Array.from(repAccum.keys());
-    let repNames = {};
-    if (repIds.length) {
-      const u = await svc.from("auth.users").select("id, email").in("id", repIds);
-      repNames = Object.fromEntries((u.data || []).map((r) => [r.id, r.email]));
-    }
+    const repNames = {};
+    await Promise.all(repIds.map(async (uid) => {
+      try {
+        const { data } = await svc.auth.admin.getUserById(uid);
+        const u = data?.user;
+        if (u) repNames[uid] = u.user_metadata?.name || u.user_metadata?.full_name || u.email || null;
+      } catch (_) { /* a missing user renders as the id fragment below */ }
+    }));
     const repEfficiency = Array.from(repAccum.values()).map((acc) => ({
       rep_id: acc.rep_id,
       name: repNames[acc.rep_id] || acc.rep_id.slice(0, 8),

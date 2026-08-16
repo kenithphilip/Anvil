@@ -78,6 +78,22 @@ export const placeOfSupplyKind = (company, customer) => {
 //   { taxable, gst_pct, cgst, sgst, igst, cess, line_total }
 // gst_pct lives on item_master.rate_of_duty_pct or on the line
 // itself; we accept both.
+// Total GST from item_master's SPLIT rates, for an item that has them but no
+// rate_of_duty_pct. IGST is the whole rate on an interstate supply; SGST and
+// CGST are half each on an intrastate one, so either expresses the same total
+// and the caller's own interstate test decides how to split it again below.
+// Returns null (not 0) when there is nothing to derive, so the ?? chain falls
+// through rather than pinning the rate at zero.
+export const splitRateTotal = (src) => {
+  if (!src) return null;
+  const igst = Number(src.igst_rate);
+  if (Number.isFinite(igst) && igst > 0) return igst;
+  const sgst = Number(src.sgst_rate);
+  const cgst = Number(src.cgst_rate);
+  const total = (Number.isFinite(sgst) ? sgst : 0) + (Number.isFinite(cgst) ? cgst : 0);
+  return total > 0 ? total : null;
+};
+
 export const computeLineTax = (line, kind) => {
   const qty = num(line.qty || line.quantity, 0);
   const rate = num(line.rate || line.unitPrice, 0);
@@ -87,7 +103,8 @@ export const computeLineTax = (line, kind) => {
   // master's GST rate never reached the voucher and a line whose PO omitted
   // the rate was taxed at 0%.
   const gst_pct = num(
-    line.gst_pct ?? line.gstRate ?? line.rate_of_duty_pct ?? line._mapped_item?.rate_of_duty_pct,
+    line.gst_pct ?? line.gstRate ?? line.rate_of_duty_pct ?? line._mapped_item?.rate_of_duty_pct
+      ?? splitRateTotal(line._mapped_item) ?? splitRateTotal(line),
     0,
   );
   const cess_pct = num(line.cess_pct ?? line.cessRate, 0);

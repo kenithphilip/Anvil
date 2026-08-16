@@ -282,7 +282,7 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opt
     // to low thousands of items. 5000 is a comfortable cap; the
     // fallback only fires when every other tier missed.
     const imDesc = await svc.from("item_master")
-      .select("id, part_no, description, hsn_sac, uom, source_country, alias, print_name, gst_applicable, taxability_type, type_of_supply, rate_of_duty_pct, stock_group, specification_code")
+      .select("id, part_no, description, hsn_sac, uom, source_country, sgst_rate, cgst_rate, igst_rate, alias, print_name, gst_applicable, taxability_type, type_of_supply, rate_of_duty_pct, stock_group, specification_code")
       .eq("tenant_id", tenantId)
       .limit(5000);
     if (imDesc && !imDesc.error && Array.isArray(imDesc.data)) {
@@ -427,6 +427,15 @@ export const mapLinesToItemMaster = async (svc, tenantId, customerId, lines, opt
         taxability_type: match.taxability_type || null,
         type_of_supply: match.type_of_supply || null,
         rate_of_duty_pct: match.rate_of_duty_pct != null ? Number(match.rate_of_duty_pct) : null,
+        // The split rates travel too. item_master collects BOTH these and
+        // rate_of_duty_pct on the same form, but only rate_of_duty_pct reached
+        // the voucher — so an operator who filled SGST 9 / CGST 9 (the natural
+        // thing for a domestic item) and left "Rate of duty %" blank had the
+        // voucher taxed at 0%, silently. computeLineTax derives the total from
+        // these when the explicit rate is absent.
+        sgst_rate: match.sgst_rate != null ? Number(match.sgst_rate) : null,
+        cgst_rate: match.cgst_rate != null ? Number(match.cgst_rate) : null,
+        igst_rate: match.igst_rate != null ? Number(match.igst_rate) : null,
         stock_group: match.stock_group || null,
         specification_code: match.specification_code || null,
         match_via: matchVia,

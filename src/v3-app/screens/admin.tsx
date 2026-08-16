@@ -1367,7 +1367,10 @@ const WiredAdminCRUD = () => {
   // ---------- Item master ----------
   const submitItem = async () => {
     if (!itemForm) return;
-    if (!itemForm.tally_item_name) return flashErr(new Error("tally_item_name required"));
+    // part_no is the schema's NOT NULL column and the unique key. This required
+    // `tally_item_name`, a field that exists nowhere, and never sent part_no at
+    // all — so every save violated the not-null constraint.
+    if (!itemForm.part_no) return flashErr(new Error("Part no is required"));
     setBusy(true); setFlash(null);
     try {
       await (AnvilBackend?.admin?.upsertItemMaster?.(itemForm)
@@ -1399,12 +1402,24 @@ const WiredAdminCRUD = () => {
       const rows = parseCSV(text);
       if (rows.length < 2) throw new Error("CSV needs header + 1 row");
       const header = rows[0].map((h) => h.trim());
+      // Header aliases. This screen's tooltip documented `tally_item_name`,
+      // `seller_part_no`, `hsn_code` and `standard_rate` — none of which are
+      // item_master columns, so a CSV written to that spec posted rows with no
+      // part_no and the whole batch failed the NOT NULL constraint. The real
+      // names are accepted, and the documented-but-wrong ones are translated so
+      // a file someone already prepared still imports.
+      const COL_ALIAS: Record<string, string> = {
+        tally_item_name: "print_name",
+        seller_part_no: "part_no",
+        hsn_code: "hsn_sac",
+        standard_rate: "purchase_price",
+      };
       const items = rows.slice(1).map((r) => {
         const o: Record<string, string> = {};
-        header.forEach((h, i) => { if (h) o[h] = r[i]; });
+        header.forEach((h, i) => { if (h) o[COL_ALIAS[h] || h] = r[i]; });
         return o;
-      }).filter((o) => o.tally_item_name);
-      if (items.length === 0) throw new Error("No rows with tally_item_name");
+      }).filter((o) => o.part_no);
+      if (items.length === 0) throw new Error("No rows with a part_no (accepted headers: part_no, or the legacy seller_part_no)");
       await (AnvilBackend?.admin?.bulkItemMaster?.(items)
              || adminCrudFetch("/api/admin/item_master", { method: "POST", body: { rows: items } }));
       flashOk(`Imported ${items.length} items`);
@@ -3676,13 +3691,13 @@ const WiredAdminCRUD = () => {
         {active === "items" && (
           <Card title="Item master" eyebrow={`${itemRows.length} items`}
                 right={<>
-                  <label className="btn btn-sm" style={{ cursor: csvBusy ? "wait" : "pointer" }} title="CSV must include header row with tally_item_name column">
+                  <label className="btn btn-sm" style={{ cursor: csvBusy ? "wait" : "pointer" }} title="CSV needs a header row with a part_no column (print_name, hsn_sac, uom, purchase_price, drawing_no optional)">
                     {csvBusy ? "importing…" : <>{Icon.upload || "↑"} Bulk CSV</>}
                     <input type="file" accept=".csv,text/csv" disabled={csvBusy} style={{ display: "none" }}
                            onChange={(ev) => { const f = ev.target.files?.[0]; ev.target.value = ""; onCsvImport(f); }} />
                   </label>
                   <Btn sm kind="primary"
-                       onClick={() => setItemForm({ tally_item_name: "", seller_part_no: "", description: "", hsn_code: "", uom: "Nos", standard_rate: "", drawing_no: "" })}>
+                       onClick={() => setItemForm({ part_no: "", print_name: "", description: "", hsn_sac: "", uom: "Nos", purchase_price: "", drawing_no: "" })}>
                     {Icon.plus} New item
                   </Btn>
                 </>}>
@@ -3692,15 +3707,15 @@ const WiredAdminCRUD = () => {
               <div className="body" style={{ color: "var(--ink-3)" }}>No items yet.</div>
             ) : (
               <table className="tbl">
-                <thead><tr><th>Tally name</th><th>Seller part no</th><th>HSN</th><th>UOM</th><th className="r">Rate</th><th>Drawing</th><th></th></tr></thead>
+                <thead><tr><th>Part no</th><th>Tally print name</th><th>HSN</th><th>UOM</th><th className="r">Purchase price</th><th>Drawing</th><th></th></tr></thead>
                 <tbody>
                   {itemRows.slice(0, 200).map((it) => (
                     <tr key={it.id}>
-                      <td className="mono-sm"><span className="pri">{it.tally_item_name}</span></td>
-                      <td className="mono-sm">{it.seller_part_no || "—"}</td>
-                      <td className="mono-sm">{it.hsn_code || "—"}</td>
+                      <td className="mono-sm"><span className="pri">{it.part_no}</span></td>
+                      <td className="mono-sm">{it.print_name || it.description || "—"}</td>
+                      <td className="mono-sm">{it.hsn_sac || "—"}</td>
                       <td className="mono-sm">{it.uom || "Nos"}</td>
-                      <td className="r mono">{it.standard_rate != null ? fmtINRShort(it.standard_rate) : "—"}</td>
+                      <td className="r mono">{it.purchase_price != null ? fmtINRShort(it.purchase_price) : "—"}</td>
                       <td className="mono-sm">{it.drawing_no || "—"}</td>
                       <td style={{ whiteSpace: "nowrap" }}>
                         <Btn sm kind="ghost" onClick={() => setItemForm({ ...it })}>{Icon.edit}</Btn>
@@ -3931,23 +3946,23 @@ const WiredAdminCRUD = () => {
               <Btn icon kind="ghost" sm onClick={() => setItemForm(null)} aria-label="Close dialog" title="Close (Esc)">{Icon.close}</Btn>
             </div>
             <div className="modal-body" style={{ display: "grid", gap: 10 }}>
-              <label className="lbl">Tally item name (required)
-                <input type="text" value={itemForm.tally_item_name || ""} onChange={(ev) => setItemForm({ ...itemForm, tally_item_name: ev.target.value })} />
+              <label className="lbl">Part no (required)
+                <input type="text" value={itemForm.part_no || ""} onChange={(ev) => setItemForm({ ...itemForm, part_no: ev.target.value })} />
               </label>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <label className="lbl">Seller part no
-                  <input type="text" value={itemForm.seller_part_no || ""} onChange={(ev) => setItemForm({ ...itemForm, seller_part_no: ev.target.value })} />
+                <label className="lbl">Tally print name
+                  <input type="text" value={itemForm.print_name || ""} onChange={(ev) => setItemForm({ ...itemForm, print_name: ev.target.value })} />
                 </label>
-                <label className="lbl">HSN code
-                  <input type="text" value={itemForm.hsn_code || ""} onChange={(ev) => setItemForm({ ...itemForm, hsn_code: ev.target.value })} />
+                <label className="lbl">HSN / SAC
+                  <input type="text" value={itemForm.hsn_sac || ""} onChange={(ev) => setItemForm({ ...itemForm, hsn_sac: ev.target.value })} />
                 </label>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 10 }}>
                 <label className="lbl">UOM
                   <input type="text" value={itemForm.uom || "Nos"} onChange={(ev) => setItemForm({ ...itemForm, uom: ev.target.value })} />
                 </label>
-                <label className="lbl">Standard rate (INR)
-                  <input type="number" value={itemForm.standard_rate || ""} onChange={(ev) => setItemForm({ ...itemForm, standard_rate: ev.target.value === "" ? null : Number(ev.target.value) })} />
+                <label className="lbl">Purchase price (INR)
+                  <input type="number" value={itemForm.purchase_price || ""} onChange={(ev) => setItemForm({ ...itemForm, purchase_price: ev.target.value === "" ? null : Number(ev.target.value) })} />
                 </label>
                 <label className="lbl">Drawing no
                   <input type="text" value={itemForm.drawing_no || ""} onChange={(ev) => setItemForm({ ...itemForm, drawing_no: ev.target.value })} />

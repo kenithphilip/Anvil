@@ -43,13 +43,43 @@ const FALLBACK_PROFILES: PricingProfile[] = [PROFILE_GRANULAR, PROFILE_COMPACT];
 // Used when the admin currency list (Admin > Settings) is empty.
 const DEFAULT_CURRENCIES = ["INR", "USD", "EUR", "CNY", "KRW", "JPY", "GBP"];
 
+// LEGACY FALLBACK. Currency is a property of who you are buying FROM, not of
+// where the part was made — `suppliers.default_currency` is the real source, and
+// this map is consulted only when no supplier is chosen yet or the picked one
+// has no default on file.
+//
+// The Korea line below is the proof: Korea's currency is KRW. "USD" encodes the
+// fact that OUR Korean supplier invoices in USD, which is a supplier
+// relationship wearing a country's name. Any tenant whose Korean supplier bills
+// in KRW, or who buys Japanese-origin parts through an Indian distributor, gets
+// the wrong currency and silently the wrong FX conversion.
 const currencyForCountry = (sc?: string): string => {
   const s = (sc || "").toUpperCase();
-  if (s.includes("KOR")) return "USD"; // Korean supply is priced in USD
+  if (s.includes("KOR")) return "USD"; // our Korean supplier invoices in USD
   if (s.includes("JPN") || s.includes("JAPAN")) return "JPY";
   if (s.includes("CHN") || s.includes("CHINA")) return "CNY";
   if (s.includes("IND")) return "INR";
   return "INR";
+};
+
+/**
+ * The currency a line should be priced in.
+ *
+ * Order matters and is the whole point of this change: the SUPPLIER's own
+ * default wins, because currency is a property of who you buy from. The
+ * origin-country map is a fallback for a supplier with no default on file, or a
+ * name that exists only as an RFQ vendor and therefore has no master row.
+ *
+ * Exported for tests — the alternative is asserting on a JSX onChange.
+ */
+export const resolveSupplierCurrency = (
+  name: string | undefined,
+  metaByName: Record<string, { currency?: string; country?: string }>,
+  sourceCountry?: string,
+): string => {
+  const fromSupplier = name ? metaByName?.[name]?.currency : undefined;
+  if (fromSupplier && String(fromSupplier).trim()) return String(fromSupplier).trim().toUpperCase();
+  return currencyForCountry(sourceCountry);
 };
 
 const pct = (n: number) => (n * 100).toFixed(1) + "%";
@@ -112,6 +142,10 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
   // name -> suppliers-master id, so a picked supplier name resolves to the FK
   // (migration 161). RFQ vendor names have no supplier-master id and stay null.
   const [supplierIdByName, setSupplierIdByName] = useState<Record<string, string>>({});
+  // name -> the supplier's own default currency + country. `suppliers` has
+  // carried both since it was created and neither was ever read here, so the
+  // operator retyped the currency on every line and the country map guessed.
+  const [supplierMetaByName, setSupplierMetaByName] = useState<Record<string, { currency?: string; country?: string }>>({});
   useEffect(() => {
     let cancel = false;
     (async () => {
@@ -127,12 +161,24 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
         if (cancel) return;
         const names = new Set<string>();
         const idByName: Record<string, string> = {};
+        const metaByName: Record<string, { currency?: string; country?: string }> = {};
         (Array.isArray(sup) ? sup : (sup?.suppliers || sup?.rows || [])).forEach((s: any) => {
-          if (s?.supplier_name) { names.add(s.supplier_name); if (s.id) idByName[s.supplier_name] = s.id; }
+          if (!s?.supplier_name) return;
+          names.add(s.supplier_name);
+          if (s.id) idByName[s.supplier_name] = s.id;
+          if (s.default_currency || s.country) {
+            metaByName[s.supplier_name] = {
+              currency: s.default_currency || undefined,
+              country: s.country || undefined,
+            };
+          }
         });
+        // RFQ vendors have no country/currency of their own, so a name that only
+        // exists there still falls back to the country map.
         (Array.isArray(ven) ? ven : (ven?.vendors || [])).forEach((v: any) => v?.vendor_name && names.add(v.vendor_name));
         setSupplierOptions(Array.from(names).sort());
         setSupplierIdByName(idByName);
+        setSupplierMetaByName(metaByName);
       } catch { /* suppliers optional */ }
     })();
     return () => { cancel = true; };
@@ -421,7 +467,18 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
                     aria-label={"supplier name line " + ((ln.line_index ?? 0) + 1)}
                     placeholder="who quoted this?"
                     value={sup.name || ""} onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => setSup(ln, { name: e.target.value, id: supplierIdByName[e.target.value] || "" })} /></td>
+                    onChange={(e) => {
+                      const name = e.target.value;
+                      // Take the supplier's own default currency. This set only
+                      // name and id, leaving `cur` at whatever the country map
+                      // guessed, so every line had to be corrected by hand — and
+                      // an uncorrected one converted at the wrong FX rate.
+                      setSup(ln, {
+                        name,
+                        id: supplierIdByName[name] || "",
+                        cur: resolveSupplierCurrency(name, supplierMetaByName, ln.source_country),
+                      });
+                    }} /></td>
                   <td className="r"><input className="input mono r" style={{ width: 90 }} type="number" step="0.01"
                     aria-label={"supplier price line " + ((ln.line_index ?? 0) + 1)}
                     value={sup.price || ""} onClick={(e) => e.stopPropagation()}

@@ -358,3 +358,55 @@ export const suggestSpareColumns = (
     // so the long tail of one-off parts is scannable.
     .sort((a, b) => b.gun_count - a.gun_count || b.part_count - a.part_count || a.col_name.localeCompare(b.col_name));
 };
+
+/** What one auto-fill pass did, alongside the rows it produced. */
+export interface AutoFillOutcome {
+  rows: any[];
+  /** Cells whose value actually changed. */
+  filled: number;
+  /** Guns that gained at least one cell. */
+  matchedGuns: number;
+  /** Guns whose BOM lookup returned nothing. */
+  emptyGuns: number;
+}
+
+/**
+ * Apply matched BOM parts into the spare-category columns, and count what it did.
+ *
+ * Pure, and that is the entire point. This ran inside a `setDraft` updater with
+ * `filled` / `matchedGuns` / `emptyGuns` declared in the enclosing scope and read
+ * on the next synchronous line — but React runs an updater during the following
+ * render, not at the call site, so the toast always read
+ * "0 cells filled across 0 gun(s)". Auto-fill worked; it just always reported
+ * having done nothing, which is indistinguishable from being broken.
+ *
+ * Returning the counts with the rows means the number shown is the number
+ * produced, and cannot drift from it again.
+ */
+export const computeAutoFill = (
+  rows: any[],
+  colNames: string[],
+  linesByGun: Map<string, SpareBomItem[]>,
+  lockedCols: Set<string> = new Set(),
+): AutoFillOutcome => {
+  let filled = 0;
+  let matchedGuns = 0;
+  let emptyGuns = 0;
+  const next = (rows || []).map((r) => {
+    const lines = linesByGun.get(String(r?.gun_no || "").toUpperCase()) || [];
+    if (!lines.length) { emptyGuns += 1; return r; }
+    const matched = matchSpares(lines, colNames);
+    const values = { ...((r && r.values) || {}) };
+    let any = false;
+    (colNames || []).forEach((col) => {
+      if (lockedCols.has(col)) return;
+      const val = matched[col];
+      // Only a genuine change counts — re-running auto-fill on an already
+      // filled matrix should report 0, not the whole grid again.
+      if (val && values[col] !== val) { values[col] = val; filled += 1; any = true; }
+    });
+    if (any) matchedGuns += 1;
+    return { ...r, values };
+  });
+  return { rows: next, filled, matchedGuns, emptyGuns };
+};

@@ -12,7 +12,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  dayDelta, etaChanged, buildObservation, summarise, describe as describeSlip,
+  dayDelta, etaChanged, buildObservation, summarise, describe as describeSlip, resolvePromise,
 } from "../api/_lib/logistics/eta-history.js";
 
 const obs = (o) => ({ kind: "revision", observed_at: "2026-08-01T00:00:00.000Z", ...o });
@@ -204,5 +204,58 @@ describe("describe", () => {
   it("returns null when there is no history to describe", () => {
     expect(describeSlip(summarise([]))).toBeNull();
     expect(describeSlip(null)).toBeNull();
+  });
+});
+
+// The frontend parses the workbook client-side and the server uses those rows
+// as-is, so a field added server-side only exists if the BROWSER is current.
+// A tab opened before the deploy posted rows without `eta_port_current`; the
+// naive read produced { null, null }, etaChanged said "nothing moved", and the
+// import recorded NOTHING while reporting success. Confirmed in production:
+// migration applied, import run, zero rows, no error.
+describe("resolvePromise — surviving a stale client bundle", () => {
+  it("uses the current-ETA fields when the client provides them", () => {
+    const r = resolvePromise({ eta_port_current: "2026-08-22", eta_store_current: "2026-08-29", eta_india: "2026-07-29" });
+    expect(r).toEqual({ eta_port: "2026-08-22", eta_store: "2026-08-29", degraded: false });
+  });
+
+  it("falls back to the legacy fields when the client is old", () => {
+    // Those carry the ORIGINAL promise, which is exactly right for a baseline —
+    // so an old client still seeds the log instead of writing nothing.
+    const r = resolvePromise({ eta_india: "2026-07-29", eta_store: "2026-08-06" });
+    expect(r).toEqual({ eta_port: "2026-07-29", eta_store: "2026-08-06", degraded: true });
+  });
+
+  it("decides on the KEY, not the value", () => {
+    // A current bundle sets both keys even for a shipment with no ETA on the
+    // sheet. Testing truthiness would misread that as a stale client and then
+    // silently record the legacy value instead.
+    const r = resolvePromise({ eta_port_current: "", eta_store_current: "", eta_india: "2026-07-29" });
+    expect(r.degraded).toBe(false);
+    expect(r.eta_port).toBeNull();
+  });
+
+  it("writes a real observation from a stale client rather than nothing", () => {
+    // The regression this exists for, end to end.
+    const stale = { eta_india: "2026-07-29", eta_store: "2026-08-06" };
+    const obs = buildObservation(null, resolvePromise(stale), { tenantId: "t", shipmentId: "s" });
+    expect(obs).not.toBeNull();
+    expect(obs.kind).toBe("baseline");
+    expect(obs.eta_port).toBe("2026-07-29");
+  });
+
+  it("detects the revision once the browser updates", () => {
+    // Baseline seeded by the old bundle, then the real current ETA arrives.
+    const baseline = buildObservation(null, resolvePromise({ eta_india: "2026-07-29", eta_store: "2026-08-06" }), { tenantId: "t", shipmentId: "s" });
+    const fresh = resolvePromise({ eta_port_current: "2026-08-22", eta_store_current: "2026-08-29" });
+    const rev = buildObservation(baseline, fresh, { tenantId: "t", shipmentId: "s" });
+    expect(rev.kind).toBe("revision");
+    expect(rev.slip_port_days).toBe(24);
+  });
+
+  it.each([null, undefined, {}])("returns nulls for %p without throwing", (v) => {
+    const r = resolvePromise(v);
+    expect(r.eta_port).toBeNull();
+    expect(r.eta_store).toBeNull();
   });
 });

@@ -13,7 +13,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-import { reconcilePoAgainstQuotes, comparePaymentTerms } from "../_lib/quote-reconcile.js";
+import { reconcilePoAgainstQuotes, comparePaymentTerms, compareIncoterms } from "../_lib/quote-reconcile.js";
 
 // Quotes in these states can't have priced this PO.
 const EXCLUDED_QUOTE_STATUSES = ["CANCELLED"];
@@ -90,6 +90,34 @@ export default async function handler(req, res) {
       });
     }
 
+    // 3c. Header-level INCOTERM check — the delivery rule was never compared,
+    // so a PO switching FOB to CIF (who pays the freight and carries the risk)
+    // passed reconciliation silently.
+    //
+    // `quotes` has no incoterm column, so the quote side is parsed out of its
+    // terms text: parseIncoterm finds a rule code anywhere in a string, which
+    // is how these are actually written ("FOB Busan, 30 days net").
+    const poIncoterm = order.incoterm_code
+      || order.result?.salesOrder?.incoterms
+      || order.result?.salesOrder?.incoterm_code
+      || order.delivery_terms || null;
+    const primaryQuoteRow = primary ? quoteMeta.get(primary.quote_id) : null;
+    const quoteIncoterm = primaryQuoteRow
+      ? (primaryQuoteRow.incoterm_code || primaryQuoteRow.delivery_terms || primaryQuoteRow.terms || null)
+      : null;
+    const incoterms = compareIncoterms(poIncoterm, quoteIncoterm);
+    if (primary) incoterms.source_quote_number = primary.quote_number;
+    // place_differs is reported too: the rule is the same but the named place
+    // moved, which still changes who pays for what leg.
+    if (incoterms.verdict === "mismatch" || incoterms.verdict === "place_differs") {
+      rec.flags.push({
+        line_no: null, part_no: null, verdict: "incoterms_" + incoterms.verdict,
+        po_rate: null, quote_rate: null, price_delta_pct: null,
+        source_quote_number: primary?.quote_number || null,
+        po_incoterm: incoterms.po_incoterm, quote_incoterm: incoterms.quote_incoterm,
+      });
+    }
+
     // 4. Persist enriched lines + report; link the primary quote (most lines).
     const nowIso = new Date().toISOString();
     const newResult = {
@@ -105,6 +133,7 @@ export default async function handler(req, res) {
         quoted_not_ordered: rec.quoted_not_ordered,
         ambiguous_parts: rec.ambiguous_parts,
         payment_terms: paymentTerms,
+      incoterms,
         flags: rec.flags,
       },
     };

@@ -2029,7 +2029,7 @@ const WiredSOWorkspace = () => {
           return (
             <Banner kind="info" icon={Icon.info} title="Not yet reconciled against quotes"
                     action={<>{reBtn}{soBtn}</>}>
-              Reconcile to auto-match this order's lines to the customer's quotes and verify price, quantity + payment terms.
+              Reconcile to auto-match this order's lines to the customer's quotes and verify price, description, quantity, payment terms + incoterms.
             </Banner>
           );
         }
@@ -2037,25 +2037,45 @@ const WiredSOWorkspace = () => {
         const flags = Array.isArray(recon.flags) ? recon.flags : [];
         const pt = recon.payment_terms;
         const clean = flags.length === 0;
-        const lineFlags = flags.filter((f: any) => f.verdict !== "payment_terms_mismatch");
+        // Header-level verdicts render on their own lines below; everything
+        // else is per-line. Filtering by an explicit set rather than by
+        // "not payment_terms" so a new header verdict cannot leak into the
+        // line list as a bare bullet.
+        const HEADER_VERDICTS = new Set([
+          "payment_terms_mismatch", "incoterms_mismatch", "incoterms_place_differs",
+        ]);
+        const ic = recon.incoterms;
+        const lineFlags = flags.filter((f: any) => !HEADER_VERDICTS.has(f.verdict));
         return (
           <Banner
             kind={clean ? "good" : "warn"}
             icon={clean ? Icon.check : Icon.alert}
             title={clean
               ? `Quotes verified — ${s.matched}/${s.total} lines matched`
-              : `Quote check: ${s.matched}/${s.total} matched · ${s.price_mismatch || 0} price · ${s.unmatched || 0} unmatched${pt?.verdict === "mismatch" ? " · payment-terms" : ""}`}
+              : `Quote check: ${s.matched}/${s.total} matched · ${s.price_mismatch || 0} price · ${s.description_mismatch || 0} description · ${s.unmatched || 0} unmatched${pt?.verdict === "mismatch" ? " · payment-terms" : ""}${ic && ic.verdict !== "match" && ic.verdict !== "unknown" ? " · incoterms" : ""}`}
             action={<>{reBtn}{soBtn}</>}>
             {!clean && (
               <div className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4 }}>
                 {pt?.verdict === "mismatch" && (
                   <div>⚠ Payment terms: PO “{pt.po_terms}” vs quote “{pt.quote_terms}”{pt.source_quote_number ? ` (${pt.source_quote_number})` : ""}</div>
                 )}
+                {ic?.verdict === "mismatch" && (
+                  <div>⚠ Incoterms: PO “{ic.po_incoterm}” vs quote “{ic.quote_incoterm}”{ic.source_quote_number ? ` (${ic.source_quote_number})` : ""}</div>
+                )}
+                {ic?.verdict === "place_differs" && (
+                  <div>⚠ Incoterm place: both {ic.po_code}, but PO “{ic.po_place || "—"}” vs quote “{ic.quote_place || "—"}”</div>
+                )}
                 {lineFlags.slice(0, 10).map((f: any, i: number) => (
                   <div key={i}>
                     {f.verdict === "price_mismatch"
                       ? `⚠ ${f.part_no}: PO ${f.po_rate} vs quote ${f.quote_rate} (${f.price_delta_pct > 0 ? "+" : ""}${f.price_delta_pct}%)${f.source_quote_number ? ` · ${f.source_quote_number}` : ""}`
-                      : `• unmatched: ${f.part_no || "—"}`}
+                      : f.verdict === "description_mismatch"
+                      ? `⚠ ${f.part_no}: description differs — PO “${f.po_description || "—"}” vs quote “${f.quote_description || "—"}”`
+                      : f.verdict === "unmatched"
+                      ? `• unmatched: ${f.part_no || "—"}`
+                      /* Unknown verdict: say what it is rather than mislabel it
+                         "unmatched", which is what the old else-branch did. */
+                      : `• ${String(f.verdict || "issue").replace(/_/g, " ")}: ${f.part_no || "—"}`}
                   </div>
                 ))}
                 {lineFlags.length > 10 && <div>…and {lineFlags.length - 10} more</div>}

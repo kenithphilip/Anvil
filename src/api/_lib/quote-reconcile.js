@@ -80,13 +80,63 @@ export const comparePaymentTerms = (poTerms, quoteTerms) => {
   };
 };
 
+// Incoterm rules are three-letter codes (FOB, CIF, EXW, DAP...) usually written
+// with a named place: "FOB Busan", "CIF Nhava Sheva". Compare the CODE, and
+// report the places separately — a changed place is a real commercial
+// difference but not the same thing as a changed rule.
+const INCOTERM_CODES = new Set([
+  "EXW", "FCA", "FAS", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP",
+  // Superseded but still written on real documents.
+  "DAT", "DAF", "DES", "DEQ", "DDU",
+]);
+
+export const parseIncoterm = (v) => {
+  const raw = String(v == null ? "" : v).trim();
+  if (!raw) return { code: null, place: null };
+  const tokens = raw.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+  const idx = tokens.findIndex((t) => INCOTERM_CODES.has(t));
+  if (idx < 0) return { code: null, place: raw };
+  const place = raw.split(/[^A-Za-z0-9]+/).filter(Boolean).slice(idx + 1).join(" ") || null;
+  return { code: tokens[idx], place };
+};
+
+// Header-level commercial check on the delivery rule. verdict:
+// match | mismatch | place_differs | unknown.
+export const compareIncoterms = (poIncoterm, quoteIncoterm) => {
+  const po = parseIncoterm(poIncoterm);
+  const qt = parseIncoterm(quoteIncoterm);
+  const has = (v) => v != null && String(v).trim() !== "";
+  let verdict;
+  if (!has(poIncoterm) || !has(quoteIncoterm)) verdict = "unknown";
+  else if (!po.code || !qt.code) {
+    // Neither side parsed as a known rule — fall back to a string compare so a
+    // free-text difference is still reported rather than silently passing.
+    verdict = normTerms(poIncoterm) === normTerms(quoteIncoterm) ? "match" : "mismatch";
+  } else if (po.code !== qt.code) verdict = "mismatch";
+  else if (normTerms(po.place) !== normTerms(qt.place)) verdict = "place_differs";
+  else verdict = "match";
+  return {
+    po_incoterm: has(poIncoterm) ? String(poIncoterm) : null,
+    quote_incoterm: has(quoteIncoterm) ? String(quoteIncoterm) : null,
+    po_code: po.code, quote_code: qt.code,
+    po_place: po.place, quote_place: qt.place,
+    verdict,
+  };
+};
+
+// Below this, two descriptions for the same part number are treated as
+// disagreeing. Token overlap is deliberately forgiving — the same part is
+// routinely written "CYLINDER ASSY" on the quote and "Cylinder Assembly, 40mm"
+// on the PO — so this only fires when the wording has genuinely diverged.
+const DESC_AGREEMENT_FLOOR = 0.34;
+
 // opts.priceTolerancePct: allowed |PO rate - quote rate| before flagging
 // a price_mismatch (default 0.5%).
 export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
   const tol = opts.priceTolerancePct != null ? Number(opts.priceTolerancePct) : 0.5;
   const { byPart, ambiguous } = indexQuoteLines(quoteLines);
   const quotesUsed = new Map();
-  const summary = { total: 0, matched: 0, price_mismatch: 0, qty_note: 0, unmatched: 0 };
+  const summary = { total: 0, matched: 0, price_mismatch: 0, description_mismatch: 0, qty_note: 0, unmatched: 0 };
 
   // Which quote part-keys the PO actually ordered. Anything left over is a
   // line the customer was quoted and did NOT order — see below.
@@ -110,8 +160,17 @@ export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
     const priceMismatch = deltaPct != null && Math.abs(deltaPct) > tol;
     const qtyNote = poQty != null && quoteQty != null && poQty !== quoteQty;
 
+    // Description was ALREADY computed and stored on _match, and nothing ever
+    // looked at it — a part whose description had completely changed
+    // reconciled as a clean match. Price wins when both differ: a wrong price
+    // is the more urgent fact, and the description delta still travels on
+    // _match for the UI to show alongside it.
+    const descScore = descAgreement(pick(ln.description, ln.itemName), q.description);
+    const descMismatch = descScore != null && descScore < DESC_AGREEMENT_FLOOR;
+
     let verdict = "matched";
     if (priceMismatch) { verdict = "price_mismatch"; summary.price_mismatch += 1; }
+    else if (descMismatch) { verdict = "description_mismatch"; summary.description_mismatch += 1; }
     else { summary.matched += 1; if (qtyNote) summary.qty_note += 1; }
 
     orderedKeys.add(key);
@@ -142,7 +201,10 @@ export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
         exact: String(pick(ln.part_no, ln.partNumber) || "") === String(q.part_no || ""),
         po_rate: poRate, quote_rate: quoteRate, price_delta_pct: deltaPct,
         po_qty: poQty, quote_qty: quoteQty, qty_note: qtyNote,
-        desc_agreement: descAgreement(pick(ln.description, ln.itemName), q.description),
+        desc_agreement: descScore,
+        desc_mismatch: descMismatch,
+        po_description: pick(ln.description, ln.itemName) || null,
+        quote_description: q.description || null,
         ambiguous: ambiguous.has(key),
         source_quote_number: q._quote_number,
       },
@@ -201,6 +263,9 @@ export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
         po_rate: l._match.po_rate ?? null,
         quote_rate: l._match.quote_rate ?? null,
         price_delta_pct: l._match.price_delta_pct ?? null,
+        desc_agreement: l._match.desc_agreement ?? null,
+        po_description: l._match.po_description ?? null,
+        quote_description: l._match.quote_description ?? null,
         source_quote_number: l._match.source_quote_number ?? null,
       })),
   };

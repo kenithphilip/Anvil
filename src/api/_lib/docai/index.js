@@ -92,6 +92,44 @@ export const LLM_FALLBACK_ADAPTERS = ["gemini", "claude", "llamaparse"];
 // through to Gemini; (2) an order whose listed engines are all unconfigured.
 // Only KEYED adapters are appended, so a deliberate exclusion made by not
 // setting an API key (e.g. for data-residency) is respected.
+// Adapters that implement a given document kind.
+//
+// Each non-PO kind is a distinct schema branch inside an adapter, not a
+// separate adapter — and only claude.js has ever grown those branches. Every
+// other adapter silently runs the PURCHASE-ORDER schema whatever `kind` says,
+// so a quotation handed to Gemini classifies as non_po and yields nothing.
+//
+// That was survivable in principle — the dispatcher keeps the best result, so
+// Claude's real parse would beat Gemini's empty one — except that Claude sits
+// LAST in the default order behind six adapters sharing one 45s run budget,
+// and allocateAdapterDeadline SKIPS an adapter outright once its slice falls
+// below the floor. The only adapter that can read the document is the one most
+// likely never to run.
+//
+// Listed by kind rather than "claude does everything" so adding a quote branch
+// to gemini is a one-line change here, not a hunt.
+export const KIND_CAPABLE_ADAPTERS = Object.freeze({
+  quote: ["claude"],
+  supplier_ack: ["claude"],
+  assembly_bom: ["claude"],
+  part_drawing: ["claude"],
+});
+
+/**
+ * Move the adapters that actually implement `kind` to the front.
+ *
+ * Reorders rather than filters: a capable adapter that is unconfigured or
+ * failing must still fall through to the rest, and a kind nobody special-cases
+ * (po, rfq, invoice) is left exactly as it was.
+ */
+export const orderForKind = (order, kind) => {
+  const capable = KIND_CAPABLE_ADAPTERS[kind];
+  if (!capable || !Array.isArray(order)) return order;
+  const first = order.filter((a) => capable.includes(a));
+  if (!first.length) return order;
+  return [...first, ...order.filter((a) => !capable.includes(a))];
+};
+
 export const ensureLlmFallbacks = (order, isConfigured) => {
   const out = Array.isArray(order) ? [...order] : [];
   for (const name of LLM_FALLBACK_ADAPTERS) {
@@ -396,6 +434,10 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
   // provider order (e.g. a legacy gemini-less order whose only configured
   // engine is a 5xx-ing Claude) can't dead-end with no customer + no lines.
   order = ensureLlmFallbacks(order, (n) => isAdapterConfigured(n, settings));
+  // Put the adapters that implement this document kind first. For a quote that
+  // means Claude runs before the six adapters that would each spend budget
+  // running the PO schema against a quotation.
+  order = orderForKind(order, hints?.expectedKind);
   const attempts = [];
   // `best` is the strongest SUCCESSFUL result seen; `lastFailure` is only used
   // when nothing succeeded. Keeping them apart is the whole point — a single

@@ -59,10 +59,10 @@ describe("the label table itself", () => {
   const entries = Object.entries(BUSY_ACTIONS);
 
   it("covers every action the workspace can start", () => {
-    // The eleven setBusy call sites in so-workspace.tsx.
+    // Every setBusy call site in so-workspace.tsx.
     expect(Object.keys(BUSY_ACTIONS).sort()).toEqual([
       "approve", "bulk_add", "cancel", "clear_lines", "correct", "delete_line",
-      "extract", "push", "reconcile", "review", "validate",
+      "extract", "push", "reconcile", "resolve_finding", "review", "validate",
     ]);
   });
 

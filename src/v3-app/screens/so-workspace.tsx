@@ -2013,6 +2013,27 @@ const WiredSOWorkspace = () => {
         </div>
       </div>
 
+      {(() => {
+        const mb = o.result?.quoteReconciliation?.mod_bom;
+        if (!mb?.is_modification_quote) return null;
+        // Its own banner, not a line in the discrepancy list: this one BLOCKS
+        // approval, and the operator's next action is to chase design rather
+        // than to reconcile anything.
+        return (
+          <Banner kind="warn" icon={Icon.alert}
+                  title={`Gun modification — final BOM outstanding (${mb.pending_parts.length} provisional part${mb.pending_parts.length === 1 ? "" : "s"})`}>
+            <div className="mono-sm">
+              Quoted against provisional “-MOD” numbers: {mb.pending_parts.slice(0, 8).join(", ")}
+              {mb.pending_parts.length > 8 ? `, +${mb.pending_parts.length - 8} more` : ""}.
+              <div style={{ marginTop: 4, color: "var(--ink-3)" }}>
+                A final BOM is one with no -MOD parts. Approval is blocked until design supplies it —
+                clear the blocking finding on this tab if the provisional numbers are intentional.
+              </div>
+            </div>
+          </Banner>
+        );
+      })()}
+
       {/* Attaching a quote is how the operator FEEDS the comparison below, so
           it sits directly above it rather than on a separate screen. Several
           quotes can back one PO; the reconciler already pools them all. */}
@@ -2054,6 +2075,7 @@ const WiredSOWorkspace = () => {
           "payment_terms_mismatch", "incoterms_mismatch", "incoterms_place_differs",
         ]);
         const ic = recon.incoterms;
+        const mod = recon.mod_bom;
         const lineFlags = flags.filter((f: any) => !HEADER_VERDICTS.has(f.verdict));
         return (
           <Banner

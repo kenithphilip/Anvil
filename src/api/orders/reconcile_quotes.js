@@ -14,6 +14,8 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { reconcilePoAgainstQuotes, comparePaymentTerms, compareIncoterms } from "../_lib/quote-reconcile.js";
+import { modBomFinding, provisionalParts, MOD_BOM_FINDING_CODE } from "../_lib/mod-parts.js";
+import { mergeBlockersForward, isUnresolvedBlocker } from "../_lib/blocking-findings.js";
 
 // Quotes in these states can't have priced this PO.
 const EXCLUDED_QUOTE_STATUSES = ["CANCELLED"];
@@ -34,7 +36,11 @@ export default async function handler(req, res) {
     const svc = serviceClient();
 
     const orderQ = await svc.from("orders")
-      .select("id, customer_id, result, quote_id, quote_number")
+      // incoterm_code + delivery_terms feed the header incoterm check, and
+      // rule_findings is read-modify-written for the -MOD blocker. All three
+      // were absent from this select, so the incoterm comparison silently read
+      // undefined off the order and fell through to the extracted payload.
+      .select("id, customer_id, result, quote_id, quote_number, rule_findings, incoterm_code, delivery_terms")
       .eq("tenant_id", ctx.tenantId).eq("id", orderId).maybeSingle();
     if (orderQ.error) throw new Error("orders read: " + orderQ.error.message);
     if (!orderQ.data) return json(res, 404, { error: { message: "Order not found" } });
@@ -118,8 +124,62 @@ export default async function handler(req, res) {
       });
     }
 
+    // 3d. GUN-MODIFICATION QUOTES.
+    //
+    // A modification quote is priced before engineering has issued the real
+    // part numbers, so its lines carry provisional -MOD codes. Derived from the
+    // parts rather than declared: order_mode 'SPARES_ASSEMBLY' exists but is
+    // picked by hand on intake BEFORE extraction runs, so it cannot answer
+    // this, and a hand-set flag would go stale the moment the lines changed.
+    //
+    // Both sides are checked. A -MOD part can reach the order from the quote
+    // (priced provisionally) or from the PO itself (the customer ordered the
+    // provisional number), and either way the order is committed to a part that
+    // does not yet exist.
+    const modFromOrder = provisionalParts(orderLines);
+    const modFromQuotes = provisionalParts(quoteLines);
+    const modFinding = modBomFinding([...orderLines, ...quoteLines], {
+      sourceQuoteNumber: primary?.quote_number || null,
+    });
+    const modBom = {
+      is_modification_quote: !!modFinding,
+      pending_parts: modFinding ? modFinding.pending_parts : [],
+      from_order: modFromOrder,
+      from_quotes: modFromQuotes,
+      // A final BOM is one with NO provisional parts. Until design supplies it
+      // the order is blocked; the finding below is what enforces that.
+      final_bom_present: !modFinding,
+    };
+
     // 4. Persist enriched lines + report; link the primary quote (most lines).
     const nowIso = new Date().toISOString();
+
+    // Raise or clear the blocking finding.
+    //
+    // mergeBlockersForward is what stops a routine rule_findings overwrite from
+    // dropping an unresolved blocker; reconciliation is exactly such a routine
+    // overwrite, so it must go through it rather than assigning the array.
+    // When the provisional parts are gone the finding is dropped outright —
+    // the condition genuinely cleared, so it should not linger as resolved
+    // noise the operator has to read past.
+    const priorFindings = Array.isArray(order.rule_findings) ? order.rule_findings : [];
+    const withoutMod = priorFindings.filter((f) => (f?.code || f?.rule_id) !== MOD_BOM_FINDING_CODE);
+    let nextFindings;
+    if (modFinding) {
+      // Preserve an existing RESOLVED one rather than re-raising it: the
+      // operator has already said the provisional numbers are intentional.
+      const existing = priorFindings.find((f) => (f?.code || f?.rule_id) === MOD_BOM_FINDING_CODE);
+      // (incoming, prior) — the new array first. Reversing these would have
+      // treated the OLD findings as the result and merged the new ones in as
+      // carry-forwards, which mergeBlockersForward only does for
+      // source === "extraction" entries, so the -MOD finding would have been
+      // dropped every time.
+      nextFindings = existing && !isUnresolvedBlocker(existing)
+        ? priorFindings
+        : mergeBlockersForward([...withoutMod, modFinding], priorFindings);
+    } else {
+      nextFindings = mergeBlockersForward(withoutMod, priorFindings);
+    }
     const newResult = {
       ...(order.result || {}),
       salesOrder: { ...(order.result?.salesOrder || {}), lineItems: rec.lines },
@@ -133,13 +193,15 @@ export default async function handler(req, res) {
         quoted_not_ordered: rec.quoted_not_ordered,
         ambiguous_parts: rec.ambiguous_parts,
         payment_terms: paymentTerms,
-      incoterms,
+        incoterms,
+        mod_bom: modBom,
         flags: rec.flags,
       },
     };
     const upd = await svc.from("orders")
       .update({
         result: newResult,
+        rule_findings: nextFindings,
         quote_id: primary?.quote_id || order.quote_id || null,
         quote_number: primary?.quote_number || order.quote_number || null,
       })

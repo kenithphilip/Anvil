@@ -18,7 +18,13 @@ import { modBomFinding, provisionalParts, MOD_BOM_FINDING_CODE } from "../_lib/m
 import { mergeBlockersForward, isUnresolvedBlocker } from "../_lib/blocking-findings.js";
 
 // Quotes in these states can't have priced this PO.
-const EXCLUDED_QUOTE_STATUSES = ["CANCELLED"];
+// DRAFT is excluded as well as CANCELLED.
+//
+// spare_matrix/to_quote.js creates DRAFT quotes with listed_unit_price: 0 by
+// design ("priced downstream in price_composition"). Pooling those let an
+// internal, unpriced, never-sent recommended-spares sheet price and judge a
+// customer PO — which is where the 411 ₹ 0 gap rows came from.
+const EXCLUDED_QUOTE_STATUSES = ["CANCELLED", "DRAFT"];
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;

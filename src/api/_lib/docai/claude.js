@@ -1347,12 +1347,26 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     model_selection_reason: selection.reason,
     normalized: {
       classification: out.classification || null,
-      customer: out.customer || null,
+      customer: out.customer || (isQuote && out.customer_name ? { name: out.customer_name } : null),
       lines,
       // CM P3: the PO's own declared line count (for the
       // line_count_shortfall completeness detector). Coerced to a
       // positive integer or null; never trust a zero/negative.
       stated_line_count: coerceStatedLineCount(out.stated_line_count),
+      // QUOTE_TOOL's header fields. `isQuote` selected the quote prompt and
+      // tool but — unlike isSupplierAck / isAssemblyBom / isPartDrawing — had
+      // no effect on what came back, so quote_number was extracted by the model
+      // and then dropped here. Every caller downstream saw null, and
+      // ingestQuote() aborts on a missing quote_number BEFORE writing the quote
+      // head or a single line: an attached quotation could never be ingested.
+      ...(isQuote ? {
+        quote_number: out.quote_number || null,
+        quote_date: out.quote_date || null,
+        currency: out.currency || null,
+        grand_total: out.grand_total ?? null,
+        validity: out.validity || null,
+        terms: out.terms || out.payment_terms || null,
+      } : {}),
     },
     confidences,
     parse_method: parseMethod,

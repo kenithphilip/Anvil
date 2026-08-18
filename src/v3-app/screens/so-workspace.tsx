@@ -154,6 +154,16 @@ const WiredSOWorkspace = () => {
   // error states further down, so a useState placed after them changes the hook
   // count between renders ("Rendered more hooks than during the previous
   // render") and takes the whole screen out.
+  // Unordered quoted lines are COLLAPSED by default, and adding one as a
+  // variance takes a second click.
+  //
+  // A variance means a mistake was made — the customer omitted a line, or the
+  // quote was wrong. The remedy is an amended PO; adding the line to the sales
+  // order is the exceptional fallback. Rendering a one-click "Add as variance"
+  // against every gap made the wrong action the easiest one, and on a real
+  // order that was 411 buttons sitting open in the banner.
+  const [gapsOpen, setGapsOpen] = u(false);
+  const [confirmGap, setConfirmGap] = u<string | null>(null);
   const [resolvingCode, setResolvingCode] = u<string | null>(null);
   const [resolveNote, setResolveNote] = u("");
   const [scheduleBump, setScheduleBump] = u(0);
@@ -2121,30 +2131,63 @@ const WiredSOWorkspace = () => {
             {(() => {
               const gaps = outstandingGaps(recon.quoted_not_ordered, draftLines);
               if (!gaps.length) return null;
+              const gapKey = (g: any, i: number) => String(g.part_no || "") + ":" + i;
               return (
                 <div className="mono-sm" style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid var(--hairline-2)" }}>
-                  <div style={{ marginBottom: 3 }}>
-                    <b>{gaps.length}</b> quoted line{gaps.length === 1 ? "" : "s"} not on this PO
-                    <span style={{ color: "var(--ink-3)" }}> — the customer has not ordered {gaps.length === 1 ? "it" : "them"}.</span>
+                  <div className="row" style={{ gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+                    <span>
+                      <b>{gaps.length}</b> quoted line{gaps.length === 1 ? "" : "s"} not on this PO
+                      <span style={{ color: "var(--ink-3)" }}> — the customer has not ordered {gaps.length === 1 ? "it" : "them"}.</span>
+                    </span>
+                    {canEditLines && (
+                      <Btn sm kind="ghost" onClick={() => { setGapsOpen((o) => !o); setConfirmGap(null); }}>
+                        {gapsOpen ? "Hide" : "Review"}
+                      </Btn>
+                    )}
                   </div>
-                  {gaps.slice(0, 8).map((g: any, i: number) => (
-                    <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", padding: "1px 0" }}>
-                      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {g.part_no || "—"}
-                        {g.qty != null ? ` · ${g.qty}` : ""}
-                        {g.unit_price != null ? ` @ ${fmtINR(g.unit_price)}` : ""}
-                        {g.source_quote_number ? ` · ${g.source_quote_number}` : ""}
-                      </span>
-                      {canEditLines && (
-                        <Btn sm kind="ghost"
-                             onClick={() => { const seed = varianceLineFromGap(g); if (seed) onAddLine("quote_variance", seed); }}
-                             title="Add this as a variance line. It cannot be pushed to Tally until the customer amends the PO.">
-                          Add as variance
-                        </Btn>
-                      )}
+                  {!gapsOpen && (
+                    <div style={{ color: "var(--ink-3)", marginTop: 2 }}>
+                      Normally the customer amends the PO. Review only if something needs adding here instead.
                     </div>
-                  ))}
-                  {gaps.length > 8 && <div style={{ color: "var(--ink-3)" }}>…and {gaps.length - 8} more</div>}
+                  )}
+                  {gapsOpen && (
+                    <div style={{ marginTop: 6 }}>
+                      <div style={{ color: "var(--ink-3)", marginBottom: 4 }}>
+                        Adding a line here does <b>not</b> fix the PO. A variance line cannot be invoiced or pushed to
+                        Tally until the customer amends it — use this only when the omission is understood and accepted.
+                      </div>
+                      {gaps.slice(0, 8).map((g: any, i: number) => {
+                        const key = gapKey(g, i);
+                        return (
+                          <div key={key} style={{ display: "flex", gap: 8, alignItems: "center", padding: "1px 0" }}>
+                            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {g.part_no || "—"}
+                              {g.qty != null ? ` · ${g.qty}` : ""}
+                              {g.unit_price != null ? ` @ ${fmtINR(g.unit_price)}` : ""}
+                              {g.source_quote_number ? ` · ${g.source_quote_number}` : ""}
+                            </span>
+                            {confirmGap === key ? (
+                              <>
+                                <span style={{ color: "var(--ink-3)" }}>add anyway?</span>
+                                <Btn sm kind="danger"
+                                     onClick={() => {
+                                       const seed = varianceLineFromGap(g);
+                                       if (seed) onAddLine("quote_variance", seed);
+                                       setConfirmGap(null);
+                                     }}>
+                                  Add as variance
+                                </Btn>
+                                <Btn sm kind="ghost" onClick={() => setConfirmGap(null)}>Cancel</Btn>
+                              </>
+                            ) : (
+                              <Btn sm kind="ghost" onClick={() => setConfirmGap(key)}>Add…</Btn>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {gaps.length > 8 && <div style={{ color: "var(--ink-3)" }}>…and {gaps.length - 8} more</div>}
+                    </div>
+                  )}
                 </div>
               );
             })()}

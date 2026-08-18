@@ -181,7 +181,7 @@ const SummaryStat = ({ label, value, tone }: { label: string; value: any; tone?:
 // Import-from-workbook panel (Part C). Parses the logistics sheet client-side,
 // pre-filters the huge line sheets to the invoices in play, previews the exact
 // upsert plan (insert/update, project link, per-line receipts), then applies.
-const ShipmentImportPanel = ({ onClose, onApplied }: { onClose: () => void; onApplied: () => void }) => {
+const ShipmentImportPanel = ({ onClose, onApplied, onRefreshOnly }: { onClose: () => void; onApplied: () => void; onRefreshOnly: () => void }) => {
   const [parsing, setParsing] = React.useState(false);
   const [parsed, setParsed] = React.useState<{ pending: any[]; lines: any[]; fileNames: string[] } | null>(null);
   const [preview, setPreview] = React.useState<any>(null);
@@ -253,9 +253,15 @@ const ShipmentImportPanel = ({ onClose, onApplied }: { onClose: () => void; onAp
         const why = s.write_errors?.[0]?.message || "no reason reported";
         setErr(`${s.failed_writes} shipment row(s) were rejected — ${why}`);
         window.notifyError?.("Import incomplete", `${s.failed_writes} row(s) rejected · ${summaryLine}`);
-      } else {
-        window.notifySuccess?.("Sheet imported", summaryLine);
+        // Do NOT close on failure. onApplied() unmounts this panel, so the
+        // banner set above was destroyed in the same tick — an import that
+        // wrote nothing looked exactly like one that worked, which is how a
+        // run where all 11 requests returned 200 and zero rows landed went
+        // unnoticed. Refresh the list but keep the panel and its reason up.
+        onRefreshOnly();
+        return;
       }
+      window.notifySuccess?.("Sheet imported", summaryLine);
       onApplied();
     } catch (e: any) { setErr(e?.message || String(e)); window.notifyError?.("Import failed", e?.message || String(e)); }
     finally { setBusy(false); setStep(null); }
@@ -540,6 +546,7 @@ const WiredShipmentsCRUD = ({ viewToggle }: { viewToggle?: React.ReactNode } = {
           <ShipmentImportPanel
             onClose={() => setImportOpen(false)}
             onApplied={() => { setImportOpen(false); reload(); }}
+            onRefreshOnly={reload}
           />
         )}
 

@@ -295,15 +295,39 @@ export default async function handler(req, res) {
       let slot = byInvoice.get(key);
       if (!slot) {
         const existing = p.existing_id ? existingByInvoice.get(key) : null;
-        slot = { plans: [], row: existing ? { ...existing } : { tenant_id: tenantId }, existing: !!existing };
+        // Spread the stored row so unspecified columns keep their values, then
+        // DROP the server-managed ones. `id` in particular is fatal: it makes
+        // the INSERT collide on the PRIMARY KEY, which the declared conflict
+        // target (tenant_id, shipper_invoice_no) does not cover, so the whole
+        // batch errors instead of updating. Observed live — 11 requests all
+        // returned 200 and not one row was written.
+        const base = existing ? { ...existing } : {};
+        delete base.id;
+        delete base.created_at;
+        slot = { plans: [], row: base, existing: !!existing };
         byInvoice.set(key, slot);
       }
       for (const [k, v] of Object.entries(p.body)) if (v !== null && v !== undefined) slot.row[k] = v;
       slot.row.tenant_id = tenantId;
-      if (slot.existing) slot.row.updated_at = new Date().toISOString();
+      slot.row.updated_at = new Date().toISOString();
       slot.plans.push(p);
     }
     const rowsToWrite = [...byInvoice.values()];
+
+    // UNIFORM COLUMN SET across the whole payload.
+    //
+    // PostgREST builds one INSERT from a JSON array and unions the keys it
+    // finds, filling absent ones with NULL. A batch mixing existing rows (which
+    // carry every column) with new ones (which carry only what the sheet gave)
+    // therefore NULLs columns on rows that never mentioned them. Every row gets
+    // the same keys, taken from the merged object, so what is written is what
+    // was merged.
+    const columns = [...new Set(rowsToWrite.flatMap((b) => Object.keys(b.row)))];
+    for (const b of rowsToWrite) {
+      const filled = {};
+      for (const c of columns) filled[c] = b.row[c] ?? null;
+      b.row = filled;
+    }
 
     const auditRows = [];
     for (let i = 0; i < rowsToWrite.length; i += 200) {

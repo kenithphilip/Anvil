@@ -1,5 +1,5 @@
 // POST /api/orders/attach_quote
-//   { order_id, document_id, extracted? }
+//   { order_id, document_id, extracted?, extraction_attempted? }
 //
 // Attach an already-uploaded quotation PDF to a customer PO and make its
 // contents count.
@@ -32,6 +32,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { ingestQuotes } from "../_lib/quote-ingest.js";
+import { parseQuoteRef, findSelfIssuedQuote } from "../_lib/quote-provenance.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -80,11 +81,64 @@ export default async function handler(req, res) {
       .upsert({ order_id: orderId, document_id: documentId, role: "quote" }, { onConflict: "order_id,document_id" });
     if (linkQ.error) throw new Error("order_documents: " + linkQ.error.message);
 
-    // 2. The extracted payload, produced by the caller via /api/docai/extract
+    // 2. Is this our OWN quote coming back?
+    //
+    //    The commonest attachment is not a third party's document — it is the
+    //    quote Anvil generated for this very order, downloaded, mailed and
+    //    then attached to the PO it produced. There is nothing to read out of
+    //    it: the lines, prices and taxes are already rows a human authored.
+    //    Extracting it costs a model call to arrive at a worse copy of data we
+    //    hold, and ingesting the result USED TO DELETE the real quote_lines.
+    //
+    //    So this runs BEFORE extraction and the client honours it: a preflight
+    //    call arrives with no payload and extraction_attempted false, and if
+    //    the document is ours the client is told to stop rather than extract.
+    //    The filename is only a hint — the decision is a quotes row this
+    //    tenant authored (see _lib/quote-provenance.js).
+    const selfRef = parseQuoteRef(docQ.data.filename);
+    if (selfRef) {
+      const self = await findSelfIssuedQuote(svc, ctx.tenantId, selfRef);
+      if (self.matched) {
+        await recordAudit(ctx, {
+          action: "order_quote_attached", objectType: "order", objectId: orderId,
+          detail: {
+            document_id: documentId, ingested: false, reason: "authored_in_anvil",
+            quote_id: self.quote.id, quote_number: self.quote.quote_number,
+          },
+        });
+        // A DRAFT quote is excluded from reconciliation by design, so saying
+        // "linked" without saying that would promise a comparison that never
+        // runs.
+        const draft = String(self.quote.status || "").toUpperCase() === "DRAFT";
+        return json(res, 200, {
+          attached: true, ingested: false, needs_extraction: false,
+          matched_authored: true,
+          quote_id: self.quote.id, quote_number: self.quote.quote_number,
+          reason: draft
+            ? `That is quote ${self.quote.quote_number}, authored in Anvil — linked as-is. It is still a draft, so send it to include it in the quote check.`
+            : `That is quote ${self.quote.quote_number}, authored in Anvil — linked as-is. Its lines are already here, so nothing was imported from the PDF.`,
+          document: { id: documentId, filename: docQ.data.filename },
+          next: draft ? null : "reconcile",
+        });
+      }
+    }
+
+    // 3. The extracted payload, produced by the caller via /api/docai/extract
     //    with kind:"quote". kind:"po" would classify a seller's quotation as
     //    non_po and yield nothing usable.
+    //
+    //    extraction_attempted separates the two callers of this endpoint: the
+    //    preflight above has not tried yet and must be told to, while a client
+    //    whose extraction genuinely failed must NOT be sent round again.
     const extracted = body?.extracted || null;
+    const extractionAttempted = body?.extraction_attempted !== false || !!extracted;
     const lines = Array.isArray(extracted?.lines) ? extracted.lines : [];
+    if (!extractionAttempted) {
+      return json(res, 200, {
+        attached: true, ingested: false, needs_extraction: true,
+        document: { id: documentId, filename: docQ.data.filename },
+      });
+    }
     if (!extracted || extracted.classification === "non_quote" || !lines.length) {
       // Attached but not ingested — reported, not thrown, and the caller is
       // told which half succeeded so the operator knows what to do next.
@@ -101,7 +155,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // 3. Materialise into quotes/quote_lines — which is what makes the existing
+    // 4. Materialise into quotes/quote_lines — which is what makes the existing
     //    reconciler see it. No new comparison code.
     const report = await ingestQuotes(svc, ctx, [{
       customerId: order.customer_id,
@@ -123,12 +177,22 @@ export default async function handler(req, res) {
         document_id: documentId, ingested: true,
         quote_number: extracted.quote_number || null,
         lines_written: report.lines_written,
+        matched_authored: report.quotes_matched_authored > 0,
       },
     });
 
+    // The filename hint is not the only way we recognise our own quote: the
+    // ingest guard checks the number the model actually read. When it fires,
+    // "ingested" would be a lie — nothing was written.
+    const authoredMatch = report.quotes_matched_authored > 0;
+
     return json(res, 200, {
       attached: true,
-      ingested: report.quotes_ok > 0,
+      ingested: !authoredMatch && report.quotes_ok > 0,
+      matched_authored: authoredMatch,
+      reason: authoredMatch
+        ? `That quote was authored in Anvil — linked as-is, and its existing lines were kept.`
+        : null,
       quote_number: extracted.quote_number || null,
       lines_written: report.lines_written,
       mappings_learned: report.mappings_learned,

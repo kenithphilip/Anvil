@@ -754,10 +754,19 @@
     // docai.extract({ kind: "quote" }) and pass the payload — the endpoint
     // links order_documents, ingests into quotes/quote_lines, and the existing
     // reconcileQuotes then picks it up like any other quote for that customer.
-    attachQuote: async (orderId, documentId, extracted) =>
+    // extractionAttempted=false is the PREFLIGHT: link the document and ask
+    // whether it even needs a model. The server recognises quotes Anvil itself
+    // authored and answers needs_extraction:false, which is how attaching our
+    // own quote PDF costs nothing and overwrites nothing.
+    attachQuote: async (orderId, documentId, extracted, extractionAttempted = true) =>
       apiFetch("/api/orders/attach_quote", {
         method: "POST",
-        body: { order_id: orderId, document_id: documentId, extracted: extracted || null },
+        body: {
+          order_id: orderId,
+          document_id: documentId,
+          extracted: extracted || null,
+          extraction_attempted: extractionAttempted,
+        },
       }),
 
     // Phase 3.6 observability: full pipeline-diagnostics blob for

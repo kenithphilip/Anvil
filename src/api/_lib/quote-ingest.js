@@ -30,6 +30,7 @@
 // normalized result.
 
 import { upsertCustomerPart } from "./item-customer-parts.js";
+import { isAuthoredInAnvil } from "./quote-provenance.js";
 
 const s = (v) => (v == null ? null : String(v).trim() || null);
 const n = (v) => {
@@ -93,6 +94,10 @@ export const ingestQuote = async (svc, ctx, input = {}) => {
     mappings_learned: 0,
     unresolved: [],
     skipped: [],
+    // Set when the number resolved to a quote this tenant AUTHORED, so nothing
+    // was overwritten. Not an error and not a failure — the quote is already
+    // in Anvil, in better shape than any extraction of it.
+    matched_authored: false,
     error: null,
   };
   const quoteNumber = s(quote.quote_number);
@@ -110,9 +115,31 @@ export const ingestQuote = async (svc, ctx, input = {}) => {
     // re-ingest updates rather than duplicating.
     const version = Number(quote.version) || 1;
     const existing = await svc.from("quotes")
-      .select("id")
+      .select("id, status, ingest_source")
       .eq("tenant_id", ctx.tenantId).eq("quote_number", quoteNumber).eq("version", version)
       .maybeSingle();
+
+    // NEVER overwrite a quote that was authored in Anvil.
+    //
+    // The idempotency below is keyed on (tenant, quote_number, version) and
+    // REPLACES the quote's lines wholesale. That is right for re-ingesting a
+    // corrected third-party PDF and catastrophic for our own: attaching the
+    // quote Anvil generated would delete hand-authored quote_lines, force the
+    // status back to SENT over a DRAFT or an ACCEPTED, and overwrite currency
+    // and grand_total with whatever a model read off the page — and report it
+    // as a clean ingest.
+    //
+    // Migration 188 already draws this line: ingest_source null means authored
+    // in Anvil. A row that was itself ingested has no hand-authored content to
+    // protect, so re-ingest proceeds for it exactly as before.
+    if (existing?.data && isAuthoredInAnvil(existing.data)) {
+      report.quote_id = existing.data.id;
+      report.matched_authored = true;
+      report.skipped.push({
+        reason: "quote " + quoteNumber + " was authored in Anvil — kept as-is, nothing imported from the document",
+      });
+      return report;
+    }
 
     const head = {
       tenant_id: ctx.tenantId,
@@ -194,6 +221,7 @@ export const ingestQuotes = async (svc, ctx, quotes = []) => {
   return {
     quotes_total: list.length,
     quotes_ok: reports.filter((r) => !r.error).length,
+    quotes_matched_authored: reports.filter((r) => r.matched_authored).length,
     mappings_learned: reports.reduce((a, r) => a + r.mappings_learned, 0),
     lines_written: reports.reduce((a, r) => a + r.lines_written, 0),
     reports,

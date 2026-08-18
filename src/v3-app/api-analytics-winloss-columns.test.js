@@ -46,13 +46,43 @@ const ordersColumns = () => {
 const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("refreshWinloss selects only columns that exist", () => {
-  const selected = () => {
-    const m = /from\("orders"\)\s*\n?\s*\.select\("([^"]+)"\)/.exec(winloss);
+  // The column list now lives in a BASE_COLS constant, because the orders read
+  // is issued twice: once asking for opportunity_id (migration 204) and once
+  // without, for a database that has not had 204 applied yet. Both variants
+  // have to be checked — a phantom column in the fallback would fail only on
+  // the tenants least able to notice.
+  //
+  // This extractor deliberately fails loudly rather than returning [] when it
+  // cannot find the list: an assertion that "no phantom column is selected"
+  // passes trivially against an empty array, which is precisely how a source-
+  // scraping test rots into a test of nothing.
+  const baseCols = () => {
+    const m = /BASE_COLS\s*=\s*"([^"]+)"/.exec(winloss);
     return (m ? m[1] : "").split(",").map((s) => s.trim()).filter(Boolean);
   };
+  const extraCols = () =>
+    (winloss.match(/readOrders\(BASE_COLS\s*\+\s*"([^"]+)"\)/g) || [])
+      .map((s) => /"([^"]+)"/.exec(s)[1])
+      .flatMap((s) => s.split(",").map((x) => x.trim()).filter(Boolean));
+
+  // Every column named by ANY variant of the read.
+  const selected = () => [...new Set([...baseCols(), ...extraCols()])];
 
   it("names at least one column", () => {
+    expect(baseCols().length).toBeGreaterThan(0);
     expect(selected().length).toBeGreaterThan(0);
+  });
+
+  it("issues the fallback read WITHOUT the migration-204 column", () => {
+    // Retrying with the same column set would just fail the same way.
+    expect(extraCols()).toContain("opportunity_id");
+    expect(baseCols()).not.toContain("opportunity_id");
+  });
+
+  it("retries only on the unknown-column error, not on any failure", () => {
+    // A permissions or connection error must surface. Masking it behind a
+    // second identical attempt is how a broken refresh looks healthy.
+    expect(code(winloss)).toMatch(/42703/);
   });
 
   // The regression.

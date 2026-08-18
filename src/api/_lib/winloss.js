@@ -46,10 +46,26 @@ export const refreshWinloss = async (svc, tenantId, { sinceDays = 90 } = {}) => 
   //                     OPPORTUNITY's owner_id
   //   lost_reason_id -> the column is `lost_reason`, free text
   //   customer_tier  -> not on orders; it already joins customers.tier below
-  const orders = await svc.from("orders")
-    .select("id, status, created_at, customer_id, approval, lost_reason, opportunity_id, result")
+  //
+  // opportunity_id (migration 204) is requested but NOT depended on. Migrations
+  // here are applied by hand, so a repo that has the column is not a database
+  // that has it — and PostgREST rejects the WHOLE select over one unknown name,
+  // which is the exact failure that kept these rollups empty since they
+  // shipped. analytics/pipeline.js sidesteps it by refusing to read the column
+  // at all; this needs it for rep attribution, so it retries without it and
+  // degrades to the quotes join instead of dying.
+  const BASE_COLS = "id, status, created_at, customer_id, approval, lost_reason, result";
+  const readOrders = (cols) => svc.from("orders")
+    .select(cols)
     .eq("tenant_id", tenantId)
     .gte("created_at", since);
+
+  let orders = await readOrders(BASE_COLS + ", opportunity_id");
+  let hasOpportunityColumn = true;
+  if (orders.error && (orders.error.code === "42703" || /opportunity_id/i.test(orders.error.message || ""))) {
+    hasOpportunityColumn = false;
+    orders = await readOrders(BASE_COLS);
+  }
   if (orders.error) throw new Error(orders.error.message);
   const customers = await svc.from("customers").select("id, tier").eq("tenant_id", tenantId);
   if (customers.error) throw new Error(customers.error.message);
@@ -145,7 +161,11 @@ export const refreshWinloss = async (svc, tenantId, { sinceDays = 90 } = {}) => 
     daysWritten += 1;
   }
 
-  // Upsert monthly customer.
+  // Upsert monthly customer. Counted only when it PERSISTED, for the same
+  // reason as the daily loop above: this ignored its result entirely and
+  // returned the ATTEMPT count, so a refresh that wrote nothing to
+  // analytics_customer_monthly still reported a clean run — and that table is
+  // what the cockpit's top-customers panel reads.
   let monthsWritten = 0;
   for (const cb of monthBuckets.values()) {
     const winRate = cb.orders_count > 0
@@ -154,11 +174,12 @@ export const refreshWinloss = async (svc, tenantId, { sinceDays = 90 } = {}) => 
     const avg = cb.response_count > 0
       ? Math.round(cb.response_minutes_sum / cb.response_count)
       : null;
-    await svc.from("analytics_customer_monthly").upsert({
+    const { error } = await svc.from("analytics_customer_monthly").upsert({
       tenant_id: cb.tenant_id, customer_id: cb.customer_id, month: cb.month,
       orders_count: cb.orders_count, won_count: cb.won_count, won_value: cb.won_value,
       win_rate: winRate, avg_response_minutes: avg,
     }, { onConflict: "tenant_id,customer_id,month" });
+    if (error) { writeErrors.push(error.message); continue; }
     monthsWritten += 1;
   }
 
@@ -167,6 +188,10 @@ export const refreshWinloss = async (svc, tenantId, { sinceDays = 90 } = {}) => 
   }
   return {
     tenant_id: tenantId, since_days: sinceDays,
+    // Surfaced rather than swallowed: a tenant whose DB is behind on 204 gets
+    // degraded rep attribution, and the cron response is the only place that
+    // can say so.
+    opportunity_column: hasOpportunityColumn,
     days_written: daysWritten, months_written: monthsWritten,
     // Reported, not swallowed: a refresh that wrote nothing must not look
     // identical to one that had nothing to write.

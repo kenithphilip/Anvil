@@ -10,7 +10,7 @@
 // until they amend the PO.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { waitFor } from "@testing-library/react";
+import { waitFor, act } from "@testing-library/react";
 import { installBackend, installRbac, renderScreen } from "../test-utils";
 
 beforeEach(() => {
@@ -68,8 +68,25 @@ const open = async (o: any = order()) => {
   return { container, update };
 };
 
+// Adding a variance now takes THREE deliberate acts: reveal the list, arm the
+// row, confirm. A variance means a mistake was made and the real remedy is an
+// amended PO — a one-click button against every gap made the wrong action the
+// easiest one, and on a real order that was 411 of them open in the banner.
+const flush = () => act(async () => { await Promise.resolve(); });
+const reveal = async (c: HTMLElement) => {
+  const b = [...c.querySelectorAll("button")].find((x) => (x.textContent || "").trim() === "Review");
+  if (b) await act(async () => { b.click(); });
+};
+// The per-row arming button ("Add…"), visible only once the list is revealed.
 const addBtns = (c: HTMLElement) =>
+  [...c.querySelectorAll("button")].filter((b) => (b.textContent || "").trim() === "Add…");
+// The confirm that actually adds the line.
+const confirmBtns = (c: HTMLElement) =>
   [...c.querySelectorAll("button")].filter((b) => (b.textContent || "").trim() === "Add as variance");
+const addVariance = async (c: HTMLElement, i = 0) => {
+  await act(async () => { addBtns(c)[i].click(); });   // arm the row
+  await act(async () => { confirmBtns(c)[0].click(); }); // confirm
+};
 const btn = (c: HTMLElement, label: string) =>
   [...c.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === label);
 
@@ -85,19 +102,39 @@ describe("the gap list", () => {
     expect(container.innerHTML).toMatch(/has not ordered/);
   });
 
-  it("offers one control per outstanding gap", async () => {
+  it("keeps the gap list COLLAPSED until asked", async () => {
+    // The regression this file now guards: 411 gaps rendered 411 one-click
+    // "Add as variance" buttons straight into the banner.
     const { container } = await open();
+    expect(addBtns(container)).toHaveLength(0);
+    expect(confirmBtns(container)).toHaveLength(0);
+    expect(container.innerHTML).toMatch(/customer amends the PO/i);
+  });
+
+  it("offers one control per outstanding gap once revealed", async () => {
+    const { container } = await open();
+    await reveal(container);
     expect(addBtns(container)).toHaveLength(2);
+    // Still no direct add — each row must be armed first.
+    expect(confirmBtns(container)).toHaveLength(0);
+  });
+
+  it("says the variance does not fix the PO", async () => {
+    const { container } = await open();
+    await reveal(container);
+    expect(container.innerHTML).toMatch(/does not.*fix the PO|cannot be invoiced/i);
   });
 
   it("shows the agreed terms so the operator can sanity-check before clicking", async () => {
     const { container } = await open();
+    await reveal(container);
     expect(container.innerHTML).toContain("TNA-16-04-40-2");
     expect(container.innerHTML).toContain("Q-4471");
   });
 
   it("renders nothing when the PO ordered everything quoted", async () => {
     const { container } = await open(order({ gaps: [] }));
+    await reveal(container);
     expect(addBtns(container)).toHaveLength(0);
     expect(container.innerHTML).not.toContain("not on this PO");
   });
@@ -106,11 +143,13 @@ describe("the gap list", () => {
     const { container } = await open(order({
       lines: [...ORDERED, { partNumber: "TNA-16-04-40-2", _origin: "quote_variance" }],
     }));
+    await reveal(container);
     expect(addBtns(container)).toHaveLength(1);
   });
 
   it("offers no control on a non-editable order", async () => {
     const { container } = await open(order({ status: "EXPORTED_TO_TALLY" }));
+    await reveal(container);
     expect(addBtns(container)).toHaveLength(0);
   });
 });
@@ -118,13 +157,15 @@ describe("the gap list", () => {
 describe("clicking through", () => {
   it("adds a line the grid marks as not-on-PO", async () => {
     const { container } = await open();
-    addBtns(container)[0].click();
+    await reveal(container);
+    await addVariance(container, 0);
     await waitFor(() => { expect(container.innerHTML).toContain("not on PO"); });
   });
 
   it("persists it as quote_variance with the quote's terms", async () => {
     const { container, update } = await open();
-    addBtns(container)[0].click();
+    await reveal(container);
+    await addVariance(container, 0);
     await waitFor(() => { expect(btn(container, "Save line edits")).toBeTruthy(); });
     btn(container, "Save line edits")!.click();
     await waitFor(() => { expect(update).toHaveBeenCalled(); });
@@ -140,14 +181,16 @@ describe("clicking through", () => {
 
   it("removes that gap from the list once added, so a second click cannot double-order", async () => {
     const { container } = await open();
+    await reveal(container);
     expect(addBtns(container)).toHaveLength(2);
-    addBtns(container)[0].click();
+    await addVariance(container, 0);
     await waitFor(() => { expect(addBtns(container)).toHaveLength(1); });
   });
 
   it("leaves the ordered lines untouched", async () => {
     const { container, update } = await open();
-    addBtns(container)[0].click();
+    await reveal(container);
+    await addVariance(container, 0);
     await waitFor(() => { expect(btn(container, "Save line edits")).toBeTruthy(); });
     btn(container, "Save line edits")!.click();
     await waitFor(() => { expect(update).toHaveBeenCalled(); });
@@ -157,7 +200,8 @@ describe("clicking through", () => {
 
   it("does not persist until Save", async () => {
     const { container, update } = await open();
-    addBtns(container)[0].click();
+    await reveal(container);
+    await addVariance(container, 0);
     await waitFor(() => { expect(btn(container, "Save line edits")).toBeTruthy(); });
     expect(update).not.toHaveBeenCalled();
   });

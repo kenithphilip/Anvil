@@ -399,6 +399,29 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
   }, [rows, profile]);
 
   const sel = selected != null ? rows.find((r) => r.ln.line_index === selected) : null;
+  // Position within the visible list, so the detail panel can step to the next
+  // line without sending the operator back up to the table to find it.
+  const selIdx = sel ? rows.findIndex((r) => r.ln.line_index === sel.ln.line_index) : -1;
+  const goTo = (i: number) => {
+    const r = rows[i];
+    if (r) setSelected(r.ln.line_index);
+  };
+  // The two detail Cards render AFTER the table, so on a quote with fifty lines
+  // clicking a row put the breakdown a full screen below the fold — the
+  // operator scrolled to the bottom, read it, scrolled back up, and repeated.
+  // Bring it to them instead.
+  const detailRef = React.useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (selected == null) return;
+    const el = detailRef.current;
+    // `?.` guards a null ref, not a missing method — jsdom (and older browsers)
+    // do not implement scrollIntoView at all, and calling it threw straight
+    // through React's commit phase and took the whole component down. Same
+    // check PdfPagePreview already uses.
+    if (el && typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ block: "start", behavior: "smooth" });
+    }
+  }, [selected]);
 
   return (
     <>
@@ -516,12 +539,27 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
       )}
 
       {sel && (
-      <>
+      <div ref={detailRef}>
         <Card title={`Waterfall - line ${(sel.ln.line_index ?? 0) + 1} ${sel.ln.part_no || ""}`}
           eyebrow="Adjust overhead rates/amounts for this line" style={{ marginTop: 10 }}
-          right={Object.keys(overridesByLine[sel.ln.line_index] ?? {}).length
-            ? <Btn sm kind="ghost" onClick={() => resetOverrides(sel.ln.line_index)}>Reset adjustments</Btn>
-            : undefined}>
+          right={
+            <div className="row" style={{ gap: 6, alignItems: "center" }}>
+              {/* Step through lines from here. Without this the only way to the
+                  next line's breakdown was to scroll back up, find the row, and
+                  scroll down again — once per line, on a fifty-line quote. */}
+              <Btn sm kind="ghost" disabled={selIdx <= 0} onClick={() => goTo(selIdx - 1)}
+                   aria-label="Previous line">{"‹"}</Btn>
+              <span className="mono-sm" style={{ color: "var(--ink-3)", minWidth: 78, textAlign: "center" }}>
+                line {selIdx + 1} of {rows.length}
+              </span>
+              <Btn sm kind="ghost" disabled={selIdx < 0 || selIdx >= rows.length - 1} onClick={() => goTo(selIdx + 1)}
+                   aria-label="Next line">{"›"}</Btn>
+              {Object.keys(overridesByLine[sel.ln.line_index] ?? {}).length
+                ? <Btn sm kind="ghost" onClick={() => resetOverrides(sel.ln.line_index)}>Reset adjustments</Btn>
+                : null}
+              <Btn sm kind="ghost" onClick={() => setSelected(null)} aria-label="Close breakdown">Close</Btn>
+            </div>
+          }>
           <table className="tbl" style={{ fontSize: 12 }}>
             <thead><tr><th>Step</th><th>Kind</th><th className="r">Rate / amount</th><th className="r">+ / -</th><th className="r">Subtotal</th></tr></thead>
             <tbody>
@@ -625,7 +663,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
             )}
           </div>
         </Card>
-      </>
+      </div>
       )}
     </>
   );

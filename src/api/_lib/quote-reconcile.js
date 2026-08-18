@@ -156,7 +156,14 @@ export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
 
     const quoteRate = num(q.discounted_unit_price) != null ? num(q.discounted_unit_price) : num(q.listed_unit_price);
     const quoteQty = num(q.qty);
-    const deltaPct = (poRate != null && quoteRate) ? round2(((poRate - quoteRate) / quoteRate) * 100) : null;
+    // A quoted rate of 0 is not a price — it is an unpriced draft line (the
+    // spare-matrix feed writes listed_unit_price: 0 by design, "priced
+    // downstream in price_composition"). Treated as a real price it did two
+    // silent things: 0 is falsy so no price check ran and the line reported a
+    // clean match, and the enrichment below overwrote the PO's actual rate
+    // with 0 on the persisted sales order.
+    const quotePriced = quoteRate != null && Number(quoteRate) !== 0;
+    const deltaPct = (poRate != null && quotePriced) ? round2(((poRate - quoteRate) / quoteRate) * 100) : null;
     const priceMismatch = deltaPct != null && Math.abs(deltaPct) > tol;
     const qtyNote = poQty != null && quoteQty != null && poQty !== quoteQty;
 
@@ -183,7 +190,8 @@ export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
       ...ln,
       // Quote-authoritative pricing / tax / classification:
       hsn: pick(ln.hsn, q.hsn_sac) || null,
-      discounted_unit_price: quoteRate,
+      // Keep the PO's rate when the quote line carries no real price.
+      discounted_unit_price: quotePriced ? quoteRate : (poRate ?? null),
       source_country: pick(ln.source_country, q.source_country) || null,
       discount_pct: q.discount_pct != null ? Number(q.discount_pct) : (ln.discount_pct ?? null),
       cgst_pct: q.cgst_pct != null ? Number(q.cgst_pct) : (ln.cgst_pct ?? null),
@@ -226,7 +234,17 @@ export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
   // add is a quote_variance, which cannot be invoiced until the PO is amended.
   const quotedNotOrdered = [];
   const seenQuoteLine = new Set();
+  // ONLY quotes this PO actually drew from.
+  //
+  // The walk used to iterate the entire customer quote pool, subtracting only
+  // the keys that matched. With 0 matched lines nothing was subtracted, so
+  // every part in every non-cancelled quote the customer had ever received
+  // became a "gap": a 2-line PO reported 411 quoted-but-not-ordered rows, each
+  // offering to be added as a variance. A quote the PO matched NOTHING from is
+  // not the quote this PO was placed against.
+  const usedQuoteIds = new Set(quotesUsed.keys());
   for (const q of quoteLines || []) {
+    if (!usedQuoteIds.has(q._quote_id)) continue;
     const key = normPart(q.part_no);
     if (!key || orderedKeys.has(key)) continue;
     // One entry per part, not per quote revision: the same part quoted three

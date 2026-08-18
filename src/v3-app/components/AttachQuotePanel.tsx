@@ -61,19 +61,27 @@ export const AttachQuotePanel: React.FC<{
       ingested: !!res?.ingested,
       quote_number: res?.quote_number ?? null,
       lines_written: res?.lines_written ?? 0,
-      reason: res?.reason ?? null,
+      // The server's own explanation, then the ingest report's error, then a
+      // generic. "could not be read" for a perfectly readable PDF sent the
+      // operator hunting the document instead of the bug.
+      reason: res?.reason || res?.report?.reports?.[0]?.error || null,
     } as Attached;
   };
 
-  const onPick = async (files: FileList | null) => {
-    if (!files || !files.length) return;
+  const onPick = async (files: File[]) => {
+    if (!files.length) return;
     setErr(null);
     const results: Attached[] = [];
     try {
       // Sequential: each attach ingests into quotes/quote_lines, and doing
       // several at once would race the same customer's quote numbering.
-      for (const f of Array.from(files)) results.push(await attachOne(f));
-      setDone((d) => [...results, ...d]);
+      // Committed per file: an error on the third must not discard the first
+      // two, which are already uploaded, linked and ingested server-side.
+      for (const f of files) {
+        const r = await attachOne(f);
+        results.push(r);
+        setDone((d) => [r, ...d]);
+      }
       const ok = results.filter((r) => r.ingested).length;
       if (ok) {
         window.notifySuccess?.(
@@ -107,7 +115,17 @@ export const AttachQuotePanel: React.FC<{
           {busy ? `${step}…` : <>{Icon.upload || "↑"} Attach quote PDF</>}
           <input
             type="file" accept=".pdf,.PDF" multiple disabled={busy} style={{ display: "none" }}
-            onChange={(e) => { const fs = e.target.files; e.target.value = ""; onPick(fs); }}
+            onChange={(e) => {
+              // COPY the files out before resetting the input. `e.target.files`
+              // is the input's own LIVE FileList, and setting value = "" empties
+              // that same object in place — so onPick received a zero-length
+              // list and returned before uploading anything. The picker opened,
+              // a PDF was chosen, and the panel did literally nothing: no busy
+              // label, no error, no toast.
+              const fs = Array.from(e.target.files || []);
+              e.target.value = "";
+              onPick(fs);
+            }}
           />
         </label>
         <span className="mono-sm" style={{ color: "var(--ink-3)" }}>

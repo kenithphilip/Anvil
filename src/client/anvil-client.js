@@ -750,6 +750,16 @@
     // (Anvil finds the quotes; no manual quote-picking). Returns the
     // verification report (matched / price_mismatch / unmatched + flags).
     reconcileQuotes: async (orderId, opts) => apiFetch("/api/orders/reconcile_quotes", { method: "POST", body: { order_id: orderId, ...(opts || {}) } }),
+    // Attach an uploaded quotation PDF to a PO. Extract it first with
+    // docai.extract({ kind: "quote" }) and pass the payload — the endpoint
+    // links order_documents, ingests into quotes/quote_lines, and the existing
+    // reconcileQuotes then picks it up like any other quote for that customer.
+    attachQuote: async (orderId, documentId, extracted) =>
+      apiFetch("/api/orders/attach_quote", {
+        method: "POST",
+        body: { order_id: orderId, document_id: documentId, extracted: extracted || null },
+      }),
+
     // Phase 3.6 observability: full pipeline-diagnostics blob for
     // an order. Used by the workspace's Pipeline Diagnostics tab
     // to render extraction_runs + processing_events + adapter

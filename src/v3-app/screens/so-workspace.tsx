@@ -5,6 +5,7 @@ import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Modal, Prov, Steps, Stream, W
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 import { BusyAction, busyLabel, busyVerb } from "../lib/busy-actions";
+import { AttachQuotePanel } from "../components/AttachQuotePanel";
 // The gate's own predicate, not a copy: a UI that disagreed with the server
 // about what blocks would offer a button that 409s, or hide the only way out.
 import { isUnresolvedBlocker as isBlockingFinding } from "../../api/_lib/blocking-findings.js";
@@ -2012,6 +2013,14 @@ const WiredSOWorkspace = () => {
         </div>
       </div>
 
+      {/* Attaching a quote is how the operator FEEDS the comparison below, so
+          it sits directly above it rather than on a separate screen. Several
+          quotes can back one PO; the reconciler already pools them all. */}
+      <AttachQuotePanel
+        orderId={o.id}
+        hasCustomer={!!o.customer_id}
+        onAttached={() => rerunReconcile(o)}
+      />
       {(() => {
         const recon = o.result?.quoteReconciliation;
         const canReconcile = canWrite && o.status !== "CANCELLED" && !!o.customer_id;

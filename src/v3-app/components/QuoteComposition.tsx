@@ -467,6 +467,9 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
       </div>
 
       <Card flush>
+        {/* Own scroll box so the header row and the totals foot stay pinned while
+            a long line list scrolls between them — see .qc-scroll in styles.css. */}
+        <div className="qc-scroll">
         <table className="tbl" style={{ fontSize: 12 }}>
           <thead><tr>
             <th>#</th><th>Part</th><th className="r">Qty</th>
@@ -530,6 +533,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
             </tr>
           </tfoot>
         </table>
+        </div>
       </Card>
 
       {totals.belowFloor > 0 && (

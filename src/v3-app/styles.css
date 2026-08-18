@@ -5031,3 +5031,49 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   .aa-fab { transition: none; }
   .aa-fab:hover { transform: none; }
 }
+
+/* === QUOTE COMPOSITION: long line lists ===
+   The totals live in a <tfoot> and the column headers in a <thead>, so on a
+   quote with dozens of lines an operator edited supplier prices with the margin
+   they were steering toward scrolled off the bottom of the page, and with the
+   column identities scrolled off the top. Both had to be found by scrolling to
+   the end of the screen and back.
+
+   The table gets its own scroll box instead of riding the page, so head and foot
+   can stick to it. Self-contained on purpose: sticking to the PAGE would need an
+   offset for the app's own sticky chrome, whose height this component does not
+   know and should not have to. */
+.qc-scroll {
+  max-height: min(62vh, 720px);
+  overflow: auto;
+  /* Contains the sticky children and gives horizontal scroll to the 11 columns
+     without the page ever scrolling sideways. */
+  position: relative;
+}
+.qc-scroll table { margin: 0; }
+.qc-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  /* Opaque: rows scroll UNDER these, and a translucent header is unreadable
+     over its own data. */
+  background: var(--paper-2, var(--paper));
+  box-shadow: inset 0 -1px 0 var(--hairline);
+}
+.qc-scroll tfoot td,
+.qc-scroll tfoot th {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: var(--paper-2, var(--paper));
+  box-shadow: inset 0 1px 0 var(--hairline);
+}
+/* The row being edited can otherwise sit visually beneath the stuck foot. */
+.qc-scroll tbody tr:last-child td { padding-bottom: 10px; }
+
+@media (max-width: 900px) {
+  /* On a short viewport a 62vh box plus stuck head and foot leaves almost no
+     rows visible; give the page back its scroll. */
+  .qc-scroll { max-height: none; overflow: visible; }
+  .qc-scroll thead th, .qc-scroll tfoot td, .qc-scroll tfoot th { position: static; }
+}

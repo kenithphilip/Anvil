@@ -65,7 +65,7 @@ const fmtMoney = (amount, currency) => {
   }
 };
 
-const Header = ({ kind, number, date, brand }) => (
+const Header = ({ kind, number, date, brand, buyerRef }) => (
   React.createElement(View, { style: styles.header, fixed: true },
     React.createElement(View, { style: styles.brandBlock },
       React.createElement(Text, { style: styles.brandName }, brand?.name || "Anvil"),
@@ -76,6 +76,12 @@ const Header = ({ kind, number, date, brand }) => (
       React.createElement(Text, { style: styles.docKind }, kind),
       React.createElement(Text, { style: styles.docNumber }, "#" + (number || "—")),
       React.createElement(Text, { style: styles.docDate }, "Issued " + (date || new Date().toLocaleDateString("en-US"))),
+      // The BUYER's own reference, beside our number. A large buyer books an
+      // incoming invoice against the PO it was raised for, and one arriving
+      // without that reference is rejected before the lines are ever read.
+      // Rendered only when supplied, so quotes and every other kind are
+      // untouched.
+      buyerRef && React.createElement(Text, { style: styles.docDate }, "Your PO " + buyerRef),
     ),
   )
 );
@@ -138,10 +144,10 @@ const Totals = ({ subtotal, tax, total, currency }) => (
   )
 );
 
-const QuoteDoc = ({ kind, number, date, brand, from, to, items, subtotal, tax, total, currency, notes }) => (
+const QuoteDoc = ({ kind, number, date, brand, buyerRef, from, to, items, subtotal, tax, total, currency, notes }) => (
   React.createElement(Document, null,
     React.createElement(Page, { size: "A4", style: styles.page },
-      React.createElement(Header, { kind, number, date, brand }),
+      React.createElement(Header, { kind, number, date, brand, buyerRef }),
       React.createElement(Parties, { from, to }),
       React.createElement(LineItems, { items, currency }),
       React.createElement(Totals, { subtotal, tax, total, currency }),

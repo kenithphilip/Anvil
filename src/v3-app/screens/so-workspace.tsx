@@ -6,6 +6,7 @@ import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 import { BusyAction, busyLabel, busyVerb } from "../lib/busy-actions";
 import { AttachQuotePanel } from "../components/AttachQuotePanel";
+import { AttachedQuotesCard } from "../components/AttachedQuotesCard";
 // The gate's own predicate, not a copy: a UI that disagreed with the server
 // about what blocks would offer a button that 409s, or hide the only way out.
 import { isUnresolvedBlocker as isBlockingFinding } from "../../api/_lib/blocking-findings.js";
@@ -162,6 +163,10 @@ const WiredSOWorkspace = () => {
   // order is the exceptional fallback. Rendering a one-click "Add as variance"
   // against every gap made the wrong action the easiest one, and on a real
   // order that was 411 buttons sitting open in the banner.
+  // Re-read the attached-quotes card after an upload. Declared HERE with the
+  // other hooks — this component early-returns further down, and a useState
+  // placed after those changes the hook count between renders.
+  const [quotesBump, setQuotesBump] = u(0);
   const [gapsOpen, setGapsOpen] = u(false);
   const [confirmGap, setConfirmGap] = u<string | null>(null);
   const [resolvingCode, setResolvingCode] = u<string | null>(null);
@@ -2050,8 +2055,13 @@ const WiredSOWorkspace = () => {
       <AttachQuotePanel
         orderId={o.id}
         hasCustomer={!!o.customer_id}
-        onAttached={() => rerunReconcile(o)}
+        onAttached={() => { setQuotesBump((n) => n + 1); rerunReconcile(o); }}
       />
+      {/* What is actually on the order, standing rather than in a toast. The
+          upload panel reports a result and then re-renders it away; the
+          reconcile banner below names only the quotes that MATCHED, so a quote
+          that attached and extracted nothing appears in neither. */}
+      <AttachedQuotesCard orderId={o.id} refreshKey={quotesBump} />
       {(() => {
         const recon = o.result?.quoteReconciliation;
         const canReconcile = canWrite && o.status !== "CANCELLED" && !!o.customer_id;

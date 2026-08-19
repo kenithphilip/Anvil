@@ -13,18 +13,15 @@
 // Pure (no I/O) so it is unit-testable; orders/reconcile_quotes.js does
 // the fetch and persistence.
 
-const normPart = (s) => String(s == null ? "" : s).toUpperCase().replace(/[^A-Z0-9]/g, "");
-const num = (v) => (v == null || v === "" ? null : Number(v));
-const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+// The mechanical half of this comparison now lives in _lib/line-compare.js so
+// the PO-vs-invoice check can share it. These four moved VERBATIM — same
+// implementations, same edge cases — so nothing about this module's behaviour
+// changes. What stayed here is everything that is actually about quotes.
+import {
+  normPart, num, round2, pick, descAgreement, DESC_AGREEMENT_FLOOR,
+} from "./line-compare.js";
 
 // Lightweight token overlap for the qualitative description check (0..1).
-const descAgreement = (a, b) => {
-  const t = (s) => new Set(String(s || "").toUpperCase().split(/[^A-Z0-9]+/).filter((w) => w.length > 2));
-  const A = t(a), B = t(b);
-  if (!A.size || !B.size) return null;
-  let hit = 0; A.forEach((w) => { if (B.has(w)) hit += 1; });
-  return round2(hit / Math.min(A.size, B.size));
-};
 
 // quoteLines: quote_line rows, each augmented with _quote_id, _quote_number,
 // _quote_created_at. Pre-sort by preference (most recent first) — first
@@ -128,8 +125,6 @@ export const compareIncoterms = (poIncoterm, quoteIncoterm) => {
 // disagreeing. Token overlap is deliberately forgiving — the same part is
 // routinely written "CYLINDER ASSY" on the quote and "Cylinder Assembly, 40mm"
 // on the PO — so this only fires when the wording has genuinely diverged.
-const DESC_AGREEMENT_FLOOR = 0.34;
-
 // opts.priceTolerancePct: allowed |PO rate - quote rate| before flagging
 // a price_mismatch (default 0.5%).
 export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
@@ -290,4 +285,3 @@ export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
 };
 
 // local helper (kept last so the file reads top-down)
-function pick(...vals) { return vals.find((v) => v != null && v !== ""); }

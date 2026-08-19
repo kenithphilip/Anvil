@@ -40,20 +40,67 @@ const n = (v) => {
 };
 
 // Normalise one extracted quote line to the quote_lines column shape. Pure.
-export const toQuoteLineRow = (line, index) => ({
-  line_index: index,
-  part_no: s(line?.partNumber ?? line?.part_no),
-  customer_part_number: s(line?.customerPartNumber ?? line?.customer_part_number ?? line?.drawingNumber),
-  description: s(line?.description),
-  qty: n(line?.quantity ?? line?.qty),
-  uom: s(line?.uom),
-  hsn_sac: s(line?.hsn ?? line?.hsn_sac),
-  listed_unit_price: n(line?.unitPrice ?? line?.unit_price),
-  line_amount: n(line?.amount ?? line?.line_amount),
-  cgst_pct: n(line?.cgst_pct),
-  sgst_pct: n(line?.sgst_pct),
-  igst_pct: n(line?.igst_pct),
-});
+// Two prices, two columns — both of which migration 108 already gave us.
+//
+// A quotation that prints a list price AND a discounted price beside it was
+// collapsing to ONE number here: whatever the extractor happened to read went
+// into listed_unit_price, discounted_unit_price was never written at all, and
+// the reconciler then compared the PO against a price the customer never
+// agreed to. Every line came back a price_mismatch, so nothing matched.
+//
+// The extractor now distinguishes them (claude.js QUOTE_TOOL: unitPrice is the
+// governing/discounted price, listUnitPrice the pre-discount one). Mapping:
+//
+//   discounted_unit_price := the price the order is placed at (always set)
+//   listed_unit_price     := the pre-discount price when one was printed,
+//                            otherwise the same single price, so a
+//                            single-price quote is unchanged from before.
+//
+// discount_pct is derived rather than read: a printed discount column is rarer
+// than the two price columns it would explain, and deriving keeps it
+// consistent with the two numbers actually stored.
+const pct = (list, net) => {
+  if (list == null || net == null) return null;
+  const l = Number(list);
+  if (!Number.isFinite(l) || l <= 0) return null;
+  const d = ((l - Number(net)) / l) * 100;
+  if (!Number.isFinite(d) || d <= 0) return null;
+  return Math.round(d * 100) / 100;
+};
+
+export const toQuoteLineRow = (line, index) => {
+  const governing = n(line?.unitPrice ?? line?.unit_price ?? line?.discounted_unit_price);
+  const list = n(line?.listUnitPrice ?? line?.list_unit_price ?? line?.listed_unit_price);
+  return {
+    line_index: index,
+    part_no: s(line?.partNumber ?? line?.part_no),
+    customer_part_number: s(line?.customerPartNumber ?? line?.customer_part_number ?? line?.drawingNumber),
+    description: s(line?.description),
+    qty: n(line?.quantity ?? line?.qty),
+    uom: s(line?.uom),
+    hsn_sac: s(line?.hsn ?? line?.hsn_sac),
+    // Fall back to the governing price so a single-price quote still fills the
+    // "listed" column exactly as it did before this change.
+    listed_unit_price: list ?? governing,
+    discounted_unit_price: governing,
+    discount_pct: pct(list, governing),
+    line_amount: n(line?.amount ?? line?.line_amount),
+    // MOQ and any per-row condition ride in remark, which migration 108
+    // already provides. A quantity condition that is never captured cannot be
+    // checked against the PO, and this quote format states it per row.
+    remark: (() => {
+      const r = s(line?.remark);
+      const moq = n(line?.moq);
+      if (moq == null) return r;
+      const tag = "MOQ=" + moq;
+      if (!r) return tag;
+      return new RegExp("MOQ", "i").test(r) ? r : r + " · " + tag;
+    })(),
+    cgst_pct: n(line?.cgst_pct),
+    sgst_pct: n(line?.sgst_pct),
+    igst_pct: n(line?.igst_pct),
+  };
+};
 
 // Which lines can seed the identity flywheel: we need BOTH our code (to find
 // the item) and the customer's reference (the key future POs will arrive with).
@@ -152,6 +199,11 @@ export const ingestQuote = async (svc, ctx, input = {}) => {
       status: "SENT",
       currency: s(quote.currency) || "INR",
       grand_total: n(quote.grand_total),
+      // `quotes` has had terms and notes since 068; the ingest path simply
+      // never wrote them, so every commercial condition on an uploaded
+      // quotation was read and thrown away.
+      ...(quote.terms ? { terms: s(quote.terms) } : {}),
+      ...(quote.notes ? { notes: s(quote.notes) } : {}),
       source_document_id: sourceDocumentId,
       ingest_source: ingestSource,
       updated_at: new Date().toISOString(),

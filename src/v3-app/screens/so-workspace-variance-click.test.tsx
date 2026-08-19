@@ -73,8 +73,13 @@ const open = async (o: any = order()) => {
 // amended PO — a one-click button against every gap made the wrong action the
 // easiest one, and on a real order that was 411 of them open in the banner.
 const flush = () => act(async () => { await Promise.resolve(); });
+// The single control the banner shows while closed. Its label carries the
+// count, because that count is now the ONLY thing said about variance until
+// somebody asks.
+const revealBtn = (c: HTMLElement) =>
+  [...c.querySelectorAll("button")].find((x) => /^Quoted-only lines \(\d+\)$/.test((x.textContent || "").trim()));
 const reveal = async (c: HTMLElement) => {
-  const b = [...c.querySelectorAll("button")].find((x) => (x.textContent || "").trim() === "Review");
+  const b = revealBtn(c);
   if (b) await act(async () => { b.click(); });
 };
 // The per-row arming button ("Add…"), visible only once the list is revealed.
@@ -91,23 +96,34 @@ const btn = (c: HTMLElement, label: string) =>
   [...c.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === label);
 
 describe("the gap list", () => {
-  it("says how many quoted lines the PO does not contain", async () => {
+  it("says how many quoted lines the PO does not contain, on the button itself", async () => {
     const { container } = await open();
-    expect(container.innerHTML).toContain("quoted line");
-    expect(container.innerHTML).toContain("not on this PO");
+    expect(revealBtn(container)?.textContent?.trim()).toBe("Quoted-only lines (2)");
   });
 
-  it("states plainly that the customer has not ordered them", async () => {
+  it("says NOTHING ELSE about variance until asked", async () => {
+    // Closed, the banner shows one button and no narration. A variance means
+    // somebody made a mistake and the remedy is an amended PO; explaining the
+    // gap inline on every reconcile is how the exceptional path starts to feel
+    // like part of the routine.
     const { container } = await open();
-    expect(container.innerHTML).toMatch(/has not ordered/);
+    expect(container.innerHTML).not.toMatch(/has not ordered/i);
+    expect(container.innerHTML).not.toMatch(/customer amends the PO/i);
+    expect(container.innerHTML).not.toMatch(/variance/i);
   });
 
   it("keeps the gap list COLLAPSED until asked", async () => {
-    // The regression this file now guards: 411 gaps rendered 411 one-click
+    // The regression this file guards: 411 gaps rendered 411 one-click
     // "Add as variance" buttons straight into the banner.
     const { container } = await open();
     expect(addBtns(container)).toHaveLength(0);
     expect(confirmBtns(container)).toHaveLength(0);
+  });
+
+  it("explains itself only once revealed", async () => {
+    const { container } = await open();
+    await reveal(container);
+    expect(container.innerHTML).toMatch(/quoted but not ordered/i);
     expect(container.innerHTML).toMatch(/customer amends the PO/i);
   });
 
@@ -136,7 +152,7 @@ describe("the gap list", () => {
     const { container } = await open(order({ gaps: [] }));
     await reveal(container);
     expect(addBtns(container)).toHaveLength(0);
-    expect(container.innerHTML).not.toContain("not on this PO");
+    expect(revealBtn(container)).toBeUndefined();
   });
 
   it("stops offering a gap the order already carries", async () => {

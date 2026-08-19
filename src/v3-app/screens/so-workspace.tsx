@@ -2135,26 +2135,30 @@ const WiredSOWorkspace = () => {
               return (
                 <div className="mono-sm" style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid var(--hairline-2)" }}>
                   <div className="row" style={{ gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
-                    <span>
-                      <b>{gaps.length}</b> quoted line{gaps.length === 1 ? "" : "s"} not on this PO
-                      <span style={{ color: "var(--ink-3)" }}> — the customer has not ordered {gaps.length === 1 ? "it" : "them"}.</span>
-                    </span>
-                    {canEditLines && (
+                    {/* Closed, this is ONE button and nothing else.
+                        Everything about variance — the count, the reasoning,
+                        the per-line list — lives behind it. A variance means
+                        somebody made a mistake, and the remedy is an amended
+                        PO; narrating the gap inline put that thought in front
+                        of the operator on every single reconcile, which is how
+                        the exceptional path starts feeling routine. */}
+                    {canEditLines ? (
                       <Btn sm kind="ghost" onClick={() => { setGapsOpen((o) => !o); setConfirmGap(null); }}>
-                        {gapsOpen ? "Hide" : "Review"}
+                        {gapsOpen ? "Hide quoted-only lines" : `Quoted-only lines (${gaps.length})`}
                       </Btn>
+                    ) : (
+                      /* No write access: state the fact, offer no action. */
+                      <span style={{ color: "var(--ink-3)" }}>
+                        {gaps.length} quoted line{gaps.length === 1 ? "" : "s"} not on this PO
+                      </span>
                     )}
                   </div>
-                  {!gapsOpen && (
-                    <div style={{ color: "var(--ink-3)", marginTop: 2 }}>
-                      Normally the customer amends the PO. Review only if something needs adding here instead.
-                    </div>
-                  )}
                   {gapsOpen && (
                     <div style={{ marginTop: 6 }}>
                       <div style={{ color: "var(--ink-3)", marginBottom: 4 }}>
-                        Adding a line here does <b>not</b> fix the PO. A variance line cannot be invoiced or pushed to
-                        Tally until the customer amends it — use this only when the omission is understood and accepted.
+                        These were quoted but not ordered — normally the customer amends the PO.
+                        Adding a line here does <b>not</b> fix the PO: a variance line cannot be invoiced or pushed to
+                        Tally until the customer amends it. Use this only when the omission is understood and accepted.
                       </div>
                       {gaps.slice(0, 8).map((g: any, i: number) => {
                         const key = gapKey(g, i);

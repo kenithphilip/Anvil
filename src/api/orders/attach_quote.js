@@ -166,6 +166,10 @@ export default async function handler(req, res) {
         quote_date: extracted.quote_date || null,
         currency: extracted.currency || null,
         terms: extracted.terms || extracted.payment_terms || null,
+        // Conditions that qualify the price — quantity minimums, combined-order
+        // requirements, validity caveats. Extracted but previously dropped on
+        // the floor here.
+        notes: extracted.notes || null,
         grand_total: extracted.grand_total ?? null,
       },
       lines,

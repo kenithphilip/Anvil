@@ -204,17 +204,43 @@ export const ingestQuote = async (svc, ctx, input = {}) => {
       // quotation was read and thrown away.
       ...(quote.terms ? { terms: s(quote.terms) } : {}),
       ...(quote.notes ? { notes: s(quote.notes) } : {}),
+      // The ISSUER's own revision marker and revision date (migration 215).
+      // #462 taught the extractor to read both and there was nowhere to put
+      // them, so they were parsed and dropped.
+      ...(quote.revision ? { revision: s(quote.revision) } : {}),
+      ...(quote.revised_date ? { revised_date: String(quote.revised_date).slice(0, 10) } : {}),
       source_document_id: sourceDocumentId,
       ingest_source: ingestSource,
       updated_at: new Date().toISOString(),
     };
     if (quote.quote_date) head.sent_at = new Date(quote.quote_date).toISOString();
 
+    // Migrations here are applied BY HAND, so a column present in the repo is
+    // not present in every database — and PostgREST rejects the WHOLE write
+    // over one unknown name. Without this, a tenant behind on 215 (or 188)
+    // would have every quote ingest fail outright rather than lose one
+    // optional field. Strip the newest columns and retry once.
+    const OPTIONAL_COLS = ["revision", "revised_date", "notes", "terms"];
+    const unknownColumn = (e) =>
+      !!e && (e.code === "42703" || OPTIONAL_COLS.some((c) => new RegExp("\\b" + c + "\\b").test(e.message || "")));
+    const withoutOptional = (h) => {
+      const copy = { ...h };
+      for (const c of OPTIONAL_COLS) delete copy[c];
+      return copy;
+    };
+
     let quoteId = existing?.data?.id || null;
     if (quoteId) {
-      await svc.from("quotes").update(head).eq("tenant_id", ctx.tenantId).eq("id", quoteId);
+      let upd = await svc.from("quotes").update(head).eq("tenant_id", ctx.tenantId).eq("id", quoteId);
+      if (unknownColumn(upd.error)) {
+        upd = await svc.from("quotes").update(withoutOptional(head)).eq("tenant_id", ctx.tenantId).eq("id", quoteId);
+      }
+      if (upd.error) { report.error = "quote update: " + upd.error.message; return report; }
     } else {
-      const ins = await svc.from("quotes").insert(head).select("id").single();
+      let ins = await svc.from("quotes").insert(head).select("id").single();
+      if (unknownColumn(ins.error)) {
+        ins = await svc.from("quotes").insert(withoutOptional(head)).select("id").single();
+      }
       if (ins.error) { report.error = "quote insert: " + ins.error.message; return report; }
       quoteId = ins.data.id;
     }

@@ -99,6 +99,18 @@ export default async function handler(req, res) {
     if (selfRef) {
       const self = await findSelfIssuedQuote(svc, ctx.tenantId, selfRef);
       if (self.matched) {
+        // Record which document is this quote's PDF, so the attached-quotes
+        // card can associate them. Deliberately narrow: it fills
+        // source_document_id ONLY when null and touches nothing else — not the
+        // status, not the prices, not a single line. The guard that brought us
+        // here exists precisely because this quote's contents are
+        // authoritative and must not be rewritten from a PDF.
+        if (!self.quote.source_document_id) {
+          await svc.from("quotes")
+            .update({ source_document_id: documentId })
+            .eq("tenant_id", ctx.tenantId).eq("id", self.quote.id)
+            .is("source_document_id", null);
+        }
         await recordAudit(ctx, {
           action: "order_quote_attached", objectType: "order", objectId: orderId,
           detail: {

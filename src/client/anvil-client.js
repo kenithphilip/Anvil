@@ -757,6 +757,11 @@
     // { invoice_lines } to check a proposed one before it exists, and
     // { price_tolerance_pct } to loosen the default exact-match on price.
     reconcileInvoice: async (orderId, opts) => apiFetch("/api/orders/reconcile_invoice", { method: "POST", body: { order_id: orderId, ...(opts || {}) } }),
+    // What quotes are attached to this PO — filename, number, line count,
+    // value and effective date. Read-only. Answers "did that upload work?",
+    // which the reconcile response cannot: it names only the quotes that
+    // MATCHED, and the interesting case is the one that did not.
+    attachedQuotes: async (orderId) => apiFetch("/api/orders/quotes?order_id=" + encodeURIComponent(orderId)),
     // Attach an uploaded quotation PDF to a PO. Extract it first with
     // docai.extract({ kind: "quote" }) and pass the payload — the endpoint
     // links order_documents, ingests into quotes/quote_lines, and the existing

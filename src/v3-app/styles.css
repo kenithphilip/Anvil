@@ -6,7 +6,27 @@
    ==========================================================================
 */
 
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Serif:wght@400;500&display=swap");
+/* Typography is SELF-HOSTED, and has to be.
+   This line used to @import IBM Plex from fonts.googleapis.com. Our own CSP
+   (vercel.json) is `style-src 'self' 'unsafe-inline' https://rsms.me`, so the
+   browser blocked it on every page load — silently, because a blocked
+   stylesheet is not a JS error. With no local @font-face anywhere, the entire
+   app fell back to system fonts for every visitor who did not happen to have
+   IBM Plex installed already. It looked fine to whoever had it locally, which
+   is why it survived.
+   The weights below are exactly the ones the design uses (see --sans/--mono/
+   --serif); latin subsets only, to keep the bundle honest. Self-hosting also
+   keeps visitor IPs away from Google, which matters for a product that talks
+   about data protection. */
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-500.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+@import "@fontsource/ibm-plex-sans/latin-700.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-500.css";
+@import "@fontsource/ibm-plex-mono/latin-600.css";
+@import "@fontsource/ibm-plex-serif/latin-400.css";
+@import "@fontsource/ibm-plex-serif/latin-500.css";
 
 :root {
   /* ── Type ──────────────────────────────────────────────── */

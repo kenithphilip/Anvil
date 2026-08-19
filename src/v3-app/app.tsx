@@ -356,7 +356,10 @@ export default function App() {
   const resolver = RESOLVERS[route] || RESOLVERS[DEFAULT_ROUTE];
   const Active = resolver({ params: readHashParams(), role });
 
-  const telemetry = useShellTelemetry();
+  // `authed` is passed in rather than re-derived: this hook sits ABOVE the
+  // auth gate below (hooks cannot be conditional), so without it the shell
+  // polled four endpoints every 30s for every anonymous landing-page visitor.
+  const telemetry = useShellTelemetry(authed);
   const viewport = useViewport();
 
   // HARD AUTH GATE. Render the landing surface (sign-in + sign-up

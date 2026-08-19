@@ -53,6 +53,13 @@ export const invoiceFromOrder = (order, opts) => {
   return {
     order_id: order.id,
     customer_id: order.customer_id || null,
+    // The buyer books this invoice against their own PO; without the
+    // reference their goods receipt is rejected clerically, before anyone
+    // looks at the lines. orders.po_number was already being SELECTed by the
+    // caller and thrown away here. Snapshotted rather than joined at render
+    // time: an invoice must state what was true when it was issued (see
+    // migration 214).
+    customer_po_number: order.po_number || null,
     issue_date: opts?.issue_date || new Date().toISOString().slice(0, 10),
     due_date: dueDate,
     currency: so.currency || opts?.currency || "USD",

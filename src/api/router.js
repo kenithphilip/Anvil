@@ -394,6 +394,7 @@ import ordersExtractionStatus from "./orders/extraction_status.js";
 import ordersVoucherPdf       from "./orders/voucher_pdf.js";
 import ordersSoPdf            from "./orders/so_pdf.js";
 import ordersReconcileQuotes  from "./orders/reconcile_quotes.js";
+import ordersReconcileInvoice  from "./orders/reconcile_invoice.js";
 import ordersAttachQuote      from "./orders/attach_quote.js";
 import ordersExtractionJobs   from "./orders/extraction_jobs.js";
 import ordersExtractionJobsId from "./orders/extraction_jobs_id.js";
@@ -650,6 +651,7 @@ const STATIC_ROUTES = {
   "/orders/voucher_pdf":            ordersVoucherPdf,
   "/orders/so_pdf":                 ordersSoPdf,
   "/orders/reconcile_quotes":       ordersReconcileQuotes,
+  "/orders/reconcile_invoice":       ordersReconcileInvoice,
   "/orders/attach_quote":           ordersAttachQuote,
   "/supplier_rfq":                  supplierRfqIndex,
   "/supplier_rfq/send":             supplierRfqSend,

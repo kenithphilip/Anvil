@@ -750,6 +750,13 @@
     // (Anvil finds the quotes; no manual quote-picking). Returns the
     // verification report (matched / price_mismatch / unmatched + flags).
     reconcileQuotes: async (orderId, opts) => apiFetch("/api/orders/reconcile_quotes", { method: "POST", body: { order_id: orderId, ...(opts || {}) } }),
+    // Does an invoice agree with the customer's PO? A buyer books an incoming
+    // invoice against the PO it was raised for, and a mismatch means no goods
+    // receipt and therefore no payment. Read-only: it answers, it refuses
+    // nothing. opts takes { invoice_id } for an existing invoice,
+    // { invoice_lines } to check a proposed one before it exists, and
+    // { price_tolerance_pct } to loosen the default exact-match on price.
+    reconcileInvoice: async (orderId, opts) => apiFetch("/api/orders/reconcile_invoice", { method: "POST", body: { order_id: orderId, ...(opts || {}) } }),
     // Attach an uploaded quotation PDF to a PO. Extract it first with
     // docai.extract({ kind: "quote" }) and pass the payload — the endpoint
     // links order_documents, ingests into quotes/quote_lines, and the existing

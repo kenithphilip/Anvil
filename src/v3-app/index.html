@@ -10,8 +10,12 @@
     <link rel="manifest" href="/manifest.json" />
     <link rel="apple-touch-icon" href="/icon-192.svg" />
     <title>Anvil</title>
-    <link rel="preconnect" href="https://rsms.me/" />
-    <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+    <!-- No third-party font host. Inter was fetched here on every page load
+         and is referenced by NO font stack in the app (styles.css asks for IBM
+         Plex Sans/Mono/Serif, which are now bundled from node_modules and
+         served from our own origin). Removing it drops a render-blocking
+         cross-origin request and stops handing every visitor's IP to a font
+         CDN. -->
   </head>
   <body>
     <div id="root"></div>

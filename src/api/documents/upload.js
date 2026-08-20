@@ -78,6 +78,56 @@ export default async function handler(req, res) {
 
     const svc = serviceClient();
     const filename = sanitizeName(body.filename);
+
+    // SAME BYTES, SAME DOCUMENT.
+    //
+    // Every upload minted a new documents row, so re-uploading a file the
+    // tenant already holds produced a second row with the same name, the same
+    // size and the same content. On an order that showed as two attachments,
+    // one of which reported "not read" — because quotes.source_document_id is
+    // single-valued, so only the most recent upload associates with the quote
+    // the earlier one had already produced. A correct re-upload looked like a
+    // failed one.
+    //
+    // documents.sha256 and its index have existed since 001_init; nothing
+    // populated them from the browser. The client now hashes the file before
+    // asking for a URL, and an exact content match returns the EXISTING
+    // document instead of minting a rival.
+    //
+    // Only when the caller supplies a hash. Callers that do not (bulk import,
+    // inbound email attachments) behave exactly as before rather than being
+    // silently deduped against a hash nobody computed.
+    const sha256 = typeof body.sha256 === "string" && /^[a-f0-9]{64}$/i.test(body.sha256)
+      ? body.sha256.toLowerCase()
+      : null;
+    if (sha256) {
+      const dupe = await svc.from("documents")
+        .select("id, filename, storage_bucket, storage_path, scan_status, created_at")
+        .eq("tenant_id", ctx.tenantId).eq("sha256", sha256)
+        // A row whose bytes never landed would hand back a document that
+        // cannot be read; require one that at least reached storage.
+        .not("storage_path", "is", null)
+        .order("created_at", { ascending: true })
+        .limit(1);
+      const hit = !dupe.error ? (dupe.data || [])[0] : null;
+      if (hit) {
+        await recordAudit(ctx, {
+          action: "document_upload_deduped",
+          objectType: "document",
+          objectId: hit.id,
+          detail: filename + " (" + size + " bytes) matched existing " + hit.filename + " by content hash",
+        });
+        // No uploadUrl: there is nothing to PUT. The client keys off
+        // `deduped` and skips the transfer entirely.
+        return json(res, 200, {
+          documentId: hit.id,
+          deduped: true,
+          existing: { filename: hit.filename, created_at: hit.created_at, scan_status: hit.scan_status },
+          path: hit.storage_path,
+          max_bytes: MAX_UPLOAD_BYTES,
+        });
+      }
+    }
     const path = ctx.tenantId + "/" + Date.now() + "_" + filename;
     let bucket;
     try {
@@ -96,7 +146,7 @@ export default async function handler(req, res) {
       filename,
       mime_type: body.mime_type || null,
       size_bytes: size || null,
-      sha256: body.sha256 || null,
+      sha256,
       uploaded_by: ctx.user ? ctx.user.id : null,
       classification: body.classification || null,
       // scan_status starts at pending; nothing can read this document

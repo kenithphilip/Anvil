@@ -604,18 +604,37 @@
     // caller will scan in batches).
     upload: async (file, classification, options) => {
       const opts = options || {};
+      // Hash the bytes before asking for a URL, so the server can hand back a
+      // document it already holds instead of minting a rival row for the same
+      // file. documents.sha256 has existed since 001_init and nothing ever
+      // filled it from here. Best-effort: crypto.subtle needs a secure
+      // context, and a missing hash simply means the old behaviour.
+      let sha256 = null;
+      try {
+        if (globalThis.crypto?.subtle && file.arrayBuffer) {
+          const digest = await globalThis.crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+          sha256 = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+        }
+      } catch (_) { sha256 = null; }
+
       const meta = await apiFetch("/api/documents/upload", {
         method: "POST",
-        body: { filename: file.name, mime_type: file.type, size_bytes: file.size, classification: classification || null },
+        body: {
+          filename: file.name, mime_type: file.type, size_bytes: file.size,
+          classification: classification || null, sha256,
+        },
       });
-      const upstream = await fetch(meta.uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
-      });
-      if (!upstream.ok) throw new Error("Upload failed: " + upstream.status);
+      // Content already on file: there is no signed URL and nothing to send.
+      if (!meta.deduped) {
+        const upstream = await fetch(meta.uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": file.type || "application/octet-stream" },
+          body: file,
+        });
+        if (!upstream.ok) throw new Error("Upload failed: " + upstream.status);
+      }
       let scan = null;
-      if (opts.autoScan !== false) {
+      if (opts.autoScan !== false && !meta.deduped) {
         try {
           scan = await apiFetch("/api/documents/scan", {
             method: "POST",

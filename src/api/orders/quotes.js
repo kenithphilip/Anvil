@@ -53,7 +53,7 @@ export default async function handler(req, res) {
       // order_documents has no tenant_id of its own; the tenant check lives on
       // the order above and again on documents here.
       const docQ = await svc.from("documents")
-        .select("id, filename, mime_type, size_bytes, created_at")
+        .select("id, filename, mime_type, size_bytes, sha256, created_at")
         .eq("tenant_id", ctx.tenantId).in("id", docIds);
       if (docQ.error) throw new Error("documents read: " + docQ.error.message);
       documents = docQ.data || [];
@@ -106,8 +106,35 @@ export default async function handler(req, res) {
       }
     }
 
+    // SUPERSEDED IS NOT FAILED.
+    //
+    // quotes.source_document_id is single-valued, so when the same quotation is
+    // uploaded twice only the most recent document associates with the quote
+    // row. The earlier one then rendered as "not read", which after the hollow-
+    // quote fix reads as "extraction failed" — the opposite of what happened.
+    //
+    // Two grades of evidence, never conflated. An identical sha256 is proof the
+    // bytes are the same file. Identical filename AND byte count is strong but
+    // circumstantial, and is reported as such rather than asserted. Content
+    // dedup at upload stops new duplicates being created at all; this is for
+    // the ones already on the order.
+    const resolved = documents.filter((d) => byDoc.has(d.id));
+    const supersededBy = (doc) => {
+      if (byDoc.has(doc.id)) return null;
+      const byHash = doc.sha256
+        ? resolved.find((r) => r.sha256 && r.sha256 === doc.sha256)
+        : null;
+      if (byHash) return { document_id: byHash.id, basis: "content_hash", certain: true };
+      const byName = resolved.find((r) =>
+        r.filename && r.filename === doc.filename &&
+        r.size_bytes != null && doc.size_bytes != null && r.size_bytes === doc.size_bytes);
+      if (byName) return { document_id: byName.id, basis: "same_name_and_size", certain: false };
+      return null;
+    };
+
     const attached = documents.map((doc) => {
       const qt = byDoc.get(doc.id) || null;
+      const superseded = qt ? null : supersededBy(doc);
       const lineCount = qt ? (counts.get(qt.id) || 0) : 0;
       const lineTotal = qt ? (totalsByQuote.get(qt.id) ?? null) : null;
       return {
@@ -115,6 +142,9 @@ export default async function handler(req, res) {
         filename: doc.filename,
         uploaded_at: doc.created_at,
         size_bytes: doc.size_bytes ?? null,
+        // Set when this document is an earlier copy of one that DID ingest.
+        // Null means the document genuinely produced nothing.
+        superseded_by: superseded,
         // Null when the PDF is attached but produced no quote row — extraction
         // failed, or it was not a quotation. That IS the answer to "did the
         // upload work", so it is reported rather than hidden.
@@ -165,7 +195,10 @@ export default async function handler(req, res) {
       summary: {
         attached_documents: attached.length,
         ingested: attached.filter((a) => a.ingested).length,
-        not_ingested: attached.filter((a) => !a.ingested).length,
+        // A duplicate of a document that DID ingest is not a failure, and
+        // counting it as one is what made a correct re-upload look broken.
+        superseded: attached.filter((a) => !a.ingested && a.superseded_by).length,
+        not_ingested: attached.filter((a) => !a.ingested && !a.superseded_by).length,
         other_quotes: otherQuotes.length,
       },
     });

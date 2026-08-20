@@ -781,6 +781,16 @@
     // which the reconcile response cannot: it names only the quotes that
     // MATCHED, and the interesting case is the one that did not.
     attachedQuotes: async (orderId) => apiFetch("/api/orders/quotes?order_id=" + encodeURIComponent(orderId)),
+    // One attached quote in full: a signed URL to read the PDF, plus the
+    // extracted lines with rates converted back to PERCENTAGES, because the
+    // operator is checking them against a document that prints percentages.
+    attachedQuote: async (orderId, documentId) =>
+      apiFetch("/api/orders/quotes?order_id=" + encodeURIComponent(orderId) + "&document_id=" + encodeURIComponent(documentId)),
+    // Remove a redundant attachment. Unlinks only — the document, its audit
+    // trail and its extraction history are kept, and the endpoint refuses to
+    // detach the copy that actually carries the quote.
+    detachQuote: async (orderId, documentId) =>
+      apiFetch("/api/orders/detach_quote", { method: "POST", body: { order_id: orderId, document_id: documentId } }),
     // Attach an uploaded quotation PDF to a PO. Extract it first with
     // docai.extract({ kind: "quote" }) and pass the payload — the endpoint
     // links order_documents, ingests into quotes/quote_lines, and the existing

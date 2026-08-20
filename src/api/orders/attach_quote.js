@@ -187,28 +187,40 @@ export default async function handler(req, res) {
       lines,
     }]);
 
-    await recordAudit(ctx, {
-      action: "order_quote_attached", objectType: "order", objectId: orderId,
-      detail: {
-        document_id: documentId, ingested: true,
-        quote_number: extracted.quote_number || null,
-        lines_written: report.lines_written,
-        matched_authored: report.quotes_matched_authored > 0,
-      },
-    });
-
     // The filename hint is not the only way we recognise our own quote: the
     // ingest guard checks the number the model actually read. When it fires,
     // "ingested" would be a lie — nothing was written.
     const authoredMatch = report.quotes_matched_authored > 0;
+    // "Ingested" has to mean LINES LANDED, not "no exception was thrown".
+    // quotes_ok counts reports without an error, and a head written with zero
+    // lines carried no error — so this said ingested:true, lines_written:0 and
+    // the operator was told a hollow quote was captured. The ingest now
+    // refuses that case outright; this makes the report agree with it.
+    const linesLanded = (report.lines_written || 0) > 0;
+    const ingestedForReal = !authoredMatch && report.quotes_ok > 0 && linesLanded;
+    const firstError = report.reports?.find((r) => r.error)?.error || null;
+
+    await recordAudit(ctx, {
+      action: "order_quote_attached", objectType: "order", objectId: orderId,
+      detail: {
+        document_id: documentId, ingested: ingestedForReal,
+        quote_number: extracted.quote_number || null,
+        lines_written: report.lines_written,
+        matched_authored: report.quotes_matched_authored > 0,
+        error: firstError,
+      },
+    });
 
     return json(res, 200, {
       attached: true,
-      ingested: !authoredMatch && report.quotes_ok > 0,
+      ingested: ingestedForReal,
       matched_authored: authoredMatch,
       reason: authoredMatch
         ? `That quote was authored in Anvil — linked as-is, and its existing lines were kept.`
-        : null,
+        : (!ingestedForReal
+            ? (firstError
+                || "The document was attached, but no priced lines could be read from it — so it is not being compared against this PO.")
+            : null),
       quote_number: extracted.quote_number || null,
       lines_written: report.lines_written,
       mappings_learned: report.mappings_learned,

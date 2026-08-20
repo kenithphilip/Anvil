@@ -59,13 +59,36 @@ const n = (v) => {
 // discount_pct is derived rather than read: a printed discount column is rarer
 // than the two price columns it would explain, and deriving keeps it
 // consistent with the two numbers actually stored.
-const pct = (list, net) => {
+// UNITS. quote_lines stores rates as FRACTIONS, not percentages:
+// discount_pct is documented in migration 108 as a "fraction (0.0 to 1.0)"
+// and quote_lines_with_totals computes listed_unit_price * (1.0 -
+// discount_pct); the tax columns are numeric(8,6) and migration 114 CHECKs
+// that their sum is <= 1.0, naming the exact failure it guards against —
+// "entering 9 instead of 0.09".
+//
+// The extractor speaks the other language: QUOTE_TOOL's prompt asks for "tax
+// RATES as percentages", so it returns 9 for 9%. Converting at this boundary
+// is the whole job of these two helpers, and getting it wrong is not a
+// rounding error — a discount_pct of 1.99 makes the view compute
+// 1910 * (1 - 1.99) and price the line at MINUS 1890.
+
+// Percent -> fraction, for a value the extractor states as a percentage.
+const asFraction = (v) => {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  // numeric(8,6) holds six decimals; 9% -> 0.09, 0.25% cess -> 0.0025.
+  return Math.round((n / 100) * 1e6) / 1e6;
+};
+
+// Discount as a FRACTION of the list price, matching the column's contract.
+const discountFraction = (list, net) => {
   if (list == null || net == null) return null;
   const l = Number(list);
   if (!Number.isFinite(l) || l <= 0) return null;
-  const d = ((l - Number(net)) / l) * 100;
+  const d = (l - Number(net)) / l;
   if (!Number.isFinite(d) || d <= 0) return null;
-  return Math.round(d * 100) / 100;
+  return Math.round(d * 1e6) / 1e6;
 };
 
 export const toQuoteLineRow = (line, index) => {
@@ -83,7 +106,7 @@ export const toQuoteLineRow = (line, index) => {
     // "listed" column exactly as it did before this change.
     listed_unit_price: list ?? governing,
     discounted_unit_price: governing,
-    discount_pct: pct(list, governing),
+    discount_pct: discountFraction(list, governing),
     line_amount: n(line?.amount ?? line?.line_amount),
     // MOQ and any per-row condition ride in remark, which migration 108
     // already provides. A quantity condition that is never captured cannot be
@@ -96,9 +119,13 @@ export const toQuoteLineRow = (line, index) => {
       if (!r) return tag;
       return new RegExp("MOQ", "i").test(r) ? r : r + " · " + tag;
     })(),
-    cgst_pct: n(line?.cgst_pct),
-    sgst_pct: n(line?.sgst_pct),
-    igst_pct: n(line?.igst_pct),
+    // Percent -> fraction. Passing 9 straight through made every GST-bearing
+    // quote fail migration 114's CHECK (9 + 9 = 18 > 1.0), which — before the
+    // ingest reported its errors honestly — surfaced as a quote head with
+    // zero lines and a cheerful "ingested: true".
+    cgst_pct: asFraction(line?.cgst_pct),
+    sgst_pct: asFraction(line?.sgst_pct),
+    igst_pct: asFraction(line?.igst_pct),
   };
 };
 

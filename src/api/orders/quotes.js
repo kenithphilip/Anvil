@@ -195,29 +195,10 @@ export default async function handler(req, res) {
       const row = attached.find((a) => a.document_id === detailDocId);
       if (!row) return json(res, 404, { error: { message: "That document is not attached to this order." } });
 
-      // A signed URL rather than proxying the bytes through this function:
-      // the PDF viewer streams it directly, and a 60s serverless budget is no
-      // place for a multi-megabyte passthrough.
-      let url = null;
-      let urlError = null;
-      const docRow = documents.find((d) => d.id === detailDocId);
-      if (docRow) {
-        const full = await svc.from("documents")
-          .select("storage_bucket, storage_path")
-          .eq("tenant_id", ctx.tenantId).eq("id", detailDocId).maybeSingle();
-        const b = full.data?.storage_bucket;
-        const pth = full.data?.storage_path;
-        if (b && pth) {
-          const signed = await svc.storage.from(b).createSignedUrl(pth, 60 * 10);
-          if (signed.error) urlError = signed.error.message;
-          else url = signed.data?.signedUrl || null;
-        } else {
-          // The row exists but its bytes never landed. Distinct from "the
-          // extraction failed", and the viewer must say which.
-          urlError = "This document has no stored file.";
-        }
-      }
-
+      // No signed URL here on purpose. ReviewDocPane resolves the document
+      // itself through /api/documents/<id> and re-signs before the ten-minute
+      // TTL expires; minting a second URL here would be a rival source of
+      // truth with a shorter life and no refresh.
       let detailLines = [];
       if (row.quote?.id) {
         const dl = await svc.from("quote_lines")
@@ -242,8 +223,7 @@ export default async function handler(req, res) {
         order_id: orderId,
         document: {
           id: row.document_id, filename: row.filename, uploaded_at: row.uploaded_at,
-          size_bytes: row.size_bytes ?? null, url, url_error: urlError,
-          url_expires_in_seconds: url ? 600 : null,
+          size_bytes: row.size_bytes ?? null,
         },
         quote: row.quote,
         superseded_by: row.superseded_by,

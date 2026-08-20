@@ -5,18 +5,22 @@
 // settled from a row count, only by putting the document and the extraction
 // side by side and letting the operator's eye do the comparison.
 //
-// Reuses PdfPagePreview (the same viewer the PO review pane uses, with its own
-// zoom) rather than an iframe: the CSP has no frame-src, so it falls back to
-// default-src 'self' and a cross-origin PDF in a frame is blocked outright.
-// PdfPagePreview renders through pdf.js to a canvas, and connect-src already
-// allows the Supabase storage origin the signed URL points at.
+// The left pane is ReviewDocPane, the SAME component the PO review tab uses —
+// not a second viewer. It resolves the document itself, renders PDF via pdf.js
+// (an iframe would be blocked: the CSP declares no frame-src, so it falls back
+// to default-src 'self' and a cross-origin PDF cannot load), carries the zoom
+// controls, falls back by mime type, and ships its own download button.
+//
+// It also RE-SIGNS the URL every nine minutes. The signed URLs this app issues
+// live for ten, so a viewer that resolved one once — as an earlier draft of
+// this file did — renders a broken page for anyone who leaves the modal open
+// while they check the figures. Which is the entire use case.
 
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Chip, Modal } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
-
-const PdfPagePreview = React.lazy(() => import("./PdfPagePreview"));
+import { ReviewDocPane } from "./ReviewPane";
 
 interface Line {
   line_index: number | null;
@@ -70,32 +74,6 @@ export const QuoteViewer: React.FC<{
     return () => { live = false; };
   }, [orderId, documentId]);
 
-  const download = async () => {
-    const url = data?.document?.url;
-    if (!url) return;
-    setBusy(true);
-    try {
-      // Fetched to a blob rather than linked directly: `download` is ignored
-      // on a cross-origin href, so a plain link would navigate away from the
-      // order instead of saving the file under its real name.
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`Could not fetch the file (${resp.status})`);
-      const blob = await resp.blob();
-      const obj = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = obj;
-      a.download = data?.document?.filename || "quote.pdf";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(obj), 10_000);
-    } catch (e: any) {
-      setErr(e?.message || String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const detach = async () => {
     setBusy(true);
     try {
@@ -145,26 +123,15 @@ export const QuoteViewer: React.FC<{
                 </span>
               )}
               <span style={{ flex: 1 }} />
-              <Btn sm kind="ghost" disabled={busy || !doc?.url} onClick={download}>
-                {Icon.download} Download
-              </Btn>
+              {/* Download lives inside ReviewDocPane's own header, beside the
+                  filename — one download control, not two competing ones. */}
             </div>
 
             {/* Document left, extraction right — the whole point is comparing
                 them without switching context. Stacks on a narrow viewport. */}
             <div className="qv-split">
               <div className="qv-doc">
-                {doc?.url ? (
-                  <React.Suspense fallback={<div className="mono-sm" style={{ color: "var(--ink-3)" }}>Rendering…</div>}>
-                    <PdfPagePreview url={doc.url} filename={doc.filename} />
-                  </React.Suspense>
-                ) : (
-                  <Banner kind="warn" icon={Icon.info} title="The document cannot be shown">
-                    <span className="mono-sm">
-                      {doc?.url_error || "No file is stored for this document."}
-                    </span>
-                  </Banner>
-                )}
+                <ReviewDocPane docId={documentId} />
               </div>
 
               <div className="qv-lines">

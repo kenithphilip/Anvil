@@ -28,15 +28,11 @@ describe("the detail endpoint", () => {
     expect(src).toMatch(/is not attached to this order/);
   });
 
-  it("returns a signed URL rather than proxying the bytes", () => {
-    // A multi-megabyte passthrough inside a 60s function is a timeout waiting
-    // to happen.
-    expect(src).toMatch(/createSignedUrl\(pth, 60 \* 10\)/);
-  });
-
-  it("distinguishes 'no file stored' from 'extraction failed'", () => {
-    expect(src).toMatch(/has no stored file/);
-    expect(src).toMatch(/url_error/);
+  it("does NOT mint a second signed URL", () => {
+    // ReviewDocPane resolves the document through /api/documents/<id> and
+    // re-signs before the TTL expires. A rival URL here would have a shorter
+    // life and no refresh.
+    expect(src).not.toMatch(/createSignedUrl/);
   });
 
   it("converts stored FRACTIONS back to percentages for display", () => {
@@ -97,25 +93,24 @@ describe("the viewer", () => {
   const src = read("src/v3-app/components/QuoteViewer.tsx");
   const code = strip(src);
 
-  it("reuses PdfPagePreview instead of an iframe", () => {
-    // The CSP has no frame-src, so it falls back to default-src 'self' and a
-    // cross-origin PDF in a frame is blocked outright.
-    expect(code).toMatch(/import\("\.\/PdfPagePreview"\)/);
+  it("reuses ReviewDocPane rather than building a second viewer", () => {
+    // ReviewDocPane is what the PO review tab already uses: it resolves the
+    // document, renders via pdf.js, zooms, falls back by mime, and downloads.
+    expect(code).toMatch(/import \{ ReviewDocPane \} from "\.\/ReviewPane"/);
+    expect(code).toMatch(/<ReviewDocPane docId=\{documentId\} \/>/);
     expect(code).not.toMatch(/<iframe|<embed|<object/);
   });
 
-  it("loads the PDF viewer lazily", () => {
-    // pdf.js is a large chunk; every order screen should not pay for it.
-    expect(code).toMatch(/React\.lazy\(/);
-    expect(code).toMatch(/React\.Suspense/);
+  it("does not resolve its own signed URL", () => {
+    // Signed URLs here live ten minutes and ReviewDocPane re-signs at nine.
+    // A viewer that resolved one once — as an earlier draft did — renders a
+    // broken page for anyone who leaves the modal open while checking figures,
+    // which is the entire use case.
+    expect(code).not.toMatch(/createObjectURL|doc\?\.url/);
   });
 
-  it("downloads through a blob so the filename survives", () => {
-    // `download` is ignored on a cross-origin href — a plain link would
-    // navigate away from the order instead of saving the file.
-    expect(code).toMatch(/URL\.createObjectURL\(blob\)/);
-    expect(code).toMatch(/a\.download = data\?\.document\?\.filename/);
-    expect(code).toMatch(/revokeObjectURL/);
+  it("has exactly one download control, ReviewDocPane's own", () => {
+    expect(code).not.toMatch(/onClick=\{download\}/);
   });
 
   it("shows the document beside the extraction", () => {

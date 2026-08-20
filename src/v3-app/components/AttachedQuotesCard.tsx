@@ -30,11 +30,19 @@ interface QuoteInfo {
   authored_in_anvil?: boolean | null;
 }
 
+interface Superseded {
+  document_id: string;
+  basis: "content_hash" | "same_name_and_size";
+  certain: boolean;
+}
+
 interface Attached {
   document_id: string;
   filename: string;
   uploaded_at?: string | null;
   ingested: boolean;
+  // An earlier copy of a document that DID ingest — not a failure.
+  superseded_by?: Superseded | null;
   quote: QuoteInfo | null;
 }
 
@@ -105,7 +113,9 @@ export const AttachedQuotesCard: React.FC<{ orderId: string; refreshKey?: number
         <div key={a.document_id} className="mono-sm"
              style={{ display: "flex", flexDirection: "column", gap: 2, padding: "6px 0", borderTop: "1px solid var(--hairline-3)" }}>
           <div className="row" style={{ gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
-            <Chip k={a.ingested ? "good" : "warn"}>{a.ingested ? "read" : "not read"}</Chip>
+            <Chip k={a.ingested ? "good" : a.superseded_by ? "info" : "warn"}>
+              {a.ingested ? "read" : a.superseded_by ? "duplicate" : "not read"}
+            </Chip>
             <span style={{ fontWeight: 600, wordBreak: "break-all" }}>{a.filename}</span>
             {a.quote?.quote_number && <span style={{ color: "var(--ink-3)" }}>{a.quote.quote_number}</span>}
             {a.quote?.revision && <Chip k="info">{a.quote.revision}</Chip>}
@@ -129,6 +139,12 @@ export const AttachedQuotesCard: React.FC<{ orderId: string; refreshKey?: number
                 {a.quote.effective_date_is_revision && " (revised)"}
               </span>
               {a.quote.status && <span>{String(a.quote.status).toLowerCase()}</span>}
+            </div>
+          ) : a.superseded_by ? (
+            <div style={{ color: "var(--ink-3)" }}>
+              {a.superseded_by.certain
+                ? "The same file, uploaded more than once. The copy above carries the quote — nothing is missing."
+                : "Looks like another copy of the same file (same name and size). The copy above carries the quote."}
             </div>
           ) : (
             <div style={{ color: "var(--amber, var(--ink-3))" }}>

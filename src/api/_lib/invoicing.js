@@ -5,6 +5,8 @@
 // template is "{prefix}-{number:04}" producing "INV-0001"; admins can
 // override via tenant_settings.
 
+import { lineAmount } from "./line-compare.js";
+
 const formatInteger = (n, width) => String(n).padStart(width, "0");
 
 export const formatInvoiceNumber = (number, format, prefix) => {
@@ -39,12 +41,45 @@ export const nextInvoiceNumber = async (svc, tenantId) => {
 };
 
 // Build an invoice payload from an order. Caller persists the row.
+// A real number, or null. Number(undefined) is NaN and NaN is falsy, so the
+// usual `Number(x) || fallback` idiom hides a non-numeric field instead of
+// falling back from it — which is how the totals below produced NaN.
+const fin = (v) => {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+const firstFinite = (...vals) => {
+  for (const v of vals) { const n = fin(v); if (n != null) return n; }
+  return null;
+};
+
 export const invoiceFromOrder = (order, opts) => {
   const so = order.result?.salesOrder || {};
   const items = Array.isArray(so.lineItems) ? so.lineItems : [];
-  const subtotal = Number(so.subtotal) || items.reduce((s, it) => s + (Number(it.total) || (Number(it.rate) * Number(it.quantity || 0))), 0);
-  const tax = Number(so.taxTotal || so.gstTotal) || 0;
-  const grand = Number(so.grandTotal || so.total) || (subtotal + tax);
+  // Sum the lines through the SHARED accessor rather than a hand-picked set of
+  // field names.
+  //
+  // The old fallback read it.total / it.rate / it.quantity — a vocabulary NO
+  // producer of these lines actually emits. DocAI extraction writes
+  // lineTotal / unitPrice / quantity (docai/line-schema.js) and
+  // quotes/convert.js writes amount / rate / qty. So the fallback yielded NaN
+  // for an extracted order (Number(undefined) is NaN, NaN is falsy, so it fell
+  // through to NaN * qty) and 0 for a converted one (rate present, but
+  // `it.quantity` undefined → Number(undefined || 0) → rate * 0). Both were
+  // written straight onto the invoice.
+  //
+  // lineAmount reads every alias in use and derives qty * rate only when no
+  // printed total is present.
+  const linesSubtotal = items.reduce((s, it) => {
+    const a = lineAmount(it);
+    return a == null ? s : s + a;
+  }, 0);
+  // `?? ` not `|| `: a genuine zero subtotal must win over the derived sum,
+  // and a non-numeric one must fall through rather than poison the result.
+  const subtotal = fin(so.subtotal) ?? linesSubtotal;
+  const tax = firstFinite(so.taxTotal, so.gstTotal) ?? 0;
+  const grand = firstFinite(so.grandTotal, so.total) ?? (subtotal + tax);
   const dueDate = opts?.due_date || (() => {
     const d = new Date();
     d.setUTCDate(d.getUTCDate() + (opts?.net_days || 30));

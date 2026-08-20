@@ -157,6 +157,28 @@ export const ingestQuote = async (svc, ctx, input = {}) => {
   const rows = (Array.isArray(lines) ? lines : []).map(toQuoteLineRow)
     .filter((r) => r.part_no || r.description || r.customer_part_number);
 
+  // A HOLLOW QUOTE IS NOT AN INGEST.
+  //
+  // Observed in production: a real quotation attached, the extractor returned
+  // line objects carrying none of part_no / description / customer_part_number,
+  // every one was dropped by the filter above, and this function wrote the
+  // HEAD anyway — quote number, currency, grand_total — with zero lines, and
+  // reported no error. attach_quote then read "no error" as success and
+  // recorded `ingested: true, lines_written: 0`.
+  //
+  // Two harms, both silent. The operator was told the upload worked. And the
+  // reconciler pools every non-cancelled quote for the customer, so the empty
+  // shell joined the pool and could never match anything — which is what
+  // "0/2 matched across 0 quote(s)" in the audit log actually meant.
+  //
+  // Refused BEFORE any write: a head with no lines is worse than no row at
+  // all, because it looks like evidence the quote was captured.
+  if (!rows.length) {
+    report.error = "no usable lines could be read from the document — nothing was written";
+    report.lines_total = Array.isArray(lines) ? lines.length : 0;
+    return report;
+  }
+
   try {
     // Upsert the quote head. Keyed on (tenant, quote_number, version) so a
     // re-ingest updates rather than duplicating.
@@ -248,13 +270,17 @@ export const ingestQuote = async (svc, ctx, input = {}) => {
 
     // Replace this quote's lines wholesale: a re-ingest of a corrected PDF
     // should not leave stale rows behind.
-    if (rows.length) {
-      await svc.from("quote_lines").delete().eq("tenant_id", ctx.tenantId).eq("quote_id", quoteId);
-      const payload = rows.map((r) => ({ ...r, tenant_id: ctx.tenantId, quote_id: quoteId }));
-      const li = await svc.from("quote_lines").insert(payload);
-      if (li.error) report.error = "quote_lines insert: " + li.error.message;
-      else report.lines_written = payload.length;
+    await svc.from("quote_lines").delete().eq("tenant_id", ctx.tenantId).eq("quote_id", quoteId);
+    const payload = rows.map((r) => ({ ...r, tenant_id: ctx.tenantId, quote_id: quoteId }));
+    const li = await svc.from("quote_lines").insert(payload);
+    if (li.error) {
+      // The delete above already ran, so the quote now has NO lines. Say so
+      // and stop — carrying on to the identity flywheel would teach part
+      // mappings from a quote whose lines were just destroyed.
+      report.error = "quote_lines insert: " + li.error.message;
+      return report;
     }
+    report.lines_written = payload.length;
 
     // Seed the identity flywheel. Only for lines carrying BOTH codes, and only
     // where our code resolves EXACTLY to an item.

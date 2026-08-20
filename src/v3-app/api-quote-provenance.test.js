@@ -177,7 +177,18 @@ describe("attach_quote wiring", () => {
 
   it("does not report ingested:true when the ingest guard kept the existing lines", () => {
     const src = read("src/api/orders/attach_quote.js");
-    expect(src).toMatch(/ingested:\s*!authoredMatch\s*&&\s*report\.quotes_ok\s*>\s*0/);
+    expect(src).toMatch(/const ingestedForReal = !authoredMatch/);
+    expect(src).toMatch(/ingested: ingestedForReal/);
+  });
+
+  it("requires LINES to have landed before calling it an ingest", () => {
+    // quotes_ok only counts reports without an error, and a head written with
+    // zero lines carried no error — so this reported ingested:true with
+    // lines_written:0 in production and told the operator a hollow quote had
+    // been captured.
+    const src = read("src/api/orders/attach_quote.js");
+    expect(src).toMatch(/linesLanded = \(report\.lines_written \|\| 0\) > 0/);
+    expect(src).toMatch(/ingestedForReal = [^;]*&&\s*linesLanded/);
   });
 
   it("the panel preflights before extracting", () => {

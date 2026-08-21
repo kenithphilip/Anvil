@@ -28,7 +28,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-import { weightCandidates } from "../_lib/item-weight-capture.js";
+import { weightCandidates, volumeCandidates } from "../_lib/item-weight-capture.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -65,14 +65,21 @@ export default async function handler(req, res) {
     // lists routinely state "KGS" once at the top. Defaulting to kg instead
     // would silently mis-scale a document printed in pounds.
     const { candidates, skipped } = weightCandidates(lines, { weight_uom: extracted.weight_uom || null });
+    // Volume matters independently of weight: estimateContainers takes the MAX
+    // of the weight-fill and volume-fill ratios, and LCL ocean is priced on
+    // weight-or-measure. A master with weights and no volumes still cannot
+    // size a light-and-bulky shipment.
+    const vol = volumeCandidates(lines);
+    const volByPart = new Map(vol.candidates.map((c) => [c.part_no, c.volume_cbm]));
 
     let learned = 0;
+    let volumesLearned = 0;
     const unknownParts = [];
     if (candidates.length) {
       // Exact, case-folded match only — the same rule quote ingestion uses. A
       // near-miss on a part code is a different SKU, and a weight written to
       // the wrong part is invisible and permanent.
-      const wanted = candidates.map((c) => c.part_no);
+      const wanted = [...new Set([...candidates.map((c) => c.part_no), ...volByPart.keys()])];
       const imQ = await svc.from("item_master")
         .select("id, part_no").eq("tenant_id", ctx.tenantId).limit(5000);
       const byPart = new Map();
@@ -81,9 +88,26 @@ export default async function handler(req, res) {
         if (k && wanted.includes(k)) byPart.set(k, r.id);
       }
 
-      for (const c of candidates) {
-        const itemId = byPart.get(c.part_no);
-        if (!itemId) { unknownParts.push(c.part_no); continue; }
+      // Every part the document taught something about — a row may carry a
+      // volume and no usable weight, or the reverse.
+      const parts = [...new Set([...candidates.map((c) => c.part_no), ...volByPart.keys()])];
+      for (const partNo of parts) {
+        const c = candidates.find((x) => x.part_no === partNo) || null;
+        const itemId = byPart.get(partNo);
+        if (!itemId) { unknownParts.push(partNo); continue; }
+
+        // Volume is written separately and unconditionally of weight, filling
+        // a blank only. A part whose weight is already known can still be
+        // missing its measurement.
+        const cbm = volByPart.get(partNo);
+        if (cbm != null) {
+          const vu = await svc.from("item_master").update({ volume_cbm: cbm })
+            .eq("tenant_id", ctx.tenantId).eq("id", itemId)
+            .is("volume_cbm", null);
+          if (!vu.error) volumesLearned += 1;
+        }
+        if (!c) continue;
+
         const patch = {
           weight_kg: c.weight_kg,
           weight_source: "document",
@@ -110,7 +134,8 @@ export default async function handler(req, res) {
       detail: {
         filename: docQ.data.filename,
         lines: lines.length, considered: candidates.length,
-        learned, refused: skipped.length, unmatched_parts: unknownParts.length,
+        learned, volumes_learned: volumesLearned,
+        refused: skipped.length + vol.skipped.length, unmatched_parts: unknownParts.length,
       },
     });
 
@@ -120,12 +145,14 @@ export default async function handler(req, res) {
       lines_read: lines.length,
       considered: candidates.length,
       learned,
+      volumes_considered: vol.candidates.length,
+      volumes_learned: volumesLearned,
       // Every reason a weight did NOT land, kept apart. "Already had one" is
       // the healthy steady state and must not read like a failure, while a
       // refused basis or an unmatched part is something to act on.
       already_had_weight: candidates.length - learned - unknownParts.length,
       unmatched_parts: unknownParts,
-      skipped,
+      skipped: [...skipped, ...vol.skipped],
     });
   } catch (err) {
     sendError(res, err);

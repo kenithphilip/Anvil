@@ -167,3 +167,55 @@ describe("migration 217", () => {
     }
   });
 });
+
+describe("volume, which the first cut extracted and dropped", () => {
+  // PACKING_LIST_TOOL had a volume_cbm slot and nothing read it. Not cosmetic:
+  // estimateContainers takes the MAX of the weight-fill and volume-fill
+  // ratios, and LCL ocean is priced on weight-or-measure. A master with
+  // weights and no volumes cannot size a light-and-bulky shipment — which is
+  // exactly the case where volume decides.
+  const { unitVolumeFromLine, volumeCandidates, MAX_PLAUSIBLE_UNIT_CBM } = require("../api/_lib/item-weight-capture.js");
+
+  it("divides a row measurement by the quantity", () => {
+    expect(unitVolumeFromLine({ volume_cbm: 1.2, volume_basis: "line_total", quantity: 30 }).cbm)
+      .toBeCloseTo(0.04, 6);
+  });
+
+  it("takes a per-unit measurement as printed", () => {
+    expect(unitVolumeFromLine({ volume_cbm: 0.04, volume_basis: "per_unit" }).cbm).toBe(0.04);
+  });
+
+  it("REFUSES an ambiguous basis, exactly as weight does", () => {
+    expect(unitVolumeFromLine({ volume_cbm: 1.2 }).reason).toBe("ambiguous_basis");
+  });
+
+  it("refuses a unit bigger than a container", () => {
+    expect(unitVolumeFromLine({ volume_cbm: MAX_PLAUSIBLE_UNIT_CBM + 1, volume_basis: "per_unit" }).reason)
+      .toBe("implausible_magnitude");
+  });
+
+  it("labels its skips so weight and volume refusals are distinguishable", () => {
+    const { skipped } = volumeCandidates([{ partNumber: "A", volume_cbm: 1.2 }]);
+    expect(skipped[0]).toMatchObject({ part_no: "A", field: "volume" });
+  });
+
+  it("the tool asks for a volume basis", () => {
+    const src = require("node:fs").readFileSync("src/api/_lib/docai/claude.js", "utf8");
+    const tool = src.slice(src.indexOf("PACKING_LIST_TOOL"), src.indexOf("PART_DRAWING_TOOL"));
+    expect(tool).toMatch(/volume_basis: \{[^}]*enum: \["per_unit", "line_total", null\]/);
+  });
+
+  it("the ingest writes it, filling a blank only", () => {
+    const src = require("node:fs").readFileSync("src/api/documents/packing_list_ingest.js", "utf8");
+    expect(src).toMatch(/update\(\{ volume_cbm: cbm \}\)/);
+    expect(src).toMatch(/\.is\("volume_cbm", null\)/);
+  });
+
+  it("writes volume independently of weight", () => {
+    // A row may carry a measurement and no usable weight, or the reverse, and
+    // a part whose weight is known can still be missing its volume.
+    const src = require("node:fs").readFileSync("src/api/documents/packing_list_ingest.js", "utf8");
+    expect(src).toMatch(/if \(!c\) continue;/);
+    expect(src).toMatch(/volumes_learned/);
+  });
+});

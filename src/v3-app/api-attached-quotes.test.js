@@ -76,28 +76,32 @@ describe("the endpoint", () => {
 });
 
 describe("the card", () => {
-  const src = read("src/v3-app/components/AttachedQuotesCard.tsx");
+  const src = read("src/v3-app/components/QuotesStrip.tsx");
   const code = strip(src);
 
   it("shows filename, line count, value and date", () => {
-    expect(code).toContain("a.filename");
+    expect(code).toMatch(/a\.quote\?\.quote_number \|\| a\.filename/);
     expect(code).toMatch(/line_count/);
-    expect(code).toMatch(/fmtMoney\(a\.quote\.grand_total/);
-    expect(code).toMatch(/fmtDate\(a\.quote\.effective_date\)/);
+    expect(code).toMatch(/money\(a\.quote\.grand_total/);
+    expect(code).toMatch(/shortDate\(a\.quote\.effective_date\)/);
   });
 
   it("says when the total was summed from lines rather than read off the document", () => {
     // A derived figure presented as the quoted total is a number the operator
     // cannot check against the PDF in front of them.
-    expect(code).toContain("(from lines)");
+    // Marked with "~" rather than the longer label — a derived total must still
+    // be distinguishable from one read off the document.
+    expect(code).toMatch(/a\.quote\.grand_total == null \? "~" : ""/);
   });
 
   it("marks a revision date as such", () => {
-    expect(code).toContain("(revised)");
+    expect(code).toMatch(/effective_date_is_revision && " rev"/);
   });
 
   it("says plainly when a document was attached but not read", () => {
-    expect(code).toMatch(/nothing was read from it/i);
+    // The strip flags it; the pane explains it.
+    expect(code).toMatch(/"unread"/);
+    expect(strip(read("src/v3-app/components/QuotePane.tsx"))).toMatch(/Nothing was extracted/i);
   });
 
   it("does not set error state after unmount", () => {
@@ -118,15 +122,15 @@ describe("wiring", () => {
 
   it("has a client method, and the card calls it", () => {
     expect(strip(read("src/client/anvil-client.js"))).toMatch(/attachedQuotes:\s*async \(orderId\)/);
-    expect(read("src/v3-app/components/AttachedQuotesCard.tsx")).toMatch(/orders\?\.attachedQuotes\?\./);
+    expect(read("src/v3-app/components/QuotesStrip.tsx")).toMatch(/orders\?\.attachedQuotes\?\./);
   });
 
   it("is mounted on the workspace next to the attach control", () => {
     const ws = read("src/v3-app/screens/so-workspace.tsx");
-    const panel = ws.indexOf("<AttachQuotePanel");
-    const card = ws.indexOf("<AttachedQuotesCard");
-    expect(panel).toBeGreaterThan(-1);
-    expect(card).toBeGreaterThan(panel);
+    // Three stacked Cards became one strip of three columns.
+    expect(ws.indexOf("<QuotesStrip")).toBeGreaterThan(-1);
+    expect(ws).toMatch(/verdict=\{/);
+    expect(ws).not.toMatch(/<AttachQuotePanel|<AttachedQuotesCard/);
   });
 
   it("refreshes after an upload", () => {

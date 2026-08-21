@@ -5106,3 +5106,51 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .qv-doc { min-width: 0; max-height: 68vh; overflow: auto; border: 1px solid var(--hairline-2); border-radius: var(--r-3); background: var(--paper-2); }
 .qv-lines { min-width: 0; max-height: 68vh; overflow: auto; }
 @media (max-width: 1100px) { .qv-split { grid-template-columns: minmax(0, 1fr); } .qv-doc { max-height: 44vh; } }
+
+/* ── Quotes strip ───────────────────────────────────────────
+   Attach / attached / verdict as three columns rather than three
+   stacked Cards. The Cards cost an eyebrow and a title each and
+   the operator reads all three as one question anyway. */
+.qs { border: 1px solid var(--hairline-2); border-radius: var(--r-3); background: var(--paper); }
+.qs-grid { display: grid; grid-template-columns: minmax(180px, 0.8fr) minmax(0, 1.6fr) minmax(220px, 1.2fr); gap: 0; }
+.qs-col { padding: 9px 12px; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.qs-col + .qs-col { border-left: 1px solid var(--hairline-3); }
+.qs-lbl { font-family: var(--mono); font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-4); }
+.qs-hint { font-family: var(--mono); font-size: 11px; color: var(--ink-3); line-height: 1.45; }
+.qs-row {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  background: transparent; border: 0; border-radius: var(--r-2);
+  padding: 2px 4px; margin-left: -4px; cursor: pointer; text-align: left;
+  font-family: var(--mono); font-size: 11.5px; color: var(--ink);
+}
+.qs-row:hover { background: var(--paper-3); }
+.qs-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.qs-file { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.qs-rev { font-size: 9.5px; padding: 0 4px; border: 1px solid var(--hairline); border-radius: 3px; color: var(--ink-3); flex: none; }
+.qs-facts { color: var(--ink-3); flex: none; }
+/* The verdict column holds a Banner, which brings its own box. */
+.qs-col-verdict > .banner { margin: 0; }
+@media (max-width: 1000px) {
+  .qs-grid { grid-template-columns: minmax(0, 1fr); }
+  .qs-col + .qs-col { border-left: 0; border-top: 1px solid var(--hairline-3); }
+}
+
+/* ── Quotes tab ─────────────────────────────────────────────
+   Document left, extraction right — the same habit the Reconcile
+   tab established for the PO. Stacks under 1100px so the table
+   keeps a readable width on a laptop. */
+.qp { display: flex; flex-direction: column; gap: 8px; }
+.qp-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.qp-tab {
+  font-family: var(--mono); font-size: 11px; padding: 3px 9px; cursor: pointer;
+  background: var(--paper-2); color: var(--ink-2);
+  border: 1px solid var(--hairline); border-radius: var(--r-2);
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.qp-tab.is-active { background: var(--paper-4); color: var(--ink); border-color: var(--ink-4); font-weight: 600; }
+.qp-tab-flag { font-size: 9px; color: var(--amber); }
+.qp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.qp-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: start; }
+.qp-doc { min-width: 0; max-height: 72vh; overflow: auto; border: 1px solid var(--hairline-2); border-radius: var(--r-3); background: var(--paper-2); }
+.qp-lines { min-width: 0; max-height: 72vh; overflow: auto; }
+@media (max-width: 1100px) { .qp-split { grid-template-columns: minmax(0, 1fr); } .qp-doc { max-height: 46vh; } }

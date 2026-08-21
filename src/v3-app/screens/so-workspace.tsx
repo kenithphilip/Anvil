@@ -5,8 +5,9 @@ import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Modal, Prov, Steps, Stream, W
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 import { BusyAction, busyLabel, busyVerb } from "../lib/busy-actions";
-import { AttachQuotePanel } from "../components/AttachQuotePanel";
-import { AttachedQuotesCard } from "../components/AttachedQuotesCard";
+import { QuotesStrip } from "../components/QuotesStrip";
+import type { AttachedQuote } from "../components/QuotesStrip";
+import { QuotePane } from "../components/QuotePane";
 // The gate's own predicate, not a copy: a UI that disagreed with the server
 // about what blocks would offer a button that 409s, or hide the only way out.
 import { isUnresolvedBlocker as isBlockingFinding } from "../../api/_lib/blocking-findings.js";
@@ -167,6 +168,10 @@ const WiredSOWorkspace = () => {
   // other hooks — this component early-returns further down, and a useState
   // placed after those changes the hook count between renders.
   const [quotesBump, setQuotesBump] = u(0);
+  // Which attached quote the Quotes tab is showing, and the list the strip
+  // already fetched — so opening the tab does not re-request it.
+  const [quoteDoc, setQuoteDoc] = u<string | null>(null);
+  const [attachedQuotes, setAttachedQuotes] = u<AttachedQuote[]>([]);
   const [gapsOpen, setGapsOpen] = u(false);
   const [confirmGap, setConfirmGap] = u<string | null>(null);
   const [resolvingCode, setResolvingCode] = u<string | null>(null);
@@ -1806,6 +1811,9 @@ const WiredSOWorkspace = () => {
     { id: "margin", label: "Margin cockpit" },
     { id: "why", label: "Why" },
     { id: "evidence", label: "Evidence" },
+    // The quote beside what was read out of it. A tab rather than an overlay:
+    // checking line items is slow comparative work that needs the room.
+    { id: "quotes", label: "Quotes", count: attachedQuotes.length || null },
     { id: "approval", label: "Approval" },
     { id: "tally", label: "Tally" },
     { id: "schedule", label: "Schedule", count: scheduleRows.length || null },
@@ -2052,16 +2060,47 @@ const WiredSOWorkspace = () => {
       {/* Attaching a quote is how the operator FEEDS the comparison below, so
           it sits directly above it rather than on a separate screen. Several
           quotes can back one PO; the reconciler already pools them all. */}
-      <AttachQuotePanel
+      {/* Attach, attached, and verdict as ONE strip of three columns. These
+          were three stacked Cards, each with an eyebrow and a title, using
+          most of a screen to say what fits on two lines — and an operator
+          reads them as a single question anyway: is this PO backed by a
+          quote, and does it agree? The verdict column carries the headline;
+          the full breakdown still renders below, but only when there IS one,
+          so the clean case collapses to a line. */}
+      <QuotesStrip
         orderId={o.id}
         hasCustomer={!!o.customer_id}
+        refreshKey={quotesBump}
+        onLoaded={setAttachedQuotes}
         onAttached={() => { setQuotesBump((n) => n + 1); rerunReconcile(o); }}
+        onOpen={(docId) => { setQuoteDoc(docId); setTab("quotes"); }}
+        verdict={(() => {
+          const recon = o.result?.quoteReconciliation;
+          const canReconcile = canWrite && o.status !== "CANCELLED" && !!o.customer_id;
+          const reBtn = canReconcile ? (
+            <Btn sm kind="ghost" disabled={!!busy} onClick={() => rerunReconcile(o)} title="Re-fetch the customer's quotes and re-verify price, quantity + payment terms">
+              {Icon.cycle} {busyVerb(busy, "reconcile", "reconcile")}
+            </Btn>
+          ) : null;
+          if (!recon) {
+            return (
+              <div className="qs-hint" style={{ display: "flex", flexDirection: "column", gap: 5, alignItems: "flex-start" }}>
+                <span>Not compared yet.</span>{reBtn}
+              </div>
+            );
+          }
+          const s = recon.summary || {};
+          const bad = (s.price_mismatch || 0) + (s.description_mismatch || 0) + (s.unmatched || 0);
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 5, alignItems: "flex-start" }}>
+              <span className="mono-sm" style={{ fontWeight: 600, color: bad ? "var(--amber)" : "var(--sage)" }}>
+                {bad ? `${s.matched || 0}/${s.total || 0} matched · ${bad} to review` : `Verified — ${s.matched || 0}/${s.total || 0} matched`}
+              </span>
+              {reBtn}
+            </div>
+          );
+        })()}
       />
-      {/* What is actually on the order, standing rather than in a toast. The
-          upload panel reports a result and then re-renders it away; the
-          reconcile banner below names only the quotes that MATCHED, so a quote
-          that attached and extracted nothing appears in neither. */}
-      <AttachedQuotesCard orderId={o.id} refreshKey={quotesBump} />
       {(() => {
         const recon = o.result?.quoteReconciliation;
         const canReconcile = canWrite && o.status !== "CANCELLED" && !!o.customer_id;
@@ -2075,18 +2114,17 @@ const WiredSOWorkspace = () => {
             {Icon.cycle} {busyVerb(busy, "reconcile", "reconcile")}
           </Btn>
         ) : null;
-        if (!recon) {
-          return (
-            <Banner kind="info" icon={Icon.info} title="Not yet reconciled against quotes"
-                    action={<>{reBtn}{soBtn}</>}>
-              Reconcile to auto-match this order's lines to the customer's quotes and verify price, description, quantity, payment terms + incoterms.
-            </Banner>
-          );
-        }
+        // The strip's verdict column already carries "not compared yet" and
+        // the reconcile control; repeating it as a full-width banner is the
+        // clutter this change exists to remove.
+        if (!recon) return null;
         const s = recon.summary || {};
         const flags = Array.isArray(recon.flags) ? recon.flags : [];
         const pt = recon.payment_terms;
         const clean = flags.length === 0;
+        // Quoted-but-not-ordered is not a "flag", so a PO short against the
+        // agreed quote would otherwise vanish with the banner.
+        const gapCount = outstandingGaps(recon.quoted_not_ordered, draftLines).length;
         // Header-level verdicts render on their own lines below; everything
         // else is per-line. Filtering by an explicit set rather than by
         // "not payment_terms" so a new header verdict cannot leak into the
@@ -2097,6 +2135,11 @@ const WiredSOWorkspace = () => {
         const ic = recon.incoterms;
         const mod = recon.mod_bom;
         const lineFlags = flags.filter((f: any) => !HEADER_VERDICTS.has(f.verdict));
+        // Nothing to review: the strip's verdict column has already said
+        // "Verified — n/n matched", and a full-width green banner repeating it
+        // is the clutter this change exists to remove. The gap list is still
+        // reachable below because quoted-but-not-ordered is not "clean".
+        if (clean && !gapCount) return null;
         return (
           <Banner
             kind={clean ? "good" : "warn"}
@@ -2721,6 +2764,16 @@ const WiredSOWorkspace = () => {
               <div className="mono-sm" style={{ color: "var(--ink-3)" }}>Evidence map is empty. After OCR + extraction completes, every populated field has a citation here.</div>
             )}
           </Card>
+        )}
+
+        {tab === "quotes" && (
+          <QuotePane
+            orderId={o.id}
+            attached={attachedQuotes}
+            selectedDocId={quoteDoc}
+            onSelect={setQuoteDoc}
+            onChanged={() => { setQuoteDoc(null); setQuotesBump((n) => n + 1); }}
+          />
         )}
 
         {tab === "approval" && (

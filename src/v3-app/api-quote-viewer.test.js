@@ -90,14 +90,14 @@ describe("detaching a redundant copy", () => {
 });
 
 describe("the viewer", () => {
-  const src = read("src/v3-app/components/QuoteViewer.tsx");
+  const src = read("src/v3-app/components/QuotePane.tsx");
   const code = strip(src);
 
   it("reuses ReviewDocPane rather than building a second viewer", () => {
     // ReviewDocPane is what the PO review tab already uses: it resolves the
     // document, renders via pdf.js, zooms, falls back by mime, and downloads.
     expect(code).toMatch(/import \{ ReviewDocPane \} from "\.\/ReviewPane"/);
-    expect(code).toMatch(/<ReviewDocPane docId=\{documentId\} \/>/);
+    expect(code).toMatch(/<ReviewDocPane docId=\{docId\} \/>/);
     expect(code).not.toMatch(/<iframe|<embed|<object/);
   });
 
@@ -114,9 +114,9 @@ describe("the viewer", () => {
   });
 
   it("shows the document beside the extraction", () => {
-    expect(code).toMatch(/qv-split/);
-    expect(code).toMatch(/qv-doc/);
-    expect(code).toMatch(/qv-lines/);
+    expect(code).toMatch(/qp-split/);
+    expect(code).toMatch(/qp-doc/);
+    expect(code).toMatch(/qp-lines/);
   });
 
   it("shows the list price only when it differs from the net price", () => {
@@ -124,9 +124,14 @@ describe("the viewer", () => {
     expect(code).toMatch(/l\.listed_unit_price !== l\.discounted_unit_price/);
   });
 
-  it("uses the house Modal, which already handles Escape and focus", () => {
-    expect(code).toMatch(/from "\.\.\/lib\/primitives"/);
-    expect(code).toMatch(/<Modal\b/);
+  it("is a TAB, not an overlay", () => {
+    // Checking line items against a document is slow comparative work. An
+    // overlay steals the room the comparison needs and adds a layer to
+    // dismiss before anything else can be seen.
+    expect(code).not.toMatch(/<Modal\b/);
+    const ws = read("src/v3-app/screens/so-workspace.tsx");
+    expect(ws).toMatch(/\{ id: "quotes", label: "Quotes"/);
+    expect(ws).toMatch(/tab === "quotes" && \(/);
   });
 
   it("does not set error state after the modal closes", () => {
@@ -144,17 +149,26 @@ describe("the viewer", () => {
   });
 });
 
-describe("the card opens it", () => {
-  const src = read("src/v3-app/components/AttachedQuotesCard.tsx");
+describe("the strip opens it", () => {
+  const src = read("src/v3-app/components/QuotesStrip.tsx");
+  const ws = read("src/v3-app/screens/so-workspace.tsx");
 
-  it("makes the filename the control", () => {
-    expect(src).toMatch(/onClick=\{\(\) => setViewing\(a\.document_id\)\}/);
+  it("makes each attached quote the control", () => {
+    expect(src).toMatch(/onClick=\{\(\) => onOpen\?\.\(a\.document_id\)\}/);
   });
 
-  it("mounts the viewer and refreshes after a detach", () => {
-    expect(src).toMatch(/<QuoteViewer/);
-    expect(src).toMatch(/onDetached=\{\(\) => setBump/);
-    expect(src).toMatch(/\[orderId, refreshKey, bump\]/);
+  it("opening one switches to the Quotes tab focused on that document", () => {
+    expect(ws).toMatch(/onOpen=\{\(docId\) => \{ setQuoteDoc\(docId\); setTab\("quotes"\); \}\}/);
+  });
+
+  it("hands its list up rather than making the tab refetch it", () => {
+    // Two components fetching the same list is two answers to one question.
+    expect(src).toMatch(/onLoaded\?\.\(list\)/);
+    expect(ws).toMatch(/onLoaded=\{setAttachedQuotes\}/);
+  });
+
+  it("refreshes after a duplicate is removed", () => {
+    expect(ws).toMatch(/onChanged=\{\(\) => \{ setQuoteDoc\(null\); setQuotesBump/);
   });
 });
 

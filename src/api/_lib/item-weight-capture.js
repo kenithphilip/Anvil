@@ -1,0 +1,95 @@
+// Filling item_master.weight_kg from documents the tenant already uploads.
+//
+// weight_kg has existed since migration 145 and is entirely empty — 1,000
+// items sampled from live data, zero with a weight — because nothing in the
+// product can write one. So freight is apportioned by line value instead of by
+// weight, and the container estimator returns "none" for every real plan.
+//
+// The alternative to a data-entry campaign across thousands of parts is to
+// take the weight from the page when a supplier prints one. This is that.
+//
+// FOUR REFUSALS, because a wrong weight is invisible. It is stored once and
+// then silently mis-apportions freight on every future quote for that part —
+// no screen shows it, no check catches it.
+//
+//   1. Only ever fills a BLANK. A weight already on the master is
+//      authoritative; a document never overwrites it.
+//   2. Only with an unambiguous BASIS. "per_unit" or "line_total" — if the
+//      extractor could not tell which, the value is dropped. A line total
+//      mistaken for a unit weight is wrong by the order quantity.
+//   3. line_total needs a quantity to divide by. No qty, no capture.
+//   4. Only plausible magnitudes. A per-unit weight of 0, or one large enough
+//      to be a container's payload, is a parse artefact rather than a part.
+
+const num = (v) => {
+  if (v == null || v === "") return null;
+  const x = Number(v);
+  return Number.isFinite(x) ? x : null;
+};
+
+// To kilograms. Anything not recognised is refused rather than assumed to be
+// kg — a pound silently treated as a kilo is a 2.2x error on every allocation.
+const TO_KG = { kg: 1, g: 0.001, lb: 0.45359237, t: 1000 };
+
+export const toKg = (value, uom) => {
+  const v = num(value);
+  if (v == null || v <= 0) return null;
+  const key = String(uom || "kg").trim().toLowerCase();
+  const f = TO_KG[key];
+  return f == null ? null : Math.round(v * f * 1e6) / 1e6;
+};
+
+// Above this, a "per-unit weight" is almost certainly a line total that was
+// mislabelled, or a units mix-up. A single part weighing more than a tonne is
+// possible but is not something to infer from a PDF without a human.
+export const MAX_PLAUSIBLE_UNIT_KG = 1000;
+
+// Extract a per-unit kg from one extracted line, or null with the reason.
+export const unitWeightFromLine = (line) => {
+  if (!line) return { kg: null, reason: "no_line" };
+  const raw = num(line.weight ?? line.weight_kg ?? line.weightKg);
+  if (raw == null || raw <= 0) return { kg: null, reason: "no_weight_stated" };
+
+  const kg = toKg(raw, line.weight_uom ?? line.weightUom ?? "kg");
+  if (kg == null) return { kg: null, reason: "unrecognised_unit" };
+
+  const basis = String(line.weight_basis ?? line.weightBasis ?? "").toLowerCase();
+  if (basis === "per_unit") {
+    return kg <= MAX_PLAUSIBLE_UNIT_KG ? { kg, reason: null } : { kg: null, reason: "implausible_magnitude" };
+  }
+  if (basis === "line_total") {
+    const qty = num(line.quantity ?? line.qty);
+    if (qty == null || qty <= 0) return { kg: null, reason: "line_total_without_qty" };
+    const per = Math.round((kg / qty) * 1e6) / 1e6;
+    if (per <= 0) return { kg: null, reason: "implausible_magnitude" };
+    return per <= MAX_PLAUSIBLE_UNIT_KG ? { kg: per, reason: null } : { kg: null, reason: "implausible_magnitude" };
+  }
+  // The extractor could not tell which the column meant, so neither can we.
+  return { kg: null, reason: "ambiguous_basis" };
+};
+
+// Which parts a document can teach a weight for.
+//
+// Pure: the caller resolves part numbers to item ids and does the writing, so
+// this stays testable without a database.
+export const weightCandidates = (lines) => {
+  const take = [];
+  const skipped = [];
+  for (const l of Array.isArray(lines) ? lines : []) {
+    const partNo = (l?.partNumber ?? l?.part_no ?? "").toString().trim();
+    const { kg, reason } = unitWeightFromLine(l);
+    if (!partNo) continue;
+    if (kg == null) {
+      // Only worth reporting when the document DID state something we then
+      // refused — "no weight printed" is the normal case and is not a skip.
+      if (reason !== "no_weight_stated" && reason !== "no_line") skipped.push({ part_no: partNo, reason });
+      continue;
+    }
+    take.push({ part_no: partNo.toUpperCase(), weight_kg: kg });
+  }
+  // One document can list the same part twice. Keep the first and drop the
+  // rest rather than letting the last row win by accident.
+  const seen = new Set();
+  const unique = take.filter((t) => (seen.has(t.part_no) ? false : (seen.add(t.part_no), true)));
+  return { candidates: unique, skipped };
+};

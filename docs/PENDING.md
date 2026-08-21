@@ -85,6 +85,20 @@ Two halves, with very different costs:
   see margin on a PO before approving, the pricing engine is bolted to the
   quote rather than the order, and there is no realized-cost path.
 
+### 2.2a — DONE since this doc was written
+
+- **The deviation now has a rupee figure** (#478). `_lib/deviation-value.js`,
+  surfaced on the approve surface. Three separate numbers — over/under against
+  agreed prices, unquoted-line exposure, and quoted-not-ordered — deliberately
+  not summed. Currency-guarded; unpriceable exceptions counted rather than
+  dropped. This INFORMS; nothing blocks yet.
+- **Supplier RFQ compared bids on raw digits across currencies** (#479). A
+  ¥1,500 bid lost to a $20 bid while being less than half the price. Now ranked
+  on converted value against `fx_rates`, and no winner is crowned at all when a
+  rate is missing.
+- **The approvals margin column was blank on every row** (#475) — two
+  derivations existed and the queue used the broken one.
+
 ### 2.2 — Reconciler PRs 3-6
 
 From `docs/PO_INVOICE_RECONCILER_SCOPE.md`. PR3 surfaces the check and blocks

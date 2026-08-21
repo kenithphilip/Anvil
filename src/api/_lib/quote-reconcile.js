@@ -276,6 +276,13 @@ export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
         po_rate: l._match.po_rate ?? null,
         quote_rate: l._match.quote_rate ?? null,
         price_delta_pct: l._match.price_delta_pct ?? null,
+        // Quantities ride along because a flag without them cannot be PRICED.
+        // The percentage was the only thing an approver ever saw, and nobody
+        // approves a purchase order on a percentage — the rupee figure needs
+        // po_qty, and this is the record that has to carry it.
+        po_qty: l._match.po_qty ?? null,
+        quote_qty: l._match.quote_qty ?? null,
+        qty_note: l._match.qty_note ?? false,
         desc_agreement: l._match.desc_agreement ?? null,
         po_description: l._match.po_description ?? null,
         quote_description: l._match.quote_description ?? null,

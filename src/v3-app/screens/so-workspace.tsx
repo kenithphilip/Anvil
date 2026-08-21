@@ -11,6 +11,9 @@ import { QuotePane } from "../components/QuotePane";
 // The gate's own predicate, not a copy: a UI that disagreed with the server
 // about what blocks would offer a button that 409s, or hide the only way out.
 import { isUnresolvedBlocker as isBlockingFinding } from "../../api/_lib/blocking-findings.js";
+// Pure, no I/O — imported rather than twinned, so the rupee figure an approver
+// reads is computed by the same code the server would use.
+import { deviationValue, currencyOf } from "../../api/_lib/deviation-value.js";
 import { RBAC } from "../lib/rbac";
 import { pushRecent } from "../lib/recent-items";
 import { amountInWords } from "../lib/amount-words";
@@ -2091,11 +2094,45 @@ const WiredSOWorkspace = () => {
           }
           const s = recon.summary || {};
           const bad = (s.price_mismatch || 0) + (s.description_mismatch || 0) + (s.unmatched || 0);
+          // The money, which is the only form of this an approver can act on.
+          // A percentage tells you a rate moved; it does not tell you whether
+          // to accept the order.
+          const cur = currencyOf(o);
+          const dv = deviationValue(recon, { currency: cur.currency });
+          const money = (v: number) => {
+            try { return new Intl.NumberFormat("en-IN", { style: "currency", currency: cur.currency || "INR", maximumFractionDigits: 0 }).format(v); }
+            catch { return `${cur.currency || ""} ${Math.round(v).toLocaleString("en-IN")}`.trim(); }
+          };
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 5, alignItems: "flex-start" }}>
               <span className="mono-sm" style={{ fontWeight: 600, color: bad ? "var(--amber)" : "var(--sage)" }}>
                 {bad ? `${s.matched || 0}/${s.total || 0} matched · ${bad} to review` : `Verified — ${s.matched || 0}/${s.total || 0} matched`}
               </span>
+              {dv.any && cur.comparable && (
+                <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                  {/* Sign is the point: ABOVE means the customer will dispute
+                      the invoice, BELOW means we are short and nobody noticed. */}
+                  {dv.priced.count > 0 && (
+                    <b style={{ color: "var(--ink)" }}>
+                      {money(Math.abs(dv.net))} {dv.net >= 0 ? "above" : "below"} quote
+                    </b>
+                  )}
+                  {dv.priced.count > 0 && dv.unmatched.count > 0 && " · "}
+                  {dv.unmatched.count > 0 && `${money(dv.unmatched.amount)} unquoted`}
+                </span>
+              )}
+              {dv.any && !cur.comparable && (
+                <span className="mono-sm" style={{ color: "var(--amber)" }}>
+                  Lines disagree on currency — no single figure shown.
+                </span>
+              )}
+              {dv.unpriceable.length > 0 && (
+                /* Said out loud: "₹0 at risk" and "we could not price 6 of the
+                   8 exceptions" are very different statements. */
+                <span className="mono-sm" style={{ color: "var(--amber)" }}>
+                  {dv.unpriceable.length} exception{dv.unpriceable.length === 1 ? "" : "s"} could not be priced
+                </span>
+              )}
               {reBtn}
             </div>
           );
@@ -2162,7 +2199,14 @@ const WiredSOWorkspace = () => {
                 {lineFlags.slice(0, 10).map((f: any, i: number) => (
                   <div key={i}>
                     {f.verdict === "price_mismatch"
-                      ? `⚠ ${f.part_no}: PO ${f.po_rate} vs quote ${f.quote_rate} (${f.price_delta_pct > 0 ? "+" : ""}${f.price_delta_pct}%)${f.source_quote_number ? ` · ${f.source_quote_number}` : ""}`
+                      ? `⚠ ${f.part_no}: PO ${f.po_rate} vs quote ${f.quote_rate} (${f.price_delta_pct > 0 ? "+" : ""}${f.price_delta_pct}%)${
+                          /* The amount, beside the percentage. A rate delta on
+                             one unit and the same delta on 3,000 read
+                             identically as a percentage. */
+                          f.po_qty != null && f.po_rate != null && f.quote_rate != null
+                            ? ` = ${(f.po_rate - f.quote_rate) * f.po_qty > 0 ? "+" : ""}${Math.round((f.po_rate - f.quote_rate) * f.po_qty).toLocaleString("en-IN")} on ${f.po_qty}`
+                            : ""
+                        }${f.source_quote_number ? ` · ${f.source_quote_number}` : ""}`
                       : f.verdict === "description_mismatch"
                       ? `⚠ ${f.part_no}: description differs — PO “${f.po_description || "—"}” vs quote “${f.quote_description || "—"}”`
                       : f.verdict === "unmatched"

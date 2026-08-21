@@ -78,6 +78,12 @@
      in dark mode resolves to #ECECE6 (cream) and rendered illegible
      on the lime fill. */
   --on-accent: #15171A;
+  /* The note above did not stop it happening again: the Ask Anvil badge and
+     avatar, and every accent fill on the landing page, still paired the lime
+     with --ink. Repointed 2026-08-20. If you add an --accent background, the
+     foreground is THIS token. */
+  /* Live dot on the Ask Anvil pill; flips with the pill. See .aa-dot. */
+  --aa-dot:    #C8FF2B;
 
   /* ── Semantic ──────────────────────────────────────────── */
   --sage:      #355E3B;        /* good · positive */
@@ -171,6 +177,7 @@
   /* Pin --on-accent dark in dark mode too: the lime --accent is the
      same bright value in both themes, so text on it must stay dark. */
   --on-accent: #15171A;
+  --aa-dot:    #3F7A00;   /* dark green: the pill is near-white here */
 
   --sage:      #6FBF7E;
   --sage-2:    #88D396;
@@ -3618,7 +3625,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   font-size: 9px;
   padding: 2px 6px;
   background: var(--accent);
-  color: var(--ink);
+  color: var(--on-accent);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -3738,7 +3745,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 }
 .landing-pillar-badge.live {
   background: var(--accent);
-  color: var(--ink);
+  color: var(--on-accent);
 }
 .landing-pillar-h {
   font-size: 22px; font-weight: 700;
@@ -3861,7 +3868,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 }
 .landing-proof-tag {
   background: var(--accent);
-  color: var(--ink);
+  color: var(--on-accent);
   padding: 2px 6px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -4071,7 +4078,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .lp .lp-btn:hover { transform: translate(-1px, -1px); box-shadow: 3px 3px 0 var(--ink); }
 .lp .lp-btn:active { transform: translate(0, 0); box-shadow: none; }
 .lp .lp-btn-primary { background: var(--ink); color: var(--paper); }
-.lp .lp-btn-live { background: var(--accent); color: var(--ink); font-weight: 700; }
+.lp .lp-btn-live { background: var(--accent); color: var(--on-accent); font-weight: 700; }
 .lp .lp-btn-lg { padding: 16px 22px; font-size: 14.5px; }
 .lp .lp-arrow { transition: transform 120ms; }
 .lp .lp-btn:hover .lp-arrow { transform: translateX(3px); }
@@ -4296,7 +4303,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .lp-con-clogo { width: 48px; height: 48px; border: 1px solid var(--ink); background: var(--paper-2); display: grid; place-items: center; font-family: var(--mono); font-weight: 700; font-size: 11px; letter-spacing: 0.04em; color: var(--ink); transition: transform 200ms; flex-shrink: 0; }
 .lp-con-nm { font-weight: 600; font-size: 13.5px; letter-spacing: -0.005em; line-height: 1.3; color: var(--ink); }
 .lp-con-meta { font-family: var(--mono); font-size: 10px; color: var(--ink-4, var(--ink-3)); letter-spacing: 0.04em; text-transform: uppercase; }
-.lp-con-stat { position: absolute; top: 8px; right: 8px; font-family: var(--mono); font-size: 9px; padding: 2px 6px; background: var(--accent); color: var(--ink); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.lp-con-stat { position: absolute; top: 8px; right: 8px; font-family: var(--mono); font-size: 9px; padding: 2px 6px; background: var(--accent); color: var(--on-accent); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 .lp-con-stat.beta { background: var(--amber, #B57810); color: #fff; }
 
 /* === ARCHITECTURE === */
@@ -4373,7 +4380,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .lp-ws-h { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid var(--hairline); padding-bottom: 8px; flex-wrap: wrap; }
 .lp-ws-so { font-weight: 700; font-size: 14px; letter-spacing: -0.005em; color: var(--ink); }
 .lp-ws-pill { font-family: var(--mono); font-size: 9px; padding: 1px 6px; background: var(--accent-3, var(--accent)); border: 1px solid var(--accent-2, var(--accent)); font-weight: 600; color: var(--ink); }
-.lp-ws-pill-accent { background: var(--accent); border-color: var(--ink); }
+.lp-ws-pill-accent { background: var(--accent); border-color: var(--on-accent); }
 .lp-ws-edit { margin-left: auto; font-family: var(--mono); font-size: 9px; color: var(--ink-4, var(--ink-3)); }
 .lp-ws-lr { display: grid; grid-template-columns: 18px 1fr 38px 50px; gap: 8px; padding: 5px 0; border-bottom: 1px dashed var(--hairline-2, var(--hairline)); align-items: center; font-size: 11px; }
 .lp-ws-ix { font-family: var(--mono); font-size: 9px; color: var(--ink-4, var(--ink-3)); }
@@ -4418,7 +4425,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .lp-pillar:hover { background: var(--accent-3, var(--paper-2)); }
 .lp-pillar:last-child { border-right: none; }
 .lp-pillar-badge { position: absolute; top: 0; left: 0; padding: 6px 10px; background: var(--ink); color: var(--paper); font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; }
-.lp-pillar-badge.live { background: var(--accent); color: var(--ink); }
+.lp-pillar-badge.live { background: var(--accent); color: var(--on-accent); }
 .lp-pillar-ic { width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid var(--ink); background: var(--paper-2); margin-top: 20px; margin-bottom: 24px; }
 .lp-pillar h3 { font-size: 22px; font-weight: 700; letter-spacing: -0.015em; margin: 0 0 10px; color: var(--ink); }
 .lp-pillar p { font-size: 14px; line-height: 1.55; color: var(--ink-2); margin: 0 0 18px; }
@@ -4436,7 +4443,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .lp-wn-card { padding: 24px; background: var(--paper); border: 1px solid var(--ink); display: flex; flex-direction: column; gap: 12px; min-height: 220px; }
 .lp-wn-tag { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
 .lp-wn-livedot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(200, 255, 43, 0.18); }
-.lp-wn-title { font-size: 22px; font-weight: 700; letter-spacing: -0.015em; line-height: 1.15; color: var(--ink); margin: 0; }
+.lp-wn-title { font-size: 22px; font-weight: 700; letter-spacing: -0.015em; line-height: 1.15; color: var(--on-accent); margin: 0; }
 .lp-wn-title .lp-em { color: var(--accent); }
 .lp-wn-copy { font-size: 13.5px; line-height: 1.55; color: var(--ink-2); margin: 0; flex: 1; }
 .lp-wn-chips { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -4486,7 +4493,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 @media (max-width: 1000px) { .lp-proof-grid { grid-template-columns: 1fr; } }
 .lp-proof-card { background: #1B1E22; border: 1px solid #2D3138; padding: 22px; font-family: var(--mono); font-size: 11.5px; line-height: 1.7; }
 .lp-proof-card-h { display: flex; align-items: center; gap: 10px; padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid #2D3138; font-weight: 600; color: var(--paper); flex-wrap: wrap; }
-.lp-proof-tag { margin-left: auto; padding: 2px 8px; background: var(--accent); color: var(--ink); font-size: 10px; font-weight: 700; }
+.lp-proof-tag { margin-left: auto; padding: 2px 8px; background: var(--accent); color: var(--on-accent); font-size: 10px; font-weight: 700; }
 .lp-proof-pre { margin: 0; white-space: pre-wrap; color: #C9CBD0; font-size: 11px; overflow-x: auto; font-family: var(--mono); }
 .lp-proof-pre b { color: var(--paper); font-weight: 600; }
 .lp-proof-meta-c { color: #6A6E76; }
@@ -4498,7 +4505,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .lp-proof-mark { position: absolute; top: -18px; left: 18px; font-family: var(--serif); font-size: 64px; line-height: 1; color: var(--accent); background: var(--ink); padding: 0 6px; }
 .lp-proof-quote blockquote { font-family: var(--serif); font-size: 19px; line-height: 1.45; margin: 0 0 16px; color: var(--paper); font-style: italic; }
 .lp-proof-by { display: flex; align-items: center; gap: 12px; font-family: var(--mono); font-size: 11px; color: #95989F; }
-.lp-proof-av { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: var(--ink); display: grid; place-items: center; font-family: var(--sans); font-weight: 700; font-size: 12px; }
+.lp-proof-av { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-family: var(--sans); font-weight: 700; font-size: 12px; }
 .lp-proof-by-name { color: var(--paper); font-weight: 600; font-family: var(--sans); }
 .lp-proof-stats { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #2D3138; }
 .lp-proof-stat { padding: 18px 18px 16px; border-right: 1px solid #2D3138; border-bottom: 1px solid #2D3138; }
@@ -4576,7 +4583,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .lp-cmp-row:last-child { border-bottom: none; }
 .lp-cmp-head { background: var(--ink); color: var(--paper); }
 .lp-cmp-head .lp-cmp-c { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; color: var(--paper); padding: 16px 14px; }
-.lp-cmp-head .lp-cmp-us { background: var(--accent); color: var(--ink); }
+.lp-cmp-head .lp-cmp-us { background: var(--accent); color: var(--on-accent); }
 .lp-cmp-c { padding: 14px; border-right: 1px solid var(--hairline); font-size: 12.5px; color: var(--ink-2); display: flex; align-items: center; gap: 6px; }
 .lp-cmp-feat { font-weight: 600; color: var(--ink); font-size: 13px; background: var(--paper-2); }
 .lp-cmp-row .lp-cmp-us { background: rgba(200, 255, 43, 0.18); color: var(--ink); font-weight: 600; }
@@ -4640,7 +4647,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .lp-cl h4 { margin: 0 0 4px; font-size: 14px; font-weight: 600; letter-spacing: -0.005em; color: var(--ink); }
 .lp-cl p { margin: 0; font-size: 12.5px; color: var(--ink-3); line-height: 1.5; }
 .lp-cl-v { font-family: var(--mono); font-size: 10.5px; text-align: right; color: var(--ink-4, var(--ink-3)); padding: 2px 6px; background: var(--paper-2); border: 1px solid var(--hairline-2, var(--hairline)); justify-self: end; height: fit-content; }
-.lp-cl-v.new { background: var(--accent); color: var(--ink); border-color: var(--ink); font-weight: 700; }
+.lp-cl-v.new { background: var(--accent); color: var(--on-accent); border-color: var(--on-accent); font-weight: 700; }
 @media (max-width: 600px) { .lp-cl { grid-template-columns: 1fr; gap: 6px; } .lp-cl-v { justify-self: start; } }
 
 /* === FAQ === */
@@ -4953,10 +4960,14 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 }
 .aa-fab:hover { transform: translateY(-1px); }
 .aa-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.aa-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+/* The FAB's surface is --ink, which INVERTS: a near-black pill in light mode,
+   a near-white one in dark. Chartreuse reads well on the first and almost
+   vanishes on the second, so the live dot flips with the surface it sits on
+   rather than staying one colour. */
+.aa-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--aa-dot); flex: none; }
 .aa-count {
   font-family: var(--mono); font-size: 10px; font-weight: 700;
-  background: var(--accent); color: var(--ink); border-radius: 9px; padding: 1px 6px;
+  background: var(--accent); color: var(--on-accent); border-radius: 9px; padding: 1px 6px;
 }
 
 .aa-panel {
@@ -4976,7 +4987,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 }
 .aa-avatar {
   width: 26px; height: 26px; border-radius: 7px; flex: none;
-  background: var(--accent); color: var(--ink);
+  background: var(--accent); color: var(--on-accent);
   display: grid; place-items: center; font: 700 11px/1 var(--mono);
 }
 .aa-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; }

@@ -716,6 +716,75 @@ Two cautions before treating this as a plan:
 
 ---
 
+### Additions — 2026-08-20 (buy-side trade and freight: three YC entrants on the import lane)
+
+Three reviewed at the user's request. None sits on the axis Anvil sells on — all three are on the **buy/transport side**, and two are service businesses with software rather than software products. They are filed together because they press on the same part of the repo: inbound logistics and landed cost (`freight_consolidations` / `freight_bids` mig 145, `src/v3-app/lib/pricing.ts`, `shipments`), which is also the part of Anvil whose schema surface most exceeds its wiring. Read the trio as an audit of that module, not as a competitive threat. The verified corrections are collected after the three entries.
+
+### 3.27 Donkey Trade — `donkey.trade` (procurement-inverse, learn-only)
+
+One-liner, verbatim: **"Factory prices, delivered, one number."**
+
+ICP: businesses that buy inventory by the pallet, starting with home builders and construction — "If your business buys inventory by the pallet, you should be buying it by the container." US-facing importers with no import cockpit of their own.
+
+Capability surface: upload a buying list in any format; AI agents scan **public customs records** to identify factories and retrieve quotes; landed price including tariffs and delivery returned as one number; **48-hour price lock** on signing; AI packing optimisation to size containers; direct factory-floor-to-destination fulfilment; own personnel physically verifying quality at the factory. A managed importer-of-record, not a tool.
+
+Integrations: not stated.
+
+Differentiators: one contract with one responsible party; the price holds after signing and **Donkey absorbs cost overruns**; **deterministic** pricing math, explicitly not AI-driven, for reproducibility; staff on factory floors; "Every container we run adds real factory prices to the lane."
+
+Maturity: YC S26; two cofounders (industrial supply, agent systems). Investors, logos, pricing: not stated. One metric — "38% saved versus buying piecemeal", anonymised home-builder case study.
+
+Relevance to Anvil: zero on Anvil's selling axis — Donkey never quotes a customer, extracts a PO or touches an ERP. The real overlap is on Anvil's **inbound** side, which is genuinely built: `freight-consolidation.js` groups procurement plans by lane and week and sizes containers against `CONTAINER_CAP`, mig 145 persists the bid/award flow, and `pricing.ts` PROFILE_GRANULAR loads a supplier price through FX → freight → insurance → duty → SWS → CHA → transport into a persisted `landed_cost`. Donkey does that arithmetic for the opposite principal: Anvil is the importer's own cockpit, Donkey the outsourced version sold to importers who lack one — the same counterparty seat §3.25 gives Derya. What Anvil cannot do is find the counterparty or stand behind the number, and it should not try: customs-record mining is absent by choice, and this tenant buys from a stable set of qualified JP/KR/CN suppliers where factory discovery is not the bottleneck. **Verdict: LEARN-ONLY.**
+
+### 3.28 Waybill — `waybill.to` (adjacent — buy-side procurement thread to follow)
+
+One-liner, verbatim: **"Procurement on autopilot"**
+
+ICP: teams that build hardware — companies with complex sourcing, international shipping and customs.
+
+Capability surface: intake by part number, BOM, PLM sync or plain English; automated sourcing of licensed suppliers; parallel RFQ to authorised distributors, franchised lines and vetted brokers; quote comparison on **landed cost, lead-time verification, MOQ analysis and authenticity**; automated negotiation; a **live fallback source** held in reserve and auto-activated if the primary fails; unified payment across parts, freight, duties, clearance and delivery; in-house fulfilment and consolidation; live carrier and flight tracking; **pre-arrival** customs filing with classification-error detection; multilingual voice agent coordinating delivery drivers; receiving label scan to inventory; **three-way** invoice/payment/import matching; on-shelf stock check before purchase; **continuous BOM monitoring** for price, EOL risk and stock; **build-schedule backward-quoting**; dedup across requesters.
+
+Integrations: Slack, Gmail, WhatsApp, Outlook; SolidWorks, NX, Altium, Eagle, KiCad; DHL, FedEx, UPS, Maersk, Kuehne+Nagel.
+
+Differentiators: one approval and one payment instead of many invoices; unbroken chain of custody via own fulfilment; the reserve fallback; pre-arrival clearance; proactive monitoring ahead of a build.
+
+Maturity: YC S26. Team size, logos, pricing, metrics: not stated.
+
+Relevance to Anvil: opposite directions across the same transaction — Waybill is the buyer Anvil's customer would be, and Anvil's tenant is the sort of supplier Waybill would RFQ, so no deal is ever contested. The touchpoint is Anvil's own import procurement, which runs end to end and is in places **deeper**: `inventory/positions.js` reconciles on-hand across ERP mirrors with in-transit and allocations, `net-req.js` computes a real net requirement behind a hysteresis gate, and `ap/match.js` is a genuine three-way match with tolerance bands — an MRP loop, not an on-shelf check. Everything downstream of the award is a licensed logistics-and-payments operator's business and would pull Anvil off its wedge. The one steal is wiring, not building: `supplier_rfq/matrix.js` crowns the cheapest raw `unit_price` while ignoring the `currency` on the same row, so a JPY bid can beat a USD one on the number alone. Ranking on landed cost through the mig-135 profile turns a lookup table into a sourcing decision. **Verdict: ADJACENT.**
+
+### 3.29 Peer Freight — `peer-freight.com` (category error — US truckload brokerage, not QTC)
+
+One-liner, verbatim: **"Difficult freight handled right"**
+
+ICP: US shippers needing truckload brokerage, especially difficult, specialised or high-compliance freight.
+
+Capability surface: quote within the hour with market comparables; carrier vetting (fraud screening, FMCSA authority, insurance validation, identity); live load tracking via a **no-login link**; same-day POD and invoice matching; hazmat, reefer, dry van, flatbed, specialised and port drayage; 24/7 owner access; same-day carrier payment; load dashboard.
+
+Integrations: not stated.
+
+Differentiators: "AI to get quotes back fast, vet carriers in more depth, and catch problems before they reach you"; takes loads other brokers decline; "Human in the loop whenever you need one"; TIA member; fully insured.
+
+Maturity: YC; advisors from Ryder, Dynamic Connections, AtoB, CDL1000, Convoy, Waylens, OTR. USDOT 5766712, $75K BMC-84 bond, **FMCSA broker authority pending**. Team size, logos: not stated. Example quote $1,840 all-in; "98% on time" on an example dashboard.
+
+Relevance to Anvil: not software — a services business holding transport authority — and on the freight transaction Anvil is the **buyer**, as it is with Derya (§3.25). Peer sits further out than Derya: US domestic truckload and drayage, a mode and geography with no Anvil presence and no tenant demand. It could not bid on an Anvil consolidation at all, because `logistics/consolidations.js:57` hardcodes `mode: "ocean"`. Wrong side, wrong mode, wrong geography, wrong buyer; no account is ever contested. It earns its place chiefly for what checking it corrected — see below. **Verdict: CATEGORY-ERROR.**
+
+### What this trio corrected about Anvil's own record
+
+Checking three outside claims against the code turned up five things this document had wrong or unstated. All verified.
+
+| claim previously held | what the code says |
+|---|---|
+| "Anvil is ocean/freight only, zero vehicles" (`backlog_fleetbase_lastmile`) | **Half wrong.** ROAD is a first-class value in five places (`shipment_mode` enum mig 006, shipments UI, `freight_rates.mode`, `freight_consolidations.mode`, `logistics_carriers.mode`), and truck registrations *are* stored — mig 074 carries `vehicle_no`, `vehicle_type`, `transporter_id`, and `eway_bills/index.js:246` refuses a Road filing without one. What is genuinely absent is any **operational** entity: no vehicle, driver, route, trip or load, so a vehicle number is a string on a tax filing. ROAD is a label no code branches on. |
+| The freight bidding module feeds pricing | **It does not.** `freight_bids` is referenced nowhere outside its own module and `freight_rates` (mig 106) is read by nothing but its own admin endpoint — the panel comment at `AdminDataPanels.tsx:338` claims those rows feed the price-composition cockpit and they do not. Anvil quotes a landed cost built on a hand-entered freight figure while a real awarded ocean cost with a `valid_until` sits one table away. |
+| MOQ is now captured from quotes (#462) | **On the wrong side, and not persisted.** `quotes` is customer-facing; `quote_lines` has no `moq` column, and `quote-ingest.js` concatenates the value into the free-text `remark` as `MOQ=30`, which nothing reads back. Useful for a human reading the row; unusable by any check. |
+| Anvil has a three-way match | **True, and invisible.** `ap/match.js` is real, with tolerance bands and optional auto-approve — but neither `ap` nor goods receipts appear anywhere in `routes.ts`, so it has no UI. It also loses its price leg on stocking POs: `inventory/plans.js:38-43` writes line items with no rate. |
+| Carrier tracking | **Excel-fed.** `_lib/shipment-import.js` parses the logistics team's workbooks; there is no carrier API client anywhere in `src`. |
+
+Two ideas worth taking, both wiring rather than building:
+
+- **Rank supplier quotes on landed cost, not raw price** (from §3.28). Also gives a consumer to two half-finished things: a real `moq` column would let the ranking use the MOQ-rounded quantity `inventory/eoq.js` already computes, and `inventory/lead-time.js` — which fits a per-supplier distribution from acknowledged-ETA-versus-actual-receipt deltas — could flag a vendor quoting 20 days whose own history says 45. That is lead-time verification Anvil can *evidence* rather than assert.
+- **Let a customer see their own shipment** (from §3.29). `portal_tokens` with per-customer scopes exists (mig 022), and `sales/part_tracking.js` already answers "where is my part?" by deriving the stage from `shipment_lines` rather than reading a free-text status. The gap is one branch: `portal/view.js` serves `summary | quotes | orders | invoices | spares | spare_matrix` and stops, so a customer can see their invoice but not their shipment. Gate it behind the per-user portal session (mig 199), **not** the token-in-URL link — [[backlog_portal_auth_compliance]] already records that link as not compliance-grade for an auto-OEM buyer, so Peer's no-login convenience is the wrong half to copy.
+
 ## 4. Cross-cutting themes from the competitor scan
 
 Five things the competitors collectively prove are now table stakes:

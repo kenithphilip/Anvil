@@ -22,36 +22,11 @@
 // Returns the list of created rows so the caller can attach the
 // count to the response payload.
 
-const computeMarginPct = (order) => {
-  // Reuse the same margin calc shape the anomaly engine uses.
-  const so = order?.result?.salesOrder || {};
-  const pc = order?.result?.priceComposition || {};
-  const lines = Array.isArray(so.lineItems) ? so.lineItems : [];
-  const compLines = Array.isArray(pc.lineItems) ? pc.lineItems : [];
-  if (!lines.length || !compLines.length) return null;
-  const compByPart = {};
-  compLines.forEach((r) => {
-    const k = String(r.partNumber || r.partNo || "").toUpperCase();
-    if (k) compByPart[k] = r;
-  });
-  let landed = 0;
-  let selling = 0;
-  let matched = 0;
-  for (const li of lines) {
-    const k = String(li.sellerPartNo || li.tallyItemName || li.itemName || "").toUpperCase();
-    const m = compByPart[k];
-    const qty = Number(li.qty) || 0;
-    const rate = Number(li.rate) || 0;
-    selling += qty * rate;
-    if (m) {
-      matched += 1;
-      const unit = Number(m.landedCostINR != null ? m.landedCostINR : m.unitInr) || 0;
-      landed += qty * unit;
-    }
-  }
-  if (!matched || selling <= 0) return null;
-  return ((selling - landed) / selling) * 100;
-};
+// Shared with the approvals QUEUE, which used to derive margin its own way
+// from a field nothing writes. See _lib/order-margin.js.
+import { orderMarginPct } from "./order-margin.js";
+
+const computeMarginPct = orderMarginPct;
 
 const orderAmountInr = (order) => {
   const so = order?.result?.salesOrder || {};

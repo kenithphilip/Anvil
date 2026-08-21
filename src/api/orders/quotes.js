@@ -35,6 +35,11 @@ export default async function handler(req, res) {
     requirePermission(ctx, "read");
     const orderId = req.query?.order_id;
     if (!orderId) return json(res, 400, { error: { message: "order_id required" } });
+    // Detail mode: one attached document, with its lines and a URL to read it.
+    // Same endpoint rather than a second route, because the authorisation and
+    // the order/tenant checks are identical and duplicating them is how the
+    // two drift apart.
+    const detailDocId = req.query?.document_id || null;
     const svc = serviceClient();
 
     const orderQ = await svc.from("orders").select("id, customer_id")
@@ -184,6 +189,49 @@ export default async function handler(req, res) {
         effective_date: (optionalKnown && qt.revised_date) || qt.sent_at || qt.created_at || null,
         authored_in_anvil: optionalKnown ? (qt.ingest_source == null || qt.ingest_source === "") : null,
       }));
+
+    // ---- detail mode -------------------------------------------------------
+    if (detailDocId) {
+      const row = attached.find((a) => a.document_id === detailDocId);
+      if (!row) return json(res, 404, { error: { message: "That document is not attached to this order." } });
+
+      // No signed URL here on purpose. ReviewDocPane resolves the document
+      // itself through /api/documents/<id> and re-signs before the ten-minute
+      // TTL expires; minting a second URL here would be a rival source of
+      // truth with a shorter life and no refresh.
+      let detailLines = [];
+      if (row.quote?.id) {
+        const dl = await svc.from("quote_lines")
+          .select("line_index, part_no, customer_part_number, description, qty, uom, hsn_sac, listed_unit_price, discounted_unit_price, discount_pct, line_amount, cgst_pct, sgst_pct, igst_pct, remark")
+          .eq("tenant_id", ctx.tenantId).eq("quote_id", row.quote.id)
+          .order("line_index", { ascending: true });
+        if (dl.error) throw new Error("quote_lines read: " + dl.error.message);
+        detailLines = (dl.data || []).map((l) => ({
+          ...l,
+          // Rates are stored as FRACTIONS (migration 114 bounds their sum at
+          // 1.0). The operator is checking against a document that prints
+          // percentages, so convert for display HERE rather than making every
+          // consumer remember.
+          cgst_pct: l.cgst_pct == null ? null : Number(l.cgst_pct) * 100,
+          sgst_pct: l.sgst_pct == null ? null : Number(l.sgst_pct) * 100,
+          igst_pct: l.igst_pct == null ? null : Number(l.igst_pct) * 100,
+          discount_pct: l.discount_pct == null ? null : Number(l.discount_pct) * 100,
+        }));
+      }
+
+      return json(res, 200, {
+        order_id: orderId,
+        document: {
+          id: row.document_id, filename: row.filename, uploaded_at: row.uploaded_at,
+          size_bytes: row.size_bytes ?? null,
+        },
+        quote: row.quote,
+        superseded_by: row.superseded_by,
+        lines: detailLines,
+        // Percentages, because that is what the document prints.
+        rates_as: "percent",
+      });
+    }
 
     return json(res, 200, {
       order_id: orderId,

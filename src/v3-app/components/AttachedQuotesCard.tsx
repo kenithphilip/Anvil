@@ -14,6 +14,7 @@ import React, { useEffect, useState } from "react";
 import { Banner, Card, Chip } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { QuoteViewer } from "./QuoteViewer";
 
 interface QuoteInfo {
   id: string;
@@ -68,6 +69,9 @@ const fmtDate = (iso?: string | null) => {
 
 export const AttachedQuotesCard: React.FC<{ orderId: string; refreshKey?: number }> = ({ orderId, refreshKey }) => {
   const [rows, setRows] = useState<Attached[] | null>(null);
+  // Which document the viewer is showing. Null = closed.
+  const [viewing, setViewing] = useState<string | null>(null);
+  const [bump, setBump] = useState(0);
   const [other, setOther] = useState<any[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
@@ -88,7 +92,7 @@ export const AttachedQuotesCard: React.FC<{ orderId: string; refreshKey?: number
       }
     })();
     return () => { live = false; };
-  }, [orderId, refreshKey]);
+  }, [orderId, refreshKey, bump]);
 
   if (rows === null && !err) return null;
 
@@ -116,7 +120,17 @@ export const AttachedQuotesCard: React.FC<{ orderId: string; refreshKey?: number
             <Chip k={a.ingested ? "good" : a.superseded_by ? "info" : "warn"}>
               {a.ingested ? "read" : a.superseded_by ? "duplicate" : "not read"}
             </Chip>
-            <span style={{ fontWeight: 600, wordBreak: "break-all" }}>{a.filename}</span>
+            {/* The filename is the control. An operator checking line items
+                reaches for the document's name, not a separate "view" verb. */}
+            <button
+              type="button"
+              className="btn ghost sm"
+              style={{ fontWeight: 600, wordBreak: "break-all", textAlign: "left", padding: "0 4px" }}
+              onClick={() => setViewing(a.document_id)}
+              title="Open this quote to check its line items"
+            >
+              {a.filename}
+            </button>
             {a.quote?.quote_number && <span style={{ color: "var(--ink-3)" }}>{a.quote.quote_number}</span>}
             {a.quote?.revision && <Chip k="info">{a.quote.revision}</Chip>}
             {a.quote?.authored_in_anvil && <Chip k="info">from Anvil</Chip>}
@@ -164,6 +178,12 @@ export const AttachedQuotesCard: React.FC<{ orderId: string; refreshKey?: number
           {other.length > 4 ? ` and ${other.length - 4} more` : ""}.
         </div>
       )}
+      <QuoteViewer
+        orderId={orderId}
+        documentId={viewing}
+        onClose={() => setViewing(null)}
+        onDetached={() => setBump((n) => n + 1)}
+      />
     </Card>
   );
 };

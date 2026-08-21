@@ -36,9 +36,15 @@ describe("the endpoint", () => {
   });
 
   it("counts lines in ONE query rather than per quote", () => {
-    // A per-quote count is N round-trips inside a 60s function.
+    // A per-quote count is N round-trips inside a 60s function. The LIST path
+    // batches with .in(); the detail path (?document_id=) reads one quote's
+    // lines and is allowed its own query — what must never appear is a
+    // per-quote count inside a loop.
     expect(code).toMatch(/from\("quote_lines"\)[\s\S]{0,300}\.in\("quote_id"/);
-    expect((code.match(/from\("quote_lines"\)/g) || []).length).toBe(1);
+    const listPath = code.slice(0, code.indexOf("if (detailDocId)"));
+    expect((listPath.match(/from\("quote_lines"\)/g) || []).length).toBe(1);
+    // No quote_lines read inside a for/map over quotes, anywhere.
+    expect(code).not.toMatch(/for \([^)]*of [^)]*quotes[^)]*\)[\s\S]{0,200}from\("quote_lines"\)/);
   });
 
   it("survives a database without migration 215", () => {

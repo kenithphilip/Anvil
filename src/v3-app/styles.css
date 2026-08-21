@@ -5097,3 +5097,12 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   .qc-scroll { max-height: none; overflow: visible; }
   .qc-scroll thead th, .qc-scroll tfoot td, .qc-scroll tfoot th { position: static; }
 }
+
+/* ── Quote viewer ───────────────────────────────────────────
+   Document on the left, what Anvil read out of it on the right.
+   Stacks below 1100px so the table keeps a usable width on a
+   laptop rather than squeezing both into unreadable columns. */
+.qv-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.qv-doc { min-width: 0; max-height: 68vh; overflow: auto; border: 1px solid var(--hairline-2); border-radius: var(--r-3); background: var(--paper-2); }
+.qv-lines { min-width: 0; max-height: 68vh; overflow: auto; }
+@media (max-width: 1100px) { .qv-split { grid-template-columns: minmax(0, 1fr); } .qv-doc { max-height: 44vh; } }

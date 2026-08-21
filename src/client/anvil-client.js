@@ -650,6 +650,12 @@
       return { ...meta, scan };
     },
     scan: async (documentId) => apiFetch("/api/documents/scan", { method: "POST", body: { documentId } }),
+    // A packing list is the only import document that can teach a per-part
+    // weight — a bill of lading gives one gross figure for a container. Extract
+    // it with docai.extract({ kind: "packing_list" }) and pass the payload;
+    // this fills item_master.weight_kg for parts that have none.
+    ingestPackingList: async (documentId, extracted) =>
+      apiFetch("/api/documents/packing_list_ingest", { method: "POST", body: { document_id: documentId, extracted } }),
     fetch: async (id) => apiFetch("/api/documents/" + id),
     remove: async (id) => apiFetch("/api/documents/" + id, { method: "DELETE" }),
     // OCR evidence rows for a document. Returns the per-token bboxes

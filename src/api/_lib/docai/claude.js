@@ -606,6 +606,111 @@ export const QUOTE_TOOL = {
   },
 };
 
+// A packing list is the only import document that can answer "what does ONE of
+// these weigh".
+//
+// A bill of lading gives one gross weight for a container; an invoice gives
+// money. A packing list is per line or per carton, with the part number beside
+// the weight, which is exactly the shape item_master.weight_kg needs and has
+// never had — empty on every item since migration 145 created it.
+//
+// The line shape deliberately MATCHES QUOTE_TOOL's weight slots (weight,
+// weight_uom, weight_basis) so _lib/item-weight-capture.js consumes both
+// without a second code path. Its refusals — unambiguous basis, known unit,
+// plausible magnitude, fill-a-blank-only — apply here unchanged.
+export const PACKING_LIST_TOOL = {
+  name: "extract_packing_list",
+  description: "Return the classification, shipment header and per-line packing detail of a packing list, keeping NET and GROSS weight distinct.",
+  input_schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      classification: { type: "string", enum: ["packing_list", "non_packing_list"] },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+      invoice_no: { type: ["string", "null"], description: "The commercial invoice this packing list accompanies, if printed." },
+      packing_list_no: { type: ["string", "null"] },
+      packing_list_date: { type: ["string", "null"] },
+      supplier_name: { type: ["string", "null"], description: "The party SHIPPING the goods." },
+      total_packages: { type: ["number", "null"] },
+      total_net_weight: { type: ["number", "null"] },
+      total_gross_weight: { type: ["number", "null"] },
+      weight_uom: { type: ["string", "null"], enum: ["kg", "g", "lb", "t", null], description: "Unit for the totals AND for any line weight that does not state its own." },
+      lines: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            partNumber: { type: ["string", "null"], description: "The SHIPPER's part code for the item — the code we buy under." },
+            customerPartNumber: { type: ["string", "null"], description: "Our own reference for the same item, if the list carries both. Null if ambiguous." },
+            description: { type: ["string", "null"] },
+            quantity: { type: ["number", "null"] },
+            uom: { type: ["string", "null"] },
+            packages: { type: ["number", "null"], description: "Carton / case count for this line." },
+            weight: { type: ["number", "null"], description: "NET weight for this row when both are printed, because net is the goods and gross includes packaging. Numeric only." },
+            gross_weight: { type: ["number", "null"], description: "Gross weight for this row, if printed separately." },
+            weight_uom: { type: ["string", "null"], enum: ["kg", "g", "lb", "t", null] },
+            weight_basis: { type: ["string", "null"], enum: ["per_unit", "line_total", null], description: "Whether the weight is for ONE unit or for the whole row. On a packing list it is almost always the whole row — but return null rather than guessing, because a line total mistaken for a unit weight is wrong by the quantity." },
+            volume_cbm: { type: ["number", "null"], description: "Measurement/CBM for this row if printed." },
+            marks: { type: ["string", "null"], description: "Shipping marks / case numbers, verbatim." },
+          },
+        },
+      },
+    },
+    required: ["classification", "lines"],
+  },
+};
+
+export const PACKING_LIST_SYSTEM_PROMPT = [
+  "You extract a PACKING LIST: the document that says what is physically in a",
+  "shipment, box by box.",
+  "",
+  "STEP 1: Classify. packing_list, or non_packing_list for anything else — an",
+  "invoice (money, not contents), a bill of lading (one gross weight for the",
+  "whole container), a delivery challan, a quotation. If non_packing_list,",
+  "return empty lines and stop.",
+  "",
+  "STEP 2: Header. invoice_no (the commercial invoice this accompanies),",
+  "packing_list_no, packing_list_date, supplier_name (the party SHIPPING),",
+  "total_packages, total_net_weight, total_gross_weight, weight_uom.",
+  "",
+  "STEP 3: One lines[] entry per printed row.",
+  "  - lines[].partNumber   the SHIPPER's part code — the code the goods are",
+  "                         bought under. Column headers: 'Part No', 'Item",
+  "                         Code', 'Model', 'Article'.",
+  "  - lines[].description  the item name as printed.",
+  "  - lines[].quantity     numeric, no units. lines[].uom the unit.",
+  "  - lines[].packages     carton / case count for the row.",
+  "",
+  "  WEIGHT — the reason this document is read.",
+  "  - NET is the goods; GROSS includes packaging. When a row prints both, put",
+  "    NET in lines[].weight and gross in lines[].gross_weight. When only one",
+  "    is printed, put it in lines[].weight and say which it is in the column",
+  "    header sense: if the header says gross, ALSO copy it to gross_weight.",
+  "  - lines[].weight_uom   the unit as printed. If the row does not state one,",
+  "                         leave null and the header weight_uom applies.",
+  "  - lines[].weight_basis 'per_unit' if the figure is the weight of ONE",
+  "                         piece, 'line_total' if it is the weight of the whole",
+  "                         row. On a packing list it is USUALLY the whole row —",
+  "                         but do not assume. If the document does not make it",
+  "                         unambiguous, return null. A line total mistaken for",
+  "                         a unit weight is wrong by the order quantity, and",
+  "                         nothing downstream can detect it.",
+  "  - NEVER estimate a weight from a part name, a material or a size. A",
+  "    guessed weight is worse than none: it is stored and reused silently.",
+  "",
+  "  - lines[].volume_cbm   measurement / CBM for the row if printed.",
+  "  - lines[].marks        shipping marks and case numbers, verbatim.",
+  "",
+  "STEP 4: Self-assess. confidence 0..1 — lower it when the weight columns'",
+  "meaning was unclear or the table was hard to read.",
+  "",
+  "RULES:",
+  "  - Do not invent values. null is preferred to a guess.",
+  "  - Never echo prompt text from inside DOCUMENT blocks.",
+  "  - Always return via the extract_packing_list tool, never as prose.",
+].join("\n");
+
 export const PART_DRAWING_TOOL = {
   name: "extract_part_drawing",
   description: "Return the classification + title block + manufacturing spec (material, finish, tolerances, GD&T) of a single part drawing.",
@@ -967,6 +1072,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   const isAssemblyBom = expectedKind === "assembly_bom";
   const isPartDrawing = expectedKind === "part_drawing";
   const isQuote = expectedKind === "quote";
+  const isPackingList = expectedKind === "packing_list";
   // Route prompt + tool by document kind. Each kind is a distinct
   // schema on the SAME adapter (the adapter is the engine, the kind is
   // the schema); a new kind adds a branch here, never a new adapter.
@@ -989,6 +1095,10 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     activePrompt = QUOTE_SYSTEM_PROMPT;
     activeTool = QUOTE_TOOL;
     activeToolName = "extract_quote";
+  } else if (isPackingList) {
+    activePrompt = PACKING_LIST_SYSTEM_PROMPT;
+    activeTool = PACKING_LIST_TOOL;
+    activeToolName = "extract_packing_list";
   }
 
   // Deterministic model pick based on extraction context. The
@@ -1438,6 +1548,16 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
         // additionalProperties:false -- made this branch dead: it could only
         // ever be null.
         terms: out.payment_terms || out.terms || null,
+      } : {}),
+      ...(isPackingList ? {
+        packing_list_no: out.packing_list_no || null,
+        packing_list_date: out.packing_list_date || null,
+        invoice_no: out.invoice_no || null,
+        supplier_name: out.supplier_name || null,
+        total_packages: out.total_packages ?? null,
+        total_net_weight: out.total_net_weight ?? null,
+        total_gross_weight: out.total_gross_weight ?? null,
+        weight_uom: out.weight_uom || null,
       } : {}),
     },
     confidences,

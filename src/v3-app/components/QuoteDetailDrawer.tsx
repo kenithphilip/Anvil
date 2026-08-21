@@ -128,6 +128,11 @@ export const QuoteDetailDrawer: React.FC<{
   const [supplierOptions, setSupplierOptions] = useState<string[]>([]);
   const [supplierIdByName, setSupplierIdByName] = useState<Record<string, string>>({});
   const [supplierNameById, setSupplierNameById] = useState<Record<string, string>>({});
+  // The supplier's OWN country and currency, from the suppliers master. Origin
+  // is a property of who you buy from, not a second thing to type beside them
+  // — this drawer used to render an "origin" input next to "choose supplier"
+  // and let the operator disagree with themselves.
+  const [supplierMetaByName, setSupplierMetaByName] = useState<Record<string, { country?: string; currency?: string }>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -179,16 +184,21 @@ export const QuoteDetailDrawer: React.FC<{
         const names = new Set<string>();
         const idByName: Record<string, string> = {};
         const nameById: Record<string, string> = {};
+        const metaByName: Record<string, { country?: string; currency?: string }> = {};
         (Array.isArray(sup) ? sup : (sup?.suppliers || sup?.rows || [])).forEach((s: any) => {
           if (s?.supplier_name) {
             names.add(s.supplier_name);
             if (s.id) { idByName[s.supplier_name] = s.id; nameById[s.id] = s.supplier_name; }
+            if (s.country || s.default_currency) {
+              metaByName[s.supplier_name] = { country: s.country || undefined, currency: s.default_currency || undefined };
+            }
           }
         });
         (Array.isArray(ven) ? ven : (ven?.vendors || [])).forEach((v: any) => v?.vendor_name && names.add(v.vendor_name));
         setSupplierOptions(Array.from(names).sort());
         setSupplierIdByName(idByName);
         setSupplierNameById(nameById);
+        setSupplierMetaByName(metaByName);
       } catch { /* suppliers optional */ }
     })();
     return () => { cancel = true; };
@@ -581,9 +591,6 @@ export const QuoteDetailDrawer: React.FC<{
               <datalist id="qd-unit-options">
                 {unitOptions.map((u) => <option key={u} value={u} />)}
               </datalist>
-              <datalist id="qd-source-options">
-                {sourceOptions.map((s) => <option key={s} value={s} />)}
-              </datalist>
               <datalist id="qd-supplier-options">
                 {supplierOptions.map((s) => <option key={s} value={s} />)}
               </datalist>
@@ -633,7 +640,7 @@ export const QuoteDetailDrawer: React.FC<{
               ) : (
                 <table className="tbl" style={{ fontSize: 12 }}>
                   <thead><tr>
-                    <th>#</th><th>Part</th><th>Description</th><th className="r">Qty</th><th>Units</th><th>Source country</th><th>Supplier</th><th></th>
+                    <th>#</th><th>Part</th><th>Description</th><th className="r">Qty</th><th>Units</th><th>Supplier</th><th></th>
                   </tr></thead>
                   <tbody>
                     {computedLines.map((ln, i) => (
@@ -643,8 +650,41 @@ export const QuoteDetailDrawer: React.FC<{
                         <td><input className="input" style={{ width: 240 }} value={ln.description || ""} onChange={(e) => setLine(i, "description", e.target.value)} /></td>
                         <td className="r"><input className="input mono r" style={{ width: 70 }} type="number" step="0.01" value={ln.qty ?? ""} onChange={(e) => setLine(i, "qty", e.target.value === "" ? null : Number(e.target.value))} /></td>
                         <td><input className="input mono" list="qd-unit-options" style={{ width: 80 }} value={ln.uom || ""} onChange={(e) => setLine(i, "uom", e.target.value)} /></td>
-                        <td><input className="input mono" list="qd-source-options" style={{ width: 120 }} value={ln.source_country || ""} placeholder="origin" onChange={(e) => setLine(i, "source_country", e.target.value)} /></td>
-                        <td><input className="input" list="qd-supplier-options" style={{ width: 150 }} aria-label={"supplier line " + (i + 1)} value={ln.supplier_name ?? (ln.supplier_id ? (supplierNameById[ln.supplier_id] || "") : "")} placeholder="choose supplier" onChange={(e) => { const name = e.target.value; setLines((arr) => arr.map((l, idx) => idx === i ? { ...l, supplier_name: name, supplier_id: supplierIdByName[name] || null } : l)); }} /></td>
+                        <td>
+                          <input className="input" list="qd-supplier-options" style={{ width: 150 }}
+                            aria-label={"supplier line " + (i + 1)}
+                            value={ln.supplier_name ?? (ln.supplier_id ? (supplierNameById[ln.supplier_id] || "") : "")}
+                            placeholder="choose supplier"
+                            onChange={(e) => {
+                              const name = e.target.value;
+                              // Origin follows the supplier. Picking one that
+                              // has a country on file sets it; picking one that
+                              // does not leaves whatever was there rather than
+                              // blanking a value the operator may have meant.
+                              const country = supplierMetaByName[name]?.country;
+                              setLines((arr) => arr.map((l, idx) => idx === i ? {
+                                ...l,
+                                supplier_name: name,
+                                supplier_id: supplierIdByName[name] || null,
+                                source_country: country || l.source_country || null,
+                              } : l));
+                            }} />
+                          {/* Shown, not editable. The operator needs to see
+                              WHICH origin the line carries — and to see when a
+                              supplier has none on file, which is a gap in the
+                              supplier record and should be fixed there. */}
+                          {(() => {
+                            const nm = ln.supplier_name ?? (ln.supplier_id ? supplierNameById[ln.supplier_id] : "");
+                            const known = nm ? supplierMetaByName[nm]?.country : undefined;
+                            if (ln.source_country) {
+                              return <div className="mono-sm" style={{ color: "var(--ink-3)" }}>origin {ln.source_country}</div>;
+                            }
+                            if (nm && !known) {
+                              return <div className="mono-sm" style={{ color: "var(--amber)" }}>no origin on this supplier</div>;
+                            }
+                            return null;
+                          })()}
+                        </td>
                         <td><Btn sm kind="ghost" onClick={() => removeLine(i)} title="Remove line">x</Btn></td>
                       </tr>
                     ))}

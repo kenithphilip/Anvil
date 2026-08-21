@@ -60,15 +60,19 @@ beforeEach(() => {
 const QUOTE = { id: "q-1", quote_number: "Q-202605-0001", version: 1, status: "DRAFT", currency: "INR" };
 
 describe("QuoteDetailDrawer — line enrichment", () => {
-  it("renders an editable source-country column once a line exists", async () => {
-    const { getByText, getByRole, getAllByText } = render(
+  it("has NO separate source-country column — origin follows the supplier", async () => {
+    // Origin is a property of who you buy from, not a second thing to type
+    // beside them. Two inputs let the operator disagree with themselves.
+    const { getByText, getByRole, queryAllByText, queryByPlaceholderText } = render(
       <QuoteDetailDrawer quote={QUOTE} onClose={() => undefined} />
     );
     fireEvent.click(getByText("Lines"));
     // The lines table (and its column headers) only render once there
     // is at least one line; add a blank line first.
     fireEvent.click(getByRole("button", { name: "Blank line" }));
-    await waitFor(() => expect(getAllByText("Source country").length).toBeGreaterThan(0));
+    await waitFor(() => expect(queryAllByText("Supplier").length).toBeGreaterThan(0));
+    expect(queryAllByText("Source country")).toHaveLength(0);
+    expect(queryByPlaceholderText("origin")).toBeNull();
   });
 
   it("appends a line prefilled from an item-master pick", async () => {
@@ -84,13 +88,15 @@ describe("QuoteDetailDrawer — line enrichment", () => {
     const addButtons = Array.from(container.querySelectorAll("button")).filter((b) => b.textContent === "Add");
     expect(addButtons.length).toBeGreaterThan(0);
     fireEvent.click(addButtons[0]);
-    // A line row now carries the catalogue part number and source country.
+    // A line row now carries the catalogue part number, and its origin — no
+    // longer an input, but still SHOWN, because the operator needs to know
+    // which origin the line carries.
     await waitFor(() => {
       const partInput = container.querySelector('input[value="BR-6204-ZZ"]') as HTMLInputElement;
       expect(partInput).toBeTruthy();
     });
-    const srcInput = container.querySelector('input[value="O-JAPAN"]') as HTMLInputElement;
-    expect(srcInput).toBeTruthy();
+    expect(container.querySelector('input[value="O-JAPAN"]')).toBeNull();
+    await waitFor(() => expect(container.textContent).toContain("origin O-JAPAN"));
   });
 
   it("exposes a Composition tab with the cost-preview surface", async () => {
@@ -175,5 +181,41 @@ describe("QuoteDetailDrawer — line enrichment", () => {
     expect(getAllByText("from customer").length).toBeGreaterThanOrEqual(2);
     expect(getByText("from opportunity")).toBeTruthy();
     expect(getByText("edited")).toBeTruthy();
+  });
+});
+
+describe("QuoteDetailDrawer — origin follows the supplier", () => {
+  // The drawer used to render an "origin" input directly beside "choose
+  // supplier". Origin is a property of the supplier, so two inputs let the
+  // operator set a Japanese supplier with a Korean origin and neither field
+  // knew the other was wrong.
+  const read = () => require("node:fs").readFileSync("src/v3-app/components/QuoteDetailDrawer.tsx", "utf8");
+
+  it("keeps the supplier's own country and currency instead of discarding them", () => {
+    // The suppliers master carries both; the loader read supplier_name and id
+    // and threw the rest away.
+    expect(read()).toMatch(/supplierMetaByName/);
+    expect(read()).toMatch(/country: s\.country \|\| undefined/);
+  });
+
+  it("sets the line's origin from the chosen supplier", () => {
+    expect(read()).toMatch(/const country = supplierMetaByName\[name\]\?\.country/);
+    expect(read()).toMatch(/source_country: country \|\| l\.source_country \|\| null/);
+  });
+
+  it("does NOT blank an existing origin when the supplier has none on file", () => {
+    // `country || l.source_country` — a supplier record missing its country
+    // must not erase a value the operator may have meant.
+    expect(read()).toMatch(/country \|\| l\.source_country/);
+  });
+
+  it("says when a supplier has no origin on file, rather than showing blank", () => {
+    // That is a gap in the supplier record and should be fixed there, so it
+    // has to be visible here.
+    expect(read()).toMatch(/no origin on this supplier/);
+  });
+
+  it("removed the orphaned origin datalist with the input it fed", () => {
+    expect(read()).not.toMatch(/qd-source-options/);
   });
 });

@@ -31,6 +31,7 @@
 
 import { upsertCustomerPart } from "./item-customer-parts.js";
 import { isAuthoredInAnvil } from "./quote-provenance.js";
+import { weightCandidates } from "./item-weight-capture.js";
 
 const s = (v) => (v == null ? null : String(v).trim() || null);
 const n = (v) => {
@@ -166,6 +167,10 @@ export const ingestQuote = async (svc, ctx, input = {}) => {
     lines_total: Array.isArray(lines) ? lines.length : 0,
     lines_written: 0,
     mappings_learned: 0,
+    // Parts that learned a shipping weight from this document, and the ones
+    // whose stated weight was refused (ambiguous basis, unknown unit).
+    weights_learned: 0,
+    weights_skipped: [],
     unresolved: [],
     skipped: [],
     // Set when the number resolved to a quote this tenant AUTHORED, so nothing
@@ -309,6 +314,53 @@ export const ingestQuote = async (svc, ctx, input = {}) => {
     }
     report.lines_written = payload.length;
 
+    // Teach the item master a shipping weight, where the document printed one
+    // and the master has none.
+    //
+    // weight_kg has been empty on every item since migration 145 added it,
+    // because nothing in the product can write one — so freight is apportioned
+    // by line value rather than by weight. A supplier who prints a weight
+    // column is the cheapest possible source, and costs the operator nothing.
+    //
+    // FILLS A BLANK ONLY. `.is("weight_kg", null)` in the update, not merely a
+    // check before it: two documents ingesting concurrently must not race, and
+    // a value already on the master is authoritative.
+    try {
+      const { candidates, skipped } = weightCandidates(lines);
+      report.weights_skipped = skipped;
+      if (candidates.length) {
+        const itemMap = await resolveItems(svc, ctx.tenantId, candidates.map((c) => c.part_no));
+        for (const c of candidates) {
+          const itemId = itemMap.get(c.part_no);
+          if (!itemId) continue;
+          const upd = await svc.from("item_master")
+            .update({
+              weight_kg: c.weight_kg,
+              weight_source: "document",
+              weight_captured_at: new Date().toISOString(),
+              weight_document_id: sourceDocumentId || null,
+            })
+            .eq("tenant_id", ctx.tenantId).eq("id", itemId)
+            .is("weight_kg", null);
+          // Migration 216 is applied BY HAND. Without it the provenance columns
+          // do not exist and PostgREST rejects the whole update — which must
+          // not take the quote ingest down over an optional enrichment.
+          if (upd.error && (upd.error.code === "42703" || /weight_(source|captured_at|document_id)/.test(upd.error.message || ""))) {
+            const retry = await svc.from("item_master")
+              .update({ weight_kg: c.weight_kg })
+              .eq("tenant_id", ctx.tenantId).eq("id", itemId)
+              .is("weight_kg", null);
+            if (!retry.error) report.weights_learned += 1;
+            continue;
+          }
+          if (!upd.error) report.weights_learned += 1;
+        }
+      }
+    } catch (_e) {
+      // Best-effort by design: a quote must ingest whether or not it happened
+      // to carry a weight column.
+    }
+
     // Seed the identity flywheel. Only for lines carrying BOTH codes, and only
     // where our code resolves EXACTLY to an item.
     if (customerId) {
@@ -354,6 +406,7 @@ export const ingestQuotes = async (svc, ctx, quotes = []) => {
     quotes_ok: reports.filter((r) => !r.error).length,
     quotes_matched_authored: reports.filter((r) => r.matched_authored).length,
     mappings_learned: reports.reduce((a, r) => a + r.mappings_learned, 0),
+    weights_learned: reports.reduce((a, r) => a + (r.weights_learned || 0), 0),
     lines_written: reports.reduce((a, r) => a + r.lines_written, 0),
     reports,
   };

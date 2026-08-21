@@ -49,7 +49,19 @@ merely displayed.
 
 ## 2. Open engineering work, in the order I would take it
 
-### 2.1 — Verify the approval path before redesigning it *(next)*
+### 2.1 — DONE: the approval path is verified
+
+See `docs/APPROVAL_DEVIATION_SCOPE.md`. Headline: the **Approvals queue does not
+approve orders** — it writes a `quote_approvals` row and never touches
+`orders.status`. The only working approve is in the SO workspace, where the
+deviation banner IS already visible. Two silent defeats found: the persisted line
+takes the QUOTE's rate so the approver's totals hide the deviation, and a
+quantity difference against the quote is counted as `matched`.
+
+Four questions for the owner are at the end of that document; the first one
+(is the queue meant to approve?) gates the rest.
+
+### 2.1b — Superseded framing, kept for the record
 
 The owner's framing: the point of comparing a PO to a quote is to reach the
 **PO acceptance decision**, which belongs to the **approver at review** — who

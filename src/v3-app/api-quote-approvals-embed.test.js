@@ -92,7 +92,29 @@ describe("quote_approvals ?type=approvals embed + flatten", () => {
         quote_number: null,
         order_mode: "PROJECT_HSS",
         created_at: "2026-05-20T00:00:00Z",
-        result: { salesOrder: { grandTotal: 696960, marginPct: 8.5, lineItems: [{}, {}, {}] } },
+        // Margin comes from priceComposition, not from a marginPct field on
+        // salesOrder. An earlier version of this test INVENTED that field in
+        // the fixture and asserted it back — which is why the queue shipped
+        // with a margin column that was blank on every real row: nothing
+        // writes marginPct, and no test noticed because the fixture supplied
+        // it. Selling 3 x 100 = 300, landed 3 x 70 = 210, margin 30%.
+        result: {
+          salesOrder: {
+            grandTotal: 696960,
+            lineItems: [
+              { sellerPartNo: "A", qty: 1, rate: 100 },
+              { sellerPartNo: "B", qty: 1, rate: 100 },
+              { sellerPartNo: "C", qty: 1, rate: 100 },
+            ],
+          },
+          priceComposition: {
+            lineItems: [
+              { partNumber: "A", landedCostINR: 70 },
+              { partNumber: "B", landedCostINR: 70 },
+              { partNumber: "C", landedCostINR: 70 },
+            ],
+          },
+        },
         customer: { customer_name: "Industrias Gogiba S.L", gstin: "27AAACA1234B1Z5", state_code: "27" },
       },
     }];
@@ -104,7 +126,8 @@ describe("quote_approvals ?type=approvals embed + flatten", () => {
     expect(a.order_mode).toBe("PROJECT_HSS");
     expect(a.line_count).toBe(3);
     expect(a.value_inr).toBe(696960);
-    expect(a.margin_pct).toBe(8.5);
+    expect(a.margin_pct).toBeCloseTo(30, 6);
+    expect(a.margin_state).toBe("computed");
     expect(a.gstin).toBe("27AAACA1234B1Z5");
     expect(a.state_code).toBe("27");
     // raw quote_approvals columns survive
@@ -115,13 +138,37 @@ describe("quote_approvals ?type=approvals embed + flatten", () => {
     expect(a.order).toBeUndefined();
   });
 
-  it("reads margin from snake_case margin_pct when camel marginPct is absent", async () => {
+  it("reports NOT COSTED rather than a bare null when there is no price composition", async () => {
+    // This test used to assert that a snake_case margin_pct on salesOrder was
+    // read when the camel one was absent. Neither is written by anything, so
+    // it was locking in a belief rather than a behaviour. The honest answer
+    // for an uncosted order is that the margin is unknown — which an approver
+    // must be able to tell apart from a thin one.
     h.rows = [{
       id: "ap-2", order_id: "ord-2", status: "PENDING",
-      order: { po_number: "X", result: { salesOrder: { grandTotal: 100, margin_pct: 12, lineItems: [{}] } }, customer: null },
+      order: { po_number: "X", result: { salesOrder: { grandTotal: 100, lineItems: [{ sellerPartNo: "A", qty: 1, rate: 100 }] } }, customer: null },
     }];
     const out = await run();
-    expect(out.approvals[0].margin_pct).toBe(12);
+    expect(out.approvals[0].margin_pct).toBeNull();
+    expect(out.approvals[0].margin_state).toBe("not_costed");
+  });
+
+  it("flags a PARTIALLY costed order with its coverage", async () => {
+    // Margin over 1 of 2 lines is not the order's margin.
+    h.rows = [{
+      id: "ap-2b", order_id: "ord-2b", status: "PENDING",
+      order: {
+        po_number: "X2", customer: null,
+        result: {
+          salesOrder: { lineItems: [{ sellerPartNo: "A", qty: 1, rate: 100 }, { sellerPartNo: "B", qty: 1, rate: 100 }] },
+          priceComposition: { lineItems: [{ partNumber: "A", landedCostINR: 50 }] },
+        },
+      },
+    }];
+    const out = await run();
+    expect(out.approvals[0].margin_state).toBe("partial");
+    expect(out.approvals[0].margin_lines_matched).toBe(1);
+    expect(out.approvals[0].margin_lines_total).toBe(2);
   });
 
   it("degrades gracefully when the order has no result / no lines", async () => {
@@ -134,6 +181,7 @@ describe("quote_approvals ?type=approvals embed + flatten", () => {
     expect(a.line_count).toBe(0);
     expect(a.value_inr).toBeNull();
     expect(a.margin_pct).toBeNull();
+    expect(a.margin_state).toBe("not_costed");
     expect(a.po_number).toBe("Y");
     expect(a.customer_name).toBe("Acme");
   });

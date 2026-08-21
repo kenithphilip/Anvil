@@ -322,7 +322,13 @@ const WiredApprovals = () => {
 
   const reasonOf = (a) => {
     if (a.reasons && Array.isArray(a.reasons) && a.reasons.length) return a.reasons[0];
-    if (Number(a.margin_pct) > 0 && Number(a.margin_pct) < 10) return "margin breach";
+    // Ordered worst-first. A loss outranks a thin margin, and both outrank
+    // "we could not tell" — which used to be indistinguishable from a healthy
+    // order because margin_pct was null for EVERY row.
+    const m = Number(a.margin_pct);
+    if (Number.isFinite(m) && m < 0) return "below cost";
+    if (Number.isFinite(m) && m < 10) return "margin breach";
+    if (a.margin_state === "not_costed") return "not costed";
     if (a.over_threshold) return "value > threshold";
     return a.comments || "policy match";
   };
@@ -374,7 +380,9 @@ const WiredApprovals = () => {
               </tr></thead>
               <tbody>
                 {pending.map((a) => {
-                  const margin = Number(a.margin_pct) || 0;
+                  // NOT `|| 0`: a negative margin is a loss, and zero-ing it
+                  // would paint the worst orders as merely unremarkable.
+                  const margin = Number.isFinite(Number(a.margin_pct)) ? Number(a.margin_pct) : 0;
                   return (
                     <tr key={a.id}>
                       <td className="mono"><span className="pri">{a.po_number || a.order_reference || (a.order_id ? a.order_id.slice(0, 12) : "—")}</span></td>
@@ -383,8 +391,26 @@ const WiredApprovals = () => {
                       <td className="r mono" style={{ color: a.line_count === 0 ? "var(--rust)" : "var(--ink)" }}>{a.line_count != null ? a.line_count : "—"}</td>
                       <td><Chip k="warn">{reasonOf(a)}</Chip></td>
                       <td className="r mono">{a.value_inr ? fmtINR(Number(a.value_inr)) : "—"}</td>
+                      {/* "—" used to mean two very different things: a thin
+                          margin and an order nobody costed. Both rendered the
+                          same, in the same colour as a healthy one. An approver
+                          cannot weigh what they cannot distinguish. */}
                       <td className="r mono" style={{ color: margin > 0 && margin < 10 ? "var(--rust)" : "var(--ink)", fontWeight: 600 }}>
-                        {margin > 0 ? margin.toFixed(1) + "%" : "—"}
+                        {a.margin_state === "not_costed" ? (
+                          <span style={{ color: "var(--ink-4)", fontWeight: 400 }} title="No price composition on this order — margin cannot be computed">
+                            not costed
+                          </span>
+                        ) : (
+                          <>
+                            {margin.toFixed(1)}%
+                            {a.margin_state === "partial" && (
+                              <span
+                                style={{ color: "var(--amber)", fontWeight: 400 }}
+                                title={`Only ${a.margin_lines_matched} of ${a.margin_lines_total} lines are costed — this is the margin on the costed part, not on the order`}
+                              > ·{a.margin_lines_matched}/{a.margin_lines_total}</span>
+                            )}
+                          </>
+                        )}
                       </td>
                       <td className="r mono" style={{ color: a.expires_at && new Date(a.expires_at).getTime() - Date.now() < 6 * 3600 * 1000 ? "var(--rust)" : "var(--ink-3)" }}>
                         {expiresLabel(a.expires_at)}

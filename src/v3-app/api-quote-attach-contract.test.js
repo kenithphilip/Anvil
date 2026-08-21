@@ -20,7 +20,7 @@ import { readFileSync } from "node:fs";
 const claude = readFileSync("src/api/_lib/docai/claude.js", "utf8");
 const ingest = readFileSync("src/api/_lib/quote-ingest.js", "utf8");
 const bridge = readFileSync("src/api/orders/attach_quote.js", "utf8");
-const panel = readFileSync("src/v3-app/components/AttachQuotePanel.tsx", "utf8");
+const panel = readFileSync("src/v3-app/components/QuotesStrip.tsx", "utf8");
 
 describe("the extractor emits what the ingest requires", () => {
   it("QUOTE_TOOL declares quote_number", () => {
@@ -80,10 +80,15 @@ describe("the panel actually receives the chosen files", () => {
   it("commits each file's result as it completes", () => {
     // An error on the third file must not discard the first two, which are
     // already uploaded, linked and ingested server-side.
-    expect(panel).toMatch(/setDone\(\(d\) => \[r, \.\.\.d\]\)/);
+    // The strip re-reads the attached list after an attach instead of keeping a
+    // per-file result array, so the source of truth is the server, not local state.
+    expect(panel).toMatch(/onAttached\?\.\(\)/);
   });
 
   it("surfaces the real reason rather than a generic string", () => {
+    // attachQuote RESOLVES with ingested:false and a reason rather than throwing,
+    // so the reason has to be read off the result — not left to a catch.
+    expect(panel).toMatch(/res\.ingested === false/);
     expect(panel).toMatch(/res\?\.report\?\.reports\?\.\[0\]\?\.error/);
   });
 });

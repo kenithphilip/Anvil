@@ -192,7 +192,7 @@ describe("attach_quote wiring", () => {
   });
 
   it("the panel preflights before extracting", () => {
-    const src = read("src/v3-app/components/AttachQuotePanel.tsx");
+    const src = read("src/v3-app/components/QuotesStrip.tsx");
     const pre = src.indexOf("attachQuote?.(orderId, documentId, null, false)");
     const extract = src.indexOf('documents?.extract?.(file, { kind: "quote" })');
     expect(pre).toBeGreaterThan(-1);

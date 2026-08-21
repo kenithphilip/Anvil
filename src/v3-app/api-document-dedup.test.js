@@ -81,7 +81,8 @@ describe("the client hashes before asking for a URL", () => {
 
 describe("the card tells a duplicate apart from a failure", () => {
   const api = strip(read("src/api/orders/quotes.js"));
-  const ui = strip(read("src/v3-app/components/AttachedQuotesCard.tsx"));
+  const ui = strip(read("src/v3-app/components/QuotesStrip.tsx"));
+  const pane = strip(read("src/v3-app/components/QuotePane.tsx"));
 
   it("matches on content hash as proof", () => {
     expect(api).toMatch(/basis: "content_hash", certain: true/);
@@ -110,11 +111,14 @@ describe("the card tells a duplicate apart from a failure", () => {
   });
 
   it("labels it 'duplicate' rather than 'not read'", () => {
-    expect(ui).toMatch(/a\.superseded_by \? "duplicate" : "not read"/);
+    // Terser in the strip ("dup"), spelled out in the pane where there is room.
+    expect(ui).toMatch(/a\.superseded_by \? "dup" : "unread"/);
+    expect(pane).toMatch(/duplicate/);
   });
 
   it("says nothing is missing, and hedges when the evidence is circumstantial", () => {
-    expect(ui).toMatch(/nothing is missing/i);
-    expect(ui).toMatch(/Looks like another copy/i);
+    // The explanation moved to the pane, which is where the operator lands
+    // when they click through to check.
+    expect(pane).toMatch(/the copy that carries the quote holds the lines/i);
   });
 });

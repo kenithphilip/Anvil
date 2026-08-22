@@ -13,7 +13,10 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { weightCandidates, unitWeightFromLine } from "../api/_lib/item-weight-capture.js";
+import {
+  weightCandidates, unitWeightFromLine,
+  unitVolumeFromLine, volumeCandidates, MAX_PLAUSIBLE_UNIT_CBM,
+} from "../api/_lib/item-weight-capture.js";
 
 const read = (p) => fs.readFileSync(path.join(process.cwd(), p), "utf8");
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
@@ -174,7 +177,6 @@ describe("volume, which the first cut extracted and dropped", () => {
   // ratios, and LCL ocean is priced on weight-or-measure. A master with
   // weights and no volumes cannot size a light-and-bulky shipment — which is
   // exactly the case where volume decides.
-  const { unitVolumeFromLine, volumeCandidates, MAX_PLAUSIBLE_UNIT_CBM } = require("../api/_lib/item-weight-capture.js");
 
   it("divides a row measurement by the quantity", () => {
     expect(unitVolumeFromLine({ volume_cbm: 1.2, volume_basis: "line_total", quantity: 30 }).cbm)
@@ -200,13 +202,13 @@ describe("volume, which the first cut extracted and dropped", () => {
   });
 
   it("the tool asks for a volume basis", () => {
-    const src = require("node:fs").readFileSync("src/api/_lib/docai/claude.js", "utf8");
+    const src = read("src/api/_lib/docai/claude.js");
     const tool = src.slice(src.indexOf("PACKING_LIST_TOOL"), src.indexOf("PART_DRAWING_TOOL"));
     expect(tool).toMatch(/volume_basis: \{[^}]*enum: \["per_unit", "line_total", null\]/);
   });
 
   it("the ingest writes it, filling a blank only", () => {
-    const src = require("node:fs").readFileSync("src/api/documents/packing_list_ingest.js", "utf8");
+    const src = read("src/api/documents/packing_list_ingest.js");
     expect(src).toMatch(/update\(\{ volume_cbm: cbm \}\)/);
     expect(src).toMatch(/\.is\("volume_cbm", null\)/);
   });
@@ -214,7 +216,7 @@ describe("volume, which the first cut extracted and dropped", () => {
   it("writes volume independently of weight", () => {
     // A row may carry a measurement and no usable weight, or the reverse, and
     // a part whose weight is known can still be missing its volume.
-    const src = require("node:fs").readFileSync("src/api/documents/packing_list_ingest.js", "utf8");
+    const src = read("src/api/documents/packing_list_ingest.js");
     expect(src).toMatch(/if \(!c\) continue;/);
     expect(src).toMatch(/volumes_learned/);
   });

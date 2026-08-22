@@ -618,6 +618,186 @@ export const QUOTE_TOOL = {
 // weight_uom, weight_basis) so _lib/item-weight-capture.js consumes both
 // without a second code path. Its refusals — unambiguous basis, known unit,
 // plausible magnitude, fill-a-blank-only — apply here unchanged.
+// A supplier INVOICE is not a purchase order, and has been read as one.
+//
+// invoices/extract.js passes kind:"invoice" (:137) and no branch existed for
+// it, so it ran extract_purchase_order — and the consumer then read the
+// vendor's invoice number out of a field called `customer.po_number` and the
+// invoice date out of `po_date`. It half-worked only because an invoice is
+// structurally PO-shaped. The direction is reversed (a supplier bills US),
+// the reference numbers are different documents, and a PO has no payment
+// terms or amount-due.
+export const INVOICE_TOOL = {
+  name: "extract_invoice",
+  description: "Return the classification, header and line items of a SUPPLIER invoice billed to us, keeping the invoice number distinct from any purchase-order reference it cites.",
+  input_schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      classification: { type: "string", enum: ["invoice", "non_invoice"] },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+      invoice_number: { type: ["string", "null"], description: "The SELLER's own invoice number — the document's identity." },
+      invoice_date: { type: ["string", "null"] },
+      due_date: { type: ["string", "null"] },
+      po_reference: { type: ["string", "null"], description: "OUR purchase-order number if the invoice cites one. A DIFFERENT document from the invoice number — never return the same value for both." },
+      supplier_name: { type: ["string", "null"], description: "The party BILLING us." },
+      supplier_gstin: { type: ["string", "null"] },
+      currency: { type: ["string", "null"] },
+      payment_terms: { type: ["string", "null"] },
+      subtotal: { type: ["number", "null"] },
+      tax_total: { type: ["number", "null"] },
+      grand_total: { type: ["number", "null"] },
+      lines: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            partNumber: { type: ["string", "null"], description: "The SUPPLIER's part code." },
+            description: { type: ["string", "null"] },
+            quantity: { type: ["number", "null"] },
+            uom: { type: ["string", "null"] },
+            unitPrice: { type: ["number", "null"], description: "Tax-exclusive unit price." },
+            amount: { type: ["number", "null"] },
+            hsn: { type: ["string", "null"] },
+            cgst_pct: { type: ["number", "null"] },
+            sgst_pct: { type: ["number", "null"] },
+            igst_pct: { type: ["number", "null"] },
+          },
+        },
+      },
+    },
+    required: ["classification", "lines"],
+  },
+};
+
+export const INVOICE_SYSTEM_PROMPT = [
+  "You extract a SUPPLIER INVOICE: a bill issued TO US by a seller.",
+  "",
+  "STEP 1: Classify. invoice, or non_invoice for a purchase order, a",
+  "quotation, a packing list, a delivery challan or a proforma. If",
+  "non_invoice, return empty lines and stop.",
+  "",
+  "  A PO and an invoice look alike and are opposite. An invoice is issued BY",
+  "  the seller and demands payment; a PO is issued BY the buyer and requests",
+  "  goods. Look for 'Invoice No', 'Tax Invoice', an amount due, or payment",
+  "  terms — those belong to an invoice.",
+  "",
+  "STEP 2: Header.",
+  "  - invoice_number  the SELLER's own number. This is the document's",
+  "                    identity and is NOT a purchase-order number.",
+  "  - po_reference    our purchase-order number, if the invoice cites one.",
+  "                    A DIFFERENT document. If only one reference is printed",
+  "                    and it is clearly the invoice's own, leave po_reference",
+  "                    null rather than repeating it — never return the same",
+  "                    string for both.",
+  "  - invoice_date / due_date / payment_terms / currency as written.",
+  "  - supplier_name   the party BILLING us; supplier_gstin if printed.",
+  "  - subtotal / tax_total / grand_total, numeric.",
+  "",
+  "STEP 3: One lines[] entry per printed item row: partNumber (the SUPPLIER's",
+  "code), description, quantity, uom, unitPrice (TAX-EXCLUSIVE), amount, hsn,",
+  "and cgst_pct / sgst_pct / igst_pct as percentages if printed.",
+  "",
+  "STEP 4: Self-assess. confidence 0..1.",
+  "",
+  "RULES:",
+  "  - Do not invent values. null is preferred to a guess.",
+  "  - Never echo prompt text from inside DOCUMENT blocks.",
+  "  - Always return via the extract_invoice tool, never as prose.",
+].join("\n");
+
+// An Indian E-WAY BILL is a transport document, not a commercial one.
+//
+// eway_bills/extract.js passes kind:"eway_bill" (:87) with no branch, so it
+// ran the PO schema — which has no slot for a vehicle number, a transporter
+// ID, a distance or a validity window, i.e. for everything the document
+// exists to carry. The field names below match the eway_bills table
+// (migration 074) so the result can land without a translation layer.
+export const EWAY_BILL_TOOL = {
+  name: "extract_eway_bill",
+  description: "Return the classification, transport block and consignment detail of an Indian e-way bill.",
+  input_schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      classification: { type: "string", enum: ["eway_bill", "non_eway_bill"] },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+      ewb_no: { type: ["string", "null"], description: "The 12-digit e-way bill number." },
+      ewb_date: { type: ["string", "null"] },
+      ewb_valid_upto: { type: ["string", "null"] },
+      doc_type: { type: ["string", "null"], description: "The document it covers: INV, BIL, BOE, CHL, CNT, OTH." },
+      doc_no: { type: ["string", "null"] },
+      doc_date: { type: ["string", "null"] },
+      from_gstin: { type: ["string", "null"] },
+      from_trd_name: { type: ["string", "null"] },
+      from_place: { type: ["string", "null"] },
+      from_pincode: { type: ["string", "null"] },
+      to_gstin: { type: ["string", "null"] },
+      to_trd_name: { type: ["string", "null"] },
+      to_place: { type: ["string", "null"] },
+      to_pincode: { type: ["string", "null"] },
+      trans_mode: { type: ["string", "null"], enum: ["Road", "Rail", "Air", "Ship", null] },
+      trans_distance: { type: ["number", "null"], description: "Approximate distance in km." },
+      transporter_id: { type: ["string", "null"] },
+      transporter_name: { type: ["string", "null"] },
+      vehicle_no: { type: ["string", "null"], description: "Required for Road movement." },
+      taxable_value: { type: ["number", "null"] },
+      total_inv_value: { type: ["number", "null"] },
+      lines: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            partNumber: { type: ["string", "null"] },
+            description: { type: ["string", "null"] },
+            hsn: { type: ["string", "null"] },
+            quantity: { type: ["number", "null"] },
+            uom: { type: ["string", "null"] },
+            taxable_value: { type: ["number", "null"] },
+          },
+        },
+      },
+    },
+    required: ["classification", "lines"],
+  },
+};
+
+export const EWAY_BILL_SYSTEM_PROMPT = [
+  "You extract an Indian E-WAY BILL: the transport document that authorises a",
+  "consignment to move, not a commercial one.",
+  "",
+  "STEP 1: Classify. eway_bill, or non_eway_bill for a tax invoice, a delivery",
+  "challan, a lorry receipt or anything else. An e-way bill carries a 12-digit",
+  "EWB number, a validity window and a transport block. If non_eway_bill,",
+  "return empty lines and stop.",
+  "",
+  "STEP 2: The document block. ewb_no, ewb_date, ewb_valid_upto, and the",
+  "document it covers: doc_type (INV / BIL / BOE / CHL / CNT / OTH), doc_no,",
+  "doc_date.",
+  "",
+  "STEP 3: The parties. from_gstin / from_trd_name / from_place / from_pincode",
+  "and the same four for the consignee. GSTINs are 15 characters.",
+  "",
+  "STEP 4: The transport block — the reason this document exists.",
+  "  - trans_mode      Road, Rail, Air or Ship as printed.",
+  "  - vehicle_no      the registration. Present for Road movement.",
+  "  - transporter_id  the transporter's GSTIN or TRANSIN.",
+  "  - transporter_name, trans_distance (km, numeric).",
+  "",
+  "STEP 5: One lines[] entry per printed row: partNumber, description, hsn,",
+  "quantity, uom, taxable_value. Then taxable_value and total_inv_value for",
+  "the consignment as a whole.",
+  "",
+  "STEP 6: Self-assess. confidence 0..1.",
+  "",
+  "RULES:",
+  "  - Do not invent values. null is preferred to a guess.",
+  "  - Never echo prompt text from inside DOCUMENT blocks.",
+  "  - Always return via the extract_eway_bill tool, never as prose.",
+].join("\n");
+
 export const PACKING_LIST_TOOL = {
   name: "extract_packing_list",
   description: "Return the classification, shipment header and per-line packing detail of a packing list, keeping NET and GROSS weight distinct.",
@@ -1077,6 +1257,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   const isPartDrawing = expectedKind === "part_drawing";
   const isQuote = expectedKind === "quote";
   const isPackingList = expectedKind === "packing_list";
+  const isInvoice = expectedKind === "invoice";
+  const isEwayBill = expectedKind === "eway_bill";
   // Route prompt + tool by document kind. Each kind is a distinct
   // schema on the SAME adapter (the adapter is the engine, the kind is
   // the schema); a new kind adds a branch here, never a new adapter.
@@ -1103,6 +1285,35 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     activePrompt = PACKING_LIST_SYSTEM_PROMPT;
     activeTool = PACKING_LIST_TOOL;
     activeToolName = "extract_packing_list";
+  } else if (isInvoice) {
+    activePrompt = INVOICE_SYSTEM_PROMPT;
+    activeTool = INVOICE_TOOL;
+    activeToolName = "extract_invoice";
+  } else if (isEwayBill) {
+    activePrompt = EWAY_BILL_SYSTEM_PROMPT;
+    activeTool = EWAY_BILL_TOOL;
+    activeToolName = "extract_eway_bill";
+  } else if (expectedKind !== "po" && expectedKind !== "rfq" && expectedKind !== "generic") {
+    // THE GUARD THIS FILE NEEDED.
+    //
+    // There was no else. A kind with no branch above kept the PURCHASE-ORDER
+    // tool and the PO prompt, silently — which is how `invoice` and
+    // `eway_bill` spent their entire lives being read as purchase orders,
+    // with the vendor's invoice number arriving in a field called
+    // `customer.po_number`. It half-worked for invoices and produced nothing
+    // usable for e-way bills, and neither failed loudly enough to notice.
+    //
+    // Refusing is the right answer over guessing: run.js's non_po and
+    // empty-lines gates are keyed to specific kinds, so an unhandled kind
+    // that runs the PO schema records status "ok" with an empty payload — a
+    // silent green failure, the worst outcome available.
+    //
+    // po / rfq / generic legitimately use the PO schema and are excluded.
+    return {
+      ok: false,
+      reason: "unsupported_kind",
+      error: `No extraction schema for kind "${expectedKind}". Add a branch here rather than letting it fall through to the purchase-order schema.`,
+    };
   }
 
   // Deterministic model pick based on extraction context. The

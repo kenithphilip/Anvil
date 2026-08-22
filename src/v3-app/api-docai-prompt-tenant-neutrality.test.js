@@ -39,3 +39,28 @@ describe.each(["claude.js", "gemini.js"])("%s prompt is entity-agnostic", (file)
     expect(src.toLowerCase()).toContain("prefix");
   });
 });
+
+// A registry variant is a prompt too.
+//
+// prompt-versions.js used to hold nothing but labels, so it was never checked.
+// The po_extractor@v2 canary changed that: system_append is appended to the
+// system blocks and sent to the model, which makes it exactly as capable of
+// leaking one tenant's part formats as the base prompt — and it is the file a
+// reviewer is least likely to think of as "a prompt".
+//
+// Only the identity checks apply here. The suites above also assert that the
+// base prompts still TEACH certain rules; a variant is a delta and is not
+// required to restate any of them.
+describe("prompt-versions.js registry text is entity-agnostic", () => {
+  const src = read("prompt-versions.js");
+
+  it.each(FORBIDDEN)("contains no reference to %s", (needle) => {
+    expect(src.toUpperCase()).not.toContain(needle.toUpperCase());
+  });
+
+  it("keeps every variant's prompt text in the registry, not in a screen", () => {
+    // If a variant's text ever moves somewhere this test does not read, the
+    // check above silently stops protecting anything.
+    expect(src).toMatch(/system_append: \[/);
+  });
+});

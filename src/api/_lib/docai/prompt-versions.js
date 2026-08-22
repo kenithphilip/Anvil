@@ -48,14 +48,69 @@ const REGISTRY = {
     {
       version: "v1",
       status: "active",
-      traffic_weight: 0.70,
+      traffic_weight: 0.90,
       description: "Original (May 2025) PO extractor system prompt.",
     },
     {
       version: "v2",
-      status: "active",
-      traffic_weight: 0.30,
-      description: "Tighter line-item table prompts; added few-shot for SAP layouts (Bet 4 Nov 2025).",
+      status: "canary",
+      traffic_weight: 0.10,
+      description: "Multi-row-per-item counting discipline, ported to whichever adapter lacks it.",
+      // THE HYPOTHESIS, and why it is a canary rather than a straight fix.
+      //
+      // The single most-cited defect family in this repo's docai history is a
+      // multi-row PO shredded or dropped entirely: #106 (a 32-line 7-page PO
+      // that returned 0 lines), then #272, #317, #417, #423, #286. Commit
+      // 8b10493 fixed the first one with prompt text and said so — "No code
+      // path changes; this is a prompt-only fix" — by adding the MULTI-ROW-PER-
+      // ITEM block now at claude.js:167-200, which calls itself "the single
+      // biggest cause of a shredded line count".
+      //
+      // That commit touched claude.js and nothing else. gemini.js never got
+      // the block — grep it for MULTI-ROW or "physical rows" and you get zero
+      // hits — and gemini is FIRST in DEFAULT_PROVIDER_ORDER, the default since
+      // migration 208. So the fix the repo is proudest of has been living on
+      // the last-resort adapter while the primary one extracts without it.
+      //
+      // Why canary and not just port it: it is proven for Claude, not for
+      // Gemini. A prompt tuned against one model's failure mode can be inert
+      // or actively harmful on another — instruction-following differs, and
+      // this adds ~15 lines to a prompt that is already long. "It worked over
+      // there" is a hypothesis, not a result, and this registry exists so that
+      // distinction can be settled with numbers instead of asserted.
+      //
+      // Deliberately NOT ported: the col-2 example mapping at claude.js:189-199.
+      // claude.js itself calls it "ONE example layout ONLY", it is the most
+      // over-fitted part of the block, and carrying it would confound the
+      // experiment with a second, different treatment.
+      //
+      // Read-out: empty_lines share of extraction_failure_rate, the
+      // line_count_shortfall anomaly rate, and replay's line_recall_avg —
+      // sliced by adapter, because the two arms are not the same treatment on
+      // both (on Claude this reinforces guidance already present; on Gemini it
+      // supplies guidance that is absent). Judge Gemini.
+      system_append: [
+        "MULTI-ROW-PER-ITEM TABLE LAYOUTS",
+        "Many Indian and Korean OEM POs print ONE line item across SEVERAL physical rows — the part",
+        "number and quantity on the first row, the description and UoM on the second, a specification or",
+        "drawing code on the third, and so on, often closed by a horizontal rule or a blank row.",
+        "",
+        "All physical rows that share the same S.No / Line / Item serial — or that are visually grouped",
+        "between two horizontal rules or across a page break — belong to ONE line item. Combine their",
+        "cells into a SINGLE lines[] entry.",
+        "",
+        "Do NOT emit one lines[] entry per physical row. That multiplies the line count by 4-5x and",
+        "shreds every per-unit amount. Equally, do NOT give up and return an empty lines[] because the",
+        "table shape is unfamiliar: count the serials and work block by block.",
+        "",
+        "If the document prints 8 S.No values you must return exactly 8 lines[] entries; if it prints 32",
+        "you must return exactly 32.",
+        "",
+        "Do not assume the part number sits in any particular column. Some formats leave the part column",
+        "blank and print the part as the first line of the description cell; others print the buyer's own",
+        "item code in its own column with our part embedded in the description behind a prefix. Apply the",
+        "partNumber location rules given above, and still return exactly one entry per printed serial.",
+      ],
     },
   ],
   supplier_ack_extractor: [
@@ -126,10 +181,23 @@ export const resolvePromptVersion = (promptName, opts = {}) => {
 export const getPromptVersion = (promptName, opts = {}) => {
   const r = resolvePromptVersion(promptName, opts);
   if (!r) return null;
+  // Does this ROW carry prompt text at all?
+  const hasText = !!(r.system || r.tools || (Array.isArray(r.system_append) && r.system_append.length));
+  // Did THIS RUN actually use it? Two different questions, and conflating them
+  // is how a comparison ends up measuring nothing: with variants disabled, a
+  // v2-labelled run executes the identical base prompt, so charting "v1 vs v2"
+  // would be charting noise against itself. Variants are opt-in — the caller
+  // must pass allowVariants — so a run is only marked a variant when the
+  // tenant switched the experiment on AND the row has something to say.
+  const applied = hasText && opts.allowVariants === true;
   return {
     ...r,
-    // True only when this row genuinely overrides the adapter's prompt.
-    is_variant: !!(r.system || r.tools),
+    has_variant_text: hasText,
+    // True only when this run genuinely ran something other than the default.
+    is_variant: applied,
+    // Only handed out when applied, so a caller cannot inject a variant it was
+    // not authorised to run by reading the row off the result.
+    system_append: applied && Array.isArray(r.system_append) ? r.system_append : null,
   };
 };
 

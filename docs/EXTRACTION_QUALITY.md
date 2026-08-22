@@ -239,7 +239,7 @@ of those is most of the work.**
 | 3 | ~~**Wire the replay scorer**~~ — **shipped (#487)**: client method + `eval_replay_regression` admin alert | **"did that prompt change help?"** | 1 |
 | 4 | ~~Golden fixtures for the non-PO kinds, harvested the same self-populating way~~ — **shipped**: per-kind scoring profiles, three non-PO fixtures, corrected-run harvest | *"does the gate protect quotes too?"* | nothing |
 | 5 | ~~Correction UI on the quote review surface~~ — **shipped**: correctable cells on the Quotes tab, run resolved through `source_document_id` | feeds the override loop beyond POs | nothing |
-| 6 | Turn on the traffic split, canary one prompt | *"can we improve without a deploy?"* | 1, 2, 3 |
+| 6 | ~~Turn on the traffic split, canary one prompt~~ — **shipped**: `system_append` on a registry row, wired to BOTH adapters, opt-in per tenant | *"can we improve without a deploy?"* | 1, 2, 3 |
 
 **PR 3 is the one the brief is actually asking for.** PR 1 is its precondition
 and is a day's work on code that already exists.
@@ -307,3 +307,77 @@ honest state: the machinery is kind-agnostic, the *inputs* are not yet.
 - **The correction loop is one screen wide** and, being permissioned `approve`,
   is fed only by people who approve orders. Widening the UI without widening
   the permission moves the bottleneck rather than removing it.
+
+---
+
+## 9. The canary (PR 6)
+
+The registry, the deterministic split and the per-run label all shipped
+earlier. What never existed was the **wire**: `run.js` resolved a version only
+to caption the `extraction_runs` row, and no adapter ever looked at it. "70/30
+between v1 and v2" described two arms running the identical prompt — an A/B
+test of a thing against itself.
+
+**The hypothesis.** The most-cited defect family in this repo's docai history
+is a multi-row PO shredded or dropped entirely: #106 (a 32-line, 7-page PO that
+returned zero lines), then #272, #317, #417, #423, #286. Commit `8b10493` fixed
+the first with prompt text alone and said so — *"No code path changes; this is
+a prompt-only fix"* — adding the MULTI-ROW-PER-ITEM block now at
+`claude.js:167-200`, which calls itself *"the single biggest cause of a
+shredded line count"*.
+
+That commit touched `claude.js` and nothing else. **`gemini.js` never got the
+block** — grep it for `MULTI-ROW` or `physical rows` and you get zero hits —
+and `gemini` is first in `DEFAULT_PROVIDER_ORDER`, the default since migration
+208. The fix this repo is proudest of has been living on the last-resort
+adapter while the primary one extracts without it.
+
+**Why a canary rather than just porting it.** It is proven for Claude, not for
+Gemini. A prompt tuned against one model's failure mode can be inert or harmful
+on another, and it adds ~15 lines to an already long prompt. *"It worked over
+there"* is a hypothesis, not a result — and this registry exists so that
+distinction gets settled with numbers.
+
+**How to run it.**
+
+1. Apply `supabase/migrations/218_docai_prompt_variants.sql`. Without it the
+   flag has no column, so it is permanently `undefined` and the canary cannot
+   fire. (`docai_prompt_pins` was in exactly that state already: `run.js` has
+   read it for months with no column behind it, so the documented "pin a
+   version to opt out" escape hatch had never once worked.)
+2. Judge it offline first, on real documents, with zero live traffic:
+   `eval.replay({ suite: "po-extraction", prompt_version: "v2" })`. Replay is
+   the **only** path that re-asks the model — `golden-gate` and `rescore` both
+   re-score a frozen `normalized_extract`, so a green `npm run eval:golden`
+   is no evidence at all about a prompt. Compare its `line_recall_avg` against
+   a run with `prompt_version` omitted.
+3. Only then set `docai_prompt_variants = true` on one tenant. 10% of that
+   tenant's PO runs draw v2, deterministically by customer, so a given
+   customer stays in one arm.
+4. Roll back by setting the flag false, or pin one tenant with
+   `docai_prompt_pins = {"po_extractor": "v1"}`. Both are settings writes.
+
+**The read-out.** `extraction_failure_rate`'s `empty_lines` share, the
+`line_count_shortfall` anomaly rate, and replay's `line_recall_avg` — **sliced
+by adapter**. The two arms are not the same treatment on both adapters: on
+Claude the delta reinforces guidance already present, on Gemini it supplies
+guidance that is absent. Judge Gemini. That asymmetry is a real confound and
+the honest reason this is a canary and not a conclusion.
+
+`is_variant` on the run row distinguishes "ran the variant" from "drew the
+label" — without it, charting v1 against v2 while the flag is off would be
+charting noise against itself.
+
+### Found while wiring it, not fixed here
+
+- `cron/extraction_jobs.js` calls `dispatchExtract` directly with synthetic
+  settings rather than going through `runExtractionPipeline`, so the large-PO
+  path takes neither the variant nor the version label. That path is exactly
+  where multi-row POs land, which makes it the one most worth covering next.
+- `portal/view.js` serves `kind=quotes` from `orders` selecting `result` (the
+  line items) with **no status filter**, while `kind=orders` filters to
+  APPROVED and beyond. Customer- and tenant-scoped, so not cross-customer, but
+  a customer can see an unapproved draft of their own order.
+- `orders/so_pdf.js` renders the customer-facing acknowledgement at any status
+  and never reads `rule_findings`, so a draft carrying an unresolved blocker
+  renders and shares on a 7-day signed URL.

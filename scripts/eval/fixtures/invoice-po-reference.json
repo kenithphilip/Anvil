@@ -1,0 +1,36 @@
+{
+  "id": "invoice-po-reference",
+  "kind": "invoice",
+  "description": "A supplier invoice carrying the buyer's PO reference and a split subtotal / tax / grand total. po_reference is the join key the three-way match runs on — a wrong one silently orphans the invoice, and nothing downstream notices.",
+  "expected": {
+    "invoiceNumber": "SI-2026-1188",
+    "invoiceDate": "2026-04-02",
+    "supplier": "ACME PVT LTD",
+    "poReference": "PO-77",
+    "currency": "INR",
+    "subtotal": 68500.0,
+    "taxTotal": 12330.0,
+    "grandTotal": 80830.0,
+    "lineItems": [
+      { "partNo": "BRG-6204", "qty": 10, "rate": 120.5, "amount": 1205.0, "hsn": "8482" },
+      { "partNo": "SKT-4410", "qty": 34, "rate": 1980.0, "amount": 67320.0, "hsn": "8515" }
+    ]
+  },
+  "normalized": {
+    "classification": "invoice",
+    "invoice_number": "SI-2026-1188",
+    "invoice_date": "2026-04-02",
+    "due_date": "2026-05-02",
+    "po_reference": "PO-77",
+    "supplier_name": "ACME PVT LTD",
+    "currency": "INR",
+    "subtotal": 68500.0,
+    "tax_total": 12330.0,
+    "grand_total": 80830.0,
+    "lines": [
+      { "partNumber": "BRG-6204", "description": "DEEP GROOVE BALL BEARING", "quantity": 10, "uom": "PCS", "unitPrice": 120.5, "amount": 1205.0, "hsn": "8482", "igst_pct": 18 },
+      { "partNumber": "SKT-4410", "description": "SOCKET, THREADED", "quantity": 34, "uom": "PCS", "unitPrice": 1980.0, "amount": 67320.0, "hsn": "8515", "igst_pct": 18 }
+    ]
+  },
+  "baseline_score": 1.0
+}

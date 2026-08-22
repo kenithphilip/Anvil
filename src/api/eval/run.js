@@ -36,6 +36,7 @@ import {
 // without the request stack. Re-exported here so existing importers (rescore.js,
 // tests) keep working unchanged.
 import { scoreCase } from "./score.js";
+import { profileFor, profileForExpected } from "./kind-profiles.js";
 export { scoreCase };
 
 const ensureEvalTables = async (svc) => {
@@ -184,7 +185,14 @@ export default async function handler(req, res) {
         skipped.push({ case_id: caseInput.id || "?", reason: "missing_actual" });
         continue;
       }
-      const scored = scoreCase(caseInput.expected, caseInput.actual);
+      // A posted case may name its document kind; otherwise the kind rides in
+      // the golden's own provenance, and absent both it is a purchase order.
+      const profile = (caseInput.kind ? profileFor(caseInput.kind) : null) || profileForExpected(caseInput.expected);
+      if (!profile) {
+        skipped.push({ case_id: caseInput.id || "?", reason: "unsupported_kind: " + caseInput.kind });
+        continue;
+      }
+      const scored = scoreCase(caseInput.expected, caseInput.actual, profile);
       totalPass += scored.pass;
       totalFail += scored.fail;
       caseResults.push({ case_id: caseInput.id || ("case_" + caseResults.length), ...scored });

@@ -104,7 +104,12 @@ export const QuotesStrip: React.FC<{
     setStep("reading");
     let extracted: any = null;
     try {
-      const out: any = await AnvilBackend?.documents?.extract?.(file, { kind: "quote" });
+      // Pass the document id. extraction_runs.source_id is the ONLY link from
+      // a run back to the file it read — the PO flow passes it (so-intake.tsx)
+      // and this one did not, so no quote extraction could be traced to its
+      // document, replayed against the live model, or harvested into the
+      // golden set. The id is already in hand from the upload above.
+      const out: any = await AnvilBackend?.documents?.extract?.(file, { kind: "quote", source_id: documentId });
       extracted = out?.normalized || null;
     } catch {
       extracted = null;   // non-fatal: attach anyway and report below

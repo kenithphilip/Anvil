@@ -26,6 +26,7 @@
  */
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
+import { notifyAdmins } from "../_lib/notifications.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
@@ -190,6 +191,34 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
   });
 
   const lineRecallAvg = recallN ? recallSum / recallN : null;
+  const regression = lineRecallAvg != null && lineRecallAvg < lineRecallFloor;
+
+  // TELL SOMEBODY.
+  //
+  // This function has always computed `regression` and returned it to a cron
+  // loop that reads only `r.ok` — so a replay that ran perfectly and found
+  // accuracy had FALLEN was indistinguishable from one that found nothing
+  // wrong. A quality signal nobody is told about is not a quality signal.
+  //
+  // Raised here rather than in cron/daily.js because that file is a mux with
+  // no service client and no tenant; this one has both.
+  if (regression) {
+    try {
+      await notifyAdmins(svc, tenantId, {
+        kind: "eval_replay_regression",
+        title: "Extraction accuracy fell on the golden corpus",
+        body: `Live replay line-recall ${lineRecallAvg.toFixed(3)} is below the floor ${lineRecallFloor} across ${caseResults.length} case(s).`,
+      }, {
+        // One alert per day per corpus, not one per replay run.
+        dedupKey: "eval_replay_regression:" + suite,
+      });
+    } catch (e) {
+      // Never let the alert fail the replay — but say so, because a swallowed
+      // alert is exactly the failure this block exists to prevent.
+      console.warn("[eval/replay] regression alert failed:", e?.message || e);
+    }
+  }
+
   return {
     suite,
     tenant_id: tenantId,
@@ -198,7 +227,7 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
     totals: { pass: totalPass, fail: totalFail, score },
     line_recall_avg: lineRecallAvg,
     line_recall_floor: lineRecallFloor,
-    regression: lineRecallAvg != null && lineRecallAvg < lineRecallFloor,
+    regression,
     models: modelsSeen,
     total_cost_usd: caseResults.reduce((s, c) => s + (c.cost_usd || 0), 0),
     cases: caseResults,

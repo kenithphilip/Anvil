@@ -412,6 +412,11 @@ export const runExtractionPipeline = async (params) => {
         pin: settings?.docai_prompt_pins?.[promptName] || null,
         forceVersion: hints?.forcePromptVersion || null,
         allowVariants,
+        // Per-DOCUMENT assignment. Keyed on the content hash (already computed
+        // above for dedupe), because customerId is null on the main intake
+        // path and a customer-keyed hash makes the split per-tenant
+        // all-or-nothing. Same file re-extracted -> same arm.
+        splitKey: preHash || null,
       })
     : null;
   // Stored as the { name, version, source } OBJECT migration 124 declared and

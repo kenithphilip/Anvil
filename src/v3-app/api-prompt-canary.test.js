@@ -25,11 +25,11 @@ const read = (rel) => readFileSync(join(HERE, "..", "..", rel), "utf8");
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("a registry row can now carry prompt text", () => {
-  const v2 = __test.REGISTRY.po_extractor.find((r) => r.version === "v2");
+  const v3 = __test.REGISTRY.po_extractor.find((r) => r.version === "v3");
 
-  it("po_extractor@v2 supplies a real delta", () => {
-    expect(Array.isArray(v2.system_append)).toBe(true);
-    expect(v2.system_append.length).toBeGreaterThan(5);
+  it("po_extractor@v3 supplies a real delta", () => {
+    expect(Array.isArray(v3.system_append)).toBe(true);
+    expect(v3.system_append.length).toBeGreaterThan(5);
   });
 
   it("is a DELTA, not a restatement of the base prompt", () => {
@@ -37,11 +37,11 @@ describe("a registry row can now carry prompt text", () => {
     // it wholesale would silently drop whichever ones the author forgot, and
     // no reviewer could tell which.
     const base = read("src/api/_lib/docai/claude.js");
-    expect(v2.system_append.join("\n").length).toBeLessThan(base.length / 10);
+    expect(v3.system_append.join("\n").length).toBeLessThan(base.length / 10);
   });
 
   it("carries the counting rule that is the point of the experiment", () => {
-    const text = v2.system_append.join("\n");
+    const text = v3.system_append.join("\n");
     expect(text).toMatch(/same S\.No/i);
     expect(text).toMatch(/exactly 8 lines\[\] entries/);
     // The failure being targeted is BOTH shredding and giving up.
@@ -52,24 +52,24 @@ describe("a registry row can now carry prompt text", () => {
   it("omits the col-2 example mapping, which would confound the experiment", () => {
     // claude.js itself calls that mapping "ONE example layout ONLY". Carrying
     // it would test two treatments at once.
-    const text = v2.system_append.join("\n");
+    const text = v3.system_append.join("\n");
     expect(text).not.toMatch(/row 1 col 2|Ex-Price column/i);
   });
 
   it("is a canary — a small share, not a coin flip", () => {
-    expect(v2.status).toBe("canary");
-    expect(v2.traffic_weight).toBeLessThanOrEqual(0.15);
+    expect(v3.status).toBe("canary");
+    expect(v3.traffic_weight).toBeLessThanOrEqual(0.15);
     const v1 = __test.REGISTRY.po_extractor.find((r) => r.version === "v1");
     expect(v1.traffic_weight).toBeGreaterThanOrEqual(0.85);
   });
 });
 
 describe("a variant applies only when the tenant opted in", () => {
-  const opts = { tenantId: "t1", customerId: "c1", forceVersion: "v2" };
+  const opts = { tenantId: "t1", customerId: "c1", forceVersion: "v3" };
 
   it("does not apply by default", () => {
     const r = getPromptVersion("po_extractor", opts);
-    expect(r.version).toBe("v2");
+    expect(r.version).toBe("v3");
     expect(r.has_variant_text).toBe(true);   // the row HAS text
     expect(r.is_variant).toBe(false);        // this run did not use it
     expect(r.system_append).toBeNull();      // and cannot reach it
@@ -238,11 +238,91 @@ describe("absent column behaves as off, so the code ships before the migration",
     const settings = {};
     expect(settings?.docai_prompt_variants === true).toBe(false);
     const r = getPromptVersion("po_extractor", {
-      tenantId: "t1", forceVersion: "v2",
+      tenantId: "t1", forceVersion: "v3",
       allowVariants: settings?.docai_prompt_variants === true,
     });
-    expect(r.version).toBe("v2");
+    expect(r.version).toBe("v3");
     expect(r.is_variant).toBe(false);
     expect(r.system_append).toBeNull();
+  });
+});
+
+describe("the canary samples DOCUMENTS, not tenants", () => {
+  const { splitFraction, REGISTRY } = __test;
+
+  it("a customer-keyed split collapses to one arm per tenant on the intake path", () => {
+    // so-intake.tsx calls documents.extract with only { source_id } — the
+    // customer is what the extraction is trying to determine — and
+    // docai/extract.js resolves `body?.customer_id || null`. So a
+    // (tenant, customer) hash is a single fixed number per tenant, and a 10%
+    // weight means ~10% of TENANTS at 100% exposure, not 10% of documents.
+    const tenants = Array.from({ length: 40 }, (_, i) => "t-" + i);
+    const perTenant = new Set(tenants.map((t) => splitFraction(t, null)));
+    expect(perTenant.size).toBe(40);        // one value each...
+    for (const t of tenants) {
+      // ...and it never varies across that tenant's documents.
+      expect(splitFraction(t, null)).toBe(splitFraction(t, null));
+    }
+  });
+
+  it("keying on the document actually samples", () => {
+    const v3 = REGISTRY.po_extractor.find((r) => r.version === "v3");
+    let hits = 0;
+    const N = 3000;
+    for (let i = 0; i < N; i++) {
+      if (getPromptVersion("po_extractor", { tenantId: "t1", splitKey: "sha-" + i }).version === "v3") hits++;
+    }
+    const share = hits / N;
+    expect(share).toBeGreaterThan(v3.traffic_weight * 0.7);
+    expect(share).toBeLessThan(v3.traffic_weight * 1.3);
+  });
+
+  it("is still deterministic — a retry cannot flip the treatment", () => {
+    const a = getPromptVersion("po_extractor", { tenantId: "t1", splitKey: "sha-abc" });
+    const b = getPromptVersion("po_extractor", { tenantId: "t1", splitKey: "sha-abc" });
+    expect(a.version).toBe(b.version);
+  });
+
+  it("falls back to the customer key when there is no document hash", () => {
+    // url-only sources have no bytes to hash. Old behaviour, best available.
+    const a = getPromptVersion("po_extractor", { tenantId: "t1", customerId: "c9" });
+    const b = getPromptVersion("po_extractor", { tenantId: "t1", customerId: "c9", splitKey: null });
+    expect(a.version).toBe(b.version);
+  });
+
+  it("run.js keys on the content hash it already computed", () => {
+    expect(strip(read("src/api/_lib/docai/run.js"))).toMatch(/splitKey: preHash \|\| null/);
+  });
+});
+
+describe("the experiment gets an uncontaminated version string", () => {
+  const rows = __test.REGISTRY.po_extractor;
+
+  it("v2 is retired, not reused", () => {
+    // Since #487 began recording prompt_version, ~30% of PO runs have carried
+    // po_extractor@v2 while executing the identical base prompt. The metrics
+    // bucket on that label (extraction-kpis promptVersionKey), so hanging the
+    // variant on v2 would drop every future variant run into a bucket already
+    // full of runs that were never variants.
+    const v2 = rows.find((r) => r.version === "v2");
+    expect(v2.status).toBe("retired");
+    expect(v2.traffic_weight).toBe(0);
+    expect(v2.system_append).toBeUndefined();
+  });
+
+  it("a retired version is never drawn by the split", () => {
+    const drawn = new Set(
+      Array.from({ length: 800 }, (_, i) =>
+        getPromptVersion("po_extractor", { tenantId: "t" + (i % 7), splitKey: "d" + i }).version),
+    );
+    expect(drawn.has("v2")).toBe(false);
+    expect(drawn.has("v1")).toBe(true);
+    expect(drawn.has("v3")).toBe(true);
+  });
+
+  it("still resolves a historical v2 row so old runs stay readable", () => {
+    // Retired removes it from the split; it must not remove it from the
+    // registry, or a run recorded months ago becomes unattributable.
+    expect(rows.find((r) => r.version === "v2")).toBeTruthy();
   });
 });

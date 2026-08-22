@@ -239,7 +239,7 @@ of those is most of the work.**
 | 3 | ~~**Wire the replay scorer**~~ — **shipped (#487)**: client method + `eval_replay_regression` admin alert | **"did that prompt change help?"** | 1 |
 | 4 | ~~Golden fixtures for the non-PO kinds, harvested the same self-populating way~~ — **shipped**: per-kind scoring profiles, three non-PO fixtures, corrected-run harvest | *"does the gate protect quotes too?"* | nothing |
 | 5 | ~~Correction UI on the quote review surface~~ — **shipped**: correctable cells on the Quotes tab, run resolved through `source_document_id` | feeds the override loop beyond POs | nothing |
-| 6 | ~~Turn on the traffic split, canary one prompt~~ — **shipped**: `system_append` on a registry row, wired to BOTH adapters, opt-in per tenant | *"can we improve without a deploy?"* | 1, 2, 3 |
+| 6 | ~~Turn on the traffic split, canary one prompt~~ — **shipped**: `system_append` on a registry row, wired to BOTH adapters, sampled per document, opt-in per tenant | *"can we improve without a deploy?"* | 1, 2, 3 |
 
 **PR 3 is the one the brief is actually asking for.** PR 1 is its precondition
 and is a day's work on code that already exists.
@@ -351,9 +351,9 @@ distinction gets settled with numbers.
    re-score a frozen `normalized_extract`, so a green `npm run eval:golden`
    is no evidence at all about a prompt. Compare its `line_recall_avg` against
    a run with `prompt_version` omitted.
-3. Only then set `docai_prompt_variants = true` on one tenant. 10% of that
-   tenant's PO runs draw v2, deterministically by customer, so a given
-   customer stays in one arm.
+3. Only then set `docai_prompt_variants = true` on one tenant. ~10% of that
+   tenant's PO **documents** draw v3, keyed on the content hash, so the same
+   file re-extracted always lands in the same arm.
 4. Roll back by setting the flag false, or pin one tenant with
    `docai_prompt_pins = {"po_extractor": "v1"}`. Both are settings writes.
 
@@ -365,8 +365,35 @@ guidance that is absent. Judge Gemini. That asymmetry is a real confound and
 the honest reason this is a canary and not a conclusion.
 
 `is_variant` on the run row distinguishes "ran the variant" from "drew the
-label" — without it, charting v1 against v2 while the flag is off would be
+label" — without it, charting v1 against v3 while the flag is off would be
 charting noise against itself.
+
+### Two things the split got wrong, and how they were found
+
+Both were caught by an adversarial pass over the first cut, and both would have
+made the canary a lie rather than a bad experiment.
+
+**The split sampled tenants, not documents.** `splitFraction` hashed
+`(tenant, customer)`, written that way so a customer would not flicker between
+arms. But the main PO intake calls `documents.extract` with **no `customer_id`**
+— the customer is what the extraction is trying to determine — so the hash
+collapsed to one fixed number per tenant. A 10% weight then meant roughly 10%
+of *tenants* receiving the variant on **100%** of their intake and the rest
+never seeing it: a full rollout by lottery wearing a canary's name, which no
+weight setting could fix. Simulated over 20 tenant ids, 2 landed in the window
+at total exposure. The split now keys on the content hash — already computed
+for dedupe, one line above where the version resolves — which measures 9.3% of
+documents while staying deterministic per file.
+
+**The variant was hung on a contaminated label.** Since #487 began recording
+`prompt_version`, ~30% of PO runs have carried `po_extractor@v2` while
+executing the identical base prompt, and the metrics bucket on that label.
+Attaching the new text to v2 would have dropped every future variant run into a
+bucket already full of runs that were never variants — the first comparison
+anyone ran would have been diluted by months of no-ops. The experiment is v3;
+v2 is retired, which keeps historical rows attributable while removing it from
+the split. A retired version cannot be pinned either, or that would be a way
+back in.
 
 ### Found while wiring it, not fixed here
 

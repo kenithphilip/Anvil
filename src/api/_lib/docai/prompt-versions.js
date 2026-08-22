@@ -52,7 +52,22 @@ const REGISTRY = {
       description: "Original (May 2025) PO extractor system prompt.",
     },
     {
+      // RETIRED, not reused. Since #487 began recording prompt_version, ~30% of
+      // PO runs have been labelled po_extractor@v2 while executing the
+      // identical base prompt. The metrics bucket on that label
+      // (extraction-kpis promptVersionKey), so hanging the new prompt text on
+      // v2 would drop every future variant run into a bucket already full of
+      // runs that were never variants — and the first comparison anyone ran
+      // would be diluted by months of no-ops. The experiment gets a clean
+      // string; retired keeps the historical rows readable and out of the
+      // split.
       version: "v2",
+      status: "retired",
+      traffic_weight: 0,
+      description: "Label-only. Recorded on ~30% of runs before variants could change the request; never executed anything different from v1.",
+    },
+    {
+      version: "v3",
       status: "canary",
       traffic_weight: 0.10,
       description: "Multi-row-per-item counting discipline, ported to whichever adapter lacks it.",
@@ -125,11 +140,25 @@ const totalActiveWeight = (rows) => rows
   .filter((r) => r.status === "active" || r.status === "canary")
   .reduce((s, r) => s + Number(r.traffic_weight || 0), 0);
 
-// Hash a (tenant, customer) tuple to a stable 0..1 number so the
-// A/B split is deterministic per customer (no flicker between
-// runs).
-const splitFraction = (tenantId, customerId) => {
-  const h = createHash("sha256").update(String(tenantId || "") + "|" + String(customerId || "")).digest();
+// Hash a (tenant, key) tuple to a stable 0..1 number so the split is
+// deterministic — the same input always lands in the same arm.
+//
+// THE KEY MATTERS MORE THAN THE WEIGHT. This was written to hash
+// (tenant, customer) so a customer would not flicker between arms. But the main
+// PO intake calls documents.extract with no customer_id — the customer is what
+// the extraction is trying to determine — so customerId is null there and the
+// hash collapses to one fixed number per tenant. A 10% weight then does not
+// mean 10% of documents: it means roughly 10% of TENANTS receive the variant
+// on 100% of their intake, and the rest never see it. That is a full rollout
+// by lottery wearing a canary's name, and no weight setting fixes it.
+//
+// So callers pass a per-document splitKey (the content hash) and the assignment
+// is per document: still deterministic — re-extracting the same file lands in
+// the same arm, so a retry cannot flip the treatment — but now actually
+// sampling. Falls back to customerId when no document key exists (url-only
+// sources), which is the old behaviour and the best available.
+const splitFraction = (tenantId, key) => {
+  const h = createHash("sha256").update(String(tenantId || "") + "|" + String(key || "")).digest();
   // First 4 bytes -> uint32 -> normalise to [0, 1).
   const v = h.readUInt32BE(0);
   return v / 2 ** 32;
@@ -163,7 +192,8 @@ export const resolvePromptVersion = (promptName, opts = {}) => {
   if (total <= 0) {
     return { name: promptName, ...active[0], source: "no_weights" };
   }
-  const f = splitFraction(opts.tenantId, opts.customerId);
+  const splitKey = opts.splitKey != null && opts.splitKey !== "" ? opts.splitKey : opts.customerId;
+  const f = splitFraction(opts.tenantId, splitKey);
   let acc = 0;
   for (const row of active) {
     acc += Number(row.traffic_weight || 0) / total;

@@ -55,8 +55,17 @@ describe("the entry point the header always named", () => {
   });
 
   it("honours a pin and a force", () => {
-    expect(getPromptVersion("po_extractor", { tenantId: "t1", pin: "v2" }).version).toBe("v2");
+    expect(getPromptVersion("po_extractor", { tenantId: "t1", pin: "v3" }).version).toBe("v3");
     expect(getPromptVersion("po_extractor", { tenantId: "t1", forceVersion: "v1" }).version).toBe("v1");
+  });
+
+  it("refuses to pin a RETIRED version", () => {
+    // Retiring a version is how it leaves the split; honouring a pin to it
+    // would be a way back in. v2 is retired precisely because its label is
+    // contaminated — ~30% of runs carry it from before variants could change
+    // the request — so a tenant pinned there would pollute the comparison it
+    // was pinned to avoid.
+    expect(getPromptVersion("po_extractor", { tenantId: "t1", pin: "v2" }).version).not.toBe("v2");
   });
 });
 

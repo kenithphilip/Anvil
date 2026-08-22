@@ -107,6 +107,16 @@ invoice **send** on a blocking verdict; PR4 adds `order_variance_decisions`
 over-invoicing guard at creation; PR6 emails the customer and is **blocked** on
 the internal comms rail.
 
+### 2.2b — Freight assumption engine (scoped, not started)
+
+`docs/FREIGHT_ASSUMPTION_ENGINE.md`. Two findings changed the plan: a mass
+estimator already exists (`_lib/pdm/raw-material-infer.js`, density x
+dimensions, wired to a screen) and writes to `composition_material_lines`
+rather than `item_master.weight_kg`; and carrier identity does not exist
+(`freight_bids.carrier` is free text, `logistics_carriers` read by nothing), so
+no forwarder track record can accumulate until that is fixed. PRs 1-5 involve
+no model at all. PR 0 is a query, and its answer decides the rest.
+
 ### 2.3 — The shipment import has never completed
 
 Roughly **130 of ~1,013 rows**. Every known code defect is fixed and merged; it

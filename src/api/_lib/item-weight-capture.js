@@ -45,12 +45,19 @@ export const toKg = (value, uom) => {
 export const MAX_PLAUSIBLE_UNIT_KG = 1000;
 
 // Extract a per-unit kg from one extracted line, or null with the reason.
-export const unitWeightFromLine = (line) => {
+export const unitWeightFromLine = (line, docDefaults = {}) => {
   if (!line) return { kg: null, reason: "no_line" };
-  const raw = num(line.weight ?? line.weight_kg ?? line.weightKg);
+  // NET before gross: net is the goods, gross includes the carton. Freight is
+  // charged on gross, but what a PART weighs is net — and this value is stored
+  // as the part's weight, not as a shipping cost.
+  const raw = num(line.weight ?? line.net_weight ?? line.weight_kg ?? line.weightKg ?? line.gross_weight);
   if (raw == null || raw <= 0) return { kg: null, reason: "no_weight_stated" };
 
-  const kg = toKg(raw, line.weight_uom ?? line.weightUom ?? "kg");
+  // A packing list often states the unit once in the header and omits it on
+  // every row. Falling back to "kg" instead would silently mis-scale a
+  // document printed in pounds.
+  const uom = line.weight_uom ?? line.weightUom ?? docDefaults.weight_uom ?? "kg";
+  const kg = toKg(raw, uom);
   if (kg == null) return { kg: null, reason: "unrecognised_unit" };
 
   const basis = String(line.weight_basis ?? line.weightBasis ?? "").toLowerCase();
@@ -72,12 +79,12 @@ export const unitWeightFromLine = (line) => {
 //
 // Pure: the caller resolves part numbers to item ids and does the writing, so
 // this stays testable without a database.
-export const weightCandidates = (lines) => {
+export const weightCandidates = (lines, docDefaults = {}) => {
   const take = [];
   const skipped = [];
   for (const l of Array.isArray(lines) ? lines : []) {
     const partNo = (l?.partNumber ?? l?.part_no ?? "").toString().trim();
-    const { kg, reason } = unitWeightFromLine(l);
+    const { kg, reason } = unitWeightFromLine(l, docDefaults);
     if (!partNo) continue;
     if (kg == null) {
       // Only worth reporting when the document DID state something we then
@@ -92,4 +99,56 @@ export const weightCandidates = (lines) => {
   const seen = new Set();
   const unique = take.filter((t) => (seen.has(t.part_no) ? false : (seen.add(t.part_no), true)));
   return { candidates: unique, skipped };
+};
+
+// VOLUME, by exactly the same rules.
+//
+// A packing list's measurement column (CBM) was extracted and then dropped —
+// PACKING_LIST_TOOL had the slot, nothing read it. That is not a cosmetic gap:
+// estimateContainers takes the MAX of the weight-fill and volume-fill ratios
+// (freight-consolidation.js), and LCL ocean is priced on weight-or-measure,
+// whichever is greater. A master with weights and no volumes still cannot size
+// or price an LCL shipment — the light-and-bulky case is exactly the one where
+// volume decides.
+//
+// Same discipline as weight: an ambiguous basis is refused, because a row
+// measurement taken as a per-unit figure is wrong by the quantity.
+
+// A single unit larger than a 40ft container's usable volume is a parse
+// artefact, not a part.
+export const MAX_PLAUSIBLE_UNIT_CBM = 67;
+
+export const unitVolumeFromLine = (line) => {
+  if (!line) return { cbm: null, reason: "no_line" };
+  const raw = num(line.volume_cbm ?? line.volumeCbm ?? line.cbm);
+  if (raw == null || raw <= 0) return { cbm: null, reason: "no_volume_stated" };
+
+  const basis = String(line.volume_basis ?? line.volumeBasis ?? "").toLowerCase();
+  const bound = (v) => (v > 0 && v <= MAX_PLAUSIBLE_UNIT_CBM ? { cbm: Math.round(v * 1e6) / 1e6, reason: null } : { cbm: null, reason: "implausible_magnitude" });
+
+  if (basis === "per_unit") return bound(raw);
+  if (basis === "line_total") {
+    const qty = num(line.quantity ?? line.qty);
+    if (qty == null || qty <= 0) return { cbm: null, reason: "line_total_without_qty" };
+    return bound(raw / qty);
+  }
+  return { cbm: null, reason: "ambiguous_basis" };
+};
+
+// Parts a document can teach a per-unit volume for. Mirrors weightCandidates.
+export const volumeCandidates = (lines) => {
+  const take = [];
+  const skipped = [];
+  for (const l of Array.isArray(lines) ? lines : []) {
+    const partNo = (l?.partNumber ?? l?.part_no ?? "").toString().trim();
+    const { cbm, reason } = unitVolumeFromLine(l);
+    if (!partNo) continue;
+    if (cbm == null) {
+      if (reason !== "no_volume_stated" && reason !== "no_line") skipped.push({ part_no: partNo, reason, field: "volume" });
+      continue;
+    }
+    take.push({ part_no: partNo.toUpperCase(), volume_cbm: cbm });
+  }
+  const seen = new Set();
+  return { candidates: take.filter((t) => (seen.has(t.part_no) ? false : (seen.add(t.part_no), true))), skipped };
 };

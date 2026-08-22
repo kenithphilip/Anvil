@@ -110,6 +110,7 @@ export const LLM_FALLBACK_ADAPTERS = ["gemini", "claude", "llamaparse"];
 // to gemini is a one-line change here, not a hunt.
 export const KIND_CAPABLE_ADAPTERS = Object.freeze({
   quote: ["claude"],
+  packing_list: ["claude"],
   supplier_ack: ["claude"],
   assembly_bom: ["claude"],
   part_drawing: ["claude"],

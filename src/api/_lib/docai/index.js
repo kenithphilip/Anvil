@@ -111,6 +111,8 @@ export const LLM_FALLBACK_ADAPTERS = ["gemini", "claude", "llamaparse"];
 export const KIND_CAPABLE_ADAPTERS = Object.freeze({
   quote: ["claude"],
   packing_list: ["claude"],
+  invoice: ["claude"],
+  eway_bill: ["claude"],
   supplier_ack: ["claude"],
   assembly_bom: ["claude"],
   part_drawing: ["claude"],

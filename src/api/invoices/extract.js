@@ -155,17 +155,34 @@ export default async function handler(req, res) {
           // prefer the explicit override, then the extracted PO
           // number, then a synthetic "EXT-<run-id-suffix>" so the
           // insert never fails on null.
-          const extractedPo = result.normalized?.customer?.po_number || null;
+          // The invoice's OWN number, from the invoice schema. Before that
+          // schema existed this endpoint ran the purchase-order tool and read
+          // the vendor's invoice number out of `customer.po_number` — a field
+          // named for a different document. The old path stays as a fallback
+          // so a run stored before the fix still resolves rather than
+          // becoming a synthetic EXT- number on re-read.
+          const n = result.normalized || {};
           const vendorInvoiceNumber = body.vendor_invoice_number
-            || extractedPo
+            || n.invoice_number
+            || n.customer?.po_number
             || ("EXT-" + result.runId.slice(0, 8));
-          const totals = totalsFromExtraction(result.normalized);
+          // The invoice STATES its totals. Summing the lines was the only
+          // option under the PO schema and silently disagrees with the
+          // document whenever a charge is not a line — freight, rounding, a
+          // discount. Prefer what is printed.
+          const summed = totalsFromExtraction(result.normalized);
+          const num = (v) => (v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
+          const totals = {
+            subtotal: num(n.subtotal) ?? summed.subtotal,
+            tax_total: num(n.tax_total) ?? summed.tax_total,
+            grand_total: num(n.grand_total) ?? summed.grand_total,
+          };
           const ins = await svc.from("ap_invoices").insert({
             tenant_id: ctx.tenantId,
             vendor_id: body?.customer_id || null,
             vendor_invoice_number: vendorInvoiceNumber,
-            invoice_date: result.normalized?.customer?.po_date || null,
-            currency: result.normalized?.customer?.currency || "INR",
+            invoice_date: n.invoice_date || n.customer?.po_date || null,
+            currency: n.currency || n.customer?.currency || "INR",
             subtotal: totals.subtotal,
             tax_total: totals.tax_total,
             grand_total: totals.grand_total,

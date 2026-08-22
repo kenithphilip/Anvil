@@ -35,10 +35,22 @@ describe("orderForKind", () => {
     expect(out).toEqual(["claude", "gemini", "docling", "marker"]);
   });
 
-  it("leaves a kind nobody special-cases exactly as it was", () => {
-    // po / rfq / invoice run on every adapter; reordering would be meddling.
-    for (const kind of ["po", "rfq", "invoice", "eway_bill"]) {
+  it("leaves a genuinely PO-shaped kind exactly as it was", () => {
+    // po / rfq / generic really do run the purchase-order schema on every
+    // adapter, so reordering would be meddling.
+    //
+    // This list USED to include invoice and eway_bill, with a comment saying
+    // they "run on every adapter". They did — on the PO schema, because
+    // neither had one of its own and claude.js had no else. The test encoded
+    // the defect as intended behaviour and kept it alive.
+    for (const kind of ["po", "rfq", "generic"]) {
       expect(orderForKind([...DEFAULT_PROVIDER_ORDER], kind)).toEqual([...DEFAULT_PROVIDER_ORDER]);
+    }
+  });
+
+  it("promotes claude for invoice and eway_bill, which now have real schemas", () => {
+    for (const kind of ["invoice", "eway_bill"]) {
+      expect(orderForKind([...DEFAULT_PROVIDER_ORDER], kind)[0]).toBe("claude");
     }
   });
 

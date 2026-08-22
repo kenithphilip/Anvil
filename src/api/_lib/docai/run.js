@@ -406,10 +406,21 @@ export const runExtractionPipeline = async (params) => {
         forceVersion: hints?.forcePromptVersion || null,
       })
     : null;
-  // Stored as "<prompt>@<version>" so a run says WHICH prompt as well as
-  // which version — po_extractor@v2 and supplier_ack_extractor@v2 are
-  // different experiments and must not aggregate together.
-  const promptVersionLabel = promptChoice ? `${promptChoice.name}@${promptChoice.version}` : null;
+  // Stored as the { name, version, source } OBJECT migration 124 declared and
+  // indexed on (prompt_version ->> 'version') — a bare string would leave that
+  // index unusable. `label` carries the readable "<prompt>@<version>" so a run
+  // says WHICH prompt as well as which version: po_extractor@v2 and
+  // supplier_ack_extractor@v2 are different experiments and must never
+  // aggregate together.
+  const promptVersionLabel = promptChoice
+    ? {
+        name: promptChoice.name,
+        version: promptChoice.version,
+        source: promptChoice.source,
+        is_variant: !!promptChoice.is_variant,
+        label: `${promptChoice.name}@${promptChoice.version}`,
+      }
+    : null;
 
   // 1. Open the extraction_runs row.
   const insertRow = {

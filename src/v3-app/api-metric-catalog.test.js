@@ -15,7 +15,7 @@ const reduceOf = (id, rows) => getMetric(id).reduce(rows, { nowMs: NOW, windowDa
 // ── in-memory svc shim (ignores filters; seed rows already "in window") ──
 const makeSvc = (seed) => ({
   from: (table) => {
-    const b = { select: () => b, eq: () => b, gte: () => b, then: (r) => r({ data: seed[table] || [], error: null }) };
+    const b = { select: () => b, eq: () => b, gte: () => b, order: () => b, limit: () => b, then: (r) => r({ data: seed[table] || [], error: null }) };
     return b;
   },
 });

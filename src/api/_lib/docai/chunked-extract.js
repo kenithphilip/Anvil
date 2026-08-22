@@ -161,6 +161,40 @@ export const mergeChunkResults = (chunkResults, chunks) => {
     }
     return total > 0 ? sum / total : 0;
   };
+  // CARRY THE HEAD FIELDS THROUGH THE MERGE.
+  //
+  // This returned only { classification, customer, lines }, so every per-kind
+  // header the extractor produced was discarded the moment a document needed
+  // more than one chunk — and a background job chunks at five pages, so
+  // multi-chunk is the only case that matters. A quotation lost its
+  // quote_number, which ingestQuote refuses to proceed without.
+  //
+  // Worse, and independent of any kind: stated_line_count was lost too. That
+  // is the PO's own declared item count, and checkLineCountShortfall exists
+  // solely to compare it against the number of lines extracted — the guard
+  // built for the "6 of 190 lines" failure. Dropping it here disabled that
+  // guard on precisely the long, multi-chunk documents it was written for.
+  //
+  // First non-null wins in chunk order, because page 1 carries the header.
+  // stated_line_count is the exception: each chunk can only report the highest
+  // serial IT can see, so the document's declared count is the largest of them.
+  const HEAD_MERGED_ELSEWHERE = new Set(["classification", "customer", "lines"]);
+  const headFields = {};
+  for (const r of chunkResults) {
+    const n = normOf(r) || {};
+    for (const [k, v] of Object.entries(n)) {
+      if (HEAD_MERGED_ELSEWHERE.has(k)) continue;
+      if (v === undefined || v === null || v === "") continue;
+      if (k === "stated_line_count") {
+        const cur = Number(headFields[k]);
+        const next = Number(v);
+        if (Number.isFinite(next) && (!Number.isFinite(cur) || next > cur)) headFields[k] = next;
+        continue;
+      }
+      if (headFields[k] === undefined) headFields[k] = v;
+    }
+  }
+
   const confidences = {};
   const allKeys = new Set();
   for (const r of chunkResults) {
@@ -205,7 +239,7 @@ export const mergeChunkResults = (chunkResults, chunks) => {
     // this, the multi-chunk merge returned lines/customer at top level, so
     // run.js read out.normalized.lines === undefined and every >1-chunk PO
     // came back with zero lines / null customer.
-    normalized: { classification, customer, lines },
+    normalized: { ...headFields, classification, customer, lines },
     confidences,
     confidence_overall: confidenceOverall,
     attempts,

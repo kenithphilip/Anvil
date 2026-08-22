@@ -606,6 +606,25 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   } else if (isPartDrawing) {
     systemPrompt = PART_DRAWING_SYSTEM_PROMPT;
     schema = PART_DRAWING_SCHEMA;
+  } else if (expectedKind !== "po" && expectedKind !== "rfq" && expectedKind !== "generic") {
+    // THE GUARD THIS FILE CLAIMED TO HAVE.
+    //
+    // The comment above says "lockstep with claude.js". It was not: claude.js
+    // grew this refusal in #485, after invoice and eway_bill documents were
+    // read as purchase orders and reported 95%-confident nonsense. gemini.js
+    // kept falling through to PO_SCHEMA for every kind without a branch —
+    // quote, invoice, eway_bill, packing_list — and gemini is FIRST in
+    // DEFAULT_PROVIDER_ORDER, so the unguarded adapter is the one that runs.
+    //
+    // Second time the same drift has surfaced: the multi-row prompt block
+    // (#106) also landed on claude.js alone. A refusal is the right answer
+    // rather than a silent default — the dispatcher moves to the next adapter,
+    // which may well have the schema this one lacks.
+    return {
+      ok: false,
+      reason: "unsupported_kind",
+      error: `No extraction schema for kind "${expectedKind}" on the gemini adapter. Add a branch here rather than letting it fall through to the purchase-order schema.`,
+    };
   }
 
   const built = buildBodyBlock({ hints, bytes, mime, url });

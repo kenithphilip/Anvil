@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { __test } from "../api/cron/extraction_jobs.js";
+import { mergeChunkResults } from "../api/_lib/docai/chunked-extract.js";
 
 const { kindOfJob, variantHintsFor } = __test;
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -185,5 +186,73 @@ describe("a capped tenant is told about the cap, not about credentials", () => {
     // Shipped the other way round in #492, which let the generic error win and
     // left the branch written for the capped case dead in exactly that case.
     expect(worker).toMatch(/chunkErr = \(overBudget\.length \? "over daily budget: /);
+  });
+});
+
+// Telling the adapter the kind is worth nothing if the adapter ignores it,
+// and carrying the kind through is worth nothing if the merge drops the
+// fields that kind is made of. Both were true.
+
+describe("gemini refuses a kind it has no schema for", () => {
+  const src = strip(read("src/api/_lib/docai/gemini.js"));
+
+  it("has the guard its own comment claimed", () => {
+    // The routing comment says "lockstep with claude.js". It was not: claude
+    // grew this refusal in #485 after invoices were read as purchase orders,
+    // and gemini kept falling through to PO_SCHEMA for quote, invoice,
+    // eway_bill and packing_list — while being FIRST in the provider order,
+    // so the unguarded adapter is the one that runs.
+    expect(src).toMatch(/reason: "unsupported_kind"/);
+    expect(src).toMatch(/expectedKind !== "po" && expectedKind !== "rfq" && expectedKind !== "generic"/);
+  });
+
+  it("refuses rather than defaulting, so the dispatcher can try another", () => {
+    expect(src).toMatch(/No extraction schema for kind/);
+  });
+
+  it("still routes the kinds it does implement", () => {
+    for (const k of ["SUPPLIER_ACK_SCHEMA", "ASSEMBLY_BOM_SCHEMA", "PART_DRAWING_SCHEMA"]) {
+      expect(src).toContain(k);
+    }
+  });
+});
+
+describe("the multi-chunk merge keeps the head fields", () => {
+  const src = strip(read("src/api/_lib/docai/chunked-extract.js"));
+
+  it("no longer returns only classification/customer/lines", () => {
+    // A background job chunks at five pages, so multi-chunk is the only case
+    // that matters — and this dropped every per-kind header. A quotation lost
+    // its quote_number, which ingestQuote refuses to proceed without.
+    expect(src).toMatch(/normalized: \{ \.\.\.headFields, classification, customer, lines \}/);
+  });
+
+  it("keeps stated_line_count, the input the shortfall guard exists to read", () => {
+    // checkLineCountShortfall compares the PO's own declared count against the
+    // lines extracted — the guard written for the "6 of 190 lines" failure.
+    // Dropping it here disabled that guard on exactly the long, multi-chunk
+    // documents it was written for.
+    expect(src).toMatch(/stated_line_count/);
+  });
+
+  it("takes the LARGEST stated_line_count, not the first", () => {
+    // Each chunk can only report the highest serial IT can see, so the
+    // document's declared count is the largest across chunks.
+    const chunk = (i, extra) => ({
+      ok: true, adapter_used: "gemini", confidence_overall: 0.9, confidences: {},
+      normalized: { classification: "po", customer: { name: "ACME" }, lines: [{ partNumber: "P" + i }], ...extra },
+    });
+    const merged = mergeChunkResults(
+      [chunk(1, { stated_line_count: 12, quote_number: "Q-1" }),
+       chunk(2, { stated_line_count: 31 }),
+       chunk(3, {})],
+      [{ index: 0 }, { index: 1 }, { index: 2 }],
+    );
+    expect(merged.normalized.stated_line_count).toBe(31);
+    // First non-null wins for everything else — page 1 carries the header.
+    expect(merged.normalized.quote_number).toBe("Q-1");
+    // And the fields that were already merged are untouched.
+    expect(merged.normalized.lines).toHaveLength(3);
+    expect(merged.normalized.customer).toEqual({ name: "ACME" });
   });
 });

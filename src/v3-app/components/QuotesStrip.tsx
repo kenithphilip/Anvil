@@ -112,6 +112,9 @@ export const QuotesStrip: React.FC<{
 
     setStep("reading");
     let extracted: any = null;
+    // Set when the extractor reports it read only page 1; surfaced to the
+    // operator at the end whether or not the ingest itself succeeded.
+    let largePdfNote: string | null = null;
     try {
       // Pass the document id. extraction_runs.source_id is the ONLY link from
       // a run back to the file it read — the PO flow passes it (so-intake.tsx)
@@ -127,6 +130,23 @@ export const QuotesStrip: React.FC<{
         customer_id: customerId || undefined,
       });
       extracted = out?.normalized || null;
+      // TELL THE OPERATOR THE DOCUMENT WAS CUT SHORT.
+      //
+      // /api/docai/extract downscopes any PDF over 40 pages to page 1 and
+      // returns large_pdf, and its own comment says the caller must then
+      // enqueue a background job for the rest. The two PO screens do. This one
+      // never read the flag, so a long quotation was silently ingested from
+      // its first page — and a quote missing most of its lines does not fail
+      // quietly: the reconciler compares it against the PO and reports every
+      // absent line as one the customer ordered but was never quoted.
+      //
+      // Enqueuing the rest needs a background writeback for quotes, which does
+      // not exist yet. Saying so is what can be done honestly today, and it
+      // beats a silently partial quotation.
+      if (out?.large_pdf) {
+        largePdfNote = "Only page 1 of " + (out.total_pages || "many")
+          + " was read — this quotation is too long for a single pass, so lines beyond the first page are missing.";
+      }
     } catch {
       extracted = null;   // non-fatal: attach anyway and report below
     }
@@ -137,9 +157,12 @@ export const QuotesStrip: React.FC<{
     // so without this the catch below never fires and the operator is left
     // with a bare "unread" chip and no cause.
     if (res && res.ingested === false && !res.matched_authored) {
-      return res.reason || res?.report?.reports?.[0]?.error || "The document was attached but nothing could be read from it.";
+      const why = res.reason || res?.report?.reports?.[0]?.error || "The document was attached but nothing could be read from it.";
+      return largePdfNote ? why + " " + largePdfNote : why;
     }
-    return null;
+    // A truncated quote INGESTS fine — it is simply short. Surfacing it here is
+    // the only signal the operator gets that the lines are incomplete.
+    return largePdfNote;
   };
 
   const onPick = async (files: File[]) => {

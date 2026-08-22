@@ -76,6 +76,22 @@ export default async function handler(req, res) {
       if (existing.data) {
         return json(res, 200, { job: existing.data, deduped: true });
       }
+      // The kinds the extractor has a schema for — the same list migration 219
+      // constrains the column to, which is extraction_runs' list. Validated
+      // rather than passed through: an unknown kind would be rejected by the
+      // CHECK and take the whole insert with it (PostgREST rejects the
+      // statement, not the column), so a typo in a caller would look like the
+      // queue was broken.
+      const KNOWN_KINDS = new Set([
+        "po", "rfq", "supplier_ack", "invoice", "eway_bill", "generic",
+        "assembly_bom", "part_drawing", "quote", "packing_list",
+      ]);
+      const requestedKind = body.kind || body.extraction_kind || null;
+      if (requestedKind && !KNOWN_KINDS.has(requestedKind)) {
+        return json(res, 400, {
+          error: { message: "unknown kind: " + requestedKind + ". Expected one of " + [...KNOWN_KINDS].join(", ") },
+        });
+      }
       const row = {
         tenant_id: ctx.tenantId,
         order_id: body.order_id,
@@ -87,8 +103,21 @@ export default async function handler(req, res) {
         source_mime: body.source_mime || "application/pdf",
         status: "queued",
         created_by: actor,
+        // Default 'po' rather than null: every caller today is a PO flow, and
+        // recording what the document actually is beats recording nothing and
+        // making the worker guess again.
+        extraction_kind: requestedKind || "po",
       };
-      const ins = await svc.from("extraction_jobs").insert(row).select("*").single();
+      let ins = await svc.from("extraction_jobs").insert(row).select("*").single();
+      // Migrations are applied by hand, so the column can be missing in a
+      // database that already has this code. Retry without it rather than
+      // refusing to queue the job — a document that extracts on the PO schema
+      // is better than one that never extracts at all.
+      if (ins.error && (ins.error.code === "42703" || /extraction_kind/.test(ins.error.message || ""))) {
+        const retry = { ...row };
+        delete retry.extraction_kind;
+        ins = await svc.from("extraction_jobs").insert(retry).select("*").single();
+      }
       if (ins.error) {
         // A concurrent request already created an in-flight job for this order
         // (partial unique index extraction_jobs_one_inflight_per_order). Return

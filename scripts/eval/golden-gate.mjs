@@ -4,7 +4,9 @@
  * eval:golden`, after `npm test`).
  *
  * Loads the committed golden fixtures (scripts/eval/fixtures/*.json) — each a
- * { expected, normalized, baseline_score } triple representing a real PO format
+ * { kind?, expected, normalized, baseline_score } tuple representing a real
+ * document format. `kind` selects the scoring profile (eval/kind-profiles.js);
+ * omitted means purchase order, which is what every pre-PR-4 fixture is
  * — renames the frozen pipeline `normalized` into the scorer vocabulary and
  * scores it against the human-verified `expected`. Exits non-zero if ANY
  * fixture scores below its committed baseline, so a change that breaks the
@@ -20,7 +22,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { scoreCase } from "../../src/api/eval/score.js";
-import { normalizedToScorable } from "../../src/api/eval/eval-normalize.js";
+import { profileFor, toScorableFor } from "../../src/api/eval/kind-profiles.js";
 
 const TOLERANCE = 0.0005; // float slack; a real regression drops score far more.
 const here = dirname(fileURLToPath(import.meta.url));
@@ -39,15 +41,22 @@ const width = Math.max(...files.map((f) => f.replace(/\.json$/, "").length), 8);
 console.log("eval:golden — scoring " + files.length + " golden fixture(s)\n");
 for (const file of files) {
   const fx = JSON.parse(readFileSync(join(fixturesDir, file), "utf8"));
-  const actual = normalizedToScorable(fx.normalized);
-  const scored = scoreCase(fx.expected, actual);
+  // A fixture with no "kind" is a purchase order — every fixture committed
+  // before PR 4 is one, and they must keep scoring exactly as they did.
+  const profile = profileFor(fx.kind || "po");
+  if (!profile) {
+    console.error("  " + file + " — unknown kind \"" + fx.kind + "\"; no scoring profile. Add one to eval/kind-profiles.js rather than scoring it against the wrong vocabulary.");
+    process.exit(1);
+  }
+  const actual = toScorableFor(fx.normalized, profile);
+  const scored = scoreCase(fx.expected, actual, profile);
   const baseline = typeof fx.baseline_score === "number" ? fx.baseline_score : 1;
   const regressed = scored.score < baseline - TOLERANCE;
   scoreSum += scored.score;
   if (regressed) regressions++;
   const id = (fx.id || file.replace(/\.json$/, "")).padEnd(width);
   console.log(
-    "  " + id + "  score=" + scored.score.toFixed(3) +
+    "  " + id + "  [" + profile.kind + "]  score=" + scored.score.toFixed(3) +
     "  baseline=" + baseline.toFixed(3) +
     "  (" + scored.pass + "/" + scored.total + ")  " +
     (regressed ? "REGRESSED" : "ok"),

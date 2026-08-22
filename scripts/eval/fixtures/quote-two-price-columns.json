@@ -1,0 +1,31 @@
+{
+  "id": "quote-two-price-columns",
+  "kind": "quote",
+  "description": "A quotation printing a list price beside a discounted net price, plus a revision marker. Guards the two-price-column contract that PR #462 shipped to fix — scoring only one price column leaves the discounted price free to go missing again.",
+  "expected": {
+    "quoteNumber": "Q-2026-0331",
+    "quoteDate": "2026-03-31",
+    "customer": "ACME PVT LTD",
+    "currency": "INR",
+    "grandTotal": 80850.0,
+    "revision": "R1",
+    "lineItems": [
+      { "partNo": "SKT-4410", "qty": 25, "rate": 1980.0, "listRate": 2200.0, "uom": "PCS", "hsn": "8515", "taxPct": 18 },
+      { "partNo": "PIN-TH-08", "qty": 60, "rate": 512.5, "uom": "PCS", "hsn": "8515", "taxPct": 18 }
+    ]
+  },
+  "normalized": {
+    "classification": "quote",
+    "quote_number": "Q-2026-0331",
+    "quote_date": "2026-03-31",
+    "customer_name": "ACME PVT LTD",
+    "currency": "INR",
+    "grand_total": 80850.0,
+    "revision": "R1",
+    "lines": [
+      { "partNumber": "SKT-4410", "description": "SOCKET, THREADED", "quantity": 25, "uom": "PCS", "unitPrice": 1980.0, "listUnitPrice": 2200.0, "amount": 49500.0, "listAmount": 55000.0, "hsn": "8515", "igst_pct": 18 },
+      { "partNumber": "PIN-TH-08", "description": "THREADED PIN", "quantity": 60, "uom": "PCS", "unitPrice": 512.5, "listUnitPrice": null, "amount": 30750.0, "hsn": "8515", "igst_pct": 18 }
+    ]
+  },
+  "baseline_score": 1.0
+}

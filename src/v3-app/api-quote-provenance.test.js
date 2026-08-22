@@ -194,9 +194,18 @@ describe("attach_quote wiring", () => {
   it("the panel preflights before extracting", () => {
     const src = read("src/v3-app/components/QuotesStrip.tsx");
     const pre = src.indexOf("attachQuote?.(orderId, documentId, null, false)");
-    const extract = src.indexOf('documents?.extract?.(file, { kind: "quote" })');
+    const extract = src.search(/documents\?\.extract\?\.\(file, \{ kind: "quote"/);
     expect(pre).toBeGreaterThan(-1);
     expect(extract).toBeGreaterThan(-1);
     expect(pre).toBeLessThan(extract);
+  });
+
+  it("hands the document id to the extractor so the run can be traced back", () => {
+    // extraction_runs.source_id is the only link from a run to the file it
+    // read. Without it a quote extraction cannot be replayed against the live
+    // model or harvested into the golden set — the id is already in hand from
+    // the upload two lines above.
+    const src = read("src/v3-app/components/QuotesStrip.tsx");
+    expect(src).toMatch(/documents\?\.extract\?\.\(file, \{ kind: "quote", source_id: documentId \}\)/);
   });
 });

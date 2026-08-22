@@ -26,14 +26,16 @@ import { recordAudit } from "../_lib/audit.js";
 import { EVAL_PIPELINE_VERSION_FALLBACK } from "../_lib/eval-attestation.js";
 import { attestAndPersistRun } from "./run.js";
 import { scoreCase } from "./score.js";
-import { normalizedToScorable } from "./eval-normalize.js";
+import { profileForExpected, toScorableFor, SCORABLE_KINDS, KIND_PROFILES } from "./kind-profiles.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
-// Line recall for one scored case: how many expected lines were matched.
+// Line recall for one scored case: how many expected lines were matched. The
+// identity check is named after the profile's identity field, so it is found
+// by the `identity` flag the scorer stamps rather than by a PO-shaped name.
 const lineRecallFromChecks = (checks, expectedLineCount) => {
   if (!expectedLineCount) return null;
-  const matched = checks.filter((c) => /^line\[\d+\]\.partNo$/.test(c.name) && c.ok).length;
+  const matched = checks.filter((c) => (c.identity || /^line\[\d+\]\.partNo$/.test(c.name)) && c.ok).length;
   return matched / expectedLineCount;
 };
 
@@ -78,8 +80,12 @@ export const rescoreGoldens = async (svc, { suite = "po-extraction", tenantId, l
       continue;
     }
 
-    const actual = normalizedToScorable(runQ.data.normalized_extract);
-    const scored = scoreCase(expected, actual);
+    // Same rule as replay: a golden whose kind has no scoring profile is
+    // skipped rather than scored against the purchase-order vocabulary.
+    const profile = profileForExpected(expected);
+    if (!profile) { skipped.push({ case_id: gc.case_id, reason: "unsupported_kind" }); continue; }
+    const actual = toScorableFor(runQ.data.normalized_extract, profile);
+    const scored = scoreCase(expected, actual, profile);
     totalPass += scored.pass;
     totalFail += scored.fail;
     const expectedLineCount = Array.isArray(expected.lineItems) ? expected.lineItems.length : 0;
@@ -87,6 +93,7 @@ export const rescoreGoldens = async (svc, { suite = "po-extraction", tenantId, l
     if (lineRecall != null) { recallSum += lineRecall; recallN++; }
     caseResults.push({
       case_id: gc.case_id,
+      kind: profile.kind,
       ...scored,
       actual_line_count: Array.isArray(actual.lineItems) ? actual.lineItems.length : 0,
       expected_line_count: expectedLineCount,
@@ -137,8 +144,21 @@ export default async function handler(req, res) {
     if (isCron) {
       const tenantId = process.env.EVAL_GOLDEN_TENANT_ID;
       if (!tenantId) return json(res, 200, { via: "cron", skipped: "no_corpus_tenant", message: "EVAL_GOLDEN_TENANT_ID not set" });
-      const report = await rescoreGoldens(svc, { suite: "po-extraction", tenantId });
-      return json(res, 200, { ...report, via: "cron" });
+      // Every kind's suite, not just the purchase-order one. A harvested
+      // packing-list golden that no cron ever re-scores is a fixture that
+      // exists and measures nothing.
+      const suites = [...new Set(SCORABLE_KINDS.map((k) => KIND_PROFILES[k].suite))];
+      const reports = [];
+      for (const s of suites) {
+        const r = await rescoreGoldens(svc, { suite: s, tenantId });
+        if (r && (r.scored > 0 || r.error)) reports.push(r);
+      }
+      return json(res, 200, {
+        via: "cron",
+        suites: suites.length,
+        scored: reports.reduce((a, r) => a + (r.scored || 0), 0),
+        reports,
+      });
     }
 
     const ctx = await resolveContext(req);

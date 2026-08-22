@@ -33,7 +33,7 @@ import { recordAudit } from "../_lib/audit.js";
 import { EVAL_PIPELINE_VERSION_FALLBACK } from "../_lib/eval-attestation.js";
 import { attestAndPersistRun } from "./run.js";
 import { scoreCase } from "./score.js";
-import { normalizedToScorable } from "./eval-normalize.js";
+import { profileForExpected, toScorableFor, modelOwnedFor, profileFor, SCORABLE_KINDS, KIND_PROFILES } from "./kind-profiles.js";
 import { chunkedExtract } from "../_lib/docai/chunked-extract.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { createRunCostAccumulator } from "../_lib/docai/run-cost.js";
@@ -43,26 +43,19 @@ const CRON_SECRET = process.env.CRON_SECRET;
 const DEFAULT_LINE_RECALL_FLOOR = 0.95;
 
 // Strip fields the MODEL does not own so live replay isn't tripped by
-// deterministic enrichment: grandTotal (the raw adapter normalized has no
-// totals) and per-line hsn (often item-master-backfilled into the golden).
-// The gate then measures what the model actually produces.
-export const modelOwnedExpected = (expected) => {
-  const out = { ...(expected || {}) };
-  delete out.grandTotal;
-  delete out._provenance;
-  if (Array.isArray(out.lineItems)) {
-    out.lineItems = out.lineItems.map((l) => {
-      const c = { ...l };
-      delete c.hsn;
-      return c;
-    });
-  }
-  return out;
-};
+// deterministic enrichment. Which fields those are is per-kind now (the PO
+// profile drops grandTotal — the raw adapter normalized has no totals — and
+// per-line hsn, often item-master-backfilled into the golden). The gate then
+// measures what the model actually produces.
+export const modelOwnedExpected = (expected, profile) =>
+  modelOwnedFor(expected, profile || profileFor("po"));
 
+// Per-line recall. The identity check is named after the profile's identity
+// field, so it is found by the `identity` flag the scorer stamps rather than
+// by matching a PO-shaped check name.
 const lineRecallFromChecks = (checks, expectedLineCount) => {
   if (!expectedLineCount) return null;
-  const matched = checks.filter((c) => /^line\[\d+\]\.partNo$/.test(c.name) && c.ok).length;
+  const matched = checks.filter((c) => (c.identity || /^line\[\d+\]\.partNo$/.test(c.name)) && c.ok).length;
   return matched / expectedLineCount;
 };
 
@@ -81,7 +74,11 @@ export const fetchDocBytes = async (svc, sourceTenantId, documentId) => {
   const resp = await safeFetch(signed.data.signedUrl);
   if (!resp.ok) return null;
   const bytes = Buffer.from(await resp.arrayBuffer());
-  return { bytes, mime: doc.mime_type || "application/pdf", filename: doc.filename || "po.pdf", sha256: doc.sha256 || null };
+  // Do NOT fabricate a .pdf filename: guessSourceType reads the extension
+  // first, so "po.pdf" would route a spreadsheet packing list to the PDF
+  // parser. An absent filename is better than a wrong one — the mime and the
+  // byte sniff still decide.
+  return { bytes, mime: doc.mime_type || null, filename: doc.filename || null, sha256: doc.sha256 || null };
 };
 
 // Pure core: re-extract each golden's source with the LIVE model and score
@@ -110,9 +107,15 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
   for (const gc of cases) {
     const expected = gc.expected || {};
     const prov = expected._provenance || {};
+    // Which document kind this golden is. A case whose kind has no scoring
+    // profile is SKIPPED, not scored against the purchase-order vocabulary:
+    // a confident number computed with the wrong field set is worse than a
+    // missing one.
+    const profile = profileForExpected(expected);
+    if (!profile) { skipped.push({ case_id: gc.case_id, reason: "unsupported_kind: " + (prov.extraction_kind || "?") }); continue; }
     const srcTenant = prov.source_tenant_id;
     const docs = Array.isArray(gc.documents) ? gc.documents : [];
-    const doc = docs.find((d) => d && d.role === "purchase_order") || docs[0];
+    const doc = docs.find((d) => d && d.role === profile.docRole) || docs[0];
     const documentId = doc && doc.documentId;
     if (!srcTenant || !documentId) { skipped.push({ case_id: gc.case_id, reason: "no_source_document" }); continue; }
 
@@ -136,10 +139,20 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
     let out = null;
     try {
       out = await chunkedExtract({
-        source: { bytes: src.bytes, mime: src.mime, filename: src.filename, sourceType: "pdf" },
+        // sourceType is LEFT UNSET on purpose. dispatchExtract resolves it as
+        // `source.sourceType || guessSourceType(source)`, so an explicit "pdf"
+        // WON over the guess and sent every xlsx / docx / image golden to the
+        // PDF chunker — and quotes and packing lists routinely arrive as
+        // spreadsheets, which are exactly the kinds this PR adds. guessSourceType
+        // falls back to "pdf" anyway, so a PO PDF is unaffected.
+        source: { bytes: src.bytes, mime: src.mime, filename: src.filename },
         settings,
         customerId: prov.customer_id || null,
-        hints: {},
+        // THE load-bearing line for non-PO goldens. hints.expectedKind is what
+        // selects the extraction schema, and it defaults to "po" — so without
+        // this a quote or packing-list golden was re-extracted with the
+        // purchase-order schema and scored against a quote's expected output.
+        hints: { expectedKind: profile.kind },
         runCost,
       });
     } catch (e) { skipped.push({ case_id: gc.case_id, reason: "extract_failed: " + (e && e.message || e) }); continue; }
@@ -149,9 +162,9 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
       continue;
     }
 
-    const actual = normalizedToScorable(out.normalized);
-    const scoreExpected = modelOwnedExpected(expected);
-    const scored = scoreCase(scoreExpected, actual);
+    const actual = toScorableFor(out.normalized, profile);
+    const scoreExpected = modelOwnedFor(expected, profile);
+    const scored = scoreCase(scoreExpected, actual, profile);
     totalPass += scored.pass;
     totalFail += scored.fail;
     const expectedLineCount = Array.isArray(scoreExpected.lineItems) ? scoreExpected.lineItems.length : 0;
@@ -161,6 +174,7 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
     modelsSeen[model] = (modelsSeen[model] || 0) + 1;
     caseResults.push({
       case_id: gc.case_id,
+      kind: profile.kind,
       ...scored,
       actual_line_count: Array.isArray(actual.lineItems) ? actual.lineItems.length : 0,
       expected_line_count: expectedLineCount,
@@ -252,8 +266,25 @@ export default async function handler(req, res) {
       const tenantId = process.env.EVAL_GOLDEN_TENANT_ID;
       if (!tenantId) return json(res, 200, { via: "cron", skipped: "no_corpus_tenant", message: "EVAL_GOLDEN_TENANT_ID not set" });
       const maxCases = Number(process.env.EVAL_REPLAY_MAX_CASES) || 5;
-      const report = await replayGoldens(svc, { suite: "po-extraction", tenantId, maxCases });
-      return json(res, 200, { ...report, via: "cron" });
+      // Every kind's suite. Replay burns real LLM calls, so EVAL_REPLAY_MAX_CASES
+      // stays a TOTAL budget shared across suites rather than a per-suite one —
+      // adding a document kind must not silently multiply the nightly bill.
+      const suites = [...new Set(SCORABLE_KINDS.map((k) => KIND_PROFILES[k].suite))];
+      const reports = [];
+      let budget = maxCases;
+      for (const s of suites) {
+        if (budget <= 0) { reports.push({ suite: s, scored: 0, skipped: [{ reason: "replay_budget_exhausted" }] }); continue; }
+        const r = await replayGoldens(svc, { suite: s, tenantId, maxCases: budget });
+        if (r && (r.scored > 0 || r.error)) reports.push(r);
+        budget -= (r && r.scored) || 0;
+      }
+      return json(res, 200, {
+        via: "cron",
+        suites: suites.length,
+        max_cases: maxCases,
+        scored: reports.reduce((a, r) => a + (r.scored || 0), 0),
+        reports,
+      });
     }
 
     const ctx = await resolveContext(req);

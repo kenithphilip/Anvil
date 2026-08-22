@@ -191,12 +191,38 @@ of those is most of the work.**
 | 1 | ~~**Record `prompt_version` on every run**~~ — **shipped (#487)** | *"which prompt produced this?"* | nothing |
 | 2 | ~~**Extraction metrics in the governed catalog**~~ — **shipped**: six metrics, `extraction` domain, by kind and by prompt version | *"is it getting better?"* | 1 |
 | 3 | ~~**Wire the replay scorer**~~ — **shipped (#487)**: client method + `eval_replay_regression` admin alert | **"did that prompt change help?"** | 1 |
-| 4 | Golden fixtures for the non-PO kinds, harvested the same self-populating way | *"does the gate protect quotes too?"* | nothing |
+| 4 | ~~Golden fixtures for the non-PO kinds, harvested the same self-populating way~~ — **shipped**: per-kind scoring profiles, three non-PO fixtures, corrected-run harvest | *"does the gate protect quotes too?"* | nothing |
 | 5 | Correction UI on the quote review surface | feeds the override loop beyond POs | nothing |
 | 6 | Turn on the traffic split, canary one prompt | *"can we improve without a deploy?"* | 1, 2, 3 |
 
 **PR 3 is the one the brief is actually asking for.** PR 1 is its precondition
 and is a day's work on code that already exists.
+
+---
+
+## 7b. The two golden stores (PR 4)
+
+They are separate on purpose, and it is worth writing down because they look
+like one thing:
+
+| | `scripts/eval/fixtures/*.json` | `eval_cases` (DB) |
+|---|---|---|
+| written by | hand, committed | harvested from approvals + corrections |
+| content | synthetic — no customer data in the repo | real tenant documents |
+| runs in | CI, on every build (`npm run eval:golden`) | the nightly rescore / replay crons |
+| blocks a merge | **yes** | no |
+
+Nothing promotes between them, and nothing should: an export from `eval_cases`
+to disk would commit real part numbers and customer names into the repository.
+The disk corpus stays synthetic and gates the build; the harvested corpus stays
+in the tenant and gates the model.
+
+**What PR 4 does not reach.** The corrected-run harvest is kind-agnostic, but
+today the only correction UI is the SO workspace, which produces `kind='po'`
+runs — so in practice it harvests POs. The non-PO suites are filled by the
+three committed fixtures until **PR 5** puts correction on the other review
+surfaces, at which point they self-populate with no further work. This is the
+honest state: the machinery is kind-agnostic, the *inputs* are not yet.
 
 ---
 
@@ -215,7 +241,19 @@ and is a day's work on code that already exists.
   flattering number, when there is nothing to compare.
 - **The golden set drifts to what we already pass.** It harvests from APPROVED
   orders, so it fills with documents the pipeline handled well. Guard: harvest
-  corrected runs too, deliberately.
+  corrected runs too, deliberately. **Held in PR 4** — `eval/harvest-corrected.js`
+  applies an operator's corrections back onto the run's `normalized_extract`
+  and snapshots the result, so a document the extractor got WRONG becomes a
+  golden. It hangs off `POST /api/docai/correction`, is idempotent (correcting
+  five fields refreshes one case, not five), and is kind-agnostic by
+  construction — it reads `extraction_runs`, never `orders`.
+- **A fixture that scores a vocabulary it does not speak.** The scorer guarded
+  every check with `if (expected.X !== undefined)`, so a non-PO fixture did not
+  fail — it scored the two or three fields it happened to share and passed. A
+  packing list with a corrupted `weight_basis` (a 2×–50× error on every
+  shipping weight) scored **1.000**. Guard: per-kind profiles in
+  `eval/kind-profiles.js`; a kind with no profile is SKIPPED, never scored
+  against the wrong field set.
 - **A/B on a corpus of three.** A traffic split judged against three PO
   fixtures will report noise as signal. Guard: PR 4 before PR 6.
 - **Prompt version recorded and never read.** Exactly what happened to

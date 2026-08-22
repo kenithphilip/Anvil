@@ -28,6 +28,7 @@
 import { callAnthropic } from "../anthropic.js";
 import { selectClaudeModel } from "./model_selector.js";
 import { parseSchemaAligned } from "./parse.js";
+import { promptNameForKind } from "./prompt-versions.js";
 
 // Per-call model selection delegates to the deterministic
 // model_selector. Selection priority (highest first):
@@ -1399,6 +1400,34 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   // tenant and the same customer's overrides.
   const fewShot = buildFewShot(promptOverrides);
   const systemBlocks = [{ type: "text", text: activePrompt, cache_control: { type: "ephemeral" } }];
+
+  // The A/B prompt variant, as a block APPENDED to the base rather than a
+  // replacement for it.
+  //
+  // Two reasons, both practical. The base prompt is ~175 lines of accumulated
+  // fixes, each one a real defect somebody found; a registry row that restated
+  // it wholesale would silently drop whichever of those the author forgot, and
+  // no reviewer could tell which. And the base block carries the ephemeral
+  // cache breakpoint — appending after it leaves that cache intact, so the
+  // canary arm does not pay full input cost on every run.
+  //
+  // Scoped by prompt NAME, not merely by "a variant was passed": a
+  // po_extractor variant must never reach a quote or packing-list run, whose
+  // activePrompt is a different string entirely. promptNameForKind is the same
+  // mapping run.js resolved against, so the two cannot drift apart.
+  const variant = hints?.promptVariant;
+  if (variant && Array.isArray(variant.system_append) && variant.system_append.length
+      && variant.name && variant.name === promptNameForKind(expectedKind)) {
+    systemBlocks.push({
+      type: "text",
+      text: [
+        `PROMPT VARIANT ${variant.name}@${variant.version} — the instructions below`,
+        "refine the rules above. Where they are more specific, follow them.",
+        "",
+        ...variant.system_append,
+      ].join("\n"),
+    });
+  }
 
   // Audit fix May 2026: surface the tenant identity to the model
   // so it does not promote the seller's printed contact details

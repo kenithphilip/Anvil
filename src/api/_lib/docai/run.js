@@ -397,6 +397,13 @@ export const runExtractionPipeline = async (params) => {
   // label: a made-up version is worse than none, because it makes a
   // comparison look attributable when it is not.
   const promptName = promptNameForKind(kind);
+  // Prompt VARIANTS are opt-in, and deliberately the opposite polarity to
+  // every other docai gate here (`docai_x !== false`, i.e. on unless disabled).
+  // Those guard proven behaviour; this one decides whether a tenant's live
+  // documents are read by an experiment, so it must be switched on by a
+  // person. Turning it off is a settings write, not a deploy — which is the
+  // question this whole registry exists to answer.
+  const allowVariants = settings?.docai_prompt_variants === true;
   const promptChoice = promptName
     ? getPromptVersion(promptName, {
         tenantId: ctx.tenantId,
@@ -404,6 +411,12 @@ export const runExtractionPipeline = async (params) => {
         // A tenant can pin a version to opt out of the split.
         pin: settings?.docai_prompt_pins?.[promptName] || null,
         forceVersion: hints?.forcePromptVersion || null,
+        allowVariants,
+        // Per-DOCUMENT assignment. Keyed on the content hash (already computed
+        // above for dedupe), because customerId is null on the main intake
+        // path and a customer-keyed hash makes the split per-tenant
+        // all-or-nothing. Same file re-extracted -> same arm.
+        splitKey: preHash || null,
       })
     : null;
   // Stored as the { name, version, source } OBJECT migration 124 declared and
@@ -770,6 +783,20 @@ export const runExtractionPipeline = async (params) => {
     };
   }
   if (kind && kind !== "po") dispatchHints.expectedKind = kind;
+
+  // Hand the resolved variant to the adapter. Until now the registry was
+  // resolved ONLY to label the row: promptChoice fed the extraction_runs
+  // insert and nothing else, so no version could ever change what the model
+  // was asked. This is the wire that makes it an experiment rather than a
+  // caption. Present only when the variant actually applies (see
+  // getPromptVersion), so an adapter cannot run one by accident.
+  if (promptChoice?.is_variant && Array.isArray(promptChoice.system_append) && promptChoice.system_append.length) {
+    dispatchHints.promptVariant = {
+      name: promptChoice.name,
+      version: promptChoice.version,
+      system_append: promptChoice.system_append,
+    };
+  }
 
   // Wave 3.5: layout-fingerprint dedupe. Two POs from the same
   // customer often share a layout (same headers, same column

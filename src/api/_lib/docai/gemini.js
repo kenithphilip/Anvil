@@ -18,6 +18,7 @@ import { callGemini, extractTextFromGemini, parseStructuredGemini, stopReasonFro
 import { parseSchemaAligned } from "./parse.js";
 import { selectGeminiModel } from "./model_selector.js";
 import { coerceStatedLineCount } from "./claude.js";
+import { promptNameForKind } from "./prompt-versions.js";
 
 const apiKey = (settings) => {
   if (settings?.docai_gemini_api_key_enc && settings?.docai_creds_iv) {
@@ -632,6 +633,24 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   // Build the user message + optional template hint block.
   const userContent = [block, { type: "text", text: "Return the structured JSON object now." }];
   const systemBlocks = [{ type: "text", text: systemPrompt }];
+
+  // The A/B prompt variant, appended — the same contract claude.js honours.
+  // Gemini is FIRST in DEFAULT_PROVIDER_ORDER, so an experiment that only
+  // reached claude would only ever reach the last-resort adapter and could not
+  // move the number it was run to move.
+  const variant = hints?.promptVariant;
+  if (variant && Array.isArray(variant.system_append) && variant.system_append.length
+      && variant.name && variant.name === promptNameForKind(expectedKind)) {
+    systemBlocks.push({
+      type: "text",
+      text: [
+        `PROMPT VARIANT ${variant.name}@${variant.version} — the instructions below`,
+        "refine the rules above. Where they are more specific, follow them.",
+        "",
+        ...variant.system_append,
+      ].join("\n"),
+    });
+  }
 
   // Audit fix May 2026: surface tenant identity (same shape as
   // claude.js) so Gemini does not promote the seller's printed

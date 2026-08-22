@@ -38,6 +38,7 @@ import { chunkedExtract } from "../_lib/docai/chunked-extract.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { createRunCostAccumulator } from "../_lib/docai/run-cost.js";
 import { safeFetch } from "../_lib/safe-fetch.js";
+import { getPromptVersion, promptNameForKind } from "../_lib/docai/prompt-versions.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const DEFAULT_LINE_RECALL_FLOOR = 0.95;
@@ -83,8 +84,32 @@ export const fetchDocBytes = async (svc, sourceTenantId, documentId) => {
 
 // Pure core: re-extract each golden's source with the LIVE model and score
 // against expected. No req/res — callable from the handler and the cron.
-export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, maxCases = 10, lineRecallFloor = DEFAULT_LINE_RECALL_FLOOR } = {}) => {
+export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, maxCases = 10, lineRecallFloor = DEFAULT_LINE_RECALL_FLOOR, promptVersion = null } = {}) => {
   const cap = Math.min(200, Math.max(1, Number(maxCases) || 10));
+
+  // Try a prompt variant WITHOUT touching a single customer's live document.
+  //
+  // This is the only path in the repo that re-runs the model: golden-gate and
+  // rescore both re-score a frozen normalized_extract, so neither can tell you
+  // anything about a prompt. Replay fetches the original PDF and asks the model
+  // again — which makes it the one place a variant can be judged before it is
+  // allowed near live traffic.
+  //
+  // allowVariants is forced true here regardless of the tenant setting: the
+  // setting governs whether a tenant's REAL extractions may be experimented on,
+  // and this run writes nothing, ingests nothing, and was asked for explicitly
+  // by an operator naming the version.
+  const variantHintFor = (kind, srcTenantId, customerId) => {
+    if (!promptVersion) return null;
+    const name = promptNameForKind(kind);
+    if (!name) return null;
+    const choice = getPromptVersion(name, {
+      tenantId: srcTenantId, customerId,
+      forceVersion: promptVersion, allowVariants: true,
+    });
+    if (!choice?.is_variant || !Array.isArray(choice.system_append) || !choice.system_append.length) return null;
+    return { promptVariant: { name: choice.name, version: choice.version, system_append: choice.system_append } };
+  };
   const casesQ = await svc.from("eval_cases")
     .select("case_id, expected, documents")
     .eq("tenant_id", tenantId)
@@ -152,7 +177,7 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
         // selects the extraction schema, and it defaults to "po" — so without
         // this a quote or packing-list golden was re-extracted with the
         // purchase-order schema and scored against a quote's expected output.
-        hints: { expectedKind: profile.kind },
+        hints: { expectedKind: profile.kind, ...(variantHintFor(profile.kind, srcTenant, prov.customer_id) || {}) },
         runCost,
       });
     } catch (e) { skipped.push({ case_id: gc.case_id, reason: "extract_failed: " + (e && e.message || e) }); continue; }
@@ -198,7 +223,10 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
     totalPass,
     totalFail,
     caseResults,
-    promptVersion: "live-replay",
+    // Name the variant in the attestation, so replaying v1 and replaying v2
+    // are two comparable rows in the trend rather than one line overwriting
+    // itself — which is the entire read-out this feature exists to produce.
+    promptVersion: promptVersion ? "live-replay:prompt:" + promptVersion : "live-replay",
     modelVersion,
     pipelineVersion: EVAL_PIPELINE_VERSION_FALLBACK,
     serverVerified: true,
@@ -292,7 +320,12 @@ export default async function handler(req, res) {
     const body = await readBody(req);
     const suite = body.suite || "po-extraction";
     const tenantId = body.tenant_id || process.env.EVAL_GOLDEN_TENANT_ID || ctx.tenantId;
-    const report = await replayGoldens(svc, { suite, tenantId, maxCases: body.maxCases });
+    // prompt_version: replay the goldens under a named registry version, so a
+    // variant can be judged on real documents before any tenant's live traffic
+    // sees it. Omitted -> the current default prompt.
+    const report = await replayGoldens(svc, {
+      suite, tenantId, maxCases: body.maxCases, promptVersion: body.prompt_version || null,
+    });
 
     if (report.scored > 0) {
       await recordAudit(ctx, {

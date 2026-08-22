@@ -43,6 +43,7 @@
 //     fieldProvenance, voterUsed, error }
 
 import { dispatchExtract } from "./index.js";
+import { getPromptVersion, promptNameForKind } from "./prompt-versions.js";
 import { chunkedExtract } from "./chunked-extract.js";
 import { profileDocument } from "./toc-profiler.js";
 import { probePdfPageCount } from "./pdf-chunker.js";
@@ -385,8 +386,33 @@ export const runExtractionPipeline = async (params) => {
     });
   }
 
+  // Which prompt version this run is attributed to.
+  //
+  // migration 124 added extraction_runs.prompt_version so accuracy could be
+  // charted per version. Nothing has ever written it, so no before/after on a
+  // prompt change has ever been attributable — which is the whole reason the
+  // A/B registry sat unused.
+  //
+  // A kind with no registry entry records NULL rather than a fabricated
+  // label: a made-up version is worse than none, because it makes a
+  // comparison look attributable when it is not.
+  const promptName = promptNameForKind(kind);
+  const promptChoice = promptName
+    ? getPromptVersion(promptName, {
+        tenantId: ctx.tenantId,
+        customerId,
+        // A tenant can pin a version to opt out of the split.
+        pin: settings?.docai_prompt_pins?.[promptName] || null,
+        forceVersion: hints?.forcePromptVersion || null,
+      })
+    : null;
+  // Stored as "<prompt>@<version>" so a run says WHICH prompt as well as
+  // which version — po_extractor@v2 and supplier_ack_extractor@v2 are
+  // different experiments and must not aggregate together.
+  const promptVersionLabel = promptChoice ? `${promptChoice.name}@${promptChoice.version}` : null;
+
   // 1. Open the extraction_runs row.
-  const ins = await svc.from("extraction_runs").insert({
+  const insertRow = {
     tenant_id: ctx.tenantId,
     customer_id: customerId,
     source_type: sourceType,
@@ -399,9 +425,20 @@ export const runExtractionPipeline = async (params) => {
     triggered_by: triggeredBy,
     inbound_email_id: inboundEmailId,
     extraction_kind: kind,
-  }).select("id").single();
-  if (ins.error) throw new Error(ins.error.message);
-  const runId = ins.data.id;
+    prompt_version: promptVersionLabel,
+  };
+  const ins = await svc.from("extraction_runs").insert(insertRow).select("id").single();
+  // Migrations here are applied BY HAND and PostgREST rejects the whole insert
+  // over one unknown column. An attribution label must never be the reason an
+  // extraction cannot start.
+  let insRes = ins;
+  if (insRes.error && (insRes.error.code === "42703" || /prompt_version/.test(insRes.error.message || ""))) {
+    const retry = { ...insertRow };
+    delete retry.prompt_version;
+    insRes = await svc.from("extraction_runs").insert(retry).select("id").single();
+  }
+  if (insRes.error) throw new Error(insRes.error.message);
+  const runId = insRes.data.id;
 
   // Dedupe short-circuit. Stamp the run row with the prior result
   // and return BEFORE we open the text layer / OCR / LLM chain.

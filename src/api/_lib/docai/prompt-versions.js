@@ -26,11 +26,23 @@
 
 import { createHash } from "node:crypto";
 
-// Stable registry. Adapters import getPromptVersion() and use
-// `.system` + `.tools` from the returned record. New versions
-// added by adding rows here; status='active' enables the split,
-// status='canary' restricts to a small percentage, status='retired'
-// removes from the split (but historical runs keep working).
+// Stable registry. New versions are added by adding rows here;
+// status='active' enables the split, status='canary' restricts to a small
+// percentage, status='retired' removes it from the split (historical runs
+// keep working).
+//
+// A row MAY carry `system` and/or `tools` to serve a genuine variant. None
+// does today, so every version currently resolves to the adapter's built-in
+// prompt and the split is an ATTRIBUTION label rather than an experiment:
+// recording which version produced a run is what makes a later before/after
+// answerable, and until a row supplies real prompt text there is nothing to
+// compare. Say that out loud rather than implying an A/B is running.
+//
+// This header used to instruct adapters to "import getPromptVersion()". No
+// such export existed — the file exported resolvePromptVersion — so nobody
+// ever wired it, and extraction_runs.prompt_version (migration 124) was
+// never written by anything for a year. getPromptVersion is defined below as
+// the documented name.
 const REGISTRY = {
   po_extractor: [
     {
@@ -105,6 +117,35 @@ export const resolvePromptVersion = (promptName, opts = {}) => {
   // Floating-point edge case: fall through to last active.
   return { name: promptName, ...active[active.length - 1], source: "ab_split_tail" };
 };
+
+// The name this file's own header always told callers to use.
+//
+// Thin wrapper over resolvePromptVersion that also reports whether the chosen
+// version actually supplies prompt text. A caller must be able to tell "we
+// are running variant v2" from "we labelled this v2 and ran the default".
+export const getPromptVersion = (promptName, opts = {}) => {
+  const r = resolvePromptVersion(promptName, opts);
+  if (!r) return null;
+  return {
+    ...r,
+    // True only when this row genuinely overrides the adapter's prompt.
+    is_variant: !!(r.system || r.tools),
+  };
+};
+
+// Which registry prompt serves which extraction kind.
+//
+// Kinds absent here have no registry entry, so their runs record a null
+// version rather than a fabricated one — a made-up label is worse than none,
+// because it would make a comparison look attributable when it is not.
+export const PROMPT_NAME_BY_KIND = Object.freeze({
+  po: "po_extractor",
+  rfq: "po_extractor",
+  generic: "po_extractor",
+  supplier_ack: "supplier_ack_extractor",
+});
+
+export const promptNameForKind = (kind) => PROMPT_NAME_BY_KIND[kind] || null;
 
 // Public: read-only registry view for the admin diagnostics UI.
 export const listPromptVersions = (promptName) => {

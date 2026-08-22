@@ -1423,6 +1423,14 @@
     listCases: async (suite) => apiFetch("/api/eval/cases" + (suite ? "?suite=" + encodeURIComponent(suite) : "")),
     upsertCase: async (payload) => apiFetch("/api/eval/cases", { method: "POST", body: payload }),
     deleteCase: async (id) => apiFetch("/api/eval/cases?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    // The only scorer that RE-RUNS the model on the golden's original bytes,
+    // and therefore the only one sensitive to a prompt or model change —
+    // rescore replays a frozen extract and cannot see either.
+    //
+    // It has been routed and unreachable: no client method existed, so the
+    // one lever for "did that prompt change help?" could only be pulled with
+    // a raw POST. Burns real LLM calls, so it is deliberate and capped.
+    replay: async (opts) => apiFetch("/api/eval/replay", { method: "POST", body: opts || {} }),
   };
 
   const cost = {

@@ -178,6 +178,32 @@ against the tool schema when the stored extract is a different object*:
 Both fixed, with a test that grounds the correctable field map against the
 normalizer's own output rather than against the schema.
 
+Three more defects, found by an adversarial pass over the first cut and fixed
+in the same PR — each one would have made the feature *look* like it worked:
+
+- **The override half of the loop could never fire.** `correction.js` promotes
+  a customer-field override only `if (customerId)`, and `customer-hints`
+  refuses to prime the next extraction without one — but the quote extraction
+  was called with no `customer_id`, so every quote run stored null. Corrections
+  were recorded and could never change an extraction. `QuotesStrip` now passes
+  the customer id (as the id, replacing a `hasCustomer` boolean that threw the
+  value away one line from where it was needed).
+- **A `dedupe_hit` run swallowed the harvest.** A content-hash match mints a
+  *fresh* run stamped `status: "ok"` with a new `finished_at`, so it sorted
+  first — and `harvest-corrected` excludes `dedupe_hit`. The operator saw
+  "Correction recorded" and no golden was created. The route now skips it.
+- **`original_value` was a value the model never produced.** `quote_lines` is
+  not a faithful copy of the extract: the ingest writes
+  `listed_unit_price: list ?? governing`, so a single-price quote stores the
+  *net* price in the list column while the extract holds null, and it appends
+  `" · MOQ=n"` to `remark`. The route now sends the extract's own lines and a
+  cell with no extract entry stays read-only rather than guessing.
+
+Header fields (quote number, currency, grand total) are deliberately *not*
+correctable yet: the header is a chip strip rather than a table, so it is a
+real interaction change rather than another cell — and shipping a tested but
+unmounted field map would be the exact habit this document exists to break.
+
 Of the surfaces the brief named: **logistics planning and manufacturing have no
 extraction at all.** That is coverage, not quality, and belongs in a different
 conversation.

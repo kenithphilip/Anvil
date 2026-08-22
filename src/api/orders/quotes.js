@@ -232,15 +232,34 @@ export default async function handler(req, res) {
       // correcting, and refusing to attach a correction to it would silence
       // exactly the documents we most need to learn from.
       let extractionRunId = null;
+      let extractedLines = null;
       try {
         const er = await svc.from("extraction_runs")
-          .select("id, finished_at")
+          .select("id, finished_at, status_reason, normalized_extract")
           .eq("tenant_id", ctx.tenantId)
           .eq("source_id", detailDocId)
           .eq("extraction_kind", "quote")
           .order("finished_at", { ascending: false, nullsFirst: false })
-          .limit(1);
-        if (!er.error && Array.isArray(er.data) && er.data.length) extractionRunId = er.data[0].id;
+          .limit(5);
+        if (!er.error && Array.isArray(er.data)) {
+          // Skip dedupe_hit. A content-hash match mints a FRESH run stamped
+          // status "ok" with a new finished_at — so it is the newest row here —
+          // and copies the prior run's extract onto it. Correcting that run
+          // looks like it worked: the correction is recorded, and then
+          // harvest-corrected refuses it (dedupe_hit is in its excluded set)
+          // and no golden is ever created. Point corrections at the run that
+          // actually read the document; the extract is identical either way.
+          //
+          // Filtered here rather than with .not("status_reason","eq",...)
+          // because status_reason is nullable and SQL drops NULL rows from a
+          // `<> value` predicate — which would silently hide every older run.
+          const usable = er.data.find((r) => r.status_reason !== "dedupe_hit");
+          if (usable) {
+            extractionRunId = usable.id;
+            const ls = usable.normalized_extract && usable.normalized_extract.lines;
+            if (Array.isArray(ls)) extractedLines = ls;
+          }
+        }
       } catch (_) { /* best-effort: the tab still renders read-only without it */ }
 
       return json(res, 200, {
@@ -258,6 +277,15 @@ export default async function handler(req, res) {
         // quote, or one ingested before the run was recorded). The UI reads
         // this as "not correctable" rather than showing a control that 404s.
         extraction_run_id: extractionRunId,
+        // The extract's OWN line values, so a correction can state what the
+        // model actually produced. quote_lines is not that: the ingest writes
+        // `listed_unit_price: list ?? governing`, so a single-price quote
+        // stores the net price in the list column while the extract holds
+        // null, and it appends " · MOQ=n" to remark. Sending the column value
+        // as original_value would record a value the model never emitted —
+        // into the RLHF row, and into the no-op guard that decides whether a
+        // correction counts. Cells with no entry here stay read-only.
+        extracted_lines: extractedLines,
       });
     }
 

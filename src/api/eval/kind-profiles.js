@@ -133,6 +133,17 @@ const QUOTE_PROFILE = {
     { key: "uom", from: ["uom"], compare: "text" },
     { key: "hsn", from: ["hsn"], compare: "text" },
     { key: "taxPct", from: ["igst_pct"], compare: "number" },
+    // The line total. It is correctable on the Quotes tab, so without a
+    // descriptor here an operator could fix it, watch the harvest count it as
+    // a corrected field, and have toScorableFor drop it — a golden that names
+    // a field it does not check. It is also worth checking on its own terms:
+    // qty x rate disagreeing with the printed amount is how a misread decimal
+    // shows up.
+    { key: "amount", from: ["amount"], compare: "number" },
+    // `remark` is deliberately NOT scored. It is correctable — it carries MOQ
+    // and per-row conditions, and those are worth feeding to the hint loop —
+    // but it is free text, and an exact-match check on free text is how a
+    // regression gate becomes noise, and a noisy gate gets turned off.
   ],
   modelOwned: { dropHeader: [], dropLine: [] },
 };

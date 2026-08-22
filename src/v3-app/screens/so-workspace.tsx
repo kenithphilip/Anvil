@@ -2072,7 +2072,7 @@ const WiredSOWorkspace = () => {
           so the clean case collapses to a line. */}
       <QuotesStrip
         orderId={o.id}
-        hasCustomer={!!o.customer_id}
+        customerId={o.customer_id || null}
         refreshKey={quotesBump}
         onLoaded={setAttachedQuotes}
         onAttached={() => { setQuotesBump((n) => n + 1); rerunReconcile(o); }}

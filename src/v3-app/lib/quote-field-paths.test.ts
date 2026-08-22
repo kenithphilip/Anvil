@@ -18,8 +18,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
-  QUOTE_LINE_FIELDS, QUOTE_HEADER_FIELDS,
-  lineFieldFor, headerFieldFor, lineFieldPath, headerFieldPath, coerceCorrection,
+  QUOTE_LINE_FIELDS, lineFieldFor, lineFieldPath, coerceCorrection,
 } from "./quote-field-paths";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -53,20 +52,15 @@ describe("the map is grounded in what is actually STORED", () => {
   // scoring profile read `customer_name` — a real QUOTE_TOOL property — but
   // the normalizer consumes it and re-emits `customer: { name }`, so the
   // profile's customer check silently never fired on any quote golden.
-  // Grounding against the schema alone would not have caught that; grounding
-  // against the normalizer's own output does.
-  it("every header extractKey survives into the stored extract", () => {
-    expect(storedQuoteRootKeys.length).toBeGreaterThan(5);
-    for (const f of QUOTE_HEADER_FIELDS) {
-      expect(
-        storedQuoteRootKeys,
-        `"${f.extractKey}" is not emitted by the quote normalizer, so a correction written there would address a field that does not exist`,
-      ).toContain(f.extractKey);
-    }
+  it("the normalizer keeps lines under `lines`, which every path assumes", () => {
+    // toQuoteLineRow maps normalized.lines 1:1, so `lines[N]` is the address.
+    expect(read("src/api/_lib/docai/claude.js")).toMatch(/normalized: \{[\s\S]{0,400}\blines,/);
   });
 
-  it("does not offer customer_name — the trap that bit the scoring profile", () => {
-    expect(QUOTE_HEADER_FIELDS.map((f) => f.extractKey)).not.toContain("customer_name");
+  it("offers no field the normalizer strips on its way to storage", () => {
+    // customer_name is the known casualty; assert the line map contains no
+    // key that only exists on the tool schema side.
+    expect(QUOTE_LINE_FIELDS.map((f) => f.extractKey)).not.toContain("customer_name");
     expect(storedQuoteRootKeys).not.toContain("customer_name");
   });
 });
@@ -77,15 +71,6 @@ describe("the map is grounded in the extractor's schema", () => {
       expect(
         new RegExp("\\b" + f.extractKey + ": \\{").test(quoteToolSource),
         `QUOTE_TOOL has no line property "${f.extractKey}" (mapped from column "${f.column}")`,
-      ).toBe(true);
-    }
-  });
-
-  it("every header extractKey is a property of QUOTE_TOOL", () => {
-    for (const f of QUOTE_HEADER_FIELDS) {
-      expect(
-        new RegExp("\\b" + f.extractKey + ": \\{").test(quoteToolSource),
-        `QUOTE_TOOL has no header property "${f.extractKey}"`,
       ).toBe(true);
     }
   });
@@ -156,17 +141,6 @@ describe("lineFieldPath", () => {
   it("refuses a column that is not correctable", () => {
     expect(lineFieldPath("discount_pct", 0)).toBeNull();
     expect(lineFieldPath("nonsense", 0)).toBeNull();
-  });
-});
-
-describe("headerFieldPath", () => {
-  it("maps to the extract root", () => {
-    expect(headerFieldPath("quote_number")).toBe("quote_number");
-    expect(headerFieldPath("grand_total")).toBe("grand_total");
-  });
-  it("refuses an unknown column", () => {
-    expect(headerFieldPath("status")).toBeNull();
-    expect(headerFieldFor("tenant_id")).toBeNull();
   });
 });
 

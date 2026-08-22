@@ -206,9 +206,12 @@ describe("resolving the run a correction attaches to", () => {
     expect(src).toMatch(/eq\("extraction_kind", "quote"\)/);
   });
 
-  it("takes the LATEST run — a re-extraction supersedes the one before it", () => {
+  it("takes the newest usable run — a re-extraction supersedes the one before it", () => {
     expect(src).toMatch(/order\("finished_at", \{ ascending: false/);
-    expect(src).toMatch(/\.limit\(1\)/);
+    // A small window, not one row: the newest may be a dedupe_hit that has to
+    // be skipped (below), and there is no honest single-row query for that.
+    expect(src).toMatch(/\.limit\(5\)/);
+    expect(src).toMatch(/\.find\(\(r\) =>/);
   });
 
   it("does NOT filter on status", () => {
@@ -216,6 +219,33 @@ describe("resolving the run a correction attaches to", () => {
     // Refusing to attach a correction to it would silence exactly the
     // documents the learning loop most needs.
     expect(src).not.toMatch(/extraction_kind", "quote"\)[\s\S]{0,200}eq\("status", "ok"\)/);
+  });
+
+  it("skips a dedupe_hit run, which the harvest would silently refuse", () => {
+    // A content-hash match mints a FRESH run stamped status "ok" with a new
+    // finished_at — so it sorts first — carrying a copy of the prior extract.
+    // Correcting it records the correction and then harvest-corrected drops it
+    // (dedupe_hit is in EXCLUDED_STATUS_REASONS): "Correction recorded", no
+    // golden, no signal.
+    expect(src).toMatch(/status_reason !== "dedupe_hit"/);
+  });
+
+  it("filters status_reason in JS, not in the query", () => {
+    // status_reason is nullable, and SQL drops NULLs from a `<> value`
+    // predicate — .not("status_reason","eq","dedupe_hit") would silently hide
+    // every run whose reason was never set.
+    expect(src).not.toMatch(/\.not\("status_reason"/);
+    expect(src).toMatch(/\.limit\(5\)/);
+  });
+
+  it("sends the extract's own line values, not the ingested columns", () => {
+    // quote_lines is not a faithful copy: `listed_unit_price: list ?? governing`
+    // stores the NET price in the list column on a single-price quote, and the
+    // ingest appends " · MOQ=n" to remark. Recording those as original_value
+    // would put values the model never produced into the RLHF row and into the
+    // no-op guard that decides whether a correction counts.
+    expect(src).toMatch(/normalized_extract/);
+    expect(src).toMatch(/extracted_lines: extractedLines/);
   });
 
   it("degrades to read-only rather than failing the tab", () => {
@@ -275,6 +305,25 @@ describe("the correction affordance", () => {
 
   it("says so, rather than letting the operator infer it from a cell reverting", () => {
     expect(code).toMatch(/it does not change the quote/);
+  });
+
+  it("takes the original from the extract, never from the rendered column", () => {
+    expect(code).toMatch(/extractLine\[spec\.extractKey\]/);
+    expect(code).toMatch(/originalValue: original/);
+    // A row with no extract line cannot state an original, so it stays
+    // read-only rather than fabricating one.
+    expect(code).toMatch(/original !== undefined/);
+  });
+
+  it("stamps the customer on the run, or the override loop cannot fire", () => {
+    // correction.js promotes a customer-field override only `if (customerId)`,
+    // and customer-hints refuses to prime the next extraction without one. A
+    // quote run with a null customer records corrections that can never change
+    // an extraction — which is the half of the loop this PR is named for.
+    const stripSrc = strip(read("src/v3-app/components/QuotesStrip.tsx"));
+    expect(stripSrc).toMatch(/kind: "quote"[\s\S]{0,400}customer_id: customerId/);
+    const ws = strip(read("src/v3-app/screens/so-workspace.tsx"));
+    expect(ws).toMatch(/<QuotesStrip[\s\S]{0,200}customerId=\{o\.customer_id/);
   });
 
   it("only offers corrections to someone who may approve", () => {

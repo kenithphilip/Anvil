@@ -32,6 +32,16 @@
 //      phantom field on the golden. The map below, and the test that grounds
 //      it against the extractor, ARE the guard.
 //
+// The ORIGINAL value is the third piece, and it does not come from the table.
+// quote_lines is not a faithful copy of the extract: the ingest writes
+// `listed_unit_price: list ?? governing`, so a single-price quote stores the
+// net price in the list column while the extract holds null, and it appends
+// " · MOQ=n" to remark. Recording a column value as `original_value` would put
+// a number the model never produced into the RLHF row and into the no-op guard
+// that decides whether a correction counts as one. So the route sends the
+// extract's own lines and the cell reads the original from there — and a cell
+// with no extract entry stays read-only rather than guessing.
+//
 // The row index is the other half. quote_lines.line_index is stamped by
 // toQuoteLineRow(line, index) BEFORE the hollow-line filter runs, so it stays a
 // faithful pointer into normalized_extract.lines[] even when the ingest drops
@@ -75,23 +85,16 @@ export const QUOTE_LINE_FIELDS: QuoteFieldSpec[] = [
   // one, so it does not belong in this change.
 ];
 
-/** Header fields, keyed by the quotes column name. */
-export const QUOTE_HEADER_FIELDS: QuoteFieldSpec[] = [
-  { column: "quote_number", extractKey: "quote_number", label: "Quote no.", type: "text" },
-  { column: "quote_date", extractKey: "quote_date", label: "Quote date", type: "text" },
-  { column: "currency", extractKey: "currency", label: "Currency", type: "text" },
-  { column: "grand_total", extractKey: "grand_total", label: "Grand total", type: "number" },
-  { column: "revision", extractKey: "revision", label: "Revision", type: "text" },
-];
+// There is deliberately no header map here. The header (quote number, currency,
+// grand total) is rendered as a chip strip, not a table, so making it
+// correctable is a real interaction change rather than another cell — and
+// shipping a tested-but-unmounted export is the exact habit this whole effort
+// exists to break. Header corrections are the next widening, not this one.
 
 const LINE_BY_COLUMN = new Map(QUOTE_LINE_FIELDS.map((f) => [f.column, f]));
-const HEADER_BY_COLUMN = new Map(QUOTE_HEADER_FIELDS.map((f) => [f.column, f]));
 
 export const lineFieldFor = (column: string): QuoteFieldSpec | null =>
   LINE_BY_COLUMN.get(String(column || "")) || null;
-
-export const headerFieldFor = (column: string): QuoteFieldSpec | null =>
-  HEADER_BY_COLUMN.get(String(column || "")) || null;
 
 /**
  * The field_path for a line cell — `lines[<line_index>].<extractKey>`.
@@ -106,12 +109,6 @@ export const lineFieldPath = (column: string, lineIndex: number | null | undefin
   if (!spec) return null;
   if (lineIndex == null || !Number.isInteger(lineIndex) || lineIndex < 0) return null;
   return `lines[${lineIndex}].${spec.extractKey}`;
-};
-
-/** The field_path for a header cell. Header fields sit at the extract root. */
-export const headerFieldPath = (column: string): string | null => {
-  const spec = headerFieldFor(column);
-  return spec ? spec.extractKey : null;
 };
 
 /**

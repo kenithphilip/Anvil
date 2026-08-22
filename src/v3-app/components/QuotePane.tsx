@@ -58,11 +58,12 @@ const num = (v: number | null | undefined, dp = 2) =>
 const CorrectableCell: React.FC<{
   column: string;
   lineIndex: number | null;
-  value: unknown;
+  /** The extract line this row came from, or null when it cannot be resolved. */
+  extractLine: any;
   display: string;
   align?: "left" | "right";
   style?: React.CSSProperties;
-}> = ({ column, lineIndex, value, display, align = "left", style }) => {
+}> = ({ column, lineIndex, extractLine, display, align = "left", style }) => {
   const { canCorrect, extractionRunId, submitCorrection } = useReviewPaneSelection();
   const spec = lineFieldFor(column);
   const path = lineFieldPath(column, lineIndex);
@@ -71,7 +72,14 @@ const CorrectableCell: React.FC<{
   const [saving, setSaving] = useState(false);
   const [corrected, setCorrected] = useState<string | null>(null);
 
-  const editable = !!(canCorrect && extractionRunId && spec && path);
+  // The value the MODEL produced, not the value the ingest stored. Without an
+  // extract line we cannot state it, so the cell stays read-only rather than
+  // recording a fabricated original.
+  const original = spec && extractLine && typeof extractLine === "object"
+    ? extractLine[spec.extractKey] ?? null
+    : undefined;
+
+  const editable = !!(canCorrect && extractionRunId && spec && path && original !== undefined);
   const shown = corrected ?? display;
 
   if (!editable) {
@@ -79,9 +87,10 @@ const CorrectableCell: React.FC<{
   }
 
   const open = () => {
-    // Prefill with the raw value, not the formatted one — a thousands
-    // separator or an em-dash placeholder is not what the document says.
-    setDraft(value == null ? "" : String(value));
+    // Prefill with what the model produced, not the rendered cell: the table
+    // shows an em-dash for a null list price and a MOQ tag the ingest appended,
+    // neither of which is text the operator should be editing.
+    setDraft(original == null ? "" : String(original));
     setEditing(true);
   };
 
@@ -91,7 +100,7 @@ const CorrectableCell: React.FC<{
     setSaving(true);
     const res = await submitCorrection({
       fieldPath: path!,
-      originalValue: value ?? null,
+      originalValue: original,
       correctedValue: c.value,
       reason: "operator corrected on the Quote tab",
     });
@@ -201,6 +210,12 @@ export const QuotePane: React.FC<{
 
   const quote = data?.quote;
   const lines: Line[] = Array.isArray(data?.lines) ? data.lines : [];
+  // The extract's own lines, addressed by line_index — the same index the
+  // ingest stamped, so a row that survived the hollow-line filter still points
+  // at the line the model produced.
+  const extractLines: any[] | null = Array.isArray(data?.extracted_lines) ? data.extracted_lines : null;
+  const extractLineFor = (idx: number | null) =>
+    extractLines && idx != null && idx >= 0 && idx < extractLines.length ? extractLines[idx] : null;
   const superseded = data?.superseded_by || null;
 
   const extractionRunId: string | null = data?.extraction_run_id || null;
@@ -309,15 +324,15 @@ export const QuotePane: React.FC<{
                       <tr key={i}>
                         <td>{l.line_index != null ? l.line_index + 1 : i + 1}</td>
                         <CorrectableCell
-                          column="part_no" lineIndex={l.line_index} value={l.part_no}
+                          column="part_no" lineIndex={l.line_index} extractLine={extractLineFor(l.line_index)}
                           display={(l.part_no || "—") + (l.customer_part_number ? ` / ${l.customer_part_number}` : "")}
                         />
                         <CorrectableCell
-                          column="description" lineIndex={l.line_index} value={l.description}
+                          column="description" lineIndex={l.line_index} extractLine={extractLineFor(l.line_index)}
                           display={l.description || "—"}
                         />
                         <CorrectableCell
-                          column="qty" lineIndex={l.line_index} value={l.qty} align="right"
+                          column="qty" lineIndex={l.line_index} extractLine={extractLineFor(l.line_index)} align="right"
                           display={num(l.qty, 3) + (l.uom ? ` ${l.uom}` : "")}
                         />
                         {/* List shown only where it differs — a single-price
@@ -326,18 +341,18 @@ export const QuotePane: React.FC<{
                             extractor MISSED is exactly the #462 defect, and a
                             cell that renders "—" is the only place to say so. */}
                         <CorrectableCell
-                          column="listed_unit_price" lineIndex={l.line_index} value={l.listed_unit_price}
+                          column="listed_unit_price" lineIndex={l.line_index} extractLine={extractLineFor(l.line_index)}
                           align="right" style={{ color: "var(--ink-3)" }}
                           display={l.listed_unit_price != null && l.listed_unit_price !== l.discounted_unit_price
                             ? num(l.listed_unit_price) : "—"}
                         />
                         <CorrectableCell
-                          column="discounted_unit_price" lineIndex={l.line_index} value={l.discounted_unit_price}
+                          column="discounted_unit_price" lineIndex={l.line_index} extractLine={extractLineFor(l.line_index)}
                           align="right" style={{ fontWeight: 600 }}
                           display={num(l.discounted_unit_price)}
                         />
                         <CorrectableCell
-                          column="line_amount" lineIndex={l.line_index} value={l.line_amount}
+                          column="line_amount" lineIndex={l.line_index} extractLine={extractLineFor(l.line_index)}
                           align="right" display={num(l.line_amount)}
                         />
                         {/* GST is the sum of three extracted fields, so a
@@ -345,7 +360,7 @@ export const QuotePane: React.FC<{
                             one. Read-only until the column is split. */}
                         <td style={{ textAlign: "right" }}>{gst ? `${gst.toFixed(2).replace(/\.00$/, "")}%` : "—"}</td>
                         <CorrectableCell
-                          column="remark" lineIndex={l.line_index} value={l.remark}
+                          column="remark" lineIndex={l.line_index} extractLine={extractLineFor(l.line_index)}
                           style={{ color: "var(--ink-3)" }} display={l.remark || ""}
                         />
                       </tr>

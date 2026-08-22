@@ -185,3 +185,149 @@ describe("layout", () => {
     expect(css).toMatch(/\.qv-lines \{[^}]*overflow: auto/);
   });
 });
+
+// ── Correcting what was read ────────────────────────────────────────────
+//
+// #489 shipped a kind-agnostic harvest: the moment a human corrects an
+// extraction, that document becomes a golden fixture. Only POs had a
+// correction UI, so the harvest could only ever fire for POs — the golden set
+// stayed a PO set no matter how many kinds the scorer learned to score. This
+// is the second kind.
+
+describe("resolving the run a correction attaches to", () => {
+  const src = strip(read("src/api/orders/quotes.js"));
+
+  it("finds the run through the document, because quotes has no run column", () => {
+    // extraction_runs.source_id IS the document id (run.js stamps
+    // `source_id: sourceId || documentId`), so the document on screen
+    // resolves its own run without a migration.
+    expect(src).toMatch(/from\("extraction_runs"\)/);
+    expect(src).toMatch(/eq\("source_id", detailDocId\)/);
+    expect(src).toMatch(/eq\("extraction_kind", "quote"\)/);
+  });
+
+  it("takes the newest usable run — a re-extraction supersedes the one before it", () => {
+    expect(src).toMatch(/order\("finished_at", \{ ascending: false/);
+    // A small window, not one row: the newest may be a dedupe_hit that has to
+    // be skipped (below), and there is no honest single-row query for that.
+    expect(src).toMatch(/\.limit\(5\)/);
+    expect(src).toMatch(/\.find\(\(r\) =>/);
+  });
+
+  it("does NOT filter on status", () => {
+    // A low-confidence run is the one most likely to need correcting.
+    // Refusing to attach a correction to it would silence exactly the
+    // documents the learning loop most needs.
+    expect(src).not.toMatch(/extraction_kind", "quote"\)[\s\S]{0,200}eq\("status", "ok"\)/);
+  });
+
+  it("skips a dedupe_hit run, which the harvest would silently refuse", () => {
+    // A content-hash match mints a FRESH run stamped status "ok" with a new
+    // finished_at — so it sorts first — carrying a copy of the prior extract.
+    // Correcting it records the correction and then harvest-corrected drops it
+    // (dedupe_hit is in EXCLUDED_STATUS_REASONS): "Correction recorded", no
+    // golden, no signal.
+    expect(src).toMatch(/status_reason !== "dedupe_hit"/);
+  });
+
+  it("filters status_reason in JS, not in the query", () => {
+    // status_reason is nullable, and SQL drops NULLs from a `<> value`
+    // predicate — .not("status_reason","eq","dedupe_hit") would silently hide
+    // every run whose reason was never set.
+    expect(src).not.toMatch(/\.not\("status_reason"/);
+    expect(src).toMatch(/\.limit\(5\)/);
+  });
+
+  it("sends the extract's own line values, not the ingested columns", () => {
+    // quote_lines is not a faithful copy: `listed_unit_price: list ?? governing`
+    // stores the NET price in the list column on a single-price quote, and the
+    // ingest appends " · MOQ=n" to remark. Recording those as original_value
+    // would put values the model never produced into the RLHF row and into the
+    // no-op guard that decides whether a correction counts.
+    expect(src).toMatch(/normalized_extract/);
+    expect(src).toMatch(/extracted_lines: extractedLines/);
+  });
+
+  it("degrades to read-only rather than failing the tab", () => {
+    // A hand-authored quote has no extraction run at all.
+    expect(src).toMatch(/let extractionRunId = null/);
+    expect(src).toMatch(/extraction_run_id: extractionRunId/);
+  });
+
+  it("still writes nothing", () => {
+    for (const w of [".insert(", ".update(", ".upsert(", ".delete("]) expect(src).not.toContain(w);
+  });
+});
+
+describe("the correction affordance", () => {
+  const code = strip(read("src/v3-app/components/QuotePane.tsx"));
+
+  it("reuses the PO pane's correction context rather than a second submitter", () => {
+    // ReviewPaneSelectionProvider already owns the POST, the 403 message and
+    // the per-pane state; it takes extractionRunId as a prop and knows nothing
+    // about purchase orders.
+    expect(code).toMatch(/import \{ ReviewPaneSelectionProvider, useReviewPaneSelection \} from "\.\/ReviewPaneContext"/);
+    expect(code).toMatch(/<ReviewPaneSelectionProvider/);
+    expect(code).toMatch(/extractionRunId=\{extractionRunId\}/);
+  });
+
+  it("re-keys the provider per document", () => {
+    // Otherwise correction state from quote A shows on quote B's cells.
+    expect(code).toMatch(/<ReviewPaneSelectionProvider[\s\S]{0,120}key=\{docId \|\| "none"\}/);
+  });
+
+  it("maps cells through the shared field map, never inline strings", () => {
+    // A hand-written `lines[${i}].unitPrice` at a call site is how a wrong
+    // path gets written into a golden.
+    expect(code).toMatch(/from "\.\.\/lib\/quote-field-paths"/);
+    expect(code).not.toMatch(/`lines\[\$\{/);
+  });
+
+  it("addresses a row by line_index, not by render position", () => {
+    expect(code).toMatch(/lineIndex=\{l\.line_index\}/);
+    expect(code).not.toMatch(/lineIndex=\{i\}/);
+  });
+
+  it("leaves the summed GST column read-only", () => {
+    // Three extracted fields render as one column; a correction there could
+    // not be attributed to cgst vs igst.
+    expect(code).toMatch(/column="discounted_unit_price"/);
+    expect(code).not.toMatch(/column="cgst_pct"|column="igst_pct"|column="gst"/);
+  });
+
+  it("does not rewrite the quote it is correcting", () => {
+    // quote_lines is what the supplier's document was read as, and the
+    // PO-vs-quote reconciliation is computed from it. A correction records
+    // ground truth about the EXTRACTION; it must not move the commercial
+    // comparison under the operator.
+    expect(code).not.toMatch(/quotes\?\.\w*[Uu]pdate|updateQuoteLine|patchQuote/);
+  });
+
+  it("says so, rather than letting the operator infer it from a cell reverting", () => {
+    expect(code).toMatch(/it does not change the quote/);
+  });
+
+  it("takes the original from the extract, never from the rendered column", () => {
+    expect(code).toMatch(/extractLine\[spec\.extractKey\]/);
+    expect(code).toMatch(/originalValue: original/);
+    // A row with no extract line cannot state an original, so it stays
+    // read-only rather than fabricating one.
+    expect(code).toMatch(/original !== undefined/);
+  });
+
+  it("stamps the customer on the run, or the override loop cannot fire", () => {
+    // correction.js promotes a customer-field override only `if (customerId)`,
+    // and customer-hints refuses to prime the next extraction without one. A
+    // quote run with a null customer records corrections that can never change
+    // an extraction — which is the half of the loop this PR is named for.
+    const stripSrc = strip(read("src/v3-app/components/QuotesStrip.tsx"));
+    expect(stripSrc).toMatch(/kind: "quote"[\s\S]{0,400}customer_id: customerId/);
+    const ws = strip(read("src/v3-app/screens/so-workspace.tsx"));
+    expect(ws).toMatch(/<QuotesStrip[\s\S]{0,200}customerId=\{o\.customer_id/);
+  });
+
+  it("only offers corrections to someone who may approve", () => {
+    const ws = strip(read("src/v3-app/screens/so-workspace.tsx"));
+    expect(ws).toMatch(/<QuotePane[\s\S]{0,300}canCorrect=\{canApprove\}/);
+  });
+});

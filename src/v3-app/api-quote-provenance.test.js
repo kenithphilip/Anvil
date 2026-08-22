@@ -194,7 +194,7 @@ describe("attach_quote wiring", () => {
   it("the panel preflights before extracting", () => {
     const src = read("src/v3-app/components/QuotesStrip.tsx");
     const pre = src.indexOf("attachQuote?.(orderId, documentId, null, false)");
-    const extract = src.search(/documents\?\.extract\?\.\(file, \{ kind: "quote"/);
+    const extract = src.search(/documents\?\.extract\?\.\(file, \{\s*\n?\s*kind: "quote"/);
     expect(pre).toBeGreaterThan(-1);
     expect(extract).toBeGreaterThan(-1);
     expect(pre).toBeLessThan(extract);
@@ -206,6 +206,18 @@ describe("attach_quote wiring", () => {
     // model or harvested into the golden set — the id is already in hand from
     // the upload two lines above.
     const src = read("src/v3-app/components/QuotesStrip.tsx");
-    expect(src).toMatch(/documents\?\.extract\?\.\(file, \{ kind: "quote", source_id: documentId \}\)/);
+    expect(src).toMatch(/kind: "quote",[\s\S]{0,80}source_id: documentId,/);
+  });
+
+  it("hands the CUSTOMER to the extractor, or the override loop cannot fire", () => {
+    // extraction_runs.customer_id gates both learning paths: correction.js
+    // promotes a customer-field override only `if (customerId)`, and
+    // customer-hints refuses to prime the next extraction without one. A quote
+    // run with a null customer records corrections that can never change an
+    // extraction — the loop is recorded but never closed.
+    const src = read("src/v3-app/components/QuotesStrip.tsx");
+    expect(src).toMatch(/customer_id: customerId \|\| undefined/);
+    // Passed as the id, not as the boolean the panel used to take.
+    expect(src).not.toMatch(/hasCustomer: boolean/);
   });
 });

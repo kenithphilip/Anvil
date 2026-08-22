@@ -18,7 +18,7 @@
     "classification": "quote",
     "quote_number": "Q-2026-0331",
     "quote_date": "2026-03-31",
-    "customer_name": "ACME PVT LTD",
+    "customer": { "name": "ACME PVT LTD" },
     "currency": "INR",
     "grand_total": 80850.0,
     "revision": "R1",

@@ -52,7 +52,15 @@ const shortDate = (iso?: string | null) => {
 
 export const QuotesStrip: React.FC<{
   orderId: string;
-  hasCustomer: boolean;
+  /**
+   * The order's customer. Passed as the id, not a boolean: the extraction run
+   * needs it stamped, because every downstream learning path is gated on it —
+   * correction.js only promotes a customer-field override `if (customerId)`,
+   * and customer-hints refuses to prime the next extraction without one. A
+   * quote run with a null customer records corrections that can never change
+   * an extraction.
+   */
+  customerId: string | null;
   refreshKey?: number;
   /** Verdict column, rendered by the workspace which owns the reconcile state. */
   verdict?: React.ReactNode;
@@ -61,7 +69,8 @@ export const QuotesStrip: React.FC<{
   onOpen?: (documentId: string) => void;
   /** Hand the loaded list up — the Quotes tab reads it rather than refetching. */
   onLoaded?: (rows: AttachedQuote[]) => void;
-}> = ({ orderId, hasCustomer, refreshKey, verdict, onAttached, onOpen, onLoaded }) => {
+}> = ({ orderId, customerId, refreshKey, verdict, onAttached, onOpen, onLoaded }) => {
+  const hasCustomer = !!customerId;
   const [rows, setRows] = useState<AttachedQuote[] | null>(null);
   const [other, setOther] = useState<any[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -109,7 +118,14 @@ export const QuotesStrip: React.FC<{
       // and this one did not, so no quote extraction could be traced to its
       // document, replayed against the live model, or harvested into the
       // golden set. The id is already in hand from the upload above.
-      const out: any = await AnvilBackend?.documents?.extract?.(file, { kind: "quote", source_id: documentId });
+      const out: any = await AnvilBackend?.documents?.extract?.(file, {
+        kind: "quote",
+        source_id: documentId,
+        // Stamps extraction_runs.customer_id. Without it a correction on this
+        // quote reaches extraction_corrections and stops there: the override
+        // promotion and the hint priming are both gated on a customer.
+        customer_id: customerId || undefined,
+      });
       extracted = out?.normalized || null;
     } catch {
       extracted = null;   // non-fatal: attach anyway and report below

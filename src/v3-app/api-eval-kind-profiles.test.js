@@ -143,6 +143,37 @@ describe("the quote profile scores BOTH price columns", () => {
     expect(s.lineItems[0].listRate).toBe(2200);
   });
 
+  it("reads the customer from the shape a quote is actually STORED in", () => {
+    // The fixture above uses the QUOTE_TOOL shape (`customer_name` at the
+    // root). A stored normalized_extract does not look like that: the
+    // normalizer consumes customer_name and re-emits `customer: { name }`
+    // (claude.js), and only the isQuote spread survives flat. Reading the
+    // schema name found nothing, toScorableFor omitted `customer`, and
+    // scoreCase's `if (exp[f.key] === undefined) continue` skipped it — so
+    // every quote golden scored the customer as a pass, including when the
+    // model read the seller's name instead of the buyer's.
+    const stored = {
+      classification: "quote",
+      customer: { name: "ACME PVT LTD" },
+      quote_number: "Q-1", currency: "INR", grand_total: 1000,
+      lines: [{ partNumber: "SKT-4410", quantity: 25, unitPrice: 1980 }],
+    };
+    expect(toScorableFor(stored, p).customer).toBe("ACME PVT LTD");
+  });
+
+  it("still reads a flat customer_name, if an adapter ever emits one raw", () => {
+    expect(toScorableFor(q, p).customer).toBe("ACME PVT LTD");
+  });
+
+  it("actually scores the customer now, instead of skipping the check", () => {
+    const stored = (name) => ({ customer: { name }, lines: [] });
+    const expected = toScorableFor(stored("ACME PVT LTD"), p);
+    const wrong = toScorableFor(stored("OUR OWN COMPANY"), p);
+    const s = scoreCase(expected, wrong, p);
+    expect(s.checks.some((c) => c.name === "customer")).toBe(true);
+    expect(s.checks.find((c) => c.name === "customer").ok).toBe(false);
+  });
+
   it("fails when the discounted price is lost to the list price (#462)", () => {
     const broken = JSON.parse(JSON.stringify(q));
     broken.lines[0].unitPrice = 2200;

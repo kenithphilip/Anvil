@@ -5165,3 +5165,31 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .qp-doc { min-width: 0; max-height: 72vh; overflow: auto; border: 1px solid var(--hairline-2); border-radius: var(--r-3); background: var(--paper-2); }
 .qp-lines { min-width: 0; max-height: 72vh; overflow: auto; }
 @media (max-width: 1100px) { .qp-split { grid-template-columns: minmax(0, 1fr); } .qp-doc { max-height: 46vh; } }
+
+/* Correctable cells on the Quotes tab.
+   The affordance has to be quiet: this table's first job is comparison
+   against the document beside it, and a grid of buttons would fight that.
+   So a cell looks like text until the pointer is on it, and only then
+   admits it is editable. */
+.qp-cell {
+  font: inherit; color: inherit; text-align: inherit;
+  background: none; border: 0; padding: 0; margin: 0;
+  cursor: text; border-radius: 2px;
+  border-bottom: 1px dashed transparent;
+}
+.qp-cell:hover { border-bottom-color: var(--ink-4); }
+/* --accent-2, not --accent: the lime --accent is the SAME value in both
+   themes, so as a stroke or small mark it disappears against light paper
+   (~1.06:1). --accent-2 and --sage are the theme-flipped pair the design
+   system already provides for exactly this. --sage additionally carries the
+   right meaning — ReviewPane uses it for a field a human has verified. */
+.qp-cell:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+.qp-cell.is-corrected { border-bottom-color: var(--sage); border-bottom-style: solid; }
+.qp-cell-mark { color: var(--sage); margin-left: 2px; font-weight: 700; }
+.qp-edit { display: inline-flex; gap: 4px; align-items: center; }
+.qp-edit-input { width: 11ch; min-width: 0; padding: 1px 4px; }
+.qp-correct-note {
+  color: var(--ink-3); padding: 5px 8px; margin-bottom: 6px;
+  background: var(--paper-2); border: 1px solid var(--hairline-3);
+  border-radius: var(--r-2); line-height: 1.45;
+}

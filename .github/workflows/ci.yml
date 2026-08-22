@@ -17,6 +17,11 @@ jobs:
           cache: "npm"
       - run: npm ci --no-audit --no-fund
       - run: npm run check
+      # src/api/** was outside every eslint glob and lint was in no CI job, so
+      # ~200 unattended server files had no gate but node --check, which parses
+      # syntax without resolving a single identifier. Fails on errors only;
+      # the pre-existing warnings do not block.
+      - run: npm run lint
       - run: npm run build
       - run: npm run verify
       - run: test -f public/index.html

@@ -68,15 +68,27 @@ output. Cost-bounded, tested, routed at `router.js:1007`.
 
 ### `docai/cost_status.js` — parse-failure rollup
 
-Computes `failed_rate_window` and `sap_repair_rate_window`, with a comment
+Computed `failed_rate_window` and `sap_repair_rate_window`, with a comment
 calling `failed` *"the signal Bet 4 is trying to drive to 0."* No screen or
-component consumes it. Computed on every call and thrown away.
+component consumed it — computed on every call and thrown away. **PR 2 moved
+that math into `_lib/extraction-kpis.js` (`parseHealth`) and published it as
+`extraction_parse_failure_rate`**, with the repair rate alongside it as the
+leading indicator. `cost_status.js` still computes its own copy for its own
+response shape.
 
 ### `_lib/metrics/catalog.js` — the governed metric layer
 
 22 metrics with provenance sentences — the only trustworthy analytics surface
 in the app. **Zero extraction metrics.** No accuracy, no defect rate, no parse
-failure. Everything the copilot can reason about excludes extraction quality.
+failure. Everything the copilot could reason about excluded extraction quality.
+
+**Closed by PR 2**: six metrics under a new `extraction` domain — defect rate
+(DPMO + sigma), failure rate, review rate, parse-failure rate, documents read,
+and prompt-version lift — all sliced by document kind, all carrying the
+`extraction_runs` ids they aggregate. They reach the copilot through the
+existing `list_metrics` / `query_metric` tools and the frontend through the
+existing `metrics.list` / `metrics.query` client methods, so nothing new had
+to be built to consume them.
 
 ---
 
@@ -176,9 +188,9 @@ of those is most of the work.**
 
 | # | what | makes what answerable | depends on |
 |---|---|---|---|
-| 1 | **Record `prompt_version` on every run** — call `resolvePromptVersion`, fix the mis-named integration point, write the column | *"which prompt produced this?"* | nothing |
-| 2 | **Extraction metrics in the governed catalog** — accuracy, defect rate, parse-failure, by kind and by prompt version | *"is it getting better?"* | 1 |
-| 3 | **Wire the replay scorer** — client method, screen action, and act on `regression` | **"did that prompt change help?"** | 1 |
+| 1 | ~~**Record `prompt_version` on every run**~~ — **shipped (#487)** | *"which prompt produced this?"* | nothing |
+| 2 | ~~**Extraction metrics in the governed catalog**~~ — **shipped**: six metrics, `extraction` domain, by kind and by prompt version | *"is it getting better?"* | 1 |
+| 3 | ~~**Wire the replay scorer**~~ — **shipped (#487)**: client method + `eval_replay_regression` admin alert | **"did that prompt change help?"** | 1 |
 | 4 | Golden fixtures for the non-PO kinds, harvested the same self-populating way | *"does the gate protect quotes too?"* | nothing |
 | 5 | Correction UI on the quote review surface | feeds the override loop beyond POs | nothing |
 | 6 | Turn on the traffic split, canary one prompt | *"can we improve without a deploy?"* | 1, 2, 3 |
@@ -192,7 +204,15 @@ and is a day's work on code that already exists.
 
 - **A quality number nobody can act on.** The DPMO alarm already lands in an
   admin bell with no drill-down to the runs behind it. Guard: every metric
-  links to the `extraction_runs` rows it aggregates.
+  links to the `extraction_runs` rows it aggregates. **Held in PR 2** — every
+  extraction metric returns `evidence: { table, total_runs, run_ids[], truncated }`,
+  and the ids are the ones you would open: the *failed* runs for the failure
+  rate, the *waiting* runs for the review rate.
+- **A comparison that looks attributable and is not.** Two guards in PR 2:
+  runs predating prompt-version recording group as `unrecorded` and are never
+  crowned best or worst, and no version is declared a winner on fewer than 20
+  shipped runs — `extraction_prompt_version_lift` returns `null`, not a
+  flattering number, when there is nothing to compare.
 - **The golden set drifts to what we already pass.** It harvests from APPROVED
   orders, so it fills with documents the pipeline handled well. Guard: harvest
   corrected runs too, deliberately.

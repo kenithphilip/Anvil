@@ -219,6 +219,30 @@ export default async function handler(req, res) {
         }));
       }
 
+      // The extraction run that read THIS document. /api/docai/correction
+      // addresses a correction by (extraction_run_id, field_path), so without
+      // it the Quote tab can only ever be read-only — the operator sees a
+      // misread price and has nowhere to put the truth.
+      //
+      // quotes carries no run column, but extraction_runs.source_id IS the
+      // document id (run.js stamps `source_id: sourceId || documentId`), so the
+      // document the operator is looking at resolves its own run. Latest run
+      // wins: a re-extraction supersedes the one before it. Status is NOT
+      // filtered — a low-confidence run is the one most likely to need
+      // correcting, and refusing to attach a correction to it would silence
+      // exactly the documents we most need to learn from.
+      let extractionRunId = null;
+      try {
+        const er = await svc.from("extraction_runs")
+          .select("id, finished_at")
+          .eq("tenant_id", ctx.tenantId)
+          .eq("source_id", detailDocId)
+          .eq("extraction_kind", "quote")
+          .order("finished_at", { ascending: false, nullsFirst: false })
+          .limit(1);
+        if (!er.error && Array.isArray(er.data) && er.data.length) extractionRunId = er.data[0].id;
+      } catch (_) { /* best-effort: the tab still renders read-only without it */ }
+
       return json(res, 200, {
         order_id: orderId,
         document: {
@@ -230,6 +254,10 @@ export default async function handler(req, res) {
         lines: detailLines,
         // Percentages, because that is what the document prints.
         rates_as: "percent",
+        // Null when no quote-kind run touched this document (a hand-authored
+        // quote, or one ingested before the run was recorded). The UI reads
+        // this as "not correctable" rather than showing a control that 404s.
+        extraction_run_id: extractionRunId,
       });
     }
 

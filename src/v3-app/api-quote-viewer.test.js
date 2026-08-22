@@ -185,3 +185,100 @@ describe("layout", () => {
     expect(css).toMatch(/\.qv-lines \{[^}]*overflow: auto/);
   });
 });
+
+// ── Correcting what was read ────────────────────────────────────────────
+//
+// #489 shipped a kind-agnostic harvest: the moment a human corrects an
+// extraction, that document becomes a golden fixture. Only POs had a
+// correction UI, so the harvest could only ever fire for POs — the golden set
+// stayed a PO set no matter how many kinds the scorer learned to score. This
+// is the second kind.
+
+describe("resolving the run a correction attaches to", () => {
+  const src = strip(read("src/api/orders/quotes.js"));
+
+  it("finds the run through the document, because quotes has no run column", () => {
+    // extraction_runs.source_id IS the document id (run.js stamps
+    // `source_id: sourceId || documentId`), so the document on screen
+    // resolves its own run without a migration.
+    expect(src).toMatch(/from\("extraction_runs"\)/);
+    expect(src).toMatch(/eq\("source_id", detailDocId\)/);
+    expect(src).toMatch(/eq\("extraction_kind", "quote"\)/);
+  });
+
+  it("takes the LATEST run — a re-extraction supersedes the one before it", () => {
+    expect(src).toMatch(/order\("finished_at", \{ ascending: false/);
+    expect(src).toMatch(/\.limit\(1\)/);
+  });
+
+  it("does NOT filter on status", () => {
+    // A low-confidence run is the one most likely to need correcting.
+    // Refusing to attach a correction to it would silence exactly the
+    // documents the learning loop most needs.
+    expect(src).not.toMatch(/extraction_kind", "quote"\)[\s\S]{0,200}eq\("status", "ok"\)/);
+  });
+
+  it("degrades to read-only rather than failing the tab", () => {
+    // A hand-authored quote has no extraction run at all.
+    expect(src).toMatch(/let extractionRunId = null/);
+    expect(src).toMatch(/extraction_run_id: extractionRunId/);
+  });
+
+  it("still writes nothing", () => {
+    for (const w of [".insert(", ".update(", ".upsert(", ".delete("]) expect(src).not.toContain(w);
+  });
+});
+
+describe("the correction affordance", () => {
+  const code = strip(read("src/v3-app/components/QuotePane.tsx"));
+
+  it("reuses the PO pane's correction context rather than a second submitter", () => {
+    // ReviewPaneSelectionProvider already owns the POST, the 403 message and
+    // the per-pane state; it takes extractionRunId as a prop and knows nothing
+    // about purchase orders.
+    expect(code).toMatch(/import \{ ReviewPaneSelectionProvider, useReviewPaneSelection \} from "\.\/ReviewPaneContext"/);
+    expect(code).toMatch(/<ReviewPaneSelectionProvider/);
+    expect(code).toMatch(/extractionRunId=\{extractionRunId\}/);
+  });
+
+  it("re-keys the provider per document", () => {
+    // Otherwise correction state from quote A shows on quote B's cells.
+    expect(code).toMatch(/<ReviewPaneSelectionProvider[\s\S]{0,120}key=\{docId \|\| "none"\}/);
+  });
+
+  it("maps cells through the shared field map, never inline strings", () => {
+    // A hand-written `lines[${i}].unitPrice` at a call site is how a wrong
+    // path gets written into a golden.
+    expect(code).toMatch(/from "\.\.\/lib\/quote-field-paths"/);
+    expect(code).not.toMatch(/`lines\[\$\{/);
+  });
+
+  it("addresses a row by line_index, not by render position", () => {
+    expect(code).toMatch(/lineIndex=\{l\.line_index\}/);
+    expect(code).not.toMatch(/lineIndex=\{i\}/);
+  });
+
+  it("leaves the summed GST column read-only", () => {
+    // Three extracted fields render as one column; a correction there could
+    // not be attributed to cgst vs igst.
+    expect(code).toMatch(/column="discounted_unit_price"/);
+    expect(code).not.toMatch(/column="cgst_pct"|column="igst_pct"|column="gst"/);
+  });
+
+  it("does not rewrite the quote it is correcting", () => {
+    // quote_lines is what the supplier's document was read as, and the
+    // PO-vs-quote reconciliation is computed from it. A correction records
+    // ground truth about the EXTRACTION; it must not move the commercial
+    // comparison under the operator.
+    expect(code).not.toMatch(/quotes\?\.\w*[Uu]pdate|updateQuoteLine|patchQuote/);
+  });
+
+  it("says so, rather than letting the operator infer it from a cell reverting", () => {
+    expect(code).toMatch(/it does not change the quote/);
+  });
+
+  it("only offers corrections to someone who may approve", () => {
+    const ws = strip(read("src/v3-app/screens/so-workspace.tsx"));
+    expect(ws).toMatch(/<QuotePane[\s\S]{0,300}canCorrect=\{canApprove\}/);
+  });
+});

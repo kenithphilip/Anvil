@@ -146,17 +146,37 @@ which arrive days later and only from the one screen that has a correction UI.
 |---|---|---|---|---|
 | `po` | PO (native) | yes | **yes** | **3** |
 | `rfq` | PO-shaped | — | no | 0 |
-| `quote` | yes | yes | no | 0 |
-| `invoice` | yes *(new)* | yes | no | 0 |
-| `packing_list` | yes *(new)* | yes | no | 0 |
+| `quote` | yes | yes | **yes** *(PR 5)* | **1** |
+| `invoice` | yes *(new)* | yes | no | **1** |
+| `packing_list` | yes *(new)* | yes | no | **1** |
 | `eway_bill` | yes *(new)* | — | no | 0 |
 | `supplier_ack` | yes | — | no | 0 |
 | `assembly_bom` | yes | yes | no | 0 |
 | `part_drawing` | yes | — | no | 0 |
 
-**Every guarantee that matters is PO-only.** The correction loop — the thing
-that actually improves extraction — can only be fed from `so-workspace.tsx`.
-Upload a quotation whose price is misread and there is nowhere to say so.
+**Every guarantee that matters was PO-only.** The correction loop — the thing
+that actually improves extraction — could only be fed from `so-workspace.tsx`.
+Upload a quotation whose price is misread and there was nowhere to say so.
+
+PR 5 closed that for quotes: the Quotes tab's line cells are correctable, and
+because the harvest shipped in PR 4 is kind-agnostic, a corrected quote now
+becomes a `quote-extraction` golden without anyone curating one. The remaining
+kinds still have no correction surface — that is the next widening, and each
+one is now a mount rather than a mechanism.
+
+Two defects surfaced while wiring it, both of the same family — *code written
+against the tool schema when the stored extract is a different object*:
+
+- `QUOTE_PROFILE.customer` read `customer_name`, a real `QUOTE_TOOL` property
+  that the normalizer consumes and re-emits as `customer: { name }`. The read
+  returned `undefined`, `toScorableFor` omitted the key, and `scoreCase` skips
+  a key that is undefined — so **every quote golden scored the customer as a
+  pass**, including one that read the seller's name instead of the buyer's.
+- The committed `quote-two-price-columns` fixture carried the same flat shape,
+  so the gate was not exercising what production stores.
+
+Both fixed, with a test that grounds the correctable field map against the
+normalizer's own output rather than against the schema.
 
 Of the surfaces the brief named: **logistics planning and manufacturing have no
 extraction at all.** That is coverage, not quality, and belongs in a different
@@ -192,7 +212,7 @@ of those is most of the work.**
 | 2 | ~~**Extraction metrics in the governed catalog**~~ — **shipped**: six metrics, `extraction` domain, by kind and by prompt version | *"is it getting better?"* | 1 |
 | 3 | ~~**Wire the replay scorer**~~ — **shipped (#487)**: client method + `eval_replay_regression` admin alert | **"did that prompt change help?"** | 1 |
 | 4 | ~~Golden fixtures for the non-PO kinds, harvested the same self-populating way~~ — **shipped**: per-kind scoring profiles, three non-PO fixtures, corrected-run harvest | *"does the gate protect quotes too?"* | nothing |
-| 5 | Correction UI on the quote review surface | feeds the override loop beyond POs | nothing |
+| 5 | ~~Correction UI on the quote review surface~~ — **shipped**: correctable cells on the Quotes tab, run resolved through `source_document_id` | feeds the override loop beyond POs | nothing |
 | 6 | Turn on the traffic split, canary one prompt | *"can we improve without a deploy?"* | 1, 2, 3 |
 
 **PR 3 is the one the brief is actually asking for.** PR 1 is its precondition

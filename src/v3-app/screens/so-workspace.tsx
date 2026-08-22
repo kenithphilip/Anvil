@@ -2817,6 +2817,7 @@ const WiredSOWorkspace = () => {
             selectedDocId={quoteDoc}
             onSelect={setQuoteDoc}
             onChanged={() => { setQuoteDoc(null); setQuotesBump((n) => n + 1); }}
+            canCorrect={canApprove}
           />
         )}
 

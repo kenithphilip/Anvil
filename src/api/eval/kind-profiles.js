@@ -103,7 +103,15 @@ const QUOTE_PROFILE = {
   header: [
     { key: "quoteNumber", from: ["quote_number"], compare: "text" },
     { key: "quoteDate", from: ["quote_date"], compare: "text" },
-    { key: "customer", from: ["customer_name"], compare: "text" },
+    // customer.name, NOT customer_name. `customer_name` is a QUOTE_TOOL schema
+    // property, but the normalizer consumes it and re-emits it nested
+    // (claude.js: `customer: out.customer || (isQuote && out.customer_name ?
+    // { name: out.customer_name } : null)`), so it does not survive into the
+    // stored normalized_extract this profile reads. Reading the schema name
+    // returned undefined, toScorableFor omitted the key, and scoreCase skipped
+    // the check — every quote golden silently scored the customer as a pass.
+    // The flat alias is kept second in case an adapter ever emits it raw.
+    { key: "customer", from: ["customer.name", "customer_name"], compare: "text" },
     { key: "currency", from: ["currency"], compare: "text" },
     { key: "grandTotal", from: ["grand_total"], compare: "number" },
     { key: "revision", from: ["revision"], compare: "text" },

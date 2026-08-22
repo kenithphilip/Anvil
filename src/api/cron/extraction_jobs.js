@@ -74,15 +74,24 @@ const settingsForTenant = async (svc, tenantId, cache) => {
 // either. Keyed on document_id so the assignment is per document and stable
 // across ticks and retries (the same job always lands in the same arm).
 //
-// Only when the kind is knowable. extraction_jobs carries no kind column, so
-// the honest inference is order_id: this worker merges into
-// orders.result.salesOrder, which is the purchase-order shape. Without an
-// order there is nothing to say the document is a PO, and promptNameForKind
-// would be guessing.
+// What kind of document this job is.
+//
+// Migration 219 put the kind on the row, so the worker states it instead of
+// deducing it. Before that it had to infer "po" from order_id — true then only
+// because the enqueue handler requires an order and both callers are PO flows,
+// and silently wrong the moment anything else queues a document.
+//
+// Null means the row predates the column (or the migration is not applied
+// yet), and those rows really were purchase orders, because nothing else could
+// create one. Reading them as 'po' is a statement about history, not a guess
+// about the future — hence the column, so tomorrow's rows say it outright.
+export const kindOfJob = (job) => job?.extraction_kind || (job?.order_id ? "po" : null);
+
 const variantHintsFor = (job, settings) => {
-  if (!job?.order_id) return null;
+  const kind = kindOfJob(job);
+  if (!kind) return null;
   if (settings?.docai_prompt_variants !== true) return null;
-  const name = promptNameForKind("po");
+  const name = promptNameForKind(kind);
   if (!name) return null;
   const choice = getPromptVersion(name, {
     tenantId: job.tenant_id,
@@ -316,6 +325,11 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
         hints: {
           chunk_index: idx, chunk_count: re.chunks.length,
           page_start: chunkMeta.page_start, page_end: chunkMeta.page_end,
+          // Tell the adapter what it is reading. Absent, it defaults to the
+          // purchase-order schema and would ask a quotation for a po_number.
+          // Omitted rather than defaulted when the kind is unknown, so the
+          // adapter's own default stays the single place that decision lives.
+          ...(kindOfJob(job) ? { expectedKind: kindOfJob(job) } : {}),
           ...(variantHintsFor(job, settings) || {}),
         },
       });
@@ -328,9 +342,13 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
       // is "every adapter was over the tenant's daily budget", and an operator
       // who cannot see that reason cannot act on it.
       if (!chunkOk) {
+        // Budget FIRST, then the generic error. The other way round — which is
+        // how this shipped — let dispatchExtract's catch-all "no docai adapter
+        // configured" win, so the branch written for the capped case never
+        // once ran in it.
         const overBudget = (out?.attempts || []).filter((a) => a.status === "skipped_over_budget");
-        chunkErr = out?.error
-          || (overBudget.length ? "over daily budget: " + overBudget.map((a) => a.adapter).join(", ") : null)
+        chunkErr = (overBudget.length ? "over daily budget: " + overBudget.map((a) => a.adapter).join(", ") : null)
+          || out?.error
           || out?.reason
           || null;
       }
@@ -416,7 +434,29 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
     // Persist into the parent order: same shape as runExtraction
     // writes for the sync flow, so downstream code (recon table,
     // anomaly compute) consumes it identically.
-    if (orderId) {
+    //
+    // ONLY for the purchase-order shapes. orders.result.salesOrder.lineItems is
+    // the PO's own lines — what the customer ordered — and the reconciler,
+    // the approval gate and the Tally push all read it. Writing a quotation's
+    // or a packing list's lines there would not be a display bug; it would
+    // replace the order's contents with another document's. Now that a job can
+    // declare a kind, that has to be refused explicitly rather than prevented
+    // by the accident that nothing else could ever be queued.
+    //
+    // A kind with no writeback is completed, not failed: the extraction
+    // succeeded and the merged result is durable in extraction_jobs.result.
+    // The event says so, so it is visible rather than silently parked.
+    const jobKind = kindOfJob(job) || "po";
+    const PO_SHAPED = new Set(["po", "rfq", "generic"]);
+    if (orderId && !PO_SHAPED.has(jobKind)) {
+      await emit(svc, tenantCtx, "docai_chunk_merged_no_writeback", {
+        job_id: job.id, order_id: orderId, kind: jobKind,
+        line_count: mergedLines.length,
+        detail: "extracted " + mergedLines.length + " lines; kind '" + jobKind
+          + "' has no background writeback, result kept on the job",
+      });
+    }
+    if (orderId && PO_SHAPED.has(jobKind)) {
       const ord = await svc.from("orders").select("result, preflight_payload").eq("tenant_id", job.tenant_id).eq("id", orderId).maybeSingle();
       if (ord.error) throw new Error("order read (merge): " + ord.error.message);
       const nextResult = { ...(ord.data?.result || {}) };
@@ -603,4 +643,4 @@ export default async function handler(req, res) {
 }
 
 // Test seam.
-export const __test = { LEASE_TTL_MS, MAX_CHUNK_ATTEMPTS, PER_TICK_BUDGET_MS, advanceJob, settingsForTenant, variantHintsFor };
+export const __test = { LEASE_TTL_MS, MAX_CHUNK_ATTEMPTS, PER_TICK_BUDGET_MS, advanceJob, settingsForTenant, variantHintsFor, kindOfJob };

@@ -179,7 +179,15 @@ describe("a refused chunk says why", () => {
     // last_error was only ever set from a caught exception, so a chunk that
     // failed because every adapter declined recorded nothing.
     expect(src).toMatch(/if \(!chunkOk\) \{/);
-    expect(src).toMatch(/chunkErr = out\?\.error/);
+    expect(src).toMatch(/\|\| out\?\.error/);
+  });
+
+  it("puts the budget reason ahead of the catch-all", () => {
+    // Shipped the other way round: dispatchExtract's "no docai adapter
+    // configured" is truthy, so it won every time and the branch written for
+    // the capped case never ran in it.
+    const line = src.slice(src.indexOf("chunkErr = ("), src.indexOf("chunkErr = (") + 200);
+    expect(line.indexOf("over daily budget")).toBeLessThan(line.indexOf("out?.error"));
   });
 
   it("names the budget explicitly — the failure this change makes possible", () => {

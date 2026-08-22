@@ -545,7 +545,14 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
       attempts.push({ adapter: adapterName, status: "error", ms: Date.now() - t0, error: err.message });
       // Carry a reason so a thrown adapter surfaces as
       // status_reason='adapter_threw' instead of 'fail_unknown'.
-      last = { ok: false, reason: "adapter_threw", error: err.message };
+      //
+      // lastFailure, not `last`. `last` is declared as a CONST further down
+      // this same block (`const last = best || lastFailure`), so assigning to
+      // it here is a write into its temporal dead zone: every adapter that
+      // THREW made dispatchExtract itself throw with "Cannot access 'last'
+      // before initialization", discarding attempts, best and salvagedRaw
+      // along with it. The intent was always the accumulator the tail reads.
+      lastFailure = { ok: false, reason: "adapter_threw", error: err.message };
       continue;
     }
     const latency_ms = Date.now() - t0;
@@ -644,10 +651,20 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
   if (!last) {
     const allSkipped = attempts.length > 0
       && attempts.every((a) => a.status === "skipped_not_configured");
+    // Being over budget is not the same as being unconfigured, and saying so
+    // matters: when every adapter is capped this returned "no docai adapter
+    // configured", so an operator whose own daily limit had stopped the run
+    // was told their API keys were missing and went looking for a credential
+    // problem that did not exist. The cost guard already recorded the real
+    // cause on each attempt; the tail just did not read it.
+    const allOverBudget = attempts.length > 0
+      && attempts.every((a) => a.status === "skipped_over_budget");
     return {
       ok: false,
-      reason: allSkipped ? "all_adapters_skipped" : "no_adapter_configured",
-      error: "no docai adapter configured",
+      reason: (allSkipped || allOverBudget) ? "all_adapters_skipped" : "no_adapter_configured",
+      error: allOverBudget
+        ? "every adapter is over its daily budget: " + attempts.map((a) => a.adapter).join(", ")
+        : "no docai adapter configured",
       attempts,
     };
   }

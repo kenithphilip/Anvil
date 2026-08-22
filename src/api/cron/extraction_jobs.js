@@ -32,6 +32,68 @@ import { chunkPdf, probePdfPageCount, BACKGROUND_MAX_TOTAL_PAGES } from "../_lib
 import { profileDocument } from "../_lib/docai/toc-profiler.js";
 import { mergeChunkResults, normalizedResult } from "../_lib/docai/chunked-extract.js";
 import { dispatchExtract } from "../_lib/docai/index.js";
+import { tenantSettings } from "../_lib/stripe-client.js";
+import { getPromptVersion, promptNameForKind } from "../_lib/docai/prompt-versions.js";
+
+// Real tenant settings, cached for the life of one tick.
+//
+// This worker used to hand dispatchExtract a SYNTHETIC settings object —
+// literally `{ tenant_id }` — so the background path, which handles the
+// LARGEST and most failure-prone documents, ran on defaults for everything:
+//
+//   - docai_gemini_api_key_enc / docai_creds_iv: absent, so every adapter fell
+//     through to the platform env key. A tenant that had configured its own
+//     provider key was silently not using it, and the spend landed on the
+//     wrong account.
+//   - docai_provider_order: absent, so the tenant's pinned order was ignored.
+//   - docai_daily_limits: absent, so allowedToCall returned `allowed` every
+//     time. But recordCall still fired with the tenant id — so background
+//     chunks INCREMENTED the daily counter while being exempt from the cap
+//     they were charging against. A 40-chunk PO could exhaust the day's budget
+//     and then block the interactive sync path, which does honour it.
+//   - docai_fallback_confidence, docai_anthropic_model, docai_gemini_model:
+//     absent, so per-tenant quality/model choices did not apply.
+//
+// Falls back to the old synthetic object if the read fails, because a settings
+// hiccup must never strand a job that would otherwise extract.
+const settingsForTenant = async (svc, tenantId, cache) => {
+  if (cache.has(tenantId)) return cache.get(tenantId);
+  let resolved;
+  try {
+    resolved = (await tenantSettings(svc, tenantId)) || { tenant_id: tenantId };
+    if (!resolved.tenant_id) resolved = { ...resolved, tenant_id: tenantId };
+  } catch (_e) {
+    resolved = { tenant_id: tenantId };
+  }
+  cache.set(tenantId, resolved);
+  return resolved;
+};
+
+// The A/B prompt variant for this JOB — resolved once and applied to every
+// chunk, because a document split across two arms is not an observation of
+// either. Keyed on document_id so the assignment is per document and stable
+// across ticks and retries (the same job always lands in the same arm).
+//
+// Only when the kind is knowable. extraction_jobs carries no kind column, so
+// the honest inference is order_id: this worker merges into
+// orders.result.salesOrder, which is the purchase-order shape. Without an
+// order there is nothing to say the document is a PO, and promptNameForKind
+// would be guessing.
+const variantHintsFor = (job, settings) => {
+  if (!job?.order_id) return null;
+  if (settings?.docai_prompt_variants !== true) return null;
+  const name = promptNameForKind("po");
+  if (!name) return null;
+  const choice = getPromptVersion(name, {
+    tenantId: job.tenant_id,
+    customerId: job.customer_id,
+    splitKey: job.document_id || job.id,
+    pin: settings?.docai_prompt_pins?.[name] || null,
+    allowVariants: true,
+  });
+  if (!choice?.is_variant || !Array.isArray(choice.system_append) || !choice.system_append.length) return null;
+  return { promptVariant: { name: choice.name, version: choice.version, system_append: choice.system_append } };
+};
 
 const LEASE_TTL_MS = 30 * 1000;
 const MAX_CHUNK_ATTEMPTS = 3;
@@ -124,7 +186,7 @@ const loadSourceBytes = async (svc, job) => {
 // next action (profile / chunk-once / merge), writes the new
 // state back. Returns the updated job row + a flag whether more
 // work remains.
-const advanceJob = async (svc, job) => {
+const advanceJob = async (svc, job, settingsCache = new Map()) => {
   const tenantCtx = { tenantId: job.tenant_id };
   const orderId = job.order_id;
 
@@ -246,14 +308,32 @@ const advanceJob = async (svc, job) => {
       });
       const target = re.chunks[idx];
       if (!target) throw new Error("chunk index " + idx + " out of range after re-chunk");
+      const settings = await settingsForTenant(svc, job.tenant_id, settingsCache);
       const out = await dispatchExtract({
         source: { bytes: target.buffer, mime: "application/pdf", filename: job.source_filename || "chunk.pdf" },
-        settings: { tenant_id: job.tenant_id },
+        settings,
         customerId: job.customer_id,
-        hints: { chunk_index: idx, chunk_count: re.chunks.length, page_start: chunkMeta.page_start, page_end: chunkMeta.page_end },
+        hints: {
+          chunk_index: idx, chunk_count: re.chunks.length,
+          page_start: chunkMeta.page_start, page_end: chunkMeta.page_end,
+          ...(variantHintsFor(job, settings) || {}),
+        },
       });
       chunkOk = !!out.ok;
       chunkResult = out;
+      // A dispatch that returns not-ok does not THROW, so last_error stayed
+      // null and a failed chunk recorded no reason at all. That mattered
+      // little while this path ignored docai_daily_limits — nothing here could
+      // be refused. Now that real settings are loaded, the honest new failure
+      // is "every adapter was over the tenant's daily budget", and an operator
+      // who cannot see that reason cannot act on it.
+      if (!chunkOk) {
+        const overBudget = (out?.attempts || []).filter((a) => a.status === "skipped_over_budget");
+        chunkErr = out?.error
+          || (overBudget.length ? "over daily budget: " + overBudget.map((a) => a.adapter).join(", ") : null)
+          || out?.reason
+          || null;
+      }
     } catch (e) {
       chunkErr = e?.message || String(e);
     }
@@ -368,6 +448,69 @@ const advanceJob = async (svc, job) => {
         return { job: (f.data || job), hasMore: false };
       }
     }
+    // TELL extraction_runs WHAT ACTUALLY CAME OUT.
+    //
+    // A document over the background threshold is extracted TWICE: once
+    // synchronously with hints.keepPages=[1] — which opens a real
+    // extraction_runs row describing a PAGE-1 STUB — and once here, in full,
+    // writing nothing. So the only quality record of a 200-page tender was a
+    // row reporting whatever page 1 happened to contain, at page 1's
+    // confidence. Every measurement built on that table — the governed
+    // extraction metrics, the operator-corrected DPMO, the golden harvest, the
+    // prompt A/B read-out — was blind to the largest documents in the product
+    // and quietly measuring a stub in their place.
+    //
+    // extraction_jobs has no extraction_run_id column, but extraction_runs
+    // .source_id IS the document id, so the job resolves its own run. Updating
+    // the outcome fields rather than inserting a second row keeps one document
+    // to one run; the page-1 preview's cost is already banked in docai_usage,
+    // and field_confidences is replaced along with the extract so lineCountOf
+    // cannot report page 1's line count against the full document's lines.
+    //
+    // Strictly best-effort: extraction_jobs.result is the durable record, and
+    // a quality-telemetry failure must never fail a job that extracted fine.
+    if (job.document_id) {
+      try {
+        const runQ = await svc.from("extraction_runs")
+          .select("id, status_reason")
+          .eq("tenant_id", job.tenant_id)
+          .eq("source_id", job.document_id)
+          .order("finished_at", { ascending: false, nullsFirst: false })
+          .limit(5);
+        const target = (runQ.data || []).find((r) => r.status_reason !== "dedupe_hit");
+        if (target) {
+          const variant = variantHintsFor(job, await settingsForTenant(svc, job.tenant_id, settingsCache));
+          const patch = {
+            normalized_extract: mergedNorm,
+            field_confidences: merged.confidences || {},
+            confidence_overall: merged.confidence_overall ?? null,
+            adapter_used: merged.adapter_used || null,
+            adapter_attempts: merged.attempts || [],
+            selected_model: merged.selected_model || null,
+            model_selection_reason: merged.model_selection_reason || null,
+            status: mergedLines.length ? "ok" : "failed",
+            status_reason: mergedLines.length ? "ok" : "empty_lines",
+            finished_at: new Date().toISOString(),
+            ...(variant ? {
+              prompt_version: {
+                name: variant.promptVariant.name,
+                version: variant.promptVariant.version,
+                source: "background_job",
+                is_variant: true,
+                label: `${variant.promptVariant.name}@${variant.promptVariant.version}`,
+              },
+            } : {}),
+          };
+          let w = await svc.from("extraction_runs").update(patch).eq("id", target.id);
+          if (w.error && (w.error.code === "42703" || /prompt_version/.test(w.error.message || ""))) {
+            const retry = { ...patch };
+            delete retry.prompt_version;
+            w = await svc.from("extraction_runs").update(retry).eq("id", target.id);
+          }
+        }
+      } catch (_e) { /* telemetry only — never fail the job for it */ }
+    }
+
     const upd = await svc.from("extraction_jobs")
       .update({
         status: "completed",
@@ -403,6 +546,9 @@ export default async function handler(req, res) {
     return res.end(JSON.stringify({ error: { message: "cron auth required" } }));
   }
   const svc = serviceClient();
+  // One settings read per tenant per tick, shared across every job and chunk
+  // this tick handles — the same pattern eval/replay.js uses.
+  const settingsCache = new Map();
   const tickStart = Date.now();
   let jobsHandled = 0;
   let stepsRun = 0;
@@ -417,7 +563,7 @@ export default async function handler(req, res) {
       let safety = 5;
       while (safety-- > 0 && Date.now() - tickStart < PER_TICK_BUDGET_MS) {
         try {
-          const r = await advanceJob(svc, current);
+          const r = await advanceJob(svc, current, settingsCache);
           stepsRun++;
           current = r.job;
           if (!r.hasMore) break;
@@ -457,4 +603,4 @@ export default async function handler(req, res) {
 }
 
 // Test seam.
-export const __test = { LEASE_TTL_MS, MAX_CHUNK_ATTEMPTS, PER_TICK_BUDGET_MS, advanceJob };
+export const __test = { LEASE_TTL_MS, MAX_CHUNK_ATTEMPTS, PER_TICK_BUDGET_MS, advanceJob, settingsForTenant, variantHintsFor };

@@ -50,6 +50,35 @@ const shortDate = (iso?: string | null) => {
     : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" });
 };
 
+// Queue the full read of a quotation too long for one request.
+//
+// Raw fetch, not the AnvilBackend client, because that is the shape the two
+// existing enqueue sites use (so-intake, so-workspace) and there is no client
+// method for this route. Deliberately mirrored rather than improved: a third
+// spelling of the same call is how the next drift starts.
+//
+// Returns whether it was queued. The caller tells the operator either way —
+// an unqueued long quote is silently short, which is the failure this exists
+// to remove.
+const enqueueFullRead = async (orderId: string, documentId: string, filename: string): Promise<boolean> => {
+  try {
+    const cfg: any = (AnvilBackend as any)?.getConfig?.() || {};
+    const session: any = (AnvilBackend as any)?.getSession?.() || null;
+    const headers: any = { "Content-Type": "application/json" };
+    if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+    if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
+    const resp = await fetch(cfg.url.replace(/\/+$/, "") + "/api/orders/extraction_jobs", {
+      method: "POST",
+      headers,
+      // kind is what makes this a QUOTE job: without it the worker infers 'po'
+      // from the order id and would extract a quotation against the
+      // purchase-order schema, then refuse to write it back.
+      body: JSON.stringify({ order_id: orderId, document_id: documentId, kind: "quote", source_filename: filename }),
+    });
+    return resp.ok;
+  } catch { return false; }
+};
+
 export const QuotesStrip: React.FC<{
   orderId: string;
   /**
@@ -114,7 +143,8 @@ export const QuotesStrip: React.FC<{
     let extracted: any = null;
     // Set when the extractor reports it read only page 1; surfaced to the
     // operator at the end whether or not the ingest itself succeeded.
-    let largePdfNote: string | null = null;
+    let largePdfPages: number | null = null;
+    let largePdfQueued = false;
     try {
       // Pass the document id. extraction_runs.source_id is the ONLY link from
       // a run back to the file it read — the PO flow passes it (so-intake.tsx)
@@ -140,12 +170,14 @@ export const QuotesStrip: React.FC<{
       // quietly: the reconciler compares it against the PO and reports every
       // absent line as one the customer ordered but was never quoted.
       //
-      // Enqueuing the rest needs a background writeback for quotes, which does
-      // not exist yet. Saying so is what can be done honestly today, and it
-      // beats a silently partial quotation.
+      // So enqueue the rest. The worker re-runs the same ingest with the
+      // complete extract, and because ingestQuote is keyed on
+      // (tenant, quote_number, version) and replaces a quote's lines
+      // wholesale, the full set SUPERSEDES the page-1 lines attached below
+      // rather than piling up next to them.
       if (out?.large_pdf) {
-        largePdfNote = "Only page 1 of " + (out.total_pages || "many")
-          + " was read — this quotation is too long for a single pass, so lines beyond the first page are missing.";
+        largePdfPages = out.total_pages || null;
+        largePdfQueued = await enqueueFullRead(orderId, documentId, file.name);
       }
     } catch {
       extracted = null;   // non-fatal: attach anyway and report below
@@ -156,12 +188,21 @@ export const QuotesStrip: React.FC<{
     // insert, a document that did not read as a quotation. It does not throw,
     // so without this the catch below never fires and the operator is left
     // with a bare "unread" chip and no cause.
+    // A long quotation ingests page 1 here and the rest arrives from the
+    // worker. Both outcomes are worth saying out loud: "still reading" is not
+    // the same promise as "we read one page and gave up", and an operator who
+    // is not told the difference will act on a short quote either way.
+    const largePdfNote = largePdfPages === null && !largePdfQueued ? null
+      : largePdfQueued
+        ? "This quotation runs to " + (largePdfPages || "several") + " pages, so the rest is being read in the"
+          + " background. Page 1 is attached now; the remaining lines appear here shortly."
+        : "Only page 1 of " + (largePdfPages || "many")
+          + " was read, and the background read could not be queued — so lines beyond the first page are"
+          + " missing. Re-upload to try again.";
     if (res && res.ingested === false && !res.matched_authored) {
       const why = res.reason || res?.report?.reports?.[0]?.error || "The document was attached but nothing could be read from it.";
       return largePdfNote ? why + " " + largePdfNote : why;
     }
-    // A truncated quote INGESTS fine — it is simply short. Surfacing it here is
-    // the only signal the operator gets that the lines are incomplete.
     return largePdfNote;
   };
 

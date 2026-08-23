@@ -158,6 +158,29 @@ const resolveItems = async (svc, tenantId, partNos) => {
   return map;
 };
 
+// The quote HEAD, as read off a document extract.
+//
+// Shared because there are now two callers — the sync attach path and the
+// background worker that finishes a quotation too long to read in one request
+// — and a head built twice is a head that drifts. This repo has already paid
+// for that lesson: the multi-row prompt fix landed on one adapter and not the
+// other, and the kind guard landed on one and not the other. Two copies of a
+// field map would go the same way, and the failure would be silent (a dropped
+// currency or grand_total reads as "the document didn't say").
+export const quoteHeadFromExtract = (extracted) => {
+  const e = extracted || {};
+  return {
+    quote_number: e.quote_number || null,
+    quote_date: e.quote_date || null,
+    currency: e.currency || null,
+    terms: e.terms || e.payment_terms || null,
+    // Conditions that qualify the price — quantity minimums, combined-order
+    // requirements, validity caveats.
+    notes: e.notes || null,
+    grand_total: e.grand_total ?? null,
+  };
+};
+
 // Ingest ONE extracted quote. Returns a report; never throws.
 export const ingestQuote = async (svc, ctx, input = {}) => {
   const { quote = {}, lines = [], customerId = null, sourceDocumentId = null, ingestSource = "document" } = input;

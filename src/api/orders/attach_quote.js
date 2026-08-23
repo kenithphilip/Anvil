@@ -31,7 +31,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-import { ingestQuotes } from "../_lib/quote-ingest.js";
+import { ingestQuotes, quoteHeadFromExtract } from "../_lib/quote-ingest.js";
 import { parseQuoteRef, findSelfIssuedQuote } from "../_lib/quote-provenance.js";
 
 export default async function handler(req, res) {
@@ -173,17 +173,7 @@ export default async function handler(req, res) {
       customerId: order.customer_id,
       sourceDocumentId: documentId,
       ingestSource: "document",
-      quote: {
-        quote_number: extracted.quote_number || null,
-        quote_date: extracted.quote_date || null,
-        currency: extracted.currency || null,
-        terms: extracted.terms || extracted.payment_terms || null,
-        // Conditions that qualify the price — quantity minimums, combined-order
-        // requirements, validity caveats. Extracted but previously dropped on
-        // the floor here.
-        notes: extracted.notes || null,
-        grand_total: extracted.grand_total ?? null,
-      },
+      quote: quoteHeadFromExtract(extracted),
       lines,
     }]);
 

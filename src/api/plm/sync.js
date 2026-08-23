@@ -11,11 +11,64 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { plmDecryptCreds, plmFetchBoms, plmFetchChanges, plmIsConfigured } from "../_lib/plm-client.js";
+import { notifyAdmins } from "../_lib/notifications.js";
+import { affectedPartKeys, matchChangesToParts, describeImpact } from "../_lib/plm-impact.js";
 
 const isCronAuthed = (req) => {
   const got = (req.headers?.authorization || "").replace(/^Bearer\s+/i, "");
   const want = process.env.CRON_SECRET || "";
   return want && got && got === want;
+};
+
+// TELL SOMEBODY AN ECO LANDED ON A PART WE HOLD.
+//
+// plm_changes had exactly one reference in the codebase — the upsert above —
+// so every engineering change this sync has ever pulled went into a table
+// nothing reads. The cron ran, the API call was spent, the row was written,
+// and a supplier revising a part we buy produced no consequence at all.
+//
+// Alerts only on changes NEW to us, and only where the ECO names a part in
+// item_master. Both halves matter: notifyAdmins dedups on a five-minute
+// window, which is a flap guard rather than an alert-once guarantee, so
+// without the created_at filter every tick would re-raise the same ECO
+// forever; and a PLM instance carries changes for the supplier's whole
+// catalogue, so without the item_master intersection the useful ones would be
+// buried in the noise that gets alerting switched off.
+const alertOnImpact = async (svc, tenantId, upserted, beforeUpsert) => {
+  const fresh = (upserted || []).filter((r) => r.created_at && r.created_at >= beforeUpsert);
+  if (!fresh.length) return { new_changes: 0, impacting: 0 };
+
+  const keys = affectedPartKeys(fresh);
+  if (!keys.length) return { new_changes: fresh.length, impacting: 0 };
+
+  // One bounded lookup for the whole batch rather than a query per change.
+  const im = await svc.from("item_master")
+    .select("part_no").eq("tenant_id", tenantId).in("part_no", keys);
+  if (im.error) return { new_changes: fresh.length, impacting: 0, error: im.error.message };
+
+  const impacts = matchChangesToParts(fresh, (im.data || []).map((r) => r.part_no));
+  if (!impacts.length) return { new_changes: fresh.length, impacting: 0 };
+
+  // One notification per ECO, keyed on its external id, so two changes landing
+  // in the same tick do not collapse into each other under the 5-minute dedup.
+  for (const impact of impacts) {
+    await notifyAdmins(svc, tenantId, {
+      kind: "plm_change_impacts_stock",
+      title: "Engineering change affects a part you hold",
+      body: describeImpact(impact),
+      // notifyAdmins builds an explicit row rather than spreading the payload,
+      // so a field admin_notifications does not have (there is no `severity`
+      // column) would be dropped in silence. These four exist.
+      link_route: "#/admin?tab=plm",
+      object_type: "plm_change",
+      // The ROW id, not external_id. object_id is a uuid column, and a text
+      // external id would fail the insert — which notifyAdmins catches and
+      // reports as { notified: 0 }, so the alert would never fire and nothing
+      // would say why.
+      object_id: impact.change.id,
+    }, { dedupKey: "plm_change:" + impact.change.external_id });
+  }
+  return { new_changes: fresh.length, impacting: impacts.length };
 };
 
 const syncOne = async (svc, system) => {
@@ -76,10 +129,16 @@ const syncOne = async (svc, system) => {
         source_system: system.system,
         ...c,
       }));
-      const { error } = await svc.from("plm_changes")
-        .upsert(rows, { onConflict: "tenant_id,source_system,external_id" });
+      // Stamped BEFORE the upsert so a row's created_at tells us whether this
+      // run is the first time we saw that ECO. The upsert re-touches rows we
+      // already had, so "returned by the upsert" is not the same as "new".
+      const beforeUpsert = new Date().toISOString();
+      const { data: upserted, error } = await svc.from("plm_changes")
+        .upsert(rows, { onConflict: "tenant_id,source_system,external_id" })
+        .select("id, external_id, eco_number, title, status, effective_date, affected_parts, created_at");
       if (error) throw new Error("Change upsert: " + error.message);
       result.changes = changes.length;
+      result.impact = await alertOnImpact(svc, system.tenant_id, upserted || [], beforeUpsert);
     }
     await svc.from("plm_sync_state").upsert({
       tenant_id: system.tenant_id,

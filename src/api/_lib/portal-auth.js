@@ -10,9 +10,28 @@
 
 import { serviceClient, userClient } from "./supabase.js";
 
-// All read scopes a logged-in portal user has over THEIR OWN customer's data.
-// (Legacy shared tokens keep their narrower per-token scopes.)
-export const SESSION_SCOPES = ["summary", "quotes", "orders", "invoices", "spares"];
+// The read scopes a logged-in portal user has over THEIR OWN customer's data.
+//
+// This tracks what the portal CLIENT can display, not what the API can serve.
+// It used to grant summary/quotes/orders/invoices as well — four kinds the
+// shipped portal never calls. PortalHome makes exactly two view() requests,
+// for "spares" and "spare_matrix", and there is no other portal client; the
+// rest was authenticated surface with nothing behind it, serving order and
+// invoice rows to a session that had no way to render them.
+//
+// A scope is a grant, so the default should be the smallest one that makes the
+// product work. Build the invoices tab and add "invoices" back in the same
+// commit — api-portal-scope-surface.test.js fails either way round, so the two
+// cannot drift apart again.
+//
+// Note "spares" also covers the spare_matrix kind: view.js maps
+// spare_matrix -> the spares scope. And "summary" was never a scope at all —
+// that kind requires "quotes" — so listing it here granted nothing and read
+// as though it did.
+//
+// Legacy shared tokens are untouched: their scopes were granted explicitly per
+// token and are none of this constant's business.
+export const SESSION_SCOPES = ["spares"];
 
 export const resolveCustomerContext = async (req) => {
   const headerAuth = (req.headers.authorization || req.headers.Authorization || "").trim();

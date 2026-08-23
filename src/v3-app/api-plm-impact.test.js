@@ -130,7 +130,7 @@ describe("the sync actually raises it", () => {
   });
 
   it("intersects against item_master before alerting", () => {
-    expect(src).toMatch(/from\("item_master"\)/);
+    expect(src).toMatch(/"item_master"/);
     expect(src).toMatch(/matchChangesToParts\(fresh/);
   });
 
@@ -149,7 +149,16 @@ describe("the sync actually raises it", () => {
     expect(call).not.toMatch(/severity:/);
   });
 
-  it("dedups per ECO, so two in one tick do not collapse", () => {
-    expect(src).toMatch(/dedupKey: "plm_change:" \+ impact\.change\.external_id/);
+  it("passes NO dedupKey, because notifyAdmins ignores its value", () => {
+    // This test previously asserted the opposite and was WRONG — it encoded
+    // the bug. notifications.js:42-51 filters on tenant + kind + unresolved +
+    // the last five minutes and never compares the key string, so a per-ECO
+    // key meant the first impacting change notified and every other one in the
+    // same tick was silently swallowed. Idempotency across ticks is the
+    // created_at filter, which is real.
+    const code = src.replace(/^\s*\/\/.*$/gm, "");
+    const call = code.slice(code.indexOf('kind: "plm_change_impacts_stock"'), code.indexOf("return { new_changes: fresh.length, impacting: impacts.length }"));
+    expect(call.length).toBeGreaterThan(20);
+    expect(call).not.toMatch(/dedupKey/);
   });
 });

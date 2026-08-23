@@ -115,9 +115,22 @@ export const plmProbe = async (s) => {
 const buildTree = (parentPart, allUsageLinks, allParts, depth = 0) => {
   if (depth > 20) return { part_no: parentPart.number, qty: 1, uom: parentPart.uom || "ea", children: [], _truncated: true };
   const childLinks = allUsageLinks.filter((u) => u.parent === parentPart.id);
+  // Count what we could NOT resolve, rather than only dropping it.
+  //
+  // `allParts` is the INCREMENTAL page ($filter: LastModified ge since) while
+  // usage links are pulled unfiltered, so a parent that was just revised
+  // arrives with its UNCHANGED children absent from the page — and silently
+  // dropping them makes the stored structure look like an assembly whose parts
+  // were deleted. Anything comparing that tree against our own BOM would
+  // report a removal that never happened, and that is the normal case on every
+  // tick after the first, not an edge case.
+  //
+  // Recording the count lets a consumer refuse an incomplete tree. It does not
+  // make the tree complete; only resolving the children would do that.
+  let unresolved = 0;
   const children = childLinks.map((link) => {
     const child = allParts.find((p) => p.id === link.child);
-    if (!child) return null;
+    if (!child) { unresolved++; return null; }
     return {
       part_no: child.number,
       description: child.description,
@@ -133,6 +146,9 @@ const buildTree = (parentPart, allUsageLinks, allParts, depth = 0) => {
     qty: 1,
     uom: parentPart.uom || "ea",
     revision: parentPart.revision,
+    // How many of this level's child links pointed at a part the pull did not
+    // return. Non-zero means the structure below is INCOMPLETE.
+    unresolved_children: unresolved,
     children,
   };
 };

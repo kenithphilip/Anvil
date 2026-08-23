@@ -56,12 +56,73 @@ const aggregate = (opportunities, customersById, dimension) => {
   return rollup;
 };
 
+// Recompute every dimension for ONE tenant and persist it.
+//
+// Extracted so the nightly cron and the admin button run the same code. It was
+// inline in the POST branch, reachable only by an authenticated admin — which
+// is why the "nightly" snapshot this endpoint's own header describes was never
+// nightly: cron/daily.js registers thirteen jobs and forecast was not one of
+// them, so forecast_snapshots only ever advanced when somebody clicked.
+// Everything reading it — the cockpit's weighted pipeline — was as old as the
+// last click, with no indication of that anywhere on the screen.
+export const writeForecastSnapshot = async (svc, tenantId) => {
+  const asOf = todayUtc();
+  const opps = await svc.from("opportunities")
+    .select("id, customer_id, stage, amount_inr, probability, close_date, order_mode")
+    .eq("tenant_id", tenantId);
+  if (opps.error) return { error: opps.error.message, tenant_id: tenantId };
+  const cust = await svc.from("customers").select("id, customer_type, state_code").eq("tenant_id", tenantId);
+  if (cust.error) return { error: cust.error.message, tenant_id: tenantId };
+  const custMap = new Map();
+  (cust.data || []).forEach((c) => custMap.set(c.id, c));
+
+  const rows = [];
+  for (const dim of ["overall", "territory", "customer_type", "order_mode"]) {
+    const rollup = aggregate(opps.data || [], custMap, dim);
+    for (const [seg, agg] of rollup.entries()) {
+      rows.push({ tenant_id: tenantId, as_of: asOf, segment_dimension: dim, segment_value: seg, ...agg });
+    }
+  }
+  if (!rows.length) return { written: 0, as_of: asOf, tenant_id: tenantId };
+  const out = await svc.from("forecast_snapshots")
+    .upsert(rows, { onConflict: "tenant_id,as_of,segment_dimension,segment_value" });
+  if (out.error) return { error: out.error.message, tenant_id: tenantId };
+  return { written: rows.length, as_of: asOf, tenant_id: tenantId };
+};
+
+const CRON_SECRET = process.env.CRON_SECRET;
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);
   try {
-    const ctx = await resolveContext(req);
     const svc = serviceClient();
+    // The cron branch runs BEFORE resolveContext, as every other nightly job
+    // here does. A cron authenticates with CRON_SECRET and has no user, so
+    // resolving a context first would throw on the request that most needs to
+    // succeed — and there is no single tenant to compute for, which is why the
+    // snapshot had to be drained per tenant rather than simply scheduled.
+    const auth = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+    if (req.method === "POST" && !!CRON_SECRET && auth === CRON_SECRET) {
+      const tenants = await svc.from("tenants").select("id");
+      if (tenants.error) throw new Error("tenants: " + tenants.error.message);
+      const out = [];
+      for (const t of tenants.data || []) {
+        // One tenant's failure must not abandon the rest: a snapshot is a
+        // whole night's freshness for everybody else on the instance.
+        try { out.push(await writeForecastSnapshot(svc, t.id)); }
+        catch (e) { out.push({ tenant_id: t.id, error: e?.message || String(e) }); }
+      }
+      return json(res, 200, {
+        ran_at: new Date().toISOString(),
+        tenants: out.length,
+        written: out.reduce((n, r) => n + (r.written || 0), 0),
+        failed: out.filter((r) => r.error).length,
+        results: out,
+      });
+    }
+
+    const ctx = await resolveContext(req);
     const dimension = DIMENSIONS.has(req.query.dimension) ? req.query.dimension : "overall";
 
     if (req.method === "GET") {
@@ -95,33 +156,11 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "POST") {
-      // Manual recompute of all dimensions and persistence to forecast_snapshots.
       requirePermission(ctx, "admin");
-      const opps = await svc.from("opportunities").select("id, customer_id, stage, amount_inr, probability, close_date, order_mode").eq("tenant_id", ctx.tenantId);
-      if (opps.error) throw new Error(opps.error.message);
-      const cust = await svc.from("customers").select("id, customer_type, state_code").eq("tenant_id", ctx.tenantId);
-      const custMap = new Map();
-      (cust.data || []).forEach((c) => custMap.set(c.id, c));
-      const asOf = todayUtc();
-      const dims = ["overall", "territory", "customer_type", "order_mode"];
-      const rows = [];
-      for (const dim of dims) {
-        const rollup = aggregate(opps.data || [], custMap, dim);
-        for (const [seg, agg] of rollup.entries()) {
-          rows.push({
-            tenant_id: ctx.tenantId,
-            as_of: asOf,
-            segment_dimension: dim,
-            segment_value: seg,
-            ...agg,
-          });
-        }
-      }
-      if (!rows.length) return json(res, 200, { ok: true, written: 0, asOf });
-      const out = await svc.from("forecast_snapshots").upsert(rows, { onConflict: "tenant_id,as_of,segment_dimension,segment_value" });
-      if (out.error) throw new Error(out.error.message);
-      await recordAudit(ctx, { action: "forecast_snapshot", objectType: "forecast", objectId: asOf, detail: "rows=" + rows.length });
-      return json(res, 200, { ok: true, written: rows.length, asOf });
+      const r = await writeForecastSnapshot(svc, ctx.tenantId);
+      if (r.error) throw new Error(r.error);
+      await recordAudit(ctx, { action: "forecast_snapshot", objectType: "forecast", objectId: r.as_of, detail: "rows=" + r.written });
+      return json(res, 200, { ok: true, written: r.written, asOf: r.as_of });
     }
     return json(res, 405, { error: { message: "Method not allowed" } });
   } catch (err) {

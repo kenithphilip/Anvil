@@ -163,6 +163,32 @@ enforced yet" (`commit.js` never reads it, no UI sets it, an uploader can
 approve their own drawing), and `bom_assets.approval_status` is touched by zero
 lines of application code.
 
+### 2.M — Mode A / Mode B: prove the accuracy before depending on it
+
+Scoped in [MODE_A_B_SCOPE.md](MODE_A_B_SCOPE.md). A tenant chooses whether Anvil
+PROCESSES their sales orders (Mode A) or only WATCHES while a person does it in
+Tally (Mode B) — and either way Anvil scores itself against what Tally actually
+recorded.
+
+Most of it exists. `tally/sync.js` already pulls EVERY voucher altered in Tally
+since a watermark — not only ones Anvil pushed — into `tally_voucher_state` with
+the full payload in `raw`. `tally/reconcile.js` already has drift runs, findings
+and resolution with a UI. `eval/score.js` + `kind-profiles.js` already do
+profile-driven field comparison with tolerances. Missing: a mode flag, the
+`Buyer's Ref./Order No` → `orders.po_number` join, and an `so_tally` profile.
+
+**PR 0 first, and it may change the scope:** does the Tally bridge return
+voucher LINES, or only headers? `tally_voucher_state` stores total/status/
+altered/cancelled plus `raw`; if `raw` has no lines the comparison is limited to
+totals and dates until the bridge is extended. Query in the doc.
+
+**The finding that shapes it:** on the first real PO→SO pair, two fields
+disagreed with the PO and neither was Anvil's doing — the PO stated payment
+after 60 days, the SO said 30; the PO allowed 6–8 weeks, the SO committed to
+~4. So the report is not "how accurate is Anvil" but "where do the PO, Anvil and
+Tally disagree, and who was right". That reframing is what makes it sellable in
+Mode B, where Anvil has no authority at all.
+
 ## 3. Known-unfixed defects
 
 Each verified, none currently breaking a user flow.

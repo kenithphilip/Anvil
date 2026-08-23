@@ -48,7 +48,11 @@ vi.mock("../api/_lib/auth.js", () => ({
 }));
 vi.mock("../api/_lib/supabase.js", () => ({ serviceClient: () => makeSvc() }));
 vi.mock("../api/_lib/audit.js", () => ({ recordAudit: async (_c, p) => { captured.audits.push(p); } }));
-vi.mock("../api/_lib/quote-ingest.js", () => ({
+// importOriginal, so quoteHeadFromExtract stays REAL. It is a pure mapper and
+// it is what "carries the quote header through" below actually asserts —
+// stubbing it would make that test pass against a stub of itself.
+vi.mock("../api/_lib/quote-ingest.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   ingestQuotes: async (_svc, _ctx, list) => {
     captured.ingested.push(...list);
     const lines = list.reduce((n, q) => n + (q.lines || []).length, 0);

@@ -32,6 +32,7 @@ import { chunkPdf, probePdfPageCount, BACKGROUND_MAX_TOTAL_PAGES } from "../_lib
 import { profileDocument } from "../_lib/docai/toc-profiler.js";
 import { mergeChunkResults, normalizedResult } from "../_lib/docai/chunked-extract.js";
 import { dispatchExtract } from "../_lib/docai/index.js";
+import { ingestQuote, quoteHeadFromExtract } from "../_lib/quote-ingest.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { getPromptVersion, promptNameForKind } from "../_lib/docai/prompt-versions.js";
 
@@ -448,7 +449,63 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
     // The event says so, so it is visible rather than silently parked.
     const jobKind = kindOfJob(job) || "po";
     const PO_SHAPED = new Set(["po", "rfq", "generic"]);
-    if (orderId && !PO_SHAPED.has(jobKind)) {
+
+    // Quotations DO have a background writeback: the same ingest the sync path
+    // uses, re-run with the complete extract.
+    //
+    // This is safe for one specific reason. ingestQuote is keyed on
+    // (tenant, quote_number, version) and REPLACES the quote's lines
+    // wholesale, so re-running it does not append a second copy — it
+    // supersedes the page-1 lines the upload ingested with the full set. That
+    // is precisely the semantics a truncated-then-completed quote needs, and
+    // it is why this reuses the ingest rather than writing lines here.
+    //
+    // It also cannot damage a quote Anvil authored: ingestQuote checks
+    // ingest_source (migration 188) and returns early on an authored row
+    // before it deletes anything.
+    //
+    // The ONLY thing it takes off a ctx is tenantId, so a cron can call it
+    // honestly — no invented user, no borrowed session.
+    if (jobKind === "quote") {
+      let wrote = null;
+      try {
+        wrote = await ingestQuote(svc, { tenantId: job.tenant_id }, {
+          quote: quoteHeadFromExtract(mergedNorm),
+          lines: mergedLines,
+          customerId: job.customer_id || null,
+          sourceDocumentId: job.document_id || null,
+          ingestSource: "document",
+        });
+      } catch (e) {
+        wrote = { error: e?.message || String(e) };
+      }
+      if (wrote?.error) {
+        // Same rule as the order writeback below: do not swallow a failed
+        // writeback into 'completed'. A quote that silently stayed truncated
+        // is the exact failure this feature exists to remove.
+        const f = await svc.from("extraction_jobs")
+          .update({ status: "failed", result: merged, last_error: "quote writeback failed: " + wrote.error, completed_at: new Date().toISOString(), lease_until: null })
+          .eq("tenant_id", job.tenant_id).eq("id", job.id);
+        if (f.error) throw new Error("job update (quote-writeback-fail): " + f.error.message);
+        await emit(svc, tenantCtx, "docai_extract_failed", { job_id: job.id, order_id: orderId, error: "quote writeback: " + wrote.error });
+        return { advanced: true, job_id: job.id, step: "merge", status: "failed" };
+      }
+      await emit(svc, tenantCtx, "docai_chunk_quote_ingested", {
+        job_id: job.id, order_id: orderId,
+        quote_id: wrote?.quote_id || null,
+        quote_number: wrote?.quote_number || null,
+        lines_written: wrote?.lines_written || 0,
+        line_count: mergedLines.length,
+        // matched_authored means the quote was authored in Anvil and left
+        // alone. Not an error, but not an ingest either — say which happened.
+        matched_authored: !!wrote?.matched_authored,
+        detail: wrote?.matched_authored
+          ? "quote was authored in Anvil — kept as-is"
+          : "wrote " + (wrote?.lines_written || 0) + " of " + mergedLines.length + " extracted lines",
+      });
+    }
+
+    if (orderId && !PO_SHAPED.has(jobKind) && jobKind !== "quote") {
       await emit(svc, tenantCtx, "docai_chunk_merged_no_writeback", {
         job_id: job.id, order_id: orderId, kind: jobKind,
         line_count: mergedLines.length,

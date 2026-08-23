@@ -181,13 +181,103 @@ score, because that is the number the decision turns on.
 
 ---
 
-## 6. Open questions
+## 6. Adjudication: who was right
+
+Answering the question §7.2 raised. Implemented as
+`src/api/_lib/three-way-adjudicate.js` — pure, 24 tests — because a design
+this easy to get subtly wrong is better specified in code than in prose.
+
+### The rule
+
+**A field is never judged by Anvil-vs-Tally. It is judged by what each of them
+says against an AUTHORITY.** Agreement between Anvil and a clerk is not
+evidence of anything; both can be wrong together, and on a real pair they
+nearly were.
+
+Seven outcomes:
+
+| verdict | meaning | counts against |
+|---|---|---|
+| `agree` | authority, Anvil and Tally all match | nobody |
+| `anvil_correct` | Anvil matches the authority, Tally does not | the manual process |
+| `anvil_wrong` | Tally matches the authority, Anvil does not | **Anvil** |
+| `both_deviate` | Anvil and Tally agree *with each other*, not the authority | both |
+| `all_differ` | three different answers | both |
+| `undecidable` | the authority is silent, or could not be read | nobody |
+| `not_applicable` | nothing outside Tally could know this field | nobody |
+
+### `both_deviate` is why this exists
+
+The PO stated payment after 60 days; the Tally SO said 30. Suppose Anvil had
+*also* said 30 — because it defaulted to the customer master's usual terms
+rather than reading the document. A two-way comparison scores that field
+**agreed, perfect**, while the business has committed to terms worth 30 days
+of working capital that its customer never asked for.
+
+Only the three-way view sees it. That single case is the whole argument.
+
+### The authority is per field, not global
+
+The awkward fields are awkward in *different* ways, and one global authority
+forces them all to be fudged the same way:
+
+| field | authority | why |
+|---|---|---|
+| qty, rate, discount, ex-tax amount, buyer's part code | **the PO** | stated literally on the document |
+| **our own part number** | **`item_master`** | the PO carries the *buyer's* code and never says ours. Judged against the PO it would be permanently `undecidable`; judged against the map it is the most valuable field in the comparison |
+| voucher number, voucher date | **none** | Tally's own sequence — not a pass, not a fail |
+| payment terms, delivery date | the PO, *once a normaliser exists* | prose. `undecidable` until someone writes and tests one |
+
+### Default to undecidable
+
+A field with no normaliser, a silent authority, or a value the normaliser
+cannot read returns `undecidable` and is excluded from **both** the numerator
+and the denominator. Resolving ambiguity in somebody's favour is worse than
+admitting the gap — and this repo has already watched an exception engine that
+fired ~2,000 mostly-wrong criticals get switched off. A harness nobody trusts
+measures nothing.
+
+That is also the phasing rule: ship the literal fields, where decidability is
+near-perfect, and let each interpreted field earn its way in behind its own
+tested normaliser.
+
+### Two rates, never one
+
+- **`anvil_error_rate`** = (`anvil_wrong` + `both_deviate` + `all_differ`) ÷ decidable
+- **`process_deviation_rate`** = (`anvil_correct` + `both_deviate` + `all_differ`) ÷ decidable
+
+`both_deviate` counts against *both*, symmetrically: neither party matched the
+authority, and agreeing with the clerk is not an excuse.
+
+Reporting only the first would bury the finding that sells the product. A
+tenant deciding whether to trust Anvil needs both numbers — how often Anvil is
+wrong, **and how often the process they have today already is**.
+
+Both are `null`, never `0`, when nothing was decidable. A rate over an empty
+denominator reads as a perfect score.
+
+### Still to design
+
+- **Evidence.** Every verdict should cite the PO span it was decided from. The
+  pipeline already stamps `field_provenance` and per-glyph bboxes (#323), so
+  the link exists; wiring it is not yet designed.
+- **Override.** An operator must be able to overrule a verdict with a reason —
+  "the customer agreed 30 days by email". That is an amendment made outside the
+  PO, and recording it both stops the finding recurring and creates the trail
+  that a term was deliberately changed. It is what turns the harness from a
+  report into a control.
+
+---
+
+## 7. Open questions
 
 1. Does the bridge return voucher lines? (PR 0 — everything below depends.)
-2. When Tally and Anvil disagree and **the PO supports Anvil**, is that scored
-   as an Anvil error? It must not be, or the harness measures conformity to the
-   clerk rather than correctness. The real pair makes this concrete rather than
-   hypothetical.
+2. ~~When Tally and Anvil disagree and the PO supports Anvil, is that scored as
+   an Anvil error?~~ **Answered in §6**: no — it is `anvil_correct`, and it
+   counts against the manual process instead. The remaining sub-question is
+   whether a tenant should be able to see `process_deviation_rate` at all, or
+   only their own Anvil score. Showing it is more useful and more honest; it is
+   also a number about their staff, so it is their call who sees it.
 3. Mode at tenant level, or per customer? A tenant may trust Anvil for one
    buyer's simple POs and not another's.
 4. How long is a fair trial — a fixed window, or a line count?

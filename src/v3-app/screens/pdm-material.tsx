@@ -44,6 +44,11 @@ const PdmMaterial = () => {
   const [file, setFile] = useState<File | null>(null);
   const [partSpec, setPartSpec] = useState<any>(null);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
+  // Pages the extractor never saw. A part drawing's title block sits on page 1,
+  // so a truncated read still yields a part_spec and a plausible verdict — the
+  // damage is quieter than on a parts list, and that is exactly why it needs
+  // saying: nothing else about the screen would look wrong.
+  const [truncatedPages, setTruncatedPages] = useState<number | null>(null);
   const [finishedPartNo, setFinishedPartNo] = useState("");
   const [allowance, setAllowance] = useState(3);
   const [yieldPct, setYieldPct] = useState(0.85);
@@ -63,10 +68,14 @@ const PdmMaterial = () => {
   };
 
   const runExtraction = async (f: File) => {
-    setFile(f); setPhase("extracting"); setFailure(null); setSaved(null); setVerdict(null);
+    setFile(f); setPhase("extracting"); setFailure(null); setSaved(null); setVerdict(null); setTruncatedPages(null);
     try {
       const ex: any = await AnvilBackend?.documents?.extract?.(f, { kind: "part_drawing" });
       if (!ex) throw new Error("Extraction backend not configured");
+      // extract.js reads page 1 only past the background threshold and returns
+      // large_pdf so the caller can queue the rest. This screen cannot — the
+      // queue keys jobs to an order and there is no order here — so it reports.
+      setTruncatedPages(ex.large_pdf ? (ex.total_pages || null) : null);
       if (ex.status !== "ok") { setFailure({ status: ex.status || "failed", reason: ex.status_reason || "failed" }); setPhase("idle"); return; }
       const spec = ex.normalized?.part_spec || null;
       if (!spec) { setFailure({ status: "failed", reason: "non_drawing" }); setPhase("idle"); return; }
@@ -166,6 +175,16 @@ const PdmMaterial = () => {
           )}
         </Card>
 
+        {truncatedPages !== null && (
+          <Banner kind="bad" title="Only page 1 was read">
+            <span className="mono-sm">
+              This drawing runs to {truncatedPages || "several"} pages and only the first was read. The title
+              block is usually on page 1, so the determination below may look right while any dimension,
+              material note or revision on a later sheet was never seen. Check it against the drawing before
+              saving.
+            </span>
+          </Banner>
+        )}
         {(phase === "review" || phase === "saving" || phase === "done") && verdict && (
           <Card title="Raw-material determination" eyebrow="step 2 · review + correct"
             right={<>

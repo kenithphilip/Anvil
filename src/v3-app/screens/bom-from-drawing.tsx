@@ -70,6 +70,11 @@ const WARN_KIND: Record<string, "warn" | "bad" | "info"> = {
   missing_asset_code: "bad",
   no_importable_lines: "bad",
   not_assembly_bom: "bad",
+  // "bad", not "warn". Every other warning here describes something the
+  // preview is showing you; this one describes rows that are NOT in the
+  // preview because they were never read, and committing on it silently
+  // creates a BOM missing most of its parts.
+  truncated_to_first_page: "bad",
 };
 
 const BomFromDrawing = () => {
@@ -138,6 +143,22 @@ const BomFromDrawing = () => {
       // ── PDF / image: LLM extraction (P1c) ────────────────────────────
       const ex: any = await AnvilBackend?.documents?.extract?.(f, { kind: "assembly_bom" });
       if (!ex) throw new Error("Extraction backend not configured");
+      // A drawing over the background page threshold is read from page 1 only
+      // — extract.js sets hints.keepPages=[1] and returns large_pdf, and its
+      // comment says the caller must then queue the rest. This screen cannot:
+      // the queue keys jobs to an order and there is no order here, and the
+      // worker has no assembly_bom writeback. So say it, loudly, where the
+      // decision is made.
+      //
+      // Saying nothing is the worst option available. A truncated parts list
+      // looks exactly like a short one, and the preview below is the last
+      // point at which anyone could tell the difference.
+      const truncation: Warning[] = ex.large_pdf ? [{
+        code: "truncated_to_first_page",
+        message: "Only page 1 of " + (ex.total_pages || "many") + " was read, so any part listed on a later"
+          + " page is missing from this preview. Committing now creates an incomplete BOM."
+          + " Split the drawing and upload the parts-list pages separately.",
+      }] : [];
       if (ex.status !== "ok") {
         setFailure({ status: ex.status || "failed", reason: ex.status_reason || "failed" });
         setPhase("idle");
@@ -157,7 +178,8 @@ const BomFromDrawing = () => {
         confidence_overall: ex.confidence_overall ?? null,
         asset: pv.asset,
         lines: pv.lines || [],
-        warnings: pv.warnings || [],
+        // Truncation first: it explains every other warning below it.
+        warnings: [...truncation, ...(pv.warnings || [])],
         meta: pv.meta,
       });
     } catch (err: any) {

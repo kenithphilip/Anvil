@@ -209,8 +209,22 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
       try { totalPages = await probePdfPageCount(bytes); }
       catch (_e) { totalPages = null; }
     }
+    // The page profiler is PO-trained and PO-shaped: it classifies a document
+    // as po/rfq/amendment/non_po and keeps only the pages it judges to carry
+    // line items, explicitly dropping "a header page with no line items".
+    //
+    // On a quotation that is actively harmful. A quote's page 1 is typically
+    // letterhead and the quote NUMBER — no line items — so the profiler drops
+    // it, ingestQuote gets no quote_number, and it refuses the whole document
+    // before writing anything. The job then fails on a quotation that read
+    // perfectly well.
+    //
+    // Until there is a profiler that understands other kinds, run it only for
+    // the kinds it was built for and keep every page for the rest.
+    const profilerKind = kindOfJob(job) || "po";
+    const PROFILABLE = new Set(["po", "rfq", "generic"]);
     let profile = null;
-    if (totalPages && totalPages >= 10) {
+    if (totalPages && totalPages >= 10 && PROFILABLE.has(profilerKind)) {
       profile = await profileDocument({
         source: { bytes, mime: job.source_mime || "application/pdf" },
         tenantId: job.tenant_id,
@@ -483,12 +497,17 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
         // Same rule as the order writeback below: do not swallow a failed
         // writeback into 'completed'. A quote that silently stayed truncated
         // is the exact failure this feature exists to remove.
+        // Compare-and-set on status, exactly as the order writeback below does:
+        // without `.eq("status","merging")` an operator who cancelled the job
+        // mid-flight would see it resurrected from cancelled into failed.
         const f = await svc.from("extraction_jobs")
           .update({ status: "failed", result: merged, last_error: "quote writeback failed: " + wrote.error, completed_at: new Date().toISOString(), lease_until: null })
-          .eq("tenant_id", job.tenant_id).eq("id", job.id);
+          .eq("id", job.id).eq("status", "merging").select("*").maybeSingle();
         if (f.error) throw new Error("job update (quote-writeback-fail): " + f.error.message);
         await emit(svc, tenantCtx, "docai_extract_failed", { job_id: job.id, order_id: orderId, error: "quote writeback: " + wrote.error });
-        return { advanced: true, job_id: job.id, step: "merge", status: "failed" };
+        // { job, hasMore } — the shape the driver reads. Returning anything
+        // else leaves `current` undefined and only works by accident.
+        return { job: (f.data || job), hasMore: false };
       }
       await emit(svc, tenantCtx, "docai_chunk_quote_ingested", {
         job_id: job.id, order_id: orderId,
@@ -513,7 +532,32 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
           + "' has no background writeback, result kept on the job",
       });
     }
-    if (orderId && PO_SHAPED.has(jobKind)) {
+    // SECOND LINE OF DEFENCE, and it reads the document rather than the label.
+    //
+    // kindOfJob falls back to "po" for any job that has an order id, so a job
+    // whose kind could not be persisted — a database without migration 219 —
+    // presents as a PO no matter what was queued. The enqueue now refuses to
+    // create such a job for a non-PO kind, but a row queued BEFORE that fix is
+    // already in the table, and this branch is what would overwrite an order's
+    // lines with it.
+    //
+    // The extract knows what it read. Every non-PO extractor stamps its own
+    // classification ("quote", "invoice", "packing_list", "assembly_bom",
+    // "part_drawing", "eway_bill", "ack"), and the PO extractor only ever
+    // emits po / rfq / non_po. So a classification outside the PO tool's own
+    // enum means this is not a purchase order, whatever the job row claims.
+    const PO_CLASSIFICATIONS = new Set(["po", "rfq", "non_po"]);
+    const classification = mergedNorm.classification || null;
+    const classifiedNonPo = !!classification && !PO_CLASSIFICATIONS.has(classification);
+    if (orderId && PO_SHAPED.has(jobKind) && classifiedNonPo) {
+      await emit(svc, tenantCtx, "docai_chunk_merged_no_writeback", {
+        job_id: job.id, order_id: orderId, kind: jobKind, classification,
+        line_count: mergedLines.length,
+        detail: "job says '" + jobKind + "' but the document read as '" + classification
+          + "' — refusing to write it into the order's lines. Apply migration 219 and re-queue.",
+      });
+    }
+    if (orderId && PO_SHAPED.has(jobKind) && !classifiedNonPo) {
       const ord = await svc.from("orders").select("result, preflight_payload").eq("tenant_id", job.tenant_id).eq("id", orderId).maybeSingle();
       if (ord.error) throw new Error("order read (merge): " + ord.error.message);
       const nextResult = { ...(ord.data?.result || {}) };

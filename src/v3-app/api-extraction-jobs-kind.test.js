@@ -115,7 +115,11 @@ describe("a non-PO merge cannot overwrite the order's lines", () => {
     // quotation's lines there replaces the order's contents with another
     // document's.
     expect(src).toMatch(/const PO_SHAPED = new Set\(\["po", "rfq", "generic"\]\)/);
-    expect(src).toMatch(/if \(orderId && PO_SHAPED\.has\(jobKind\)\)/);
+    // The gate is now STRICTER than when this test was written: the kind must
+    // be PO-shaped AND the extract must not have classified itself as some
+    // other kind of document. A job that lost its kind to the 42703 retry
+    // reads back as "po", so the label alone was not enough.
+    expect(src).toMatch(/if \(orderId && PO_SHAPED\.has\(jobKind\) && !classifiedNonPo\)/);
   });
 
   it("completes rather than fails, and says so", () => {

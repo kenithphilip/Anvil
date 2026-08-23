@@ -75,7 +75,12 @@ const enqueueFullRead = async (orderId: string, documentId: string, filename: st
       // purchase-order schema, then refuse to write it back.
       body: JSON.stringify({ order_id: orderId, document_id: documentId, kind: "quote", source_filename: filename }),
     });
-    return resp.ok;
+    // resp.ok alone is not enough. A 409 means an extraction of a different
+    // kind is already in flight on this order and ours was NOT queued; a 200
+    // carrying someone else's job would be the same lie one status code up.
+    if (!resp.ok) return false;
+    const body: any = await resp.json().catch(() => null);
+    return !!body?.job && (body.job.extraction_kind || "po") === "quote";
   } catch { return false; }
 };
 

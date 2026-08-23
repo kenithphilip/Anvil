@@ -138,3 +138,72 @@ describe("the UI can see how it ended", () => {
     expect(src).toMatch(/"docai_chunk_merged_no_writeback"/);
   });
 });
+
+// ── Regression: the defects an adversarial pass found AFTER #496 merged ──
+//
+// Every one of these was live. The first is the reason this file exists.
+
+describe("a job that cannot record its kind is refused, not downgraded", () => {
+  const src = strip(read("src/api/orders/extraction_jobs.js"));
+
+  it("fails closed for a non-PO kind when the column is missing", () => {
+    // THE DESTRUCTIVE ONE. kindOfJob falls back to "po" for any job with an
+    // order id, so a quote job that lost its kind to the 42703 retry reads
+    // back as a PO — and the merge step writes the QUOTATION's lines into
+    // orders.result.salesOrder.lineItems, replacing the customer's PO lines.
+    expect(src).toMatch(/extraction_kind_column_missing/);
+    expect(src).toMatch(/PO_SHAPED_KINDS\.has\(row\.extraction_kind\)/);
+  });
+
+  it("still downgrades for the PO-shaped kinds, where the label costs nothing", () => {
+    // "po" is exactly what the worker infers anyway, so dropping it changes
+    // nothing — and refusing here would break the path that works today.
+    expect(src).toMatch(/delete retry\.extraction_kind/);
+  });
+});
+
+describe("the in-flight dedup does not lie across kinds", () => {
+  const src = strip(read("src/api/orders/extraction_jobs.js"));
+
+  it("refuses rather than handing back another kind's job", () => {
+    // The unique index is (tenant_id, order_id) with no kind in it. A quote
+    // queued while the order's PO extraction runs would be handed that PO job
+    // with deduped:true — the caller sees ok and promises a background read
+    // that will never happen.
+    expect(src).toMatch(/extraction_in_flight_other_kind/);
+    expect(src).toMatch(/existingKind !== wantedKind/);
+  });
+
+  it("the caller checks the job it got back, not just the status code", () => {
+    const strip_ = strip(read("src/v3-app/components/QuotesStrip.tsx"));
+    expect(strip_).toMatch(/extraction_kind \|\| "po"\) === "quote"/);
+  });
+});
+
+describe("the worker reads the document, not only the label", () => {
+  const src = strip(read("src/api/cron/extraction_jobs.js"));
+
+  it("refuses an order writeback when the extract classified as non-PO", () => {
+    // Second line of defence, for rows queued before the enqueue fix. The PO
+    // extractor only ever emits po / rfq / non_po, so anything else means the
+    // document is not a purchase order whatever the job row says.
+    expect(src).toMatch(/PO_CLASSIFICATIONS = new Set\(\["po", "rfq", "non_po"\]\)/);
+    expect(src).toMatch(/PO_SHAPED\.has\(jobKind\) && !classifiedNonPo/);
+  });
+
+  it("does not run the PO page profiler on other kinds", () => {
+    // The profiler drops "a header page with no line items" — which on a
+    // quotation is the page carrying the quote number, without which
+    // ingestQuote refuses the whole document.
+    expect(src).toMatch(/PROFILABLE\.has\(profilerKind\)/);
+  });
+
+  it("compare-and-sets on merging, so a cancel is not resurrected", () => {
+    const failures = src.match(/\.eq\("id", job\.id\)\.eq\("status", "merging"\)/g) || [];
+    expect(failures.length).toBeGreaterThanOrEqual(2);   // quote branch + order branch
+  });
+
+  it("returns the shape the driver actually reads", () => {
+    expect(src).not.toMatch(/return \{ advanced: true, job_id: job\.id, step: "merge"/);
+  });
+});

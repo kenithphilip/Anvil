@@ -12,6 +12,22 @@ import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { resolvePortalAccess } from "../_lib/portal-auth.js";
 
+// The order statuses a CUSTOMER may see, in one place.
+//
+// This list was inline on the `orders` branch and simply absent from `quotes`,
+// so the same table was filtered on one path and served whole on the other.
+// The unfiltered path returned DRAFT, PENDING_REVIEW, BLOCKED, DUPLICATE,
+// FAILED_TALLY_IMPORT and CANCELLED rows — internal working states — each
+// carrying `result`, which holds the extracted salesOrder line items and their
+// prices. An extraction nobody has reviewed yet is exactly the thing a
+// customer must not read a price off.
+//
+// Naming it once is the point: two copies of an access rule is one copy and
+// one oversight.
+const CUSTOMER_VISIBLE_ORDER_STATUSES = [
+  "APPROVED", "EXPORTED_TO_TALLY", "SCHEDULED", "DISPATCHED", "RECONCILED",
+];
+
 const logAccess = async (svc, t, req, status, path) => {
   await svc.from("portal_access_log").insert({
     tenant_id: t.tenant_id,
@@ -43,8 +59,19 @@ export default async function handler(req, res) {
     let payload = null;
     if (kind === "summary") {
       const [q, o, i] = await Promise.all([
-        svc.from("orders").select("id", { count: "exact", head: true }).eq("tenant_id", t.tenant_id).eq("customer_id", t.customer_id),
-        svc.from("orders").select("id", { count: "exact", head: true }).eq("tenant_id", t.tenant_id).eq("customer_id", t.customer_id).in("status", ["APPROVED", "EXPORTED_TO_TALLY", "SCHEDULED", "DISPATCHED"]),
+        // Both counted over the same allow-list the list endpoints use.
+        // Unfiltered, the first told the customer "you have N quotes" counting
+        // drafts and cancellations they can neither see nor act on.
+        //
+        // They are now necessarily EQUAL, and that is a symptom worth stating
+        // rather than hiding: `quotes` and `orders` are the same query against
+        // the same table, distinguished only by a filter that one of them was
+        // missing. Anvil has a real `quotes` table this endpoint never touches.
+        // Pointing it there is a product decision, not a security fix, so it is
+        // deliberately not made here — but nothing should read these two counts
+        // as measuring different things, because they do not.
+        svc.from("orders").select("id", { count: "exact", head: true }).eq("tenant_id", t.tenant_id).eq("customer_id", t.customer_id).in("status", CUSTOMER_VISIBLE_ORDER_STATUSES),
+        svc.from("orders").select("id", { count: "exact", head: true }).eq("tenant_id", t.tenant_id).eq("customer_id", t.customer_id).in("status", CUSTOMER_VISIBLE_ORDER_STATUSES),
         svc.from("invoices").select("id", { count: "exact", head: true }).eq("tenant_id", t.tenant_id).eq("customer_id", t.customer_id).in("status", ["sent", "partial", "overdue"]),
       ]);
       const cust = t.customer_id ? await svc.from("customers").select("customer_name, contact_email").eq("id", t.customer_id).maybeSingle() : { data: null };
@@ -57,13 +84,14 @@ export default async function handler(req, res) {
       const r = await svc.from("orders")
         .select("id, quote_number, po_number, status, payload_hash, result, created_at")
         .eq("tenant_id", t.tenant_id).eq("customer_id", t.customer_id)
+        .in("status", CUSTOMER_VISIBLE_ORDER_STATUSES)
         .order("created_at", { ascending: false }).limit(50);
       payload = { quotes: r.data || [] };
     } else if (kind === "orders") {
       const r = await svc.from("orders")
         .select("id, quote_number, po_number, status, tally_status, result, created_at")
         .eq("tenant_id", t.tenant_id).eq("customer_id", t.customer_id)
-        .in("status", ["APPROVED", "EXPORTED_TO_TALLY", "SCHEDULED", "DISPATCHED", "RECONCILED"])
+        .in("status", CUSTOMER_VISIBLE_ORDER_STATUSES)
         .order("created_at", { ascending: false }).limit(50);
       payload = { orders: r.data || [] };
     } else if (kind === "invoices") {

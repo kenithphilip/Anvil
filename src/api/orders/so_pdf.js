@@ -17,6 +17,7 @@ import { recordAudit } from "../_lib/audit.js";
 import { renderSalesOrder } from "../_lib/pdf-renderer.js";
 import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "../_lib/storage.js";
 import { classifyOrigin } from "../_lib/pending-so/part-origin.js";
+import { hasUnresolvedBlocker, firstUnresolvedBlocker } from "../_lib/blocking-findings.js";
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -141,11 +142,40 @@ export default async function handler(req, res) {
     const svc = serviceClient();
 
     const orderQ = await svc.from("orders")
-      .select("id, status, po_number, po_date, quote_number, quote_id, result, customer_id, created_at, approved_at, dispatch_mode, registration_serial_no, delivery_terms, so_voucher_no, so_message, customer_location_id, delivery_point_contact_id")
+      .select("id, status, rule_findings, po_number, po_date, quote_number, quote_id, result, customer_id, created_at, approved_at, dispatch_mode, registration_serial_no, delivery_terms, so_voucher_no, so_message, customer_location_id, delivery_point_contact_id")
       .eq("tenant_id", ctx.tenantId).eq("id", orderId).maybeSingle();
     if (orderQ.error) throw new Error("orders read: " + orderQ.error.message);
     if (!orderQ.data) return json(res, 404, { error: { message: "Order not found" } });
     const order = orderQ.data;
+
+    // Rendering at any status is DELIBERATE — this is the acknowledgment a
+    // seller returns on receiving a PO, not the post-tax voucher, and you
+    // acknowledge an order before you approve it. Gating the PDF on APPROVED
+    // would break the thing it is for.
+    //
+    // Sharing it is a different act. format=share uploads the PDF and mints a
+    // SEVEN-DAY signed URL for a customer, so it is the one outward-facing
+    // artefact this endpoint produces — and it was reachable on an order
+    // carrying an unresolved blocking finding: a line count short of what the
+    // PO declared, a total that does not reconcile, an extraction the operator
+    // has not signed off. The same findings that stop approve, the Tally push
+    // and the ERP runner. Sending the customer a document built on them is
+    // worse than any of those, because it cannot be retracted.
+    //
+    // So: the internal download stays available at any status; the shareable
+    // link does not.
+    if (format === "share" && hasUnresolvedBlocker(order.rule_findings)) {
+      const b = firstUnresolvedBlocker(order.rule_findings);
+      return json(res, 409, {
+        error: {
+          code: "ORDER_HAS_UNRESOLVED_BLOCKER",
+          message: "Cannot share this acknowledgment: unresolved blocking finding (" + b.code + "): "
+            + (b.detail || "extraction incomplete")
+            + " Resolve it first, or download the PDF for internal review.",
+          finding: b,
+        },
+      });
+    }
 
     let customer = null;
     if (order.customer_id) {

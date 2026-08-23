@@ -131,6 +131,38 @@ the code does not support.
 
 ---
 
+### 2.N — Capital-items product catalog (configurator)
+
+Scoped in [PRODUCT_CATALOG_SCOPE.md](PRODUCT_CATALOG_SCOPE.md). The sales
+workbook is a configurator hand-built in Excel five times — *family + option
+values → part number* — and the ATD sheet is simultaneously an option matrix
+and a bill of materials.
+
+The reason to do it is not the spreadsheet. `opportunity_line_items` has
+required a `product_family` since migration 086, and its own comment says the
+engine "falls back to the (family, category) → part_no map maintained on
+item_master". **That map was never built** — `item_master` has no
+`product_family` column and nothing in `src/api` resolves one. Every forecast
+line has carried an unresolvable family ever since.
+
+Three new tables (`product_families`, `product_options`, `product_variants`);
+everything else extends `item_master` / `inventory_positions` /
+`item_customer_parts` / `bill_of_materials`. Every line table in Anvil joins on
+`part_no text`, so a catalog that resolves to one reaches every stage without
+re-keying anything.
+
+PRs 1–3 (model → importer → resolve the 086 hole) are the spine and are worth
+doing on their own. Five owner questions are listed in §10 of the scope doc;
+the identity question (part number vs model code — 81 cells carry both) blocks
+PR 1.
+
+Adjacent and deliberately separate: engineering change control does not exist
+in any form, and the design sign-off the request describes has no home —
+`gun_drawings.approval_status` is a provision its own migration says is "not
+enforced yet" (`commit.js` never reads it, no UI sets it, an uploader can
+approve their own drawing), and `bom_assets.approval_status` is touched by zero
+lines of application code.
+
 ## 3. Known-unfixed defects
 
 Each verified, none currently breaking a user flow.

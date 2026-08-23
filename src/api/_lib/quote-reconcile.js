@@ -28,19 +28,40 @@ import {
 // occurrence of a part wins; a part seen in >1 quote is flagged ambiguous.
 const indexQuoteLines = (quoteLines) => {
   const byPart = new Map();
+  const byCustomerPart = new Map();
   const ambiguous = new Set();
+  const ambiguousCustomer = new Set();
   for (const q of quoteLines || []) {
     const key = normPart(q.part_no);
-    if (!key) continue;
-    if (byPart.has(key)) {
-      // Another quote already priced this part -> ambiguous, keep the
-      // first (preferred) one but record the conflict.
-      if (byPart.get(key)._quote_id !== q._quote_id) ambiguous.add(key);
-      continue;
+    if (key) {
+      if (byPart.has(key)) {
+        // Another quote already priced this part -> ambiguous, keep the
+        // first (preferred) one but record the conflict.
+        if (byPart.get(key)._quote_id !== q._quote_id) ambiguous.add(key);
+      } else {
+        byPart.set(key, q);
+      }
     }
-    byPart.set(key, q);
+    // A SECOND index on the buyer's own code.
+    //
+    // Both quote_lines and the extracted PO line carry customer_part_number,
+    // and it was passed through to the output while never being matched on —
+    // so a purchase order that prints only the buyer's reference matched
+    // nothing at all, and every line came back "ordered but never quoted".
+    //
+    // That is not a rare shape. On a real customer PO the item code is the
+    // BUYER's; our own part number appears nowhere on the document, and only
+    // shows up on the sales order once a person has looked it up.
+    const ckey = normPart(q.customer_part_number);
+    if (ckey) {
+      if (byCustomerPart.has(ckey)) {
+        if (byCustomerPart.get(ckey)._quote_id !== q._quote_id) ambiguousCustomer.add(ckey);
+      } else {
+        byCustomerPart.set(ckey, q);
+      }
+    }
   }
-  return { byPart, ambiguous };
+  return { byPart, byCustomerPart, ambiguous, ambiguousCustomer };
 };
 
 // Extract a credit-period day count from a free-text payment-terms string.
@@ -129,7 +150,7 @@ export const compareIncoterms = (poIncoterm, quoteIncoterm) => {
 // a price_mismatch (default 0.5%).
 export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
   const tol = opts.priceTolerancePct != null ? Number(opts.priceTolerancePct) : 0.5;
-  const { byPart, ambiguous } = indexQuoteLines(quoteLines);
+  const { byPart, byCustomerPart, ambiguous, ambiguousCustomer } = indexQuoteLines(quoteLines);
   const quotesUsed = new Map();
   const summary = { total: 0, matched: 0, price_mismatch: 0, description_mismatch: 0, qty_note: 0, unmatched: 0 };
 
@@ -140,13 +161,43 @@ export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
   const lines = (orderLines || []).map((ln, i) => {
     summary.total += 1;
     const key = normPart(pick(ln.part_no, ln.partNumber, ln.itemCode));
-    const q = key ? byPart.get(key) : null;
+    // TIERED. Our own part number first; the buyer's code only when that
+    // misses, never overriding it. A PO that names both should reconcile
+    // against the part we actually sell, and the fallback exists for the
+    // common case where the document carries only the customer's reference.
+    let matchedOn = null;
+    let q = key ? byPart.get(key) : null;
+    if (q) matchedOn = "part_no";
+    let customerKey = null;
+    if (!q) {
+      // The buyer's code can arrive in any of three slots depending on which
+      // extractor schema read the document.
+      customerKey = normPart(pick(ln.customer_part_number, ln.customerItemCode, ln.customer_item_code));
+      if (customerKey) {
+        q = byCustomerPart.get(customerKey) || null;
+        if (q) matchedOn = "customer_part_number";
+      }
+    }
     const poRate = num(pick(ln.discounted_unit_price, ln.rate, ln.unit_price, ln.unitPrice, ln.ex_price));
     const poQty = num(pick(ln.qty, ln.quantity));
 
     if (!q) {
       summary.unmatched += 1;
-      return { ...ln, _match: { verdict: "unmatched", part_no: pick(ln.part_no, ln.partNumber) || null } };
+      return { ...ln, _match: {
+        verdict: "unmatched",
+        part_no: pick(ln.part_no, ln.partNumber) || null,
+        // Say which identifiers were tried. "Unmatched" on a line that only
+        // ever carried the buyer's code means something different from
+        // unmatched on one carrying ours, and the operator has to know which.
+        //
+        // Reported AS PRINTED, not as keyed. normPart strips every non
+        // alphanumeric character, so the key for "ALSO-NOPE" is "ALSONOPE" —
+        // a string that appears on no document and that nobody can search for.
+        tried: {
+          part_no: pick(ln.part_no, ln.partNumber, ln.itemCode) || null,
+          customer_part_number: pick(ln.customer_part_number, ln.customerItemCode, ln.customer_item_code) || null,
+        },
+      } };
     }
 
     const quoteRate = num(q.discounted_unit_price) != null ? num(q.discounted_unit_price) : num(q.listed_unit_price);
@@ -175,7 +226,17 @@ export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
     else if (descMismatch) { verdict = "description_mismatch"; summary.description_mismatch += 1; }
     else { summary.matched += 1; if (qtyNote) summary.qty_note += 1; }
 
-    orderedKeys.add(key);
+    // Record the key the REVERSE WALK uses, which is the matched quote line's
+    // part_no — not the PO line's.
+    //
+    // Those are the same string only when the match came through part_no. A
+    // line matched on the buyer's code has a PO key that is empty or different,
+    // so adding it here would leave the quote's part unsubtracted and the
+    // reverse walk would report a part as "quoted but never ordered" that was
+    // ordered, matched and priced two hundred lines earlier.
+    if (key) orderedKeys.add(key);
+    const matchedQuoteKey = normPart(q.part_no);
+    if (matchedQuoteKey) orderedKeys.add(matchedQuoteKey);
     quotesUsed.set(q._quote_id, {
       quote_id: q._quote_id, quote_number: q._quote_number,
       lines_matched: (quotesUsed.get(q._quote_id)?.lines_matched || 0) + 1,
@@ -208,7 +269,17 @@ export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
         desc_mismatch: descMismatch,
         po_description: pick(ln.description, ln.itemName) || null,
         quote_description: q.description || null,
-        ambiguous: ambiguous.has(key),
+        // Ambiguity is per INDEX. A line matched on the buyer's code is
+        // ambiguous when that code appears in more than one quote — checking
+        // the part_no set instead would report the wrong conflict, or none.
+        ambiguous: matchedOn === "customer_part_number"
+          ? ambiguousCustomer.has(customerKey)
+          : ambiguous.has(key),
+        // Which identifier carried the match. Our own part number is a
+        // stronger claim than the buyer's code — the same customer reference
+        // can be reused across revisions — so an operator reviewing a
+        // reconciliation needs to see which one was used.
+        matched_on: matchedOn,
         source_quote_number: q._quote_number,
       },
     };

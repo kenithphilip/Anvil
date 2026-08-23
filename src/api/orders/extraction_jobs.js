@@ -74,6 +74,24 @@ export default async function handler(req, res) {
         .limit(1)
         .maybeSingle();
       if (existing.data) {
+        // Deduping across KINDS would be a lie. The unique index behind this is
+        // (tenant_id, order_id) with no kind in it, so a quotation queued while
+        // the order's PO extraction is still running would be handed that PO
+        // job and reported as queued — the caller sees ok, tells the operator
+        // "the rest is being read in the background", and nothing ever reads
+        // it. Same order, different document, different job.
+        const existingKind = existing.data.extraction_kind || "po";
+        const wantedKind = body.kind || body.extraction_kind || "po";
+        if (existingKind !== wantedKind) {
+          return json(res, 409, {
+            error: {
+              code: "extraction_in_flight_other_kind",
+              message: "A '" + existingKind + "' extraction is already running on this order, and only one job"
+                + " per order can be in flight. Retry the '" + wantedKind + "' read once it finishes.",
+            },
+            job: existing.data,
+          });
+        }
         return json(res, 200, { job: existing.data, deduped: true });
       }
       // The kinds the extractor has a schema for — the same list migration 219
@@ -113,7 +131,31 @@ export default async function handler(req, res) {
       // database that already has this code. Retry without it rather than
       // refusing to queue the job — a document that extracts on the PO schema
       // is better than one that never extracts at all.
+      //
+      // That reasoning held while a PO was the only thing anyone could queue.
+      // It is now DESTRUCTIVE for anything else. A job that persists without
+      // its kind reads back through kindOfJob as "po" (it has an order id), so
+      // the merge step takes the PO_SHAPED branch and writes the document's
+      // lines into orders.result.salesOrder.lineItems — replacing the
+      // customer's purchase-order lines with a quotation's.
+      //
+      // So: fall back only for the PO-shaped kinds, where dropping the label
+      // costs nothing because "po" is exactly what the worker would infer
+      // anyway. For any other kind, fail closed and say why. An unqueued long
+      // quotation is a visible gap; a quotation silently overwriting a PO is
+      // data loss nobody sees until the order is wrong.
+      const PO_SHAPED_KINDS = new Set(["po", "rfq", "generic"]);
       if (ins.error && (ins.error.code === "42703" || /extraction_kind/.test(ins.error.message || ""))) {
+        if (!PO_SHAPED_KINDS.has(row.extraction_kind)) {
+          return json(res, 503, {
+            error: {
+              code: "extraction_kind_column_missing",
+              message: "Cannot queue a '" + row.extraction_kind + "' extraction: this database has not had"
+                + " migration 219 applied, so the job could not record what kind of document it is and would"
+                + " be processed as a purchase order. Apply 219 and retry.",
+            },
+          });
+        }
         const retry = { ...row };
         delete retry.extraction_kind;
         ins = await svc.from("extraction_jobs").insert(retry).select("*").single();

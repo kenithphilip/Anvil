@@ -237,6 +237,44 @@ customers, or for both? Who arbitrates when two principles conflict — (5) and
 (6) pull against each other on any screen that removes a decision. And does it
 carry authority over a roadmap item, or only over how one is built?
 
+### 2.K — Kit lines: when one PO line is a whole quote
+
+Scoped in [KIT_LINE_SCOPE.md](KIT_LINE_SCOPE.md), from a real project order.
+
+The customer took each of two multi-line quotations, lifted the labour line
+out, and ordered the remaining goods as ONE priced SET — then combined the
+labour from both quotes into a third PO line. The arithmetic is exact to the
+rupee in both directions, so the relationship is provable rather than inferred.
+
+**Today this reads as a total failure on a correct order.** The reconciler is
+one-to-one, so all three PO lines come back unmatched and ~40 quoted lines come
+back never-ordered — forty invitations to add a variance that should not exist.
+Worse, the sales order would carry three lines called "one SET", so no work
+order can be raised for the transformer, the pendant or the six hose variants,
+`bill_of_materials` never sees them, and aftersales records a SET rather than
+its contents.
+
+**The constraint that shapes the design:** the customer-facing figure must not
+change. They ordered one SET at one price and the invoice has to say so or it
+will not be paid. A kit line is therefore BOTH a header (one line, SET price —
+invoice, acknowledgement, AR) AND a composition (the quote's lines at quote
+prices — work orders, BOM, inventory, spares). Neither derives from the other;
+both are recorded.
+
+**Do the extraction fix first (§5 of the doc).** The quote's lines were not
+extracted at all, and a kit match is arithmetic against those lines — without
+them there is nothing to compute with. Two checkable causes: `QUOTE_SYSTEM_PROMPT`
+has ZERO of the 34-line multi-row block `SYSTEM_PROMPT` carries and calls "the
+single biggest cause of a shredded line count" (100 lines vs 171); and the
+layout has two price column GROUPS rather than the two adjacent columns #462
+designed `unitPrice`/`listUnitPrice` for, with the SPECIAL PRICE group being
+the one the totals are struck from.
+
+**That prompt gap is the THIRD instance of one drift pattern** — the same block
+missing from gemini.js (#491), the unsupported_kind guard on one adapter only
+(#485), and now a prompt fix on one document kind and not its sibling. It is
+not adapter-specific: a fix lands where the bug was reported and nowhere else.
+
 ## 3. Known-unfixed defects
 
 Each verified, none currently breaking a user flow.

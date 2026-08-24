@@ -12,6 +12,28 @@ Stated intent for the page, from the owner:
 Everything below was verified by opening the file or running the live page. Claims that turned out
 to be **fine** are recorded too, so nobody re-litigates them.
 
+**Update 2026-08-24 — PR #521 closed the compliance-claim items (§1.3–§1.6 and table row 2).**
+Re-verifying them turned up three the original audit missed:
+
+- **"Auth · SCIM"** in the architecture footer. No SCIM endpoint, provisioning code or dependency
+  exists.
+- **"BYO LLM key"**, which the audit recorded only as a badge. It is also an entire FAQ answer and
+  an Enterprise plan feature, and both told a buyer that document content *"never crosses our
+  boundary"* under Bedrock / Vertex / Azure in their own VPC. None of those adapters exist. What
+  does exist is a per-tenant key for the seven `docai_*_api_key_enc` extraction providers — real,
+  and a different thing from isolation, so the FAQ now separates the two.
+- **"SOC 2 + ISO 27001 evidence + signed BAA / DPA"** sold as an Enterprise plan feature — a
+  contractual promise for artefacts that cannot be produced.
+
+The lesson worth keeping: the badge strip is where a claim is *noticed*, not where it does the
+damage. The same assertion was live in five other places — a plan feature, two FAQ answers, an
+architecture footer and the page footer — and fixing only the strip would have left every one of
+them standing. `src/v3-app/landing-trust-claims.test.js` now pins them together.
+
+Left alone deliberately: the uptime SLA figures and the `status.anvil.app` domain (table row 1).
+An SLA is a commitment an owner can simply decide to make, unlike a certification — that is a
+decision, not a defect.
+
 ---
 
 ## 0. The one-line problem
@@ -238,8 +260,8 @@ one. That is the finding.
 | # | item | size | kind | notes |
 |---|---|---|---|---|
 | 1 | Confirm `anvil.app` ownership; fix or replace all 5 mailto CTAs | small | **decision** | blocks everything else in demand-gen |
-| 2 | Remove or requalify SOC 2 / ISO / GDPR / residency badges | small | copy | legal exposure; do this first among the code-free items |
-| 3 | Fix "cryptographically chained" and the 17-vs-18 mismatch | small | copy | |
+| 2 | ~~Remove or requalify SOC 2 / ISO / GDPR / residency badges~~ | small | copy | **DONE — PR #521** |
+| 3 | Fix "cryptographically chained" and the 17-vs-18 mismatch | small | copy | chaining **DONE — PR #521**; the 17-vs-18 mismatch remains |
 | 4 | Gate the 30s poller behind an authed session | small | code | live cost + log noise |
 | 5 | Self-host IBM Plex; drop the CSP-blocked Google Fonts import | small | code | affects the whole app, not just landing |
 | 6 | Replace the mailto with a real lead-capture form + autoresponder | medium | code | needs a working outbound path |

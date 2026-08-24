@@ -150,6 +150,13 @@ export const compareIncoterms = (poIncoterm, quoteIncoterm) => {
 // a price_mismatch (default 0.5%).
 export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
   const tol = opts.priceTolerancePct != null ? Number(opts.priceTolerancePct) : 0.5;
+  // The dual-code map, normalised on the way in so the caller can hand over
+  // raw values from item_customer_parts without knowing this file's key rules.
+  // Absent map = the first two tiers only, which is what every caller did
+  // before and still the right behaviour when the customer is unknown.
+  const customerPartMap = opts.customerPartMap instanceof Map
+    ? new Map([...opts.customerPartMap].map(([k, v]) => [normPart(k), v]))
+    : null;
   const { byPart, byCustomerPart, ambiguous, ambiguousCustomer } = indexQuoteLines(quoteLines);
   const quotesUsed = new Map();
   const summary = { total: 0, matched: 0, price_mismatch: 0, description_mismatch: 0, qty_note: 0, unmatched: 0 };
@@ -176,6 +183,23 @@ export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
       if (customerKey) {
         q = byCustomerPart.get(customerKey) || null;
         if (q) matchedOn = "customer_part_number";
+        if (!q && customerPartMap) {
+          // THIRD TIER: the dual-code map.
+          //
+          // The two tiers above can only match a buyer code that some quote
+          // line happens to carry. item_customer_parts is the canonical
+          // mapping — built by the ingest every time an operator confirms a
+          // part — so it knows codes no quote ever recorded. Without it, a PO
+          // naming a part we have sold this customer for years still came back
+          // unmatched purely because the code was absent from the quote rows.
+          //
+          // Passed IN rather than looked up: this function is pure, and it is
+          // the reason it can be tested against a hundred line shapes without
+          // a database.
+          const ourPart = customerPartMap.get(customerKey) || null;
+          const viaMap = ourPart ? byPart.get(normPart(ourPart)) : null;
+          if (viaMap) { q = viaMap; matchedOn = "item_customer_parts"; }
+        }
       }
     }
     const poRate = num(pick(ln.discounted_unit_price, ln.rate, ln.unit_price, ln.unitPrice, ln.ex_price));

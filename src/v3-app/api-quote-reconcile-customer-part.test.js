@@ -12,7 +12,13 @@
 // up in the dual-code map.
 
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { reconcilePoAgainstQuotes } from "../api/_lib/quote-reconcile.js";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const read = (rel) => readFileSync(join(HERE, "..", "..", rel), "utf8");
 
 const qline = (over = {}) => ({
   _quote_id: "q1", _quote_number: "Q-1", _quote_created_at: "2026-01-01T00:00:00Z",
@@ -122,5 +128,120 @@ describe("the reverse walk stays honest", () => {
       [qline(), qline({ part_no: "OUR-2", customer_part_number: "THEIRS-2" })],
     );
     expect((r.quoted_not_ordered || []).map((x) => x.part_no)).toEqual(["OUR-2"]);
+  });
+});
+
+// ── Third tier: the canonical dual-code map ──────────────────────────
+//
+// The two tiers above can only match a buyer code that some QUOTE LINE happens
+// to carry. item_customer_parts is the canonical mapping — grown by the ingest
+// every time an operator confirms a part — so it knows codes no quote ever
+// recorded. Without it a PO naming a part we have sold this customer for years
+// still came back unmatched, purely because the code was absent from the quote
+// rows.
+
+describe("matching through item_customer_parts", () => {
+  const map = new Map([["THEIRS-9", "OUR-1"]]);
+
+  it("matches a buyer code that appears on NO quote line", () => {
+    const r = reconcilePoAgainstQuotes(
+      [{ customer_part_number: "THEIRS-9", qty: 1, rate: 100 }],
+      [qline({ customer_part_number: null })],          // the quote knows nothing of THEIRS-9
+      { customerPartMap: map },
+    );
+    expect(r.summary.matched).toBe(1);
+    expect(r.lines[0]._match.matched_on).toBe("item_customer_parts");
+  });
+
+  it("is the LAST resort — a quote-line code still wins", () => {
+    // Tier 2 is a direct observation on the document we are reconciling
+    // against; the map is a stored belief about the customer.
+    const r = reconcilePoAgainstQuotes(
+      [{ customer_part_number: "THEIRS-1", qty: 1, rate: 100 }],
+      [qline()],
+      { customerPartMap: new Map([["THEIRS-1", "OUR-OTHER"]]) },
+    );
+    expect(r.lines[0]._match.matched_on).toBe("customer_part_number");
+  });
+
+  it("never displaces a part_no match", () => {
+    const r = reconcilePoAgainstQuotes(
+      [{ part_no: "OUR-1", customer_part_number: "THEIRS-9", qty: 1, rate: 100 }],
+      [qline()],
+      { customerPartMap: map },
+    );
+    expect(r.lines[0]._match.matched_on).toBe("part_no");
+  });
+
+  it("normalises the map's keys, so the caller need not know our key rules", () => {
+    const r = reconcilePoAgainstQuotes(
+      [{ customer_part_number: "theirs 9", qty: 1, rate: 100 }],
+      [qline({ customer_part_number: null })],
+      { customerPartMap: new Map([[" Theirs-9 ", "OUR-1"]]) },
+    );
+    expect(r.summary.matched).toBe(1);
+  });
+
+  it("stays unmatched when the map points at a part no quote carries", () => {
+    // A mapping is not a quotation. Resolving to a part nobody priced must not
+    // manufacture a match.
+    const r = reconcilePoAgainstQuotes(
+      [{ customer_part_number: "THEIRS-9", qty: 1, rate: 100 }],
+      [qline({ part_no: "SOMETHING-ELSE", customer_part_number: null })],
+      { customerPartMap: map },
+    );
+    expect(r.lines[0]._match.verdict).toBe("unmatched");
+  });
+
+  it("behaves exactly as before when no map is supplied", () => {
+    const r = reconcilePoAgainstQuotes(
+      [{ customer_part_number: "THEIRS-9", qty: 1, rate: 100 }],
+      [qline({ customer_part_number: null })],
+    );
+    expect(r.lines[0]._match.verdict).toBe("unmatched");
+  });
+
+  it("ignores a non-Map option rather than throwing", () => {
+    const r = reconcilePoAgainstQuotes(
+      [{ customer_part_number: "THEIRS-9", qty: 1, rate: 100 }],
+      [qline({ customer_part_number: null })],
+      { customerPartMap: { "THEIRS-9": "OUR-1" } },     // a plain object
+    );
+    expect(r.lines[0]._match.verdict).toBe("unmatched");
+  });
+
+  it("subtracts the matched quote from the reverse walk", () => {
+    // Same trap as tier 2: orderedKeys must record the QUOTE's part_no, or the
+    // part gets reported as quoted-but-never-ordered having just been matched.
+    const r = reconcilePoAgainstQuotes(
+      [{ customer_part_number: "THEIRS-9", qty: 1, rate: 100 }],
+      [qline({ customer_part_number: null })],
+      { customerPartMap: map },
+    );
+    expect(r.quoted_not_ordered || []).toHaveLength(0);
+  });
+});
+
+describe("the route builds the map safely", () => {
+  const src = read("src/api/orders/reconcile_quotes.js");
+
+  it("filters to the ACTIVE mapping", () => {
+    // Migration 129 enforces one active row per (tenant, customer, code);
+    // superseded rows keep a stamped valid_to. Omitting the filter resolves a
+    // buyer code to a part it USED to mean.
+    expect(src).toMatch(/\.is\("valid_to", null\)/);
+  });
+
+  it("scopes to the order's customer", () => {
+    expect(src).toMatch(/\.eq\("customer_id", order\.customer_id\)/);
+  });
+
+  it("chunks the item_master lookup", () => {
+    expect(src).toMatch(/i \+= 100/);
+  });
+
+  it("is best-effort — a map failure must not lose the reconciliation", () => {
+    // The map only ever ADDS matches; two tiers of reconciliation beat none.
+    expect(src).toMatch(/catch \(_e\) \{[\s\S]{0,200}Best-effort/);
   });
 });

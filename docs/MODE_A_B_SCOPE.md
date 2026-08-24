@@ -9,6 +9,65 @@ paraphrased below; the structural findings are exact.
 
 ---
 
+## 0a. REVISED 2026-08-24 — the foundation was wrong
+
+**`tally_voucher_state` is empty and no tenant has Tally connected.** PR 0 was
+asked precisely to find this, and it did: everything below §0 was designed
+around the Tally bridge, and the bridge has never carried a byte for anybody.
+
+That does not block Mode A/B. It corrects it.
+
+**The comparison does not need a Tally connection. It needs the Tally sales
+order, and the customer already has that as a PDF.** The pair that produced
+every structural finding in §1 arrived that way — exported from Tally and sent
+over. Nobody had to integrate anything.
+
+And requiring a connector for Mode B was backwards on its own terms. Mode B's
+whole promise is *change nothing about your process*; asking a customer to
+install an ERP bridge before they trust the software is a bigger ask than the
+thing they are evaluating. A customer who will never connect Tally to a
+vendor's system is exactly the customer Mode B exists for.
+
+### What this changes
+
+| | was | now |
+|---|---|---|
+| How Anvil sees the Tally SO | reverse sync into `tally_voucher_state` | **extract the PDF the customer already exports** |
+| Prerequisite | a working Tally bridge per tenant | none |
+| Missing piece | the voucher→order join | a `sales_order` extraction kind |
+| Reuses | `tally/reconcile.js` drift machinery | **the extraction pipeline**, hardened all through #486–#493 |
+
+The join key is unchanged and still clean: the SO prints `Buyer's Ref./Order No`,
+`orders.po_number` holds the other side. The adjudicator (#503) plugs in
+unaltered — it takes three values and a spec, and does not care how any of them
+were obtained.
+
+### What is genuinely missing now
+
+1. A **`sales_order` extraction kind** — schema, prompt, a branch in both
+   adapters (grep BOTH; that drift has cost this repo three times), and the
+   `extraction_kind` CHECK.
+2. Golden fixtures for it, per #489's per-kind profiles.
+3. The **join** from an extracted SO to its order, on the buyer's reference.
+4. The **three-way report**, feeding `adjudicateField`.
+5. The **mode flag and selector**.
+
+Notably absent from that list: a bridge, a connector, credentials, or an IT
+project on the customer's side.
+
+### The bridge is not wasted, but it is not the on-ramp
+
+Eleven files under `src/api/tally/` — push, sync, reconcile, drift_addon,
+health, diagnostics, masters, amend, retry, validate, companies — plus a paid
+SKU gated on `tally_drift_addon_enabled`, have never run against a live
+connection. That is worth knowing on its own.
+
+Once a tenant trusts Anvil enough to connect Tally, the push-and-drift path is
+the mature version of this and it is already built. But it is the destination,
+not the doorway, and the doorway is what Mode B was asked for.
+
+---
+
 ## 0. The short version
 
 The comparison is the product. A customer will not hand sales-order processing
@@ -112,7 +171,7 @@ was built for.
 
 | Piece | State |
 |---|---|
-| Pull vouchers from Tally | **exists** — `tally/sync.js` `syncVoucherState`, every altered voucher since a watermark, not just pushed ones, full payload in `raw` |
+| Pull vouchers from Tally | exists, but **has never run** — no tenant has Tally connected and `tally_voucher_state` is empty. See §0a: the design no longer depends on it |
 | Mirror table | **exists** — `tally_voucher_state`, keyed `(tenant, company, external_voucher_no)` |
 | Drift run + findings + resolution | **exists** — `tally/reconcile.js`, `drift_check` mode, runs/findings history, admin screen |
 | Field-by-field scoring with tolerances | **exists** — `eval/score.js` + `kind-profiles.js` |
@@ -128,11 +187,11 @@ was built for.
 
 ## 4. The build
 
-**PR 0 — answer the one question that decides the rest.** Does the Tally bridge
-return voucher *lines*? Read one `tally_voucher_state.raw` for a real SO. If it
-carries lines, PRs 1–5 hold. If it returns headers only, the comparison is
-limited to totals and dates until the bridge is extended — a materially
-different scope, and better known now.
+**PR 0 — DONE, and it changed the plan.** The question was whether the bridge
+returns voucher lines. The answer was that the bridge has never run at all:
+`tally_voucher_state` is empty, no tenant has Tally connected. See §0a — the
+input is the SO PDF the customer already exports, and PRs 1–5 below should be
+read against that, not against the bridge.
 
 ```sql
 select external_voucher_no, voucher_type,

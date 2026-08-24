@@ -6,6 +6,142 @@ import { OpportunityQuoteRevisions } from "../components/OpportunityQuoteRevisio
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 
+// The list view: the pipeline as one sortable table.
+//
+// The board answers "what is in each stage". It cannot answer "what is the
+// biggest thing in this pipeline", "what has not moved in a month", or "which
+// of these is least likely to close" — questions ABOUT the pipeline rather
+// than about a stage, and every one of them needs comparing across all eleven
+// columns at once.
+//
+// Sorting is client-side on purpose. The board already holds the whole set in
+// memory (it has to, to bucket it), so a round trip per sort would be slower
+// and would make the two views disagree about what "the pipeline" contains.
+const OPP_COLUMNS = [
+  { key: "title", label: "Opportunity", align: "left" },
+  { key: "customer", label: "Customer", align: "left" },
+  { key: "stage", label: "Stage", align: "left" },
+  { key: "value", label: "Value", align: "right" },
+  { key: "weighted", label: "Weighted", align: "right" },
+  { key: "probability", label: "Close prob.", align: "right" },
+  { key: "owner", label: "Owner", align: "left" },
+  { key: "age", label: "Age", align: "right" },
+];
+
+const oppSortValue = (r, key) => {
+  switch (key) {
+    case "title": return String(r.title || r.customer_name || r.customer || "").toLowerCase();
+    case "customer": return String(r.customer_name || r.customer || "").toLowerCase();
+    // Sorted by the stage's WEIGHT, not its name: alphabetical stage order is
+    // meaningless, and pipeline order is what somebody scanning this wants.
+    case "stage": return OPP_STAGES.findIndex((s) => s.id === r.stage);
+    case "value": return Number(r.value) || 0;
+    case "weighted": {
+      const w = OPP_STAGES.find((s) => s.id === r.stage)?.w ?? 0;
+      return (Number(r.value) || 0) * w;
+    }
+    // -1, not 0: an opportunity nobody has scored is not the same as one
+    // scored at zero, and sorting them together hides exactly the rows that
+    // need attention.
+    case "probability": return Number.isFinite(Number(r.ai_probability)) ? Number(r.ai_probability) : -1;
+    case "owner": return String(r.owner || "").toLowerCase();
+    case "age": {
+      const t = r.created_at || r.updated_at;
+      return t ? new Date(t).getTime() : 0;
+    }
+    default: return 0;
+  }
+};
+
+const OppList = ({ rows, sortKey, sortDir, onSort }) => {
+  const sorted = [...rows].sort((a, b) => {
+    const av = oppSortValue(a, sortKey);
+    const bv = oppSortValue(b, sortKey);
+    if (av === bv) return 0;
+    // Both sides come from the same key, so they are always the same type —
+    // but TypeScript cannot see that through the switch, and asserting it is
+    // honest here in a way a cast to `any` would not be.
+    const cmp = typeof av === "string" && typeof bv === "string"
+      ? av.localeCompare(bv)
+      : Number(av) - Number(bv);
+    return sortDir === "desc" ? -cmp : cmp;
+  });
+
+  return (
+    <Card>
+      {/* Its own scroll container: eight columns on a narrow screen must not
+          make the whole page scroll sideways. */}
+      <div style={{ overflowX: "auto" }}>
+        <table className="tbl" style={{ width: "100%" }}>
+          <thead>
+            <tr>
+              {OPP_COLUMNS.map((c) => {
+                const active = sortKey === c.key;
+                return (
+                  <th
+                    key={c.key}
+                    onClick={() => onSort(c.key)}
+                    aria-sort={active ? (sortDir === "desc" ? "descending" : "ascending") : "none"}
+                    style={{ textAlign: c.align === "right" ? "right" : "left", cursor: "pointer", whiteSpace: "nowrap" }}
+                    title={`Sort by ${c.label.toLowerCase()}`}
+                  >
+                    {c.label}
+                    {/* The arrow is not the only signal — aria-sort carries it
+                        for a screen reader, and the header stays legible
+                        without colour. */}
+                    <span style={{ opacity: active ? 0.9 : 0.25, marginLeft: 4 }}>
+                      {active ? (sortDir === "desc" ? "\u2193" : "\u2191") : "\u2195"}
+                    </span>
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r) => {
+              const stage = OPP_STAGES.find((s) => s.id === r.stage);
+              const sc = OPP_STAGE_CHIP(r.stage);
+              const prob = OPP_PROB_CHIP(r.ai_probability);
+              const v = Number(r.value) || 0;
+              const created = r.created_at || r.updated_at;
+              return (
+                <tr
+                  key={r.id}
+                  tabIndex={0}
+                  onClick={() => { window.location.hash = `#/opps?id=${r.id}`; }}
+                  onKeyDown={(ev) => {
+                    if (ev.key === "Enter" || ev.key === " ") {
+                      ev.preventDefault();
+                      window.location.hash = `#/opps?id=${r.id}`;
+                    }
+                  }}
+                  style={{ cursor: "pointer" }}
+                >
+                  <td>{r.title || r.customer_name || r.customer || "—"}</td>
+                  <td>{r.customer_name || r.customer || "—"}</td>
+                  <td><Chip k={sc.k}>{sc.label}</Chip></td>
+                  {/* tabular-nums so the figures line up down the column */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{v ? fmtINRShort(v) : "—"}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                    {v && stage ? fmtINRShort(v * stage.w) : "—"}
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    <span title={r.ai_probability_reasoning || (r.ai_probability == null ? "Not scored yet" : "")}>
+                      <Chip k={prob.k}>{prob.label}</Chip>
+                    </span>
+                  </td>
+                  <td>{r.owner || "—"}</td>
+                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{created ? ageLabel(created) : "—"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+};
+
 // ============================================================
 // ANVIL v3 — wired Opportunities
 // Wave B · Sales pipeline · 11-stage kanban
@@ -73,6 +209,20 @@ const WiredOpportunities = () => {
   // Audit P9.2: optional sort-by-AI-probability flag + per-row
   // re-predict spinner.
   const [sortByProb, setSortByProb] = useState(false);
+  // Board or list.
+  //
+  // Eleven columns is a lot of horizontal scrolling to answer "what is the
+  // biggest thing in this pipeline" or "what has not moved in a month" —
+  // questions about the pipeline as a WHOLE, which a board is the wrong shape
+  // for. The board answers "what is in each stage"; a list answers everything
+  // that needs comparing across stages, and sorting.
+  //
+  // In the hash so a view survives a refresh and can be linked to, matching
+  // the ?id= convention already on this screen.
+  const [view, setView] = useState(() =>
+    (typeof window !== "undefined" && window.location.hash.includes("view=list")) ? "list" : "board");
+  const [sortKey, setSortKey] = useState("value");
+  const [sortDir, setSortDir] = useState("desc");
   const [predictingId, setPredictingId] = useState<string | null>(null);
   const [draft, setDraft] = useState({
     opportunity_name: "", customer_id: "", stage: "QUALIFICATION", amount_inr: "",
@@ -191,9 +341,27 @@ const WiredOpportunities = () => {
         title="Opportunities · 11-stage pipeline"
         meta={`${total} active · weighted ${fmtINRShort(weighted)}`}
         right={<>
-          <Btn sm kind={sortByProb ? "live" : "ghost"} onClick={() => setSortByProb((v) => !v)} title="Sort by AI close probability (highest first)">
-            {sortByProb ? "Sorting by probability" : "Sort by probability"}
+          <Btn
+            sm
+            kind={view === "list" ? "live" : "ghost"}
+            onClick={() => {
+              const next = view === "list" ? "board" : "list";
+              setView(next);
+              const base = window.location.hash.split("?")[0] || "#/opps";
+              window.location.hash = next === "list" ? `${base}?view=list` : base;
+            }}
+            title={view === "list" ? "Switch to the stage board" : "Switch to a sortable list across all stages"}
+          >
+            {Icon.layers} {view === "list" ? "List" : "Board"}
           </Btn>
+          {/* Probability sort is a BOARD affordance — it re-sorts within each
+              column. In the list every column is sortable by its header, so
+              offering both would be two controls fighting over one ordering. */}
+          {view === "board" && (
+            <Btn sm kind={sortByProb ? "live" : "ghost"} onClick={() => setSortByProb((v) => !v)} title="Sort by AI close probability (highest first)">
+              {sortByProb ? "Sorting by probability" : "Sort by probability"}
+            </Btn>
+          )}
           <Btn icon kind="ghost" sm onClick={list.reload} title="Refresh">{Icon.cycle}</Btn>
           <Btn sm kind="primary" onClick={() => setCreating((v) => !v)}>
             {Icon.plus} {creating ? "Cancel" : "New opp"}
@@ -312,6 +480,19 @@ const WiredOpportunities = () => {
               No opportunities yet. Promote a lead to start the pipeline.
             </div>
           </Card>
+        ) : view === "list" ? (
+          <OppList
+            rows={rows}
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onSort={(k) => {
+              // Same column toggles direction; a new column starts descending,
+              // because every column here is one where "biggest / newest /
+              // furthest along" is the question being asked.
+              if (k === sortKey) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+              else { setSortKey(k); setSortDir("desc"); }
+            }}
+          />
         ) : (
           <div className="kanban" role="list" aria-label="Opportunity pipeline">
             {OPP_STAGES.map((s) => {

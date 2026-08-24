@@ -6,6 +6,7 @@ import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 import { BusyAction, busyLabel, busyVerb } from "../lib/busy-actions";
 import { QuotesStrip } from "../components/QuotesStrip";
+import { ThreeWayPanel } from "../components/ThreeWayPanel";
 import type { AttachedQuote } from "../components/QuotesStrip";
 import { QuotePane } from "../components/QuotePane";
 // The gate's own predicate, not a copy: a UI that disagreed with the server
@@ -1819,6 +1820,9 @@ const WiredSOWorkspace = () => {
     { id: "quotes", label: "Quotes", count: attachedQuotes.length || null },
     { id: "approval", label: "Approval" },
     { id: "tally", label: "Tally" },
+    // Next to Tally deliberately: both are about what the ERP holds. This one
+    // asks whether it matches what the customer ordered.
+    { id: "threeway", label: "PO vs ERP" },
     { id: "schedule", label: "Schedule", count: scheduleRows.length || null },
     { id: "shipments", label: "Shipments" },
     { id: "activity", label: "Activity", count: mergedTimeline.length || null },
@@ -2810,6 +2814,7 @@ const WiredSOWorkspace = () => {
           </Card>
         )}
 
+        {tab === "threeway" && <ThreeWayPanel orderId={o.id} />}
         {tab === "quotes" && (
           <QuotePane
             orderId={o.id}

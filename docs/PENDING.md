@@ -177,10 +177,15 @@ and resolution with a UI. `eval/score.js` + `kind-profiles.js` already do
 profile-driven field comparison with tolerances. Missing: a mode flag, the
 `Buyer's Ref./Order No` → `orders.po_number` join, and an `so_tally` profile.
 
-**PR 0 first, and it may change the scope:** does the Tally bridge return
-voucher LINES, or only headers? `tally_voucher_state` stores total/status/
-altered/cancelled plus `raw`; if `raw` has no lines the comparison is limited to
-totals and dates until the bridge is extended. Query in the doc.
+**PR 0 IS DONE (2026-08-24) and it changed the plan.** `tally_voucher_state` is
+empty and NO TENANT HAS TALLY CONNECTED — the bridge has never carried a byte.
+The comparison does not need a connection: it needs the Tally sales order, and
+the customer already exports that as a PDF (the pair that produced every
+structural finding arrived that way). Requiring a connector for Mode B was
+backwards anyway — its whole promise is "change nothing about your process".
+Now missing: a `sales_order` extraction kind, golden fixtures for it, the join
+on the buyer's reference, the report, and the mode selector. No bridge. See §0a
+of the scope doc.
 
 **The finding that shapes it:** on the first real PO→SO pair, two fields
 disagreed with the PO and neither was Anvil's doing — the PO stated payment

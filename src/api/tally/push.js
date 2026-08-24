@@ -66,6 +66,36 @@ export default async function handler(req, res) {
       return json(res, 400, { error: { message: "orderId required" } });
     }
     const svc = serviceClient();
+
+    // MODE B: Anvil does not write to the customer's ledger.
+    //
+    // The mode's entire promise is that their process is unchanged, and a
+    // voucher appearing in Tally that nobody entered breaks that promise in
+    // the one way that cannot be undone by a settings toggle. So the push is
+    // refused here, before the bridge is even resolved.
+    //
+    // Refused LOUDLY rather than no-oped. A push that silently does nothing is
+    // how a tenant discovers their mode by finding an empty ledger a week
+    // later; a 409 naming the mode is how they discover it in the second it
+    // happens. Everything else Anvil does — extract, reconcile, propose,
+    // compare — is untouched by the mode.
+    const modeQ = await svc.from("tenant_settings")
+      .select("so_processing_mode").eq("tenant_id", ctx.tenantId).maybeSingle();
+    // An unreadable setting, or a database without migration 221, leaves this
+    // undefined and the push proceeds — which is mode A, the behaviour every
+    // tenant already has. Failing the other way would stop pushes on a
+    // transient read error.
+    if (modeQ?.data?.so_processing_mode === "B") {
+      return json(res, 409, {
+        error: {
+          code: "SO_PROCESSING_MODE_B",
+          message: "This tenant is in Mode B: sales orders are processed by hand in the ERP and Anvil does not"
+            + " push vouchers. Anvil's own proposal is still recorded and compared. Switch to Mode A under"
+            + " Admin > Sales-order processing to let Anvil push.",
+        },
+      });
+    }
+
     const company = await tallyResolveCompany(svc, ctx.tenantId, body.companyId);
     // Resolve voucher type: explicit override on the request wins,
     // otherwise fall back to the company's default_sales_voucher_type

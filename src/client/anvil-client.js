@@ -575,6 +575,11 @@
     // Tenant docai settings (admin only). GET returns current
     // values; updateSettings PATCHes a partial.
     getSettings:    async () => apiFetch("/api/admin/docai_settings"),
+    // Mode A / Mode B: whether Anvil processes sales orders or only watches.
+    // Returns the explanation alongside the value so the screen does not keep
+    // its own copy of what the modes mean.
+    soProcessingMode:    async () => apiFetch("/api/admin/so_processing_mode"),
+    setSoProcessingMode: async (mode) => apiFetch("/api/admin/so_processing_mode", { method: "PATCH", body: { mode } }),
     updateSettings: async (patch) => apiFetch("/api/admin/docai_settings", { method: "PATCH", body: patch }),
     // Issue #210: per-tenant DocAI provider keys (encrypted) + provider order.
     // providerKeys() returns key_present booleans only (never the key).

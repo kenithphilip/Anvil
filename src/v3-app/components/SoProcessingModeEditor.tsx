@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Banner, Btn, Card, Chip } from "../lib/primitives";
+import { Banner, Btn, Card, Chip, KPI, KPIRow } from "../lib/primitives";
 import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 
@@ -15,6 +15,11 @@ import { RBAC } from "../lib/rbac";
 // the modes mean would drift, and the copy on the screen is the one a customer
 // reads before deciding. Saved via /api/admin/so_processing_mode; enforced in
 // tally/push.js, which refuses to push in Mode B.
+
+// Em-dash, never 0%, when a rate is null: a rate over an empty denominator
+// reads as a perfect score.
+const pctOf = (v: number | null | undefined) =>
+  (v === null || v === undefined ? "—" : `${Math.round(v * 1000) / 10}%`);
 
 type ModeInfo = {
   mode: string;
@@ -33,6 +38,10 @@ export const SoProcessingModeEditor: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  // The running score. This is what makes the choice evidence-led rather than
+  // a leap: a month of the customer's OWN orders with both answers side by
+  // side, rather than a vendor's accuracy claim about a benchmark.
+  const [summary, setSummary] = useState<any>(null);
 
   const load = () => {
     setErr(null);
@@ -43,6 +52,11 @@ export const SoProcessingModeEditor: React.FC = () => {
         setApplied(r?.applied !== false);
       })
       .catch((e: any) => setErr(e?.message || String(e)));
+    // Separate and non-fatal: a comparison that cannot be summarised must not
+    // stop somebody reading, or changing, their mode.
+    Promise.resolve(AnvilBackend?.orders?.threeWaySummary?.())
+      .then((r: any) => setSummary(r || null))
+      .catch(() => setSummary(null));
   };
 
   useEffect(load, []);
@@ -81,6 +95,50 @@ export const SoProcessingModeEditor: React.FC = () => {
             This decides whether Anvil writes to your ERP, so only an admin can change it.
           </span>
         </Banner>
+      )}
+
+      {summary?.available && (
+        <div style={{ marginTop: 12 }}>
+          <KPIRow>
+            <KPI lbl="Anvil differs from the PO" v={pctOf(summary.score?.anvil_error_rate)} />
+            <KPI lbl="Your process differs from the PO" v={pctOf(summary.score?.process_deviation_rate)} />
+            <KPI lbl="Orders compared" v={String(summary.orders_compared ?? 0)} />
+            <KPI lbl="Fields compared" v={String(summary.score?.decidable ?? 0)} />
+          </KPIRow>
+
+          {/* A thin score read as a verdict is how somebody hands over their
+              sales-order processing on four fields of evidence. */}
+          {summary.confidence && !summary.confidence.sufficient && (
+            <Banner kind="warn" title="Not enough compared yet to decide on">
+              <span className="mono-sm">{summary.confidence.detail}</span>
+            </Banner>
+          )}
+
+          {summary.both_deviated_orders > 0 && (
+            <Banner kind="bad" title={`${summary.both_deviated_orders} order${summary.both_deviated_orders === 1 ? "" : "s"} where Anvil and your ERP agreed — and the PO did not`}>
+              <span className="mono-sm">
+                Comparing the two against each other would have shown no problem at all. Only checking both
+                against the purchase order finds these.
+              </span>
+            </Banner>
+          )}
+
+          {Array.isArray(summary.by_field) && summary.by_field.length > 0 && (
+            <div className="mono-sm" style={{ marginTop: 8, opacity: 0.85 }}>
+              Most disagreed field{summary.by_field.length === 1 ? "" : "s"}:{" "}
+              {summary.by_field.slice(0, 3).map((f: any) => `${f.field} (${f.anvil_wrong + f.process_wrong} of ${f.decidable})`).join(", ")}
+            </div>
+          )}
+
+          {Array.isArray(summary.skipped) && summary.skipped.length > 0 && (
+            // Named rather than dropped: an order silently missing from a
+            // denominator is how a score flatters itself.
+            <div className="mono-sm" style={{ marginTop: 6, opacity: 0.7 }}>
+              {summary.skipped.length} attached sales order{summary.skipped.length === 1 ? "" : "s"} could not
+              be read, and {summary.skipped.length === 1 ? "is" : "are"} excluded from the figures above.
+            </div>
+          )}
+        </div>
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16, marginTop: 12 }}>

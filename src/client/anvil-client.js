@@ -800,6 +800,9 @@
         method: "POST",
         body: { document_id: documentId, extracted, ...(orderId ? { order_id: orderId } : {}) },
       }),
+    // The PO, Anvil and the ERP side by side for one order. Read-only.
+    threeWayReport: async (orderId) =>
+      apiFetch("/api/orders/three_way_report?orderId=" + encodeURIComponent(orderId)),
     attachedQuotes: async (orderId) => apiFetch("/api/orders/quotes?order_id=" + encodeURIComponent(orderId)),
     // One attached quote in full: a signed URL to read the PDF, plus the
     // extracted lines with rates converted back to PERCENTAGES, because the

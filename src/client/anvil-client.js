@@ -801,6 +801,10 @@
         body: { document_id: documentId, extracted, ...(orderId ? { order_id: orderId } : {}) },
       }),
     // The PO, Anvil and the ERP side by side for one order. Read-only.
+    // The running score across orders — the number the Mode A/B decision
+    // turns on. Bounded; defaults to the 50 most recent with a sales order.
+    threeWaySummary: async (limit) =>
+      apiFetch("/api/orders/three_way_summary" + (limit ? "?limit=" + encodeURIComponent(limit) : "")),
     threeWayReport: async (orderId) =>
       apiFetch("/api/orders/three_way_report?orderId=" + encodeURIComponent(orderId)),
     attachedQuotes: async (orderId) => apiFetch("/api/orders/quotes?order_id=" + encodeURIComponent(orderId)),

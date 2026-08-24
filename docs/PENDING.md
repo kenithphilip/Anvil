@@ -275,6 +275,44 @@ missing from gemini.js (#491), the unsupported_kind guard on one adapter only
 (#485), and now a prompt fix on one document kind and not its sibling. It is
 not adapter-specific: a fix lands where the bug was reported and nowhere else.
 
+### 2.J — Job shops: are we compatible, and what would it take?
+
+Assessed in [JOB_SHOP_FIT.md](JOB_SHOP_FIT.md) from a real prospect profile — a
+Pune precision-machining and fixture business, two plants, ~130 staff, 30+ CNC
+machines, CMM to 2 microns, tier-1 automotive/aerospace/oil-and-gas customers,
+exporting to Europe and the Americas.
+
+**Useful today for the FRONT half of their business, absent for the back half.**
+Anvil was built around a company selling its OWN products — catalogue, spare
+matrix, installed base, aftersales. A job shop sells CAPACITY against someone
+else's drawing.
+
+**What already fits, and unusually well:** multi-format PO extraction (25+ OEM
+layouts is exactly the problem we have spent most on); matching on the
+CUSTOMER's part number — for a product company the buyer's code is a
+convenience, for a job shop it is the only identity a part has, and #506/#508's
+tiers describe their world more accurately than ours; quote↔PO reconciliation;
+Mode A/B as an on-ramp; GST/e-invoice/e-way; drawing extraction.
+
+**What is missing is the core of their business:** there is no operation, no
+work centre, no machine, no routing anywhere in the schema. `bill_of_materials`
+is parent→child parts — a structure, not a process. No capacity, no machine
+envelope, no hourly rate. **They cannot quote in Anvil**, and quoting is where a
+job shop wins or loses money. No work order or shop floor. No material-cert /
+heat-number / CMM-report traceability, which is also what stands between their
+ISO 9001 and the AS9100 their aerospace customers will ask for. No inbound-RFQ
+workflow — their sales motion starts with a customer sending a DRAWING.
+
+**The strategic question is not technical.** Three options in §4: stay a
+product-company system and sell the commercial layer as a front end; build the
+job-shop spine (routing, costing, work orders — a lot of company, against
+entrenched incumbents in a price-driven segment); or take the INBOUND-RFQ WEDGE
+only — drawing in, quote out, on the extraction machinery already built.
+Option 3 uses what Anvil has rather than what it would have to become, and
+estimating is the bottleneck in every job shop.
+
+§5 lists what can honestly be said to such a shop today, and what must not be.
+
 ## 3. Known-unfixed defects
 
 Each verified, none currently breaking a user flow.

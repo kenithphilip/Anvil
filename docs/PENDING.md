@@ -194,6 +194,49 @@ after 60 days, the SO said 30; the PO allowed 6–8 weeks, the SO committed to
 Tally disagree, and who was right". That reframing is what makes it sellable in
 Mode B, where Anvil has no authority at all.
 
+### 2.P — A product manifesto / first principles
+
+Asked for 2026-08-24: a set of first principles to guide product iteration and
+product management.
+
+**Not a blank page.** Anvil has been making the same handful of judgements
+over and over, and they are recoverable from the code and the commit history
+rather than needing to be invented. A manifesto assembled from decisions
+already taken is one the team can recognise; one written from scratch is a
+wish-list. Candidates, each with a real instance behind it:
+
+1. **Machinery that is built and never wired does not exist.** `prompt-versions.js`
+   sat unwired for a year, `plm_changes` and `plm_boms` were written on every
+   cron tick and read by nothing, migration 124's `prompt_version` column was
+   never written to, `gun_drawings.approval_status` is a provision its own
+   migration calls "not enforced yet". This is the single most-repeated failure
+   in the repo.
+2. **A label must never outrun the truth.** A run tagged `v2` that ran the
+   default prompt; a `dedupKey` that deduplicates nothing; a comment asserting
+   parity between two adapters that had diverged. If the system says it did
+   something, it must have done it.
+3. **Default to undecidable.** A harness that resolves ambiguity in somebody's
+   favour is worse than one that admits the gap — see the exception engine that
+   fired ~2,000 mostly-wrong criticals and got switched off.
+4. **Quiet is not the same as broken, and the difference must be visible.**
+   "0 drifted" reads identically whether everything matched or every tree was
+   refused; those call for opposite responses.
+5. **Never ask for what the document already says.** The PO names its order,
+   the sales order names the PO it answers. Joel's standing "reduce clicks"
+   lens.
+6. **State the cost, not only the benefit.** A selector listing only upsides is
+   a recommendation wearing a toggle.
+7. **The authority is per-field.** Agreement with a person is not correctness.
+8. **A change arriving must not change behaviour nobody asked to change** —
+   the reasoning behind both migration 218's default-off and 221's default-A.
+9. **Fail closed on a discriminator, open on an attribute.** The 42703 retry
+   that dropped `extraction_kind` and cost a customer's PO lines.
+
+**Open questions for the owner:** is this a document for the team, for
+customers, or for both? Who arbitrates when two principles conflict — (5) and
+(6) pull against each other on any screen that removes a decision. And does it
+carry authority over a roadmap item, or only over how one is built?
+
 ## 3. Known-unfixed defects
 
 Each verified, none currently breaking a user flow.

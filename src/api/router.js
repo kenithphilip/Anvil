@@ -402,6 +402,7 @@ import logisticsFreightAllocation from "./logistics/freight_allocation.js";
 import ordersDetachQuote      from "./orders/detach_quote.js";
 import ordersAttachQuote      from "./orders/attach_quote.js";
 import ordersAttachSalesOrder from "./orders/attach_sales_order.js";
+import ordersThreeWayReport from "./orders/three_way_report.js";
 import ordersExtractionJobs   from "./orders/extraction_jobs.js";
 import ordersExtractionJobsId from "./orders/extraction_jobs_id.js";
 import ordersCostSummary      from "./orders/cost_summary.js";
@@ -664,6 +665,7 @@ const STATIC_ROUTES = {
   "/orders/detach_quote":            ordersDetachQuote,
   "/orders/attach_quote":           ordersAttachQuote,
   "/orders/attach_sales_order": ordersAttachSalesOrder,
+  "/orders/three_way_report": ordersThreeWayReport,
   "/supplier_rfq":                  supplierRfqIndex,
   "/supplier_rfq/send":             supplierRfqSend,
   "/supplier_rfq/quote":            supplierRfqQuote,

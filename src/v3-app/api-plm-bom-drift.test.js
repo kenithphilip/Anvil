@@ -233,7 +233,7 @@ describe("the sync raises it on the right trigger", () => {
     // flips plm_sync_state to errored. The mirror is the job; telling somebody
     // is a side benefit, and one malformed structure must not report a BOM
     // pull that worked as broken.
-    expect(src).toMatch(/try \{[\s\S]{0,200}alertOnBomDrift/);
+    expect(src).toMatch(/try \{[\s\S]{0,400}alertOnBomDrift/);
     expect(src).toMatch(/try \{ result\.impact = await alertOnImpact/);
   });
 
@@ -279,5 +279,67 @@ describe("the sync raises it on the right trigger", () => {
     // at once.
     expect(src).toMatch(/priorRevUsable = false/);
     expect(src).toMatch(/skipped: "prior_revision_read_failed"/);
+  });
+});
+
+// ── Making the comparison actually fire ──────────────────────────────
+//
+// The truncation guard made the feature CORRECT. It also made it nearly
+// silent: the incremental pull rarely returns a revised parent's unchanged
+// children, so comparable() refused almost every tree. Resolving the missing
+// children is what turns a correct-but-quiet feature into a working one.
+
+describe("the pull resolves the children the incremental page left behind", () => {
+  const src = read("src/api/_lib/plm-client.js");
+
+  it("fetches missing child parts for Windchill", () => {
+    expect(src).toMatch(/const resolveMissingChildren = async/);
+    expect(src).toMatch(/\.filter\(\(id\) => id && !have\.has\(id\)\)/);
+  });
+
+  it("takes Arena's child from the BOM row, which already carries it", () => {
+    // Arena returns childItem inline, so a child outside the incremental items
+    // page is already in hand. The old code read only .guid and threw the rest
+    // away, truncating the tree with the data to complete it on the same
+    // response.
+    expect(src).toMatch(/arenaChildParts\.push\(\{/);
+    expect(src).toMatch(/number: kid\.number \?\? kid\.itemNumber/);
+  });
+
+  it("declares the Arena accumulators at FUNCTION scope", () => {
+    // Declared inside the arena branch they are invisible where the results
+    // are merged, so the merge silently never happens and the fix is dead
+    // code that reads as live.
+    // Searched FROM the function, not from the top of the file: the
+    // resolveMissingChildren helper above it contains the same branch string,
+    // so a plain indexOf pointed backwards and sliced an empty string — a test
+    // that passes on nothing.
+    const fnStart = src.indexOf("export const plmFetchBoms");
+    const head = src.slice(fnStart, src.indexOf('if (s.system === "windchill")', fnStart));
+    expect(head).toMatch(/const arenaChildParts = \[\];/);
+    expect(head).toMatch(/const arenaSeen = new Set\(\);/);
+  });
+
+  it("escapes the id before putting it in an OData filter", () => {
+    expect(src).toMatch(/replace\(\/'\/g, "''"\)/);
+  });
+
+  it("bounds the work — this runs inside a 20s cron budget", () => {
+    expect(src).toMatch(/const MAX_RESOLVE_IDS = 200/);
+    expect(src).toMatch(/const RESOLVE_CHUNK = 20/);
+  });
+
+  it("degrades to today's behaviour rather than to a false deletion", () => {
+    // Anything still unresolved stays counted, so comparable() still refuses
+    // the tree. A wrong filter syntax makes the pass a no-op, not a hazard —
+    // which matters because this cannot be tested against a real Windchill.
+    expect(src).toMatch(/catch \(_e\) \{ \/\* leave them unresolved/);
+  });
+
+  it("reports how much it could assemble, so quiet is distinguishable from broken", () => {
+    // "0 drifted" reads identically whether every BOM matched or every tree
+    // was refused. Those call for opposite responses.
+    expect(src).toMatch(/boms\.resolution = resolution;/);
+    expect(read("src/api/plm/sync.js")).toMatch(/result\.bom_resolution = boms\.resolution/);
   });
 });

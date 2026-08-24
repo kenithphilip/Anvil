@@ -264,7 +264,11 @@ const syncOne = async (svc, system) => {
       // errored. A malformed structure or one bad notify row would otherwise
       // report the BOM pull as broken when it worked perfectly.
       try {
-        result.bom_drift = priorRevUsable
+        // How much of the structure the pull could assemble. A sync that resolved
+      // nothing and a sync where nothing drifted both report drifted:0, and
+      // they call for opposite responses.
+      if (boms.resolution) result.bom_resolution = boms.resolution;
+      result.bom_drift = priorRevUsable
           ? await alertOnBomDrift(svc, system.tenant_id, rows, priorRev)
           : { revised: 0, drifted: 0, skipped: "prior_revision_read_failed" };
       }

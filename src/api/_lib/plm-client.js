@@ -158,10 +158,62 @@ const flatLeafCount = (node) => {
   return node.children.reduce((s, c) => s + flatLeafCount(c), 0);
 };
 
+// Fetch the child parts an incremental pull left behind.
+//
+// This is the fix for the defect that made BOM drift unusable: parts come back
+// filtered by LastModified while usage links do not, so a parent that was just
+// revised arrives with its UNCHANGED children absent. buildTree then records
+// them as unresolved and the comparison refuses the tree — correct, but it
+// means the feature almost never fires.
+//
+// Resolving them is what makes it fire. Windchill needs a second Parts call
+// keyed on the missing IDs; Arena already returns the child inline on the BOM
+// row and never needed one.
+//
+// OPTIMISTIC AND FAIL-SAFE. Anything still unresolved after this stays
+// unresolved, buildTree still counts it, and comparable() still refuses the
+// tree. So a failed or partial resolve degrades to exactly today's behaviour —
+// quiet — rather than to a false "the supplier deleted these parts". That
+// matters because I cannot test this against a real Windchill: if the filter
+// syntax is wrong the pass returns nothing and nothing breaks.
+const MAX_RESOLVE_IDS = 200;   // bounded: this runs inside a 20s cron budget
+const RESOLVE_CHUNK = 20;      // OData $filter goes in the URL
+
+const resolveMissingChildren = async (s, parts, usageLinks) => {
+  const have = new Set(parts.map((p) => p.id));
+  const missing = [...new Set(usageLinks.map((u) => u.child).filter((id) => id && !have.has(id)))];
+  if (!missing.length) return { requested: 0, resolved: 0 };
+  const wanted = missing.slice(0, MAX_RESOLVE_IDS);
+  let resolved = 0;
+
+  if (s.system === "windchill") {
+    for (let i = 0; i < wanted.length; i += RESOLVE_CHUNK) {
+      const batch = wanted.slice(i, i + RESOLVE_CHUNK);
+      try {
+        const resp = await callJson(s, "/Windchill/servlet/odata/v1/ProdMgmt/Parts", {
+          query: { $top: RESOLVE_CHUNK, $filter: batch.map((id) => `ID eq '${String(id).replace(/'/g, "''")}'`).join(" or ") },
+        });
+        for (const p of (resp.value || [])) {
+          if (have.has(p.ID)) continue;
+          have.add(p.ID);
+          parts.push({ id: p.ID, number: p.Number, description: p.Name, revision: p.Revision, state: p.State?.Value, uom: p.DefaultUnit, raw: p });
+          resolved++;
+        }
+      } catch (_e) { /* leave them unresolved; the tree will be refused, not misread */ }
+    }
+  }
+  return { requested: wanted.length, resolved, capped: missing.length > wanted.length };
+};
+
 export const plmFetchBoms = async (s, opts = {}) => {
   const { since } = opts;
   let parts = [];
   let usageLinks = [];
+  // Function-scoped, not block-scoped inside the arena branch: a const declared
+  // in that branch is invisible where the results are merged below, so the
+  // merge would silently never happen.
+  const arenaChildParts = [];
+  const arenaSeen = new Set();
 
   if (s.system === "windchill") {
     // Windchill OData v1: /ProdMgmt/Parts and /ProdMgmt/PartUses
@@ -209,16 +261,34 @@ export const plmFetchBoms = async (s, opts = {}) => {
     }));
     // Arena doesn't expose a flat usage list; we fetch BOM per
     // item. Cap at 50 items per pass to stay inside the cron budget.
+    for (const x of parts) arenaSeen.add(x.id);
     for (const p of parts.slice(0, 50)) {
       try {
         const bomResp = await callJson(s, `/v1/items/${encodeURIComponent(p.id)}/bom`);
         for (const row of (bomResp.results || [])) {
+          const kid = row.childItem;
           usageLinks.push({
             parent: p.id,
-            child: row.childItem?.guid,
+            child: kid?.guid,
             qty: row.quantity,
             uom: row.unitOfMeasure,
           });
+          // Arena returns the child INLINE on the BOM row, so a child outside
+          // the incremental items page is already in hand — no second call.
+          // Without this the Arena tree was truncated exactly like Windchill's,
+          // while the data to complete it sat unread on the same response.
+          if (kid?.guid && !arenaSeen.has(kid.guid)) {
+            arenaSeen.add(kid.guid);
+            arenaChildParts.push({
+              id: kid.guid,
+              number: kid.number ?? kid.itemNumber ?? String(kid.guid),
+              description: kid.description ?? null,
+              revision: kid.revision ?? null,
+              state: kid.itemStatus?.name ?? null,
+              uom: kid.unitOfMeasure ?? null,
+              raw: kid,
+            });
+          }
         }
       } catch (err) {
         // Tolerate per-item failures so a single 404 doesn't kill
@@ -228,12 +298,21 @@ export const plmFetchBoms = async (s, opts = {}) => {
     }
   }
 
+  if (arenaChildParts.length) parts = parts.concat(arenaChildParts);
+
+  // Resolve whatever the incremental page left behind, so buildTree can
+  // produce a COMPLETE structure rather than one the comparison must refuse.
+  const resolution = await resolveMissingChildren(s, parts, usageLinks);
+  // Carried out to the caller so a quiet sync can be told apart from a broken
+  // one. Without it, "0 drifted" reads the same whether every BOM matched or
+  // every tree was refused as incomplete — and those need opposite responses.
+
   // Build canonical BOMs only for parts that have at least one
   // child link OR are explicitly released (so we mirror leaf
   // assemblies). This keeps the table from filling with thousands
   // of trivial single-part rows.
   const parentsWithChildren = new Set(usageLinks.map((u) => u.parent));
-  return parts
+  const boms = parts
     .filter((p) => parentsWithChildren.has(p.id))
     .map((p) => {
       const tree = buildTree(p, usageLinks, parts);
@@ -248,6 +327,11 @@ export const plmFetchBoms = async (s, opts = {}) => {
         raw: p.raw,
       };
     });
+  // An array with the summary attached, so the existing caller keeps working
+  // unchanged (it maps over the rows) while the sync can still read how much
+  // of the structure the pull was actually able to assemble.
+  boms.resolution = resolution;
+  return boms;
 };
 
 // ── ECO pull ──────────────────────────────────────────────────────

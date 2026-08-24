@@ -338,6 +338,20 @@ const runAllAdaptersInParallel = async ({ source, settings, customerId, hints, r
 // inside a 60s ceiling).
 const RUN_BUDGET_MS = Math.max(5_000, Number(process.env.DOCAI_RUN_BUDGET_MS) || 45_000);
 
+export const KIND_GATES_TABLE = Object.freeze({
+    po:           { reject: "non_po",           requiresLines: true },
+    rfq:          { reject: "non_po",           requiresLines: true },
+    generic:      { reject: null,               requiresLines: false },
+    supplier_ack: { reject: "non_ack",          requiresLines: false },
+    assembly_bom: { reject: "non_drawing",      requiresLines: true },
+    part_drawing: { reject: "non_drawing",      requiresLines: false },
+    quote:        { reject: "non_quote",        requiresLines: true },
+    invoice:      { reject: "non_invoice",      requiresLines: true },
+    packing_list: { reject: "non_packing_list", requiresLines: true },
+    eway_bill:    { reject: "non_eway_bill",    requiresLines: false },
+    sales_order:  { reject: "non_sales_order",  requiresLines: true },
+  });
+
 export const runExtractionPipeline = async (params) => {
   const runStartedAtMs = Date.now();
   const deadlineAt = runStartedAtMs + RUN_BUDGET_MS;
@@ -1309,6 +1323,28 @@ export const runExtractionPipeline = async (params) => {
     });
   }
 
+  // PER-KIND GATES, in ONE place.
+  //
+  // These were three hand-written branches — non_po for po, non_ack for
+  // supplier_ack, non_drawing for the two drawing kinds — plus an empty-lines
+  // check listing po, rfq and assembly_bom. Every kind added after that
+  // silently skipped both: quote, invoice, packing_list and eway_bill all
+  // emit their own non_<kind> classification that nothing refused, and a
+  // quote extracting ZERO lines was recorded as status 'ok'. A green run with
+  // an empty payload, which is precisely what the non_drawing branch's own
+  // comment said it existed to prevent.
+  //
+  // A table rather than branches, so the next kind cannot quietly opt out:
+  // an entry missing here is visible, where a missing `||` in a condition is
+  // not. api-kind-gates.test.js asserts every kind in the extraction_kind
+  // CHECK has one.
+  //
+  // requiresLines follows each tool's OWN schema — every tool listed true
+  // declares "lines" in its required array. part_drawing has no parts list and
+  // eway_bill is a header document about a consignment, so neither is failed
+  // for having none.
+  const KIND_GATES = KIND_GATES_TABLE;
+
   // 8. Derive status_reason.
   const lines = Array.isArray(out?.normalized?.lines) ? out.normalized.lines : [];
   let status;
@@ -1316,23 +1352,14 @@ export const runExtractionPipeline = async (params) => {
   if (!out || !out.ok) {
     status = "failed";
     statusReason = out?.reason || "fail_unknown";
-  } else if (out.normalized?.classification === "non_po" && kind === "po") {
+  } else if (KIND_GATES[kind]?.reject && out.normalized?.classification === KIND_GATES[kind].reject) {
+    // The extractor's OWN verdict that this is not the document it was asked
+    // to read. Surfaced rather than recorded as a green run with an empty
+    // payload — which is what happened to every kind added after these gates
+    // were written one branch at a time. See KIND_GATES.
     status = "failed";
-    statusReason = "non_po";
-  } else if (out.normalized?.classification === "non_ack" && kind === "supplier_ack") {
-    // Phase F.2: the supplier-ack classifier rejected the document
-    // (it was a marketing brochure, an unrelated PO, etc.). Surface
-    // it explicitly instead of silently recording status_reason='ok'.
-    status = "failed";
-    statusReason = "non_ack";
-  } else if (out.normalized?.classification === "non_drawing" && (kind === "assembly_bom" || kind === "part_drawing")) {
-    // CM PDM P1a/P3a: the drawing classifier rejected the document (it was a
-    // PO, a photo, or the wrong kind of drawing). Surface it instead of
-    // recording a green run with an empty payload. part_drawing has no parts
-    // list, so it deliberately skips the empty-lines gate below.
-    status = "failed";
-    statusReason = "non_drawing";
-  } else if (lines.length === 0 && (kind === "po" || kind === "rfq" || kind === "assembly_bom")) {
+    statusReason = KIND_GATES[kind].reject;
+  } else if (lines.length === 0 && KIND_GATES[kind]?.requiresLines) {
     const conf = out.confidence_overall;
     if (textLayer?.status === "image_only" && !ocrLayerUsed) {
       status = "failed"; statusReason = "image_pdf_no_text";

@@ -7,6 +7,7 @@ import { AnvilBackend } from "../lib/api";
 import { BusyAction, busyLabel, busyVerb } from "../lib/busy-actions";
 import { QuotesStrip } from "../components/QuotesStrip";
 import { ThreeWayPanel } from "../components/ThreeWayPanel";
+import { InvoicePoCheck } from "../components/InvoicePoCheck";
 import type { AttachedQuote } from "../components/QuotesStrip";
 import { QuotePane } from "../components/QuotePane";
 // The gate's own predicate, not a copy: a UI that disagreed with the server
@@ -1823,6 +1824,10 @@ const WiredSOWorkspace = () => {
     // Next to Tally deliberately: both are about what the ERP holds. This one
     // asks whether it matches what the customer ordered.
     { id: "threeway", label: "PO vs ERP" },
+    // The invoice against the same PO. Next to its sibling: one asks whether
+    // the ERP recorded the order correctly, the other whether the invoice
+    // bills it correctly, and both answer to the customer's document.
+    { id: "invoice_check", label: "Invoice vs PO" },
     { id: "schedule", label: "Schedule", count: scheduleRows.length || null },
     { id: "shipments", label: "Shipments" },
     { id: "activity", label: "Activity", count: mergedTimeline.length || null },
@@ -2815,6 +2820,7 @@ const WiredSOWorkspace = () => {
         )}
 
         {tab === "threeway" && <ThreeWayPanel orderId={o.id} />}
+        {tab === "invoice_check" && <InvoicePoCheck orderId={o.id} />}
         {tab === "quotes" && (
           <QuotePane
             orderId={o.id}

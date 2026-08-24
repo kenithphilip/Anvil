@@ -317,17 +317,19 @@ estimating is the bottleneck in every job shop.
 
 Each verified, none currently breaking a user flow.
 
-- **The reconciler never matches on `customer_part_number`** — only on our own
-  part code. A PO carrying only the customer's reference cannot match.
-- **`forecast_snapshots` has no cron.** `forecast/index.js:4` documents it as
-  nightly; `cron/daily.js` registers 13 jobs and forecast is not one. The
-  cockpit's weighted-pipeline figures are as old as the last manual click.
+- ~~The reconciler never matches on `customer_part_number`~~ — **fixed**
+  (#506, #508). Three tiers now: our code, the buyer's code on a quote line,
+  then the canonical `item_customer_parts` map.
+- ~~`forecast_snapshots` has no cron~~ — **fixed** (#507). Registered in the
+  daily group, drained per tenant, with the writer shared between the cron and
+  the admin button.
+- ~~`#467` has no UI caller~~ — **fixed**: an "Invoice vs PO" tab on the SO
+  workspace. Read-only; refusing to SEND on a blocking verdict is still PR3 and
+  still gated on §1.1.
 - **The analytics refresh is a sequential per-row upsert** — fine at current
   volume, a timeout at scale.
 - **`app.tsx:188` listens for `anvil:session`, which nothing emits.** Dead
   wiring that reads as live; same-tab sign-in works via the ordinary re-render.
-- **`#467` has no UI caller** — deliberate, but nothing yet checks invoices
-  against POs in practice.
 
 ---
 

@@ -248,6 +248,62 @@ const EWAY_BILL_PROFILE = {
   modelOwned: { dropHeader: [], dropLine: [] },
 };
 
+// The sales order the customer's ERP produced. The third side of the Mode A/B
+// comparison, and the only document that prints BOTH part numbers.
+const SALES_ORDER_PROFILE = {
+  kind: "sales_order",
+  suite: "sales-order-extraction",
+  label: "Sales order / order acknowledgement",
+  docRole: "sales_order",
+  header: [
+    // The join key first, because it is the field the whole comparison hangs
+    // on. A sales order whose buyer reference is misread does not reconcile
+    // against anything, and it fails looking like an unmatched order rather
+    // than a bad extraction.
+    { key: "buyerRefOrderNo", from: ["buyer_ref_order_no"], compare: "text" },
+    { key: "voucherNo", from: ["voucher_no"], compare: "text" },
+    { key: "voucherDate", from: ["voucher_date"], compare: "text" },
+    { key: "buyer", from: ["buyer_name"], compare: "text" },
+    { key: "paymentTerms", from: ["payment_terms"], compare: "text" },
+    { key: "currency", from: ["currency"], compare: "text" },
+    { key: "totalAmount", from: ["total_amount"], compare: "number" },
+  ],
+  identity: {
+    // Matched on OUR part number, like every other kind — but a sales order is
+    // the one document that also prints the customer's, so a fixture can pin
+    // both and catch the columns being read the wrong way round.
+    name: "partNo",
+    rules: [
+      { actual: ["partNo"], expected: ["partNo"] },
+      { actual: ["itemName"], expected: ["itemName", "partNo"] },
+    ],
+  },
+  line: [
+    { key: "qty", from: ["quantity", "qty"], compare: "number" },
+    { key: "rate", from: ["rate", "unitPrice"], compare: "number" },
+    { key: "amount", from: ["amount"], compare: "number" },
+    { key: "discountPct", from: ["discount_pct"], compare: "number" },
+    { key: "uom", from: ["uom"], compare: "text" },
+    { key: "hsn", from: ["hsn"], compare: "text" },
+    // The customer's own code, scored explicitly. This is the mapping a person
+    // performed by hand, it is the field most worth verifying in the whole
+    // comparison, and a fixture that did not check it would let the two part
+    // columns be swapped without a single test going red.
+    { key: "customerPartNo", from: ["customerPartNumber", "customer_part_number"], compare: "text" },
+    // `due_on` and `batch` are extracted and deliberately NOT scored here.
+    // A due date is a commitment the ERP derived, not a fact printed on the
+    // PO, so it belongs in the three-way adjudication where the authority is
+    // named — not in a pass/fail on extraction accuracy.
+  ],
+  modelOwned: {
+    // Neither is a claim about the model's reading. The voucher number and
+    // date are the ERP's own sequence and clock, unknowable to anything
+    // outside it, so a live replay must not score them.
+    dropHeader: ["voucherNo", "voucherDate"],
+    dropLine: [],
+  },
+};
+
 export const KIND_PROFILES = {
   po: PO_PROFILE,
   rfq: PO_PROFILE,          // rfq runs the PO schema; same vocabulary
@@ -255,6 +311,7 @@ export const KIND_PROFILES = {
   packing_list: PACKING_LIST_PROFILE,
   invoice: INVOICE_PROFILE,
   eway_bill: EWAY_BILL_PROFILE,
+  sales_order: SALES_ORDER_PROFILE,
 };
 
 // A kind with no profile has no business in the golden set: a fixture the

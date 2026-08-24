@@ -103,6 +103,10 @@ export default async function handler(req, res) {
       const KNOWN_KINDS = new Set([
         "po", "rfq", "supplier_ack", "invoice", "eway_bill", "generic",
         "assembly_bom", "part_drawing", "quote", "packing_list",
+        // Migration 220. A long sales order needs backgrounding like any other
+        // document, and a kind permitted on a run but refused at enqueue is a
+        // confusing way to discover the two lists had drifted.
+        "sales_order",
       ]);
       const requestedKind = body.kind || body.extraction_kind || null;
       if (requestedKind && !KNOWN_KINDS.has(requestedKind)) {

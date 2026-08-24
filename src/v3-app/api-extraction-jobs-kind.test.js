@@ -8,7 +8,7 @@
 // today and silently wrong the moment anything else enqueues.
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { __test } from "../api/cron/extraction_jobs.js";
@@ -32,14 +32,31 @@ describe("the three kind lists cannot drift apart", () => {
   // two lists that will — and the failure is a CHECK violation that rejects
   // the whole insert, so the queue looks broken rather than the list looking
   // wrong.
-  const runsSql = read("supabase/migrations/217_packing_list_kind.sql");
-  const jobsSql = read("supabase/migrations/219_extraction_jobs_kind.sql");
+  // Read the LATEST migration that redefines each CHECK, not a pinned one.
+  //
+  // These were pinned to 217 and 219, which made the test assert that the
+  // lists agreed AS OF THOSE FILES — so adding a kind in a later migration
+  // failed here even when all three lists agreed perfectly. The point is that
+  // the lists agree NOW; the file that last spoke is the source of truth.
+  const latestWith = (needle) => {
+    const files = readdirSync(join(HERE, "..", "..", "supabase", "migrations"))
+      .filter((f) => f.endsWith(".sql")).sort();
+    let found = null;
+    for (const f of files) {
+      const sql = read("supabase/migrations/" + f);
+      if (sql.includes(needle)) found = sql;
+    }
+    if (!found) throw new Error("no migration defines " + needle);
+    return found;
+  };
+  const runsSql = latestWith("extraction_runs_extraction_kind_check");
+  const jobsSql = latestWith("extraction_jobs_extraction_kind_check");
   const handler = read("src/api/orders/extraction_jobs.js");
 
   const runsKinds = kindsIn(runsSql, "extraction_runs_extraction_kind_check");
   const jobsKinds = kindsIn(jobsSql, "extraction_jobs_extraction_kind_check");
 
-  it("migration 219 permits exactly what extraction_runs permits", () => {
+  it("the jobs CHECK permits exactly what extraction_runs permits", () => {
     expect(jobsKinds).toEqual(runsKinds);
     expect(jobsKinds).toContain("quote");
     expect(jobsKinds).toContain("packing_list");

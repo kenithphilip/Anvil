@@ -198,7 +198,7 @@ const ARCH_STAGES: Array<{ n: string; nm: string; d: string; chips: string[]; ga
   { n: "01 · ingestion",  nm: "Multi-channel intake", d: "5 inbound channels. Customer-tier priority, dedup, thread state. Same canonical schema downstream.", chips: ["email", "whatsapp", "slack", "teams", "voice"] },
   { n: "02 · firewall",   nm: "PII redaction",        d: "Always-on. PAN, GSTIN, Aadhaar, phone, email tokens replaced with deterministic hashes before any LLM call.", chips: ["pre-LLM", "tenant-scoped", "audited"], gated: true },
   { n: "03 · extraction", nm: "Doc AI router",        d: "5 engines layered. Native parsers (GAEB, SheetJS) beat LLM where structure exists. Confidence scores propagate.", chips: ["Reducto", "Azure DI", "Unstructured", "Mistral", "Claude"] },
-  { n: "04 · reasoning",  nm: "Model routing",        d: "Haiku for trivia, Sonnet for line-items, Opus for anomalies. Per-call price is shown, not buried. Cache hit-rate exposed.", chips: ["Haiku", "Sonnet", "Opus", "BYO LLM"] },
+  { n: "04 · reasoning",  nm: "Model routing",        d: "Haiku for trivia, Sonnet for line-items, Opus for anomalies. Per-call price is shown, not buried. Cache hit-rate exposed.", chips: ["Haiku", "Sonnet", "Opus"] },
   { n: "05 · gate",       nm: "Operator review",      d: "Drafts only. A human presses ↵ before anything posts. Override reason is required, logged, indexed.", chips: ["⌘K", "↵", "passkey"], gated: true },
   { n: "06 · push",       nm: "17 ERPs · idempotent", d: "SAP, NetSuite, D365, Acumatica, Tally, P21, Eclipse, SX.e, Sage X3, IFS, Fusion, EBS, JDE, Plex, JobBoss², Ramco, proALPHA. Retry queue. Two-way reconcile.", chips: ["idempotent", "retry", "e-Invoice"] },
 ];
@@ -207,14 +207,17 @@ const ARCH_STAGES: Array<{ n: string; nm: string; d: string; chips: string[]; ga
 // the audit log, the cost meter, and the MCP surface. Each rail
 // maps to a concrete table or endpoint shipped today.
 const ARCH_RAIL: Array<{ k: string; v: string; d: string }> = [
-  { k: "A · audit log",  v: "Append-only, signed, NDJSON-exportable",     d: "Every state transition, every override, every model call, every ERP push. Cryptographically chained via the audit-events table. Replayable." },
+  { k: "A · audit log",  v: "Append-only, signed, NDJSON-exportable",     d: "Every state transition, every override, every model call, every ERP push. UPDATE and DELETE are revoked on audit_events at the database layer, and exports are HMAC-signed. Replayable as NDJSON." },
   { k: "B · cost meter", v: "Per-call price exposed to operators",        d: "Live cost panel reads tokens in, tokens out, model picked, cache hit, retry count. Cost is a first-class metric, not a billing surprise." },
   { k: "C · MCP surface", v: "External AI clients can read with scoped tokens", d: "11-tool registry. Claude desktop, ChatGPT, Copilot can query Anvil with role-bound scopes. Every call writes mcp_call_log." },
 ];
 
 const ARCH_FOOTER: Array<[string, string]> = [
-  ["Data residency",   "ap-south-1 default · EU · US on Group"],
-  ["Auth",             "Passkeys · TOTP · WebAuthn · SCIM"],
+  // One deployment, one region. Multi-region is a roadmap item, not
+  // a plan tier — there is no region routing anywhere in the codebase.
+  ["Hosting",          "Single region · multi-region on the roadmap"],
+  // SCIM removed: no SCIM endpoint, provisioning code or dependency exists.
+  ["Auth",             "Passkeys · TOTP · WebAuthn"],
   ["Tenant isolation", "RLS on every table · per-tenant LLM key"],
   ["SLA",              "99.9% Operator · 99.95% Group"],
 ];
@@ -273,16 +276,35 @@ const WHATSNEW: Array<{
   },
 ];
 
-// Security strip: 6 badges. Statuses are honest: SOC 2 / ISO 27001
-// programs are in progress (no fixed completion date until the
-// observation window closes); remainder live.
+// Security strip. Every badge below names something a reader could
+// verify in this repository, and nothing that requires a third party
+// we have not engaged.
+//
+// The previous strip said the opposite of the truth, under a comment
+// asserting the statuses were honest. Five of its six badges failed:
+// SOC 2 and ISO 27001 read "in progress", which tells a buyer an
+// auditor is engaged and an observation window is running — what
+// exists is SECURITY.md and an internal audit. "GDPR / DPDP —
+// compliant" was self-asserted with no DPA, no subject-access path,
+// no erasure endpoint, no retention policy and no sub-processor
+// list. "Data residency — IN · EU · US" described region routing
+// that does not exist in any form: no region key in vercel.json,
+// none in the Supabase config, no routing code. "BYO LLM key —
+// supported" described per-tenant provider keys; both adapters read
+// one process-level env var, and there is no Bedrock or Vertex path.
+//
+// A certification claim is the one thing on a landing page a buyer's
+// security reviewer checks first and cannot be talked out of. Saying
+// "planned" costs a deal we were not going to close honestly anyway;
+// saying "in progress" and being asked for the report loses one we
+// otherwise would have.
 const SECURITY = [
-  { ico: "SOC2", nm: "SOC 2 Type II", st: "in progress",    kind: "prog" },
-  { ico: "ISO",  nm: "ISO 27001",     st: "in progress",    kind: "prog" },
-  { ico: "GDPR", nm: "GDPR / DPDP",   st: "compliant",     kind: "live" },
-  { ico: "RES",  nm: "Data residency", st: "IN · EU · US", kind: "live" },
-  { ico: "BYO",  nm: "BYO LLM key",   st: "supported",     kind: "live" },
-  { ico: "PII",  nm: "PII redaction", st: "always-on",     kind: "live" },
+  { ico: "RLS",  nm: "Tenant isolation",  st: "Postgres RLS",   kind: "live" },
+  { ico: "PII",  nm: "PII redaction",     st: "always-on",      kind: "live" },
+  { ico: "MFA",  nm: "Passkeys · TOTP",   st: "available",      kind: "live" },
+  { ico: "LOG",  nm: "Append-only audit", st: "DB-enforced",    kind: "live" },
+  { ico: "SOC2", nm: "SOC 2 Type II",     st: "planned",        kind: "prog" },
+  { ico: "ISO",  nm: "ISO 27001",         st: "planned",        kind: "prog" },
 ];
 
 // Problem section: 4 pain rows with industry-estimate time stats.
@@ -399,8 +421,11 @@ const TIERS: Array<{
       { t: "Everything in Growth" },
       { t: "All 17 ERP pushes" },
       { t: "Voice AI (inbound + outbound)" },
-      { t: "BYO LLM key (Bedrock · Vertex · Azure) · -10% off" },
-      { t: "SOC 2 + ISO 27001 evidence + signed BAA / DPA" },
+      // Was "BYO LLM key (Bedrock · Vertex · Azure) · -10% off" and
+      // "SOC 2 + ISO 27001 evidence + signed BAA / DPA". Neither can be
+      // delivered: there is no per-tenant key path and no certification.
+      // A plan feature is a contractual promise, not marketing copy.
+      { t: "Security review support · architecture + controls walkthrough" },
       { t: "99.9% uptime · 1-hour support · dedicated CSM + QBR" },
     ],
     cta: "Talk to sales",
@@ -427,11 +452,11 @@ const CHANGELOG = [
 ];
 
 const FAQ = [
-  { num: "01", q: "Where does my data live? Does it leave India?", a: "By default your data stays in {ap-south-1} (Mumbai). EU and US residency available on Growth and Enterprise plans. PII is redacted before any LLM call leaves your tenant, that's the redaction firewall, on by default. You can also bring your own LLM key (Bedrock or Vertex inside your VPC) on the Enterprise plan, in which case we never see the document content at all." },
+  { num: "01", q: "Where does my data live? Does it leave India?", a: "Your data is held in one region, in India. We do not currently offer EU or US residency — that is a roadmap item, and we would rather say so than discover it during your security review. PII is redacted before any LLM call leaves your tenant; that is the redaction firewall and it is on by default for every provider. Document content does leave our infrastructure to reach a model provider. You can put your own API key in front of the extraction providers so the usage is billed to you and governed by your contract with them — but the request still passes through us, so treat this as key ownership, not isolation." },
   { num: "02", q: "My ERP isn't on your list. Is that a dealbreaker?", a: "Probably not. Our connector framework is field-mapped, if your ERP has REST, OData, SOAP, or even SFTP CSV, we can usually have a working push live in 5–8 working days. We've built three \"custom\" connectors so far (a 30-yr-old Foxpro system being one of them). Send us the API doc; we'll quote a timeline before you sign anything." },
   { num: "03", q: "How fast is onboarding actually?", a: "Two weeks to first voucher is the bar we hold ourselves to: Week 1, connect your ERP, sync masters, train the alias graph on your last 90 days of POs. Week 2, pilot with 1 customer, tune anomaly rules, ship to production. Most teams hit production day 11. The longest pilot we've had was 19 days; the customer had a non-standard SAP ECC setup." },
   { num: "04", q: "Who owns the extracted data and the alias graph?", a: "You do. Always. We don't train cross-tenant models, we don't sell aggregated data, and your alias graph is exportable as JSON at any time. If you cancel, you take a full NDJSON export with you, every order, every event, every override reason. We keep zero copies after 30 days." },
-  { num: "05", q: "Can I use my own LLM key?", a: "Yes, on the Enterprise plan. We support AWS Bedrock (Claude, Llama), Google Vertex (Gemini), and Azure OpenAI, pointed at your own VPC. In that mode, document content never crosses our boundary; we orchestrate, you pay your own usage to AWS/GCP/Azure directly. Useful for finance teams with strict third-party-AI governance. Bringing your own key earns a 10% discount on the Enterprise base." },
+  { num: "05", q: "Can I use my own LLM key?", a: "For document extraction, yes — you can supply your own key for the extraction providers (including Gemini) and it is used in place of ours, so that usage is billed to you under your own contract. Two limits worth stating plainly, because this answer used to overstate both: we cannot yet point at AWS Bedrock, Google Vertex or Azure OpenAI, and nothing runs inside your VPC. The request still leaves our infrastructure, with PII redacted first. Whose key pays for the call and whose network it crosses are different questions, and only the first one is answered today." },
   { num: "06", q: "What's the SLA? What happens if Anvil is down?", a: "99.0% on Starter, 99.5% on Growth (≤ 3.6h/month downtime), 99.9% on Enterprise (≤ 43 min/month). If we're down: the Tally bridge keeps running locally, the inbox keeps queueing, and committing resumes the moment we're back, nothing is lost. We post incidents on {status.anvil.app} with full RCAs within 72 hours." },
   { num: "07", q: "How do you handle e-Invoice cancellations / amendments?", a: "Both are first-class. Cancel within 24h via the e-Invoice surface, we hit GSTN's {/cancel} endpoint and reverse the voucher. Amendments outside the 24h window are filed as credit notes with full lineage to the original IRN. Every state transition is on the audit log; e-Way bills follow the same lifecycle." },
   { num: "08", q: "What if I want to leave?", a: "Month-to-month. No 12-month lock. Export everything as NDJSON or CSV, including the audit log and alias graph. We delete your tenant data within 30 days of cancellation (audit logs retained per your statutory requirement, then purged). You'll also get a free 60-day transition period on a read-only plan if you need it for a finance audit cycle." },
@@ -821,7 +846,7 @@ const Landing: React.FC = () => {
               <div>
                 <span className="lp-eb lp-eb-dot">Trust &amp; security</span>
                 <h3 id="sec-h">Built for finance teams. Audited like one.</h3>
-                <p>RLS on every table, passkeys + TOTP for every user, redaction firewall before any LLM call. EU and IN data residency on request. Bring your own LLM key.</p>
+                <p>RLS on every table, passkeys + TOTP for every user, redaction firewall before any LLM call, and an audit log the database itself will not let anyone edit.</p>
               </div>
               <div className="lp-sec-badges">
                 {SECURITY.map((b) => (

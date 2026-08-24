@@ -47,6 +47,11 @@ import evalReplay       from "../eval/replay.js";
 // object) and notifications track detail.notified — so running it on both paths
 // costs a no-op, and no tenant has it on unless logistics_monitor_enabled.
 import logisticsMonitor from "./logistics-monitor-tick.js";
+// The nightly forecast snapshot. /api/forecast's own header says the dashboard
+// "reads from the nightly forecast_snapshots table" — but nothing scheduled it,
+// so the table only advanced when an admin clicked, and the cockpit's weighted
+// pipeline was as old as the last click with nothing on screen saying so.
+import forecastSnapshot from "../forecast/index.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -68,6 +73,7 @@ export default async function handler(req, res) {
       { name: "billing/recurring", fn: recurringCron,    opts: { path: "/api/billing/recurring_cron" } },
       { name: "eway_bills/expire", fn: ewayExpire,       opts: { path: "/api/eway_bills/expire" } },
       { name: "catalog/embed",     fn: catalogEmbed,     opts: { path: "/api/catalog/embed" } },
+      { name: "forecast/snapshot", fn: forecastSnapshot, opts: { path: "/api/forecast", method: "POST", body: {} } },
       // Bet 5: monthly drift-reconciliation report. Idempotent;
       // self-skips on non-month-start days.
       { name: "drift-report",      fn: driftReportCron,  opts: { path: "/api/cron/drift-report" } },

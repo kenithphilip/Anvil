@@ -81,8 +81,51 @@ export default async function handler(req, res) {
     }
 
     // 3. Reconcile.
+    // The dual-code map for THIS customer: their part number -> ours.
+    //
+    // The reconciler's first two tiers can only match a buyer code that some
+    // quote line happens to carry. item_customer_parts is the canonical
+    // mapping, grown by the ingest each time an operator confirms a part, so
+    // it knows codes no quote ever recorded — a PO naming a part we have sold
+    // this customer for years used to come back unmatched purely because the
+    // code was absent from the quote rows.
+    //
+    // valid_to IS NULL is load-bearing, not hygiene. Migration 129's partial
+    // unique index enforces one ACTIVE row per (tenant, customer, code);
+    // superseded mappings stay in the table with a stamped valid_to, so
+    // omitting the filter would resolve a buyer code to a part it USED to mean.
+    //
+    // Two queries rather than an embedded select: item_customer_parts keys to
+    // item_id and the part number lives on item_master, and PostgREST embedded
+    // FKs are fragile enough here that promote.js already avoids them.
+    const customerPartMap = new Map();
+    try {
+      const icp = await svc.from("item_customer_parts")
+        .select("item_id, customer_part_number")
+        .eq("tenant_id", ctx.tenantId).eq("customer_id", order.customer_id)
+        .is("valid_to", null);
+      const itemIds = [...new Set((icp.data || []).map((r) => r.item_id).filter(Boolean))];
+      if (!icp.error && itemIds.length) {
+        const byId = new Map();
+        for (let i = 0; i < itemIds.length; i += 100) {
+          const im = await svc.from("item_master").select("id, part_no")
+            .eq("tenant_id", ctx.tenantId).in("id", itemIds.slice(i, i + 100));
+          if (im.error) break;
+          for (const r of im.data || []) byId.set(r.id, r.part_no);
+        }
+        for (const r of icp.data || []) {
+          const ourPart = byId.get(r.item_id);
+          if (r.customer_part_number && ourPart) customerPartMap.set(r.customer_part_number, ourPart);
+        }
+      }
+    } catch (_e) {
+      // Best-effort. A reconciliation on the two direct tiers is worth more
+      // than none, and this map only ever ADDS matches.
+    }
+
     const rec = reconcilePoAgainstQuotes(orderLines, quoteLines, {
       priceTolerancePct: body.price_tolerance_pct != null ? Number(body.price_tolerance_pct) : 0.5,
+      customerPartMap,
     });
 
     // 3b. Header-level payment-terms check: the PO's payment terms

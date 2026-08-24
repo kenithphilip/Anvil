@@ -1,0 +1,57 @@
+{
+  "id": "sales-order-dual-part-columns",
+  "kind": "sales_order",
+  "description": "A sales order raised against a customer PO. The layout prints BOTH part columns and cites the buyer's order number — the two things that make this kind worth a schema of its own. Values are synthetic; the shape is taken from a real ERP export.",
+  "expected": {
+    "buyerRefOrderNo": "25AB0001234",
+    "voucherNo": "4417",
+    "voucherDate": "30-Jan-26",
+    "buyer": "Northwind Automation Systems Pvt Ltd",
+    "paymentTerms": "30 Days",
+    "currency": "INR",
+    "totalAmount": 9496.30,
+    "lineItems": [
+      {
+        "partNo": "3-000000-0-I",
+        "customerPartNo": "AB-L1-70B-2",
+        "itemName": "Bend Adapter",
+        "qty": 1,
+        "rate": 9790.00,
+        "discountPct": 3,
+        "amount": 9496.30,
+        "uom": "No."
+      }
+    ]
+  },
+  "normalized": {
+    "classification": "sales_order",
+    "buyer_ref_order_no": "25AB0001234",
+    "voucher_no": "4417",
+    "voucher_date": "30-Jan-26",
+    "buyer_name": "Northwind Automation Systems Pvt Ltd",
+    "payment_terms": "30 Days",
+    "delivery_terms": null,
+    "dispatched_through": "By Road",
+    "destination": null,
+    "currency": "INR",
+    "total_amount": 9496.30,
+    "total_is_tax_inclusive": null,
+    "amount_in_words": "Nine Thousand Four Hundred Ninety Six INR and Thirty paise Only",
+    "lines": [
+      {
+        "partNumber": "3-000000-0-I",
+        "customerPartNumber": "AB-L1-70B-2",
+        "description": "Bend Adapter",
+        "batch": "25AB0001234",
+        "due_on": "28-Feb-26",
+        "quantity": 1,
+        "uom": "No.",
+        "rate": 9790.00,
+        "discount_pct": 3,
+        "amount": 9496.30,
+        "hsn": null
+      }
+    ]
+  },
+  "baseline_score": 1.0
+}

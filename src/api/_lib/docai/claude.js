@@ -453,6 +453,152 @@ export const PART_DRAWING_SYSTEM_PROMPT = [
 // OUR code vs the CUSTOMER's reference. Getting them the wrong way round
 // teaches every future PO the wrong identity, so the prompt is explicit that
 // an unlabelled or ambiguous column must be left null rather than guessed.
+// The SALES ORDER we issue back on receiving a customer PO — read from the ERP
+// that produced it, not from Anvil.
+//
+// This is the OTHER SIDE of a comparison, and that is the whole reason the kind
+// exists. Mode A/B puts three documents side by side: the customer's PO (what
+// was asked for), Anvil's proposal (what we would do), and this (what a person
+// actually recorded). Anvil already reads the first and produces the second.
+//
+// Two things make this document unlike every other kind here.
+//
+// FIRST, it prints BOTH part numbers. A customer PO carries the buyer's code
+// and nothing else — our part number is not on it, and a person looks it up.
+// The sales order carries the buyer's code AND ours, side by side, which makes
+// it the only document that states the mapping outright. Getting those two
+// columns the right way round is the single most valuable thing this extractor
+// does; swapping them silently inverts the comparison.
+//
+// SECOND, the join key is not this document's own number. The voucher number
+// is the ERP's internal sequence and means nothing outside it. The field that
+// ties this to an Anvil order is the BUYER'S reference — the customer's PO
+// number, printed as "Buyer's Ref." or "Order No".
+export const SALES_ORDER_SYSTEM_PROMPT = [
+  "You extract a SALES ORDER / order acknowledgement raised BY the seller (our",
+  "company) in an ERP, in response to a purchase order received from a customer.",
+  "",
+  "STEP 1: Classify. Decide one of:",
+  "  - sales_order      an outbound sales order / order acknowledgement / order",
+  "                     confirmation with a line table",
+  "  - non_sales_order  anything else (a purchase order RECEIVED from a buyer, a",
+  "                     quotation, a tax invoice, a delivery note, a drawing)",
+  "",
+  "Tell these apart by DIRECTION and by STAGE, not by layout — many ERPs print",
+  "all of them on the same template:",
+  "  - a purchase order is the BUYER ordering from us. Its header names them as",
+  "    the buyer and us as the supplier/vendor.",
+  "  - a quotation is us OFFERING a price, before any order exists.",
+  "  - a tax invoice CHARGES for goods. It carries an invoice number and tax",
+  "    amounts, and usually follows dispatch.",
+  "  - a sales order is us CONFIRMING what we will supply, after their order and",
+  "    before invoicing. It normally cites the buyer's own order reference.",
+  "If non_sales_order, return classification='non_sales_order', empty lines, and stop.",
+  "",
+  "STEP 2: Header fields.",
+  "  - buyer_ref_order_no  THE MOST IMPORTANT FIELD ON THE DOCUMENT.",
+  "                        The CUSTOMER's own purchase-order number, as printed",
+  "                        under 'Buyer's Ref.', 'Buyer's Order No', 'Order No',",
+  "                        'Your Ref', 'Ref. No' or 'Customer PO'. It is what ties",
+  "                        this document to the order it answers.",
+  "                        Do NOT put this document's own voucher number here.",
+  "  - voucher_no          THIS document's own number ('Voucher No', 'SO No',",
+  "                        'Order Confirmation No'). The ERP's internal sequence.",
+  "  - voucher_date        the date this document was raised ('Dated', 'Date').",
+  "  - buyer_name          the party being sold TO. Never our own company.",
+  "  - buyer_gstin         their tax registration if printed.",
+  "  - consignee_name      the SHIP-TO party when printed separately from the",
+  "                        buyer. Often the same company at a different site.",
+  "  - payment_terms       as written, e.g. '30 Days', 'Net 45', 'Against delivery'.",
+  "  - delivery_terms      delivery/dispatch terms as written.",
+  "  - dispatched_through  the mode or carrier if stated, e.g. 'By Road'.",
+  "  - destination         the stated destination if printed.",
+  "  - currency            the currency symbol or code on the amounts.",
+  "  - total_amount        the document's own printed total, VERBATIM.",
+  "                        Do NOT compute it, and do NOT adjust it for tax.",
+  "                        Some layouts print an ex-tax body total, others a",
+  "                        tax-inclusive grand total; report what is printed and",
+  "                        set total_is_tax_inclusive only when the document says.",
+  "  - amount_in_words     the amount in words if printed.",
+  "",
+  "STEP 3: Lines. One entry per printed line item.",
+  "  - partNumber          OUR part code, from the seller's own part column",
+  "                        ('Part No', 'Item Code', 'Product Code').",
+  "  - customerPartNumber  the BUYER's code for the same item ('Cust Part No',",
+  "                        'Customer Part No', 'Buyer Part No', 'Their Ref').",
+  "",
+  "  These two are NOT interchangeable and getting them the wrong way round",
+  "  inverts everything downstream. When the table prints two part columns, the",
+  "  one labelled for the CUSTOMER is customerPartNumber and the other is ours.",
+  "  When only ONE part column is printed and nothing marks it as the customer's,",
+  "  it is OURS — put it in partNumber and leave customerPartNumber null.",
+  "  Never guess which is which from the format of the code itself.",
+  "",
+  "  - description         the goods description as printed.",
+  "  - batch               the batch/lot cell if the row has one. On many ERP",
+  "                        layouts this repeats the customer's PO number.",
+  "  - due_on              the row's promised or due date if printed.",
+  "  - quantity            numeric.",
+  "  - uom                 the unit ('per' column on some layouts): No, Nos, PCS, KG.",
+  "  - rate                the unit rate as printed.",
+  "  - discount_pct        the row discount percentage if a Disc% column exists.",
+  "  - amount              the row amount as printed.",
+  "  - hsn                 the HSN/SAC code if a column exists.",
+  "",
+  "Report figures exactly as printed. Do not recompute an amount from rate and",
+  "quantity, and do not reconcile a row that does not add up — a row whose",
+  "arithmetic is wrong is a finding, and silently correcting it destroys it.",
+].join("\n");
+
+const SALES_ORDER_TOOL = {
+  name: "extract_sales_order",
+  description: "Return the classification, header and line items of a SALES ORDER raised by the seller against a customer purchase order, keeping the buyer's reference distinct from this document's own number, and OUR part code distinct from the customer's.",
+  input_schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      classification: { type: "string", enum: ["sales_order", "non_sales_order"] },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+      buyer_ref_order_no: { type: ["string", "null"], description: "The CUSTOMER's purchase-order number this document answers ('Buyer's Ref.', 'Order No', 'Your Ref'). The join key. NOT this document's own voucher number." },
+      voucher_no: { type: ["string", "null"], description: "This document's own number — the ERP's internal sequence. Means nothing outside that ERP." },
+      voucher_date: { type: ["string", "null"] },
+      buyer_name: { type: ["string", "null"], description: "The party sold TO. Never our own company." },
+      buyer_gstin: { type: ["string", "null"] },
+      consignee_name: { type: ["string", "null"], description: "The ship-to party when printed separately from the buyer." },
+      payment_terms: { type: ["string", "null"], description: "As written, e.g. '30 Days'." },
+      delivery_terms: { type: ["string", "null"] },
+      dispatched_through: { type: ["string", "null"] },
+      destination: { type: ["string", "null"] },
+      currency: { type: ["string", "null"] },
+      total_amount: { type: ["number", "null"], description: "The document's own printed total, verbatim. Never computed, never tax-adjusted." },
+      total_is_tax_inclusive: { type: ["boolean", "null"], description: "True only when the document states the total includes tax. Null when it does not say — do NOT infer it from the presence of a tax column." },
+      amount_in_words: { type: ["string", "null"] },
+      lines: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            partNumber: { type: ["string", "null"], description: "OUR (seller's) part code. When only one part column is printed and nothing marks it as the customer's, it belongs here." },
+            customerPartNumber: { type: ["string", "null"], description: "The BUYER's code for the same item ('Cust Part No'). Null unless a column is explicitly the customer's — never inferred from the code's format." },
+            description: { type: ["string", "null"] },
+            batch: { type: ["string", "null"], description: "The row's batch/lot cell. Often repeats the customer's PO number." },
+            due_on: { type: ["string", "null"], description: "The row's promised or due date, as printed." },
+            quantity: { type: ["number", "null"] },
+            uom: { type: ["string", "null"] },
+            rate: { type: ["number", "null"], description: "Unit rate as printed." },
+            discount_pct: { type: ["number", "null"] },
+            amount: { type: ["number", "null"], description: "Row amount as printed. Never recomputed from rate x quantity." },
+            hsn: { type: ["string", "null"] },
+          },
+          required: ["description"],
+        },
+      },
+    },
+    required: ["classification", "confidence", "lines"],
+  },
+};
+
 export const QUOTE_SYSTEM_PROMPT = [
   "You extract a PRICE QUOTATION issued BY the seller (our company) TO a customer.",
   "",
@@ -1257,6 +1403,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   const isAssemblyBom = expectedKind === "assembly_bom";
   const isPartDrawing = expectedKind === "part_drawing";
   const isQuote = expectedKind === "quote";
+  const isSalesOrder = expectedKind === "sales_order";
   const isPackingList = expectedKind === "packing_list";
   const isInvoice = expectedKind === "invoice";
   const isEwayBill = expectedKind === "eway_bill";
@@ -1282,6 +1429,10 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     activePrompt = QUOTE_SYSTEM_PROMPT;
     activeTool = QUOTE_TOOL;
     activeToolName = "extract_quote";
+  } else if (isSalesOrder) {
+    activePrompt = SALES_ORDER_SYSTEM_PROMPT;
+    activeTool = SALES_ORDER_TOOL;
+    activeToolName = "extract_sales_order";
   } else if (isPackingList) {
     activePrompt = PACKING_LIST_SYSTEM_PROMPT;
     activeTool = PACKING_LIST_TOOL;
@@ -1792,6 +1943,31 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
         // additionalProperties:false -- made this branch dead: it could only
         // ever be null.
         terms: out.payment_terms || out.terms || null,
+      } : {}),
+      // The sales-order header. Spread for the same reason the quote block
+      // above exists: selecting the prompt and tool does NOT carry the header
+      // through, so without this every field would be extracted by the model
+      // and dropped here. On a quote that silently broke ingestion; here it
+      // would drop buyer_ref_order_no, which is the ONLY thing tying the
+      // document to the order it answers — the comparison would have nothing
+      // to join on and would report every sales order as unmatched.
+      ...(isSalesOrder ? {
+        buyer_ref_order_no: out.buyer_ref_order_no || null,
+        voucher_no: out.voucher_no || null,
+        voucher_date: out.voucher_date || null,
+        buyer_name: out.buyer_name || null,
+        buyer_gstin: out.buyer_gstin || null,
+        consignee_name: out.consignee_name || null,
+        payment_terms: out.payment_terms || null,
+        delivery_terms: out.delivery_terms || null,
+        dispatched_through: out.dispatched_through || null,
+        destination: out.destination || null,
+        currency: out.currency || null,
+        total_amount: out.total_amount ?? null,
+        // Null when the document does not say. Read as `false` it would assert
+        // an ex-tax total on a layout that never claimed one.
+        total_is_tax_inclusive: out.total_is_tax_inclusive ?? null,
+        amount_in_words: out.amount_in_words || null,
       } : {}),
       ...(isPackingList ? {
         packing_list_no: out.packing_list_no || null,

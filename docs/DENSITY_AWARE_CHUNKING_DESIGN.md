@@ -77,14 +77,77 @@ and run deadline (both re-checked **per window**), and the density result is
 **adopted only when it recovers more lines** than the attempt before it, so a
 worse or empty result can never replace a better one.
 
-## Phase 3 — refinements (later)
+## Phase 3a — the proactive trigger (SHIPPED)
 
-- **Proactive** trigger: when `shouldRowChunk` fires on the first-pass text, go
-  straight to row windows instead of paying for a doomed single-shot + retry.
-- **Background path** for very large contracts (hundreds of items) so the sync
-  15s function ceiling isn't the limit.
-- **Overlap windows** by one item + reconcile, to self-heal a boundary the
-  planner mis-cut on an unusual layout.
+Phase 2 reaches the row windows only as a *third* pass: cheap single-shot →
+generation-tier retry → density. On a document already known to be too dense,
+the first two are **doomed by construction**, and on a tight run budget they can
+exhaust it before the density step is ever reached.
+
+So `run.js` now checks **before** the first dispatch: flag on, density kind,
+a text layer, deadline not passed, and `shouldRowChunk(bodyText)` → go straight
+to `densityChunkedExtract`. One pass of N windows instead of three passes.
+
+- **Falls through** to the normal path on any `{skip}` signal or a result with
+  no lines, so a mis-read of density costs a fallback, never an extraction.
+
+### Three rules the proactive path must obey (from adversarial review)
+
+Going first means owning the failure, and an adopted density result reports
+`model_selection_reason: "escalate_quality"` — which is **not** in
+`CHEAP_TIER_REASONS`, so neither escalation can fire afterwards, and
+`densityAttempted` blocks the reactive path. Everything downstream of adoption
+is therefore *structurally unable to recover*. Hence:
+
+1. **Adopt only a COMPLETE run.** `merged.ok` is `okAny` — one good window out
+   of six — so `density_complete` (every planned window ran **and** succeeded,
+   no budget breach, no deadline cut) is what the proactive path requires.
+   Adopting a partial would ship part of a line table as a green run with every
+   recovery mechanism disabled behind it.
+2. **Reserve budget for the fallback.** Windows run sequentially at the
+   generation tier; without a reserve a slow/failing proactive pass leaves the
+   fallback with the deadline already behind it, so every adapter records
+   `skipped_deadline` and the run fails outright — strictly worse than the cheap
+   pass it replaced. `DOCAI_DENSITY_RESERVE_MS` (default 15s) is held back.
+3. **A higher bar than reactive.** Reactive only spends extra calls after a real
+   failure; proactive spends them up front on a document that might have been
+   fine. `DOCAI_DENSITY_PROACTIVE_MIN_ITEMS` (default 60) vs the reactive 46.
+
+`density-chunk.js` also **strips `source.bytes`/`url`** per window: only the LLM
+adapters honour `hints.bodyText`, while docling / marker / unstructured /
+azure_di / reducto read the bytes and would extract the **whole document for
+every window** — and the dispatcher does not stop at the first success below the
+fallback-confidence threshold, so one of them can win a window and contribute a
+full-document line set N times over into a merge that has no dedup. Without
+bytes they report `no_source_bytes` and are skipped, which is correct: a row
+window is a text artifact.
+- **`densityAttempted`** guards the Phase 2 reactive block: if the proactive
+  pass already tried row windows on this same text and did not help, running the
+  identical plan again is guaranteed waste.
+- `isDensityKind` / `DENSITY_KINDS` are exported from `density-chunk.js` and
+  used by BOTH call sites, so the proactive and reactive triggers cannot drift.
+
+Covered by integration tests through `runExtractionPipeline` (dense text →
+every dispatch is a window with `escalate:true` + a `density_window` index and
+the full document is never sent; flag off → unchanged single-shot; sparse doc →
+unchanged single-shot).
+
+## Phase 3b / 3c — not built, and why
+
+- **Background path** for very large contracts. The sync run has a deadline, so
+  a 200-item contract (8+ windows) can hit it and adopt a *partial* result. The
+  background worker (`cron/extraction_jobs.js`) already walks chunks across cron
+  ticks, but it chunks **PDFs by page** and persists each chunk as a **PDF
+  buffer** in the job's `chunk_status`; row windows are **text**, so supporting
+  them there means giving a job a second chunk representation (store window text
+  or re-derive the plan per tick from the cached text layer). That is a real
+  schema/worker change, not a wiring change, and is the honest prerequisite for
+  the "thousands of line items" target.
+- **Overlap-reconcile.** Windows currently partition the item blocks exactly,
+  which is what lets the merge skip dedup entirely. Overlapping windows by one
+  item to self-heal a mis-cut boundary would require a real dedup pass in
+  `mergeChunkResults` (there is none downstream today). Only worth it if a real
+  document is observed being mis-cut.
 
 ## Limitations (honest)
 

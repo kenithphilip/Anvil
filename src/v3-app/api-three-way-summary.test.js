@@ -119,8 +119,13 @@ describe("the endpoint", () => {
     expect(src).toMatch(/Math\.min\(MAX_ORDERS/);
   });
 
-  it("skips dedupe_hit runs", () => {
-    expect(src).toMatch(/status_reason === "dedupe_hit"/);
+  it("skips dedupe_hit and other non-usable extract runs", () => {
+    // dedupe_hit (a content-hash re-mint) plus the failure statuses that still
+    // write an empty normalized_extract, so a newer failed re-run cannot shadow
+    // an older good read.
+    expect(src).toMatch(/UNUSABLE_EXTRACT_STATUS/);
+    expect(src).toMatch(/"dedupe_hit"/);
+    expect(src).toMatch(/"empty_lines"/);
   });
 
   it("reads only ACTIVE dual-code mappings", () => {

@@ -131,12 +131,19 @@ export const planRowWindows = (text, opts = {}) => {
   // ; the last runs to end of document, minus a trailing non-item tail (terms /
   // totals) which we drop from the LAST block's span so terms don't bloat it.
   const lastItem = itemIdx[itemIdx.length - 1];
-  // trailing tail = lines after the last item row up to the first blank-run that
-  // precedes prose; keep the last block tight to its own physical rows by
-  // ending it at the next blank line after lastItem.
+  // Trailing tail (terms / totals / signature): everything after the last item
+  // block. Cut at the FIRST blank line after the last item row -- a single
+  // blank separator is what pdftotext -layout usually emits, so requiring a
+  // double blank here left the whole T&C block glued to the last window.
+  // The last item's own continuation rows are non-blank, so they stay.
   let lastBlockEnd = lines.length;
   for (let i = lastItem + 1; i < lines.length; i++) {
-    if (isBlank(lines[i]) && (i + 1 >= lines.length || isBlank(lines[i + 1]))) { lastBlockEnd = i; break; }
+    if (!isBlank(lines[i])) continue;
+    // Skip the blank run; if what follows is not another physical row of this
+    // item's block (it never is -- the next item row would have ended the
+    // block), the tail starts here.
+    lastBlockEnd = i;
+    break;
   }
 
   const blocks = [];

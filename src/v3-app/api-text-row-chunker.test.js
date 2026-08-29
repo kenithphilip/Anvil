@@ -138,6 +138,45 @@ describe("planRowWindows (edges)", () => {
     expect(planRowWindows(42).tableFound).toBe(false);
   });
 
+  it("drops a terms tail separated by only ONE blank line", () => {
+    // pdftotext -layout usually emits a single blank separator; requiring a
+    // DOUBLE blank glued the whole T&C block onto the last window.
+    const rows = [];
+    for (let i = 1; i <= 12; i++) rows.push(`  ${i}  WIDGET-${i}  5  100`);
+    const text = [
+      "QUOTATION", "TO: Someone Ltd", "",
+      " Item  Description  Qty  Rate", "",
+      ...rows,
+      "",                                   // single blank, then the tail
+      "Terms & Conditions:",
+      "1) Prices are ex-works our factory.",
+      "Your's Faithfully",
+    ].join("\n");
+    const plan = planRowWindows(text, { maxItemsPerWindow: 6 });
+    expect(plan.itemCount).toBe(12);
+    const all = plan.windows.map((w) => w.text).join("\n");
+    expect(all).not.toContain("Prices are ex-works");
+    expect(all).not.toContain("Faithfully");
+    expect(all).toContain("WIDGET-12"); // the last item is still kept
+  });
+
+  it("keeps a multi-row item's continuation rows when a blank follows the block", () => {
+    // The last item's own physical rows are non-blank and precede the blank, so
+    // cutting at the first blank must not truncate them.
+    const text = [
+      "PURCHASE ORDER", "S.No  Item  Qty  Rate", "",
+      "  1  PART-1  1  10", "     DESCRIPTION LINE 1", "     SPEC-1",
+      "  2  PART-2  1  20", "     DESCRIPTION LINE 2", "     SPEC-2",
+      "", "Terms: net 30",
+    ].join("\n");
+    const plan = planRowWindows(text, { maxItemsPerWindow: 10 });
+    expect(plan.itemCount).toBe(2);
+    const all = plan.windows.map((w) => w.text).join("\n");
+    expect(all).toContain("DESCRIPTION LINE 2"); // continuation kept
+    expect(all).toContain("SPEC-2");
+    expect(all).not.toContain("Terms: net 30");  // tail dropped
+  });
+
   it("exposes tunables", () => {
     expect(__consts__.DEFAULT_MAX_ITEMS_PER_WINDOW).toBeGreaterThan(0);
     expect(__consts__.DEFAULT_MIN_ITEMS_TO_CHUNK).toBeGreaterThan(0);

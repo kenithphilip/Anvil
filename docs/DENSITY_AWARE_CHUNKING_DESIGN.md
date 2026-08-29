@@ -48,25 +48,34 @@ table (stacked header, numbering gaps, terms tail), multi-physical-row-per-item,
 and the no-table / no-header / garbage edges. **Not wired into the pipeline yet**
 — it can be merged safely and does nothing until Phase 2 calls it.
 
-## Phase 2 — wire it as the last-resort escalation (dark-flagged)
+## Phase 2 — the last-resort escalation, dark-flagged (SHIPPED in this PR)
 
-Add `densityChunkedExtract({ bodyText, settings, ... })` (a sibling of
-`chunkedExtract`) that:
+`src/api/_lib/docai/density-chunk.js` — `densityChunkedExtract` (a sibling of
+`chunkedExtract`), wired into `run.js` after the #525 escalation, behind
+`tenant_settings.docai_density_chunk_enabled` (**migration 223**, default false).
+
+It:
 - calls `planRowWindows(bodyText)`; if `!tableFound` or `itemCount < min`, returns
   a signal to fall back to single-shot;
 - runs each window through `dispatchExtract` in **text mode**
   (`hints.bodyText = buildWindowBodyText(plan, window)`), at the generation tier;
-- **merges**: concatenate lines in window order; header/customer from the first
-  non-empty window; dedupe on (part_no|customer_part_number + qty) so an
-  accidental overlap between windows can't double-count; per-window failures are
-  reported, never silently dropped (an item missing from a denominator is how a
-  count flatters itself).
+- **merges** via the existing `mergeChunkResults`, which concatenates lines in
+  window order, takes the customer/head fields (incl. `quote_number` and
+  `stated_line_count`) from the first window that has them, and returns the
+  nested `normalized` shape `run.js` reads. No dedup pass is needed **or
+  present** — row windows *partition* the item blocks, so the same item cannot
+  appear twice. (That is a requirement of this merge, not an accident: there is
+  no line-level dedup anywhere downstream, contrary to a stale comment that this
+  PR corrects.) Per-window failures contribute an empty line array and are
+  reported, never silently dropped.
 
-Wire into `run.js` as the step **after** the #525 generation-tier retry still
-returns truncated/empty AND `shouldRowChunk(bodyText)` — i.e. only the genuinely
-too-big tables reach it, behind `tenant_settings.docai_density_chunk_enabled`
-(default off) for a pilot. Bounded by the same `runCost` cap and run deadline;
-each window is one call, so the cap governs total spend.
+Trigger in `run.js`: the flag is on, the kind is po/rfq/quote, the previous
+attempt is **still deficient** (`output_truncated`, or `ok` with zero lines),
+there is a text layer, the deadline has not passed, and `shouldRowChunk` fires —
+i.e. only genuinely too-big tables reach it. Bounded by the same `runCost` cap
+and run deadline (both re-checked **per window**), and the density result is
+**adopted only when it recovers more lines** than the attempt before it, so a
+worse or empty result can never replace a better one.
 
 ## Phase 3 — refinements (later)
 

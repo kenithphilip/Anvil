@@ -785,6 +785,156 @@ Two ideas worth taking, both wiring rather than building:
 - **Rank supplier quotes on landed cost, not raw price** (from §3.28). Also gives a consumer to two half-finished things: a real `moq` column would let the ranking use the MOQ-rounded quantity `inventory/eoq.js` already computes, and `inventory/lead-time.js` — which fits a per-supplier distribution from acknowledged-ETA-versus-actual-receipt deltas — could flag a vendor quoting 20 days whose own history says 45. That is lead-time verification Anvil can *evidence* rather than assert.
 - **Let a customer see their own shipment** (from §3.29). `portal_tokens` with per-customer scopes exists (mig 022), and `sales/part_tracking.js` already answers "where is my part?" by deriving the stage from `shipment_lines` rather than reading a free-text status. The gap is one branch: `portal/view.js` serves `summary | quotes | orders | invoices | spares | spare_matrix` and stops, so a customer can see their invoice but not their shipment. Gate it behind the per-user portal session (mig 199), **not** the token-in-URL link — [[backlog_portal_auth_compliance]] already records that link as not compliance-grade for an auto-OEM buyer, so Peer's no-login convenience is the wrong half to copy.
 
+### Additions — 2026-08-29 (YC's hardware RFS, and the one multiply Anvil is missing)
+
+Reviewed at the user's request: **Prototyping.io** plus three YC requests-for-startups
+that frame it — Nicolas Dessaigne on **hardware supply chain / iteration speed**,
+Charlie Warren on **new operating systems for the physical world**, and Zane
+Hengsperger on **modern metal mills**. The instruction was explicitly *learn, do
+not copy*, so the entry below is short and the synthesis after it is long: the
+theses turn out to be a better diagnostic of Anvil than the company is a
+competitor. Every claim was re-verified against current code.
+
+### 3.30 Prototyping.io — `prototyping.io` (adjacent-learn-only — the design→part loop)
+
+One-liner, verbatim: **"Multiple manufacturing processes, one platform."** YC's own
+framing: *"helps turn designs into mechanical parts in days."*
+
+ICP: hardware teams, early-stage startups through enterprises, needing prototype
+and early-production mechanical parts.
+
+Capability surface: upload a 3D CAD model; AI extracts design features and
+intent; the platform analyses manufacturability and flags issues; it selects the
+manufacturing process and sourcing; **machine programs are generated**; parts are
+made and delivered. Processes: CNC machining, sheet metal, 3D printing, injection
+moulding, extrusion, die casting. Materials across aluminium, steel, titanium,
+PEEK/PC/nylon; finishes from anodising to plating to powder coat.
+
+Integrations: not stated (CAD upload is the interface).
+
+Differentiators: **"AI-powered DFM analysis on your designs"**; tolerances to
+±0.0002"; **no MOQ**; one platform across six processes rather than a broker
+routing to shops.
+
+Maturity: YC **P26**, founded 2026, two founders (Revanth Bodepudi, CEO; Prerit
+Oberai, CTO), SF Bay Area. Waitlist for early access — no public pricing, no
+turnaround SLA, no logos, no metrics. Treat capability claims as intent.
+
+Relevance to Anvil: **none competitively, and that is not the point.** Anvil never
+makes a part and Prototyping.io never quotes a customer PO, extracts one, or
+touches an ERP — the same non-overlap as §3.24/§3.27. What makes it worth an
+entry is that it occupies the exact step Anvil stops one line of arithmetic
+short of. Prototyping.io reads a drawing to decide **how to make the part**;
+Anvil reads a drawing to decide **what the part is**. See the synthesis.
+**Verdict: LEARN-ONLY.**
+
+### What the three YC theses actually say about Anvil
+
+The three essays share one premise: the bottleneck in physical-goods businesses
+is no longer information, it is **time and cost that nobody can compute**.
+Checked against the code, that premise lands hard.
+
+**Anvil is an import distributor's pricing engine wearing a manufacturer's
+clothes.** A quoted price has exactly **one** cost input — a supplier's unit price
+in a foreign currency — pushed through FX conversion, then *import landing*
+costs, then margin, then discount (`src/v3-app/lib/pricing.ts:8-11`; the seeded
+granular profile is packing, shipping, insurance, basic customs duty, social
+welfare tax, CHA charges, local transport, install & warranty,
+`mig 135:99-111`; the recompute takes the supplier price straight off the
+request body, `QuoteComposition.tsx:320`). That is a landed-cost-plus-markup engine. It prices what the
+tenant **buys**. It cannot price what the tenant **makes**.
+
+| what the physical world would need | what the code has |
+|---|---|
+| routing / operations / process plan | **absent** — every `routing` hit is LLM-model or email routing |
+| work centre, machine rate, labour rate, setup time, cycle time | **absent** — the only `cycle_time` is a weld-gun product spec |
+| conversion cost, burden, shop rate, job costing | **absent** |
+| a work order | **absent** — `work_order` is a *sales origin classifier* (local vs import) |
+| a shop-floor traveler | **`orders/traveler.js` renders the SALES ORDER PDF through the same React-PDF component as quotes and invoices, with the title string changed to "Production Traveler"**, then queues a `print_jobs` row to an on-prem CUPS/IPP relay. No operations, no sign-offs |
+
+**And yet Anvil is one multiply away from a real made-to-print cost basis.** This
+is the finding worth acting on. Anvil already contains a genuine
+first-principles raw-material calculator: it resolves a material callout to
+grade + density, classifies the geometry, adds a machining allowance to choose
+stock form and dimensions, computes gross mass from volume × density, and
+divides by yield to get **kg consumed per unit**
+(`_lib/pdm/raw-material-infer.js:108-131` `inferStock`, `:137-165`
+`determineRawMaterial`, grade/density master at `:29-41`). It also already looks
+up a material price — `composition_material_lines.unit_cost` is auto-filled from
+`material_price_references` (`admin/composition_material_lines.js:123-129`).
+**Nothing multiplies them.** `unit_cost` has no reader anywhere in `src/`, and
+the recipe writer never sets it (`raw-material-persist.js:32-52` persists
+`consumption_per_unit` and no cost field at all). The consumption figure never
+becomes money, and the quote's raw-material breakup is hand-entered beside it
+with dimensions as a **free-text string** (`QuoteComposition.tsx:31-38`
+`dimensions: string; // free text`), never seeded from the drawing the system
+already parsed.
+
+The same dead-end repeats one layer up. The `part_drawing` extractor really does
+read manufacturing spec — `material`, `finish`, `heat_treatment`, an overall
+envelope, **`tolerances[]`**, **`gdt[]`**, `notes[]` — and every one of
+tolerances, GD&T, finish and heat treatment is **consumed by nothing**, living
+only as JSON inside `extraction_runs.normalized_extract` (`run.js:1403`); the
+one downstream consumer reads just `material`, `dimensions`, `bought_out` and
+the title (`raw-material-infer.js:170-181`). The code comment promising
+ingestion into `item_specifications` (`claude.js:1378-1379`) describes columns
+that **do not exist** — that table (`mig 105:302-321`) has no tolerance, GD&T,
+finish or heat-treatment field, and its only writer is the manual admin drawer
+(`ItemDetailDrawer.tsx:199`). So Anvil pays a model to read the hardest part of a drawing and then
+throws the answer away.
+
+That reframes the job-shop verdict recorded in [[project_job_shop_segment]]. The
+back half is not merely "absent" — it is **partially built and unwired**, which is
+a much cheaper starting position than it looks.
+
+**On Warren's "route work between an agent, a robot and a person": Anvil's real
+analogue is Mode A/B, and it is shipped.** `so_processing_mode` already decides
+whether *Anvil* or *a person* performs the sales-order work, and — unusually —
+`three-way-adjudicate.js` scores **which of them was right** against the PO as
+authority rather than scoring agreement. Warren asks "how do you measure
+reliability" for mixed human/agent work; Anvil has that measurement in
+production and should say so. The gap is the other half: Anvil **records** field
+work but cannot **route** it. `service_visits` is real and wired (a
+`field_engineer` column, check-in/check-out timestamps, a five-state lifecycle,
+its own screen and nav; `service_visits` at `mig 006:529-547`) — but
+`field_engineer` appears exactly once in the handler, hardcoded to whoever
+created the row (`service/visits.js:42`), and is absent from the PATCH
+allow-list, so **a visit can never be assigned to anybody**. There is no technician entity at all. Likewise
+`failure_events` is a genuine in-field breakdown stream at (part × asset
+instance × date) grain, captured through a **desk form** with a hand-typed date
+and a typed downtime number, and FMECA (`RPN = S×O×D`) is real but its only
+consumer is spare-part min/max. Every physical-asset record Anvil keeps
+terminates in a **spare sale**, not a field action. Robots and wearables are the
+wrong lesson to take; *assignability* is the right one, and it is a small change.
+
+**On Hengsperger's mills: the diagnosis is Anvil's own.** "Production planning,
+scheduling, quoting and execution are fragmented… short runs and spec changes
+are treated as disruptions instead of opportunities." Anvil cannot tell a
+profitable short run from an unprofitable one, because for a made part there is
+no cost basis to compare against — and per [[backlog_margin_bi]] an operator
+cannot see margin on a PO *before approving it* even for a bought one. The
+8–30-week lead times the essay describes are also the strongest external
+validation the **forecast → BOM → raw-material preorder** wedge has had: that
+wedge exists precisely to buy long-lead material before the order lands, and it
+remains the thing in §0 still open.
+
+**Three things to take, none of which is "build a factory":**
+
+1. **Multiply the two numbers Anvil already has.** `consumption_per_unit (kg) ×
+   unit_cost` gives a material cost from the drawing, which is a real second
+   cost input to `composePrice` and the first honest answer to "what would it
+   cost us to make this?" It reuses the calculator, the price reference and the
+   composition table that all already exist. It is not CAM and not DFM — do not
+   build those; that is Prototyping.io's company, not Anvil's.
+2. **Persist what the drawing extractor already read.** Give `tolerances`,
+   `gdt`, `finish` and `heat_treatment` a home on the item, so the spec that
+   drives make/buy, supplier selection and inspection stops being discarded. The
+   extraction is already paid for.
+3. **Make a service visit assignable.** One column off the hardcode and onto the
+   PATCH allow-list turns a record of field work into dispatch of field work —
+   the smallest possible step toward Warren's thesis, and the one Anvil's
+   existing AMC/visit machinery is already shaped for.
+
 ## 4. Cross-cutting themes from the competitor scan
 
 Five things the competitors collectively prove are now table stakes:
@@ -1162,3 +1312,5 @@ After the post-implementation pass, the remaining open items in Now are:
 - Ekho Labs: https://www.ekholabs.com (reviewed 2026-08-15; no pricing, funding or customer logos published)
 - Naïve: https://usenaive.ai, ycombinator.com/companies/naive, techcrunch.com/2026/08/06 ($28.5M Series A, Nexus)
 - Spaceflow: https://www.spaceflow.tech, ycombinator.com/companies/spaceflow-technologies-inc (YC S26)
+- Prototyping.io: https://www.prototyping.io, ycombinator.com/companies/prototypingio (YC P26, founded 2026; waitlist only — no pricing, turnaround SLA, logos or metrics published, so capability claims are read as intent)
+- YC requests-for-startups, hardware track (reviewed 2026-08-29): "Hardware Supply Chain" (Nicolas Dessaigne), "New Operating Systems for the Physical World" (Charlie Warren), "Modern Metal Mills" (Zane Hengsperger) — used as a diagnostic of Anvil, not as a competitor scan

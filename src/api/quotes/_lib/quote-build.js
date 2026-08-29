@@ -34,6 +34,61 @@ export const computeTotals = (lineItems) => {
   };
 };
 
+// Sum PERSISTED quote_lines rows into { subtotal, tax_total, grand_total }.
+//
+// computeTotals above reads the legacy `quotes.line_items` JSONB shape
+// (unitPrice/gstRate). The drawer, the composition cockpit and the PO->quote
+// path all write the `quote_lines` TABLE instead, whose columns are different
+// (`line_amount`, and tax as the migration-108 per-component percentages).
+// Nothing rolled those rows back up, so a quote created empty and then filled
+// in kept subtotal/tax_total/grand_total at 0 -- and that zero is what
+// quotes/send.js puts in the customer's email ("for INR 0.00").
+//
+// Pure. The caller fetches the rows and persists the result.
+export const totalsFromQuoteLines = (rows) => {
+  const lines = Array.isArray(rows) ? rows : [];
+  let subtotal = 0;
+  let taxTotal = 0;
+  for (const ln of lines) {
+    const qty = Number(ln.qty ?? ln.quantity ?? 0);
+    const ppu = ln.discounted_unit_price != null
+      ? Number(ln.discounted_unit_price)
+      : Number(ln.listed_unit_price ?? 0);
+    // line_amount is authoritative when the writer computed it (it already
+    // accounts for the discount); fall back to qty x price-per-unit.
+    const amt = ln.line_amount != null && Number.isFinite(Number(ln.line_amount))
+      ? Number(ln.line_amount)
+      : (Number.isFinite(qty) && Number.isFinite(ppu) ? qty * ppu : 0);
+    if (!Number.isFinite(amt)) continue;
+    subtotal += amt;
+    // Migration 108 stores tax per component. Sum whichever are present:
+    // an intra-state line carries CGST+SGST (+UTGST), an inter-state one IGST.
+    const pct = ["cgst_pct", "sgst_pct", "igst_pct", "utgst_pct", "cess_pct"]
+      .reduce((s, k) => s + (Number.isFinite(Number(ln[k])) ? Number(ln[k]) : 0), 0);
+    if (pct > 0) taxTotal += amt * pct / 100;
+  }
+  const round = (n) => Math.round(n * 100) / 100;
+  return { subtotal: round(subtotal), tax_total: round(taxTotal), grand_total: round(subtotal + taxTotal) };
+};
+
+// Re-roll a quote's header from its persisted quote_lines and store it.
+// Best-effort by design: a totals refresh must never fail the line write that
+// triggered it. Returns the totals it wrote, or null if it could not.
+export const refreshQuoteTotals = async (svc, tenantId, quoteId) => {
+  try {
+    const { data, error } = await svc.from("quote_lines")
+      .select("qty, listed_unit_price, discounted_unit_price, line_amount, cgst_pct, sgst_pct, igst_pct, utgst_pct, cess_pct")
+      .eq("tenant_id", tenantId).eq("quote_id", quoteId);
+    if (error) return null;
+    const totals = totalsFromQuoteLines(data || []);
+    const upd = await svc.from("quotes").update(totals)
+      .eq("tenant_id", tenantId).eq("id", quoteId);
+    return upd.error ? null : totals;
+  } catch (_e) {
+    return null;
+  }
+};
+
 // Per-tenant quote number: Q-YYYYMM-NNNN (NNNN = count-this-month + 1).
 export const generateQuoteNumber = async (svc, tenantId) => {
   const stamp = new Date().toISOString().slice(0, 7).replace("-", ""); // YYYYMM

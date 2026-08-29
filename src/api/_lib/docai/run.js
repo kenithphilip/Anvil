@@ -1003,7 +1003,7 @@ export const runExtractionPipeline = async (params) => {
     // up front on a document that might have extracted fine, so it should fire
     // only when a single call is clearly hopeless, not merely borderline.
     const PROACTIVE_MIN_ITEMS = Math.max(1, Number(process.env.DOCAI_DENSITY_PROACTIVE_MIN_ITEMS) || 60);
-    if (settings?.docai_density_chunk_enabled && isDensityKind(kind)
+    if (settings?.docai_density_chunk_enabled && isDensityKind(kind) && !dispatchHints.skipDensity
         && bodyText && Date.now() < deadlineAt - PROACTIVE_RESERVE_MS
         && shouldRowChunk(bodyText, { minItems: PROACTIVE_MIN_ITEMS })) {
       densityAttempted = true;
@@ -1176,6 +1176,7 @@ export const runExtractionPipeline = async (params) => {
     // same text and did not help, running the identical plan again here is
     // guaranteed waste.
     if (settings?.docai_density_chunk_enabled && denseKind && stillDeficient && !densityAttempted
+        && !dispatchHints.skipDensity
         && bodyText && Date.now() < deadlineAt && shouldRowChunk(bodyText)) {
       await recordRunEvent("docai_density_chunk_started", {
         first_reason: out?.reason || null,

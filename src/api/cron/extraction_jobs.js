@@ -35,6 +35,9 @@ import { dispatchExtract } from "../_lib/docai/index.js";
 import { ingestQuote, quoteHeadFromExtract } from "../_lib/quote-ingest.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { getPromptVersion, promptNameForKind } from "../_lib/docai/prompt-versions.js";
+import { extractTextLayer } from "../_lib/docai/text_layer.js";
+import { planDensityChunking } from "../_lib/docai/density-plan.js";
+import { buildWindowBodyText } from "../_lib/docai/text-row-chunker.js";
 
 // Real tenant settings, cached for the life of one tick.
 //
@@ -192,6 +195,61 @@ const loadSourceBytes = async (svc, job) => {
   throw new Error("no source bytes available for job " + job.id);
 };
 
+// A row-window job's plan is re-derived per tick rather than stored, exactly as
+// the page chunker re-materialises its bytes. That is only safe while the
+// re-derivation is IDENTICAL, so the text this is built from must be complete
+// and whole-document -- these guards are the difference between "same plan" and
+// "a shorter plan that still indexes in range", which would silently extract
+// the WRONG rows and report success.
+//
+// Returns { ok, bodyText, reason }. Never throws: any doubt falls back to page
+// chunking, which is the conservative direction.
+const loadBodyText = async (bytes, job) => {
+  try {
+    const layer = await extractTextLayer({ bytes, mime: job.source_mime || "application/pdf" });
+    if (!layer?.body_text) return { ok: false, bodyText: null, reason: "no_text_layer" };
+    // 'mixed' means part of the document is scanned: the digital pages have
+    // text and the scanned ones do not. Row-planning over that half silently
+    // drops every scanned page's items -- and the page path we would be
+    // replacing hands those pages to the OCR-capable adapters.
+    if (layer.status !== "has_text") return { ok: false, bodyText: null, reason: "text_status_" + (layer.status || "unknown") };
+    // The text layer hard-trims at MAX_BODY_TEXT_BYTES. A trimmed body is a
+    // DETERMINISTICALLY truncated table: the mismatch check would never fire,
+    // every item past the cut would never be windowed, and the job would
+    // complete green having dropped them.
+    if (Number.isFinite(Number(layer.char_count)) && Number(layer.char_count) > layer.body_text.length) {
+      return { ok: false, bodyText: null, reason: "body_text_truncated" };
+    }
+    return { ok: true, bodyText: layer.body_text, reason: null };
+  } catch (_e) {
+    return { ok: false, bodyText: null, reason: "text_layer_threw" };
+  }
+};
+
+// Row-window jobs are marked per chunk-status entry rather than with a new
+// column: chunk_status is already the per-chunk jsonb the worker iterates, so
+// the mode travels with the very rows it describes and needs no migration.
+const isRowChunk = (meta) => meta?.mode === "row";
+
+// Ceiling on row windows per job. The page path has BACKGROUND_MAX_TOTAL_PAGES;
+// without an equivalent a pathological table plans an unbounded number of
+// generation-tier calls. Above this the job stays on page chunks.
+const MAX_ROW_WINDOWS = Math.max(1, Number(process.env.DOCAI_MAX_ROW_WINDOWS) || 80);
+
+// Fingerprint of the planned windows. Pinned on the job at chunking time and
+// re-checked every tick: a plan that SHRINKS (window size env changed, source
+// re-uploaded, text layer differs) still indexes in range, so without this the
+// worker would extract different rows than it planned and never notice.
+const planFingerprint = (plan) => {
+  const text = plan.windows.map((w) => w.text).join("\n \n");
+  let h1 = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h1 ^= text.charCodeAt(i);
+    h1 = Math.imul(h1, 0x01000193) >>> 0;
+  }
+  return plan.windows.length + ":" + plan.itemCount + ":" + h1.toString(16);
+};
+
 // One advancement step. Reads the current state, performs the
 // next action (profile / chunk-once / merge), writes the new
 // state back. Returns the updated job row + a flag whether more
@@ -262,31 +320,91 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
   if (job.status === "chunking") {
     await emit(svc, tenantCtx, "docai_chunk_chunking_started", { job_id: job.id, order_id: orderId, page_count: job.total_pages });
     const bytes = await loadSourceBytes(svc, job);
-    const chunkResult = await chunkPdf(bytes, {
-      maxPagesPerChunk: 5,
-      keepPages: job.keep_pages || null,
-      maxTotalPages: BACKGROUND_MAX_TOTAL_PAGES,
-    });
+
+    // Phase 3b: ROW-WINDOW chunking for a line-dense table. Page chunks cannot
+    // split a document whose lines are packed onto few pages, and a 2000-line
+    // contract is far past what any single call can hold -- so when the text
+    // layer is dense, chunk by ITEM ROWS instead. Nothing about the windows is
+    // persisted: planRowWindows is pure over the same text, so each tick
+    // re-derives the identical window, exactly as the page path re-materialises
+    // its bytes. Falls back to page chunks whenever the plan does not apply.
+    const chunkSettings = await settingsForTenant(svc, job.tenant_id, settingsCache);
+    let chunkStatus = null;
+    let rowPlanned = null;
+    let rowPin = null;
+    // keep_pages means the profiler decided only SOME pages carry the table.
+    // Row windows are built from the whole text layer and would silently pull
+    // in the pages it excluded, so the two are mutually exclusive.
+    const rowEligible = chunkSettings?.docai_density_chunk_enabled && !job.keep_pages;
+    const textForPlan = rowEligible ? await loadBodyText(bytes, job) : { ok: false, reason: "not_eligible" };
+    if (textForPlan.ok) {
+      const decision = planDensityChunking({
+        kind: kindOfJob(job), bodyText: textForPlan.bodyText, settings: chunkSettings,
+      });
+      if (decision.eligible && decision.windowCount > MAX_ROW_WINDOWS) {
+        await emit(svc, tenantCtx, "docai_chunk_row_windows_rejected", {
+          job_id: job.id, order_id: orderId, reason: "too_many_windows",
+          window_count: decision.windowCount, max: MAX_ROW_WINDOWS,
+        });
+      } else if (decision.eligible) {
+        rowPlanned = decision;
+        rowPin = {
+          window_count: decision.windowCount,
+          item_count: decision.itemCount,
+          fingerprint: planFingerprint(decision.plan),
+        };
+        chunkStatus = decision.plan.windows.map((w) => ({
+          index: w.index,
+          mode: "row",
+          item_count: w.itemCount,
+          status: "pending",
+          attempts: 0,
+        }));
+        await emit(svc, tenantCtx, "docai_chunk_row_windows_planned", {
+          job_id: job.id, order_id: orderId,
+          window_count: decision.windowCount, item_count: decision.itemCount,
+        });
+      }
+    } else if (rowEligible && textForPlan.reason) {
+      await emit(svc, tenantCtx, "docai_chunk_row_windows_rejected", {
+        job_id: job.id, order_id: orderId, reason: textForPlan.reason,
+      });
+    }
+
+    let chunkResult = null;
+    if (!chunkStatus) {
+      chunkResult = await chunkPdf(bytes, {
+        maxPagesPerChunk: 5,
+        keepPages: job.keep_pages || null,
+        maxTotalPages: BACKGROUND_MAX_TOTAL_PAGES,
+      });
+      // Store chunk_status without the bytes; we re-materialise
+      // bytes on each tick rather than persisting them (they would
+      // bloat the row and we already have the source).
+      chunkStatus = chunkResult.chunks.map((c) => ({
+        index: c.index,
+        page_start: c.pageStart,
+        page_end: c.pageEnd,
+        page_count: c.pageCount,
+        status: "pending",
+        attempts: 0,
+      }));
+    }
     await emit(svc, tenantCtx, "docai_chunk_chunking_complete", {
       job_id: job.id, order_id: orderId,
-      page_count: chunkResult.totalPages, chunk_count: chunkResult.chunks.length,
+      page_count: chunkResult ? chunkResult.totalPages : (job.total_pages || null),
+      chunk_count: chunkStatus.length,
+      mode: rowPlanned ? "row" : "page",
     });
-    // Store chunk_status without the bytes; we re-materialise
-    // bytes on each tick rather than persisting them (they would
-    // bloat the row and we already have the source).
-    const chunkStatus = chunkResult.chunks.map((c) => ({
-      index: c.index,
-      page_start: c.pageStart,
-      page_end: c.pageEnd,
-      page_count: c.pageCount,
-      status: "pending",
-      attempts: 0,
-    }));
     const upd = await svc.from("extraction_jobs")
       .update({
         status: chunkStatus.length ? "extracting" : "merging",
         chunk_status: chunkStatus,
         next_chunk_index: 0,
+        // Pin the plan the windows were cut from. Every later tick re-derives
+        // the plan and must reproduce this exactly; anything else means the
+        // windows it is about to extract are not the windows we queued.
+        ...(rowPin ? { partial_result: { ...(job.partial_result || {}), row_plan: rowPin } } : {}),
         lease_until: new Date(Date.now() + LEASE_TTL_MS).toISOString(),
       })
       .eq("id", job.id)
@@ -321,25 +439,62 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
     let chunkResult = null;
     let chunkErr = null;
     try {
-      // Re-materialise the chunk's pages from the source. The
-      // chunker is deterministic; same input + same keep list
-      // produces the same byte ranges.
+      // Re-materialise this chunk from the source. Both chunkers are
+      // deterministic -- the page chunker over the same bytes + keep list, the
+      // row planner over the same text layer -- so the same index rebuilds the
+      // same chunk on every tick without persisting it.
       const bytes = await loadSourceBytes(svc, job);
-      const re = await chunkPdf(bytes, {
-        maxPagesPerChunk: 5,
-        keepPages: job.keep_pages || null,
-        maxTotalPages: BACKGROUND_MAX_TOTAL_PAGES,
-      });
-      const target = re.chunks[idx];
-      if (!target) throw new Error("chunk index " + idx + " out of range after re-chunk");
       const settings = await settingsForTenant(svc, job.tenant_id, settingsCache);
+
+      let source;
+      let windowHints = {};
+      let chunkCount = list.length;
+      if (isRowChunk(chunkMeta)) {
+        const text = await loadBodyText(bytes, job);
+        if (!text.ok) throw new Error("row plan text unavailable on re-derive (" + text.reason + ")");
+        const decision = planDensityChunking({ kind: kindOfJob(job), bodyText: text.bodyText, settings });
+        if (!decision.eligible) throw new Error("row plan no longer applies on re-derive (" + decision.reason + ")");
+        // VERIFY THE PIN. An out-of-range index is the easy case; the dangerous
+        // one is a plan that SHRANK -- it still indexes in range but window N
+        // now covers different rows, so we would extract the wrong items and
+        // report success. Compare the whole planned shape, not just the count.
+        const pin = job.partial_result?.row_plan || null;
+        const now = planFingerprint(decision.plan);
+        if (pin && pin.fingerprint !== now) {
+          throw new Error("ROW_PLAN_DRIFT: planned " + pin.fingerprint + " but re-derived " + now);
+        }
+        const w = decision.plan.windows[idx];
+        if (!w) throw new Error("row window " + idx + " out of range after re-plan");
+        // Bytes stripped: only the LLM adapters honour hints.bodyText, and a
+        // byte-reading adapter handed the full PDF would extract the WHOLE
+        // document for this window (see density-chunk.js).
+        source = { bytes: null, url: null, mime: job.source_mime || "application/pdf", filename: job.source_filename || "document.pdf" };
+        windowHints = {
+          bodyText: buildWindowBodyText(decision.plan, w),
+          density_window: idx,
+          escalate: true,
+        };
+        chunkCount = decision.windowCount;
+      } else {
+        const re = await chunkPdf(bytes, {
+          maxPagesPerChunk: 5,
+          keepPages: job.keep_pages || null,
+          maxTotalPages: BACKGROUND_MAX_TOTAL_PAGES,
+        });
+        const target = re.chunks[idx];
+        if (!target) throw new Error("chunk index " + idx + " out of range after re-chunk");
+        source = { bytes: target.buffer, mime: "application/pdf", filename: job.source_filename || "chunk.pdf" };
+        chunkCount = re.chunks.length;
+      }
+
       const out = await dispatchExtract({
-        source: { bytes: target.buffer, mime: "application/pdf", filename: job.source_filename || "chunk.pdf" },
+        source,
         settings,
         customerId: job.customer_id,
         hints: {
-          chunk_index: idx, chunk_count: re.chunks.length,
+          chunk_index: idx, chunk_count: chunkCount,
           page_start: chunkMeta.page_start, page_end: chunkMeta.page_end,
+          ...windowHints,
           // Tell the adapter what it is reading. Absent, it defaults to the
           // purchase-order schema and would ask a quotation for a po_number.
           // Omitted rather than defaulted when the kind is unknown, so the
@@ -418,7 +573,15 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
       job_id: job.id, order_id: orderId, chunk_count: (job.chunk_status || []).length,
     });
     const chunkResults = job.partial_result?.chunk_results || [];
-    const chunks = (job.chunk_status || []).map((c) => ({ pageStart: c.page_start, pageEnd: c.page_end, pageCount: c.page_count }));
+    // Row windows carry no page geometry, so weight them by ITEM count -- the
+    // merge weights confidence by `pageCount`, and without this every window
+    // would count the same whether it held 25 items or 3 (mirrors the sync
+    // density path, which passes item counts for the same reason).
+    const chunks = (job.chunk_status || []).map((c) => ({
+      pageStart: c.page_start,
+      pageEnd: c.page_end,
+      pageCount: c.page_count ?? c.item_count,
+    }));
     const merged = mergeChunkResults(chunkResults, chunks);
     // mergeChunkResults returns the nested `normalized` shape (lines/customer
     // under .normalized); read through the shared accessor. Reading flat
@@ -431,6 +594,32 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
     // tick held the lease, don't write the order or mark it completed.
     const cur = await svc.from("extraction_jobs").select("status").eq("id", job.id).maybeSingle();
     if (cur.data && cur.data.status === "cancelled") return { job, hasMore: false };
+
+    // A ROW-WINDOW job must be COMPLETE to be written back. Page chunks
+    // partition a document that mostly repeats its header, so a lost chunk
+    // costs some lines; row windows partition the LINE TABLE ITSELF, so a lost
+    // window is a contiguous block of items missing from the middle of the
+    // order -- and the writeback below replaces the order's lines (for a quote,
+    // ingestQuote replaces them wholesale). A partial row walk that reports
+    // 'completed' is therefore silent data loss, not a degraded result. The
+    // all-failed gate below cannot catch it because merged.ok is okAny.
+    const rowMode = (job.chunk_status || []).some(isRowChunk);
+    const failedRowWindows = rowMode
+      ? (job.chunk_status || []).filter((c) => c.status === "failed")
+      : [];
+    if (failedRowWindows.length) {
+      const detail = failedRowWindows.length + " of " + (job.chunk_status || []).length
+        + " row windows failed; refusing to write a partial line table";
+      const f = await svc.from("extraction_jobs")
+        .update({ status: "failed", result: merged, last_error: detail, completed_at: new Date().toISOString(), lease_until: null })
+        .eq("id", job.id).eq("status", "merging").select("*").maybeSingle();
+      await emit(svc, tenantCtx, "docai_chunk_row_windows_incomplete", {
+        job_id: job.id, order_id: orderId,
+        failed: failedRowWindows.map((c) => c.index),
+        window_count: (job.chunk_status || []).length,
+      });
+      return { job: f.data || job, hasMore: false };
+    }
 
     // If EVERY chunk failed (merged.ok === false), FAIL the job — do NOT blank
     // the order's existing line items and report it 'completed' (that turned a

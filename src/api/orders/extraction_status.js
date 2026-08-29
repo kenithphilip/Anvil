@@ -30,6 +30,15 @@ const CHUNK_STAGES = new Set([
   "docai_chunk_passthrough",
   "docai_chunk_chunking_started",
   "docai_chunk_chunking_complete",
+  // Row-window (density) chunking: without these a dense document -- the one
+  // that takes LONGEST -- shows no progress at all while it works.
+  "docai_chunk_row_windows_planned",
+  "docai_chunk_row_windows_rejected",
+  "docai_chunk_row_windows_incomplete",
+  "docai_chunk_density_chunking_started",
+  "docai_chunk_density_window_started",
+  "docai_chunk_density_window_done",
+  "docai_chunk_density_chunking_done",
   "docai_chunk_chunk_started",
   "docai_chunk_chunk_done",
   "docai_chunk_chunk_failed",

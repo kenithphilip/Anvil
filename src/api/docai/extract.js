@@ -25,6 +25,9 @@ import { runExtractionPipeline } from "../_lib/docai/run.js";
 import { withEngineOverride } from "../_lib/docai/index.js";
 import { safeFetch } from "../_lib/safe-fetch.js";
 import { probePdfPageCount } from "../_lib/docai/pdf-chunker.js";
+import { extractTextLayer } from "../_lib/docai/text_layer.js";
+import { planDensityChunking } from "../_lib/docai/density-plan.js";
+import { isDensityKind } from "../_lib/docai/density-chunk.js";
 
 // Above this page count a synchronous extraction is shunted to page-1-only +
 // the background worker. It used to be 12 because chunks ran SEQUENTIALLY
@@ -128,6 +131,7 @@ export default async function handler(req, res) {
     // itself sets this so its own re-extraction is never down-scoped).
     const hints = { ...(body?.hints || {}) };
     let largePdf = false;
+    let denseBackground = false;
     let totalPages = 0;
     const isPdfSource = sourceType === "pdf" || resolvedMime === "application/pdf";
     if (isPdfSource && sourceBytes && !body?.no_background && !hints.keepPages) {
@@ -136,6 +140,38 @@ export default async function handler(req, res) {
         largePdf = true;
         hints.keepPages = [1]; // 1-based: customer header lives on every page
       }
+    }
+
+    // Phase 3b: DENSITY-based background eligibility. The page threshold above
+    // is blind to the document this whole feature exists for -- a 200-line rate
+    // contract on 4 pages is nowhere near 40 pages, so it would run
+    // synchronously and, past the handful of row windows a sync run can finish,
+    // adopt a partial or time out. Route by WINDOW COUNT instead: <= the sync
+    // budget stays in-process (Phase 3a handles it), more than that belongs on
+    // the background worker, which now walks row windows one per tick.
+    // isDensityKind FIRST: the probe below is a full pdfjs parse, and without
+    // this every assembly_bom / part_drawing / invoice upload would pay for one
+    // that planDensityChunking then discards on the kind check anyway.
+    if (!largePdf && isPdfSource && sourceBytes && !body?.no_background && !hints.keepPages
+        && settings?.docai_density_chunk_enabled && isDensityKind(body?.kind || "po")) {
+      try {
+        const layer = await extractTextLayer({ bytes: sourceBytes, mime: resolvedMime || "application/pdf" });
+        const decision = planDensityChunking({
+          kind: body?.kind || "po", bodyText: layer?.body_text, settings,
+        });
+        if (decision.needsBackground) {
+          largePdf = true;
+          denseBackground = true;
+          hints.keepPages = [1];
+          // Suppress the SYNC row-window walk. keepPages only constrains the
+          // PAGE chunker; without this the pipeline would still row-window the
+          // whole document at generation tier, burn the entire run budget on a
+          // walk it cannot finish, fall through unadopted -- and then the
+          // background job would do the identical work again. Double spend, and
+          // the "return fast" contract broken.
+          hints.skipDensity = true;
+        }
+      } catch (_e) { /* probe only: a failure just leaves it on the sync path */ }
     }
 
     const result = await runExtractionPipeline({
@@ -215,6 +251,9 @@ export default async function handler(req, res) {
       // preview (customer + first-page lines) and the caller must
       // enqueue a background extraction_jobs row for the full document.
       large_pdf: largePdf,
+      // Why it was routed to the background: page count, or a line-dense table
+      // needing more row windows than a sync run should attempt (Phase 3b).
+      dense_background: denseBackground,
       total_pages: totalPages || null,
       background_page_threshold: BACKGROUND_PAGE_THRESHOLD,
     });

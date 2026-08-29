@@ -71,6 +71,8 @@ import { validateGstin, gstinStateCode } from "../gstin.js";
 import { findByGstin, findCustomersByPan } from "../customer-canonicalizer.js";
 import { voteAcrossAdapters } from "./voter.js";
 import { shouldEscalateEmptyLines, shouldEscalateTruncated } from "./model_selector.js";
+import { densityChunkedExtract } from "./density-chunk.js";
+import { shouldRowChunk } from "./text-row-chunker.js";
 import { repairPartCodes, brandTokensFromTenantName } from "./part-split.js";
 import { validateExtraction } from "./validators.js";
 import { recordEvent } from "../audit.js";
@@ -1093,6 +1095,50 @@ export const runExtractionPipeline = async (params) => {
           truncated: true,
         };
         out = escalated;
+      }
+    }
+
+    // Density-aware row-window chunking (Phase 2, dark-flagged). Last resort
+    // when a page-few but LINE-dense doc still came back truncated or empty
+    // after the generation-tier retry: pdf chunking can't split it (the lines
+    // aren't on more pages), so split the TEXT by row windows and extract each.
+    // See density-chunk.js / docs/DENSITY_AWARE_CHUNKING_DESIGN.md.
+    const denseKind = kind === "po" || kind === "rfq" || kind === "quote";
+    const linesNow = Array.isArray(out?.normalized?.lines) ? out.normalized.lines.length : 0;
+    const stillDeficient = out?.reason === "output_truncated" || (out?.ok && linesNow === 0);
+    if (settings?.docai_density_chunk_enabled && denseKind && stillDeficient
+        && bodyText && Date.now() < deadlineAt && shouldRowChunk(bodyText)) {
+      await recordRunEvent("docai_density_chunk_started", {
+        first_reason: out?.reason || null,
+        first_model: out?.selected_model || null,
+        lines_before: linesNow,
+      });
+      const dense = await densityChunkedExtract({
+        source: dispatchSource,
+        settings: { ...settings, tenant_id: ctx.tenantId },
+        customerId,
+        hints: dispatchHints,
+        runCost,
+        opts: { eventSink: chunkEventSink, deadlineAt },
+      }).catch((err) => ({ skip: true, reason: "threw", error: err?.message || String(err) }));
+      const denseLines = Array.isArray(dense?.normalized?.lines) ? dense.normalized.lines.length : 0;
+      const adopted = !!(dense && !dense.skip && dense.ok && denseLines > linesNow);
+      await recordRunEvent("docai_density_chunk_done", {
+        skip: !!dense?.skip,
+        reason: dense?.reason || null,
+        window_count: dense?.density_window_count ?? null,
+        windows_run: dense?.density_windows_run ?? null,
+        lines_after: denseLines,
+        adopted,
+      });
+      if (adopted) {
+        if (out.toc_profile) dense.toc_profile = out.toc_profile;
+        dense.escalated_from = {
+          model: out.selected_model || null,
+          reason: out.model_selection_reason || null,
+          density: true,
+        };
+        out = dense;
       }
     }
   }

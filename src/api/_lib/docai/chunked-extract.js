@@ -26,9 +26,14 @@
 //   - confidence_overall: weighted by chunk pageCount.
 //   - customer: first non-null customer block. Tenant scrub
 //     still runs downstream.
-//   - lines: concatenated in chunk order. The TOC profiler
-//     output is the authoritative page-keep list; line
-//     deduplication is handled at the next layer (validators).
+//   - lines: concatenated in chunk order. The TOC profiler output is the
+//     authoritative page-keep list, and chunk page ranges do not overlap, so
+//     the same item cannot be emitted twice. NOTE: there is NO line-level
+//     dedup anywhere downstream (only page-number dedup in pdf-chunker and
+//     whole-run content-hash dedup in run.js) -- an earlier comment here
+//     claimed validators dedup lines; they do not. Non-overlapping input is
+//     therefore a REQUIREMENT of this merge, which density-chunk.js also
+//     satisfies (row windows partition the item blocks).
 //   - adapter_used: most common across chunks; on a tie, the
 //     first chunk's adapter wins.
 //   - latency_ms: sum across chunks.

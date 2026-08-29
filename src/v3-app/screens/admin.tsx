@@ -91,7 +91,11 @@ const ADMIN_CRUD_TABS = [
 // row + only the selected category's tabs, instead of one long horizontally
 // scrolling strip.
 const ADMIN_TAB_GROUPS: { label: string; ids: string[] }[] = [
-  { label: "Team & access", ids: ["access", "members", "profile", "security", "roles", "navigation", "billing"] },
+  // `company` was in ADMIN_CRUD_TABS and rendered, but was in no group -- and
+  // the strip only renders the selected group's ids, so the seller-identity
+  // editor (legal name, GSTIN, address, CIN/PAN: the block that prints on
+  // outbound documents) was reachable only by typing #/admin?tab=company.
+  { label: "Team & access", ids: ["access", "members", "profile", "security", "roles", "navigation", "billing", "company"] },
   { label: "ERP connectors", ids: ["netsuite", "tally", "sage_x3", "ifs", "oracle_fusion", "ramco", "jde", "plex", "jobboss", "oracle_ebs", "proalpha", "plm"] },
   { label: "Channels", ids: ["voice", "chat"] },
   { label: "Sales & quotes", ids: ["settings", "so_mode", "holidays", "leadtimes", "fx", "thresh", "doc_templates", "terms_packs"] },
@@ -1291,8 +1295,22 @@ const WiredAdminCRUD = () => {
     if (!threshForm.role) return flashErr(new Error("Role required"));
     setBusy(true); setFlash(null);
     try {
-      await (AnvilBackend?.admin?.upsertApprovalThreshold?.(threshForm)
-             || adminCrudFetch("/api/admin/quote_approvals?type=thresholds", { method: "POST", body: threshForm }));
+      // The form field names are NOT the column names. quote_approval_thresholds
+      // (mig 006) is approver_role / min_amount_inr / max_amount_inr, and the
+      // API reads exactly those -- posting the raw form sent approver_role
+      // undefined (NOT NULL violation on insert) and, on edit, wrote
+      // min_amount_inr = 0 and max_amount_inr = null, silently wiping the band.
+      const threshPayload = {
+        ...(threshForm.id ? { id: threshForm.id } : {}),
+        approver_role: threshForm.role,
+        min_amount_inr: threshForm.min_amount,
+        max_amount_inr: threshForm.max_amount,
+        margin_below_pct: threshForm.margin_below_pct,
+        required_for_modes: threshForm.required_for_modes,
+        active: threshForm.active,
+      };
+      await (AnvilBackend?.admin?.upsertApprovalThreshold?.(threshPayload)
+             || adminCrudFetch("/api/admin/quote_approvals?type=thresholds", { method: "POST", body: threshPayload }));
       flashOk("Threshold saved");
       setThreshForm(null);
       thresholds.reload();
@@ -3409,7 +3427,7 @@ const WiredAdminCRUD = () => {
                   values={quoteCurrencies}
                   onChange={setQuoteCurrencies}
                   placeholder="e.g. INR, USD, EUR, CNY, KRW, JPY"
-                  hint="Currency dropdown for new quotes, composition supplier prices, and RFQ capture."
+                  hint="Currency dropdown in the price-composition cockpit and RFQ capture. (The New Quote dialog still defaults to INR.)"
                 />
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <Btn sm kind="primary" onClick={onSaveQuoteSettings} disabled={quoteSettingsSaving || !quoteSettingsDirty}>{quoteSettingsSaving ? "Saving…" : "Save quote settings"}</Btn>
@@ -3608,12 +3626,12 @@ const WiredAdminCRUD = () => {
                   <tbody>
                     {thresholdRows.map((t) => (
                       <tr key={t.id}>
-                        <td><Chip k="info">{(t.role || "—").replace(/_/g, " ")}</Chip></td>
-                        <td className="r mono">{t.min_amount != null ? fmtINRShort(t.min_amount) : "—"}</td>
-                        <td className="r mono">{t.max_amount != null ? fmtINRShort(t.max_amount) : "—"}</td>
+                        <td><Chip k="info">{(t.approver_role || "—").replace(/_/g, " ")}</Chip></td>
+                        <td className="r mono">{t.min_amount_inr != null ? fmtINRShort(t.min_amount_inr) : "—"}</td>
+                        <td className="r mono">{t.max_amount_inr != null ? fmtINRShort(t.max_amount_inr) : "—"}</td>
                         <td className="r mono">{t.margin_below_pct != null ? Number(t.margin_below_pct).toFixed(1) + "%" : "—"}</td>
                         <td style={{ whiteSpace: "nowrap" }}>
-                          <Btn sm kind="ghost" onClick={() => setThreshForm({ ...t })}>{Icon.edit}</Btn>
+                          <Btn sm kind="ghost" onClick={() => setThreshForm({ ...t, role: t.approver_role, min_amount: t.min_amount_inr, max_amount: t.max_amount_inr })}>{Icon.edit}</Btn>
                           <Btn sm kind="ghost" disabled={busy} onClick={() => deleteThreshold(t.id)}>{Icon.trash}</Btn>
                         </td>
                       </tr>

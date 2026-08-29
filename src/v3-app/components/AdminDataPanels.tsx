@@ -518,7 +518,7 @@ export const PricingSettingsPanel: React.FC = () => {
   if (!settings) return null;
 
   return (
-    <Card title="Pricing defaults" eyebrow="tenant-wide. Price-composition cockpit uses these unless overridden per quote.">
+    <Card title="Pricing defaults" eyebrow="tenant-wide. NOT YET WIRED: the price-composition cockpit reads pricing PROFILES, not these fields.">
       <div className="row" style={{ gap: 14, flexWrap: "wrap" }}>
         <div>
           <label className="mono-sm">Target margin %</label>

@@ -1067,6 +1067,28 @@ const WiredSOWorkspace = () => {
     }
   };
 
+  // The extracted sales order as a spreadsheet (orders/export.js -> .xlsx, or
+  // .csv if the xlsx dep is absent in the deploy). The server names the file
+  // and picks the extension, so honour the Content-Disposition it returns.
+  const downloadSoExcel = async (orderObj: any) => {
+    if (!orderObj?.id) return;
+    try {
+      const out = await (AnvilBackend as any)?.orders?.excelBlob?.(orderObj.id);
+      if (!out?.blob) throw new Error("Excel export helper unavailable");
+      const url = URL.createObjectURL(out.blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = out.filename || ("SO-" + (orderObj.po_number || String(orderObj.id).slice(0, 8)) + ".xlsx");
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      window.notifySuccess?.("Sales order exported", "Saved to Downloads as " + a.download + ".");
+    } catch (err: any) {
+      window.notifyError?.("Excel export failed", err?.message || String(err));
+    }
+  };
+
   // Re-fetch the customer's quotes and re-verify this order's lines
   // (price / qty / part / payment terms). Reloads the order via `bump`.
   const rerunReconcile = async (orderObj: any) => {
@@ -1893,6 +1915,11 @@ const WiredSOWorkspace = () => {
                onClick={() => downloadSoPdf(o)}
                title="Download the Tally-style Sales Order acknowledgment PDF">
             {Icon.download} Download SO
+          </Btn>
+          <Btn sm kind="ghost"
+               onClick={() => downloadSoExcel(o)}
+               title="Export the extracted sales order (header + line items) as an Excel spreadsheet">
+            {Icon.download} Excel
           </Btn>
           {["APPROVED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED"].includes(o.status) && (
             <Btn sm kind="ghost"

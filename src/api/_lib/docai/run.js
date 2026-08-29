@@ -70,7 +70,7 @@ import { computeGstinPin } from "./grounding.js";
 import { validateGstin, gstinStateCode } from "../gstin.js";
 import { findByGstin, findCustomersByPan } from "../customer-canonicalizer.js";
 import { voteAcrossAdapters } from "./voter.js";
-import { shouldEscalateEmptyLines } from "./model_selector.js";
+import { shouldEscalateEmptyLines, shouldEscalateTruncated } from "./model_selector.js";
 import { repairPartCodes, brandTokensFromTenantName } from "./part-split.js";
 import { validateExtraction } from "./validators.js";
 import { recordEvent } from "../audit.js";
@@ -1049,6 +1049,48 @@ export const runExtractionPipeline = async (params) => {
         escalated.escalated_from = {
           model: out.selected_model || null,
           reason: out.model_selection_reason || null,
+        };
+        out = escalated;
+      }
+    } else if (shouldEscalateTruncated({ out, kind, settings }) && Date.now() >= deadlineAt) {
+      // Same budget guard as the empty-lines retry: a second full call with no
+      // time left only strands a status='running' row.
+      await recordRunEvent("docai_truncation_escalation_skipped", {
+        reason: "run_budget_exhausted",
+        elapsed_ms: Date.now() - runStartedAtMs,
+      });
+    } else if (shouldEscalateTruncated({ out, kind, settings })) {
+      // The first pass hit the cheap tier's smaller output ceiling and dropped
+      // the line tail (a dense QUOTE / PO under the page-chunk threshold, so it
+      // was never split). The generation tier's ~2x budget may fit the whole
+      // table -- retry once there. Mirrors the empty-lines path; the two are
+      // mutually exclusive (empty needs out.ok, truncation is not-ok).
+      await recordRunEvent("docai_truncation_escalation_started", {
+        first_model: out.selected_model || null,
+        first_reason: out.model_selection_reason || null,
+      });
+      const escalated = await chunkedExtract({
+        source: dispatchSource,
+        settings: { ...settings, tenant_id: ctx.tenantId },
+        customerId,
+        hints: { ...dispatchHints, escalate: true },
+        runCost,
+        opts: { eventSink: chunkEventSink, keepPages },
+      }).catch((err) => ({ ok: false, error: err?.message || String(err) }));
+      const escalatedLines = Array.isArray(escalated?.normalized?.lines) ? escalated.normalized.lines.length : 0;
+      const adopted = !!(escalated?.ok && escalatedLines > 0);
+      await recordRunEvent("docai_truncation_escalation_done", {
+        escalated_model: escalated?.selected_model || null,
+        escalated_reason: escalated?.model_selection_reason || null,
+        lines_after: escalatedLines,
+        adopted,
+      });
+      if (adopted) {
+        if (out.toc_profile) escalated.toc_profile = out.toc_profile;
+        escalated.escalated_from = {
+          model: out.selected_model || null,
+          reason: out.model_selection_reason || null,
+          truncated: true,
         };
         out = escalated;
       }

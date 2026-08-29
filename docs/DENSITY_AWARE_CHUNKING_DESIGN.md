@@ -132,17 +132,57 @@ every dispatch is a window with `escalate:true` + a `density_window` index and
 the full document is never sent; flag off → unchanged single-shot; sparse doc →
 unchanged single-shot).
 
-## Phase 3b / 3c — not built, and why
+## Phase 3b — the background path (SHIPPED)
 
-- **Background path** for very large contracts. The sync run has a deadline, so
-  a 200-item contract (8+ windows) can hit it and adopt a *partial* result. The
-  background worker (`cron/extraction_jobs.js`) already walks chunks across cron
-  ticks, but it chunks **PDFs by page** and persists each chunk as a **PDF
-  buffer** in the job's `chunk_status`; row windows are **text**, so supporting
-  them there means giving a job a second chunk representation (store window text
-  or re-derive the plan per tick from the cached text layer). That is a real
-  schema/worker change, not a wiring change, and is the honest prerequisite for
-  the "thousands of line items" target.
+Past a handful of windows a document must move to the background worker, because
+the sync run has a deadline. Two things were needed, and the second is the one
+that actually mattered.
+
+### It needed NO new storage
+The worker persists **no chunk bytes at all** — it re-materialises them every
+tick, by design:
+
+> *"Store chunk_status without the bytes; we re-materialise bytes on each tick
+> rather than persisting them (they would bloat the row and we already have the
+> source)."* — `cron/extraction_jobs.js`
+
+`planRowWindows` is **pure over the same text layer**, so a row window is
+re-derivable on exactly those terms: tick N rebuilds the identical window N.
+So no window text is stored and **no migration** is needed — the mode rides on
+the `chunk_status` jsonb entries the worker already iterates
+(`{ index, mode: "row", item_count, status, attempts }`), and `loadBodyText`
+re-derives the text layer per tick (deterministic, local, LLM-free: CPU, not
+money).
+
+- **Chunking stage** — plan row windows when the text is dense; otherwise fall
+  back to `chunkPdf` exactly as before.
+- **Extracting stage** — for a row chunk, re-derive the plan, take window `idx`,
+  dispatch it as **text** with the bytes **stripped** (same reason as the sync
+  path). If the plan no longer applies on re-derive, the chunk fails loudly
+  rather than silently extracting the wrong rows.
+- **Merging stage** — row windows have no page geometry, so they are weighted by
+  **item count** (the merge weights confidence by `pageCount`; without this a
+  25-item window would count the same as a 3-item one).
+
+### The part that made it reachable: density-aware ELIGIBILITY
+The background path was gated purely on **page count > 40**
+(`BACKGROUND_PAGE_THRESHOLD`) — blind to the very document this feature exists
+for. A 200-line contract on 4 pages is nowhere near 40 pages, so it would never
+have reached the worker however well the worker handled it. `docai/extract.js`
+now also routes by **window count**: `planDensityChunking().needsBackground`
+(more windows than `SYNC_WINDOW_BUDGET`, default 6) sets `large_pdf` plus a new
+`dense_background` flag. The division of labour:
+
+| windows | path |
+|---|---|
+| ≤ 6 | **sync** — Phase 3a proactive density, in-process |
+| > 6 | **background** — one window per cron tick, no deadline ceiling |
+
+`density-plan.js` holds that single decision so the sync path, the eligibility
+check and the worker cannot disagree about what "row-chunkable" means.
+
+## Phase 3c — not built, and why
+
 - **Overlap-reconcile.** Windows currently partition the item blocks exactly,
   which is what lets the merge skip dedup entirely. Overlapping windows by one
   item to self-heal a mis-cut boundary would require a real dedup pass in

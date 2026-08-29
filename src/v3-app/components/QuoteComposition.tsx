@@ -35,6 +35,27 @@ type MatRow = {
   dimensions: string;     // free text, stored as { note }
   consumption_per_unit: string;
   uom: string;
+  // The price side. unit_cost is auto-filled server-side from
+  // material_price_references when the operator leaves it blank.
+  unit_cost: string;
+  currency: string;
+  // 'auto' = the value came back from the server's market-reference fill, not
+  // from a keystroke. Sending an auto value back would PIN it, so a later
+  // market move would never reach the quote (migration 144 exists to stop
+  // exactly that).
+  unit_cost_source?: "auto" | "typed";
+  // consumption_per_unit x unit_cost, computed by the API (never stored: both
+  // factors move). { amount, currency, ok, reason }.
+  material_cost?: any;
+};
+
+// Why a material cost could not be computed, in words an operator can act on.
+const MAT_COST_REASON: Record<string, string> = {
+  no_consumption: "No consumption per unit yet — enter how much material one finished unit uses.",
+  no_unit_cost: "No rate — type one, or add a market price for this material under Admin.",
+  negative_consumption: "Consumption cannot be negative.",
+  negative_unit_cost: "Rate cannot be negative.",
+  uom_mismatch: "The market rate is quoted in a different unit to this line — set the UOM to match.",
 };
 
 // In-code fallback used when the tenant has no configured profiles yet
@@ -107,6 +128,8 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
   // keyed by line_index. Saving syncs into bill_of_materials so the
   // demand planner's BOM explosion is fed from this RFQ work.
   const [materials, setMaterials] = useState<Record<number, MatRow[]>>({});
+  // Per-composition-line derived material-cost rollup, straight from the API.
+  const [matCost, setMatCost] = useState<Record<number, any>>({});
   const [matSaving, setMatSaving] = useState(false);
 
   useEffect(() => {
@@ -257,19 +280,38 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
             dimensions: (r.dimensions && r.dimensions.note) || "",
             consumption_per_unit: r.consumption_per_unit != null ? String(r.consumption_per_unit) : "",
             uom: r.uom || "kg",
+            unit_cost: r.unit_cost != null ? String(r.unit_cost) : "",
+            currency: r.currency || "",
+            unit_cost_source: "auto",
+            material_cost: r.material_cost_per_unit || null,
           });
         }
         if (Object.keys(byLine).length) setMaterials(byLine);
+        const rolls: Record<number, any> = {};
+        for (const r of (resp?.material_cost || [])) rolls[r.composition_line_index] = r;
+        setMatCost(rolls);
       } catch { /* no saved recipe yet */ }
     })();
     return () => { cancelled = true; };
   }, [quoteId]);
 
   const matRows = (li: number) => materials[li] || [];
+  const matRollUp = (li: number) => matCost[li] || null;
   const addMat = (li: number) =>
-    setMaterials((m) => ({ ...m, [li]: [...(m[li] || []), { raw_material_part_no: "", material: "", form: "", dimensions: "", consumption_per_unit: "", uom: "kg" }] }));
-  const updMat = (li: number, i: number, patch: Partial<MatRow>) =>
-    setMaterials((m) => { const arr = [...(m[li] || [])]; arr[i] = { ...arr[i], ...patch }; return { ...m, [li]: arr }; });
+    setMaterials((m) => ({ ...m, [li]: [...(m[li] || []), { raw_material_part_no: "", material: "", form: "", dimensions: "", consumption_per_unit: "", uom: "kg", unit_cost: "", currency: "" }] }));
+  // Editing any factor invalidates the server-computed cost: leaving the old
+  // number beside new inputs shows three values that do not multiply out.
+  // A rate the operator TYPES stops being an auto value and is sent on save.
+  const STALE_KEYS = ["consumption_per_unit", "unit_cost", "uom", "currency"];
+  const updMat = (li: number, i: number, patchIn: Partial<MatRow>) =>
+    setMaterials((m) => {
+      const arr = [...(m[li] || [])];
+      const patch: Partial<MatRow> = { ...patchIn };
+      if (STALE_KEYS.some((k) => k in patch)) patch.material_cost = null;
+      if ("unit_cost" in patch) patch.unit_cost_source = "typed";
+      arr[i] = { ...arr[i], ...patch };
+      return { ...m, [li]: arr };
+    });
   const rmMat = (li: number, i: number) =>
     setMaterials((m) => { const arr = [...(m[li] || [])]; arr.splice(i, 1); return { ...m, [li]: arr }; });
 
@@ -291,8 +333,37 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
           dimensions: r.dimensions ? { note: r.dimensions } : {},
           consumption_per_unit: r.consumption_per_unit !== "" ? Number(r.consumption_per_unit) : null,
           uom: r.uom || "kg",
+          // Send the rate only when the operator typed one: the server fills a
+          // blank from the market reference, and sending null would overwrite
+          // that auto-fill with nothing on every save.
+          // Auto-filled values are deliberately NOT sent: omitting unit_cost is
+          // what lets the server re-resolve the market reference, so the cost
+          // moves with the market rather than with whoever last saved.
+          ...(r.unit_cost !== "" && r.unit_cost_source === "typed" ? { unit_cost: Number(r.unit_cost) } : {}),
+          ...(r.currency ? { currency: r.currency } : {}),
         })),
       });
+      // Take the server's computed cost back so the row shows it without a
+      // refetch (it is derived, so only the server should produce it).
+      // Match by the seq we SENT, not by array position: `arr` filters out
+      // rows with a blank part no, so a half-typed row shifts every index and
+      // the computed cost would land on the wrong material.
+      const savedLines = Array.isArray(resp?.lines) ? resp.lines : [];
+      if (savedLines.length) {
+        const bySeq = new Map<number, any>(savedLines.map((sv: any) => [Number(sv.seq), sv]));
+        const seqOf = new Map<MatRow, number>();
+        arr.forEach((r, seq) => seqOf.set(r, seq));
+        setMaterials((m) => ({
+          ...m,
+          [li]: (m[li] || []).map((row) => {
+            const seq = seqOf.get(row);
+            const sv = seq == null ? null : bySeq.get(seq);
+            return sv ? { ...row, unit_cost: sv.unit_cost != null ? String(sv.unit_cost) : row.unit_cost,
+              currency: sv.currency || row.currency, unit_cost_source: "auto" as const,
+              material_cost: sv.material_cost_per_unit || null } : row;
+          }),
+        }));
+      }
       const synced = resp?.bom_synced ?? 0;
       window.notifySuccess?.(
         "Materials saved",
@@ -622,11 +693,12 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
           <table className="tbl" style={{ fontSize: 12 }}>
             <thead><tr>
               <th>Raw material part</th><th>Grade</th><th>Form</th>
-              <th>Dimensions</th><th className="r">Consumption / unit</th><th>UOM</th><th></th>
+              <th>Dimensions</th><th className="r">Consumption / unit</th><th>UOM</th>
+              <th className="r">Rate / unit</th><th className="r">Material cost / unit</th><th></th>
             </tr></thead>
             <tbody>
               {matRows(sel.ln.line_index).length === 0 ? (
-                <tr><td colSpan={7} className="muted" style={{ padding: 14, textAlign: "center" }}>
+                <tr><td colSpan={9} className="muted" style={{ padding: 14, textAlign: "center" }}>
                   No materials yet. Add the raw material(s) this part consumes.
                 </td></tr>
               ) : matRows(sel.ln.line_index).map((m, i) => (
@@ -649,11 +721,57 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
                   <td><input className="input mono" style={{ width: 52 }}
                     aria-label={"uom " + (i + 1)}
                     value={m.uom} onChange={(e) => updMat(sel.ln.line_index, i, { uom: e.target.value })} /></td>
+                  <td className="r"><input className="input mono r" style={{ width: 90 }} type="number" step="0.0001"
+                    aria-label={"unit cost " + (i + 1)} placeholder="auto"
+                    title={"Rate per " + (m.uom || "kg") + ". Leave blank to take the market reference (Admin > material prices)."}
+                    value={m.unit_cost} onChange={(e) => updMat(sel.ln.line_index, i, { unit_cost: e.target.value })} /></td>
+                  {/* THE MULTIPLY: consumption x rate. Server-computed, and
+                      deliberately blank rather than 0 when either half is
+                      missing -- an unpriced material is unpriced, not free. */}
+                  <td className="r mono">{
+                    m.material_cost?.ok
+                      ? ((m.material_cost.currency || m.currency || "")
+                          + " "
+                          // A cost that rounds to 0.00 is indistinguishable from
+                          // free; say "< 0.01" instead of lying about it.
+                          + (Number(m.material_cost.amount) > 0 && Number(m.material_cost.amount) < 0.01
+                              ? "< 0.01" : Number(m.material_cost.amount).toFixed(2))).trim()
+                      : <span className="muted" title={MAT_COST_REASON[m.material_cost?.reason as string] || "Save the recipe to compute the material cost."}>—</span>
+                  }</td>
                   <td><Btn sm kind="ghost" onClick={() => rmMat(sel.ln.line_index, i)} title="Remove">×</Btn></td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {/* The rolled-up derived cost: what the RAW MATERIAL for one finished
+              unit costs, beside the supplier price typed above. Deliberately
+              refuses to show a single number across currencies, and says so
+              when only some of the recipe is priced. */}
+          {(() => {
+            const roll = matRollUp(sel.ln.line_index);
+            if (!roll || roll.priced_lines === 0) return null;
+            return (
+              <div className="row" style={{ gap: 10, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <span className="mono-sm" style={{ opacity: 0.75 }}>Material cost / unit (derived):</span>
+                <strong className="mono">{
+                  roll.mixed_currency
+                    ? roll.by_currency.map((b: any) => b.currency + " " + Number(b.amount).toFixed(2)).join("  +  ")
+                    : (roll.currency || "") + " " + Number(roll.amount).toFixed(2)
+                }</strong>
+                {roll.mixed_currency && (
+                  <span className="mono-sm" style={{ color: "var(--amber)" }}>
+                    mixed currencies — not totalled
+                  </span>
+                )}
+                {!roll.complete && (
+                  <span className="mono-sm" style={{ color: "var(--amber)" }}>
+                    {roll.unpriced_lines} of {roll.priced_lines + roll.unpriced_lines} material
+                    {roll.priced_lines + roll.unpriced_lines === 1 ? "" : "s"} unpriced — this understates the part
+                  </span>
+                )}
+              </div>
+            );
+          })()}
           <div className="row" style={{ gap: 8, marginTop: 8, alignItems: "center" }}>
             <Btn sm kind="ghost" onClick={() => addMat(sel.ln.line_index)}>+ Add material</Btn>
             <Btn sm kind="primary" disabled={!quoteId || matSaving} onClick={() => saveMaterials(sel.ln)}

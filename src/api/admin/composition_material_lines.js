@@ -17,6 +17,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { recipeToBomRows } from "../_lib/composition-recipe.js";
 import { resolveMaterialPrice } from "../_lib/material-prices.js";
+import { materialCostPerUnit, rollUpMaterialCost } from "../_lib/pdm/material-cost.js";
 
 const numericKeys = ["density", "gross_qty", "yield_pct", "consumption_per_unit", "unit_cost"];
 
@@ -100,7 +101,27 @@ export default async function handler(req, res) {
       else return json(res, 400, { error: { message: "quote_id or finished_part_no required" } });
       const { data, error } = await q.order("composition_line_index", { ascending: true }).order("seq", { ascending: true });
       if (error) throw new Error(error.message);
-      return json(res, 200, { lines: data || [] });
+      const rows = data || [];
+      // THE MULTIPLY. consumption_per_unit x unit_cost = what the raw material
+      // for one finished unit costs -- the first cost input Anvil can DERIVE
+      // for a part the tenant makes, rather than read off a supplier's price
+      // for a part somebody else made. Computed here, never stored: both
+      // factors move (unit_cost tracks a market reference, consumption is
+      // re-derived whenever the recipe changes) and a stale cost is worse than
+      // no cost.
+      const withCost = rows.map((r) => ({ ...r, material_cost_per_unit: materialCostPerUnit(r) }));
+      // Rolled up per composition line, so the cockpit can put a derived
+      // make-cost beside the typed supplier price on the same row.
+      const byLine = new Map();
+      for (const r of rows) {
+        const k = r.composition_line_index;
+        if (!byLine.has(k)) byLine.set(k, []);
+        byLine.get(k).push(r);
+      }
+      const material_cost = [...byLine.entries()]
+        .map(([composition_line_index, ls]) => ({ composition_line_index, ...rollUpMaterialCost(ls) }))
+        .sort((a, b) => a.composition_line_index - b.composition_line_index);
+      return json(res, 200, { lines: withCost, material_cost });
     }
 
     if (req.method === "POST") {
@@ -125,14 +146,26 @@ export default async function handler(req, res) {
             const ref = await resolveMaterialPrice(svc, ctx.tenantId, {
               partNo: row.raw_material_part_no, grade: row.material, uom: row.uom,
             });
-            if (ref) { row.unit_cost = Number(ref.unit_price); if (!row.currency) row.currency = ref.currency || null; }
+            // REFUSE A UOM MISMATCH. resolveMaterialPrice prefers the requested
+            // uom but falls back to "the latest of any uom", and the reference
+            // table is unique per (material_key, uom) -- so a tenant holding a
+            // per-TONNE price and no per-kg row would auto-fill a rate 1000x
+            // the line's basis, and the multiply downstream would report it as
+            // a confident cost. A missing price is recoverable; a silently
+            // thousand-fold one is not.
+            const refUom = String(ref?.uom || "").trim().toLowerCase();
+            const lineUom = String(row.uom || "kg").trim().toLowerCase();
+            if (ref && refUom && refUom === lineUom) {
+              row.unit_cost = Number(ref.unit_price);
+              if (!row.currency) row.currency = ref.currency || null;
+            }
           } catch (_e) { /* no reference: leave unit_cost null */ }
         }
         const upsert = await svc.from("composition_material_lines")
           .upsert(row, { onConflict: "tenant_id,quote_id,composition_line_index,seq" })
           .select("*").single();
         if (upsert.error) throw new Error(upsert.error.message);
-        out.push(upsert.data);
+        out.push({ ...upsert.data, material_cost_per_unit: materialCostPerUnit(upsert.data) });
       }
 
       // Sync each affected finished part's recipe into bill_of_materials.

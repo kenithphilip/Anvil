@@ -529,3 +529,82 @@ describe("runExtractionPipeline / empty-lines auto-escalation (Mahindra PO fix)"
     expect(result.status).toBe("failed");
   });
 });
+
+// Phase 3a: PROACTIVE density chunking. When the text layer is already too
+// dense for one call, the single-shot pass and the generation-tier retry after
+// it are both doomed -- go straight to the row windows instead of paying for
+// two passes that cannot succeed.
+describe("runExtractionPipeline / proactive density chunking", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  // 60 item rows with a header: dense enough to trip shouldRowChunk (>= 46).
+  const denseBody = () => {
+    const rows = [];
+    for (let i = 1; i <= 80; i++) rows.push(`  ${i}   ADAPTER   TNA-16-04-${i}   85159000   5 Nos 660 3300`);
+    return ["PRICE QUOTATION", "TO: Fiat India Automobiles Limited", "",
+      " Item  Part Name  PARTS NO.  HSN CODE  Qty Unit  Unit Price  Amount", "",
+      ...rows, "", "Terms: ex-works"].join("\n");
+  };
+
+  const runWith = async ({ settings, body }) => {
+    const textLayer = await import("../api/_lib/docai/text_layer.js");
+    textLayer.extractTextLayer.mockResolvedValueOnce({
+      ok: true, status: "has_text", page_count: 4, char_count: body.length,
+      body_text: body, page_breakdown: [{ page: 1, chars: body.length, has_text: true }],
+      extractor: "unpdf", extractor_version: "test", latency_ms: 5, error: null,
+    });
+    const storage = makeStorage();
+    return runExtractionPipeline({
+      ctx: { tenantId: "t1", userId: "u1" }, svc: buildSvc(storage), settings,
+      bytes: Buffer.from("%PDF-1.4 fake"), url: null, filename: "quote.pdf",
+      mime: "application/pdf", sourceType: "pdf", customerId: "c1",
+      documentId: "11111111-1111-1111-1111-111111111111",
+      sourceId: "11111111-1111-1111-1111-111111111111",
+      caseId: "ord-1", kind: "quote",
+    });
+  };
+
+  it("goes STRAIGHT to row windows on a dense text layer (no doomed single-shot first)", async () => {
+    const dispatcher = await import("../api/_lib/docai/index.js");
+    await runWith({ settings: { docai_density_chunk_enabled: true }, body: denseBody() });
+    const calls = dispatcher.dispatchExtract.mock.calls.map((c) => c[0]);
+    // Every call is a WINDOW: escalate:true, a density_window index, and a body
+    // shorter than the whole document.
+    expect(calls.length).toBeGreaterThan(1);
+    for (const c of calls) {
+      expect(c.hints.escalate).toBe(true);
+      expect(typeof c.hints.density_window).toBe("number");
+    }
+    // No call carried the full document -> the doomed pass never ran.
+    const full = denseBody();
+    expect(calls.some((c) => c.hints.bodyText === full)).toBe(false);
+    // COVERAGE: the windows together must span the whole table (first and last
+    // item), otherwise "it chunked" would pass while silently dropping rows.
+    const union = calls.map((c) => c.hints.bodyText).join("\n");
+    expect(union).toContain("TNA-16-04-1 ");
+    expect(union).toContain("TNA-16-04-80 ");
+    // 80 items / 25 per window = 4 windows.
+    expect(calls.length).toBe(4);
+  });
+
+  it("does NOT engage when the flag is off (single-shot, unchanged behaviour)", async () => {
+    const dispatcher = await import("../api/_lib/docai/index.js");
+    const body = denseBody();
+    await runWith({ settings: {}, body });
+    const calls = dispatcher.dispatchExtract.mock.calls.map((c) => c[0]);
+    // Positively: exactly ONE call, carrying the WHOLE document (not a window).
+    expect(calls.length).toBe(1);
+    expect(calls[0].hints.bodyText).toBe(body);
+    expect(calls[0].hints.density_window).toBeUndefined();
+  });
+
+  it("does NOT engage on a sparse document even with the flag on", async () => {
+    const dispatcher = await import("../api/_lib/docai/index.js");
+    const sparse = ["QUOTATION", " Item  Description  Qty  Rate", "  1  WIDGET  5  100", "  2  GADGET  3  200"].join("\n");
+    await runWith({ settings: { docai_density_chunk_enabled: true }, body: sparse });
+    const calls = dispatcher.dispatchExtract.mock.calls.map((c) => c[0]);
+    expect(calls.length).toBe(1);
+    expect(calls[0].hints.bodyText).toBe(sparse);
+    expect(calls[0].hints.density_window).toBeUndefined();
+  });
+});

@@ -71,7 +71,7 @@ import { validateGstin, gstinStateCode } from "../gstin.js";
 import { findByGstin, findCustomersByPan } from "../customer-canonicalizer.js";
 import { voteAcrossAdapters } from "./voter.js";
 import { shouldEscalateEmptyLines, shouldEscalateTruncated } from "./model_selector.js";
-import { densityChunkedExtract } from "./density-chunk.js";
+import { densityChunkedExtract, isDensityKind } from "./density-chunk.js";
 import { shouldRowChunk } from "./text-row-chunker.js";
 import { repairPartCodes, brandTokensFromTenantName } from "./part-split.js";
 import { validateExtraction } from "./validators.js";
@@ -981,17 +981,80 @@ export const runExtractionPipeline = async (params) => {
         }
       }
     }
-    out = await chunkedExtract({
-      source: dispatchSource,
-      settings: { ...settings, tenant_id: ctx.tenantId },
-      customerId,
-      hints: dispatchHints,
-      runCost,
-      opts: {
-        eventSink: chunkEventSink,
-        keepPages,
-      },
-    });
+    // Phase 3a: PROACTIVE density chunking. When the text layer is ALREADY
+    // known to be too dense for one call, the single-shot pass is doomed and so
+    // is the generation-tier retry after it -- three passes to reach the row
+    // windows that were always the answer, two of them paid for nothing (and on
+    // a tight run budget the wasted calls can exhaust it before the density
+    // step is ever reached). Go straight to the windows instead.
+    //
+    // Falls through to the normal path on ANY skip signal or a result with no
+    // lines, so a mis-read of density costs a fallback, never an extraction.
+    let proactiveDensity = false;
+    let densityAttempted = false;
+    // Going first means owning the failure: keep a slice of the run budget in
+    // reserve so a slow or failing proactive pass cannot leave the fallback
+    // single-shot with a deadline already behind it (every adapter would then
+    // record skipped_deadline and the run would fail outright -- strictly worse
+    // than the cheap pass this replaced).
+    const PROACTIVE_RESERVE_MS = Math.max(0, Number(process.env.DOCAI_DENSITY_RESERVE_MS) || 15_000);
+    // A HIGHER bar than the reactive path: reactive only spends extra calls
+    // after a real failure, so it can afford to be eager. Proactive spends them
+    // up front on a document that might have extracted fine, so it should fire
+    // only when a single call is clearly hopeless, not merely borderline.
+    const PROACTIVE_MIN_ITEMS = Math.max(1, Number(process.env.DOCAI_DENSITY_PROACTIVE_MIN_ITEMS) || 60);
+    if (settings?.docai_density_chunk_enabled && isDensityKind(kind)
+        && bodyText && Date.now() < deadlineAt - PROACTIVE_RESERVE_MS
+        && shouldRowChunk(bodyText, { minItems: PROACTIVE_MIN_ITEMS })) {
+      densityAttempted = true;
+      await recordRunEvent("docai_density_chunk_proactive_started", { kind });
+      const dense = await densityChunkedExtract({
+        source: dispatchSource,
+        settings: { ...settings, tenant_id: ctx.tenantId },
+        customerId,
+        hints: dispatchHints,
+        runCost,
+        opts: { eventSink: chunkEventSink, deadlineAt: deadlineAt - PROACTIVE_RESERVE_MS },
+      }).catch((err) => ({ skip: true, reason: "threw", error: err?.message || String(err) }));
+      const denseLines = Array.isArray(dense?.normalized?.lines) ? dense.normalized.lines.length : 0;
+      // COMPLETE runs only. A partial (a window failed, or the budget/deadline
+      // cut the walk short) would be adopted as a green run carrying part of
+      // the table -- and because an adopted density result reports
+      // model_selection_reason='escalate_quality', neither escalation can fire
+      // afterwards and the reactive density path is blocked by
+      // densityAttempted. Every recovery mechanism would be disabled behind a
+      // silently-truncated line set. Falling through instead costs one normal
+      // pass and keeps the whole ladder available.
+      proactiveDensity = !!(dense && !dense.skip && dense.ok && dense.density_complete && denseLines > 0);
+      await recordRunEvent("docai_density_chunk_proactive_done", {
+        skip: !!dense?.skip,
+        reason: dense?.reason || null,
+        window_count: dense?.density_window_count ?? null,
+        windows_run: dense?.density_windows_run ?? null,
+        windows_ok: dense?.density_windows_ok ?? null,
+        complete: !!dense?.density_complete,
+        lines: denseLines,
+        adopted: proactiveDensity,
+      });
+      if (proactiveDensity) {
+        dense.density_proactive = true;
+        out = dense;
+      }
+    }
+
+    if (!proactiveDensity) {
+      out = await chunkedExtract({
+        source: dispatchSource,
+        settings: { ...settings, tenant_id: ctx.tenantId },
+        customerId,
+        hints: dispatchHints,
+        runCost,
+        opts: {
+          eventSink: chunkEventSink,
+          keepPages,
+        },
+      });
+    }
     // Stash the profiler outcome on the extraction result so
     // downstream consumers (UI, audit) can see what was kept and
     // what was skipped.
@@ -1002,7 +1065,10 @@ export const runExtractionPipeline = async (params) => {
         line_item_pages: profileResult.line_item_pages,
         page_count: profileResult.page_count,
         reason: profileResult.reason,
-        used: !!keepPages,
+        // Row windows are built from the whole text layer and never receive
+        // keepPages, so an adopted proactive density run did NOT use the
+        // profiler's page-keep list, whatever the list said.
+        used: !!keepPages && !proactiveDensity,
       };
     }
 
@@ -1103,10 +1169,13 @@ export const runExtractionPipeline = async (params) => {
     // after the generation-tier retry: pdf chunking can't split it (the lines
     // aren't on more pages), so split the TEXT by row windows and extract each.
     // See density-chunk.js / docs/DENSITY_AWARE_CHUNKING_DESIGN.md.
-    const denseKind = kind === "po" || kind === "rfq" || kind === "quote";
+    const denseKind = isDensityKind(kind);
     const linesNow = Array.isArray(out?.normalized?.lines) ? out.normalized.lines.length : 0;
     const stillDeficient = out?.reason === "output_truncated" || (out?.ok && linesNow === 0);
-    if (settings?.docai_density_chunk_enabled && denseKind && stillDeficient
+    // !densityAttempted: if the PROACTIVE pass already tried row windows on this
+    // same text and did not help, running the identical plan again here is
+    // guaranteed waste.
+    if (settings?.docai_density_chunk_enabled && denseKind && stillDeficient && !densityAttempted
         && bodyText && Date.now() < deadlineAt && shouldRowChunk(bodyText)) {
       await recordRunEvent("docai_density_chunk_started", {
         first_reason: out?.reason || null,

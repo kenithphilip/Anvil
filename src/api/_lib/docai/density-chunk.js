@@ -17,6 +17,12 @@ import { planRowWindows, shouldRowChunk, buildWindowBodyText } from "./text-row-
 
 const emit = (sink, e) => { if (typeof sink === "function") { try { sink(e); } catch (_e) { /* never throw out of progress */ } } };
 
+// Kinds whose extraction carries a line table worth row-windowing. Matches
+// ESCALATABLE_KINDS in model_selector.js; exported so run.js's PROACTIVE and
+// REACTIVE call sites cannot drift apart.
+export const DENSITY_KINDS = Object.freeze(["po", "rfq", "quote"]);
+export const isDensityKind = (kind) => DENSITY_KINDS.includes(kind);
+
 // Returns a merged extraction result (same shape as dispatchExtract) OR a
 // { skip: true, reason } signal telling the caller to keep its existing result.
 export const densityChunkedExtract = async (args) => {
@@ -54,7 +60,16 @@ export const densityChunkedExtract = async (args) => {
     let out;
     try {
       out = await dispatchExtract({
-        source,
+        // STRIP THE BYTES. Only the LLM adapters honour hints.bodyText; the
+        // byte-consuming ones (docling, marker, unstructured, azure_di,
+        // reducto) read source.bytes and would happily extract the WHOLE
+        // document for EVERY window. The dispatcher does not stop at the first
+        // success below the fallback-confidence threshold, so one of them can
+        // win a window and contribute a full-document line set -- N times over,
+        // concatenated by a merge that has no dedup. Without bytes they report
+        // no_source_bytes and are skipped, which is the correct outcome: a row
+        // window is a TEXT artifact.
+        source: { ...source, bytes: null, url: null },
         settings,
         customerId,
         // escalate:true -> generation tier; a 25-item window fits its budget
@@ -79,8 +94,16 @@ export const densityChunkedExtract = async (args) => {
   merged.density_chunked = true;
   merged.density_window_count = plan.windows.length;
   merged.density_windows_run = windowResults.length;
+  merged.density_windows_ok = windowResults.filter((r) => r && r.ok).length;
   if (budgetBreachedAt != null) { merged.over_run_budget = true; merged.budget_breached_at_window = budgetBreachedAt; }
   if (deadlineHitAt != null) { merged.deadline_hit_at_window = deadlineHitAt; }
+  // COMPLETE means every planned window ran AND succeeded, with no budget or
+  // deadline cut. `ok` alone is okAny -- one good window out of six -- so a
+  // caller that treats a partial as success ships a partial line table as a
+  // green run. Callers on the PRIMARY path must require this.
+  merged.density_complete = merged.density_windows_ok === plan.windows.length
+    && merged.density_windows_run === plan.windows.length
+    && budgetBreachedAt == null && deadlineHitAt == null;
   emit(eventSink, {
     stage: "density_chunking_done",
     window_count: plan.windows.length,

@@ -758,6 +758,26 @@
       return await resp.blob();
     },
     voucherShare: async (orderId) => apiFetch("/api/orders/voucher_pdf?orderId=" + encodeURIComponent(orderId) + "&format=share"),
+    // The extracted sales order as an .xlsx (falls back to .csv server-side if
+    // the xlsx dep is absent). Returns a Blob; the caller triggers the download.
+    excelBlob: async (orderId) => {
+      const cfg = readConfig();
+      if (!cfg.url) throw new Error("Backend URL not configured");
+      const session = readSession();
+      const url = cfg.url.replace(/\/+$/, "") + "/api/orders/export?orderId=" + encodeURIComponent(orderId);
+      const headers = {};
+      if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+      if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
+      const resp = await fetch(url, { headers });
+      if (!resp.ok) {
+        let msg = "Excel export " + resp.status;
+        try { const j = await resp.json(); msg = j?.error?.message || msg; } catch (_) { /* binary/empty */ }
+        throw new Error(msg);
+      }
+      const disposition = resp.headers.get("Content-Disposition") || "";
+      const m = disposition.match(/filename="?([^"]+)"?/);
+      return { blob: await resp.blob(), filename: m ? m[1] : "sales-order.xlsx" };
+    },
     // Tally-style Sales Order acknowledgment PDF (so_pdf.js).
     soPdfBlob: async (orderId) => {
       const cfg = readConfig();

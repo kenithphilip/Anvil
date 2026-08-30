@@ -43,6 +43,8 @@ const PdmMaterial = () => {
   const [phase, setPhase] = useState<"idle" | "extracting" | "review" | "saving" | "done">("idle");
   const [file, setFile] = useState<File | null>(null);
   const [partSpec, setPartSpec] = useState<any>(null);
+  // The extraction this spec came from, kept for provenance on the saved spec.
+  const [extractionRunId, setExtractionRunId] = useState<string | null>(null);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
   // Pages the extractor never saw. A part drawing's title block sits on page 1,
   // so a truncated read still yields a part_spec and a plausible verdict — the
@@ -58,7 +60,7 @@ const PdmMaterial = () => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const reset = () => {
-    setPhase("idle"); setFile(null); setPartSpec(null); setVerdict(null);
+    setPhase("idle"); setFile(null); setPartSpec(null); setExtractionRunId(null); setVerdict(null);
     setFinishedPartNo(""); setFailure(null); setSaved(null);
   };
 
@@ -80,6 +82,7 @@ const PdmMaterial = () => {
       const spec = ex.normalized?.part_spec || null;
       if (!spec) { setFailure({ status: "failed", reason: "non_drawing" }); setPhase("idle"); return; }
       setPartSpec(spec);
+      setExtractionRunId(ex.run_id || null);
       setFinishedPartNo(spec.title_block?.part_no || spec.title_block?.drawing_no || "");
       const resp = await determine(spec, { allowanceMm: allowance, yieldPct });
       setVerdict(resp?.verdict || resp || null);
@@ -112,11 +115,18 @@ const PdmMaterial = () => {
     if (!verdict || !finishedPartNo.trim()) return;
     setPhase("saving");
     try {
-      const resp: any = await AnvilBackend?.pdm?.saveRawMaterial?.(finishedPartNo.trim(), verdict);
+      const resp: any = await AnvilBackend?.pdm?.saveRawMaterial?.(finishedPartNo.trim(), verdict, partSpec, extractionRunId);
       if (!resp || resp.error) { window.notifyError?.("Could not save", (resp && resp.error && (resp.error.message || resp.error)) || "save failed"); setPhase("review"); return; }
       setSaved({ procurement_type: resp.procurement_type, raw_material_part_no: resp.raw_material_part_no || null });
       setPhase("done");
-      window.notifySuccess?.("Raw material saved", finishedPartNo.trim() + " · " + resp.procurement_type);
+      // Say plainly whether the drawing's engineering spec was stored too, and
+      // why not when it wasn't — a silent no-op is how this stayed discarded.
+      const es = resp.engineering_spec;
+      const specNote = es?.stored
+        ? " · spec saved (" + (es.fields || []).join(", ") + ")"
+        : (es?.reason === "human_authored_spec_preserved" ? " · kept the existing hand-entered spec"
+          : (es && es.reason !== "nothing_to_store" && es.reason !== "no_part_spec" ? " · spec not saved (" + es.reason + ")" : ""));
+      window.notifySuccess?.("Raw material saved", finishedPartNo.trim() + " · " + resp.procurement_type + specNote);
     } catch (err: any) { window.notifyError?.("Could not save", String(err?.message || err)); setPhase("review"); }
   };
 

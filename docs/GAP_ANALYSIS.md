@@ -935,6 +935,97 @@ remains the thing in §0 still open.
    the smallest possible step toward Warren's thesis, and the one Anvil's
    existing AMC/visit machinery is already shaped for.
 
+### Additions — 2026-08-29 (MRO master data + spare-parts intelligence: the first review that contests a §8 moat)
+
+Reviewed at the user's request. **Verdantis is the closest thing to a real
+competitor this document has examined** — not because it sells what Anvil sells
+(it does not), but because it is the first entrant whose product directly
+overlaps two of the moats §8 tells us never to erase. It also sits on the
+opposite side of the transaction from Anvil in a way that is worth stating
+plainly rather than filing as "procurement-inverse, no threat". The corrections
+it forces on Anvil's own record follow the entry.
+
+### 3.31 Verdantis — `verdantis.com` (adjacent — contests a §8 moat, and inverts the business model)
+
+One-liner: **MRO master-data and spare-parts intelligence for asset-intensive
+enterprises.** Two products: **MRO360** (an EAM suite: criticality analysis,
+inventory intelligence, maintenance-demand forecasting, demand planning and
+optimisation, work-order planning) and the **Verdantis MDM Suite** (Harmonize
+for standardisation + Integrity for governance, plus five named AI agents —
+AutoEnrich, SpareSeek, ObsoCheck, AutoDoc, AutoTrans).
+
+ICP: asset-intensive enterprises managing MRO inventory across multi-plant
+operations — oil and gas, energy and utilities, metals and mining, chemicals,
+pulp and paper, food and beverage, building materials.
+
+Capability surface: spare-parts criticality scoring, **obsolescence detection**,
+**alternate-part identification**, safety-stock optimisation, demand forecasting,
+reorder-point recalibration, item-master normalisation / enrichment /
+deduplication across systems, supplier-reliability tracking, maverick-spend
+elimination, BOM management, work-order scheduling, preventive and predictive
+maintenance.
+
+Integrations: **SAP S/4HANA, SAP ECC, Oracle EBS, IBM Maximo, Infor.**
+
+Differentiators: "agentic AI" / "AI-native"; **contractually guaranteed**
+savings; "480M+" records normalised; "25+ years of industrial data expertise";
+">95% accuracy" claimed for demand forecasting.
+
+Maturity: the strongest of any entrant reviewed here. Logos include **Chevron,
+Saudi Aramco, Marathon Petroleum, CITGO, HF Sinclair, AEP, Mars, Barrick,
+Newmont, Weatherford**. Metrics: "35% average reduction in maintenance OpEx",
+"$42M working capital released" (refiner), "27,400 dead SKUs surfaced" (steel
+producer); 1.8M-2M+ SKUs under management; 8-14 week implementations.
+
+Relevance to Anvil — two things, and the second matters more than the first.
+
+**It contests a moat.** §8 lists "Spare-matrix recommender + obsolete-parts" and
+"Supplier scorecard by country-of-origin" as things "none of the YC25 cohort
+touches". That remains true *of the YC25 cohort* and is false as a general
+claim: criticality, obsolescence, alternates, safety stock and supplier
+reliability are Verdantis's core product, sold to Aramco, for 25 years. The moat
+is real at the SME / mid-market tier where a plant has no MDM programme at all;
+it is not a moat against an enterprise incumbent, and the marketing story should
+say which tier it is claiming.
+
+**It inverts the business model, and this is the honest part.** Verdantis is
+bought by the **asset owner** — the party Anvil's tenant *sells spares to* — and
+its headline value is **buying fewer spares**: "$42M working capital released",
+"27,400 dead SKUs surfaced". Anvil's spare matrix exists to recommend a spare
+kit; Verdantis exists to tell that same plant which of those parts it should
+stop stocking. Same data, opposite sign. No account is contested because Anvil
+never sells to Verdantis's buyer — but a customer running Verdantis is a
+customer whose spares demand is being actively compressed, and a spares seller
+should know that rather than discover it. **Verdict: ADJACENT.**
+
+### What checking Verdantis corrected about Anvil's own record
+
+Five things, all verified against current code.
+
+| claim previously held | what the code says |
+|---|---|
+| The obsolete-parts capability is an inventory-hygiene feature | **It is a QUOTING feature.** `_lib/part-supersession.js` has exactly one non-test consumer in `src/`: `spare_matrix/to_quote.js`. It substitutes a superseded part at the moment a quote line is built. Nothing sweeps the item master for dead stock, and nothing tells a customer what to stop carrying — which is precisely Verdantis's headline number. |
+| FMECA is a differentiator that drives maintenance | **Real, and it drives one thing: stocking.** `fmeca_criticality` (mig 178, `RPN = S x O x D`) is read by its own endpoint (`fmeca/index.js`) and by `spare_matrix/recompute_recommended.js`. No PM task, no inspection, no work order — consistent with §3.30's finding that every physical-asset record Anvil keeps terminates in a spare sale. |
+| Anvil's inventory science is thin next to an EAM suite | **Wrong, and better than the doc credits.** `_lib/inventory/` carries `safety-stock`, `reliability`, `classify`, `lead-time`, `net-req`, `forecast`, `pipeline-demand`, `positions`, `exceptions-detector` and `conformal` — conformal prediction intervals are a more honest uncertainty treatment than a ">95% accuracy" claim. |
+| ...and it runs | **It does not run on a schedule.** `cron/inventory-planning-weekly.js` is registered in `router.js:225/723` and appears in **neither** `cron/tick.js`'s fan-out **nor** `cron/daily.js`'s, and the only Vercel cron entry is `/api/cron/daily` (`vercel.json`). So the whole planning stack is callable and never called. Verdantis's entire proposition is that this runs continuously; Anvil has the machinery and no clock. |
+| EOQ feeds the planning loop | **`_lib/inventory/eoq.js` has zero non-lib importers.** It is an orphan, which is the same finding §3.28 reached from the other direction (its MOQ-rounded quantity has no consumer). |
+
+Three things to take:
+
+- **Schedule the planning cron.** The single highest-value line in this section:
+  Anvil already computes safety stock, lead-time distributions, reliability and
+  demand with conformal intervals, and nothing triggers any of it. This is
+  wiring, not building, and it converts a library into a product.
+- **Claim the moat by tier.** "No one else does spare-matrix recommendation" is
+  false against Verdantis and true against the YC25 cohort. Saying "the only one
+  that does this for a mid-market industrial supplier, without an MDM programme"
+  is both defensible and more persuasive.
+- **Consider selling the opposite sign.** A spares seller that can tell a
+  customer which parts they are over-stocking is making a trust claim no
+  competitor in this document can match — and Anvil already has the FMECA,
+  installed base and failure history to compute it. It costs some spare revenue
+  and buys the position Verdantis charges Aramco for.
+
 ## 4. Cross-cutting themes from the competitor scan
 
 Five things the competitors collectively prove are now table stakes:
@@ -1314,3 +1405,4 @@ After the post-implementation pass, the remaining open items in Now are:
 - Spaceflow: https://www.spaceflow.tech, ycombinator.com/companies/spaceflow-technologies-inc (YC S26)
 - Prototyping.io: https://www.prototyping.io, ycombinator.com/companies/prototypingio (YC P26, founded 2026; waitlist only — no pricing, turnaround SLA, logos or metrics published, so capability claims are read as intent)
 - YC requests-for-startups, hardware track (reviewed 2026-08-29): "Hardware Supply Chain" (Nicolas Dessaigne), "New Operating Systems for the Physical World" (Charlie Warren), "Modern Metal Mills" (Zane Hengsperger) — used as a diagnostic of Anvil, not as a competitor scan
+- Verdantis: https://www.verdantis.com (reviewed 2026-08-29; MRO360 + MDM Suite. Logos, savings metrics and the ">95% accuracy" forecasting claim are the vendor's own, unaudited)

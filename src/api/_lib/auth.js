@@ -224,6 +224,11 @@ export const SERVER_ACTIONS = {
   // limited to design + sales roles + admin — data-download control. Other roles
   // can see a drawing exists (list) but cannot pull the file/link. Mirrors rbac.ts.
   "drawing.download":    new Set(["design_engineer", "design_manager", "sales_engineer", "sales_manager", "admin"]),
+  // Assigning field work to a PERSON. The coarse "write" verb admits eight
+  // roles, including finance and procurement -- who cannot even see the Service
+  // Visits screen (MATRIX["svc-visits"] gives them ""), yet could reassign
+  // another engineer's scheduled visit. Mirrors rbac.ts service.assign.
+  "service.assign":      new Set(["operator", "admin"]),
 };
 
 export const hasAction = (ctx, action) => {

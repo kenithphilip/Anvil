@@ -1373,8 +1373,16 @@
   // persists the reviewed verdict into the recipe + BOM + procurement_type.
   const pdm = {
     determineRawMaterial: async (payload) => apiFetch("/api/pdm/raw-material", { method: "POST", body: payload }),
-    saveRawMaterial: async (finishedPartNo, verdict) =>
-      apiFetch("/api/pdm/raw-material", { method: "POST", body: { finished_part_no: finishedPartNo, verdict, commit: true } }),
+    // part_spec + extraction_run_id are carried so the commit can ALSO store
+    // the engineering spec the same drawing gave us (finish, heat treatment,
+    // tolerances, GD&T). Without them the server takes its no_part_spec branch
+    // and that spec stays discarded.
+    saveRawMaterial: async (finishedPartNo, verdict, partSpec = null, extractionRunId = null) =>
+      apiFetch("/api/pdm/raw-material", { method: "POST", body: {
+        finished_part_no: finishedPartNo, verdict, commit: true,
+        ...(partSpec ? { part_spec: partSpec } : {}),
+        ...(extractionRunId ? { extraction_run_id: extractionRunId } : {}),
+      } }),
   };
 
   const copilot = {

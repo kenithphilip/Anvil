@@ -127,6 +127,8 @@ export const ACTIONS: Record<string, Role[]> = {
   "einvoice.cancel":      ["finance", "admin"],
   "amc.generate_visits":  ["operator", "admin"],
   "service.submit_closure":["operator", "admin"],
+  // Assigning a visit to a person is dispatch, not data entry.
+  "service.assign":       ["operator", "admin"],
   "admin.add_member":     ["admin"],
   "admin.change_role":    ["admin"],
   "security.edit_redaction":["admin"],

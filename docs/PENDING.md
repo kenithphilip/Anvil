@@ -329,7 +329,7 @@ Each verified, none currently breaking a user flow.
 - **The analytics refresh is a sequential per-row upsert** — fine at current
   volume, a timeout at scale.
 - ~~**`app.tsx:188` listens for `anvil:session`, which nothing emits.**~~ Fixed
-  in PR #522, and it was worse than recorded here. The listener's handler was
+  in PR #535, and it was worse than recorded here. The listener's handler was
   `setRoute((r) => r)`, which React bails out of, so the `storage` listener
   beside it was equally inert — and the note's own reassurance ("same-tab
   sign-in works via the ordinary re-render") was true only by luck. The case

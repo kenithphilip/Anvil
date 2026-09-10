@@ -21,7 +21,7 @@
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
-import { reconcileInvoiceAgainstOrder, compareTotals, countsTowardBilled } from "../_lib/invoice-reconcile.js";
+import { reconcileInvoiceAgainstOrder, compareTotals, countsTowardBilled, dispatchLookup } from "../_lib/invoice-reconcile.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -111,8 +111,25 @@ export default async function handler(req, res) {
     // double-billed against itself.
     const priorInvoices = invoices.filter((i) => !subject || i.id !== subject.id);
 
+    // What has actually gone out of the door, for the under-delivery leg.
+    //
+    // Single order, so .eq and no .in() chunking — the precedent is the sibling
+    // endpoint reconcile_quotes.js and _lib/dispatch-register-send.js.
+    //
+    // Best-effort on purpose: a read failure must leave the leg UNCHECKED, not
+    // report nothing shipped. dispatchLookup([]) and dispatchLookup(null) both
+    // return present: false, so the catch needs no special case.
+    let dispatchRows = null;
+    try {
+      const dq = await svc.from("dispatch_lines")
+        .select("line_index, part_no, description, dispatched_qty, uom, dispatch_date, invoice_number")
+        .eq("tenant_id", ctx.tenantId).eq("order_id", orderId);
+      if (!dq.error) dispatchRows = dq.data || [];
+    } catch (_e) { /* leave unchecked */ }
+
     const result = reconcileInvoiceAgainstOrder(orderLines, subjectLines, priorInvoices, {
       priceTolerancePct: body.price_tolerance_pct,
+      dispatch: dispatchLookup(dispatchRows),
     });
 
     const totals = subject

@@ -29,12 +29,31 @@ import {
 // than one way and the operator should see the reason a receipt would actually
 // be rejected on, not whichever check happened to run first.
 export const VERDICTS = Object.freeze([
-  "not_on_po",        // invoiced something the PO never ordered
-  "qty_over_ordered", // cumulative invoiced qty exceeds the ordered qty
-  "price_mismatch",   // invoiced at a rate the PO does not carry
+  "not_on_po",             // invoiced something the PO never ordered
+  "qty_over_ordered",      // cumulative invoiced qty exceeds the ordered qty
+  "qty_exceeds_dispatched",// billing more units than we have actually shipped
+  "price_mismatch",        // invoiced at a rate the PO does not carry
   "description_mismatch",
   "matched",
+  // NOT a severity — a refusal, which is why it sits outside the worst-first
+  // run above. A line with no part code cannot be matched to a PO line at all,
+  // and saying so is different from saying the PO does not carry it.
+  "unkeyed",
 ]);
+
+// Why qty_exceeds_dispatched sits where it does, between the two clerical
+// quantity checks and price:
+//
+// A buyer raises a goods receipt against WHAT ARRIVED, not against the PO. So
+// an invoice can agree with the PO on every line and still go unpaid because
+// only 60 of 100 units shipped. qty_over_ordered outranks it because exceeding
+// the PO is the more fundamental error — it is wrong against the contract, not
+// merely against this consignment — but both outrank price, because a short
+// shipment is a certain rejection where a price query is a negotiation.
+//
+// This leg is only ever evaluated when dispatch data EXISTS for the order. With
+// no dispatch rows the honest answer is "not checked", never "nothing shipped":
+// see dispatchLookup() below.
 
 // Statuses whose quantities count as ALREADY BILLED.
 //
@@ -67,7 +86,62 @@ export const billedQtyByPart = (priorInvoices) => {
   return billed;
 };
 
+// What we have actually shipped, per part key.
+//
+// REFUSAL IS THE POINT OF THIS FUNCTION. dispatch_lines is optional: every join
+// column in migration 193 is nullable and — today — the table has exactly one
+// writer (POST /api/comms/dispatch_lines) with no frontend caller, no importer
+// and no ERP sync, so for most orders it is simply empty. A check that read
+// "no dispatch rows" as "nothing shipped" would flag every line of every order
+// and teach the operator to ignore the panel.
+//
+// So `present` is returned separately from the quantities, and the caller must
+// not evaluate the leg when it is false. This mirrors the house convention used
+// by comparability() in sales-order-match.js and comparable() in
+// plm-bom-drift.js: refuse to score, name the reason, and return null rather
+// than zero. It is also deliberately the OPPOSITE of ap/match.js on the buy
+// side, which coerces a missing goods receipt to received=0 and fires
+// receipt_short on every line — correct-looking there only because that side
+// has a capture screen.
+const MIXED_UOM = Symbol("mixed_uom");
+
+export const dispatchLookup = (dispatchLines) => {
+  const rows = Array.isArray(dispatchLines) ? dispatchLines : null;
+  if (!rows || rows.length === 0) {
+    return { present: false, reason: "no_dispatch_data", byKey: new Map(), uomByKey: new Map(), unresolved: [] };
+  }
+  const byKey = new Map();
+  const uomByKey = new Map();
+  const unresolved = [];
+  for (const d of rows) {
+    const key = lineKey(d);
+    const qty = num(d?.dispatched_qty);
+    if (!key) {
+      // A despatch row we cannot key is NOT zero and must not be folded into
+      // another line's total. Reported so the operator can see the check was
+      // partial rather than clean.
+      unresolved.push({ part_no: linePartNo(d), dispatched_qty: qty, line_index: d?.line_index ?? null });
+      continue;
+    }
+    if (qty == null) continue;
+    byKey.set(key, round2((byKey.get(key) || 0) + Number(qty)));
+    // Kept so the comparison can REFUSE on a unit mismatch rather than compare
+    // numbers in different units. Hose sold by the 100m roll and despatched in
+    // metres is the case that makes this matter: 300 against 3 is not an
+    // under-delivery, it is two different units.
+    const u = String(d?.uom || "").trim().toUpperCase();
+    if (u) {
+      const seen = uomByKey.get(key);
+      if (seen === undefined) uomByKey.set(key, u);
+      else if (seen !== u) uomByKey.set(key, MIXED_UOM);
+    }
+  }
+  return { present: true, reason: null, byKey, uomByKey, unresolved };
+};
+
 // opts.priceTolerancePct — allowed |invoice rate - PO rate| before flagging.
+// opts.dispatch — a dispatchLookup() result. Omitted or { present: false }
+//   leaves the under-delivery leg unevaluated and reported as not checked.
 // Defaults to 0, deliberately: the quote hop tolerates 0.5% because a quote is
 // a negotiation, but an invoice is a demand for a specific sum and a buyer's
 // three-way match is usually exact. A tenant that wants slack must ask for it.
@@ -75,10 +149,14 @@ export const reconcileInvoiceAgainstOrder = (orderLines, invoiceLines, priorInvo
   const tol = opts.priceTolerancePct != null ? Number(opts.priceTolerancePct) : 0;
   const { byPart: poByPart, ambiguous } = indexByPart(orderLines);
   const billed = billedQtyByPart(priorInvoices);
+  const dispatch = opts.dispatch && opts.dispatch.present
+    ? opts.dispatch
+    : { present: false, reason: opts.dispatch?.reason || "no_dispatch_data", byKey: new Map(), unresolved: [] };
 
   const summary = {
     total: 0, matched: 0,
-    not_on_po: 0, qty_over_ordered: 0, price_mismatch: 0, description_mismatch: 0,
+    not_on_po: 0, qty_over_ordered: 0, qty_exceeds_dispatched: 0,
+    price_mismatch: 0, description_mismatch: 0, unkeyed: 0,
   };
   const invoicedKeys = new Set();
 
@@ -88,6 +166,32 @@ export const reconcileInvoiceAgainstOrder = (orderLines, invoiceLines, priorInvo
     const po = key ? poByPart.get(key) : null;
     const invQty = lineQty(ln);
     const invRate = lineRate(ln);
+
+    // A line with no part code is NOT "not on the PO".
+    //
+    // This used to fall straight through to not_on_po with blocking: true, so
+    // an installation-labour line priced in man-days — a real PO line that
+    // simply has no part number — made can_send false even when the PO and the
+    // invoice agreed exactly. A false positive on a BLOCKING verdict is the
+    // worst kind: it teaches the operator that the panel cries wolf.
+    //
+    // The giveaway that it was a bug rather than a decision: billedQtyByPart
+    // already skips these lines (`if (!key) continue`), so the two halves of
+    // this same module disagreed about what an unkeyed line means.
+    //
+    // Known and NOT fixed here: indexByPart skips null keys too, so an unkeyed
+    // PO line is equally invisible to the reverse `not_invoiced` walk below. It
+    // is the same root cause and wants the ordinal keying dispatch_lines uses,
+    // which is a larger change than this one.
+    if (!key) {
+      summary.unkeyed += 1;
+      return {
+        part_no: linePartNo(ln), verdict: "unkeyed", blocking: false,
+        invoice_qty: invQty, invoice_rate: invRate, invoice_amount: lineAmount(ln),
+        po_qty: null, po_rate: null, dispatch_checked: false,
+        detail: "This line has no part code, so it cannot be matched to a PO line automatically. Check it by hand.",
+      };
+    }
 
     if (!po) {
       // The buyer cannot receive what they did not order. Always a blocker.
@@ -111,6 +215,23 @@ export const reconcileInvoiceAgainstOrder = (orderLines, invoiceLines, priorInvo
     const price = comparePrice(invRate, poRate, tol);
     const desc = compareDescription(lineDesc(ln), lineDesc(po));
 
+    // What we have actually shipped against this part, and whether we are
+    // entitled to ask about it at all.
+    // Units must agree before quantities mean anything. An invoice line in one
+    // unit and a despatch in another is not comparable, and the honest answer
+    // is that this line was not checked — not that it short-shipped.
+    const invUom = String(ln?.uom || ln?.unit || "").trim().toUpperCase();
+    const dispUom = dispatch.uomByKey?.get(key);
+    const uomComparable = !dispatch.present ? false
+      : dispUom === MIXED_UOM ? false
+      : (!invUom || !dispUom || invUom === dispUom);
+    const dispatchChecked = dispatch.present && uomComparable;
+
+    const dispatched = dispatchChecked ? (dispatch.byKey.get(key) ?? 0) : null;
+    const overDispatched = (dispatchChecked && invQty != null && cumulative > round2(dispatched))
+      ? round2(cumulative - round2(dispatched))
+      : null;
+
     // Worst-first, matching VERDICTS order.
     let verdict = "matched";
     let detail = null;
@@ -118,6 +239,13 @@ export const reconcileInvoiceAgainstOrder = (orderLines, invoiceLines, priorInvo
       verdict = "qty_over_ordered";
       detail = `Invoicing ${invQty} brings the total billed to ${cumulative} against ${poQty} ordered — ${overBy} over.`;
       summary.qty_over_ordered += 1;
+    } else if (overDispatched != null) {
+      // The physical leg. A buyer's goods receipt is raised against what
+      // arrived, so billing ahead of the despatch is held however well it
+      // agrees with the PO.
+      verdict = "qty_exceeds_dispatched";
+      detail = `Billing ${cumulative} against ${dispatched} actually despatched — ${overDispatched} not yet shipped. Their goods receipt is raised on what arrived.`;
+      summary.qty_exceeds_dispatched += 1;
     } else if (price.mismatch) {
       verdict = "price_mismatch";
       detail = `Invoiced at ${invRate} against ${poRate} on the PO (${price.delta_pct > 0 ? "+" : ""}${price.delta_pct}%).`;
@@ -141,6 +269,11 @@ export const reconcileInvoiceAgainstOrder = (orderLines, invoiceLines, priorInvo
       previously_billed_qty: priorQty || null,
       cumulative_billed_qty: invQty != null ? cumulative : null,
       over_by: overBy,
+      // null vs 0 carries real meaning here: null is "we did not check", 0 is
+      // "we checked and nothing has shipped".
+      dispatched_qty: dispatched,
+      over_dispatched_by: overDispatched,
+      dispatch_checked: dispatchChecked,
       price_delta_pct: price.delta_pct,
       desc_agreement: desc.score,
       // A part appearing twice on the PO means "which line did you mean?" has
@@ -175,6 +308,14 @@ export const reconcileInvoiceAgainstOrder = (orderLines, invoiceLines, priorInvo
     not_invoiced: notInvoiced,
     // The single question the caller usually wants answered.
     can_send: blocking.length === 0,
+    // Reported so the UI can say "not checked" rather than letting a clean
+    // result imply the despatch was verified. A silent pass and a skipped
+    // check look identical in any summary that only carries a count.
+    dispatch: {
+      checked: dispatch.present,
+      reason: dispatch.present ? null : dispatch.reason,
+      unresolved: dispatch.unresolved || [],
+    },
     price_tolerance_pct: tol,
     counted_invoice_statuses: COUNTED_INVOICE_STATUSES,
   };

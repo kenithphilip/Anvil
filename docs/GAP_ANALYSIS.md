@@ -1026,6 +1026,159 @@ Three things to take:
   installed base and failure history to compute it. It costs some spare revenue
   and buys the position Verdantis charges Aramco for.
 
+### Additions — 2026-09-10 (enterprise supplier lifecycle management — the machine on the other end of Anvil's invoice)
+
+One reviewed at the user's request, and it is the most instructive entry in this
+section for a reason none of the others share. Every competitor above is
+evaluated on whether it contests Anvil's deals. Gainfront contests nothing: it
+never quotes a customer, never reads a PO as a seller, never touches an
+order-to-cash flow. It is **what Anvil's customer's customer runs** — the
+enterprise procurement platform on the receiving end of the invoice an Anvil
+tenant sends. Read it as documentation of the counterparty, not as a rival.
+
+**Read alongside §3.31.** Verdantis was reviewed earlier from the opposite
+direction — MRO master-data standardisation and governance — and the two
+converge on the same defect in Anvil rather than on each other: Anvil's own
+master data does not reconcile. Verdantis sells the harmonisation of *item*
+master data; Gainfront sells the harmonisation of *supplier* master data. Anvil
+has an unresolved instance of each, and the item-side alias machinery it already
+built for customers (#506, #508) is the mechanism both would use.
+
+That makes it the first entry that can settle a question Anvil has been
+answering from folklore. `InvoicePoCheck` (#520) tells a seller that a buyer
+books an incoming invoice against the PO it was raised for, and that where they
+disagree no goods receipt is raised and no payment follows. Gainfront describes
+that same machine from the inside, which turns an assertion into a specification.
+
+### 3.32 Gainfront — `gainfront.com` (procurement-inverse — counterparty documentation, highest-value entry in this section)
+
+Positioning: AI-powered **supplier lifecycle management**, organised around a
+single supplier record that sourcing, contracts, risk, spend and diversity all
+resolve to. Their own demo framing of the problem is the sharpest line on the
+site: **"One supplier. Five systems. Five answers."** — one vendor appearing as
+five different records across SAP, Coupa, an AP spreadsheet, a contracts system
+and a legacy P2P tool, which their AI reconciles into one master.
+
+ICP: enterprise procurement teams. Named logos include Accenture, Walmart,
+Merck, Siemens, ADP, Albertsons, BD, Genentech, Toyota Boshoku, Yanfeng,
+ConocoPhillips, Iron Mountain, Lumen and Teva. This is the buying organisation
+of exactly the tier-1 automotive and industrial OEM an Anvil tenant sells into.
+
+Capability surface — nine modules:
+
+| module | what it does |
+|---|---|
+| **SRM** | supplier onboarding, enriched profiles, scorecards, compliance |
+| **RFx** | AI-drafted RFPs, bid collection, weighted scoring, award |
+| **CLM** | contract metadata extraction, clause playbooks, obligations, renewal alerts |
+| **SpendPower** | supplier normalisation, 4-level AI categorisation, product-level normalisation |
+| **P2P** | guided buying, configurable approvals, blanket POs, catalogues, 2-way and 3-way AI invoice matching |
+| **INV** | item master, stock visibility, reorder logic |
+| **D&I** | tier 1/2 diversity reporting, certifications, economic impact, Scope 3 |
+| **RiskMetrix** | inherent risk scoring, automated questionnaires, third-party monitoring |
+| **AgentFlow** | AI agents routing intake, approvals and handoffs across existing systems |
+
+Integrations: SAP, Coupa, Ariba named as systems AgentFlow sits **on top of**
+rather than replacing. No further integration list published.
+
+Differentiators: two deployment models — the full SLM suite as a replacement,
+or **AgentFlow as an orchestration layer over tools already in place**, on the
+argument that rip-and-replace is not the only way to modernise. Their AI is
+positioned as doing *operational* work rather than chat: OCR and field
+extraction, supplier enrichment, fraud and verification checks, risk scoring,
+questionnaire automation, RFP drafting, spend classification, supplier
+normalisation, contract metadata extraction, clause identification, invoice
+matching, anomaly detection.
+
+Their stated procurement failure modes are worth recording verbatim in
+substance because Anvil's sell-side equivalents are the same three: risk
+arrives late, reporting is a fire drill, and savings never land because spend
+analysis never reaches the sourcing or purchasing decision.
+
+Maturity: established enterprise vendor, not an early-stage entrant — a
+different class from the YC cohort in §3.25–3.29. Self-reported metrics: 87%
+faster RFx cycles, 40% year-one cost reduction, 98% spend-classification
+accuracy, 100% gross retention, up to 86% faster supplier onboarding, 85%
+faster contract metadata extraction. Unaudited vendor figures; recorded as
+claims, not findings. Pricing not published.
+
+**What the P2P module actually specifies, and why it matters more than the rest**
+
+Their invoice matching flags under-deliveries, quantity mismatches, quality
+mismatches and rejected items "before payment." Tolerance thresholds, the
+exception workflow and the dispute path are **not published** — so Anvil cannot
+copy a number from them, only the shape. The shape is enough: it confirms the
+four reasons a correct-looking invoice goes unpaid, and three of them are
+physical rather than clerical. An invoice can be arithmetically perfect against
+the PO and still fail on a short delivery or a quality rejection the seller has
+not been told about.
+
+Relevance to Anvil: the two sides are **structurally non-competing and
+asymmetrically informed**, which is the whole finding. Gainfront sees the
+invoice only once it arrives; it cannot tell a supplier in advance that a line
+will fail. Anvil holds the quote, the PO, the reconciliation and the dispatch
+**before** the invoice is sent, so it is positioned to run the buyer's match
+while the answer is still cheap — the thing `InvoicePoCheck` started and which
+nothing upstream of it yet feeds. Neither platform can do the other's half, and
+the seam between them is where Anvil's defensible work sits. **Verdict:
+PROCUREMENT-INVERSE, LEARN-ONLY — and the single best source yet for specifying
+Anvil's sell-side invoice gate.**
+
+### What Gainfront corrected about Anvil's own record
+
+Checking one outside claim against the code turned up five things this document
+had wrong, understated, or filed as an open question when the repo had already
+answered it. All verified.
+
+| claim previously held | what the code says |
+|---|---|
+| Anvil's supplier identity is coherent enough to join | **It is not, and Gainfront's headline demo is literally true inside Anvil.** A supplier is represented six ways: `source_pos.supplier` (free text, no FK, `001_init.sql`), `supplier_scorecards.supplier` (free text, unique on `(tenant_id, supplier)`, mig 005), `supplier_lead_times.supplier` (free text, mig 003), `ap_invoices.vendor_id` (uuid with **no FK**, mig 054), the `vendors` master (mig 035, RFQ side) and the **separate** `suppliers` master (mig 085, inventory-planning side). Mig 168 bridges `vendors.supplier_id → suppliers(id)` but its own comment records it as a **curated link with no auto-backfill**, and a NULL "falls back to the supplier_name slug match." So one supplier's POs, scorecard, lead time, AP invoices, quotes and planning record cannot be joined without a human having linked them first. Five systems, five answers — in one product. |
+| "`ap/match.js` is a three-way match pointed at SUPPLIERS not customers" — filed as a defect in [[project_po_invoice_grn]] | **It is pointed the correct way, and it is an asset, not a bug.** The buy side is where a three-way match belongs. It compares PO line ↔ invoice line ↔ goods receipt, with `ap_tolerance_pct` (pct-based, on price) and `ap_max_qty_variance` (absolute, on qty), and emits `price_above_tolerance` / `qty_above_tolerance` / receipt-short findings plus a score. That is the same surface Gainfront sells as P2P AI matching. The real defect recorded in §3 stands and is narrower: it has no UI in `routes.ts`. |
+| §1.1 "price tolerance / who may accept a variance" is an **open owner decision** blocking reconciler PR3–PR5 | **The buy side decided it three years of migrations ago and shipped defaults.** Mig 054 adds `ap_tolerance_pct default 2.0`, `ap_max_qty_variance default 0`, and `ap_auto_approve_within_tolerance **default true**`. The sell-side blocker is therefore not a question without an answer — it is the same question, already answered in this repo for money flowing the other way. Adopting the buy-side defaults as the sell-side starting point is defensible and unblocks three PRs. |
+| "No `invoice_lines` table" ([[project_po_invoice_grn]]) | **True on the sell side only, and the asymmetry is backwards.** `ap_invoices` + `ap_invoice_lines` + `ap_goods_receipts` all exist (mig 054). `invoices` has **no** line table at all. Anvil can match a *supplier's* invoice line by line against a PO and a receipt, but cannot represent the lines of the invoice it sends its own customer — which is precisely what the buyer on the other end is about to match. |
+| Anvil has no supplier ESG / disclosure surface | **It has one, and it is the India-statutory version of Gainfront's D&I Scope-3 module.** `supplier_disclosures` + `supplier_disclosure_periods` (mig 101, BRSR value chain) collect per-supplier Scope 1/2 tCO₂e, electricity and renewable share, and fuel consumption. Gainfront sells Scope 3 as a module; Anvil collects the upstream data a Scope 3 number is built from. This is the [[backlog_moat_bets]] BRSR cascade, already part-built. |
+
+Three genuine absences on Anvil's buy side, verified by grep rather than assumed:
+**no spend classification of any kind** (no UNSPSC, commodity code, spend
+category or taxonomy anywhere in `src/api` or the migrations), **no supplier
+risk scoring, questionnaire or third-party monitoring**, and **no supplier-side
+CLM** — the `contracts` table (mig 006) plus `admin/contracts.js` and the
+`amc_renewal_chase` agent are customer-side AMC contracts with renewal chasing,
+not clause playbooks or obligation tracking against a vendor.
+
+### The ideas worth taking
+
+Ordered by leverage, and all three are wiring or policy rather than new
+platform surface. None of them requires becoming a procurement suite, which
+would pull Anvil off its wedge exactly as §3.27 and §3.28 would.
+
+1. **Run the buyer's match before the invoice leaves.** Gainfront names the four
+   reasons an invoice is held: under-delivery, quantity mismatch, quality
+   mismatch, rejected items. `InvoicePoCheck` covers the clerical half (price,
+   qty, not-on-PO, over-ordered) and none of the physical half, because Anvil
+   has the dispatch data and does not consult it. A seller who learns at invoice
+   time that a line short-shipped has already lost the payment cycle. This is
+   the highest-value item in this entry and it is additive to a component that
+   already ships.
+
+2. **Adopt the buy-side tolerance defaults on the sell side.** Unblocks
+   reconciler PR3–PR5 without a new owner decision, with the precedent and the
+   column names already in the repo. Flag to the owner as a proposal rather than
+   applying it silently — `ap_auto_approve_within_tolerance default true` is a
+   defensible default for inbound invoices and a riskier one outbound, and that
+   difference is the owner's call.
+
+3. **Reconcile Anvil's own supplier master before selling supplier
+   intelligence.** `supplier_scorecards` keyed on free-text supplier name cannot
+   be trusted the moment the same vendor is typed two ways, and a scorecard
+   nobody can trust is worse than none. The alias machinery to fix this already
+   exists and is pointed the other way: `item_customer_parts` and the
+   reconciler's match tiers (#506, #508) solve *"the buyer calls our part
+   something else."* The buy-side twin — *"we call the same vendor and the same
+   purchased part several things"* — is the same problem with the arrow
+   reversed, which is also Gainfront's SpendPower in one sentence. Anvil would
+   be reusing a solved mechanism, not inventing one.
+
 ## 4. Cross-cutting themes from the competitor scan
 
 Five things the competitors collectively prove are now table stakes:
@@ -1207,6 +1360,20 @@ Grouped by severity for buying-decision impact.
 26. **i18n + multi-currency display layer beyond INR/USD.** Roadmap item.
 
 27. **Anvil rebrand cleanup.** `obara-client.js`, `obara-documents` bucket name, `obara-ops-v11.1.html` legacy, inline copy. Today the codebase's name is "Obara India sales-ops execution layer" verbatim in `package.json` description.
+
+### From the 2026-09-10 supplier-lifecycle scan (Gainfront — §3.32)
+
+Buy-side gaps, verified absent by grep rather than assumed. None is a reason to
+become a procurement suite; the first two are prerequisites for trusting things
+Anvil already ships.
+
+| gap | why it matters | size |
+|---|---|---|
+| **One supplier master.** Six representations today, four of them free text or an unenforced uuid; mig 168's bridge is hand-curated with no backfill | `supplier_scorecards` is keyed on a free-text name, so the same vendor typed two ways silently becomes two scorecards. A scorecard nobody can trust is worse than no scorecard. Blocks every supplier-intelligence claim | medium |
+| **Physical-failure legs on the outbound invoice check** — under-delivery and quality rejection | Gainfront names four reasons a buyer holds an invoice; `InvoicePoCheck` covers only the two clerical ones. Anvil holds the dispatch data and does not consult it | small-medium |
+| **Sell-side invoice lines.** `ap_invoice_lines` exists; `invoices` has no line table | Anvil can match a supplier's invoice line by line but cannot represent the lines of the invoice it sends — the exact rows the buyer is about to match | medium |
+| **Spend classification** — no UNSPSC, commodity code, category or taxonomy anywhere | Without it, purchased-part spend cannot be consolidated and the same part bought under two descriptions never shows as one line. This is SpendPower's core, and the alias machinery to do it already exists pointed at customers | medium |
+| **Supplier risk scoring / questionnaires / monitoring** | Absent entirely. Lowest priority of the five — it is a genuine module, not wiring, and sits furthest from Anvil's wedge | large — defer |
 
 ### From the 2026-07-22 revenue-intelligence scan (Backstory.ai / Scratchpad — §3.15–3.16)
 
@@ -1403,6 +1570,7 @@ After the post-implementation pass, the remaining open items in Now are:
 - Ekho Labs: https://www.ekholabs.com (reviewed 2026-08-15; no pricing, funding or customer logos published)
 - Naïve: https://usenaive.ai, ycombinator.com/companies/naive, techcrunch.com/2026/08/06 ($28.5M Series A, Nexus)
 - Spaceflow: https://www.spaceflow.tech, ycombinator.com/companies/spaceflow-technologies-inc (YC S26)
+- Gainfront: https://www.gainfront.com, /solutions/gainfront-procure-to-pay/, /solutions/business-spend-management/, /agent-flow/ (reviewed 2026-09-10; established enterprise vendor, pricing not published; P2P matching tolerances and exception workflow NOT published — shape taken, no numbers)
 - Prototyping.io: https://www.prototyping.io, ycombinator.com/companies/prototypingio (YC P26, founded 2026; waitlist only — no pricing, turnaround SLA, logos or metrics published, so capability claims are read as intent)
 - YC requests-for-startups, hardware track (reviewed 2026-08-29): "Hardware Supply Chain" (Nicolas Dessaigne), "New Operating Systems for the Physical World" (Charlie Warren), "Modern Metal Mills" (Zane Hengsperger) — used as a diagnostic of Anvil, not as a competitor scan
 - Verdantis: https://www.verdantis.com (reviewed 2026-08-29; MRO360 + MDM Suite. Logos, savings metrics and the ">95% accuracy" forecasting claim are the vendor's own, unaudited)

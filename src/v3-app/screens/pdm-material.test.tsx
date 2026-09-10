@@ -50,7 +50,18 @@ describe("PdmMaterial", () => {
     await waitFor(() => expect(getByText("CuCrZr")).toBeTruthy());
 
     fireEvent.click(getByText(/Save recipe/i));
-    await waitFor(() => expect(saveRawMaterial).toHaveBeenCalledWith("SHANK-A", expect.objectContaining({ procurement_type: "make" })));
+    // FOUR arguments, not two. #532 added part_spec + extraction_run_id so the
+    // commit also stores the engineering spec the same drawing gave us; without
+    // them the server takes its no_part_spec branch and that spec is discarded.
+    // toHaveBeenCalledWith matches arity exactly, so this assertion broke when
+    // the signature grew — and asserting the extra args rather than relaxing to
+    // expect.anything() is what makes dropping part_spec fail a test.
+    await waitFor(() => expect(saveRawMaterial).toHaveBeenCalledWith(
+      "SHANK-A",
+      expect.objectContaining({ procurement_type: "make" }),
+      expect.objectContaining({ material: "CrCu", dimensions: { diameter: 25, length: 110 } }),
+      null,   // no extraction_run_id: this extract mock returns no run
+    ));
     await waitFor(() => expect(getByText(/Saved SHANK-A as make/i)).toBeTruthy());
     expect(getByText("RM-CUCRZR-ROD")).toBeTruthy();
   });
@@ -69,7 +80,14 @@ describe("PdmMaterial", () => {
     fireEvent.click(getByText(/^Buy$/));
     await waitFor(() => expect(getByText(/Bought-out — no raw-material recipe/i)).toBeTruthy());
     fireEvent.click(getByText(/Save recipe/i));
-    await waitFor(() => expect(saveRawMaterial).toHaveBeenCalledWith("SHANK-A", expect.objectContaining({ procurement_type: "buy", recipe: null })));
+    // The spec still travels on a Buy: the recipe is dropped because nothing is
+    // machined, but finish and tolerances still describe the part we purchase.
+    await waitFor(() => expect(saveRawMaterial).toHaveBeenCalledWith(
+      "SHANK-A",
+      expect.objectContaining({ procurement_type: "buy", recipe: null }),
+      expect.objectContaining({ material: "CrCu" }),
+      null,
+    ));
   });
 
   it("surfaces a non-drawing extraction instead of a verdict", async () => {

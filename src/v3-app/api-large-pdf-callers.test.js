@@ -53,11 +53,40 @@ describe("no caller ignores a truncated read", () => {
   it("the threshold applies to every kind, which is why they all must", () => {
     // If this ever grew a per-kind exemption the list above would need
     // revisiting rather than silently over-asserting.
+    //
+    // This asserted over a slice running all the way to runExtractionPipeline,
+    // which stopped meaning what it says once the density-chunking route landed
+    // below the page threshold. That route IS per-kind by design, and `strip`
+    // here is the identity function, so the old slice failed on the word "kind"
+    // in a comment as readily as in code. Two separate ways to be wrong about
+    // the same invariant.
+    //
+    // The invariant is narrower than the old slice and is split in two below:
+    // the page threshold itself is kind-blind, AND nothing downstream may
+    // exempt a kind from it.
     const extract = strip(read("src/api/docai/extract.js"));
     expect(extract).toMatch(/totalPages > BACKGROUND_PAGE_THRESHOLD/);
-    // No kind appears in the truncation condition.
-    const cond = extract.slice(extract.indexOf("let largePdf = false;"), extract.indexOf("const result = await runExtractionPipeline"));
-    expect(cond).not.toMatch(/kind/);
+
+    // Whole-line // comments only. Block-comment stripping is NOT used: the
+    // file contains `/*` and removing to the next `*/` deletes real code.
+    const decomment = (t) => t.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+
+    // 1. The page-threshold block decides truncation without consulting kind.
+    //    Bounded by the density block that follows it, not by the pipeline call.
+    const start = extract.indexOf("let largePdf = false;");
+    const densityAt = extract.indexOf("if (!largePdf", start);
+    expect(start, "page-threshold block not found").toBeGreaterThan(-1);
+    expect(densityAt, "density block not found after it").toBeGreaterThan(start);
+    expect(decomment(extract.slice(start, densityAt))).not.toMatch(/kind/);
+
+    // 2. The density route may only WIDEN truncation, never exempt a kind from
+    //    it. `!largePdf` is what makes that true: the block is skipped entirely
+    //    once the page threshold has already fired, so no per-kind branch can
+    //    reach in and clear it. Drop that guard and a dense `po` could unset
+    //    what the page count set.
+    const densityBlock = decomment(extract.slice(densityAt, extract.indexOf("const result = await runExtractionPipeline", densityAt)));
+    expect(densityBlock).toMatch(/if \(!largePdf/);
+    expect(densityBlock).not.toMatch(/largePdf\s*=\s*false/);
   });
 });
 

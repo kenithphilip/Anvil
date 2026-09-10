@@ -97,16 +97,37 @@
       return null;
     } catch (_) { return null; }
   };
+  // Tell this tab the session changed.
+  //
+  // The "storage" event deliberately does NOT fire in the tab that performed
+  // the write — that is the DOM spec — so a same-tab session change is
+  // invisible to anything watching storage. React's auth gate reads the
+  // session during render and has no way to know it moved; without this it
+  // only finds out on the next unrelated re-render.
+  //
+  // Guarded because this IIFE is also invoked with a non-browser `global`
+  // (jsdom setup, cold Node imports), where dispatchEvent/CustomEvent may
+  // not exist. A notification failing must never break a session write.
+  const notifySessionChanged = () => {
+    try { global.dispatchEvent?.(new CustomEvent("anvil:session")); } catch (_) {}
+  };
+
   const writeSession = (session) => {
     const value = JSON.stringify(session || null);
     ssSet(SESSION_KEY, value);
     // Mirror to localStorage during transition for the 43 screens
     // that read it directly. Tracked for removal once migrated.
     lsSet(SESSION_KEY, value);
+    notifySessionChanged();
   };
   const clearSession = () => {
     ssRemove(SESSION_KEY);
     lsRemove(SESSION_KEY);
+    // Every teardown funnels here — setSession(null), the 401 handler, the
+    // local-expiry drop, and setConfig with a blank url — so this one call
+    // covers all four. The 401 and blank-url paths had NO propagation at
+    // all before: they cleared the session and left the Shell rendered.
+    notifySessionChanged();
   };
 
   const buildHeaders = (cfg, session, extra) => {

@@ -328,8 +328,16 @@ Each verified, none currently breaking a user flow.
   still gated on §1.1.
 - **The analytics refresh is a sequential per-row upsert** — fine at current
   volume, a timeout at scale.
-- **`app.tsx:188` listens for `anvil:session`, which nothing emits.** Dead
-  wiring that reads as live; same-tab sign-in works via the ordinary re-render.
+- ~~**`app.tsx:188` listens for `anvil:session`, which nothing emits.**~~ Fixed
+  in PR #535, and it was worse than recorded here. The listener's handler was
+  `setRoute((r) => r)`, which React bails out of, so the `storage` listener
+  beside it was equally inert — and the note's own reassurance ("same-tab
+  sign-in works via the ordinary re-render") was true only by luck. The case
+  that never worked: sign out in one tab and the other tab keeps rendering the
+  authenticated Shell, because the cross-tab listener re-routes only when
+  `next?.access_token` is truthy. The client now dispatches `anvil:session`
+  from its writeSession/clearSession funnel, which also covers the 401 handler
+  and the blank-backend-url path, neither of which propagated at all.
 
 ---
 

@@ -180,17 +180,24 @@ export default function App() {
     return () => window.removeEventListener("nav:change", bump);
   }, [authed]);
 
-  // When the storage event reports a fresh session in another tab,
-  // force a re-render here so the gate flips to authenticated.
-  useEffect(() => {
-    const onChange = () => { setRoute((r) => r); };
-    window.addEventListener("storage", onChange);
-    window.addEventListener("anvil:session", onChange as EventListener);
-    return () => {
-      window.removeEventListener("storage", onChange);
-      window.removeEventListener("anvil:session", onChange as EventListener);
-    };
-  }, []);
+  // The session lives in sessionStorage/localStorage behind the imperative
+  // client, so React only learns it changed if something tells it. "storage"
+  // covers other tabs; "anvil:session" covers this one, dispatched from the
+  // client's writeSession/clearSession funnel.
+  //
+  // What was here did neither. setRoute((r) => r) hands React a value that is
+  // Object.is-equal to the current state, so it bails out without rendering —
+  // not flakily, never. That made BOTH listeners inert, including "storage",
+  // which does fire and was the only reason this effect looked alive.
+  // "anvil:session" was inert twice over: nothing has ever dispatched it, in
+  // any commit in this repository's history.
+  //
+  // The case this was written for and never handled: sign out in one tab and
+  // the other tab keeps rendering the authenticated Shell. The cross-tab
+  // listener below re-routes only when next?.access_token is truthy, so a
+  // sign-out reaches setSession(null) and stops there. Sign-IN worked, which
+  // is why nobody noticed.
+  useRerenderOnEvents(["storage", "anvil:session"]);
 
   const onRoute = useCallback((id: string) => {
     if (!RESOLVERS[id]) return;
@@ -372,7 +379,17 @@ export default function App() {
   // reset, magic-link callback) must render their own surface
   // even when there's no session. We dispatch on the parsed
   // route id below.
-  if (!authed) {
+  //
+  // `|| PRE_AUTH_ROUTES.has(route)` is load-bearing, and it is here because
+  // making the gate react to session writes exposed what the delay was hiding.
+  // All four sign-in flows call setSession and then navigate on a 400ms timer
+  // (signin.tsx:117/169/204/241). The session write now flips `authed` at
+  // once, so without this the Shell renders 400ms early with RESOLVERS.signin
+  // inside it — a DIFFERENT lazy object from SignInScreen, so the form
+  // remounts blank, losing the typed email and the "Signed in. Redirecting…"
+  // confirmation, wrapped in full app chrome. Staying on the pre-auth surface
+  // until the route actually changes keeps the old, correct appearance.
+  if (!authed || PRE_AUTH_ROUTES.has(route)) {
     if (route === "signin") {
       return (
         <>
@@ -388,6 +405,24 @@ export default function App() {
         <>
           <Suspense fallback={<Loading label="reset" />}>
             <ResetPasswordScreen />
+          </Suspense>
+          <ToastStack />
+        </>
+      );
+    }
+    // Connect configures the backend URL, tenant and dev token — a surface
+    // you use precisely BECAUSE you have no working session. The client
+    // already knows this: its 401 handler refuses to navigate away from
+    // "connect" (anvil-client.js PRE_AUTH). The gate disagreed and rendered
+    // Landing, which did not matter while nothing re-rendered on a session
+    // change; now that something does, a 401 here would replace the screen
+    // and the error explaining it mid-keystroke, discarding what was typed.
+    // Reconciling the two sets is the fix.
+    if (route === "connect") {
+      return (
+        <>
+          <Suspense fallback={<Loading label="connect" />}>
+            {Active ? <Active /> : <NotFound id={route} />}
           </Suspense>
           <ToastStack />
         </>

@@ -185,6 +185,42 @@ const PACKING_LIST_PROFILE = {
   modelOwned: { dropHeader: [], dropLine: [] },
 };
 
+const DELIVERY_NOTE_PROFILE = {
+  kind: "delivery_note",
+  suite: "delivery-note-extraction",
+  label: "Delivery note / challan",
+  docRole: "delivery_note",
+  header: [
+    { key: "deliveryNoteNo", from: ["delivery_note_no"], compare: "text" },
+    // The field the kind exists for. A wrong docket number is worse than a
+    // missing one: it gets matched against a real consignment.
+    { key: "docketNo", from: ["docket_no"], compare: "text" },
+    { key: "carrier", from: ["carrier"], compare: "text" },
+    { key: "ewayBillNo", from: ["eway_bill_no"], compare: "text" },
+    { key: "invoiceNo", from: ["invoice_no"], compare: "text" },
+    // Scored separately from invoiceNo on purpose: the most common extraction
+    // error on a challan is returning one document's number for both.
+    { key: "buyerPoNo", from: ["buyer_po_no"], compare: "text" },
+  ],
+  identity: {
+    name: "partNo",
+    rules: [
+      { actual: ["partNo"], expected: ["partNo"] },
+      { actual: ["itemName"], expected: ["itemName", "partNo"] },
+    ],
+  },
+  line: [
+    // DESPATCHED quantity. Scored because a challan that prints ordered and
+    // despatched side by side will silently return the wrong column, and the
+    // whole dispatch check is built on this number.
+    { key: "qty", from: ["quantity", "qty"], compare: "number" },
+    { key: "uom", from: ["uom"], compare: "text" },
+    { key: "orderedQty", from: ["ordered_qty"], compare: "number" },
+    { key: "lineRef", from: ["line_ref"], compare: "text" },
+  ],
+  modelOwned: { dropHeader: [], dropLine: [] },
+};
+
 const INVOICE_PROFILE = {
   kind: "invoice",
   suite: "invoice-extraction",
@@ -312,6 +348,7 @@ export const KIND_PROFILES = {
   invoice: INVOICE_PROFILE,
   eway_bill: EWAY_BILL_PROFILE,
   sales_order: SALES_ORDER_PROFILE,
+  delivery_note: DELIVERY_NOTE_PROFILE,
 };
 
 // A kind with no profile has no business in the golden set: a fixture the

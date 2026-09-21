@@ -116,6 +116,12 @@ export const KIND_CAPABLE_ADAPTERS = Object.freeze({
   supplier_ack: ["claude"],
   assembly_bom: ["claude"],
   part_drawing: ["claude"],
+  // sales_order was MISSING here. It shipped with a claude-only prompt and tool
+  // and no entry, so the only adapter that can read the document ran last on a
+  // shared deadline and could be skipped outright — the exact failure this
+  // table exists to prevent, reintroduced by the kind that came after it.
+  sales_order: ["claude"],
+  delivery_note: ["claude"],
 });
 
 /**

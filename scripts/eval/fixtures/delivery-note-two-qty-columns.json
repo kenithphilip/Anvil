@@ -1,0 +1,64 @@
+{
+  "id": "delivery-note-two-qty-columns",
+  "kind": "delivery_note",
+  "description": "A delivery challan for a PARTIAL shipment, printing the ordered quantity and the despatched quantity in adjacent columns. The despatched figure is the one the dispatch check is built on, and returning the ordered column instead is the single most likely extraction error on this document. Also carries a docket number distinct from the challan number, and an e-way bill reference distinct from both. Synthetic.",
+  "expected": {
+    "deliveryNoteNo": "DC-2026-1188",
+    "docketNo": "BLR/4471182",
+    "carrier": "NATIONAL ROADLINES",
+    "ewayBillNo": "381004472913",
+    "invoiceNo": "SI-2026-0912",
+    "buyerPoNo": "PO-BX-778104",
+    "lineItems": [
+      { "partNo": "BR-6204-ZZ", "qty": 60, "uom": "NOS", "orderedQty": 100, "lineRef": "1" },
+      { "partNo": "OS-25-42-7", "qty": 50, "uom": "NOS", "orderedQty": 50, "lineRef": "2" },
+      { "partNo": "HOSE-8-BLU", "qty": 2, "uom": "ROLL", "orderedQty": 5, "lineRef": "3" }
+    ]
+  },
+  "normalized": {
+    "classification": "delivery_note",
+    "delivery_note_no": "DC-2026-1188",
+    "delivery_note_date": "2026-09-14",
+    "docket_no": "BLR/4471182",
+    "carrier": "NATIONAL ROADLINES",
+    "vehicle_no": "KA05MX7741",
+    "eway_bill_no": "381004472913",
+    "invoice_no": "SI-2026-0912",
+    "invoice_date": "2026-09-14",
+    "buyer_po_no": "PO-BX-778104",
+    "ship_to_name": "BUYER PLANT TWO",
+    "ship_to_place": "HOSUR",
+    "total_packages": 9,
+    "lines": [
+      {
+        "partNumber": "BR-6204-ZZ",
+        "description": "BEARING 6204 ZZ",
+        "quantity": 60,
+        "uom": "NOS",
+        "ordered_qty": 100,
+        "line_ref": "1",
+        "remark": "BALANCE 40 TO FOLLOW"
+      },
+      {
+        "partNumber": "OS-25-42-7",
+        "description": "OIL SEAL 25X42X7",
+        "quantity": 50,
+        "uom": "NOS",
+        "ordered_qty": 50,
+        "line_ref": "2",
+        "remark": null
+      },
+      {
+        "partNumber": "HOSE-8-BLU",
+        "description": "HOSE 8MM BLUE",
+        "quantity": 2,
+        "uom": "ROLL",
+        "ordered_qty": 5,
+        "line_ref": "3",
+        "remark": null
+      }
+    ],
+    "stated_line_count": 3
+  },
+  "baseline_score": 1.0
+}

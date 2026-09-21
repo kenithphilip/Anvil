@@ -682,6 +682,18 @@
     // this fills item_master.weight_kg for parts that have none.
     ingestPackingList: async (documentId, extracted) =>
       apiFetch("/api/documents/packing_list_ingest", { method: "POST", body: { document_id: documentId, extracted } }),
+    // The delivery challan: the only document that carries the docket number,
+    // so it is the only thing that can stop the pre-send dispatch check saying
+    // "no docket" on every invoice. Extract with
+    // docai.extract({ kind: "delivery_note" }) and pass the payload; this
+    // records the despatched quantity per line against the order.
+    // orderId is optional — omit it and the endpoint resolves the order from
+    // the challan's buyer PO number, then its invoice number, REFUSING rather
+    // than guessing when neither is unambiguous.
+    ingestDeliveryNote: async (documentId, extracted, orderId = null) =>
+      apiFetch("/api/documents/delivery_note_ingest", { method: "POST", body: {
+        document_id: documentId, extracted, ...(orderId ? { order_id: orderId } : {}),
+      } }),
     fetch: async (id) => apiFetch("/api/documents/" + id),
     remove: async (id) => apiFetch("/api/documents/" + id, { method: "DELETE" }),
     // OCR evidence rows for a document. Returns the per-token bboxes

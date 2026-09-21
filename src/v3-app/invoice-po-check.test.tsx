@@ -108,3 +108,42 @@ describe("table manners", () => {
     expect(src).toMatch(/Nothing here should stop this being received/);
   });
 });
+
+describe("the despatch side is disclosed, not assumed", () => {
+  it("reads po_reference.missing, not po_reference === null", () => {
+    // The API returns po_reference as an OBJECT whenever an invoice exists, so
+    // `=== null` was true only when there was no invoice at all — the banner
+    // could never fire for a real one. A missing PO reference on the invoice is
+    // itself a reason a buyer's AP system holds it, so this mattered.
+    expect(src).toMatch(/po_reference\?\.missing === true/);
+    expect(src).not.toMatch(/res\.po_reference === null/);
+  });
+
+  it("says so when the despatch side was not checked", () => {
+    // dispatch_lines is optional and usually empty, so a clean result must not
+    // imply the despatch was verified. A skipped check and a passing one look
+    // identical unless one of them says so.
+    expect(src).toMatch(/res\.dispatch\?\.checked === false/);
+    expect(src).toMatch(/not checked/i);
+  });
+
+  it("only claims the shipped half when it actually checked it", () => {
+    // The clean-path banner is conditional on dispatch.checked rather than
+    // asserting unconditionally that nothing bills ahead of despatch.
+    expect(src).toMatch(/res\.dispatch\?\.checked \?/);
+  });
+
+  it("carries both new verdicts in plain language", () => {
+    expect(src).toMatch(/qty_exceeds_dispatched:/);
+    expect(src).toMatch(/unkeyed:/);
+    // unkeyed is a refusal, so it must not be dressed as a fault.
+    const unkeyed = src.slice(src.indexOf("unkeyed:"), src.indexOf("unkeyed:") + 200);
+    expect(unkeyed).not.toMatch(/"bad"/);
+  });
+
+  it("surfaces despatch rows that could not be matched", () => {
+    // Left out of the totals rather than folded into another line, so the
+    // operator can tell a partial check from a complete one.
+    expect(src).toMatch(/dispatch\?\.unresolved/);
+  });
+});

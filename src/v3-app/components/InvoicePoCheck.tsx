@@ -34,6 +34,9 @@ type Line = {
   previously_billed_qty?: number | null;
   cumulative_billed_qty?: number | null;
   over_by?: number | null;
+  dispatched_qty?: number | null;
+  over_dispatched_by?: number | null;
+  dispatch_checked?: boolean;
   ambiguous?: boolean;
   detail?: string | null;
 };
@@ -45,7 +48,11 @@ type Result = {
   lines: Line[];
   not_invoiced: { part_no?: string | null; description?: string | null; remaining_qty?: number | null }[];
   totals?: { invoice_total?: number | null; po_line_total?: number | null; delta_pct?: number | null; mismatch?: boolean };
-  po_reference?: string | null;
+  // An OBJECT, not a string. It was typed `string | null` and tested `=== null`,
+  // which is only true when there is no invoice at all — so the banner below
+  // never fired for a real one. `missing` is the actual signal.
+  po_reference?: { known?: boolean; invoice_ref?: string | null; order_po_number?: string | null; missing?: boolean | null } | null;
+  dispatch?: { checked: boolean; reason?: string | null; unresolved?: { part_no?: string | null; dispatched_qty?: number | null }[] };
   prior_invoices?: { invoice_number?: string | null; status?: string | null; counted?: boolean }[];
 };
 
@@ -58,6 +65,12 @@ const VERDICT: Record<string, { label: string; k: string; why: string }> = {
   price_mismatch:       { label: "Price differs",       k: "bad",  why: "The rate does not match the PO. A buyer's system will hold this for a price query and no GRN will be raised." },
   qty_over_ordered:     { label: "Over-ordered",        k: "bad",  why: "This invoice bills more than the PO allows, counting what earlier invoices already billed. It cannot be received." },
   not_on_po:            { label: "Not on the PO",       k: "bad",  why: "The buyer's PO has no such line, so there is nothing to receive it against." },
+  // The physical leg. Distinct from qty_over_ordered: this line can be well
+  // within the PO and still unreceivable, because the goods receipt is raised
+  // against what arrived.
+  qty_exceeds_dispatched: { label: "Ahead of despatch",  k: "bad",  why: "This bills more than has actually shipped. Their goods receipt is raised on what arrived, so the difference cannot be received yet." },
+  // A refusal, not a fault — so it is never blocking.
+  unkeyed:              { label: "Needs a manual check", k: "warn", why: "This line has no part code, so it cannot be matched to a PO line automatically." },
 };
 
 const n = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : String(v));
@@ -96,7 +109,8 @@ export const InvoicePoCheck: React.FC<{ orderId: string; invoiceId?: string | nu
       {res.can_send ? (
         <Banner kind="ok" title="Nothing here should stop this being received">
           <span className="mono-sm">
-            Every invoiced line matches the PO on part, quantity and price within tolerance.
+            Every invoiced line matches the PO on part, quantity and price within tolerance
+            {res.dispatch?.checked ? ", and none bills ahead of what has shipped" : ""}.
           </span>
         </Banner>
       ) : (
@@ -115,7 +129,7 @@ export const InvoicePoCheck: React.FC<{ orderId: string; invoiceId?: string | nu
         <KPI lbl="Lines that disagree" v={String(res.summary.blocking)} />
       </KPIRow>
 
-      {res.po_reference === null && (
+      {res.po_reference?.missing === true && (
         // Migration 214 put the buyer's PO number on the invoice. Without it
         // the buyer has nothing to book against, whatever the lines say.
         <Banner kind="warn" title="This invoice does not carry the buyer's PO number">
@@ -184,6 +198,25 @@ export const InvoicePoCheck: React.FC<{ orderId: string; invoiceId?: string | nu
         <div className="mono-sm" style={{ marginTop: 8, opacity: 0.7 }}>
           Counting {res.prior_invoices!.filter((p) => p.counted).length} earlier invoice
           {res.prior_invoices!.filter((p) => p.counted).length === 1 ? "" : "s"} toward what has already been billed.
+        </div>
+      )}
+
+      {/* A skipped check and a clean one look identical unless one of them says
+          so. This is the whole reason the API reports dispatch.checked. */}
+      {res.dispatch?.checked === false && (
+        <Banner kind="info" title="The despatch side was not checked">
+          <span className="mono-sm">
+            No despatch records exist for this order, so nothing here can tell you whether the quantities
+            billed have actually shipped. A buyer raises their goods receipt on what arrived — that half of
+            the answer is missing, not passing.
+          </span>
+        </Banner>
+      )}
+
+      {(res.dispatch?.unresolved?.length ?? 0) > 0 && (
+        <div className="mono-sm" style={{ marginTop: 8, opacity: 0.75 }}>
+          <strong>{res.dispatch!.unresolved!.length} despatch record{res.dispatch!.unresolved!.length === 1 ? "" : "s"} could not be matched to a line</strong>{" "}
+          and were left out rather than added to another line's total, so the despatch check is partial.
         </div>
       )}
 

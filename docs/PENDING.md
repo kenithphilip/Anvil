@@ -313,6 +313,89 @@ estimating is the bottleneck in every job shop.
 
 §5 lists what can honestly be said to such a shop today, and what must not be.
 
+### 2.D — Nothing records what we actually shipped, per line
+
+**ANSWERED 2026-09-21, and the answer redirected the work.** Owner: *"if it's
+invoiced it has to leave the store, and against invoices a despatch register
+format exists (generated in Tally by entering docket number, e-way bill details
+if the item is above a particular amount)."*
+
+Two consequences:
+
+1. **The under-delivery leg is vacuous for this tenant.** Invoicing IS the
+   despatch event, so nothing can be invoiced that has not left the store. The
+   leg #538 built is correct and will report "not checked" forever here. That is
+   the right behaviour, not a gap — leave it. It becomes meaningful only for a
+   tenant who invoices ahead of despatch.
+2. **What actually holds a consignment is the paperwork**, and the despatch
+   register names it: the docket number and the e-way bill. Built instead — see
+   below. `dispatch_lines` already had `lr_number`, `carrier`, `invoice_number`
+   and `invoice_date`: migration 193's schema is a direct mirror of the Tally
+   register, which is why nothing needed adding to it.
+
+Shipped as the dispatch-readiness check: `_lib/dispatch-readiness.js` decides
+whether an e-way bill is required (threshold by place of supply, both figures
+tenant settings via migration 225 — they are jurisdictional and intra-state
+thresholds differ per state), whether one is actually filed as GENERATED rather
+than DRAFT/CANCELLED/EXPIRED, whether a road bill has a vehicle, and whether any
+docket exists at all. It REFUSES — `required: null`, never false — when the
+consignment value or the place of supply cannot be determined.
+
+**Still open, and now the real gap:** nothing WRITES the despatch register. The
+docket number is entered by hand in Tally at despatch, and Anvil never sees it,
+so `docket_missing` will fire on every invoice until something captures it. The
+options remain a `delivery_note` extraction kind, a workbook importer on the
+`sales/shipment_import.js` pattern, or rendering the `delivery_note` template
+migration 106 already anticipates. That is a data-capture decision, not a
+reconciler one.
+
+Original scoping follows, kept because the dead ends are worth not
+rediscovering.
+
+#538 added the under-delivery leg to the pre-send invoice check: are we billing
+more than we shipped? A buyer raises their goods receipt against what arrived,
+so this is one of the four reasons an invoice goes unpaid. The leg is built,
+tested and correct — and it reports **"not checked"** on every order, because
+its data source is empty.
+
+`dispatch_lines` (mig 193) is the right table. It is read by the dispatch
+register, the pending-SO view and the comms rail. Its writer exists
+(`upsertDispatchLines`, `POST /api/comms/dispatch_lines`) and is tested. What
+does not exist is anything that CALLS it: no client method, no UI, no importer,
+no ERP sync, no seed.
+
+**Every other candidate source fails, and each for a different reason:**
+
+| candidate | why it does not work |
+|---|---|
+| `shipment_lines` (mig 209) | Populated from the logistics workbooks — but keys on `source_po_id`, so it is the INBOUND import ladder. Wrong direction. |
+| `packing_list` extraction + `documents/packing_list_ingest.js` | Real and working, but inbound supplier packing lists, and it writes only `item_master.weight_kg`. Its own comment deliberately refuses the shipment ladder because "which shipment?" has no safe answer there. That refusal was right. |
+| `eway_bills` (mig 074) | Carries `line_items` and is really written — but generated FROM the invoice, so validating the invoice against it is circular. |
+| Tally delivery-note sync | Never implemented. `tally_voucher_state` is empty and no tenant has Tally connected, so the eleven files under `src/api/tally/` have never run. |
+| `delivery_note` document template | A value in mig 106's `doc_type` CHECK and an `<option>` in the admin template editor. No renderer, no issuer — a tenant can author the template and nothing ever produces one. |
+| Manual entry form | Violates the prefill rule: data-capture forms must prefill from a DocAI extract plus existing masters, not ship blank fields. |
+
+**The question only the owner can answer: what physically exists when goods
+leave the door?** The work is different for each, and picking wrong makes it
+useless:
+
+- **A Tally delivery challan / delivery note PDF** → a new `delivery_note`
+  extraction kind. Most Anvil-native, reuses the strongest thing we have, and
+  the document is upstream of the invoice so the check stays non-circular.
+- **An Excel dispatch tracker the logistics team already maintains** → a
+  workbook importer on the `sales/shipment_import.js` pattern, which is proven
+  and already handles their file conventions. Cheapest and most certain.
+- **Nothing structured — it lives in the transporter's LR and people's heads**
+  → then the honest move is to render the `delivery_note` template that mig 106
+  already anticipates, making Anvil the thing that produces the dispatch record
+  instead of trying to read one. Biggest build, and the only one that also
+  gives the customer a despatch document.
+
+Until this is answered, #538's leg stays dormant. That is the correct behaviour
+— it refuses rather than guessing — but it is not yet useful.
+
+---
+
 ## 3. Known-unfixed defects
 
 Each verified, none currently breaking a user flow.

@@ -352,6 +352,9 @@ export const KIND_GATES_TABLE = Object.freeze({
     packing_list: { reject: "non_packing_list", requiresLines: true },
     eway_bill:    { reject: "non_eway_bill",    requiresLines: false },
     sales_order:  { reject: "non_sales_order",  requiresLines: true },
+  // requiresLines: a challan with no line items has not told us what moved,
+  // which is the only reason we read it.
+  delivery_note:{ reject: "non_delivery_note", requiresLines: true },
   });
 
 export const runExtractionPipeline = async (params) => {

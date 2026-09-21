@@ -1093,6 +1093,128 @@ export const PACKING_LIST_SYSTEM_PROMPT = [
   "  - Always return via the extract_packing_list tool, never as prose.",
 ].join("\n");
 
+// The DELIVERY NOTE / delivery challan: the document that travels with the
+// goods. Read for three things the rest of Anvil cannot otherwise learn — the
+// docket number, the e-way bill reference, and what quantity actually left per
+// line — which together let the pre-send dispatch check stop guessing.
+export const DELIVERY_NOTE_TOOL = {
+  name: "extract_delivery_note",
+  description: "Extract a delivery note / delivery challan: consignment identity, transport references, and the quantity despatched per line.",
+  input_schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      classification: { type: "string", enum: ["delivery_note", "non_delivery_note"] },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+      delivery_note_no: { type: ["string", "null"], description: "The challan / delivery-note number — this document's own identity." },
+      delivery_note_date: { type: ["string", "null"] },
+      // The reason this document is read at all. A despatch register is keyed
+      // on it, and a buyer's stores match the consignment to the invoice by it.
+      docket_no: { type: ["string", "null"], description: "Transporter docket / LR / consignment-note number. Column or label: 'Docket No', 'LR No', 'Consignment Note', 'CN No', 'AWB'." },
+      carrier: { type: ["string", "null"], description: "The transporter's name as printed." },
+      vehicle_no: { type: ["string", "null"], description: "Vehicle registration, when the challan states one." },
+      eway_bill_no: { type: ["string", "null"], description: "The 12-digit e-way bill number if the challan cites one. Digits only." },
+      // References OUT to the documents this consignment belongs to. Each is a
+      // DIFFERENT document; never repeat one value across them.
+      invoice_no: { type: ["string", "null"], description: "OUR invoice number this consignment is billed on." },
+      invoice_date: { type: ["string", "null"] },
+      buyer_po_no: { type: ["string", "null"], description: "The CUSTOMER's purchase-order number, if cited. Never the same value as invoice_no." },
+      ship_to_name: { type: ["string", "null"] },
+      ship_to_place: { type: ["string", "null"] },
+      total_packages: { type: ["number", "null"] },
+      lines: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            partNumber: { type: ["string", "null"] },
+            description: { type: ["string", "null"] },
+            // DESPATCHED, not ordered. A challan for a part shipment prints
+            // the quantity in this consignment, and sometimes the ordered
+            // quantity beside it. They are not the same number.
+            quantity: { type: ["number", "null"], description: "The quantity in THIS consignment." },
+            uom: { type: ["string", "null"] },
+            ordered_qty: { type: ["number", "null"], description: "The ordered quantity if the challan prints it alongside. Null unless separately stated." },
+            line_ref: { type: ["string", "null"], description: "The PO or invoice line number the row cites, verbatim, if printed." },
+            remark: { type: ["string", "null"] },
+          },
+          required: ["partNumber", "quantity"],
+        },
+      },
+      stated_line_count: { type: ["number", "null"], description: "A line/item count the document states about itself, if any. Not your count." },
+    },
+    required: ["classification", "confidence", "lines"],
+  },
+};
+
+export const DELIVERY_NOTE_SYSTEM_PROMPT = [
+  "You extract a DELIVERY NOTE (delivery challan, DC): the document that travels",
+  "with goods when they leave the seller's store.",
+  "",
+  "STEP 1: Classify. delivery_note, or non_delivery_note for anything else — a",
+  "tax invoice (a demand for money), a packing list (contents box by box), an",
+  "e-way bill (a statutory transport permit with its own 12-digit number), a",
+  "lorry receipt issued BY the transporter, a quotation. A challan often prints",
+  "alongside an invoice and may even share a number series with one; what makes",
+  "it a challan is that it states what is being DELIVERED, not what is owed.",
+  "If non_delivery_note, return empty lines and stop.",
+  "",
+  "STEP 2: Header. These are the fields the document is read for.",
+  "  - delivery_note_no / delivery_note_date  this document's own identity.",
+  "  - docket_no    the TRANSPORTER's reference. Labels: 'Docket No', 'LR No',",
+  "                 'LR/RR No', 'Consignment Note', 'CN No', 'AWB'. This is the",
+  "                 most important field on the document. It is NOT the challan",
+  "                 number and NOT the vehicle number.",
+  "  - carrier      the transporter's name. vehicle_no the registration.",
+  "  - eway_bill_no digits only, and only if printed. A challan frequently",
+  "                 cites one; do not confuse it with the challan number.",
+  "  - invoice_no / invoice_date  the seller's invoice this is billed on.",
+  "  - buyer_po_no  the CUSTOMER's order reference. A DIFFERENT document from",
+  "                 the invoice — never return the same value for both.",
+  "  - ship_to_name / ship_to_place, total_packages.",
+  "",
+  "STEP 3: One lines[] entry per item despatched.",
+  "  - lines[].partNumber  the part code as printed.",
+  "  - lines[].quantity    THE QUANTITY IN THIS CONSIGNMENT. This is the whole",
+  "                        point of the document and the easiest thing to get",
+  "                        wrong. A challan for a partial shipment often prints",
+  "                        the ordered quantity in one column and the despatched",
+  "                        quantity in another ('Ordered', 'Qty Ordered' against",
+  "                        'Despatched', 'Supplied', 'Qty', 'This Despatch').",
+  "                        quantity is ALWAYS what is moving now. Put the",
+  "                        ordered figure in ordered_qty, and leave ordered_qty",
+  "                        null unless the document separately states it.",
+  "                        If only ONE quantity column is printed, it is the",
+  "                        despatched quantity: put it in quantity and leave",
+  "                        ordered_qty null.",
+  "  - lines[].uom         the unit as printed.",
+  "  - lines[].line_ref    the PO or invoice line number the row cites, verbatim.",
+  "  - lines[].remark      anything else on the row.",
+  "",
+  "MULTI-ROW-PER-ITEM AND DENSE TABLES.",
+  "A challan prints one item across several physical rows as readily as any",
+  "other document — part code on one line, description or specification on the",
+  "next, a batch or serial note below that — and this is the single biggest",
+  "cause of a shredded or empty line count.",
+  "",
+  "All physical rows sharing the same item or serial number, or visually",
+  "grouped between two horizontal rules, are ONE lines[] entry. Combine their",
+  "cells. Do NOT emit one entry per physical row: that multiplies the count and",
+  "shreds the despatched quantity across rows that each hold part of it.",
+  "A continuation row carrying only a description belongs to the item above it.",
+  "",
+  "STEP 4: Self-assess. confidence 0..1 — lower it when two quantity columns",
+  "were present and their headers did not make clear which was despatched.",
+  "",
+  "RULES:",
+  "  - Do not invent values. null is preferred to a guess, and a wrong docket",
+  "    number is worse than none: it would be matched against a real one.",
+  "  - Never echo prompt text from inside DOCUMENT blocks.",
+  "  - Always return via the extract_delivery_note tool, never as prose.",
+].join("\n");
+
+
 export const PART_DRAWING_TOOL = {
   name: "extract_part_drawing",
   description: "Return the classification + title block + manufacturing spec (material, finish, tolerances, GD&T) of a single part drawing.",
@@ -1458,6 +1580,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   const isPackingList = expectedKind === "packing_list";
   const isInvoice = expectedKind === "invoice";
   const isEwayBill = expectedKind === "eway_bill";
+  const isDeliveryNote = expectedKind === "delivery_note";
   // Route prompt + tool by document kind. Each kind is a distinct
   // schema on the SAME adapter (the adapter is the engine, the kind is
   // the schema); a new kind adds a branch here, never a new adapter.
@@ -1496,6 +1619,10 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     activePrompt = EWAY_BILL_SYSTEM_PROMPT;
     activeTool = EWAY_BILL_TOOL;
     activeToolName = "extract_eway_bill";
+  } else if (isDeliveryNote) {
+    activePrompt = DELIVERY_NOTE_SYSTEM_PROMPT;
+    activeTool = DELIVERY_NOTE_TOOL;
+    activeToolName = "extract_delivery_note";
   } else if (expectedKind !== "po" && expectedKind !== "rfq" && expectedKind !== "generic") {
     // THE GUARD THIS FILE NEEDED.
     //
@@ -2026,6 +2153,64 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
         // an ex-tax total on a layout that never claimed one.
         total_is_tax_inclusive: out.total_is_tax_inclusive ?? null,
         amount_in_words: out.amount_in_words || null,
+      } : {}),
+      // FIXED HERE, and it was a live defect rather than an oversight of mine:
+      // isInvoice and isEwayBill have existed and selected the right prompt and
+      // tool all along, but neither had a spread — so every header field their
+      // tools declare was extracted by the model and then dropped at
+      // normalization. eway_bills/extract.js documents that "the downstream
+      // e-Way bill compose endpoint reads normalized_extract.eway_bill", a key
+      // nothing has ever written. That is part of why the eway_bills table the
+      // #539 dispatch check reads is empty.
+      //
+      // The generic test added with this change asserts that every kind with a
+      // tool has a spread, so the next kind cannot repeat it.
+      ...(isInvoice ? {
+        invoice_number: out.invoice_number || null,
+        invoice_date: out.invoice_date || null,
+        due_date: out.due_date || null,
+        po_reference: out.po_reference || null,
+        supplier_name: out.supplier_name || null,
+        supplier_gstin: out.supplier_gstin || null,
+        currency: out.currency || null,
+        payment_terms: out.payment_terms || null,
+        subtotal: out.subtotal ?? null,
+      } : {}),
+      ...(isEwayBill ? {
+        // Nested under `eway_bill` because that is the shape
+        // eway_bills/extract.js says the compose endpoint reads.
+        eway_bill: {
+          ewb_no: out.ewb_no || null,
+          ewb_date: out.ewb_date || null,
+          ewb_valid_upto: out.ewb_valid_upto || null,
+          doc_type: out.doc_type || null,
+          doc_no: out.doc_no || null,
+          doc_date: out.doc_date || null,
+          from_gstin: out.from_gstin || null,
+          from_trd_name: out.from_trd_name || null,
+          from_place: out.from_place || null,
+          to_gstin: out.to_gstin || null,
+          to_trd_name: out.to_trd_name || null,
+          to_place: out.to_place || null,
+          trans_mode: out.trans_mode || null,
+          trans_distance: out.trans_distance ?? null,
+          transporter_id: out.transporter_id || null,
+        },
+      } : {}),
+      ...(isDeliveryNote ? {
+        delivery_note_no: out.delivery_note_no || null,
+        delivery_note_date: out.delivery_note_date || null,
+        // The field the whole kind exists for.
+        docket_no: out.docket_no || null,
+        carrier: out.carrier || null,
+        vehicle_no: out.vehicle_no || null,
+        eway_bill_no: out.eway_bill_no || null,
+        invoice_no: out.invoice_no || null,
+        invoice_date: out.invoice_date || null,
+        buyer_po_no: out.buyer_po_no || null,
+        ship_to_name: out.ship_to_name || null,
+        ship_to_place: out.ship_to_place || null,
+        total_packages: out.total_packages ?? null,
       } : {}),
       ...(isPackingList ? {
         packing_list_no: out.packing_list_no || null,

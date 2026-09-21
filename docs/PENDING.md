@@ -145,6 +145,21 @@ item_master". **That map was never built** — `item_master` has no
 `product_family` column and nothing in `src/api` resolves one. Every forecast
 line has carried an unresolvable family ever since.
 
+**Requirement added 2026-09-21 — spec-driven SELECTION, the inverse operation.**
+A configurator runs forwards (option values → part number). A sales engineer
+facing a customer specification needs the reverse: which part numbers satisfy
+these requirements? `item_specifications` cannot answer it — every field is free
+text or manufacturing spec (mig 105, extended by 224), and there is **not one
+rated, comparable, unit-bearing attribute anywhere**. Needs
+`product_attributes` + `variant_attribute_values` where the *comparison
+semantic* (`at_least` / `at_most` / `range` / `exact` / `enum_subset`) is the
+load-bearing column — without it a selector offers a 200 daN gun for a 450 daN
+requirement. Must rank and explain rather than auto-pick, must extract the
+requirements from the RFQ document rather than ask someone to type them, and
+must be lead-time aware: a fully compliant variant at 14 weeks is often a worse
+answer than a 90% one at 3, which is the same binding constraint as §2.PM. See
+§9b of the scope doc.
+
 Three new tables (`product_families`, `product_options`, `product_variants`);
 everything else extends `item_master` / `inventory_positions` /
 `item_customer_parts` / `bill_of_materials`. Every line table in Anvil joins on

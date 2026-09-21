@@ -53,6 +53,13 @@ type Result = {
   // never fired for a real one. `missing` is the actual signal.
   po_reference?: { known?: boolean; invoice_ref?: string | null; order_po_number?: string | null; missing?: boolean | null } | null;
   dispatch?: { checked: boolean; reason?: string | null; unresolved?: { part_no?: string | null; dispatched_qty?: number | null }[] };
+  dispatch_readiness?: {
+    findings: { verdict: string; blocking: boolean; decided: boolean; detail?: string | null }[];
+    eway: { required: boolean | null; threshold: number | null; place_of_supply: string | null; status: string | null; ewb_no: string | null; filed: boolean };
+    docket: string | null;
+    can_dispatch: boolean;
+    summary: { blocking: number; undecided: number; decided: boolean | null };
+  } | null;
   prior_invoices?: { invoice_number?: string | null; status?: string | null; counted?: boolean }[];
 };
 
@@ -198,6 +205,39 @@ export const InvoicePoCheck: React.FC<{ orderId: string; invoiceId?: string | nu
         <div className="mono-sm" style={{ marginTop: 8, opacity: 0.7 }}>
           Counting {res.prior_invoices!.filter((p) => p.counted).length} earlier invoice
           {res.prior_invoices!.filter((p) => p.counted).length === 1 ? "" : "s"} toward what has already been billed.
+        </div>
+      )}
+
+      {/* Can the goods behind this invoice actually move?
+          Separate from the PO comparison because it is a different question with
+          a different answer: the invoice can be correct in every particular and
+          the consignment still be undispatchable. */}
+      {res.dispatch_readiness && res.dispatch_readiness.findings.some((f) => f.verdict !== "ready") && (
+        <div style={{ marginTop: 12 }}>
+          {res.dispatch_readiness.findings.filter((f) => f.verdict !== "ready").map((f, i) => (
+            <Banner
+              key={f.verdict + i}
+              kind={f.blocking ? "bad" : !f.decided ? "info" : "warn"}
+              title={
+                f.verdict === "eway_missing" ? "No e-way bill, and this consignment needs one"
+                : f.verdict === "eway_not_filed" ? `The e-way bill is ${res.dispatch_readiness!.eway.status || "not filed"}, not generated`
+                : f.verdict === "eway_vehicle_missing" ? "The e-way bill has no vehicle recorded"
+                : f.verdict === "docket_missing" ? "No docket or LR number against this invoice"
+                : f.verdict === "threshold_unknown" ? "Could not tell whether an e-way bill is needed"
+                : f.verdict === "place_of_supply_unknown" ? "Could not tell intra- from inter-state"
+                : f.verdict
+              }
+            >
+              <span className="mono-sm">{f.detail}</span>
+            </Banner>
+          ))}
+        </div>
+      )}
+
+      {res.dispatch_readiness?.can_dispatch && res.dispatch_readiness.eway.required === true && (
+        <div className="mono-sm" style={{ marginTop: 8, opacity: 0.75 }}>
+          E-way bill {res.dispatch_readiness.eway.ewb_no || "on file"} generated
+          {res.dispatch_readiness.docket ? ` · docket ${res.dispatch_readiness.docket}` : ""}.
         </div>
       )}
 

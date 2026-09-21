@@ -315,8 +315,42 @@ estimating is the bottleneck in every job shop.
 
 ### 2.D — Nothing records what we actually shipped, per line
 
-Blocked on ONE owner answer, not on engineering. Scoped 2026-09-21 while
-building #538.
+**ANSWERED 2026-09-21, and the answer redirected the work.** Owner: *"if it's
+invoiced it has to leave the store, and against invoices a despatch register
+format exists (generated in Tally by entering docket number, e-way bill details
+if the item is above a particular amount)."*
+
+Two consequences:
+
+1. **The under-delivery leg is vacuous for this tenant.** Invoicing IS the
+   despatch event, so nothing can be invoiced that has not left the store. The
+   leg #538 built is correct and will report "not checked" forever here. That is
+   the right behaviour, not a gap — leave it. It becomes meaningful only for a
+   tenant who invoices ahead of despatch.
+2. **What actually holds a consignment is the paperwork**, and the despatch
+   register names it: the docket number and the e-way bill. Built instead — see
+   below. `dispatch_lines` already had `lr_number`, `carrier`, `invoice_number`
+   and `invoice_date`: migration 193's schema is a direct mirror of the Tally
+   register, which is why nothing needed adding to it.
+
+Shipped as the dispatch-readiness check: `_lib/dispatch-readiness.js` decides
+whether an e-way bill is required (threshold by place of supply, both figures
+tenant settings via migration 225 — they are jurisdictional and intra-state
+thresholds differ per state), whether one is actually filed as GENERATED rather
+than DRAFT/CANCELLED/EXPIRED, whether a road bill has a vehicle, and whether any
+docket exists at all. It REFUSES — `required: null`, never false — when the
+consignment value or the place of supply cannot be determined.
+
+**Still open, and now the real gap:** nothing WRITES the despatch register. The
+docket number is entered by hand in Tally at despatch, and Anvil never sees it,
+so `docket_missing` will fire on every invoice until something captures it. The
+options remain a `delivery_note` extraction kind, a workbook importer on the
+`sales/shipment_import.js` pattern, or rendering the `delivery_note` template
+migration 106 already anticipates. That is a data-capture decision, not a
+reconciler one.
+
+Original scoping follows, kept because the dead ends are worth not
+rediscovering.
 
 #538 added the under-delivery leg to the pre-send invoice check: are we billing
 more than we shipped? A buyer raises their goods receipt against what arrived,

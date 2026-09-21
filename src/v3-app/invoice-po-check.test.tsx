@@ -147,3 +147,24 @@ describe("the despatch side is disclosed, not assumed", () => {
     expect(src).toMatch(/dispatch\?\.unresolved/);
   });
 });
+
+describe("the consignment can actually move", () => {
+  it("renders the dispatch-readiness findings", () => {
+    // A different question from the PO comparison, with a different answer: the
+    // invoice can be correct in every particular and the goods still be
+    // undispatchable.
+    expect(src).toMatch(/dispatch_readiness/);
+    expect(src).toMatch(/eway_missing/);
+    expect(src).toMatch(/docket_missing/);
+  });
+
+  it("shows an undecided check as info, not as a pass or a fault", () => {
+    // !f.decided must reach a distinct banner kind, or a refusal reads as one
+    // or the other.
+    expect(src).toMatch(/!f\.decided \? "info"/);
+  });
+
+  it("only claims the e-way bill is in order when one was actually required", () => {
+    expect(src).toMatch(/eway\.required === true/);
+  });
+});

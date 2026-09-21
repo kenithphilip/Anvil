@@ -22,6 +22,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { reconcileInvoiceAgainstOrder, compareTotals, countsTowardBilled, dispatchLookup } from "../_lib/invoice-reconcile.js";
+import { assessDispatchReadiness } from "../_lib/dispatch-readiness.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -132,6 +133,69 @@ export default async function handler(req, res) {
       dispatch: dispatchLookup(dispatchRows),
     });
 
+    // ── Can the consignment behind this invoice lawfully move? ──────────────
+    //
+    // The owner's despatch register is kept in Tally against each invoice, and
+    // what it captures is the docket number and the e-way bill details. Those
+    // are the two things that hold a consignment: goods moving without a
+    // required e-way bill can be detained, and without a docket the buyer's
+    // stores cannot tie the delivery to the invoice.
+    //
+    // Every read here is best-effort and every failure leaves the assessment
+    // UNDECIDED rather than passing, because dispatch-readiness.js returns
+    // required: null (never false) when an input is missing.
+    let sellerGstin = null;
+    let ewaySettings = {};
+    try {
+      const ts = await svc.from("tenant_settings")
+        .select("einvoice_seller_gstin").eq("tenant_id", ctx.tenantId).maybeSingle();
+      if (!ts.error) sellerGstin = ts.data?.einvoice_seller_gstin || null;
+    } catch (_e) { /* undecided */ }
+
+    // SEPARATE query, deliberately. Migration 225 adds these two columns and
+    // migrations here apply by hand, so on any deployment that has not run it
+    // the select returns 42703 — and PostgREST rejects the WHOLE statement, not
+    // just the unknown column. Asking for them beside einvoice_seller_gstin
+    // would therefore lose the GSTIN too and make every invoice undecidable.
+    try {
+      const th = await svc.from("tenant_settings")
+        .select("eway_threshold_inr, eway_threshold_intrastate_inr")
+        .eq("tenant_id", ctx.tenantId).maybeSingle();
+      if (!th.error && th.data) ewaySettings = th.data;
+    } catch (_e) { /* module falls back to its documented defaults */ }
+
+    let buyerGstin = null;
+    if (order.customer_id) {
+      try {
+        const cq = await svc.from("customers").select("gstin")
+          .eq("tenant_id", ctx.tenantId).eq("id", order.customer_id).maybeSingle();
+        if (!cq.error) buyerGstin = cq.data?.gstin || null;
+      } catch (_e) { /* undecided */ }
+    }
+
+    // Newest first: a re-filed bill supersedes a cancelled one.
+    let ewayBill = null;
+    if (subject?.id) {
+      try {
+        const eq = await svc.from("eway_bills")
+          .select("id, status, ewb_no, vehicle_no, trans_mode, created_at")
+          .eq("tenant_id", ctx.tenantId).eq("invoice_id", subject.id)
+          .order("created_at", { ascending: false }).limit(1);
+        if (!eq.error && eq.data?.length) ewayBill = eq.data[0];
+      } catch (_e) { /* undecided */ }
+    }
+
+    // The docket comes off the despatch register when it has one. Reuses the
+    // rows already fetched above for the under-delivery leg.
+    const docket = (dispatchRows || []).map((d) => d?.lr_number).find((v) => v) || null;
+
+    const dispatchReadiness = subject
+      ? assessDispatchReadiness({
+          invoiceValue: subject.grand_total,
+          sellerGstin, buyerGstin, ewayBill, docket, settings: ewaySettings,
+        })
+      : null;
+
     const totals = subject
       ? compareTotals(subject.grand_total, orderLines, { priceTolerancePct: body.price_tolerance_pct })
       : null;
@@ -156,6 +220,7 @@ export default async function handler(req, res) {
       ...result,
       totals,
       po_reference: poReference,
+      dispatch_readiness: dispatchReadiness,
       prior_invoices: priorInvoices.map((i) => ({
         id: i.id, invoice_number: i.invoice_number, status: i.status,
         counted: countsTowardBilled(i),

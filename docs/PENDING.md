@@ -396,6 +396,46 @@ Until this is answered, #538's leg stays dormant. That is the correct behaviour
 
 ---
 
+### 2.PM — Project management: the schedule runs through lead times, not tasks
+
+Scoped 2026-09-21 in `docs/PROJECT_MANAGEMENT_SCOPE.md`. Nothing built.
+
+Asked after reviewing an open-source task-manager comparison. The comparison is a
+useful negative result: by its own admission all five tools lack Gantt, critical
+path, estimates-vs-actuals and team assignment. Integrating one would add a second
+place to type things and would not touch the stated problem — that the long-lead
+component must be ordered before the design specifying it is signed off.
+
+**The surprise is how much already exists.** `projects` (mig 006) carries the
+entire schedule baseline — six `expected_*_date` milestones, three
+`budgeted_*_mandays` effort figures — and a 15-value `project_phase` enum whose
+phases ARE the described time sink (`PRICE_NEGOTIATION`, `DESIGN`,
+`APPROVAL_PROCESSING`). `project_phase_log` carries the actual: phase,
+`started_at`, `completed_at`, `responsible_user`, `progress_pct`. So schedule
+variance is computable from data already stored, and **nothing computes it** —
+`sales/projects.js` is CRUD that writes those fields and no code reads them for
+analysis. Fifth instance this session of build-it-and-never-wire-it.
+
+The scheduling primitives exist too: `_lib/datemath.js` already does working-day
+arithmetic with per-country holidays, and `_lib/spare-minmax.js` already parses
+free-text lead times.
+
+Genuinely absent: any task/dependency object, a per-part lead time, a backward
+pass from required date to order-by date, and any variance reporting.
+
+Six PRs in the scope doc. PR 1 is the whole bet and needs **no new tables**:
+compute `order_by = required − lead − transit − inspection` in business days per
+BOM component and show the slack. It makes an invisible deadline visible from data
+already held, and it must REFUSE on an unresolvable lead time rather than default
+to 56 days — a default dressed as an estimate is how a schedule tool loses trust
+in week one.
+
+Five open questions in the doc, two of which gate everything: whether the phase
+timestamps are recorded as work happens or retro-filled in batches, and whether
+the customer's required date is contractual or aspirational.
+
+---
+
 ## 3. Known-unfixed defects
 
 Each verified, none currently breaking a user flow.

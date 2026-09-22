@@ -34,6 +34,7 @@ import driftReportCron  from "./drift-report.js";
 // EVAL_QUALITY_ALERT_DISABLED.
 import evalQualityAlert from "./eval_quality_alert.js";
 import extractionReaper from "./extraction_reaper.js";
+import inventoryPlanning from "./inventory-planning-weekly.js";
 // CM P4: live-model replay of the golden corpus. OPT-IN + cost-bounded — only
 // scheduled when EVAL_REPLAY_ENABLED is set (it burns real LLM calls). Gets a
 // wide per-handler timeout since each case re-runs the model.
@@ -54,6 +55,17 @@ import logisticsMonitor from "./logistics-monitor-tick.js";
 import forecastSnapshot from "../forecast/index.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
+
+// Which weekday the weekly planner runs on, in UTC. 1 = Monday, matching the
+// "Monday 02:00 IST" cadence the handler documents (IST Monday 02:00 is UTC
+// Sunday 20:30, but the daily cron fires at 02:30 UTC, so UTC Monday is the
+// nearest honest slot). Override with INVENTORY_PLANNING_DAY; set it to -1 to
+// disable the schedule without a deploy.
+const PLANNING_DAY = process.env.INVENTORY_PLANNING_DAY != null
+  ? Number(process.env.INVENTORY_PLANNING_DAY)
+  : 1;
+export const isPlanningDay = (now = new Date()) =>
+  Number.isFinite(PLANNING_DAY) && PLANNING_DAY >= 0 && now.getUTCDay() === PLANNING_DAY;
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -93,6 +105,31 @@ export default async function handler(req, res) {
       // because each golden case re-runs the model; the handler caps case count.
       ...(process.env.EVAL_REPLAY_ENABLED
         ? [{ name: "eval/replay", fn: evalReplay, opts: { path: "/api/eval/replay", method: "POST", body: {}, timeoutMs: 55000 } }]
+        : []),
+      // GIVE THE PLANNER A CLOCK.
+      //
+      // inventory-planning-weekly.js computes demand classification, a chosen
+      // forecaster, conformal prediction intervals, a gamma-fitted lead time,
+      // safety stock, the net-requirement curve and draft procurement plans --
+      // and NOTHING triggered it. It was registered in router.js and appeared
+      // in neither this fan-out nor tick.js's, while /api/cron/daily is the
+      // only Vercel cron entry. So the whole planning stack was callable and
+      // never called.
+      //
+      // Gated to ONE DAY so a weekly job stays weekly: this group runs daily,
+      // and the planner is a per-tenant x per-item loop. It is idempotent
+      // anyway (the demand_forecasts unique key catches a re-run and
+      // procurement_plans are drafts an operator approves), so a duplicate day
+      // would be wasteful rather than harmful -- but wasteful daily is still
+      // the wrong default.
+      //
+      // Safe to switch on: the handler returns { skipped: true } for any tenant
+      // without tenant_settings.inventory_planning_enabled, and only touches
+      // items with item_master.planning_enabled -- so this changes nothing for
+      // anybody until they opt in. Wide timeout for the same reason as
+      // eval/replay: it is a real computation, and the handler caps its own work.
+      ...(isPlanningDay()
+        ? [{ name: "inventory/planning_weekly", fn: inventoryPlanning, opts: { path: "/api/cron/inventory-planning-weekly", timeoutMs: 55000 } }]
         : []),
     ]);
     const okCount = results.filter((r) => r.ok).length;

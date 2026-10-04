@@ -1829,9 +1829,9 @@ const WiredSOWorkspace = () => {
       await AnvilBackend?.orders?.update?.(o.id, { result: nextResult });
       // Audit fix May 2026: clear the draft immediately so a
       // second Save click during the reload window cannot fire a
-      // duplicate PATCH. The useEffect on persistedLinesKey will
-      // also null this when the new lines arrive, but it races
-      // the click; we win the race here.
+      // duplicate PATCH. The render-phase reset on persistedLinesKey
+      // also nulls this when the new lines arrive, but only after the
+      // reload; clearing here closes the window before it.
       setLinesDraft(null);
       window.notifySuccess?.("Line edits saved", `${draftLines.length} line${draftLines.length === 1 ? "" : "s"} on ${o.po_number || o.id.slice(0, 8)}`);
       setBump((n: number) => n + 1);

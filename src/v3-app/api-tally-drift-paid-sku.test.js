@@ -137,8 +137,14 @@ const buildSvc = (seed = {}) => {
 
 beforeEach(() => { vi.clearAllMocks(); });
 
+// Resolve the handler path against this file before importing it.
+// Vitest 4 replaced vite-node with Vite's module runner, which resolves a
+// NON-literal relative dynamic import against the root-relative module id
+// (the Vite root is src/v3-app), so "../api/..." could no longer climb out
+// of the root and failed with "Cannot find module '/api/...'". A file URL
+// built from import.meta.url names the same file under every runner.
 const callHandler = async (importPath, method, url, body) => {
-  const handler = (await import(importPath)).default;
+  const handler = (await import(new URL(importPath, import.meta.url).href)).default;
   const req = { method, url, headers: {}, _body: body };
   const res = { statusCode: 0, _json: null, setHeader() {}, end() {} };
   await handler(req, res);

@@ -232,6 +232,110 @@ PRs 1–3 are the spine and are worth doing regardless of what follows.
 
 ---
 
+## 9b. Requirement added 2026-09-21 — selection, which is the inverse of configuration
+
+Requested: *a sales or product master catalog that helps sales engineers select
+part numbers for equipment — turnkey products, but selected based on customer
+spec.*
+
+This is **not** the configurator scoped above, and the difference decides the
+data model. A configurator runs **forwards**: the engineer knows the option
+values and wants the part number (family + option values → part_no, which is
+what the workbook in §1 is). Selection runs **backwards**: the customer states
+requirements and the engineer needs to know *which part numbers satisfy them*.
+
+Both are needed, and only one of them is scoped. A configurator cannot answer
+"the customer asked for 450 daN at 6 bar with a 300 mm throat — what do we
+offer?", because it has no idea what any variant is *rated* for.
+
+### What exists, and it is less than it looks
+
+`item_specifications` (migration 105) is the obvious home and cannot do this
+today. Every field is free text or manufacturing spec: `technical_description`,
+`material`, `specified_life_time`, `mfg_feasibility`, plus the drawing spec
+migration 224 added in #532 (`finish`, `heat_treatment`, `tolerances`, `gdt`).
+
+**There is not one rated, comparable, unit-bearing attribute anywhere.** A
+customer-specified figure lives buried inside `technical_description text`,
+where nothing can compare it to a requirement. `item_master.network_min_lead_days`
+is, ironically, the only numeric engineering-ish attribute the catalog carries.
+
+So the missing piece is specific: **typed rated attributes with a unit and a
+comparison semantic**, per variant. Not another free-text column.
+
+### The shape
+
+`product_attributes` (attribute key, label, unit, datatype, comparison) and
+`variant_attribute_values` (variant → attribute → value). The comparison
+semantic is the load-bearing column and the one most likely to be left out:
+
+| comparison | means | example |
+|---|---|---|
+| `at_least` | variant value must be ≥ required | rated force, duty cycle |
+| `at_most` | variant value must be ≤ required | weight, envelope, current draw |
+| `range` | required must fall inside variant's min..max | stroke, throat depth |
+| `exact` | must match | voltage, phase, mounting |
+| `enum_subset` | variant must offer the requested option | cooling type, cable exit |
+
+Without it, a selector compares numbers without knowing which direction is
+better and will happily offer a 200 daN gun for a 450 daN requirement.
+
+### Three rules that matter more than the schema
+
+**1. Rank and explain; never auto-pick.** The output is a ranked candidate list
+where each row says which attributes it meets, which it misses, and by how much.
+"Three variants meet the spec, two miss on throat depth by 20 mm" is useful; a
+single suggested part number is not checkable by the person who has to sign the
+quote. Follows the refusal convention now used across the reconcilers.
+
+**2. The customer's spec arrives as a document, so extract it.** An RFQ, a spec
+sheet or a drawing states the requirements, and typing them into a form to get a
+part number back is exactly the manual data entry the prefill rule forbids. This
+is a natural DocAI kind — requirements in, candidate parts out — and it is the
+`rfq` kind finally having a consumer. It is also the inbound-RFQ wedge
+[[project_job_shop_segment]] identified as the defensible one, arriving from a
+different direction.
+
+**3. Selection must be lead-time aware, or it optimises the wrong thing.** A
+fully compliant variant at fourteen weeks is often a worse answer than a
+90%-compliant one available in three, and today nothing tells the engineer that
+at the moment of choosing. This is the same insight as
+[PROJECT_MANAGEMENT_SCOPE.md](PROJECT_MANAGEMENT_SCOPE.md): the binding
+constraint on a project is lead time, not specification. A selector that returns
+compliance without availability hands the engineer a quote that cannot be
+delivered — and the quote is precisely where that decision is cheap to change.
+
+### Turnkey changes the unit of selection
+
+The request says *turnkey products*, so what is being selected is usually an
+assembly or a system, not one part. That means selection has to compose: choose
+the gun, and the transformer, timer, cables and hoses that go with it must
+follow, which is the §3 variant → BOM relationship doing double duty. Two
+consequences worth stating now:
+
+- a spec that constrains the **system** (total kVA, floor footprint) is not
+  satisfiable by checking any single variant's attributes;
+- the composed result is what [[project_po_quote_reconciliation]] and the kit-line
+  work in `KIT_LINE_SCOPE.md` then have to reconcile against a PO that orders it
+  as one SET. Selection should emit the composition, not just the header part.
+
+### Where this goes in the phasing
+
+After §8's PR 2 (`product_variants` must exist before anything can be rated) and
+usefully before the configurator UI, because the attribute table is what makes
+both the forward and backward directions work. Rough order: attributes and values
+→ the ranked selector against typed requirements → requirement extraction from an
+RFQ document → lead-time-aware ranking → system-level constraints.
+
+Two questions this needs answered before building, both for the owner:
+
+1. **Which attributes actually decide a sale?** A guessed list of thirty produces
+   a form nobody fills. The honest source is the last fifty RFQs: whatever
+   customers actually specified is the list, and it is probably under ten.
+2. **Is there a canonical rating sheet per product family**, or does each rating
+   live in a catalogue PDF and an engineer's memory? That decides whether the
+   attribute values are imported once or accumulated from drawings and quotes.
+
 ## 10. Open questions
 
 1. Is a variant's identity the part number, the model code, or the pair? 81

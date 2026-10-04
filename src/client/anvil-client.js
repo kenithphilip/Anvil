@@ -97,16 +97,37 @@
       return null;
     } catch (_) { return null; }
   };
+  // Tell this tab the session changed.
+  //
+  // The "storage" event deliberately does NOT fire in the tab that performed
+  // the write — that is the DOM spec — so a same-tab session change is
+  // invisible to anything watching storage. React's auth gate reads the
+  // session during render and has no way to know it moved; without this it
+  // only finds out on the next unrelated re-render.
+  //
+  // Guarded because this IIFE is also invoked with a non-browser `global`
+  // (jsdom setup, cold Node imports), where dispatchEvent/CustomEvent may
+  // not exist. A notification failing must never break a session write.
+  const notifySessionChanged = () => {
+    try { global.dispatchEvent?.(new CustomEvent("anvil:session")); } catch (_) {}
+  };
+
   const writeSession = (session) => {
     const value = JSON.stringify(session || null);
     ssSet(SESSION_KEY, value);
     // Mirror to localStorage during transition for the 43 screens
     // that read it directly. Tracked for removal once migrated.
     lsSet(SESSION_KEY, value);
+    notifySessionChanged();
   };
   const clearSession = () => {
     ssRemove(SESSION_KEY);
     lsRemove(SESSION_KEY);
+    // Every teardown funnels here — setSession(null), the 401 handler, the
+    // local-expiry drop, and setConfig with a blank url — so this one call
+    // covers all four. The 401 and blank-url paths had NO propagation at
+    // all before: they cleared the session and left the Shell rendered.
+    notifySessionChanged();
   };
 
   const buildHeaders = (cfg, session, extra) => {
@@ -661,6 +682,18 @@
     // this fills item_master.weight_kg for parts that have none.
     ingestPackingList: async (documentId, extracted) =>
       apiFetch("/api/documents/packing_list_ingest", { method: "POST", body: { document_id: documentId, extracted } }),
+    // The delivery challan: the only document that carries the docket number,
+    // so it is the only thing that can stop the pre-send dispatch check saying
+    // "no docket" on every invoice. Extract with
+    // docai.extract({ kind: "delivery_note" }) and pass the payload; this
+    // records the despatched quantity per line against the order.
+    // orderId is optional — omit it and the endpoint resolves the order from
+    // the challan's buyer PO number, then its invoice number, REFUSING rather
+    // than guessing when neither is unambiguous.
+    ingestDeliveryNote: async (documentId, extracted, orderId = null) =>
+      apiFetch("/api/documents/delivery_note_ingest", { method: "POST", body: {
+        document_id: documentId, extracted, ...(orderId ? { order_id: orderId } : {}),
+      } }),
     fetch: async (id) => apiFetch("/api/documents/" + id),
     remove: async (id) => apiFetch("/api/documents/" + id, { method: "DELETE" }),
     // OCR evidence rows for a document. Returns the per-token bboxes

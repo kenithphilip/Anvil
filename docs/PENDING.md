@@ -145,6 +145,21 @@ item_master". **That map was never built** — `item_master` has no
 `product_family` column and nothing in `src/api` resolves one. Every forecast
 line has carried an unresolvable family ever since.
 
+**Requirement added 2026-09-21 — spec-driven SELECTION, the inverse operation.**
+A configurator runs forwards (option values → part number). A sales engineer
+facing a customer specification needs the reverse: which part numbers satisfy
+these requirements? `item_specifications` cannot answer it — every field is free
+text or manufacturing spec (mig 105, extended by 224), and there is **not one
+rated, comparable, unit-bearing attribute anywhere**. Needs
+`product_attributes` + `variant_attribute_values` where the *comparison
+semantic* (`at_least` / `at_most` / `range` / `exact` / `enum_subset`) is the
+load-bearing column — without it a selector offers a 200 daN gun for a 450 daN
+requirement. Must rank and explain rather than auto-pick, must extract the
+requirements from the RFQ document rather than ask someone to type them, and
+must be lead-time aware: a fully compliant variant at 14 weeks is often a worse
+answer than a 90% one at 3, which is the same binding constraint as §2.PM. See
+§9b of the scope doc.
+
 Three new tables (`product_families`, `product_options`, `product_variants`);
 everything else extends `item_master` / `inventory_positions` /
 `item_customer_parts` / `bill_of_materials`. Every line table in Anvil joins on
@@ -313,6 +328,129 @@ estimating is the bottleneck in every job shop.
 
 §5 lists what can honestly be said to such a shop today, and what must not be.
 
+### 2.D — Nothing records what we actually shipped, per line
+
+**ANSWERED 2026-09-21, and the answer redirected the work.** Owner: *"if it's
+invoiced it has to leave the store, and against invoices a despatch register
+format exists (generated in Tally by entering docket number, e-way bill details
+if the item is above a particular amount)."*
+
+Two consequences:
+
+1. **The under-delivery leg is vacuous for this tenant.** Invoicing IS the
+   despatch event, so nothing can be invoiced that has not left the store. The
+   leg #538 built is correct and will report "not checked" forever here. That is
+   the right behaviour, not a gap — leave it. It becomes meaningful only for a
+   tenant who invoices ahead of despatch.
+2. **What actually holds a consignment is the paperwork**, and the despatch
+   register names it: the docket number and the e-way bill. Built instead — see
+   below. `dispatch_lines` already had `lr_number`, `carrier`, `invoice_number`
+   and `invoice_date`: migration 193's schema is a direct mirror of the Tally
+   register, which is why nothing needed adding to it.
+
+Shipped as the dispatch-readiness check: `_lib/dispatch-readiness.js` decides
+whether an e-way bill is required (threshold by place of supply, both figures
+tenant settings via migration 225 — they are jurisdictional and intra-state
+thresholds differ per state), whether one is actually filed as GENERATED rather
+than DRAFT/CANCELLED/EXPIRED, whether a road bill has a vehicle, and whether any
+docket exists at all. It REFUSES — `required: null`, never false — when the
+consignment value or the place of supply cannot be determined.
+
+**Still open, and now the real gap:** nothing WRITES the despatch register. The
+docket number is entered by hand in Tally at despatch, and Anvil never sees it,
+so `docket_missing` will fire on every invoice until something captures it. The
+options remain a `delivery_note` extraction kind, a workbook importer on the
+`sales/shipment_import.js` pattern, or rendering the `delivery_note` template
+migration 106 already anticipates. That is a data-capture decision, not a
+reconciler one.
+
+Original scoping follows, kept because the dead ends are worth not
+rediscovering.
+
+#538 added the under-delivery leg to the pre-send invoice check: are we billing
+more than we shipped? A buyer raises their goods receipt against what arrived,
+so this is one of the four reasons an invoice goes unpaid. The leg is built,
+tested and correct — and it reports **"not checked"** on every order, because
+its data source is empty.
+
+`dispatch_lines` (mig 193) is the right table. It is read by the dispatch
+register, the pending-SO view and the comms rail. Its writer exists
+(`upsertDispatchLines`, `POST /api/comms/dispatch_lines`) and is tested. What
+does not exist is anything that CALLS it: no client method, no UI, no importer,
+no ERP sync, no seed.
+
+**Every other candidate source fails, and each for a different reason:**
+
+| candidate | why it does not work |
+|---|---|
+| `shipment_lines` (mig 209) | Populated from the logistics workbooks — but keys on `source_po_id`, so it is the INBOUND import ladder. Wrong direction. |
+| `packing_list` extraction + `documents/packing_list_ingest.js` | Real and working, but inbound supplier packing lists, and it writes only `item_master.weight_kg`. Its own comment deliberately refuses the shipment ladder because "which shipment?" has no safe answer there. That refusal was right. |
+| `eway_bills` (mig 074) | Carries `line_items` and is really written — but generated FROM the invoice, so validating the invoice against it is circular. |
+| Tally delivery-note sync | Never implemented. `tally_voucher_state` is empty and no tenant has Tally connected, so the eleven files under `src/api/tally/` have never run. |
+| `delivery_note` document template | A value in mig 106's `doc_type` CHECK and an `<option>` in the admin template editor. No renderer, no issuer — a tenant can author the template and nothing ever produces one. |
+| Manual entry form | Violates the prefill rule: data-capture forms must prefill from a DocAI extract plus existing masters, not ship blank fields. |
+
+**The question only the owner can answer: what physically exists when goods
+leave the door?** The work is different for each, and picking wrong makes it
+useless:
+
+- **A Tally delivery challan / delivery note PDF** → a new `delivery_note`
+  extraction kind. Most Anvil-native, reuses the strongest thing we have, and
+  the document is upstream of the invoice so the check stays non-circular.
+- **An Excel dispatch tracker the logistics team already maintains** → a
+  workbook importer on the `sales/shipment_import.js` pattern, which is proven
+  and already handles their file conventions. Cheapest and most certain.
+- **Nothing structured — it lives in the transporter's LR and people's heads**
+  → then the honest move is to render the `delivery_note` template that mig 106
+  already anticipates, making Anvil the thing that produces the dispatch record
+  instead of trying to read one. Biggest build, and the only one that also
+  gives the customer a despatch document.
+
+Until this is answered, #538's leg stays dormant. That is the correct behaviour
+— it refuses rather than guessing — but it is not yet useful.
+
+---
+
+### 2.PM — Project management: the schedule runs through lead times, not tasks
+
+Scoped 2026-09-21 in `docs/PROJECT_MANAGEMENT_SCOPE.md`. Nothing built.
+
+Asked after reviewing an open-source task-manager comparison. The comparison is a
+useful negative result: by its own admission all five tools lack Gantt, critical
+path, estimates-vs-actuals and team assignment. Integrating one would add a second
+place to type things and would not touch the stated problem — that the long-lead
+component must be ordered before the design specifying it is signed off.
+
+**The surprise is how much already exists.** `projects` (mig 006) carries the
+entire schedule baseline — six `expected_*_date` milestones, three
+`budgeted_*_mandays` effort figures — and a 15-value `project_phase` enum whose
+phases ARE the described time sink (`PRICE_NEGOTIATION`, `DESIGN`,
+`APPROVAL_PROCESSING`). `project_phase_log` carries the actual: phase,
+`started_at`, `completed_at`, `responsible_user`, `progress_pct`. So schedule
+variance is computable from data already stored, and **nothing computes it** —
+`sales/projects.js` is CRUD that writes those fields and no code reads them for
+analysis. Fifth instance this session of build-it-and-never-wire-it.
+
+The scheduling primitives exist too: `_lib/datemath.js` already does working-day
+arithmetic with per-country holidays, and `_lib/spare-minmax.js` already parses
+free-text lead times.
+
+Genuinely absent: any task/dependency object, a per-part lead time, a backward
+pass from required date to order-by date, and any variance reporting.
+
+Six PRs in the scope doc. PR 1 is the whole bet and needs **no new tables**:
+compute `order_by = required − lead − transit − inspection` in business days per
+BOM component and show the slack. It makes an invisible deadline visible from data
+already held, and it must REFUSE on an unresolvable lead time rather than default
+to 56 days — a default dressed as an estimate is how a schedule tool loses trust
+in week one.
+
+Five open questions in the doc, two of which gate everything: whether the phase
+timestamps are recorded as work happens or retro-filled in batches, and whether
+the customer's required date is contractual or aspirational.
+
+---
+
 ## 3. Known-unfixed defects
 
 Each verified, none currently breaking a user flow.
@@ -328,8 +466,16 @@ Each verified, none currently breaking a user flow.
   still gated on §1.1.
 - **The analytics refresh is a sequential per-row upsert** — fine at current
   volume, a timeout at scale.
-- **`app.tsx:188` listens for `anvil:session`, which nothing emits.** Dead
-  wiring that reads as live; same-tab sign-in works via the ordinary re-render.
+- ~~**`app.tsx:188` listens for `anvil:session`, which nothing emits.**~~ Fixed
+  in PR #535, and it was worse than recorded here. The listener's handler was
+  `setRoute((r) => r)`, which React bails out of, so the `storage` listener
+  beside it was equally inert — and the note's own reassurance ("same-tab
+  sign-in works via the ordinary re-render") was true only by luck. The case
+  that never worked: sign out in one tab and the other tab keeps rendering the
+  authenticated Shell, because the cross-tab listener re-routes only when
+  `next?.access_token` is truthy. The client now dispatches `anvil:session`
+  from its writeSession/clearSession funnel, which also covers the 401 handler
+  and the blank-backend-url path, neither of which propagated at all.
 
 ---
 

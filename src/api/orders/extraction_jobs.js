@@ -107,6 +107,8 @@ export default async function handler(req, res) {
         // document, and a kind permitted on a run but refused at enqueue is a
         // confusing way to discover the two lists had drifted.
         "sales_order",
+        // Migration 226. Same reasoning.
+        "delivery_note",
       ]);
       const requestedKind = body.kind || body.extraction_kind || null;
       if (requestedKind && !KNOWN_KINDS.has(requestedKind)) {

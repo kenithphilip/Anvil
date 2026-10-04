@@ -15,7 +15,7 @@ added incrementally.
 ```sh
 git clone https://github.com/kenithphilip/Anvil.git anvil
 cd anvil
-nvm use                         # picks Node 20.18.0 from .nvmrc
+nvm use                         # picks Node 22 from .nvmrc
 npm install
 npm run check                   # syntax-checks every api file + bridge client
 npm run build                   # produces public/index.html

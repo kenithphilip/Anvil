@@ -5,7 +5,7 @@ to with magic-link auth, with all 10 migrations applied and the corpus
 customer and item master rows in place. Time required: 30 to 45 minutes the
 first time, 5 minutes for subsequent environments.
 
-This guide assumes Node 20 (`nvm use` after cloning), a free Supabase
+This guide assumes Node 22 (`nvm use` after cloning), a free Supabase
 account, a Vercel account, and an Anthropic API key. Optional integrations
 (Mistral OCR, ClamAV, Tally bridge, GSTN) are listed at the end and can be
 added incrementally.

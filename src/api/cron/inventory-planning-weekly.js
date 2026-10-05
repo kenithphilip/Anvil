@@ -57,7 +57,7 @@ const defaultServiceLevel = (itemType, tenantDefault) =>
 //
 // We pick the median of recommended_qty_180d across installed
 // instances; if the item isn't tracked in equipment_installed_parts
-// we fall back to BOM walk via v_bom_walk_recursive.
+// we fall back to the tenant's BOM via v_bom_where_used_recursive.
 const projectEquivalentForPart = async (svc, tenantId, partNo) => {
   const eip = await svc.from("equipment_installed_parts")
     .select("recommended_qty_180d")
@@ -70,11 +70,16 @@ const projectEquivalentForPart = async (svc, tenantId, partNo) => {
     return values[Math.floor(values.length / 2)];
   }
   // BOM-walk fallback: how many of `partNo` does the modal gun
-  // consume? Read v_bom_walk_recursive for any root that pulls in
-  // this child and take the max as the project-equivalent.
-  const walk = await svc.from("v_bom_walk_recursive")
+  // consume? Read the where-used walk (migration 183) for every
+  // assembly in THIS tenant's BOM that pulls in the part and take the
+  // max as the project-equivalent. Same per-assembly totals as
+  // v_bom_walk_recursive (085), but that view has no tenant_id and its
+  // recursive join does not match on tenant either, so reading it here
+  // sized one tenant's safety stock from other tenants' BOMs.
+  const walk = await svc.from("v_bom_where_used_recursive")
     .select("total_qty")
-    .eq("child_part_no", partNo)
+    .eq("tenant_id", tenantId)
+    .eq("part_no", partNo)
     .order("total_qty", { ascending: false })
     .limit(1);
   const walkRow = walk.data?.[0];

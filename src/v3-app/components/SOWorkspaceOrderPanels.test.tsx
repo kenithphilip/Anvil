@@ -6,7 +6,7 @@
 
 import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, waitFor, fireEvent } from "@testing-library/react";
+import { render, waitFor, fireEvent, act } from "@testing-library/react";
 import { installBackend } from "../test-utils";
 import { OrderHeaderEditor } from "./SOWorkspaceOrderPanels";
 
@@ -25,8 +25,16 @@ const baseOrder = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+const NEHA = { id: "c5000000-0000-0000-0000-000000000005", name: "Neha Iyer", email: "neha@other.example", is_active: true };
+
 const optionTexts = (sel: HTMLSelectElement) => Array.from(sel.options).map((o) => o.textContent);
 const selectedText = (sel: HTMLSelectElement) => sel.options[sel.selectedIndex]?.textContent;
+
+const deferred = <T,>() => {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+};
 
 describe("OrderHeaderEditor delivery point contact", () => {
   let listContacts: any;
@@ -39,7 +47,7 @@ describe("OrderHeaderEditor delivery point contact", () => {
       orders: { update },
     });
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
   it("lists the customer's active contacts by name and selects the saved one", async () => {
     const { getByLabelText, findByText } = render(
@@ -114,5 +122,81 @@ describe("OrderHeaderEditor delivery point contact", () => {
     const sel = getByLabelText("Delivery point contact") as HTMLSelectElement;
     expect(sel.value).toBe(savedId);
     expect(selectedText(sel)).toBe("Saved contact c2000000");
+  });
+
+  it("an order with no customer shows its saved contact without claiming it is on another customer", async () => {
+    const strayId = "c9000000-0000-0000-0000-000000000009";
+    const { getByLabelText } = render(
+      <OrderHeaderEditor order={baseOrder({ customer_id: null, delivery_point_contact_id: strayId })} onSaved={() => {}} />,
+    );
+    const sel = getByLabelText("Delivery point contact") as HTMLSelectElement;
+    expect(listContacts).toHaveBeenCalledTimes(0);
+    expect(optionTexts(sel)).toEqual(["Not set", "Saved contact c9000000"]);
+    expect(sel.value).toBe(strayId);
+  });
+
+  it("does not call a saved contact foreign when the list came back full at the API cap", async () => {
+    const strayId = "c9000000-0000-0000-0000-000000000009";
+    const page = Array.from({ length: 500 }, (_, i) => ({ id: "d" + String(i).padStart(7, "0"), name: "Contact " + i, is_active: true }));
+    listContacts.mockResolvedValueOnce({ contacts: page });
+    const { getByLabelText, findByText } = render(
+      <OrderHeaderEditor order={baseOrder({ delivery_point_contact_id: strayId })} onSaved={() => {}} />,
+    );
+    await findByText("Contact 499");
+    const sel = getByLabelText("Delivery point contact") as HTMLSelectElement;
+    expect(sel.value).toBe(strayId);
+    expect(selectedText(sel)).toBe("Saved contact c9000000");
+    expect(sel.options).toHaveLength(502);
+  });
+
+  it("still loads the incoterm list when the contacts load fails", async () => {
+    installBackend({
+      getConfig: () => ({ url: "http://anvil.test/" }),
+      customers: { listContacts: vi.fn(async () => { throw new Error("HTTP 500"); }) },
+      orders: { update },
+    });
+    // The tax components panel inside the editor fetches too; only the
+    // reference endpoint carries incoterms.
+    const fetchMock = vi.fn(async (url: string) => ({
+      ok: true,
+      json: async () => (url.endsWith("/api/admin/item_reference")
+        ? { incoterms: [{ code: "FOB", label: "Free on board" }] }
+        : {}),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { findByText, getByText } = render(<OrderHeaderEditor order={baseOrder()} onSaved={() => {}} />);
+    await findByText("Could not load this customer's contacts.");
+    await findByText("FOB . Free on board");
+    expect(fetchMock.mock.calls.map((c) => c[0])).toContain("http://anvil.test/api/admin/item_reference");
+    expect((getByText("FOB . Free on board") as HTMLOptionElement).value).toBe("FOB");
+  });
+
+  it("reloads the list when the order's customer changes and drops the previous customer's contacts at once", async () => {
+    const cust2 = deferred<any>();
+    listContacts.mockImplementation(async (p: any) => (p.customer_id === "cust-2" ? cust2.promise : { contacts: CONTACTS }));
+    const { getByLabelText, findByText, queryByText, rerender } = render(
+      <OrderHeaderEditor order={baseOrder()} onSaved={() => {}} />,
+    );
+    await findByText("Asha Rao");
+    rerender(<OrderHeaderEditor order={baseOrder({ customer_id: "cust-2" })} onSaved={() => {}} />);
+    expect(listContacts).toHaveBeenLastCalledWith({ customer_id: "cust-2" });
+    const sel = getByLabelText("Delivery point contact") as HTMLSelectElement;
+    expect(queryByText("Asha Rao")).toBeNull();
+    expect(optionTexts(sel)).toEqual(["Not set"]);
+    await act(async () => { cust2.resolve({ contacts: [NEHA] }); });
+    expect(optionTexts(sel)).toEqual(["Not set", "Neha Iyer"]);
+  });
+
+  it("ignores a late answer for the previous customer", async () => {
+    const cust1 = deferred<any>();
+    listContacts.mockImplementation(async (p: any) => (p.customer_id === "cust-1" ? cust1.promise : { contacts: [NEHA] }));
+    const { getByLabelText, findByText, rerender } = render(
+      <OrderHeaderEditor order={baseOrder()} onSaved={() => {}} />,
+    );
+    rerender(<OrderHeaderEditor order={baseOrder({ customer_id: "cust-2" })} onSaved={() => {}} />);
+    await findByText("Neha Iyer");
+    await act(async () => { cust1.resolve({ contacts: CONTACTS }); });
+    const sel = getByLabelText("Delivery point contact") as HTMLSelectElement;
+    expect(optionTexts(sel)).toEqual(["Not set", "Neha Iyer"]);
   });
 });

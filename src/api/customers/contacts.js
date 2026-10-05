@@ -67,6 +67,9 @@ export default async function handler(req, res) {
       if (id) q = q.eq("id", id);
       if (customerId) q = q.eq("customer_id", customerId);
       if (emailQ) q = q.ilike("email", emailQ);
+      // The SO header contact picker treats a page shorter than this cap as
+      // the complete list (CONTACTS_LIST_CAP in
+      // src/v3-app/components/SOWorkspaceOrderPanels.tsx). Keep them in step.
       q = q.order("is_primary", { ascending: false }).order("updated_at", { ascending: false }).limit(500);
       const { data, error } = await q;
       if (error) throw new Error(error.message);

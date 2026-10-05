@@ -7,6 +7,10 @@ import { Banner, Btn, Card, Chip, KV, fmtINR } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 
+// GET /api/customers/contacts returns at most this many rows (the .limit in
+// src/api/customers/contacts.js). Keep the two in step.
+const CONTACTS_LIST_CAP = 500;
+
 // Order header-fields editor. Mounted inside the SO workspace as the
 // `Header fields` tab. Carries the six new columns added by migration
 // 106: dispatch_mode, registration_serial_no, incoterm_code,
@@ -69,7 +73,10 @@ export const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = 
     let cancelled = false;
     setContactRows(null);
     setContactsFailed(false);
-    if (!order.customer_id) { setContactRows([]); return; }
+    // No customer means no list to check a saved contact against, so the
+    // rows stay null (unknown) rather than an empty list that would read
+    // as "this customer has no such contact".
+    if (!order.customer_id) return;
     Promise.resolve(AnvilBackend?.customers?.listContacts?.({ customer_id: order.customer_id }))
       .then((resp: any) => {
         if (cancelled) return;
@@ -161,16 +168,22 @@ export const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = 
   // without is_active predates that column and counts as active.
   const activeContacts = (contactRows || []).filter((c: any) => c && c.is_active !== false);
   // The order can hold a contact the picker does not offer: one since
-  // marked inactive, one on another customer, or any while the list is
-  // not loaded. Give it its own option so it stays visible and can be
-  // cleared, instead of the select showing "Not set" while every save
-  // quietly writes the hidden id back.
+  // marked inactive, one on another customer, one past the list cap, or
+  // any while the list is not loaded (or the order has no customer). Give
+  // it its own option so it stays visible and can be cleared, instead of
+  // the select showing "Not set" while every save quietly writes the
+  // hidden id back.
   const savedContactId: string = draft.delivery_point_contact_id || "";
   const savedContactUnlisted = !!savedContactId && !activeContacts.some((c: any) => c.id === savedContactId);
   const savedContactRow = savedContactUnlisted ? (contactRows || []).find((c: any) => c && c.id === savedContactId) : null;
+  // Absence from the list proves the contact is not on this customer only
+  // when the list is complete. GET /api/customers/contacts stops at
+  // CONTACTS_LIST_CAP rows (src/api/customers/contacts.js), so a full page
+  // may simply have cut the saved contact off.
+  const contactsListComplete = !!contactRows && contactRows.length < CONTACTS_LIST_CAP;
   const savedContactLabel = savedContactRow
     ? contactLabel(savedContactRow) + " (inactive)"
-    : "Saved contact " + savedContactId.slice(0, 8) + (contactRows ? " (not on this customer)" : "");
+    : "Saved contact " + savedContactId.slice(0, 8) + (contactsListComplete ? " (not on this customer)" : "");
 
   return (
     <Card title="Order header fields" eyebrow="dispatch . terms . vendor mapping . delivery contact">

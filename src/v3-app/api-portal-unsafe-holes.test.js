@@ -48,9 +48,11 @@ const makeSvc = () => ({
   from(table) {
     const ds = tables[table] || (tables[table] = []);
     let rows = [...ds];
-    let mode = "select"; let payload = null; let single = false; let enumError = null;
+    let mode = "select"; let payload = null; let single = false; let enumError = null; let proj = null;
     const b = {
-      select: () => b,
+      // A select list is honoured, so a test can see exactly which columns
+      // a handler would have sent back.
+      select: (cols) => { if (mode === "select" && typeof cols === "string" && cols.trim() !== "*") proj = cols.split(",").map((c) => c.trim()).filter(Boolean); return b; },
       eq: (c, v) => { rows = rows.filter((r) => String(r[c]) === String(v)); return b; },
       is: (c, v) => { rows = rows.filter((r) => (v === null ? r[c] == null : String(r[c]) === String(v))); return b; },
       in: (c, vals) => {
@@ -77,7 +79,8 @@ const makeSvc = () => ({
         ds.push(...arr);
         return { data: single ? arr[0] : arr, error: null };
       }
-      return { data: single ? rows[0] || null : rows, error: null };
+      const pick = (r) => (proj ? Object.fromEntries(proj.filter((c) => c in r).map((c) => [c, r[c]])) : r);
+      return { data: single ? (rows[0] ? pick(rows[0]) : null) : rows.map(pick), error: null };
     };
     return b;
   },
@@ -86,18 +89,20 @@ const makeSvc = () => ({
 vi.mock("../api/_lib/cors.js", () => ({
   applyCors: () => {}, handlePreflight: () => false, readBody: async (req) => req._body,
   json: (res, status, body) => { res._status = status; res._json = body; return res; },
-  sendError: (res, err) => { res._status = err.status || 500; res._json = { error: { message: err.message, code: err.code } }; return res; },
+  // Same shape as the real sendError (cors.js): message and status only.
+  sendError: (res, err) => { res._status = err.status || 500; res._json = { error: { message: err.message, status: err.status || 500 } }; return res; },
 }));
 vi.mock("../api/_lib/supabase.js", () => ({
   serviceClient: () => makeSvc(),
   // The bearer / access token value IS the auth user id in these tests.
   userClient: (token) => ({ auth: { getUser: async () => ({ data: { user: { id: token, email: token + "@example.com" } }, error: null }) } }),
 }));
+const signOuts = [];
 vi.mock("@supabase/supabase-js", () => ({
   createClient: () => ({
     auth: {
       signInWithPassword: async ({ email }) => ({ data: { user: { id: "auth-" + email, email }, session: { access_token: "AT" } }, error: null }),
-      signOut: async () => ({}),
+      signOut: async () => { signOuts.push(1); return {}; },
     },
   }),
 }));
@@ -126,6 +131,7 @@ beforeEach(() => {
   };
   errors = {};
   rpcCalls = [];
+  signOuts.length = 0;
 });
 
 const token = (over = {}) => ({ id: "tok1", tenant_id: TENANT, customer_id: "c1", token: "TK", scopes: ["accept_quote", "orders", "invoices", "quotes"], revoked_at: null, expires_at: null, ...over });
@@ -194,7 +200,7 @@ describe("ensureMembership never onboards a portal identity as staff", () => {
 
   it("refuses through resolveContext (staff API with a portal JWT)", async () => {
     tables.portal_users = [portalUser("authP")];
-    await expect(resolveContext({ headers: { authorization: "Bearer authP" } })).rejects.toMatchObject({ status: 403 });
+    await expect(resolveContext({ headers: { authorization: "Bearer authP" } })).rejects.toMatchObject({ status: 403, code: "PORTAL_ACCOUNT" });
     expect(rpcCalls).toHaveLength(0);
     expect(tables.tenant_members).toHaveLength(0);
   });
@@ -203,7 +209,7 @@ describe("ensureMembership never onboards a portal identity as staff", () => {
     tables.portal_users = [portalUser("authP")];
     const res = await run(verify, { method: "POST", _body: { access_token: "authP" } });
     expect(res._status).toBe(403);
-    expect(res._json.error.code).toBe("PORTAL_ACCOUNT");
+    expect(res._json.error.message).toMatch(/customer portal account/i);
     expect(rpcCalls).toHaveLength(0);
     expect(tables.tenant_members).toHaveLength(0);
   });
@@ -212,7 +218,9 @@ describe("ensureMembership never onboards a portal identity as staff", () => {
     tables.portal_users = [portalUser("auth-buyer@oem.com")];
     const res = await run(passwordLogin, { method: "POST", _body: { email: "buyer@oem.com", password: "pw" } });
     expect(res._status).toBe(403);
+    expect(res._json.error.message).toMatch(/customer portal account/i);
     expect(res._json.session).toBeUndefined();
+    expect(signOuts).toHaveLength(1);
     expect(rpcCalls).toHaveLength(0);
     expect(tables.tenant_members).toHaveLength(0);
   });
@@ -262,6 +270,23 @@ describe("portal/view customer-visible statuses", () => {
     expect(res._status).toBe(200);
     const statuses = res._json.orders.map((o) => o.status).sort();
     expect(statuses).toEqual(["APPROVED", "EXPORTED_TO_TALLY", "RECONCILED"]);
+  });
+
+  it("serves order rows through the allowlist only: no result blob, no internal ids or hashes", async () => {
+    tables.portal_tokens = [token()];
+    tables.orders = [{
+      id: "o1", tenant_id: TENANT, customer_id: "c1", status: "APPROVED", created_at: "2026-10-01",
+      quote_number: "Q-202610-0001", po_number: "4500313249", payload_hash: "h", tally_status: "pushed",
+      result: { validatorIssues: ["x"], external_systems: { sap: { last_error: "internal" } } },
+    }];
+    for (const kind of ["orders", "quotes"]) {
+      const res = await run(portalView, { method: "GET", url: "/api/portal/view?kind=" + kind + "&token=TK" });
+      expect(res._status).toBe(200);
+      const rows = res._json[kind];
+      expect(rows).toHaveLength(1);
+      expect(Object.keys(rows[0]).sort()).toEqual(["created_at", "po_number", "quote_number", "status"]);
+      expect(rows[0].po_number).toBe("4500313249");
+    }
   });
 
   it("legacy kind=invoices serves issued invoices only, never draft or void", async () => {

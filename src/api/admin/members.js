@@ -9,6 +9,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { isPortalIdentity } from "../_lib/tenancy.js";
 
 // Phase 1 F11: role enum drift fix.
 //
@@ -99,6 +100,12 @@ export default async function handler(req, res) {
       if (invite.error) throw new Error(invite.error.message);
       const userId = invite.data && invite.data.user && invite.data.user.id;
       if (!userId) throw new Error("Auth invite returned no user id");
+      // Inviting an email that already belongs to a customer portal user
+      // returns that user's id; upserting it here would make the customer
+      // staff, approved by default (042).
+      if (await isPortalIdentity(svc, userId)) {
+        return json(res, 409, { error: { code: "PORTAL_ACCOUNT", message: "This email belongs to a customer portal user and cannot be invited as staff." } });
+      }
       const upsert = await svc.from("tenant_members").upsert({ tenant_id: ctx.tenantId, user_id: userId, role }, { onConflict: "tenant_id,user_id" }).select("*").single();
       if (upsert.error) throw new Error(upsert.error.message);
       await recordAudit(ctx, { action: "member_invite", objectType: "tenant_members", objectId: userId, after: { email: body.email, role } });

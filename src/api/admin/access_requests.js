@@ -20,6 +20,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { sendEmail } from "../_lib/mailer.js";
+import { isPortalIdentity } from "../_lib/tenancy.js";
 
 const VALID_ROLES = new Set([
   "viewer", "sales_engineer", "sales_manager", "procurement", "finance", "admin",
@@ -124,6 +125,13 @@ export default async function handler(req, res) {
       const updates = {};
 
       if (body.action === "approve") {
+        // A customer portal identity is never approved as staff. Rows like
+        // this exist when a portal invitee reached a staff sign-in before
+        // ensureMembership refused portal identities; one click here would
+        // have given a customer the seller's staff access.
+        if (await isPortalIdentity(svc, body.user_id)) {
+          return json(res, 409, { error: { code: "PORTAL_ACCOUNT", message: "This account is a customer portal user and cannot be approved as staff. Deny the request instead." } });
+        }
         const targetRole = body.role && VALID_ROLES.has(body.role) ? body.role : (member.requested_role || member.role);
         updates.status = "approved";
         updates.role = targetRole;

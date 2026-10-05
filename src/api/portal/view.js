@@ -34,6 +34,14 @@ const CUSTOMER_VISIBLE_ORDER_STATUSES = [
   "APPROVED", "EXPORTED_TO_TALLY", "RECONCILED",
 ];
 
+// The order columns a token may read, in one place. Never `result`: it holds
+// whatever the staff side wrote (validator issues, ERP error text, price
+// composition with landed cost), and never internal ids or hashes. These
+// legacy kinds were unreachable while the status list above named values the
+// enum rejects; fixing that list made them answer again, so they answer with
+// this projection only.
+const PORTAL_ORDER_COLUMNS = "quote_number, po_number, status, created_at";
+
 // Invoices a customer may see: issued ones. `draft` has not been sent and
 // `void` was withdrawn; neither is the customer's document. Values are the
 // invoices.status CHECK list (012_invoices.sql).
@@ -93,14 +101,14 @@ export default async function handler(req, res) {
       };
     } else if (kind === "quotes") {
       const r = await svc.from("orders")
-        .select("id, quote_number, po_number, status, payload_hash, result, created_at")
+        .select(PORTAL_ORDER_COLUMNS)
         .eq("tenant_id", t.tenant_id).eq("customer_id", t.customer_id)
         .in("status", CUSTOMER_VISIBLE_ORDER_STATUSES)
         .order("created_at", { ascending: false }).limit(50);
       payload = { quotes: r.data || [] };
     } else if (kind === "orders") {
       const r = await svc.from("orders")
-        .select("id, quote_number, po_number, status, tally_status, result, created_at")
+        .select(PORTAL_ORDER_COLUMNS)
         .eq("tenant_id", t.tenant_id).eq("customer_id", t.customer_id)
         .in("status", CUSTOMER_VISIBLE_ORDER_STATUSES)
         .order("created_at", { ascending: false }).limit(50);

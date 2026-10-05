@@ -39,6 +39,37 @@ export const requiresApproval = () => REQUIRE_APPROVAL;
 
 export const defaultTenantId = () => DEFAULT_TENANT;
 
+// True when this Supabase auth user is a customer portal identity (any
+// portal_users row, in any tenant, at any status).
+//
+// A missing table (migration 199 not applied: Postgres 42P01, PostgREST
+// PGRST205) means no portal identity can exist, so the answer is false.
+// Any other read error throws 500: failing open would let a portal user be
+// onboarded or approved as staff.
+export const isPortalIdentity = async (svc, authUserId) => {
+  if (!authUserId) return false;
+  const r = await svc
+    .from("portal_users")
+    .select("id")
+    .eq("auth_user_id", authUserId)
+    .limit(1);
+  if (r.error) {
+    const code = r.error.code;
+    if (code === "42P01" || code === "PGRST205") return false;
+    const err = new Error("portal_users lookup failed: " + r.error.message);
+    err.status = 500;
+    throw err;
+  }
+  return Array.isArray(r.data) && r.data.length > 0;
+};
+
+export const portalAccountError = () => {
+  const err = new Error("This is a customer portal account. Sign in at /portal.");
+  err.status = 403;
+  err.code = "PORTAL_ACCOUNT";
+  return err;
+};
+
 // Returns the user's memberships, inserting one if none exist and
 // auto-onboarding is enabled. The returned array always contains at
 // least one row when AUTO_ONBOARD is true.
@@ -75,34 +106,15 @@ export const ensureMembership = async (svc, user, opts = {}) => {
   // access request then made a customer a staff user of the seller. Five
   // callers reach this insert (resolveContext, auth/verify, password_login,
   // passkey/auth_finish, signup), so the guard lives here rather than in any
-  // one of them.
+  // one of them. admin/access_requests (approve) and admin/members (invite)
+  // apply the same check, for rows created before this guard existed.
   //
   // It runs only on the insert path: an existing membership has already been
   // returned above, so staff are untouched. It throws instead of returning []
-  // so that password_login and passkey refuse before minting a session, and
+  // so that password_login and passkey refuse before returning a session, and
   // the customer is told where to sign in.
-  //
-  // Missing table (migration 199 not applied, Postgres 42P01 or PostgREST
-  // PGRST205) means no portal identity can exist: onboard as before. Any
-  // other read error fails closed, the way the tenant_members lookup does,
-  // because failing open would onboard a portal user as staff.
-  const portal = await svc
-    .from("portal_users")
-    .select("id")
-    .eq("auth_user_id", user.id)
-    .limit(1);
-  if (portal.error) {
-    const code = portal.error.code;
-    if (code !== "42P01" && code !== "PGRST205") {
-      const err = new Error("portal_users lookup failed: " + portal.error.message);
-      err.status = 500;
-      throw err;
-    }
-  } else if (Array.isArray(portal.data) && portal.data.length > 0) {
-    const err = new Error("This is a customer portal account. Sign in at /portal.");
-    err.status = 403;
-    err.code = "PORTAL_ACCOUNT";
-    throw err;
+  if (await isPortalIdentity(svc, user.id)) {
+    throw portalAccountError();
   }
 
   // Make sure the default tenant row exists. The 001_init.sql migration

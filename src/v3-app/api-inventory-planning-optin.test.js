@@ -50,6 +50,25 @@ const bomWalkView = (bom) => {
   });
 };
 
+// v_bom_where_used_recursive (migration 183), which the planner's BOM floor
+// reads: the same per-(assembly, part) sums as the walk above, but computed
+// inside each tenant (its recursive join matches on tenant_id) and carrying
+// tenant_id, so a caller can scope it.
+const whereUsedView = (bom) => {
+  const byTenant = new Map();
+  for (const b of bom) {
+    if (!byTenant.has(b.tenant_id)) byTenant.set(b.tenant_id, []);
+    byTenant.get(b.tenant_id).push(b);
+  }
+  const out = [];
+  for (const [tenant_id, rows] of byTenant) {
+    for (const v of bomWalkView(rows)) {
+      out.push({ tenant_id, part_no: v.child_part_no, assembly_part_no: v.root_part_no, total_qty: v.total_qty });
+    }
+  }
+  return out;
+};
+
 // In-memory stand-in for the Supabase service client. Supports the query
 // shapes the planner uses, applies filters to the seeded rows, and records each
 // insert / update / upsert / delete in `writes`. An insert gets created_at, as
@@ -58,7 +77,10 @@ const makeDb = (seed) => {
   const tables = {};
   for (const [name, rows] of Object.entries(seed)) tables[name] = rows.map((r) => ({ ...r }));
   const rowsOf = (name) => (tables[name] ||= []);
-  const sourceOf = (name) => (name === "v_bom_walk_recursive" ? bomWalkView(rowsOf("bill_of_materials")) : rowsOf(name));
+  const sourceOf = (name) => (
+    name === "v_bom_walk_recursive" ? bomWalkView(rowsOf("bill_of_materials"))
+      : name === "v_bom_where_used_recursive" ? whereUsedView(rowsOf("bill_of_materials"))
+        : rowsOf(name));
   const writes = [];
   let seq = 0;
 
@@ -287,7 +309,7 @@ describe("planTenant on an opted-in tenant", () => {
     expect(itemRow(h.db, "t-on", "P-ON").safety_stock).toBe(30);
   });
 
-  it("sums a multi-level BOM per root and takes the largest root, as v_bom_walk_recursive did", async () => {
+  it("sums a multi-level BOM per assembly and takes the largest, from the tenant-scoped where-used view", async () => {
     // GUN-BIG takes 20 of P-ON directly and 4 of SUB, which takes 5 each: 40.
     // SUB alone is 5 and GUN-ON is 30, so the floor is 40.
     const data = seed();

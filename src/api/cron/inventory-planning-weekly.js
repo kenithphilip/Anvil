@@ -57,40 +57,39 @@ const defaultServiceLevel = (itemType, tenantDefault) =>
 //
 // We pick the median of recommended_qty_180d across installed
 // instances; if the item isn't tracked in equipment_installed_parts
-// we fall back to the BOM walk in bomEquivalents (bomProjectEquivalents).
-const projectEquivalentForPart = async (svc, tenantId, partNo, bomEquivalents) => {
+// we fall back to the tenant's BOM via v_bom_where_used_recursive.
+const projectEquivalentForPart = async (svc, tenantId, partNo) => {
   const eip = await svc.from("equipment_installed_parts")
     .select("recommended_qty_180d")
     .eq("tenant_id", tenantId)
     .eq("part_no", partNo)
     .not("recommended_qty_180d", "is", null);
+  // A failed read is not "no data": falling through would size the floor
+  // from the next source (or the fallback of 1) and write that guess to
+  // item_master.safety_stock. Refuse instead, like the planner's other reads.
+  if (eip.error) throw new Error("installed parts floor: " + eip.error.message);
   const values = (eip.data || []).map((r) => Number(r.recommended_qty_180d)).filter((v) => v > 0);
   if (values.length) {
     values.sort((a, b) => a - b);
     return values[Math.floor(values.length / 2)];
   }
   // BOM-walk fallback: how many of `partNo` does the modal gun
-  // consume? The largest total over any root that pulls in this child.
-  const fromBom = bomEquivalents.get(partNo);
-  if (fromBom) return fromBom;
+  // consume? Read the where-used walk (migration 183) for every
+  // assembly in THIS tenant's BOM that pulls in the part and take the
+  // max as the project-equivalent. Same per-assembly totals as
+  // v_bom_walk_recursive (085), but that view has no tenant_id and its
+  // recursive join does not match on tenant either, so reading it here
+  // sized one tenant's safety stock from other tenants' BOMs.
+  const walk = await svc.from("v_bom_where_used_recursive")
+    .select("total_qty")
+    .eq("tenant_id", tenantId)
+    .eq("part_no", partNo)
+    .order("total_qty", { ascending: false })
+    .limit(1);
+  if (walk.error) throw new Error("bom floor: " + walk.error.message);
+  const walkRow = walk.data?.[0];
+  if (walkRow?.total_qty) return Number(walkRow.total_qty);
   return 1;     // safest non-zero fallback
-};
-
-// The BOM-walk fallback above, built once per tenant from THAT tenant's
-// bill_of_materials rows: for each child part, the sum of the path multipliers
-// (depth <= 8) from each root that pulls it in, and the largest of those per-root
-// sums. That is the number v_bom_walk_recursive (migration 085) gave, which this
-// used to read per item. The view has no tenant_id and its recursive join follows
-// edges across tenants, so another tenant's BOM for a shared part_no became this
-// tenant's safety-stock floor. Returns Map<child_part_no, qty>.
-const bomProjectEquivalents = (bomRows) => {
-  const out = new Map();
-  for (const [child, paths] of buildBomAttributionIndex(bomRows, 8)) {
-    const perRoot = new Map();
-    for (const p of paths) perRoot.set(p.root, (perRoot.get(p.root) || 0) + p.mult);
-    out.set(child, Math.max(...perRoot.values()));
-  }
-  return out;
 };
 
 // Phase 3.5: hysteresis. The plan-emit signal must be stable across
@@ -327,7 +326,8 @@ const planTenant = async (svc, tenantId) => {
   // receive procurement plans driven by upstream sales pipeline. Read
   // bill_of_materials directly (tenant-scoped column) rather than the
   // v_bom_walk_recursive view, which has no tenant_id to filter on. The
-  // project-equivalent floor reads these same rows (bomEquivalents below).
+  // project-equivalent floor reads the same tenant's BOM through the
+  // where-used view (projectEquivalentForPart).
   // Inert for tenants without a BOM.
   const bomRows = await svc.from("bill_of_materials")
     .select("parent_part_no, child_part_no, qty")
@@ -347,7 +347,6 @@ const planTenant = async (svc, tenantId) => {
   // loop) so an exploded raw-material plan can credit the finished-good
   // opportunities that cascaded into it — same edges as the explosion above.
   const bomAttributionIndex = buildBomAttributionIndex(bomRows.data || [], 8, { buyParts });
-  const bomEquivalents = bomProjectEquivalents(bomRows.data || []);
 
   // Committed demand from future sales-order schedule lines, built ONCE for the
   // whole tenant and BOM-EXPLODED like the pipeline — so a confirmed SO for a
@@ -458,7 +457,7 @@ const planTenant = async (svc, tenantId) => {
       || defaultServiceLevel(item.item_type, cfg.inventory_default_service_level);
     // Phase 3.5: project-equivalent floor reads from
     // equipment_installed_parts.recommended_qty_180d (doc 2.3.3).
-    const projectEquivalentQty = await projectEquivalentForPart(svc, tenantId, item.part_no, bomEquivalents);
+    const projectEquivalentQty = await projectEquivalentForPart(svc, tenantId, item.part_no);
     // Step 4b (gated): reliability safety-stock floor from field failures. 0 when
     // the flag is off, so this leaves the max() unchanged for existing tenants.
     const relFloor = reliabilityOn

@@ -346,7 +346,9 @@ distinction gets settled with numbers.
    read it for months with no column behind it, so the documented "pin a
    version to opt out" escape hatch had never once worked.)
 2. Judge it offline first, on real documents, with zero live traffic:
-   `eval.replay({ suite: "po-extraction", prompt_version: "v2" })`. Replay is
+   `eval.replay({ suite: "po-extraction", prompt_version: "v3" })`. (Not v2:
+   it is retired and label-only, so it only ever ran the base prompt, and
+   replay now refuses it with a 400 that lists the live versions.) Replay is
    the **only** path that re-asks the model — `golden-gate` and `rescore` both
    re-score a frozen `normalized_extract`, so a green `npm run eval:golden`
    is no evidence at all about a prompt. Compare its `line_recall_avg` against

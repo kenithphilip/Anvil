@@ -25,6 +25,7 @@ vi.mock("../api/_lib/audit.js", () => ({ recordAudit: vi.fn(async () => {}) }));
 import { chunkedExtract } from "../api/_lib/docai/chunked-extract.js";
 import { tenantSettings } from "../api/_lib/stripe-client.js";
 import { recordAudit } from "../api/_lib/audit.js";
+import { safeFetch } from "../api/_lib/safe-fetch.js";
 import { listPromptVersions, resolvePromptVersion } from "../api/_lib/docai/prompt-versions.js";
 import replayHandler, { replayGoldens, modelOwnedExpected, fetchDocBytes } from "../api/eval/replay.js";
 
@@ -193,10 +194,25 @@ describe("prompt_version through the handler", () => {
     const res = await post({ prompt_version: "v9" });
 
     expect(res.statusCode).toBe(400);
-    expect(res.payload.error.allowed_versions).toEqual(listPromptVersions("po_extractor").map((r) => r.version));
-    expect(res.payload.error.allowed_versions).toContain("v1");
-    expect(res.payload.error.allowed_versions).toContain("v3");
+    expect(res.payload.error.allowed_versions).toEqual(["v1", "v3"]);
     expect(res.payload.error.message).toContain("v9");
+    expect(chunkedExtract).not.toHaveBeenCalled();
+    expect(handlerSvc.log.tables).toEqual([]);
+    expect(recordAudit).not.toHaveBeenCalled();
+  });
+
+  it("refuses retired v2, which only ever ran the base prompt, and points at the live versions", async () => {
+    // The runbook once said to judge the canary by replaying v2. v2 is in the
+    // registry, so a bare existence check let it through: both cases ran the
+    // base prompt and the run was attested as v2, comparing base with base.
+    expect(listPromptVersions("po_extractor").find((r) => r.version === "v2").status).toBe("retired");
+    chunkedExtract.mockResolvedValue(goodExtract([{ partNumber: "A", quantity: 1, unitPrice: 10 }]));
+    handlerSvc = recordingSvc([poCase("A", CANARY_CUSTOMER), poCase("B", CONTROL_CUSTOMER)], docRow);
+    const res = await post({ prompt_version: "v2" });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.payload.error.allowed_versions).toEqual(["v1", "v3"]);
+    expect(res.payload.error.message).toContain("retired");
     expect(chunkedExtract).not.toHaveBeenCalled();
     expect(handlerSvc.log.tables).toEqual([]);
     expect(recordAudit).not.toHaveBeenCalled();
@@ -265,6 +281,11 @@ describe("replayGoldens never lets the split stand in for a forced version", () 
       { case_id: "B", reason: "prompt_version_not_applicable: v9 for kind po" },
     ]);
     expect(svc.log.evalRunInserts).toEqual([]);
+    // Refused before the source is fetched: the golden list is the only read,
+    // and no document row, signed URL or tenant setting is asked for.
+    expect(svc.log.tables).toEqual(["eval_cases"]);
+    expect(safeFetch).not.toHaveBeenCalled();
+    expect(tenantSettings).not.toHaveBeenCalled();
   });
 
   it("refuses a case whose kind has no registry prompt instead of running it unversioned under the variant's name", async () => {

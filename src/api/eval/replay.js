@@ -82,15 +82,21 @@ export const fetchDocBytes = async (svc, sourceTenantId, documentId) => {
   return { bytes, mime: doc.mime_type || null, filename: doc.filename || null, sha256: doc.sha256 || null };
 };
 
-// The versions a replay of `suite` may name: the registry rows of the prompt
-// that suite's kind runs. A suite whose kind has no registry prompt allows
-// none, because no version could change what its model is asked.
+// The versions a replay of `suite` may name: the live (active or canary)
+// registry rows of the prompt that suite's kind runs. A suite whose kind has
+// no registry prompt allows none, because no version could change what its
+// model is asked. A retired row is left out: no traffic will ever be served
+// it again, so judging it answers nothing, and po_extractor v2 is a retired
+// label that only ever ran the base prompt. Replaying it to judge the canary
+// would compare the base prompt with itself.
 export const promptVersionsForSuite = (suite) => {
   const profile = profileForSuite(suite);
   const name = profile ? promptNameForKind(profile.kind) : null;
   // listPromptVersions with no name returns the WHOLE registry object, so it
   // is only ever asked for one prompt.
-  return name ? listPromptVersions(name).map((r) => r.version) : [];
+  return name
+    ? listPromptVersions(name).filter((r) => r.status === "active" || r.status === "canary").map((r) => r.version)
+    : [];
 };
 
 // Pure core: re-extract each golden's source with the LIVE model and score
@@ -252,9 +258,14 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
     totalPass,
     totalFail,
     caseResults,
-    // Name the variant in the attestation, so replaying v1 and replaying v2
+    // Name the variant in the attestation, so replaying v1 and replaying v3
     // are two comparable rows in the trend rather than one line overwriting
     // itself — which is the entire read-out this feature exists to produce.
+    //
+    // What this names is the version every case was HANDED. Only the claude
+    // and gemini adapters read hints.promptVariant, so a case that a fallback
+    // adapter (openrouter, llamaparse, docling, ...) ended up serving ran the
+    // base prompt even though the run carries the variant's name.
     promptVersion: promptVersion ? "live-replay:prompt:" + promptVersion : "live-replay",
     modelVersion,
     pipelineVersion: EVAL_PIPELINE_VERSION_FALLBACK,
@@ -363,7 +374,7 @@ export default async function handler(req, res) {
         return json(res, 400, {
           error: {
             message: allowed.length
-              ? `prompt_version "${String(promptVersion)}" is not a version of the ${suite} prompt; allowed: ${allowed.join(", ")}`
+              ? `prompt_version "${String(promptVersion)}" is not a live version of the ${suite} prompt (retired versions are not replayable); allowed: ${allowed.join(", ")}`
               : `suite ${suite} runs no versioned prompt, so prompt_version cannot apply`,
             allowed_versions: allowed,
           },

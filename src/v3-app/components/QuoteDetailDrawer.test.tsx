@@ -219,3 +219,37 @@ describe("QuoteDetailDrawer — origin follows the supplier", () => {
     expect(read()).not.toMatch(/qd-source-options/);
   });
 });
+
+describe("QuoteDetailDrawer Follow-up tab", () => {
+  it("lists this quote's touches and logs a call with the quote's contact", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 9, 2, 10, 0, 0));   // Fri 2 Oct; +3 business days = Wed 7 Oct
+    try {
+      const listSpy = vi.fn(async () => ({ communications: [
+        { id: "t-1", document_type: "rep_touch", channel: "meeting", body: "Met stores", created_at: "2026-09-29T10:00:00Z" },
+      ] }));
+      const logSpy = vi.fn(async (p: any) => ({ communication: { id: "new", ...p } }));
+      (window as any).AnvilBackend.communications = { list: listSpy, log: logSpy };
+      const quote = { ...QUOTE, customer_id: "c-1", customer_contact_id: "ct-1" };
+      const { getByText, getByLabelText, getByRole, findByText } = render(
+        <QuoteDetailDrawer quote={quote} onClose={() => undefined} />
+      );
+      fireEvent.click(getByText("Follow-up"));
+      await waitFor(() => expect(listSpy).toHaveBeenCalledWith({ object_type: "quote", object_id: "q-1" }));
+      expect(await findByText("Met stores")).toBeTruthy();
+      // The drawer hands over the contacts it already loaded for the header.
+      await waitFor(() => expect((getByLabelText("Touch contact") as HTMLSelectElement).textContent).toContain("Asha Rao"));
+      expect((getByLabelText("Touch contact") as HTMLSelectElement).value).toBe("ct-1");
+
+      fireEvent.change(getByLabelText("Touch notes"), { target: { value: "Spoke to maintenance" } });
+      fireEvent.click(getByRole("button", { name: "Log touch" }));
+      await waitFor(() => expect(logSpy).toHaveBeenCalledTimes(1));
+      expect(logSpy).toHaveBeenCalledWith({
+        object_type: "quote", object_id: "q-1", channel: "meeting", body: "Spoke to maintenance",
+        customer_contact_id: "ct-1", metadata: { next_followup_at: "2026-10-07" },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

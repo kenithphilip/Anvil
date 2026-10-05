@@ -130,7 +130,10 @@ describe("the list endpoint selects only real columns", () => {
     const src = readFileSync(join(API, "communications", "list.js"), "utf8");
     const sel = src.match(/\.select\("([^"]+)"\)/);
     expect(sel).toBeTruthy();
-    for (const col of sel[1].split(",").map((c) => c.trim())) {
+    for (const tok of sel[1].split(",").map((c) => c.trim())) {
+      // A JSON projection ("alias:metadata->>key") reads a key out of a real
+      // column; the column is what has to exist.
+      const col = tok.replace(/^[a-z_]+:/, "").split("->")[0];
       expect(COMMS_COLUMNS.has(col) || col === "id").toBe(true);
     }
   });

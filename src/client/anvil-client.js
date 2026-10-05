@@ -1489,14 +1489,28 @@
     draft: async (payload) => apiFetch("/api/communications/draft", { method: "POST", body: payload }),
     send: async (id) => apiFetch("/api/communications/send", { method: "POST", body: { id } }),
     missingDoc: async (orderId) => apiFetch("/api/communications/missing_doc", { method: "POST", body: { orderId } }),
-    // List communications for an order or source PO. ThreadDrawer
-    // populates its comms panel from this endpoint; was missing,
-    // so the comms timeline rendered empty regardless of how many
-    // emails the order had attached.
-    list: async (orderId) => {
-      const qs = orderId ? "?order_id=" + encodeURIComponent(orderId) : "";
-      return apiFetch("/api/communications" + qs);
+    // List communications. ThreadDrawer populates its comms panel from
+    // this endpoint; was missing, so the comms timeline rendered empty
+    // regardless of how many emails the order had attached.
+    //
+    // A string argument is an order id (the ThreadDrawer call). An object
+    // is a filter set of object_type, object_id, customer_id, order_id,
+    // source_po_id and limit. The Follow-up timeline (TouchLog) passes
+    // object_type + object_id. Empty values are dropped, not sent.
+    list: async (filters) => {
+      const params = typeof filters === "string" ? { order_id: filters } : (filters || {});
+      const sp = new URLSearchParams();
+      for (const k of Object.keys(params)) {
+        const v = params[k];
+        if (v != null && v !== "") sp.set(k, String(v));
+      }
+      const qs = sp.toString();
+      return apiFetch("/api/communications" + (qs ? "?" + qs : ""));
     },
+    // Record a rep touch (call / meeting / whatsapp / visit / note) against a
+    // quote or an opportunity. Payload: { object_type, object_id, channel,
+    // body, customer_contact_id?, metadata: { next_followup_at? } }.
+    log: async (payload) => apiFetch("/api/communications/log", { method: "POST", body: payload }),
   };
 
   const evalExt = {

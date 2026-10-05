@@ -108,6 +108,7 @@ import claudeMessages          from "./claude/messages.js";
 
 import commsDraft              from "./communications/draft.js";
 import commsList               from "./communications/list.js";
+import commsLog                from "./communications/log.js";
 import commsMissingDoc         from "./communications/missing_doc.js";
 import commsSend               from "./communications/send.js";
 import copilotConfirm          from "./copilot/confirm.js";
@@ -960,6 +961,7 @@ const STATIC_ROUTES = {
 
   "/communications":                commsList,
   "/communications/draft":          commsDraft,
+  "/communications/log":            commsLog,
   "/communications/missing_doc":    commsMissingDoc,
   "/communications/send":           commsSend,
   "/copilot/confirm":               copilotConfirm,

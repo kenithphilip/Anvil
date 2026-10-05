@@ -580,10 +580,17 @@ const WiredSOWorkspace = () => {
   // operator is looking at, so a large PO is described correctly once the
   // background worker has merged its full line set. The "PR no." column only
   // appears when some line carries one: most POs carry none, and an empty
-  // column on every order would be noise.
+  // column on every order would be noise. requisitionGroups gives every
+  // non-empty value a group, so "some group" is "some line carries a value".
   const reqGroups = requisitionGroups(draftLines);
   const showPrCol = reqGroups.length > 0;
   const prCol = showPrCol ? 1 : 0;
+  // Widths of the columns actually on screen. A width the operator dragged
+  // for the PR column on one PO stays stored, but on a PO without the column
+  // it must not switch the grid to fixed layout (which squeezes every
+  // undragged column to an equal share) or offer a reset for a column that
+  // is not there.
+  const shownColw: ColumnWidths = showPrCol ? colw : clearColumn(colw, "pr");
   const reqNotice = requisitionNotice(reqGroups);
   const headerRequisition = String(o.result?.salesOrder?.customer?.requisition_no ?? "").trim();
   const grandTotal = Number(o.result?.salesOrder?.grandTotal) || 0;
@@ -2678,7 +2685,7 @@ const WiredSOWorkspace = () => {
                   <>
                   {/* Only offered once a column has actually been dragged —
                       a reset for a layout nobody changed is noise. */}
-                  {Object.keys(colw).length > 0 && (
+                  {Object.keys(shownColw).length > 0 && (
                     <div className="row" style={{ justifyContent: "flex-end", marginBottom: 4 }}>
                       <Btn sm kind="ghost" onClick={resetCols}
                            title="Return every column to automatic width">
@@ -2689,7 +2696,7 @@ const WiredSOWorkspace = () => {
                   <ReconLinesTable
                     lines={draftLines}
                     renderRow={reconRow}
-                    layout={tableLayoutFor(colw)}
+                    layout={tableLayoutFor(shownColw)}
                     head={<thead><tr>
                       <th style={{ width: 28 }}>#</th>
                       {([

@@ -33,6 +33,42 @@ describe("normaliseRequisition", () => {
     expect(normaliseRequisition(" - / ")).toBeNull();
     expect(normaliseRequisition(null)).toBeNull();
   });
+
+  // Fixtures are written as escapes so this file stays ASCII.
+  const FULL_WIDTH_PR = "\uFF11\uFF10\uFF10\uFF10\uFF13\uFF14\uFF13\uFF19\uFF16\uFF14"; // 1000343964, full width
+  const HANGUL_A = "PR-\uC694\uCCAD123";
+  const HANGUL_B = "PR-\uBC1C\uC8FC123";
+  const DEVANAGARI_KA = "\u0915-1";        // ka
+  const DEVANAGARI_KI = "\u0915\u093F-1";  // ka + vowel sign i (a mark)
+
+  it("folds full-width digits to the ASCII digits they are (NFKC)", () => {
+    expect(normaliseRequisition(FULL_WIDTH_PR)).toBe("1000343964");
+  });
+
+  it("keeps letters of other scripts, so two different PRs never share a key", () => {
+    expect(normaliseRequisition(HANGUL_A)).toBe("PR\uC694\uCCAD123");
+    expect(normaliseRequisition(HANGUL_A)).not.toBe(normaliseRequisition(HANGUL_B));
+  });
+
+  it("keeps combining marks, which tell two Indic-script values apart", () => {
+    expect(normaliseRequisition(DEVANAGARI_KI)).toBe("\u0915\u093F1");
+    expect(normaliseRequisition(DEVANAGARI_KA)).not.toBe(normaliseRequisition(DEVANAGARI_KI));
+  });
+
+  describe("in groups", () => {
+    it("a full-width and an ASCII spelling of one PR are one requisition", () => {
+      const groups = requisitionGroups([{ requisition_no: FULL_WIDTH_PR }, { requisition_no: "1000343964" }]);
+      expect(groups).toEqual([{ key: "1000343964", value: FULL_WIDTH_PR, lines: [1, 2] }]);
+    });
+
+    it("two non-Latin PRs that differ only outside ASCII are two requisitions", () => {
+      const groups = requisitionGroups([{ requisition_no: HANGUL_A }, { requisition_no: HANGUL_B }]);
+      expect(groups.map((g) => g.value)).toEqual([HANGUL_A, HANGUL_B]);
+      expect(requisitionNotice(groups)).toBe(
+        "This PO's lines carry 2 requisition numbers: " + HANGUL_A + " (line 1), " + HANGUL_B + " (line 2).",
+      );
+    });
+  });
 });
 
 describe("requisitionGroups", () => {
@@ -53,6 +89,18 @@ describe("requisitionGroups", () => {
   it("is empty when no line carries one", () => {
     expect(requisitionGroups([{ partNumber: "A" }, { requisition_no: "" }])).toEqual([]);
     expect(requisitionGroups(null)).toEqual([]);
+  });
+
+  it("keeps a value with no letter or digit as its own group, keyed by the value, instead of dropping it", () => {
+    const groups = requisitionGroups([
+      { requisition_no: "1000343964" },
+      { requisition_no: " * " },
+      { requisition_no: "*" },
+    ]);
+    expect(groups).toEqual([
+      { key: "1000343964", value: "1000343964", lines: [1] },
+      { key: "*", value: "*", lines: [2, 3] },
+    ]);
   });
 });
 

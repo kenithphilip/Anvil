@@ -13,12 +13,13 @@ import { installBackend, installRbac, renderScreen } from "../test-utils";
 
 const ORDER_ID = "ord-pr-1";
 
-const line = (part: string, pr: string | null, stamped: boolean) => ({
+const line = (part: string, pr: string | null, stamped: boolean, extra: Record<string, unknown> = {}) => ({
   partNumber: part,
   description: "Fixture item " + part,
   qty: 1,
   rate: 100,
   uom: "NOS",
+  ...extra,
   ...(pr != null ? { requisition_no: pr } : {}),
   _field_sources: stamped
     ? { itemCode: "ocr", qty: "ocr", rate: "ocr", ...(pr != null ? { requisition_no: "ocr" } : {}) }
@@ -66,9 +67,17 @@ const prCells = (c: HTMLElement) =>
 const notice = (c: HTMLElement) =>
   Array.from(c.querySelectorAll<HTMLElement>("[role='status']"))
     .find((el) => /requisition numbers/.test(el.textContent || "")) || null;
-const footerSpan = (c: HTMLElement) =>
-  Array.from(reconTable(c).querySelector("tfoot tr")!.children)
-    .reduce((n, td) => n + Number((td as HTMLTableCellElement).colSpan || 1), 0);
+// The span of EVERY footer row, top to bottom: subtotal, auxiliary (only when a
+// line carries aux amounts), grand total, amount in words.
+const footerSpans = (c: HTMLElement) =>
+  Array.from(reconTable(c).querySelectorAll("tfoot tr")).map((tr) =>
+    Array.from(tr.children).reduce((n, td) => n + Number((td as HTMLTableCellElement).colSpan || 1), 0));
+const footerLabels = (c: HTMLElement) =>
+  Array.from(reconTable(c).querySelectorAll("tfoot tr")).map((tr) => (tr.textContent || "").trim().split(/\s+/)[0]);
+// Tooling amount on the line, so the auxiliary footer row renders too.
+const WITH_AUX = { tooling_amount: 5 };
+const resetBtn = (c: HTMLElement) =>
+  Array.from(c.querySelectorAll("button")).find((b) => /reset column widths/.test(b.textContent || "")) || null;
 
 beforeEach(() => {
   try { window.localStorage.removeItem("anvil.colw.so-recon"); } catch (_) { /* preference only */ }
@@ -108,10 +117,13 @@ describe("recon grid: PR no. column", () => {
     expect(cells[1].textContent).toBe("");
   });
 
-  it("keeps the footer spanning the full width with the column added", async () => {
-    const c = await mount(orderWith([line("PN-1", "1000343964", true)]));
+  it("keeps every footer row spanning the full width with the column added", async () => {
+    const c = await mount(orderWith([line("PN-1", "1000343964", true, WITH_AUX)]));
     expect(headers(c)).toHaveLength(12);
-    expect(footerSpan(c)).toBe(12);
+    // All four rows rendered, the auxiliary one included ...
+    expect(footerLabels(c)).toEqual(["subtotal", "auxiliary", "grand", "amount"]);
+    // ... and each spans the twelve header columns.
+    expect(footerSpans(c)).toEqual([12, 12, 12, 12]);
   });
 
   it("keeps the opened tax-breakdown row spanning the full width too", async () => {
@@ -137,14 +149,35 @@ describe("recon grid: PR no. column", () => {
     const th = Array.from(reconTable(c).querySelectorAll<HTMLElement>("thead th"))
       .find((h) => (h.textContent || "").trim() === "PR no.")!;
     expect(th.style.width).toBe("160px");
+    // A dragged column on screen makes the layout fixed and offers the reset.
+    expect(reconTable(c).style.tableLayout).toBe("fixed");
+    expect(resetBtn(c)).not.toBeNull();
   });
 
-  it("has no PR column, and the original width, when no line carries one", async () => {
-    const c = await mount(orderWith([line("PN-1", null, true), line("PN-2", null, true)]));
+  it("ignores a stored PR no. width on a PO that has no PR column", async () => {
+    // Dragged on a consolidated PO, then a normal PO is opened: the stored
+    // width is for a column that is not on screen, so the grid keeps its
+    // automatic layout and offers no reset.
+    window.localStorage.setItem("anvil.colw.so-recon", JSON.stringify({ pr: 160 }));
+    const c = await mount(orderWith([line("PN-1", null, true)]));
+    expect(headers(c)).toHaveLength(11);
+    expect(reconTable(c).style.tableLayout).toBe("auto");
+    expect(resetBtn(c)).toBeNull();
+  });
+
+  it("has no PR column, and the original width on every footer row, when no line carries one", async () => {
+    const c = await mount(orderWith([line("PN-1", null, true, WITH_AUX), line("PN-2", null, true)]));
     expect(headers(c)).not.toContain("PR no.");
     expect(headers(c)).toHaveLength(11);
-    expect(footerSpan(c)).toBe(11);
+    expect(footerLabels(c)).toEqual(["subtotal", "auxiliary", "grand", "amount"]);
+    expect(footerSpans(c)).toEqual([11, 11, 11, 11]);
     expect(prCells(c)).toHaveLength(0);
+  });
+
+  it("shows the column for a value with no letter or digit in it, as the extractor returned it", async () => {
+    const c = await mount(orderWith([line("PN-1", "*", true), line("PN-2", null, true)]));
+    expect(headers(c)).toContain("PR no.");
+    expect(prCells(c).map((td) => td.querySelector("span")?.textContent)).toEqual(["*", undefined]);
   });
 });
 
@@ -160,6 +193,27 @@ describe("recon grid: more than one PR on a PO", () => {
     expect(n!.textContent).toBe(
       "This PO's lines carry 2 requisition numbers: 1000343964 (lines 1-2), 1000344102 (line 3).",
     );
+  });
+
+  it("is worked out from the operator's draft lines: removing a line renumbers it", async () => {
+    const c = await mount(orderWith([
+      line("PN-1", "1000343964", true),
+      line("PN-2", "1000343964", true),
+      line("PN-3", "1000344102", true),
+    ]));
+    expect(notice(c)!.textContent).toBe(
+      "This PO's lines carry 2 requisition numbers: 1000343964 (lines 1-2), 1000344102 (line 3).",
+    );
+    const remove = c.querySelector("button[aria-label='Remove line 1']") as HTMLButtonElement;
+    expect(remove).toBeTruthy();
+    fireEvent.click(remove);
+    await waitFor(() => expect(notice(c)!.textContent).toBe(
+      "This PO's lines carry 2 requisition numbers: 1000343964 (line 1), 1000344102 (line 2).",
+    ));
+    // Remove the second PR's only line: one PR left, so no notice.
+    fireEvent.click(c.querySelector("button[aria-label='Remove line 2']") as HTMLButtonElement);
+    await waitFor(() => expect(prCells(c)).toHaveLength(1));
+    expect(notice(c)).toBeNull();
   });
 
   it("shows no notice when every line carries the same PR, however it is spaced", async () => {

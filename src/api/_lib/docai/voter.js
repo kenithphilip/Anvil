@@ -152,8 +152,10 @@ const voteScalar = (entries, fieldPath) => {
 // dual-code payload: the buyer's SAP code (the tier-0 mapping key), the
 // verbatim description the part-split re-parses from, and the drawing/spec
 // code. A voted run therefore produced strictly less than a single-adapter run.
-// requisition_no is listed for the same reason: a field the adapters now read
-// per line must not vanish only on the runs where two of them agreed.
+// requisition_no is listed for the same reason. The voted line is rebuilt
+// from this list whatever the adapters returned, so without it the per-line
+// value was dropped on every voted run (two or more adapters returned a
+// result), not only on runs where they agreed.
 const LINE_FIELDS = [
   "partNumber", "customerItemCode", "description", "raw_description",
   "specification", "requisition_no", "quantity", "unitPrice", "uom", "hsn", "gst_pct",

@@ -74,16 +74,48 @@ describe("DeliveryChallanUpload", () => {
     expect(screen.getByText(/Nothing was recorded/)).toBeTruthy();
     const open = screen.getByText("Open order for PO 4500313249");
     fireEvent.click(open);
-    expect(window.location.hash).toBe("#/so?id=ord-2");
+    expect(window.location.hash).toBe("#/so?id=ord-2&tab=invoice_check");
     expect(onRecorded).not.toHaveBeenCalled();
-    expect(screen.queryByText(/recorded$/)).toBeNull();
+    expect(screen.queryByText(/^Challan .* recorded$/)).toBeNull();
   });
 
-  it("reports an unreadable challan instead of sending an empty extract", async () => {
-    extract.mockResolvedValueOnce({ normalized: null } as any);
+  it("reports an unreadable challan with the extractor's reason, instead of sending an empty extract", async () => {
+    extract.mockResolvedValueOnce({ normalized: null, status_reason: "no_adapter_configured" } as any);
     const { container } = render(<DeliveryChallanUpload orderId="ord-1" />);
     pick(container);
     await waitFor(() => expect(screen.getByText("Could not record the challan")).toBeTruthy());
+    expect(screen.getByText(/no_adapter_configured/)).toBeTruthy();
     expect(ingestDeliveryNote).not.toHaveBeenCalled();
+  });
+
+  it("refuses a file of which only page 1 was read", async () => {
+    extract.mockResolvedValueOnce({ normalized: EXTRACTED, large_pdf: true, total_pages: 44 } as any);
+    const { container } = render(<DeliveryChallanUpload orderId="ord-1" />);
+    pick(container);
+    await waitFor(() => expect(screen.getByText(/only the first was read/)).toBeTruthy());
+    expect(ingestDeliveryNote).not.toHaveBeenCalled();
+  });
+
+  it("holds a low-confidence read until the operator chooses to record it", async () => {
+    extract.mockResolvedValueOnce({ normalized: EXTRACTED, status: "low_confidence", status_reason: "despatched and ordered columns unclear" } as any);
+    ingestDeliveryNote.mockResolvedValue({ ok: true, written: { inserted: 1, updated: 0 }, docket_no: "LR-7781", delivery_note_no: "DC-0042" });
+    const onRecorded = vi.fn();
+    const { container } = render(<DeliveryChallanUpload orderId="ord-1" onRecorded={onRecorded} />);
+    pick(container);
+    await waitFor(() => expect(screen.getByText("Read with low confidence, not recorded yet")).toBeTruthy());
+    expect(ingestDeliveryNote).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Record anyway"));
+    await waitFor(() => expect(ingestDeliveryNote).toHaveBeenCalledWith("doc-1", EXTRACTED, "ord-1"));
+    await waitFor(() => expect(onRecorded).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not report success or refresh the check when the write failed", async () => {
+    ingestDeliveryNote.mockResolvedValue({ ok: false, reason: "write_failed", detail: "1 of 1 despatch line could not be recorded: invalid date", written: { inserted: 0, updated: 0, errors: [{}] } });
+    const onRecorded = vi.fn();
+    const { container } = render(<DeliveryChallanUpload orderId="ord-1" onRecorded={onRecorded} />);
+    pick(container);
+    await waitFor(() => expect(screen.getByText("The despatch lines could not be recorded")).toBeTruthy());
+    expect(screen.queryByText(/^Challan .* recorded$/)).toBeNull();
+    expect(onRecorded).not.toHaveBeenCalled();
   });
 });

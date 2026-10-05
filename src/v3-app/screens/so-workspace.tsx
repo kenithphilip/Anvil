@@ -2853,7 +2853,7 @@ const WiredSOWorkspace = () => {
         {tab === "threeway" && <ThreeWayPanel orderId={o.id} />}
         {tab === "invoice_check" && (
           <>
-            <DeliveryChallanUpload orderId={o.id} onRecorded={() => setInvoiceCheckKey((k: number) => k + 1)} />
+            <DeliveryChallanUpload key={o.id} orderId={o.id} onRecorded={() => setInvoiceCheckKey((k: number) => k + 1)} />
             <InvoicePoCheck key={invoiceCheckKey} orderId={o.id} />
           </>
         )}

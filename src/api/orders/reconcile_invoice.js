@@ -123,7 +123,7 @@ export default async function handler(req, res) {
     let dispatchRows = null;
     try {
       const dq = await svc.from("dispatch_lines")
-        .select("line_index, part_no, description, dispatched_qty, uom, dispatch_date, invoice_number")
+        .select("line_index, part_no, description, dispatched_qty, uom, dispatch_date, invoice_number, lr_number")
         .eq("tenant_id", ctx.tenantId).eq("order_id", orderId);
       if (!dq.error) dispatchRows = dq.data || [];
     } catch (_e) { /* leave unchecked */ }
@@ -186,8 +186,20 @@ export default async function handler(req, res) {
     }
 
     // The docket comes off the despatch register when it has one. Reuses the
-    // rows already fetched above for the under-delivery leg.
-    const docket = (dispatchRows || []).map((d) => d?.lr_number).find((v) => v) || null;
+    // rows already fetched above for the under-delivery leg (lr_number must be
+    // in that select: it was not, so the docket was always null).
+    //
+    // It is the docket for THIS invoice. When the despatch rows carry invoice
+    // numbers, only rows billed on the subject invoice count; another
+    // invoice's consignment does not prove this one can move. Only when no row
+    // carries an invoice number does the order-level docket stand in.
+    const norm = (v) => String(v == null ? "" : v).trim().toUpperCase();
+    const rowsAll = dispatchRows || [];
+    const billedRows = rowsAll.filter((d) => d?.invoice_number);
+    const docketRows = billedRows.length
+      ? billedRows.filter((d) => subject?.invoice_number && norm(d.invoice_number) === norm(subject.invoice_number))
+      : rowsAll;
+    const docket = docketRows.map((d) => d?.lr_number).find((v) => v) || null;
 
     const dispatchReadiness = subject
       ? assessDispatchReadiness({

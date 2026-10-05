@@ -29,7 +29,10 @@ beforeEach(() => {
     customers: { listContacts: listContactsSpy },
   };
 });
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => {
+  vi.useRealTimers();
+  try { window.localStorage.removeItem("anvil:v3_role"); } catch (_) { /* no storage */ }
+});
 
 const typeNotes = (getByLabelText: any, text: string) =>
   fireEvent.change(getByLabelText("Touch notes"), { target: { value: text } });
@@ -44,7 +47,8 @@ describe("defaultNextFollowup", () => {
 describe("TouchLog", () => {
   it("logs a call on a quote with the default next date of today plus 3 business days", async () => {
     const { getByLabelText, getByRole } = render(<TouchLog objectType="quote" objectId="q-1" />);
-    await waitFor(() => expect(listSpy).toHaveBeenCalledWith({ object_type: "quote", object_id: "q-1" }));
+    // A quote's timeline asks for every version of the quote.
+    await waitFor(() => expect(listSpy).toHaveBeenCalledWith({ object_type: "quote", object_id: "q-1", versions: "all" }));
     expect((getByLabelText("Touch channel") as HTMLSelectElement).value).toBe("call");
     expect((getByLabelText("Next follow-up") as HTMLInputElement).value).toBe("2026-10-07");
 
@@ -66,14 +70,17 @@ describe("TouchLog", () => {
   it("prefills the last channel used and the quote's own contact", async () => {
     rows = [
       { id: "t-old", document_type: "rep_touch", channel: "visit", customer_contact_id: "ct-2", body: "Site visit", created_at: "2026-09-20T10:00:00Z" },
-      { id: "t-new", document_type: "rep_touch", channel: "whatsapp", customer_contact_id: "ct-2", body: "Sent drawings", created_at: "2026-09-28T10:00:00Z" },
+      { id: "t-new", document_type: "rep_touch", channel: "meeting", customer_contact_id: "ct-2", body: "Reviewed drawings", created_at: "2026-09-28T10:00:00Z" },
       // Newer than both touches, but an email is not a touch channel.
       { id: "e-1", document_type: "quote_email", channel: "email", subject: "Quotation Q-1", created_at: "2026-09-30T10:00:00Z", status: "sent" },
+      // Newer still, and on a channel a touch can use, but a system-sent
+      // WhatsApp nudge is not something the rep did: only touches feed the prefill.
+      { id: "n-1", document_type: "agent_message", channel: "whatsapp", subject: "Reminder", created_at: "2026-10-01T10:00:00Z", status: "sent" },
     ];
     const { getByLabelText, getByRole } = render(
       <TouchLog objectType="quote" objectId="q-1" customerId="c-1" contactId="ct-1" />
     );
-    await waitFor(() => expect((getByLabelText("Touch channel") as HTMLSelectElement).value).toBe("whatsapp"));
+    await waitFor(() => expect((getByLabelText("Touch channel") as HTMLSelectElement).value).toBe("meeting"));
     await waitFor(() => expect(listContactsSpy).toHaveBeenCalledWith({ customer_id: "c-1" }));
     expect((getByLabelText("Touch contact") as HTMLSelectElement).value).toBe("ct-1");
 
@@ -81,7 +88,7 @@ describe("TouchLog", () => {
     fireEvent.click(getByRole("button", { name: "Log touch" }));
     await waitFor(() => expect(logSpy).toHaveBeenCalledTimes(1));
     expect(logSpy.mock.calls[0][0]).toEqual({
-      object_type: "quote", object_id: "q-1", channel: "whatsapp", body: "Chased the PO",
+      object_type: "quote", object_id: "q-1", channel: "meeting", body: "Chased the PO",
       customer_contact_id: "ct-1", metadata: { next_followup_at: "2026-10-07" },
     });
   });
@@ -90,6 +97,8 @@ describe("TouchLog", () => {
     rows = [{ id: "t-1", document_type: "rep_touch", channel: "meeting", customer_contact_id: "ct-2", body: "Review", created_at: "2026-09-28T10:00:00Z" }];
     const { getByLabelText, getByRole } = render(<TouchLog objectType="opportunity" objectId="o-1" customerId="c-1" />);
     await waitFor(() => expect((getByLabelText("Touch contact") as HTMLSelectElement).value).toBe("ct-2"));
+    // An opportunity's timeline is that one row: there are no versions.
+    expect(listSpy).toHaveBeenCalledWith({ object_type: "opportunity", object_id: "o-1" });
     fireEvent.change(getByLabelText("Next follow-up"), { target: { value: "2026-10-12" } });
     typeNotes(getByLabelText, "Budget confirmed");
     fireEvent.click(getByRole("button", { name: "Log touch" }));
@@ -115,6 +124,54 @@ describe("TouchLog", () => {
     expect(items[1]).toContain("Called stores");
     expect(items[1]).toContain("next follow-up");
     expect(items[2]).toContain("Site visit notes");
+  });
+
+  it("marks rows filed against an earlier version of the quote", async () => {
+    rows = [
+      { id: "t-v1", object_id: "q-0", document_type: "rep_touch", channel: "call", body: "Called about v1", created_at: "2026-09-20T10:00:00Z" },
+      { id: "t-v2", object_id: "q-1", document_type: "rep_touch", channel: "call", body: "Called about v2", created_at: "2026-09-28T10:00:00Z" },
+    ];
+    const { findByRole } = render(<TouchLog objectType="quote" objectId="q-1" />);
+    const list = await findByRole("list", { name: "Follow-up timeline" });
+    const items = Array.from(list.querySelectorAll("li")).map((li) => li.textContent || "");
+    expect(items[0]).toContain("Called about v2");
+    expect(items[0]).not.toContain("earlier version");
+    expect(items[1]).toContain("Called about v1");
+    expect(items[1]).toContain("earlier version");
+  });
+
+  it("shows the timeline but no Log form to a role the endpoint refuses", async () => {
+    window.localStorage.setItem("anvil:v3_role", "viewer");
+    rows = [{ id: "t-1", document_type: "rep_touch", channel: "call", body: "Called stores", created_at: "2026-09-28T10:00:00Z" }];
+    const { findByText, queryByLabelText, getByText } = render(<TouchLog objectType="quote" objectId="q-1" />);
+    expect(await findByText("Called stores")).toBeTruthy();
+    expect(queryByLabelText("Touch notes")).toBeNull();
+    expect(getByText("Your role can read follow-ups but not log them.")).toBeTruthy();
+  });
+
+  it("shows the Log form to a writing role", async () => {
+    window.localStorage.setItem("anvil:v3_role", "procurement");
+    const { findByLabelText } = render(<TouchLog objectType="quote" objectId="q-1" />);
+    expect(await findByLabelText("Touch notes")).toBeTruthy();
+  });
+
+  it("keeps Esc from reaching the host's close handler while the note has text", async () => {
+    const hostEsc = vi.fn();
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") hostEsc(); };
+    window.addEventListener("keydown", onKey);
+    try {
+      const { getByLabelText } = render(<TouchLog objectType="quote" objectId="q-1" />);
+      await waitFor(() => expect(listSpy).toHaveBeenCalled());
+      typeNotes(getByLabelText, "Half a note");
+      fireEvent.keyDown(getByLabelText("Touch notes"), { key: "Escape" });
+      expect(hostEsc).not.toHaveBeenCalled();
+      // An empty note lets Esc through, so the guard is the note, not the box.
+      typeNotes(getByLabelText, "");
+      fireEvent.keyDown(getByLabelText("Touch notes"), { key: "Escape" });
+      expect(hostEsc).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener("keydown", onKey);
+    }
   });
 
   it("does not post an empty note", async () => {

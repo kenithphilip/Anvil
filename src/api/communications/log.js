@@ -19,11 +19,12 @@
 // catalog's customer-comms totals do not count it. See _lib/rep-touch.js.
 //
 // 400: unknown object_type or channel, missing body, malformed ids or date.
+// 403: a read-only role (viewer, customer_support): "write" plus "touch.log".
 // 404: the target is not a quote / opportunity of the caller's tenant.
 // 400: customer_contact_id is not a contact of the target's customer.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requireAction, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { commsRow } from "../_lib/comms-row.js";
@@ -39,6 +40,7 @@ export default async function handler(req, res) {
   try {
     const ctx = await resolveContext(req);
     requirePermission(ctx, "write");
+    requireAction(ctx, "touch.log");
     const checked = validateTouch(await readBody(req));
     if (checked.error) return json(res, 400, { error: { message: checked.error } });
     const t = checked.value;

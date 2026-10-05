@@ -1495,8 +1495,9 @@
     //
     // A string argument is an order id (the ThreadDrawer call). An object
     // is a filter set of object_type, object_id, customer_id, order_id,
-    // source_po_id and limit. The Follow-up timeline (TouchLog) passes
-    // object_type + object_id. Empty values are dropped, not sent.
+    // source_po_id, versions and limit. The Follow-up timeline (TouchLog)
+    // passes object_type + object_id, plus versions: "all" on a quote so
+    // every version's touches show. Empty values are dropped, not sent.
     list: async (filters) => {
       const params = typeof filters === "string" ? { order_id: filters } : (filters || {});
       const sp = new URLSearchParams();

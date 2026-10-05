@@ -229,6 +229,12 @@ export const SERVER_ACTIONS = {
   // Visits screen (MATRIX["svc-visits"] gives them ""), yet could reassign
   // another engineer's scheduled visit. Mirrors rbac.ts service.assign.
   "service.assign":      new Set(["operator", "admin"]),
+  // Logging a rep touch (call / meeting / visit) against a quote or an
+  // opportunity: exactly the coarse "write" roles, so it tightens nothing
+  // server-side. It is registered so the Follow-up form (TouchLog.tsx, via
+  // rbac.ts canDo) hides itself for the roles this endpoint always refuses
+  // (viewer, customer_support) instead of offering a form that 403s.
+  "touch.log":           new Set(["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "design_engineer", "design_manager"]),
 };
 
 export const hasAction = (ctx, action) => {

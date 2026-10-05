@@ -235,10 +235,12 @@ describe("QuoteDetailDrawer Follow-up tab", () => {
         <QuoteDetailDrawer quote={quote} onClose={() => undefined} />
       );
       fireEvent.click(getByText("Follow-up"));
-      await waitFor(() => expect(listSpy).toHaveBeenCalledWith({ object_type: "quote", object_id: "q-1" }));
+      await waitFor(() => expect(listSpy).toHaveBeenCalledWith({ object_type: "quote", object_id: "q-1", versions: "all" }));
       expect(await findByText("Met stores")).toBeTruthy();
-      // The drawer hands over the contacts it already loaded for the header.
+      // The drawer hands over the contacts it already loaded for the header:
+      // one load, the drawer's, and the Follow-up tab does not fetch its own.
       await waitFor(() => expect((getByLabelText("Touch contact") as HTMLSelectElement).textContent).toContain("Asha Rao"));
+      expect((window as any).AnvilBackend.customers.listContacts).toHaveBeenCalledTimes(1);
       expect((getByLabelText("Touch contact") as HTMLSelectElement).value).toBe("ct-1");
 
       fireEvent.change(getByLabelText("Touch notes"), { target: { value: "Spoke to maintenance" } });
@@ -251,5 +253,25 @@ describe("QuoteDetailDrawer Follow-up tab", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("QuoteDetailDrawer Follow-up tab: Esc", () => {
+  it("does not close the drawer on Esc while a touch note has text, and does once it is empty", async () => {
+    (window as any).AnvilBackend.communications = { list: vi.fn(async () => ({ communications: [] })), log: vi.fn() };
+    const onClose = vi.fn();
+    const { getByText, findByLabelText } = render(
+      <QuoteDetailDrawer quote={{ ...QUOTE, customer_id: "c-1" }} onClose={onClose} />
+    );
+    fireEvent.click(getByText("Follow-up"));
+    const notes = await findByLabelText("Touch notes");
+    fireEvent.change(notes, { target: { value: "Buyer wants a revised delivery date" } });
+    fireEvent.keyDown(notes, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    expect((notes as HTMLTextAreaElement).value).toBe("Buyer wants a revised delivery date");
+    // The drawer's own Esc close still works when there is nothing to lose.
+    fireEvent.change(notes, { target: { value: "" } });
+    fireEvent.keyDown(notes, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

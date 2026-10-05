@@ -13,7 +13,10 @@
 //     bypasses RLS, so the handler's own lookup is the tenant gate);
 //   * a logged touch is final: status sent, provider manual, document_type
 //     rep_touch, sent_by = ctx.user.id, customer_id copied from the target;
-//   * a filtered GET returns only that object's rows;
+//   * a filtered GET returns only that object's rows (object_type, object_id,
+//     customer_id each narrow it), a quote's versions=all widens to every
+//     version of that quote in this tenant, and only a touch's body comes back;
+//   * the "touch.log" action admits exactly the roles the client shows the form to;
 //   * the queued-comms reaper (agents/run.js) does not pick up a touch;
 //   * the metric catalog's customer-comms totals do not move when touches land.
 
@@ -123,6 +126,7 @@ vi.mock("../api/_lib/comms-send.js", () => ({
 const { default: logHandler } = await import("../api/communications/log.js");
 const { default: listHandler } = await import("../api/communications/list.js");
 const { computeMetric } = await import("../api/_lib/metrics/catalog.js");
+const { RBAC } = await import("./lib/rbac");
 const { sendCommunication } = await import("../api/_lib/comms-send.js");
 // The whole API router, loaded once at module scope (it imports every handler,
 // which is slow under a parallel run and must not eat a test's timeout).
@@ -142,11 +146,14 @@ const CUST_A2 = "cccccccc-0000-4000-8000-0000000000a2";
 const CUST_B = "cccccccc-0000-4000-8000-0000000000b1";
 const QUOTE_A = "dddddddd-0000-4000-8000-0000000000a1";
 const QUOTE_A2 = "dddddddd-0000-4000-8000-0000000000a2";
+const QUOTE_A_V2 = "dddddddd-0000-4000-8000-0000000002a1";   // Q-1 revised
 const QUOTE_B = "dddddddd-0000-4000-8000-0000000000b1";
+const QUOTE_B_Q1 = "dddddddd-0000-4000-8000-0000000001b1";   // another tenant's Q-1
 const OPP_A = "eeeeeeee-0000-4000-8000-0000000000a1";
 const OPP_B = "eeeeeeee-0000-4000-8000-0000000000b1";
 const CONTACT_A = "ffffffff-0000-4000-8000-0000000000a1";
 const CONTACT_A2 = "ffffffff-0000-4000-8000-0000000000a2";
+const CONTACT_FOREIGN = "ffffffff-0000-4000-8000-0000000000b1";
 
 const makeRes = () => ({
   statusCode: 200, headers: {}, body: null,
@@ -177,9 +184,11 @@ const touch = (over = {}) => ({
 beforeEach(() => {
   h.state.tables = {
     quotes: [
-      { id: QUOTE_A, tenant_id: TENANT_A, customer_id: CUST_A, quote_number: "Q-1" },
-      { id: QUOTE_A2, tenant_id: TENANT_A, customer_id: CUST_A2, quote_number: "Q-2" },
-      { id: QUOTE_B, tenant_id: TENANT_B, customer_id: CUST_B, quote_number: "Q-B" },
+      { id: QUOTE_A, tenant_id: TENANT_A, customer_id: CUST_A, quote_number: "Q-1", version: 1 },
+      { id: QUOTE_A2, tenant_id: TENANT_A, customer_id: CUST_A2, quote_number: "Q-2", version: 1 },
+      { id: QUOTE_A_V2, tenant_id: TENANT_A, customer_id: CUST_A, quote_number: "Q-1", version: 2, prior_version_id: QUOTE_A },
+      { id: QUOTE_B, tenant_id: TENANT_B, customer_id: CUST_B, quote_number: "Q-B", version: 1 },
+      { id: QUOTE_B_Q1, tenant_id: TENANT_B, customer_id: CUST_B, quote_number: "Q-1", version: 1 },
     ],
     opportunities: [
       { id: OPP_A, tenant_id: TENANT_A, customer_id: CUST_A, opportunity_name: "Line 4 retrofit" },
@@ -188,6 +197,8 @@ beforeEach(() => {
     customer_contacts: [
       { id: CONTACT_A, tenant_id: TENANT_A, customer_id: CUST_A, name: "Asha Rao" },
       { id: CONTACT_A2, tenant_id: TENANT_A, customer_id: CUST_A2, name: "Vikram Shah" },
+      // Another tenant's contact row that names this tenant's customer id.
+      { id: CONTACT_FOREIGN, tenant_id: TENANT_B, customer_id: CUST_A, name: "Not ours" },
     ],
     communications: [],
     audit_events: [],
@@ -273,16 +284,26 @@ describe("POST /api/communications/log", () => {
     expect(badDate.body.error.message).toMatch(/next_followup_at/);
     expect((await postLog(touch({ metadata: { next_followup_at: "07/10/2026" } }))).status).toBe(400);
     expect((await postLog(touch({ object_id: "q-1" }))).status).toBe(400);
+    const tooLong = await postLog(touch({ body: "x".repeat(10001) }));
+    expect(tooLong.status).toBe(400);
+    expect(tooLong.body.error.message).toBe("body is longer than 10000 characters");
     // No next date is fine: the date is optional.
     const noDate = await postLog(touch({ metadata: {} }));
     expect(noDate.status).toBe(200);
-    expect(h.rowsOf("communications")).toHaveLength(1);
+    // The longest note allowed is stored whole.
+    expect((await postLog(touch({ body: "y".repeat(10000) }))).status).toBe(200);
+    expect(h.rowsOf("communications").map((r) => r.body.length)).toEqual(["Spoke to maintenance".length, 10000]);
   });
 
   it("stores a contact of the target's customer and refuses any other", async () => {
     const other = await postLog(touch({ customer_contact_id: CONTACT_A2 }));
     expect(other.status).toBe(400);
     expect(other.body.error.message).toMatch(/not a contact of this quote's customer/);
+    // A contact row in ANOTHER tenant is refused even when it names this
+    // quote's customer id: the lookup is tenant-scoped, not customer-scoped only.
+    const foreign = await postLog(touch({ customer_contact_id: CONTACT_FOREIGN }));
+    expect(foreign.status).toBe(400);
+    expect(h.rowsOf("communications")).toHaveLength(0);
     const ok = await postLog(touch({ customer_contact_id: CONTACT_A }));
     expect(ok.status).toBe(200);
     expect(h.rowsOf("communications")[0].customer_contact_id).toBe(CONTACT_A);
@@ -292,6 +313,46 @@ describe("POST /api/communications/log", () => {
     h.ctx = { ...h.ctx, role: "viewer" };
     const r = await postLog(touch());
     expect(r.status).toBe(403);
+  });
+
+  it("admits exactly the roles the client offers the Log form to", async () => {
+    // TouchLog shows the form when RBAC.canDo("touch.log"). Drive the real
+    // handler as every role and compare: a role that sees the form must be
+    // able to log, and a role the server refuses must not see it.
+    const admitted = {};
+    const shown = {};
+    for (const role of RBAC.ROLES) {
+      h.ctx = { user: { id: USER }, tenantId: TENANT_A, role, anonymous: false };
+      const r = await postLog(touch());
+      expect([200, 403]).toContain(r.status);
+      admitted[role] = r.status === 200;
+      window.localStorage.setItem("anvil:v3_role", role);
+      shown[role] = RBAC.canDo("touch.log");
+    }
+    window.localStorage.removeItem("anvil:v3_role");
+    expect(shown).toEqual(admitted);
+    // Not vacuous: both outcomes occur.
+    expect(admitted.sales_engineer).toBe(true);
+    expect(admitted.viewer).toBe(false);
+    expect(admitted.customer_support).toBe(false);
+  });
+
+  it("enforces the registered touch.log action, so narrowing it narrows who can log", async () => {
+    // Today touch.log equals the coarse write roles. The handler must still
+    // consult it: otherwise a later narrowing would hide the form (rbac.ts)
+    // while the endpoint kept accepting the role.
+    const { SERVER_ACTIONS } = await import("../api/_lib/auth.js");
+    h.ctx = { ...h.ctx, role: "procurement" };
+    expect((await postLog(touch())).status).toBe(200);
+    SERVER_ACTIONS["touch.log"].delete("procurement");
+    try {
+      const r = await postLog(touch());
+      expect(r.status).toBe(403);
+      expect(r.body.error.message).toMatch(/touch\.log/);
+    } finally {
+      SERVER_ACTIONS["touch.log"].add("procurement");
+    }
+    expect(h.rowsOf("communications")).toHaveLength(1);
   });
 });
 
@@ -320,6 +381,8 @@ describe("GET /api/communications filters", () => {
       { id: "c-4", tenant_id: TENANT_A, object_type: "opportunity", object_id: OPP_A, customer_id: CUST_A, document_type: "rep_touch", created_at: "2026-10-03T10:00:00Z" },
       // Another tenant's row filed against the SAME object id.
       { id: "c-5", tenant_id: TENANT_B, object_type: "quote", object_id: QUOTE_A, customer_id: CUST_B, document_type: "rep_touch", created_at: "2026-10-04T10:00:00Z" },
+      // Same object id, different object type: object_type must narrow too.
+      { id: "c-6", tenant_id: TENANT_A, object_type: "opportunity", object_id: QUOTE_A, customer_id: CUST_A2, document_type: "rep_touch", created_at: "2026-10-05T10:00:00Z" },
     ];
   };
 
@@ -349,20 +412,76 @@ describe("GET /api/communications filters", () => {
     const r = await getList({ object_id: "q-1" });
     expect(r.status).toBe(400);
     expect(r.body.error.message).toBe("object_id must be a uuid");
+    const c = await getList({ customer_id: "c-1" });
+    expect(c.status).toBe(400);
+    expect(c.body.error.message).toBe("customer_id must be a uuid");
   });
 
   it("returns a touch logged through POST when filtered to its quote", async () => {
-    await postLog(touch());
+    await postLog(touch({ customer_contact_id: CONTACT_A }));
     await postLog(touch({ object_id: QUOTE_A2, body: "Different quote" }));
     const r = await getList({ object_type: "quote", object_id: QUOTE_A });
     expect(r.body.communications).toHaveLength(1);
+    // Every field TouchLog reads off a row: the contact feeds the opportunity's
+    // contact prefill and the "with <name>" on the timeline.
     expect(r.body.communications[0]).toMatchObject({
       object_id: QUOTE_A, document_type: "rep_touch", body: "Spoke to maintenance",
-      channel: "call", sent_by: USER, next_followup_at: "2026-10-07",
+      channel: "call", customer_contact_id: CONTACT_A, next_followup_at: "2026-10-07",
     });
-    // Only the next date is read out of metadata. A quote email's metadata
-    // carries its portal share link, and the list does not hand that out.
+    expect(typeof r.body.communications[0].sent_at).toBe("string");
+    expect(typeof r.body.communications[0].created_at).toBe("string");
+    // Only the next date is read out of metadata.
     expect(r.body.communications[0]).not.toHaveProperty("metadata");
+  });
+
+  it("returns a touch's body but not a quote email's, whose text carries the portal link", async () => {
+    const PORTAL = "https://portal.example/q/accept?token=secret-bearer";
+    h.state.tables.communications = [
+      {
+        id: "e-1", tenant_id: TENANT_A, object_type: "quote", object_id: QUOTE_A, document_type: "quote_email",
+        channel: "email", status: "sent", subject: "Quotation Q-1 v1", created_at: "2026-10-01T10:00:00Z",
+        body: "Hello,\n\nView quotation: https://files.example/signed\n\nAccept this quotation: " + PORTAL,
+        metadata: { share_url: "https://files.example/signed", portal_url: PORTAL },
+      },
+    ];
+    await postLog(touch());
+    const r = await getList({ object_type: "quote", object_id: QUOTE_A });
+    expect(r.status).toBe(200);
+    const byId = Object.fromEntries(r.body.communications.map((c) => [c.document_type, c]));
+    expect(byId.rep_touch.body).toBe("Spoke to maintenance");
+    expect(byId.quote_email).toMatchObject({ id: "e-1", subject: "Quotation Q-1 v1", body: null });
+    expect(JSON.stringify(r.body)).not.toContain("secret-bearer");
+  });
+
+  it("versions=all lists every version of the quote in this tenant, and nothing else", async () => {
+    await postLog(touch({ body: "Called on v1", channel: "call" }));                 // v1 of Q-1
+    await postLog(touch({ object_id: QUOTE_A_V2, body: "Sent revised drawing", channel: "whatsapp" }));
+    await postLog(touch({ object_id: QUOTE_A2, body: "Other quote" }));               // Q-2
+    // A row in THIS tenant pointing at another tenant's quote that happens to
+    // share the number Q-1: the chain lookup is tenant-scoped, so it stays out.
+    h.state.tables.communications.push({
+      id: "x-1", tenant_id: TENANT_A, object_type: "quote", object_id: QUOTE_B_Q1, document_type: "rep_touch",
+      body: "Not this chain", created_at: "2026-10-09T10:00:00Z",
+    });
+
+    const chain = await getList({ object_type: "quote", object_id: QUOTE_A_V2, versions: "all" });
+    expect(chain.status).toBe(200);
+    expect(chain.body.communications.map((c) => c.body)).toEqual(["Sent revised drawing", "Called on v1"]);
+
+    // Without versions=all the filter is the one row id, as before.
+    const one = await getList({ object_type: "quote", object_id: QUOTE_A_V2 });
+    expect(one.body.communications.map((c) => c.body)).toEqual(["Sent revised drawing"]);
+
+    // versions is refused, not ignored, outside its one supported form.
+    for (const query of [
+      { object_type: "opportunity", object_id: OPP_A, versions: "all" },
+      { object_type: "quote", versions: "all" },
+      { object_type: "quote", object_id: QUOTE_A, versions: "latest" },
+    ]) {
+      const r = await getList(query);
+      expect(r.status).toBe(400);
+      expect(r.body.error.message).toBe("versions=all needs object_type=quote and an object_id");
+    }
   });
 });
 

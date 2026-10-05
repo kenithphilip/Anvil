@@ -37,6 +37,11 @@ describe("Opps detail: touch log", () => {
     const { findByLabelText, getByRole } = renderScreen(Opps);
     const notes = await findByLabelText("Touch notes");
     await waitFor(() => expect(listSpy).toHaveBeenCalledWith({ object_type: "opportunity", object_id: "o-1" }));
+    // The opportunity's customer reaches TouchLog: its contacts load into an
+    // enabled picker (without a customer id the picker is disabled and empty).
+    const picker = (await findByLabelText("Touch contact")) as HTMLSelectElement;
+    await waitFor(() => expect(picker.textContent).toContain("Meera Iyer"));
+    expect(picker.disabled).toBe(false);
 
     fireEvent.change(notes, { target: { value: "Budget confirmed by plant head" } });
     fireEvent.click(getByRole("button", { name: "Log touch" }));

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { RBAC } from "../lib/rbac";
 import { fmtDate } from "../lib/helpers";
 import { addBusinessDays } from "../../api/_lib/datemath.js";
 import { TOUCH_CHANNELS, TOUCH_DOCUMENT_TYPE } from "../../api/_lib/rep-touch.js";
@@ -12,6 +13,14 @@ import { TOUCH_CHANNELS, TOUCH_DOCUMENT_TYPE } from "../../api/_lib/rep-touch.js
 // card in screens/opps.tsx. Lists every communications row filed against the
 // object (rep touches, the quote email, automatic nudges), newest first, and
 // posts a new rep touch to /api/communications/log.
+//
+// A quote's timeline covers every version of it (versions=all): a revise
+// inserts a new quotes row, and the call that prompted the revise was logged
+// against the old one. A new touch is filed against the version on screen.
+//
+// The form shows only for roles the endpoint admits ("touch.log", registered
+// in rbac.ts ACTIONS and auth.js SERVER_ACTIONS). Esc in a note that has text
+// does not close the host drawer, so an unsent note is not lost.
 //
 // The form is prefilled so a rep types only what was said:
 //   * channel: the channel of the last touch on this object (else "call");
@@ -72,11 +81,14 @@ export const TouchLog: React.FC<{
   const [nextDate, setNextDate] = useState<string>(() => defaultNextFollowup());
   const [busy, setBusy] = useState(false);
   const [saveErr, setSaveErr] = useState<string | null>(null);
+  const canLog = RBAC.canDo("touch.log");
 
   useEffect(() => {
     let cancelled = false;
     setLoadErr(null);
-    Promise.resolve((AnvilBackend as any)?.communications?.list?.({ object_type: objectType, object_id: objectId }))
+    const filters: Record<string, string> = { object_type: objectType, object_id: objectId };
+    if (objectType === "quote") filters.versions = "all";
+    Promise.resolve((AnvilBackend as any)?.communications?.list?.(filters))
       .then((r: any) => { if (!cancelled) setRows(asRows(r)); })
       .catch((e: any) => { if (!cancelled) { setRows([]); setLoadErr(e?.message || String(e)); } });
     return () => { cancelled = true; };
@@ -129,48 +141,59 @@ export const TouchLog: React.FC<{
     }
   };
 
+  // The quote drawer and quotes.tsx both close on Esc from a window listener.
+  // Stopping the key here (React dispatches at the root, before window) keeps
+  // a note with text in it from being thrown away by a reflex Esc.
+  const onNoteKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Escape" && body.trim()) e.stopPropagation();
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <Card title="Log a touch" eyebrow="A call, meeting or visit outside Anvil. Never sent to the customer.">
-        {saveErr && (
-          <div style={{ marginBottom: 8 }}>
-            <Banner kind="bad" icon={Icon.alert} title="Could not log touch"><span className="mono-sm">{saveErr}</span></Banner>
+      {!canLog ? (
+        <div className="mono-sm" style={{ color: "var(--ink-3)" }}>Your role can read follow-ups but not log them.</div>
+      ) : (
+        <Card title="Log a touch" eyebrow="A call, meeting or visit outside Anvil. Never sent to the customer.">
+          {saveErr && (
+            <div style={{ marginBottom: 8 }}>
+              <Banner kind="bad" icon={Icon.alert} title="Could not log touch"><span className="mono-sm">{saveErr}</span></Banner>
+            </div>
+          )}
+          <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4, color: "var(--ink-3)" }}>
+              Channel
+              <select className="select" aria-label="Touch channel" value={channel} onChange={(e) => setChannelPick(e.target.value)}>
+                {TOUCH_CHANNELS.map((c: string) => <option key={c} value={c}>{CHANNEL_LABEL[c] || c}</option>)}
+              </select>
+            </label>
+            <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4, color: "var(--ink-3)", flex: 1, minWidth: 180 }}>
+              Contact
+              <select className="select" aria-label="Touch contact" value={contact}
+                disabled={!customerId}
+                onChange={(e) => setContactPick(e.target.value)}>
+                <option value="">{!customerId ? "No customer linked" : contacts.length === 0 ? "No contacts on file" : "No contact"}</option>
+                {/* The prefilled contact before the list arrives (or one since
+                    removed from the list) still shows as chosen, so what is on
+                    screen is what gets sent. */}
+                {contact && !contacts.some((c: any) => c.id === contact) && <option value={contact}>contact on file</option>}
+                {contacts.map((c: any) => (
+                  <option key={c.id} value={c.id}>{(c.name || c.email || String(c.id).slice(0, 8)) + (c.role ? " - " + c.role : "")}</option>
+                ))}
+              </select>
+            </label>
+            <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4, color: "var(--ink-3)" }}>
+              Next follow-up
+              <input className="input mono" type="date" aria-label="Next follow-up" value={nextDate} onChange={(e) => setNextDate(e.target.value)} />
+            </label>
           </div>
-        )}
-        <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
-          <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4, color: "var(--ink-3)" }}>
-            Channel
-            <select className="select" aria-label="Touch channel" value={channel} onChange={(e) => setChannelPick(e.target.value)}>
-              {TOUCH_CHANNELS.map((c: string) => <option key={c} value={c}>{CHANNEL_LABEL[c] || c}</option>)}
-            </select>
-          </label>
-          <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4, color: "var(--ink-3)", flex: 1, minWidth: 180 }}>
-            Contact
-            <select className="select" aria-label="Touch contact" value={contact}
-              disabled={!customerId}
-              onChange={(e) => setContactPick(e.target.value)}>
-              <option value="">{!customerId ? "No customer linked" : contacts.length === 0 ? "No contacts on file" : "No contact"}</option>
-              {/* The prefilled contact before the list arrives (or one since
-                  removed from the list) still shows as chosen, so what is on
-                  screen is what gets sent. */}
-              {contact && !contacts.some((c: any) => c.id === contact) && <option value={contact}>contact on file</option>}
-              {contacts.map((c: any) => (
-                <option key={c.id} value={c.id}>{(c.name || c.email || String(c.id).slice(0, 8)) + (c.role ? " - " + c.role : "")}</option>
-              ))}
-            </select>
-          </label>
-          <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4, color: "var(--ink-3)" }}>
-            Next follow-up
-            <input className="input mono" type="date" aria-label="Next follow-up" value={nextDate} onChange={(e) => setNextDate(e.target.value)} />
-          </label>
-        </div>
-        <textarea className="input" rows={3} aria-label="Touch notes" style={{ width: "100%", marginTop: 8 }}
-          placeholder="What was said, and what happens next"
-          value={body} onChange={(e) => setBody(e.target.value)} />
-        <div className="row" style={{ justifyContent: "flex-end", marginTop: 8 }}>
-          <Btn sm kind="primary" disabled={busy || !body.trim()} onClick={logTouch}>{busy ? "Logging..." : "Log touch"}</Btn>
-        </div>
-      </Card>
+          <textarea className="input" rows={3} aria-label="Touch notes" style={{ width: "100%", marginTop: 8 }}
+            placeholder="What was said, and what happens next"
+            value={body} onChange={(e) => setBody(e.target.value)} onKeyDown={onNoteKeyDown} />
+          <div className="row" style={{ justifyContent: "flex-end", marginTop: 8 }}>
+            <Btn sm kind="primary" disabled={busy || !body.trim()} onClick={logTouch}>{busy ? "Logging..." : "Log touch"}</Btn>
+          </div>
+        </Card>
+      )}
 
       <Card title="Follow-up timeline" eyebrow="Touches, quote emails and automatic nudges, newest first">
         {loadErr && <Banner kind="bad" icon={Icon.alert} title="Could not load follow-ups"><span className="mono-sm">{loadErr}</span></Banner>}
@@ -187,17 +210,20 @@ export const TouchLog: React.FC<{
                 : String(r.document_type || r.channel || "message").replace(/_/g, " ");
               const next = r.next_followup_at || r.metadata?.next_followup_at;
               const who = contactName(r.customer_contact_id);
+              const earlier = objectType === "quote" && r.object_id && r.object_id !== objectId;
               return (
                 <li key={r.id} style={{ borderBottom: "1px solid var(--line)", paddingBottom: 8 }}>
                   <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     <Chip k={touch ? "info" : "ghost"}>{label}</Chip>
                     {!touch && r.status && r.status !== "sent" && <Chip k={r.status === "failed" ? "bad" : "warn"}>{r.status}</Chip>}
+                    {earlier && <Chip k="ghost">earlier version</Chip>}
                     <span className="mono-sm" style={{ color: "var(--ink-3)" }}>{fmtDate(r.sent_at || r.created_at, "medium")}</span>
                     {who && <span className="mono-sm" style={{ color: "var(--ink-3)" }}>with {who}</span>}
                     {next && <span className="mono-sm" style={{ marginLeft: "auto", color: "var(--ink-2)" }}>next follow-up {fmtDay(next)}</span>}
                   </div>
                   <div style={{ fontSize: 12.5, color: "var(--ink-2)", whiteSpace: "pre-wrap", marginTop: 4 }}>
-                    {touch ? r.body : (r.subject || r.body || "")}
+                    {/* The API returns body for touches only (list.js). */}
+                    {touch ? r.body : (r.subject || "")}
                   </div>
                 </li>
               );

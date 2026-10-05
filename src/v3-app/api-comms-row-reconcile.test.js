@@ -128,7 +128,9 @@ describe("a send with no provider is not recorded as sent", () => {
 describe("the list endpoint selects only real columns", () => {
   it("does not 400 on a phantom column", () => {
     const src = readFileSync(join(API, "communications", "list.js"), "utf8");
-    const sel = src.match(/\.select\("([^"]+)"\)/);
+    // The select on the communications table (list.js also reads quotes to
+    // resolve a quote's versions; those columns are not communications').
+    const sel = src.match(/from\("communications"\)\s*\.select\("([^"]+)"\)/);
     expect(sel).toBeTruthy();
     for (const tok of sel[1].split(",").map((c) => c.trim())) {
       // A JSON projection ("alias:metadata->>key") reads a key out of a real

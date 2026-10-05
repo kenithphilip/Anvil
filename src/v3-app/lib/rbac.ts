@@ -129,6 +129,9 @@ export const ACTIONS: Record<string, Role[]> = {
   "service.submit_closure":["operator", "admin"],
   // Assigning a visit to a person is dispatch, not data entry.
   "service.assign":       ["operator", "admin"],
+  // Log a rep touch on a quote / opportunity (TouchLog). The server's coarse
+  // "write" roles; viewer and customer_support are read-only there.
+  "touch.log":            ["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "design_engineer", "design_manager"],
   "admin.add_member":     ["admin"],
   "admin.change_role":    ["admin"],
   "security.edit_redaction":["admin"],

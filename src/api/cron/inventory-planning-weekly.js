@@ -64,6 +64,10 @@ const projectEquivalentForPart = async (svc, tenantId, partNo) => {
     .eq("tenant_id", tenantId)
     .eq("part_no", partNo)
     .not("recommended_qty_180d", "is", null);
+  // A failed read is not "no data": falling through would size the floor
+  // from the next source (or the fallback of 1) and write that guess to
+  // item_master.safety_stock. Refuse instead, like the planner's other reads.
+  if (eip.error) throw new Error("installed parts floor: " + eip.error.message);
   const values = (eip.data || []).map((r) => Number(r.recommended_qty_180d)).filter((v) => v > 0);
   if (values.length) {
     values.sort((a, b) => a - b);
@@ -82,6 +86,7 @@ const projectEquivalentForPart = async (svc, tenantId, partNo) => {
     .eq("part_no", partNo)
     .order("total_qty", { ascending: false })
     .limit(1);
+  if (walk.error) throw new Error("bom floor: " + walk.error.message);
   const walkRow = walk.data?.[0];
   if (walkRow?.total_qty) return Number(walkRow.total_qty);
   return 1;     // safest non-zero fallback

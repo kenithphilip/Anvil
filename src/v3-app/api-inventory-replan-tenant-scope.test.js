@@ -13,7 +13,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-const H = vi.hoisted(() => ({ tenant: null, db: {}, reads: [], updates: [], inserts: [] }));
+const H = vi.hoisted(() => ({ tenant: null, db: {}, fail: {}, reads: [], updates: [], inserts: [] }));
 
 vi.mock("../api/_lib/auth.js", () => ({
   resolveContext: vi.fn(async () => ({ user: { id: "u-admin" }, tenantId: H.tenant, role: "admin" })),
@@ -116,6 +116,7 @@ vi.mock("../api/_lib/supabase.js", () => ({
         }
         if (mode === "upsert") return { data: null, error: null };
         H.reads.push({ table, eqs: api.eqs });
+        if (H.fail[table]) return { data: null, error: { message: H.fail[table] } };
         return { data: rows(), error: null };
       };
       const api = {
@@ -206,6 +207,7 @@ const safetyStockWritten = (partNo) => {
 
 beforeEach(() => {
   seed();
+  H.fail = {};
   H.reads = [];
   H.updates = [];
   H.inserts = [];
@@ -243,5 +245,32 @@ describe("replan sizes the project-equivalent floor from the caller's own BOM", 
       "bill_of_materials", "v_bom_where_used_recursive", "v_bom_where_used_recursive",
     ]);
     for (const r of bomReads) expect(r.eqs.tenant_id).toBe(TA);
+  });
+});
+
+// A failed floor read is not an empty one. Before, the planner read
+// walk.data?.[0], fell through to the fallback of 1 and wrote that guess to
+// item_master.safety_stock; a failed installed-parts read fell through to the
+// BOM walk the same way. The replan now refuses, as its other reads do.
+describe("replan refuses rather than guessing a floor when a floor read fails", () => {
+  const itemMasterWrites = () => H.updates.filter((u) => u.table === "item_master");
+
+  it("a where-used view error returns the error and writes no safety stock", async () => {
+    H.fail.v_bom_where_used_recursive = "canceling statement due to statement timeout";
+    const out = await runReplan(TA);
+    expect(out.statusCode).toBe(500);
+    expect(out.body.error.message).toBe("bom floor: canceling statement due to statement timeout");
+    expect(H.reads.filter((r) => r.table === "v_bom_where_used_recursive")).toHaveLength(1);
+    expect(itemMasterWrites()).toEqual([]);
+  });
+
+  it("an installed-parts error returns the error instead of falling through to the BOM", async () => {
+    H.fail.equipment_installed_parts = "relation \"equipment_installed_parts\" does not exist";
+    const out = await runReplan(TA);
+    expect(out.statusCode).toBe(500);
+    expect(out.body.error.message).toBe("installed parts floor: relation \"equipment_installed_parts\" does not exist");
+    expect(H.reads.filter((r) => r.table === "equipment_installed_parts")).toHaveLength(1);
+    expect(H.reads.filter((r) => r.table === "v_bom_where_used_recursive")).toEqual([]);
+    expect(itemMasterWrites()).toEqual([]);
   });
 });

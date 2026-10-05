@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Btn, Chip } from "../lib/primitives";
 import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
@@ -38,18 +38,28 @@ const SUGGESTION_WHY: Record<string, string> = {
 export const AccountOwnerPanel: React.FC<{
   customer: Customer;
   members: Member[];
+  // Set when the member list could not be loaded: the picker then has only
+  // the current owner and Unassigned, and says why.
+  membersError?: string | null;
   onChanged?: () => void;
-}> = ({ customer, members, onChanged }) => {
+}> = ({ customer, members, membersError, onChanged }) => {
   const canAssign = RBAC.canDo("customer.assign_owner");
   const currentOwner: string = customer.owner_user_id || "";
   const [draft, setDraft] = useState<string>(currentOwner);
   const [moveOpps, setMoveOpps] = useState(false);
   const [busy, setBusy] = useState(false);
   const [suggestion, setSuggestion] = useState<any>(null);
+  // True once the person has used the picker. A suggestion that arrives after
+  // that must not replace their choice: Save would then send the computed
+  // guess instead of the member they picked.
+  const touched = useRef(false);
 
   // Reset the staged choice whenever a different customer (or a saved owner)
   // arrives, so switching rows never carries a stale draft across.
-  useEffect(() => { setDraft(currentOwner); setMoveOpps(false); setSuggestion(null); }, [customer.id, currentOwner]);
+  useEffect(() => {
+    touched.current = false;
+    setDraft(currentOwner); setMoveOpps(false); setSuggestion(null);
+  }, [customer.id, currentOwner]);
 
   // Ask for a suggestion only where one can be acted on: an unowned account,
   // seen by someone who may assign it.
@@ -61,8 +71,8 @@ export const AccountOwnerPanel: React.FC<{
         if (cancelled) return;
         const s = (r?.suggestions || []).find((x: any) => x.customer_id === customer.id) || null;
         setSuggestion(s);
-        // Preselect, do not save.
-        if (s?.owner_user_id) setDraft(s.owner_user_id);
+        // Preselect, do not save; and only into a picker nobody has touched.
+        if (s?.owner_user_id && !touched.current) setDraft(s.owner_user_id);
       })
       .catch(() => { if (!cancelled) setSuggestion(null); });
     return () => { cancelled = true; };
@@ -75,6 +85,19 @@ export const AccountOwnerPanel: React.FC<{
   const dirty = draft !== currentOwner;
   const suggested = suggestion?.owner_user_id || "";
   const suggestedName = suggestion?.owner_name || memberLabel(options.find((m) => m.user_id === suggested)) || suggested.slice(0, 8);
+  // A controlled <select> whose value matches no option shows its FIRST
+  // option, "Unassigned", beside a chip naming the owner, and choosing
+  // Unassigned then fires no change. So the current owner (an ex-member, or
+  // anyone while the member list is loading or failed) and the suggestion get
+  // an option of their own when the member list does not have them.
+  const listed = new Set(options.map((m) => m.user_id));
+  const offList: { id: string; label: string }[] = [];
+  if (currentOwner && !listed.has(currentOwner)) {
+    offList.push({ id: currentOwner, label: ownerName + (options.length ? " (not an approved member)" : "") });
+  }
+  if (suggested && suggested !== currentOwner && !listed.has(suggested)) {
+    offList.push({ id: suggested, label: suggestedName });
+  }
 
   const save = async () => {
     if (!canAssign || !dirty) return;
@@ -107,10 +130,11 @@ export const AccountOwnerPanel: React.FC<{
               aria-label="Account owner"
               disabled={busy}
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => { touched.current = true; setDraft(e.target.value); }}
               style={{ minWidth: 220 }}
             >
               <option value="">Unassigned</option>
+              {offList.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
               {options.map((m) => <option key={m.user_id} value={m.user_id}>{memberLabel(m)}</option>)}
             </select>
             {!!draft && (
@@ -128,6 +152,11 @@ export const AccountOwnerPanel: React.FC<{
           </>
         )}
       </div>
+      {canAssign && membersError && (
+        <div className="mono-sm" role="alert" style={{ color: "var(--bad)", fontSize: 10, marginTop: 4 }}>
+          Could not load the team list, so no other member can be picked: {membersError}
+        </div>
+      )}
       {canAssign && !currentOwner && suggestion && (
         <div className="mono-sm" style={{ color: "var(--ink-4)", fontSize: 10, marginTop: 4 }}>
           {suggested

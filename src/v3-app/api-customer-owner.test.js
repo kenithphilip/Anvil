@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const H = vi.hoisted(() => ({ ctx: null, store: {}, noOwnerColumn: false, users: {}, calls: [] }));
+const H = vi.hoisted(() => ({ ctx: null, store: {}, noOwnerColumn: false, users: {}, calls: [], authCalls: [], failRead: {} }));
 
 vi.mock("../api/_lib/auth.js", async (importOriginal) => {
   const actual = await importOriginal();
@@ -22,25 +22,32 @@ vi.mock("../api/_lib/auth.js", async (importOriginal) => {
 
 // ── in-memory Supabase ─────────────────────────────────────────────────────
 // Enough of the PostgREST builder for these handlers: filters (eq, in, is,
-// gte, not in, or), order, range, limit, select projection, update, insert,
-// upsert-on-conflict, maybeSingle/single. With H.noOwnerColumn set, the
-// customers table behaves as it does before migration 227: rows have no
-// owner_user_id, and any query that names the column fails with 42703.
+// gte, not in, not is null, or), order, range, limit, select projection,
+// update, insert, upsert-on-conflict, delete, maybeSingle/single. With
+// H.noOwnerColumn set, the customers table behaves as it does before
+// migration 227: rows have no owner_user_id, and any query that names the
+// column fails with 42703. H.failRead[table] makes every read of that table
+// fail with the given error (a statement timeout, say).
 const missingOwner = () => ({ data: null, error: { code: "42703", message: "column customers.owner_user_id does not exist" } });
 const makeSvc = () => ({
   auth: {
     admin: {
-      getUserById: async (id) => ({ data: { user: H.users[id] || null }, error: null }),
+      getUserById: async (id) => {
+        H.authCalls.push(id);
+        if (H.authError) return { data: { user: null }, error: H.authError };
+        return { data: { user: H.users[id] || null }, error: null };
+      },
     },
   },
   from(table) {
     if (!H.store[table]) H.store[table] = [];
     const ds = H.store[table];
-    const st = { filters: [], mode: "select", patch: null, row: null, onConflict: null, cols: "*", single: null, order: null, range: null, limit: null, names: [] };
+    const st = { filters: [], mode: "select", patch: null, row: null, onConflict: null, cols: "*", single: null, order: null, range: null, limit: null, names: [], inSizes: [] };
     const nameCol = (c) => { st.names.push(c); };
     const matches = (r) => st.filters.every((f) => f(r));
     const run = () => {
-      H.calls.push({ table, mode: st.mode, names: [...st.names], cols: st.cols, patch: st.patch, row: st.row });
+      H.calls.push({ table, mode: st.mode, names: [...st.names], cols: st.cols, patch: st.patch, row: st.row, inSizes: [...st.inSizes] });
+      if (st.mode === "select" && H.failRead[table]) return { data: null, error: H.failRead[table] };
       if (table === "customers" && H.noOwnerColumn) {
         const touches = st.names.includes("owner_user_id") || /owner_user_id/.test(st.cols)
           || (st.patch && "owner_user_id" in st.patch) || (st.row && "owner_user_id" in st.row);
@@ -54,6 +61,9 @@ const makeSvc = () => ({
         const rows = Array.isArray(st.row) ? st.row : [st.row];
         for (const r of rows) ds.push({ id: r.id || "gen-" + ds.length, ...r });
         out = rows;
+      } else if (st.mode === "delete") {
+        out = ds.filter(matches);
+        H.store[table] = ds.filter((r) => !matches(r));
       } else if (st.mode === "upsert") {
         const keys = (st.onConflict || "id").split(",");
         let hit = ds.find((r) => keys.every((k) => r[k] === st.row[k]));
@@ -80,11 +90,12 @@ const makeSvc = () => ({
     const b = {
       select(cols) { if (st.mode === "select") st.cols = cols || "*"; return b; },
       eq(c, v) { nameCol(c); st.filters.push((r) => r[c] === v); return b; },
-      in(c, vs) { nameCol(c); st.filters.push((r) => vs.includes(r[c])); return b; },
+      in(c, vs) { nameCol(c); st.inSizes.push(vs.length); st.filters.push((r) => vs.includes(r[c])); return b; },
       is(c, v) { nameCol(c); st.filters.push((r) => (r[c] ?? null) === v); return b; },
       gte(c, v) { nameCol(c); st.filters.push((r) => r[c] >= v); return b; },
       not(c, op, v) {
         nameCol(c);
+        if (op === "is" && v === null) { st.filters.push((r) => (r[c] ?? null) !== null); return b; }
         if (op !== "in") throw new Error("fake: not(" + op + ") unsupported");
         const list = String(v).replace(/^\(|\)$/g, "").split(",");
         st.filters.push((r) => !list.includes(r[c]));
@@ -108,6 +119,7 @@ const makeSvc = () => ({
       update(patch) { st.mode = "update"; st.patch = patch; return b; },
       insert(row) { st.mode = "insert"; st.row = row; return b; },
       upsert(row, opts) { st.mode = "upsert"; st.row = row; st.onConflict = opts && opts.onConflict; return b; },
+      delete() { st.mode = "delete"; return b; },
       maybeSingle() { st.single = "maybe"; return Promise.resolve(run()); },
       single() { st.single = "one"; return Promise.resolve(run()); },
       then(res, rej) { return Promise.resolve(run()).then(res, rej); },
@@ -123,7 +135,8 @@ const { default: membersHandler } = await import("../api/admin/members.js");
 const { creditReviewRequest } = await import("../api/agents/_handlers/credit_review_request.js");
 const { SERVER_ACTIONS } = await import("../api/_lib/auth.js");
 const { ACTIONS } = await import("./lib/rbac");
-const { fetchAllRows, tallyOwners, strictMajorityOwner, isMissingOwnerColumn } = await import("../api/_lib/customer-owner.js");
+const { default: mergeHandler } = await import("../api/customers/merge.js");
+const { fetchAllRows, tallyOwners, strictMajorityOwner, isMissingOwnerColumn, OWNER_READ_PAGING } = await import("../api/_lib/customer-owner.js");
 
 const call = async (handler, { method = "GET", query = {}, body } = {}) => {
   const res = { statusCode: 200, body: null, setHeader() { return this; }, status(c) { this.statusCode = c; return this; }, json(o) { this.body = o; return this; }, send(p) { this.body = p; return this; }, end(p) { if (p != null) this.body = p; return this; } };
@@ -150,10 +163,14 @@ const asRole = (role, userId = MGR) => { H.ctx = { user: { id: userId }, tenantI
 const daysAgo = (n) => new Date(Date.now() - n * 86400 * 1000).toISOString();
 const customer = (id) => H.store.customers.find((c) => c.id === id);
 const auditRows = () => (H.store.audit_events || []).filter((a) => a.action === "customer_owner_change");
+const oppAuditRows = () => (H.store.audit_events || []).filter((a) => a.action === "opp_owner_change");
 
 beforeEach(() => {
   H.noOwnerColumn = false;
   H.calls = [];
+  H.authCalls = [];
+  H.authError = null;
+  H.failRead = {};
   H.users = {
     [MGR]: { id: MGR, email: "mgr@seller.test", user_metadata: { name: "Meera Manager" } },
     [U2]: { id: U2, email: "ravi@seller.test", user_metadata: { name: "Ravi Rep" } },
@@ -260,6 +277,23 @@ describe("POST /api/customers/owner: who the owner may be", () => {
   });
 });
 
+describe("POST /api/customers/owner: a large selection", () => {
+  it("assigns 150 accounts with no id filter carrying more than 100 ids", async () => {
+    // An in.(...) filter rides in the URL: 500 uuids would be about 18 KB.
+    const many = Array.from({ length: 150 }, (_, i) => "dddddddd-0000-4000-8000-" + String(i).padStart(12, "0"));
+    H.store.customers.push(...many.map((id) => ({ id, tenant_id: T1, customer_key: id, customer_name: id, owner_user_id: null })));
+    asRole("sales_manager");
+    const r = await call(ownerHandler, { method: "POST", body: { customer_ids: many, owner_user_id: U2, move_open_opportunities: true } });
+    expect(r.status).toBe(200);
+    expect(r.body.updated).toHaveLength(150);
+    expect(many.every((id) => customer(id).owner_user_id === U2)).toBe(true);
+    const sizes = H.calls.flatMap((c) => c.inSizes);
+    expect(sizes.length).toBeGreaterThan(0);
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(100);
+    expect(auditRows()).toHaveLength(150);
+  });
+});
+
 describe("POST /api/customers/owner: which customers", () => {
   it("another tenant's customer id is rejected, and the batch is not partly applied", async () => {
     asRole("sales_manager");
@@ -287,16 +321,18 @@ describe("POST /api/customers/owner: which customers", () => {
 });
 
 describe("POST /api/customers/owner: moving open opportunities", () => {
+  const STALE = daysAgo(200);
   beforeEach(() => {
     H.store.opportunities = [
-      { id: "o-prev", tenant_id: T1, customer_id: C2, owner_id: U3, stage: "RFQ" },
-      { id: "o-nobody", tenant_id: T1, customer_id: C2, owner_id: null, stage: "QUALIFICATION" },
-      { id: "o-other-rep", tenant_id: T1, customer_id: C2, owner_id: MGR, stage: "RFQ" },
-      { id: "o-closed", tenant_id: T1, customer_id: C2, owner_id: U3, stage: "CLOSE_WON" },
-      { id: "o-other-acct", tenant_id: T1, customer_id: C1, owner_id: U3, stage: "RFQ" },
+      { id: "o-prev", tenant_id: T1, customer_id: C2, owner_id: U3, stage: "RFQ", updated_at: STALE },
+      { id: "o-nobody", tenant_id: T1, customer_id: C2, owner_id: null, stage: "QUALIFICATION", updated_at: STALE },
+      { id: "o-other-rep", tenant_id: T1, customer_id: C2, owner_id: MGR, stage: "RFQ", updated_at: STALE },
+      { id: "o-closed", tenant_id: T1, customer_id: C2, owner_id: U3, stage: "CLOSE_WON", updated_at: STALE },
+      { id: "o-other-acct", tenant_id: T1, customer_id: C1, owner_id: U3, stage: "RFQ", updated_at: STALE },
     ];
   });
   const ownerOf = (id) => H.store.opportunities.find((o) => o.id === id).owner_id;
+  const opp = (id) => H.store.opportunities.find((o) => o.id === id);
 
   it("moves the previous owner's and nobody's OPEN opportunities on that account, and nothing else", async () => {
     asRole("sales_manager");
@@ -309,6 +345,84 @@ describe("POST /api/customers/owner: moving open opportunities", () => {
     expect(ownerOf("o-other-acct")).toBe(U3);
     expect(r.body.moved_opportunities).toBe(2);
     expect(auditRows()[0].after_payload.moved_opportunity_ids.sort()).toEqual(["o-nobody", "o-prev"]);
+  });
+
+  it("writes an audit row per moved opportunity naming who held it before, so the move can be undone", async () => {
+    asRole("sales_manager");
+    await call(ownerHandler, { method: "POST", body: { customer_ids: [C2], owner_user_id: U2, move_open_opportunities: true } });
+    const rows = oppAuditRows();
+    expect(rows.map((a) => a.object_id).sort()).toEqual(["o-nobody", "o-prev"]);
+    for (const a of rows) {
+      expect(a.object_type).toBe("opportunity");
+      expect(a.after_payload).toEqual({ owner_id: U2 });
+      expect(a.actor).toBe(MGR);
+    }
+    expect(rows.find((a) => a.object_id === "o-prev").before_payload).toEqual({ owner_id: U3 });
+    expect(rows.find((a) => a.object_id === "o-nobody").before_payload).toEqual({ owner_id: null });
+  });
+
+  it("a move is not activity on the deal: updated_at is left as it was", async () => {
+    asRole("sales_manager");
+    await call(ownerHandler, { method: "POST", body: { customer_ids: [C2], owner_user_id: U2, move_open_opportunities: true } });
+    expect(ownerOf("o-prev")).toBe(U2);
+    expect(opp("o-prev").updated_at).toBe(STALE);
+    expect(opp("o-nobody").updated_at).toBe(STALE);
+  });
+
+  it("each account moves only what ITS previous owner held: one batch over accounts with different owners", async () => {
+    // C2 was U3's, so U3's open deal on C2 moves. C1 was nobody's, so U3's
+    // deal on C1 is U3's own pipeline and stays; only C1's unowned deal moves.
+    H.store.opportunities.push({ id: "o-c1-nobody", tenant_id: T1, customer_id: C1, owner_id: null, stage: "RFQ", updated_at: STALE });
+    asRole("sales_manager");
+    const r = await call(ownerHandler, { method: "POST", body: { customer_ids: [C1, C2], owner_user_id: U2, move_open_opportunities: true } });
+    expect(r.status).toBe(200);
+    expect(ownerOf("o-prev")).toBe(U2);
+    expect(ownerOf("o-nobody")).toBe(U2);
+    expect(ownerOf("o-c1-nobody")).toBe(U2);
+    expect(ownerOf("o-other-acct")).toBe(U3);
+    expect(ownerOf("o-other-rep")).toBe(MGR);
+    expect(r.body.moved_opportunities).toBe(3);
+    const byCustomer = Object.fromEntries(auditRows().map((a) => [a.object_id, a.after_payload.moved_opportunity_ids.sort()]));
+    expect(byCustomer).toEqual({ [C1]: ["o-c1-nobody"], [C2]: ["o-nobody", "o-prev"] });
+  });
+
+  it("writes every audit row of the request in one insert, not one round trip per row", async () => {
+    asRole("sales_manager");
+    await call(ownerHandler, { method: "POST", body: { customer_ids: [C1, C2, C3], owner_user_id: U2, move_open_opportunities: true } });
+    const inserts = H.calls.filter((c) => c.table === "audit_events" && c.mode === "insert");
+    expect(inserts).toHaveLength(1);
+    // 3 customers changed, 2 opportunities moved.
+    expect(inserts[0].row).toHaveLength(5);
+    expect(auditRows()).toHaveLength(3);
+  });
+
+  it("pages past the first page of open opportunities, and moves none it could not read in full", async () => {
+    const pad = (n) => String(n).padStart(2, "0");
+    H.store.opportunities = Array.from({ length: 5 }, (_, i) => ({ id: "o-" + pad(i), tenant_id: T1, customer_id: C2, owner_id: U3, stage: "RFQ" }));
+    const saved = { ...OWNER_READ_PAGING };
+    asRole("sales_manager");
+    try {
+      // Three pages of two: all five read, all five moved.
+      Object.assign(OWNER_READ_PAGING, { pageSize: 2, maxPages: 3 });
+      const r = await call(ownerHandler, { method: "POST", body: { customer_ids: [C2], owner_user_id: U2, move_open_opportunities: true } });
+      expect(r.body.moved_opportunities).toBe(5);
+      expect(H.store.opportunities.every((o) => o.owner_id === U2)).toBe(true);
+      // Two pages of two: the read stops short, so nothing moves and the
+      // response says the owner was saved without the opportunities.
+      for (const o of H.store.opportunities) o.owner_id = U3;
+      customer(C2).owner_user_id = U3;
+      Object.assign(OWNER_READ_PAGING, { pageSize: 2, maxPages: 2 });
+      const capped = await call(ownerHandler, { method: "POST", body: { customer_ids: [C2], owner_user_id: U2, move_open_opportunities: true } });
+      expect(capped.status).toBe(200);
+      expect(customer(C2).owner_user_id).toBe(U2);
+      expect(capped.body.moved_opportunities).toBe(0);
+      expect(H.store.opportunities.every((o) => o.owner_id === U3)).toBe(true);
+      expect(capped.body.warnings).toHaveLength(1);
+      expect(capped.body.warnings[0].customer_ids).toEqual([C2]);
+      expect(capped.body.warnings[0].message).toMatch(/owner saved; open opportunities on 1 account not moved/);
+    } finally {
+      Object.assign(OWNER_READ_PAGING, saved);
+    }
   });
 
   it("leaves opportunities alone when the box is not ticked", async () => {
@@ -357,11 +471,24 @@ describe("GET /api/customers/owner?suggest=1: a strict majority or nothing", () 
     expect(s.total).toBe(4);
   });
 
-  it("unattributed records count toward the total: 1 of 2 is not a majority", async () => {
+  it("an unowned opportunity counts toward the total: 1 of 2 is not a majority", async () => {
     asRole("sales_engineer", U2);
-    H.store.quotes = [quote(C1, U2), quote(C1, null)];
+    H.store.opportunities = [opp(C1, null)];
+    H.store.quotes = [quote(C1, U2)];
     const r = await call(ownerHandler, { query: { suggest: "1" } });
-    expect(suggestionFor(r.body, C1).owner_user_id).toBeNull();
+    const s = suggestionFor(r.body, C1);
+    expect(s.owner_user_id).toBeNull();
+    expect(s.reason).toBe("no_majority");
+    expect(s.total).toBe(2);
+  });
+
+  it("an uploaded quote (no author) is nobody's vote: the rep who wrote the in-app quotes is suggested", async () => {
+    // _lib/quote-ingest.js builds the quote head without created_by. Counting
+    // those would make 2 of 5 and bury the only author on the account.
+    asRole("sales_engineer", U2);
+    H.store.quotes = [quote(C1, U2), quote(C1, U2), quote(C1, null), quote(C1, null), quote(C1, null)];
+    const r = await call(ownerHandler, { query: { suggest: "1", customer_id: C1 } });
+    expect(r.body.suggestions[0]).toMatchObject({ owner_user_id: U2, reason: "majority", votes: 2, total: 2 });
   });
 
   it("ignores evidence older than 365 days and evidence from another tenant", async () => {
@@ -412,6 +539,27 @@ describe("GET /api/customers/owner?suggest=1: a strict majority or nothing", () 
     expect(r.body.complete).toBe(true);
   });
 
+  it("refuses to suggest from evidence it could not read in full", async () => {
+    // U2 leads on every page that WAS read; the cap stops the read before the
+    // rest. A guess about the unread part is not offered as a suggestion.
+    asRole("sales_engineer", U2);
+    const pad = (n) => String(n).padStart(3, "0");
+    H.store.quotes = Array.from({ length: 5 }, (_, i) => quote(C1, U2, 10, "q-" + pad(i)));
+    const saved = { ...OWNER_READ_PAGING };
+    Object.assign(OWNER_READ_PAGING, { pageSize: 2, maxPages: 2 });
+    try {
+      const r = await call(ownerHandler, { query: { suggest: "1", customer_id: C1 } });
+      expect(r.status).toBe(200);
+      expect(r.body.complete).toBe(false);
+      expect(r.body.suggestions[0]).toMatchObject({ customer_id: C1, owner_user_id: null, reason: "evidence_incomplete" });
+    } finally {
+      Object.assign(OWNER_READ_PAGING, saved);
+    }
+    // The same evidence read in full does suggest U2.
+    const full = await call(ownerHandler, { query: { suggest: "1", customer_id: C1 } });
+    expect(full.body.suggestions[0]).toMatchObject({ owner_user_id: U2, votes: 5, total: 5 });
+  });
+
   it("does not write anything", async () => {
     asRole("sales_manager");
     H.store.quotes = [quote(C1, U2)];
@@ -453,10 +601,11 @@ describe("customer-owner helpers", () => {
 });
 
 describe("GET /api/customers: owner and owner filter", () => {
-  it("returns owner_user_id and the owner's display name", async () => {
+  it("returns owner_user_id, and the owner's display name when asked (include=owner_name)", async () => {
     asRole("viewer");
-    const r = await call(customersHandler);
+    const r = await call(customersHandler, { query: { include: "owner_name" } });
     expect(r.status).toBe(200);
+    expect(H.authCalls).toEqual([U3]);
     const bolt = r.body.customers.find((c) => c.id === C2);
     expect(bolt.owner_user_id).toBe(U3);
     expect(bolt.owner_name).toBe("Sana Sales");
@@ -464,6 +613,17 @@ describe("GET /api/customers: owner and owner filter", () => {
     expect(acme.owner_user_id).toBeNull();
     expect(acme.owner_name).toBeNull();
     expect(r.body.customers.map((c) => c.id)).not.toContain(CX);
+  });
+
+  it("without include=owner_name it makes no auth lookup (a picker does not pay for names)", async () => {
+    asRole("viewer");
+    const r = await call(customersHandler);
+    expect(r.status).toBe(200);
+    const bolt = r.body.customers.find((c) => c.id === C2);
+    expect(bolt.owner_user_id).toBe(U3);
+    expect("owner_name" in bolt).toBe(false);
+    expect(H.calls.some((c) => c.table === "customers" && c.mode === "select")).toBe(true);
+    expect(H.authCalls).toEqual([]);
   });
 
   it("owner=me is the caller's accounts", async () => {
@@ -561,8 +721,39 @@ describe("credit_review_request reads the account owner", () => {
     expect(H.calls.some((c) => c.table === "users")).toBe(false);
   });
 
-  it("does not email an owner who is no longer an approved member", async () => {
+  it("does not email an owner who is no longer an approved member, and says that is why", async () => {
     H.store.tenant_members = H.store.tenant_members.filter((m) => m.user_id !== U3);
+    const out = await creditReviewRequest(goal, { svc: makeSvc() });
+    expect(out.action).toBe("escalate");
+    expect(out.action_payload.reason).toBe("owner_not_member");
+    expect(out.thought).toMatch(/no longer an approved member/);
+    expect(H.authCalls).toEqual([]);
+  });
+
+  it("a failed membership read is a retry, not an escalation with a false reason", async () => {
+    H.failRead.tenant_members = { code: "57014", message: "canceling statement due to statement timeout" };
+    const out = await creditReviewRequest(goal, { svc: makeSvc() });
+    expect(out.action).toBe("noop");
+    expect(out.thought).toMatch(/statement timeout/);
+  });
+
+  it("a failed auth lookup of the owner is a retry too", async () => {
+    H.authError = { status: 503, message: "auth service unavailable" };
+    const out = await creditReviewRequest(goal, { svc: makeSvc() });
+    expect(out.action).toBe("noop");
+    expect(out.thought).toMatch(/auth service unavailable/);
+  });
+
+  it("an owner whose login has no email escalates with that reason", async () => {
+    H.users[U3] = { id: U3, user_metadata: { full_name: "Sana Sales" } };
+    const out = await creditReviewRequest(goal, { svc: makeSvc() });
+    expect(out.action).toBe("escalate");
+    expect(out.action_payload.reason).toBe("owner_has_no_email");
+    expect(out.thought).toMatch(/no email address/);
+  });
+
+  it("with no owner and no finance alias it escalates as before", async () => {
+    customer(C2).owner_user_id = null;
     const out = await creditReviewRequest(goal, { svc: makeSvc() });
     expect(out.action).toBe("escalate");
     expect(out.action_payload.reason).toBe("no_internal_recipient");
@@ -574,6 +765,58 @@ describe("credit_review_request reads the account owner", () => {
     const out = await creditReviewRequest(goal, { svc: makeSvc() });
     expect(out.action).toBe("send_email");
     expect(out.action_payload.to).toBe("fin@seller.test");
+  });
+});
+
+describe("POST /api/customers/merge keeps the account owner", () => {
+  const D1 = "cccccccc-0000-4000-8000-0000000000d1";
+  const D2 = "cccccccc-0000-4000-8000-0000000000d2";
+  const merge = (primary, dups) => call(mergeHandler, { method: "POST", body: { primary_id: primary, duplicate_ids: dups } });
+  const mergeAudit = () => H.store.audit_events.find((a) => a.action === "customer_merge");
+  beforeEach(() => {
+    H.store.customers.push(
+      { id: D1, tenant_id: T1, customer_key: "acme-sap", customer_name: "ACME (SAP)", owner_user_id: U2 },
+      { id: D2, tenant_id: T1, customer_key: "acme-ns", customer_name: "ACME (NS)", owner_user_id: null },
+    );
+  });
+
+  it("an unowned primary takes the owner its duplicates agree on, and the audit says so", async () => {
+    asRole("admin");
+    const r = await merge(C1, [D1, D2]);
+    expect(r.status).toBe(200);
+    expect(customer(C1).owner_user_id).toBe(U2);
+    expect(customer(D1)).toBeUndefined();
+    expect(mergeAudit().after_payload.owner).toEqual({
+      outcome: "carried", owner_user_id: U2, duplicate_owners: [{ customer_id: D1, owner_user_id: U2 }],
+    });
+  });
+
+  it("duplicates with DIFFERENT owners leave the primary unassigned, and both owners are on the audit", async () => {
+    customer(D2).owner_user_id = U3;
+    asRole("admin");
+    const r = await merge(C1, [D1, D2]);
+    expect(r.status).toBe(200);
+    expect(customer(C1).owner_user_id).toBeNull();
+    const audit = mergeAudit().after_payload.owner;
+    expect(audit.outcome).toBe("conflict_left_unassigned");
+    expect(audit.duplicate_owners.map((d) => d.owner_user_id).sort()).toEqual([U2, U3].sort());
+  });
+
+  it("an owned primary keeps its owner, and the duplicate's owner is recorded", async () => {
+    asRole("admin");
+    await merge(C2, [D1]);
+    expect(customer(C2).owner_user_id).toBe(U3);
+    expect(mergeAudit().after_payload.owner).toMatchObject({ outcome: "primary_kept", owner_user_id: U3 });
+  });
+
+  it("before migration 227 it never writes the owner column", async () => {
+    H.noOwnerColumn = true;
+    asRole("admin");
+    const r = await merge(C1, [D1]);
+    expect(r.status).toBe(200);
+    const patch = H.calls.find((c) => c.table === "customers" && c.mode === "update").patch;
+    expect(patch.external_ref).toBeDefined();
+    expect("owner_user_id" in patch).toBe(false);
   });
 });
 

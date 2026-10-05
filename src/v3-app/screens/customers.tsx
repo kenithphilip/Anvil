@@ -168,15 +168,21 @@ const CUSTOMER_TYPE_CHIP = (t) => {
   return map[t] || { k: "ghost", label: (t || "—").toLowerCase() };
 };
 
-// Account owner filter (migration 227). "all" reads the whole list; the other
-// two ask the server (GET /api/customers?owner=me|none), so a tenant with more
-// customers than one page still sees every account it owns.
-type OwnerFilter = "all" | "mine" | "none";
-const OWNER_FILTER_PARAM: Record<Exclude<OwnerFilter, "all">, string> = { mine: "me", none: "none" };
+// Account owner filter (migration 227). "all" reads the whole list; the others
+// ask the server (GET /api/customers?owner=me|none|<member id>), so a tenant
+// with more customers than one page still sees every account in the view.
+// "user:<id>" is one member's accounts, offered to managers (who have the
+// member list).
+type OwnerFilter = "all" | "mine" | "none" | `user:${string}`;
+const ownerFilterParam = (f: OwnerFilter): string =>
+  f === "mine" ? "me" : f === "none" ? "none" : f.slice("user:".length);
+// The list asks for owner names (one auth lookup per distinct owner) only
+// here, where the Owner column renders them.
+const LIST_INCLUDE = "owner_name";
 
 const WiredCustomers = () => {
   const list = useFetch(
-    () => AnvilBackend?.customers?.list?.() || Promise.resolve({ customers: [] }),
+    () => AnvilBackend?.customers?.list?.({ include: LIST_INCLUDE }) || Promise.resolve({ customers: [] }),
     []
   );
   // The table's own fetch when an owner filter is on. The full list above
@@ -186,7 +192,7 @@ const WiredCustomers = () => {
   const ownerList = useFetch(
     () => (ownerFilter === "all"
       ? Promise.resolve(null)
-      : (AnvilBackend?.customers?.list?.({ owner: OWNER_FILTER_PARAM[ownerFilter] }) || Promise.resolve({ customers: [] }))),
+      : (AnvilBackend?.customers?.list?.({ owner: ownerFilterParam(ownerFilter), include: LIST_INCLUDE }) || Promise.resolve({ customers: [] }))),
     [ownerFilter]
   );
   // Assigning owners is a manager's call (customer.assign_owner); only they
@@ -199,11 +205,28 @@ const WiredCustomers = () => {
     [canAssignOwner]
   );
   const memberOptions = approvedMembers(membersResp.data);
+  const membersError = canAssignOwner && membersResp.error
+    ? String((membersResp.error as any)?.message || membersResp.error)
+    : null;
+  // In the Unassigned view a manager sees, per account, who the history says
+  // owns it (GET /api/customers/owner?suggest=1, every unowned account at
+  // once). Shown, never saved: assigning is still a tick and a click.
+  const suggestionsResp = useFetch(
+    () => (canAssignOwner && ownerFilter === "none"
+      ? (AnvilBackend?.customers?.ownerSuggestions?.() || Promise.resolve(null))
+      : Promise.resolve(null)),
+    [canAssignOwner, ownerFilter]
+  );
+  const suggestionByCustomer = new Map<string, any>(
+    (((suggestionsResp.data as any)?.suggestions) || [])
+      .filter((x: any) => x && x.owner_user_id)
+      .map((x: any) => [x.customer_id, x]),
+  );
   const [checked, setChecked] = useState<Set<string>>(() => new Set());
   const [bulkOwner, setBulkOwner] = useState("");
   const [bulkMove, setBulkMove] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
-  const reloadAll = () => { list.reload(); ownerList.reload(); };
+  const reloadAll = () => { list.reload(); ownerList.reload(); suggestionsResp.reload(); };
   const changeOwnerFilter = (f: OwnerFilter) => { setOwnerFilter(f); setChecked(new Set()); };
   const toggleChecked = (id: string) => setChecked((prev) => {
     const next = new Set(prev);
@@ -341,6 +364,11 @@ const WiredCustomers = () => {
       (r.gstin || "").toLowerCase().includes(q)
     );
   });
+  // Ticked rows the search (or the 200-row cap) now hides. They stay ticked,
+  // so a manager can gather accounts across several searches, but the bulk
+  // bar says how many will be assigned that are not on screen.
+  const shownIds = new Set(filtered.slice(0, 200).map((r) => r.id));
+  const hiddenChecked = Array.from(checked).filter((id) => !shownIds.has(id)).length;
 
   return (
     <>
@@ -367,6 +395,7 @@ const WiredCustomers = () => {
             <option value="all">All customers</option>
             <option value="mine">Mine</option>
             <option value="none">Unassigned</option>
+            {memberOptions.map((m) => <option key={m.user_id} value={`user:${m.user_id}`}>Owned by {memberLabel(m)}</option>)}
           </select>
           <Btn icon kind="ghost" sm onClick={reloadAll} title="Refresh">{Icon.cycle}</Btn>
           {(canApply || canSubmit) && <Btn sm kind="primary" onClick={() => setShowNew(true)}>{Icon.plus} New customer</Btn>}
@@ -537,6 +566,7 @@ const WiredCustomers = () => {
               <AccountOwnerPanel
                 customer={selectedCustomer}
                 members={memberOptions}
+                membersError={membersError}
                 onChanged={reloadAll}
               />
             </div>
@@ -567,6 +597,11 @@ const WiredCustomers = () => {
           {canAssignOwner && checked.size > 0 && (
             <div className="row" role="region" aria-label="Bulk assign owner" style={{ gap: 10, alignItems: "center", padding: "10px 12px", borderBottom: "1px solid var(--hairline-2)", flexWrap: "wrap" }}>
               <span className="mono-sm">{checked.size} selected</span>
+              {hiddenChecked > 0 && (
+                <span className="mono-sm" data-testid="bulk-hidden" style={{ color: "var(--ink-3)" }}>
+                  {hiddenChecked} of them not shown by the current search, and assigned too
+                </span>
+              )}
               <select
                 className="select"
                 aria-label="Bulk owner"
@@ -586,6 +621,11 @@ const WiredCustomers = () => {
               )}
               <Btn sm kind="primary" disabled={bulkBusy} onClick={bulkAssign}>{bulkBusy ? "Saving..." : "Assign owner"}</Btn>
               <Btn sm kind="ghost" onClick={() => setChecked(new Set())}>Clear selection</Btn>
+              {membersError && (
+                <span className="mono-sm" role="alert" style={{ color: "var(--bad)" }}>
+                  Could not load the team list: {membersError}
+                </span>
+              )}
             </div>
           )}
           {ownerFilter !== "all" && ownerList.loading ? (
@@ -600,7 +640,7 @@ const WiredCustomers = () => {
             <div className="body" style={{ padding: 28, textAlign: "center", color: "var(--ink-3)", display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}>
               {ownerFilter !== "all" && !query ? (
                 <>
-                  <div>{ownerFilter === "mine" ? "No customers are assigned to you." : "Every customer has an owner."}</div>
+                  <div>{ownerFilter === "mine" ? "No customers are assigned to you." : ownerFilter === "none" ? "Every customer has an owner." : "No customers are assigned to this member."}</div>
                   <Btn sm onClick={() => changeOwnerFilter("all")}>Show all customers</Btn>
                 </>
               ) : query ? (
@@ -678,6 +718,11 @@ const WiredCustomers = () => {
                         {r.owner_user_id
                           ? (r.owner_name || r.owner_user_id.slice(0, 8))
                           : <span style={{ color: "var(--ink-3)" }}>Unassigned</span>}
+                        {!r.owner_user_id && suggestionByCustomer.has(r.id) && (
+                          <div style={{ color: "var(--ink-4)", fontSize: 10 }} data-testid="owner-suggestion">
+                            suggested: {suggestionByCustomer.get(r.id).owner_name || suggestionByCustomer.get(r.id).owner_user_id.slice(0, 8)}
+                          </div>
+                        )}
                       </td>
                       <td title={r.ai_health_reasoning || (r.ai_health_score == null ? "Run /api/customers/health_score to populate" : "")}>
                         <Chip k={hc.k}>{hc.label}</Chip>

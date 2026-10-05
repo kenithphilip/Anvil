@@ -77,7 +77,8 @@ export default async function handler(req, res) {
     if (req.method === "GET") {
       requirePermission(ctx, "read");
       // Account owner filter (migration 227): owner=me | <member uuid> | none.
-      // Absent means everyone's, as before.
+      // Absent means everyone's, as before. The Customers screen sends all
+      // three (Mine, Unassigned, and a manager's per-member options).
       const ownerParam = req.query && req.query.owner ? String(req.query.owner) : "";
       let ownerFilter = null;   // { kind: "none" } | { kind: "user", id }
       if (ownerParam) {
@@ -108,12 +109,16 @@ export default async function handler(req, res) {
       }
       if (error) throw new Error(error.message);
       customers = customers || [];
-      // The owner's display name, so the list can say who without a second
-      // round trip per row. Bounded by the number of distinct owners.
-      const ownerNames = await userDisplayNames(svc, customers.map((c) => c.owner_user_id));
-      for (const c of customers) {
-        c.owner_user_id = c.owner_user_id || null;
-        c.owner_name = c.owner_user_id ? (ownerNames.get(c.owner_user_id) || null) : null;
+      for (const c of customers) c.owner_user_id = c.owner_user_id || null;
+      // The owner's display name, only when asked (?include=owner_name, sent
+      // by the Customers screen). Names live in auth, one getUserById per
+      // distinct owner, and about twenty other screens load this list only
+      // to fill a customer picker: they should not wait on auth round trips
+      // for a name they never render.
+      const include = new Set(String((req.query && req.query.include) || "").split(",").map((v) => v.trim()).filter(Boolean));
+      if (include.has("owner_name")) {
+        const ownerNames = await userDisplayNames(svc, customers.map((c) => c.owner_user_id));
+        for (const c of customers) c.owner_name = c.owner_user_id ? (ownerNames.get(c.owner_user_id) || null) : null;
       }
       const ids = customers.map((c) => c.id);
       const profiles = ids.length

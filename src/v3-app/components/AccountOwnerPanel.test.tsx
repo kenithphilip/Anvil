@@ -4,7 +4,7 @@
 
 import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, waitFor, fireEvent } from "@testing-library/react";
+import { render, waitFor, fireEvent, act } from "@testing-library/react";
 import { installBackend, installRbac } from "../test-utils";
 import { AccountOwnerPanel } from "./AccountOwnerPanel";
 
@@ -77,12 +77,71 @@ describe("AccountOwnerPanel", () => {
     expect(ownerSuggestions).not.toHaveBeenCalled();
   });
 
-  it("is read-only for a sales_engineer: the owner is shown, no picker, no suggestion request", () => {
+  it("is read-only for a sales_engineer: the owner is shown, no picker", () => {
     installRbac("sales_engineer");
     const { queryByLabelText, getByText, getByTestId } = render(<AccountOwnerPanel customer={OWNED} members={MEMBERS} />);
     expect(getByTestId("account-owner-name").textContent).toBe("Sana Sales");
     expect(queryByLabelText("Account owner")).toBeNull();
     expect(getByText(/sales manager or admin assigns/i)).toBeTruthy();
+  });
+
+  it("asks a sales_engineer's view of an UNOWNED account for no suggestion (it could not act on one)", async () => {
+    // The unowned account is the case where a manager's panel DOES ask (the
+    // first test proves it), so this is the role gate, not the owned-account
+    // early return.
+    installRbac("sales_engineer");
+    const { getByText } = render(<AccountOwnerPanel customer={UNOWNED} members={MEMBERS} />);
+    expect(getByText("unassigned")).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 0));
     expect(ownerSuggestions).not.toHaveBeenCalled();
+  });
+
+  it("a suggestion that arrives AFTER the manager picked someone does not replace the pick", async () => {
+    let resolveSuggestion: (v: any) => void = () => {};
+    ownerSuggestions.mockImplementation(() => new Promise((r) => { resolveSuggestion = r; }));
+    const { getByLabelText, getByText } = render(<AccountOwnerPanel customer={UNOWNED} members={MEMBERS} />);
+    await waitFor(() => expect(ownerSuggestions).toHaveBeenCalled());
+    fireEvent.change(getByLabelText("Account owner"), { target: { value: "u-3" } });
+    await act(async () => {
+      resolveSuggestion({ suggestions: [{ customer_id: "cust-1", owner_user_id: "u-2", owner_name: "Ravi Rep", reason: "majority", votes: 3, total: 4 }] });
+    });
+    // The suggestion is still shown as information...
+    await waitFor(() => expect(getByText(/owns 3 of 4 opportunities and quotes/)).toBeTruthy());
+    // ...but the picker keeps the manager's choice, and Save sends it.
+    expect((getByLabelText("Account owner") as HTMLSelectElement).value).toBe("u-3");
+    fireEvent.click(getByText("Save"));
+    await waitFor(() => expect(assignOwner).toHaveBeenCalledTimes(1));
+    expect(assignOwner.mock.calls[0][0].owner_user_id).toBe("u-3");
+  });
+
+  it("ticking move and then switching to Unassigned sends move_open_opportunities false", async () => {
+    // The checkbox hides when nobody is picked, but its state survives; the
+    // server refuses move:true with a null owner.
+    const { getByLabelText, getByText } = render(<AccountOwnerPanel customer={OWNED} members={MEMBERS} />);
+    fireEvent.change(getByLabelText("Account owner"), { target: { value: "u-2" } });
+    fireEvent.click(getByLabelText("Move open opportunities"));
+    fireEvent.change(getByLabelText("Account owner"), { target: { value: "" } });
+    fireEvent.click(getByText("Save"));
+    await waitFor(() => expect(assignOwner).toHaveBeenCalledTimes(1));
+    expect(assignOwner.mock.calls[0][0]).toEqual({ customer_ids: ["cust-2"], owner_user_id: null, move_open_opportunities: false });
+  });
+
+  it("an owner who is not in the member list is still the picker's value, and can be cleared", async () => {
+    const exMember = { id: "cust-3", customer_name: "Core", owner_user_id: "u-7", owner_name: "Old Rep" };
+    const { getByLabelText, getByText } = render(<AccountOwnerPanel customer={exMember} members={MEMBERS} />);
+    const select = getByLabelText("Account owner") as HTMLSelectElement;
+    expect(select.value).toBe("u-7");
+    expect(select.options[select.selectedIndex].textContent).toBe("Old Rep (not an approved member)");
+    fireEvent.change(select, { target: { value: "" } });
+    fireEvent.click(getByText("Save"));
+    await waitFor(() => expect(assignOwner).toHaveBeenCalledTimes(1));
+    expect(assignOwner.mock.calls[0][0]).toEqual({ customer_ids: ["cust-3"], owner_user_id: null, move_open_opportunities: false });
+  });
+
+  it("says so when the member list could not be loaded", () => {
+    const { getByRole, getByLabelText } = render(<AccountOwnerPanel customer={OWNED} members={[]} membersError="403 forbidden" />);
+    expect(getByRole("alert").textContent).toMatch(/Could not load the team list.*403 forbidden/);
+    // The owner is still shown in the picker rather than a false "Unassigned".
+    expect((getByLabelText("Account owner") as HTMLSelectElement).value).toBe("u-3");
   });
 });

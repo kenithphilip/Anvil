@@ -42,6 +42,8 @@ describe("customers client: account owner", () => {
   it("list passes the owner filter, and is unchanged without one", async () => {
     await client.customers.list({ owner: "me" });
     expect(lastCall().url).toBe("https://api.test/api/customers?owner=me");
+    await client.customers.list({ owner: "u-2", include: "owner_name" });
+    expect(lastCall().url).toBe("https://api.test/api/customers?owner=u-2&include=owner_name");
     await client.customers.list();
     expect(lastCall().url).toBe("https://api.test/api/customers");
   });

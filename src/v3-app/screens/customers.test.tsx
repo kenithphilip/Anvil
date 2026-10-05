@@ -44,16 +44,20 @@ const MEMBERS = [
   { user_id: "u-3", display_name: "Sana Sales", status: "approved" },
 ];
 
-const mount = async (role = "sales_manager") => {
+const mount = async (role = "sales_manager", opts: { membersFail?: boolean } = {}) => {
   installRbac(role);
   const list = vi.fn(async (params?: any) => {
     if (params?.owner === "me") return { customers: [ROWS[1]] };
     if (params?.owner === "none") return { customers: [ROWS[0], ROWS[2]] };
+    if (params?.owner === "u-3") return { customers: [ROWS[1]] };
     return { customers: ROWS, profiles: {} };
   });
   const assignOwner = vi.fn(async (p: any) => ({ updated: p.customer_ids, warnings: [] }));
   const ownerSuggestions = vi.fn(async () => ({ suggestions: [{ customer_id: "cust-1", owner_user_id: "u-2", owner_name: "Ravi Rep", reason: "majority", votes: 2, total: 3 }] }));
-  const listMembers = vi.fn(async () => ({ members: MEMBERS }));
+  const listMembers = vi.fn(async () => {
+    if (opts.membersFail) throw new Error("members down");
+    return { members: MEMBERS };
+  });
   installBackend({ customers: { list, assignOwner, ownerSuggestions }, admin: { listMembers } });
   const mod = await import("./customers");
   const utils = renderScreen(mod.default);
@@ -72,16 +76,80 @@ describe("Customers: account owner", () => {
     expect(within(acme).getByText("Unassigned")).toBeTruthy();
   });
 
+  it("asks for owner names on its list, the one screen that renders them", async () => {
+    const { list } = await mount();
+    expect(list).toHaveBeenCalledWith({ include: "owner_name" });
+  });
+
   it("Mine and Unassigned ask the API for that owner's accounts", async () => {
     const { getByLabelText, list, queryByText, getByText } = await mount();
     fireEvent.change(getByLabelText("Owner filter"), { target: { value: "mine" } });
-    await waitFor(() => expect(list).toHaveBeenCalledWith({ owner: "me" }));
+    await waitFor(() => expect(list).toHaveBeenCalledWith({ owner: "me", include: "owner_name" }));
     await waitFor(() => expect(queryByText("Acme")).toBeNull());
     expect(getByText("Bolt")).toBeTruthy();
     fireEvent.change(getByLabelText("Owner filter"), { target: { value: "none" } });
-    await waitFor(() => expect(list).toHaveBeenCalledWith({ owner: "none" }));
+    await waitFor(() => expect(list).toHaveBeenCalledWith({ owner: "none", include: "owner_name" }));
     await waitFor(() => expect(getByText("Acme")).toBeTruthy());
     expect(getByText("Core")).toBeTruthy();
+  });
+
+  it("a manager can filter to one member's accounts, sent to the API as owner=<member id>", async () => {
+    const { getByLabelText, list, queryByText, getByText, listMembers } = await mount();
+    await waitFor(() => expect(listMembers).toHaveBeenCalled());
+    const filter = getByLabelText("Owner filter") as HTMLSelectElement;
+    await waitFor(() => expect(Array.from(filter.options).map((o) => o.textContent)).toContain("Owned by Sana Sales"));
+    fireEvent.change(filter, { target: { value: "user:u-3" } });
+    await waitFor(() => expect(list).toHaveBeenCalledWith({ owner: "u-3", include: "owner_name" }));
+    await waitFor(() => expect(queryByText("Acme")).toBeNull());
+    expect(getByText("Bolt")).toBeTruthy();
+  });
+
+  it("the Unassigned view shows each account's suggested owner, read for all accounts at once and saved by nobody", async () => {
+    const { getByLabelText, getByText, ownerSuggestions, assignOwner } = await mount();
+    fireEvent.change(getByLabelText("Owner filter"), { target: { value: "none" } });
+    await waitFor(() => expect(ownerSuggestions).toHaveBeenCalledWith());
+    const acme = getByText("Acme").closest("tr") as HTMLElement;
+    await waitFor(() => expect(within(acme).getByTestId("owner-suggestion").textContent).toBe("suggested: Ravi Rep"));
+    expect(within(acme).getByText("Unassigned")).toBeTruthy();
+    const core = getByText("Core").closest("tr") as HTMLElement;
+    expect(within(core).queryByTestId("owner-suggestion")).toBeNull();
+    expect(assignOwner).not.toHaveBeenCalled();
+  });
+
+  it("bulk: ticking move and then switching to Unassigned sends move_open_opportunities false", async () => {
+    const { getByLabelText, getByText, assignOwner, listMembers } = await mount();
+    await waitFor(() => expect(listMembers).toHaveBeenCalled());
+    fireEvent.click(getByLabelText("Select Bolt"));
+    await waitFor(() => expect(Array.from((getByLabelText("Bulk owner") as HTMLSelectElement).options).map((o) => o.value)).toContain("u-2"));
+    fireEvent.change(getByLabelText("Bulk owner"), { target: { value: "u-2" } });
+    fireEvent.click(getByLabelText("Bulk move open opportunities"));
+    fireEvent.change(getByLabelText("Bulk owner"), { target: { value: "" } });
+    fireEvent.click(getByText("Assign owner"));
+    await waitFor(() => expect(assignOwner).toHaveBeenCalledTimes(1));
+    expect(assignOwner.mock.calls[0][0]).toEqual({ customer_ids: ["cust-2"], owner_user_id: null, move_open_opportunities: false });
+  });
+
+  it("bulk: a ticked row the search now hides is counted on the bar, and assigned with the rest", async () => {
+    const { getByLabelText, getByText, getByTestId, queryByText, assignOwner, listMembers } = await mount();
+    await waitFor(() => expect(listMembers).toHaveBeenCalled());
+    fireEvent.click(getByLabelText("Select Acme"));
+    fireEvent.change(getByLabelText("Search customers"), { target: { value: "bolt" } });
+    await waitFor(() => expect(queryByText("Acme")).toBeNull());
+    fireEvent.click(getByLabelText("Select Bolt"));
+    expect(getByText("2 selected")).toBeTruthy();
+    expect(getByTestId("bulk-hidden").textContent).toMatch(/^1 of them not shown by the current search/);
+    await waitFor(() => expect(Array.from((getByLabelText("Bulk owner") as HTMLSelectElement).options).map((o) => o.value)).toContain("u-2"));
+    fireEvent.change(getByLabelText("Bulk owner"), { target: { value: "u-2" } });
+    fireEvent.click(getByText("Assign owner"));
+    await waitFor(() => expect(assignOwner).toHaveBeenCalledTimes(1));
+    expect([...assignOwner.mock.calls[0][0].customer_ids].sort()).toEqual(["cust-1", "cust-2"]);
+  });
+
+  it("says so in the bulk bar when the member list could not be loaded", async () => {
+    const { getByLabelText, findByRole, listMembers } = await mount("sales_manager", { membersFail: true });
+    await waitFor(() => expect(listMembers).toHaveBeenCalled());
+    fireEvent.click(getByLabelText("Select Bolt"));
+    expect((await findByRole("alert")).textContent).toMatch(/Could not load the team list: members down/);
   });
 
   it("bulk assign sends exactly the checked ids", async () => {

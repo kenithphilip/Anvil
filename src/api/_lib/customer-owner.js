@@ -25,6 +25,22 @@ export const isMissingOwnerColumn = (err) => {
   return err.code === "42703" || err.code === "PGRST204" || /does not exist|schema cache/i.test(msg);
 };
 
+// How far the owner endpoint pages a read (suggestion evidence, the open
+// opportunities a move reads) before it gives up and says so. A module object
+// rather than constants so a test can shrink it and drive the handler into
+// its "could not read it all" paths without building 20,000 rows.
+export const OWNER_READ_PAGING = { pageSize: 1000, maxPages: 20 };
+
+// Ids per PostgREST `in.(...)` filter. The filter rides in the URL, and 500
+// uuids is about 18 KB of query string, past what a proxy in front of
+// PostgREST may accept. 100 keeps each request near 4 KB.
+export const IN_CHUNK = 100;
+export const chunk = (list, size = IN_CHUNK) => {
+  const out = [];
+  for (let i = 0; i < (list || []).length; i += size) out.push(list.slice(i, i + size));
+  return out;
+};
+
 // Read every row a query returns, a page at a time.
 //
 // PostgREST caps a response at its max-rows setting (1000 on Supabase) and

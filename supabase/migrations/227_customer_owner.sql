@@ -19,9 +19,12 @@
 -- the account's opportunities and authored quotes over 365 days) and saves it
 -- only when a person clicks.
 --
--- WRITES. Only POST /api/customers/owner writes this column (sales_manager and
--- admin, action customer.assign_owner). The POST /api/customers upsert never
--- writes it, so saving an unrelated customer field cannot clear an owner.
+-- WRITES. POST /api/customers/owner names or clears the owner (sales_manager
+-- and admin, action customer.assign_owner). The admin customer merge
+-- (POST /api/customers/merge) carries a duplicate's owner onto an unowned
+-- primary when the duplicates agree, and audits what it did. The
+-- POST /api/customers upsert never writes it, so saving an unrelated customer
+-- field cannot clear an owner.
 --
 -- Additive and idempotent.
 
@@ -36,4 +39,4 @@ create index if not exists customers_owner_idx
   where owner_user_id is not null;
 
 comment on column customers.owner_user_id is
-  'Account owner (a tenant member). Written only by POST /api/customers/owner. NULL means Unassigned; never backfilled by guess.';
+  'Account owner (a tenant member). Set by POST /api/customers/owner, carried by customer merge, never by the customer upsert. NULL means Unassigned; never backfilled by guess.';

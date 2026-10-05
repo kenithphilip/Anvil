@@ -27,17 +27,23 @@ const sumOutstanding = async (svc, tenantId, customerId) => {
 //
 // Only while the owner is still an APPROVED member of this tenant: an owner
 // was a member when assigned, but membership can be revoked afterwards, and a
-// credit-limit summary must not go to someone who has left. No membership (or
-// a failed check) means no recipient, and the goal escalates instead.
-const ownerEmail = async (svc, tenantId, userId) => {
-  if (!userId) return null;
-  try {
-    if (!(await resolveAssignee(svc, tenantId, userId))) return null;
-    const { data } = await svc.auth.admin.getUserById(userId);
-    return (data && data.user && data.user.email) || null;
-  } catch {
-    return null;
-  }
+// credit-limit summary must not go to someone who has left.
+//
+// Returns { email } or { reason } for an answer, and THROWS when it could not
+// find out: a failed membership read or auth lookup is a transient fault, not
+// evidence that the owner left, so the caller retries instead of escalating
+// with a reason that would be false.
+const ownerRecipient = async (svc, tenantId, userId) => {
+  if (!(await resolveAssignee(svc, tenantId, userId))) return { reason: "owner_not_member" };
+  const { data, error } = await svc.auth.admin.getUserById(userId);
+  if (error) throw new Error("could not read the owner's auth user: " + (error.message || String(error)));
+  const email = data && data.user && data.user.email;
+  return email ? { email } : { reason: "owner_has_no_email" };
+};
+
+const OWNER_REASON_THOUGHT = {
+  owner_not_member: "the account owner is no longer an approved member of this tenant",
+  owner_has_no_email: "the account owner has no email address on their login",
 };
 
 const readCustomer = (svc, goal, cols) => svc.from("customers")
@@ -80,8 +86,24 @@ export const creditReviewRequest = async (goal, ctx) => {
   let recipient = null;
   const ts = await svc.from("tenant_settings").select("finance_email").eq("tenant_id", goal.tenant_id).maybeSingle();
   if (ts.data?.finance_email) recipient = ts.data.finance_email;
+  let ownerReason = null;
   if (!recipient && cust.owner_user_id) {
-    recipient = await ownerEmail(svc, goal.tenant_id, cust.owner_user_id);
+    let o;
+    try {
+      o = await ownerRecipient(svc, goal.tenant_id, cust.owner_user_id);
+    } catch (err) {
+      // Same as a failed customer read above: try again next tick.
+      return { thought: "account owner lookup failed: " + (err && err.message ? err.message : String(err)) + "; retrying.", action: "noop", action_payload: {} };
+    }
+    if (o.email) recipient = o.email;
+    else ownerReason = o.reason;
+  }
+  if (!recipient && ownerReason) {
+    return {
+      thought: "No internal recipient: tenant_settings.finance_email is empty and " + OWNER_REASON_THOUGHT[ownerReason] + "; escalating.",
+      action: "escalate",
+      action_payload: { reason: ownerReason },
+    };
   }
   if (!recipient) {
     return { thought: "No internal recipient (tenant_settings.finance_email + owner_user_id both empty); escalating.", action: "escalate", action_payload: { reason: "no_internal_recipient" } };

@@ -56,16 +56,33 @@ import forecastSnapshot from "../forecast/index.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
-// Which weekday the weekly planner runs on, in UTC. 1 = Monday, matching the
-// "Monday 02:00 IST" cadence the handler documents (IST Monday 02:00 is UTC
-// Sunday 20:30, but the daily cron fires at 02:30 UTC, so UTC Monday is the
-// nearest honest slot). Override with INVENTORY_PLANNING_DAY; set it to -1 to
-// disable the schedule without a deploy.
-const PLANNING_DAY = process.env.INVENTORY_PLANNING_DAY != null
-  ? Number(process.env.INVENTORY_PLANNING_DAY)
-  : 1;
-export const isPlanningDay = (now = new Date()) =>
-  Number.isFinite(PLANNING_DAY) && PLANNING_DAY >= 0 && now.getUTCDay() === PLANNING_DAY;
+// Which weekday the weekly planner runs on, in UTC (0 = Sunday .. 6 = Saturday).
+// The default, 1 = Monday, matches the "Monday 02:00 IST" cadence the handler
+// documents (IST Monday 02:00 is UTC Sunday 20:30, but the daily cron fires at
+// 02:30 UTC, so UTC Monday is the nearest honest slot). Override with
+// INVENTORY_PLANNING_DAY; -1 switches the schedule off without a code change
+// (Vercel applies an env change from the next deployment).
+//
+// Unset or blank means the default. Number("") is 0, so a blank variable used to
+// move the planner to Sunday without anyone asking. Anything other than -1 or a
+// single digit 0..6 is refused rather than guessed at: the planner does not run,
+// and a warning naming the value is logged on every daily run until it is fixed,
+// instead of the schedule stopping in silence.
+export const DEFAULT_PLANNING_DAY = 1;
+export const planningDay = (raw = process.env.INVENTORY_PLANNING_DAY) => {
+  const value = raw == null ? "" : String(raw).trim();
+  if (value === "") return DEFAULT_PLANNING_DAY;
+  if (value === "-1") return -1;
+  if (/^[0-6]$/.test(value)) return Number(value);
+  console.warn("[cron/daily] INVENTORY_PLANNING_DAY=" + JSON.stringify(String(raw))
+    + " is not a UTC weekday 0..6 (0 = Sunday) or -1 (off), so the inventory"
+    + " planner will not run until it is corrected");
+  return -1;
+};
+export const isPlanningDay = (now = new Date(), raw = process.env.INVENTORY_PLANNING_DAY) => {
+  const day = planningDay(raw);
+  return day >= 0 && now.getUTCDay() === day;
+};
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -126,10 +143,27 @@ export default async function handler(req, res) {
       // Safe to switch on: the handler returns { skipped: true } for any tenant
       // without tenant_settings.inventory_planning_enabled, and only touches
       // items with item_master.planning_enabled -- so this changes nothing for
-      // anybody until they opt in. Wide timeout for the same reason as
-      // eval/replay: it is a real computation, and the handler caps its own work.
+      // anybody until they opt in.
+      //
+      // Budget: 40s, wider than the 20s default slice because it is a real
+      // computation, but not the 55s eval/replay has. The group runs in
+      // parallel, so the longest budget bounds the group's wall time. After
+      // it, this function still writes one heartbeat per handler in sequence
+      // (about 16 round trips) and runs the staleness probe, all inside the
+      // 60s maxDuration vercel.json gives api/dispatch.js. 55s left about 5s
+      // for that tail.
+      //
+      // The planner does NOT cap its own work: inventory-planning-weekly.js has
+      // no item cap and no deadline. Past the budget cron-mux stops waiting and
+      // reports a timeout (504), and the platform may freeze whatever is still
+      // running once this function returns. demand_forecasts and
+      // procurement_plans are written at the end of each tenant, so an
+      // abandoned tenant keeps the item_master updates that had landed, gets no
+      // forecasts or plans, and leaves its forecast_runs row at 'running'. A
+      // timeout on this row is a reason to give the planner a deadline or its
+      // own invocation, not something to absorb.
       ...(isPlanningDay()
-        ? [{ name: "inventory/planning_weekly", fn: inventoryPlanning, opts: { path: "/api/cron/inventory-planning-weekly", timeoutMs: 55000 } }]
+        ? [{ name: "inventory/planning_weekly", fn: inventoryPlanning, opts: { path: "/api/cron/inventory-planning-weekly", timeoutMs: 40000 } }]
         : []),
     ]);
     const okCount = results.filter((r) => r.ok).length;

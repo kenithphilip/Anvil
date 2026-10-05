@@ -44,14 +44,13 @@ export const defaultTenantId = () => DEFAULT_TENANT;
 //
 // A missing table (migration 199 not applied: Postgres 42P01, PostgREST
 // PGRST205) means no portal identity can exist, so the answer is false.
-// Any other read error throws 500: failing open would let a portal user be
-// onboarded or approved as staff.
-export const isPortalIdentity = async (svc, authUserId) => {
-  if (!authUserId) return false;
+// Any other read error, or a response that is not a row list, throws 500:
+// failing open would let a portal user be onboarded or approved as staff.
+const portalUsersLookup = async (svc, column, value) => {
   const r = await svc
     .from("portal_users")
     .select("id")
-    .eq("auth_user_id", authUserId)
+    .eq(column, value)
     .limit(1);
   if (r.error) {
     const code = r.error.code;
@@ -60,7 +59,25 @@ export const isPortalIdentity = async (svc, authUserId) => {
     err.status = 500;
     throw err;
   }
-  return Array.isArray(r.data) && r.data.length > 0;
+  if (!Array.isArray(r.data)) {
+    const err = new Error("portal_users lookup returned no row list");
+    err.status = 500;
+    throw err;
+  }
+  return r.data.length > 0;
+};
+
+export const isPortalIdentity = async (svc, authUserId) => {
+  if (!authUserId) return false;
+  return portalUsersLookup(svc, "auth_user_id", authUserId);
+};
+
+// Same rule by email (portal_users.email is stored lowercased). Used before a
+// staff invite is SENT, so a portal customer never receives a staff invite.
+export const isPortalEmail = async (svc, email) => {
+  const e = String(email || "").trim().toLowerCase();
+  if (!e) return false;
+  return portalUsersLookup(svc, "email", e);
 };
 
 export const portalAccountError = () => {
@@ -107,7 +124,9 @@ export const ensureMembership = async (svc, user, opts = {}) => {
   // callers reach this insert (resolveContext, auth/verify, password_login,
   // passkey/auth_finish, signup), so the guard lives here rather than in any
   // one of them. admin/access_requests (approve) and admin/members (invite)
-  // apply the same check, for rows created before this guard existed.
+  // apply the same check, so a PENDING row created before this guard cannot
+  // be approved. A row that is already APPROVED is not revoked by this code:
+  // find those with the query in the PR that introduced this guard.
   //
   // It runs only on the insert path: an existing membership has already been
   // returned above, so staff are untouched. It throws instead of returning []

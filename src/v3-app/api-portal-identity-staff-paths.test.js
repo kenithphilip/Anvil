@@ -13,10 +13,11 @@ const TENANT = "00000000-0000-0000-0000-000000000001";
 let tables;
 let errors;
 let inviteReturns;
+let invitesSent;
 
 const makeSvc = () => ({
   auth: { admin: {
-    inviteUserByEmail: async () => ({ data: { user: { id: inviteReturns } }, error: null }),
+    inviteUserByEmail: async (email) => { invitesSent.push(email); return { data: { user: { id: inviteReturns } }, error: null }; },
     updateUserById: async () => ({ data: {}, error: null }),
     getUserById: async () => ({ data: { user: null }, error: null }),
   } },
@@ -72,6 +73,7 @@ beforeEach(() => {
   tables = { tenant_members: [], portal_users: [], audit_events: [] };
   errors = {};
   inviteReturns = "authNew";
+  invitesSent = [];
 });
 
 describe("admin/access_requests approve", () => {
@@ -119,12 +121,20 @@ describe("admin/access_requests approve", () => {
 });
 
 describe("admin/members invite", () => {
-  it("refuses to invite an email that belongs to a portal user, and writes no membership", async () => {
-    inviteReturns = "authP";
-    tables.portal_users = [{ id: "pu1", tenant_id: TENANT, customer_id: "c1", auth_user_id: "authP", status: "active" }];
-    const res = await run(members, { method: "POST", _body: { email: "buyer@oem.com", role: "sales_engineer" } });
+  it("refuses a portal email before any invite is sent, and writes no membership", async () => {
+    tables.portal_users = [{ id: "pu1", tenant_id: TENANT, customer_id: "c1", auth_user_id: "authP", email: "buyer@oem.com", status: "active" }];
+    const res = await run(members, { method: "POST", _body: { email: "Buyer@OEM.com", role: "sales_engineer" } });
     expect(res._status).toBe(409);
     expect(res._json.error.code).toBe("PORTAL_ACCOUNT");
+    expect(invitesSent).toEqual([]);
+    expect(tables.tenant_members).toHaveLength(0);
+  });
+
+  it("refuses when the invite returns an auth user that is a portal identity under another email", async () => {
+    inviteReturns = "authP";
+    tables.portal_users = [{ id: "pu1", tenant_id: TENANT, customer_id: "c1", auth_user_id: "authP", email: "old-address@oem.com", status: "active" }];
+    const res = await run(members, { method: "POST", _body: { email: "new-address@oem.com", role: "sales_engineer" } });
+    expect(res._status).toBe(409);
     expect(tables.tenant_members).toHaveLength(0);
   });
 

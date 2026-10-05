@@ -24,8 +24,9 @@ const makeStub = ({ memberships = [], tenants = [{ id: TENANT_ID }] }) => {
         _selectArgs: null,
         select(...args) { this._selectArgs = args; return this; },
         eq(col, val) { this._eq = { col, val }; return this; },
-        // ensureMembership's portal-identity lookup ends in .limit(1); with
-        // no portal_users rows in these fixtures it resolves to data: null.
+        // ensureMembership's portal-identity lookup ends in .limit(1). These
+        // fixtures have no portal users, so it resolves to an empty row list
+        // (a non-list response fails closed).
         limit() { return this; },
         maybeSingle() {
           if (this._table === "tenants" && this._eq?.col === "id") {
@@ -35,6 +36,7 @@ const makeStub = ({ memberships = [], tenants = [{ id: TENANT_ID }] }) => {
           return Promise.resolve({ data: null, error: null });
         },
         then(resolve) {
+          if (this._table === "portal_users") return resolve({ data: [], error: null });
           if (this._table === "tenant_members") {
             if (this._selectArgs?.[1]?.head === true) {
               const count = memberships.filter((m) => m.tenant_id === this._eq.val).length;

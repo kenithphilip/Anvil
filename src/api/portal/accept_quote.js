@@ -100,11 +100,14 @@ const acceptQuotePath = async (req, res, svc, t, body) => {
     path: "accept_quote", status: 200,
   });
 
+  // Return what the customer needs, not the whole quotes row: it carries
+  // created_by (a staff user id), field_sources, fx snapshots and ingest
+  // details. A token holder is not staff.
   return json(res, 200, {
     ok: true,
     acceptance_id: ins.data.id,
     accepted_at: ins.data.accepted_at,
-    quote: upd.data,
+    quote: { id: upd.data.id, quote_number: upd.data.quote_number || null, version: upd.data.version, status: upd.data.status },
   });
 };
 

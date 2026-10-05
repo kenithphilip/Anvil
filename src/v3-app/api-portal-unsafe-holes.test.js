@@ -97,14 +97,18 @@ vi.mock("../api/_lib/supabase.js", () => ({
   // The bearer / access token value IS the auth user id in these tests.
   userClient: (token) => ({ auth: { getUser: async () => ({ data: { user: { id: token, email: token + "@example.com" } }, error: null }) } }),
 }));
+// Each client records whether IT signed in, so a sign-out on a fresh,
+// session-less client (which would revoke nothing) does not count.
 const signOuts = [];
 vi.mock("@supabase/supabase-js", () => ({
-  createClient: () => ({
-    auth: {
-      signInWithPassword: async ({ email }) => ({ data: { user: { id: "auth-" + email, email }, session: { access_token: "AT" } }, error: null }),
-      signOut: async () => { signOuts.push(1); return {}; },
-    },
-  }),
+  createClient: () => {
+    const client = { signedIn: false };
+    client.auth = {
+      signInWithPassword: async ({ email }) => { client.signedIn = true; return { data: { user: { id: "auth-" + email, email }, session: { access_token: "AT" } }, error: null }; },
+      signOut: async (opts) => { signOuts.push({ signedIn: client.signedIn, scope: opts && opts.scope }); return {}; },
+    };
+    return client;
+  },
 }));
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || "http://supabase.test";
@@ -172,9 +176,10 @@ describe("portal/accept_quote", () => {
 
   it("accepts the customer's own SENT quote and writes an audit row with `actor`, not `actor_id`", async () => {
     tables.portal_tokens = [token()];
-    tables.quotes = [{ id: "q1", tenant_id: TENANT, customer_id: "c1", status: "SENT", version: 2 }];
+    tables.quotes = [{ id: "q1", tenant_id: TENANT, customer_id: "c1", status: "SENT", version: 2, quote_number: "Q-202610-0007", created_by: "staff-uuid", field_sources: { x: 1 }, fx_snapshot: { USD: 84 } }];
     const res = await run(acceptQuote, { method: "POST", _body: { token: "TK", quote_id: "q1", signature_name: "Ravi" } });
     expect(res._status).toBe(200);
+    expect(res._json.quote).toEqual({ id: "q1", quote_number: "Q-202610-0007", version: 2, status: "ACCEPTED" });
     expect(tables.quotes[0].status).toBe("ACCEPTED");
     expect(tables.portal_quote_acceptances).toHaveLength(1);
     expect(tables.audit_events).toHaveLength(1);
@@ -220,7 +225,7 @@ describe("ensureMembership never onboards a portal identity as staff", () => {
     expect(res._status).toBe(403);
     expect(res._json.error.message).toMatch(/customer portal account/i);
     expect(res._json.session).toBeUndefined();
-    expect(signOuts).toHaveLength(1);
+    expect(signOuts).toEqual([{ signedIn: true, scope: "local" }]);
     expect(rpcCalls).toHaveLength(0);
     expect(tables.tenant_members).toHaveLength(0);
   });
@@ -251,6 +256,16 @@ describe("ensureMembership never onboards a portal identity as staff", () => {
   it("fails closed with 500 on any other portal_users error", async () => {
     errors.portal_users = { code: "08006", message: "connection failure" };
     await expect(ensureMembership(makeSvc(), { id: "authNew3" })).rejects.toMatchObject({ status: 500 });
+    expect(rpcCalls).toHaveLength(0);
+    expect(tables.tenant_members).toHaveLength(0);
+  });
+
+  it("fails closed with 500 when the lookup returns no row list (an empty or odd PostgREST body)", async () => {
+    const base = makeSvc();
+    const svc = { ...base, from: (t) => (t === "portal_users"
+      ? { select: () => ({ eq: () => ({ limit: () => Promise.resolve({ data: null, error: null }) }) }) }
+      : base.from(t)) };
+    await expect(ensureMembership(svc, { id: "authOdd" })).rejects.toMatchObject({ status: 500 });
     expect(rpcCalls).toHaveLength(0);
     expect(tables.tenant_members).toHaveLength(0);
   });

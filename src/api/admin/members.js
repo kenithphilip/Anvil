@@ -9,7 +9,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-import { isPortalIdentity } from "../_lib/tenancy.js";
+import { isPortalIdentity, isPortalEmail } from "../_lib/tenancy.js";
 
 // Phase 1 F11: role enum drift fix.
 //
@@ -96,13 +96,18 @@ export default async function handler(req, res) {
       }
 
       const role = normaliseRole(body.role, "sales_engineer");
+      // Refuse a customer portal email BEFORE Supabase sends anything, so the
+      // customer never receives a staff invite.
+      if (await isPortalEmail(svc, body.email)) {
+        return json(res, 409, { error: { code: "PORTAL_ACCOUNT", message: "This email belongs to a customer portal user and cannot be invited as staff." } });
+      }
       const invite = await svc.auth.admin.inviteUserByEmail(body.email);
       if (invite.error) throw new Error(invite.error.message);
       const userId = invite.data && invite.data.user && invite.data.user.id;
       if (!userId) throw new Error("Auth invite returned no user id");
-      // Inviting an email that already belongs to a customer portal user
-      // returns that user's id; upserting it here would make the customer
-      // staff, approved by default (042).
+      // Second check, by auth id: the invite can return an existing auth
+      // user whose portal row has a different email. Upserting it here would
+      // make the customer staff, approved by default (042).
       if (await isPortalIdentity(svc, userId)) {
         return json(res, 409, { error: { code: "PORTAL_ACCOUNT", message: "This email belongs to a customer portal user and cannot be invited as staff." } });
       }

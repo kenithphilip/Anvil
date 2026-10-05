@@ -51,12 +51,14 @@ export default async function handler(req, res) {
     // Recovery for legacy users who signed up before auto-onboarding.
     // A customer portal identity is refused (403 PORTAL_ACCOUNT); sign out
     // the session signInWithPassword just created so it is not left live.
+    // scope 'local' revokes only that session, not the customer's live
+    // portal sessions.
     const svc = serviceClient();
     try {
       await ensureMembership(svc, user);
     } catch (err) {
       if (err && err.code === "PORTAL_ACCOUNT") {
-        try { await anon.auth.signOut(); } catch { /* ignore */ }
+        try { await anon.auth.signOut({ scope: "local" }); } catch { /* ignore */ }
       }
       throw err;
     }

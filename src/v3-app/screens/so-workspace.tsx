@@ -8,6 +8,7 @@ import { BusyAction, busyLabel, busyVerb } from "../lib/busy-actions";
 import { QuotesStrip } from "../components/QuotesStrip";
 import { ThreeWayPanel } from "../components/ThreeWayPanel";
 import { InvoicePoCheck } from "../components/InvoicePoCheck";
+import { DeliveryChallanUpload } from "../components/DeliveryChallanUpload";
 import type { AttachedQuote } from "../components/QuotesStrip";
 import { QuotePane } from "../components/QuotePane";
 // The gate's own predicate, not a copy: a UI that disagreed with the server
@@ -259,6 +260,9 @@ const WiredSOWorkspace = () => {
   // reconcile view, so a legacy ?tab=review deep-link opens Reconcile.
   const initialTab = rawTab === "review" ? "recon" : rawTab;
   const [tab, setTab] = u(initialTab);
+  // Bumped when a delivery challan is recorded, so the invoice check below
+  // re-reads the despatch lines and the docket it just gained.
+  const [invoiceCheckKey, setInvoiceCheckKey] = u(0);
   // Unified reconcile layout: pdf | split | lines. Persisted per-browser;
   // defaults to split on wide viewports and lines on narrow ones so a
   // small screen is not cramped by the side-by-side.
@@ -2847,7 +2851,12 @@ const WiredSOWorkspace = () => {
         )}
 
         {tab === "threeway" && <ThreeWayPanel orderId={o.id} />}
-        {tab === "invoice_check" && <InvoicePoCheck orderId={o.id} />}
+        {tab === "invoice_check" && (
+          <>
+            <DeliveryChallanUpload orderId={o.id} onRecorded={() => setInvoiceCheckKey((k: number) => k + 1)} />
+            <InvoicePoCheck key={invoiceCheckKey} orderId={o.id} />
+          </>
+        )}
         {tab === "quotes" && (
           <QuotePane
             orderId={o.id}

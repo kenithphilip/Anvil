@@ -56,6 +56,61 @@ const asOrdinal = (v) => {
   return n >= 1 ? n - 1 : null;
 };
 
+// Resolve the order a challan belongs to from its own references, the same
+// way whether or not the operator named an order: the buyer's PO number
+// first, then our invoice number. Refuses ambiguity and returns candidates.
+const resolveFromChallan = async (svc, tenantId, extracted) => {
+  const ordersQ = await svc.from("orders")
+    .select("id, po_number, customer_id")
+    .eq("tenant_id", tenantId).limit(2000);
+  if (ordersQ.error) throw new Error("orders read: " + ordersQ.error.message);
+
+  // Reuse the existing matcher rather than writing a second one: it already
+  // refuses ambiguity and returns candidates. It reads buyer_ref_order_no,
+  // so the challan's own field name is adapted rather than the matcher
+  // duplicated.
+  let match = matchSalesOrderToOrders(
+    { buyer_ref_order_no: extracted.buyer_po_no },
+    ordersQ.data || [],
+  );
+  let orderId = null;
+  // Invoices that carry the challan's invoice number, by order. Read once and
+  // returned, so the explicit-order check can compare against it.
+  let invoiceHits = [];
+
+  if (clean(extracted.invoice_no)) {
+    const invQ = await svc.from("invoices")
+      .select("id, order_id, invoice_number")
+      .eq("tenant_id", tenantId);
+    if (!invQ.error) {
+      const want = poKey(extracted.invoice_no);
+      invoiceHits = (invQ.data || []).filter((i) => poKey(i.invoice_number) === want && i.order_id);
+    }
+  }
+
+  if (match.matched) {
+    orderId = match.order?.id || match.order_id || null;
+    match = { ...match, reason: match.reason || "matched_on_buyer_po_number" };
+  } else if (invoiceHits.length === 1) {
+    // Second tier: the invoice this consignment is billed on. A challan
+    // often cites the invoice and not the customer's PO.
+    orderId = invoiceHits[0].order_id;
+    match = { matched: true, reason: "matched_on_invoice_number", order_id: orderId };
+  } else if (invoiceHits.length > 1) {
+    // Ambiguity refused here too: two invoices carrying one number is a
+    // data problem, and picking either would attach the goods to a guess.
+    match = {
+      matched: false, reason: "ambiguous_invoice_number",
+      detail: `${invoiceHits.length} invoices carry the number "${extracted.invoice_no}", so which order this consignment belongs to has no answer.`,
+      candidates: invoiceHits.map((i) => ({ invoice_id: i.id, order_id: i.order_id })),
+    };
+  }
+  // PO numbers by order id, so a candidate can be shown by the number the
+  // operator knows rather than an internal id.
+  const poById = new Map((ordersQ.data || []).map((o) => [o.id, o.po_number || null]));
+  return { orderId, match, invoiceHits, poById };
+};
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);
@@ -97,48 +152,63 @@ export default async function handler(req, res) {
     }
 
     // ── Which order does this consignment belong to? ──────────────────────────
-    let orderId = clean(body.order_id);
+    let orderId = null;
     let match = null;
-    if (!orderId) {
-      const ordersQ = await svc.from("orders")
-        .select("id, po_number, customer_id")
-        .eq("tenant_id", ctx.tenantId).limit(2000);
-      if (ordersQ.error) throw new Error("orders read: " + ordersQ.error.message);
+    // How the order was settled, for the audit row and the response.
+    let basis = null;
+    const explicitOrderId = clean(body.order_id);
 
-      // Reuse the existing matcher rather than writing a second one — it already
-      // refuses ambiguity and returns candidates. It reads buyer_ref_order_no,
-      // so the challan's own field name is adapted rather than the matcher
-      // duplicated.
-      match = matchSalesOrderToOrders(
-        { buyer_ref_order_no: extracted.buyer_po_no },
-        ordersQ.data || [],
-      );
+    if (explicitOrderId) {
+      // The operator chose the order. That choice is checked, not trusted:
+      // a challan uploaded on the wrong order would otherwise land there
+      // silently, satisfy that order's despatch check, and (once the portal
+      // shows despatches) tell a customer goods shipped that never did.
+      const ordQ = await svc.from("orders")
+        .select("id, po_number")
+        .eq("tenant_id", ctx.tenantId).eq("id", explicitOrderId).maybeSingle();
+      if (ordQ.error) throw new Error("order read: " + ordQ.error.message);
+      if (!ordQ.data) return json(res, 404, { error: { message: "order not found" } });
+      const order = ordQ.data;
 
-      if (!match.matched && clean(extracted.invoice_no)) {
-        // Second tier: the invoice this consignment is billed on. A challan
-        // often cites the invoice and not the customer's PO.
-        const invQ = await svc.from("invoices")
-          .select("id, order_id, invoice_number")
-          .eq("tenant_id", ctx.tenantId);
-        if (!invQ.error) {
-          const want = poKey(extracted.invoice_no);
-          const hits = (invQ.data || []).filter((i) => poKey(i.invoice_number) === want && i.order_id);
-          // Ambiguity refused here too: two invoices carrying one number is a
-          // data problem, and picking either would attach the goods to a guess.
-          if (hits.length === 1) {
-            orderId = hits[0].order_id;
-            match = { matched: true, reason: "matched_on_invoice_number", order_id: orderId };
-          } else if (hits.length > 1) {
-            match = {
-              matched: false, reason: "ambiguous_invoice_number",
-              detail: `${hits.length} invoices carry the number "${extracted.invoice_no}", so which order this consignment belongs to has no answer.`,
-              candidates: hits.map((i) => ({ invoice_id: i.id, order_id: i.order_id })),
-            };
-          }
-        }
-      } else if (match.matched) {
-        orderId = match.order?.id || match.order_id || null;
+      const resolved = await resolveFromChallan(svc, ctx.tenantId, extracted);
+      const challanPo = poKey(extracted.buyer_po_no);
+      const orderPo = poKey(order.po_number);
+      const poConflict = !!(challanPo && orderPo && challanPo !== orderPo);
+      const invoiceElsewhere = resolved.invoiceHits.some((i) => i.order_id !== order.id);
+      const invoiceHere = resolved.invoiceHits.some((i) => i.order_id === order.id);
+
+      if (poConflict || invoiceElsewhere) {
+        return json(res, 200, {
+          ok: false,
+          reason: "order_mismatch",
+          detail: poConflict
+            ? `This challan cites PO "${extracted.buyer_po_no}", but the chosen order is for PO "${order.po_number}". Nothing was recorded.`
+            : `This challan cites invoice "${extracted.invoice_no}", which belongs to a different order. Nothing was recorded.`,
+          // Where the challan's own references point, so the operator can
+          // open the right order instead.
+          candidates: (resolved.orderId
+            ? [{ id: resolved.orderId }]
+            : (resolved.match?.candidates || resolved.invoiceHits.filter((i) => i.order_id !== order.id).map((i) => ({ id: i.order_id, invoice_id: i.id }))))
+            .filter((c) => c.id && c.id !== order.id)
+            .map((c) => ({ ...c, po_number: c.po_number ?? resolved.poById.get(c.id) ?? null })),
+          delivery_note_no: clean(extracted.delivery_note_no),
+          buyer_po_no: clean(extracted.buyer_po_no),
+          invoice_no: clean(extracted.invoice_no),
+          written: { inserted: 0, updated: 0 },
+        });
       }
+
+      orderId = order.id;
+      basis = challanPo && orderPo
+        ? "order chosen by operator; PO number matches"
+        : invoiceHere
+          ? "order chosen by operator; invoice number matches"
+          : "order chosen by operator; challan carries no checkable reference";
+    } else {
+      const resolved = await resolveFromChallan(svc, ctx.tenantId, extracted);
+      orderId = resolved.orderId;
+      match = resolved.match;
+      basis = match?.reason || null;
     }
 
     if (!orderId) {
@@ -194,13 +264,13 @@ export default async function handler(req, res) {
       action: "delivery_note_ingest",
       objectType: "order",
       objectId: orderId,
-      detail: `${written.inserted} inserted, ${written.updated} updated from challan ${header.delivery_note_no || "(unnumbered)"}`,
+      detail: `${written.inserted} inserted, ${written.updated} updated from challan ${header.delivery_note_no || "(unnumbered)"}; ${basis || "order resolved"}`,
     });
 
     return json(res, 200, {
       ok: true,
       order_id: orderId,
-      matched_on: match?.reason || (body.order_id ? "explicit_order_id" : null),
+      matched_on: basis,
       delivery_note_no: header.delivery_note_no,
       docket_no: header.lr_number,
       eway_bill_no: clean(extracted.eway_bill_no),

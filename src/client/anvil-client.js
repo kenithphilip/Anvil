@@ -898,8 +898,21 @@
   };
 
   const customers = {
-    list: async () => apiFetch("/api/customers"),
+    // params (optional): { owner: "me" | "none" | <member id> } narrows the
+    // list to an account owner's customers, or the unassigned ones.
+    list: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/customers" + (qs ? "?" + qs : ""));
+    },
     upsert: async (payload) => apiFetch("/api/customers", { method: "POST", body: payload }),
+    // Account owner (migration 227). assignOwner payload:
+    //   { customer_ids: [...], owner_user_id: <member id> | null, move_open_opportunities: bool }
+    // ownerSuggestions params (optional): { customer_id } to ask about one account.
+    assignOwner: async (payload) => apiFetch("/api/customers/owner", { method: "POST", body: payload }),
+    ownerSuggestions: async (params) => {
+      const qs = new URLSearchParams({ suggest: "1", ...(params || {}) }).toString();
+      return apiFetch("/api/customers/owner?" + qs);
+    },
     // Issue #186: validate + derive (state code / PAN / validity) from a GSTIN,
     // and fetch the registry (name/address) when a GST provider is configured.
     gstLookup: async (gstin) => apiFetch("/api/customers/gst_lookup", { method: "POST", body: { gstin } }),

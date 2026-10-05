@@ -5,6 +5,9 @@
 // limit. Single email to ops (not to the customer); marks complete
 // once a review row is recorded.
 
+import { isMissingOwnerColumn } from "../../_lib/customer-owner.js";
+import { resolveAssignee } from "../../_lib/assignee.js";
+
 const HOURS = 60 * 60 * 1000;
 
 const sumOutstanding = async (svc, tenantId, customerId) => {
@@ -18,13 +21,41 @@ const sumOutstanding = async (svc, tenantId, customerId) => {
     .reduce((s, i) => s + (Number(i.grand_total) || 0) - (Number(i.paid_amount) || 0), 0);
 };
 
+// The account owner's email. Auth users live in the auth schema, which
+// PostgREST does not expose; this used to read a `users` table that does not
+// exist, so the owner fallback could never produce a recipient.
+//
+// Only while the owner is still an APPROVED member of this tenant: an owner
+// was a member when assigned, but membership can be revoked afterwards, and a
+// credit-limit summary must not go to someone who has left. No membership (or
+// a failed check) means no recipient, and the goal escalates instead.
+const ownerEmail = async (svc, tenantId, userId) => {
+  if (!userId) return null;
+  try {
+    if (!(await resolveAssignee(svc, tenantId, userId))) return null;
+    const { data } = await svc.auth.admin.getUserById(userId);
+    return (data && data.user && data.user.email) || null;
+  } catch {
+    return null;
+  }
+};
+
+const readCustomer = (svc, goal, cols) => svc.from("customers")
+  .select(cols)
+  .eq("tenant_id", goal.tenant_id)
+  .eq("id", goal.object_id)
+  .maybeSingle();
+
 export const creditReviewRequest = async (goal, ctx) => {
   const svc = ctx.svc;
-  const r = await svc.from("customers")
-    .select("id, customer_name, credit_limit, currency, owner_user_id")
-    .eq("tenant_id", goal.tenant_id)
-    .eq("id", goal.object_id)
-    .maybeSingle();
+  let r = await readCustomer(svc, goal, "id, customer_name, credit_limit, currency, owner_user_id");
+  // owner_user_id arrives with migration 227. Before it is applied, selecting
+  // it fails the whole read, and the review never runs. The owner is a
+  // nullable ATTRIBUTE (it only picks a fallback recipient), so drop it and
+  // read again rather than stall the agent.
+  if (r.error && isMissingOwnerColumn(r.error)) {
+    r = await readCustomer(svc, goal, "id, customer_name, credit_limit, currency");
+  }
   if (r.error) return { thought: "customer read failed: " + r.error.message, action: "noop", action_payload: {} };
   if (!r.data) return { thought: "customer missing", action: "give_up", action_payload: { reason: "customer_not_found" } };
   const cust = r.data;
@@ -50,8 +81,7 @@ export const creditReviewRequest = async (goal, ctx) => {
   const ts = await svc.from("tenant_settings").select("finance_email").eq("tenant_id", goal.tenant_id).maybeSingle();
   if (ts.data?.finance_email) recipient = ts.data.finance_email;
   if (!recipient && cust.owner_user_id) {
-    const u = await svc.from("users").select("email").eq("id", cust.owner_user_id).maybeSingle();
-    if (u.data?.email) recipient = u.data.email;
+    recipient = await ownerEmail(svc, goal.tenant_id, cust.owner_user_id);
   }
   if (!recipient) {
     return { thought: "No internal recipient (tenant_settings.finance_email + owner_user_id both empty); escalating.", action: "escalate", action_payload: { reason: "no_internal_recipient" } };

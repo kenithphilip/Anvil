@@ -633,13 +633,21 @@ Permission: admin. With `order_id`, clears all lines for the order.
 
 ## customers
 
-### GET /api/customers
+### GET /api/customers?owner=me|none|<member uuid>
 
-Permission: read. Returns `{ customers, profiles: { customer_id: profile } }`.
+Permission: read. Returns `{ customers, profiles: { customer_id: profile } }`. Each customer carries `owner_user_id` and `owner_name` (migration 227). `owner` narrows the list to the caller's accounts (`me`), the unassigned ones (`none`) or one member's; any other value is a 400. Before migration 227 is applied the owner degrades: nobody owns anything, so `none` is every customer, `me` is empty, and the response carries `warning: "owner_unavailable"`.
 
 ### POST /api/customers
 
-Permission: write. Body includes `customer_key`, optional profile. Profile upsert creates a new version row in `customer_format_profiles` with `version` incremented. Audit `upsert_customer_profile`.
+Permission: write. Body includes `customer_key`, optional profile. Profile upsert creates a new version row in `customer_format_profiles` with `version` incremented. Audit `upsert_customer_profile`. Never writes `owner_user_id`, even when the body carries it; the owner has one writer, below.
+
+### GET /api/customers/owner?suggest=1&customer_id=
+
+Permission: read. For each unowned customer (or just `customer_id`), `{ customer_id, owner_user_id, owner_name, votes, total, reason }`: the approved member who owns a strict majority of the account's opportunities (`owner_id`, by `updated_at`) and authored quotes (`created_by`, by `created_at`) over 365 days, else `owner_user_id: null` with `reason` one of `no_activity`, `no_majority`, `not_a_member`, `evidence_incomplete`. Read only; 409 `MIGRATION_REQUIRED` before migration 227.
+
+### POST /api/customers/owner
+
+Permission: write plus action `customer.assign_owner` (sales_manager, admin). Body `{ customer_ids: [uuid], owner_user_id: uuid | null, move_open_opportunities: bool }`. `owner_user_id` must be present (null unassigns) and must be an approved member of the tenant (400). Every id must be a customer of the tenant or nothing is written (404 with the foreign ids). `move_open_opportunities` moves the customer's open opportunities held by the previous owner or by nobody (needs a non-null owner). Audit `customer_owner_change`, one row per customer that changed, with before/after and the moved opportunity ids. Returns `{ owner_user_id, updated, unchanged, moved_opportunities, warnings }`.
 
 ### GET /api/customers/profile_versions?customerId=
 

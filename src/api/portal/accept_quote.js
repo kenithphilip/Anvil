@@ -1,28 +1,28 @@
 // POST /api/portal/accept_quote
-// Body: { token, quote_id?, order_id?, signature_name, signature_email? }
+// Body: { token, quote_id, signature_name, signature_email? }
 //
-// Customer-side quote acceptance. Two paths:
+// Customer-side quote acceptance through a legacy portal link (Audit P6.6):
+// the operator sent a quote via /api/quotes/send, the customer types their
+// name, and posts here with quote_id. We:
 //
-//   Audit P6.6 (preferred): the operator sent a quote via
-//   /api/quotes/send. The customer clicks the portal URL, types
-//   their name, posts to this endpoint with quote_id. We:
+//   1. Validate the token (scope=accept_quote).
+//   2. Validate the quote: it belongs to the token's customer, is SENT, and
+//      has not expired. A quote with no customer is refused: the customer
+//      check used to be skipped for it, so any accept_quote token in the
+//      tenant could accept it.
+//   3. Persist a portal_quote_acceptances row (signature, IP, UA,
+//      payload_hash snapshot from the quote).
+//   4. Flip the quote to ACCEPTED with accepted_at + accepted_by_email +
+//      accepted_signature_name.
 //
-//     1. Validate the token (scope=accept_quote).
-//     2. Validate the quote (status SENT, not expired, customer
-//        matches token).
-//     3. Persist a portal_quote_acceptances row (signature, IP,
-//        UA, payload_hash snapshot from the quote).
-//     4. Flip the quote to ACCEPTED with accepted_at +
-//        accepted_by_email + accepted_signature_name.
-//
-//   Legacy: the operator created an order directly + issued a
-//   portal token bound to that order. The customer clicks accept
-//   with order_id; we flip the order to APPROVED. This path
-//   stays so existing tokens remain valid; it's the original
-//   shape this endpoint handled before P6.
+// The old order path is retired (410). It took an order_id and set ANY order
+// of the token's customer to APPROVED, at any status and with no payload
+// check, which let a link bypass the approval gate. Nothing in the app sends
+// order_id here; the route stays so an old link gets a clear answer.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
+import { recordAudit } from "../_lib/audit.js";
 
 const validateToken = async (svc, token) => {
   if (!token) return { error: { code: 401, message: "token required" } };
@@ -43,7 +43,7 @@ const acceptQuotePath = async (req, res, svc, t, body) => {
   if (qQ.error) throw new Error(qQ.error.message);
   if (!qQ.data) return json(res, 404, { error: { message: "quote not found" } });
   const q = qQ.data;
-  if (q.customer_id && q.customer_id !== t.customer_id) {
+  if (!q.customer_id || !t.customer_id || q.customer_id !== t.customer_id) {
     return json(res, 403, { error: { message: "quote doesn't match token" } });
   }
   if (q.status !== "SENT") {
@@ -82,13 +82,16 @@ const acceptQuotePath = async (req, res, svc, t, body) => {
   }).eq("tenant_id", t.tenant_id).eq("id", q.id).select("*").single();
   if (upd.error) throw new Error(upd.error.message);
 
-  await svc.from("audit_events").insert({
-    tenant_id: t.tenant_id,
-    actor_id: null,
+  // audit_events has `actor` (uuid, references auth.users), not `actor_id`.
+  // The old raw insert named a column that does not exist, so every
+  // acceptance audit row was rejected and, because supabase-js returns the
+  // error instead of throwing, silently lost. A token has no auth user, so
+  // the actor is null; recordAudit logs any failure to audit_failures.
+  await recordAudit({ tenantId: t.tenant_id, user: null, role: null }, {
     action: "portal_quote_accepted",
-    object_type: "quote",
-    object_id: q.id,
-    detail: "by=" + body.signature_name + " v" + q.version,
+    objectType: "quote",
+    objectId: q.id,
+    detail: "by=" + body.signature_name + " v" + q.version + " token=" + t.id,
   });
   await svc.from("portal_access_log").insert({
     tenant_id: t.tenant_id, token_id: t.id,
@@ -105,82 +108,26 @@ const acceptQuotePath = async (req, res, svc, t, body) => {
   });
 };
 
-const acceptOrderPath = async (req, res, svc, t, body) => {
-  const orderQ = await svc.from("orders").select("*")
-    .eq("tenant_id", t.tenant_id).eq("id", body.order_id).maybeSingle();
-  if (orderQ.error) throw new Error(orderQ.error.message);
-  if (!orderQ.data) return json(res, 404, { error: { message: "order not found" } });
-  if (orderQ.data.customer_id !== t.customer_id) {
-    return json(res, 403, { error: { message: "order doesn't match token" } });
-  }
-
-  const ins = await svc.from("portal_quote_acceptances").insert({
-    tenant_id: t.tenant_id,
-    token_id: t.id,
-    order_id: orderQ.data.id,
-    customer_id: t.customer_id,
-    ip: req.headers["x-forwarded-for"]?.split(",")[0] || null,
-    user_agent: req.headers["user-agent"] || null,
-    signature_name: body.signature_name,
-    signature_email: body.signature_email || t.email || null,
-    payload_hash: orderQ.data.payload_hash || orderQ.data.approval?.payloadHash || null,
-    raw: { remote_addr: req.headers["x-forwarded-for"], host: req.headers.host },
-  }).select("id, accepted_at").single();
-  if (ins.error) throw new Error(ins.error.message);
-
-  await svc.from("orders").update({
-    status: "APPROVED",
-    approval: {
-      ...(orderQ.data.approval || {}),
-      decided_by: "portal:" + t.id,
-      decided_at: ins.data.accepted_at,
-      decision: "accepted",
-      signature_name: body.signature_name,
-    },
-  }).eq("tenant_id", t.tenant_id).eq("id", orderQ.data.id);
-
-  await svc.from("audit_events").insert({
-    tenant_id: t.tenant_id,
-    actor_id: null,
-    action: "portal_quote_accepted",
-    object_type: "order",
-    object_id: orderQ.data.id,
-    detail: "by=" + body.signature_name,
-  });
-
-  await svc.from("portal_access_log").insert({
-    tenant_id: t.tenant_id, token_id: t.id,
-    ip: req.headers["x-forwarded-for"]?.split(",")[0] || null,
-    user_agent: req.headers["user-agent"] || null,
-    path: "accept_quote", status: 200,
-  });
-
-  return json(res, 200, {
-    ok: true,
-    acceptance_id: ins.data.id,
-    accepted_at: ins.data.accepted_at,
-  });
-};
-
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);
   if (req.method !== "POST") return json(res, 405, { error: { message: "Method not allowed" } });
   try {
     const body = await readBody(req);
+    if (!body?.quote_id && body?.order_id) {
+      // Retired before any token lookup, so the answer does not depend on
+      // whether the token is valid.
+      return json(res, 410, { error: { code: "ORDER_ACCEPT_RETIRED", message: "Accepting an order through a portal link is no longer supported. Please confirm the order with your contact at the supplier." } });
+    }
     if (!body?.token || !body?.signature_name) {
       return json(res, 400, { error: { message: "token and signature_name required" } });
     }
-    if (!body?.quote_id && !body?.order_id) {
-      return json(res, 400, { error: { message: "Either quote_id or order_id required" } });
+    if (!body?.quote_id) {
+      return json(res, 400, { error: { message: "quote_id required" } });
     }
     const svc = serviceClient();
     const v = await validateToken(svc, body.token);
     if (v.error) return json(res, v.error.code, { error: { message: v.error.message } });
-    const t = v.token;
-
-    // Prefer the new quote_id path when both are supplied.
-    if (body.quote_id) return acceptQuotePath(req, res, svc, t, body);
-    return acceptOrderPath(req, res, svc, t, body);
+    return acceptQuotePath(req, res, svc, v.token, body);
   } catch (err) { sendError(res, err); }
 }

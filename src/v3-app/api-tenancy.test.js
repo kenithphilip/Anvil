@@ -24,6 +24,9 @@ const makeStub = ({ memberships = [], tenants = [{ id: TENANT_ID }] }) => {
         _selectArgs: null,
         select(...args) { this._selectArgs = args; return this; },
         eq(col, val) { this._eq = { col, val }; return this; },
+        // ensureMembership's portal-identity lookup ends in .limit(1); with
+        // no portal_users rows in these fixtures it resolves to data: null.
+        limit() { return this; },
         maybeSingle() {
           if (this._table === "tenants" && this._eq?.col === "id") {
             const found = tenants.find((t) => t.id === this._eq.val) || null;

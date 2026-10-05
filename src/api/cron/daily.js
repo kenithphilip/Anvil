@@ -158,10 +158,14 @@ export default async function handler(req, res) {
       // reports a timeout (504), and the platform may freeze whatever is still
       // running once this function returns. demand_forecasts and
       // procurement_plans are written at the end of each tenant, so an
-      // abandoned tenant keeps the item_master updates that had landed, gets no
-      // forecasts or plans, and leaves its forecast_runs row at 'running'. A
-      // timeout on this row is a reason to give the planner a deadline or its
-      // own invocation, not something to absorb.
+      // abandoned tenant keeps what its item loop had already written (the
+      // item_master safety stock and reorder point, conformal residuals, and
+      // the 'hyst:' info exceptions for shortages held back), gets no forecasts
+      // or plans, and leaves its forecast_runs row at 'running'. Tenants are
+      // planned one after another in no fixed order, so every tenant not yet
+      // reached gets nothing at all, and one slow tenant can do that to the
+      // others week after week. A timeout on this row is a reason to give the
+      // planner a deadline or its own invocation, not something to absorb.
       ...(isPlanningDay()
         ? [{ name: "inventory/planning_weekly", fn: inventoryPlanning, opts: { path: "/api/cron/inventory-planning-weekly", timeoutMs: 40000 } }]
         : []),

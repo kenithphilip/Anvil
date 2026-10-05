@@ -189,6 +189,15 @@ describe("the daily cron runs the planner on the planning weekday only", () => {
       expect(lines[0]).toContain("will not run");
     }
   });
+
+  it("refuses a number that only parses to a weekday, rather than guessing which one was meant", async () => {
+    for (const bad of ["01", "1.0", "+1", "1e0", "0x1", " 1 1"]) {
+      warn.mockClear();
+      setPlanningDay(bad);
+      expect(await plannedWeekdays()).toEqual([]);
+      expect(dayWarnings()).toHaveLength(7);
+    }
+  });
 });
 
 describe("the planner's budget leaves the daily function room to finish", () => {
@@ -208,15 +217,23 @@ describe("the planner's budget leaves the daily function room to finish", () => 
 describe("a weekly row is judged against a weekly bound", () => {
   it("the daily run's own staleness sweep keeps the planner row fresh until the next planning day", async () => {
     await runDaily(SUNDAY + 1 * DAY_MS);
-    // Every day up to and including the next Monday, the sweep that runs at the
-    // end of /api/cron/daily must not call the Monday row stale. On the
-    // 10-minute default it did from the Tuesday on, holding /api/_healthz at 503.
-    for (let d = 2; d <= 8; d++) {
+    const writtenAt = h.cronHealth.get(PLANNER_ROW).last_run_at;
+    // Every later day of the week, the sweep that runs at the end of
+    // /api/cron/daily must not call the Monday row stale. On the 10-minute
+    // default it did from the Tuesday on.
+    for (let d = 2; d <= 7; d++) {
       const r = await runDaily(SUNDAY + d * DAY_MS);
       expect(r.body.staleness_check.any_stale).toBe(false);
       expect(r.body.staleness_check.stale_workers).toEqual([]);
     }
-    expect(h.cronHealth.has(PLANNER_ROW)).toBe(true);
+    // The next Monday's run, an hour late, before the planner has rewritten
+    // its row: the row is then a full week and an hour old and must still
+    // read fresh. The planner is switched off for this run so the row the
+    // sweep sees is the one from a week ago.
+    setPlanningDay("-1");
+    const r = await runDaily(SUNDAY + 8 * DAY_MS + 60 * 60 * 1000);
+    expect(h.cronHealth.get(PLANNER_ROW).last_run_at).toBe(writtenAt);
+    expect(r.body.staleness_check.stale_workers).toEqual([]);
   });
 
   it("a missed week still shows as stale", async () => {

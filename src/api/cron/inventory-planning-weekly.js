@@ -57,8 +57,8 @@ const defaultServiceLevel = (itemType, tenantDefault) =>
 //
 // We pick the median of recommended_qty_180d across installed
 // instances; if the item isn't tracked in equipment_installed_parts
-// we fall back to BOM walk via v_bom_walk_recursive.
-const projectEquivalentForPart = async (svc, tenantId, partNo) => {
+// we fall back to the BOM walk in bomEquivalents (bomProjectEquivalents).
+const projectEquivalentForPart = async (svc, tenantId, partNo, bomEquivalents) => {
   const eip = await svc.from("equipment_installed_parts")
     .select("recommended_qty_180d")
     .eq("tenant_id", tenantId)
@@ -70,33 +70,47 @@ const projectEquivalentForPart = async (svc, tenantId, partNo) => {
     return values[Math.floor(values.length / 2)];
   }
   // BOM-walk fallback: how many of `partNo` does the modal gun
-  // consume? Read v_bom_walk_recursive for any root that pulls in
-  // this child and take the max as the project-equivalent.
-  const walk = await svc.from("v_bom_walk_recursive")
-    .select("total_qty")
-    .eq("child_part_no", partNo)
-    .order("total_qty", { ascending: false })
-    .limit(1);
-  const walkRow = walk.data?.[0];
-  if (walkRow?.total_qty) return Number(walkRow.total_qty);
+  // consume? The largest total over any root that pulls in this child.
+  const fromBom = bomEquivalents.get(partNo);
+  if (fromBom) return fromBom;
   return 1;     // safest non-zero fallback
+};
+
+// The BOM-walk fallback above, built once per tenant from THAT tenant's
+// bill_of_materials rows: for each child part, the sum of the path multipliers
+// (depth <= 8) from each root that pulls it in, and the largest of those per-root
+// sums. That is the number v_bom_walk_recursive (migration 085) gave, which this
+// used to read per item. The view has no tenant_id and its recursive join follows
+// edges across tenants, so another tenant's BOM for a shared part_no became this
+// tenant's safety-stock floor. Returns Map<child_part_no, qty>.
+const bomProjectEquivalents = (bomRows) => {
+  const out = new Map();
+  for (const [child, paths] of buildBomAttributionIndex(bomRows, 8)) {
+    const perRoot = new Map();
+    for (const p of paths) perRoot.set(p.root, (perRoot.get(p.root) || 0) + p.mult);
+    out.set(child, Math.max(...perRoot.values()));
+  }
+  return out;
 };
 
 // Phase 3.5: hysteresis. The plan-emit signal must be stable across
 // N consecutive weekly runs (default 2 per tenant_settings) before
-// we draft a new procurement_plans row. We read the most recent N
-// forecast_runs and check whether each contained the part among
-// its plans (via models_evaluated.shortages or wape_summary; the
-// latter rolls up only WAPE so we use a small lookup table on
-// procurement_plans for the "did this part show a shortage in the
-// previous run" signal).
-const hysteresisOK = async (svc, tenantId, partNo, requiredStreak) => {
+// we draft a new procurement_plans row. Evidence that an earlier run
+// saw a shortage for this part, inside the last (requiredStreak * 7)
+// days, is either of:
+//
+//   - a DRAFT/APPROVED/RELEASED plan for the part. Approximate (a part
+//     could have had a plan for a different week) but persistent
+//     shortages produce persistent plans.
+//   - the 'hyst:<part>:<week>' info exception a run records when it holds
+//     a shortage back (the else branch in planTenant), from a week before
+//     thisWeek. A re-run inside the same week is not a second run.
+//
+// The exceptions are what let a streak start. With plans as the only
+// evidence, a plan needed a prior plan, so on the default of 2 runs the
+// planner held every shortage back forever and drafted nothing.
+const hysteresisOK = async (svc, tenantId, partNo, requiredStreak, thisWeek) => {
   if (requiredStreak <= 1) return { ok: true, streak: 1 };
-  // We use the existence of any DRAFT/APPROVED plan for this part
-  // in the last (requiredStreak * 7) days as evidence of a prior
-  // shortage detection. This is approximate (a part could have
-  // had a plan for a different week) but is good enough for
-  // hysteresis: persistent shortages produce persistent plans.
   const sinceISO = new Date(Date.now() - requiredStreak * 7 * 86400_000).toISOString();
   const r = await svc.from("procurement_plans")
     .select("id, created_at")
@@ -104,7 +118,21 @@ const hysteresisOK = async (svc, tenantId, partNo, requiredStreak) => {
     .eq("part_no", partNo)
     .in("status", ["draft", "approved", "released"])
     .gte("created_at", sinceISO);
-  const streak = (r.data || []).length + 1;
+  const held = await svc.from("inventory_exceptions")
+    .select("detail")
+    .eq("tenant_id", tenantId)
+    .eq("part_no", partNo)
+    .eq("exception_kind", "below_reorder_point")
+    .gte("created_at", sinceISO);
+  const prefix = "hyst:" + partNo + ":";
+  const heldWeeks = new Set();
+  for (const row of (held.data || [])) {
+    const fp = String(row?.detail?.fingerprint || "");
+    if (!fp.startsWith(prefix)) continue;
+    const week = fp.slice(prefix.length);
+    if (week && week < thisWeek) heldWeeks.add(week);
+  }
+  const streak = (r.data || []).length + heldWeeks.size + 1;
   return { ok: streak >= requiredStreak, streak };
 };
 
@@ -298,7 +326,8 @@ const planTenant = async (svc, tenantId) => {
   // it consumes, so RAW_MATERIAL (and any planning-enabled child) parts
   // receive procurement plans driven by upstream sales pipeline. Read
   // bill_of_materials directly (tenant-scoped column) rather than the
-  // v_bom_walk_recursive view, which has no tenant_id to filter on.
+  // v_bom_walk_recursive view, which has no tenant_id to filter on. The
+  // project-equivalent floor reads these same rows (bomEquivalents below).
   // Inert for tenants without a BOM.
   const bomRows = await svc.from("bill_of_materials")
     .select("parent_part_no, child_part_no, qty")
@@ -318,6 +347,7 @@ const planTenant = async (svc, tenantId) => {
   // loop) so an exploded raw-material plan can credit the finished-good
   // opportunities that cascaded into it — same edges as the explosion above.
   const bomAttributionIndex = buildBomAttributionIndex(bomRows.data || [], 8, { buyParts });
+  const bomEquivalents = bomProjectEquivalents(bomRows.data || []);
 
   // Committed demand from future sales-order schedule lines, built ONCE for the
   // whole tenant and BOM-EXPLODED like the pipeline — so a confirmed SO for a
@@ -428,7 +458,7 @@ const planTenant = async (svc, tenantId) => {
       || defaultServiceLevel(item.item_type, cfg.inventory_default_service_level);
     // Phase 3.5: project-equivalent floor reads from
     // equipment_installed_parts.recommended_qty_180d (doc 2.3.3).
-    const projectEquivalentQty = await projectEquivalentForPart(svc, tenantId, item.part_no);
+    const projectEquivalentQty = await projectEquivalentForPart(svc, tenantId, item.part_no, bomEquivalents);
     // Step 4b (gated): reliability safety-stock floor from field failures. 0 when
     // the flag is off, so this leaves the max() unchanged for existing tenants.
     const relFloor = reliabilityOn
@@ -663,7 +693,7 @@ const planTenant = async (svc, tenantId) => {
       // value is recorded on the plan's rationale so the operator
       // can see the engine waited.
       const requiredStreak = cfg.inventory_hysteresis_runs || 2;
-      const hyst = await hysteresisOK(svc, tenantId, item.part_no, requiredStreak);
+      const hyst = await hysteresisOK(svc, tenantId, item.part_no, requiredStreak, today);
       if (hyst.ok) {
         planResult.plan.tenant_id = tenantId;
         // Bet 3: stamp CP fields directly + record the legacy

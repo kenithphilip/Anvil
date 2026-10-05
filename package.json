@@ -5,7 +5,7 @@
   "description": "Anvil. Multi-tenant industrial sales-ops platform. Vercel serverless functions over Supabase Postgres, with a Vite + React + TypeScript browser app under src/v3-app.",
   "type": "module",
   "engines": {
-    "node": "20.x"
+    "node": "22.x"
   },
   "scripts": {
     "build": "rm -rf public/assets public/index.html public/portal.html public/v3-app && vite build",

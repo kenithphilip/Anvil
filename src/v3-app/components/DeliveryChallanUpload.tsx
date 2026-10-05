@@ -19,7 +19,7 @@ import { Icon } from "../lib/icons";
 type Candidate = { id?: string | null; invoice_id?: string | null; po_number?: string | null };
 type Outcome =
   | { kind: "ok"; written: { inserted: number; updated: number }; docket: string | null; challan: string | null; basis: string | null }
-  | { kind: "refused"; reason: string; detail: string; candidates: Candidate[] };
+  | { kind: "refused"; reason: string; detail: string; candidates: Candidate[]; overridable?: boolean; partial?: number };
 
 const REASON_TITLE: Record<string, string> = {
   order_mismatch: "This challan belongs to a different order",
@@ -28,11 +28,14 @@ const REASON_TITLE: Record<string, string> = {
   not_a_delivery_note: "This document was not read as a delivery challan",
   no_lines: "The challan has no line items",
   no_challan_identity: "The challan has no number to record it by",
-  write_failed: "The despatch lines could not be recorded",
+  write_failed: "Some despatch lines could not be recorded",
+  po_differs: "The challan's PO does not match this order",
   unresolved_order: "Could not tell which order this challan belongs to",
 };
 
 type Held = { documentId: string; extracted: any; reason: string };
+// The last read that was refused for a reason the operator may override.
+type Pending = { documentId: string; extracted: any };
 
 export const DeliveryChallanUpload: React.FC<{ orderId: string; onRecorded?: () => void }> = ({ orderId, onRecorded }) => {
   const [step, setStep] = useState<null | "uploading" | "reading" | "recording">(null);
@@ -41,10 +44,14 @@ export const DeliveryChallanUpload: React.FC<{ orderId: string; onRecorded?: () 
   // A read the extractor itself was unsure of. Its quantities feed the
   // "billed ahead of despatch" check, so it waits for an explicit decision.
   const [held, setHeld] = useState<Held | null>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
 
-  const record = async (documentId: string, extracted: any) => {
+  const record = async (documentId: string, extracted: any, confirmPoMismatch = false) => {
     setStep("recording");
-    const res: any = await AnvilBackend?.documents?.ingestDeliveryNote?.(documentId, extracted, orderId);
+    const res: any = confirmPoMismatch
+      ? await AnvilBackend?.documents?.ingestDeliveryNote?.(documentId, extracted, orderId, { confirm_po_mismatch: true })
+      : await AnvilBackend?.documents?.ingestDeliveryNote?.(documentId, extracted, orderId);
+    setPending(null);
     if (res && res.ok) {
       setOutcome({
         kind: "ok",
@@ -55,13 +62,29 @@ export const DeliveryChallanUpload: React.FC<{ orderId: string; onRecorded?: () 
       });
       onRecorded?.();
     } else {
+      const landed = (res?.written?.inserted || 0) + (res?.written?.updated || 0);
       setOutcome({
         kind: "refused",
         reason: res?.reason || "unresolved_order",
         detail: res?.detail || "Nothing was recorded.",
         candidates: Array.isArray(res?.candidates) ? res.candidates : [],
+        overridable: res?.overridable === true,
+        partial: landed,
       });
+      if (res?.overridable === true) setPending({ documentId, extracted });
+      // Some lines did land: the check below must re-read them.
+      if (landed > 0) onRecorded?.();
     }
+  };
+
+  const recordConfirmed = async () => {
+    if (!pending) return;
+    const p = pending;
+    setErr(null);
+    setOutcome(null);
+    try { await record(p.documentId, p.extracted, true); }
+    catch (e: any) { setErr(e?.message || String(e)); }
+    finally { setStep(null); }
   };
 
   const recordHeld = async () => {
@@ -79,6 +102,7 @@ export const DeliveryChallanUpload: React.FC<{ orderId: string; onRecorded?: () 
     setErr(null);
     setOutcome(null);
     setHeld(null);
+    setPending(null);
     try {
       setStep("uploading");
       const up: any = await AnvilBackend?.documents?.upload?.(file, "delivery_note", { autoScan: false });
@@ -172,8 +196,15 @@ export const DeliveryChallanUpload: React.FC<{ orderId: string; onRecorded?: () 
       )}
 
       {outcome?.kind === "refused" && (
-        <Banner kind="warn" title={REASON_TITLE[outcome.reason] || "The challan was not recorded"}>
+        <Banner
+          kind="warn"
+          title={REASON_TITLE[outcome.reason] || "The challan was not recorded"}
+          action={outcome.overridable && pending ? <Btn sm onClick={recordConfirmed}>Record on this order anyway</Btn> : undefined}
+        >
           <span className="mono-sm">{outcome.detail}</span>
+          {(outcome.partial || 0) > 0 && (
+            <span className="mono-sm"> {outcome.partial} line{outcome.partial === 1 ? " was" : "s were"} recorded; the check below shows them.</span>
+          )}
           {outcome.candidates.filter((c) => c.id).length > 0 && (
             <div style={{ marginTop: 6 }}>
               {outcome.candidates.filter((c) => c.id).map((c) => (

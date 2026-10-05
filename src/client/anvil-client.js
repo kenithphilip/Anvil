@@ -690,9 +690,13 @@
     // orderId is optional — omit it and the endpoint resolves the order from
     // the challan's buyer PO number, then its invoice number, REFUSING rather
     // than guessing when neither is unambiguous.
-    ingestDeliveryNote: async (documentId, extracted, orderId = null) =>
+    // opts.confirm_po_mismatch records the challan on orderId even though its
+    // PO is on no order and differs from the order's (the "po_differs"
+    // refusal is overridable; an order_mismatch is not).
+    ingestDeliveryNote: async (documentId, extracted, orderId = null, opts = {}) =>
       apiFetch("/api/documents/delivery_note_ingest", { method: "POST", body: {
         document_id: documentId, extracted, ...(orderId ? { order_id: orderId } : {}),
+        ...(opts && opts.confirm_po_mismatch === true ? { confirm_po_mismatch: true } : {}),
       } }),
     fetch: async (id) => apiFetch("/api/documents/" + id),
     remove: async (id) => apiFetch("/api/documents/" + id, { method: "DELETE" }),

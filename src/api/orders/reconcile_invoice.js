@@ -189,17 +189,24 @@ export default async function handler(req, res) {
     // rows already fetched above for the under-delivery leg (lr_number must be
     // in that select: it was not, so the docket was always null).
     //
-    // It is the docket for THIS invoice. When the despatch rows carry invoice
-    // numbers, only rows billed on the subject invoice count; another
-    // invoice's consignment does not prove this one can move. Only when no row
-    // carries an invoice number does the order-level docket stand in.
+    // It is the docket for THIS invoice. A despatch row billed on this
+    // invoice counts first. A row that names no invoice, or one Anvil does
+    // not hold (a Tally-raised number is not mirrored), cannot be attributed,
+    // so it stands in at order level. A row billed on ANOTHER known invoice of
+    // this order never counts: that consignment does not prove this one moved.
     const norm = (v) => String(v == null ? "" : v).trim().toUpperCase();
     const rowsAll = dispatchRows || [];
-    const billedRows = rowsAll.filter((d) => d?.invoice_number);
-    const docketRows = billedRows.length
-      ? billedRows.filter((d) => subject?.invoice_number && norm(d.invoice_number) === norm(subject.invoice_number))
-      : rowsAll;
-    const docket = docketRows.map((d) => d?.lr_number).find((v) => v) || null;
+    const subjectNo = norm(subject?.invoice_number);
+    const otherKnown = new Set(
+      invoices.filter((i) => !subject || i.id !== subject.id).map((i) => norm(i.invoice_number)).filter(Boolean),
+    );
+    const lr = (d) => d?.lr_number;
+    const mine = subjectNo ? rowsAll.filter((d) => norm(d?.invoice_number) === subjectNo) : [];
+    const unattributed = rowsAll.filter((d) => {
+      const n = norm(d?.invoice_number);
+      return !n || (n !== subjectNo && !otherKnown.has(n));
+    });
+    const docket = mine.map(lr).find((v) => v) || unattributed.map(lr).find((v) => v) || null;
 
     const dispatchReadiness = subject
       ? assessDispatchReadiness({

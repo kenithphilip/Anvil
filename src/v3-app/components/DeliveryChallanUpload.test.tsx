@@ -109,13 +109,45 @@ describe("DeliveryChallanUpload", () => {
     await waitFor(() => expect(onRecorded).toHaveBeenCalledTimes(1));
   });
 
-  it("does not report success or refresh the check when the write failed", async () => {
+  it("does not report success or refresh the check when nothing was written", async () => {
     ingestDeliveryNote.mockResolvedValue({ ok: false, reason: "write_failed", detail: "1 of 1 despatch line could not be recorded: invalid date", written: { inserted: 0, updated: 0, errors: [{}] } });
     const onRecorded = vi.fn();
     const { container } = render(<DeliveryChallanUpload orderId="ord-1" onRecorded={onRecorded} />);
     pick(container);
-    await waitFor(() => expect(screen.getByText("The despatch lines could not be recorded")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Some despatch lines could not be recorded")).toBeTruthy());
     expect(screen.queryByText(/^Challan .* recorded$/)).toBeNull();
     expect(onRecorded).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the check when part of a failed write did land, and says how much", async () => {
+    ingestDeliveryNote.mockResolvedValue({ ok: false, reason: "write_failed", detail: "1 of 2 despatch lines could not be recorded: invalid date", written: { inserted: 1, updated: 0, errors: [{}] } });
+    const onRecorded = vi.fn();
+    const { container } = render(<DeliveryChallanUpload orderId="ord-1" onRecorded={onRecorded} />);
+    pick(container);
+    await waitFor(() => expect(screen.getByText(/1 line was recorded/)).toBeTruthy());
+    expect(onRecorded).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers to record on this order anyway when the challan's PO is merely unrecognised", async () => {
+    ingestDeliveryNote
+      .mockResolvedValueOnce({ ok: false, reason: "po_differs", overridable: true, detail: 'This challan cites PO "PO-778", which is on no order.', candidates: [], written: { inserted: 0, updated: 0 } })
+      .mockResolvedValueOnce({ ok: true, written: { inserted: 1, updated: 0 }, docket_no: "LR-7781", delivery_note_no: "DC-0042", matched_on: "order chosen by operator; operator confirmed" });
+    const onRecorded = vi.fn();
+    const { container } = render(<DeliveryChallanUpload orderId="ord-1" onRecorded={onRecorded} />);
+    pick(container);
+    await waitFor(() => expect(screen.getByText("The challan's PO does not match this order")).toBeTruthy());
+    expect(onRecorded).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Record on this order anyway"));
+    await waitFor(() => expect(ingestDeliveryNote).toHaveBeenLastCalledWith("doc-1", EXTRACTED, "ord-1", { confirm_po_mismatch: true }));
+    await waitFor(() => expect(screen.getByText(/Challan DC-0042 recorded/)).toBeTruthy());
+    expect(onRecorded).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers no override for a challan that belongs to a different order", async () => {
+    ingestDeliveryNote.mockResolvedValue({ ok: false, reason: "order_mismatch", detail: "belongs elsewhere", candidates: [{ id: "ord-2", po_number: "4500313249" }], written: { inserted: 0, updated: 0 } });
+    const { container } = render(<DeliveryChallanUpload orderId="ord-1" />);
+    pick(container);
+    await waitFor(() => expect(screen.getByText("This challan belongs to a different order")).toBeTruthy());
+    expect(screen.queryByText("Record on this order anyway")).toBeNull();
   });
 });

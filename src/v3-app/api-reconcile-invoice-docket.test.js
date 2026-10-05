@@ -98,6 +98,22 @@ describe("reconcile_invoice reads the docket a challan recorded", () => {
     expect(docketOf(res)).toBe("LR-1000");
   });
 
+  it("accepts a docket billed on an invoice number Anvil does not hold (a Tally-raised number)", async () => {
+    tables.dispatch_lines = [{ tenant_id: TENANT, order_id: "ord-1", part_no: "P-1", dispatched_qty: 2, lr_number: "LR-5555", invoice_number: "TALLY/25-26/0099" }];
+    const res = await run({ order_id: "ord-1", invoice_id: "inv-1" });
+    expect(docketOf(res)).toBe("LR-5555");
+    expect(verdicts(res)).not.toContain("docket_missing");
+  });
+
+  it("prefers the docket billed on this invoice over an unattributed one", async () => {
+    tables.dispatch_lines = [
+      { tenant_id: TENANT, order_id: "ord-1", part_no: "P-1", dispatched_qty: 1, lr_number: "LR-OTHER", invoice_number: null },
+      { tenant_id: TENANT, order_id: "ord-1", part_no: "P-1", dispatched_qty: 1, lr_number: "LR-MINE", invoice_number: "INV/26/0001" },
+    ];
+    const res = await run({ order_id: "ord-1", invoice_id: "inv-1" });
+    expect(docketOf(res)).toBe("LR-MINE");
+  });
+
   it("does not let another invoice's consignment satisfy this invoice's docket", async () => {
     tables.invoices = [invoice("inv-1", "INV/26/0001"), invoice("inv-2", "INV/26/0002")];
     tables.dispatch_lines = [{ tenant_id: TENANT, order_id: "ord-1", part_no: "P-1", dispatched_qty: 2, lr_number: "LR-7781", invoice_number: "INV/26/0001" }];

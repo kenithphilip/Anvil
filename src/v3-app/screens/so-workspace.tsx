@@ -248,6 +248,17 @@ const WiredSOWorkspace = () => {
   // table) without touching the tenant-wide provider order in Admin.
   const [extractEngine, setExtractEngine] = u<string>("");
 
+  // The router re-renders only when the ROUTE changes (#/so to #/quotes), so
+  // a link from one order to another left this screen on the old order until
+  // some unrelated render. Re-render on any hash change; the effects below
+  // are keyed on orderId and reload for the new order.
+  const [, setHashTick] = u(0);
+  e(() => {
+    const onHash = () => setHashTick((n: number) => n + 1);
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
   // Read order id + tab from URL hash query: #/so?id=...&tab=schedule
   const hashQuery = (() => {
     const hash = window.location.hash || "";

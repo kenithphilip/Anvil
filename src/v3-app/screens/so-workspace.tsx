@@ -40,6 +40,7 @@ import {
 import { AskAnvil } from "../components/AskAnvil";
 import { mergeExtractedLines } from "../lib/line-merge";
 import { varianceLineFromGap, outstandingGaps } from "../lib/variance-line";
+import { lineRequisition, requisitionGroups, requisitionNotice } from "../lib/requisition";
 
 // Line-reconciliation table body, mounted inside the unified reconcile
 // view's ReviewPaneSelectionProvider so a row click drives the shared
@@ -84,7 +85,7 @@ export const mappingTitle = (ln: any): string => {
 // one is inserted.
 const RECON_TABLE_KEY = "so-recon";
 const RECON_COL_IDS = [
-  "n", "item", "uom", "qty", "rate", "hsn", "gst", "taxable", "tax", "line", "issues",
+  "n", "item", "pr", "uom", "qty", "rate", "hsn", "gst", "taxable", "tax", "line", "issues",
 ] as const;
 
 const ReconLinesTable: React.FC<{
@@ -575,6 +576,16 @@ const WiredSOWorkspace = () => {
   // diverges, after Save the server reload clears the draft back to
   // null and the persisted lines take over again.
   const draftLines: any[] = linesDraft ?? lines;
+  // Purchase requisition (PR) numbers per line, computed from the lines the
+  // operator is looking at, so a large PO is described correctly once the
+  // background worker has merged its full line set. The "PR no." column only
+  // appears when some line carries one: most POs carry none, and an empty
+  // column on every order would be noise.
+  const reqGroups = requisitionGroups(draftLines);
+  const showPrCol = reqGroups.length > 0;
+  const prCol = showPrCol ? 1 : 0;
+  const reqNotice = requisitionNotice(reqGroups);
+  const headerRequisition = String(o.result?.salesOrder?.customer?.requisition_no ?? "").trim();
   const grandTotal = Number(o.result?.salesOrder?.grandTotal) || 0;
   const subtotal = draftLines.reduce((s, ln) => s + (Number(ln.lineTotal) || (Number(ln.qty || ln.quantity) * Number(ln.rate || ln.unitPrice)) || 0), 0);
   const findings = Array.isArray(o.rule_findings) ? o.rule_findings : [];
@@ -1396,6 +1407,16 @@ const WiredSOWorkspace = () => {
           )}
           {mapAffordance(ln, i)}
         </td>
+        {showPrCol && (
+          <td className="mono-sm" title="Purchase requisition (PR) number printed on this line of the PO">
+            {lineRequisition(ln) && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span>{lineRequisition(ln)}</span>
+                <FieldPill src={getFieldSource(ln, "requisition_no")} />
+              </div>
+            )}
+          </td>
+        )}
         <td><EditableCell {...cellProps} line={ln} i={i} canonicalKey="uom" type="text" placeholder="Nos" /></td>
         <td className="r mono"><EditableCell {...cellProps} line={ln} i={i} canonicalKey="qty" type="number" align="right" /></td>
         <td className="r mono"><EditableCell {...cellProps} line={ln} i={i} canonicalKey="rate" type="number" align="right" /></td>
@@ -1443,7 +1464,7 @@ const WiredSOWorkspace = () => {
     const breakdownRow = (
       <tr key={"brk-" + i} style={{ background: "var(--paper-2)" }}>
         <td></td>
-        <td colSpan={10} style={{ padding: "10px 6px" }}>
+        <td colSpan={10 + prCol} style={{ padding: "10px 6px" }}>
           <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 8, fontSize: 11 }}>
             Per-unit tax and auxiliary amounts. Set the ones the PO carries; the row above recomputes the line total from them. The "Rate" cell is the tax-exclusive ex-price.
           </div>
@@ -2523,6 +2544,9 @@ const WiredSOWorkspace = () => {
               ["Bill to",     o.result.salesOrder.customer.bill_to_address || "—"],
               ["Ship to",     o.result.salesOrder.customer.ship_to_address
                               || o.result.salesOrder.customer.bill_to_address || "—"],
+              // The header-level PR number, read-only. Listed only when the
+              // PO header prints one; per-line PR numbers are in the grid.
+              ...(headerRequisition ? [["PR no.", headerRequisition] as [string, string]] : []),
             ]} />
                   </Card>
                 )}
@@ -2583,6 +2607,14 @@ const WiredSOWorkspace = () => {
             {linesDirty && o.approval && (
               <div className="mono-sm" style={{ padding: "8px 16px", color: "var(--rust)", background: "var(--paper-2)" }}>
                 Editing line items will invalidate the existing approval. The order will need to be re-approved before push.
+              </div>
+            )}
+            {/* Non-blocking: a consolidated PO answering several PRs is
+                legitimate. It is shown so the operator can see which lines
+                answer which PR, not to stop anything. */}
+            {reqNotice && (
+              <div role="status" className="mono-sm" style={{ padding: "8px 16px", color: "var(--ink-2)", background: "var(--paper-2)" }}>
+                {reqNotice}
               </div>
             )}
             {draftLines.length === 0 ? (
@@ -2661,7 +2693,9 @@ const WiredSOWorkspace = () => {
                     head={<thead><tr>
                       <th style={{ width: 28 }}>#</th>
                       {([
-                        ["item", "Item", ""], ["uom", "UoM", ""], ["qty", "Qty", "r"],
+                        ["item", "Item", ""],
+                        ...(showPrCol ? [["pr", "PR no.", ""]] : []),
+                        ["uom", "UoM", ""], ["qty", "Qty", "r"],
                         ["rate", "Rate", "r"], ["hsn", "HSN / SAC", ""], ["gst", "GST %", "r"],
                         ["taxable", "Taxable ₹", "r"], ["tax", "Tax ₹", "r"],
                         ["line", "Line ₹", "r"], ["issues", "Issues", ""],
@@ -2675,7 +2709,7 @@ const WiredSOWorkspace = () => {
                     </tr></thead>}
                     footer={<tfoot>
                       <tr style={{ background: "var(--paper-2)" }}>
-                        <td colSpan={7} className="r mono" style={{ paddingTop: 8 }}>
+                        <td colSpan={7 + prCol} className="r mono" style={{ paddingTop: 8 }}>
                           <span style={{ color: "var(--ink-3)" }}>subtotal · taxable</span>
                         </td>
                         <td className="r mono"><b>{fmtINR(taxableTotal)}</b></td>
@@ -2685,7 +2719,7 @@ const WiredSOWorkspace = () => {
                       </tr>
                       {auxTotal > 0 && (
                         <tr style={{ background: "var(--paper-2)" }}>
-                          <td colSpan={9} className="r mono">
+                          <td colSpan={9 + prCol} className="r mono">
                             <span style={{ color: "var(--ink-3)" }}>auxiliary · tooling / P&amp;F / others</span>
                           </td>
                           <td className="r mono">{fmtINR(auxTotal)}</td>
@@ -2693,7 +2727,7 @@ const WiredSOWorkspace = () => {
                         </tr>
                       )}
                       <tr style={{ background: "var(--paper-2)" }}>
-                        <td colSpan={7} className="r mono" style={{ paddingBottom: 8 }}>
+                        <td colSpan={7 + prCol} className="r mono" style={{ paddingBottom: 8 }}>
                           <span style={{ color: "var(--ink-3)" }}>
                             grand total · taxable + tax{auxTotal > 0 ? " + aux" : ""}
                           </span>
@@ -2705,7 +2739,7 @@ const WiredSOWorkspace = () => {
                       </tr>
                       {grandWithTax > 0 && (
                         <tr style={{ background: "var(--paper-2)" }}>
-                          <td colSpan={11} className="mono-sm" style={{ paddingTop: 2, paddingBottom: 10, color: "var(--ink-3)" }}>
+                          <td colSpan={11 + prCol} className="mono-sm" style={{ paddingTop: 2, paddingBottom: 10, color: "var(--ink-3)" }}>
                             <span style={{ color: "var(--ink-3)" }}>amount chargeable (in words):</span>{" "}
                             <i>{amountInWords(grandWithTax, { currency: o.currency || "INR" })}</i>
                           </td>

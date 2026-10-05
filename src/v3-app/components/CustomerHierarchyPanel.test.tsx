@@ -1,7 +1,7 @@
 // Tests for the customer hierarchy panel: shows the current parent +
 // child entities. Editing is admin-only and a parent change is staged as a
 // draft that must be confirmed + saved (it no longer auto-saves on change).
-// Saving sends the full customer object through customers.upsert.
+// Saving sends only the parent change, addressed by id.
 
 import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -52,8 +52,16 @@ describe("CustomerHierarchyPanel", () => {
     await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
     const payload = upsert.mock.calls[0][0];
     expect(payload.parent_customer_id).toBe("grp");
-    expect(payload.customer_key).toBe("hmi-pune"); // full object preserved
+    expect(payload.customer_key).toBe("hmi-pune");
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
+  });
+
+  it("a parent change sends only id, key and the parent, not the stale customer object", async () => {
+    const { getByLabelText, getByText } = render(<CustomerHierarchyPanel customer={PLANT_A} allCustomers={ALL} />);
+    fireEvent.change(getByLabelText("Parent customer"), { target: { value: "pb" } });
+    fireEvent.click(getByText("Save"));
+    await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
+    expect(upsert.mock.calls[0][0]).toEqual({ id: "pa", customer_key: "hmi-chennai", parent_customer_id: "pb" });
   });
 
   it("does not save when the confirm dialog is dismissed", async () => {

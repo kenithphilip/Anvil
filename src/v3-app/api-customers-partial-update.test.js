@@ -6,15 +6,19 @@
 //
 // These tests drive the real handler over an in-memory customers table
 // whose upsert follows PostgREST: on a (tenant_id, customer_key) conflict
-// it overwrites exactly the columns present in the payload. The real
-// requireAction / SERVER_ACTIONS gate and the real GSTIN validator run;
-// only resolveContext and the Supabase client are replaced.
+// it overwrites exactly the columns present in the payload. A plain insert
+// that hits the migration 001 unique (tenant_id, customer_key) fails with
+// 23505, as Postgres does. The real requireAction / SERVER_ACTIONS gate
+// and the real GSTIN validator run; only resolveContext and the Supabase
+// client are replaced.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-const H = vi.hoisted(() => ({ ctx: null, tables: {}, writes: [], missingColumns: new Set(), seq: 0 }));
+const H = vi.hoisted(() => ({ ctx: null, tables: {}, writes: [], missingColumns: new Set(), seq: 0, beforeWrite: null }));
 // Column defaults the fake applies on insert (migration 158).
 const INSERT_DEFAULTS = vi.hoisted(() => ({ customer_change_requests: { status: "pending" } }));
+// Unique constraints a plain insert enforces (migration 001).
+const UNIQUE = vi.hoisted(() => ({ customers: ["tenant_id", "customer_key"] }));
 
 vi.mock("../api/_lib/auth.js", async (importOriginal) => {
   const actual = await importOriginal();
@@ -34,10 +38,20 @@ vi.mock("../api/_lib/supabase.js", () => ({
       const missing = (row) => Object.keys(row).find((k) => H.missingColumns.has(table + "." + k));
       const terminal = () => {
         if (mode !== "select") {
+          // Lets a test land a concurrent write between the handler's
+          // lookup and its own write.
+          if (H.beforeWrite) { const hook = H.beforeWrite; H.beforeWrite = null; hook(); }
           const rows = Array.isArray(payload) ? payload : [payload];
           for (const row of rows) {
             const col = missing(row);
             if (col) return { data: null, error: { code: "42703", message: 'column "' + col + '" of relation "' + table + '" does not exist' } };
+          }
+          if (mode === "insert" && UNIQUE[table]) {
+            for (const row of rows) {
+              if (ds.some((r) => UNIQUE[table].every((c) => r[c] === row[c]))) {
+                return { data: null, error: { code: "23505", message: "duplicate key value violates unique constraint" } };
+              }
+            }
           }
           for (const row of rows) H.writes.push({ table, mode, payload: { ...row } });
         }
@@ -144,6 +158,7 @@ beforeEach(() => {
   H.writes = [];
   H.missingColumns = new Set();
   H.seq = 0;
+  H.beforeWrite = null;
 });
 
 describe("POST /api/customers updates only the keys the body carries", () => {
@@ -171,7 +186,9 @@ describe("POST /api/customers updates only the keys the body carries", () => {
     expect(row("c-acme")).toEqual({ ...untouched(["notes", "parent_customer_id"]), notes: null, parent_customer_id: null });
   });
 
-  it("ship_to still falls back to bill_to when the body sends ship_to empty, and is left alone when absent", async () => {
+  it("an empty ship_to sent with bill_to means same-as-bill-to, absent is left alone, and null alone clears", async () => {
+    // so-intake sends ship_to null whenever the operator leaves ship-to
+    // blank, on create and edit alike; on both it means "same as bill-to".
     const both = await post({ id: "c-acme", bill_to: "Plot 9, Bhosari\nPune 411026", ship_to: null });
     expect(both.statusCode).toBe(200);
     expect(row("c-acme").ship_to).toBe("Plot 9, Bhosari\nPune 411026");
@@ -180,6 +197,27 @@ describe("POST /api/customers updates only the keys the body carries", () => {
     const billOnly = await post({ id: "c-acme", bill_to: "Plot 9, Bhosari\nPune 411026" });
     expect(billOnly.statusCode).toBe(200);
     expect(row("c-acme").ship_to).toBe("Gate 2, Chakan\nPune 410501");
+
+    H.tables.customers = [ACME(), GROUP()];
+    const cleared = await post({ id: "c-acme", ship_to: null });
+    expect(cleared.statusCode).toBe(200);
+    expect(row("c-acme")).toEqual({ ...ACME(), ship_to: null });
+  });
+
+  it("an edit carrying bill_to mirrors it into the customer's default_bill location, and only that one", async () => {
+    const res = await post({ id: "c-acme", bill_to: "Plot 9, Bhosari\nPune 411026" });
+    expect(res.statusCode).toBe(200);
+    expect(H.tables.customer_locations).toEqual([
+      expect.objectContaining({
+        tenant_id: T1,
+        customer_id: "c-acme",
+        location_code: "default_bill",
+        address_line1: "Plot 9, Bhosari",
+        pincode: "411026",
+        gstin: GSTIN_MH,
+        state_code: "27",
+      }),
+    ]);
   });
 
   it("canonicalises a customer_type to the migration 006 enum and refuses a value outside it", async () => {
@@ -193,11 +231,24 @@ describe("POST /api/customers updates only the keys the body carries", () => {
     expect(row("c-acme").customer_type).toBe("LINE_BUILDER");
   });
 
-  it("refuses to blank a named customer's name", async () => {
+  it("a whitespace-only customer_type clears the column instead of reaching the enum", async () => {
+    const res = await post({ id: "c-acme", customer_type: "   " });
+    expect(res.statusCode).toBe(200);
+    expect(H.writes).toEqual([{ table: "customers", mode: "update", payload: { customer_type: null } }]);
+    expect(row("c-acme")).toEqual({ ...ACME(), customer_type: null });
+  });
+
+  it("refuses to blank a named customer's name, with null or with whitespace", async () => {
     const res = await post({ id: "c-acme", customer_name: null });
     expect(res.statusCode).toBe(400);
     expect(res.body.error).toMatchObject({ code: "CUSTOMER_NAME_REQUIRED", field: "customer_name" });
     expect(row("c-acme")).toEqual(ACME());
+
+    const spaces = await post({ id: "c-acme", customer_name: "   " });
+    expect(spaces.statusCode).toBe(400);
+    expect(spaces.body.error).toMatchObject({ code: "CUSTOMER_NAME_REQUIRED", field: "customer_name" });
+    expect(row("c-acme")).toEqual(ACME());
+    expect(H.writes).toEqual([]);
   });
 
   it("refuses to rewrite customer_key on an id-addressed edit", async () => {
@@ -248,10 +299,35 @@ describe("GSTIN gate on an edit", () => {
     expect(row("c-acme")).toEqual({ ...ACME(), gstin: null });
   });
 
-  it("resending the stored GSTIN unchanged is not a GSTIN edit", async () => {
-    const res = await post({ customer_key: "acme", gstin: GSTIN_MH.toLowerCase(), notes: "Updated by SE" }, "sales_engineer");
+  it("resending the stored GSTIN is still gated, so a sales_engineer's so-intake edit of a GSTIN customer writes nothing", async () => {
+    // so-intake's edit dialog always resends the stored GSTIN. Write roles
+    // change a GSTIN-bearing customer through the change-request queue.
+    const soIntakeEdit = {
+      customer_key: "acme",
+      customer_name: "Acme Motors",
+      gstin: GSTIN_MH,
+      payment_terms: "Net 120",
+      margin_floor_pct: 2,
+      bill_to: "Somewhere else\nMumbai 400001",
+    };
+    const se = await post(soIntakeEdit, "sales_engineer");
+    expect(se.statusCode).toBe(403);
+    expect(row("c-acme")).toEqual(ACME());
+    expect(H.writes).toEqual([]);
+
+    const manager = await post(soIntakeEdit, "sales_manager");
+    expect(manager.statusCode).toBe(200);
+    expect(row("c-acme")).toMatchObject({ payment_terms: "Net 120", margin_floor_pct: 2, notes: "Plant visit every quarter", parent_customer_id: "c-group" });
+  });
+
+  it("a sales_engineer may create a customer with no GSTIN (foreign customer, smoke path)", async () => {
+    const res = await post({ customer_key: "smoke-cust-1", customer_name: "Smoke Customer", gstin: null }, "sales_engineer");
     expect(res.statusCode).toBe(200);
-    expect(row("c-acme")).toEqual({ ...ACME(), notes: "Updated by SE" });
+    expect(H.tables.customers.find((r) => r.customer_key === "smoke-cust-1")).toMatchObject({ customer_name: "Smoke Customer", gstin: null });
+
+    const foreign = await post({ customer_name: "Northwind Korea", country: "kr", gstin: null, tax_id: "123-45-67890", tax_id_type: "brn" }, "sales_engineer");
+    expect(foreign.statusCode).toBe(200);
+    expect(H.tables.customers.find((r) => r.customer_key === "northwind-korea")).toMatchObject({ country: "KR", gstin: null, tax_id_type: "brn" });
   });
 
   it("a new GSTIN is still gated and validated", async () => {
@@ -293,6 +369,35 @@ describe("create keeps its defaults", () => {
     const res = await post({ customer_name: "Weld Line Builders", customer_type: "LINE_BUILDER" });
     expect(res.statusCode).toBe(200);
     expect(H.tables.customers.find((r) => r.customer_key === "weld-line-builders").customer_type).toBe("LINE_BUILDER");
+  });
+
+  it("a create with no id or key whose name slugs onto an existing customer is refused and changes nothing", async () => {
+    // The so-intake create dialog's shape: no customer_key, many keys.
+    const res = await post({ customer_name: "ACME", gstin: null, currency: "INR", bill_to: null, ship_to: null, payment_terms: "Advance", margin_floor_pct: 10 });
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error).toMatchObject({ code: "CUSTOMER_EXISTS", customer_id: "c-acme", customer_key: "acme" });
+    expect(row("c-acme")).toEqual(ACME());
+    expect(H.writes).toEqual([]);
+  });
+
+  it("a create that loses a race to another create of the same key is refused instead of overwriting it", async () => {
+    const rival = { id: "c-rival", tenant_id: T1, customer_key: "zen-robotics", customer_name: "Zen Robotics", gstin: GSTIN_TN, notes: "created first" };
+    H.beforeWrite = () => { H.tables.customers.push({ ...rival }); };
+    const res = await post({ customer_name: "Zen Robotics", currency: "INR" });
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error).toMatchObject({ code: "CUSTOMER_EXISTS", customer_key: "zen-robotics" });
+    expect(row("c-rival")).toEqual(rival);
+    expect(H.tables.customers.filter((r) => r.customer_key === "zen-robotics")).toHaveLength(1);
+  });
+
+  it("a pre-061 create keeps notes and lands payment_terms in default_payment_terms", async () => {
+    H.missingColumns = new Set(["customers.currency"]);
+    const res = await post({ customer_name: "Legacy Works", currency: "INR", payment_terms: "Net 30", notes: "old deployment" });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.warning).toBe("optional_fields_unavailable");
+    const created = H.tables.customers.find((r) => r.customer_key === "legacy-works");
+    expect(created).toMatchObject({ customer_name: "Legacy Works", notes: "old deployment", default_payment_terms: "Net 30" });
+    expect(Object.keys(created)).not.toContain("currency");
   });
 });
 
@@ -341,12 +446,17 @@ describe("every caller of POST /api/customers", () => {
     expect(res.body.profile).toMatchObject({ customer_id: "c-acme", version: 3, is_current: true, trusted: true });
   });
 
-  it("hierarchy panel (whole customer object) sets the parent and changes nothing else", async () => {
-    const res = await post({ ...ACME(), parent_customer_id: null });
+  it("hierarchy panel ({id, customer_key, parent_customer_id}) writes only the parent and leaves locations alone", async () => {
+    // Stored ship_to empty: a whole-object resend used to copy bill_to
+    // into it and re-mirror bill_to over the curated location row.
+    H.tables.customers = [{ ...ACME(), ship_to: null, parent_customer_id: null }, GROUP()];
+    const curated = { id: "loc-1", tenant_id: T1, customer_id: "c-acme", location_code: "default_bill", plant_name: "Acme Pune Plant 4", address_line2: "MIDC Bhosari Phase II" };
+    H.tables.customer_locations = [{ ...curated }];
+    const res = await post({ id: "c-acme", customer_key: "acme", parent_customer_id: "c-group" });
     expect(res.statusCode).toBe(200);
-    const again = await post({ ...row("c-acme"), parent_customer_id: "c-group" });
-    expect(again.statusCode).toBe(200);
-    expect(row("c-acme")).toEqual(ACME());
+    expect(H.writes).toEqual([{ table: "customers", mode: "update", payload: { parent_customer_id: "c-group" } }]);
+    expect(row("c-acme")).toEqual({ ...ACME(), ship_to: null });
+    expect(H.tables.customer_locations).toEqual([curated]);
   });
 
   it("a pre-061 deployment retries an edit with only the legacy columns it carried", async () => {
@@ -355,6 +465,19 @@ describe("every caller of POST /api/customers", () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.warning).toBe("optional_fields_unavailable");
     expect(row("c-acme")).toEqual({ ...ACME(), notes: "Switching to USD" });
+  });
+
+  it("a pre-061 edit lands a payment_terms value in default_payment_terms, and a null one clears nothing", async () => {
+    H.missingColumns = new Set(["customers.payment_terms", "customers.currency"]);
+    const res = await post({ customer_key: "acme", payment_terms: "Net 90" });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.warning).toBe("optional_fields_unavailable");
+    expect(row("c-acme")).toEqual({ ...ACME(), default_payment_terms: "Net 90" });
+
+    H.tables.customers = [ACME(), GROUP()];
+    const blank = await post({ id: "c-acme", payment_terms: null, notes: "terms unknown" });
+    expect(blank.statusCode).toBe(200);
+    expect(row("c-acme")).toEqual({ ...ACME(), notes: "terms unknown" });
   });
 
   it("the change-request path still applies an approved partial update", async () => {

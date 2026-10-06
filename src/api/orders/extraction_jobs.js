@@ -74,7 +74,47 @@ export default async function handler(req, res) {
         .limit(1)
         .maybeSingle();
       if (existing.data) {
+        // Deduping across KINDS would be a lie. The unique index behind this is
+        // (tenant_id, order_id) with no kind in it, so a quotation queued while
+        // the order's PO extraction is still running would be handed that PO
+        // job and reported as queued — the caller sees ok, tells the operator
+        // "the rest is being read in the background", and nothing ever reads
+        // it. Same order, different document, different job.
+        const existingKind = existing.data.extraction_kind || "po";
+        const wantedKind = body.kind || body.extraction_kind || "po";
+        if (existingKind !== wantedKind) {
+          return json(res, 409, {
+            error: {
+              code: "extraction_in_flight_other_kind",
+              message: "A '" + existingKind + "' extraction is already running on this order, and only one job"
+                + " per order can be in flight. Retry the '" + wantedKind + "' read once it finishes.",
+            },
+            job: existing.data,
+          });
+        }
         return json(res, 200, { job: existing.data, deduped: true });
+      }
+      // The kinds the extractor has a schema for — the same list migration 219
+      // constrains the column to, which is extraction_runs' list. Validated
+      // rather than passed through: an unknown kind would be rejected by the
+      // CHECK and take the whole insert with it (PostgREST rejects the
+      // statement, not the column), so a typo in a caller would look like the
+      // queue was broken.
+      const KNOWN_KINDS = new Set([
+        "po", "rfq", "supplier_ack", "invoice", "eway_bill", "generic",
+        "assembly_bom", "part_drawing", "quote", "packing_list",
+        // Migration 220. A long sales order needs backgrounding like any other
+        // document, and a kind permitted on a run but refused at enqueue is a
+        // confusing way to discover the two lists had drifted.
+        "sales_order",
+        // Migration 226. Same reasoning.
+        "delivery_note",
+      ]);
+      const requestedKind = body.kind || body.extraction_kind || null;
+      if (requestedKind && !KNOWN_KINDS.has(requestedKind)) {
+        return json(res, 400, {
+          error: { message: "unknown kind: " + requestedKind + ". Expected one of " + [...KNOWN_KINDS].join(", ") },
+        });
       }
       const row = {
         tenant_id: ctx.tenantId,
@@ -87,9 +127,58 @@ export default async function handler(req, res) {
         source_mime: body.source_mime || "application/pdf",
         status: "queued",
         created_by: actor,
+        // Default 'po' rather than null: every caller today is a PO flow, and
+        // recording what the document actually is beats recording nothing and
+        // making the worker guess again.
+        extraction_kind: requestedKind || "po",
       };
-      const ins = await svc.from("extraction_jobs").insert(row).select("*").single();
-      if (ins.error) throw new Error(ins.error.message);
+      let ins = await svc.from("extraction_jobs").insert(row).select("*").single();
+      // Migrations are applied by hand, so the column can be missing in a
+      // database that already has this code. Retry without it rather than
+      // refusing to queue the job — a document that extracts on the PO schema
+      // is better than one that never extracts at all.
+      //
+      // That reasoning held while a PO was the only thing anyone could queue.
+      // It is now DESTRUCTIVE for anything else. A job that persists without
+      // its kind reads back through kindOfJob as "po" (it has an order id), so
+      // the merge step takes the PO_SHAPED branch and writes the document's
+      // lines into orders.result.salesOrder.lineItems — replacing the
+      // customer's purchase-order lines with a quotation's.
+      //
+      // So: fall back only for the PO-shaped kinds, where dropping the label
+      // costs nothing because "po" is exactly what the worker would infer
+      // anyway. For any other kind, fail closed and say why. An unqueued long
+      // quotation is a visible gap; a quotation silently overwriting a PO is
+      // data loss nobody sees until the order is wrong.
+      const PO_SHAPED_KINDS = new Set(["po", "rfq", "generic"]);
+      if (ins.error && (ins.error.code === "42703" || /extraction_kind/.test(ins.error.message || ""))) {
+        if (!PO_SHAPED_KINDS.has(row.extraction_kind)) {
+          return json(res, 503, {
+            error: {
+              code: "extraction_kind_column_missing",
+              message: "Cannot queue a '" + row.extraction_kind + "' extraction: this database has not had"
+                + " migration 219 applied, so the job could not record what kind of document it is and would"
+                + " be processed as a purchase order. Apply 219 and retry.",
+            },
+          });
+        }
+        const retry = { ...row };
+        delete retry.extraction_kind;
+        ins = await svc.from("extraction_jobs").insert(retry).select("*").single();
+      }
+      if (ins.error) {
+        // A concurrent request already created an in-flight job for this order
+        // (partial unique index extraction_jobs_one_inflight_per_order). Return
+        // that job instead of erroring, so a double-click can't double-process.
+        if (ins.error.code === "23505" || /duplicate key|unique constraint/i.test(ins.error.message)) {
+          const race = await svc.from("extraction_jobs").select("*")
+            .eq("tenant_id", ctx.tenantId).eq("order_id", body.order_id)
+            .in("status", ["queued", "profiling", "chunking", "extracting", "merging"])
+            .order("created_at", { ascending: false }).limit(1).maybeSingle();
+          if (race.data) return json(res, 200, { job: race.data, deduped: true });
+        }
+        throw new Error(ins.error.message);
+      }
       await recordAudit(ctx, {
         action: "extraction_job_created",
         objectType: "extraction_job",

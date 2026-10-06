@@ -74,7 +74,13 @@ export default async function handler(req, res) {
     const host = req.headers["x-forwarded-host"] || req.headers.host || "";
     const fullUrl = `${proto}://${host}${req.url}`;
     const signature = req.headers["x-twilio-signature"] || "";
-    if (creds.auth_token && !verifyTwilioSignature(creds.auth_token, fullUrl, params, signature)) {
+    // Fail CLOSED: reject when no auth token is configured rather than skipping
+    // verification (audit SO-processing #16). Otherwise anyone who knows the
+    // public WhatsApp business number can POST a forged, unsigned message.
+    if (!creds.auth_token) {
+      return json(res, 403, { error: { message: "WhatsApp auth token not configured; unsigned requests are rejected" } });
+    }
+    if (!verifyTwilioSignature(creds.auth_token, fullUrl, params, signature)) {
       return json(res, 403, { error: { message: "Invalid Twilio signature" } });
     }
 

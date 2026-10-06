@@ -183,6 +183,10 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/catalog/search.js | read |
 | src/api/catalog/synonyms.js | read, approve |
 | src/api/claude/messages.js | read, write, admin |
+| src/api/comms/payment_statement.js | read, write |
+| src/api/comms/routing.js | read, write |
+| src/api/comms/service_report_template.js | read, write |
+| src/api/comms/service_report.js | read, write |
 | src/api/communications/draft.js | write |
 | src/api/communications/list.js | read |
 | src/api/communications/missing_doc.js | write |
@@ -196,6 +200,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/cron/drift-meter.js | admin |
 | src/api/cron/drift-report.js | admin |
 | src/api/cron/eval_quality_alert.js | read |
+| src/api/cron/extraction_reaper.js | approve |
 | src/api/cron/tally-reconcile.js | approve |
 | src/api/customer_locations/index.js | read |
 | src/api/customers/change_requests.js | read, write, approve |
@@ -392,6 +397,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/quotes/convert.js | approve |
 | src/api/quotes/expire.js | approve |
 | src/api/quotes/index.js | read, write, approve |
+| src/api/quotes/ingest.js | write |
 | src/api/quotes/pdf.js | read |
 | src/api/quotes/send.js | approve |
 | src/api/ramco/connect.js | admin |

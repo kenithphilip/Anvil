@@ -5,7 +5,7 @@
 // seller returns on receiving a customer PO (reproduces the Obara
 // P250432276 layout). Distinct from voucher_pdf.js (the post-tax ERP
 // sales voucher): body is ex-tax (Amount = Qty x Rate), with Cust Part
-// No (buyer item no), Part No (vendor + "(O/K)"), Due on, and a
+// No (buyer item no), Part No (vendor + its per-origin group marker), Due on, and a
 // "Batch : <PO#>" sub-row per line. Line data comes from
 // order.result.salesOrder.lineItems (populated by quote convert.js, or
 // by the Link-Quote enrichment for PO-first orders).
@@ -16,9 +16,33 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { renderSalesOrder } from "../_lib/pdf-renderer.js";
 import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "../_lib/storage.js";
+import { classifyOrigin } from "../_lib/pending-so/part-origin.js";
+import { hasUnresolvedBlocker, firstUnresolvedBlocker } from "../_lib/blocking-findings.js";
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
-const OK_SUFFIX = "(O/K)"; // fixed Obara marker appended to every vendor part on the SO
+
+// Obara group-origin marker appended to a vendor part on the SO PDF. This was a
+// hardcoded "(O/K)" on EVERY part, which mislabelled locally-made -I parts and
+// China/Japan imports as Korea. Derive it per part instead: prefer the
+// item-master-resolved source_country, else classify from the part/description
+// strings (pending-so/part-origin). A locally-made part already carries its own
+// "-I" suffix so nothing is appended; an unclassifiable part gets NO marker
+// rather than a wrong guess.
+const SOURCE_COUNTRY_MARKER = {
+  "O-KOREA": "(O/K)", "O-CHINA": "(O/C)", "O-JAPAN": "(O/J)",
+  "O-THAILAND": "(O/T)", "O-FRANCE": "(O/F)",
+};
+export const partOriginMarker = (line, partNo, description) => {
+  // Don't double-mark a part that already carries an origin marker.
+  if (/-I$/i.test(String(partNo || "")) || /\(\s*O\s*\//i.test(String(partNo || ""))) return "";
+  // 1. Item-master resolved origin (stamped by mapLinesToItemMaster) wins.
+  const mapped = line?._mapped_item?.source_country || line?.source_country || null;
+  if (mapped) return SOURCE_COUNTRY_MARKER[mapped] || ""; // O-INDIA / unknown vocab -> no marker
+  // 2. Else classify from the strings; only an import gets an (O/x) marker.
+  const v = classifyOrigin({ part_no: partNo, description });
+  return (v.origin === "import" && SOURCE_COUNTRY_MARKER[v.source_country]) || "";
+};
+
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const pick = (...vals) => vals.find((v) => v != null && v !== "");
 
@@ -47,7 +71,7 @@ const buildSalesOrderData = ({ order, customer, consigneeLoc, seller, contact, s
       description: pick(ln.description, ln.itemName) || "—",
       hsn: pick(ln.hsn, ln.hsn_sac) || "",
       custPartNo: pick(ln.customer_part_number, ln.cust_part_no, ln.customerPartNumber) || "",
-      partNo: partNo ? partNo + OK_SUFFIX : "",
+      partNo: partNo ? partNo + partOriginMarker(ln, partNo, pick(ln.description, ln.itemName)) : "",
       dueOn: fmtDate(dueByIndex.get(i) || soData.delivery_date || null),
       qty,
       uom: pick(ln.uom, ln.unit) || "No.",
@@ -118,11 +142,40 @@ export default async function handler(req, res) {
     const svc = serviceClient();
 
     const orderQ = await svc.from("orders")
-      .select("id, status, po_number, po_date, quote_number, quote_id, result, customer_id, created_at, approved_at, dispatch_mode, registration_serial_no, delivery_terms, so_voucher_no, so_message, customer_location_id, delivery_point_contact_id")
+      .select("id, status, rule_findings, po_number, po_date, quote_number, quote_id, result, customer_id, created_at, approved_at, dispatch_mode, registration_serial_no, delivery_terms, so_voucher_no, so_message, customer_location_id, delivery_point_contact_id")
       .eq("tenant_id", ctx.tenantId).eq("id", orderId).maybeSingle();
     if (orderQ.error) throw new Error("orders read: " + orderQ.error.message);
     if (!orderQ.data) return json(res, 404, { error: { message: "Order not found" } });
     const order = orderQ.data;
+
+    // Rendering at any status is DELIBERATE — this is the acknowledgment a
+    // seller returns on receiving a PO, not the post-tax voucher, and you
+    // acknowledge an order before you approve it. Gating the PDF on APPROVED
+    // would break the thing it is for.
+    //
+    // Sharing it is a different act. format=share uploads the PDF and mints a
+    // SEVEN-DAY signed URL for a customer, so it is the one outward-facing
+    // artefact this endpoint produces — and it was reachable on an order
+    // carrying an unresolved blocking finding: a line count short of what the
+    // PO declared, a total that does not reconcile, an extraction the operator
+    // has not signed off. The same findings that stop approve, the Tally push
+    // and the ERP runner. Sending the customer a document built on them is
+    // worse than any of those, because it cannot be retracted.
+    //
+    // So: the internal download stays available at any status; the shareable
+    // link does not.
+    if (format === "share" && hasUnresolvedBlocker(order.rule_findings)) {
+      const b = firstUnresolvedBlocker(order.rule_findings);
+      return json(res, 409, {
+        error: {
+          code: "ORDER_HAS_UNRESOLVED_BLOCKER",
+          message: "Cannot share this acknowledgment: unresolved blocking finding (" + b.code + "): "
+            + (b.detail || "extraction incomplete")
+            + " Resolve it first, or download the PDF for internal review.",
+          finding: b,
+        },
+      });
+    }
 
     let customer = null;
     if (order.customer_id) {

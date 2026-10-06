@@ -43,10 +43,11 @@
 //     fieldProvenance, voterUsed, error }
 
 import { dispatchExtract } from "./index.js";
+import { getPromptVersion, promptNameForKind } from "./prompt-versions.js";
 import { chunkedExtract } from "./chunked-extract.js";
 import { profileDocument } from "./toc-profiler.js";
 import { probePdfPageCount } from "./pdf-chunker.js";
-import { extractTextLayer, contentHash } from "./text_layer.js";
+import { extractTextLayer, extractTextBlocks, contentHash } from "./text_layer.js";
 import { extractOcrLayer } from "./ocr_layer.js";
 import { applyTemplate, buildTemplate } from "./templates.js";
 import { createRunCostAccumulator } from "./run-cost.js";
@@ -69,7 +70,10 @@ import { computeGstinPin } from "./grounding.js";
 import { validateGstin, gstinStateCode } from "../gstin.js";
 import { findByGstin, findCustomersByPan } from "../customer-canonicalizer.js";
 import { voteAcrossAdapters } from "./voter.js";
-import { shouldEscalateEmptyLines } from "./model_selector.js";
+import { shouldEscalateEmptyLines, shouldEscalateTruncated } from "./model_selector.js";
+import { densityChunkedExtract, isDensityKind } from "./density-chunk.js";
+import { shouldRowChunk } from "./text-row-chunker.js";
+import { repairPartCodes, brandTokensFromTenantName } from "./part-split.js";
 import { validateExtraction } from "./validators.js";
 import { recordEvent } from "../audit.js";
 import { buildTenantIdentity, scrubCustomerOfTenantIdentity } from "./tenant-scrub.js";
@@ -323,7 +327,39 @@ const runAllAdaptersInParallel = async ({ source, settings, customerId, hints, r
 //   vote       boolean: run all adapters in parallel + vote
 //   hints      extra hints to merge in
 //   recordEvents whether to write processing_events (default true)
+// Wall-clock budget for one extraction run, kept BELOW the serverless
+// function ceiling (vercel.json pins api/dispatch.js to maxDuration 60, the
+// cap on the current plan). The pipeline stops dispatching new LLM calls once
+// this is spent, leaving headroom to finalise the extraction_runs row.
+//
+// Without it the platform kills the function mid-call: run.js never reaches
+// its final UPDATE, so the row stays status='running' for ever with no
+// attempts and no error, and the provider call is billed anyway. Two runs on
+// PO 0066026562 were stuck exactly this way after the text layer started
+// working and pushed Claude onto the slower generation tier (a 47s call
+// inside a 60s ceiling).
+const RUN_BUDGET_MS = Math.max(5_000, Number(process.env.DOCAI_RUN_BUDGET_MS) || 45_000);
+
+export const KIND_GATES_TABLE = Object.freeze({
+    po:           { reject: "non_po",           requiresLines: true },
+    rfq:          { reject: "non_po",           requiresLines: true },
+    generic:      { reject: null,               requiresLines: false },
+    supplier_ack: { reject: "non_ack",          requiresLines: false },
+    assembly_bom: { reject: "non_drawing",      requiresLines: true },
+    part_drawing: { reject: "non_drawing",      requiresLines: false },
+    quote:        { reject: "non_quote",        requiresLines: true },
+    invoice:      { reject: "non_invoice",      requiresLines: true },
+    packing_list: { reject: "non_packing_list", requiresLines: true },
+    eway_bill:    { reject: "non_eway_bill",    requiresLines: false },
+    sales_order:  { reject: "non_sales_order",  requiresLines: true },
+  // requiresLines: a challan with no line items has not told us what moved,
+  // which is the only reason we read it.
+  delivery_note:{ reject: "non_delivery_note", requiresLines: true },
+  });
+
 export const runExtractionPipeline = async (params) => {
+  const runStartedAtMs = Date.now();
+  const deadlineAt = runStartedAtMs + RUN_BUDGET_MS;
   const {
     ctx, svc, settings,
     bytes = null, url = null, filename = null, mime = null,
@@ -369,8 +405,57 @@ export const runExtractionPipeline = async (params) => {
     });
   }
 
+  // Which prompt version this run is attributed to.
+  //
+  // migration 124 added extraction_runs.prompt_version so accuracy could be
+  // charted per version. Nothing has ever written it, so no before/after on a
+  // prompt change has ever been attributable — which is the whole reason the
+  // A/B registry sat unused.
+  //
+  // A kind with no registry entry records NULL rather than a fabricated
+  // label: a made-up version is worse than none, because it makes a
+  // comparison look attributable when it is not.
+  const promptName = promptNameForKind(kind);
+  // Prompt VARIANTS are opt-in, and deliberately the opposite polarity to
+  // every other docai gate here (`docai_x !== false`, i.e. on unless disabled).
+  // Those guard proven behaviour; this one decides whether a tenant's live
+  // documents are read by an experiment, so it must be switched on by a
+  // person. Turning it off is a settings write, not a deploy — which is the
+  // question this whole registry exists to answer.
+  const allowVariants = settings?.docai_prompt_variants === true;
+  const promptChoice = promptName
+    ? getPromptVersion(promptName, {
+        tenantId: ctx.tenantId,
+        customerId,
+        // A tenant can pin a version to opt out of the split.
+        pin: settings?.docai_prompt_pins?.[promptName] || null,
+        forceVersion: hints?.forcePromptVersion || null,
+        allowVariants,
+        // Per-DOCUMENT assignment. Keyed on the content hash (already computed
+        // above for dedupe), because customerId is null on the main intake
+        // path and a customer-keyed hash makes the split per-tenant
+        // all-or-nothing. Same file re-extracted -> same arm.
+        splitKey: preHash || null,
+      })
+    : null;
+  // Stored as the { name, version, source } OBJECT migration 124 declared and
+  // indexed on (prompt_version ->> 'version') — a bare string would leave that
+  // index unusable. `label` carries the readable "<prompt>@<version>" so a run
+  // says WHICH prompt as well as which version: po_extractor@v2 and
+  // supplier_ack_extractor@v2 are different experiments and must never
+  // aggregate together.
+  const promptVersionLabel = promptChoice
+    ? {
+        name: promptChoice.name,
+        version: promptChoice.version,
+        source: promptChoice.source,
+        is_variant: !!promptChoice.is_variant,
+        label: `${promptChoice.name}@${promptChoice.version}`,
+      }
+    : null;
+
   // 1. Open the extraction_runs row.
-  const ins = await svc.from("extraction_runs").insert({
+  const insertRow = {
     tenant_id: ctx.tenantId,
     customer_id: customerId,
     source_type: sourceType,
@@ -383,9 +468,20 @@ export const runExtractionPipeline = async (params) => {
     triggered_by: triggeredBy,
     inbound_email_id: inboundEmailId,
     extraction_kind: kind,
-  }).select("id").single();
-  if (ins.error) throw new Error(ins.error.message);
-  const runId = ins.data.id;
+    prompt_version: promptVersionLabel,
+  };
+  const ins = await svc.from("extraction_runs").insert(insertRow).select("id").single();
+  // Migrations here are applied BY HAND and PostgREST rejects the whole insert
+  // over one unknown column. An attribution label must never be the reason an
+  // extraction cannot start.
+  let insRes = ins;
+  if (insRes.error && (insRes.error.code === "42703" || /prompt_version/.test(insRes.error.message || ""))) {
+    const retry = { ...insertRow };
+    delete retry.prompt_version;
+    insRes = await svc.from("extraction_runs").insert(retry).select("id").single();
+  }
+  if (insRes.error) throw new Error(insRes.error.message);
+  const runId = insRes.data.id;
 
   // Dedupe short-circuit. Stamp the run row with the prior result
   // and return BEFORE we open the text layer / OCR / LLM chain.
@@ -684,6 +780,10 @@ export const runExtractionPipeline = async (params) => {
   }
 
   const dispatchHints = { ...hints };
+  // Threaded to dispatchExtract, which refuses to START an adapter once the
+  // budget is spent (recording skipped_deadline) rather than being killed
+  // mid-call and leaving the run row stranded at status='running'.
+  dispatchHints.deadlineAt = deadlineAt;
   if (customerHint?.rendered) {
     dispatchHints.customerHint = customerHint;
   }
@@ -702,6 +802,20 @@ export const runExtractionPipeline = async (params) => {
     };
   }
   if (kind && kind !== "po") dispatchHints.expectedKind = kind;
+
+  // Hand the resolved variant to the adapter. Until now the registry was
+  // resolved ONLY to label the row: promptChoice fed the extraction_runs
+  // insert and nothing else, so no version could ever change what the model
+  // was asked. This is the wire that makes it an experiment rather than a
+  // caption. Present only when the variant actually applies (see
+  // getPromptVersion), so an adapter cannot run one by accident.
+  if (promptChoice?.is_variant && Array.isArray(promptChoice.system_append) && promptChoice.system_append.length) {
+    dispatchHints.promptVariant = {
+      name: promptChoice.name,
+      version: promptChoice.version,
+      system_append: promptChoice.system_append,
+    };
+  }
 
   // Wave 3.5: layout-fingerprint dedupe. Two POs from the same
   // customer often share a layout (same headers, same column
@@ -870,17 +984,80 @@ export const runExtractionPipeline = async (params) => {
         }
       }
     }
-    out = await chunkedExtract({
-      source: dispatchSource,
-      settings: { ...settings, tenant_id: ctx.tenantId },
-      customerId,
-      hints: dispatchHints,
-      runCost,
-      opts: {
-        eventSink: chunkEventSink,
-        keepPages,
-      },
-    });
+    // Phase 3a: PROACTIVE density chunking. When the text layer is ALREADY
+    // known to be too dense for one call, the single-shot pass is doomed and so
+    // is the generation-tier retry after it -- three passes to reach the row
+    // windows that were always the answer, two of them paid for nothing (and on
+    // a tight run budget the wasted calls can exhaust it before the density
+    // step is ever reached). Go straight to the windows instead.
+    //
+    // Falls through to the normal path on ANY skip signal or a result with no
+    // lines, so a mis-read of density costs a fallback, never an extraction.
+    let proactiveDensity = false;
+    let densityAttempted = false;
+    // Going first means owning the failure: keep a slice of the run budget in
+    // reserve so a slow or failing proactive pass cannot leave the fallback
+    // single-shot with a deadline already behind it (every adapter would then
+    // record skipped_deadline and the run would fail outright -- strictly worse
+    // than the cheap pass this replaced).
+    const PROACTIVE_RESERVE_MS = Math.max(0, Number(process.env.DOCAI_DENSITY_RESERVE_MS) || 15_000);
+    // A HIGHER bar than the reactive path: reactive only spends extra calls
+    // after a real failure, so it can afford to be eager. Proactive spends them
+    // up front on a document that might have extracted fine, so it should fire
+    // only when a single call is clearly hopeless, not merely borderline.
+    const PROACTIVE_MIN_ITEMS = Math.max(1, Number(process.env.DOCAI_DENSITY_PROACTIVE_MIN_ITEMS) || 60);
+    if (settings?.docai_density_chunk_enabled && isDensityKind(kind) && !dispatchHints.skipDensity
+        && bodyText && Date.now() < deadlineAt - PROACTIVE_RESERVE_MS
+        && shouldRowChunk(bodyText, { minItems: PROACTIVE_MIN_ITEMS })) {
+      densityAttempted = true;
+      await recordRunEvent("docai_density_chunk_proactive_started", { kind });
+      const dense = await densityChunkedExtract({
+        source: dispatchSource,
+        settings: { ...settings, tenant_id: ctx.tenantId },
+        customerId,
+        hints: dispatchHints,
+        runCost,
+        opts: { eventSink: chunkEventSink, deadlineAt: deadlineAt - PROACTIVE_RESERVE_MS },
+      }).catch((err) => ({ skip: true, reason: "threw", error: err?.message || String(err) }));
+      const denseLines = Array.isArray(dense?.normalized?.lines) ? dense.normalized.lines.length : 0;
+      // COMPLETE runs only. A partial (a window failed, or the budget/deadline
+      // cut the walk short) would be adopted as a green run carrying part of
+      // the table -- and because an adopted density result reports
+      // model_selection_reason='escalate_quality', neither escalation can fire
+      // afterwards and the reactive density path is blocked by
+      // densityAttempted. Every recovery mechanism would be disabled behind a
+      // silently-truncated line set. Falling through instead costs one normal
+      // pass and keeps the whole ladder available.
+      proactiveDensity = !!(dense && !dense.skip && dense.ok && dense.density_complete && denseLines > 0);
+      await recordRunEvent("docai_density_chunk_proactive_done", {
+        skip: !!dense?.skip,
+        reason: dense?.reason || null,
+        window_count: dense?.density_window_count ?? null,
+        windows_run: dense?.density_windows_run ?? null,
+        windows_ok: dense?.density_windows_ok ?? null,
+        complete: !!dense?.density_complete,
+        lines: denseLines,
+        adopted: proactiveDensity,
+      });
+      if (proactiveDensity) {
+        dense.density_proactive = true;
+        out = dense;
+      }
+    }
+
+    if (!proactiveDensity) {
+      out = await chunkedExtract({
+        source: dispatchSource,
+        settings: { ...settings, tenant_id: ctx.tenantId },
+        customerId,
+        hints: dispatchHints,
+        runCost,
+        opts: {
+          eventSink: chunkEventSink,
+          keepPages,
+        },
+      });
+    }
     // Stash the profiler outcome on the extraction result so
     // downstream consumers (UI, audit) can see what was kept and
     // what was skipped.
@@ -891,7 +1068,10 @@ export const runExtractionPipeline = async (params) => {
         line_item_pages: profileResult.line_item_pages,
         page_count: profileResult.page_count,
         reason: profileResult.reason,
-        used: !!keepPages,
+        // Row windows are built from the whole text layer and never receive
+        // keepPages, so an adopted proactive density run did NOT use the
+        // profiler's page-keep list, whatever the list said.
+        used: !!keepPages && !proactiveDensity,
       };
     }
 
@@ -902,7 +1082,16 @@ export const runExtractionPipeline = async (params) => {
     // shouldEscalateEmptyLines bounds this so a genuine non-PO, a hard parse
     // failure, or an already-strong first model never trigger a wasted second
     // call; the shared runCost cap still governs the extra spend.
-    if (shouldEscalateEmptyLines({ out, kind, settings })) {
+    // The retry is a SECOND full LLM call, so it is the single most likely
+    // thing to blow the run budget. Skip it when there is no time rather than
+    // starting a call the function will be killed during — a stranded
+    // status='running' row is strictly worse than an honest empty_lines.
+    if (shouldEscalateEmptyLines({ out, kind, settings }) && Date.now() >= deadlineAt) {
+      await recordRunEvent("docai_empty_lines_escalation_skipped", {
+        reason: "run_budget_exhausted",
+        elapsed_ms: Date.now() - runStartedAtMs,
+      });
+    } else if (shouldEscalateEmptyLines({ out, kind, settings })) {
       await recordRunEvent("docai_empty_lines_escalation_started", {
         first_model: out.selected_model || null,
         first_reason: out.model_selection_reason || null,
@@ -933,6 +1122,96 @@ export const runExtractionPipeline = async (params) => {
           reason: out.model_selection_reason || null,
         };
         out = escalated;
+      }
+    } else if (shouldEscalateTruncated({ out, kind, settings }) && Date.now() >= deadlineAt) {
+      // Same budget guard as the empty-lines retry: a second full call with no
+      // time left only strands a status='running' row.
+      await recordRunEvent("docai_truncation_escalation_skipped", {
+        reason: "run_budget_exhausted",
+        elapsed_ms: Date.now() - runStartedAtMs,
+      });
+    } else if (shouldEscalateTruncated({ out, kind, settings })) {
+      // The first pass hit the cheap tier's smaller output ceiling and dropped
+      // the line tail (a dense QUOTE / PO under the page-chunk threshold, so it
+      // was never split). The generation tier's ~2x budget may fit the whole
+      // table -- retry once there. Mirrors the empty-lines path; the two are
+      // mutually exclusive (empty needs out.ok, truncation is not-ok).
+      await recordRunEvent("docai_truncation_escalation_started", {
+        first_model: out.selected_model || null,
+        first_reason: out.model_selection_reason || null,
+      });
+      const escalated = await chunkedExtract({
+        source: dispatchSource,
+        settings: { ...settings, tenant_id: ctx.tenantId },
+        customerId,
+        hints: { ...dispatchHints, escalate: true },
+        runCost,
+        opts: { eventSink: chunkEventSink, keepPages },
+      }).catch((err) => ({ ok: false, error: err?.message || String(err) }));
+      const escalatedLines = Array.isArray(escalated?.normalized?.lines) ? escalated.normalized.lines.length : 0;
+      const adopted = !!(escalated?.ok && escalatedLines > 0);
+      await recordRunEvent("docai_truncation_escalation_done", {
+        escalated_model: escalated?.selected_model || null,
+        escalated_reason: escalated?.model_selection_reason || null,
+        lines_after: escalatedLines,
+        adopted,
+      });
+      if (adopted) {
+        if (out.toc_profile) escalated.toc_profile = out.toc_profile;
+        escalated.escalated_from = {
+          model: out.selected_model || null,
+          reason: out.model_selection_reason || null,
+          truncated: true,
+        };
+        out = escalated;
+      }
+    }
+
+    // Density-aware row-window chunking (Phase 2, dark-flagged). Last resort
+    // when a page-few but LINE-dense doc still came back truncated or empty
+    // after the generation-tier retry: pdf chunking can't split it (the lines
+    // aren't on more pages), so split the TEXT by row windows and extract each.
+    // See density-chunk.js / docs/DENSITY_AWARE_CHUNKING_DESIGN.md.
+    const denseKind = isDensityKind(kind);
+    const linesNow = Array.isArray(out?.normalized?.lines) ? out.normalized.lines.length : 0;
+    const stillDeficient = out?.reason === "output_truncated" || (out?.ok && linesNow === 0);
+    // !densityAttempted: if the PROACTIVE pass already tried row windows on this
+    // same text and did not help, running the identical plan again here is
+    // guaranteed waste.
+    if (settings?.docai_density_chunk_enabled && denseKind && stillDeficient && !densityAttempted
+        && !dispatchHints.skipDensity
+        && bodyText && Date.now() < deadlineAt && shouldRowChunk(bodyText)) {
+      await recordRunEvent("docai_density_chunk_started", {
+        first_reason: out?.reason || null,
+        first_model: out?.selected_model || null,
+        lines_before: linesNow,
+      });
+      const dense = await densityChunkedExtract({
+        source: dispatchSource,
+        settings: { ...settings, tenant_id: ctx.tenantId },
+        customerId,
+        hints: dispatchHints,
+        runCost,
+        opts: { eventSink: chunkEventSink, deadlineAt },
+      }).catch((err) => ({ skip: true, reason: "threw", error: err?.message || String(err) }));
+      const denseLines = Array.isArray(dense?.normalized?.lines) ? dense.normalized.lines.length : 0;
+      const adopted = !!(dense && !dense.skip && dense.ok && denseLines > linesNow);
+      await recordRunEvent("docai_density_chunk_done", {
+        skip: !!dense?.skip,
+        reason: dense?.reason || null,
+        window_count: dense?.density_window_count ?? null,
+        windows_run: dense?.density_windows_run ?? null,
+        lines_after: denseLines,
+        adopted,
+      });
+      if (adopted) {
+        if (out.toc_profile) dense.toc_profile = out.toc_profile;
+        dense.escalated_from = {
+          model: out.selected_model || null,
+          reason: out.model_selection_reason || null,
+          density: true,
+        };
+        out = dense;
       }
     }
   }
@@ -1023,6 +1302,34 @@ export const runExtractionPipeline = async (params) => {
     } catch (_e) { /* never break the run */ }
   }
 
+  // 6a3. Deterministic part-code repair. The prompt asks the model to pull our
+  // code out of a prefixed description ("OBARA STD SHANK TWS-092-90-2" ->
+  // "TWS-092-90-2"), but that split lived entirely inside the LLM with no
+  // post-processor and no validator — so an uncut cell flowed straight through
+  // into item_customer_parts as a lookup key and into customer-hints as a
+  // learned "prefix", where it reinforced itself on the next run. This repairs
+  // the line deterministically so the outcome is auditable and re-runnable.
+  // Untouched when the model already returned a bare code.
+  if (out?.normalized && settings?.docai_part_split !== false) {
+    try {
+      // Brand + noise vocabulary is per-TENANT data, never hardcoded: the
+      // brand comes from the tenant's own registered name, extra noise words
+      // from tenant settings. Nothing here is specific to any one entity.
+      const brandTokens = [
+        ...brandTokensFromTenantName(settings?.tenant_display_name || settings?.tally_company_name || ""),
+        ...(Array.isArray(settings?.docai_part_split_brand_tokens) ? settings.docai_part_split_brand_tokens : []),
+      ];
+      const { normalized: repairedNorm, repaired } = repairPartCodes(out.normalized, {
+        brandTokens,
+        stopWords: Array.isArray(settings?.docai_part_split_stopwords) ? settings.docai_part_split_stopwords : [],
+      });
+      if (repaired > 0) {
+        out.normalized = repairedNorm;
+        await recordRunEvent("docai_part_codes_repaired", { count: repaired });
+      }
+    } catch (_e) { /* never break a run over a cosmetic repair */ }
+  }
+
   // 6b. Tenant-identity scrub (May 2026 audit fix). Strip any
   // customer fields that match the tenant's own contact info.
   // Closes the "extractor pulled the seller's salesperson email
@@ -1050,19 +1357,39 @@ export const runExtractionPipeline = async (params) => {
     } catch (_e) { /* scrub is best-effort */ }
   }
 
-  // 6d. Wave 4.3: stamp bbox evidence per line. When the OCR
-  // layer carried per-block bboxes, match each extracted line to
-  // the OCR block it most likely came from and stamp
-  // line._evidence = { page, bbox, score }. Pure mutation; the
-  // UI uses this for click-to-highlight on the document preview.
+  // 6d. Wave 4.3: stamp bbox evidence per line — match each extracted line to
+  // the document block it most likely came from and stamp
+  // line._evidence = { page, bbox, bbox_norm, score }. The UI uses this for
+  // the hover/click-to-highlight overlay on the document preview.
+  //
+  // Geometry source (fixed 2026-07-23): prefer OCR blocks, else fall back to
+  // the PDF's own text layer. Previously this ran ONLY when an OCR layer
+  // existed — but OCR only runs when the text layer FAILED, so an ordinary
+  // digital PO produced no geometry and the overlay silently rendered
+  // nothing. extractTextBlocks reads glyph positions straight from the PDF,
+  // which needs no OCR and covers exactly that majority case.
   let evidenceCount = 0;
-  if (ocrLayer && out?.normalized) {
+  let evidenceSource = null;
+  if (out?.normalized) {
     try {
-      evidenceCount = stampEvidenceOnLines(out.normalized, ocrLayer);
-      if (evidenceCount > 0) {
-        await recordRunEvent("docai_bbox_evidence_stamped", { count: evidenceCount });
+      let geometry = ocrLayer && Array.isArray(ocrLayer.raw_pages) && ocrLayer.raw_pages.length
+        ? ocrLayer
+        : null;
+      if (geometry) evidenceSource = "ocr_layer";
+      if (!geometry && bytes) {
+        geometry = await extractTextBlocks({ bytes });
+        if (geometry) evidenceSource = "text_layer";
       }
-    } catch (_e) { /* best-effort */ }
+      if (geometry) {
+        evidenceCount = stampEvidenceOnLines(out.normalized, geometry);
+        if (evidenceCount > 0) {
+          await recordRunEvent("docai_bbox_evidence_stamped", {
+            count: evidenceCount,
+            source: evidenceSource,
+          });
+        }
+      }
+    } catch (_e) { /* best-effort: geometry must never break a run */ }
   }
 
   // 6c. Wave 2.4: detect non-Latin scripts per line so the UI can
@@ -1137,6 +1464,16 @@ export const runExtractionPipeline = async (params) => {
     // docai_line_count_shortfall_slack=N to tolerate a small gap.
     lineCountShortfallEnabled: settings?.docai_line_count_shortfall_enabled !== false,
     lineCountShortfallSlack: settings?.docai_line_count_shortfall_slack,
+    // CM P0: money-completeness gate. Unlike the line-count gate above this
+    // reads the document's own printed total out of the text layer, so it
+    // still fires when a truncated response took stated_line_count down with
+    // the lines it was meant to police. bodyText is the L1/L2 text captured
+    // at :489 and is live here — no plumbing needed.
+    kind,
+    bodyText,
+    documentTotalCheckEnabled: settings?.docai_document_total_check_enabled !== false,
+    documentTotalErrorCoverage: settings?.docai_document_total_error_coverage,
+    documentTotalWarnCoverage: settings?.docai_document_total_warn_coverage,
   };
   const anomalyReport = detectAnomalies(out?.normalized || null, anomalyOpts);
   if (anomalyReport.summary.total > 0) {
@@ -1147,6 +1484,28 @@ export const runExtractionPipeline = async (params) => {
     });
   }
 
+  // PER-KIND GATES, in ONE place.
+  //
+  // These were three hand-written branches — non_po for po, non_ack for
+  // supplier_ack, non_drawing for the two drawing kinds — plus an empty-lines
+  // check listing po, rfq and assembly_bom. Every kind added after that
+  // silently skipped both: quote, invoice, packing_list and eway_bill all
+  // emit their own non_<kind> classification that nothing refused, and a
+  // quote extracting ZERO lines was recorded as status 'ok'. A green run with
+  // an empty payload, which is precisely what the non_drawing branch's own
+  // comment said it existed to prevent.
+  //
+  // A table rather than branches, so the next kind cannot quietly opt out:
+  // an entry missing here is visible, where a missing `||` in a condition is
+  // not. api-kind-gates.test.js asserts every kind in the extraction_kind
+  // CHECK has one.
+  //
+  // requiresLines follows each tool's OWN schema — every tool listed true
+  // declares "lines" in its required array. part_drawing has no parts list and
+  // eway_bill is a header document about a consignment, so neither is failed
+  // for having none.
+  const KIND_GATES = KIND_GATES_TABLE;
+
   // 8. Derive status_reason.
   const lines = Array.isArray(out?.normalized?.lines) ? out.normalized.lines : [];
   let status;
@@ -1154,23 +1513,14 @@ export const runExtractionPipeline = async (params) => {
   if (!out || !out.ok) {
     status = "failed";
     statusReason = out?.reason || "fail_unknown";
-  } else if (out.normalized?.classification === "non_po" && kind === "po") {
+  } else if (KIND_GATES[kind]?.reject && out.normalized?.classification === KIND_GATES[kind].reject) {
+    // The extractor's OWN verdict that this is not the document it was asked
+    // to read. Surfaced rather than recorded as a green run with an empty
+    // payload — which is what happened to every kind added after these gates
+    // were written one branch at a time. See KIND_GATES.
     status = "failed";
-    statusReason = "non_po";
-  } else if (out.normalized?.classification === "non_ack" && kind === "supplier_ack") {
-    // Phase F.2: the supplier-ack classifier rejected the document
-    // (it was a marketing brochure, an unrelated PO, etc.). Surface
-    // it explicitly instead of silently recording status_reason='ok'.
-    status = "failed";
-    statusReason = "non_ack";
-  } else if (out.normalized?.classification === "non_drawing" && (kind === "assembly_bom" || kind === "part_drawing")) {
-    // CM PDM P1a/P3a: the drawing classifier rejected the document (it was a
-    // PO, a photo, or the wrong kind of drawing). Surface it instead of
-    // recording a green run with an empty payload. part_drawing has no parts
-    // list, so it deliberately skips the empty-lines gate below.
-    status = "failed";
-    statusReason = "non_drawing";
-  } else if (lines.length === 0 && (kind === "po" || kind === "rfq" || kind === "assembly_bom")) {
+    statusReason = KIND_GATES[kind].reject;
+  } else if (lines.length === 0 && KIND_GATES[kind]?.requiresLines) {
     const conf = out.confidence_overall;
     if (textLayer?.status === "image_only" && !ocrLayerUsed) {
       status = "failed"; statusReason = "image_pdf_no_text";

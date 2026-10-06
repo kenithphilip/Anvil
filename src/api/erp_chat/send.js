@@ -12,6 +12,9 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { erpChatTools, dispatchErpChatTool } from "../_lib/erp-chat-tools.js";
+import { resolvePersona } from "../_lib/agent-personas.js";
+import { loadPersonaContext } from "../_lib/agent-context.js";
+import { tenantSettings } from "../_lib/stripe-client.js";
 import { callAnthropic } from "../_lib/anthropic.js";
 
 // Audit P3.4: route the per-loop Anthropic call through
@@ -32,6 +35,13 @@ Rules:
 - Cite the source(s) you used at the end of your answer
   ("Source: netsuite_open_orders, sap_sales_orders").
 - If a tool returns no rows, say so honestly.
+- COUNTING: tools return total_count (the true number of matches) alongside
+  rows (a capped sample). Answer "how many" from total_count. NEVER count the
+  rows array -- it is truncated, so counting it under-reports.
+- A zero result is a claim about the DATA, not proof. Before concluding
+  "there are none", consider that a filter may not have matched (e.g. a status
+  spelled differently) and say what you filtered on, so the operator can see
+  whether the query -- rather than reality -- produced the zero.
 - Keep answers under 200 words unless the user asks for detail.
 - For aging / outstanding-money questions use open_invoices_aging.
 - For inventory questions use search_inventory; combine across ERPs.
@@ -53,12 +63,30 @@ export default async function handler(req, res) {
     }
     const svc = serviceClient();
 
+    // Module persona (Ask Anvil). The client sends a NAME; the prompt and the
+    // scope list are looked up server-side, so a caller cannot supply either.
+    //
+    // A persona that is unknown, or whose tenant flag is off, is REJECTED
+    // rather than falling back to the default. Falling back would widen the
+    // tool set the caller explicitly asked to narrow — the opposite of what
+    // asking for a persona means. Sending no persona at all is still fine and
+    // behaves exactly as before, which is what the existing Ask Anvil screen
+    // does.
+    let persona = null;
+    if (body.persona) {
+      const settings = await tenantSettings(svc, ctx.tenantId);
+      persona = resolvePersona(body.persona, settings);
+      if (!persona) {
+        return json(res, 403, { error: { message: "persona not available for this tenant" } });
+      }
+    }
+
     // Resolve or create session.
     let sessionId = body.session_id;
     if (!sessionId) {
       const ins = await svc.from("erp_chat_sessions").insert({
         tenant_id: ctx.tenantId,
-        user_id: ctx.userId || null,
+        user_id: ctx.user?.id || ctx.userId || null,   // actor id is ctx.user.id (ctx.userId is always undefined)
         title: body.content.slice(0, 60),
       }).select("id").single();
       if (ins.error) throw new Error(ins.error.message);
@@ -86,13 +114,37 @@ export default async function handler(req, res) {
     }
 
     // Tool-use loop.
-    const tools = erpChatTools();
+    // Scope filtering is what MAKES the persona. erpChatTools() with no
+    // argument returns every tool including the write ones — which is what
+    // this endpoint has always done, and why the SO persona has to pass its
+    // scopes explicitly to stay read-only.
+    const tools = persona ? erpChatTools({ scopes: persona.scopes }) : erpChatTools();
+
+    // Record context goes in the SYSTEM prompt, never in the message.
+    //
+    // callAnthropic applies redactMessages() to messages and only
+    // applyFirewall() — a prepended header, no stripping — to the system. A PO
+    // number sent as message text was matched by a configured redaction rule
+    // and reached the model as "[redacted-phone]", so the agent could not tell
+    // which order it was looking at. Loading it here from OUR tables, scoped by
+    // tenant, sidesteps a filter that exists for untrusted user text and was
+    // never meant to police our own identifiers.
+    let personaContext = null;
+    if (persona && body.record_id) {
+      personaContext = await loadPersonaContext(persona.id, svc, ctx.tenantId, String(body.record_id));
+    }
+    const systemPrompt = persona
+      ? (personaContext ? persona.system + "\n\n" + personaContext.text : persona.system)
+      : SYSTEM;
     let messages = [...history];
     let assistantText = "";
     let citations = [];
     let loop = 0;
     let totalLatency = 0;
     let totalTokensIn = 0; let totalTokensOut = 0;
+    // Per-turn diagnostics trace (see the tool loop below). Built entirely
+    // from metadata the turn already emits — no extra model calls.
+    const toolTrace = [];
     while (loop < MAX_LOOPS) {
       loop += 1;
       const t0 = Date.now();
@@ -100,7 +152,7 @@ export default async function handler(req, res) {
         tenantId: ctx.tenantId,
         userId: ctx.user?.id || null,
         messages,
-        system: SYSTEM,
+        system: systemPrompt,
         purpose: "extraction",
         model: MODEL,
         max_tokens: 2048,
@@ -127,11 +179,28 @@ export default async function handler(req, res) {
       // Run each tool, attach a tool_result block, push assistant + user messages.
       const toolResults = [];
       for (const tc of toolCalls) {
+        const tToolStart = Date.now();
         const result = await dispatchErpChatTool(ctx.tenantId, tc.name, tc.input || {}, { userId: ctx.user?.id });
         toolResults.push({ type: "tool_result", tool_use_id: tc.id, content: JSON.stringify(result) });
         if (result?.source) {
           citations.push({ source: result.source, tool: tc.name });
         }
+        // Diagnostics trace. Everything here is metadata the turn ALREADY
+        // produced — the tool name the model chose, the arguments it bound,
+        // the table the tool read, how many rows came back. Recording it costs
+        // no additional model call, which is the constraint: the panel must
+        // never itself consume tokens to explain a turn.
+        toolTrace.push({
+          loop,
+          name: tc.name,
+          args: tc.input || {},
+          source: result?.source || null,
+          rows: Array.isArray(result?.rows) ? result.rows.length : null,
+          ok: !result?.error,
+          error: result?.error ? String(result.error).slice(0, 200) : null,
+          proposed: !!result?.proposed,
+          ms: Date.now() - tToolStart,
+        });
         await svc.from("erp_chat_messages").insert({
           tenant_id: ctx.tenantId,
           session_id: sessionId,
@@ -172,6 +241,21 @@ export default async function handler(req, res) {
       content: assistantText,
       citations,
       stats: { loops: loop, latency_ms: totalLatency, tokens_in: totalTokensIn, tokens_out: totalTokensOut },
+      // Pipeline diagnostics for THIS prompt. Deliberately assembled from
+      // metadata the turn already produced (the provider's own usage counters,
+      // the tool calls the model issued, the tables those tools read), so the
+      // panel is free: it never triggers an additional model call to describe
+      // itself. `schema_refs` is the distinct set of internal tables this
+      // answer actually stands on.
+      diagnostics: {
+        model: MODEL,
+        loops: loop,
+        latency_ms: totalLatency,
+        tokens_in: totalTokensIn,
+        tokens_out: totalTokensOut,
+        tools: toolTrace,
+        schema_refs: Array.from(new Set(toolTrace.map((t) => t.source).filter(Boolean))).sort(),
+      },
     });
   } catch (err) { sendError(res, err); }
 }

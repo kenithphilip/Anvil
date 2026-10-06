@@ -32,6 +32,7 @@ import { estimateLeadTime } from "../_lib/inventory/lead-time.js";
 import {
   computePipelineDemand, computeCommittedDemand, isoWeekStart, STAGE_PROBABILITY_DEFAULTS,
   calibrateStageProbabilities, explodePipelineThroughBom,
+  buildBomAttributionIndex, topContributingOpps,
 } from "../_lib/inventory/pipeline-demand.js";
 import { planForItem, addWeeks } from "../_lib/inventory/net-req.js";
 import { reliabilityFloor } from "../_lib/inventory/reliability.js";
@@ -56,26 +57,36 @@ const defaultServiceLevel = (itemType, tenantDefault) =>
 //
 // We pick the median of recommended_qty_180d across installed
 // instances; if the item isn't tracked in equipment_installed_parts
-// we fall back to BOM walk via v_bom_walk_recursive.
+// we fall back to the tenant's BOM via v_bom_where_used_recursive.
 const projectEquivalentForPart = async (svc, tenantId, partNo) => {
   const eip = await svc.from("equipment_installed_parts")
     .select("recommended_qty_180d")
     .eq("tenant_id", tenantId)
     .eq("part_no", partNo)
     .not("recommended_qty_180d", "is", null);
+  // A failed read is not "no data": falling through would size the floor
+  // from the next source (or the fallback of 1) and write that guess to
+  // item_master.safety_stock. Refuse instead, like the planner's other reads.
+  if (eip.error) throw new Error("installed parts floor: " + eip.error.message);
   const values = (eip.data || []).map((r) => Number(r.recommended_qty_180d)).filter((v) => v > 0);
   if (values.length) {
     values.sort((a, b) => a - b);
     return values[Math.floor(values.length / 2)];
   }
   // BOM-walk fallback: how many of `partNo` does the modal gun
-  // consume? Read v_bom_walk_recursive for any root that pulls in
-  // this child and take the max as the project-equivalent.
-  const walk = await svc.from("v_bom_walk_recursive")
+  // consume? Read the where-used walk (migration 183) for every
+  // assembly in THIS tenant's BOM that pulls in the part and take the
+  // max as the project-equivalent. Same per-assembly totals as
+  // v_bom_walk_recursive (085), but that view has no tenant_id and its
+  // recursive join does not match on tenant either, so reading it here
+  // sized one tenant's safety stock from other tenants' BOMs.
+  const walk = await svc.from("v_bom_where_used_recursive")
     .select("total_qty")
-    .eq("child_part_no", partNo)
+    .eq("tenant_id", tenantId)
+    .eq("part_no", partNo)
     .order("total_qty", { ascending: false })
     .limit(1);
+  if (walk.error) throw new Error("bom floor: " + walk.error.message);
   const walkRow = walk.data?.[0];
   if (walkRow?.total_qty) return Number(walkRow.total_qty);
   return 1;     // safest non-zero fallback
@@ -188,7 +199,7 @@ const buildStageCalibration = async (svc, tenantId) => {
 // Pipeline demand: read opportunities + opportunity_line_items.
 const buildPipeline = async (svc, tenantId, weeks, calibration) => {
   const opps = await svc.from("opportunities")
-    .select("id, stage, probability, close_date")
+    .select("id, stage, probability, ai_probability, close_date")
     .eq("tenant_id", tenantId)
     .not("stage", "in", "(CLOSE_LOST,REGRETTED)");
   if (opps.error) throw new Error("pipeline/opportunities: " + opps.error.message);
@@ -232,25 +243,10 @@ const buildLeadTimeSamples = async (svc, tenantId, supplierId) => {
 };
 
 // -------------------------------------------------------------------
-// Top-N opportunity contributions for the rationale jsonb.
-const topOppsForPart = (pairs, partNo, n = 3) => {
-  const contrib = [];
-  for (const { opp, lines } of pairs) {
-    const totalQty = (lines || []).reduce((s, l) => s + (l.part_no === partNo ? (Number(l.qty) || 0) : 0), 0);
-    if (totalQty <= 0) continue;
-    const prob = typeof opp.probability === "number" ? opp.probability : (STAGE_PROBABILITY_DEFAULTS[opp.stage] || 0);
-    contrib.push({
-      opp_id: opp.id,
-      opportunity_name: opp.opportunity_name,
-      stage: opp.stage,
-      qty: totalQty,
-      probability: prob,
-      expected_qty: totalQty * prob,
-    });
-  }
-  contrib.sort((a, b) => b.expected_qty - a.expected_qty);
-  return contrib.slice(0, n);
-};
+// Top-N opportunity contributions for the rationale jsonb now come from the pure
+// topContributingOpps() in _lib/inventory/pipeline-demand.js, which also credits
+// opportunities whose finished good's BOM consumes an exploded raw-material part
+// (via buildBomAttributionIndex). See PR "BOM-traced opportunity attribution".
 
 // -------------------------------------------------------------------
 // Plan one tenant. Returns a summary suitable for the cron heartbeat.
@@ -328,6 +324,11 @@ const planTenant = async (svc, tenantId) => {
   const buyParts = new Set((buyPartsQ.data || []).map((r) => r.part_no).filter(Boolean));
   const bomExplosion = explodePipelineThroughBom(pipeline, bomRows.data || [], 8, { buyParts });
 
+  // BOM-traced opportunity attribution: built ONCE per tenant (outside the item
+  // loop) so an exploded raw-material plan can credit the finished-good
+  // opportunities that cascaded into it — same edges as the explosion above.
+  const bomAttributionIndex = buildBomAttributionIndex(bomRows.data || [], 8, { buyParts });
+
   // Committed demand from future sales-order schedule lines, built ONCE for the
   // whole tenant and BOM-EXPLODED like the pipeline — so a confirmed SO for a
   // finished good cascades into its raw-material / component demand (parity with
@@ -344,7 +345,7 @@ const planTenant = async (svc, tenantId) => {
 
   // Pre-fetch the opportunity pairs for top-opp attribution.
   const oppsForAttribution = await svc.from("opportunities")
-    .select("id, opportunity_name, stage, probability")
+    .select("id, opportunity_name, stage, probability, ai_probability")
     .eq("tenant_id", tenantId)
     .not("stage", "in", "(CLOSE_LOST,REGRETTED)");
   const oppIds = (oppsForAttribution.data || []).map((o) => o.id);
@@ -662,7 +663,7 @@ const planTenant = async (svc, tenantId) => {
       packSize: item.pack_size || 1,
       roundingRule: item.rounding_rule || "ceil",
       serviceLevel: alpha,
-      topOpps: topOppsForPart(oppPairs, item.part_no),
+      topOpps: topContributingOpps(oppPairs, item.part_no, bomAttributionIndex, calibration),
       hysteresisStreak: 1,
     });
     if (planResult.plan) {

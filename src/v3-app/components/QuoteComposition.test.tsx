@@ -147,3 +147,74 @@ describe("QuoteComposition — raw materials (BOM) editor", () => {
     });
   });
 });
+
+// Navigating the per-line breakdown on a long quote.
+//
+// The Waterfall and Raw-materials cards render AFTER the line table, so on a
+// quote with fifty lines clicking a row put the breakdown a full screen below
+// the fold. The operator scrolled to the bottom, read it, scrolled back up to
+// find the next row, and repeated — once per line. The table already pins its
+// header and totals; the detail panel was the part still stranded.
+describe("QuoteComposition — stepping through line breakdowns", () => {
+  const MANY = Array.from({ length: 12 }, (_, i) => ({
+    line_index: i, part_no: `PART-${i + 1}`, qty: 1,
+    source_country: "O-KOREA", listed_unit_price: 100000, discount_pct: 0,
+  }));
+
+  const openFirstLine = () => {
+    const view = render(<QuoteComposition lines={MANY} />);
+    const cell = view.getByText("PART-1");
+    fireEvent.click(cell.closest("tr")!);
+    return view;
+  };
+
+  it("shows which line is open and how many there are", () => {
+    const { getByText } = openFirstLine();
+    expect(getByText(/line 1 of 12/i)).toBeTruthy();
+  });
+
+  it("steps to the next line without touching the table", () => {
+    const { getByText, getByLabelText } = openFirstLine();
+    fireEvent.click(getByLabelText("Next line"));
+    expect(getByText(/line 2 of 12/i)).toBeTruthy();
+    // The heading follows the selection, so the panel is never showing one
+    // line's numbers under another line's title.
+    expect(getByText(/Waterfall - line 2/i)).toBeTruthy();
+  });
+
+  it("steps backwards too", () => {
+    const { getByText, getByLabelText } = openFirstLine();
+    fireEvent.click(getByLabelText("Next line"));
+    fireEvent.click(getByLabelText("Previous line"));
+    expect(getByText(/line 1 of 12/i)).toBeTruthy();
+  });
+
+  it("cannot step past either end", () => {
+    const { getByLabelText } = openFirstLine();
+    // Already on the first line.
+    expect((getByLabelText("Previous line") as HTMLButtonElement).disabled).toBe(true);
+    for (let i = 0; i < 11; i += 1) fireEvent.click(getByLabelText("Next line"));
+    expect((getByLabelText("Next line") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("closes the breakdown without clearing the quote", () => {
+    const { getByLabelText, queryByText, getByText } = openFirstLine();
+    fireEvent.click(getByLabelText("Close breakdown"));
+    expect(queryByText(/Waterfall - line/i)).toBeNull();
+    // The line list is still there to pick from.
+    expect(getByText("PART-1")).toBeTruthy();
+  });
+
+  it("brings the breakdown into view when a line is opened", () => {
+    // jsdom has no layout, so assert the call rather than the pixels.
+    const spy = vi.fn();
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = spy;
+    try {
+      openFirstLine();
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      Element.prototype.scrollIntoView = orig;
+    }
+  });
+});

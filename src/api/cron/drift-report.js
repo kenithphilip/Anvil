@@ -17,6 +17,7 @@ import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { commsRow } from "../_lib/comms-row.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -108,7 +109,7 @@ const sendDriftReportEmail = async (svc, { tenantId, tenantName, html, subject, 
   // /api/communications. We use the simpler generic-email path so
   // this cron does not need any provider-specific credentials.
   if (!recipients || recipients.length === 0) return { sent: false, reason: "no_recipients" };
-  const ins = await svc.from("communications").insert(recipients.map((to) => ({
+  const ins = await svc.from("communications").insert(recipients.map((to) => commsRow({
     tenant_id: tenantId,
     direction: "outbound",
     channel: "email",

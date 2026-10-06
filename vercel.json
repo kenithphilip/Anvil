@@ -41,6 +41,8 @@
     { "source": "/v3.html", "destination": "/index.html" },
     { "source": "/v3-app", "destination": "/index.html" },
     { "source": "/v3-app/", "destination": "/index.html" },
-    { "source": "/v3-app/index.html", "destination": "/index.html" }
+    { "source": "/v3-app/index.html", "destination": "/index.html" },
+    { "source": "/portal", "destination": "/portal.html" },
+    { "source": "/portal/", "destination": "/portal.html" }
   ]
 }

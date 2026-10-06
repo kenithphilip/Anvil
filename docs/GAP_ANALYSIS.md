@@ -48,7 +48,89 @@ Scope: codebase audit of `Anvil-main`, 14-company competitive scan (11 original 
 
 ---
 
+## 0. Refresh — 2026-07-29 (read this first)
+
+**The May-2026 audit below is now substantially out of date, and its central
+thesis is inverted.** It described a system "strong on the front half, thin on
+the back half, with zero non-Tally ERP connectors." That is no longer true. All
+figures verified against current code (`supabase/migrations`, `src/api/router.js`,
+`src/v3-app/screens`, `src/api/_lib/*client*.js`).
+
+**Scale, then vs. now:**
+
+| | May 2026 (below) | 2026-07-29 |
+|---|---|---|
+| SQL migrations | 10 | **195** |
+| Routed API endpoints | ~80 | **454** |
+| v3 screens | 35 | **157** |
+| Named ERP / accounting connectors | Tally (+NetSuite in flight) | **17** |
+
+**The "critical gaps" (§6 #1–#6) are essentially all closed:**
+
+- **ERP breadth (was "the single most important gap").** 17 connectors now exist:
+  Tally, NetSuite, SAP S/4HANA, Microsoft Dynamics 365, Acumatica, Oracle EBS,
+  Oracle Fusion, IFS, JD Edwards, Infor SX.e, Epicor Prophet-21, Epicor Eclipse,
+  ProAlpha, Ramco, Plex, JobBoss, Sage X3 (`src/api/_lib/*-client.js` + per-ERP
+  route groups). Depth varies (push vs. bidirectional sync) — that's the remaining
+  work, not presence.
+- **Back-half (order→cash) is built:** generic `invoices` + GSTN `einvoices`,
+  AR aging (`_lib/ops-kpis.js`), a GRN-aware payment statement, and **payment
+  rails** (Stripe Connect + Razorpay).
+- **Autonomous agents:** `agents/run.js` is a goal-driven loop (`ar_collect`,
+  quote-chase, `handle_replies`) with an append-only step audit + a queued-comms
+  reaper.
+- **E-signature:** DocuSign (`src/api/esign/*` + `_lib/docusign-client.js`, migration 023).
+- **ERP sync (not just push):** several connectors do scheduled pulls, not only
+  one-way voucher push.
+
+**Also new since May (whole modules the doc doesn't mention):**
+
+- **Customer-communications suite (design items 0–8 + reply-loop):**
+  function-based routing matrix, Outlook/Microsoft-Graph + SendGrid providers,
+  dispatch register, template-driven service report, GRN payment statement, five
+  governed comms-analytics metrics, a structurally-separate marketing path
+  (consent/suppression/unsubscribe), and inbound reply attribution. See
+  `docs/CUSTOMER_COMMS_DESIGN.md`.
+- **GenAI copilot / "real-time ERP-query chat" (was gap #10, Axal's wedge):**
+  `copilot/`, `erp_chat/`, an **MCP server** (`mcp/server.js` + scoped tokens),
+  and a **governed metric catalog** (`_lib/metrics/catalog.js`, ~24 metrics) with
+  a `{value, unit, provenance, as_of}` contract.
+- **Customer-facing portal (was gap #12):** `portal/` — view quotes/orders/
+  invoices, accept a quote, pay, reorder, invoice PDF, token-scoped access.
+- **Multi-channel inbound (was gaps #7/#8/#9):** email, WhatsApp, Slack, Teams,
+  and **voice** (`voice/` — webhook, outbound, consent, DND, handoff).
+- **Drawing extraction + PDM, Logistics Ops, Spare-Intelligence bridge, generalized
+  BOM ingestion** — all post-May.
+
+**What is genuinely still open (the real 2026-07-29 gaps):**
+
+1. **ERP connector DEPTH + marketing-site proof** — many are push-first; deepen to
+   bidirectional master/inventory/AR sync, and actually list them publicly.
+2. **De-Obara cleanup** — branding + customer IP/PII still throughout the repo (a
+   real credibility + compliance risk; the one §2 claim that still holds).
+3. **Compliance posture** — SOC 2 / ISO 27001 / data-residency for enterprise
+   vendor-security review (deal-unblockers).
+4. **Comms follow-ups** — GRN-aged AR view, Graph-reply retry worker, admin UIs
+   (Graph connect, marketing-consent capture), the DPDPA retention decision.
+5. **Handwritten-PO extraction + an RLHF/edit-feedback loop** (the eval harness is
+   the foundation; the closed loop isn't built).
+6. **Front-end maintainability** — a few mega screens (`admin.tsx` ~6k lines).
+7. **Forecast→BOM raw-material preorder** (the north-star wedge) — still the
+   highest-leverage differentiator to finish.
+
+**Everything from `---` onward is the preserved May-2026 snapshot** (matrices +
+competitor research remain useful); read its "missing/partial/gap" claims through
+the corrections above. The per-competitor section has been kept current (§3.12–3.24; §3.22–3.24 = Shielded, Naïve, Spaceflow, added 2026-08-07).
+
+---
+
 ## 1. Executive summary
+
+> **Amended — see §0 (2026-07-29).** This summary's "thin back half / zero
+> non-Tally ERP" thesis no longer holds: the back half (invoicing, AR, payment
+> rails), 17 ERP connectors, autonomous agents, e-sign, a customer portal, a
+> GenAI copilot, and the customer-comms suite have all shipped. The text below is
+> the May-2026 snapshot.
 
 Anvil today is **a serious, multi-tenant, India-anchored sales-ops execution system** wearing the marketing skin of a generic AI-native quote-to-cash platform. The codebase is mature: 80 serverless functions, 72 Postgres tables, 35 wired React/TS screens, multi-tier model routing, prompt-injection firewall, PII redaction, Tally + GSTN integrations, and a real audit trail on every action. It is not a marketing prototype.
 
@@ -119,6 +201,13 @@ The following are wired end-to-end:
 - **Audit and processing events on every business action.** `_lib/audit.js` is called from nearly every endpoint. The communications timeline merge in SOWorkspace.Activity proves it.
 
 ### What is partial, stubbed, or known-flaky
+
+> **Mostly superseded (§0, 2026-07-29).** Most items below are now shipped:
+> non-Tally ERP connectors (17 of them), payment collection (Stripe + Razorpay),
+> autonomous agents, a real SendGrid **and** Outlook/Graph comms provider, quote
+> PDF, e-signature, and a customer-facing portal. The still-accurate items are the
+> De-Obara branding/PII cleanup and some role-tailored-dashboard / mobile polish.
+> Read the rest as a May-2026 snapshot.
 
 Per `docs/ROADMAP.md` and code spot-checks:
 
@@ -431,13 +520,670 @@ Relevance to Anvil: **borrow 3 patterns.** (1) Validates + extends Anvil's shipp
 
 **Net (both):** the transferable value is a **defensible, evidence-grounded, admin-removing UX** layered on Anvil's copilot + forecast + cockpit — not their enterprise-SaaS-sales product. Concrete items folded into §6 (Important) and parked in the backlog (memory `backlog_revenue_intel_ux`).
 
+### Additions — 2026-07-27 (adjacent-learn-only: drawing intelligence)
+
+One drawing-intelligence tool reviewed at the user's request. **Not a sales-ops competitor** — it operates on the *engineering-drawing QA* step, not the order/procurement flow. It is adjacent to Anvil's own **drawing extraction + PDM** line (memory `project_drawing_extraction_pdm`; PRs #288–293 extract part/assembly CAD drawings into BOM/item data for spare ordering). Hera does drawing → *review*; Anvil does drawing → *data*. The value is capability + positioning patterns for Anvil's extraction pipeline, not features to match.
+
+### 3.17 Hera — `manufacturingintelligence.org` (adjacent-learn-only)
+
+One-liner: "The physical economy runs on drawings. Review takes days. Hera takes minutes." Automated engineering-drawing review (by GIM Corp, YC-backed).
+
+ICP: manufacturing engineering + quality teams who review technical drawings before parts ship.
+
+Capability surface: a "Design Intelligence" console that runs four checks on a technical drawing in minutes — **GD&T conformance**, **code compliance**, **tolerance-stack analysis**, and **drawing-integrity verification** — validating GD&T callouts, datums, and tolerances against **ASME Y14.5-2018, ASME BPVC, B31, and AWS** standards.
+
+Differentiators: deep GD&T/standards parsing (callouts + datums + tolerances, not just OCR); standards-conformance as the value prop; the days→minutes time-compression wedge.
+
+Relevance to Anvil: **learn, don't chase.** (1) **Deeper drawing parse** — Anvil's drawing extraction reads part/assembly data for BOM/spare ordering; Hera shows the depth achievable on the *same artifact* (GD&T callouts, datums, tolerance stacks) that Anvil's P2/P3 (DXF/DWG, part_drawing) could mine for richer item attributes. (2) **Standards-conformance as a manufacturing-credibility signal** — the ASME/AWS framing is a trust cue Anvil can echo where it touches engineering data. (3) **Same days→minutes wedge** Anvil uses for PO extraction, applied to a different artifact — validates the time-compression pitch. Do **not** build engineering-drawing QA/GD&T review: Anvil's wedge is order/procurement flow + forecast→BOM, and drawing QA is a different buyer (design/quality, not ops/procurement).
+
+### Additions — 2026-07-29 (adjacent-learn-only: process-plant document intelligence)
+
+Two more reviewed at the user's request. Operon is a **document-intelligence** adjacency (same class as Hera §3.17 and Anvil's own DocAI / drawing-extraction line); Bizmark is an early, content-light entry. Neither is a sales-ops competitor.
+
+### 3.18 Operon Solutions — `operonsolutions.com` (adjacent-learn-only)
+
+One-liner: "The context layer for process & manufacturing." AI plant-documentation intelligence (by Operon, YC-backed).
+
+ICP: process/manufacturing operators — chemical, oil & gas, cement, electronics — and EPC (engineering-procurement-construction) service providers.
+
+Capability surface: digitizes P&IDs, isometrics, and compliance records into a queryable **"typed plant graph"** connecting equipment + instruments across documents; AI symbol/tag recognition ("97%+ detection accuracy"); a knowledge **chat with source citation**; automated compliance-document generation (LDAR, MOC, HAZOP); agentic workflows over REST/GraphQL/SDK; cloud + on-prem.
+
+Differentiators: the typed cross-document graph as a reusable context layer; citation-grounded plant Q&A; compliance-doc automation for a regulated buyer.
+
+Relevance to Anvil: **learn, don't chase.** (1) **"Typed graph + cited chat"** is the same evidence-grounded pattern Anvil is hardening for Ask Anvil + the metric-catalog provenance contract — Operon validates the drill-to-source UX on engineering documents. (2) **Material take-offs for procurement** from digitized drawings is a genuine bridge into Anvil's forecast→BOM wedge (extracted plant items → spare/BOM demand). (3) **On-prem + SDK** posture is a reminder that process-industry buyers often require on-prem — relevant to Anvil's enterprise-readiness (compliance/CISO backlog). Do **not** build P&ID/plant-compliance tooling (LDAR/HAZOP): that's a different buyer (plant safety/operations, not sales-ops/procurement).
+
+### 3.19 Bizmark — `bizmark.ai` (adjacent-learn-only, early / thin)
+
+One-liner: "Every process, run with the intelligence you already have" — "Systems of Applied Intelligence for the Real Economy."
+
+ICP: not stated on the site.
+
+Capability surface: **content-light** — the public site describes a positioning (applied-intelligence over existing business data to optimize processes) but names no specific product, platform, or case study. Assessment is provisional pending more material.
+
+Relevance to Anvil: **watch, low signal.** The "run existing processes with intelligence you already have" framing rhymes with Anvil's copilot-over-your-own-ERP-data thesis, but with no disclosed product there's nothing concrete to learn or counter yet. Revisit if they ship specifics; do not act on this entry alone.
+
+### Additions — 2026-08-01 (field-service management: a thread to follow)
+
+Reviewed at the user's request, with a deliberate steer: **field service management (FSM) is an adjacency worth following, not dismissing.** FSM is structurally close to **maintenance management** — both revolve around *deploying the right engineer to the right job*, which is a constrained-planning problem (engineer **availability** × **geography/route** × **skill/certification match** × job **demand/priority/SLA** × **parts-on-hand**). That is the same optimization *family* Anvil already runs elsewhere — forecast→BOM procurement planning, spare/installed-base intelligence (FMECA/MEIO), and freight bidding — and it sits directly on top of Anvil's existing **Service** module (Service Visits, AMC Schedule, CAR reports). So this entry is filed as "learn + candidate expansion," not "don't chase."
+
+### 3.20 Kebra — `kebra.com` (adjacent — field-service thread to follow)
+
+One-liner: "AI-native field service." AI agents that automate the **back office** of field-service companies — turning a completed job into structured documentation, warranty recovery, invoicing, and follow-up.
+
+ICP: HVAC (and similar trades) field-service contractors — field technicians and service-company owners — looking to cut post-job admin.
+
+Capability surface: AI agents that (1) **structure job documentation** from field data (notes, photos, equipment models, diagnostics, parts used); (2) **recover warranty revenue** by auto-submitting claims to manufacturer portals (their demo shows a recovered Trane claim); (3) **QA the job** — flag missing info and prompt the tech to complete it before leaving site; (4) **sync back-office** — parts ordering/inventory, invoice creation, customer follow-up/upsell. Integrations: **ServiceTitan** (job management), **QuickBooks** (invoicing), manufacturer warranty portals, parts suppliers, email/SMS.
+
+Differentiators: an **AI-native post-job automation layer** that sits *on top of* the incumbent FSM system-of-record (ServiceTitan) rather than replacing it; **warranty-claim recovery** as a hard-dollar wedge; capture-at-the-truck QA so documentation is complete before the tech leaves.
+
+Maturity: early; narrow (HVAC back office); positions as AI-native. Note the scope boundary — **Kebra automates the back office; it does not own dispatch/scheduling** (ServiceTitan does). The dispatch-planning engine is the harder, more defensible part of FSM, and Kebra deliberately doesn't build it.
+
+Relevance to Anvil: **follow the thread — this is Anvil's Service module's future, not a QTC competitor.** Three concrete pulls: (1) **Engineer-deployment planning is the real prize.** Kebra sidesteps dispatch; Anvil should lean *into* it. Scheduling service/AMC engineers by availability × skill × route × SLA × spare-on-hand is the same constrained-assignment problem as forecast→BOM preorder and freight bidding — Anvil already has the planning substrate and the installed-base + spare-intelligence data (FMECA/MEIO, spare matrix) that make service demand *forecastable*, which pure FSM tools lack. That is a differentiated wedge: **maintenance/AMC → predicted service demand → engineer + spare-part deployment plan.** (2) **Capture-at-the-truck QA** — the "don't let the job close with missing data" pattern maps directly onto Anvil's Service Visit / CAR capture, and onto the same evidence-grounded, complete-before-commit ethos Anvil enforces on extraction. (3) **Warranty/entitlement recovery** connects to the parked support-desk / warranty-entitlement backlog — a hard-dollar reason to hold installed-base + service-history data that Anvil already stores. Do **not** clone Kebra's HVAC back-office niche; **do** treat FSM engineer-deployment planning as a candidate expansion of the Service module, powered by Anvil's forecasting + spare-intelligence spine.
+
+### 3.21 Agency Tool Company — `agencytool.com` (category error — robotics fleet infra, not QTC)
+
+One-liner: "Tools for everyone fielding robots." OTA software-deployment + fleet management infrastructure for robotics companies (by the founders of Scythe Robotics, launched mid-2026).
+
+ICP: robotics companies fielding fleets in production — agriculture, construction, logistics, autonomous vehicles. The buyer is a **robotics/embedded software team**, not a sales-ops or procurement function.
+
+Capability surface: **ATC Deploy** (live, beta) — OTA updates to individual robots or fleets, delta-compressed ("20x faster than a docker pull", ships only changed bytes, resumable over flaky networks), fleet segmentation + targeted rollouts, config/calibration artifact management, role-based approval workflows, per-robot versioning + fleet-convergence visibility, full deployment history/audit, web console + CLI; works with ROS 2, Docker images, arbitrary filesets. **ATC Build** (coming) — CI/CD on hosted embedded hardware (NVIDIA Jetson Orin/NX/AGX/Thor, Raspberry Pi), running tests on the real target instead of emulation; integrates GitHub Actions / GitLab CI.
+
+Maturity: very early (launched ~mid-2026, 3 launch partners, waitlist-gated), but credible founders (built + sold Scythe Robotics, fielded hundreds of autonomous mowers).
+
+Relevance to Anvil: **none for QTC — a category error from the reference list** (same class as Raven §3.11's plant-floor OEE). Agency Tool is robotics DevOps/edge-fleet infrastructure; Anvil is quote-to-cash + procurement + forecasting for industrial sales-ops. There is no product, buyer, or data overlap. Two faint, transferable *patterns* only — do not act on this entry alone: (1) **staged-rollout governance** (fleet segmentation + role-based approval + version-convergence visibility + audit trail) is a clean template for any future Anvil deploy/rollout-governance surface, but Anvil is multi-tenant SaaS, not an edge-fleet operator, so the analogy is loose; (2) **offline-tolerant, resumable sync** over intermittent networks is genuinely relevant *if* Anvil ever builds field/edge data capture — which is exactly where the Kebra §3.20 field-service thread points (service engineers capturing job data at low-connectivity Indian industrial sites). That connectivity-resilience requirement is the one thread worth remembering; the OTA/robotics product itself is not a competitor.
+
+### 3.22 Shielded — `shieldedglobal.com` (adjacent-learn-only — risk-intelligence overlay)
+
+One-liner: "The Unified Intelligence Layer for Business Risk." Real-time risk intelligence that maps external events (tariffs, commodities, freight, FX, disruptions) to financial impact.
+
+ICP: ERP-using mid-market to enterprise firms exposed to tariff/commodity/freight/FX volatility, tailored to three verticals — Manufacturing & Defense (tariff exposure, BOM cost changes, program margin), Food & Beverage (ingredient/landed cost by SKU), Transportation & Logistics (fuel/freight volatility). US-centric (USMCA framing), not India-first.
+
+Capability surface: a **read-only sense-and-recommend overlay**. Ingests internal data (ERP export or spreadsheet) + external feeds and continuously maps drivers to margin change by supplier/SKU, BOM cost change, landed cost, and program margin. Outputs a "what changed / financial impact / priority action" feed, proactive alerts, duty/tariff + USMCA-exclusion calculations, and recommended mitigations (re-source, hedge, re-price). No quoting, no PO/SO extraction, no RFQ, no order processing — **not a system of action**.
+
+Integrations: "Connect ERP systems, spreadsheets, and external intelligence." None named; on-ramp is a spreadsheet export.
+
+Differentiators: a **cause-to-margin mapping engine** (external event → BOM cost → SKU/program margin, quantified with a time horizon); proactive alerts + recommended mitigations rather than a static dashboard; concrete tariff/duty + USMCA logic.
+
+Maturity: YC S26, backed by YC + Susa Ventures. No funding amount, logos, team size, or pricing disclosed; demo/login-gated. Seed-stage.
+
+Relevance to Anvil: partial adjacency, sitting one layer **above** Anvil's transactional core — a risk-intelligence overlay, not a QTC or procurement rival, so no overlap on extraction/quoting/RFQ/order processing. But the overlap lands squarely on **Anvil's moat**: Shielded's "external cost driver → BOM cost → margin impact, with alerts + re-source recs" is exactly the lens Anvil's forecasting-driven procurement + ocean-freight modules would benefit from — and Anvil already **owns** the BOM explosion, supplier data, and freight bids Shielded can only import from a static spreadsheet, so Anvil can compute this on **live** transactional data. **Verdict: LEARN-ONLY.** Take the cost-risk exposure lens — a live "landed-cost / margin-at-risk by BOM component and by opportunity" view driven by tariff/commodity/FX/freight deltas, with proactive alerts and a re-source/hedge recommendation, layered onto the forecast-to-preorder pipeline. Not a consolidation target (different category, US/tariff-centric, seed-stage); not yet a positioning threat.
+
+### 3.23 Naïve — `usenaive.ai` (category error — horizontal AI-agent infra, not QTC)
+
+One-liner: "Ship Apps. Agents. Companies. One prompt. One config file. All your infrastructure." Unified runtime/infra for AI agents.
+
+ICP: developers and AI engineers building agentic apps and "AI-native" businesses (automation agencies, autonomous content channels, solo builders wiring agents into Cursor/Claude Code). Buyer = the developer/founder; self-serve, 30k+ signups. **Not** sold to industrial sales/procurement/ops teams.
+
+Capability surface: a horizontal "autonomous company runtime" — agent cloud infra (Postgres/auth/storage/realtime/edge fns), a governance control plane (policy + audit logs + **hard spend caps enforced before a transaction**), scoped virtual cards + invoicing, a durable multi-agent runtime, 300+ model routing, per-agent KYC/KYB + automated US LLC/EIN formation, 100+ connectors, TypeScript IaC.
+
+Integrations: Stripe, Supabase, Vercel, QuickBooks, PostHog, Rippling, Brave + 100+ — dev/SaaS building blocks, **not** manufacturing ERPs (no Tally/SAP/Zoho/IndiaMART/CAD-PLM).
+
+Differentiators: giving each agent a real-world **legal + financial identity** (auto LLC/EIN, KYB, scoped cards) fused with a durable runtime and a pre-transaction governance plane. (Caveat: a community post alleges they forked a ~41k-star OSS project and stripped its license — an originality flag, noted not endorsed.)
+
+Maturity: YC Spring 2025; $28.5M Series A led by Nexus Venture Partners (~$32M total) with notable angels; ~10 FTEs; 30k+ developer customers. Well-funded but land-grab-stage infra.
+
+Relevance to Anvil: **Verdict: CATEGORY-ERROR.** Naïve is horizontal AI-agent infrastructure for developers — it competes with Vercel/Supabase/agent-ops infra, not with any part of Anvil's seller-side QTC, extraction, RFQ, spares, freight, or forecasting. Different buyer, job, and vertical; nothing to consolidate or defend against. The only tangency is Anvil-**as-a-customer**, not competitor: its governance pattern (policy + audit log + hard spend cap enforced *before* an agent transacts) is a clean reference for guardrails on Anvil's copilot/agents. Keep it **out** of the QTC/procurement matrix; LEARN-ONLY at most for agent governance.
+
+### 3.24 Spaceflow — `spaceflow.tech` (procurement-inverse, learn-only)
+
+One-liner: "Enterprise AI, without the transformation." A managed runtime for enterprise AI agents; procurement "AI employees" for the buy side.
+
+ICP: enterprises on heavily-customized legacy/on-prem systems (perpetual licenses, air-gapped) whose procurement teams do high-volume quote comparison + invoice-to-PO matching. Current logos are Turkish foodservice/enterprise (100+ locations); manufacturing, banking, defense named as target regulated verticals.
+
+Capability surface: the **buy-side** document loop end-to-end — read supplier emails; extract price/lead-time/MOQ from quotes, normalize units, rank responses; consolidate RFQ replies into comparison tables; draft POs with threshold approval routing; match supplier invoices to POs and contract prices line-by-line; vendor scorecards + late-delivery/shipment-delay alerts. Every action proposed, logged, human-approved. Claims: RFQ 4 days → <1 hour, 42% less maverick spend, 3× RFQ throughput, ~$120k/yr savings/deployment, "$400M annual supplier spend runs through Spaceflow."
+
+Integrations: ERP (explicitly **SAP ECC 6.0 with heavy Z-tables**), email, spreadsheets, documents, supplier portals; positions as **MCP-native**. Not a broad named-connector list — the pitch is adapting to one customer's customized stack, not connector breadth.
+
+Differentiators: **on-prem / customer-cloud deployment with model inference inside the customer boundary** ("your transactional data never travels"); a governance gateway with identity passthrough + immutable audit logging; learns existing custom tables/pricing/approval chains without re-implementation (targets decades-old ECC 6.0); remote install "in days"; framed as a managed agent runtime, not a point app.
+
+Maturity: YC S26; ~$1M raised, six-figure ARR; Turkish-founded, now SF; angels from Airbnb, Volvo Cars, Google, Encord, Sequoia. Named Turkish customers. Early but real, content-rich site (Security / Trust Center / KVKK).
+
+Relevance to Anvil: Spaceflow automates the **buy side** of the very RFQ → quote → PO → invoice loop Anvil runs on the **sell side** — the procurement inverse of Anvil's QTC. It mirrors Anvil's supplier-RFQ/quote-capture subsystem and KR/JP/CN supplier scorecard, but as the customer's own procurement cockpit, not a seller's tool, so it is **not** a head-to-head QTC rival. Anvil already does supplier RFQ, quote capture, and vendor scorecards; Spaceflow's genuine edge is **architectural** — on-prem/air-gapped deployment with in-boundary inference, a governance gateway, and immutable audit logging, which is exactly the **TISAX / enterprise-vendor-security posture Anvil's compliance/CISO backlog flags as a deal-unblocker**. **Verdict: LEARN-ONLY** (procurement-inverse, not a seller-side rival). Take the on-prem + governance-gateway + MCP-native managed-runtime deployment model for regulated/air-gapped buyers. **Watch:** if Spaceflow bolts a sell-side module onto the same runtime, it becomes a **THREAT** to Anvil's SAP-ECC-heavy Indian enterprise ICP.
+
+### Additions — 2026-08-11 (AI-native freight forwarding)
+
+One reviewed at the user's request. **`shieldedglobal.com` was also requested and is already covered above at §3.22** (reviewed 2026-08-01, verdict LEARN-ONLY — risk-intelligence overlay); re-reading it against the live site confirms that entry still holds, so it is not duplicated here.
+
+Derya is a different shape from everything else in this scan: it is not software Anvil competes with, it is a **service provider inside a market Anvil already builds a bidding module for**.
+
+### 3.25 Derya — `usederya.com` (adjacent — potential channel/integration, not a rival)
+
+One-liner: AI-native freight forwarding — booking, exporter→port, port→port with customs clearance, and final delivery to the importer, coordinated by AI agents.
+
+ICP: importers/exporters wanting a managed international shipment; also sells *to* freight forwarders (lead generation, deal sourcing) and to carriers (pre-qualified, fully-documented loads).
+
+Capability surface: FCL, LCL, and air freight; quote generation "within one business day"; carrier coordination; customs clearance; automated chasing of missing documentation; and **trade financing on shipments above $20,000**. Positions "AI agents in real time to coordinate tasks, answer questions, and maintain team alignment" across the traditional forwarding desk functions (sales, pricing, ops).
+
+Geography: Turkey-based with a partner network; corridors advertised include Sudan–Turkey, Malaysia–Turkey, Brazil–Ukraine. **Not an India-first lane set**, and not the KR/CN/JP group-subsidiary corridors Anvil's primary tenant imports on.
+
+Maturity: early; site is marketing-led, no pricing, no named enterprise logos, no public API/docs found. Treat capability claims as unverified.
+
+Relevance to Anvil: **this is the one entry in the scan that is plausibly a partner rather than a competitor, and the distinction is load-bearing.** Anvil's logistics P4 shipped a freight-bidding module — `freight_consolidations` / `freight_bids` (migration 145), `_lib/freight-consolidation.js` (`estimateContainers` + `consolidatePlans`), and `/api/logistics/consolidations` + `/api/logistics/freight_bids` (build/list/status, quote/award) — which solicits FCL/LCL bids **from forwarders**. Derya *is* a forwarder, on the sell side of that exact transaction. Anvil is the buyer's cockpit; Derya is a vendor Anvil's module would invite to bid.
+
+Three takeaways:
+
+1. **Channel, not chase.** If Derya (or any AI-native forwarder) exposes a quote API, it becomes a bid source for `freight_bids` — turning Anvil's award flow from "email the forwarders" into a live-rate comparison. Worth watching for a public API; there isn't one today.
+2. **The document-chasing pattern is the transferable idea.** "Automatically handles missing documentation" is the same rail Anvil already runs for POs (DocAI extract → validators → chase) applied to shipping docs — B/L, packing list, certificate of origin. Anvil's shipment stack (`shipments`, `shipment_lines` mig 209, `logistics_monitor` mig 206) captures the records but does **not** chase the documents; that gap is real and is Anvil's to close, independent of Derya.
+3. **Trade finance is a genuine adjacency, and out of scope.** Financing shipments >$20k sits beside Anvil's AR/collections line ([[project_payment_reality]]: OEMs paying via SAP AP bank transfer with TDS). Note it; do not build it.
+
+**Verdict: LEARN-ONLY, with a watch item.** No feature overlap — Derya moves cargo, Anvil runs quote-to-cash. Do **not** build forwarding operations. **Watch:** if Derya moves up-stack into shipper-side software (rate management, landed-cost, procurement-adjacent tooling), it stops being a channel and starts overlapping Anvil's logistics module — the same up-stack risk flagged for Spaceflow in §3.24.
+
+### Additions — 2026-08-15 (logistics-planning stack elements)
+
+Two entries at the user's request, framed as **stack elements Anvil could plan logistics with**, rather than as rivals. `usederya.com` was already reviewed at §3.25 on 2026-08-11 and is not re-reviewed here; what follows adds Ekho Labs and then says how the two compose, because they sit at opposite ends of the same problem and only one of them is a decision layer.
+
+### 3.26 Ekho Labs — `ekholabs.com` (adjacent — upstream signal for Anvil's monitor)
+
+One-liner, verbatim from the site: **"The decision engine for disrupted freight."**
+
+What it does: ingests a claimed 10,000+ sources — sanctions registries, AIS, port feeds, weather models, union and congressional communications — and forecasts corridor disruption with a **median 12-day lead time**, then recommends specific actions: PO-level reroutes, carrier alternatives, booking windows.
+
+ICP: freight teams running ocean lanes through disrupted corridors; enterprise supply-chain leadership.
+
+Integration shape: **read-only API into the TMS/ERP you already run** — CargoWise, SAP TM, Oracle OTM, Descartes are named. SSO/SAML, "live in under 24 hours", no install. That posture matters more than the feature list: Ekho does not want to be your system of record, which is exactly the half Anvil already owns.
+
+Maturity: early. No pricing, no funding, no customer logos. One named advisor (Lenovo ISG's former COO) and one case study (Hamburg → Jeddah, March 2026). **Treat "10,000+ sources" and "12-day median" as marketing claims — neither is independently verifiable from the site.**
+
+Relevance to Anvil — and it is more direct than Derya's:
+
+1. **PO-level is Anvil's unit of work.** Ekho recommends reroutes *per purchase order*, not per container. Anvil already carries `shipments` + `shipment_lines` (migration 209) linked back to orders, so a PO-level disruption signal lands on a row Anvil already has. Most disruption tooling is lane-level and would not.
+2. **Anvil has the consumer already built, and it is switched off.** Migration 206 shipped a configuration-driven monitor with SLA/escalation: tenant-defined rules, a per-tenant cron detector, fingerprint-deduped `logistics_exceptions` each carrying its own SLA clock, alerts fanned to bell + email. Today its detector reads sources Anvil owns — source-PO ack, ready-date and work-order delays via `delays/scan.js`. **An external disruption feed is a new `rule_kind`, not a new subsystem.** The flag is `tenant_settings.logistics_monitor_enabled`, default off.
+3. **It closes the loop with the freight-bidding module.** `freight_consolidations` / `freight_bids` (migration 145) solicits FCL/LCL bids. A 12-day warning is only useful if you can act on it, and re-bidding a consolidation *is* the action. Signal → exception → re-bid is a path Anvil could complete end to end.
+
+Where it does **not** fit:
+
+- Its named integrations are enterprise TMS platforms. **Anvil is not a TMS and is not on that list**, so "read-only API into your stack" is a claim about SAP TM, not about Anvil. Any integration would be Anvil pulling from Ekho, and no public API docs were found.
+- Anvil's primary tenant imports on **KR/CN/JP group-subsidiary corridors**. Ekho's public evidence is a Middle East / Europe ocean lane. Corridor coverage is unverified for the lanes that actually matter here.
+- Disruption intelligence is a **data subscription with recurring cost**, sitting beside a compliance question about egress ([[backlog_compliance_ciso]]) — the same gate flagged for OpenRouter.
+
+**Verdict: LEARN-ONLY, with a concrete watch item.** Do not build disruption forecasting; ten thousand data sources is not a side quest. **Watch:** if Ekho publishes a public API and covers Asian corridors, it is the cheapest way to give Anvil's monitor a *predictive* rule alongside its current *reactive* ones — which is the difference between telling an operator a shipment is already late and telling them it will be.
+
+### How the two compose
+
+They are the opposite ends of one workflow, and neither is a competitor:
+
+| | what it is | where it sits | Anvil's side |
+|---|---|---|---|
+| **Ekho Labs** (§3.26) | decision engine — predicts disruption, recommends reroutes | *upstream* of the decision | consumer: a new `rule_kind` on the migration-206 monitor |
+| **Derya** (§3.25) | freight forwarder — actually moves the cargo | *downstream* of the decision | counterparty: a bid source for `freight_bids` (mig 145) |
+
+The honest read is that **Anvil is the middle layer and already owns it**: the records (`shipments`, `shipment_lines`), the exception spine with SLA clocks (mig 206), and the bidding module (mig 145). What it lacks is a predictive input at the front and live rates at the back. Both are integrations, not builds.
+
+Two cautions before treating this as a plan:
+
+- **Neither has a public API.** Both entries are watch items, and a watch item is not a roadmap line.
+- **Anvil's own monitor has never run in production** — `logistics_monitor_enabled` is default-false and, per [[backlog_sla_support_pm_mvp]], flipping it is 0 LOC. **Turning on the thing that already exists should precede shopping for something to feed it.**
+
 ---
+
+### Additions — 2026-08-20 (buy-side trade and freight: three YC entrants on the import lane)
+
+Three reviewed at the user's request. None sits on the axis Anvil sells on — all three are on the **buy/transport side**, and two are service businesses with software rather than software products. They are filed together because they press on the same part of the repo: inbound logistics and landed cost (`freight_consolidations` / `freight_bids` mig 145, `src/v3-app/lib/pricing.ts`, `shipments`), which is also the part of Anvil whose schema surface most exceeds its wiring. Read the trio as an audit of that module, not as a competitive threat. The verified corrections are collected after the three entries.
+
+### 3.27 Donkey Trade — `donkey.trade` (procurement-inverse, learn-only)
+
+One-liner, verbatim: **"Factory prices, delivered, one number."**
+
+ICP: businesses that buy inventory by the pallet, starting with home builders and construction — "If your business buys inventory by the pallet, you should be buying it by the container." US-facing importers with no import cockpit of their own.
+
+Capability surface: upload a buying list in any format; AI agents scan **public customs records** to identify factories and retrieve quotes; landed price including tariffs and delivery returned as one number; **48-hour price lock** on signing; AI packing optimisation to size containers; direct factory-floor-to-destination fulfilment; own personnel physically verifying quality at the factory. A managed importer-of-record, not a tool.
+
+Integrations: not stated.
+
+Differentiators: one contract with one responsible party; the price holds after signing and **Donkey absorbs cost overruns**; **deterministic** pricing math, explicitly not AI-driven, for reproducibility; staff on factory floors; "Every container we run adds real factory prices to the lane."
+
+Maturity: YC S26; two cofounders (industrial supply, agent systems). Investors, logos, pricing: not stated. One metric — "38% saved versus buying piecemeal", anonymised home-builder case study.
+
+Relevance to Anvil: zero on Anvil's selling axis — Donkey never quotes a customer, extracts a PO or touches an ERP. The real overlap is on Anvil's **inbound** side, which is genuinely built: `freight-consolidation.js` groups procurement plans by lane and week and sizes containers against `CONTAINER_CAP`, mig 145 persists the bid/award flow, and `pricing.ts` PROFILE_GRANULAR loads a supplier price through FX → freight → insurance → duty → SWS → CHA → transport into a persisted `landed_cost`. Donkey does that arithmetic for the opposite principal: Anvil is the importer's own cockpit, Donkey the outsourced version sold to importers who lack one — the same counterparty seat §3.25 gives Derya. What Anvil cannot do is find the counterparty or stand behind the number, and it should not try: customs-record mining is absent by choice, and this tenant buys from a stable set of qualified JP/KR/CN suppliers where factory discovery is not the bottleneck. **Verdict: LEARN-ONLY.**
+
+### 3.28 Waybill — `waybill.to` (adjacent — buy-side procurement thread to follow)
+
+One-liner, verbatim: **"Procurement on autopilot"**
+
+ICP: teams that build hardware — companies with complex sourcing, international shipping and customs.
+
+Capability surface: intake by part number, BOM, PLM sync or plain English; automated sourcing of licensed suppliers; parallel RFQ to authorised distributors, franchised lines and vetted brokers; quote comparison on **landed cost, lead-time verification, MOQ analysis and authenticity**; automated negotiation; a **live fallback source** held in reserve and auto-activated if the primary fails; unified payment across parts, freight, duties, clearance and delivery; in-house fulfilment and consolidation; live carrier and flight tracking; **pre-arrival** customs filing with classification-error detection; multilingual voice agent coordinating delivery drivers; receiving label scan to inventory; **three-way** invoice/payment/import matching; on-shelf stock check before purchase; **continuous BOM monitoring** for price, EOL risk and stock; **build-schedule backward-quoting**; dedup across requesters.
+
+Integrations: Slack, Gmail, WhatsApp, Outlook; SolidWorks, NX, Altium, Eagle, KiCad; DHL, FedEx, UPS, Maersk, Kuehne+Nagel.
+
+Differentiators: one approval and one payment instead of many invoices; unbroken chain of custody via own fulfilment; the reserve fallback; pre-arrival clearance; proactive monitoring ahead of a build.
+
+Maturity: YC S26. Team size, logos, pricing, metrics: not stated.
+
+Relevance to Anvil: opposite directions across the same transaction — Waybill is the buyer Anvil's customer would be, and Anvil's tenant is the sort of supplier Waybill would RFQ, so no deal is ever contested. The touchpoint is Anvil's own import procurement, which runs end to end and is in places **deeper**: `inventory/positions.js` reconciles on-hand across ERP mirrors with in-transit and allocations, `net-req.js` computes a real net requirement behind a hysteresis gate, and `ap/match.js` is a genuine three-way match with tolerance bands — an MRP loop, not an on-shelf check. Everything downstream of the award is a licensed logistics-and-payments operator's business and would pull Anvil off its wedge. The one steal is wiring, not building: `supplier_rfq/matrix.js` crowns the cheapest raw `unit_price` while ignoring the `currency` on the same row, so a JPY bid can beat a USD one on the number alone. Ranking on landed cost through the mig-135 profile turns a lookup table into a sourcing decision. **Verdict: ADJACENT.**
+
+### 3.29 Peer Freight — `peer-freight.com` (category error — US truckload brokerage, not QTC)
+
+One-liner, verbatim: **"Difficult freight handled right"**
+
+ICP: US shippers needing truckload brokerage, especially difficult, specialised or high-compliance freight.
+
+Capability surface: quote within the hour with market comparables; carrier vetting (fraud screening, FMCSA authority, insurance validation, identity); live load tracking via a **no-login link**; same-day POD and invoice matching; hazmat, reefer, dry van, flatbed, specialised and port drayage; 24/7 owner access; same-day carrier payment; load dashboard.
+
+Integrations: not stated.
+
+Differentiators: "AI to get quotes back fast, vet carriers in more depth, and catch problems before they reach you"; takes loads other brokers decline; "Human in the loop whenever you need one"; TIA member; fully insured.
+
+Maturity: YC; advisors from Ryder, Dynamic Connections, AtoB, CDL1000, Convoy, Waylens, OTR. USDOT 5766712, $75K BMC-84 bond, **FMCSA broker authority pending**. Team size, logos: not stated. Example quote $1,840 all-in; "98% on time" on an example dashboard.
+
+Relevance to Anvil: not software — a services business holding transport authority — and on the freight transaction Anvil is the **buyer**, as it is with Derya (§3.25). Peer sits further out than Derya: US domestic truckload and drayage, a mode and geography with no Anvil presence and no tenant demand. It could not bid on an Anvil consolidation at all, because `logistics/consolidations.js:57` hardcodes `mode: "ocean"`. Wrong side, wrong mode, wrong geography, wrong buyer; no account is ever contested. It earns its place chiefly for what checking it corrected — see below. **Verdict: CATEGORY-ERROR.**
+
+### What this trio corrected about Anvil's own record
+
+Checking three outside claims against the code turned up five things this document had wrong or unstated. All verified.
+
+| claim previously held | what the code says |
+|---|---|
+| "Anvil is ocean/freight only, zero vehicles" (`backlog_fleetbase_lastmile`) | **Half wrong.** ROAD is a first-class value in five places (`shipment_mode` enum mig 006, shipments UI, `freight_rates.mode`, `freight_consolidations.mode`, `logistics_carriers.mode`), and truck registrations *are* stored — mig 074 carries `vehicle_no`, `vehicle_type`, `transporter_id`, and `eway_bills/index.js:246` refuses a Road filing without one. What is genuinely absent is any **operational** entity: no vehicle, driver, route, trip or load, so a vehicle number is a string on a tax filing. ROAD is a label no code branches on. |
+| The freight bidding module feeds pricing | **It does not.** `freight_bids` is referenced nowhere outside its own module and `freight_rates` (mig 106) is read by nothing but its own admin endpoint — the panel comment at `AdminDataPanels.tsx:338` claims those rows feed the price-composition cockpit and they do not. Anvil quotes a landed cost built on a hand-entered freight figure while a real awarded ocean cost with a `valid_until` sits one table away. |
+| MOQ is now captured from quotes (#462) | **On the wrong side, and not persisted.** `quotes` is customer-facing; `quote_lines` has no `moq` column, and `quote-ingest.js` concatenates the value into the free-text `remark` as `MOQ=30`, which nothing reads back. Useful for a human reading the row; unusable by any check. |
+| Anvil has a three-way match | **True, and invisible.** `ap/match.js` is real, with tolerance bands and optional auto-approve — but neither `ap` nor goods receipts appear anywhere in `routes.ts`, so it has no UI. It also loses its price leg on stocking POs: `inventory/plans.js:38-43` writes line items with no rate. |
+| Carrier tracking | **Excel-fed.** `_lib/shipment-import.js` parses the logistics team's workbooks; there is no carrier API client anywhere in `src`. |
+
+Two ideas worth taking, both wiring rather than building:
+
+- **Rank supplier quotes on landed cost, not raw price** (from §3.28). Also gives a consumer to two half-finished things: a real `moq` column would let the ranking use the MOQ-rounded quantity `inventory/eoq.js` already computes, and `inventory/lead-time.js` — which fits a per-supplier distribution from acknowledged-ETA-versus-actual-receipt deltas — could flag a vendor quoting 20 days whose own history says 45. That is lead-time verification Anvil can *evidence* rather than assert.
+- **Let a customer see their own shipment** (from §3.29). `portal_tokens` with per-customer scopes exists (mig 022), and `sales/part_tracking.js` already answers "where is my part?" by deriving the stage from `shipment_lines` rather than reading a free-text status. The gap is one branch: `portal/view.js` serves `summary | quotes | orders | invoices | spares | spare_matrix` and stops, so a customer can see their invoice but not their shipment. Gate it behind the per-user portal session (mig 199), **not** the token-in-URL link — [[backlog_portal_auth_compliance]] already records that link as not compliance-grade for an auto-OEM buyer, so Peer's no-login convenience is the wrong half to copy.
+
+### Additions — 2026-08-29 (YC's hardware RFS, and the one multiply Anvil is missing)
+
+Reviewed at the user's request: **Prototyping.io** plus three YC requests-for-startups
+that frame it — Nicolas Dessaigne on **hardware supply chain / iteration speed**,
+Charlie Warren on **new operating systems for the physical world**, and Zane
+Hengsperger on **modern metal mills**. The instruction was explicitly *learn, do
+not copy*, so the entry below is short and the synthesis after it is long: the
+theses turn out to be a better diagnostic of Anvil than the company is a
+competitor. Every claim was re-verified against current code.
+
+### 3.30 Prototyping.io — `prototyping.io` (adjacent-learn-only — the design→part loop)
+
+One-liner, verbatim: **"Multiple manufacturing processes, one platform."** YC's own
+framing: *"helps turn designs into mechanical parts in days."*
+
+ICP: hardware teams, early-stage startups through enterprises, needing prototype
+and early-production mechanical parts.
+
+Capability surface: upload a 3D CAD model; AI extracts design features and
+intent; the platform analyses manufacturability and flags issues; it selects the
+manufacturing process and sourcing; **machine programs are generated**; parts are
+made and delivered. Processes: CNC machining, sheet metal, 3D printing, injection
+moulding, extrusion, die casting. Materials across aluminium, steel, titanium,
+PEEK/PC/nylon; finishes from anodising to plating to powder coat.
+
+Integrations: not stated (CAD upload is the interface).
+
+Differentiators: **"AI-powered DFM analysis on your designs"**; tolerances to
+±0.0002"; **no MOQ**; one platform across six processes rather than a broker
+routing to shops.
+
+Maturity: YC **P26**, founded 2026, two founders (Revanth Bodepudi, CEO; Prerit
+Oberai, CTO), SF Bay Area. Waitlist for early access — no public pricing, no
+turnaround SLA, no logos, no metrics. Treat capability claims as intent.
+
+Relevance to Anvil: **none competitively, and that is not the point.** Anvil never
+makes a part and Prototyping.io never quotes a customer PO, extracts one, or
+touches an ERP — the same non-overlap as §3.24/§3.27. What makes it worth an
+entry is that it occupies the exact step Anvil stops one line of arithmetic
+short of. Prototyping.io reads a drawing to decide **how to make the part**;
+Anvil reads a drawing to decide **what the part is**. See the synthesis.
+**Verdict: LEARN-ONLY.**
+
+### What the three YC theses actually say about Anvil
+
+The three essays share one premise: the bottleneck in physical-goods businesses
+is no longer information, it is **time and cost that nobody can compute**.
+Checked against the code, that premise lands hard.
+
+**Anvil is an import distributor's pricing engine wearing a manufacturer's
+clothes.** A quoted price has exactly **one** cost input — a supplier's unit price
+in a foreign currency — pushed through FX conversion, then *import landing*
+costs, then margin, then discount (`src/v3-app/lib/pricing.ts:8-11`; the seeded
+granular profile is packing, shipping, insurance, basic customs duty, social
+welfare tax, CHA charges, local transport, install & warranty,
+`mig 135:99-111`; the recompute takes the supplier price straight off the
+request body, `QuoteComposition.tsx:320`). That is a landed-cost-plus-markup engine. It prices what the
+tenant **buys**. It cannot price what the tenant **makes**.
+
+| what the physical world would need | what the code has |
+|---|---|
+| routing / operations / process plan | **absent** — every `routing` hit is LLM-model or email routing |
+| work centre, machine rate, labour rate, setup time, cycle time | **absent** — the only `cycle_time` is a weld-gun product spec |
+| conversion cost, burden, shop rate, job costing | **absent** |
+| a work order | **absent** — `work_order` is a *sales origin classifier* (local vs import) |
+| a shop-floor traveler | **`orders/traveler.js` renders the SALES ORDER PDF through the same React-PDF component as quotes and invoices, with the title string changed to "Production Traveler"**, then queues a `print_jobs` row to an on-prem CUPS/IPP relay. No operations, no sign-offs |
+
+**And yet Anvil is one multiply away from a real made-to-print cost basis.** This
+is the finding worth acting on. Anvil already contains a genuine
+first-principles raw-material calculator: it resolves a material callout to
+grade + density, classifies the geometry, adds a machining allowance to choose
+stock form and dimensions, computes gross mass from volume × density, and
+divides by yield to get **kg consumed per unit**
+(`_lib/pdm/raw-material-infer.js:108-131` `inferStock`, `:137-165`
+`determineRawMaterial`, grade/density master at `:29-41`). It also already looks
+up a material price — `composition_material_lines.unit_cost` is auto-filled from
+`material_price_references` (`admin/composition_material_lines.js:123-129`).
+**Nothing multiplies them.** `unit_cost` has no reader anywhere in `src/`, and
+the recipe writer never sets it (`raw-material-persist.js:32-52` persists
+`consumption_per_unit` and no cost field at all). The consumption figure never
+becomes money, and the quote's raw-material breakup is hand-entered beside it
+with dimensions as a **free-text string** (`QuoteComposition.tsx:31-38`
+`dimensions: string; // free text`), never seeded from the drawing the system
+already parsed.
+
+The same dead-end repeats one layer up. The `part_drawing` extractor really does
+read manufacturing spec — `material`, `finish`, `heat_treatment`, an overall
+envelope, **`tolerances[]`**, **`gdt[]`**, `notes[]` — and every one of
+tolerances, GD&T, finish and heat treatment is **consumed by nothing**, living
+only as JSON inside `extraction_runs.normalized_extract` (`run.js:1403`); the
+one downstream consumer reads just `material`, `dimensions`, `bought_out` and
+the title (`raw-material-infer.js:170-181`). The code comment promising
+ingestion into `item_specifications` (`claude.js:1378-1379`) describes columns
+that **do not exist** — that table (`mig 105:302-321`) has no tolerance, GD&T,
+finish or heat-treatment field, and its only writer is the manual admin drawer
+(`ItemDetailDrawer.tsx:199`). So Anvil pays a model to read the hardest part of a drawing and then
+throws the answer away.
+
+That reframes the job-shop verdict recorded in [[project_job_shop_segment]]. The
+back half is not merely "absent" — it is **partially built and unwired**, which is
+a much cheaper starting position than it looks.
+
+**On Warren's "route work between an agent, a robot and a person": Anvil's real
+analogue is Mode A/B, and it is shipped.** `so_processing_mode` already decides
+whether *Anvil* or *a person* performs the sales-order work, and — unusually —
+`three-way-adjudicate.js` scores **which of them was right** against the PO as
+authority rather than scoring agreement. Warren asks "how do you measure
+reliability" for mixed human/agent work; Anvil has that measurement in
+production and should say so. The gap is the other half: Anvil **records** field
+work but cannot **route** it. `service_visits` is real and wired (a
+`field_engineer` column, check-in/check-out timestamps, a five-state lifecycle,
+its own screen and nav; `service_visits` at `mig 006:529-547`) — but
+`field_engineer` appears exactly once in the handler, hardcoded to whoever
+created the row (`service/visits.js:42`), and is absent from the PATCH
+allow-list, so **a visit can never be assigned to anybody**. There is no technician entity at all. Likewise
+`failure_events` is a genuine in-field breakdown stream at (part × asset
+instance × date) grain, captured through a **desk form** with a hand-typed date
+and a typed downtime number, and FMECA (`RPN = S×O×D`) is real but its only
+consumer is spare-part min/max. Every physical-asset record Anvil keeps
+terminates in a **spare sale**, not a field action. Robots and wearables are the
+wrong lesson to take; *assignability* is the right one, and it is a small change.
+
+**On Hengsperger's mills: the diagnosis is Anvil's own.** "Production planning,
+scheduling, quoting and execution are fragmented… short runs and spec changes
+are treated as disruptions instead of opportunities." Anvil cannot tell a
+profitable short run from an unprofitable one, because for a made part there is
+no cost basis to compare against — and per [[backlog_margin_bi]] an operator
+cannot see margin on a PO *before approving it* even for a bought one. The
+8–30-week lead times the essay describes are also the strongest external
+validation the **forecast → BOM → raw-material preorder** wedge has had: that
+wedge exists precisely to buy long-lead material before the order lands, and it
+remains the thing in §0 still open.
+
+**Three things to take, none of which is "build a factory":**
+
+1. **Multiply the two numbers Anvil already has.** `consumption_per_unit (kg) ×
+   unit_cost` gives a material cost from the drawing, which is a real second
+   cost input to `composePrice` and the first honest answer to "what would it
+   cost us to make this?" It reuses the calculator, the price reference and the
+   composition table that all already exist. It is not CAM and not DFM — do not
+   build those; that is Prototyping.io's company, not Anvil's.
+2. **Persist what the drawing extractor already read.** Give `tolerances`,
+   `gdt`, `finish` and `heat_treatment` a home on the item, so the spec that
+   drives make/buy, supplier selection and inspection stops being discarded. The
+   extraction is already paid for.
+3. **Make a service visit assignable.** One column off the hardcode and onto the
+   PATCH allow-list turns a record of field work into dispatch of field work —
+   the smallest possible step toward Warren's thesis, and the one Anvil's
+   existing AMC/visit machinery is already shaped for.
+
+### Additions — 2026-08-29 (MRO master data + spare-parts intelligence: the first review that contests a §8 moat)
+
+Reviewed at the user's request. **Verdantis is the closest thing to a real
+competitor this document has examined** — not because it sells what Anvil sells
+(it does not), but because it is the first entrant whose product directly
+overlaps two of the moats §8 tells us never to erase. It also sits on the
+opposite side of the transaction from Anvil in a way that is worth stating
+plainly rather than filing as "procurement-inverse, no threat". The corrections
+it forces on Anvil's own record follow the entry.
+
+### 3.31 Verdantis — `verdantis.com` (adjacent — contests a §8 moat, and inverts the business model)
+
+One-liner: **MRO master-data and spare-parts intelligence for asset-intensive
+enterprises.** Two products: **MRO360** (an EAM suite: criticality analysis,
+inventory intelligence, maintenance-demand forecasting, demand planning and
+optimisation, work-order planning) and the **Verdantis MDM Suite** (Harmonize
+for standardisation + Integrity for governance, plus five named AI agents —
+AutoEnrich, SpareSeek, ObsoCheck, AutoDoc, AutoTrans).
+
+ICP: asset-intensive enterprises managing MRO inventory across multi-plant
+operations — oil and gas, energy and utilities, metals and mining, chemicals,
+pulp and paper, food and beverage, building materials.
+
+Capability surface: spare-parts criticality scoring, **obsolescence detection**,
+**alternate-part identification**, safety-stock optimisation, demand forecasting,
+reorder-point recalibration, item-master normalisation / enrichment /
+deduplication across systems, supplier-reliability tracking, maverick-spend
+elimination, BOM management, work-order scheduling, preventive and predictive
+maintenance.
+
+Integrations: **SAP S/4HANA, SAP ECC, Oracle EBS, IBM Maximo, Infor.**
+
+Differentiators: "agentic AI" / "AI-native"; **contractually guaranteed**
+savings; "480M+" records normalised; "25+ years of industrial data expertise";
+">95% accuracy" claimed for demand forecasting.
+
+Maturity: the strongest of any entrant reviewed here. Logos include **Chevron,
+Saudi Aramco, Marathon Petroleum, CITGO, HF Sinclair, AEP, Mars, Barrick,
+Newmont, Weatherford**. Metrics: "35% average reduction in maintenance OpEx",
+"$42M working capital released" (refiner), "27,400 dead SKUs surfaced" (steel
+producer); 1.8M-2M+ SKUs under management; 8-14 week implementations.
+
+Relevance to Anvil — two things, and the second matters more than the first.
+
+**It contests a moat.** §8 lists "Spare-matrix recommender + obsolete-parts" and
+"Supplier scorecard by country-of-origin" as things "none of the YC25 cohort
+touches". That remains true *of the YC25 cohort* and is false as a general
+claim: criticality, obsolescence, alternates, safety stock and supplier
+reliability are Verdantis's core product, sold to Aramco, for 25 years. The moat
+is real at the SME / mid-market tier where a plant has no MDM programme at all;
+it is not a moat against an enterprise incumbent, and the marketing story should
+say which tier it is claiming.
+
+**It inverts the business model, and this is the honest part.** Verdantis is
+bought by the **asset owner** — the party Anvil's tenant *sells spares to* — and
+its headline value is **buying fewer spares**: "$42M working capital released",
+"27,400 dead SKUs surfaced". Anvil's spare matrix exists to recommend a spare
+kit; Verdantis exists to tell that same plant which of those parts it should
+stop stocking. Same data, opposite sign. No account is contested because Anvil
+never sells to Verdantis's buyer — but a customer running Verdantis is a
+customer whose spares demand is being actively compressed, and a spares seller
+should know that rather than discover it. **Verdict: ADJACENT.**
+
+### What checking Verdantis corrected about Anvil's own record
+
+Five things, all verified against current code.
+
+| claim previously held | what the code says |
+|---|---|
+| The obsolete-parts capability is an inventory-hygiene feature | **It is a QUOTING feature.** `_lib/part-supersession.js` has exactly one non-test consumer in `src/`: `spare_matrix/to_quote.js`. It substitutes a superseded part at the moment a quote line is built. Nothing sweeps the item master for dead stock, and nothing tells a customer what to stop carrying — which is precisely Verdantis's headline number. |
+| FMECA is a differentiator that drives maintenance | **Real, and it drives one thing: stocking.** `fmeca_criticality` (mig 178, `RPN = S x O x D`) is read by its own endpoint (`fmeca/index.js`) and by `spare_matrix/recompute_recommended.js`. No PM task, no inspection, no work order — consistent with §3.30's finding that every physical-asset record Anvil keeps terminates in a spare sale. |
+| Anvil's inventory science is thin next to an EAM suite | **Wrong, and better than the doc credits.** `_lib/inventory/` carries `safety-stock`, `reliability`, `classify`, `lead-time`, `net-req`, `forecast`, `pipeline-demand`, `positions`, `exceptions-detector` and `conformal` — conformal prediction intervals are a more honest uncertainty treatment than a ">95% accuracy" claim. |
+| ...and it runs | **It does not run on a schedule.** `cron/inventory-planning-weekly.js` is registered in `router.js:225/723` and appears in **neither** `cron/tick.js`'s fan-out **nor** `cron/daily.js`'s, and the only Vercel cron entry is `/api/cron/daily` (`vercel.json`). So the whole planning stack is callable and never called. Verdantis's entire proposition is that this runs continuously; Anvil has the machinery and no clock. |
+| EOQ feeds the planning loop | **`_lib/inventory/eoq.js` has zero non-lib importers.** It is an orphan, which is the same finding §3.28 reached from the other direction (its MOQ-rounded quantity has no consumer). |
+
+Three things to take:
+
+- **Schedule the planning cron.** The single highest-value line in this section:
+  Anvil already computes safety stock, lead-time distributions, reliability and
+  demand with conformal intervals, and nothing triggers any of it. This is
+  wiring, not building, and it converts a library into a product.
+- **Claim the moat by tier.** "No one else does spare-matrix recommendation" is
+  false against Verdantis and true against the YC25 cohort. Saying "the only one
+  that does this for a mid-market industrial supplier, without an MDM programme"
+  is both defensible and more persuasive.
+- **Consider selling the opposite sign.** A spares seller that can tell a
+  customer which parts they are over-stocking is making a trust claim no
+  competitor in this document can match — and Anvil already has the FMECA,
+  installed base and failure history to compute it. It costs some spare revenue
+  and buys the position Verdantis charges Aramco for.
+
+### Additions — 2026-09-10 (enterprise supplier lifecycle management — the machine on the other end of Anvil's invoice)
+
+One reviewed at the user's request, and it is the most instructive entry in this
+section for a reason none of the others share. Every competitor above is
+evaluated on whether it contests Anvil's deals. Gainfront contests nothing: it
+never quotes a customer, never reads a PO as a seller, never touches an
+order-to-cash flow. It is **what Anvil's customer's customer runs** — the
+enterprise procurement platform on the receiving end of the invoice an Anvil
+tenant sends. Read it as documentation of the counterparty, not as a rival.
+
+**Read alongside §3.31.** Verdantis was reviewed earlier from the opposite
+direction — MRO master-data standardisation and governance — and the two
+converge on the same defect in Anvil rather than on each other: Anvil's own
+master data does not reconcile. Verdantis sells the harmonisation of *item*
+master data; Gainfront sells the harmonisation of *supplier* master data. Anvil
+has an unresolved instance of each, and the item-side alias machinery it already
+built for customers (#506, #508) is the mechanism both would use.
+
+That makes it the first entry that can settle a question Anvil has been
+answering from folklore. `InvoicePoCheck` (#520) tells a seller that a buyer
+books an incoming invoice against the PO it was raised for, and that where they
+disagree no goods receipt is raised and no payment follows. Gainfront describes
+that same machine from the inside, which turns an assertion into a specification.
+
+### 3.32 Gainfront — `gainfront.com` (procurement-inverse — counterparty documentation, highest-value entry in this section)
+
+Positioning: AI-powered **supplier lifecycle management**, organised around a
+single supplier record that sourcing, contracts, risk, spend and diversity all
+resolve to. Their own demo framing of the problem is the sharpest line on the
+site: **"One supplier. Five systems. Five answers."** — one vendor appearing as
+five different records across SAP, Coupa, an AP spreadsheet, a contracts system
+and a legacy P2P tool, which their AI reconciles into one master.
+
+ICP: enterprise procurement teams. Named logos include Accenture, Walmart,
+Merck, Siemens, ADP, Albertsons, BD, Genentech, Toyota Boshoku, Yanfeng,
+ConocoPhillips, Iron Mountain, Lumen and Teva. This is the buying organisation
+of exactly the tier-1 automotive and industrial OEM an Anvil tenant sells into.
+
+Capability surface — nine modules:
+
+| module | what it does |
+|---|---|
+| **SRM** | supplier onboarding, enriched profiles, scorecards, compliance |
+| **RFx** | AI-drafted RFPs, bid collection, weighted scoring, award |
+| **CLM** | contract metadata extraction, clause playbooks, obligations, renewal alerts |
+| **SpendPower** | supplier normalisation, 4-level AI categorisation, product-level normalisation |
+| **P2P** | guided buying, configurable approvals, blanket POs, catalogues, 2-way and 3-way AI invoice matching |
+| **INV** | item master, stock visibility, reorder logic |
+| **D&I** | tier 1/2 diversity reporting, certifications, economic impact, Scope 3 |
+| **RiskMetrix** | inherent risk scoring, automated questionnaires, third-party monitoring |
+| **AgentFlow** | AI agents routing intake, approvals and handoffs across existing systems |
+
+Integrations: SAP, Coupa, Ariba named as systems AgentFlow sits **on top of**
+rather than replacing. No further integration list published.
+
+Differentiators: two deployment models — the full SLM suite as a replacement,
+or **AgentFlow as an orchestration layer over tools already in place**, on the
+argument that rip-and-replace is not the only way to modernise. Their AI is
+positioned as doing *operational* work rather than chat: OCR and field
+extraction, supplier enrichment, fraud and verification checks, risk scoring,
+questionnaire automation, RFP drafting, spend classification, supplier
+normalisation, contract metadata extraction, clause identification, invoice
+matching, anomaly detection.
+
+Their stated procurement failure modes are worth recording verbatim in
+substance because Anvil's sell-side equivalents are the same three: risk
+arrives late, reporting is a fire drill, and savings never land because spend
+analysis never reaches the sourcing or purchasing decision.
+
+Maturity: established enterprise vendor, not an early-stage entrant — a
+different class from the YC cohort in §3.25–3.29. Self-reported metrics: 87%
+faster RFx cycles, 40% year-one cost reduction, 98% spend-classification
+accuracy, 100% gross retention, up to 86% faster supplier onboarding, 85%
+faster contract metadata extraction. Unaudited vendor figures; recorded as
+claims, not findings. Pricing not published.
+
+**What the P2P module actually specifies, and why it matters more than the rest**
+
+Their invoice matching flags under-deliveries, quantity mismatches, quality
+mismatches and rejected items "before payment." Tolerance thresholds, the
+exception workflow and the dispute path are **not published** — so Anvil cannot
+copy a number from them, only the shape. The shape is enough: it confirms the
+four reasons a correct-looking invoice goes unpaid, and three of them are
+physical rather than clerical. An invoice can be arithmetically perfect against
+the PO and still fail on a short delivery or a quality rejection the seller has
+not been told about.
+
+Relevance to Anvil: the two sides are **structurally non-competing and
+asymmetrically informed**, which is the whole finding. Gainfront sees the
+invoice only once it arrives; it cannot tell a supplier in advance that a line
+will fail. Anvil holds the quote, the PO, the reconciliation and the dispatch
+**before** the invoice is sent, so it is positioned to run the buyer's match
+while the answer is still cheap — the thing `InvoicePoCheck` started and which
+nothing upstream of it yet feeds. Neither platform can do the other's half, and
+the seam between them is where Anvil's defensible work sits. **Verdict:
+PROCUREMENT-INVERSE, LEARN-ONLY — and the single best source yet for specifying
+Anvil's sell-side invoice gate.**
+
+### What Gainfront corrected about Anvil's own record
+
+Checking one outside claim against the code turned up five things this document
+had wrong, understated, or filed as an open question when the repo had already
+answered it. All verified.
+
+| claim previously held | what the code says |
+|---|---|
+| Anvil's supplier identity is coherent enough to join | **It is not, and Gainfront's headline demo is literally true inside Anvil.** A supplier is represented six ways: `source_pos.supplier` (free text, no FK, `001_init.sql`), `supplier_scorecards.supplier` (free text, unique on `(tenant_id, supplier)`, mig 005), `supplier_lead_times.supplier` (free text, mig 003), `ap_invoices.vendor_id` (uuid with **no FK**, mig 054), the `vendors` master (mig 035, RFQ side) and the **separate** `suppliers` master (mig 085, inventory-planning side). Mig 168 bridges `vendors.supplier_id → suppliers(id)` but its own comment records it as a **curated link with no auto-backfill**, and a NULL "falls back to the supplier_name slug match." So one supplier's POs, scorecard, lead time, AP invoices, quotes and planning record cannot be joined without a human having linked them first. Five systems, five answers — in one product. |
+| "`ap/match.js` is a three-way match pointed at SUPPLIERS not customers" — filed as a defect in [[project_po_invoice_grn]] | **It is pointed the correct way, and it is an asset, not a bug.** The buy side is where a three-way match belongs. It compares PO line ↔ invoice line ↔ goods receipt, with `ap_tolerance_pct` (pct-based, on price) and `ap_max_qty_variance` (absolute, on qty), and emits `price_above_tolerance` / `qty_above_tolerance` / receipt-short findings plus a score. That is the same surface Gainfront sells as P2P AI matching. The real defect recorded in §3 stands and is narrower: it has no UI in `routes.ts`. |
+| §1.1 "price tolerance / who may accept a variance" is an **open owner decision** blocking reconciler PR3–PR5 | **The buy side decided it three years of migrations ago and shipped defaults.** Mig 054 adds `ap_tolerance_pct default 2.0`, `ap_max_qty_variance default 0`, and `ap_auto_approve_within_tolerance **default true**`. The sell-side blocker is therefore not a question without an answer — it is the same question, already answered in this repo for money flowing the other way. Adopting the buy-side defaults as the sell-side starting point is defensible and unblocks three PRs. |
+| "No `invoice_lines` table" ([[project_po_invoice_grn]]) | **True on the sell side only, and the asymmetry is backwards.** `ap_invoices` + `ap_invoice_lines` + `ap_goods_receipts` all exist (mig 054). `invoices` has **no** line table at all. Anvil can match a *supplier's* invoice line by line against a PO and a receipt, but cannot represent the lines of the invoice it sends its own customer — which is precisely what the buyer on the other end is about to match. |
+| Anvil has no supplier ESG / disclosure surface | **It has one, and it is the India-statutory version of Gainfront's D&I Scope-3 module.** `supplier_disclosures` + `supplier_disclosure_periods` (mig 101, BRSR value chain) collect per-supplier Scope 1/2 tCO₂e, electricity and renewable share, and fuel consumption. Gainfront sells Scope 3 as a module; Anvil collects the upstream data a Scope 3 number is built from. This is the [[backlog_moat_bets]] BRSR cascade, already part-built. |
+
+Three genuine absences on Anvil's buy side, verified by grep rather than assumed:
+**no spend classification of any kind** (no UNSPSC, commodity code, spend
+category or taxonomy anywhere in `src/api` or the migrations), **no supplier
+risk scoring, questionnaire or third-party monitoring**, and **no supplier-side
+CLM** — the `contracts` table (mig 006) plus `admin/contracts.js` and the
+`amc_renewal_chase` agent are customer-side AMC contracts with renewal chasing,
+not clause playbooks or obligation tracking against a vendor.
+
+### The ideas worth taking
+
+Ordered by leverage, and all three are wiring or policy rather than new
+platform surface. None of them requires becoming a procurement suite, which
+would pull Anvil off its wedge exactly as §3.27 and §3.28 would.
+
+1. **Run the buyer's match before the invoice leaves.** Gainfront names the four
+   reasons an invoice is held: under-delivery, quantity mismatch, quality
+   mismatch, rejected items. `InvoicePoCheck` covers the clerical half (price,
+   qty, not-on-PO, over-ordered) and none of the physical half, because Anvil
+   has the dispatch data and does not consult it. A seller who learns at invoice
+   time that a line short-shipped has already lost the payment cycle. This is
+   the highest-value item in this entry and it is additive to a component that
+   already ships.
+
+2. **Adopt the buy-side tolerance defaults on the sell side.** Unblocks
+   reconciler PR3–PR5 without a new owner decision, with the precedent and the
+   column names already in the repo. Flag to the owner as a proposal rather than
+   applying it silently — `ap_auto_approve_within_tolerance default true` is a
+   defensible default for inbound invoices and a riskier one outbound, and that
+   difference is the owner's call.
+
+3. **Reconcile Anvil's own supplier master before selling supplier
+   intelligence.** `supplier_scorecards` keyed on free-text supplier name cannot
+   be trusted the moment the same vendor is typed two ways, and a scorecard
+   nobody can trust is worse than none. The alias machinery to fix this already
+   exists and is pointed the other way: `item_customer_parts` and the
+   reconciler's match tiers (#506, #508) solve *"the buyer calls our part
+   something else."* The buy-side twin — *"we call the same vendor and the same
+   purchased part several things"* — is the same problem with the arrow
+   reversed, which is also Gainfront's SpendPower in one sentence. Anvil would
+   be reusing a solved mechanism, not inventing one.
 
 ## 4. Cross-cutting themes from the competitor scan
 
 Five things the competitors collectively prove are now table stakes:
 
-1. **Named ERP integrations on the marketing site.** Mercura lists 11. Pactle lists 7. Avent lists 6. Anvil's website lists Tally. This is the most credibility-damaging visible gap.
+1. **Named ERP integrations on the marketing site.** Mercura lists 11. Pactle lists 7. Avent lists 6. Anvil's website lists Tally. This is the most credibility-damaging visible gap. — **_Update (§0, 2026-07-29): the code gap is closed — 17 connectors now exist. What remains is (a) deepening several from push to bidirectional sync and (b) actually listing them on the marketing site._**
 
 2. **An "AI agents" frame, not "AI-powered" or "AI-assisted."** Every YC25 entrant uses agent language explicitly. Mercura, Avent, Arzana, Soff, Korso, Lumari, Comena, Axal all market specific named agents or agent workflows. Anvil's marketing-site copy uses agent language but the implementation has no autonomous agent loop.
 
@@ -493,6 +1239,13 @@ Legend: **F** = full / production, **P** = partial / has the bones but not all o
 
 ### ERP / integrations breadth
 
+> **Amended (§0, 2026-07-29).** The Anvil column below is a May snapshot. Current
+> Anvil connector coverage is **F** for NetSuite, SAP S/4HANA, Dynamics 365,
+> Acumatica, Oracle EBS, Oracle Fusion, IFS, JD Edwards, Infor SX.e, Epicor
+> Prophet-21, Epicor Eclipse, ProAlpha, Ramco, Plex, JobBoss, Sage X3 (+ Tally,
+> GSTN), plus Stripe **and** Razorpay payment rails, DocuSign e-sign, and Slack +
+> Teams. Depth varies (push vs. bidirectional).
+
 | System            | Anvil | Pactle | Mercura | Arzana | Comena | Axal | Soff | Avent | Korso | Smartbase | Lumari |
 |-------------------|-------|--------|---------|--------|--------|------|------|-------|-------|-----------|--------|
 | Tally (India)     | F     | N      | N       | N      | N      | N    | N    | N     | N     | N         | N      |
@@ -538,6 +1291,13 @@ Legend: **F** = full / production, **P** = partial / has the bones but not all o
 ---
 
 ## 6. Gap analysis — what Anvil is missing
+
+> **Superseded by §0 (2026-07-29).** Critical gaps #1–#6 and important gaps
+> #7/#9/#10/#11/#12/#13/#18 are now **built** (17 ERP connectors, invoicing, AR +
+> dunning agent, payment rails, autonomous agent loop, e-sign, customer portal,
+> copilot/real-time-ERP chat, multi-channel inbound incl. voice, comms provider
+> integrations). The list below is the May-2026 snapshot; the **current** open
+> gaps are enumerated in §0 ("What is genuinely still open"). Retained for history.
 
 Grouped by severity for buying-decision impact.
 
@@ -601,6 +1361,20 @@ Grouped by severity for buying-decision impact.
 
 27. **Anvil rebrand cleanup.** `obara-client.js`, `obara-documents` bucket name, `obara-ops-v11.1.html` legacy, inline copy. Today the codebase's name is "Obara India sales-ops execution layer" verbatim in `package.json` description.
 
+### From the 2026-09-10 supplier-lifecycle scan (Gainfront — §3.32)
+
+Buy-side gaps, verified absent by grep rather than assumed. None is a reason to
+become a procurement suite; the first two are prerequisites for trusting things
+Anvil already ships.
+
+| gap | why it matters | size |
+|---|---|---|
+| **One supplier master.** Six representations today, four of them free text or an unenforced uuid; mig 168's bridge is hand-curated with no backfill | `supplier_scorecards` is keyed on a free-text name, so the same vendor typed two ways silently becomes two scorecards. A scorecard nobody can trust is worse than no scorecard. Blocks every supplier-intelligence claim | medium |
+| **Physical-failure legs on the outbound invoice check** — under-delivery and quality rejection | Gainfront names four reasons a buyer holds an invoice; `InvoicePoCheck` covers only the two clerical ones. Anvil holds the dispatch data and does not consult it | small-medium |
+| **Sell-side invoice lines.** `ap_invoice_lines` exists; `invoices` has no line table | Anvil can match a supplier's invoice line by line but cannot represent the lines of the invoice it sends — the exact rows the buyer is about to match | medium |
+| **Spend classification** — no UNSPSC, commodity code, category or taxonomy anywhere | Without it, purchased-part spend cannot be consolidated and the same part bought under two descriptions never shows as one line. This is SpendPower's core, and the alias machinery to do it already exists pointed at customers | medium |
+| **Supplier risk scoring / questionnaires / monitoring** | Absent entirely. Lowest priority of the five — it is a genuine module, not wiring, and sits furthest from Anvil's wedge | large — defer |
+
 ### From the 2026-07-22 revenue-intelligence scan (Backstory.ai / Scratchpad — §3.15–3.16)
 
 These are UX/AI patterns to *borrow*, not competitors to match. Ranked by leverage on Anvil's actual users (ops/procurement, not AEs):
@@ -655,6 +1429,14 @@ The most likely failure mode of this roadmap is over-rotating toward generic CPQ
 ---
 
 ## 9. Roadmap
+
+> **Amended (§0, 2026-07-29).** The entire "Now (next 8 weeks)" block below has
+> **shipped**, and much of "Next" too (ERP connectors, e-sign, portal, WhatsApp,
+> real-time ERP chat, comms provider). The **current** roadmap seed is §0's "What
+> is genuinely still open" — ERP-sync depth + public listing, De-Obara cleanup,
+> SOC 2/ISO, the comms follow-ups, handwritten-PO + RLHF loop, front-end
+> maintainability, and finishing the **forecast→BOM raw-material preorder** wedge.
+> The tables below are the May-2026 plan, retained for history.
 
 Effort sizes are calendar weeks for a small (2–4 engineer) team, not commitments. Sequencing is dependency-driven.
 
@@ -783,3 +1565,12 @@ After the post-implementation pass, the remaining open items in Now are:
 - Soff: https://soff.ai
 - Mercura: https://www.mercura.ai, https://mercura.io, ycombinator.com/companies/mercura, ycombinator.com/launches/Mun
 - Raven: https://startraven.com, ycombinator.com/companies/raven
+- Shielded: https://www.shieldedglobal.com, ycombinator.com/companies/shielded (YC S26, Susa Ventures)
+- Derya: https://www.usederya.com (reviewed 2026-08-11; marketing-led, no pricing or public API found)
+- Ekho Labs: https://www.ekholabs.com (reviewed 2026-08-15; no pricing, funding or customer logos published)
+- Naïve: https://usenaive.ai, ycombinator.com/companies/naive, techcrunch.com/2026/08/06 ($28.5M Series A, Nexus)
+- Spaceflow: https://www.spaceflow.tech, ycombinator.com/companies/spaceflow-technologies-inc (YC S26)
+- Gainfront: https://www.gainfront.com, /solutions/gainfront-procure-to-pay/, /solutions/business-spend-management/, /agent-flow/ (reviewed 2026-09-10; established enterprise vendor, pricing not published; P2P matching tolerances and exception workflow NOT published — shape taken, no numbers)
+- Prototyping.io: https://www.prototyping.io, ycombinator.com/companies/prototypingio (YC P26, founded 2026; waitlist only — no pricing, turnaround SLA, logos or metrics published, so capability claims are read as intent)
+- YC requests-for-startups, hardware track (reviewed 2026-08-29): "Hardware Supply Chain" (Nicolas Dessaigne), "New Operating Systems for the Physical World" (Charlie Warren), "Modern Metal Mills" (Zane Hengsperger) — used as a diagnostic of Anvil, not as a competitor scan
+- Verdantis: https://www.verdantis.com (reviewed 2026-08-29; MRO360 + MDM Suite. Logos, savings metrics and the ">95% accuracy" forecasting claim are the vendor's own, unaudited)

@@ -17,6 +17,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { rawMaterialFromPartSpec } from "../_lib/pdm/raw-material-infer.js";
 import { persistDetermination } from "../_lib/pdm/raw-material-persist.js";
+import { persistPartSpec } from "../_lib/pdm/part-spec-persist.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -43,13 +44,26 @@ export default async function handler(req, res) {
       } catch (e) {
         return json(res, e?.status === 400 ? 400 : 500, { error: { message: e?.message || "persist failed" } });
       }
+      // Store the engineering spec the SAME drawing carried -- finish, heat
+      // treatment, tolerances, GD&T. The operator is already reviewing this
+      // part's drawing here, so this is the moment those fields stop being
+      // discarded. Non-fatal: the raw-material determination is the primary
+      // job and must not fail because the spec could not be stored.
+      const spec = body?.part_spec
+        ? await persistPartSpec(svc, ctx.tenantId, {
+          finishedPartNo: body?.finished_part_no,
+          partSpec: body.part_spec,
+          extractionRunId: body?.extraction_run_id || null,
+        })
+        : { stored: false, reason: "no_part_spec" };
       await recordAudit(ctx, {
         action: "pdm_raw_material_saved",
         objectType: "item",
         objectId: String(body?.finished_part_no || ""),
-        detail: result.procurement_type + (result.raw_material_part_no ? " -> " + result.raw_material_part_no : ""),
+        detail: result.procurement_type + (result.raw_material_part_no ? " -> " + result.raw_material_part_no : "")
+          + (spec.stored ? " | spec: " + (spec.fields || []).join(",") : ""),
       });
-      return json(res, 200, { committed: true, ...result });
+      return json(res, 200, { committed: true, ...result, engineering_spec: spec });
     }
 
     // Dry-run determination for review.

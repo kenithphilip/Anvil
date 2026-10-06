@@ -6,9 +6,9 @@
 //   - service/amc_cron    (AMC contract reminders)
 //   - rlhf/aggregate      (RLHF reward rollups)
 //
-// Sequenced (not parallel) because they're independent and not
-// time-sensitive. Per-handler try/catch via runCronGroup so one
-// failure does not block the rest.
+// runCronGroup fans these out in PARALLEL (Promise.allSettled) with a
+// per-handler timeout, so one slow or failing handler neither blocks nor
+// starves the rest.
 
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { runCronGroup, recordCronHeartbeat } from "../_lib/cron-mux.js";
@@ -33,10 +33,25 @@ import driftReportCron  from "./drift-report.js";
 // reads; self-guards on sample size + a 24h dedup. Disable via
 // EVAL_QUALITY_ALERT_DISABLED.
 import evalQualityAlert from "./eval_quality_alert.js";
+import extractionReaper from "./extraction_reaper.js";
 // CM P4: live-model replay of the golden corpus. OPT-IN + cost-bounded — only
 // scheduled when EVAL_REPLAY_ENABLED is set (it burns real LLM calls). Gets a
 // wide per-handler timeout since each case re-runs the model.
 import evalReplay       from "../eval/replay.js";
+// Logistics monitor. Also registered in tick.js's 5-min ALWAYS group — but that
+// group only runs if the EXTERNAL cron-job.org trigger is configured and live,
+// because Vercel's Hobby tier rejects any sub-daily schedule (docs/CRONS.md) and
+// vercel.json therefore schedules nothing but this daily path. So the 5-min
+// cadence is best-effort and this is the only Vercel-native guarantee the
+// monitor runs at all. Idempotent — the detector dedups per (tenant, kind,
+// object) and notifications track detail.notified — so running it on both paths
+// costs a no-op, and no tenant has it on unless logistics_monitor_enabled.
+import logisticsMonitor from "./logistics-monitor-tick.js";
+// The nightly forecast snapshot. /api/forecast's own header says the dashboard
+// "reads from the nightly forecast_snapshots table" — but nothing scheduled it,
+// so the table only advanced when an admin clicked, and the cockpit's weighted
+// pipeline was as old as the last click with nothing on screen saying so.
+import forecastSnapshot from "../forecast/index.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -58,12 +73,22 @@ export default async function handler(req, res) {
       { name: "billing/recurring", fn: recurringCron,    opts: { path: "/api/billing/recurring_cron" } },
       { name: "eway_bills/expire", fn: ewayExpire,       opts: { path: "/api/eway_bills/expire" } },
       { name: "catalog/embed",     fn: catalogEmbed,     opts: { path: "/api/catalog/embed" } },
+      { name: "forecast/snapshot", fn: forecastSnapshot, opts: { path: "/api/forecast", method: "POST", body: {} } },
       // Bet 5: monthly drift-reconciliation report. Idempotent;
       // self-skips on non-month-start days.
       { name: "drift-report",      fn: driftReportCron,  opts: { path: "/api/cron/drift-report" } },
       // CM P4: extraction-quality alert — raises the admin bell when the
       // operator-corrected DPMO breaches threshold. Self-guards on sample size.
       { name: "eval/quality_alert", fn: evalQualityAlert, opts: { path: "/api/cron/eval_quality_alert" } },
+      // Backstop for runs stranded at status='running' by a killed function.
+      { name: "docai/extraction_reaper", fn: extractionReaper, opts: { path: "/api/cron/extraction_reaper" } },
+      // Daily backstop for the logistics monitor. Registered under a name of its
+      // OWN, not tick.js's "logistics/monitor": each name is a row in
+      // cron_health, and reusing the 5-min row would refresh it once a day
+      // against a 10-minute staleness bound — leaving it stale 23h50m out of
+      // every 24h and holding /api/_healthz at 503. Worse, it would also mask a
+      // dead external trigger by making the 5-min row look freshly written.
+      { name: "logistics/monitor_daily", fn: logisticsMonitor, opts: { path: "/api/cron/logistics-monitor-tick" } },
       // CM P4: live-model replay — opt-in via EVAL_REPLAY_ENABLED. Wide timeout
       // because each golden case re-runs the model; the handler caps case count.
       ...(process.env.EVAL_REPLAY_ENABLED

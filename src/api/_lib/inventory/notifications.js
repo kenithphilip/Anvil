@@ -14,6 +14,7 @@
 // timestamps + channels used so re-runs of the cron don't dupe.
 
 import { notifyAdmins } from "../notifications.js";
+import { commsRow } from "../comms-row.js";
 
 const isWithinWindow = (now, startStr, endStr) => {
   // IST window check. The tenant_settings.inventory_voice_window_*
@@ -109,7 +110,7 @@ export const dispatchNotifications = async (svc, tenantId) => {
     // is missing for this deployment we silently skip (best-effort).
     if (!already.email_at && isHigh) {
       try {
-        await svc.from("communications").insert({
+        await svc.from("communications").insert(commsRow({
           tenant_id: tenantId,
           direction: "outbound",
           channel: "email",
@@ -119,7 +120,7 @@ export const dispatchNotifications = async (svc, tenantId) => {
           status: "queued",
           object_type: "inventory_exception",
           object_id: e.id,
-        });
+        }));
         already.email_at = new Date().toISOString();
         emailQueued += 1;
       } catch (_) { /* best-effort */ }

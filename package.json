@@ -5,10 +5,10 @@
   "description": "Anvil. Multi-tenant industrial sales-ops platform. Vercel serverless functions over Supabase Postgres, with a Vite + React + TypeScript browser app under src/v3-app.",
   "type": "module",
   "engines": {
-    "node": "20.x"
+    "node": "22.x"
   },
   "scripts": {
-    "build": "rm -rf public/assets public/index.html public/v3-app && vite build",
+    "build": "rm -rf public/assets public/index.html public/portal.html public/v3-app && vite build",
     "dev": "vite",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "check": "for f in $(find api src/api -name '*.js' | sort); do node --check \"$f\" || exit 1; done && node --check src/client/anvil-client.js && npm run typecheck && npm run check:imports",
@@ -27,6 +27,9 @@
     "predeploy": "npm run build && npm run check && npm run verify && npm run audit:systemic"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
+    "@fontsource/ibm-plex-serif": "^5.3.0",
     "@llamaindex/llama-cloud": "^2.10.0",
     "@react-pdf/renderer": "^4.5.1",
     "@simplewebauthn/browser": "^11.0.0",
@@ -37,8 +40,8 @@
     "dagre": "^0.8.5",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "4.8.69",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react": "~19.2.6",
+    "react-dom": "~19.2.6",
     "react-pdf": "9.2.1",
     "stripe": "^22.1.0"
   },
@@ -51,14 +54,14 @@
     "@babel/parser": "^7.29.7",
     "@testing-library/react": "^16.0.1",
     "@types/node": "^22.7.4",
-    "@types/react": "^18.3.10",
-    "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.0.2",
     "eslint": "^10.3.0",
     "jsdom": "^25.0.1",
     "prettier": "^3.3.3",
-    "typescript": "^5.6.2",
-    "vite": "^5.4.10",
-    "vitest": "^2.1.4"
+    "typescript": "^6.0.3",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.11"
   }
 }

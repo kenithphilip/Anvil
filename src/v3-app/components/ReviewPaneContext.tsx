@@ -115,7 +115,9 @@ export const ReviewPaneSelectionProvider: React.FC<{
   const submitCorrection = useCallback(async (args: {
     fieldPath: string; originalValue: unknown; correctedValue: unknown; reason?: string;
   }): Promise<CorrectionResult> => {
-    if (!extractionRunId) return { ok: false, error: "This order has no extraction run to attach a correction to." };
+    // "document", not "order": the Quotes tab is a second consumer of this
+    // provider, and a quote is not an order.
+    if (!extractionRunId) return { ok: false, error: "This document has no extraction run to attach a correction to." };
     try {
       const cfg: any = (AnvilBackend as any)?.getConfig?.() || {};
       const session: any = (AnvilBackend as any)?.getSession?.() || null;

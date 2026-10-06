@@ -22,6 +22,7 @@
 
 import { decryptField } from "../secrets.js";
 import { safeFetch } from "../safe-fetch.js";
+import { classifyColumns, columnMatchCount } from "./table-columns.js";
 
 const apiKey = (settings) => {
   if (settings?.docai_docling_api_key_enc && settings?.docai_creds_iv) {
@@ -136,23 +137,26 @@ const normalizeFromDocling = (body) => {
   for (const rows of tables) {
     if (rows.length < 2) continue;
     const header = rows[0];
-    const partI = colIdx(header, /(part|sku|item|catalog|p\/n)/);
-    const qtyI = colIdx(header, /(qty|quantity|count|pcs)/);
-    const priceI = colIdx(header, /(unit ?price|rate|price)/);
-    const descI = colIdx(header, /(desc|name|product)/);
-    // Only treat the table as a line-items table if at least two
-    // of (part, qty, price, desc) match. Avoids picking up summary
-    // tables with rows like "Subtotal | 12,500".
-    const matches = [partI, qtyI, priceI, descI].filter((i) => i >= 0).length;
-    if (matches < 2) continue;
+    // Shared classifier: keeps the buyer's "Item Number" out of partNumber and
+    // prefers "Item Description" over "Service Parent Name". See
+    // table-columns.js for why this used to invert on Mahindra POs.
+    const cols = classifyColumns(header);
+    const { part: partI, buyerCode: buyerI, desc: descI, qty: qtyI, price: priceI } = cols;
+    // Only treat the table as a line-items table if at least two signal
+    // columns match. Avoids picking up summary tables with rows like
+    // "Subtotal | 12,500".
+    if (columnMatchCount(cols) < 2) continue;
     for (const r of rows.slice(1)) {
+      const rawDesc = descI >= 0 ? (r[descI] || null) : null;
       const li = {
         partNumber: partI >= 0 ? (r[partI] || null) : null,
-        description: descI >= 0 ? (r[descI] || null) : null,
+        customerItemCode: buyerI >= 0 ? (r[buyerI] || null) : null,
+        description: rawDesc,
+        raw_description: rawDesc,
         quantity: qtyI >= 0 ? Number(String(r[qtyI] || "0").replace(/[^\d.\-]/g, "")) || null : null,
         unitPrice: priceI >= 0 ? Number(String(r[priceI] || "0").replace(/[^\d.\-]/g, "")) || null : null,
       };
-      if (li.partNumber || li.description) lines.push(li);
+      if (li.partNumber || li.description || li.customerItemCode) lines.push(li);
     }
   }
   return {

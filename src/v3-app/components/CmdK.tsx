@@ -1,14 +1,14 @@
 // Live Cmd+K palette. Replaces the static demo CmdK in Shell.tsx with
 // a real backend-search palette:
 //
-//   1. Recent orders (loaded from AnvilBackend.orders.list).
-//   2. As-you-type filter against po_number / quote_number / customer
-//      name / id.
-//   3. Static "Jump to" entries that route to known nav ids; these
-//      respect the active RBAC role so a sales_engineer doesn't see
-//      Admin Center in the list.
-//   4. Up/Down arrows + Enter for keyboard nav. Esc closes. Click
-//      selects.
+//   1. Recent orders (loaded from AnvilBackend.orders.list) + as-you-type
+//      filter against po_number / quote_number / customer / id.
+//   2. Backend search for ITEMS (item_master) and GUNS / BOMs (bom_assets)
+//      as you type — the palette can now find a part or a gun's BOM, not
+//      just orders. Item -> Item Master (filtered); gun/BOM -> its BOM drawer.
+//   3. Static "Jump to" entries that route to known nav ids; these respect
+//      the active RBAC role so a sales_engineer doesn't see Admin Center.
+//   4. Up/Down arrows + Enter for keyboard nav. Esc closes. Click selects.
 //
 // All copy strings are derived from real data. No hardcoded customer
 // names or quote numbers leak into the rendered UI.
@@ -52,10 +52,7 @@ const ACTIONS: Array<{ id: string; t: string; m: string; ic: keyof typeof Icon; 
   { id: "new-customer", t: "Add Customer Format Profile",       m: "C P", ic: "plus", route: "#/customers?new=1" },
   // Per Landing.html design package CmdK list: 5 actions, the 5th
   // is "Send missing-doc nudge" which routes to the comms inbox
-  // where the operator can pick a draft and fire it. Specific
-  // label ("missing-doc nudge") narrows the use case so it's
-  // discoverable: chasing a buyer for a missing GST cert /
-  // delivery note / spec sheet rather than any generic ping.
+  // where the operator can pick a draft and fire it.
   { id: "send-nudge",   t: "Send missing-doc nudge",            m: "C N", ic: "send", route: "#/comms?new=nudge" },
 ];
 
@@ -72,33 +69,49 @@ export const CmdK: React.FC<CmdKProps> = ({ open, onClose, onJump }) => {
   const [active, setActive] = useState(0);
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [itemHits, setItemHits] = useState<any[]>([]);
+  const [gunHits, setGunHits] = useState<any[]>([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // Load recent orders the moment the palette opens. We cap at 20 so a
-  // tenant with thousands of orders doesn't ship them all to the
-  // browser; the as-you-type filter then picks among them.
+  // Load recent orders the moment the palette opens (cap 20).
   useEffect(() => {
     if (!open) return;
     let cancel = false;
     setLoading(true);
     Promise.resolve(AnvilBackend?.orders?.list?.({ limit: 20 }) ?? [])
-      .then((r) => {
-        if (cancel) return;
-        setOrders(ordersOf(r));
-      })
+      .then((r) => { if (!cancel) setOrders(ordersOf(r)); })
       .catch(() => { if (!cancel) setOrders([]); })
       .finally(() => { if (!cancel) setLoading(false); });
-    // Focus the input after the dialog mounts.
     const t = window.setTimeout(() => inputRef.current?.focus(), 30);
     return () => { cancel = true; window.clearTimeout(t); };
   }, [open]);
 
+  // Debounced backend search for items + guns/BOMs as you type. item_master is
+  // read-accessible (ItemMasterTab loads it for every role); bom.assets filters
+  // bom_assets by asset_code / name.
+  useEffect(() => {
+    if (!open) return;
+    const q = query.trim();
+    if (q.length < 2) { setItemHits([]); setGunHits([]); return; }
+    let cancel = false;
+    const t = window.setTimeout(() => {
+      Promise.all([
+        Promise.resolve(AnvilBackend?.admin?.listItemMaster?.({ q, limit: 6 })).catch(() => null),
+        Promise.resolve(AnvilBackend?.bom?.assets?.({ q })).catch(() => null),
+      ]).then(([im, ba]: any[]) => {
+        if (cancel) return;
+        const items = (im && (im.items || im.rows)) || [];
+        const assets = (ba && ba.assets) || [];
+        setItemHits(Array.isArray(items) ? items.slice(0, 6) : []);
+        setGunHits(Array.isArray(assets) ? assets.slice(0, 6) : []);
+      });
+    }, 180);
+    return () => { cancel = true; window.clearTimeout(t); };
+  }, [query, open]);
+
   // Reset on close so the next open starts fresh.
   useEffect(() => {
-    if (!open) {
-      setQuery("");
-      setActive(0);
-    }
+    if (!open) { setQuery(""); setActive(0); setItemHits([]); setGunHits([]); }
   }, [open]);
 
   const filteredOrders = useMemo(() => {
@@ -110,52 +123,55 @@ export const CmdK: React.FC<CmdKProps> = ({ open, onClose, onJump }) => {
         (o.quote_number || "").toLowerCase().includes(q) ||
         (o.customer?.customer_name || "").toLowerCase().includes(q) ||
         (o.id || "").toLowerCase().includes(q) ||
-        // Match the synthesised draft label so typing "HYUND" or
-        // "DRAFT-19MAY" finds the matching order from the palette.
         draftLabel(o).toLowerCase().includes(q),
       )
       .slice(0, 12);
   }, [orders, query]);
 
-  const navItems = useMemo<CmdKItem[]>(() => {
-    return NAV_JUMPS
-      .filter((n) => RBAC.canRead(n.id))
-      .filter((n) => !query || n.t.toLowerCase().includes(query.toLowerCase()))
-      .map((n) => ({
-        ic: Icon[n.ic],
-        t: n.t,
-        m: n.m,
-        go: () => { onJump(n.id); onClose(); },
-      }));
-  }, [query, onJump, onClose]);
-
-  const actionItems = useMemo<CmdKItem[]>(() => {
-    return ACTIONS
-      .filter((a) => !query || a.t.toLowerCase().includes(query.toLowerCase()))
-      .map((a) => ({
-        ic: Icon[a.ic],
-        t: a.t,
-        m: a.m,
-        go: () => { window.location.hash = a.route; onClose(); },
-      }));
-  }, [query, onClose]);
-
   const orderItems = useMemo<CmdKItem[]>(() =>
     filteredOrders.map((o) => ({
       ic: Icon.layers,
-      t: [draftLabel(o),
-          o.customer?.customer_name,
-          o.updated_at ? ageLabel(o.updated_at) + " ago" : null,
-         ].filter(Boolean).join(" · "),
+      t: [draftLabel(o), o.customer?.customer_name, o.updated_at ? ageLabel(o.updated_at) + " ago" : null].filter(Boolean).join(" · "),
       m: "↵ open",
       go: () => { window.location.hash = `#/so?id=${o.id}`; onClose(); },
     })),
   [filteredOrders, onClose]);
 
-  // Flat list for keyboard navigation: orders first, then jumps, then actions.
-  const flat = useMemo(() => [...orderItems, ...navItems, ...actionItems], [orderItems, navItems, actionItems]);
+  const itemItems = useMemo<CmdKItem[]>(() =>
+    itemHits.map((it) => ({
+      ic: Icon.tag,
+      t: [it.part_no, it.description].filter(Boolean).join(" · ") || String(it.id || ""),
+      m: "↵ item",
+      go: () => { window.location.hash = `#/items?q=${encodeURIComponent(it.part_no || it.id || "")}`; onClose(); },
+    })),
+  [itemHits, onClose]);
 
-  // Clamp active index when the list shrinks (e.g. search narrows).
+  const gunItems = useMemo<CmdKItem[]>(() =>
+    gunHits.map((a) => ({
+      ic: Icon.layers,
+      t: [a.asset_code, a.name].filter(Boolean).join(" · ") || String(a.id || ""),
+      m: "↵ BOM",
+      go: () => { window.location.hash = `#/spares?gun=${encodeURIComponent(a.asset_code || a.id || "")}`; onClose(); },
+    })),
+  [gunHits, onClose]);
+
+  const navItems = useMemo<CmdKItem[]>(() =>
+    NAV_JUMPS
+      .filter((n) => RBAC.canRead(n.id))
+      .filter((n) => !query || n.t.toLowerCase().includes(query.toLowerCase()))
+      .map((n) => ({ ic: Icon[n.ic], t: n.t, m: n.m, go: () => { onJump(n.id); onClose(); } })),
+  [query, onJump, onClose]);
+
+  const actionItems = useMemo<CmdKItem[]>(() =>
+    ACTIONS
+      .filter((a) => !query || a.t.toLowerCase().includes(query.toLowerCase()))
+      .map((a) => ({ ic: Icon[a.ic], t: a.t, m: a.m, go: () => { window.location.hash = a.route; onClose(); } })),
+  [query, onClose]);
+
+  // Flat list for keyboard nav: orders, items, guns/BOMs, jumps, actions.
+  const flat = useMemo(() => [...orderItems, ...itemItems, ...gunItems, ...navItems, ...actionItems],
+    [orderItems, itemItems, gunItems, navItems, actionItems]);
+
   useEffect(() => {
     if (active >= flat.length) setActive(Math.max(0, flat.length - 1));
   }, [flat.length, active]);
@@ -169,15 +185,14 @@ export const CmdK: React.FC<CmdKProps> = ({ open, onClose, onJump }) => {
 
   if (!open) return null;
 
+  const iBase = orderItems.length;
+  const gBase = iBase + itemItems.length;
+  const nBase = gBase + gunItems.length;
+  const aBase = nBase + navItems.length;
+
   return (
     <div className="cmdk-bg" onClick={onClose} role="presentation">
-      <div
-        className="cmdk"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Command palette"
-      >
+      <div className="cmdk" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Command palette">
         <div className="cmdk-input">
           {Icon.search}
           <input
@@ -185,7 +200,7 @@ export const CmdK: React.FC<CmdKProps> = ({ open, onClose, onJump }) => {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKey}
-            placeholder={loading ? "Loading orders…" : "Search orders, jump to module, run action…"}
+            placeholder={loading ? "Loading…" : "Search orders, items, guns / BOMs, jump to module…"}
             aria-label="Search"
             aria-autocomplete="list"
             aria-controls="cmdk-list"
@@ -201,24 +216,38 @@ export const CmdK: React.FC<CmdKProps> = ({ open, onClose, onJump }) => {
               ))}
             </CmdKGroup>
           )}
-          {!loading && orderItems.length === 0 && query && (
-            <div className="cmdk-empty" style={{ padding: "12px 16px", color: "var(--ink-3)" }}>
-              No orders match "{query}".
-            </div>
+          {itemItems.length > 0 && (
+            <CmdKGroup label="Items">
+              {itemItems.map((it, i) => (
+                <CmdKRow key={`i-${i}`} item={it} active={(iBase + i) === active} onMouseEnter={() => setActive(iBase + i)} index={iBase + i} />
+              ))}
+            </CmdKGroup>
+          )}
+          {gunItems.length > 0 && (
+            <CmdKGroup label="Guns / BOMs">
+              {gunItems.map((it, i) => (
+                <CmdKRow key={`g-${i}`} item={it} active={(gBase + i) === active} onMouseEnter={() => setActive(gBase + i)} index={gBase + i} />
+              ))}
+            </CmdKGroup>
           )}
           {navItems.length > 0 && (
             <CmdKGroup label="Jump to">
               {navItems.map((it, i) => (
-                <CmdKRow key={`n-${i}`} item={it} active={(orderItems.length + i) === active} onMouseEnter={() => setActive(orderItems.length + i)} index={orderItems.length + i} />
+                <CmdKRow key={`n-${i}`} item={it} active={(nBase + i) === active} onMouseEnter={() => setActive(nBase + i)} index={nBase + i} />
               ))}
             </CmdKGroup>
           )}
           {actionItems.length > 0 && (
             <CmdKGroup label="Actions">
               {actionItems.map((it, i) => (
-                <CmdKRow key={`a-${i}`} item={it} active={(orderItems.length + navItems.length + i) === active} onMouseEnter={() => setActive(orderItems.length + navItems.length + i)} index={orderItems.length + navItems.length + i} />
+                <CmdKRow key={`a-${i}`} item={it} active={(aBase + i) === active} onMouseEnter={() => setActive(aBase + i)} index={aBase + i} />
               ))}
             </CmdKGroup>
+          )}
+          {!loading && query.trim().length >= 2 && flat.length === 0 && (
+            <div className="cmdk-empty" style={{ padding: "12px 16px", color: "var(--ink-3)" }}>
+              No orders, items, or BOMs match "{query}".
+            </div>
           )}
         </div>
       </div>

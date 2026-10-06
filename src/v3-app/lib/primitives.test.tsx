@@ -41,6 +41,21 @@ describe("Chip + Dot + Sev + Prov", () => {
     expect(container.querySelector(".chip.warn")).toBeTruthy();
     expect(container.textContent).toBe("live");
   });
+  // .chip lowercases its content via CSS. That is right for status words
+  // and wrong for identifiers: a customer material code stored as
+  // GD544202507310053 rendered as gd544202507310053 and was reported as
+  // extraction having corrupted the data (it had not). `code` opts out.
+  it("Chip adds the code class so identifiers escape the lowercase transform", () => {
+    const { container } = render(<Chip k="ghost" code>GD544202507310053</Chip>);
+    expect(container.querySelector(".chip.code")).toBeTruthy();
+    // The DOM text must stay verbatim — the transform is presentational only,
+    // so this asserts we never lowercase the value itself.
+    expect(container.textContent).toBe("GD544202507310053");
+  });
+  it("Chip omits the code class by default", () => {
+    const { container } = render(<Chip k="good">clean</Chip>);
+    expect(container.querySelector(".chip.code")).toBeNull();
+  });
   it("Dot renders an empty span with kind class", () => {
     const { container } = render(<Dot k="live" />);
     expect(container.querySelector(".dot.live")).toBeTruthy();

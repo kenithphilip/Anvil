@@ -97,6 +97,11 @@ export default async function handler(req, res) {
     if (req.method === "POST") {
       requirePermission(ctx, "admin");
       const body = await readBody(req);
+      // A blank cell (present but "") must NOT coerce to 0 — Number("") === 0
+      // would silently store 0% GST / ₹0 price / 0 lead-days. Blank/absent/
+      // non-numeric -> null; numOr applies a default only when there's no value.
+      const num = (v) => { if (v == null || v === "") return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
+      const numOr = (v, d) => { const n = num(v); return n != null ? n : d; };
       const isBulk = req.url.includes("/bulk") || Array.isArray(body.rows);
       if (isBulk) {
         const rows = (body.rows || []).map((r) => ({
@@ -111,17 +116,17 @@ export default async function handler(req, res) {
           sub_category: r.sub_category || null,
           source_country: r.source_country || null,
           source_currency: r.source_currency || null,
-          purchase_price: r.purchase_price != null ? Number(r.purchase_price) : null,
+          purchase_price: num(r.purchase_price),
           purchase_quote_no: r.purchase_quote_no || null,
           purchase_quote_validity_start: r.purchase_quote_validity_start || null,
           purchase_quote_validity_end: r.purchase_quote_validity_end || null,
           hsn_sac: r.hsn_sac || null,
-          sgst_rate: r.sgst_rate != null ? Number(r.sgst_rate) : null,
-          cgst_rate: r.cgst_rate != null ? Number(r.cgst_rate) : null,
-          igst_rate: r.igst_rate != null ? Number(r.igst_rate) : null,
-          default_lead_days: r.default_lead_days != null ? Number(r.default_lead_days) : null,
-          moq: r.moq != null ? Number(r.moq) : 1,
-          pack_size: r.pack_size != null ? Number(r.pack_size) : 1,
+          sgst_rate: num(r.sgst_rate),
+          cgst_rate: num(r.cgst_rate),
+          igst_rate: num(r.igst_rate),
+          default_lead_days: num(r.default_lead_days),
+          moq: numOr(r.moq, 1),
+          pack_size: numOr(r.pack_size, 1),
           lifecycle: LIFECYCLE.has(r.lifecycle) ? r.lifecycle : "ACTIVE",
           is_assembly: !!r.is_assembly,
           notes: r.notes || null,
@@ -146,17 +151,17 @@ export default async function handler(req, res) {
         sub_category: body.sub_category || null,
         source_country: body.source_country || null,
         source_currency: body.source_currency || null,
-        purchase_price: body.purchase_price != null ? Number(body.purchase_price) : null,
+        purchase_price: num(body.purchase_price),
         purchase_quote_no: body.purchase_quote_no || null,
         purchase_quote_validity_start: body.purchase_quote_validity_start || null,
         purchase_quote_validity_end: body.purchase_quote_validity_end || null,
         hsn_sac: body.hsn_sac || null,
-        sgst_rate: body.sgst_rate != null ? Number(body.sgst_rate) : null,
-        cgst_rate: body.cgst_rate != null ? Number(body.cgst_rate) : null,
-        igst_rate: body.igst_rate != null ? Number(body.igst_rate) : null,
-        default_lead_days: body.default_lead_days != null ? Number(body.default_lead_days) : null,
-        moq: body.moq != null ? Number(body.moq) : 1,
-        pack_size: body.pack_size != null ? Number(body.pack_size) : 1,
+        sgst_rate: num(body.sgst_rate),
+        cgst_rate: num(body.cgst_rate),
+        igst_rate: num(body.igst_rate),
+        default_lead_days: num(body.default_lead_days),
+        moq: numOr(body.moq, 1),
+        pack_size: numOr(body.pack_size, 1),
         lifecycle: LIFECYCLE.has(body.lifecycle) ? body.lifecycle : "ACTIVE",
         is_assembly: !!body.is_assembly,
         notes: body.notes || null,
@@ -166,24 +171,46 @@ export default async function handler(req, res) {
         ...buildExtensionPatch(body),
         updated_at: new Date().toISOString(),
       };
-      // Pre-105 deployments will reject the unknown columns with
-      // Postgres code 42703. Catch that case and retry with only the
-      // legacy columns so signups still work until the operator runs
-      // the migration. The retry log line tells them which migration
-      // is missing.
-      let { data, error } = await svc.from("item_master").upsert(row, { onConflict: "tenant_id,part_no" }).select("*").single();
+      // INSERT for a new item (no id), UPDATE-by-id for an edit. The previous
+      // blind upsert on (tenant_id, part_no) had two data-loss bugs:
+      //  (1) "New item" with an already-existing part_no resolved to an UPDATE
+      //      that blanked every column the operator didn't type;
+      //  (2) editing an item's part_no did NOT conflict, so it INSERTed a fresh
+      //      row — orphaning the original + its item_customer_parts.
+      // Keying edits by id renames in place; refusing a duplicate part_no on
+      // create (409) stops the silent overwrite.
+      const hasId = body.id != null && String(body.id).trim() !== "";
+      const doWrite = (legacy) => {
+        let payload = row;
+        if (legacy) { payload = { ...row }; for (const k of Object.keys(buildExtensionPatch(body))) delete payload[k]; }
+        return hasId
+          ? svc.from("item_master").update(payload).eq("id", body.id).eq("tenant_id", ctx.tenantId).select("*").maybeSingle()
+          : svc.from("item_master").insert(payload).select("*").single();
+      };
+      if (!hasId) {
+        const dup = await svc.from("item_master").select("id").eq("tenant_id", ctx.tenantId).eq("part_no", body.part_no).maybeSingle();
+        if (dup.error) throw new Error(dup.error.message);
+        if (dup.data) return json(res, 409, { error: { message: "An item with part number '" + body.part_no + "' already exists — open it to edit, or use a different part number.", code: "DUPLICATE_PART_NO" } });
+      }
+      // Pre-105 deployments reject the extension columns with 42703; retry with
+      // only the legacy columns so item creation still works until migration 105.
+      let { data, error } = await doWrite(false);
       if (error && (error.code === "42703" || /column .* does not exist/i.test(error.message))) {
-        const legacyOnly = { ...row };
-        for (const k of Object.keys(buildExtensionPatch(body))) delete legacyOnly[k];
-        const retry = await svc.from("item_master").upsert(legacyOnly, { onConflict: "tenant_id,part_no" }).select("*").single();
-        if (retry.error) throw new Error(retry.error.message);
-        // eslint-disable-next-line no-console
-        console.warn("[item_master] saved without extension columns; run migration 105 to enable alias/print_name/taxability_type/batches/opening-balance");
-        data = retry.data;
-        error = null;
+        const retry = await doWrite(true);
+        data = retry.data; error = retry.error;
+        if (!error) {
+          // eslint-disable-next-line no-console
+          console.warn("[item_master] saved without extension columns; run migration 105 to enable alias/print_name/taxability_type/batches/opening-balance");
+        }
+      }
+      // Renaming a part_no onto one another item already uses (unique
+      // tenant_id, part_no) or a create that raced the dup check.
+      if (error && (error.code === "23505" || /duplicate key|unique constraint/i.test(error.message))) {
+        return json(res, 409, { error: { message: "Part number '" + body.part_no + "' is already used by another item.", code: "DUPLICATE_PART_NO" } });
       }
       if (error) throw new Error(error.message);
-      await recordAudit(ctx, { action: "item_master_upsert", objectType: "item_master", objectId: data.id, after: data });
+      if (hasId && !data) return json(res, 404, { error: { message: "Item not found for this tenant" } });
+      await recordAudit(ctx, { action: hasId ? "item_master_update" : "item_master_insert", objectType: "item_master", objectId: data.id, after: data });
       return json(res, 200, { item: data });
     }
     if (req.method === "DELETE") {

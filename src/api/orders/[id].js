@@ -6,6 +6,8 @@ import { evaluateApprovalsForOrder } from "../_lib/approval-evaluator.js";
 import { lineCandidates, lineSapCandidates } from "../_lib/item-mapper.js";
 import { upsertCustomerPart } from "../_lib/item-customer-parts.js";
 import { promoteApprovedOrder } from "../eval/promote.js";
+import { computeOrderPayloadHash } from "../_lib/payload-hash.js";
+import { hasUnresolvedBlocker, firstUnresolvedBlocker, mergeBlockersForward, resolveFinding } from "../_lib/blocking-findings.js";
 
 const APPROVE_INPUTS = [
   "status", "approval", "payload_hash", "result",
@@ -33,6 +35,8 @@ const APPROVE_INPUTS = [
   "vendor_code", "dispatch_mode", "registration_serial_no",
   "incoterm_code", "delivery_terms", "delivery_point_contact_id",
   "template_id",
+  // Logistics P3: the date promised to the customer (drives outbound OTD).
+  "committed_delivery_date",
 ];
 
 const buildPatch = (body) => {
@@ -114,6 +118,30 @@ export default async function handler(req, res) {
       const { data: prev, error: prevErr } = await svc.from("orders").select("*").eq("tenant_id", ctx.tenantId).eq("id", id).single();
       if (prevErr || !prev) return json(res, 404, { error: { message: "Order not found" } });
 
+      // CM P3b: explicit operator resolve of a blocking finding (e.g. a
+      // false-positive line-count shortfall — stated_line_count is model-
+      // reported and can hallucinate). Approve-gated + audit-logged; the finding
+      // is kept for the audit trail but marked resolved so the push/approve
+      // gates pass. This is the escape hatch that guarantees no stuck order.
+      if (body.resolve_finding && body.resolve_finding.code) {
+        requirePermission(ctx, "approve");
+        const { findings: nextFindings, resolved } = resolveFinding(prev.rule_findings, body.resolve_finding.code, {
+          by: ctx.user ? ctx.user.id : null,
+          at: new Date().toISOString(),
+          note: body.resolve_finding.note || null,
+        });
+        if (!resolved) return json(res, 404, { error: { message: "No unresolved finding '" + body.resolve_finding.code + "' on this order" } });
+        const { data: rf, error: rfErr } = await svc.from("orders").update({ rule_findings: nextFindings }).eq("tenant_id", ctx.tenantId).eq("id", id).select("*").single();
+        if (rfErr) throw new Error(rfErr.message);
+        await recordAudit(ctx, { action: "order_finding_resolved", objectType: "order", objectId: id, detail: { code: body.resolve_finding.code, note: body.resolve_finding.note || null } });
+        return json(res, 200, { order: rf });
+      }
+
+      // CM P3b: a routine rule_findings overwrite (e.g. the "Run validation"
+      // step) must NOT silently drop an unresolved extraction blocker — carry it
+      // forward so the only way to clear it is the explicit resolve above.
+      if ("rule_findings" in body) patch.rule_findings = mergeBlockersForward(body.rule_findings, prev.rule_findings);
+
       // Audit P1.5 (May 2026): block transitions that skip the
       // approval flow. Without this, a DRAFT could PATCH directly
       // to EXPORTED_TO_TALLY because the existing approval-
@@ -140,6 +168,15 @@ export default async function handler(req, res) {
       if (body.status === "APPROVED") {
         if (!body.approval || !body.approval.payloadHash) return json(res, 400, { error: { message: "Approval requires payload hash" } });
         requirePermission(ctx, "approve");
+        // CM P3b: refuse to approve an order that still has an unresolved
+        // blocking finding. Evaluate the INCOMING findings (the merged patch
+        // when the body sets them, else prev) so a single save+approve PATCH
+        // passes once the array is clean/resolved.
+        const effFindings = ("rule_findings" in body) ? patch.rule_findings : prev.rule_findings;
+        if (hasUnresolvedBlocker(effFindings)) {
+          const b = firstUnresolvedBlocker(effFindings);
+          return json(res, 409, { error: { code: "ORDER_HAS_UNRESOLVED_BLOCKER", message: "Cannot approve: unresolved blocking finding (" + b.code + "): " + (b.detail || "extraction incomplete") + " Resolve it first.", finding: b } });
+        }
         patch.approval = { ...body.approval, approvedBy: ctx.user ? ctx.user.id : null };
         patch.approved_at = new Date().toISOString();
         patch.approved_by = ctx.user ? ctx.user.id : null;
@@ -159,6 +196,28 @@ export default async function handler(req, res) {
         patch.approval = null;
         patch.approval_expires_at = null;
         patch.approval_actions = [];
+      }
+
+      // Stamp orders.payload_hash so a SCANNED PO can be approved at all.
+      // Approve refuses without approval.payloadHash, and the workspace reads
+      // it from this column — but it was only ever written on the quote path,
+      // so an order created from a scanned PO could never be approved and
+      // therefore never reach Tally.
+      //
+      // Scanned POs (no quote_id): keep it current on every content edit and
+      // on send-for-review, so the stored hash always describes the order as
+      // it stands. Quote-derived orders: only fill a MISSING hash — the value
+      // carried over from quotes/send.js identifies the exact quote the
+      // customer accepted, and overwriting it would break that linkage.
+      const movingToReview = body.status === "PENDING_REVIEW" && prev.status !== "PENDING_REVIEW";
+      const resultEdited = "result" in body;
+      if (movingToReview || resultEdited) {
+        const isQuoteDerived = !!prev.quote_id;
+        if (!isQuoteDerived || !prev.payload_hash) {
+          const nextResult = resultEdited ? body.result : prev.result;
+          const hash = computeOrderPayloadHash({ ...prev, result: nextResult });
+          if (hash) patch.payload_hash = hash;
+        }
       }
 
       const { data, error } = await svc.from("orders").update(patch).eq("tenant_id", ctx.tenantId).eq("id", id).select("*").single();

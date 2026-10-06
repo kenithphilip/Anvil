@@ -6,7 +6,27 @@
    ==========================================================================
 */
 
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Serif:wght@400;500&display=swap");
+/* Typography is SELF-HOSTED, and has to be.
+   This line used to @import IBM Plex from fonts.googleapis.com. Our own CSP
+   (vercel.json) is `style-src 'self' 'unsafe-inline' https://rsms.me`, so the
+   browser blocked it on every page load — silently, because a blocked
+   stylesheet is not a JS error. With no local @font-face anywhere, the entire
+   app fell back to system fonts for every visitor who did not happen to have
+   IBM Plex installed already. It looked fine to whoever had it locally, which
+   is why it survived.
+   The weights below are exactly the ones the design uses (see --sans/--mono/
+   --serif); latin subsets only, to keep the bundle honest. Self-hosting also
+   keeps visitor IPs away from Google, which matters for a product that talks
+   about data protection. */
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-500.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+@import "@fontsource/ibm-plex-sans/latin-700.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-500.css";
+@import "@fontsource/ibm-plex-mono/latin-600.css";
+@import "@fontsource/ibm-plex-serif/latin-400.css";
+@import "@fontsource/ibm-plex-serif/latin-500.css";
 
 :root {
   /* ── Type ──────────────────────────────────────────────── */
@@ -58,6 +78,12 @@
      in dark mode resolves to #ECECE6 (cream) and rendered illegible
      on the lime fill. */
   --on-accent: #15171A;
+  /* The note above did not stop it happening again: the Ask Anvil badge and
+     avatar, and every accent fill on the landing page, still paired the lime
+     with --ink. Repointed 2026-08-20. If you add an --accent background, the
+     foreground is THIS token. */
+  /* Live dot on the Ask Anvil pill; flips with the pill. See .aa-dot. */
+  --aa-dot:    #C8FF2B;
 
   /* ── Semantic ──────────────────────────────────────────── */
   --sage:      #355E3B;        /* good · positive */
@@ -151,6 +177,7 @@
   /* Pin --on-accent dark in dark mode too: the lime --accent is the
      same bright value in both themes, so text on it must stay dark. */
   --on-accent: #15171A;
+  --aa-dot:    #3F7A00;   /* dark green: the pill is near-white here */
 
   --sage:      #6FBF7E;
   --sage-2:    #88D396;
@@ -324,8 +351,24 @@ button { cursor: pointer; }
   margin-left: auto;
   text-align: left;
 }
-.head-search > span { flex: 1; text-align: left; }
+/* The label must never wrap. The container is a fixed 28px tall, so a label
+ * that wraps to two or three lines overflows the button instead of growing it
+ * — which is exactly what the old "Search orders, customers, items, jobs…"
+ * did at tablet widths. min-width:0 is required for the ellipsis: a flex item
+ * defaults to min-width:auto and refuses to shrink below its content. */
+.head-search > span {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* "Ctrl K" is wider than "⌘K" — hold the key cap at its natural width and let
+ * the label take the squeeze, never the other way round. */
 .head-search kbd {
+  flex: none;
+  white-space: nowrap;
   font-family: var(--mono);
   font-size: 10px;
   padding: 2px 5px;
@@ -368,6 +411,18 @@ button { cursor: pointer; }
   display: flex;
   flex-direction: column;
   z-index: 50;
+}
+/* Collapsed rail is only 56px wide and .app-side clips overflow, so the 220px
+   popover gets sliced to a right-edge sliver (only the value column shows —
+   "light / normal / collapsed", clipped). In collapsed mode, pin the menu to the
+   viewport instead: position:fixed escapes the sidebar's overflow:hidden without
+   un-clipping the footer, and it opens rightward over the content. */
+[data-rail="collapsed"] .settings-menu {
+  position: fixed;
+  left: 12px;
+  right: auto;
+  top: auto;
+  bottom: 48px;
 }
 .settings-menu-row {
   display: grid;
@@ -523,12 +578,31 @@ button { cursor: pointer; }
 }
 .side-foot .av {
   width: 22px; height: 22px;
+  flex: 0 0 22px;          /* never let the name block squeeze the avatar oval */
   background: var(--paper-3);
   display: grid; place-items: center;
   font-size: 10px; font-weight: 600;
   color: var(--ink-2);
   border-radius: 2px;
 }
+/* Long names must ellipsis, not push the settings gear out of the rail. */
+.side-foot-id { overflow: hidden; }
+.side-foot-name,
+.side-foot-role { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-foot-name { font-size: 11px; font-family: var(--sans); color: var(--ink-2); font-weight: 600; }
+.side-foot-role { font-size: 10px; font-family: var(--mono); color: var(--ink-4); }
+
+/* Collapsed rail: 56px total, ~28px of content width after padding — an
+   avatar (22px) plus the name/role block plus the settings gear cannot sit
+   in one row, and they overlapped. Drop the identity text (the avatar's
+   initials + title carry it) and stack the avatar over the gear. */
+[data-rail="collapsed"] .side-foot {
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0;
+  justify-content: center;
+}
+[data-rail="collapsed"] .side-foot-id { display: none; }
 
 /* ── Workspace ─────────────────────────────────────────── */
 /*
@@ -808,6 +882,9 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   font-family: var(--mono);
   font-size: 10px;
   font-weight: 500;
+  /* Identifier-bearing chips opt out via <Chip code> — see .chip.code
+     below. Lowercasing a part number or material code misrepresents
+     stored data. */
   text-transform: lowercase;
   letter-spacing: 0;
   border: 1px solid var(--hairline);
@@ -816,6 +893,9 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   border-radius: 2px;
   white-space: nowrap;
 }
+/* Identifiers render verbatim: part numbers, customer material codes, HSN,
+   hashes. Letter-spacing helps a long alphanumeric code stay legible. */
+.chip.code  { text-transform: none; letter-spacing: 0.01em; }
 .chip.live  { background: var(--accent);    color: var(--on-accent); border-color: var(--accent-2); font-weight: 600; }
 .chip.good  { background: var(--sage-3);    color: var(--sage-2); border-color: transparent; }
 .chip.warn  { background: var(--amber-3);   color: var(--amber-2); border-color: transparent; }
@@ -826,6 +906,11 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .chip.ghost { background: transparent; color: var(--ink-3); border-color: var(--hairline); }
 .chip.lg    { height: 24px; padding: 0 9px; font-size: 11px; }
 .chip .dot  { width: 5px; height: 5px; border-radius: 999px; background: currentColor; }
+/* Caption inside an identifier chip ("cust p/n <code>"). Rendered as its
+   own flex item, dimmer and letter-spaced, so the caption cannot be read
+   as part of the code beside it — an operator read "SAP gd5442…" as the
+   extractor having ADDED characters to the buyer's material number. */
+.chip .lbl  { color: var(--ink-4); font-size: 9px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
 
 /* ── KV list ───────────────────────────────────────────── */
 .kv {
@@ -865,6 +950,55 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   color: var(--ink-2);
   vertical-align: middle;
 }
+/* Column separators for wide data tables (.tbl.grid).
+   Horizontal rules alone leave a numeric table — uom / qty / rate / hsn /
+   gst% / taxable — hard to scan: with nothing running vertically the eye
+   loses which header a figure sits under, which is exactly the complaint
+   on the line-item reconciliation table. Translucent rather than a solid
+   hairline so the rule blends over the tinted row states below
+   (hover / sel / row-flag / row-warn / row-live) instead of drawing a hard
+   cage across them. `+ td` so the first column gets no leading edge. */
+.tbl.grid thead th + th,
+.tbl.grid tbody td + td { border-left: 1px solid color-mix(in srgb, var(--ink) 9%, transparent); }
+
+/* Column resize handle. Sits on the header's trailing edge; invisible until the
+   header is hovered so the grid stays quiet at rest. Wider hit area than its
+   visible rule, because a 1px target is not draggable in practice. */
+.col-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  /* Above the neighbouring header so the drag starts on the intended column. */
+  z-index: 1;
+  touch-action: none; /* the drag is ours; do not let it scroll the pane */
+  user-select: none;
+}
+.tbl thead th:hover .col-resize-handle::after,
+.col-resize-handle:focus-visible::after {
+  content: "";
+  position: absolute;
+  top: 15%;
+  left: 3px;
+  width: 2px;
+  height: 70%;
+  border-radius: 1px;
+  background: var(--ink-4);
+}
+.col-resize-handle:focus-visible {
+  outline: 2px solid var(--accent, var(--ink-3));
+  outline-offset: -1px;
+}
+/* Under fixed layout an explicit width is authoritative, so long values must be
+   allowed to wrap rather than force the column back open. Header labels keep
+   their nowrap from .tbl thead th. */
+.tbl[style*="fixed"] tbody td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .tbl tbody tr:hover td { background: var(--paper-2); }
 .tbl tbody tr.sel td { background: var(--paper-4); }
 .tbl tbody tr.row-flag td { background: rgba(162,58,31,0.06); }
@@ -1429,6 +1563,48 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
    parent for the SVG overlay; pages stack vertically inside the
    container with a small gap so a multi-page PO has clear page
    boundaries. */
+/* Shell so the zoom bar can sit outside the scrolling area and stay put while
+   the page scrolls under it. */
+.rp-pdf-shell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.rp-pdf-zoombar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--paper-2, var(--paper));
+  border-bottom: 1px solid var(--hairline);
+  flex: 0 0 auto;
+}
+.rp-zoom-btn {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.rp-zoom-btn:hover:not(:disabled) { background: var(--paper-3); }
+.rp-zoom-btn:disabled { opacity: 0.4; cursor: default; }
+.rp-zoom-reset { font-size: 11px; }
+.rp-zoom-readout {
+  min-width: 44px;
+  text-align: center;
+  color: var(--ink-3);
+  /* Digits change every pinch frame; proportional figures would jitter the
+     buttons either side of this readout. */
+  font-variant-numeric: tabular-nums;
+}
 .rp-pdf-container {
   display: flex;
   flex-direction: column;
@@ -1438,7 +1614,20 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   background: var(--paper-3);
   width: 100%;
   height: 100%;
+  min-height: 0;
   overflow: auto;
+  /* Claim the pinch, leave panning to the browser. Without this the OS zooms
+     the whole page and the two-finger gesture never reaches the handler. */
+  touch-action: pan-x pan-y;
+}
+/* Transformed only during a live gesture; the committed zoom re-rasters the
+   page instead, so this carries no transform at rest and cannot blur it. */
+.rp-pdf-zoomer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  will-change: transform;
 }
 .rp-pdf-page-wrap {
   position: relative;
@@ -1900,8 +2089,40 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 }
 
 /* Reduced-motion users: kill the animations the toast stack adds. */
+/* ── Loading state (components/LoadingState.tsx) ───────────
+   A 3x3 pixel grid + shimmering label + elapsed timer, for work
+   measured in tens of seconds (an extraction run is budgeted at 45s).
+   The cells animate on a per-cell delay set in JS so one keyframe
+   serves every variant.
+
+   The global prefers-reduced-motion rule below no-ops both keyframes:
+   the grid freezes at its dim base opacity and the label falls back to
+   flat --ink-3. The elapsed timer is JS and keeps ticking, so the wait
+   stays observable with zero motion. */
+.loading-state { display: inline-flex; align-items: center; gap: 10px; width: fit-content; }
+.px-grid { display: grid; grid-template-columns: repeat(3, 4px); gap: 1.5px; }
+.px-cell { width: 4px; height: 4px; background: var(--ink); border-radius: 1px; opacity: 0.15; }
+.px-grid.round .px-cell { border-radius: 999px; }
+@keyframes pixel-on { 0%, 100% { opacity: 0.15; } 50% { opacity: 1; } }
+
+.loading-label {
+  font-size: 13px; font-weight: 500; color: var(--ink-3);
+  background-image: linear-gradient(90deg, var(--ink-3) 35%, var(--ink) 50%, var(--ink-3) 65%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer-text 1.4s linear infinite;
+}
+@keyframes shimmer-text { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* Tabular figures so the tenths digit doesn't jitter the layout. */
+.loading-elapsed { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
+  /* background-clip:text with a transparent fill would render the label
+     invisible once the shimmer stops — restore a solid colour. */
+  .loading-label { -webkit-text-fill-color: var(--ink-2); color: var(--ink-2); }
 }
 
 /* High-contrast users: thicken the hairline so tables remain legible. */
@@ -3404,7 +3625,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
   font-size: 9px;
   padding: 2px 6px;
   background: var(--accent);
-  color: var(--ink);
+  color: var(--on-accent);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -3524,7 +3745,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 }
 .landing-pillar-badge.live {
   background: var(--accent);
-  color: var(--ink);
+  color: var(--on-accent);
 }
 .landing-pillar-h {
   font-size: 22px; font-weight: 700;
@@ -3647,7 +3868,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 }
 .landing-proof-tag {
   background: var(--accent);
-  color: var(--ink);
+  color: var(--on-accent);
   padding: 2px 6px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -3857,7 +4078,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .lp .lp-btn:hover { transform: translate(-1px, -1px); box-shadow: 3px 3px 0 var(--ink); }
 .lp .lp-btn:active { transform: translate(0, 0); box-shadow: none; }
 .lp .lp-btn-primary { background: var(--ink); color: var(--paper); }
-.lp .lp-btn-live { background: var(--accent); color: var(--ink); font-weight: 700; }
+.lp .lp-btn-live { background: var(--accent); color: var(--on-accent); font-weight: 700; }
 .lp .lp-btn-lg { padding: 16px 22px; font-size: 14.5px; }
 .lp .lp-arrow { transition: transform 120ms; }
 .lp .lp-btn:hover .lp-arrow { transform: translateX(3px); }
@@ -4082,7 +4303,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .lp-con-clogo { width: 48px; height: 48px; border: 1px solid var(--ink); background: var(--paper-2); display: grid; place-items: center; font-family: var(--mono); font-weight: 700; font-size: 11px; letter-spacing: 0.04em; color: var(--ink); transition: transform 200ms; flex-shrink: 0; }
 .lp-con-nm { font-weight: 600; font-size: 13.5px; letter-spacing: -0.005em; line-height: 1.3; color: var(--ink); }
 .lp-con-meta { font-family: var(--mono); font-size: 10px; color: var(--ink-4, var(--ink-3)); letter-spacing: 0.04em; text-transform: uppercase; }
-.lp-con-stat { position: absolute; top: 8px; right: 8px; font-family: var(--mono); font-size: 9px; padding: 2px 6px; background: var(--accent); color: var(--ink); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.lp-con-stat { position: absolute; top: 8px; right: 8px; font-family: var(--mono); font-size: 9px; padding: 2px 6px; background: var(--accent); color: var(--on-accent); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 .lp-con-stat.beta { background: var(--amber, #B57810); color: #fff; }
 
 /* === ARCHITECTURE === */
@@ -4159,7 +4380,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .lp-ws-h { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid var(--hairline); padding-bottom: 8px; flex-wrap: wrap; }
 .lp-ws-so { font-weight: 700; font-size: 14px; letter-spacing: -0.005em; color: var(--ink); }
 .lp-ws-pill { font-family: var(--mono); font-size: 9px; padding: 1px 6px; background: var(--accent-3, var(--accent)); border: 1px solid var(--accent-2, var(--accent)); font-weight: 600; color: var(--ink); }
-.lp-ws-pill-accent { background: var(--accent); border-color: var(--ink); }
+.lp-ws-pill-accent { background: var(--accent); border-color: var(--on-accent); }
 .lp-ws-edit { margin-left: auto; font-family: var(--mono); font-size: 9px; color: var(--ink-4, var(--ink-3)); }
 .lp-ws-lr { display: grid; grid-template-columns: 18px 1fr 38px 50px; gap: 8px; padding: 5px 0; border-bottom: 1px dashed var(--hairline-2, var(--hairline)); align-items: center; font-size: 11px; }
 .lp-ws-ix { font-family: var(--mono); font-size: 9px; color: var(--ink-4, var(--ink-3)); }
@@ -4204,7 +4425,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .lp-pillar:hover { background: var(--accent-3, var(--paper-2)); }
 .lp-pillar:last-child { border-right: none; }
 .lp-pillar-badge { position: absolute; top: 0; left: 0; padding: 6px 10px; background: var(--ink); color: var(--paper); font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; }
-.lp-pillar-badge.live { background: var(--accent); color: var(--ink); }
+.lp-pillar-badge.live { background: var(--accent); color: var(--on-accent); }
 .lp-pillar-ic { width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid var(--ink); background: var(--paper-2); margin-top: 20px; margin-bottom: 24px; }
 .lp-pillar h3 { font-size: 22px; font-weight: 700; letter-spacing: -0.015em; margin: 0 0 10px; color: var(--ink); }
 .lp-pillar p { font-size: 14px; line-height: 1.55; color: var(--ink-2); margin: 0 0 18px; }
@@ -4222,7 +4443,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .lp-wn-card { padding: 24px; background: var(--paper); border: 1px solid var(--ink); display: flex; flex-direction: column; gap: 12px; min-height: 220px; }
 .lp-wn-tag { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
 .lp-wn-livedot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(200, 255, 43, 0.18); }
-.lp-wn-title { font-size: 22px; font-weight: 700; letter-spacing: -0.015em; line-height: 1.15; color: var(--ink); margin: 0; }
+.lp-wn-title { font-size: 22px; font-weight: 700; letter-spacing: -0.015em; line-height: 1.15; color: var(--on-accent); margin: 0; }
 .lp-wn-title .lp-em { color: var(--accent); }
 .lp-wn-copy { font-size: 13.5px; line-height: 1.55; color: var(--ink-2); margin: 0; flex: 1; }
 .lp-wn-chips { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -4272,7 +4493,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 @media (max-width: 1000px) { .lp-proof-grid { grid-template-columns: 1fr; } }
 .lp-proof-card { background: #1B1E22; border: 1px solid #2D3138; padding: 22px; font-family: var(--mono); font-size: 11.5px; line-height: 1.7; }
 .lp-proof-card-h { display: flex; align-items: center; gap: 10px; padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid #2D3138; font-weight: 600; color: var(--paper); flex-wrap: wrap; }
-.lp-proof-tag { margin-left: auto; padding: 2px 8px; background: var(--accent); color: var(--ink); font-size: 10px; font-weight: 700; }
+.lp-proof-tag { margin-left: auto; padding: 2px 8px; background: var(--accent); color: var(--on-accent); font-size: 10px; font-weight: 700; }
 .lp-proof-pre { margin: 0; white-space: pre-wrap; color: #C9CBD0; font-size: 11px; overflow-x: auto; font-family: var(--mono); }
 .lp-proof-pre b { color: var(--paper); font-weight: 600; }
 .lp-proof-meta-c { color: #6A6E76; }
@@ -4284,7 +4505,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .lp-proof-mark { position: absolute; top: -18px; left: 18px; font-family: var(--serif); font-size: 64px; line-height: 1; color: var(--accent); background: var(--ink); padding: 0 6px; }
 .lp-proof-quote blockquote { font-family: var(--serif); font-size: 19px; line-height: 1.45; margin: 0 0 16px; color: var(--paper); font-style: italic; }
 .lp-proof-by { display: flex; align-items: center; gap: 12px; font-family: var(--mono); font-size: 11px; color: #95989F; }
-.lp-proof-av { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: var(--ink); display: grid; place-items: center; font-family: var(--sans); font-weight: 700; font-size: 12px; }
+.lp-proof-av { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-family: var(--sans); font-weight: 700; font-size: 12px; }
 .lp-proof-by-name { color: var(--paper); font-weight: 600; font-family: var(--sans); }
 .lp-proof-stats { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #2D3138; }
 .lp-proof-stat { padding: 18px 18px 16px; border-right: 1px solid #2D3138; border-bottom: 1px solid #2D3138; }
@@ -4362,7 +4583,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .lp-cmp-row:last-child { border-bottom: none; }
 .lp-cmp-head { background: var(--ink); color: var(--paper); }
 .lp-cmp-head .lp-cmp-c { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; color: var(--paper); padding: 16px 14px; }
-.lp-cmp-head .lp-cmp-us { background: var(--accent); color: var(--ink); }
+.lp-cmp-head .lp-cmp-us { background: var(--accent); color: var(--on-accent); }
 .lp-cmp-c { padding: 14px; border-right: 1px solid var(--hairline); font-size: 12.5px; color: var(--ink-2); display: flex; align-items: center; gap: 6px; }
 .lp-cmp-feat { font-weight: 600; color: var(--ink); font-size: 13px; background: var(--paper-2); }
 .lp-cmp-row .lp-cmp-us { background: rgba(200, 255, 43, 0.18); color: var(--ink); font-weight: 600; }
@@ -4426,7 +4647,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 .lp-cl h4 { margin: 0 0 4px; font-size: 14px; font-weight: 600; letter-spacing: -0.005em; color: var(--ink); }
 .lp-cl p { margin: 0; font-size: 12.5px; color: var(--ink-3); line-height: 1.5; }
 .lp-cl-v { font-family: var(--mono); font-size: 10.5px; text-align: right; color: var(--ink-4, var(--ink-3)); padding: 2px 6px; background: var(--paper-2); border: 1px solid var(--hairline-2, var(--hairline)); justify-self: end; height: fit-content; }
-.lp-cl-v.new { background: var(--accent); color: var(--ink); border-color: var(--ink); font-weight: 700; }
+.lp-cl-v.new { background: var(--accent); color: var(--on-accent); border-color: var(--on-accent); font-weight: 700; }
 @media (max-width: 600px) { .lp-cl { grid-template-columns: 1fr; gap: 6px; } .lp-cl-v { justify-self: start; } }
 
 /* === FAQ === */
@@ -4683,3 +4904,292 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
    single non-breaking inline-block prevents the wrap from happening
    between them. */
 .lp-h1-segment { display: inline-block; }
+
+/* ── Markdown body (Ask Anvil assistant answers) ───────────────────────────
+   The assistant replies in Markdown. Rendered via lib/markdown.ts, which
+   escapes all input before emitting this fixed tag set — so these selectors
+   are the complete surface. Everything is token-driven, so it tracks both
+   themes with no separate dark-mode block. */
+.md-body > *:first-child { margin-top: 0; }
+.md-body > *:last-child  { margin-bottom: 0; }
+.md-body p { margin: 0 0 8px; line-height: 1.55; }
+.md-body h3, .md-body h4, .md-body h5, .md-body h6 {
+  margin: 12px 0 6px; font-size: 14px; font-weight: 650; color: var(--ink);
+}
+.md-body ul, .md-body ol { margin: 0 0 8px; padding-left: 20px; }
+.md-body li { margin: 2px 0; line-height: 1.5; }
+.md-body strong { font-weight: 650; color: var(--ink); }
+.md-body code {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px; padding: 1px 5px; border-radius: 4px;
+  background: var(--paper); border: 1px solid var(--hairline-2); color: var(--ink-2);
+}
+.md-body pre {
+  margin: 0 0 8px; padding: 10px; border-radius: 8px; overflow-x: auto;
+  background: var(--paper); border: 1px solid var(--hairline-2);
+}
+.md-body pre code { padding: 0; border: 0; background: none; }
+.md-body a { color: var(--accent-2); text-decoration: underline; }
+
+/* Wide tables scroll INSIDE the bubble rather than stretching the chat. */
+.md-table-wrap { overflow-x: auto; margin: 0 0 8px; }
+.md-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.md-table th, .md-table td {
+  border: 1px solid var(--hairline-2); padding: 6px 9px;
+  text-align: left; vertical-align: top; white-space: nowrap;
+}
+.md-table th { background: var(--paper); font-weight: 650; color: var(--ink-2); }
+/* Figures line up for comparison. */
+.md-table td { font-variant-numeric: tabular-nums; }
+
+/* ==========================================================================
+   Ask Anvil — floating module-scoped agent surface (migration 210 flag).
+   Bottom-right was unoccupied; the overlay ladder tops out at 300 (CmdK,
+   ThreadDrawer), so the button sits at 290 and the panel at 300 rather than
+   inventing a new tier above them.
+   ========================================================================== */
+.aa-fab {
+  position: fixed; right: 20px; bottom: 20px; z-index: 290;
+  display: flex; align-items: center; gap: 8px;
+  height: 40px; padding: 0 15px 0 13px;
+  border: 1px solid var(--hairline); border-radius: 21px;
+  background: var(--ink); color: var(--paper);
+  font: 600 12.5px/1 var(--sans); cursor: pointer;
+  box-shadow: 0 8px 26px rgba(0,0,0,.18), 0 2px 5px rgba(0,0,0,.08);
+  transition: transform .16s ease;
+}
+.aa-fab:hover { transform: translateY(-1px); }
+.aa-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The FAB's surface is --ink, which INVERTS: a near-black pill in light mode,
+   a near-white one in dark. Chartreuse reads well on the first and almost
+   vanishes on the second, so the live dot flips with the surface it sits on
+   rather than staying one colour. */
+.aa-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--aa-dot); flex: none; }
+.aa-count {
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  background: var(--accent); color: var(--on-accent); border-radius: 9px; padding: 1px 6px;
+}
+
+.aa-panel {
+  position: fixed; right: 20px; bottom: 20px; z-index: 300;
+  width: min(392px, calc(100vw - 40px));
+  /* Capped so the panel can never grow past the viewport on a short window;
+     the message list scrolls inside instead of the page. */
+  max-height: min(620px, calc(100vh - 96px));
+  display: flex; flex-direction: column;
+  background: var(--paper); border: 1px solid var(--hairline); border-radius: 12px;
+  box-shadow: 0 14px 40px rgba(0,0,0,.2), 0 2px 6px rgba(0,0,0,.08);
+  overflow: hidden;
+}
+.aa-head {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 10px 12px; border-bottom: 1px solid var(--hairline); background: var(--paper-2);
+}
+.aa-avatar {
+  width: 26px; height: 26px; border-radius: 7px; flex: none;
+  background: var(--accent); color: var(--on-accent);
+  display: grid; place-items: center; font: 700 11px/1 var(--mono);
+}
+.aa-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.aa-name { font-size: 12.5px; font-weight: 650; }
+/* The read-only claim is load-bearing: it is the operator's assurance that
+   nothing here can change the order. It must never be truncated away. */
+.aa-scope { font-family: var(--mono); font-size: 9.5px; color: var(--ink-3); }
+.aa-x { border: 0; background: transparent; color: var(--ink-3); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 3px; }
+.aa-x:hover { color: var(--ink); }
+
+.aa-body { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 9px; }
+.aa-hello { margin: 0; font-size: 12.5px; color: var(--ink-3); line-height: 1.55; }
+.aa-msg { max-width: 92%; font-size: 12.8px; line-height: 1.5; }
+.aa-msg.aa-me {
+  align-self: flex-end; background: var(--paper-3); border: 1px solid var(--hairline);
+  border-radius: 11px 11px 3px 11px; padding: 6px 10px; white-space: pre-wrap;
+}
+.aa-msg.aa-ai { align-self: flex-start; color: var(--ink); }
+.aa-msg.aa-ai p:first-child { margin-top: 0; }
+.aa-msg.aa-ai p:last-child { margin-bottom: 0; }
+.aa-busy { color: var(--ink-3); font-style: italic; }
+.aa-trace {
+  font-family: var(--mono); font-size: 10px; color: var(--ink-3);
+  border: 1px solid var(--hairline); border-radius: 7px; padding: 4px 8px;
+  background: var(--paper-2); margin-bottom: 6px;
+}
+.aa-trace summary { cursor: pointer; list-style: none; }
+.aa-trace summary::-webkit-details-marker { display: none; }
+.aa-trace ol { margin: 5px 0 0; padding-left: 15px; line-height: 1.7; }
+.aa-err {
+  font-size: 12px; color: var(--bad, #B91C1C); background: var(--bad-soft, #FDECEC);
+  border: 1px solid var(--hairline); border-radius: 7px; padding: 7px 9px;
+}
+
+.aa-sugg { border-top: 1px solid var(--hairline); padding: 9px 12px; background: var(--paper-2); }
+.aa-sugg-lbl {
+  font-family: var(--mono); font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-3); margin-bottom: 6px;
+}
+.aa-sugg button {
+  display: block; width: 100%; text-align: left; margin-bottom: 5px;
+  border: 1px solid var(--hairline); border-radius: 7px; background: var(--paper);
+  color: var(--ink-2); font: inherit; font-size: 11.8px; line-height: 1.4;
+  padding: 6px 9px; cursor: pointer;
+}
+.aa-sugg button:last-child { margin-bottom: 0; }
+.aa-sugg button:hover { border-color: var(--ink-3); }
+.aa-src { display: block; font-family: var(--mono); font-size: 9px; color: var(--ink-3); margin-top: 2px; }
+.aa-sev { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.aa-sev-error { background: var(--bad, #B91C1C); }
+.aa-sev-warn  { background: var(--warn, #B45309); }
+.aa-sev-info  { background: var(--ink-3); }
+
+.aa-composer { border-top: 1px solid var(--hairline); padding: 9px 12px; display: flex; gap: 7px; align-items: center; }
+.aa-composer input {
+  flex: 1; min-width: 0; border: 1px solid var(--hairline); border-radius: 8px;
+  padding: 7px 10px; font: inherit; font-size: 12.5px; background: var(--paper); color: var(--ink);
+}
+.aa-send {
+  flex: none; border: 0; border-radius: 8px; background: var(--ink); color: var(--paper);
+  padding: 7px 12px; font: 600 12px/1.3 var(--sans); cursor: pointer;
+}
+.aa-send:disabled { opacity: .45; cursor: default; }
+
+/* On a phone the panel takes the width; the SO line grid is unusable behind a
+   floating card at that size anyway. */
+@media (max-width: 640px) {
+  .aa-panel { right: 8px; left: 8px; bottom: 8px; width: auto; max-height: calc(100vh - 76px); }
+  .aa-fab { right: 12px; bottom: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aa-fab { transition: none; }
+  .aa-fab:hover { transform: none; }
+}
+
+/* === QUOTE COMPOSITION: long line lists ===
+   The totals live in a <tfoot> and the column headers in a <thead>, so on a
+   quote with dozens of lines an operator edited supplier prices with the margin
+   they were steering toward scrolled off the bottom of the page, and with the
+   column identities scrolled off the top. Both had to be found by scrolling to
+   the end of the screen and back.
+
+   The table gets its own scroll box instead of riding the page, so head and foot
+   can stick to it. Self-contained on purpose: sticking to the PAGE would need an
+   offset for the app's own sticky chrome, whose height this component does not
+   know and should not have to. */
+.qc-scroll {
+  max-height: min(62vh, 720px);
+  overflow: auto;
+  /* Contains the sticky children and gives horizontal scroll to the 11 columns
+     without the page ever scrolling sideways. */
+  position: relative;
+}
+.qc-scroll table { margin: 0; }
+.qc-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  /* Opaque: rows scroll UNDER these, and a translucent header is unreadable
+     over its own data. */
+  background: var(--paper-2, var(--paper));
+  box-shadow: inset 0 -1px 0 var(--hairline);
+}
+.qc-scroll tfoot td,
+.qc-scroll tfoot th {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: var(--paper-2, var(--paper));
+  box-shadow: inset 0 1px 0 var(--hairline);
+}
+/* The row being edited can otherwise sit visually beneath the stuck foot. */
+.qc-scroll tbody tr:last-child td { padding-bottom: 10px; }
+
+@media (max-width: 900px) {
+  /* On a short viewport a 62vh box plus stuck head and foot leaves almost no
+     rows visible; give the page back its scroll. */
+  .qc-scroll { max-height: none; overflow: visible; }
+  .qc-scroll thead th, .qc-scroll tfoot td, .qc-scroll tfoot th { position: static; }
+}
+
+/* ── Quote viewer ───────────────────────────────────────────
+   Document on the left, what Anvil read out of it on the right.
+   Stacks below 1100px so the table keeps a usable width on a
+   laptop rather than squeezing both into unreadable columns. */
+.qv-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.qv-doc { min-width: 0; max-height: 68vh; overflow: auto; border: 1px solid var(--hairline-2); border-radius: var(--r-3); background: var(--paper-2); }
+.qv-lines { min-width: 0; max-height: 68vh; overflow: auto; }
+@media (max-width: 1100px) { .qv-split { grid-template-columns: minmax(0, 1fr); } .qv-doc { max-height: 44vh; } }
+
+/* ── Quotes strip ───────────────────────────────────────────
+   Attach / attached / verdict as three columns rather than three
+   stacked Cards. The Cards cost an eyebrow and a title each and
+   the operator reads all three as one question anyway. */
+.qs { border: 1px solid var(--hairline-2); border-radius: var(--r-3); background: var(--paper); }
+.qs-grid { display: grid; grid-template-columns: minmax(180px, 0.8fr) minmax(0, 1.6fr) minmax(220px, 1.2fr); gap: 0; }
+.qs-col { padding: 9px 12px; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.qs-col + .qs-col { border-left: 1px solid var(--hairline-3); }
+.qs-lbl { font-family: var(--mono); font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-4); }
+.qs-hint { font-family: var(--mono); font-size: 11px; color: var(--ink-3); line-height: 1.45; }
+.qs-row {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  background: transparent; border: 0; border-radius: var(--r-2);
+  padding: 2px 4px; margin-left: -4px; cursor: pointer; text-align: left;
+  font-family: var(--mono); font-size: 11.5px; color: var(--ink);
+}
+.qs-row:hover { background: var(--paper-3); }
+.qs-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.qs-file { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.qs-rev { font-size: 9.5px; padding: 0 4px; border: 1px solid var(--hairline); border-radius: 3px; color: var(--ink-3); flex: none; }
+.qs-facts { color: var(--ink-3); flex: none; }
+/* The verdict column holds a Banner, which brings its own box. */
+.qs-col-verdict > .banner { margin: 0; }
+@media (max-width: 1000px) {
+  .qs-grid { grid-template-columns: minmax(0, 1fr); }
+  .qs-col + .qs-col { border-left: 0; border-top: 1px solid var(--hairline-3); }
+}
+
+/* ── Quotes tab ─────────────────────────────────────────────
+   Document left, extraction right — the same habit the Reconcile
+   tab established for the PO. Stacks under 1100px so the table
+   keeps a readable width on a laptop. */
+.qp { display: flex; flex-direction: column; gap: 8px; }
+.qp-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.qp-tab {
+  font-family: var(--mono); font-size: 11px; padding: 3px 9px; cursor: pointer;
+  background: var(--paper-2); color: var(--ink-2);
+  border: 1px solid var(--hairline); border-radius: var(--r-2);
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.qp-tab.is-active { background: var(--paper-4); color: var(--ink); border-color: var(--ink-4); font-weight: 600; }
+.qp-tab-flag { font-size: 9px; color: var(--amber); }
+.qp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.qp-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: start; }
+.qp-doc { min-width: 0; max-height: 72vh; overflow: auto; border: 1px solid var(--hairline-2); border-radius: var(--r-3); background: var(--paper-2); }
+.qp-lines { min-width: 0; max-height: 72vh; overflow: auto; }
+@media (max-width: 1100px) { .qp-split { grid-template-columns: minmax(0, 1fr); } .qp-doc { max-height: 46vh; } }
+
+/* Correctable cells on the Quotes tab.
+   The affordance has to be quiet: this table's first job is comparison
+   against the document beside it, and a grid of buttons would fight that.
+   So a cell looks like text until the pointer is on it, and only then
+   admits it is editable. */
+.qp-cell {
+  font: inherit; color: inherit; text-align: inherit;
+  background: none; border: 0; padding: 0; margin: 0;
+  cursor: text; border-radius: 2px;
+  border-bottom: 1px dashed transparent;
+}
+.qp-cell:hover { border-bottom-color: var(--ink-4); }
+/* --accent-2, not --accent: the lime --accent is the SAME value in both
+   themes, so as a stroke or small mark it disappears against light paper
+   (~1.06:1). --accent-2 and --sage are the theme-flipped pair the design
+   system already provides for exactly this. --sage additionally carries the
+   right meaning — ReviewPane uses it for a field a human has verified. */
+.qp-cell:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+.qp-cell.is-corrected { border-bottom-color: var(--sage); border-bottom-style: solid; }
+.qp-cell-mark { color: var(--sage); margin-left: 2px; font-weight: 700; }
+.qp-edit { display: inline-flex; gap: 4px; align-items: center; }
+.qp-edit-input { width: 11ch; min-width: 0; padding: 1px 4px; }
+.qp-correct-note {
+  color: var(--ink-3); padding: 5px 8px; margin-bottom: 6px;
+  background: var(--paper-2); border: 1px solid var(--hairline-3);
+  border-radius: var(--r-2); line-height: 1.45;
+}

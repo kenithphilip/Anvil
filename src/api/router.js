@@ -21,6 +21,7 @@ import adminContracts          from "./admin/contracts.js";
 import adminCustomerLocations  from "./admin/customer_locations.js";
 import adminDiagnostics        from "./admin/diagnostics.js";
 import adminDocaiSettings      from "./admin/docai_settings.js";
+import adminSoProcessingMode   from "./admin/so_processing_mode.js";
 import adminLlmSettings        from "./admin/llm_settings.js";
 import adminNavSettings        from "./admin/nav_settings.js";
 import adminQuoteSettings      from "./admin/quote_settings.js";
@@ -102,13 +103,18 @@ import bomSourceFormats        from "./bom/source_formats.js";
 import bomParse                from "./bom/parse.js";
 import bomWhereUsed            from "./bom/where_used.js";
 import bomFromDrawing          from "./bom/from_drawing.js";
+import bomUploads              from "./bom/uploads.js";
 import claudeMessages          from "./claude/messages.js";
 
 import commsDraft              from "./communications/draft.js";
 import commsList               from "./communications/list.js";
+import commsLog                from "./communications/log.js";
 import commsMissingDoc         from "./communications/missing_doc.js";
 import commsSend               from "./communications/send.js";
 import copilotConfirm          from "./copilot/confirm.js";
+import salesPartTracking      from "./sales/part_tracking.js";
+import adminSellerDetails     from "./admin/seller_details.js";
+import agentPersonas          from "./agent/personas.js";
 import copilotProposals        from "./copilot/proposals.js";
 import metricsCatalog          from "./metrics/index.js";
 import pdmRawMaterial          from "./pdm/raw_material.js";
@@ -125,6 +131,8 @@ import customersGstLookup        from "./customers/gst_lookup.js";
 import docaiProviderKeys         from "./admin/docai_provider_keys.js";
 import customersDuplicates      from "./customers/duplicates.js";
 import customersMerge           from "./customers/merge.js";
+// Account owner on customers (migration 227): assign + suggest.
+import customersOwner           from "./customers/owner.js";
 import customerLocationsIndex   from "./customer_locations/index.js";
 import locationsIndex           from "./locations/index.js";
 // Phase 7.3: customer health score (Haiku per-customer + cron drain).
@@ -143,8 +151,12 @@ import ewayBillsExtract         from "./eway_bills/extract.js";
 import ewayBillsExpire          from "./eway_bills/expire.js";
 
 import deliveryPromise         from "./delivery/promise.js";
+import delaysScan              from "./delays/scan.js";
 import logisticsConsolidations from "./logistics/consolidations.js";
 import logisticsFreightBids     from "./logistics/freight_bids.js";
+import logisticsExceptions      from "./logistics/exceptions.js";
+import adminLogisticsMonitorRules from "./admin/logistics_monitor_rules.js";
+import logisticsMonitorTick     from "./cron/logistics-monitor-tick.js";
 
 // SOC 2 CC8.1 change log: production deploy events.
 import deploysIndex            from "./deploys/index.js";
@@ -180,6 +192,7 @@ import inventoryPositions       from "./inventory/positions.js";
 import inventoryForecasts       from "./inventory/forecasts.js";
 import inventoryForecastRuns    from "./inventory/forecast_runs.js";
 import inventoryPlans           from "./inventory/plans.js";
+import inventoryDemandStory     from "./inventory/demand_story.js";
 import inventoryExceptions      from "./inventory/exceptions.js";
 import inventoryAllocations     from "./inventory/allocations.js";
 import inventoryExplain         from "./inventory/explain.js";
@@ -219,6 +232,7 @@ import tallyReconcileCron       from "./cron/tally-reconcile.js";
 import driftMeterCron           from "./cron/drift-meter.js";
 import driftReportCron          from "./cron/drift-report.js";
 import evalQualityAlertCron     from "./cron/eval_quality_alert.js";
+import extractionReaperCron     from "./cron/extraction_reaper.js";
 
 import masterDataGraph         from "./master_data/graph.js";
 
@@ -232,12 +246,16 @@ import salesInternalSo         from "./sales/internal_so.js";
 import salesLeads              from "./sales/leads.js";
 import salesOpportunities      from "./sales/opportunities.js";
 import opportunityLineItems    from "./opportunities/line_items.js";
+import opportunityQuotes       from "./opportunities/quotes.js";
 import operatorActions         from "./operator_actions/index.js";
 import operatorActionsAdvance  from "./operator_actions/advance.js";
 import operatorActionsEvidence from "./operator_actions/evidence.js";
 import operatorActionsReconcile from "./operator_actions/reconcile.js";
 import salesProjects           from "./sales/projects.js";
 import salesShipments          from "./sales/shipments.js";
+import salesShipmentTracking   from "./sales/shipment_tracking.js";
+import salesShipmentImport     from "./sales/shipment_import.js";
+import salesPendingSalesOrders from "./sales/pending_sales_orders.js";
 // Phase 7.1 + 7.2: lead scoring + opportunity probability.
 import salesScoreLead          from "./sales/score_lead.js";
 import salesPredictOpportunity from "./sales/predict_opportunity.js";
@@ -257,6 +275,7 @@ import sourcePosById           from "./source_pos/[id].js";
 import sourcePosAck            from "./source_pos/ack.js";
 import sourcePosAckExtract     from "./source_pos/ack_extract.js";
 import sourcePosAckAccept      from "./source_pos/ack_accept.js";
+import sourcePosReceive        from "./source_pos/receive.js";
 import sourcePosIndex          from "./source_pos/index.js";
 import sourcePosScorecard      from "./source_pos/scorecard.js";
 
@@ -269,7 +288,12 @@ import spareMatrixById         from "./spare_matrix/[id].js";
 import spareMatrixRecomputeRec from "./spare_matrix/recompute_recommended.js";
 import spareMatrixRecommended  from "./spare_matrix/recommended.js";
 import spareMatrixToQuote      from "./spare_matrix/to_quote.js";
-import spareMatrixSuggestCols  from "./spare_matrix/suggest_columns.js";
+import spareMatrixShare        from "./spare_matrix/share.js";
+import spareMatrixDrawingsStage  from "./spare_matrix/drawings/stage.js";
+import spareMatrixDrawingsList   from "./spare_matrix/drawings/list.js";
+import spareMatrixDrawingsUpdate from "./spare_matrix/drawings/update.js";
+import spareMatrixDrawingsCommit from "./spare_matrix/drawings/commit.js";
+import spareMatrixDrawingsDownload from "./spare_matrix/drawings/download.js";
 import failureEventsIndex      from "./failure_events/index.js";
 import fmecaIndex              from "./fmeca/index.js";
 import receiptsIndex           from "./receipts/index.js";
@@ -293,6 +317,17 @@ import whatsappSend            from "./whatsapp/send.js";
 import quotesPdf               from "./quotes/pdf.js";
 import quotesIndex             from "./quotes/index.js";
 import quotesSend              from "./quotes/send.js";
+import quotesIngest            from "./quotes/ingest.js";
+import commsRouting            from "./comms/routing.js";
+import commsPaymentStatement   from "./comms/payment_statement.js";
+import commsServiceReport      from "./comms/service_report.js";
+import commsServiceReportTpl   from "./comms/service_report_template.js";
+import commsDispatchRegister   from "./comms/dispatch_register.js";
+import commsDispatchLines      from "./comms/dispatch_lines.js";
+import commsGraph              from "./comms/graph.js";
+import commsGraphCallback      from "./comms/graph_callback.js";
+import marketingSend           from "./marketing/send.js";
+import marketingUnsubscribe    from "./marketing/unsubscribe.js";
 import quotesConvert           from "./quotes/convert.js";
 import quotesExpire            from "./quotes/expire.js";
 import agentsHandleReplies     from "./agents/handle_replies.js";
@@ -347,6 +382,9 @@ import pushSend                from "./push/send.js";
 
 import portalTokens            from "./portal/tokens.js";
 import portalView              from "./portal/view.js";
+import portalAuthLogin         from "./portal/auth/login.js";
+import portalAuthInvite        from "./portal/auth/invite.js";
+import portalAuthMe            from "./portal/auth/me.js";
 import portalPay               from "./portal/pay.js";
 import portalReorder           from "./portal/reorder.js";
 import portalInvoicePdf        from "./portal/invoice_pdf.js";
@@ -358,8 +396,19 @@ import ordersReconcile         from "./orders/reconcile.js";
 import ordersSuggestMappings   from "./orders/suggest_mappings.js";
 import ordersExtractionStatus from "./orders/extraction_status.js";
 import ordersVoucherPdf       from "./orders/voucher_pdf.js";
+import ordersExport           from "./orders/export.js";
 import ordersSoPdf            from "./orders/so_pdf.js";
 import ordersReconcileQuotes  from "./orders/reconcile_quotes.js";
+import ordersReconcileInvoice  from "./orders/reconcile_invoice.js";
+import ordersQuotes            from "./orders/quotes.js";
+import documentsPackingList    from "./documents/packing_list_ingest.js";
+import documentsDeliveryNote   from "./documents/delivery_note_ingest.js";
+import logisticsFreightAllocation from "./logistics/freight_allocation.js";
+import ordersDetachQuote      from "./orders/detach_quote.js";
+import ordersAttachQuote      from "./orders/attach_quote.js";
+import ordersAttachSalesOrder from "./orders/attach_sales_order.js";
+import ordersThreeWayReport from "./orders/three_way_report.js";
+import ordersThreeWaySummary from "./orders/three_way_summary.js";
 import ordersExtractionJobs   from "./orders/extraction_jobs.js";
 import ordersExtractionJobsId from "./orders/extraction_jobs_id.js";
 import ordersCostSummary      from "./orders/cost_summary.js";
@@ -377,6 +426,8 @@ import analyticsWinloss        from "./analytics/winloss.js";
 import analyticsRefresh        from "./analytics/refresh.js";
 import analyticsFunnel         from "./analytics/funnel.js";
 import analyticsOpsKpis        from "./analytics/ops_kpis.js";
+import analyticsPipeline       from "./analytics/pipeline.js";
+import analyticsOtd            from "./analytics/otd.js";
 
 import catalogSearch           from "./catalog/search.js";
 import catalogSynonyms         from "./catalog/synonyms.js";
@@ -596,6 +647,9 @@ const STATIC_ROUTES = {
   "/push/send":                     pushSend,
   "/portal/tokens":                 portalTokens,
   "/portal/view":                   portalView,
+  "/portal/auth/login":             portalAuthLogin,
+  "/portal/auth/invite":            portalAuthInvite,
+  "/portal/auth/me":                portalAuthMe,
   "/portal/pay":                    portalPay,
   "/portal/reorder":                portalReorder,
   "/portal/invoice_pdf":            portalInvoicePdf,
@@ -608,8 +662,19 @@ const STATIC_ROUTES = {
   "/orders/extraction_jobs":        ordersExtractionJobs,
   "/orders/cost_summary":           ordersCostSummary,
   "/orders/voucher_pdf":            ordersVoucherPdf,
+  "/orders/export":                 ordersExport,
   "/orders/so_pdf":                 ordersSoPdf,
   "/orders/reconcile_quotes":       ordersReconcileQuotes,
+  "/orders/reconcile_invoice":       ordersReconcileInvoice,
+  "/orders/quotes":                  ordersQuotes,
+  "/documents/packing_list_ingest": documentsPackingList,
+  "/documents/delivery_note_ingest": documentsDeliveryNote,
+  "/logistics/freight_allocation":   logisticsFreightAllocation,
+  "/orders/detach_quote":            ordersDetachQuote,
+  "/orders/attach_quote":           ordersAttachQuote,
+  "/orders/attach_sales_order": ordersAttachSalesOrder,
+  "/orders/three_way_report": ordersThreeWayReport,
+  "/orders/three_way_summary": ordersThreeWaySummary,
   "/supplier_rfq":                  supplierRfqIndex,
   "/supplier_rfq/send":             supplierRfqSend,
   "/supplier_rfq/quote":            supplierRfqQuote,
@@ -622,6 +687,8 @@ const STATIC_ROUTES = {
   "/analytics/refresh":             analyticsRefresh,
   "/analytics/funnel":              analyticsFunnel,
   "/analytics/ops_kpis":            analyticsOpsKpis,
+  "/analytics/pipeline":            analyticsPipeline,
+  "/analytics/otd":                 analyticsOtd,
   "/catalog/search":                catalogSearch,
   "/catalog/synonyms":              catalogSynonyms,
   "/catalog/alternatives":          catalogAlternatives,
@@ -665,6 +732,7 @@ const STATIC_ROUTES = {
   "/cron/drift-meter":               driftMeterCron,
   "/cron/drift-report":              driftReportCron,
   "/cron/eval_quality_alert":        evalQualityAlertCron,
+  "/cron/extraction_reaper":         extractionReaperCron,
   "/edi/inbound":                   ediInbound,
   "/edi/outbound":                  ediOutbound,
   "/edi/partners":                  ediPartners,
@@ -786,6 +854,7 @@ const STATIC_ROUTES = {
   "/admin/customer_locations":      adminCustomerLocations,
   "/admin/diagnostics":             adminDiagnostics,
   "/admin/docai_settings":          adminDocaiSettings,
+  "/admin/so_processing_mode":      adminSoProcessingMode,
   "/admin/docai_provider_keys":     docaiProviderKeys,
   "/admin/llm_settings":            adminLlmSettings,
   "/admin/nav_settings":            adminNavSettings,
@@ -860,6 +929,17 @@ const STATIC_ROUTES = {
   "/quotes/pdf":                    quotesPdf,
   "/quotes":                        quotesIndex,
   "/quotes/send":                   quotesSend,
+  "/quotes/ingest":                 quotesIngest,
+  "/comms/routing":                 commsRouting,
+  "/comms/payment_statement":       commsPaymentStatement,
+  "/comms/service_report":          commsServiceReport,
+  "/comms/service_report_template": commsServiceReportTpl,
+  "/comms/dispatch_register":       commsDispatchRegister,
+  "/comms/dispatch_lines":          commsDispatchLines,
+  "/comms/graph":                   commsGraph,
+  "/comms/graph/callback":          commsGraphCallback,
+  "/marketing/send":                marketingSend,
+  "/marketing/unsubscribe":         marketingUnsubscribe,
   "/quotes/convert":                quotesConvert,
   "/quotes/expire":                 quotesExpire,
   "/agents/handle_replies":         agentsHandleReplies,
@@ -878,13 +958,18 @@ const STATIC_ROUTES = {
   "/bom/parse":                      bomParse,
   "/bom/where-used":                 bomWhereUsed,
   "/bom/from-drawing":               bomFromDrawing,
+  "/bom/uploads":                    bomUploads,
   "/claude/messages":               claudeMessages,
 
   "/communications":                commsList,
   "/communications/draft":          commsDraft,
+  "/communications/log":            commsLog,
   "/communications/missing_doc":    commsMissingDoc,
   "/communications/send":           commsSend,
   "/copilot/confirm":               copilotConfirm,
+  "/sales/part_tracking":           salesPartTracking,
+  "/admin/seller_details":          adminSellerDetails,
+  "/agent/personas":                agentPersonas,
   "/copilot/proposals":             copilotProposals,
   "/metrics":                       metricsCatalog,
   "/pdm/raw-material":              pdmRawMaterial,
@@ -900,6 +985,7 @@ const STATIC_ROUTES = {
   "/customers/gst_lookup":          customersGstLookup,
   "/customers/duplicates":          customersDuplicates,
   "/customers/merge":               customersMerge,
+  "/customers/owner":               customersOwner,
   "/customer_locations":            customerLocationsIndex,
   "/locations":                     locationsIndex,
   "/customers/health_score":        customersHealthScore,
@@ -914,8 +1000,12 @@ const STATIC_ROUTES = {
   "/eway_bills/expire":             ewayBillsExpire,
 
   "/delivery/promise":              deliveryPromise,
+  "/delays/scan":                   delaysScan,
   "/logistics/consolidations":      logisticsConsolidations,
   "/logistics/freight_bids":        logisticsFreightBids,
+  "/logistics/exceptions":          logisticsExceptions,
+  "/admin/logistics_monitor_rules": adminLogisticsMonitorRules,
+  "/cron/logistics-monitor-tick":   logisticsMonitorTick,
   "/deploys":                       deploysIndex,
 
   "/documents":                     documentsIndex,
@@ -947,6 +1037,7 @@ const STATIC_ROUTES = {
   "/inventory/forecasts":           inventoryForecasts,
   "/inventory/forecast_runs":       inventoryForecastRuns,
   "/inventory/plans":               inventoryPlans,
+  "/inventory/demand_story":        inventoryDemandStory,
   "/inventory/exceptions":          inventoryExceptions,
   "/inventory/allocations":         inventoryAllocations,
   "/inventory/explain":             inventoryExplain,
@@ -1002,8 +1093,12 @@ const STATIC_ROUTES = {
   "/sales/leads":                   salesLeads,
   "/sales/opportunities":           salesOpportunities,
   "/opportunities/line_items":      opportunityLineItems,
+  "/opportunities/quotes":          opportunityQuotes,
   "/sales/projects":                salesProjects,
   "/sales/shipments":               salesShipments,
+  "/sales/shipment_tracking":       salesShipmentTracking,
+  "/sales/shipment_import":         salesShipmentImport,
+  "/sales/pending_sales_orders":    salesPendingSalesOrders,
   "/sales/score_lead":              salesScoreLead,
   "/sales/predict_opportunity":     salesPredictOpportunity,
 
@@ -1027,6 +1122,13 @@ const STATIC_ROUTES = {
   "/spare_matrix/obsolete":         spareMatrixObsolete,
   "/spare_matrix/opportunities":    spareMatrixOpportunities,
   "/spare_matrix/recommend":        spareMatrixRecommend,
+  // Bulk gun-drawing upload (EG/2D/3D) — static, so they resolve BEFORE the
+  // dynamic "/spare_matrix/<id>" route (which would else capture "drawings").
+  "/spare_matrix/drawings/stage":   spareMatrixDrawingsStage,
+  "/spare_matrix/drawings/list":    spareMatrixDrawingsList,
+  "/spare_matrix/drawings/update":  spareMatrixDrawingsUpdate,
+  "/spare_matrix/drawings/commit":  spareMatrixDrawingsCommit,
+  "/spare_matrix/drawings/download": spareMatrixDrawingsDownload,
   "/spare_matrix":                  spareMatrixIndex,
   "/failure_events":                failureEventsIndex,
   "/fmeca":                         fmecaIndex,
@@ -1082,6 +1184,7 @@ const DYNAMIC_ROUTES = [
   // matcher catches them first.
   { prefix: "/source_pos/",  suffix: "/ack_extract", handler: sourcePosAckExtract, param: "id" },
   { prefix: "/source_pos/",  suffix: "/ack_accept",  handler: sourcePosAckAccept,  param: "id" },
+  { prefix: "/source_pos/",  suffix: "/receive",     handler: sourcePosReceive,   param: "id" },
   // "/source_pos/<id>"
   { prefix: "/source_pos/",  handler: sourcePosById,  param: "id" },
   // "/spare_matrix/<id>" -> full matrix read / bulk save / delete.
@@ -1092,7 +1195,7 @@ const DYNAMIC_ROUTES = [
   { prefix: "/spare_matrix/", suffix: "/recompute_recommended", handler: spareMatrixRecomputeRec, param: "id" },
   { prefix: "/spare_matrix/", suffix: "/recommended",           handler: spareMatrixRecommended,  param: "id" },
   { prefix: "/spare_matrix/", suffix: "/to_quote",              handler: spareMatrixToQuote,      param: "id" },
-  { prefix: "/spare_matrix/", suffix: "/suggest_columns",       handler: spareMatrixSuggestCols,  param: "id" },
+  { prefix: "/spare_matrix/", suffix: "/share",                 handler: spareMatrixShare,        param: "id" },
   { prefix: "/spare_matrix/", handler: spareMatrixById, param: "id" },
   // Invoices: /invoices/<id>. The static "/invoices" + "/invoices/pdf"
   // + "/invoices/send" entries above take precedence; the dynamic
@@ -1107,6 +1210,9 @@ const DYNAMIC_ROUTES = [
   { prefix: "/inventory/exceptions/", suffix: "/ack",      handler: inventoryExceptions, param: "id" },
   { prefix: "/inventory/exceptions/", suffix: "/resolve",  handler: inventoryExceptions, param: "id" },
   { prefix: "/inventory/exceptions/", suffix: "/suppress", handler: inventoryExceptions, param: "id" },
+  { prefix: "/logistics/exceptions/", suffix: "/ack",      handler: logisticsExceptions, param: "id" },
+  { prefix: "/logistics/exceptions/", suffix: "/resolve",  handler: logisticsExceptions, param: "id" },
+  { prefix: "/logistics/exceptions/", suffix: "/suppress", handler: logisticsExceptions, param: "id" },
   // PATCH /inventory/allocations/<id>.
   { prefix: "/inventory/allocations/", handler: inventoryAllocations, param: "id" },
   // PATCH /inventory/suppliers/<id>.

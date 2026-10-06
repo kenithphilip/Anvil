@@ -5,19 +5,44 @@
 import { describe, it, expect } from "vitest";
 import { promoteApprovedOrder } from "../api/eval/promote.js";
 
-const makeSvc = (capture) => ({
+// The real column set of each table this touches. The stub REJECTS a filter on
+// a column that does not exist, the way PostgREST does — with code 42703, and
+// by failing the whole statement.
+//
+// This is not pedantry. The previous stub swallowed `.eq()` unconditionally,
+// and under it a query filtering `order_documents.tenant_id` — a column that
+// has never existed (001_init.sql:169) — passed every test while returning the
+// empty tuple in production. Every harvested golden was written with
+// `documents: []`, and the live-model replay skipped 100% of them.
+const COLUMNS = {
+  order_documents: ["order_id", "document_id", "role"],
+  documents: ["id", "tenant_id", "sha256", "storage_bucket", "storage_path", "mime_type", "filename"],
+  eval_cases: ["id", "tenant_id", "suite", "case_id", "description", "documents", "expected", "enabled"],
+};
+
+const makeSvc = (capture, seed = {}) => ({
   from(table) {
+    let bad = null;
     const b = {
       select() { return b; },
-      eq() { return b; },
+      eq(col) {
+        const cols = COLUMNS[table];
+        if (cols && !cols.includes(col)) bad = col;
+        return b;
+      },
       in() { return b; },
       upsert(row) { capture.evalCase = row; return b; },
       single() { return b; },
       maybeSingle() { return b; },
       then(resolve) {
+        if (bad) {
+          return Promise.resolve({
+            data: null,
+            error: { code: "42703", message: `column ${table}.${bad} does not exist` },
+          }).then(resolve);
+        }
         if (table === "eval_cases") return Promise.resolve({ data: { id: "ec-1" }, error: null }).then(resolve);
-        // order_documents / documents: no source docs in these tests.
-        return Promise.resolve({ data: [], error: null }).then(resolve);
+        return Promise.resolve({ data: seed[table] || [], error: null }).then(resolve);
       },
     };
     return b;
@@ -109,5 +134,28 @@ describe("promoteApprovedOrder", () => {
     delete order.result.salesOrder.customer.po_number;
     const res = await promoteApprovedOrder(makeSvc(capture), order, {});
     expect(res.case_id).toBe("ord-1");
+  });
+
+  it("resolves the source documents — the golden must be replayable", async () => {
+    // The bug this guards: filtering order_documents on a tenant_id it does
+    // not have made PostgREST reject the statement, so `documents` came back
+    // empty and replay.js skipped the case with "no_source_document". A golden
+    // that cannot be replayed cannot catch a model or prompt regression, which
+    // is the only thing the live replay exists for.
+    const capture = {};
+    const svc = makeSvc(capture, {
+      order_documents: [{ order_id: "ord-1", document_id: "doc-1", role: "purchase_order" }],
+      documents: [{ id: "doc-1", sha256: "sha-1" }],
+    });
+    const out = await promoteApprovedOrder(svc, approvedOrder());
+    expect(out.promoted).toBe(true);
+    expect(capture.evalCase.documents).toEqual([{ documentId: "doc-1", role: "purchase_order", sha256: "sha-1" }]);
+    expect(capture.evalCase.expected._provenance.source_sha256).toBe("sha-1");
+  });
+
+  it("records the document kind so a golden says which profile reads it", async () => {
+    const capture = {};
+    await promoteApprovedOrder(makeSvc(capture), approvedOrder());
+    expect(capture.evalCase.expected._provenance.extraction_kind).toBe("po");
   });
 });

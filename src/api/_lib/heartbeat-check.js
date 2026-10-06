@@ -27,6 +27,25 @@ export const CRON_EXPECTED_MAX_AGE_MS = {
   "d365/sync":            75 * 60 * 1000,
   "acumatica/sync":       75 * 60 * 1000,
   "p21/sync":             75 * 60 * 1000,
+  // The logistics monitor runs on BOTH paths: tick.js's 5-min ALWAYS group
+  // (best-effort — it needs the external cron-job.org trigger, since Hobby tier
+  // forbids a sub-daily vercel.json schedule) and cron/daily (the only cadence
+  // Vercel actually guarantees). These two rows are the ones the daily path
+  // writes, so they carry the daily bound:
+  //
+  //   logistics/monitor_daily  the daily registration's own row.
+  //   logistics-monitor-tick   self-recorded INSIDE the handler, so it is
+  //                            written by whichever path ran. On the default
+  //                            10-minute bound a once-daily run would leave it
+  //                            stale ~23h50m a day and hold /api/_healthz at
+  //                            503 permanently.
+  //
+  // "logistics/monitor" — tick.js's group row — deliberately keeps the 10-minute
+  // default: it is the one row that still reports whether the external 5-minute
+  // trigger is alive, and relaxing it would hide that. A dead trigger also shows
+  // up as a stale "cron/tick", so the signal is not lost either way.
+  "logistics/monitor_daily": 30 * 60 * 60 * 1000,
+  "logistics-monitor-tick":  30 * 60 * 60 * 1000,
   default:                10 * 60 * 1000,
 };
 

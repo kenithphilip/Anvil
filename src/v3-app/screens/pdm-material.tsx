@@ -43,7 +43,14 @@ const PdmMaterial = () => {
   const [phase, setPhase] = useState<"idle" | "extracting" | "review" | "saving" | "done">("idle");
   const [file, setFile] = useState<File | null>(null);
   const [partSpec, setPartSpec] = useState<any>(null);
+  // The extraction this spec came from, kept for provenance on the saved spec.
+  const [extractionRunId, setExtractionRunId] = useState<string | null>(null);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
+  // Pages the extractor never saw. A part drawing's title block sits on page 1,
+  // so a truncated read still yields a part_spec and a plausible verdict — the
+  // damage is quieter than on a parts list, and that is exactly why it needs
+  // saying: nothing else about the screen would look wrong.
+  const [truncatedPages, setTruncatedPages] = useState<number | null>(null);
   const [finishedPartNo, setFinishedPartNo] = useState("");
   const [allowance, setAllowance] = useState(3);
   const [yieldPct, setYieldPct] = useState(0.85);
@@ -53,7 +60,7 @@ const PdmMaterial = () => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const reset = () => {
-    setPhase("idle"); setFile(null); setPartSpec(null); setVerdict(null);
+    setPhase("idle"); setFile(null); setPartSpec(null); setExtractionRunId(null); setVerdict(null);
     setFinishedPartNo(""); setFailure(null); setSaved(null);
   };
 
@@ -63,14 +70,19 @@ const PdmMaterial = () => {
   };
 
   const runExtraction = async (f: File) => {
-    setFile(f); setPhase("extracting"); setFailure(null); setSaved(null); setVerdict(null);
+    setFile(f); setPhase("extracting"); setFailure(null); setSaved(null); setVerdict(null); setTruncatedPages(null);
     try {
       const ex: any = await AnvilBackend?.documents?.extract?.(f, { kind: "part_drawing" });
       if (!ex) throw new Error("Extraction backend not configured");
+      // extract.js reads page 1 only past the background threshold and returns
+      // large_pdf so the caller can queue the rest. This screen cannot — the
+      // queue keys jobs to an order and there is no order here — so it reports.
+      setTruncatedPages(ex.large_pdf ? (ex.total_pages || null) : null);
       if (ex.status !== "ok") { setFailure({ status: ex.status || "failed", reason: ex.status_reason || "failed" }); setPhase("idle"); return; }
       const spec = ex.normalized?.part_spec || null;
       if (!spec) { setFailure({ status: "failed", reason: "non_drawing" }); setPhase("idle"); return; }
       setPartSpec(spec);
+      setExtractionRunId(ex.run_id || null);
       setFinishedPartNo(spec.title_block?.part_no || spec.title_block?.drawing_no || "");
       const resp = await determine(spec, { allowanceMm: allowance, yieldPct });
       setVerdict(resp?.verdict || resp || null);
@@ -103,11 +115,18 @@ const PdmMaterial = () => {
     if (!verdict || !finishedPartNo.trim()) return;
     setPhase("saving");
     try {
-      const resp: any = await AnvilBackend?.pdm?.saveRawMaterial?.(finishedPartNo.trim(), verdict);
+      const resp: any = await AnvilBackend?.pdm?.saveRawMaterial?.(finishedPartNo.trim(), verdict, partSpec, extractionRunId);
       if (!resp || resp.error) { window.notifyError?.("Could not save", (resp && resp.error && (resp.error.message || resp.error)) || "save failed"); setPhase("review"); return; }
       setSaved({ procurement_type: resp.procurement_type, raw_material_part_no: resp.raw_material_part_no || null });
       setPhase("done");
-      window.notifySuccess?.("Raw material saved", finishedPartNo.trim() + " · " + resp.procurement_type);
+      // Say plainly whether the drawing's engineering spec was stored too, and
+      // why not when it wasn't — a silent no-op is how this stayed discarded.
+      const es = resp.engineering_spec;
+      const specNote = es?.stored
+        ? " · spec saved (" + (es.fields || []).join(", ") + ")"
+        : (es?.reason === "human_authored_spec_preserved" ? " · kept the existing hand-entered spec"
+          : (es && es.reason !== "nothing_to_store" && es.reason !== "no_part_spec" ? " · spec not saved (" + es.reason + ")" : ""));
+      window.notifySuccess?.("Raw material saved", finishedPartNo.trim() + " · " + resp.procurement_type + specNote);
     } catch (err: any) { window.notifyError?.("Could not save", String(err?.message || err)); setPhase("review"); }
   };
 
@@ -166,6 +185,16 @@ const PdmMaterial = () => {
           )}
         </Card>
 
+        {truncatedPages !== null && (
+          <Banner kind="bad" title="Only page 1 was read">
+            <span className="mono-sm">
+              This drawing runs to {truncatedPages || "several"} pages and only the first was read. The title
+              block is usually on page 1, so the determination below may look right while any dimension,
+              material note or revision on a later sheet was never seen. Check it against the drawing before
+              saving.
+            </span>
+          </Banner>
+        )}
         {(phase === "review" || phase === "saving" || phase === "done") && verdict && (
           <Card title="Raw-material determination" eyebrow="step 2 · review + correct"
             right={<>

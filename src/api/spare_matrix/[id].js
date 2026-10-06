@@ -36,10 +36,6 @@ const reconcile = async (svc, table, tenantId, matrixId, incoming, mapFn) => {
   if (existing.error) throw new Error(existing.error.message);
   const keepIds = new Set((incoming || []).filter((x) => x && x.id).map((x) => x.id));
   const toDelete = (existing.data || []).map((r) => r.id).filter((id) => !keepIds.has(id));
-  if (toDelete.length) {
-    const del = await svc.from(table).delete().eq("tenant_id", tenantId).in("id", toDelete);
-    if (del.error) throw new Error(del.error.message);
-  }
   const upserts = (incoming || []).map((x, i) => mapFn(x, i));
   // Split by id: a bulk upsert that MIXES rows-with-id and rows-without-id
   // makes PostgREST unify columns and send id=null on the new rows (the
@@ -54,6 +50,19 @@ const reconcile = async (svc, table, tenantId, matrixId, incoming, mapFn) => {
   if (withoutId.length) {
     const ins = await svc.from(table).insert(withoutId).select("id");
     if (ins.error) throw new Error(ins.error.message);
+  }
+
+  // DELETE LAST, after every write has landed.
+  //
+  // This ran first, so a delete that succeeded followed by an insert that failed
+  // left the matrix short of exactly the rows it had just removed — and since
+  // the client used to send no ids at all, "removed" meant all of them. There is
+  // no transaction across PostgREST calls, so ordering is the only protection
+  // available: writes first means a mid-way failure leaves the prior state
+  // intact and the operator can simply save again.
+  if (toDelete.length) {
+    const del = await svc.from(table).delete().eq("tenant_id", tenantId).in("id", toDelete);
+    if (del.error) throw new Error(del.error.message);
   }
 };
 

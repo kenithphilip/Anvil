@@ -89,6 +89,12 @@ const CHEAP_TIER_REASONS = new Set([
   "eway_bill_structured",
 ]);
 
+// Kinds whose extraction carries a line table worth a reactive retry. A dense
+// QUOTE (a 78-line annual rate contract in 4 pages) chokes the cheap tier
+// exactly like a dense PO, but sits under the page-based chunk threshold so it
+// is never split -- the retry at the generation tier is its only recovery.
+const ESCALATABLE_KINDS = new Set(["po", "rfq", "quote"]);
+
 // Public: pick a Claude model + tier + reason for the given
 // extraction context. Pure function; no I/O.
 //
@@ -186,12 +192,31 @@ export const selectGeminiModel = (ctx = {}) => {
 // is not in CHEAP_TIER_REASONS, so a still-empty retry cannot re-trigger.
 export const shouldEscalateEmptyLines = ({ out, kind, settings } = {}) => {
   if (settings?.docai_empty_lines_escalation === false) return false;
-  if (kind !== "po" && kind !== "rfq") return false;
+  if (!ESCALATABLE_KINDS.has(kind)) return false;
   if (!out || !out.ok) return false;
   const lines = Array.isArray(out.normalized?.lines) ? out.normalized.lines : [];
   if (lines.length > 0) return false;
   if (!out.normalized?.customer) return false;
-  if (out.normalized?.classification === "non_po") return false;
+  // A genuine non-document (a PO handed to the quote extractor, or vice-versa)
+  // must not burn a second call; the extractors flag it per kind.
+  const cls = out.normalized?.classification;
+  if (cls === "non_po" || cls === "non_quote") return false;
+  return CHEAP_TIER_REASONS.has(out.model_selection_reason);
+};
+
+// Reactive retry when a first pass hit the model's OUTPUT-TOKEN ceiling
+// (claude.js returns reason "output_truncated" and drops the line tail rather
+// than silently returning a partial). The generation tier carries ~2x the
+// output budget, so on a cheaper-than-generation first pass the whole table may
+// fit on retry. Bounded like shouldEscalateEmptyLines: escalatable kinds only,
+// only from a cheap tier (a stronger model exists), opt-out via settings.
+// Unlike the empty-lines path this fires on a NOT-ok result (truncation fails
+// loudly), so the two are mutually exclusive.
+export const shouldEscalateTruncated = ({ out, kind, settings } = {}) => {
+  if (settings?.docai_truncation_escalation === false) return false;
+  if (!ESCALATABLE_KINDS.has(kind)) return false;
+  if (!out) return false;
+  if (out.reason !== "output_truncated" && out.truncated !== true) return false;
   return CHEAP_TIER_REASONS.has(out.model_selection_reason);
 };
 

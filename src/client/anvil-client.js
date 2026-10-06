@@ -64,7 +64,7 @@
   // close) under the new `anvil:` prefix. We continue to mirror to
   // localStorage under both prefixes during the transition window
   // because 43 v3 screens read the legacy key inline. Once those
-  // screens are migrated to call `ObaraBackend.getSession()` we can
+  // screens are migrated to call `AnvilBackend.getSession()` we can
   // drop the localStorage write and the supply-chain JS exfiltration
   // surface goes away.
   //
@@ -97,16 +97,37 @@
       return null;
     } catch (_) { return null; }
   };
+  // Tell this tab the session changed.
+  //
+  // The "storage" event deliberately does NOT fire in the tab that performed
+  // the write — that is the DOM spec — so a same-tab session change is
+  // invisible to anything watching storage. React's auth gate reads the
+  // session during render and has no way to know it moved; without this it
+  // only finds out on the next unrelated re-render.
+  //
+  // Guarded because this IIFE is also invoked with a non-browser `global`
+  // (jsdom setup, cold Node imports), where dispatchEvent/CustomEvent may
+  // not exist. A notification failing must never break a session write.
+  const notifySessionChanged = () => {
+    try { global.dispatchEvent?.(new CustomEvent("anvil:session")); } catch (_) {}
+  };
+
   const writeSession = (session) => {
     const value = JSON.stringify(session || null);
     ssSet(SESSION_KEY, value);
     // Mirror to localStorage during transition for the 43 screens
     // that read it directly. Tracked for removal once migrated.
     lsSet(SESSION_KEY, value);
+    notifySessionChanged();
   };
   const clearSession = () => {
     ssRemove(SESSION_KEY);
     lsRemove(SESSION_KEY);
+    // Every teardown funnels here — setSession(null), the 401 handler, the
+    // local-expiry drop, and setConfig with a blank url — so this one call
+    // covers all four. The 401 and blank-url paths had NO propagation at
+    // all before: they cleared the session and left the Shell rendered.
+    notifySessionChanged();
   };
 
   const buildHeaders = (cfg, session, extra) => {
@@ -437,6 +458,8 @@
     refresh:  async (payload) => apiFetch("/api/analytics/refresh", { method: "POST", body: payload || {} }),
     funnel:   async (q) => apiFetch("/api/analytics/funnel" + (q ? "?" + new URLSearchParams(q).toString() : "")),
     opsKpis:  async (q) => apiFetch("/api/analytics/ops_kpis" + (q ? "?" + new URLSearchParams(q).toString() : "")),
+    pipeline: async (q) => apiFetch("/api/analytics/pipeline" + (q ? "?" + new URLSearchParams(q).toString() : "")),
+    otd:      async (q) => apiFetch("/api/analytics/otd" + (q ? "?" + new URLSearchParams(q).toString() : "")),
   };
 
   const supplierRfq = {
@@ -515,6 +538,26 @@
     dataset:   async (q) => apiFetch("/api/rlhf/dataset" + (q ? "?" + new URLSearchParams(q).toString() : "")),
   };
 
+  // Ask Anvil module personas. Returns only what the tenant has enabled, so an
+  // empty list means the surface never renders. See migration 210.
+  const agent = {
+    personas: async () => apiFetch("/api/agent/personas"),
+  };
+
+  // The tenant's own registered identity — what customer-facing PDFs print as
+  // the seller. Migration 062 added the columns; nothing ever wrote them.
+  // "Where is my part?" — searches shipment_lines and returns each match with
+  // its shipment's sailing/arrival/receipt ladder.
+  const partTracking = {
+    search: async (q, limit) => apiFetch("/api/sales/part_tracking?q=" + encodeURIComponent(q || "")
+      + (limit ? "&limit=" + encodeURIComponent(limit) : "")),
+  };
+
+  const sellerDetails = {
+    get:  async () => apiFetch("/api/admin/seller_details"),
+    save: async (patch) => apiFetch("/api/admin/seller_details", { method: "PATCH", body: patch }),
+  };
+
   const erpChat = {
     sessions:    async () => apiFetch("/api/erp_chat/sessions"),
     session:     async (id) => apiFetch("/api/erp_chat/sessions?id=" + encodeURIComponent(id) + "&messages=true"),
@@ -553,6 +596,11 @@
     // Tenant docai settings (admin only). GET returns current
     // values; updateSettings PATCHes a partial.
     getSettings:    async () => apiFetch("/api/admin/docai_settings"),
+    // Mode A / Mode B: whether Anvil processes sales orders or only watches.
+    // Returns the explanation alongside the value so the screen does not keep
+    // its own copy of what the modes mean.
+    soProcessingMode:    async () => apiFetch("/api/admin/so_processing_mode"),
+    setSoProcessingMode: async (mode) => apiFetch("/api/admin/so_processing_mode", { method: "PATCH", body: { mode } }),
     updateSettings: async (patch) => apiFetch("/api/admin/docai_settings", { method: "PATCH", body: patch }),
     // Issue #210: per-tenant DocAI provider keys (encrypted) + provider order.
     // providerKeys() returns key_present booleans only (never the key).
@@ -582,18 +630,37 @@
     // caller will scan in batches).
     upload: async (file, classification, options) => {
       const opts = options || {};
+      // Hash the bytes before asking for a URL, so the server can hand back a
+      // document it already holds instead of minting a rival row for the same
+      // file. documents.sha256 has existed since 001_init and nothing ever
+      // filled it from here. Best-effort: crypto.subtle needs a secure
+      // context, and a missing hash simply means the old behaviour.
+      let sha256 = null;
+      try {
+        if (globalThis.crypto?.subtle && file.arrayBuffer) {
+          const digest = await globalThis.crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+          sha256 = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+        }
+      } catch (_) { sha256 = null; }
+
       const meta = await apiFetch("/api/documents/upload", {
         method: "POST",
-        body: { filename: file.name, mime_type: file.type, size_bytes: file.size, classification: classification || null },
+        body: {
+          filename: file.name, mime_type: file.type, size_bytes: file.size,
+          classification: classification || null, sha256,
+        },
       });
-      const upstream = await fetch(meta.uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
-      });
-      if (!upstream.ok) throw new Error("Upload failed: " + upstream.status);
+      // Content already on file: there is no signed URL and nothing to send.
+      if (!meta.deduped) {
+        const upstream = await fetch(meta.uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": file.type || "application/octet-stream" },
+          body: file,
+        });
+        if (!upstream.ok) throw new Error("Upload failed: " + upstream.status);
+      }
       let scan = null;
-      if (opts.autoScan !== false) {
+      if (opts.autoScan !== false && !meta.deduped) {
         try {
           scan = await apiFetch("/api/documents/scan", {
             method: "POST",
@@ -609,12 +676,34 @@
       return { ...meta, scan };
     },
     scan: async (documentId) => apiFetch("/api/documents/scan", { method: "POST", body: { documentId } }),
+    // A packing list is the only import document that can teach a per-part
+    // weight — a bill of lading gives one gross figure for a container. Extract
+    // it with docai.extract({ kind: "packing_list" }) and pass the payload;
+    // this fills item_master.weight_kg for parts that have none.
+    ingestPackingList: async (documentId, extracted) =>
+      apiFetch("/api/documents/packing_list_ingest", { method: "POST", body: { document_id: documentId, extracted } }),
+    // The delivery challan: the only document that carries the docket number,
+    // so it is the only thing that can stop the pre-send dispatch check saying
+    // "no docket" on every invoice. Extract with
+    // docai.extract({ kind: "delivery_note" }) and pass the payload; this
+    // records the despatched quantity per line against the order.
+    // orderId is optional — omit it and the endpoint resolves the order from
+    // the challan's buyer PO number, then its invoice number, REFUSING rather
+    // than guessing when neither is unambiguous.
+    // opts.confirm_po_mismatch records the challan on orderId even though its
+    // PO is on no order and differs from the order's (the "po_differs"
+    // refusal is overridable; an order_mismatch is not).
+    ingestDeliveryNote: async (documentId, extracted, orderId = null, opts = {}) =>
+      apiFetch("/api/documents/delivery_note_ingest", { method: "POST", body: {
+        document_id: documentId, extracted, ...(orderId ? { order_id: orderId } : {}),
+        ...(opts && opts.confirm_po_mismatch === true ? { confirm_po_mismatch: true } : {}),
+      } }),
     fetch: async (id) => apiFetch("/api/documents/" + id),
     remove: async (id) => apiFetch("/api/documents/" + id, { method: "DELETE" }),
     // OCR evidence rows for a document. Returns the per-token bboxes
     // the documents-detail overlay paints on top of the source image.
     // The Mistral OCR pipeline (/api/documents/ocr, exposed as
-    // ObaraBackend.ocr.run below) populates these; an empty `rows`
+    // AnvilBackend.ocr.run below) populates these; an empty `rows`
     // array means OCR has not yet been run on this document.
     evidence: async (id) => apiFetch("/api/documents/" + id + "/evidence"),
     // List documents for the tenant. Powers the Documents library
@@ -706,6 +795,26 @@
       return await resp.blob();
     },
     voucherShare: async (orderId) => apiFetch("/api/orders/voucher_pdf?orderId=" + encodeURIComponent(orderId) + "&format=share"),
+    // The extracted sales order as an .xlsx (falls back to .csv server-side if
+    // the xlsx dep is absent). Returns a Blob; the caller triggers the download.
+    excelBlob: async (orderId) => {
+      const cfg = readConfig();
+      if (!cfg.url) throw new Error("Backend URL not configured");
+      const session = readSession();
+      const url = cfg.url.replace(/\/+$/, "") + "/api/orders/export?orderId=" + encodeURIComponent(orderId);
+      const headers = {};
+      if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+      if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
+      const resp = await fetch(url, { headers });
+      if (!resp.ok) {
+        let msg = "Excel export " + resp.status;
+        try { const j = await resp.json(); msg = j?.error?.message || msg; } catch (_) { /* binary/empty */ }
+        throw new Error(msg);
+      }
+      const disposition = resp.headers.get("Content-Disposition") || "";
+      const m = disposition.match(/filename="?([^"]+)"?/);
+      return { blob: await resp.blob(), filename: m ? m[1] : "sales-order.xlsx" };
+    },
     // Tally-style Sales Order acknowledgment PDF (so_pdf.js).
     soPdfBlob: async (orderId) => {
       const cfg = readConfig();
@@ -728,6 +837,63 @@
     // (Anvil finds the quotes; no manual quote-picking). Returns the
     // verification report (matched / price_mismatch / unmatched + flags).
     reconcileQuotes: async (orderId, opts) => apiFetch("/api/orders/reconcile_quotes", { method: "POST", body: { order_id: orderId, ...(opts || {}) } }),
+    // Does an invoice agree with the customer's PO? A buyer books an incoming
+    // invoice against the PO it was raised for, and a mismatch means no goods
+    // receipt and therefore no payment. Read-only: it answers, it refuses
+    // nothing. opts takes { invoice_id } for an existing invoice,
+    // { invoice_lines } to check a proposed one before it exists, and
+    // { price_tolerance_pct } to loosen the default exact-match on price.
+    reconcileInvoice: async (orderId, opts) => apiFetch("/api/orders/reconcile_invoice", { method: "POST", body: { order_id: orderId, ...(opts || {}) } }),
+    // What quotes are attached to this PO — filename, number, line count,
+    // value and effective date. Read-only. Answers "did that upload work?",
+    // which the reconcile response cannot: it names only the quotes that
+    // MATCHED, and the interesting case is the one that did not.
+    // Attach a sales order — the ERP's reply to a customer PO — to the order
+    // it answers. The document names the order (its buyer reference is the
+    // customer's PO number), so no order_id is required; pass one only to
+    // override an ambiguous or unreadable reference.
+    attachSalesOrder: async (documentId, extracted, orderId) =>
+      apiFetch("/api/orders/attach_sales_order", {
+        method: "POST",
+        body: { document_id: documentId, extracted, ...(orderId ? { order_id: orderId } : {}) },
+      }),
+    // The PO, Anvil and the ERP side by side for one order. Read-only.
+    // The running score across orders — the number the Mode A/B decision
+    // turns on. Bounded; defaults to the 50 most recent with a sales order.
+    threeWaySummary: async (limit) =>
+      apiFetch("/api/orders/three_way_summary" + (limit ? "?limit=" + encodeURIComponent(limit) : "")),
+    threeWayReport: async (orderId) =>
+      apiFetch("/api/orders/three_way_report?orderId=" + encodeURIComponent(orderId)),
+    attachedQuotes: async (orderId) => apiFetch("/api/orders/quotes?order_id=" + encodeURIComponent(orderId)),
+    // One attached quote in full: a signed URL to read the PDF, plus the
+    // extracted lines with rates converted back to PERCENTAGES, because the
+    // operator is checking them against a document that prints percentages.
+    attachedQuote: async (orderId, documentId) =>
+      apiFetch("/api/orders/quotes?order_id=" + encodeURIComponent(orderId) + "&document_id=" + encodeURIComponent(documentId)),
+    // Remove a redundant attachment. Unlinks only — the document, its audit
+    // trail and its extraction history are kept, and the endpoint refuses to
+    // detach the copy that actually carries the quote.
+    detachQuote: async (orderId, documentId) =>
+      apiFetch("/api/orders/detach_quote", { method: "POST", body: { order_id: orderId, document_id: documentId } }),
+    // Attach an uploaded quotation PDF to a PO. Extract it first with
+    // docai.extract({ kind: "quote" }) and pass the payload — the endpoint
+    // links order_documents, ingests into quotes/quote_lines, and the existing
+    // reconcileQuotes then picks it up like any other quote for that customer.
+    // extractionAttempted=false is the PREFLIGHT: link the document and ask
+    // whether it even needs a model. The server recognises quotes Anvil itself
+    // authored and answers needs_extraction:false, which is how attaching our
+    // own quote PDF costs nothing and overwrites nothing.
+    attachQuote: async (orderId, documentId, extracted, extractionAttempted = true) =>
+      apiFetch("/api/orders/attach_quote", {
+        method: "POST",
+        body: {
+          order_id: orderId,
+          document_id: documentId,
+          extracted: extracted || null,
+          extraction_attempted: extractionAttempted,
+        },
+      }),
+
     // Phase 3.6 observability: full pipeline-diagnostics blob for
     // an order. Used by the workspace's Pipeline Diagnostics tab
     // to render extraction_runs + processing_events + adapter
@@ -736,8 +902,24 @@
   };
 
   const customers = {
-    list: async () => apiFetch("/api/customers"),
+    // params (optional): { owner: "me" | "none" | <member id> } narrows the
+    // list to an account owner's customers, or the unassigned ones;
+    // { include: "owner_name" } adds each owner's display name (an auth
+    // lookup per distinct owner, so only screens that render it ask).
+    list: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/customers" + (qs ? "?" + qs : ""));
+    },
     upsert: async (payload) => apiFetch("/api/customers", { method: "POST", body: payload }),
+    // Account owner (migration 227). assignOwner payload:
+    //   { customer_ids: [...], owner_user_id: <member id> | null, move_open_opportunities: bool }
+    // ownerSuggestions params (optional): { customer_id } to ask about one
+    // account; none for every unowned account of the tenant.
+    assignOwner: async (payload) => apiFetch("/api/customers/owner", { method: "POST", body: payload }),
+    ownerSuggestions: async (params) => {
+      const qs = new URLSearchParams({ suggest: "1", ...(params || {}) }).toString();
+      return apiFetch("/api/customers/owner?" + qs);
+    },
     // Issue #186: validate + derive (state code / PAN / validity) from a GSTIN,
     // and fetch the registry (name/address) when a GST provider is configured.
     gstLookup: async (gstin) => apiFetch("/api/customers/gst_lookup", { method: "POST", body: { gstin } }),
@@ -1057,6 +1239,7 @@
     },
     forecastRuns: async (limit) => apiFetch("/api/inventory/forecast_runs" + (limit ? "?limit=" + limit : "")),
     forecastRun: async (id) => apiFetch("/api/inventory/forecast_runs?id=" + encodeURIComponent(id)),
+    demandStory: async (opportunityId) => apiFetch("/api/inventory/demand_story?opportunity_id=" + encodeURIComponent(opportunityId)),
     plans: {
       list: async (params) => {
         const qs = new URLSearchParams(params || {}).toString();
@@ -1205,6 +1388,7 @@
     },
     asset: async (id) => apiFetch("/api/bom/assets?id=" + encodeURIComponent(id)),
     assetByCode: async (code) => apiFetch("/api/bom/assets?asset_code=" + encodeURIComponent(code)),
+    uploads: async (params) => apiFetch("/api/bom/uploads" + (params && Object.keys(params).length ? "?" + new URLSearchParams(params).toString() : "")),
     linkProject: async (payload) => apiFetch("/api/bom/asset_projects", { method: "POST", body: payload }),
     unlinkProject: async (assetId, projectId) =>
       apiFetch("/api/bom/asset_projects?asset_id=" + encodeURIComponent(assetId) + "&project_id=" + encodeURIComponent(projectId), { method: "DELETE" }),
@@ -1242,8 +1426,16 @@
   // persists the reviewed verdict into the recipe + BOM + procurement_type.
   const pdm = {
     determineRawMaterial: async (payload) => apiFetch("/api/pdm/raw-material", { method: "POST", body: payload }),
-    saveRawMaterial: async (finishedPartNo, verdict) =>
-      apiFetch("/api/pdm/raw-material", { method: "POST", body: { finished_part_no: finishedPartNo, verdict, commit: true } }),
+    // part_spec + extraction_run_id are carried so the commit can ALSO store
+    // the engineering spec the same drawing gave us (finish, heat treatment,
+    // tolerances, GD&T). Without them the server takes its no_part_spec branch
+    // and that spec stays discarded.
+    saveRawMaterial: async (finishedPartNo, verdict, partSpec = null, extractionRunId = null) =>
+      apiFetch("/api/pdm/raw-material", { method: "POST", body: {
+        finished_part_no: finishedPartNo, verdict, commit: true,
+        ...(partSpec ? { part_spec: partSpec } : {}),
+        ...(extractionRunId ? { extraction_run_id: extractionRunId } : {}),
+      } }),
   };
 
   const copilot = {
@@ -1304,6 +1496,9 @@
     create: async (payload) => apiFetch("/api/source_pos", { method: "POST", body: payload }),
     update: async (id, patch) => apiFetch("/api/source_pos/" + encodeURIComponent(id), { method: "PATCH", body: patch }),
     ack: async (sourcePoId, ack) => apiFetch("/api/source_pos/ack", { method: "POST", body: { sourcePoId, ack } }),
+    // P2 GRN: outstanding lines + prior receipts, and record a goods receipt.
+    getReceiving: async (id) => apiFetch("/api/source_pos/" + encodeURIComponent(id) + "/receive"),
+    receive: async (id, payload) => apiFetch("/api/source_pos/" + encodeURIComponent(id) + "/receive", { method: "POST", body: payload }),
     scorecard: async (params) => {
       const qs = new URLSearchParams(params || {}).toString();
       return apiFetch("/api/source_pos/scorecard" + (qs ? "?" + qs : ""));
@@ -1314,14 +1509,29 @@
     draft: async (payload) => apiFetch("/api/communications/draft", { method: "POST", body: payload }),
     send: async (id) => apiFetch("/api/communications/send", { method: "POST", body: { id } }),
     missingDoc: async (orderId) => apiFetch("/api/communications/missing_doc", { method: "POST", body: { orderId } }),
-    // List communications for an order or source PO. ThreadDrawer
-    // populates its comms panel from this endpoint; was missing,
-    // so the comms timeline rendered empty regardless of how many
-    // emails the order had attached.
-    list: async (orderId) => {
-      const qs = orderId ? "?order_id=" + encodeURIComponent(orderId) : "";
-      return apiFetch("/api/communications" + qs);
+    // List communications. ThreadDrawer populates its comms panel from
+    // this endpoint; was missing, so the comms timeline rendered empty
+    // regardless of how many emails the order had attached.
+    //
+    // A string argument is an order id (the ThreadDrawer call). An object
+    // is a filter set of object_type, object_id, customer_id, order_id,
+    // source_po_id, versions and limit. The Follow-up timeline (TouchLog)
+    // passes object_type + object_id, plus versions: "all" on a quote so
+    // every version's touches show. Empty values are dropped, not sent.
+    list: async (filters) => {
+      const params = typeof filters === "string" ? { order_id: filters } : (filters || {});
+      const sp = new URLSearchParams();
+      for (const k of Object.keys(params)) {
+        const v = params[k];
+        if (v != null && v !== "") sp.set(k, String(v));
+      }
+      const qs = sp.toString();
+      return apiFetch("/api/communications" + (qs ? "?" + qs : ""));
     },
+    // Record a rep touch (call / meeting / whatsapp / visit / note) against a
+    // quote or an opportunity. Payload: { object_type, object_id, channel,
+    // body, customer_contact_id?, metadata: { next_followup_at? } }.
+    log: async (payload) => apiFetch("/api/communications/log", { method: "POST", body: payload }),
   };
 
   const evalExt = {
@@ -1330,6 +1540,14 @@
     listCases: async (suite) => apiFetch("/api/eval/cases" + (suite ? "?suite=" + encodeURIComponent(suite) : "")),
     upsertCase: async (payload) => apiFetch("/api/eval/cases", { method: "POST", body: payload }),
     deleteCase: async (id) => apiFetch("/api/eval/cases?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    // The only scorer that RE-RUNS the model on the golden's original bytes,
+    // and therefore the only one sensitive to a prompt or model change —
+    // rescore replays a frozen extract and cannot see either.
+    //
+    // It has been routed and unreachable: no client method existed, so the
+    // one lever for "did that prompt change help?" could only be pulled with
+    // a raw POST. Burns real LLM calls, so it is deliberate and capped.
+    replay: async (opts) => apiFetch("/api/eval/replay", { method: "POST", body: opts || {} }),
   };
 
   const cost = {
@@ -1376,8 +1594,22 @@
     bulkFillRecommended: async (id, opts) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/recommended", { method: "PATCH", body: { bulk: { source: (opts && opts.source) || "max", only_blank: !!(opts && opts.only_blank) } } }),
     // PR5: feed the recommended sheet into a DRAFT quote (unpriced).
     toQuote: async (id, payload) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/to_quote", { method: "POST", body: payload || {} }),
-    // Scan every gun's BOM in the matrix and propose new spare-category columns.
-    suggestColumns: async (id) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/suggest_columns"),
+    // Column suggestion now runs client-side (preset-aware, copper-critical) in
+    // spares.tsx via suggestSpareColumns — no server round-trip.
+    // Share a matrix with its customer via the portal (returns { token, url }).
+    share: async (id) => apiFetch("/api/spare_matrix/" + encodeURIComponent(id) + "/share", { method: "POST", body: {} }),
+    // Bulk gun-drawing upload (EG sheet / 2D / 3D). Files upload to storage via
+    // documents.upload first; stage() filename-matches them to guns, update()
+    // corrects a staged row, commit() finalizes. list() is the review/track feed.
+    drawings: {
+      stage: async (payload) => apiFetch("/api/spare_matrix/drawings/stage", { method: "POST", body: payload || {} }),
+      list: async (params) => apiFetch("/api/spare_matrix/drawings/list" + (params && Object.keys(params).length ? "?" + new URLSearchParams(params).toString() : "")),
+      update: async (payload) => apiFetch("/api/spare_matrix/drawings/update", { method: "POST", body: payload || {} }),
+      commit: async (payload) => apiFetch("/api/spare_matrix/drawings/commit", { method: "POST", body: payload || {} }),
+      // Download-controlled fetch of one drawing (gun_drawings.id) -> signed URL
+      // or external link. Server-gated by the `drawing.download` action.
+      download: async (id) => apiFetch("/api/spare_matrix/drawings/download?id=" + encodeURIComponent(id)),
+    },
   };
 
   // Reliability step 4a: in-field failure / replacement event stream, keyed to
@@ -1422,6 +1654,11 @@
     createOpportunityLine: async (payload) => apiFetch("/api/opportunities/line_items", { method: "POST", body: payload }),
     updateOpportunityLine: async (id, payload) => apiFetch("/api/opportunities/line_items?id=" + encodeURIComponent(id), { method: "PATCH", body: payload }),
     deleteOpportunityLine: async (id) => apiFetch("/api/opportunities/line_items?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    // Uploaded external quote revisions per opportunity (migration 203).
+    listOpportunityQuotes: async (opportunity_id) => apiFetch("/api/opportunities/quotes?opportunity_id=" + encodeURIComponent(opportunity_id)),
+    addOpportunityQuote: async (payload) => apiFetch("/api/opportunities/quotes", { method: "POST", body: payload }),
+    updateOpportunityQuote: async (id, payload) => apiFetch("/api/opportunities/quotes?id=" + encodeURIComponent(id), { method: "PATCH", body: payload }),
+    deleteOpportunityQuote: async (id) => apiFetch("/api/opportunities/quotes?id=" + encodeURIComponent(id), { method: "DELETE" }),
     // Audit P7.2: Haiku close-probability prediction.
     predictOpportunity: async (id) => apiFetch("/api/sales/predict_opportunity" + (id ? "?id=" + encodeURIComponent(id) : "")),
     repredictOpportunities: async () => apiFetch("/api/sales/predict_opportunity", { method: "POST" }),
@@ -1430,6 +1667,9 @@
     updateInternalSo: async (payload) => apiFetch("/api/sales/internal_so", { method: "PATCH", body: payload }),
     deleteInternalSo: async (id) => apiFetch("/api/sales/internal_so?id=" + encodeURIComponent(id), { method: "DELETE" }),
     listShipments: async (params) => apiFetch("/api/sales/shipments" + (params ? "?" + new URLSearchParams(params).toString() : "")),
+    shipmentTracking: async (params) => apiFetch("/api/sales/shipment_tracking" + (params ? "?" + new URLSearchParams(params).toString() : "")),
+    shipmentImport: async (payload) => apiFetch("/api/sales/shipment_import", { method: "POST", body: payload }),
+    pendingSalesOrders: async (params) => apiFetch("/api/sales/pending_sales_orders" + (params ? "?" + new URLSearchParams(params).toString() : "")),
     createShipment: async (payload) => apiFetch("/api/sales/shipments", { method: "POST", body: payload }),
     updateShipment: async (payload) => apiFetch("/api/sales/shipments", { method: "PATCH", body: payload }),
     deleteShipment: async (id) => apiFetch("/api/sales/shipments?id=" + encodeURIComponent(id), { method: "DELETE" }),
@@ -1710,6 +1950,14 @@
     addBid: async (payload) => apiFetch("/api/logistics/freight_bids", { method: "POST", body: payload }),
     awardBid: async (id) => apiFetch("/api/logistics/freight_bids", { method: "POST", body: { action: "award", id } }),
     deleteBid: async (id) => apiFetch("/api/logistics/freight_bids?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    // P1 logistics monitor: config-driven delay/SLA exceptions + escalation.
+    getMonitorRules: async () => apiFetch("/api/admin/logistics_monitor_rules"),
+    saveMonitorRule: async (payload) => apiFetch("/api/admin/logistics_monitor_rules", { method: "POST", body: payload }),
+    setMonitorEnabled: async (enabled) => apiFetch("/api/admin/logistics_monitor_rules", { method: "POST", body: { logistics_monitor_enabled: enabled } }),
+    listExceptions: async (params) => apiFetch("/api/logistics/exceptions" + (params ? "?" + new URLSearchParams(params).toString() : "")),
+    ackException: async (id) => apiFetch("/api/logistics/exceptions/" + encodeURIComponent(id) + "/ack", { method: "POST" }),
+    resolveException: async (id, note) => apiFetch("/api/logistics/exceptions/" + encodeURIComponent(id) + "/resolve", { method: "POST", body: { note } }),
+    suppressException: async (id, note) => apiFetch("/api/logistics/exceptions/" + encodeURIComponent(id) + "/suppress", { method: "POST", body: { note } }),
   };
 
   const api = {
@@ -1754,6 +2002,9 @@
     esign,
     edi,
     rlhf,
+    agent,
+    partTracking,
+    sellerDetails,
     erpChat,
     mcp,
     inbound,
@@ -1822,12 +2073,12 @@
   };
 
   // Canonical name post-rebrand. The old name stays as a writable
-  // alias so any consumer that grabbed `window.ObaraBackend`
+  // alias so any consumer that grabbed `window.AnvilBackend`
   // (102 call sites across screens + scripts at the rename time)
   // keeps working without an import change, and tests that swap
-  // `window.ObaraBackend` for a stub keep working too. Both globals
+  // `window.AnvilBackend` for a stub keep working too. Both globals
   // point at the same object, so a write to one is a write to both.
   global.AnvilBackend = api;
-  global.ObaraBackend = api;
+  global.AnvilBackend = api;
   global.storage = buildHybridStorage();
 })(typeof window !== "undefined" ? window : globalThis);

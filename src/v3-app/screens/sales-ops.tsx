@@ -25,9 +25,13 @@ const SalesOpsCockpit = () => {
     return r || null;
   }, []);
   const ops = useFetch(async () => { const r: any = await AnvilBackend?.analytics?.opsKpis?.(); return r || null; }, []);
+  const [granularity, setGranularity] = React.useState<"day" | "week" | "month">("week");
+  const pipeline = useFetch(async () => { const r: any = await AnvilBackend?.analytics?.pipeline?.({ granularity }); return r || null; }, [granularity]);
+  // Customer on-time-delivery (Logistics P3): committed vs actual delivery date.
+  const otd = useFetch(async () => { const r: any = await AnvilBackend?.analytics?.otd?.(); return r || null; }, []);
 
-  const loading = funnel.loading || winloss.loading || forecast.loading || ops.loading;
-  const reloadAll = () => { funnel.reload(); winloss.reload(); forecast.reload(); ops.reload(); };
+  const loading = funnel.loading || winloss.loading || forecast.loading || ops.loading || pipeline.loading || otd.loading;
+  const reloadAll = () => { funnel.reload(); winloss.reload(); forecast.reload(); ops.reload(); pipeline.reload(); otd.reload(); };
 
   const fd: any = funnel.data || {};
   const wl: any = winloss.data || {};
@@ -47,8 +51,17 @@ const SalesOpsCockpit = () => {
   const agingBuckets: any[] = Array.isArray(aging.buckets) ? aging.buckets : [];
   const repRev: any[] = Array.isArray(ok.revenue_by_rep) ? ok.revenue_by_rep : [];
   const dOrDash = (s: any) => (s && s.median != null ? `${s.median}d` : "—");
+  const otdData: any = otd.data || {};
+  const otdChipKind = (p: number): "good" | "warn" | "bad" => (p >= 95 ? "good" : p >= 85 ? "warn" : "bad");
 
-  const anyError = funnel.error || winloss.error || forecast.error || ops.error;
+  const pl: any = pipeline.data || {};
+  const plTotals: any = pl.totals || {};
+  const plCohort: any = pl.cohort || {};
+  const plAttr: any = pl.attributed || {};
+  const plTrend: any[] = Array.isArray(pl.trend) ? pl.trend : [];
+  const plStalled: any[] = Array.isArray(pl.stalled) ? pl.stalled : [];
+
+  const anyError = funnel.error || winloss.error || forecast.error || ops.error || pipeline.error || otd.error;
 
   return (
     <>
@@ -66,6 +79,80 @@ const SalesOpsCockpit = () => {
             <span className="mono-sm">Run /api/analytics/refresh + the inventory cron to populate snapshots.</span>
           </Banner>
         )}
+
+        {/* ---- P2: Pipeline conversion — quotes sent → orders processed → sales completed (paid) ---- */}
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 2, marginBottom: 8 }}>
+          <div className="mono-sm" style={{ color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: 0.5 }}>
+            Pipeline conversion{pl.scoped_to_self ? " · your accounts" : ""}
+          </div>
+          <div className="row" style={{ gap: 4 }}>
+            {(["day", "week", "month"] as const).map((gr) => (
+              <Btn key={gr} sm kind={granularity === gr ? "primary" : "ghost"} onClick={() => setGranularity(gr)}>{gr}</Btn>
+            ))}
+          </div>
+        </div>
+
+        <KPIRow cols={4}>
+          <KPI lbl="Quotes sent" v={String(plTotals.quotes_sent?.count || 0)} d={`${fmtINRShort(plTotals.quotes_sent?.value || 0)} · ${plTotals.distinct_opportunities_quoted || 0} deals`} live={(plTotals.quotes_sent?.count || 0) > 0} />
+          <KPI lbl="Orders processed" v={String(plTotals.orders_processed?.count || 0)} d="approved SOs" />
+          <KPI lbl="Sales completed" v={String(plTotals.paid?.count || 0)} d={`${fmtINRShort(plTotals.paid?.value || 0)} paid`} dKind={(plTotals.paid?.value || 0) > 0 ? "up" : ""} />
+          <KPI lbl="Quote → won" v={pctOrDash(plCohort.quote_to_won_pct)} d={`${plCohort.won || 0}/${plCohort.quoted || 0} deals · win ${pctOrDash(plCohort.win_rate_pct)}`} dKind={plCohort.quote_to_won_pct != null ? (plCohort.quote_to_won_pct >= 25 ? "up" : "down") : ""} />
+        </KPIRow>
+
+        {(plAttr.quoted || 0) > 0 && (
+          <div className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 2 }}>
+            <b>Attributed:</b> {plAttr.ordered}/{plAttr.quoted} quoted → order ({pctOrDash(plAttr.order_conv_pct)}) · {plAttr.paid} → paid ({pctOrDash(plAttr.paid_conv_pct)})
+            {plAttr.unattributed_processed_orders ? ` · ${plAttr.unattributed_processed_orders} order${plAttr.unattributed_processed_orders > 1 ? "s" : ""} unattributed (direct-PO)` : ""}
+          </div>
+        )}
+
+        <div className="row" style={{ gap: 12, marginTop: 12, marginBottom: 4, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <Card title="Conversion trend" eyebrow={`quotes → orders → paid · by ${pl.granularity || granularity}`} style={{ flex: "2 1 460px", minWidth: 340 }} flush>
+            {plTrend.length === 0 ? (
+              <div className="body" style={{ padding: 16, color: "var(--ink-3)" }}>
+                No quotes sent in this window. <span className="mono-sm">(Needs migration 203 applied + quotes tracked on opportunities.)</span>
+              </div>
+            ) : (
+              <table className="tbl" style={{ fontSize: 12 }}>
+                <thead><tr>
+                  <th>Period</th><th className="r">Quotes</th><th className="r">Q value</th>
+                  <th className="r">Orders</th><th className="r">Paid</th><th className="r">Paid value</th>
+                </tr></thead>
+                <tbody>
+                  {plTrend.map((p: any) => (
+                    <tr key={p.period}>
+                      <td className="mono-sm">{p.period}</td>
+                      <td className="r mono">{p.quotes_sent_count}</td>
+                      <td className="r mono-sm">{fmtINRShort(p.quotes_sent_value)}</td>
+                      <td className="r mono">{p.orders_processed_count}</td>
+                      <td className="r mono">{p.paid_count}</td>
+                      <td className="r mono-sm">{fmtINRShort(p.paid_value)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Card>
+
+          <Card title="Stalled quotes" eyebrow="sent · still open · no order yet" style={{ flex: "1 1 300px", minWidth: 280 }} flush>
+            {plStalled.length === 0 ? (
+              <div className="body" style={{ padding: 16, color: "var(--ink-3)" }}>No stalled quotes.</div>
+            ) : (
+              <table className="tbl" style={{ fontSize: 12 }}>
+                <thead><tr><th>Opportunity</th><th className="r">Age</th><th className="r">Value</th></tr></thead>
+                <tbody>
+                  {plStalled.slice(0, 10).map((s: any) => (
+                    <tr key={s.opportunity_id}>
+                      <td className="mono-sm">{String(s.opportunity_id).slice(0, 8)}{s.revisions > 1 ? ` · v${s.revisions}` : ""}</td>
+                      <td className="r"><Chip k={s.age_days > 60 ? "bad" : s.age_days > 30 ? "warn" : "good"}>{s.age_days}d</Chip></td>
+                      <td className="r mono-sm">{fmtINRShort(s.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Card>
+        </div>
 
         <KPIRow cols={4}>
           <KPI lbl="Weighted pipeline" v={fmtINRShort(weightedPipeline)} d="probability-adjusted" live={weightedPipeline > 0} />
@@ -106,6 +193,24 @@ const SalesOpsCockpit = () => {
 
         <div className="row" style={{ gap: 12, marginTop: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
           {/* Revenue leakage — lost reasons */}
+          {/* Customer on-time delivery (Logistics P3) */}
+          <Card title="On-time delivery" eyebrow={otdData.total_delivered ? `${otdData.total_delivered} delivered · last ${otdData.window_days}d` : "committed vs actual"} style={{ flex: "1 1 240px", minWidth: 220 }} flush>
+            <div style={{ padding: 16 }}>
+              {otdData.otd_pct == null ? (
+                <div className="mono-sm" style={{ color: "var(--ink-3)" }}>No committed + delivered orders yet.</div>
+              ) : (
+                <>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                    <span style={{ fontSize: 28, fontWeight: 700 }}>{otdData.otd_pct}%</span>
+                    <Chip k={otdChipKind(otdData.otd_pct)}>on time</Chip>
+                  </div>
+                  <div className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 6 }}>
+                    {otdData.on_time} on time · {otdData.late} late{otdData.open_committed ? ` · ${otdData.open_committed} open` : ""}
+                  </div>
+                </>
+              )}
+            </div>
+          </Card>
           <Card title="Lost reasons" eyebrow="last 90 days" style={{ flex: "1 1 320px", minWidth: 280 }} flush>
             {(wl.lost_reasons || []).length === 0 ? (
               <div className="body" style={{ padding: 16, color: "var(--ink-3)" }}>No losses recorded.</div>

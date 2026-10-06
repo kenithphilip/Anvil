@@ -13,10 +13,18 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-import { reconcilePoAgainstQuotes, comparePaymentTerms } from "../_lib/quote-reconcile.js";
+import { reconcilePoAgainstQuotes, comparePaymentTerms, compareIncoterms } from "../_lib/quote-reconcile.js";
+import { modBomFinding, provisionalParts, MOD_BOM_FINDING_CODE } from "../_lib/mod-parts.js";
+import { mergeBlockersForward, isUnresolvedBlocker } from "../_lib/blocking-findings.js";
 
 // Quotes in these states can't have priced this PO.
-const EXCLUDED_QUOTE_STATUSES = ["CANCELLED"];
+// DRAFT is excluded as well as CANCELLED.
+//
+// spare_matrix/to_quote.js creates DRAFT quotes with listed_unit_price: 0 by
+// design ("priced downstream in price_composition"). Pooling those let an
+// internal, unpriced, never-sent recommended-spares sheet price and judge a
+// customer PO — which is where the 411 ₹ 0 gap rows came from.
+const EXCLUDED_QUOTE_STATUSES = ["CANCELLED", "DRAFT"];
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -34,7 +42,11 @@ export default async function handler(req, res) {
     const svc = serviceClient();
 
     const orderQ = await svc.from("orders")
-      .select("id, customer_id, result, quote_id, quote_number")
+      // incoterm_code + delivery_terms feed the header incoterm check, and
+      // rule_findings is read-modify-written for the -MOD blocker. All three
+      // were absent from this select, so the incoterm comparison silently read
+      // undefined off the order and fell through to the extracted payload.
+      .select("id, customer_id, result, quote_id, quote_number, rule_findings, incoterm_code, delivery_terms")
       .eq("tenant_id", ctx.tenantId).eq("id", orderId).maybeSingle();
     if (orderQ.error) throw new Error("orders read: " + orderQ.error.message);
     if (!orderQ.data) return json(res, 404, { error: { message: "Order not found" } });
@@ -69,8 +81,51 @@ export default async function handler(req, res) {
     }
 
     // 3. Reconcile.
+    // The dual-code map for THIS customer: their part number -> ours.
+    //
+    // The reconciler's first two tiers can only match a buyer code that some
+    // quote line happens to carry. item_customer_parts is the canonical
+    // mapping, grown by the ingest each time an operator confirms a part, so
+    // it knows codes no quote ever recorded — a PO naming a part we have sold
+    // this customer for years used to come back unmatched purely because the
+    // code was absent from the quote rows.
+    //
+    // valid_to IS NULL is load-bearing, not hygiene. Migration 129's partial
+    // unique index enforces one ACTIVE row per (tenant, customer, code);
+    // superseded mappings stay in the table with a stamped valid_to, so
+    // omitting the filter would resolve a buyer code to a part it USED to mean.
+    //
+    // Two queries rather than an embedded select: item_customer_parts keys to
+    // item_id and the part number lives on item_master, and PostgREST embedded
+    // FKs are fragile enough here that promote.js already avoids them.
+    const customerPartMap = new Map();
+    try {
+      const icp = await svc.from("item_customer_parts")
+        .select("item_id, customer_part_number")
+        .eq("tenant_id", ctx.tenantId).eq("customer_id", order.customer_id)
+        .is("valid_to", null);
+      const itemIds = [...new Set((icp.data || []).map((r) => r.item_id).filter(Boolean))];
+      if (!icp.error && itemIds.length) {
+        const byId = new Map();
+        for (let i = 0; i < itemIds.length; i += 100) {
+          const im = await svc.from("item_master").select("id, part_no")
+            .eq("tenant_id", ctx.tenantId).in("id", itemIds.slice(i, i + 100));
+          if (im.error) break;
+          for (const r of im.data || []) byId.set(r.id, r.part_no);
+        }
+        for (const r of icp.data || []) {
+          const ourPart = byId.get(r.item_id);
+          if (r.customer_part_number && ourPart) customerPartMap.set(r.customer_part_number, ourPart);
+        }
+      }
+    } catch (_e) {
+      // Best-effort. A reconciliation on the two direct tiers is worth more
+      // than none, and this map only ever ADDS matches.
+    }
+
     const rec = reconcilePoAgainstQuotes(orderLines, quoteLines, {
       priceTolerancePct: body.price_tolerance_pct != null ? Number(body.price_tolerance_pct) : 0.5,
+      customerPartMap,
     });
 
     // 3b. Header-level payment-terms check: the PO's payment terms
@@ -90,8 +145,90 @@ export default async function handler(req, res) {
       });
     }
 
+    // 3c. Header-level INCOTERM check — the delivery rule was never compared,
+    // so a PO switching FOB to CIF (who pays the freight and carries the risk)
+    // passed reconciliation silently.
+    //
+    // `quotes` has no incoterm column, so the quote side is parsed out of its
+    // terms text: parseIncoterm finds a rule code anywhere in a string, which
+    // is how these are actually written ("FOB Busan, 30 days net").
+    const poIncoterm = order.incoterm_code
+      || order.result?.salesOrder?.incoterms
+      || order.result?.salesOrder?.incoterm_code
+      || order.delivery_terms || null;
+    const primaryQuoteRow = primary ? quoteMeta.get(primary.quote_id) : null;
+    const quoteIncoterm = primaryQuoteRow
+      ? (primaryQuoteRow.incoterm_code || primaryQuoteRow.delivery_terms || primaryQuoteRow.terms || null)
+      : null;
+    const incoterms = compareIncoterms(poIncoterm, quoteIncoterm);
+    if (primary) incoterms.source_quote_number = primary.quote_number;
+    // place_differs is reported too: the rule is the same but the named place
+    // moved, which still changes who pays for what leg.
+    if (incoterms.verdict === "mismatch" || incoterms.verdict === "place_differs") {
+      rec.flags.push({
+        line_no: null, part_no: null, verdict: "incoterms_" + incoterms.verdict,
+        po_rate: null, quote_rate: null, price_delta_pct: null,
+        source_quote_number: primary?.quote_number || null,
+        po_incoterm: incoterms.po_incoterm, quote_incoterm: incoterms.quote_incoterm,
+      });
+    }
+
+    // 3d. GUN-MODIFICATION QUOTES.
+    //
+    // A modification quote is priced before engineering has issued the real
+    // part numbers, so its lines carry provisional -MOD codes. Derived from the
+    // parts rather than declared: order_mode 'SPARES_ASSEMBLY' exists but is
+    // picked by hand on intake BEFORE extraction runs, so it cannot answer
+    // this, and a hand-set flag would go stale the moment the lines changed.
+    //
+    // Both sides are checked. A -MOD part can reach the order from the quote
+    // (priced provisionally) or from the PO itself (the customer ordered the
+    // provisional number), and either way the order is committed to a part that
+    // does not yet exist.
+    const modFromOrder = provisionalParts(orderLines);
+    const modFromQuotes = provisionalParts(quoteLines);
+    const modFinding = modBomFinding([...orderLines, ...quoteLines], {
+      sourceQuoteNumber: primary?.quote_number || null,
+    });
+    const modBom = {
+      is_modification_quote: !!modFinding,
+      pending_parts: modFinding ? modFinding.pending_parts : [],
+      from_order: modFromOrder,
+      from_quotes: modFromQuotes,
+      // A final BOM is one with NO provisional parts. Until design supplies it
+      // the order is blocked; the finding below is what enforces that.
+      final_bom_present: !modFinding,
+    };
+
     // 4. Persist enriched lines + report; link the primary quote (most lines).
     const nowIso = new Date().toISOString();
+
+    // Raise or clear the blocking finding.
+    //
+    // mergeBlockersForward is what stops a routine rule_findings overwrite from
+    // dropping an unresolved blocker; reconciliation is exactly such a routine
+    // overwrite, so it must go through it rather than assigning the array.
+    // When the provisional parts are gone the finding is dropped outright —
+    // the condition genuinely cleared, so it should not linger as resolved
+    // noise the operator has to read past.
+    const priorFindings = Array.isArray(order.rule_findings) ? order.rule_findings : [];
+    const withoutMod = priorFindings.filter((f) => (f?.code || f?.rule_id) !== MOD_BOM_FINDING_CODE);
+    let nextFindings;
+    if (modFinding) {
+      // Preserve an existing RESOLVED one rather than re-raising it: the
+      // operator has already said the provisional numbers are intentional.
+      const existing = priorFindings.find((f) => (f?.code || f?.rule_id) === MOD_BOM_FINDING_CODE);
+      // (incoming, prior) — the new array first. Reversing these would have
+      // treated the OLD findings as the result and merged the new ones in as
+      // carry-forwards, which mergeBlockersForward only does for
+      // source === "extraction" entries, so the -MOD finding would have been
+      // dropped every time.
+      nextFindings = existing && !isUnresolvedBlocker(existing)
+        ? priorFindings
+        : mergeBlockersForward([...withoutMod, modFinding], priorFindings);
+    } else {
+      nextFindings = mergeBlockersForward(withoutMod, priorFindings);
+    }
     const newResult = {
       ...(order.result || {}),
       salesOrder: { ...(order.result?.salesOrder || {}), lineItems: rec.lines },
@@ -99,14 +236,21 @@ export default async function handler(req, res) {
         as_of: nowIso,
         summary: rec.summary,
         quotes_used: rec.quotes_used,
+        // Lines the customer was quoted and did NOT order. Surfaced so the
+        // operator can decide whether it is a deliberate partial order or an
+        // omission worth chasing a PO amendment for.
+        quoted_not_ordered: rec.quoted_not_ordered,
         ambiguous_parts: rec.ambiguous_parts,
         payment_terms: paymentTerms,
+        incoterms,
+        mod_bom: modBom,
         flags: rec.flags,
       },
     };
     const upd = await svc.from("orders")
       .update({
         result: newResult,
+        rule_findings: nextFindings,
         quote_id: primary?.quote_id || order.quote_id || null,
         quote_number: primary?.quote_number || order.quote_number || null,
       })

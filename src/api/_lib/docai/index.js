@@ -24,6 +24,7 @@ import * as gemini from "./gemini.js";
 import * as office from "./office.js";
 import * as llamaparse from "./llamaparse.js";
 import * as openrouterAdapter from "./openrouter.js";
+import { conformLines } from "./line-schema.js";
 import { allowedToCall, recordCall } from "../cost_guard.js";
 import { serviceClient } from "../supabase.js";
 import { rankAdaptersForCustomer } from "./adapter-learning.js";
@@ -53,6 +54,20 @@ const ADAPTERS = {
 // engine X" picker) before it's trusted as a provider-order entry.
 export const ADAPTER_NAMES = Object.keys(ADAPTERS);
 
+// The order used when a tenant has NOT pinned docai_provider_order. Re-exported
+// from provider-order.js so read-only surfaces (the SO workspace pipeline
+// diagnostics card) keep importing it from here, while there is exactly ONE
+// definition. It previously lived here AND in adapter-learning.js with the two
+// disagreeing about where gemini belongs.
+export { DEFAULT_PROVIDER_ORDER } from "./provider-order.js";
+import { DEFAULT_PROVIDER_ORDER } from "./provider-order.js";
+
+// Is this adapter usable for this tenant? Mirrors the dispatcher's own gate
+// exactly, so a diagnostics surface cannot disagree with what will really run.
+// Safe to call anywhere: every adapter's key lookup wraps decryptField in
+// try/catch, so an unset ANVIL_SECRETS_KEY yields false rather than throwing.
+export const isAdapterConfigured = (name, settings) => !!ADAPTERS[name]?.isConfigured?.(settings);
+
 // Apply a caller's per-run engine override to a settings object WITHOUT
 // mutating tenant config: prepend the (validated) engine to the provider order
 // so it runs first, keeping the tenant's existing order as fallback. A blank
@@ -77,6 +92,53 @@ export const LLM_FALLBACK_ADAPTERS = ["gemini", "claude", "llamaparse"];
 // through to Gemini; (2) an order whose listed engines are all unconfigured.
 // Only KEYED adapters are appended, so a deliberate exclusion made by not
 // setting an API key (e.g. for data-residency) is respected.
+// Adapters that implement a given document kind.
+//
+// Each non-PO kind is a distinct schema branch inside an adapter, not a
+// separate adapter — and only claude.js has ever grown those branches. Every
+// other adapter silently runs the PURCHASE-ORDER schema whatever `kind` says,
+// so a quotation handed to Gemini classifies as non_po and yields nothing.
+//
+// That was survivable in principle — the dispatcher keeps the best result, so
+// Claude's real parse would beat Gemini's empty one — except that Claude sits
+// LAST in the default order behind six adapters sharing one 45s run budget,
+// and allocateAdapterDeadline SKIPS an adapter outright once its slice falls
+// below the floor. The only adapter that can read the document is the one most
+// likely never to run.
+//
+// Listed by kind rather than "claude does everything" so adding a quote branch
+// to gemini is a one-line change here, not a hunt.
+export const KIND_CAPABLE_ADAPTERS = Object.freeze({
+  quote: ["claude"],
+  packing_list: ["claude"],
+  invoice: ["claude"],
+  eway_bill: ["claude"],
+  supplier_ack: ["claude"],
+  assembly_bom: ["claude"],
+  part_drawing: ["claude"],
+  // sales_order was MISSING here. It shipped with a claude-only prompt and tool
+  // and no entry, so the only adapter that can read the document ran last on a
+  // shared deadline and could be skipped outright — the exact failure this
+  // table exists to prevent, reintroduced by the kind that came after it.
+  sales_order: ["claude"],
+  delivery_note: ["claude"],
+});
+
+/**
+ * Move the adapters that actually implement `kind` to the front.
+ *
+ * Reorders rather than filters: a capable adapter that is unconfigured or
+ * failing must still fall through to the rest, and a kind nobody special-cases
+ * (po, rfq, invoice) is left exactly as it was.
+ */
+export const orderForKind = (order, kind) => {
+  const capable = KIND_CAPABLE_ADAPTERS[kind];
+  if (!capable || !Array.isArray(order)) return order;
+  const first = order.filter((a) => capable.includes(a));
+  if (!first.length) return order;
+  return [...first, ...order.filter((a) => !capable.includes(a))];
+};
+
 export const ensureLlmFallbacks = (order, isConfigured) => {
   const out = Array.isArray(order) ? [...order] : [];
   for (const name of LLM_FALLBACK_ADAPTERS) {
@@ -105,6 +167,78 @@ const overallConfidence = (confidences) => {
   const vals = Object.values(confidences || {}).map((v) => Number(v)).filter((v) => Number.isFinite(v));
   if (!vals.length) return null;
   return vals.reduce((a, b) => a + b, 0) / vals.length;
+};
+
+// FAIR-SHARE BUDGET ALLOCATION.
+//
+// Every adapter shares ONE 45s run budget and each takes what it needs until
+// the budget is gone. The adapter that runs last gets whatever is left, which
+// on a large document is nothing usable. Observed on PO 0066026562, same
+// document and code, minutes apart:
+//
+//   gemini 29,520ms + claude   220ms + llamaparse 2,845ms -> ok, 44 lines
+//   gemini 26,558ms + claude 5,603ms + llamaparse 5,999ms -> llamaparse TIMED OUT
+//
+// The only difference is whether Claude's pre-call guard tripped or it actually
+// attempted. LlamaParse — the one adapter that parses that document — got 12s
+// in the first case and 6s in the second, and 6s was not enough. The outcome
+// was decided by upstream latency in an adapter that failed either way.
+//
+// Each adapter already reserves a FIXED tail (GEMINI_FALLBACK_RESERVE_MS and
+// ANTHROPIC_FALLBACK_RESERVE_MS, both 8s). Fixed is the bug: 8s is right when
+// one adapter follows and wrong when two do, because the reserve does not know
+// how many still have to run.
+//
+// So the DISPATCHER allocates, since it is the only place that knows the whole
+// order. Each adapter is handed a deadline that holds back MIN_ADAPTER_MS for
+// every configured adapter still queued behind it.
+//
+// THIS REDISTRIBUTES A FIXED BUDGET; IT DOES NOT CREATE TIME. Reserving for the
+// tail necessarily caps the head, and on a document where the primary genuinely
+// needs the whole 45s that is a real cost. Two things make the trade sound:
+// #418 means a capped-then-failed primary no longer discards a later success,
+// and an adapter that cannot get its floor is now SKIPPED explicitly rather
+// than started and timed out — a skip is diagnosable, a timeout burns the
+// budget it was given. The durable fix for genuinely large documents is
+// chunking, not allocation.
+const MIN_ADAPTER_MS = Number(process.env.DOCAI_MIN_ADAPTER_MS || 6000);
+
+// Never hold back more than this share of what remains, so a long tail of
+// configured-but-unlikely adapters cannot starve the primary. With the default
+// order that keeps the head's slice comfortably dominant.
+const MAX_RESERVE_FRACTION = Number(process.env.DOCAI_MAX_RESERVE_FRACTION || 0.5);
+
+export const allocateAdapterDeadline = ({ now, runDeadlineAt, queuedAfter }) => {
+  if (!runDeadlineAt) return null;                  // no run budget => unchanged
+  const remaining = runDeadlineAt - now;
+  if (remaining <= 0) return runDeadlineAt;
+  const queued = Math.max(0, Number(queuedAfter) || 0);
+  const wanted = queued * MIN_ADAPTER_MS;
+  const reserve = Math.min(wanted, Math.floor(remaining * MAX_RESERVE_FRACTION));
+  const slice = remaining - reserve;
+  // Below the floor there is no point starting: the adapter would consume its
+  // slice and time out. The caller skips instead.
+  if (slice < MIN_ADAPTER_MS) return null;
+  return now + slice;
+};
+
+// Rank two successful results. Used only when every adapter came in UNDER the
+// fallback threshold, so the loop has to choose rather than early-return.
+//
+// Lines first: a 0.82 result carrying 44 line items beats a 0.90 carrying none,
+// because confidence scores the fields that ARE there and says nothing about
+// the ones that are missing. Then confidence. Then line count, so a fuller
+// parse wins a tie. Equal on all three keeps the incumbent, which preserves the
+// tenant's provider order as the final tie-break.
+export const isBetterResult = (candidate, incumbent) => {
+  if (!candidate?.ok) return false;
+  if (!incumbent) return true;
+  const count = (r) => (Array.isArray(r?.normalized?.lines) ? r.normalized.lines.length : 0);
+  const conf = (r) => (Number.isFinite(r?.confidence_overall) ? r.confidence_overall : -1);
+  const ca = count(candidate), ci = count(incumbent);
+  if ((ca > 0) !== (ci > 0)) return ca > 0;
+  if (conf(candidate) !== conf(incumbent)) return conf(candidate) > conf(incumbent);
+  return ca > ci;
 };
 
 // Build the per-customer few-shot bundle for the Claude fallback.
@@ -220,7 +354,16 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
           promptOverrides: buildPromptOverrides(settings, customerId),
         });
         const conf = overallConfidence(fb.confidences);
-        attempts.push({ adapter: adapterName, status: fb.ok ? "ok" : "failed", ms: Date.now() - tStart, confidence: conf });
+        attempts.push({
+          adapter: adapterName,
+          status: fb.ok ? "ok" : "failed",
+          ms: Date.now() - tStart,
+          confidence: conf,
+          ...(fb.ok ? {} : {
+            ...(fb.reason ? { reason: fb.reason } : {}),
+            ...(fb.error ? { error: String(fb.error).slice(0, 500) } : {}),
+          }),
+        });
         if (fb.ok) {
           return { adapter_used: adapterName, latency_ms: Date.now() - tStart, ...fb, confidence_overall: conf, attempts };
         }
@@ -252,8 +395,7 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
   // through to the static default. The helper caches per
   // (tenant, customer) for 30 minutes so the per-call cost is at
   // most one Postgres select per cache window.
-  const defaultStaticOrder = ["gemini", "docling", "marker", "unstructured", "azure_di", "reducto", "claude"];
-  let order = settings?.docai_provider_order || defaultStaticOrder;
+  let order = settings?.docai_provider_order || DEFAULT_PROVIDER_ORDER;
   // Phase F #2: PDF metadata-driven adapter bias. Read /Producer
   // and /Creator from the input PDF; if they match a known
   // pattern (SAP, Tally, Microsoft Word, Adobe Acrobat, etc.),
@@ -300,20 +442,64 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
   // Self-heal: guarantee a configured LLM extractor is reachable so a stale
   // provider order (e.g. a legacy gemini-less order whose only configured
   // engine is a 5xx-ing Claude) can't dead-end with no customer + no lines.
-  order = ensureLlmFallbacks(order, (n) => !!ADAPTERS[n]?.isConfigured?.(settings));
+  order = ensureLlmFallbacks(order, (n) => isAdapterConfigured(n, settings));
+  // Put the adapters that implement this document kind first. For a quote that
+  // means Claude runs before the six adapters that would each spend budget
+  // running the PO schema against a quotation.
+  order = orderForKind(order, hints?.expectedKind);
   const attempts = [];
-  let last = null;
+  // `best` is the strongest SUCCESSFUL result seen; `lastFailure` is only used
+  // when nothing succeeded. Keeping them apart is the whole point — a single
+  // `last` let a failure clobber a success (see the assignment below).
+  let best = null;
+  let lastFailure = null;
+  let salvagedRaw = null;
   // Materialise an svc reference once so per-iteration cost-guard
   // checks don't re-spawn the client. Best-effort: a missing
   // SUPABASE_URL leaves svc null and the guard treats that as
   // "no limits" (legacy behaviour).
   let svc = null;
   try { svc = serviceClient(); } catch (_e) { svc = null; }
-  for (const adapterName of order) {
+  for (const [idx, adapterName] of order.entries()) {
     const adapter = ADAPTERS[adapterName];
     if (!adapter) continue;
+    // RUN DEADLINE. The serverless function has a hard ceiling (60s on the
+    // current plan). Starting an LLM call we cannot finish is the worst
+    // outcome: the platform kills the function mid-flight, so run.js never
+    // reaches its final UPDATE — the row stays status='running' forever with
+    // no attempts and no error, AND the provider call is still billed. Stop
+    // BEFORE the next adapter instead, so the run always returns and records a
+    // real, diagnosable status. Observed on PO 0066026562: a 47s Claude call
+    // left two runs permanently stuck.
+    if (hints?.deadlineAt && Date.now() >= hints.deadlineAt) {
+      attempts.push({
+        adapter: adapterName,
+        status: "skipped_deadline",
+        reason: "run_budget_exhausted",
+      });
+      continue;
+    }
     if (!adapter.isConfigured(settings)) {
       attempts.push({ adapter: adapterName, status: "skipped_not_configured" });
+      continue;
+    }
+    // How many CONFIGURED adapters are still queued behind this one. Counting
+    // unconfigured ones would reserve time for adapters that never run and
+    // starve the ones that do.
+    const queuedAfter = order.slice(idx + 1)
+      .filter((n) => ADAPTERS[n] && isAdapterConfigured(n, settings)).length;
+    const adapterDeadlineAt = hints?.deadlineAt
+      ? allocateAdapterDeadline({ now: Date.now(), runDeadlineAt: hints.deadlineAt, queuedAfter })
+      : null;
+    // Below the floor, starting is worse than skipping: the adapter consumes
+    // its slice and times out, and the run records a timeout where it could
+    // have recorded a reason.
+    if (hints?.deadlineAt && !adapterDeadlineAt) {
+      attempts.push({
+        adapter: adapterName,
+        status: "skipped_deadline",
+        reason: "insufficient_budget_share",
+      });
       continue;
     }
     // Cost-guard: short-circuit when the operator's daily cap for
@@ -355,17 +541,42 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
         ...source,
         settings,
         customerId,
-        hints,
+        // Fair-share deadline: this adapter's slice, not the whole run budget.
+        // Holding back MIN_ADAPTER_MS per adapter still queued behind it is
+        // what stops the tail being handed 6s on a document that needs 12.
+        hints: adapterDeadlineAt ? { ...hints, deadlineAt: adapterDeadlineAt } : hints,
         promptOverrides: buildPromptOverrides(settings, customerId),
       });
     } catch (err) {
       attempts.push({ adapter: adapterName, status: "error", ms: Date.now() - t0, error: err.message });
       // Carry a reason so a thrown adapter surfaces as
       // status_reason='adapter_threw' instead of 'fail_unknown'.
-      last = { ok: false, reason: "adapter_threw", error: err.message };
+      //
+      // lastFailure, not `last`. `last` is declared as a CONST further down
+      // this same block (`const last = best || lastFailure`), so assigning to
+      // it here is a write into its temporal dead zone: every adapter that
+      // THREW made dispatchExtract itself throw with "Cannot access 'last'
+      // before initialization", discarding attempts, best and salvagedRaw
+      // along with it. The intent was always the accumulator the tail reads.
+      lastFailure = { ok: false, reason: "adapter_threw", error: err.message };
       continue;
     }
     const latency_ms = Date.now() - t0;
+    // Schema boundary. Every adapter's line vocabulary is reconciled with the
+    // canonical shape HERE, once, rather than each consumer guessing at the
+    // dialect in front of it. Before this, llamaparse's `line_total` +
+    // `tax_amount` reached computeLineTotals and the completeness guard, both
+    // of which read different names, and the whole tax column was silently
+    // dropped on a run that reported ok.
+    //
+    // Applied to every adapter, not just the one that misbehaved: the point is
+    // that adapter #11 cannot reintroduce this without CI saying so.
+    let schemaDiag = null;
+    if (out?.ok && out.normalized) {
+      const conformed = conformLines(out.normalized);
+      out.normalized = conformed.normalized;
+      schemaDiag = conformed.diag;
+    }
     const conf = overallConfidence(out.confidences);
     // Bet 1 (May 2026): confidence threshold is now per-tenant
     // (tenant_settings.docai_fallback_confidence, default 0.85).
@@ -377,11 +588,25 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
     const fallbackThreshold = Number.isFinite(Number(settings?.docai_fallback_confidence))
       ? Number(settings.docai_fallback_confidence)
       : 0.85;
+    // Carry the adapter's OWN reason/error onto the attempt. Without this a
+    // failed adapter records only {adapter, status, ms, confidence} — and since
+    // the run-level `error` is overwritten by whichever adapter ran LAST, an
+    // earlier failure left no trace anywhere. That is exactly how a 47-second
+    // Claude failure on PO 0066026562 became undiagnosable: the only surviving
+    // error belonged to LlamaParse, three adapters later.
     attempts.push({
       adapter: adapterName,
       status: out.ok ? (conf != null && conf < fallbackThreshold ? "low_confidence" : "ok") : "failed",
       ms: latency_ms,
       confidence: conf,
+      ...(out.ok ? {} : {
+        ...(out.reason ? { reason: out.reason } : {}),
+        ...(out.error ? { error: String(out.error).slice(0, 500) } : {}),
+      }),
+      // Only present when the adapter spoke a dialect. An `unknown` key here
+      // is a field the adapter emitted that NOTHING downstream reads — the
+      // exact silent-loss shape that cost an entire tax column.
+      ...(schemaDiag ? { schema: schemaDiag } : {}),
     });
     // Telemetry: record the call against today's counter so
     // /api/docai/usage shows live usage and the guard locks the
@@ -397,21 +622,84 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
     if (out.ok && (conf == null || conf >= fallbackThreshold)) {
       return { adapter_used: adapterName, latency_ms, ...out, confidence_overall: conf, attempts };
     }
-    last = { adapter_used: adapterName, latency_ms, ...out, confidence_overall: conf };
+    const candidate = { adapter_used: adapterName, latency_ms, ...out, confidence_overall: conf };
+    // KEEP THE BEST RESULT, NOT THE LAST ONE.
+    //
+    // `last` was reassigned on every iteration, so a LATER FAILURE overwrote an
+    // EARLIER SUCCESS. Observed in production: LlamaParse returned a complete
+    // parse at 0.82 — under the 0.85 fallback threshold, so the loop continued —
+    // then Gemini and Claude both died on "run budget exhausted", and Claude's
+    // failure became the run. The run persisted raw_extract: null,
+    // normalized_extract: null and reported `failed`, throwing away a working
+    // extraction AND the evidence needed to understand what happened.
+    //
+    // A successful extraction must survive anything that runs after it. Falling
+    // through to a fallback is an attempt to do BETTER, never a reason to
+    // discard what we already have.
+    if (out.ok) {
+      if (isBetterResult(candidate, best)) best = candidate;
+    } else {
+      lastFailure = candidate;
+    }
+    // Salvage geometry-bearing output from ANY adapter that produced it, even
+    // one that failed. LlamaParse's `empty_lines` failure carries the full
+    // markdown it parsed; losing that is what made the 6-lines-vs-44 question
+    // unanswerable after the fact.
+    if (out.raw && !salvagedRaw) salvagedRaw = { adapter: adapterName, raw: out.raw };
   }
   // Phase 3.6 observability (audit close): surface a structured
   // failure-reason so the operator can see why no adapter
   // contributed. Without this, the only signal was a 200 with
   // empty normalized + a notify-warn toast.
+  // A success outranks any failure that ran after it. `lastFailure` is only
+  // consulted when nothing succeeded at all.
+  const last = best || lastFailure;
   if (!last) {
     const allSkipped = attempts.length > 0
       && attempts.every((a) => a.status === "skipped_not_configured");
+    // Being over budget is not the same as being unconfigured, and saying so
+    // matters: when every adapter is capped this returned "no docai adapter
+    // configured", so an operator whose own daily limit had stopped the run
+    // was told their API keys were missing and went looking for a credential
+    // problem that did not exist. The cost guard already recorded the real
+    // cause on each attempt; the tail just did not read it.
+    const allOverBudget = attempts.length > 0
+      && attempts.every((a) => a.status === "skipped_over_budget");
     return {
       ok: false,
-      reason: allSkipped ? "all_adapters_skipped" : "no_adapter_configured",
-      error: "no docai adapter configured",
+      reason: (allSkipped || allOverBudget) ? "all_adapters_skipped" : "no_adapter_configured",
+      error: allOverBudget
+        ? "every adapter is over its daily budget: " + attempts.map((a) => a.adapter).join(", ")
+        : "no docai adapter configured",
       attempts,
     };
   }
-  return { ...last, attempts };
+  // Salvage the parsed document from whichever adapter produced one, so a run
+  // that ends in failure still persists something to diagnose from. Never
+  // overwrites the chosen result's own raw, and records whose it is — mislabelled
+  // provenance would be worse than none.
+  const withSalvage = (r) => (r.raw || !salvagedRaw
+    ? r
+    : { ...r, raw: salvagedRaw.raw, raw_adapter: salvagedRaw.adapter });
+  // `last` is whichever adapter ran LAST, not the best one — so after a
+  // fall-through it is often a weak-but-ok result (LlamaParse returning zero
+  // lines at 0.4 confidence). run.js persists `error: out?.error || null`, so
+  // that weak result's empty error became the run's, and the REAL failures
+  // above it — a Gemini 400, a Claude timeout — survived only inside
+  // adapter_attempts. The run row then read "low confidence · review" with
+  // error NULL, which is how an all-providers-down outage looked like a soft
+  // parsing miss for hours. Lift the hard failures onto the run itself.
+  const adapterFailures = attempts
+    .filter((a) => a.status === "failed")
+    .map((a) => ({ adapter: a.adapter, reason: a.reason || null, error: a.error || null }));
+  if (!adapterFailures.length) return withSalvage({ ...last, attempts });
+  return withSalvage({
+    ...last,
+    attempts,
+    adapter_failures: adapterFailures,
+    // Keep the winning adapter's own error when it has one; otherwise the run
+    // inherits a readable summary of what actually broke upstream of it.
+    error: last.error
+      || adapterFailures.map((f) => f.adapter + ": " + (f.error || f.reason || "failed")).join(" | ").slice(0, 500),
+  });
 };

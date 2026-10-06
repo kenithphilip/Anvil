@@ -50,6 +50,7 @@ export const NAV: NavGroup[] = [
       // rows landed in Phase 2.
       { id: "inventory-planning",   label: "Inventory Planning", icon: Icon.cycle },
       { id: "inventory-plans",      label: "Planned POs",        icon: Icon.cal },
+      { id: "demand-story",         label: "Demand Story",       icon: Icon.bolt },
       { id: "inventory-exceptions", label: "Stock Exceptions",   icon: Icon.alert },
       { id: "inventory-allocations",label: "Allocations",        icon: Icon.lock },
       { id: "inventory-suppliers",  label: "Suppliers",          icon: Icon.briefcase },
@@ -141,6 +142,11 @@ export const ROLES: RoleEntry[] = [
   { id: "admin",          label: "Admin",          short: "ADM" },
   { id: "operator",       label: "Operator",       short: "OPS" },
   { id: "viewer",         label: "Viewer",         short: "VWR" },
+  // Design team — uploads gun/spare data + drawings alongside sales.
+  { id: "design_engineer", label: "Design Engineer", short: "DEN" },
+  { id: "design_manager",  label: "Design Manager",  short: "DMG" },
+  // Customer support — views + shares spare matrices with customers.
+  { id: "customer_support", label: "Customer Support", short: "SUP" },
 ];
 
 // Build a breadcrumb from a nav id by walking NAV.

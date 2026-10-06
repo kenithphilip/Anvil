@@ -57,7 +57,12 @@ export default async function handler(req, res) {
     // we keep the secret-header fallback for simpler ops.
     // Audit H10 (May 2026): constant-time secret comparison.
     const provided = String(req.headers["x-anvil-teams-secret"] || "");
-    if (creds.webhook_secret && !timingSafeEqual(provided, creds.webhook_secret)) {
+    // Fail CLOSED: an active config with no webhook secret must reject requests
+    // rather than accept them unverified (audit SO-processing #16).
+    if (!creds.webhook_secret) {
+      return json(res, 403, { error: { message: "Teams webhook secret not configured; requests are rejected" } });
+    }
+    if (!timingSafeEqual(provided, creds.webhook_secret)) {
       return json(res, 403, { error: { message: "Invalid Teams webhook secret" } });
     }
 

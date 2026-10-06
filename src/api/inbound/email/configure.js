@@ -44,6 +44,9 @@ export default async function handler(req, res) {
         if (body.graph.tenant_id !== undefined) patch.graph_tenant_id = body.graph.tenant_id;
         if (body.graph.mailbox !== undefined) patch.graph_mailbox = body.graph.mailbox;
         if (body.graph.subscription_id !== undefined) patch.graph_subscription_id = body.graph.subscription_id;
+        // The subscription clientState secret — verified by the webhook before it
+        // fetches a notified message. Must match what the subscription was created with.
+        if (body.graph.client_state !== undefined) patch.graph_client_state = body.graph.client_state;
         if (body.graph.client_id !== undefined) patch.graph_client_id = body.graph.client_id;
         // Encrypted fields would route through secrets.js; v1 accepts plaintext for now.
       }

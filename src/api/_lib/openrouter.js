@@ -24,7 +24,15 @@ import { applyFirewall, redactMessages } from "./anthropic.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-export const isOpenRouterConfigured = () => !!process.env.OPENROUTER_API_KEY;
+// Single key resolver. Canonical name is OPENROUTER_API_KEY; `open_router` is
+// accepted as a compatibility alias because that is what the Vercel project
+// actually sets. Without the alias the key is invisible to the adapter and the
+// dispatcher skips it as `skipped_not_configured` — a silent no-op with no
+// operator-visible signal that a paid key was configured but never used.
+export const openRouterApiKey = () =>
+  process.env.OPENROUTER_API_KEY || process.env.open_router || null;
+
+export const isOpenRouterConfigured = () => !!openRouterApiKey();
 
 // The model slug (OpenRouter uses "<author>/<slug>" ids). Explicit override
 // wins; else OPENROUTER_MODEL env; else a sensible default.
@@ -68,8 +76,8 @@ export const toOpenAiTools = (tools) =>
 // Returns { ok, status, data, model, tier, error } — the same shape as
 // callAnthropic/callGemini so llm.js can normalise it uniformly.
 export const callOpenRouter = async (opts = {}) => {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) return { ok: false, status: 500, error: "OPENROUTER_API_KEY not set", tier: "openrouter" };
+  const apiKey = openRouterApiKey();
+  if (!apiKey) return { ok: false, status: 500, error: "OPENROUTER_API_KEY (or open_router) not set", tier: "openrouter" };
   if (!Array.isArray(opts.messages)) return { ok: false, status: 400, error: "messages array required", tier: "openrouter" };
 
   const model = pickOpenRouterModel(opts.model);

@@ -50,14 +50,25 @@ export default async function handler(req, res) {
         const projQ = await svc.from("projects").select("id, project_code, project_name, customer_id")
           .eq("tenant_id", tenantId).in("id", projIds);
         const byId = new Map((projQ.data || []).map((p) => [p.id, p]));
-        projects = (linkQ.data || []).map((l) => ({
-          project_id: l.project_id,
-          qty: l.qty,
-          notes: l.notes,
-          project_code: byId.get(l.project_id)?.project_code || null,
-          project_name: byId.get(l.project_id)?.project_name || null,
-          customer_id: byId.get(l.project_id)?.customer_id || null,
-        }));
+        // Resolve customer names so the BOM where-used shows WHO uses the gun.
+        const custIds = [...new Set((projQ.data || []).map((p) => p.customer_id).filter(Boolean))];
+        let custById = new Map();
+        if (custIds.length) {
+          const custQ = await svc.from("customers").select("id, customer_name").eq("tenant_id", tenantId).in("id", custIds);
+          custById = new Map((custQ.data || []).map((c) => [c.id, c.customer_name]));
+        }
+        projects = (linkQ.data || []).map((l) => {
+          const p = byId.get(l.project_id);
+          return {
+            project_id: l.project_id,
+            qty: l.qty,
+            notes: l.notes,
+            project_code: p?.project_code || null,
+            project_name: p?.project_name || null,
+            customer_id: p?.customer_id || null,
+            customer_name: (p && p.customer_id && custById.get(p.customer_id)) || null,
+          };
+        });
       }
 
       const histQ = await svc.from("bom_import_events")

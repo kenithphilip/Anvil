@@ -31,9 +31,32 @@ describe("secrets / encryption helpers", () => {
   it("round-trips an arbitrary string", () => {
     const iv = newIv();
     const enc = encryptField("hello-world-12345", iv);
-    expect(Buffer.isBuffer(enc)).toBe(true);
-    expect(enc.length).toBeGreaterThan(16);
+    // Emits a bytea '\x'-hex STRING, not a Buffer (a Buffer never lands in a
+    // bytea column through supabase-js JSON serialisation).
+    expect(typeof enc).toBe("string");
+    expect(enc.startsWith("\\x")).toBe(true);
+    expect(typeof iv).toBe("string");
+    expect(iv).toMatch(/^\\x[0-9a-f]{24}$/); // 12-byte IV
     expect(decryptField(enc, iv)).toBe("hello-world-12345");
+  });
+
+  it("survives the storage boundary: a Buffer would be JSON-mangled, a '\\x'-hex string is not", () => {
+    // Regression guard for the actual outage: postgrest-js JSON.stringify turns a
+    // Buffer into {"type":"Buffer","data":[...]} which cannot be stored as bytea.
+    // A '\x'-hex string passes through unchanged and PostgREST returns bytea reads
+    // in the same form, so encrypt -> (JSON wire) -> decrypt must round-trip.
+    const iv = newIv();
+    const enc = encryptField("k-live-123", iv);
+    const overWire = JSON.parse(JSON.stringify({ enc, iv }));
+    expect(overWire.enc).toBe(enc);           // still a string, not a {type:"Buffer"} object
+    expect(typeof overWire.enc).toBe("string");
+    expect(decryptField(overWire.enc, overWire.iv)).toBe("k-live-123");
+  });
+
+  it("decryptField also accepts a Buffer (defensive back-compat)", () => {
+    const iv = Buffer.from("0".repeat(24), "hex");
+    const enc = encryptField("via-buffer-iv", iv); // iv passed as a raw Buffer
+    expect(decryptField(enc, iv)).toBe("via-buffer-iv");
   });
 
   it("returns null when encrypting empty input", () => {
@@ -45,8 +68,9 @@ describe("secrets / encryption helpers", () => {
   it("rejects tampered ciphertext", () => {
     const iv = newIv();
     const enc = encryptField("secret", iv);
-    enc[0] = enc[0] ^ 0xff;
-    expect(() => decryptField(enc, iv)).toThrow();
+    // Flip the last hex nibble (part of the GCM auth tag) -> auth failure.
+    const tampered = enc.slice(0, -1) + (enc.slice(-1) === "0" ? "1" : "0");
+    expect(() => decryptField(tampered, iv)).toThrow();
   });
 
   it("rejects swapped IV", () => {
@@ -58,7 +82,9 @@ describe("secrets / encryption helpers", () => {
 
   it("encryptBundle produces one IV shared by all fields and round-trips", () => {
     const { iv, fields } = encryptBundle({ a: "alpha", b: "beta", c: "gamma" });
-    expect(iv.length).toBe(12);
+    expect(iv).toMatch(/^\\x[0-9a-f]{24}$/); // 12-byte IV as a bytea hex string
+    expect(typeof fields.a).toBe("string");
+    expect(fields.a.startsWith("\\x")).toBe(true);
     const back = decryptBundle(fields, iv);
     expect(back).toEqual({ a: "alpha", b: "beta", c: "gamma" });
   });
@@ -68,8 +94,9 @@ describe("secrets / encryption helpers", () => {
       consumer_key: "CK", consumer_secret: "CS",
       token_id: "TI", token_secret: "TS",
     });
-    expect(enc.netsuite_creds_iv).toBeDefined();
-    expect(Buffer.isBuffer(enc.netsuite_consumer_key_enc)).toBe(true);
+    expect(enc.netsuite_creds_iv).toMatch(/^\\x[0-9a-f]{24}$/);
+    expect(typeof enc.netsuite_consumer_key_enc).toBe("string");
+    expect(enc.netsuite_consumer_key_enc.startsWith("\\x")).toBe(true);
     const row = {
       netsuite_account_id: "1234567",
       ...enc,

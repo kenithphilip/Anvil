@@ -14,7 +14,7 @@
 //   7. default cost-optimised (preflight)
 
 import { describe, it, expect } from "vitest";
-import { selectClaudeModel, selectGeminiModel, selectModelForProvider, shouldEscalateEmptyLines, __consts__ } from "../api/_lib/docai/model_selector.js";
+import { selectClaudeModel, selectGeminiModel, selectModelForProvider, shouldEscalateEmptyLines, shouldEscalateTruncated, __consts__ } from "../api/_lib/docai/model_selector.js";
 
 describe("selectClaudeModel / priority order", () => {
   it("tenant pin wins over every rule", () => {
@@ -301,7 +301,62 @@ describe("shouldEscalateEmptyLines / reactive retry predicate", () => {
     expect(shouldEscalateEmptyLines({ out: emptyPoOut, kind: "po", settings: { docai_empty_lines_escalation: false } })).toBe(false);
   });
 
-  it("only applies to po/rfq kinds", () => {
+  it("applies to po/rfq/quote, but not invoice", () => {
     expect(shouldEscalateEmptyLines({ out: emptyPoOut, kind: "invoice", settings: {} })).toBe(false);
+    expect(shouldEscalateEmptyLines({ out: emptyPoOut, kind: "rfq", settings: {} })).toBe(true);
+  });
+
+  it("fires for a cheap-tier QUOTE that returned a header but zero lines (the FIAT ARC)", () => {
+    // A dense annual rate contract (78 lines / 4 pages) sits under the page
+    // chunk threshold, so it is single-shot and the cheap tier punts the table.
+    const emptyQuoteOut = {
+      ok: true,
+      selected_model: "claude-haiku-4-5-20251001",
+      model_selection_reason: "default_cost_optimised",
+      normalized: { classification: "quote", customer: { name: "Fiat India Automobiles Limited" }, lines: [] },
+    };
+    expect(shouldEscalateEmptyLines({ out: emptyQuoteOut, kind: "quote", settings: {} })).toBe(true);
+  });
+
+  it("does NOT fire on a genuine non_quote", () => {
+    const out = { ok: true, model_selection_reason: "default_cost_optimised", normalized: { classification: "non_quote", customer: { name: "x" }, lines: [] } };
+    expect(shouldEscalateEmptyLines({ out, kind: "quote", settings: {} })).toBe(false);
+  });
+});
+
+describe("shouldEscalateTruncated / output-ceiling retry predicate", () => {
+  const truncatedOut = {
+    ok: false,
+    reason: "output_truncated",
+    selected_model: "claude-haiku-4-5-20251001",
+    model_selection_reason: "default_cost_optimised",
+  };
+
+  it("fires for a cheap-tier truncation on an escalatable kind", () => {
+    expect(shouldEscalateTruncated({ out: truncatedOut, kind: "quote", settings: {} })).toBe(true);
+    expect(shouldEscalateTruncated({ out: truncatedOut, kind: "po", settings: {} })).toBe(true);
+  });
+
+  it("also honours a `truncated: true` flag (not just the reason string)", () => {
+    const out = { truncated: true, model_selection_reason: "default_cost_optimised" };
+    expect(shouldEscalateTruncated({ out, kind: "quote", settings: {} })).toBe(true);
+  });
+
+  it("does NOT fire when the result was not truncated", () => {
+    const out = { ok: true, reason: "ok", model_selection_reason: "default_cost_optimised" };
+    expect(shouldEscalateTruncated({ out, kind: "quote", settings: {} })).toBe(false);
+  });
+
+  it("does NOT fire when already on a strong tier (nothing bigger to escalate to)", () => {
+    const out = { ...truncatedOut, model_selection_reason: "po_multipage" };
+    expect(shouldEscalateTruncated({ out, kind: "quote", settings: {} })).toBe(false);
+  });
+
+  it("does NOT fire on a non-escalatable kind", () => {
+    expect(shouldEscalateTruncated({ out: truncatedOut, kind: "invoice", settings: {} })).toBe(false);
+  });
+
+  it("respects the docai_truncation_escalation=false opt-out", () => {
+    expect(shouldEscalateTruncated({ out: truncatedOut, kind: "quote", settings: { docai_truncation_escalation: false } })).toBe(false);
   });
 });

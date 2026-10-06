@@ -23,18 +23,24 @@ import { serviceClient } from "./supabase.js";
 // columns that fail on the parent table (no foreign keys, no RLS,
 // no enum checks), so an audit-events failure does not also cause
 // an audit_failures failure.
+const sentinelRow = (table, payload, error) => ({
+  tenant_id: payload.tenant_id || null,
+  table_name: table,
+  attempted_action: payload.action || payload.event_type || null,
+  attempted_object_type: payload.object_type || null,
+  attempted_object_id: payload.object_id ? String(payload.object_id).slice(0, 200) : null,
+  error_message: (error && (error.message || String(error))).slice(0, 500),
+  error_code: error && error.code ? String(error.code).slice(0, 60) : null,
+  raw_payload: payload,
+});
+
+// payload is one row or an array of rows (recordAudits writes its sentinels in
+// one insert, as it writes its audit rows).
 const recordSentinel = async (svc, table, payload, error) => {
   try {
-    await svc.from("audit_failures").insert({
-      tenant_id: payload.tenant_id || null,
-      table_name: table,
-      attempted_action: payload.action || payload.event_type || null,
-      attempted_object_type: payload.object_type || null,
-      attempted_object_id: payload.object_id ? String(payload.object_id).slice(0, 200) : null,
-      error_message: (error && (error.message || String(error))).slice(0, 500),
-      error_code: error && error.code ? String(error.code).slice(0, 60) : null,
-      raw_payload: payload,
-    });
+    await svc.from("audit_failures").insert(Array.isArray(payload)
+      ? payload.map((p) => sentinelRow(table, p, error))
+      : sentinelRow(table, payload, error));
   } catch (sentinelErr) {
     // Last-line fallback: stderr only. We deliberately do NOT
     // throw here. If audit_failures is also broken, we still
@@ -50,6 +56,21 @@ const recordSentinel = async (svc, table, payload, error) => {
   }
 };
 
+const auditRow = (ctx, payload) => ({
+  tenant_id: ctx.tenantId,
+  actor: ctx.user ? ctx.user.id : null,
+  actor_role: ctx.role || null,
+  action: payload.action,
+  object_type: payload.objectType || "system",
+  object_id: payload.objectId || null,
+  before_payload: payload.before || null,
+  after_payload: payload.after || null,
+  payload_hash: payload.payloadHash || null,
+  source_evidence_ids: payload.evidenceIds || null,
+  reason: payload.reason || null,
+  detail: payload.detail || null,
+});
+
 export const recordAudit = async (ctx, payload) => {
   if (!ctx || !ctx.tenantId) {
     // eslint-disable-next-line no-console
@@ -57,20 +78,7 @@ export const recordAudit = async (ctx, payload) => {
     return;
   }
   const svc = serviceClient();
-  const row = {
-    tenant_id: ctx.tenantId,
-    actor: ctx.user ? ctx.user.id : null,
-    actor_role: ctx.role || null,
-    action: payload.action,
-    object_type: payload.objectType || "system",
-    object_id: payload.objectId || null,
-    before_payload: payload.before || null,
-    after_payload: payload.after || null,
-    payload_hash: payload.payloadHash || null,
-    source_evidence_ids: payload.evidenceIds || null,
-    reason: payload.reason || null,
-    detail: payload.detail || null,
-  };
+  const row = auditRow(ctx, payload);
   const { error } = await svc.from("audit_events").insert(row);
   if (error) {
     // eslint-disable-next-line no-console
@@ -86,6 +94,48 @@ export const recordAudit = async (ctx, payload) => {
   }
 };
 
+// Many audit rows for one request, written in as few inserts as possible.
+//
+// A bulk write that awaits one recordAudit per row spends a round trip per
+// row AFTER its data write has committed, so a request that runs out of time
+// leaves changes with no audit row for the tail. This writes up to
+// AUDIT_BATCH rows per insert. Same contract as recordAudit otherwise: a
+// failure is logged and sent to audit_failures, never thrown.
+const AUDIT_BATCH = 500;
+export const recordAudits = async (ctx, payloads) => {
+  const list = (payloads || []).filter(Boolean);
+  if (!list.length) return;
+  if (!ctx || !ctx.tenantId) {
+    console.warn("[audit] recordAudits called without ctx.tenantId; dropping " + list.length + " rows");
+    return;
+  }
+  const svc = serviceClient();
+  const rows = list.map((p) => auditRow(ctx, p));
+  for (let i = 0; i < rows.length; i += AUDIT_BATCH) {
+    const slice = rows.slice(i, i + AUDIT_BATCH);
+    const { error } = await svc.from("audit_events").insert(slice);
+    if (error) {
+      console.error("[audit] audit_events batch insert failed", {
+        tenant_id: ctx.tenantId,
+        rows: slice.length,
+        actions: [...new Set(slice.map((r) => r.action))],
+        error_code: error.code,
+        error_message: error.message,
+      });
+      await recordSentinel(svc, "audit_events", slice, error);
+    }
+  }
+};
+
+// processing_events columns are EXACTLY: tenant_id, case_id, event_type,
+// object_type, object_id, detail, duration_ms, created_at (001_init.sql:343).
+// There is NO `severity` column and never was. Nine direct inserts across the
+// agents / voice / inbound handlers used to pass one as a top-level key, which
+// PostgREST rejects (PGRST204) — so every one of those events was silently
+// dropped, including the inbound-complaint handler. Severity now rides inside
+// `detail`, which costs nothing (both readers already select `detail`, and the
+// diagnostics tab renders it) and needs no migration. If you want a severity
+// here, put it in `detail` — do not add a top-level key.
 export const recordEvent = async (ctx, payload) => {
   if (!ctx || !ctx.tenantId) {
     // eslint-disable-next-line no-console

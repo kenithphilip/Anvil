@@ -45,8 +45,7 @@ const recordEventDirect = async (svc, action, eventType, severity, detail) => {
     event_type: eventType,
     object_type: "voice_call_action",
     object_id: action.id,
-    detail: detail || {},
-    severity: severity || "info",
+    detail: { ...(detail || {}), severity: severity || "info" },
   });
 };
 

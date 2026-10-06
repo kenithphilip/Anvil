@@ -13,6 +13,7 @@
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../../_lib/cors.js";
 import { serviceClient } from "../../_lib/supabase.js";
+import { findUserByEmail } from "../../_lib/auth-user-lookup.js";
 import { verifyAuthenticationResponse } from "@simplewebauthn/server";
 import { ensureMembership, getMemberStatus, defaultTenantId } from "../../_lib/tenancy.js";
 import { createClient } from "@supabase/supabase-js";
@@ -64,14 +65,16 @@ export default async function handler(req, res) {
     }
     const svc = serviceClient();
 
-    // Resolve the user. Audit follow-up (May 2026, regression of
-    // H11): use email-filtered listUsers instead of project-wide
-    // pull. Closes a cross-tenant enumeration vector on this
-    // pre-authentication endpoint.
+    // Resolve the user.
+    //
+    // This was listUsers({ page: 1, perPage: 1, email }), and the SDK drops the
+    // `email` key — so `user` was whoever happens to be first in the project,
+    // and the credential below was checked against THAT account. Fails closed:
+    // a lookup that could not complete is not a match.
     let user = null;
     try {
-      const { data } = await svc.auth.admin.listUsers({ page: 1, perPage: 1, email });
-      user = (data?.users || [])[0] || null;
+      const found = await findUserByEmail(svc, email);
+      user = found.exhaustive ? found.user : null;
     } catch (_) { user = null; }
     if (!user) {
       return json(res, 401, { error: { code: "PASSKEY_FAIL", message: "Could not verify passkey." } });
@@ -151,10 +154,18 @@ export default async function handler(req, res) {
       });
     }
 
-    // Mint a session for the user.
-    const sess = await mintSessionForUser(svc, email);
+    // Mint a session for the VERIFIED OWNER — user.email, never the caller's
+    // `email` field.
+    //
+    // The identity proven and the identity issued were decoupled: the credential
+    // was verified against `user`, then the session was minted for the raw
+    // request string. With the lookup bug above that meant anyone holding the
+    // first project user's passkey could obtain a session as any other account,
+    // in any tenant, by editing one field. Both halves are fixed; this half is
+    // the one that must hold even if the lookup is ever wrong again.
+    const sess = await mintSessionForUser(svc, user.email);
     await safeAwait(svc.from("user_security_audit").insert({
-      user_id: user.id, user_email: email,
+      user_id: user.id, user_email: user.email,
       event: "passkey_login_ok",
     }));
     return json(res, 200, {

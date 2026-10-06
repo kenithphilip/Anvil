@@ -12,6 +12,7 @@ import { getRecent, clearRecent, type RecentItem } from "../lib/recent-items";
 import { AnvilBackend } from "../lib/api";
 import { Prefs } from "../lib/preferences";
 import { signOutAndRedirect } from "../lib/session";
+import { shortcutLabel, shortcutAria } from "../lib/platform";
 import type { NavGroup, RoleEntry, NavBadge } from "../lib/nav";
 import type { ShellTelemetry, BadgeMap } from "../lib/telemetry";
 
@@ -546,10 +547,10 @@ export const Shell: React.FC<ShellProps> = ({
         ))}
       </div>
 
-      <button type="button" className="head-search" onClick={onCmdK} aria-label="Open search (Cmd+K)">
+      <button type="button" className="head-search" onClick={onCmdK} aria-label={`Global search (${shortcutAria("K")})`}>
         {Icon.search}
-        <span>Search orders, customers, items, jobs…</span>
-        <kbd>⌘K</kbd>
+        <span>Global search</span>
+        <kbd>{shortcutLabel("K")}</kbd>
       </button>
 
       <button type="button" className="head-pill tenant" onClick={onTenant} title="Switch tenant" aria-label={`Switch tenant (current: ${tenant?.code || "TENANT"})`}>
@@ -623,12 +624,19 @@ export const Shell: React.FC<ShellProps> = ({
         ))}
       </nav>
       <div className="side-foot">
-        <div className="av">{session?.initials || "GU"}</div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, fontFamily: "var(--sans)", color: "var(--ink-2)", fontWeight: 600 }}>
+        <div className="av" title={(session?.displayName || "Guest") + " · " + (role?.label || "Sales Engineer")}>
+          {session?.initials || "GU"}
+        </div>
+        {/* .side-foot-id is hidden by the collapsed-rail rule: at 56px there
+            is ~28px of content width, which the avatar alone nearly fills, so
+            the name/role block and the settings gear used to collide. The
+            avatar keeps the identity (initials) and its title carries the
+            full name for anyone who needs it. */}
+        <div className="side-foot-id" style={{ flex: 1, minWidth: 0 }}>
+          <div className="side-foot-name">
             {session?.displayName || "Guest"}
           </div>
-          <div style={{ fontSize: 10, fontFamily: "var(--mono)", color: "var(--ink-4)" }}>
+          <div className="side-foot-role">
             {role?.label || "Sales Engineer"}
           </div>
         </div>

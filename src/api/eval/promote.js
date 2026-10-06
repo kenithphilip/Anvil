@@ -20,15 +20,21 @@ const DEFAULT_SUITE = "po-extraction";
 // avoid PostgREST embedded-FK fragility. Best-effort.
 const resolveSourceDocuments = async (svc, sourceTenantId, orderId) => {
   try {
+    // order_documents is (order_id, document_id, role) — it has NO tenant_id
+    // (001_init.sql:169). Filtering on one made PostgREST reject the whole
+    // statement with 42703, so this function returned the empty tuple every
+    // time and EVERY harvested golden was written with documents: []. Replay
+    // then skipped 100% of them with "no_source_document" — the live-model
+    // scorer has never run against a harvested case. order_id is already
+    // tenant-scoped through orders; the tenant filter belongs on `documents`.
     const od = await svc.from("order_documents")
       .select("document_id, role")
-      .eq("tenant_id", sourceTenantId)
       .eq("order_id", orderId);
     if (!od || od.error || !Array.isArray(od.data) || !od.data.length) return { documents: [], sourceSha256: null };
     const ids = od.data.map((r) => r.document_id).filter(Boolean);
     let shaById = {};
     if (ids.length) {
-      const docs = await svc.from("documents").select("id, sha256").in("id", ids);
+      const docs = await svc.from("documents").select("id, sha256").eq("tenant_id", sourceTenantId).in("id", ids);
       if (docs && !docs.error && Array.isArray(docs.data)) {
         for (const d of docs.data) shaById[d.id] = d.sha256 || null;
       }
@@ -71,6 +77,10 @@ export const promoteApprovedOrder = async (svc, order, opts = {}) => {
   // Provenance rides inside `expected` under a key scoreCase ignores, so no
   // migration is needed. It pins how to reproduce + who verified the case.
   expected._provenance = {
+    // The document kind, so a golden says which scoring profile reads it.
+    // eval_cases has no kind column and migrations here are applied by hand,
+    // so it rides in _provenance — the channel this object already is.
+    extraction_kind: "po",
     order_id: order.id,
     source_tenant_id: sourceTenantId,
     extraction_run_id: extractionRunId,

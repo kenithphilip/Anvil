@@ -31,7 +31,9 @@ export default async function handler(req, res) {
       if (!s.data) return json(res, 404, { error: { message: "session not found" } });
       let messages = [];
       if (wantMessages) {
-        const m = await svc.from("erp_chat_messages").select("id, role, content, tool_call, tool_result, citations, model, latency_ms, created_at")
+        // tokens_in/out are persisted per assistant turn and are what the
+        // Ask Anvil diagnostics panel shows for a RESTORED conversation.
+        const m = await svc.from("erp_chat_messages").select("id, role, content, tool_call, tool_result, citations, model, latency_ms, tokens_in, tokens_out, created_at")
           .eq("session_id", id).order("created_at", { ascending: true });
         messages = m.data || [];
       }

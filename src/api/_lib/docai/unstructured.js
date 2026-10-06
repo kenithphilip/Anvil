@@ -18,6 +18,7 @@
 
 import { decryptField } from "../secrets.js";
 import { safeFetch } from "../safe-fetch.js";
+import { classifyColumns } from "./table-columns.js";
 
 const HOSTED_URL = "https://api.unstructured.io/general/v0/general";
 
@@ -84,19 +85,21 @@ const normalizeFromUnstructured = (elements) => {
     }
     if (!rows.length) continue;
     const header = rows[0];
-    const colIdx = (re) => header.findIndex((h) => re.test(String(h || "").toLowerCase()));
-    const partIdx = colIdx(/(part|sku|item|catalog)/);
-    const qtyIdx  = colIdx(/(qty|quantity)/);
-    const priceIdx = colIdx(/(price|rate)/);
-    const descIdx  = colIdx(/(desc|name)/);
+    // Shared classifier — keeps the buyer's "Item Number" out of partNumber and
+    // prefers "Item Description" over "Service Parent Name". See
+    // table-columns.js for why this used to invert on Mahindra POs.
+    const { part: partIdx, buyerCode: buyerIdx, desc: descIdx, qty: qtyIdx, price: priceIdx } = classifyColumns(header);
     for (const r of rows.slice(1)) {
+      const rawDesc = descIdx >= 0 ? r[descIdx] : null;
       const li = {
         partNumber: partIdx >= 0 ? r[partIdx] : null,
-        description: descIdx >= 0 ? r[descIdx] : null,
+        customerItemCode: buyerIdx >= 0 ? r[buyerIdx] : null,
+        description: rawDesc,
+        raw_description: rawDesc,
         quantity: qtyIdx >= 0 ? Number(String(r[qtyIdx] || "0").replace(/[^\d.]/g, "")) : null,
         unitPrice: priceIdx >= 0 ? Number(String(r[priceIdx] || "0").replace(/[^\d.]/g, "")) : null,
       };
-      if (li.partNumber || li.description) lines.push(li);
+      if (li.partNumber || li.description || li.customerItemCode) lines.push(li);
     }
   }
   return { customer: null, lines, raw_element_count: (elements || []).length };

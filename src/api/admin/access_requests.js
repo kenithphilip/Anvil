@@ -19,6 +19,8 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { sendEmail } from "../_lib/mailer.js";
+import { isPortalIdentity } from "../_lib/tenancy.js";
 
 const VALID_ROLES = new Set([
   "viewer", "sales_engineer", "sales_manager", "procurement", "finance", "admin",
@@ -123,6 +125,13 @@ export default async function handler(req, res) {
       const updates = {};
 
       if (body.action === "approve") {
+        // A customer portal identity is never approved as staff. Rows like
+        // this exist when a portal invitee reached a staff sign-in before
+        // ensureMembership refused portal identities; one click here would
+        // have given a customer the seller's staff access.
+        if (await isPortalIdentity(svc, body.user_id)) {
+          return json(res, 409, { error: { code: "PORTAL_ACCOUNT", message: "This account is a customer portal user and cannot be approved as staff. Deny the request instead." } });
+        }
         const targetRole = body.role && VALID_ROLES.has(body.role) ? body.role : (member.requested_role || member.role);
         updates.status = "approved";
         updates.role = targetRole;
@@ -182,6 +191,27 @@ export default async function handler(req, res) {
       if (body.action === "approve" || body.action === "deny") {
         await resolveNotificationsFor(svc, ctx.tenantId, body.user_id, ctx.user.id,
           body.action === "approve" ? "approved" : "denied");
+      }
+
+      // Best-effort welcome email on approval (self-signup users get only an
+      // in-app notification otherwise; admin-invited users already got the
+      // Supabase invite email). Uses the switchable mailer — a no-op when no
+      // provider is configured — and never blocks the approval.
+      if (body.action === "approve") {
+        try {
+          const u = await svc.auth.admin.getUserById(body.user_id);
+          const email = u && u.data && u.data.user && u.data.user.email;
+          const name = u && u.data && u.data.user && u.data.user.user_metadata && u.data.user.user_metadata.name;
+          if (email) {
+            const appUrl = process.env.APP_URL || "";
+            const text = (name ? `Hi ${name},\n\n` : "Hi,\n\n") +
+              "Your Anvil account has been approved — you're all set.\n\n" +
+              (appUrl ? `Sign in here: ${appUrl}\n\n` : "") +
+              "Your role: " + (updates.role || member.role) + ".\n\n" +
+              "Welcome aboard,\nThe Anvil team";
+            await sendEmail({ to: email, subject: "Welcome to Anvil — your account is approved", text });
+          }
+        } catch (_) { /* best-effort; the approval is already persisted */ }
       }
 
       await recordAudit(ctx, {

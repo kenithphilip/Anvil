@@ -14,6 +14,13 @@ import { encryptChatCreds, decryptChatCreds } from "../../_lib/inbound-chat.js";
 
 const VALID = new Set(["whatsapp", "slack", "teams", "wechat"]);
 
+// The verification secret each webhook channel MUST carry. An ACTIVE config
+// without it would let the (fail-closed) webhook reject all its traffic, or —
+// before that fix — accept forged unsigned requests. Enforcing it here stops
+// the fail-open state from being created in the first place (audit
+// SO-processing #16). wechat has no inbound webhook, so it is unconstrained.
+const REQUIRED_SECRET = { whatsapp: "auth_token", slack: "signing_secret", teams: "webhook_secret" };
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);
@@ -37,12 +44,20 @@ export default async function handler(req, res) {
       if (!channel || !VALID.has(channel)) {
         return json(res, 400, { error: { message: "channel in (whatsapp, slack, teams, wechat) required" } });
       }
+      const active = body.active !== false;
+      // Fail-closed invariant: an active webhook channel must carry its
+      // verification secret, so a config that would accept forged inbound (or
+      // reject all its own traffic) can never be created.
+      const need = REQUIRED_SECRET[channel];
+      if (active && need && !String((body.creds || {})[need] || "").trim()) {
+        return json(res, 400, { error: { message: `An active ${channel} config requires creds.${need}` } });
+      }
       const enc = encryptChatCreds(channel, body.creds || {});
       const row = {
         tenant_id: ctx.tenantId,
         channel,
         display_name: body.display_name || null,
-        active: body.active !== false,
+        active,
         ...enc,
       };
       const { data, error } = await svc.from("inbound_chat_configs")

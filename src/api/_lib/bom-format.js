@@ -78,7 +78,12 @@ export const BUILTIN_FORMATS = [
     quirks: { level_from_col: "std_category" },
   },
   {
-    key: "obara_india", label: "India (flat)", is_builtin: true, source_country: "O-INDIA",
+    // source_country is null, NOT "O-INDIA": obara_india is the priority-5
+    // detection FLOOR (it wins when no KR/CN/JP signal fires), so stamping it
+    // "O-INDIA" silently mis-attributed every signal-less foreign BOM to India.
+    // It keeps its rich column map as the floor, but origin is left unknown for
+    // the operator (or a positive signal) to set.
+    key: "obara_india", label: "India (flat)", is_builtin: true, source_country: null,
     column_map: {
       part_no: ["part no", "part no.", "part number", "partno", "part_no"],
       part_name: ["part name", "name", "description", "item name"],
@@ -139,12 +144,20 @@ const PART_NAME_LABELS = ["part name", "part_name", "name", "description", "item
 
 // Find the header row: first row (within 50) carrying both a part-no and
 // a part-name label; else the most-populated row.
+// A row that repeats the column labels (Part No. / Part Name / …). Same signal
+// findHeaderRow uses to LOCATE the header — reused to SKIP the header when it is
+// reprinted at the top of each page of a multi-page BOM, instead of ingesting it
+// as a part. (Bug: gun SRTC-2K0374 stored a page-header row as a BOM line.)
+export const isHeaderRow = (row) => {
+  const cells = (row || []).map(norm);
+  return cells.some((c) => PART_NO_LABELS.includes(c)) && cells.some((c) => PART_NAME_LABELS.includes(c));
+};
+
 export const findHeaderRow = (rows) => {
   const lim = Math.min((rows || []).length, 50);
   for (let i = 0; i < lim; i += 1) {
     if (!rows[i]) continue;
-    const cells = rows[i].map(norm);
-    if (cells.some((c) => PART_NO_LABELS.includes(c)) && cells.some((c) => PART_NAME_LABELS.includes(c))) return i;
+    if (isHeaderRow(rows[i])) return i;
   }
   let best = -1, bestN = 0;
   for (let i = 0; i < lim; i += 1) {
@@ -272,6 +285,9 @@ export const mapSheet = (rows, fileName, formats) => {
   let seq = 0;
   for (let i = headerIndex + 1; i < rows.length; i += 1) {
     const row = rows[i] || [];
+    // Skip a reprinted page-header row (its Part No. column literally holds the
+    // label "Part No."), rather than storing it as a part.
+    if (isHeaderRow(row)) continue;
     let partNo = cellAt(row, cols.part_no);
     let supplierPartNo = cellAt(row, cols.parts_code) || cellAt(row, cols.supplier_part_no);
     if (quirks.parts_code_to === "part_no" && supplierPartNo) partNo = supplierPartNo;

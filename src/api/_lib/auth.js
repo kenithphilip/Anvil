@@ -30,8 +30,13 @@ if (ALLOW_ANONYMOUS && NODE_ENV === "production") {
 // operator-role users (service-visit and AMC handlers) got 403 on
 // every read endpoint that asked for "read" permission, despite the
 // frontend matrix granting them read across most pages.
-const VIEWER_ROLES   = new Set(["viewer", "sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator"]);
-const WRITER_ROLES   = new Set(["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator"]);
+const VIEWER_ROLES   = new Set(["viewer", "sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "design_engineer", "design_manager", "customer_support"]);
+// customer_support is read-only server-side (it inherits the viewer matrix on
+// the client). Its ONE write — sharing a spare matrix to the customer portal —
+// is gated by the "spare_matrix.share" action (requireAction) rather than
+// blanket WRITER_ROLES membership, so it can no longer write to every other
+// endpoint (invoices, customers, quotes, …).
+const WRITER_ROLES   = new Set(["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "design_engineer", "design_manager"]);
 const APPROVER_ROLES = new Set(["sales_manager", "finance", "admin"]);
 const ADMIN_ROLES    = new Set(["admin"]);
 
@@ -40,6 +45,52 @@ const REQUIRED_ROLES = {
   write: WRITER_ROLES,
   approve: APPROVER_ROLES,
   admin: ADMIN_ROLES,
+};
+
+// ── Per-tenant domain mapping (Phase 0) ──────────────────────────────────
+// Resolve the request Host to a tenant, so a per-tenant domain/subdomain
+// (e.g. obara.anvil.app, or a custom vanity host) can scope the session
+// without the user typing a tenant UUID. Ships DARK: used only as a fallback
+// in resolveContext when no x-anvil-tenant header is present AND the resolved
+// tenant is one the user already belongs to — it never grants cross-tenant
+// access. See docs / PR: tenant domain mapping Phase 0.
+
+// The effective request host, lowercased, port stripped. Prefers the
+// x-forwarded-host the proxy (Vercel) sets over the raw Host header.
+export const hostFromReq = (req) => {
+  const raw = String((req && req.headers && (req.headers["x-forwarded-host"] || req.headers.host)) || "")
+    .split(",")[0].trim().toLowerCase();
+  return raw.replace(/:\d+$/, "");
+};
+
+// The leftmost subdomain label of a host, or "" when there isn't one (apex
+// domain, bare hostname, localhost, or an IP literal). Maps
+// <slug>.<app-domain> to a tenant by slug.
+export const subdomainLabel = (host) => {
+  const h = String(host || "").trim().toLowerCase();
+  if (!h || h === "localhost" || /^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return "";
+  const parts = h.split(".");
+  if (parts.length < 3) return "";   // need sub.domain.tld to have a subdomain
+  return parts[0];
+};
+
+// Look up the tenant a host maps to: first an explicit full-host `domain`
+// match (custom vanity domains), then the subdomain label against `slug`.
+// Best-effort — any error resolves to null so host resolution can never break
+// auth; the caller then falls back to the user's default tenant.
+export const resolveHostTenant = async (svc, req) => {
+  try {
+    const host = hostFromReq(req);
+    if (!host) return null;
+    const byDomain = await svc.from("tenants").select("id").ilike("domain", host).maybeSingle();
+    if (byDomain && byDomain.data && byDomain.data.id) return byDomain.data.id;
+    const label = subdomainLabel(host);
+    if (!label) return null;
+    const bySlug = await svc.from("tenants").select("id").eq("slug", label).maybeSingle();
+    return (bySlug && bySlug.data && bySlug.data.id) || null;
+  } catch (_) {
+    return null;
+  }
 };
 
 export const resolveContext = async (req) => {
@@ -88,7 +139,17 @@ export const resolveContext = async (req) => {
     err.status = 403;
     throw err;
   }
-  const tenantId = tenantHeader || allowed[0].tenant_id;
+  // Tenant precedence: explicit x-anvil-tenant header > per-tenant host
+  // (domain/subdomain) the user belongs to > the user's first membership.
+  // Host resolution can NEVER select a tenant the user isn't a member of —
+  // an unknown or non-member host simply falls through to allowed[0], so this
+  // is backward-compatible and ships dark until a tenant domain is populated.
+  let tenantId = tenantHeader;
+  if (!tenantId) {
+    const hostTenant = await resolveHostTenant(svc, req);
+    if (hostTenant && allowed.some((m) => m.tenant_id === hostTenant)) tenantId = hostTenant;
+  }
+  if (!tenantId) tenantId = allowed[0].tenant_id;
   const membership = allowed.find((m) => m.tenant_id === tenantId);
   if (!membership) {
     const err = new Error("User is not a member of tenant " + tenantId);
@@ -135,6 +196,68 @@ export const requirePermission = (ctx, level) => {
   if (!required.has(ctx.role)) {
     const err = new Error("Role " + ctx.role + " is not allowed to perform " + level + " action");
     err.status = 403;
+    throw err;
+  }
+};
+
+// ── Fine-grained action gating ───────────────────────────────────────────
+// The coarse read/write/approve/admin verbs above are too broad for a handful
+// of sensitive actions: the client ACTIONS matrix (src/v3-app/lib/rbac.ts) and
+// the per-resource MATRIX restrict them further, but until now that was
+// enforced ONLY client-side. SERVER_ACTIONS mirrors the sensitive entries so the
+// server is the real gate. Enforced at the specific endpoints (share, invoices,
+// quotes convert/send, customer GSTIN). Kept in sync with rbac.ts ACTIONS BY
+// HAND: src/scripts/audit-rbac.mjs compares roles, verb sets and the MATRIX,
+// not these tables, so a new action needs its own parity test (see
+// api-customer-owner.test.js for customer.assign_owner).
+export const SERVER_ACTIONS = {
+  // Share a spare matrix to the customer portal — the ONE write customer_support
+  // is allowed (it is otherwise read-only). Mirrors rbac.ts ACTIONS.
+  "spare_matrix.share":  new Set(["sales_engineer", "sales_manager", "design_engineer", "design_manager", "customer_support", "admin"]),
+  // GSTIN edits are restricted (a bad GSTIN breaks e-invoice IRN / Tally lookup).
+  "customer.edit_gstin": new Set(["sales_manager", "admin"]),
+  // Naming a customer's account owner decides whose pipeline, chase list and
+  // follow-ups the account lands on. That is a manager's call: the coarse
+  // write verb would let any rep (or finance, or procurement) take an account
+  // or hand one away. Mirrors rbac.ts customer.assign_owner.
+  "customer.assign_owner": new Set(["sales_manager", "admin"]),
+  // MATRIX.invoices: only sales_manager (rw), finance (rwa), admin (rwa) — NOT
+  // operator/procurement/customer_support/sales_engineer (r or hidden).
+  "invoices.write":      new Set(["sales_manager", "finance", "admin"]),
+  // MATRIX.quotes: sales_manager (rwa) + admin (rwa) approve/convert/send;
+  // finance is read-only on quotes (its approve power is invoices/tally).
+  "quotes.approve":      new Set(["sales_manager", "admin"]),
+  // Downloading a gun drawing (EG sheet / 2D / 3D file, or its external link) is
+  // limited to design + sales roles + admin — data-download control. Other roles
+  // can see a drawing exists (list) but cannot pull the file/link. Mirrors rbac.ts.
+  "drawing.download":    new Set(["design_engineer", "design_manager", "sales_engineer", "sales_manager", "admin"]),
+  // Assigning field work to a PERSON. The coarse "write" verb admits eight
+  // roles, including finance and procurement -- who cannot even see the Service
+  // Visits screen (MATRIX["svc-visits"] gives them ""), yet could reassign
+  // another engineer's scheduled visit. Mirrors rbac.ts service.assign.
+  "service.assign":      new Set(["operator", "admin"]),
+  // Logging a rep touch (call / meeting / visit) against a quote or an
+  // opportunity: exactly the coarse "write" roles, so it tightens nothing
+  // server-side. It is registered so the Follow-up form (TouchLog.tsx, via
+  // rbac.ts canDo) hides itself for the roles this endpoint always refuses
+  // (viewer, customer_support) instead of offering a form that 403s.
+  "touch.log":           new Set(["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "design_engineer", "design_manager"]),
+};
+
+export const hasAction = (ctx, action) => {
+  const allow = SERVER_ACTIONS[action];
+  if (!allow) return true;                 // action not server-gated here
+  if (!ctx || ctx.anonymous) return false; // anonymous can never act
+  return allow.has(ctx.role) || ctx.role === "admin";
+};
+
+// Throwing gate for a fine-grained action. Call AFTER requirePermission (which
+// enforces the coarse verb + the anonymous hard-stop) so this only tightens.
+export const requireAction = (ctx, action) => {
+  if (!hasAction(ctx, action)) {
+    const err = new Error("Role " + (ctx && ctx.role) + " is not permitted to perform '" + action + "'");
+    err.status = 403;
+    err.code = "ACTION_FORBIDDEN";
     throw err;
   }
 };

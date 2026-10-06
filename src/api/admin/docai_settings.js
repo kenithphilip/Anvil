@@ -15,6 +15,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings, updateTenantSettings } from "../_lib/stripe-client.js";
+import { listPromptVersions } from "../_lib/docai/prompt-versions.js";
 
 const KNOWN_ADAPTERS = new Set([
   "gemini", "claude", "reducto", "azure_di", "unstructured",
@@ -122,7 +123,29 @@ const SAFE_KEYS = [
   "docai_fallback_confidence",
   "docai_mistral_ocr_batch",
   "docai_gemini_media_resolution",
+  // PR 6: the prompt A/B lever. Writable here so switching an experiment on or
+  // off — or pinning a tenant out of one — is a settings change rather than a
+  // deploy, which is the whole claim the prompt registry makes.
+  "docai_prompt_variants",
+  "docai_prompt_pins",
 ];
+
+// A pin is { "<prompt_name>": "<version>" }. Validated rather than trusted:
+// this value decides which prompt reads a customer's purchase orders, and a
+// typo that silently resolves to no pin would leave a tenant in an experiment
+// they asked to leave.
+const validatePromptPins = (v) => {
+  if (v == null) return null;
+  if (typeof v !== "object" || Array.isArray(v)) return "docai_prompt_pins must be an object like {\"po_extractor\":\"v1\"}";
+  for (const [name, version] of Object.entries(v)) {
+    const rows = listPromptVersions(name);
+    if (!Array.isArray(rows) || !rows.length) return `docai_prompt_pins: unknown prompt "${name}"`;
+    if (typeof version !== "string" || !rows.some((r) => r.version === version)) {
+      return `docai_prompt_pins: "${name}" has no version "${version}"`;
+    }
+  }
+  return null;
+};
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -194,6 +217,18 @@ export default async function handler(req, res) {
         if (err) errors.push(err);
         else updates.docai_gemini_media_resolution = body.docai_gemini_media_resolution || null;
       }
+      if (Object.prototype.hasOwnProperty.call(body, "docai_prompt_variants")) {
+        if (typeof body.docai_prompt_variants !== "boolean" && body.docai_prompt_variants !== null) {
+          errors.push("docai_prompt_variants must be true, false or null");
+        } else {
+          updates.docai_prompt_variants = body.docai_prompt_variants === true;
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(body, "docai_prompt_pins")) {
+        const err = validatePromptPins(body.docai_prompt_pins);
+        if (err) errors.push(err);
+        else updates.docai_prompt_pins = body.docai_prompt_pins || null;
+      }
 
       if (errors.length) {
         return json(res, 400, { error: { message: errors.join("; ") } });
@@ -204,7 +239,27 @@ export default async function handler(req, res) {
         });
       }
 
-      const next = await updateTenantSettings(svc, ctx.tenantId, updates);
+      // Migrations are applied by hand here, so the live table can lag the
+      // repo. PostgREST rejects the WHOLE statement with 42703 when it names a
+      // column that does not exist yet — which for the two prompt keys is a
+      // likely first experience, and a raw "column does not exist" tells the
+      // operator nothing about what to do. Name the migration instead.
+      let next;
+      try {
+        next = await updateTenantSettings(svc, ctx.tenantId, updates);
+      } catch (e) {
+        const msg = String(e?.message || e);
+        if (/docai_prompt_(variants|pins)/.test(msg) && /column|42703/i.test(msg)) {
+          return json(res, 409, {
+            error: {
+              message: "The prompt A/B columns are not in this database yet. Apply supabase/migrations/218_docai_prompt_variants.sql, then retry.",
+              code: "MIGRATION_NOT_APPLIED",
+              migration: "218_docai_prompt_variants.sql",
+            },
+          });
+        }
+        throw e;
+      }
       await recordAudit(ctx, {
         action: "docai_settings_updated",
         objectType: "tenant",

@@ -13,9 +13,14 @@ import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "..
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
 
-const buildInvoicePdfData = (tenant, invoice, customer) => ({
+const buildInvoicePdfData = (tenant, invoice, customer, order) => ({
   number: invoice.invoice_number,
   date: invoice.issue_date,
+  // The buyer's own reference, printed where they look for it. Falls back to
+  // the order's PO number for invoices issued before migration 214 added the
+  // snapshot column, so historic invoices re-render with the reference rather
+  // than blank.
+  buyerRef: invoice.customer_po_number || order?.po_number || null,
   brand: {
     name: tenant?.display_name || "Anvil",
     address: tenant?.billing_address || null,
@@ -70,7 +75,18 @@ export default async function handler(req, res) {
     const tQ = await svc.from("tenants").select("display_name, slug").eq("id", ctx.tenantId).maybeSingle();
     const tenant = tQ.data || null;
 
-    const pdf = await renderInvoice(buildInvoicePdfData(tenant, invQ.data, customer));
+    // Only for the pre-214 fallback: invoices created before the snapshot
+    // column existed have no customer_po_number of their own, and re-rendering
+    // one blank would lose the reference the buyer needs. Skipped entirely
+    // once the invoice carries its own.
+    let order = null;
+    if (!invQ.data.customer_po_number && invQ.data.order_id) {
+      const oQ = await svc.from("orders").select("po_number")
+        .eq("tenant_id", ctx.tenantId).eq("id", invQ.data.order_id).maybeSingle();
+      if (!oQ.error) order = oQ.data;
+    }
+
+    const pdf = await renderInvoice(buildInvoicePdfData(tenant, invQ.data, customer, order));
 
     if (format === "share") {
       let bucket;

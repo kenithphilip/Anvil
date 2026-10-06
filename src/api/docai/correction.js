@@ -19,6 +19,7 @@ import { tenantSettings, updateTenantSettings } from "../_lib/stripe-client.js";
 import { safeFire } from "../_lib/safe-thenable.js";
 import { promoteCorrectionIfStable } from "../_lib/docai/overrides.js";
 import { classifyDiff, recordCorrections, stableEqual } from "../_lib/docai/learned-corrections.js";
+import { promoteCorrectedRun } from "../eval/harvest-corrected.js";
 
 const REBUILD_THRESHOLD = 50;
 const MAX_EXAMPLES_PER_FIELD = 5;
@@ -128,6 +129,29 @@ export default async function handler(req, res) {
       detail: body.field_path,
     });
 
+    // PR 4 / EXTRACTION_QUALITY §8: harvest the CORRECTED run into the golden
+    // set. promote.js snapshots orders on APPROVAL, which selects for
+    // documents the pipeline already got right — run that alone and the
+    // regression gate fills with easy PDFs. A corrected run is the opposite
+    // signal and the more valuable fixture: a document the extractor got
+    // WRONG, with a human's answer attached.
+    //
+    // Best-effort and idempotent (upsert on tenant+suite+case_id), so
+    // correcting five fields refreshes one golden rather than making five.
+    // Never let a harvest failure lose the correction that was just recorded.
+    let goldenHarvest = null;
+    try {
+      goldenHarvest = await promoteCorrectedRun(svc, {
+        tenantId: ctx.tenantId,
+        extractionRunId: body.extraction_run_id,
+        targetTenantId: process.env.EVAL_GOLDEN_TENANT_ID || ctx.tenantId,
+      });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("[docai/correction] golden harvest failed:", e?.message || e);
+      goldenHarvest = { promoted: false, reason: "exception" };
+    }
+
     // Rebuild the per-customer Claude few-shot overrides if we
     // crossed the threshold.
     if (customerId) {
@@ -157,6 +181,13 @@ export default async function handler(req, res) {
       } catch (_e) { promoted = null; }
     }
 
-    return json(res, 200, { ok: true, id: ins.data.id, override_promoted: promoted });
+    return json(res, 200, {
+      ok: true,
+      id: ins.data.id,
+      override_promoted: promoted,
+      // So an operator can see their fix became a regression test, not just a
+      // logged edit. A skip carries its reason rather than reading as success.
+      golden_harvest: goldenHarvest,
+    });
   } catch (err) { sendError(res, err); }
 }

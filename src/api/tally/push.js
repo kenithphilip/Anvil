@@ -25,6 +25,7 @@ import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { tallyPush, tallyResolveCompany, tallyIsRecoverable } from "../_lib/tally-client.js";
 import { resolveSalesVoucherType } from "../_lib/tally-voucher-type.js";
 import { buildSalesVoucherXml, isPlaceholderXml } from "../_lib/tally-build-voucher.js";
+import { firstUnresolvedBlocker } from "../_lib/blocking-findings.js";
 
 const idempotencyKey = (gstin, poNumber, payloadHash) =>
   [String(gstin || ""), String(poNumber || ""), String(payloadHash || "")].join("|");
@@ -65,6 +66,36 @@ export default async function handler(req, res) {
       return json(res, 400, { error: { message: "orderId required" } });
     }
     const svc = serviceClient();
+
+    // MODE B: Anvil does not write to the customer's ledger.
+    //
+    // The mode's entire promise is that their process is unchanged, and a
+    // voucher appearing in Tally that nobody entered breaks that promise in
+    // the one way that cannot be undone by a settings toggle. So the push is
+    // refused here, before the bridge is even resolved.
+    //
+    // Refused LOUDLY rather than no-oped. A push that silently does nothing is
+    // how a tenant discovers their mode by finding an empty ledger a week
+    // later; a 409 naming the mode is how they discover it in the second it
+    // happens. Everything else Anvil does — extract, reconcile, propose,
+    // compare — is untouched by the mode.
+    const modeQ = await svc.from("tenant_settings")
+      .select("so_processing_mode").eq("tenant_id", ctx.tenantId).maybeSingle();
+    // An unreadable setting, or a database without migration 221, leaves this
+    // undefined and the push proceeds — which is mode A, the behaviour every
+    // tenant already has. Failing the other way would stop pushes on a
+    // transient read error.
+    if (modeQ?.data?.so_processing_mode === "B") {
+      return json(res, 409, {
+        error: {
+          code: "SO_PROCESSING_MODE_B",
+          message: "This tenant is in Mode B: sales orders are processed by hand in the ERP and Anvil does not"
+            + " push vouchers. Anvil's own proposal is still recorded and compared. Switch to Mode A under"
+            + " Admin > Sales-order processing to let Anvil push.",
+        },
+      });
+    }
+
     const company = await tallyResolveCompany(svc, ctx.tenantId, body.companyId);
     // Resolve voucher type: explicit override on the request wins,
     // otherwise fall back to the company's default_sales_voucher_type
@@ -86,9 +117,40 @@ export default async function handler(req, res) {
     if (!order.approval || !order.approval.payloadHash) {
       return json(res, 409, { error: { message: "Order has no approval bound to a payload hash" } });
     }
+    // A quote_variance line is one an operator added because the QUOTE owes it,
+    // not because the customer ordered it. Pushing it to Tally would create a
+    // voucher for goods the buyer never authorised on their PO — the commercial
+    // equivalent of invoicing for something nobody bought.
+    //
+    // Approval does not cover this: an approver can legitimately approve an
+    // order that carries a known variance, intending to chase a PO amendment.
+    // The gate belongs at the push, which is the point of no return.
+    //
+    // Resolution is either an amended PO (re-extraction turns the line into a
+    // normal extracted one) or removing the line. Both are operator acts.
+    const varianceLines = (order.result?.salesOrder?.lineItems || [])
+      .filter((l) => l && l._origin === "quote_variance");
+    if (varianceLines.length) {
+      return json(res, 409, {
+        error: {
+          message: varianceLines.length + " line" + (varianceLines.length === 1 ? " is" : "s are")
+            + " marked as owed under the quote but NOT on the customer's PO."
+            + " Push is blocked until the customer amends the PO, or the line is removed.",
+          code: "quote_variance_unresolved",
+          lines: varianceLines.map((l) => l.partNumber || l.itemCode || l.description || null),
+        },
+      });
+    }
+
     const expected = order.payload_hash || order.approval.payloadHash;
     if (body.payloadHash && expected && body.payloadHash !== expected) {
       return json(res, 409, { error: { message: "Payload hash mismatch with approved order" } });
+    }
+    // CM P3b: Tally inlines its own approval check (it does not use the shared
+    // requireApprovedOrder guard), so mirror the unresolved-blocker refusal here.
+    const blocker = firstUnresolvedBlocker(order.rule_findings);
+    if (blocker) {
+      return json(res, 409, { error: { code: "ORDER_HAS_UNRESOLVED_BLOCKER", message: "Order has an unresolved blocking finding (" + blocker.code + "): " + (blocker.detail || "extraction incomplete") + " Resolve it before pushing.", finding: blocker } });
     }
 
     // F1 second half: compose the voucher XML server-side when

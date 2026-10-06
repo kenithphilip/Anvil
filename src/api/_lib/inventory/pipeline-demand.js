@@ -45,15 +45,24 @@ const isoWeekStart = (d) => {
 //   3. Stage default from STAGE_PROBABILITY_DEFAULTS.
 //   4. 0 (unknown stage; ignore).
 export const resolveOpportunityProbability = (opp, calibration = null) => {
+  let base;
   if (typeof opp?.probability === "number" && opp.probability >= 0 && opp.probability <= 1) {
-    return opp.probability;
+    base = opp.probability;
+  } else {
+    const stage = opp?.stage;
+    if (calibration && typeof calibration[stage] === "number") base = calibration[stage];
+    else if (typeof STAGE_PROBABILITY_DEFAULTS[stage] === "number") base = STAGE_PROBABILITY_DEFAULTS[stage];
+    else base = 0;
   }
-  const stage = opp?.stage;
-  if (calibration && typeof calibration[stage] === "number") return calibration[stage];
-  if (typeof STAGE_PROBABILITY_DEFAULTS[stage] === "number") {
-    return STAGE_PROBABILITY_DEFAULTS[stage];
-  }
-  return 0;
+  // Blend the AI predictor when present. CRITICAL: ai_probability is stored
+  // 0..100 (NOT 0..1) — divide by 100 (a naive wire inflates demand ~100x).
+  // Policy: max(operator/default, ai) — the AI signal can only RAISE conviction,
+  // never silently suppress a deal the operator rated. It is sparse (populated
+  // only when an operator runs the Haiku predictor per opp), so absence degrades
+  // cleanly to the operator/default base.
+  const ai = Number(opp?.ai_probability);
+  const blended = (Number.isFinite(ai) && ai >= 0 && ai <= 100) ? Math.max(base, ai / 100) : base;
+  return Math.max(0, Math.min(1, blended));
 };
 
 // Compute pipeline demand for a list of (opportunity, lines) pairs.
@@ -190,6 +199,140 @@ export const explodePipelineThroughBom = (pipeline, bomRows, maxDepth = 8, opts 
     }
   }
   return { exploded };
+};
+
+// PR1 (BOM-traced opportunity attribution): the INVERSE of the explosion.
+// For each descendant part, the finished-good ANCESTOR parts whose demand
+// cascades into it, with the cumulative BOM multiplier and the BOM path — the
+// same edges explodePipelineThroughBom walks. Lets a procurement plan for a raw
+// material (e.g. STEEL) credit the opportunities that sell the finished good
+// (e.g. GUN) consuming it, so the plan's "why?" rail is non-empty for exploded
+// plans (before this it showed zero contributing opportunities).
+//
+// Descendants only (never self); direct part_no matches are the caller's job.
+// Mirrors explodePipelineThroughBom's inputs + terminality: a buy part receives
+// attribution from its parent but is not cascaded further.
+// Returns Map<descendant_part_no, [{ root, mult, path: [root..descendant] }]>.
+export const buildBomAttributionIndex = (bomRows, maxDepth = 8, opts = {}) => {
+  const rows = Array.isArray(bomRows) ? bomRows : [];
+  const buyParts = opts && opts.buyParts instanceof Set ? opts.buyParts : null;
+  const children = new Map();
+  for (const r of rows) {
+    if (!r || !r.parent_part_no || !r.child_part_no) continue;
+    const a = children.get(r.parent_part_no) || [];
+    a.push({ child: r.child_part_no, qty: Number(r.qty) || 0 });
+    children.set(r.parent_part_no, a);
+  }
+  const index = new Map();
+  if (children.size === 0) return index;
+  for (const root of children.keys()) {
+    const stack = [{ part: root, mult: 1, depth: 0, seen: new Set([root]), path: [root] }];
+    while (stack.length) {
+      const node = stack.pop();
+      if (node.depth >= maxDepth) continue;
+      if (buyParts && buyParts.has(node.part)) continue; // terminal, exactly like the explosion
+      const kids = children.get(node.part);
+      if (!kids) continue;
+      for (const k of kids) {
+        const m = node.mult * k.qty;
+        if (!(m > 0)) continue;
+        const path = [...node.path, k.child];
+        if (!index.has(k.child)) index.set(k.child, []);
+        index.get(k.child).push({ root, mult: m, path });
+        if (!node.seen.has(k.child)) {
+          const seen = new Set(node.seen); seen.add(k.child);
+          stack.push({ part: k.child, mult: m, depth: node.depth + 1, seen, path });
+        }
+      }
+    }
+  }
+  return index;
+};
+
+// PR1: the top-N opportunities contributing to a part's demand, for the
+// procurement plan's "why?" rationale. Credits BOTH opportunities that sell the
+// part directly AND — via the attribution index — opportunities that sell a
+// finished good whose BOM consumes the part (× the cumulative BOM multiplier,
+// stamping the BOM path in `via`). Pure. The probability uses the SAME resolver
+// as the demand math (operator else calibration else stage default, blended with
+// ai_probability), so the rail reconciles with the plan quantities.
+export const topContributingOpps = (pairs, partNo, attributionIndex = null, calibration = null, n = 3) => {
+  const byOpp = new Map();
+  const credit = (opp, qtyOfSource, mult, path) => {
+    if (!(qtyOfSource > 0) || !(mult > 0)) return;
+    const prob = resolveOpportunityProbability(opp, calibration);
+    const partQty = qtyOfSource * mult;
+    const expected = partQty * prob;
+    if (!(expected > 0)) return;
+    const cur = byOpp.get(opp.id) || {
+      opp_id: opp.id, opportunity_name: opp.opportunity_name, stage: opp.stage,
+      qty: 0, probability: prob, expected_qty: 0, via: [],
+    };
+    cur.qty += partQty;
+    cur.expected_qty += expected;
+    if (path && path.length > 1) { const p = path.join(" → "); if (!cur.via.includes(p)) cur.via.push(p); }
+    byOpp.set(opp.id, cur);
+  };
+  const ancestors = attributionIndex ? (attributionIndex.get(partNo) || []) : [];
+  for (const { opp, lines } of (pairs || [])) {
+    const sumFor = (target) => (lines || []).reduce((s, l) => s + (l.part_no === target ? (Number(l.qty) || 0) : 0), 0);
+    credit(opp, sumFor(partNo), 1, null);                                    // direct sale of partNo
+    for (const { root, mult, path } of ancestors) credit(opp, sumFor(root), mult, path); // finished good that consumes partNo
+  }
+  const round = (x) => Math.round(x * 1000) / 1000;
+  return [...byOpp.values()]
+    .sort((a, b) => b.expected_qty - a.expected_qty)
+    .slice(0, n)
+    .map((o) => ({ ...o, qty: round(o.qty), expected_qty: round(o.expected_qty) }));
+};
+
+// PR3 (Demand Story hero): assemble the causal story for ONE opportunity —
+// finished-good lines (× win-prob) → BOM-exploded raw materials → the draft
+// procurement plans it drove. Pure; reuses the engine functions above so the
+// numbers reconcile with the weekly planner. The endpoint just supplies the rows.
+export const buildDemandStory = ({ opp, lines = [], bomRows = [], buyParts = null, plans = [] } = {}) => {
+  const round = (x) => Math.round((Number(x) || 0) * 1000) / 1000;
+  const bp = buyParts instanceof Set ? buyParts : null;
+  const probability = resolveOpportunityProbability(opp);
+
+  const finishedMap = new Map();
+  const finished_goods = [];
+  for (const l of (lines || [])) {
+    if (!l || !l.part_no) continue;
+    const qty = Number(l.qty) || 0;
+    const expected = qty * probability;
+    finished_goods.push({ part_no: l.part_no, qty, expected_qty: round(expected) });
+    if (expected > 0) finishedMap.set(l.part_no, (finishedMap.get(l.part_no) || 0) + expected);
+  }
+
+  const W = "total";
+  const pipeline = new Map();
+  for (const [p, q] of finishedMap) pipeline.set(p, new Map([[W, q]]));
+  explodePipelineThroughBom(pipeline, bomRows, 8, { buyParts: bp });
+  const attributionIndex = buildBomAttributionIndex(bomRows, 8, { buyParts: bp });
+  const finishedSet = new Set(finishedMap.keys());
+  const raw_materials = [];
+  for (const [part, weeks] of pipeline) {
+    if (finishedSet.has(part)) continue;
+    const total = weeks.get(W) || 0;
+    if (total <= 0) continue;
+    const via = (attributionIndex.get(part) || []).filter((a) => finishedSet.has(a.root)).map((a) => a.path.join(" → "));
+    raw_materials.push({ part_no: part, expected_qty: round(total), via });
+  }
+  raw_materials.sort((a, b) => b.expected_qty - a.expected_qty);
+
+  const contributing_plans = (plans || [])
+    .filter((p) => Array.isArray(p?.rationale?.top_opps) && p.rationale.top_opps.some((o) => o.opp_id === opp?.id))
+    .map((p) => ({ id: p.id, part_no: p.part_no, recommended_qty: p.recommended_qty, status: p.status, expected_arrival_date: p.expected_arrival_date }));
+
+  return {
+    opportunity: {
+      id: opp?.id, opportunity_name: opp?.opportunity_name, stage: opp?.stage,
+      probability: round(probability), operator_probability: opp?.probability,
+      ai_probability: opp?.ai_probability, close_date: opp?.close_date, customer_id: opp?.customer_id,
+    },
+    finished_goods, raw_materials, contributing_plans,
+  };
 };
 
 // Convenience: roll up the pipeline-demand map into a flat array of

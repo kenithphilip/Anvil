@@ -26,42 +26,37 @@
  */
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
+import { notifyAdmins } from "../_lib/notifications.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { EVAL_PIPELINE_VERSION_FALLBACK } from "../_lib/eval-attestation.js";
 import { attestAndPersistRun } from "./run.js";
 import { scoreCase } from "./score.js";
-import { normalizedToScorable } from "./eval-normalize.js";
+import { profileForExpected, profileForSuite, toScorableFor, modelOwnedFor, profileFor, SCORABLE_KINDS, KIND_PROFILES } from "./kind-profiles.js";
 import { chunkedExtract } from "../_lib/docai/chunked-extract.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { createRunCostAccumulator } from "../_lib/docai/run-cost.js";
 import { safeFetch } from "../_lib/safe-fetch.js";
+import { getPromptVersion, listPromptVersions, promptNameForKind } from "../_lib/docai/prompt-versions.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const DEFAULT_LINE_RECALL_FLOOR = 0.95;
 
 // Strip fields the MODEL does not own so live replay isn't tripped by
-// deterministic enrichment: grandTotal (the raw adapter normalized has no
-// totals) and per-line hsn (often item-master-backfilled into the golden).
-// The gate then measures what the model actually produces.
-export const modelOwnedExpected = (expected) => {
-  const out = { ...(expected || {}) };
-  delete out.grandTotal;
-  delete out._provenance;
-  if (Array.isArray(out.lineItems)) {
-    out.lineItems = out.lineItems.map((l) => {
-      const c = { ...l };
-      delete c.hsn;
-      return c;
-    });
-  }
-  return out;
-};
+// deterministic enrichment. Which fields those are is per-kind now (the PO
+// profile drops grandTotal — the raw adapter normalized has no totals — and
+// per-line hsn, often item-master-backfilled into the golden). The gate then
+// measures what the model actually produces.
+export const modelOwnedExpected = (expected, profile) =>
+  modelOwnedFor(expected, profile || profileFor("po"));
 
+// Per-line recall. The identity check is named after the profile's identity
+// field, so it is found by the `identity` flag the scorer stamps rather than
+// by matching a PO-shaped check name.
 const lineRecallFromChecks = (checks, expectedLineCount) => {
   if (!expectedLineCount) return null;
-  const matched = checks.filter((c) => /^line\[\d+\]\.partNo$/.test(c.name) && c.ok).length;
+  const matched = checks.filter((c) => (c.identity || /^line\[\d+\]\.partNo$/.test(c.name)) && c.ok).length;
   return matched / expectedLineCount;
 };
 
@@ -80,13 +75,71 @@ export const fetchDocBytes = async (svc, sourceTenantId, documentId) => {
   const resp = await safeFetch(signed.data.signedUrl);
   if (!resp.ok) return null;
   const bytes = Buffer.from(await resp.arrayBuffer());
-  return { bytes, mime: doc.mime_type || "application/pdf", filename: doc.filename || "po.pdf", sha256: doc.sha256 || null };
+  // Do NOT fabricate a .pdf filename: guessSourceType reads the extension
+  // first, so "po.pdf" would route a spreadsheet packing list to the PDF
+  // parser. An absent filename is better than a wrong one — the mime and the
+  // byte sniff still decide.
+  return { bytes, mime: doc.mime_type || null, filename: doc.filename || null, sha256: doc.sha256 || null };
+};
+
+// The versions a replay of `suite` may name: the live (active or canary)
+// registry rows of the prompt that suite's kind runs. A suite whose kind has
+// no registry prompt allows none, because no version could change what its
+// model is asked. A retired row is left out: no traffic will ever be served
+// it again, so judging it answers nothing, and po_extractor v2 is a retired
+// label that only ever ran the base prompt. Replaying it to judge the canary
+// would compare the base prompt with itself.
+export const promptVersionsForSuite = (suite) => {
+  const profile = profileForSuite(suite);
+  const name = profile ? promptNameForKind(profile.kind) : null;
+  // listPromptVersions with no name returns the WHOLE registry object, so it
+  // is only ever asked for one prompt.
+  return name
+    ? listPromptVersions(name).filter((r) => r.status === "active" || r.status === "canary").map((r) => r.version)
+    : [];
 };
 
 // Pure core: re-extract each golden's source with the LIVE model and score
 // against expected. No req/res — callable from the handler and the cron.
-export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, maxCases = 10, lineRecallFloor = DEFAULT_LINE_RECALL_FLOOR } = {}) => {
+export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, maxCases = 10, lineRecallFloor = DEFAULT_LINE_RECALL_FLOOR, promptVersion = null } = {}) => {
   const cap = Math.min(200, Math.max(1, Number(maxCases) || 10));
+
+  // Try a prompt variant WITHOUT touching a single customer's live document.
+  //
+  // This is the only path in the repo that re-runs the model: golden-gate and
+  // rescore both re-score a frozen normalized_extract, so neither can tell you
+  // anything about a prompt. Replay fetches the original PDF and asks the model
+  // again — which makes it the one place a variant can be judged before it is
+  // allowed near live traffic.
+  //
+  // allowVariants is forced true here regardless of the tenant setting: the
+  // setting governs whether a tenant's REAL extractions may be experimented on,
+  // and this run writes nothing, ingests nothing, and was asked for explicitly
+  // by an operator naming the version.
+  //
+  // Returns { hint } for a case that may run, or { refused } for one that
+  // cannot run the version the operator named.
+  const variantFor = (kind, srcTenantId, customerId) => {
+    if (!promptVersion) return { hint: null };
+    const name = promptNameForKind(kind);
+    const choice = name
+      ? getPromptVersion(name, {
+        tenantId: srcTenantId, customerId,
+        forceVersion: promptVersion, allowVariants: true,
+      })
+      : null;
+    // The run is attested as "live-replay:prompt:<promptVersion>", so a case
+    // runs exactly that version or does not run. A forced version missing from
+    // the registry does not stop resolvePromptVersion: it falls through to the
+    // A/B split, keyed here on the customer, which hands about one customer in
+    // ten the v3 canary. A typo would then score the canary under the typo's
+    // name. A kind with no registry prompt cannot run a named version either.
+    if (!choice || choice.version !== promptVersion) {
+      return { refused: "prompt_version_not_applicable: " + promptVersion + " for kind " + kind };
+    }
+    if (!choice.is_variant || !Array.isArray(choice.system_append) || !choice.system_append.length) return { hint: null };
+    return { hint: { promptVariant: { name: choice.name, version: choice.version, system_append: choice.system_append } } };
+  };
   const casesQ = await svc.from("eval_cases")
     .select("case_id, expected, documents")
     .eq("tenant_id", tenantId)
@@ -109,11 +162,22 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
   for (const gc of cases) {
     const expected = gc.expected || {};
     const prov = expected._provenance || {};
+    // Which document kind this golden is. A case whose kind has no scoring
+    // profile is SKIPPED, not scored against the purchase-order vocabulary:
+    // a confident number computed with the wrong field set is worse than a
+    // missing one.
+    const profile = profileForExpected(expected);
+    if (!profile) { skipped.push({ case_id: gc.case_id, reason: "unsupported_kind: " + (prov.extraction_kind || "?") }); continue; }
     const srcTenant = prov.source_tenant_id;
     const docs = Array.isArray(gc.documents) ? gc.documents : [];
-    const doc = docs.find((d) => d && d.role === "purchase_order") || docs[0];
+    const doc = docs.find((d) => d && d.role === profile.docRole) || docs[0];
     const documentId = doc && doc.documentId;
     if (!srcTenant || !documentId) { skipped.push({ case_id: gc.case_id, reason: "no_source_document" }); continue; }
+
+    // Refused before the bytes are fetched or the model is asked: a case that
+    // cannot run the named version costs nothing and scores nothing.
+    const variant = variantFor(profile.kind, srcTenant, prov.customer_id);
+    if (variant.refused) { skipped.push({ case_id: gc.case_id, reason: variant.refused }); continue; }
 
     let src = null;
     try { src = await fetchDocBytes(svc, srcTenant, documentId); }
@@ -135,10 +199,20 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
     let out = null;
     try {
       out = await chunkedExtract({
-        source: { bytes: src.bytes, mime: src.mime, filename: src.filename, sourceType: "pdf" },
+        // sourceType is LEFT UNSET on purpose. dispatchExtract resolves it as
+        // `source.sourceType || guessSourceType(source)`, so an explicit "pdf"
+        // WON over the guess and sent every xlsx / docx / image golden to the
+        // PDF chunker — and quotes and packing lists routinely arrive as
+        // spreadsheets, which are exactly the kinds this PR adds. guessSourceType
+        // falls back to "pdf" anyway, so a PO PDF is unaffected.
+        source: { bytes: src.bytes, mime: src.mime, filename: src.filename },
         settings,
         customerId: prov.customer_id || null,
-        hints: {},
+        // THE load-bearing line for non-PO goldens. hints.expectedKind is what
+        // selects the extraction schema, and it defaults to "po" — so without
+        // this a quote or packing-list golden was re-extracted with the
+        // purchase-order schema and scored against a quote's expected output.
+        hints: { expectedKind: profile.kind, ...(variant.hint || {}) },
         runCost,
       });
     } catch (e) { skipped.push({ case_id: gc.case_id, reason: "extract_failed: " + (e && e.message || e) }); continue; }
@@ -148,9 +222,9 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
       continue;
     }
 
-    const actual = normalizedToScorable(out.normalized);
-    const scoreExpected = modelOwnedExpected(expected);
-    const scored = scoreCase(scoreExpected, actual);
+    const actual = toScorableFor(out.normalized, profile);
+    const scoreExpected = modelOwnedFor(expected, profile);
+    const scored = scoreCase(scoreExpected, actual, profile);
     totalPass += scored.pass;
     totalFail += scored.fail;
     const expectedLineCount = Array.isArray(scoreExpected.lineItems) ? scoreExpected.lineItems.length : 0;
@@ -160,6 +234,7 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
     modelsSeen[model] = (modelsSeen[model] || 0) + 1;
     caseResults.push({
       case_id: gc.case_id,
+      kind: profile.kind,
       ...scored,
       actual_line_count: Array.isArray(actual.lineItems) ? actual.lineItems.length : 0,
       expected_line_count: expectedLineCount,
@@ -183,13 +258,49 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
     totalPass,
     totalFail,
     caseResults,
-    promptVersion: "live-replay",
+    // Name the variant in the attestation, so replaying v1 and replaying v3
+    // are two comparable rows in the trend rather than one line overwriting
+    // itself — which is the entire read-out this feature exists to produce.
+    //
+    // What this names is the version every case was HANDED. Only the claude
+    // and gemini adapters read hints.promptVariant, so a case that a fallback
+    // adapter (openrouter, llamaparse, docling, ...) ended up serving ran the
+    // base prompt even though the run carries the variant's name.
+    promptVersion: promptVersion ? "live-replay:prompt:" + promptVersion : "live-replay",
     modelVersion,
     pipelineVersion: EVAL_PIPELINE_VERSION_FALLBACK,
     serverVerified: true,
   });
 
   const lineRecallAvg = recallN ? recallSum / recallN : null;
+  const regression = lineRecallAvg != null && lineRecallAvg < lineRecallFloor;
+
+  // TELL SOMEBODY.
+  //
+  // This function has always computed `regression` and returned it to a cron
+  // loop that reads only `r.ok` — so a replay that ran perfectly and found
+  // accuracy had FALLEN was indistinguishable from one that found nothing
+  // wrong. A quality signal nobody is told about is not a quality signal.
+  //
+  // Raised here rather than in cron/daily.js because that file is a mux with
+  // no service client and no tenant; this one has both.
+  if (regression) {
+    try {
+      await notifyAdmins(svc, tenantId, {
+        kind: "eval_replay_regression",
+        title: "Extraction accuracy fell on the golden corpus",
+        body: `Live replay line-recall ${lineRecallAvg.toFixed(3)} is below the floor ${lineRecallFloor} across ${caseResults.length} case(s).`,
+      }, {
+        // One alert per day per corpus, not one per replay run.
+        dedupKey: "eval_replay_regression:" + suite,
+      });
+    } catch (e) {
+      // Never let the alert fail the replay — but say so, because a swallowed
+      // alert is exactly the failure this block exists to prevent.
+      console.warn("[eval/replay] regression alert failed:", e?.message || e);
+    }
+  }
+
   return {
     suite,
     tenant_id: tenantId,
@@ -198,7 +309,7 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
     totals: { pass: totalPass, fail: totalFail, score },
     line_recall_avg: lineRecallAvg,
     line_recall_floor: lineRecallFloor,
-    regression: lineRecallAvg != null && lineRecallAvg < lineRecallFloor,
+    regression,
     models: modelsSeen,
     total_cost_usd: caseResults.reduce((s, c) => s + (c.cost_usd || 0), 0),
     cases: caseResults,
@@ -223,8 +334,25 @@ export default async function handler(req, res) {
       const tenantId = process.env.EVAL_GOLDEN_TENANT_ID;
       if (!tenantId) return json(res, 200, { via: "cron", skipped: "no_corpus_tenant", message: "EVAL_GOLDEN_TENANT_ID not set" });
       const maxCases = Number(process.env.EVAL_REPLAY_MAX_CASES) || 5;
-      const report = await replayGoldens(svc, { suite: "po-extraction", tenantId, maxCases });
-      return json(res, 200, { ...report, via: "cron" });
+      // Every kind's suite. Replay burns real LLM calls, so EVAL_REPLAY_MAX_CASES
+      // stays a TOTAL budget shared across suites rather than a per-suite one —
+      // adding a document kind must not silently multiply the nightly bill.
+      const suites = [...new Set(SCORABLE_KINDS.map((k) => KIND_PROFILES[k].suite))];
+      const reports = [];
+      let budget = maxCases;
+      for (const s of suites) {
+        if (budget <= 0) { reports.push({ suite: s, scored: 0, skipped: [{ reason: "replay_budget_exhausted" }] }); continue; }
+        const r = await replayGoldens(svc, { suite: s, tenantId, maxCases: budget });
+        if (r && (r.scored > 0 || r.error)) reports.push(r);
+        budget -= (r && r.scored) || 0;
+      }
+      return json(res, 200, {
+        via: "cron",
+        suites: suites.length,
+        max_cases: maxCases,
+        scored: reports.reduce((a, r) => a + (r.scored || 0), 0),
+        reports,
+      });
     }
 
     const ctx = await resolveContext(req);
@@ -232,7 +360,30 @@ export default async function handler(req, res) {
     const body = await readBody(req);
     const suite = body.suite || "po-extraction";
     const tenantId = body.tenant_id || process.env.EVAL_GOLDEN_TENANT_ID || ctx.tenantId;
-    const report = await replayGoldens(svc, { suite, tenantId, maxCases: body.maxCases });
+    // prompt_version: replay the goldens under a named registry version, so a
+    // variant can be judged on real documents before any tenant's live traffic
+    // sees it. Omitted -> the current default prompt.
+    //
+    // Checked against the registry before anything runs. An unknown version
+    // used to replay anyway, under an attestation carrying its name, while the
+    // A/B split chose what the model was actually asked.
+    const promptVersion = body.prompt_version || null;
+    if (promptVersion !== null) {
+      const allowed = promptVersionsForSuite(suite);
+      if (!allowed.includes(promptVersion)) {
+        return json(res, 400, {
+          error: {
+            message: allowed.length
+              ? `prompt_version "${String(promptVersion)}" is not a live version of the ${suite} prompt (retired versions are not replayable); allowed: ${allowed.join(", ")}`
+              : `suite ${suite} runs no versioned prompt, so prompt_version cannot apply`,
+            allowed_versions: allowed,
+          },
+        });
+      }
+    }
+    const report = await replayGoldens(svc, {
+      suite, tenantId, maxCases: body.maxCases, promptVersion,
+    });
 
     if (report.scored > 0) {
       await recordAudit(ctx, {

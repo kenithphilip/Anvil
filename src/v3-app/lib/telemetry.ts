@@ -109,7 +109,27 @@ const computeBadges = (orders: any[], audit: any[]): BadgeMap => {
 
 const POLL_MS = 30_000;
 
-export const useShellTelemetry = (): ShellTelemetry => {
+// `signedIn` gates every authenticated call this hook makes.
+//
+// It has to be a parameter rather than an internal read because the caller
+// already knows: app.tsx computes `authed` from the session and re-renders on
+// change, so passing it makes the poll start the moment a sign-in lands
+// instead of waiting for a tick. Passing `undefined` falls back to reading the
+// session directly, which keeps the safe behaviour for tests and any future
+// caller that forgets — the default must never be "poll anyway".
+const hasValidSession = (): boolean => {
+  try {
+    const session = AnvilBackend?.getSession?.();
+    if (!session?.access_token) return false;
+    const expiresAt = Number(session.expires_at || 0);
+    if (expiresAt && expiresAt < Math.floor(Date.now() / 1000)) return false;
+    return true;
+  } catch (_) {
+    return false;
+  }
+};
+
+export const useShellTelemetry = (signedIn?: boolean): ShellTelemetry => {
   const [badges, setBadges] = useState<BadgeMap>({});
   const [fx, setFx] = useState<{ usd?: number; jpy?: number; cronAt?: string } | null>(null);
   const [drafts, setDrafts] = useState<number>(0);
@@ -159,8 +179,16 @@ export const useShellTelemetry = (): ShellTelemetry => {
     return { email, initials, displayName: finalDisplay };
   })();
 
+  const active = signedIn === undefined ? hasValidSession() : signedIn;
+
   const refresh = async () => {
     if (!AnvilBackend?.isReady?.()) return;
+    // Nothing here is public. /api/orders, /api/audit and /api/fx/rates all
+    // require a tenant context, so for a signed-out visitor this ran four
+    // requests every thirty seconds forever and collected three 401s each
+    // time. The landing page is a signed-out visitor: app.tsx calls this hook
+    // above its auth gate, because hooks cannot be conditional.
+    if (!active) return;
     // /api/health is public + tenant-agnostic, so it works whether
     // the user is signed in or not. Orders + audit require a tenant
     // context; a 403 from those is non-fatal for the shell.
@@ -204,13 +232,17 @@ export const useShellTelemetry = (): ShellTelemetry => {
   };
 
   useEffect(() => {
+    // No timer and no listener at all while signed out — not merely a refresh
+    // that returns early. Re-runs on `active`, so signing in starts the poll
+    // immediately rather than up to POLL_MS later.
+    if (!active) return;
     refresh();
     const t = setInterval(refresh, POLL_MS);
     const onFocus = () => refresh();
     window.addEventListener("focus", onFocus);
     return () => { clearInterval(t); window.removeEventListener("focus", onFocus); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [active]);
 
   useEffect(() => {
     const t = setInterval(() => setTime(formatIST(new Date())), 30_000);

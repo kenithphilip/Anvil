@@ -1,0 +1,33 @@
+{
+  "id": "packing-list-weight-basis",
+  "kind": "packing_list",
+  "description": "An import packing list printing weight PER PACKAGE alongside a per-unit row — the case where weight_basis is the whole answer. Guards the measurement columns (weight, its unit, its basis, volume) that the PO-only scorer dropped before scoring, so a basis flip scored 1.000.",
+  "expected": {
+    "packingListNo": "PL-2026-0417",
+    "invoiceNo": "INV-2026-0417",
+    "supplier": "OVERSEAS SUPPLIER CO LTD",
+    "totalPackages": 7,
+    "totalNetWeight": 412.5,
+    "weightUom": "kg",
+    "lineItems": [
+      { "partNo": "GB-1140", "qty": 40, "packages": 4, "weight": 78.0, "weightUom": "kg", "weightBasis": "per_package", "volumeCbm": 0.42, "volumeBasis": "per_package" },
+      { "partNo": "TIP-0620", "qty": 500, "packages": 3, "weight": 0.135, "weightUom": "kg", "weightBasis": "per_unit", "volumeCbm": 0.06, "volumeBasis": "per_package" }
+    ]
+  },
+  "normalized": {
+    "classification": "packing_list",
+    "packing_list_no": "PL-2026-0417",
+    "invoice_no": "INV-2026-0417",
+    "packing_list_date": "2026-03-14",
+    "supplier_name": "OVERSEAS SUPPLIER CO LTD",
+    "total_packages": 7,
+    "total_net_weight": 412.5,
+    "total_gross_weight": 438.0,
+    "weight_uom": "kg",
+    "lines": [
+      { "partNumber": "GB-1140", "description": "GUN BODY ASSEMBLY", "quantity": 40, "uom": "PCS", "packages": 4, "weight": 78.0, "gross_weight": 82.5, "weight_uom": "kg", "weight_basis": "per_package", "volume_cbm": 0.42, "volume_basis": "per_package", "marks": "CASE 1-4" },
+      { "partNumber": "TIP-0620", "description": "ELECTRODE TIP", "quantity": 500, "uom": "PCS", "packages": 3, "weight": 0.135, "gross_weight": 0.15, "weight_uom": "kg", "weight_basis": "per_unit", "volume_cbm": 0.06, "volume_basis": "per_package", "marks": "CASE 5-7" }
+    ]
+  },
+  "baseline_score": 1.0
+}

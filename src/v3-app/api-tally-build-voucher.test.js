@@ -50,9 +50,14 @@ const orderFixture = {
   customer_id: "cust-1",
   result: {
     salesOrder: {
+      // _mapped_item is now REQUIRED to build a voucher: Tally keys inventory
+      // on the stock-item name, so an unmapped line would post the buyer's
+      // prose (or silently match the wrong item). See unmappedVoucherLines.
       lineItems: [
-        { description: "Bearing", itemCode: "BR-6204", qty: 10, rate: 1000, uom: "Nos", gst_pct: 18 },
-        { description: "Seal kit", itemCode: "SK-100", qty: 5, rate: 500, uom: "Nos", gst_pct: 18 },
+        { description: "Bearing", itemCode: "BR-6204", qty: 10, rate: 1000, uom: "Nos", gst_pct: 18,
+          _mapped_item: { part_no: "BR-6204", print_name: "Bearing" } },
+        { description: "Seal kit", itemCode: "SK-100", qty: 5, rate: 500, uom: "Nos", gst_pct: 18,
+          _mapped_item: { part_no: "SK-100", print_name: "Seal kit" } },
       ],
     },
   },
@@ -175,8 +180,12 @@ describe("buildSalesVoucherXml", () => {
       customer: buyerMH,
     });
     expect((xml.match(/<ALLINVENTORYENTRIES.LIST>/g) || []).length).toBe(2);
-    expect(xml).toContain("<STOCKITEMNAME>Bearing</STOCKITEMNAME>");
-    expect(xml).toContain("<STOCKITEMNAME>Seal kit</STOCKITEMNAME>");
+    // STOCKITEMNAME is the master's part_no, NOT the line description. Tally
+    // keys inventory on this name, and descriptions are not unique (many
+    // distinct parts share "SHANK"), so posting a description would collide or
+    // create junk items from the buyer's prose.
+    expect(xml).toContain("<STOCKITEMNAME>BR-6204</STOCKITEMNAME>");
+    expect(xml).toContain("<STOCKITEMNAME>SK-100</STOCKITEMNAME>");
     expect((xml.match(/<ACCOUNTINGALLOCATIONS.LIST>/g) || []).length).toBe(2);
   });
 

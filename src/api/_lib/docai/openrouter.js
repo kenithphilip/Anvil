@@ -19,11 +19,14 @@
 // and the dispatcher falls through to the next adapter. See
 // docs/OPENROUTER_FAILOVER_NOTES.md for the compliance/data-egress gate.
 
-import { callOpenRouter, pickOpenRouterModel } from "../openrouter.js";
+import { callOpenRouter, pickOpenRouterModel, openRouterApiKey } from "../openrouter.js";
 import { parseSchemaAligned } from "./parse.js";
 import { SYSTEM_PROMPT, TOOL_DEFINITION } from "./claude.js";
 
-export const isConfigured = (_settings) => !!process.env.OPENROUTER_API_KEY;
+// Shared resolver: accepts OPENROUTER_API_KEY or the `open_router` alias the
+// Vercel project sets. Reading process.env directly here would make the
+// adapter report "not configured" for a key the client can actually use.
+export const isConfigured = (_settings) => !!openRouterApiKey();
 
 const systemText = () =>
   (Array.isArray(SYSTEM_PROMPT)

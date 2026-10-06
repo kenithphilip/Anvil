@@ -55,20 +55,8 @@ const detectOrigin = (filename) => {
   if (/(china|cn[-_ ])/.test(f) || /(^|[-_ ])cn[-_ ]/.test(f) || /(\bchn\b)/.test(f)) return "O-CHINA";
   if (/(japan|jp[-_ ])/.test(f) || /(^|[-_ ])jp[-_ ]/.test(f) || /(\bjpn\b)/.test(f)) return "O-JAPAN";
   if (/(india|in[-_ ])/.test(f) || /(^|[-_ ])in[-_ ]/.test(f) || /(\bind\b)/.test(f)) return "O-INDIA";
-  return "O-INDIA";
-};
-
-const ORIGIN_CHIP_KIND = {
-  "O-KOREA": "info",
-  "O-CHINA": "warn",
-  "O-JAPAN": "good",
-  "O-INDIA": "ghost",
-};
-const ORIGIN_LABEL = {
-  "O-KOREA": "Korea",
-  "O-CHINA": "China",
-  "O-JAPAN": "Japan",
-  "O-INDIA": "India",
+  return null;   // unknown — never silently default to India (the server's
+                 // content detection or the operator's pick decides instead)
 };
 
 // Strip extension and take a model-code-looking core (letters+digits, hyphen, slash).
@@ -114,6 +102,7 @@ const parseXlsx = async (arrayBuffer) => {
   // Pick the sheet with the largest populated range (Korea exports leave Sheet1 empty).
   let bestName = wb.SheetNames[0];
   let bestScore = -1;
+  let populated = 0;
   for (const name of wb.SheetNames) {
     const sh = wb.Sheets[name];
     if (!sh || !sh["!ref"]) continue;
@@ -121,8 +110,16 @@ const parseXlsx = async (arrayBuffer) => {
     if (!m) continue;
     const colsW = XLSX.utils.decode_col(m[3]) - XLSX.utils.decode_col(m[1]) + 1;
     const rowsH = parseInt(m[4], 10) - parseInt(m[2], 10) + 1;
+    // Count only meaningfully-populated sheets (skip 1-2 cell stragglers).
+    if (colsW * rowsH >= 4) populated += 1;
     const score = colsW * rowsH;
     if (score > bestScore) { bestScore = score; bestName = name; }
+  }
+  // A BOM split across multiple populated sheets would silently lose all but the
+  // largest — warn so the operator can split the workbook and re-import.
+  if (populated > 1 && typeof window !== "undefined") {
+    window.notifyWarn?.("Multi-sheet workbook",
+      `Only the largest sheet ("${bestName}") was imported; ${populated - 1} other populated sheet(s) were skipped. Split them into separate files to import all.`);
   }
   return XLSX.utils.sheet_to_json(wb.Sheets[bestName], { header: 1, defval: "" }) || [];
 };
@@ -256,6 +253,8 @@ const parseRowsRich = async (rows, fileName) => {
           material: ln.material || null,
           supplier_part_no: ln.supplier_part_no || null,
           side: ln.side || null,
+          size: ln.size || null,
+          is_spare: ln.is_spare != null ? ln.is_spare : null,
           std_category: ln.std_category || null,
           remarks: ln.remarks || null,
         }));
@@ -342,11 +341,15 @@ const WiredBomImport = () => {
       if (!items.length) throw new Error("No item rows detected (header not found)");
       // The engine's detected asset code beats the filename guess.
       const resolvedGun = (asset && asset.asset_code) || gunNo;
+      // Origin: the server's CONTENT detection (Hangul/kana/CJK script, header
+      // labels) is authoritative; fall back to the filename hint; else leave it
+      // unknown (null) for the operator to set — never auto-stamp India.
+      const resolvedOrigin = (asset && asset.source_country) || detectOrigin(file.name) || null;
       // Mod-detection diff against existing BOM (best-effort; non-fatal).
       const existing = await fetchExistingBomChildren(resolvedGun);
       const diff = computeDiff(existing, items);
       const status = items.length > 1000 ? "warn" : "good";
-      upsertFile(id, { items, status, diff, gunNo: resolvedGun, sourceFormat: source_format });
+      upsertFile(id, { items, status, diff, gunNo: resolvedGun, origin: resolvedOrigin, sourceFormat: source_format });
     } catch (err) {
       upsertFile(id, { items: [], status: "bad", error: String(err.message || err) });
     }
@@ -437,6 +440,8 @@ const WiredBomImport = () => {
             material: it.material || null,
             supplier_part_no: it.supplier_part_no || null,
             side: it.side || null,
+            size: it.size || null,
+            is_spare: it.is_spare != null ? it.is_spare : null,
             std_category: it.std_category || null,
             remarks: it.remarks || null,
           }));
@@ -588,7 +593,20 @@ const WiredBomImport = () => {
                           {f.sourceFormat ? <div className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 2 }}>format: {f.sourceFormat}</div> : null}
                           {f.error ? <div className="mono-sm" style={{ color: "var(--bad)", marginTop: 2 }}>{f.error}</div> : null}
                         </td>
-                        <td><Chip k={ORIGIN_CHIP_KIND[f.origin] || "ghost"}>{ORIGIN_LABEL[f.origin] || f.origin}</Chip></td>
+                        <td>
+                          {/* Editable origin — prefilled from the server's content
+                              detection; the operator can correct it (or set it when
+                              unknown) before import. */}
+                          <select className="mono" value={f.origin || ""}
+                            onChange={(e) => upsertFile(f.id, { origin: e.target.value || null })}
+                            style={{ fontSize: 11, padding: "2px 4px" }} aria-label="Origin country">
+                            <option value="">— unknown</option>
+                            <option value="O-INDIA">India</option>
+                            <option value="O-KOREA">Korea</option>
+                            <option value="O-CHINA">China</option>
+                            <option value="O-JAPAN">Japan</option>
+                          </select>
+                        </td>
                         <td>
                           <input
                             className="mono"

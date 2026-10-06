@@ -28,6 +28,7 @@
 import { callAnthropic } from "../anthropic.js";
 import { selectClaudeModel } from "./model_selector.js";
 import { parseSchemaAligned } from "./parse.js";
+import { promptNameForKind } from "./prompt-versions.js";
 
 // Per-call model selection delegates to the deterministic
 // model_selector. Selection priority (highest first):
@@ -39,6 +40,25 @@ import { parseSchemaAligned } from "./parse.js";
 // model_selection_reason for diagnostics.
 
 export const isConfigured = (_settings) => !!process.env.ANTHROPIC_API_KEY;
+
+// The per-line requisition (PR) number, worded ONCE and imported by gemini.js.
+//
+// The multi-row block below has told the model since #106 that row 4 of an OEM
+// item block prints a requisition number, but the only slot the schema offered
+// was customer.requisition_no, and a line is additionalProperties:false. So a
+// consolidated PO raised against several purchase requisitions kept one of
+// them at most, and gemini.js (which runs FIRST) never asked at all. Each
+// adapter wording this for itself is exactly how the multi-row block (#106)
+// and the unsupported-kind guard (#485) drifted apart, so both prompts and
+// both schemas take these strings from here.
+export const LINE_REQUISITION_RULE =
+  "the buyer's requisition (PR) number printed ON THIS LINE: a 'Req No' / 'PR No' / 'Requisition' "
+  + "cell, or the requisition row of a multi-row item block (e.g. '1000343964'). A consolidated PO can "
+  + "carry a different one on each line, so read it per line. Null when the line prints none; never "
+  + "copy customer.requisition_no onto a line.";
+export const LINE_REQUISITION_DESCRIPTION =
+  "Buyer's requisition / PR number printed on THIS line (a consolidated PO can carry one per line). "
+  + "Null when the line prints none; never copied from customer.requisition_no.";
 
 export const SYSTEM_PROMPT = [
   "You are a purchase-order / RFQ extractor for a B2B manufacturing platform serving Indian and international customers.",
@@ -59,7 +79,7 @@ export const SYSTEM_PROMPT = [
   "  - A small distributor (e.g. 'Summit Automation Pvt Ltd') buys Northwind-brand spares for use at a",
   "    Meridian Steel customer site. The customer is the distributor, not Northwind, not Meridian.",
   "  - A Tier-2 supplier buys SKF bearings to assemble into a Comet Motors line. The customer is the",
-  "    Tier-2 supplier, not SKF, not Tata.",
+  "    Tier-2 supplier, not SKF, not Comet Motors.",
   "If you find yourself returning a famous brand or end-customer name, re-read the bill-to block.",
   "",
   "STEP 1: Classify. Decide one of:",
@@ -78,8 +98,23 @@ export const SYSTEM_PROMPT = [
   "literal property name on the customer or lines object:",
   "  - 'name'             legal entity name as written in the bill-to / buyer block. Strip prefixes",
   "                       like 'M/s.' or 'M/S.'.",
-  "                       SANITY CHECK: the name MUST also appear inside bill_to_address. If it doesn't,",
-  "                       you have probably picked an end-customer or project name; re-read the bill-to block.",
+  "                       SANITY CHECK: when the document HAS an explicit bill-to / sold-to / buyer",
+  "                       block, the name MUST appear inside bill_to_address; if it doesn't, you have",
+  "                       probably picked an end-customer or project name; re-read the bill-to block.",
+  "                       LETTERHEAD-ONLY BUYERS: some POs print NO bill-to block -- the only address",
+  "                       block is the party the PO is ADDRESSED TO ('TO: <name>', the firm being asked",
+  "                       to supply). Apply this ONLY when BOTH hold: (a) there is no bill-to / sold-to",
+  "                       block, AND (b) that sole 'TO:' addressee is the SUPPLIER, i.e. us -- the",
+  "                       recipient asked to supply (it matches the TENANT IDENTITY block below when",
+  "                       present, or the document says 'we are pleased to place our order with your",
+  "                       firm' or similar). Then the buyer is the company on the LETTERHEAD at the top:",
+  "                       set name to it and bill_to_address to its address; do NOT return the 'TO:'",
+  "                       addressee (the seller) as the customer, and do NOT null the customer merely",
+  "                       because there is no 'Bill To' label. If instead the 'TO:' party is a company",
+  "                       OTHER than us, the document was not issued to us -- treat the letterhead as the",
+  "                       seller and re-read normally. This NEVER overrides the distributor rule above:",
+  "                       if a famous OEM appears only as an end-customer, site, or brand while a",
+  "                       different company issues the PO, that issuer is the customer.",
   "  - 'email'            printed contact email or null.",
   "  - 'phone'            printed contact phone or null.",
   "  - 'po_number'        buyer's PO/RFQ reference.",
@@ -118,11 +153,11 @@ export const SYSTEM_PROMPT = [
   "                       'Part No' column. Find it wherever it lives, in this order:",
   "                       (a) a dedicated Part-No / material column if populated;",
   "                       (b) if that column is BLANK, the alphanumeric part-code token on the FIRST line",
-  "                           of the Description cell (e.g. 'TNA-16-04-10-2' from a Description whose",
+  "                           of the Description cell (e.g. 'BRG-16-04-10-2' from a Description whose",
   "                           later lines are boilerplate like 'Refer Table 1...' / 'Delivery date :...');",
   "                       (c) if the description is a phrase with a descriptive PREFIX, the embedded",
-  "                           part-code token (letters/digits with hyphens), e.g. 'OBARA STD SHANK",
-  "                           TWS-092-90-2' -> 'TWS-092-90-2', 'OBARA FIXED HOLDER X-HD0420-3' -> 'X-HD0420-3'.",
+  "                           part-code token (letters/digits with hyphens), e.g. 'ACME STD BUSHING",
+  "                           AB-1042-7' -> 'AB-1042-7', 'ACME FIXED HOLDER X-PQ0420-3' -> 'X-PQ0420-3'.",
   "                       Never return null for partNumber merely because a labelled Part-No column is empty.",
   "  - lines[].customerItemCode the BUYER's OWN item / material / SAP code, from a dedicated column labelled",
   "                       'Item Number' / 'Material' / 'SAP Code' / 'Cust Part No' (e.g. 'A12060OBAR010003').",
@@ -131,7 +166,8 @@ export const SYSTEM_PROMPT = [
   "  - lines[].description one-line description (cleaned)",
   "  - lines[].raw_description the Description / Item-Description cell VERBATIM and uncut (before stripping any",
   "                       prefix or boilerplate). Always return this so the part parse is auditable/re-runnable.",
-  "  - lines[].specification per-tenant specification or drawing code if printed as a separate cell (e.g., '4-ET31062', '403A7K1172'). Null otherwise.",
+  "  - lines[].specification per-tenant specification or drawing code if printed as a separate cell (e.g., '4-XY31062', '502B8K1172'). Null otherwise.",
+  "  - lines[].requisition_no " + LINE_REQUISITION_RULE,
   "  - lines[].quantity   numeric, no units",
   "  - lines[].unitPrice  numeric, in customer.currency. ALWAYS the TAX-EXCLUSIVE ex-price.",
   "                       If the PO prints both an 'Ex-Price' / 'Net Pr.' / 'Basic Price' column and a",
@@ -164,8 +200,8 @@ export const SYSTEM_PROMPT = [
   "  Do not fabricate a CGST=SGST split when only a consolidated GST line is on the document.",
   "",
   "MULTI-ROW-PER-ITEM TABLE LAYOUTS",
-  "Many Indian and Korean OEM POs (MMIL / Meridian Motor India, Meridian Steel, KIA, Comet Motors, Vega Motor,",
-  "NRD Auto) print each line item across multiple physical rows. A typical 4 or 5-row block looks like:",
+  "Many Indian and Korean OEM POs print each line item across multiple physical rows, and this is the",
+  "single biggest cause of a shredded line count. A typical 4 or 5-row block looks like:",
   "  Row 1: S.No  PartNumber                        Qty    Ex-Price    SGST   UnitPrice   Maker",
   "  Row 2:       Description                       UoM    ToolingCost CGST              LineTotal",
   "  Row 3:       Specification / drawing code      CUR    P&F         S-VAT             Delivery",
@@ -184,14 +220,14 @@ export const SYSTEM_PROMPT = [
   "when it exceeds the number of lines you extracted (that gap is a signal we rely on). null only when the",
   "document prints no total and no serial numbers.",
   "",
-  "When you encounter an MMIL-style PO (header 'HYUNDAI MOTOR INDIA LTD', vendor_code labelled 'TH...'),",
-  "specifically extract per-block: partNumber from row 1 col 2 (e.g. 'GD544202503060009'), description",
-  "from row 2 col 2 (e.g. 'ATD NS HEAD ASSY'), specification from row 3 col 2 (e.g. 'AS2-0061'),",
+  "For a layout of exactly that shape, extract per-block: partNumber from row 1 col 2 (a long solid",
+  "alphanumeric code, e.g. 'GD544202503060009'), description from row 2 col 2 (e.g. 'NS HEAD ASSY'),",
+  "specification from row 3 col 2 (e.g. 'AS2-0061'),",
   "requisition_no from row 4 col 2 (e.g. '1000343964'), quantity from row 1 col 3, uom from row 2 col 3,",
   "unitPrice from row 1 col 4 (the Ex-Price column, not the Unit Price column which already includes tax),",
   "sgst_amount from row 1 col 6, cgst_amount from row 2 col 6, and lineTotal from row 2 col 7. Page 1",
   "carries a 'Total Amount' line near the top -- ignore that for per-line totals, it is the grand total.",
-  "That col-2 mapping is the MMIL example ONLY. Other Mahindra/OEM formats differ: some leave the Part-No",
+  "That col-2 mapping is ONE example layout ONLY. Other OEM formats differ: some leave the Part-No",
   "column BLANK and print the part as the first line of the Description cell; others print the buyer's SAP",
   "'Item Number' in its own column AND our part embedded in the Item-Description behind a prefix. Do NOT",
   "assume the part is in column 2 -- apply the lines[].partNumber location rules (a)/(b)/(c) above, and",
@@ -442,6 +478,763 @@ export const PART_DRAWING_SYSTEM_PROMPT = [
   "  - Always return via the extract_part_drawing tool, never as prose.",
 ].join("\n");
 
+// ── QUOTE (the seller's OWN outbound quotation) ────────────────────────────
+// Ingested to seed the identity flywheel + price history from documents the
+// sales team already produces. This is the seller's document, so its part
+// codes are authoritative — far better evidence than parsing a buyer's prose.
+//
+// ENTITY-AGNOSTIC: columns are resolved by MEANING, never by position or by
+// any one seller's template. The critical distinction is the two code columns:
+// OUR code vs the CUSTOMER's reference. Getting them the wrong way round
+// teaches every future PO the wrong identity, so the prompt is explicit that
+// an unlabelled or ambiguous column must be left null rather than guessed.
+// The SALES ORDER we issue back on receiving a customer PO — read from the ERP
+// that produced it, not from Anvil.
+//
+// This is the OTHER SIDE of a comparison, and that is the whole reason the kind
+// exists. Mode A/B puts three documents side by side: the customer's PO (what
+// was asked for), Anvil's proposal (what we would do), and this (what a person
+// actually recorded). Anvil already reads the first and produces the second.
+//
+// Two things make this document unlike every other kind here.
+//
+// FIRST, it prints BOTH part numbers. A customer PO carries the buyer's code
+// and nothing else — our part number is not on it, and a person looks it up.
+// The sales order carries the buyer's code AND ours, side by side, which makes
+// it the only document that states the mapping outright. Getting those two
+// columns the right way round is the single most valuable thing this extractor
+// does; swapping them silently inverts the comparison.
+//
+// SECOND, the join key is not this document's own number. The voucher number
+// is the ERP's internal sequence and means nothing outside it. The field that
+// ties this to an Anvil order is the BUYER'S reference — the customer's PO
+// number, printed as "Buyer's Ref." or "Order No".
+export const SALES_ORDER_SYSTEM_PROMPT = [
+  "You extract a SALES ORDER / order acknowledgement raised BY the seller (our",
+  "company) in an ERP, in response to a purchase order received from a customer.",
+  "",
+  "STEP 1: Classify. Decide one of:",
+  "  - sales_order      an outbound sales order / order acknowledgement / order",
+  "                     confirmation with a line table",
+  "  - non_sales_order  anything else (a purchase order RECEIVED from a buyer, a",
+  "                     quotation, a tax invoice, a delivery note, a drawing)",
+  "",
+  "Tell these apart by DIRECTION and by STAGE, not by layout — many ERPs print",
+  "all of them on the same template:",
+  "  - a purchase order is the BUYER ordering from us. Its header names them as",
+  "    the buyer and us as the supplier/vendor.",
+  "  - a quotation is us OFFERING a price, before any order exists.",
+  "  - a tax invoice CHARGES for goods. It carries an invoice number and tax",
+  "    amounts, and usually follows dispatch.",
+  "  - a sales order is us CONFIRMING what we will supply, after their order and",
+  "    before invoicing. It normally cites the buyer's own order reference.",
+  "If non_sales_order, return classification='non_sales_order', empty lines, and stop.",
+  "",
+  "STEP 2: Header fields.",
+  "  - buyer_ref_order_no  THE MOST IMPORTANT FIELD ON THE DOCUMENT.",
+  "                        The CUSTOMER's own purchase-order number, as printed",
+  "                        under 'Buyer's Ref.', 'Buyer's Order No', 'Order No',",
+  "                        'Your Ref', 'Ref. No' or 'Customer PO'. It is what ties",
+  "                        this document to the order it answers.",
+  "                        Do NOT put this document's own voucher number here.",
+  "  - voucher_no          THIS document's own number ('Voucher No', 'SO No',",
+  "                        'Order Confirmation No'). The ERP's internal sequence.",
+  "  - voucher_date        the date this document was raised ('Dated', 'Date').",
+  "  - buyer_name          the party being sold TO. Never our own company.",
+  "  - buyer_gstin         their tax registration if printed.",
+  "  - consignee_name      the SHIP-TO party when printed separately from the",
+  "                        buyer. Often the same company at a different site.",
+  "  - payment_terms       as written, e.g. '30 Days', 'Net 45', 'Against delivery'.",
+  "  - delivery_terms      delivery/dispatch terms as written.",
+  "  - dispatched_through  the mode or carrier if stated, e.g. 'By Road'.",
+  "  - destination         the stated destination if printed.",
+  "  - currency            the currency symbol or code on the amounts.",
+  "  - total_amount        the document's own printed total, VERBATIM.",
+  "                        Do NOT compute it, and do NOT adjust it for tax.",
+  "                        Some layouts print an ex-tax body total, others a",
+  "                        tax-inclusive grand total; report what is printed and",
+  "                        set total_is_tax_inclusive only when the document says.",
+  "  - amount_in_words     the amount in words if printed.",
+  "",
+  "STEP 3: Lines. One entry per printed line item.",
+  "  - partNumber          OUR part code, from the seller's own part column",
+  "                        ('Part No', 'Item Code', 'Product Code').",
+  "  - customerPartNumber  the BUYER's code for the same item ('Cust Part No',",
+  "                        'Customer Part No', 'Buyer Part No', 'Their Ref').",
+  "",
+  "  These two are NOT interchangeable and getting them the wrong way round",
+  "  inverts everything downstream. When the table prints two part columns, the",
+  "  one labelled for the CUSTOMER is customerPartNumber and the other is ours.",
+  "  When only ONE part column is printed and nothing marks it as the customer's,",
+  "  it is OURS — put it in partNumber and leave customerPartNumber null.",
+  "  Never guess which is which from the format of the code itself.",
+  "",
+  "  - description         the goods description as printed.",
+  "  - batch               the batch/lot cell if the row has one. On many ERP",
+  "                        layouts this repeats the customer's PO number.",
+  "  - due_on              the row's promised or due date if printed.",
+  "  - quantity            numeric.",
+  "  - uom                 the unit ('per' column on some layouts): No, Nos, PCS, KG.",
+  "  - rate                the unit rate as printed.",
+  "  - discount_pct        the row discount percentage if a Disc% column exists.",
+  "  - amount              the row amount as printed.",
+  "  - hsn                 the HSN/SAC code if a column exists.",
+  "",
+  "Report figures exactly as printed. Do not recompute an amount from rate and",
+  "quantity, and do not reconcile a row that does not add up — a row whose",
+  "arithmetic is wrong is a finding, and silently correcting it destroys it.",
+].join("\n");
+
+const SALES_ORDER_TOOL = {
+  name: "extract_sales_order",
+  description: "Return the classification, header and line items of a SALES ORDER raised by the seller against a customer purchase order, keeping the buyer's reference distinct from this document's own number, and OUR part code distinct from the customer's.",
+  input_schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      classification: { type: "string", enum: ["sales_order", "non_sales_order"] },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+      buyer_ref_order_no: { type: ["string", "null"], description: "The CUSTOMER's purchase-order number this document answers ('Buyer's Ref.', 'Order No', 'Your Ref'). The join key. NOT this document's own voucher number." },
+      voucher_no: { type: ["string", "null"], description: "This document's own number — the ERP's internal sequence. Means nothing outside that ERP." },
+      voucher_date: { type: ["string", "null"] },
+      buyer_name: { type: ["string", "null"], description: "The party sold TO. Never our own company." },
+      buyer_gstin: { type: ["string", "null"] },
+      consignee_name: { type: ["string", "null"], description: "The ship-to party when printed separately from the buyer." },
+      payment_terms: { type: ["string", "null"], description: "As written, e.g. '30 Days'." },
+      delivery_terms: { type: ["string", "null"] },
+      dispatched_through: { type: ["string", "null"] },
+      destination: { type: ["string", "null"] },
+      currency: { type: ["string", "null"] },
+      total_amount: { type: ["number", "null"], description: "The document's own printed total, verbatim. Never computed, never tax-adjusted." },
+      total_is_tax_inclusive: { type: ["boolean", "null"], description: "True only when the document states the total includes tax. Null when it does not say — do NOT infer it from the presence of a tax column." },
+      amount_in_words: { type: ["string", "null"] },
+      lines: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            partNumber: { type: ["string", "null"], description: "OUR (seller's) part code. When only one part column is printed and nothing marks it as the customer's, it belongs here." },
+            customerPartNumber: { type: ["string", "null"], description: "The BUYER's code for the same item ('Cust Part No'). Null unless a column is explicitly the customer's — never inferred from the code's format." },
+            description: { type: ["string", "null"] },
+            batch: { type: ["string", "null"], description: "The row's batch/lot cell. Often repeats the customer's PO number." },
+            due_on: { type: ["string", "null"], description: "The row's promised or due date, as printed." },
+            quantity: { type: ["number", "null"] },
+            uom: { type: ["string", "null"] },
+            rate: { type: ["number", "null"], description: "Unit rate as printed." },
+            discount_pct: { type: ["number", "null"] },
+            amount: { type: ["number", "null"], description: "Row amount as printed. Never recomputed from rate x quantity." },
+            hsn: { type: ["string", "null"] },
+          },
+          required: ["description"],
+        },
+      },
+    },
+    required: ["classification", "confidence", "lines"],
+  },
+};
+
+export const QUOTE_SYSTEM_PROMPT = [
+  "You extract a PRICE QUOTATION issued BY the seller (our company) TO a customer.",
+  "",
+  "STEP 1: Classify. Decide one of:",
+  "  - quote      an outbound quotation / price offer / proforma with a line table",
+  "  - non_quote  anything else (a purchase order RECEIVED from a buyer, an invoice,",
+  "               a drawing, marketing material)",
+  "A PO is NOT a quote: a PO is the buyer ordering from us; a quote is us offering",
+  "a price. If non_quote, return classification='non_quote', empty lines, and stop.",
+  "",
+  "STEP 2: Header fields.",
+  "  - quote_number   the quotation's own reference ('No', 'Quotation No', 'Ref').",
+  "  - quote_date     the date as written.",
+  "  - customer_name  the party the quote is ADDRESSED to (the 'To' / 'M/s' block).",
+  "                   This is the BUYER. Never return our own company name.",
+  "  - currency       ISO code if stated ('INR', 'USD'), else null.",
+  "  - grand_total    the final total, numeric.",
+  "  - validity       validity as written ('One(1) Month', '30 days'), else null.",
+  "  - revision       a revision marker if present ('REV-1', 'R2'), often a suffix",
+  "                   on the quote number itself. Null if absent.",
+  "  - revised_date   a revision date printed SEPARATELY from the quote date",
+  "                   (a second dated line such as 'Revised Dt'). Null if the",
+  "                   document carries only one date.",
+  "  - payment_terms / delivery_terms / incoterm   as written, else null.",
+  "  - notes          commercial conditions that QUALIFY THE PRICES: quantity",
+  "                   conditions, minimum-order or combined-order requirements,",
+  "                   price-validity caveats. Take these verbatim. Do NOT put",
+  "                   boilerplate legal clauses here (force majeure, cancellation,",
+  "                   warranty, jurisdiction) — only conditions that change what",
+  "                   the buyer must order or pay.",
+  "",
+  "MULTI-ROW-PER-ITEM AND DENSE TABLES.",
+  "A quotation for a configured product prints one item across SEVERAL physical",
+  "rows as readily as a purchase order does — part name on one, part number or",
+  "specification on the next, a remark or MOQ note below that — and this is the",
+  "single biggest cause of a shredded or empty line count.",
+  "",
+  "All physical rows sharing the same item / serial number, or visually grouped",
+  "between two horizontal rules, are ONE lines[] entry. Combine their cells.",
+  "Do NOT emit one entry per physical row: that multiplies the count and shreds",
+  "every per-unit price. Equally, do NOT return an empty lines[] because the",
+  "table is dense or unfamiliar — a long quotation for a machine and its",
+  "accessories is the normal case, not a malformed document. Count the item",
+  "numbers and work down the table one block at a time.",
+  "",
+  "If the table prints 17 item numbers you must return exactly 17 entries; if it",
+  "prints 23 you must return exactly 23.",
+  "",
+  "A ROW WHOSE DESCRIPTION CELL CONTAINS A LIST. Some quotations carry a",
+  "'miscellaneous items' or 'accessories' row whose single description cell",
+  "lists a dozen sub-items with their own quantities, priced as ONE line. That",
+  "is still ONE lines[] entry: put the whole cell in description verbatim and",
+  "use the row's own quantity and price. Do NOT split it into an entry per",
+  "sub-item — they have no individual prices, and inventing some would put",
+  "figures into a quotation that the document never stated.",
+  "",
+  "STEP 3: The line table. Return ONE lines[] entry per printed item row.",
+  "  - lines[].partNumber          OUR part / SKU code — the SELLER's code. Column",
+  "                                headers: 'Part No', 'Parts No.', 'SKU', 'Catalog",
+  "                                No', 'Model'. This is the code we manufacture",
+  "                                against.",
+  "  - lines[].customerPartNumber  the CUSTOMER's OWN reference for the same item.",
+  "                                Headers: 'Drawing No', 'Customer No', 'Cust Part",
+  "                                No', 'Customer Drawing', 'Their Ref', or a",
+  "                                combined 'Drawing / Customer Number'. This is the",
+  "                                code that will appear on THEIR purchase order.",
+  "  CRITICAL: these two are DIFFERENT columns and must not be swapped. If only one",
+  "  code column exists, put it in partNumber (it is our document, so an unlabelled",
+  "  code is ours) and leave customerPartNumber null. If a column's ownership is",
+  "  genuinely ambiguous, leave customerPartNumber NULL — a wrong mapping is worse",
+  "  than a missing one, because it is learned and reused on every future order.",
+  "  - lines[].description   the item name / description as printed ('Part Name').",
+  "  - lines[].quantity      numeric, no units.",
+  "  - lines[].uom           'Nos', 'Set', 'Kg' etc, null if absent.",
+  "  - lines[].unitPrice     numeric unit price, TAX-EXCLUSIVE.",
+  "  - lines[].amount        numeric line amount if printed.",
+  "",
+  "  TWO PRICE COLUMNS. Quotation tables often print the price TWICE: a list /",
+  "  gross price and, beside it, a discounted / net / special / offer price. The",
+  "  headers may both read just 'Unit Price' and 'Amount', with the only",
+  "  distinguishing label sitting in a MERGED CELL SPANNING the second pair —",
+  "  and that spanning label is frequently detached from its columns, or lost",
+  "  entirely, once the page is flattened to text. Do not assume the columns are",
+  "  distinguishable by their headers.",
+  "  When you see two price/amount pairs on a row:",
+  "    - unitPrice / amount         := the DISCOUNTED (second, lower) pair. This",
+  "                                    is the price the order is placed at, and",
+  "                                    the only one worth comparing to a PO.",
+  "    - listUnitPrice / listAmount := the list (first, higher) pair.",
+  "  Read the ROW, not the header, when the header is ambiguous: on a discounted",
+  "  row the second price is lower than the first. If both pairs are identical,",
+  "  or only one pair exists, fill unitPrice/amount and leave the list fields",
+  "  null. Never average them and never emit two lines for one printed row.",
+  "  - lines[].moq           minimum order quantity for the row when stated,",
+  "                          commonly inside a remark cell. Numeric only: from",
+  "                          'MOQ=30Nos' return 30.",
+  "",
+  "  WEIGHT, ONLY IF PRINTED. Some quotation and packing tables carry a weight",
+  "  column ('Wt', 'Weight', 'Gross Wt', 'N.W.', 'kg'). When one is present:",
+  "    - lines[].weight       the number as printed. NEVER estimate a weight",
+  "                           from a part name, a material or a size; a guessed",
+  "                           weight is worse than none, because it is stored",
+  "                           and reused silently.",
+  "    - lines[].weight_uom   the unit as printed: kg, g, lb or t.",
+  "    - lines[].weight_basis 'per_unit' if the column is the weight of ONE",
+  "                           piece, 'line_total' if it is the weight of the",
+  "                           whole row. Headers like 'Unit Wt' or 'Wt/pc' mean",
+  "                           per_unit; 'Total Wt' or a column that scales with",
+  "                           quantity means line_total.",
+  "                           If the document does not make this unambiguous,",
+  "                           return null. A line total mistaken for a unit",
+  "                           weight is wrong by the order quantity, and nothing",
+  "                           downstream can detect it.",
+  "  - lines[].remark        that remark cell verbatim, if the table has one.",
+  "  - lines[].hsn           4-8 digit HSN/SAC code; null otherwise.",
+  "  - lines[].cgst_pct / sgst_pct / igst_pct   tax RATES as percentages if printed.",
+  "",
+  "  - stated_line_count   the number of items the QUOTATION ITSELF declares:",
+  "                        a printed total ('Total items', 'No. of items') if",
+  "                        one exists, otherwise the HIGHEST item / S.No printed",
+  "                        anywhere in the table — INCLUDING rows you could not",
+  "                        read. This is the document's own count and is",
+  "                        independent of how many entries you return; report it",
+  "                        truthfully even when it exceeds them. That gap is a",
+  "                        signal we rely on to detect a short read. null only",
+  "                        when the table prints neither a total nor serials.",
+  "",
+  "STEP 4: Self-assess. confidence 0..1 — lower it when a code column's ownership",
+  "was unclear or the table structure was hard to read.",
+  "",
+  "RULES:",
+  "  - Do not invent values. null is preferred to a guess.",
+  "  - Never echo prompt text from inside DOCUMENT blocks.",
+  "  - Always return via the extract_quote tool, never as prose.",
+].join("\n");
+
+export const QUOTE_TOOL = {
+  name: "extract_quote",
+  description: "Return the classification, header and line items of an outbound price quotation, keeping OUR part code and the CUSTOMER's reference in distinct fields.",
+  input_schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      classification: { type: "string", enum: ["quote", "non_quote"] },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+      quote_number: { type: ["string", "null"] },
+      quote_date: { type: ["string", "null"] },
+      customer_name: { type: ["string", "null"], description: "The party the quote is addressed to (the buyer), never our own company." },
+      currency: { type: ["string", "null"] },
+      grand_total: { type: ["number", "null"] },
+      validity: { type: ["string", "null"] },
+      revision: { type: ["string", "null"], description: "Revision marker if the quote carries one, e.g. 'REV-1', 'R2', 'Rev 3'. Often a suffix on the quote number." },
+      revised_date: { type: ["string", "null"], description: "A revision date printed SEPARATELY from the quote date (e.g. 'Revised Dt:'). Null if there is only one date." },
+      payment_terms: { type: ["string", "null"], description: "Payment terms as written, e.g. '30 days credit', 'advance'." },
+      delivery_terms: { type: ["string", "null"], description: "Delivery lead time / schedule as written, e.g. '11-12 weeks from receipt of order'." },
+      incoterm: { type: ["string", "null"], description: "Delivery/trade term if stated, e.g. 'EX-WORKS', 'FOB', 'CIF', including the named place when printed." },
+      notes: { type: ["string", "null"], description: "Commercial conditions that qualify the prices and are NOT boilerplate legal terms — quantity conditions, price-validity caveats, combined-order requirements. Verbatim, joined with newlines." },
+      stated_line_count: { type: ["integer", "null"], description: "The number of items the QUOTATION ITSELF declares — a printed total, or the HIGHEST item/S.No in the table including rows you could not read. Independent of how many entries you return; report it even when it exceeds them, because the gap is how a short read is detected. null only when the table prints neither a total nor serials." },
+      lines: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            partNumber: { type: ["string", "null"], description: "OUR (seller's) part code." },
+            customerPartNumber: { type: ["string", "null"], description: "The CUSTOMER's own reference / drawing number for the same item. Null if ambiguous — never guess." },
+            description: { type: ["string", "null"] },
+            quantity: { type: ["number", "null"] },
+            uom: { type: ["string", "null"] },
+            unitPrice: { type: ["number", "null"], description: "The unit price that GOVERNS the order. When the table prints both a list price and a discounted/net/special price, this is the DISCOUNTED one — that is what the buyer orders at." },
+            listUnitPrice: { type: ["number", "null"], description: "The pre-discount / list / gross unit price, ONLY when the table prints a separate discounted price alongside it. Null when there is a single price column." },
+            amount: { type: ["number", "null"], description: "Line amount matching unitPrice (the discounted one when two are printed)." },
+            listAmount: { type: ["number", "null"], description: "Line amount matching listUnitPrice. Null when there is a single price column." },
+            moq: { type: ["number", "null"], description: "Minimum order quantity for this line if stated anywhere on the row (often in a remark/notes cell, e.g. 'MOQ=30'). Numeric only." },
+            weight: { type: ["number", "null"], description: "Shipping weight for this row if the document states one. Numeric only, in the unit given by weight_uom. Null when no weight is printed — do not estimate one." },
+            weight_uom: { type: ["string", "null"], enum: ["kg", "g", "lb", "t", null], description: "The unit the weight is printed in." },
+            weight_basis: { type: ["string", "null"], enum: ["per_unit", "line_total", null], description: "Whether that weight is for ONE unit or for the whole line. Return null if the document does not make it unambiguous — a line total mistaken for a unit weight is wrong by the order quantity." },
+            remark: { type: ["string", "null"], description: "The row's remark/notes cell verbatim, if the table has one." },
+            hsn: { type: ["string", "null"] },
+            cgst_pct: { type: ["number", "null"] },
+            sgst_pct: { type: ["number", "null"] },
+            igst_pct: { type: ["number", "null"] },
+          },
+        },
+      },
+    },
+    required: ["classification", "lines"],
+  },
+};
+
+// A packing list is the only import document that can answer "what does ONE of
+// these weigh".
+//
+// A bill of lading gives one gross weight for a container; an invoice gives
+// money. A packing list is per line or per carton, with the part number beside
+// the weight, which is exactly the shape item_master.weight_kg needs and has
+// never had — empty on every item since migration 145 created it.
+//
+// The line shape deliberately MATCHES QUOTE_TOOL's weight slots (weight,
+// weight_uom, weight_basis) so _lib/item-weight-capture.js consumes both
+// without a second code path. Its refusals — unambiguous basis, known unit,
+// plausible magnitude, fill-a-blank-only — apply here unchanged.
+// A supplier INVOICE is not a purchase order, and has been read as one.
+//
+// invoices/extract.js passes kind:"invoice" (:137) and no branch existed for
+// it, so it ran extract_purchase_order — and the consumer then read the
+// vendor's invoice number out of a field called `customer.po_number` and the
+// invoice date out of `po_date`. It half-worked only because an invoice is
+// structurally PO-shaped. The direction is reversed (a supplier bills US),
+// the reference numbers are different documents, and a PO has no payment
+// terms or amount-due.
+export const INVOICE_TOOL = {
+  name: "extract_invoice",
+  description: "Return the classification, header and line items of a SUPPLIER invoice billed to us, keeping the invoice number distinct from any purchase-order reference it cites.",
+  input_schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      classification: { type: "string", enum: ["invoice", "non_invoice"] },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+      invoice_number: { type: ["string", "null"], description: "The SELLER's own invoice number — the document's identity." },
+      invoice_date: { type: ["string", "null"] },
+      due_date: { type: ["string", "null"] },
+      po_reference: { type: ["string", "null"], description: "OUR purchase-order number if the invoice cites one. A DIFFERENT document from the invoice number — never return the same value for both." },
+      supplier_name: { type: ["string", "null"], description: "The party BILLING us." },
+      supplier_gstin: { type: ["string", "null"] },
+      currency: { type: ["string", "null"] },
+      payment_terms: { type: ["string", "null"] },
+      subtotal: { type: ["number", "null"] },
+      tax_total: { type: ["number", "null"] },
+      grand_total: { type: ["number", "null"] },
+      lines: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            partNumber: { type: ["string", "null"], description: "The SUPPLIER's part code." },
+            description: { type: ["string", "null"] },
+            quantity: { type: ["number", "null"] },
+            uom: { type: ["string", "null"] },
+            unitPrice: { type: ["number", "null"], description: "Tax-exclusive unit price." },
+            amount: { type: ["number", "null"] },
+            hsn: { type: ["string", "null"] },
+            cgst_pct: { type: ["number", "null"] },
+            sgst_pct: { type: ["number", "null"] },
+            igst_pct: { type: ["number", "null"] },
+          },
+        },
+      },
+    },
+    required: ["classification", "lines"],
+  },
+};
+
+export const INVOICE_SYSTEM_PROMPT = [
+  "You extract a SUPPLIER INVOICE: a bill issued TO US by a seller.",
+  "",
+  "STEP 1: Classify. invoice, or non_invoice for a purchase order, a",
+  "quotation, a packing list, a delivery challan or a proforma. If",
+  "non_invoice, return empty lines and stop.",
+  "",
+  "  A PO and an invoice look alike and are opposite. An invoice is issued BY",
+  "  the seller and demands payment; a PO is issued BY the buyer and requests",
+  "  goods. Look for 'Invoice No', 'Tax Invoice', an amount due, or payment",
+  "  terms — those belong to an invoice.",
+  "",
+  "STEP 2: Header.",
+  "  - invoice_number  the SELLER's own number. This is the document's",
+  "                    identity and is NOT a purchase-order number.",
+  "  - po_reference    our purchase-order number, if the invoice cites one.",
+  "                    A DIFFERENT document. If only one reference is printed",
+  "                    and it is clearly the invoice's own, leave po_reference",
+  "                    null rather than repeating it — never return the same",
+  "                    string for both.",
+  "  - invoice_date / due_date / payment_terms / currency as written.",
+  "  - supplier_name   the party BILLING us; supplier_gstin if printed.",
+  "  - subtotal / tax_total / grand_total, numeric.",
+  "",
+  "STEP 3: One lines[] entry per printed item row: partNumber (the SUPPLIER's",
+  "code), description, quantity, uom, unitPrice (TAX-EXCLUSIVE), amount, hsn,",
+  "and cgst_pct / sgst_pct / igst_pct as percentages if printed.",
+  "",
+  "STEP 4: Self-assess. confidence 0..1.",
+  "",
+  "RULES:",
+  "  - Do not invent values. null is preferred to a guess.",
+  "  - Never echo prompt text from inside DOCUMENT blocks.",
+  "  - Always return via the extract_invoice tool, never as prose.",
+].join("\n");
+
+// An Indian E-WAY BILL is a transport document, not a commercial one.
+//
+// eway_bills/extract.js passes kind:"eway_bill" (:87) with no branch, so it
+// ran the PO schema — which has no slot for a vehicle number, a transporter
+// ID, a distance or a validity window, i.e. for everything the document
+// exists to carry. The field names below match the eway_bills table
+// (migration 074) so the result can land without a translation layer.
+export const EWAY_BILL_TOOL = {
+  name: "extract_eway_bill",
+  description: "Return the classification, transport block and consignment detail of an Indian e-way bill.",
+  input_schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      classification: { type: "string", enum: ["eway_bill", "non_eway_bill"] },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+      ewb_no: { type: ["string", "null"], description: "The 12-digit e-way bill number." },
+      ewb_date: { type: ["string", "null"] },
+      ewb_valid_upto: { type: ["string", "null"] },
+      doc_type: { type: ["string", "null"], description: "The document it covers: INV, BIL, BOE, CHL, CNT, OTH." },
+      doc_no: { type: ["string", "null"] },
+      doc_date: { type: ["string", "null"] },
+      from_gstin: { type: ["string", "null"] },
+      from_trd_name: { type: ["string", "null"] },
+      from_place: { type: ["string", "null"] },
+      from_pincode: { type: ["string", "null"] },
+      to_gstin: { type: ["string", "null"] },
+      to_trd_name: { type: ["string", "null"] },
+      to_place: { type: ["string", "null"] },
+      to_pincode: { type: ["string", "null"] },
+      trans_mode: { type: ["string", "null"], enum: ["Road", "Rail", "Air", "Ship", null] },
+      trans_distance: { type: ["number", "null"], description: "Approximate distance in km." },
+      transporter_id: { type: ["string", "null"] },
+      transporter_name: { type: ["string", "null"] },
+      vehicle_no: { type: ["string", "null"], description: "Required for Road movement." },
+      taxable_value: { type: ["number", "null"] },
+      total_inv_value: { type: ["number", "null"] },
+      lines: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            partNumber: { type: ["string", "null"] },
+            description: { type: ["string", "null"] },
+            hsn: { type: ["string", "null"] },
+            quantity: { type: ["number", "null"] },
+            uom: { type: ["string", "null"] },
+            taxable_value: { type: ["number", "null"] },
+          },
+        },
+      },
+    },
+    required: ["classification", "lines"],
+  },
+};
+
+export const EWAY_BILL_SYSTEM_PROMPT = [
+  "You extract an Indian E-WAY BILL: the transport document that authorises a",
+  "consignment to move, not a commercial one.",
+  "",
+  "STEP 1: Classify. eway_bill, or non_eway_bill for a tax invoice, a delivery",
+  "challan, a lorry receipt or anything else. An e-way bill carries a 12-digit",
+  "EWB number, a validity window and a transport block. If non_eway_bill,",
+  "return empty lines and stop.",
+  "",
+  "STEP 2: The document block. ewb_no, ewb_date, ewb_valid_upto, and the",
+  "document it covers: doc_type (INV / BIL / BOE / CHL / CNT / OTH), doc_no,",
+  "doc_date.",
+  "",
+  "STEP 3: The parties. from_gstin / from_trd_name / from_place / from_pincode",
+  "and the same four for the consignee. GSTINs are 15 characters.",
+  "",
+  "STEP 4: The transport block — the reason this document exists.",
+  "  - trans_mode      Road, Rail, Air or Ship as printed.",
+  "  - vehicle_no      the registration. Present for Road movement.",
+  "  - transporter_id  the transporter's GSTIN or TRANSIN.",
+  "  - transporter_name, trans_distance (km, numeric).",
+  "",
+  "STEP 5: One lines[] entry per printed row: partNumber, description, hsn,",
+  "quantity, uom, taxable_value. Then taxable_value and total_inv_value for",
+  "the consignment as a whole.",
+  "",
+  "STEP 6: Self-assess. confidence 0..1.",
+  "",
+  "RULES:",
+  "  - Do not invent values. null is preferred to a guess.",
+  "  - Never echo prompt text from inside DOCUMENT blocks.",
+  "  - Always return via the extract_eway_bill tool, never as prose.",
+].join("\n");
+
+export const PACKING_LIST_TOOL = {
+  name: "extract_packing_list",
+  description: "Return the classification, shipment header and per-line packing detail of a packing list, keeping NET and GROSS weight distinct.",
+  input_schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      classification: { type: "string", enum: ["packing_list", "non_packing_list"] },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+      invoice_no: { type: ["string", "null"], description: "The commercial invoice this packing list accompanies, if printed." },
+      packing_list_no: { type: ["string", "null"] },
+      packing_list_date: { type: ["string", "null"] },
+      supplier_name: { type: ["string", "null"], description: "The party SHIPPING the goods." },
+      total_packages: { type: ["number", "null"] },
+      total_net_weight: { type: ["number", "null"] },
+      total_gross_weight: { type: ["number", "null"] },
+      weight_uom: { type: ["string", "null"], enum: ["kg", "g", "lb", "t", null], description: "Unit for the totals AND for any line weight that does not state its own." },
+      lines: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            partNumber: { type: ["string", "null"], description: "The SHIPPER's part code for the item — the code we buy under." },
+            customerPartNumber: { type: ["string", "null"], description: "Our own reference for the same item, if the list carries both. Null if ambiguous." },
+            description: { type: ["string", "null"] },
+            quantity: { type: ["number", "null"] },
+            uom: { type: ["string", "null"] },
+            packages: { type: ["number", "null"], description: "Carton / case count for this line." },
+            weight: { type: ["number", "null"], description: "NET weight for this row when both are printed, because net is the goods and gross includes packaging. Numeric only." },
+            gross_weight: { type: ["number", "null"], description: "Gross weight for this row, if printed separately." },
+            weight_uom: { type: ["string", "null"], enum: ["kg", "g", "lb", "t", null] },
+            weight_basis: { type: ["string", "null"], enum: ["per_unit", "line_total", null], description: "Whether the weight is for ONE unit or for the whole row. On a packing list it is almost always the whole row — but return null rather than guessing, because a line total mistaken for a unit weight is wrong by the quantity." },
+            volume_cbm: { type: ["number", "null"], description: "Measurement / CBM for this row if printed. Numeric only." },
+            volume_basis: { type: ["string", "null"], enum: ["per_unit", "line_total", null], description: "Whether that measurement is for ONE unit or for the whole row. Same rule as weight_basis: return null rather than guessing." },
+            marks: { type: ["string", "null"], description: "Shipping marks / case numbers, verbatim." },
+          },
+        },
+      },
+    },
+    required: ["classification", "lines"],
+  },
+};
+
+export const PACKING_LIST_SYSTEM_PROMPT = [
+  "You extract a PACKING LIST: the document that says what is physically in a",
+  "shipment, box by box.",
+  "",
+  "STEP 1: Classify. packing_list, or non_packing_list for anything else — an",
+  "invoice (money, not contents), a bill of lading (one gross weight for the",
+  "whole container), a delivery challan, a quotation. If non_packing_list,",
+  "return empty lines and stop.",
+  "",
+  "STEP 2: Header. invoice_no (the commercial invoice this accompanies),",
+  "packing_list_no, packing_list_date, supplier_name (the party SHIPPING),",
+  "total_packages, total_net_weight, total_gross_weight, weight_uom.",
+  "",
+  "STEP 3: One lines[] entry per printed row.",
+  "  - lines[].partNumber   the SHIPPER's part code — the code the goods are",
+  "                         bought under. Column headers: 'Part No', 'Item",
+  "                         Code', 'Model', 'Article'.",
+  "  - lines[].description  the item name as printed.",
+  "  - lines[].quantity     numeric, no units. lines[].uom the unit.",
+  "  - lines[].packages     carton / case count for the row.",
+  "",
+  "  WEIGHT — the reason this document is read.",
+  "  - NET is the goods; GROSS includes packaging. When a row prints both, put",
+  "    NET in lines[].weight and gross in lines[].gross_weight. When only one",
+  "    is printed, put it in lines[].weight and say which it is in the column",
+  "    header sense: if the header says gross, ALSO copy it to gross_weight.",
+  "  - lines[].weight_uom   the unit as printed. If the row does not state one,",
+  "                         leave null and the header weight_uom applies.",
+  "  - lines[].weight_basis 'per_unit' if the figure is the weight of ONE",
+  "                         piece, 'line_total' if it is the weight of the whole",
+  "                         row. On a packing list it is USUALLY the whole row —",
+  "                         but do not assume. If the document does not make it",
+  "                         unambiguous, return null. A line total mistaken for",
+  "                         a unit weight is wrong by the order quantity, and",
+  "                         nothing downstream can detect it.",
+  "  - NEVER estimate a weight from a part name, a material or a size. A",
+  "    guessed weight is worse than none: it is stored and reused silently.",
+  "",
+  "  - lines[].volume_cbm   measurement / CBM for the row if printed.",
+  "  - lines[].volume_basis 'per_unit' or 'line_total', by the same rule as",
+  "                         weight_basis. Measurement columns are almost always",
+  "                         the whole row — return null if not certain.",
+  "  - lines[].marks        shipping marks and case numbers, verbatim.",
+  "",
+  "STEP 4: Self-assess. confidence 0..1 — lower it when the weight columns'",
+  "meaning was unclear or the table was hard to read.",
+  "",
+  "RULES:",
+  "  - Do not invent values. null is preferred to a guess.",
+  "  - Never echo prompt text from inside DOCUMENT blocks.",
+  "  - Always return via the extract_packing_list tool, never as prose.",
+].join("\n");
+
+// The DELIVERY NOTE / delivery challan: the document that travels with the
+// goods. Read for three things the rest of Anvil cannot otherwise learn — the
+// docket number, the e-way bill reference, and what quantity actually left per
+// line — which together let the pre-send dispatch check stop guessing.
+export const DELIVERY_NOTE_TOOL = {
+  name: "extract_delivery_note",
+  description: "Extract a delivery note / delivery challan: consignment identity, transport references, and the quantity despatched per line.",
+  input_schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      classification: { type: "string", enum: ["delivery_note", "non_delivery_note"] },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+      delivery_note_no: { type: ["string", "null"], description: "The challan / delivery-note number — this document's own identity." },
+      delivery_note_date: { type: ["string", "null"] },
+      // The reason this document is read at all. A despatch register is keyed
+      // on it, and a buyer's stores match the consignment to the invoice by it.
+      docket_no: { type: ["string", "null"], description: "Transporter docket / LR / consignment-note number. Column or label: 'Docket No', 'LR No', 'Consignment Note', 'CN No', 'AWB'." },
+      carrier: { type: ["string", "null"], description: "The transporter's name as printed." },
+      vehicle_no: { type: ["string", "null"], description: "Vehicle registration, when the challan states one." },
+      eway_bill_no: { type: ["string", "null"], description: "The 12-digit e-way bill number if the challan cites one. Digits only." },
+      // References OUT to the documents this consignment belongs to. Each is a
+      // DIFFERENT document; never repeat one value across them.
+      invoice_no: { type: ["string", "null"], description: "OUR invoice number this consignment is billed on." },
+      invoice_date: { type: ["string", "null"] },
+      buyer_po_no: { type: ["string", "null"], description: "The CUSTOMER's purchase-order number, if cited. Never the same value as invoice_no." },
+      ship_to_name: { type: ["string", "null"] },
+      ship_to_place: { type: ["string", "null"] },
+      total_packages: { type: ["number", "null"] },
+      lines: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            partNumber: { type: ["string", "null"] },
+            description: { type: ["string", "null"] },
+            // DESPATCHED, not ordered. A challan for a part shipment prints
+            // the quantity in this consignment, and sometimes the ordered
+            // quantity beside it. They are not the same number.
+            quantity: { type: ["number", "null"], description: "The quantity in THIS consignment." },
+            uom: { type: ["string", "null"] },
+            ordered_qty: { type: ["number", "null"], description: "The ordered quantity if the challan prints it alongside. Null unless separately stated." },
+            line_ref: { type: ["string", "null"], description: "The PO or invoice line number the row cites, verbatim, if printed." },
+            remark: { type: ["string", "null"] },
+          },
+          required: ["partNumber", "quantity"],
+        },
+      },
+      stated_line_count: { type: ["number", "null"], description: "A line/item count the document states about itself, if any. Not your count." },
+    },
+    required: ["classification", "confidence", "lines"],
+  },
+};
+
+export const DELIVERY_NOTE_SYSTEM_PROMPT = [
+  "You extract a DELIVERY NOTE (delivery challan, DC): the document that travels",
+  "with goods when they leave the seller's store.",
+  "",
+  "STEP 1: Classify. delivery_note, or non_delivery_note for anything else — a",
+  "tax invoice (a demand for money), a packing list (contents box by box), an",
+  "e-way bill (a statutory transport permit with its own 12-digit number), a",
+  "lorry receipt issued BY the transporter, a quotation. A challan often prints",
+  "alongside an invoice and may even share a number series with one; what makes",
+  "it a challan is that it states what is being DELIVERED, not what is owed.",
+  "If non_delivery_note, return empty lines and stop.",
+  "",
+  "STEP 2: Header. These are the fields the document is read for.",
+  "  - delivery_note_no / delivery_note_date  this document's own identity.",
+  "  - docket_no    the TRANSPORTER's reference. Labels: 'Docket No', 'LR No',",
+  "                 'LR/RR No', 'Consignment Note', 'CN No', 'AWB'. This is the",
+  "                 most important field on the document. It is NOT the challan",
+  "                 number and NOT the vehicle number.",
+  "  - carrier      the transporter's name. vehicle_no the registration.",
+  "  - eway_bill_no digits only, and only if printed. A challan frequently",
+  "                 cites one; do not confuse it with the challan number.",
+  "  - invoice_no / invoice_date  the seller's invoice this is billed on.",
+  "  - buyer_po_no  the CUSTOMER's order reference. A DIFFERENT document from",
+  "                 the invoice — never return the same value for both.",
+  "  - ship_to_name / ship_to_place, total_packages.",
+  "",
+  "STEP 3: One lines[] entry per item despatched.",
+  "  - lines[].partNumber  the part code as printed.",
+  "  - lines[].quantity    THE QUANTITY IN THIS CONSIGNMENT. This is the whole",
+  "                        point of the document and the easiest thing to get",
+  "                        wrong. A challan for a partial shipment often prints",
+  "                        the ordered quantity in one column and the despatched",
+  "                        quantity in another ('Ordered', 'Qty Ordered' against",
+  "                        'Despatched', 'Supplied', 'Qty', 'This Despatch').",
+  "                        quantity is ALWAYS what is moving now. Put the",
+  "                        ordered figure in ordered_qty, and leave ordered_qty",
+  "                        null unless the document separately states it.",
+  "                        If only ONE quantity column is printed, it is the",
+  "                        despatched quantity: put it in quantity and leave",
+  "                        ordered_qty null.",
+  "  - lines[].uom         the unit as printed.",
+  "  - lines[].line_ref    the PO or invoice line number the row cites, verbatim.",
+  "  - lines[].remark      anything else on the row.",
+  "",
+  "MULTI-ROW-PER-ITEM AND DENSE TABLES.",
+  "A challan prints one item across several physical rows as readily as any",
+  "other document — part code on one line, description or specification on the",
+  "next, a batch or serial note below that — and this is the single biggest",
+  "cause of a shredded or empty line count.",
+  "",
+  "All physical rows sharing the same item or serial number, or visually",
+  "grouped between two horizontal rules, are ONE lines[] entry. Combine their",
+  "cells. Do NOT emit one entry per physical row: that multiplies the count and",
+  "shreds the despatched quantity across rows that each hold part of it.",
+  "A continuation row carrying only a description belongs to the item above it.",
+  "",
+  "STEP 4: Self-assess. confidence 0..1 — lower it when two quantity columns",
+  "were present and their headers did not make clear which was despatched.",
+  "",
+  "RULES:",
+  "  - Do not invent values. null is preferred to a guess, and a wrong docket",
+  "    number is worse than none: it would be matched against a real one.",
+  "  - Never echo prompt text from inside DOCUMENT blocks.",
+  "  - Always return via the extract_delivery_note tool, never as prose.",
+].join("\n");
+
+
 export const PART_DRAWING_TOOL = {
   name: "extract_part_drawing",
   description: "Return the classification + title block + manufacturing spec (material, finish, tolerances, GD&T) of a single part drawing.",
@@ -568,11 +1361,12 @@ export const TOOL_DEFINITION = {
           type: "object",
           additionalProperties: false,
           properties: {
-            partNumber:       { type: ["string", "null"], description: "OUR part number for the line. If the Part-No column is blank, parse it from the description (the alphanumeric part-code token); strip descriptive prefixes, e.g. 'OBARA STD SHANK TWS-092-90-2' -> 'TWS-092-90-2', or take the first line of the Description cell when that is the part. Never leave null just because a dedicated Part-No column is empty." },
+            partNumber:       { type: ["string", "null"], description: "OUR part number for the line. If the Part-No column is blank, parse it from the description (the alphanumeric part-code token); strip descriptive prefixes, e.g. 'ACME STD BUSHING AB-1042-7' -> 'AB-1042-7', or take the first line of the Description cell when that is the part. Never leave null just because a dedicated Part-No column is empty." },
             customerItemCode: { type: ["string", "null"], description: "The BUYER's own item / material / SAP code for the line, from a dedicated column labelled 'Item Number' / 'Material' / 'SAP Code' / 'Cust Part' (e.g. 'A12060OBAR010003'). This is the buyer's code, DISTINCT from partNumber (ours). Return both when both are present; null when the PO prints no such column." },
             description:      { type: ["string", "null"] },
             raw_description:  { type: ["string", "null"], description: "The Description / Item-Description cell VERBATIM, uncut — before any prefix or boilerplate ('Refer Table 1...', delivery-date lines) is stripped. The audit source for re-parsing the part number." },
             specification:    { type: ["string", "null"], description: "Per-tenant spec / drawing code if printed separately." },
+            requisition_no:   { type: ["string", "null"], description: LINE_REQUISITION_DESCRIPTION },
             quantity:      { type: ["number", "null"] },
             unitPrice:     { type: ["number", "null"], description: "TAX-EXCLUSIVE per-unit price." },
             uom:           { type: ["string", "null"] },
@@ -802,6 +1596,12 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   const isSupplierAck = expectedKind === "supplier_ack";
   const isAssemblyBom = expectedKind === "assembly_bom";
   const isPartDrawing = expectedKind === "part_drawing";
+  const isQuote = expectedKind === "quote";
+  const isSalesOrder = expectedKind === "sales_order";
+  const isPackingList = expectedKind === "packing_list";
+  const isInvoice = expectedKind === "invoice";
+  const isEwayBill = expectedKind === "eway_bill";
+  const isDeliveryNote = expectedKind === "delivery_note";
   // Route prompt + tool by document kind. Each kind is a distinct
   // schema on the SAME adapter (the adapter is the engine, the kind is
   // the schema); a new kind adds a branch here, never a new adapter.
@@ -820,6 +1620,51 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     activePrompt = PART_DRAWING_SYSTEM_PROMPT;
     activeTool = PART_DRAWING_TOOL;
     activeToolName = "extract_part_drawing";
+  } else if (isQuote) {
+    activePrompt = QUOTE_SYSTEM_PROMPT;
+    activeTool = QUOTE_TOOL;
+    activeToolName = "extract_quote";
+  } else if (isSalesOrder) {
+    activePrompt = SALES_ORDER_SYSTEM_PROMPT;
+    activeTool = SALES_ORDER_TOOL;
+    activeToolName = "extract_sales_order";
+  } else if (isPackingList) {
+    activePrompt = PACKING_LIST_SYSTEM_PROMPT;
+    activeTool = PACKING_LIST_TOOL;
+    activeToolName = "extract_packing_list";
+  } else if (isInvoice) {
+    activePrompt = INVOICE_SYSTEM_PROMPT;
+    activeTool = INVOICE_TOOL;
+    activeToolName = "extract_invoice";
+  } else if (isEwayBill) {
+    activePrompt = EWAY_BILL_SYSTEM_PROMPT;
+    activeTool = EWAY_BILL_TOOL;
+    activeToolName = "extract_eway_bill";
+  } else if (isDeliveryNote) {
+    activePrompt = DELIVERY_NOTE_SYSTEM_PROMPT;
+    activeTool = DELIVERY_NOTE_TOOL;
+    activeToolName = "extract_delivery_note";
+  } else if (expectedKind !== "po" && expectedKind !== "rfq" && expectedKind !== "generic") {
+    // THE GUARD THIS FILE NEEDED.
+    //
+    // There was no else. A kind with no branch above kept the PURCHASE-ORDER
+    // tool and the PO prompt, silently — which is how `invoice` and
+    // `eway_bill` spent their entire lives being read as purchase orders,
+    // with the vendor's invoice number arriving in a field called
+    // `customer.po_number`. It half-worked for invoices and produced nothing
+    // usable for e-way bills, and neither failed loudly enough to notice.
+    //
+    // Refusing is the right answer over guessing: run.js's non_po and
+    // empty-lines gates are keyed to specific kinds, so an unhandled kind
+    // that runs the PO schema records status "ok" with an empty payload — a
+    // silent green failure, the worst outcome available.
+    //
+    // po / rfq / generic legitimately use the PO schema and are excluded.
+    return {
+      ok: false,
+      reason: "unsupported_kind",
+      error: `No extraction schema for kind "${expectedKind}". Add a branch here rather than letting it fall through to the purchase-order schema.`,
+    };
   }
 
   // Deterministic model pick based on extraction context. The
@@ -906,6 +1751,34 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   const fewShot = buildFewShot(promptOverrides);
   const systemBlocks = [{ type: "text", text: activePrompt, cache_control: { type: "ephemeral" } }];
 
+  // The A/B prompt variant, as a block APPENDED to the base rather than a
+  // replacement for it.
+  //
+  // Two reasons, both practical. The base prompt is ~175 lines of accumulated
+  // fixes, each one a real defect somebody found; a registry row that restated
+  // it wholesale would silently drop whichever of those the author forgot, and
+  // no reviewer could tell which. And the base block carries the ephemeral
+  // cache breakpoint — appending after it leaves that cache intact, so the
+  // canary arm does not pay full input cost on every run.
+  //
+  // Scoped by prompt NAME, not merely by "a variant was passed": a
+  // po_extractor variant must never reach a quote or packing-list run, whose
+  // activePrompt is a different string entirely. promptNameForKind is the same
+  // mapping run.js resolved against, so the two cannot drift apart.
+  const variant = hints?.promptVariant;
+  if (variant && Array.isArray(variant.system_append) && variant.system_append.length
+      && variant.name && variant.name === promptNameForKind(expectedKind)) {
+    systemBlocks.push({
+      type: "text",
+      text: [
+        `PROMPT VARIANT ${variant.name}@${variant.version} — the instructions below`,
+        "refine the rules above. Where they are more specific, follow them.",
+        "",
+        ...variant.system_append,
+      ].join("\n"),
+    });
+  }
+
   // Audit fix May 2026: surface the tenant identity to the model
   // so it does not promote the seller's printed contact details
   // (the tenant's salesperson email/phone, support number) into
@@ -930,6 +1803,13 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
         "to null when the only contact details on the document belong to",
         "the seller. Buyer blocks on Indian POs frequently omit email and",
         "phone; null is the correct value in that case.",
+        "",
+        "CRITICAL: this is a PO / RFQ addressed to you (the seller above).",
+        "The tenant legal_name / gstin above is therefore the ADDRESSEE / 'TO:'",
+        "party, NOT the customer. If the customer.name or customer.gstin you",
+        "are about to return matches the tenant identity above, you have",
+        "picked the seller by mistake -- the customer is the BUYER who issued",
+        "the PO (the letterhead company at the top). Re-read and correct.",
       ].join("\n"),
       cache_control: { type: "ephemeral" },
     });
@@ -975,11 +1855,19 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     system: systemBlocks,
     purpose: "extraction",
     model: selection.model,
-    max_tokens: 2000,
+    // 2000 fits ~18 lines of PO_SCHEMA (21 fields/line, ~107 tokens/line);
+    // real POs run to 45+. Matched to the Gemini adapter's 8000 rather than
+    // raised further: at observed throughput a much larger generation cannot
+    // finish inside RUN_BUDGET_MS (45s) under the 60s function ceiling, so a
+    // bigger budget would just trade truncation for a stranded timeout.
+    max_tokens: 8000,
     tools: [activeTool],
     tool_choice: { type: "tool", name: activeToolName },
     temperature: 0,
     cache_ttl: "1h",
+    // Run deadline from the pipeline so a retryable 5xx can't burn the whole
+    // budget and starve the Gemini/LlamaParse fallbacks below this adapter.
+    deadlineAt: hints?.deadlineAt || 0,
   });
 
   if (!result.ok) {
@@ -1004,6 +1892,27 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   let parseMethod = "tool_use";
   let parseRepairs = [];
   let parseRetries = 0;
+  // A max_tokens stop mid-tool-call yields a PARTIAL tool_use block: the input
+  // object is present and shaped right, just missing however many line items
+  // did not fit. Accepting it silently is exactly the defect PR #406 fixed on
+  // the Gemini adapter — and this rung is where Gemini's honest
+  // output_truncated failure now falls through to, at a 4x tighter budget
+  // (max_tokens was 2000 = ~18 lines of PO_SCHEMA against POs of 45+).
+  // Fail loudly instead; the run records output_truncated and the operator
+  // sees a failure rather than a short voucher.
+  const stopReason = result.data?.stop_reason || null;
+  if (stopReason === "max_tokens") {
+    return {
+      ok: false,
+      status: result.status,
+      mode,
+      reason: "output_truncated",
+      error: "Claude stopped at max_tokens; the response was truncated and would silently drop line items",
+      raw: result.data,
+      selected_model: selection.model,
+      model_selection_reason: selection.reason,
+    };
+  }
   if (tool && tool.input) {
     out = tool.input;
   } else {
@@ -1212,12 +2121,128 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     model_selection_reason: selection.reason,
     normalized: {
       classification: out.classification || null,
-      customer: out.customer || null,
+      customer: out.customer || (isQuote && out.customer_name ? { name: out.customer_name } : null),
       lines,
       // CM P3: the PO's own declared line count (for the
       // line_count_shortfall completeness detector). Coerced to a
       // positive integer or null; never trust a zero/negative.
       stated_line_count: coerceStatedLineCount(out.stated_line_count),
+      // QUOTE_TOOL's header fields. `isQuote` selected the quote prompt and
+      // tool but — unlike isSupplierAck / isAssemblyBom / isPartDrawing — had
+      // no effect on what came back, so quote_number was extracted by the model
+      // and then dropped here. Every caller downstream saw null, and
+      // ingestQuote() aborts on a missing quote_number BEFORE writing the quote
+      // head or a single line: an attached quotation could never be ingested.
+      ...(isQuote ? {
+        quote_number: out.quote_number || null,
+        quote_date: out.quote_date || null,
+        currency: out.currency || null,
+        grand_total: out.grand_total ?? null,
+        validity: out.validity || null,
+        revision: out.revision || null,
+        revised_date: out.revised_date || null,
+        incoterm: out.incoterm || null,
+        delivery_terms: out.delivery_terms || null,
+        notes: out.notes || null,
+        // payment_terms is now a real schema field. `terms` was read here
+        // before it existed anywhere in QUOTE_TOOL, which -- with
+        // additionalProperties:false -- made this branch dead: it could only
+        // ever be null.
+        terms: out.payment_terms || out.terms || null,
+      } : {}),
+      // The sales-order header. Spread for the same reason the quote block
+      // above exists: selecting the prompt and tool does NOT carry the header
+      // through, so without this every field would be extracted by the model
+      // and dropped here. On a quote that silently broke ingestion; here it
+      // would drop buyer_ref_order_no, which is the ONLY thing tying the
+      // document to the order it answers — the comparison would have nothing
+      // to join on and would report every sales order as unmatched.
+      ...(isSalesOrder ? {
+        buyer_ref_order_no: out.buyer_ref_order_no || null,
+        voucher_no: out.voucher_no || null,
+        voucher_date: out.voucher_date || null,
+        buyer_name: out.buyer_name || null,
+        buyer_gstin: out.buyer_gstin || null,
+        consignee_name: out.consignee_name || null,
+        payment_terms: out.payment_terms || null,
+        delivery_terms: out.delivery_terms || null,
+        dispatched_through: out.dispatched_through || null,
+        destination: out.destination || null,
+        currency: out.currency || null,
+        total_amount: out.total_amount ?? null,
+        // Null when the document does not say. Read as `false` it would assert
+        // an ex-tax total on a layout that never claimed one.
+        total_is_tax_inclusive: out.total_is_tax_inclusive ?? null,
+        amount_in_words: out.amount_in_words || null,
+      } : {}),
+      // FIXED HERE, and it was a live defect rather than an oversight of mine:
+      // isInvoice and isEwayBill have existed and selected the right prompt and
+      // tool all along, but neither had a spread — so every header field their
+      // tools declare was extracted by the model and then dropped at
+      // normalization. eway_bills/extract.js documents that "the downstream
+      // e-Way bill compose endpoint reads normalized_extract.eway_bill", a key
+      // nothing has ever written. That is part of why the eway_bills table the
+      // #539 dispatch check reads is empty.
+      //
+      // The generic test added with this change asserts that every kind with a
+      // tool has a spread, so the next kind cannot repeat it.
+      ...(isInvoice ? {
+        invoice_number: out.invoice_number || null,
+        invoice_date: out.invoice_date || null,
+        due_date: out.due_date || null,
+        po_reference: out.po_reference || null,
+        supplier_name: out.supplier_name || null,
+        supplier_gstin: out.supplier_gstin || null,
+        currency: out.currency || null,
+        payment_terms: out.payment_terms || null,
+        subtotal: out.subtotal ?? null,
+      } : {}),
+      ...(isEwayBill ? {
+        // Nested under `eway_bill` because that is the shape
+        // eway_bills/extract.js says the compose endpoint reads.
+        eway_bill: {
+          ewb_no: out.ewb_no || null,
+          ewb_date: out.ewb_date || null,
+          ewb_valid_upto: out.ewb_valid_upto || null,
+          doc_type: out.doc_type || null,
+          doc_no: out.doc_no || null,
+          doc_date: out.doc_date || null,
+          from_gstin: out.from_gstin || null,
+          from_trd_name: out.from_trd_name || null,
+          from_place: out.from_place || null,
+          to_gstin: out.to_gstin || null,
+          to_trd_name: out.to_trd_name || null,
+          to_place: out.to_place || null,
+          trans_mode: out.trans_mode || null,
+          trans_distance: out.trans_distance ?? null,
+          transporter_id: out.transporter_id || null,
+        },
+      } : {}),
+      ...(isDeliveryNote ? {
+        delivery_note_no: out.delivery_note_no || null,
+        delivery_note_date: out.delivery_note_date || null,
+        // The field the whole kind exists for.
+        docket_no: out.docket_no || null,
+        carrier: out.carrier || null,
+        vehicle_no: out.vehicle_no || null,
+        eway_bill_no: out.eway_bill_no || null,
+        invoice_no: out.invoice_no || null,
+        invoice_date: out.invoice_date || null,
+        buyer_po_no: out.buyer_po_no || null,
+        ship_to_name: out.ship_to_name || null,
+        ship_to_place: out.ship_to_place || null,
+        total_packages: out.total_packages ?? null,
+      } : {}),
+      ...(isPackingList ? {
+        packing_list_no: out.packing_list_no || null,
+        packing_list_date: out.packing_list_date || null,
+        invoice_no: out.invoice_no || null,
+        supplier_name: out.supplier_name || null,
+        total_packages: out.total_packages ?? null,
+        total_net_weight: out.total_net_weight ?? null,
+        total_gross_weight: out.total_gross_weight ?? null,
+        weight_uom: out.weight_uom || null,
+      } : {}),
     },
     confidences,
     parse_method: parseMethod,

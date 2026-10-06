@@ -18,6 +18,10 @@
 //   reduce(data, { nowMs, windowDays }) -> { value, breakdown?, provenance }  (PURE, tested)
 
 import { computeArAging, computeCycleTime, median } from "../ops-kpis.js";
+import {
+  defectRate, runOutcomes, parseHealth, promptVersionSlices,
+  groupBy, isShipped, isFinished, kindKey, evidenceOf,
+} from "../extraction-kpis.js";
 
 const DAY = 86400000;
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -72,6 +76,80 @@ const fetchScorecards = async (svc, tenantId) => {
   const r = await svc.from("supplier_scorecards").select("supplier, on_time_pct").eq("tenant_id", tenantId);
   if (r.error) throw new Error("supplier_scorecards: " + r.error.message);
   return r.data || [];
+};
+
+// Communications (item 7). OUTBOUND only: every writer inserts outbound, and
+// filtering here keeps the counts honest if inbound rows ever land in the table.
+const fetchCommunications = async (svc, tenantId, since) => {
+  let q = svc.from("communications")
+    .select("document_type, direction, status, created_at, sent_at, customer_id, metadata")
+    .eq("tenant_id", tenantId).eq("direction", "outbound");
+  if (since) q = q.gte("created_at", since);
+  const r = await q;
+  if (r.error) throw new Error("communications: " + r.error.message);
+  return r.data || [];
+};
+// Routing coverage needs two tables; fetch returns both for a pure reduce.
+const fetchRoutingCoverage = async (svc, tenantId) => {
+  const [rules, customers] = await Promise.all([
+    svc.from("comms_routing_rules").select("customer_id, is_active").eq("tenant_id", tenantId),
+    svc.from("customers").select("id").eq("tenant_id", tenantId),
+  ]);
+  if (rules.error) throw new Error("comms_routing_rules: " + rules.error.message);
+  if (customers.error) throw new Error("customers: " + customers.error.message);
+  return { rules: rules.data || [], customers: customers.data || [] };
+};
+// The customer-FACING document types. `communications` also carries supplier
+// RFQs, prospecting outreach, inventory/system notifications, and agent
+// messages — none of which are customer communications, so the customer-comms
+// metrics filter to this set (a customer_id filter would be wrong: quote/invoice
+// emails set object_id, not customer_id). ar_reminder = the autonomous AR
+// agent's dunning; payment_reminder = the manual statement — both are follow-ups.
+const CUSTOMER_COMMS_TYPES = new Set([
+  "dispatch_register", "payment_reminder", "ar_reminder", "service_report",
+  "quote_email", "invoice_email",
+]);
+const PAYMENT_COMMS_TYPES = new Set(["payment_reminder", "ar_reminder"]);
+// "Issued" = handed to the send path (queued or sent), i.e. not a saved draft.
+const isIssued = (c) => c.status !== "draft";
+
+// ── extraction quality (docai) ───────────────────────────────────────
+//
+// extraction_runs takes a row for every document Anvil reads, so it is the
+// highest-volume table these metrics touch: the fetch is windowed, ordered
+// newest-first and capped. A governed metric must never be the query that
+// times the dispatcher out.
+//
+// field_confidences is pulled because it is how a run's LINE COUNT is known
+// without opening the whole normalized_extract blob (the adapters write
+// "lines[0]", "lines[1]" … keys into it) — and lines are the unit the defect
+// rate is denominated in.
+const EXTRACTION_RUN_CAP = 5000;
+const fetchExtractionRuns = async (svc, tenantId, since) => {
+  let q = svc.from("extraction_runs")
+    .select("id, status, status_reason, extraction_kind, prompt_version, parse_method, parse_retries, confidence_overall, field_confidences, finished_at")
+    .eq("tenant_id", tenantId);
+  if (since) q = q.gte("finished_at", since);
+  const r = await q.order("finished_at", { ascending: false }).limit(EXTRACTION_RUN_CAP);
+  if (r.error) throw new Error("extraction_runs: " + r.error.message);
+  return r.data || [];
+};
+// Defect rate needs both tables; fetch returns both for a pure reduce
+// (same shape as fetchRoutingCoverage).
+const fetchExtractionQuality = async (svc, tenantId, since) => {
+  const [runs, corr] = await Promise.all([
+    fetchExtractionRuns(svc, tenantId, since),
+    (async () => {
+      let q = svc.from("extraction_corrections")
+        .select("extraction_run_id, field_path")
+        .eq("tenant_id", tenantId);
+      if (since) q = q.gte("applied_at", since);
+      const r = await q.limit(50000);
+      if (r.error) throw new Error("extraction_corrections: " + r.error.message);
+      return r.data || [];
+    })(),
+  ]);
+  return { runs, corrections: corr };
 };
 
 // ── the catalog ──────────────────────────────────────────────────────
@@ -240,6 +318,236 @@ export const METRICS = [
       return { value, count: vals.length, provenance: "avg(on_time_pct) over supplier_scorecards (current snapshot), tenant-scoped" };
     },
   },
+  // ---- Communications (item 7) — per docs/CUSTOMER_COMMS_DESIGN.md §7 ----
+  // Reply rate + time-to-first-response are DELIBERATELY not here: they need
+  // inbound thread linkage, and no inbound row lands in `communications` today
+  // (every writer is outbound). They unblock with the Graph reply-loop join —
+  // shipping them now would measure fiction (always 0 replies).
+  {
+    id: "comms_sent", label: "Customer messages issued", domain: "communications", unit: "count",
+    description: "Customer-facing outbound messages in the window (queued or sent; excludes drafts and non-customer traffic like supplier RFQs / notifications), broken down by document type.",
+    params: ["window_days"],
+    fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
+    reduce: (rows) => {
+      const list = (rows || []).filter((c) => CUSTOMER_COMMS_TYPES.has(c.document_type) && isIssued(c));
+      const breakdown = {};
+      for (const c of list) breakdown[c.document_type] = (breakdown[c.document_type] || 0) + 1;
+      return { value: list.length, breakdown, provenance: "count(outbound customer-facing communications not in draft, created in window), grouped by document_type" };
+    },
+  },
+  {
+    id: "comms_delivery_rate", label: "Customer message delivery rate", domain: "communications", unit: "percent",
+    description: "Share of attempted customer messages (in window) that actually sent, vs. stuck queued or failed. A low rate usually means no send provider is configured.",
+    params: ["window_days"],
+    fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
+    reduce: (rows) => {
+      const cust = (rows || []).filter((c) => CUSTOMER_COMMS_TYPES.has(c.document_type));
+      const attempted = cust.filter((c) => ["sent", "replied", "queued", "failed"].includes(c.status));
+      const delivered = attempted.filter((c) => c.status === "sent" || c.status === "replied").length;
+      const value = attempted.length ? Math.round((delivered / attempted.length) * 1000) / 10 : 0;
+      return { value, count: delivered, denominator: attempted.length,
+        provenance: "count(status in {sent,replied}) ÷ count(status in {sent,replied,queued,failed}) × 100, over customer-facing outbound in window" };
+    },
+  },
+  {
+    id: "dispatch_register_cadence", label: "Dispatch registers sent", domain: "communications", unit: "count",
+    description: "Dispatch registers proactively sent to customers in the window — whether we inform them of despatches or they chase us.",
+    params: ["window_days"],
+    fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
+    reduce: (rows) => ({
+      value: (rows || []).filter((c) => c.document_type === "dispatch_register" && isIssued(c)).length,
+      provenance: "count(communications with document_type='dispatch_register', outbound, not draft, in window)",
+    }),
+  },
+  {
+    id: "payment_followups_sent", label: "Payment follow-ups sent", domain: "communications", unit: "count",
+    description: "Payment reminders sent to customers in the window — both the manual statement (payment_reminder) and the autonomous AR agent's dunning (ar_reminder).",
+    params: ["window_days"],
+    fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
+    reduce: (rows) => ({
+      value: (rows || []).filter((c) => PAYMENT_COMMS_TYPES.has(c.document_type) && isIssued(c)).length,
+      provenance: "count(communications with document_type in {payment_reminder,ar_reminder}, outbound, not draft, in window)",
+    }),
+  },
+  {
+    id: "routing_coverage", label: "Customers with comms routing configured", domain: "communications", unit: "percent",
+    description: "Share of customers with at least one active comms routing rule. Low coverage means most customers fall back to the primary contact instead of the right function (stores / accounts).",
+    params: [],
+    fetch: (svc, t) => fetchRoutingCoverage(svc, t),
+    reduce: ({ rules, customers }) => {
+      const configured = new Set((rules || []).filter((r) => r.is_active !== false && r.customer_id).map((r) => r.customer_id));
+      const total = (customers || []).length;
+      const value = total ? Math.round((configured.size / total) * 1000) / 10 : 0;
+      return { value, count: configured.size, denominator: total,
+        provenance: "count(distinct customer_id in comms_routing_rules where is_active) ÷ count(customers) × 100" };
+    },
+  },
+  // Reply metrics — unblocked by the Graph reply-loop join (_lib/graph-reply.js):
+  // an inbound reply now flips its originating outbound row to status='replied'
+  // and stamps metadata.replied_at, so these read real data (0 until Graph is
+  // connected + a reply arrives — honest, not fiction).
+  {
+    id: "comms_reply_rate", label: "Customer reply rate", domain: "communications", unit: "percent",
+    description: "Share of customer messages sent in the window that received a reply (attributed via Graph conversationId / In-Reply-To).",
+    params: ["window_days"],
+    fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
+    reduce: (rows) => {
+      const cust = (rows || []).filter((c) => CUSTOMER_COMMS_TYPES.has(c.document_type) && (c.status === "sent" || c.status === "replied"));
+      const replied = cust.filter((c) => c.status === "replied").length;
+      const value = cust.length ? Math.round((replied / cust.length) * 1000) / 10 : 0;
+      return { value, count: replied, denominator: cust.length,
+        provenance: "count(status='replied') ÷ count(status in {sent,replied}) × 100, customer-facing outbound in window" };
+    },
+  },
+  {
+    id: "time_to_first_response_median", label: "Median time to first reply (days)", domain: "communications", unit: "days",
+    description: "Median days from sending a customer message to the customer's first reply, over replied messages in the window.",
+    params: ["window_days"],
+    fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
+    reduce: (rows) => {
+      const durs = [];
+      for (const c of rows || []) {
+        if (c.status !== "replied" || !CUSTOMER_COMMS_TYPES.has(c.document_type)) continue;
+        const repliedAt = c.metadata?.replied_at;
+        if (!repliedAt || !c.sent_at) continue;
+        const d = (Date.parse(repliedAt) - Date.parse(c.sent_at)) / 86400000;
+        if (Number.isFinite(d) && d >= 0) durs.push(d);
+      }
+      return { value: Math.round(median(durs) * 10) / 10, count: durs.length,
+        provenance: "median(metadata.replied_at − sent_at in days) over replied customer-facing outbound in window" };
+    },
+  },
+  // ---- Extraction quality (windowed by extraction_runs.finished_at) ----
+  //
+  // Why these are in the governed catalog at all: extraction is the machine
+  // the whole product rests on — every PO, quote, invoice and packing list
+  // enters Anvil through it — and until now the only surface that could
+  // quote a number about it was one dashboard block. The copilot could
+  // answer "what is my overdue AR" but not "is the reader getting better".
+  {
+    id: "extraction_defect_rate", label: "Extraction defect rate", domain: "extraction", unit: "percent",
+    description: "Share of critical extracted fields an operator later had to correct, on documents that shipped. DPMO and process sigma ride in the breakdown.",
+    params: ["window_days"],
+    fetch: (svc, t, { nowMs, windowDays }) => fetchExtractionQuality(svc, t, sinceIso(nowMs, windowDays)),
+    reduce: ({ runs, corrections }) => {
+      const d = defectRate(runs, corrections);
+      const by_kind = {};
+      for (const [kind, rows] of groupBy(runs.filter(isShipped), kindKey)) {
+        const k = defectRate(rows, corrections);
+        by_kind[kind] = { shipped_runs: k.shipped_runs, defects: k.defects, dpmo: Math.round(k.dpmo), sigma: k.sigma };
+      }
+      return {
+        value: round2(d.escape_rate * 100),
+        count: d.defects,
+        denominator: d.opportunities,
+        breakdown: {
+          dpmo: Math.round(d.dpmo), sigma: d.sigma, shipped_runs: d.shipped_runs,
+          corrected_runs: d.corrected_runs, units: d.units, by_kind,
+        },
+        evidence: evidenceOf(d.run_ids, "the shipped runs this rate is computed over"),
+        provenance: "distinct (run, field) corrections ÷ Σ[5 header + 5×lines] critical fields, over status='ok' runs with ≥1 line — operator-corrected, so a LOWER BOUND on true escapes",
+      };
+    },
+  },
+  {
+    id: "extraction_failure_rate", label: "Extraction failure rate", domain: "extraction", unit: "percent",
+    description: "Share of finished extraction runs that failed outright (no usable output), with the failure reasons and the per-document-kind split.",
+    params: ["window_days"],
+    fetch: (svc, t, { nowMs, windowDays }) => fetchExtractionRuns(svc, t, sinceIso(nowMs, windowDays)),
+    reduce: (runs) => {
+      const o = runOutcomes(runs);
+      const by_kind = {};
+      for (const [kind, rows] of groupBy(runs.filter(isFinished), kindKey)) {
+        const k = runOutcomes(rows);
+        by_kind[kind] = { finished: k.finished, failed: k.failed, failure_rate: k.failure_rate };
+      }
+      return {
+        value: o.failure_rate,
+        count: o.failed,
+        denominator: o.finished,
+        breakdown: { ok: o.ok, failed: o.failed, low_confidence: o.low_confidence, reasons: o.reasons, by_kind },
+        evidence: evidenceOf(runs.filter((r) => r.status === "failed").map((r) => r.id), "the failed runs"),
+        provenance: "count(status='failed') ÷ count(status ≠ 'running') over extraction_runs in the window; in-flight runs are excluded from both sides",
+      };
+    },
+  },
+  {
+    id: "extraction_review_rate", label: "Extraction review rate", domain: "extraction", unit: "percent",
+    description: "Share of finished extraction runs held back for a human to check (low confidence) — how much of the reading Anvil still cannot do alone.",
+    params: ["window_days"],
+    fetch: (svc, t, { nowMs, windowDays }) => fetchExtractionRuns(svc, t, sinceIso(nowMs, windowDays)),
+    reduce: (runs) => {
+      const o = runOutcomes(runs);
+      const by_kind = {};
+      for (const [kind, rows] of groupBy(runs.filter(isFinished), kindKey)) {
+        const k = runOutcomes(rows);
+        by_kind[kind] = { finished: k.finished, low_confidence: k.low_confidence, review_rate: k.review_rate };
+      }
+      return {
+        value: o.review_rate,
+        count: o.low_confidence,
+        denominator: o.finished,
+        breakdown: { low_confidence: o.low_confidence, ok: o.ok, failed: o.failed, by_kind },
+        evidence: evidenceOf(runs.filter((r) => r.status === "low_confidence").map((r) => r.id), "the runs waiting on a human"),
+        provenance: "count(status='low_confidence') ÷ count(status ≠ 'running') over extraction_runs in the window",
+      };
+    },
+  },
+  {
+    id: "extraction_parse_failure_rate", label: "Model output parse-failure rate", domain: "extraction", unit: "percent",
+    description: "Share of runs where the model's answer could not be turned into JSON at all. The repair rate — output that only parsed after a fixup pass — rides in the breakdown as the leading indicator.",
+    params: ["window_days"],
+    fetch: (svc, t, { nowMs, windowDays }) => fetchExtractionRuns(svc, t, sinceIso(nowMs, windowDays)),
+    reduce: (runs) => {
+      const p = parseHealth(runs);
+      return {
+        value: p.parse_failure_rate,
+        count: p.failed,
+        denominator: p.parsed_runs,
+        breakdown: { by_method: p.by_method, repaired: p.repaired, repair_rate: p.repair_rate, retries_per_run: p.retries_per_run },
+        evidence: evidenceOf(runs.filter((r) => r.parse_method === "failed").map((r) => r.id), "the runs whose output never parsed"),
+        provenance: "count(parse_method='failed') ÷ count(parse_method is not null) over extraction_runs in the window; repair_rate counts sap_repaired + sap_zod_retry",
+      };
+    },
+  },
+  {
+    id: "extraction_runs_count", label: "Documents read", domain: "extraction", unit: "count",
+    description: "How many documents Anvil read in the window, split by kind — the volume every other extraction rate is a share of.",
+    params: ["window_days"],
+    fetch: (svc, t, { nowMs, windowDays }) => fetchExtractionRuns(svc, t, sinceIso(nowMs, windowDays)),
+    reduce: (runs) => {
+      const finished = runs.filter(isFinished);
+      const by_kind = {};
+      for (const [kind, rows] of groupBy(finished, kindKey)) by_kind[kind] = rows.length;
+      return {
+        value: finished.length,
+        breakdown: { by_kind, in_flight: runs.length - finished.length, capped_at: EXTRACTION_RUN_CAP },
+        evidence: evidenceOf(finished.map((r) => r.id), finished.length >= EXTRACTION_RUN_CAP ? "window hit the row cap — the true count is higher" : null),
+        provenance: "count of extraction_runs finished in the window, newest first, capped at " + EXTRACTION_RUN_CAP + " rows",
+      };
+    },
+  },
+  {
+    id: "extraction_prompt_version_lift", label: "Prompt version lift", domain: "extraction", unit: "percent",
+    description: "How much better the best-performing extraction prompt version is than the worst, by defect rate. The readout for whether a prompt change actually helped.",
+    params: ["window_days"],
+    fetch: (svc, t, { nowMs, windowDays }) => fetchExtractionQuality(svc, t, sinceIso(nowMs, windowDays)),
+    reduce: ({ runs, corrections }) => {
+      const v = promptVersionSlices(runs, corrections);
+      return {
+        value: v.lift_pct,
+        count: v.comparable_versions,
+        breakdown: { versions: v.versions, best: v.best, worst: v.worst, min_runs: v.min_runs, unrecorded_runs: v.unrecorded_runs },
+        evidence: evidenceOf(
+          runs.filter(isShipped).map((r) => r.id),
+          v.comparable_versions < 2
+            ? "fewer than two prompt versions have enough shipped runs to compare — no lift is claimed"
+            : "the shipped runs behind the per-version rates",
+        ),
+        provenance: "(worst.dpmo − best.dpmo) ÷ worst.dpmo × 100, over prompt versions with ≥" + v.min_runs + " shipped runs each; runs predating prompt-version recording group as 'unrecorded' and are never crowned",
+      };
+    },
+  },
 ];
 
 const BY_ID = new Map(METRICS.map((m) => [m.id, m]));
@@ -272,6 +580,7 @@ export const computeMetric = async (svc, tenantId, id, params = {}, nowMs = Date
     ...(out.breakdown !== undefined ? { breakdown: out.breakdown } : {}),
     ...(out.count !== undefined ? { count: out.count } : {}),
     ...(out.denominator !== undefined ? { denominator: out.denominator } : {}),
+    ...(out.evidence !== undefined ? { evidence: out.evidence } : {}),
     ...(usesWindow ? { window_days: windowDays } : {}),
     as_of: new Date(nowMs).toISOString(),
     provenance: out.provenance,

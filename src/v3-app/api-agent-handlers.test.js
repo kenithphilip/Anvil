@@ -104,9 +104,9 @@ describe("agent handler · supplier_ack_followup", () => {
 });
 
 describe("agent handler · delivery_eta_check", () => {
-  it("escalates when promised_date is past", async () => {
+  it("escalates when the acknowledged ETA is past", async () => {
     const svc = makeSvc({
-      source_pos: [{ id: "o1", tenant_id: "t1", status: "SENT", promised_date: "2020-01-01" }],
+      source_pos: [{ id: "o1", tenant_id: "t1", status: "SENT_TO_SUPPLIER", acknowledged_eta: "2020-01-01" }],
     });
     const out = await deliveryEtaCheck(baseGoal(), { svc });
     expect(out.action).toBe("escalate");
@@ -115,10 +115,17 @@ describe("agent handler · delivery_eta_check", () => {
   it("noops with a sleep when outside the check window", async () => {
     const farFuture = new Date(Date.now() + 30 * 86400 * 1000).toISOString();
     const svc = makeSvc({
-      source_pos: [{ id: "o1", tenant_id: "t1", status: "SENT", promised_date: farFuture }],
+      source_pos: [{ id: "o1", tenant_id: "t1", status: "SENT_TO_SUPPLIER", acknowledged_eta: farFuture }],
     });
     const out = await deliveryEtaCheck(baseGoal(), { svc });
     expect(out.action).toBe("noop");
+  });
+  it("marks complete when the PO is already RECEIVED", async () => {
+    const svc = makeSvc({
+      source_pos: [{ id: "o1", tenant_id: "t1", status: "RECEIVED", acknowledged_eta: "2020-01-01" }],
+    });
+    const out = await deliveryEtaCheck(baseGoal(), { svc });
+    expect(out.action).toBe("mark_complete");
   });
 });
 

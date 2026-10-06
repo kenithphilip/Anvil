@@ -159,8 +159,8 @@ export default async function handler(req, res) {
           provider: config.provider,
           callee: body.to,
           db_error: ins.error.message,
+          severity: "warn",
         },
-        severity: "warn",
       });
       await recordAudit(ctx, {
         action: "voice_outbound_persist_failed",

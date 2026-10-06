@@ -354,6 +354,19 @@ const validateLine = (line, idx) => {
       message: "line has neither partNumber nor description",
     }, null));
   }
+  // A part code is a single token. When partNumber is a whole phrase the
+  // extractor failed to split "OBARA STD SHANK TWS-092-90-2" into code +
+  // description — and nothing used to notice, so the sentence flowed on into
+  // item_customer_parts as a permanent lookup key and into customer-hints as a
+  // learned prefix. part-split.js repairs this before validation; a surviving
+  // finding means the repair could not identify a code token either.
+  if (typeof line.partNumber === "string" && /\s/.test(line.partNumber.trim())) {
+    issues.push(buildIssue(`${path}.partNumber`, {
+      code: "part_number_not_a_code",
+      severity: "warn",
+      message: "partNumber looks like a phrase, not a part code — the code was not split out of the description",
+    }, line.partNumber));
+  }
   return issues;
 };
 

@@ -7,7 +7,7 @@
 //      Allocates an invoice_number atomically via next_invoice_number.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { nextInvoiceNumber, invoiceFromOrder } from "../_lib/invoicing.js";
@@ -41,6 +41,10 @@ export default async function handler(req, res) {
 
     if (req.method === "POST") {
       requirePermission(ctx, "write");
+      // MATRIX.invoices restricts creation to sales_manager/finance/admin — the
+      // coarse WRITER set also includes operator/procurement/sales_engineer, so
+      // enforce the resource action here too.
+      requireAction(ctx, "invoices.write");
       const body = await readBody(req);
       if (!body?.order_id) {
         return json(res, 400, { error: { message: "order_id required" } });
@@ -68,12 +72,23 @@ export default async function handler(req, res) {
       if (body.currency) draft.currency = body.currency;
 
       const invoice_number = await nextInvoiceNumber(svc, ctx.tenantId);
-      const ins = await svc.from("invoices").insert({
+      const payload = {
         tenant_id: ctx.tenantId,
         invoice_number,
         created_by: ctx.user?.id || null,
         ...draft,
-      }).select("*").single();
+      };
+      let ins = await svc.from("invoices").insert(payload).select("*").single();
+      // Migrations here are applied BY HAND, so a column that exists in the
+      // repo does not exist in every database. PostgREST rejects the whole
+      // INSERT over one unknown name — which would take invoice creation out
+      // entirely on any tenant behind on 214. Drop the new field and retry:
+      // an invoice without the buyer's PO reference is the status quo, an
+      // invoice that cannot be raised at all is an outage.
+      if (ins.error && (ins.error.code === "42703" || /customer_po_number/i.test(ins.error.message || ""))) {
+        delete payload.customer_po_number;
+        ins = await svc.from("invoices").insert(payload).select("*").single();
+      }
       if (ins.error) throw new Error(ins.error.message);
 
       await recordAudit(ctx, {

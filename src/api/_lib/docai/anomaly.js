@@ -296,6 +296,225 @@ const checkLineCountShortfall = (normalized, opts = {}) => {
   }];
 };
 
+// CM P0 (Aug 2026): the money-completeness guard.
+//
+// Every other detector in this file — checkLineCountShortfall above very much
+// included — consumes a number the MODEL wrote. That is fine until the model
+// truncates, because normalized.stated_line_count is emitted AFTER the line
+// array: the lines and the declaration that would have caught the missing
+// lines are lost in the same breath, so the detector no-ops and the run
+// reports "clean". On the incident: 1 extracted line worth 80,716.72 against
+// a PO printing 458,859.52 — 95% confidence, 0 anomalies, 0 validator errors.
+//
+// This check reads the document's PRINTED grand total straight out of the L1/L2
+// text layer (opts.bodyText) — evidence the extractor does not author — and
+// asks whether the lines we returned account for that money. Verified against
+// the incident document: its four real line totals sum to the printed grand
+// total exactly, so the comparison is arithmetic rather than heuristic.
+// Measured against 20 realistic Indian PO phrasings, the original pattern hit
+// 10/20. The misses were all ordinary: "Total:", "PO Total:", "Order Total:",
+// "Net Total:", "Total (INR):", "Gross Total:". On any of those the guard
+// no-ops silently — and it is the last line of defence, so a miss is a short
+// voucher nobody is warned about.
+//
+// The qualifier is now optional (`(?:grand|net|gross|po|order|...)?\s*total`),
+// which also lets a bare "Total" match. Two deliberate consequences:
+//   - "Sub Total" / "Subtotal" are EXCLUDED by a negative lookbehind. A
+//     subtotal is not the grand total, and matching it would understate the
+//     document and fire false blockers.
+//   - Bare "Total" is a weak label that can appear on a column header or a
+//     per-section line. That is safe here ONLY because printedDocumentTotal
+//     takes the MAXIMUM match in the document, so a section total can never
+//     beat the real grand total. Do not change that max() to a first-match.
+const DOC_TOTAL_RE = /(?<!sub[\s-]?)(?:(?:grand|net|gross|po|order|purchase\s*order|invoice)\s*)?total(?:\s*(?:amount|value|invoice\s*value|po\s*value|order\s*value|purchase\s*order\s*value|amount\s*payable))?\b|net\s*amount\s*payable\b|amount\s*payable\b|net\s*payable\b/gi;
+
+// Matched label -> the money figure that follows it. ANCHORED (^): the money
+// must come straight after the label, separated only by punctuation/currency.
+// Unanchored, prose like "no totals here, just 12,345.67" matched — the word
+// "total" plus any number later in the sentence.
+const MONEY_AFTER_LABEL_RE = /^\s*(?:\([^)]{0,24}\))?\s*[:\-]?\s*(?:INR|Rs\.?|₹|USD|US\$|\$|EUR|€|JPY|KRW)?\s*\(?\s*([0-9][0-9,]{2,}(?:\.[0-9]{1,3})?)/;
+
+// The grand total is the largest labelled figure in the document: a PO that
+// prints per-section subtotals under the same words still yields the true
+// total as the maximum. Returns null when nothing is labelled -> check no-ops.
+const printedDocumentTotal = (text) => {
+  if (typeof text !== "string" || text.length < 20) return null;
+  let best = null;
+  // Two-stage: find a total-ish LABEL, then read the money immediately after
+  // it. One combined pattern cannot express "optional qualifier + optional
+  // suffix" without the suffix alternation swallowing the number.
+  for (const m of text.matchAll(DOC_TOTAL_RE)) {
+    const after = text.slice(m.index + m[0].length, m.index + m[0].length + 48);
+    const money = after.match(MONEY_AFTER_LABEL_RE);
+    if (!money) continue;
+    const n = Number(String(money[1]).replace(/,/g, ""));
+    if (!Number.isFinite(n) || n <= 0) continue;
+    if (best == null || n > best) best = n;
+  }
+  return best;
+};
+
+const TAX_AMOUNT_KEYS = ["cgst_amount", "sgst_amount", "igst_amount", "utgst_amount", "cess_amount", "excise_amount", "ed_cess_amount"];
+const AUX_AMOUNT_KEYS = ["tooling_amount", "p_and_f_amount", "others_amount"];
+
+// Per-line gross. The tax/aux amounts on a PO line are PER UNIT (that is how
+// the stacked multi-row layouts print them: Ex-Price 34,202 + SGST 3,078.18 +
+// CGST 3,078.18 = Unit Price 40,358.36, x qty 2 = TotAmt 80,716.72), so they
+// are multiplied by qty alongside the rate. Falls back to gst_pct when no
+// explicit tax amounts were captured.
+const lineGross = (l) => {
+  const qty = numberOrNull(l?.quantity ?? l?.qty) ?? 0;
+  const rate = numberOrNull(l?.unitPrice ?? l?.rate) ?? 0;
+  const taxable = qty * rate;
+  let perUnit = 0;
+  let taxSeen = false;
+  for (const k of [...TAX_AMOUNT_KEYS, ...AUX_AMOUNT_KEYS]) {
+    const v = numberOrNull(l?.[k]);
+    if (v != null && v > 0) { perUnit += v; taxSeen = true; }
+  }
+  if (taxSeen) return { taxable, gross: taxable + qty * perUnit, taxSeen: true };
+
+  // Absolute per-line figures, as a TABLE parser reads them off the page
+  // ("Taxes 180.14 | Line Total 1,180.94"). NOT multiplied by qty — the block
+  // above is per-unit, these are per-line, and conflating them double-counts.
+  //
+  // Their absence here is why this guard went silent on a PO that was short a
+  // whole line: llamaparse's tax column was invisible to it, so `taxSeen`
+  // stayed false, the MAX_TAX_INFLATION allowance meant for tax-less
+  // extractions was applied to a tax-inclusive printed total, and coverage
+  // came out at 107.95% against a document we had under-read by Rs 36,746.
+  const printedTotal = numberOrNull(l?.lineTotal);
+  const taxTotal = numberOrNull(l?.taxTotal);
+  if (printedTotal != null && printedTotal > 0) {
+    return { taxable, gross: printedTotal, taxSeen: taxTotal != null && taxTotal > 0 };
+  }
+  if (taxTotal != null && taxTotal > 0) {
+    return { taxable, gross: taxable + taxTotal, taxSeen: true };
+  }
+
+  const pct = numberOrNull(l?.gst_pct);
+  if (pct != null && pct > 0) return { taxable, gross: taxable * (1 + pct / 100), taxSeen: true };
+  return { taxable, gross: taxable, taxSeen: false };
+};
+
+// When extraction captured no tax at all, the printed total is probably
+// tax-inclusive while our sum is not. Widen the ceiling past the highest
+// Indian slab (28%) so that case can never manufacture a blocker.
+const MAX_TAX_INFLATION = 1.30;
+
+//   opts.documentTotalCheckEnabled === false -> disabled.
+//   opts.documentTotalErrorCoverage (default 0.80) -> below this = error.
+//   opts.documentTotalWarnCoverage  (default 0.98) -> below this = warn.
+const checkDocumentTotalShortfall = (normalized, opts = {}) => {
+  if (opts.documentTotalCheckEnabled === false) return [];
+  if (opts.kind && opts.kind !== "po" && opts.kind !== "rfq") return [];
+  const printed = printedDocumentTotal(opts.bodyText);
+  if (printed == null) return [];
+  const lines = Array.isArray(normalized?.lines) ? normalized.lines : [];
+  // 0 lines already fails the run outright; don't double-report it.
+  if (!lines.length) return [];
+  let gross = 0;
+  let anyTax = false;
+  let anyMoney = false;
+  for (const l of lines) {
+    const t = lineGross(l);
+    gross += t.gross;
+    if (t.taxSeen) anyTax = true;
+    if (t.taxable > 0) anyMoney = true;
+  }
+  if (!anyMoney) return [];
+  const ceiling = anyTax ? gross : gross * MAX_TAX_INFLATION;
+  const coverage = ceiling / printed;
+  const errAt = numberOrNull(opts.documentTotalErrorCoverage) ?? 0.80;
+  const warnAt = numberOrNull(opts.documentTotalWarnCoverage) ?? 0.98;
+  if (coverage >= warnAt) return [];
+  const acct = Math.round(ceiling * 100) / 100;
+  return [{
+    code: "document_total_shortfall",
+    severity: coverage < errAt ? "error" : "warn",
+    path: "lines",
+    actual: acct,
+    expected: printed,
+    detail: "document prints a total of " + printed.toFixed(2) + " but the " + lines.length
+      + " extracted line" + (lines.length === 1 ? "" : "s") + " account for only " + acct.toFixed(2)
+      + " (" + (coverage * 100).toFixed(1) + "%) — line items are probably missing or mis-read",
+  }];
+};
+
+// CONSERVATION: rows the parser accepted vs lines it emitted.
+//
+// The one completeness invariant that needs to know NOTHING about the
+// document. It does not require a printed total, a declared line count, or any
+// layout convention — only that a parser which accepted N data rows produced N
+// lines. Any gap is our defect, on any format, from any adapter, including
+// formats nobody has seen yet.
+//
+// That independence is the point. Every other detector in this file consumes
+// something the DOCUMENT or the MODEL supplied, so each has a blind spot the
+// document controls. This one has no such dependency.
+//
+// Its limit, stated plainly: it cannot see a row the parser never received.
+// A row LlamaParse itself failed to emit is invisible here — that is what
+// checkDocumentTotalShortfall and the printed line count are for. The three are
+// complementary and none subsumes the others.
+const checkParserConservation = (normalized, opts = {}) => {
+  if (opts.parserConservationEnabled === false) return [];
+  const c = normalized?.parse_conservation;
+  if (!c || typeof c !== "object") return [];
+  const considered = numberOrNull(c.rows_considered);
+  const emitted = numberOrNull(c.lines_emitted);
+  const misaligned = numberOrNull(c.rows_misaligned) ?? 0;
+  const out = [];
+
+  // Rows the parser could not align to the header. It refuses to guess at
+  // these rather than emit a column-shifted line, so they are a KNOWN loss —
+  // and a known loss must be reported, not swallowed.
+  if (misaligned > 0) {
+    out.push({
+      code: "parser_rows_misaligned",
+      severity: "warn",
+      path: "lines",
+      actual: emitted,
+      expected: (emitted ?? 0) + misaligned,
+      detail: misaligned + " table row" + (misaligned === 1 ? "" : "s")
+        + " could not be aligned to the header and were skipped rather than"
+        + " emitted with shifted columns — the document may carry line items this run does not",
+    });
+  }
+
+  if (considered != null && emitted != null && considered > emitted) {
+    const dropped = considered - emitted;
+    out.push({
+      code: "parser_conservation_gap",
+      severity: "warn",
+      path: "lines",
+      actual: emitted,
+      expected: considered,
+      detail: "parser accepted " + considered + " data row" + (considered === 1 ? "" : "s")
+        + " but emitted " + emitted + " line" + (emitted === 1 ? "" : "s")
+        + " (" + dropped + " dropped as page furniture) — verify none was a real line item",
+    });
+  }
+
+  // The document numbers its own rows and the highest number exceeds what we
+  // produced. Unlike the two above, this CAN catch a row the parser never saw.
+  const maxLineNo = numberOrNull(c.max_line_no);
+  if (maxLineNo != null && emitted != null && maxLineNo > emitted) {
+    out.push({
+      code: "printed_line_number_gap",
+      severity: "error",
+      path: "lines",
+      actual: emitted,
+      expected: maxLineNo,
+      detail: "the document numbers its line items up to " + maxLineNo
+        + " but extraction produced " + emitted
+        + " — " + (maxLineNo - emitted) + " printed line" + (maxLineNo - emitted === 1 ? "" : "s")
+        + " missing",
+    });
+  }
+  return out;
+};
+
 const checkCurrencyConsistency = (normalized) => {
   if (!normalized) return null;
   const headerCurr = normalized.customer?.currency;
@@ -349,6 +568,8 @@ export const detectAnomalies = (normalized, opts = {}) => {
   if (currIssue) anomalies.push(currIssue);
   anomalies.push(...checkTotals(normalized));
   anomalies.push(...checkLineCountShortfall(normalized, opts));
+  anomalies.push(...checkDocumentTotalShortfall(normalized, opts));
+  anomalies.push(...checkParserConservation(normalized, opts));
 
   const summary = { error: 0, warn: 0, info: 0, total: anomalies.length };
   for (const a of anomalies) {
@@ -363,4 +584,4 @@ export const detectAnomalies = (normalized, opts = {}) => {
   };
 };
 
-export const __test = { lineArithmetic, linePriceSanity, lineQtySanity, lineHsnSanity, lineGstSanity, checkTotals, checkLineCountShortfall, KNOWN_GST_SLABS };
+export const __test = { lineArithmetic, linePriceSanity, lineQtySanity, lineHsnSanity, lineGstSanity, checkTotals, checkLineCountShortfall, checkDocumentTotalShortfall, checkParserConservation, printedDocumentTotal, lineGross, KNOWN_GST_SLABS };

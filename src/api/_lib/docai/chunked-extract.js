@@ -26,9 +26,14 @@
 //   - confidence_overall: weighted by chunk pageCount.
 //   - customer: first non-null customer block. Tenant scrub
 //     still runs downstream.
-//   - lines: concatenated in chunk order. The TOC profiler
-//     output is the authoritative page-keep list; line
-//     deduplication is handled at the next layer (validators).
+//   - lines: concatenated in chunk order. The TOC profiler output is the
+//     authoritative page-keep list, and chunk page ranges do not overlap, so
+//     the same item cannot be emitted twice. NOTE: there is NO line-level
+//     dedup anywhere downstream (only page-number dedup in pdf-chunker and
+//     whole-run content-hash dedup in run.js) -- an earlier comment here
+//     claimed validators dedup lines; they do not. Non-overlapping input is
+//     therefore a REQUIREMENT of this merge, which density-chunk.js also
+//     satisfies (row windows partition the item blocks).
 //   - adapter_used: most common across chunks; on a tie, the
 //     first chunk's adapter wins.
 //   - latency_ms: sum across chunks.
@@ -100,15 +105,23 @@ const mostCommon = (xs) => {
   return best;
 };
 
+// Read the normalised block out of a dispatchExtract / mergeChunkResults
+// result. classification / customer / lines live UNDER `.normalized` (the shape
+// run.js reads via out.normalized.*); this tolerates a flat fallback so a stray
+// flat or stub result can never silently zero a read.
+//
+// EXPORTED because a mergeChunkResults output is also consumed by the
+// background-job cron (cron/extraction_jobs.js). When mergeChunkResults was
+// changed to return the nested `normalized` shape, the cron was left reading a
+// flat `merged.lines` / `merged.customer` — which is `undefined` under the new
+// shape — so every chunked *background* PO wrote ZERO lines + null customer and
+// still marked the job 'completed'. Both readers MUST go through this accessor.
+export const normalizedResult = (r) => (r && r.normalized) || r || {};
+
 // Merge per-chunk dispatchExtract outputs into the single
 // normalised shape the rest of run.js expects.
 export const mergeChunkResults = (chunkResults, chunks) => {
-  // Each chunk result is a dispatchExtract result whose lines / customer /
-  // classification live UNDER `.normalized` (the same shape the passthrough +
-  // single-chunk paths return and run.js reads via out.normalized.*). normOf
-  // reads that nested shape, tolerating a flat fallback so a stray flat result
-  // can never silently zero the whole merge.
-  const normOf = (r) => (r && r.normalized) || r || {};
+  const normOf = normalizedResult;
   if (!chunkResults.length) {
     return { ok: false, reason: "no_chunks", error: "no_chunks", normalized: { classification: null, customer: null, lines: [] }, confidences: {}, attempts: [] };
   }
@@ -153,6 +166,40 @@ export const mergeChunkResults = (chunkResults, chunks) => {
     }
     return total > 0 ? sum / total : 0;
   };
+  // CARRY THE HEAD FIELDS THROUGH THE MERGE.
+  //
+  // This returned only { classification, customer, lines }, so every per-kind
+  // header the extractor produced was discarded the moment a document needed
+  // more than one chunk — and a background job chunks at five pages, so
+  // multi-chunk is the only case that matters. A quotation lost its
+  // quote_number, which ingestQuote refuses to proceed without.
+  //
+  // Worse, and independent of any kind: stated_line_count was lost too. That
+  // is the PO's own declared item count, and checkLineCountShortfall exists
+  // solely to compare it against the number of lines extracted — the guard
+  // built for the "6 of 190 lines" failure. Dropping it here disabled that
+  // guard on precisely the long, multi-chunk documents it was written for.
+  //
+  // First non-null wins in chunk order, because page 1 carries the header.
+  // stated_line_count is the exception: each chunk can only report the highest
+  // serial IT can see, so the document's declared count is the largest of them.
+  const HEAD_MERGED_ELSEWHERE = new Set(["classification", "customer", "lines"]);
+  const headFields = {};
+  for (const r of chunkResults) {
+    const n = normOf(r) || {};
+    for (const [k, v] of Object.entries(n)) {
+      if (HEAD_MERGED_ELSEWHERE.has(k)) continue;
+      if (v === undefined || v === null || v === "") continue;
+      if (k === "stated_line_count") {
+        const cur = Number(headFields[k]);
+        const next = Number(v);
+        if (Number.isFinite(next) && (!Number.isFinite(cur) || next > cur)) headFields[k] = next;
+        continue;
+      }
+      if (headFields[k] === undefined) headFields[k] = v;
+    }
+  }
+
   const confidences = {};
   const allKeys = new Set();
   for (const r of chunkResults) {
@@ -197,7 +244,7 @@ export const mergeChunkResults = (chunkResults, chunks) => {
     // this, the multi-chunk merge returned lines/customer at top level, so
     // run.js read out.normalized.lines === undefined and every >1-chunk PO
     // came back with zero lines / null customer.
-    normalized: { classification, customer, lines },
+    normalized: { ...headFields, classification, customer, lines },
     confidences,
     confidence_overall: confidenceOverall,
     attempts,

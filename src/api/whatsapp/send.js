@@ -14,6 +14,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { safeFetch } from "../_lib/safe-fetch.js";
+import { commsRow } from "../_lib/comms-row.js";
 
 const sanitizePhone = (s) => String(s || "").replace(/[^0-9+]/g, "");
 
@@ -90,7 +91,7 @@ export default async function handler(req, res) {
       : (providerResult && providerResult.ok ? "sent" : "failed");
 
     const svc = serviceClient();
-    const ins = await svc.from("communications").insert({
+    const ins = await svc.from("communications").insert(commsRow({
       tenant_id: ctx.tenantId,
       object_type: body?.order_id ? "order" : "whatsapp",
       object_id: body?.order_id || null,
@@ -107,7 +108,7 @@ export default async function handler(req, res) {
         provider_response: providerResult?.body || null,
         error: lastError,
       },
-    }).select("id").single();
+    })).select("id").single();
     if (ins.error) throw new Error(ins.error.message);
 
     await recordAudit(ctx, {

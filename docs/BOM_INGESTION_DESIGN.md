@@ -97,6 +97,13 @@ the normalized graph the planner needs:
                  v_bom_walk_recursive → planning, spares, quoting, logistics
 ```
 
+As built, `v_bom_walk_recursive` (migration 085) has no `tenant_id` and its
+recursive join does not match on tenant, so it mixes every tenant's BOM.
+Nothing in `src/api` reads it. Tenant-scoped consumers read
+`bill_of_materials` filtered on `tenant_id`, or `v_bom_where_used_recursive`
+(migration 183), which joins on tenant at every hop. See
+`INVENTORY_PLANNING_DESIGN.md` section 5.4.
+
 - **Layer A** is the source of truth for "what the BOM document said":
   source order, hierarchy depth, side/variant, supplier code, material,
   remarks. Used directly by spares/quote/maintenance views.

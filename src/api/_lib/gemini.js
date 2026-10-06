@@ -15,11 +15,58 @@
 // than Claude Haiku.
 
 import { safeFetch } from "./safe-fetch.js";
-import { applyFirewall, redactMessages } from "./anthropic.js";
+import { applyFirewall, redactMessages, capRetrySleep, attemptTimeout } from "./anthropic.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+
+// Gemini 3 family. Matches both the preview spelling ("gemini-3-flash-preview")
+// and the dotted stable one ("gemini-3.6-flash", "gemini-3.1-pro-preview").
+export const IS_GEMINI_3 = /gemini-3(?:[.-]|$)/i;
+
+// mediaResolution is a protobuf ENUM, not a free string: the wire value must be
+// the full "MEDIA_RESOLUTION_*" name. Sending the bare word 400s the request:
+//
+//   Invalid value at 'generation_config.media_resolution'
+//   (...v1beta.GenerationConfig.MediaResolution), "high"
+//
+// Anvil stores the friendly word ("high") in tenant_settings and
+// GEMINI_MEDIA_RESOLUTION, and passed it through verbatim. That was latent for
+// as long as the family test was /3-/ — which does not match "gemini-3.6-flash"
+// — so the knob was never actually sent. Widening the regex to IS_GEMINI_3 made
+// it start applying, and Gemini began 400ing in ~100ms on EVERY call: not one
+// document, the whole primary adapter, silently demoted to the fallbacks.
+//
+// So translate at the wire edge rather than migrating the stored vocabulary.
+// Already-prefixed values pass through, which keeps the escape hatch open if an
+// operator sets the raw enum in env.
+const MEDIA_RESOLUTION_ENUM = {
+  low: "MEDIA_RESOLUTION_LOW",
+  medium: "MEDIA_RESOLUTION_MEDIUM",
+  high: "MEDIA_RESOLUTION_HIGH",
+  ultra_high: "MEDIA_RESOLUTION_ULTRA_HIGH",
+};
+export const toMediaResolutionEnum = (v) => {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+  if (/^MEDIA_RESOLUTION_[A-Z_]+$/.test(s)) return s;
+  return MEDIA_RESOLUTION_ENUM[s.toLowerCase()] || null;
+};
+
 const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Run-budget guards, mirroring callAnthropic (see anthropic.js). Without these
+// callGemini could run 3 attempts x 60s with an UNCAPPED retry-after sleep —
+// far past docai's 45s RUN_BUDGET_MS and past vercel.json's maxDuration of 60,
+// so the platform killed the function mid-flight and run.js never wrote its
+// final UPDATE. The row then sat at status='running' forever with no attempts
+// and no error, while the provider call was still billed. Gemini is FIRST in
+// the default provider order, so it is the likeliest adapter to strand a run.
+// deadlineAt=0 (every non-docai caller) collapses all of this to the previous
+// behaviour exactly.
+const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 60_000);
+const GEMINI_FALLBACK_RESERVE_MS = Number(process.env.GEMINI_FALLBACK_RESERVE_MS || 8000);
+const MIN_ATTEMPT_MS = 2000;
 
 // Bet 1 (May 2026): default Gemini bumped to 3 Flash. The 2.5
 // family is still env-pinnable for back-compat. Pricing per
@@ -99,6 +146,51 @@ const mapSystem = (system) => {
 //                        force responseMimeType=application/json.
 //   - response_mime_type override responseMimeType (defaults to text/plain
 //                        when no schema supplied, application/json otherwise)
+// Gemini's generationConfig.responseSchema is an OpenAPI-3.0 Schema SUBSET, not
+// full JSON Schema. Our extraction schemas (docai/gemini.js, kept in lockstep
+// with claude.js) express a nullable field as a union `type: ["string","null"]`
+// — which Gemini rejects outright ("Invalid JSON payload ... Unknown name
+// 'type' ... Proto field is not repeating"), failing the whole call before it
+// runs. This converts to the subset Gemini accepts:
+//   - a nullable union `type: [T, "null"]`  ->  `type: T` + `nullable: true`
+//   - unknown JSON-Schema keywords (additionalProperties, $schema, $ref, …) are
+//     dropped so they can't 400 the request.
+// Recurses through properties + items. Pure + exported for tests.
+const GEMINI_SCHEMA_KEYS = new Set([
+  "type", "format", "description", "nullable", "enum", "items", "properties",
+  "required", "minItems", "maxItems", "minimum", "maximum", "propertyOrdering",
+]);
+export const toGeminiSchema = (schema) => {
+  if (Array.isArray(schema)) return schema.map(toGeminiSchema);
+  if (!schema || typeof schema !== "object") return schema;
+
+  const out = {};
+  // Collapse a nullable union to a scalar type + the `nullable` flag.
+  let type = schema.type;
+  let nullable = schema.nullable === true;
+  if (Array.isArray(type)) {
+    if (type.includes("null")) nullable = true;
+    type = type.find((t) => t !== "null") ?? null;
+  }
+  if (type != null) out.type = type;
+  if (nullable) out.nullable = true;
+
+  for (const [k, v] of Object.entries(schema)) {
+    if (k === "type" || k === "nullable") continue;   // handled above
+    if (!GEMINI_SCHEMA_KEYS.has(k)) continue;         // drop unsupported keywords
+    if (k === "properties" && v && typeof v === "object") {
+      out.properties = Object.fromEntries(
+        Object.entries(v).map(([pk, pv]) => [pk, toGeminiSchema(pv)]),
+      );
+    } else if (k === "items") {
+      out.items = toGeminiSchema(v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+};
+
 export const callGemini = async ({
   tenantId,
   apiKey,
@@ -116,10 +208,29 @@ export const callGemini = async ({
   // PO PDFs; lower values reduce token cost on simple POs but lose
   // fine-text legibility.
   media_resolution,
+  // Gemini 3 reasoning depth: "LOW" | "MEDIUM" | "HIGH".
+  //
+  // Thinking tokens come out of the SAME maxOutputTokens budget as the answer,
+  // and Gemini 3 models think by DEFAULT (gemini-3.6-flash ships at MEDIUM).
+  // That is why a 13-page / 45-line PO truncated at max_tokens 8000 even though
+  // the line array alone needs only ~4,800 tokens: medium reasoning consumed
+  // the remainder and the JSON was cut mid-array.
+  //
+  // Undefined here so no existing caller changes behaviour — the docai
+  // extraction path opts in explicitly, because structured line-item
+  // extraction is mechanical (responseSchema carries the structure) and every
+  // token spent reasoning is a token not spent on a line item.
+  // Must NOT be combined with the legacy thinking_budget (Google returns 400).
+  thinking_level,
+  // Optional run deadline (epoch ms) threaded from the docai pipeline, exactly
+  // as callAnthropic takes it. 0 => no deadline and every guard below collapses
+  // to the historical behaviour.
+  deadlineAt: deadlineAtOpt,
 }) => {
   if (!apiKey) {
     return { ok: false, error: "GEMINI_API_KEY missing", status: 0 };
   }
+  const deadlineAt = Number(deadlineAtOpt) || 0;
   const { model } = pickGeminiModel({ tier, override: modelOverride });
 
   const firewalledSystem = applyFirewall(system);
@@ -137,7 +248,7 @@ export const callGemini = async ({
 
   if (response_schema) {
     body.generationConfig.responseMimeType = "application/json";
-    body.generationConfig.responseSchema = response_schema;
+    body.generationConfig.responseSchema = toGeminiSchema(response_schema);
   } else if (response_mime_type) {
     body.generationConfig.responseMimeType = response_mime_type;
   }
@@ -146,11 +257,44 @@ export const callGemini = async ({
   // count vs 2.5 Flash because 3 Flash treats every image at high
   // resolution unless told otherwise; we pin to the env default
   // ("high") to stay in the same cost band as 2.5 was.
+  //
+  // The family test was /3-/, which matches "gemini-3-flash-preview" but NOT
+  // "gemini-3.6-flash" (that reads "3.6-", with no "3-" substring). So this
+  // knob silently stopped applying the moment the deployment moved to
+  // gemini-3.6-flash. IS_GEMINI_3 matches both spellings.
   const resolvedMediaRes = media_resolution
     || process.env.GEMINI_MEDIA_RESOLUTION
     || "high";
-  if (resolvedMediaRes && /3-/.test(model)) {
-    body.generationConfig.mediaResolution = resolvedMediaRes;
+  if (resolvedMediaRes && IS_GEMINI_3.test(model)) {
+    const mr = toMediaResolutionEnum(resolvedMediaRes);
+    // An unmappable word (typo in env, or a value some future admin build lets
+    // through) must NOT be forwarded — that is the 400 we are fixing. Omitting
+    // the field falls back to Google's own default, which is what shipped for
+    // every release before the knob started applying.
+    //
+    // ULTRA_HIGH is documented as per-PART only; at generationConfig level it is
+    // rejected. Dropping it here means a tenant configured that way gets a
+    // working extraction at the default resolution instead of a hard 400 on
+    // every document.
+    if (mr && mr !== "MEDIA_RESOLUTION_ULTRA_HIGH") {
+      body.generationConfig.mediaResolution = mr;
+    }
+  }
+
+  // Reasoning depth. See the thinking_level param doc above: Gemini 3 thinks by
+  // default and those tokens come out of maxOutputTokens, so on a long
+  // line-item table the reasoning crowds out the answer. Only sent when the
+  // caller asks for it, so existing callers are untouched.
+  if (thinking_level && IS_GEMINI_3.test(model)) {
+    body.generationConfig.thinkingConfig = {
+      // LOWERCASE. Google's REST reference documents the accepted values as
+      // "minimal" | "low" | "medium" | "high" and its curl example sends
+      // {"thinkingConfig": {"thinkingLevel": "low"}}. This was .toUpperCase()
+      // on first write, which risked a 400 on an unknown enum value — and a
+      // 400 here fails the request outright, so it would have broken EVERY
+      // extraction, not just the long ones this setting is aimed at.
+      thinkingLevel: String(thinking_level).toLowerCase(),
+    };
   }
 
   const url = GEMINI_BASE + "/" + encodeURIComponent(model) + ":generateContent";
@@ -159,20 +303,34 @@ export const callGemini = async ({
     "x-goog-api-key": apiKey,
   };
 
+  const retryOpts = { deadlineAt, reserveMs: GEMINI_FALLBACK_RESERVE_MS };
   let lastErr = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
+    // Time-box this attempt to the remaining run budget (minus the reserve that
+    // keeps a downstream adapter viable), capped at the normal ceiling.
+    const attemptTimeoutMs = attemptTimeout({ ...retryOpts, ceilingMs: GEMINI_TIMEOUT_MS });
+    if (deadlineAt && attemptTimeoutMs < MIN_ATTEMPT_MS) {
+      // Not enough budget left to try without starving the fallback — and
+      // starting a call we cannot finish is what strands the run.
+      lastErr = lastErr || new Error("run budget exhausted before Gemini call");
+      break;
+    }
     let resp;
     try {
-      resp = await safeFetch(url, { method: "POST", headers, body: JSON.stringify(body), timeoutMs: 60_000 });
+      resp = await safeFetch(url, { method: "POST", headers, body: JSON.stringify(body), timeoutMs: attemptTimeoutMs });
     } catch (err) {
       lastErr = err;
-      if (attempt < 3) { await sleep(Math.min(8000, 600 * Math.pow(2, attempt - 1))); continue; }
+      const wait = attempt < 3 ? capRetrySleep(600 * Math.pow(2, attempt - 1), retryOpts) : null;
+      if (wait != null) { await sleep(wait); continue; }
       return { ok: false, error: err.message || String(err), status: 0, model, tier };
     }
     if (RETRYABLE.has(resp.status) && attempt < 3) {
       const ra = Number(resp.headers.get("retry-after")) * 1000;
-      await sleep(Number.isFinite(ra) && ra > 0 ? ra : Math.min(8000, 600 * Math.pow(2, attempt - 1)));
-      continue;
+      const base = Number.isFinite(ra) && ra > 0 ? ra : 600 * Math.pow(2, attempt - 1);
+      // wait == null => the budget won't allow another round trip; fall through
+      // and return this response so the ladder moves on immediately.
+      const wait = capRetrySleep(base, retryOpts);
+      if (wait != null) { await sleep(wait); continue; }
     }
     const text = await resp.text();
     let parsed = null;

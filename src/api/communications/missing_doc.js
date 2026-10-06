@@ -7,6 +7,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { commsRow } from "../_lib/comms-row.js";
 
 const TEMPLATES = {
   quote: { code: "missing_quote", subject: "Quote reference needed", body: "Hi {{contact}},\\n\\nWe received PO {{poNumber}} but could not locate the matching quote. Could you share the quote reference number?\\n\\nThanks,\\n{{senderName}}" },
@@ -45,7 +46,7 @@ export default async function handler(req, res) {
     for (const docType of missing) {
       const tpl = TEMPLATES[docType];
       if (!tpl) continue;
-      const insert = await svc.from("communications").insert({
+      const insert = await svc.from("communications").insert(commsRow({
         tenant_id: ctx.tenantId,
         order_id: body.orderId,
         direction: "outbound",
@@ -54,7 +55,7 @@ export default async function handler(req, res) {
         body: fill(tpl.body, variables),
         status: "draft",
         template_code: tpl.code,
-      }).select("*").single();
+      })).select("*").single();
       if (insert.error) {
         errors.push({ docType, message: insert.error.message });
         continue;

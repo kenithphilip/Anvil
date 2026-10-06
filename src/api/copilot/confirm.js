@@ -16,6 +16,7 @@ import { recordAudit } from "../_lib/audit.js";
 import { consumeProposal, cancelProposal, setProposalResult } from "../_lib/action-proposals.js";
 import { sendCommunication } from "../_lib/comms-send.js";
 import { enqueueTallyVoucher } from "../_lib/tally-enqueue.js";
+import { commsRow } from "../_lib/comms-row.js";
 
 // Execute a consumed proposal's bound action. Throws on failure.
 const executeAction = async (svc, ctx, proposal) => {
@@ -44,7 +45,7 @@ const executeAction = async (svc, ctx, proposal) => {
 
   if (action === "draft_and_send_comms") {
     if (!args.to_addr || !args.body) throw new Error("to_addr and body required");
-    const draft = await svc.from("communications").insert({
+    const draft = await svc.from("communications").insert(commsRow({
       tenant_id: ctx.tenantId,
       order_id: args.order_id || null,
       direction: "outbound",
@@ -54,7 +55,7 @@ const executeAction = async (svc, ctx, proposal) => {
       subject: args.subject || null,
       body: args.body,
       status: "draft",
-    }).select("*").single();
+    })).select("*").single();
     if (draft.error) throw new Error(draft.error.message);
     const sent = await sendCommunication(svc, ctx, draft.data.id);
     return {

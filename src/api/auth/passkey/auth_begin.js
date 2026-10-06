@@ -14,6 +14,7 @@
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../../_lib/cors.js";
 import { serviceClient } from "../../_lib/supabase.js";
+import { findUserByEmail } from "../../_lib/auth-user-lookup.js";
 import { generateAuthenticationOptions } from "@simplewebauthn/server";
 import crypto from "node:crypto";
 
@@ -41,14 +42,12 @@ export default async function handler(req, res) {
     // browser will then fail to find a matching credential.
     let userId = null;
     try {
-      // Audit follow-up (May 2026, regression of H11): switched from
-      // project-wide listUsers (which loaded every Supabase user
-      // across all tenants on this unauthenticated pre-auth endpoint)
-      // to a filtered single-row lookup. No cross-tenant emails are
-      // read into memory.
-      const { data } = await svc.auth.admin.listUsers({ page: 1, perPage: 1, email });
-      const u = (data?.users || [])[0];
-      userId = u?.id || null;
+      // Was listUsers({ page: 1, perPage: 1, email }). The SDK drops the
+      // `email` key, so this resolved to the first user in the project and the
+      // challenge was issued against a stranger's credentials. Fails closed:
+      // a search that could not complete is not a match.
+      const found = await findUserByEmail(svc, email);
+      userId = found.exhaustive && found.user ? found.user.id : null;
     } catch (_) { userId = null; }
 
     let allowCredentials = [];

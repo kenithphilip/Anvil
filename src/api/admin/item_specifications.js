@@ -41,6 +41,13 @@ export default async function handler(req, res) {
       requirePermission(ctx, "admin");
       const body = await readBody(req);
       if (!body.item_id) return json(res, 400, { error: { message: "item_id required" } });
+      // The spec PK is item_id ALONE (no tenant in the key) and this upserts via
+      // the service role (RLS bypassed), so verify the item belongs to this
+      // tenant first — otherwise an admin who knows another tenant's item UUID
+      // could overwrite its spec.
+      const own = await svc.from("item_master").select("id").eq("id", body.item_id).eq("tenant_id", ctx.tenantId).maybeSingle();
+      if (own.error) throw new Error(own.error.message);
+      if (!own.data) return json(res, 404, { error: { message: "Item not found for this tenant" } });
       const feasibility = body.mfg_feasibility
         ? (FEASIBILITY.has(String(body.mfg_feasibility).toLowerCase()) ? String(body.mfg_feasibility).toLowerCase() : "tbd")
         : null;

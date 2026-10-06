@@ -10,7 +10,7 @@
 // document (a remount would detach it) and reflect the new value.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { waitFor, fireEvent } from "@testing-library/react";
+import { act, waitFor, fireEvent } from "@testing-library/react";
 import { installBackend, installRbac, renderScreen } from "../test-utils";
 
 const ORDER_ID = "ord-focus-1";
@@ -60,6 +60,15 @@ describe("SoWorkspace recon cell editing", () => {
 
     // Setup sanity: the cell must be editable, else onChange never fires.
     expect(input.disabled).toBe(false);
+
+    // Drain pending passive effects before editing. When the mocked order data
+    // first settles, `persistedLinesKey` flips "[]" -> real JSON and schedules a
+    // `setLinesDraft(null)` effect. If that effect flushed AFTER the edit below,
+    // it would wipe the draft and revert the value to "2" — a ~15% test flake
+    // (in the app the effect flushes long before a human can type). Flushing it
+    // now, while linesDraft is already null (a no-op that never remounts the
+    // hoisted cell), makes the edit deterministic.
+    await act(async () => { await Promise.resolve(); });
 
     input.focus();
     expect(document.activeElement).toBe(input);

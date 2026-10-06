@@ -4,7 +4,7 @@
 // raw materials / components, multiplying by per-unit BOM quantities.
 
 import { describe, it, expect } from "vitest";
-import { explodePipelineThroughBom, computeCommittedDemand } from "../api/_lib/inventory/pipeline-demand.js";
+import { explodePipelineThroughBom, computeCommittedDemand, buildBomAttributionIndex, topContributingOpps, computePipelineDemand, resolveOpportunityProbability, buildDemandStory } from "../api/_lib/inventory/pipeline-demand.js";
 
 const wk = "2026-06-08";
 const mk = (entries) => new Map(entries.map(([p, q]) => [p, new Map([[wk, q]])]));
@@ -163,5 +163,145 @@ describe("gap ②: a confirmed SO explodes committed demand into raw material", 
     expect(qtyOf(committed, "GUN")).toBe(5);    // the ordered finished good
     expect(qtyOf(committed, "STEEL")).toBe(10); // raw material now has firm committed demand
     expect(qtyOf(committed, "ELEC")).toBe(5);
+  });
+});
+
+// -------------------------------------------------------------------
+// PR: BOM-traced opportunity attribution.
+const bom = (rows) => rows.map(([parent_part_no, child_part_no, qty]) => ({ parent_part_no, child_part_no, qty }));
+const opp = (id, stage, probability, name) => ({ id, stage, probability, opportunity_name: name });
+const pair = (o, lines) => ({ opp: o, lines });
+
+describe("buildBomAttributionIndex", () => {
+  it("maps a raw material to its finished-good ancestor with multiplier + path", () => {
+    const idx = buildBomAttributionIndex(bom([["GUN", "STEEL", 3]]));
+    expect(idx.get("STEEL")).toEqual([{ root: "GUN", mult: 3, path: ["GUN", "STEEL"] }]);
+    expect(idx.get("GUN")).toBeUndefined(); // descendants only, never self
+  });
+  it("accumulates the cumulative multiplier across BOM levels", () => {
+    const idx = buildBomAttributionIndex(bom([["GUN", "SUB", 2], ["SUB", "STEEL", 5]]));
+    expect(idx.get("STEEL")).toEqual(expect.arrayContaining([
+      { root: "GUN", mult: 10, path: ["GUN", "SUB", "STEEL"] },
+      { root: "SUB", mult: 5, path: ["SUB", "STEEL"] },
+    ]));
+    expect(idx.get("SUB")).toEqual([{ root: "GUN", mult: 2, path: ["GUN", "SUB"] }]);
+  });
+  it("stops at a buy part — its raw material is not attributed (bought whole)", () => {
+    const idx = buildBomAttributionIndex(bom([["GUN", "SUB", 2], ["SUB", "STEEL", 5]]), 8, { buyParts: new Set(["SUB"]) });
+    expect(idx.get("SUB")).toEqual([{ root: "GUN", mult: 2, path: ["GUN", "SUB"] }]); // SUB still gets demand from GUN
+    expect(idx.get("STEEL")).toBeUndefined();                                          // but STEEL under it is not
+  });
+  it("is empty for no BOM and terminates on a cycle", () => {
+    expect(buildBomAttributionIndex([]).size).toBe(0);
+    const idx = buildBomAttributionIndex(bom([["A", "B", 1], ["B", "A", 1]]));
+    expect(idx.get("B")).toBeTruthy(); // no infinite loop
+  });
+});
+
+describe("topContributingOpps", () => {
+  it("credits a DIRECT sale of the part (unchanged behavior, no path)", () => {
+    const pairs = [pair(opp("o1", "RFQ", 0.3, "Acme GUN order"), [{ part_no: "GUN", qty: 10 }])];
+    const out = topContributingOpps(pairs, "GUN", null);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ opp_id: "o1", opportunity_name: "Acme GUN order", qty: 10, probability: 0.3, expected_qty: 3, via: [] });
+  });
+  it("credits an EXPLODED raw-material to the finished-good opp, with multiplier + BOM path", () => {
+    const idx = buildBomAttributionIndex(bom([["GUN", "STEEL", 3]]));
+    const pairs = [pair(opp("o1", "RFQ", 0.3, "Acme GUN order"), [{ part_no: "GUN", qty: 10 }])];
+    const out = topContributingOpps(pairs, "STEEL", idx);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ opp_id: "o1", qty: 30, expected_qty: 9, via: ["GUN → STEEL"] });
+  });
+  it("fabricates nothing: an exploded part with no attributing opp yields []", () => {
+    const idx = buildBomAttributionIndex(bom([["GUN", "STEEL", 3]]));
+    const pairs = [pair(opp("o1", "RFQ", 0.3, "x"), [{ part_no: "BOLT", qty: 5 }])];
+    expect(topContributingOpps(pairs, "STEEL", idx)).toEqual([]);
+  });
+  it("uses the stage default when probability is unset, and ranks by expected_qty", () => {
+    const pairs = [
+      pair(opp("o1", "RFQ", null, "no-prob"), [{ part_no: "GUN", qty: 100 }]),         // 100 * 0.30 = 30
+      pair(opp("o2", "NEGOTIATION_REVIEW", 0.5, "big"), [{ part_no: "GUN", qty: 80 }]), //  80 * 0.50 = 40
+    ];
+    const out = topContributingOpps(pairs, "GUN", null);
+    expect(out.map((o) => o.opp_id)).toEqual(["o2", "o1"]);
+    expect(out[1].probability).toBe(0.30); // RFQ stage default
+  });
+});
+
+describe("attribution reconciles with real demand (no fabrication)", () => {
+  it("sum of attributed expected_qty for an exploded part == its exploded pipeline demand", () => {
+    // One opp sells 10 GUN at p=0.3, closing in week W. GUN consumes 3 STEEL.
+    const W = "2026-06-10";
+    const pairs = [{ opp: { id: "o1", stage: "RFQ", probability: 0.3, close_date: W, opportunity_name: "Acme" },
+                     lines: [{ part_no: "GUN", qty: 10 }] }];
+    const bomRows = bom([["GUN", "STEEL", 3]]);
+    // engine path: pipeline demand -> explode
+    const pipeline = computePipelineDemand({ pairs });
+    explodePipelineThroughBom(pipeline, bomRows);
+    const steelDemand = [...(pipeline.get("STEEL")?.values() || [])].reduce((s, q) => s + q, 0); // 10*0.3*3 = 9
+    // attribution path
+    const idx = buildBomAttributionIndex(bomRows);
+    const top = topContributingOpps(pairs, "STEEL", idx);
+    const attributed = top.reduce((s, o) => s + o.expected_qty, 0);
+    expect(steelDemand).toBe(9);
+    expect(attributed).toBeCloseTo(steelDemand, 6); // attribution == real demand, not invented
+  });
+});
+
+describe("resolveOpportunityProbability — ai_probability blend max(operator, ai/100)", () => {
+  it("CRITICAL: ai_probability is 0..100, divided by 100 (no 100x inflation)", () => {
+    const p = resolveOpportunityProbability({ stage: "RFQ", ai_probability: 60 });
+    expect(p).toBeCloseTo(0.6, 6);   // 60 -> 0.6, NOT 60
+    expect(p).toBeLessThanOrEqual(1);
+  });
+  it("takes the max of operator and ai/100 (ai can only raise)", () => {
+    expect(resolveOpportunityProbability({ probability: 0.3, ai_probability: 90 })).toBeCloseTo(0.9, 6); // ai wins
+    expect(resolveOpportunityProbability({ probability: 0.8, ai_probability: 50 })).toBeCloseTo(0.8, 6); // operator wins
+  });
+  it("blends ai over the STAGE DEFAULT when operator probability is unset", () => {
+    // RFQ default 0.30; ai 70 -> 0.70
+    expect(resolveOpportunityProbability({ stage: "RFQ", ai_probability: 70 })).toBeCloseTo(0.7, 6);
+    // ai below the default -> default wins
+    expect(resolveOpportunityProbability({ stage: "RFQ", ai_probability: 10 })).toBeCloseTo(0.3, 6);
+  });
+  it("degrades cleanly when ai_probability is absent / null / out of range", () => {
+    expect(resolveOpportunityProbability({ probability: 0.4 })).toBe(0.4);
+    expect(resolveOpportunityProbability({ probability: 0.4, ai_probability: null })).toBe(0.4);
+    expect(resolveOpportunityProbability({ probability: 0.4, ai_probability: 150 })).toBe(0.4); // >100 ignored
+    expect(resolveOpportunityProbability({ stage: "RFQ" })).toBeCloseTo(0.3, 6);
+  });
+  it("flows through topContributingOpps: an AI-scored opp is weighted higher", () => {
+    const pairs = [{ opp: { id: "o1", stage: "RFQ", probability: 0.3, ai_probability: 90, opportunity_name: "hot" },
+                     lines: [{ part_no: "GUN", qty: 10 }] }];
+    const out = topContributingOpps(pairs, "GUN", null);
+    expect(out[0].probability).toBeCloseTo(0.9, 6);     // blended, not the 0.3 operator value
+    expect(out[0].expected_qty).toBeCloseTo(9, 6);      // 10 * 0.9
+  });
+});
+
+describe("buildDemandStory (moat Bet 1 hero endpoint core)", () => {
+  it("tells the opp → finished → raw → plans story, reconciled with the engine", () => {
+    const opp = { id: "op1", opportunity_name: "Acme Q3", stage: "RFQ", probability: 0.3 };
+    const lines = [{ part_no: "GUN", qty: 10 }];
+    const bomRows = bom([["GUN", "STEEL", 3]]);
+    const plans = [
+      { id: "pl1", part_no: "STEEL", recommended_qty: 9, status: "draft", expected_arrival_date: "2026-08-01",
+        rationale: { top_opps: [{ opp_id: "op1" }] } },
+      { id: "pl2", part_no: "BOLT", recommended_qty: 5, status: "draft",
+        rationale: { top_opps: [{ opp_id: "other" }] } }, // different opp -> excluded
+    ];
+    const story = buildDemandStory({ opp, lines, bomRows, buyParts: new Set(), plans });
+
+    expect(story.opportunity).toMatchObject({ id: "op1", probability: 0.3 });
+    expect(story.finished_goods).toEqual([{ part_no: "GUN", qty: 10, expected_qty: 3 }]);
+    expect(story.raw_materials).toEqual([{ part_no: "STEEL", expected_qty: 9, via: ["GUN → STEEL"] }]);
+    expect(story.contributing_plans.map((p) => p.id)).toEqual(["pl1"]); // only the plan referencing op1
+  });
+
+  it("degrades gracefully: no lines / no BOM yields empty sections, not an error", () => {
+    const story = buildDemandStory({ opp: { id: "x", stage: "RFQ" }, lines: [], bomRows: [], plans: [] });
+    expect(story.finished_goods).toEqual([]);
+    expect(story.raw_materials).toEqual([]);
+    expect(story.contributing_plans).toEqual([]);
   });
 });

@@ -33,6 +33,8 @@ const FIELD_PATHS = [
   "customer.po_number", "customer.po_date", "customer.gstin",
   "customer.state_code", "customer.currency", "customer.payment_terms",
   "customer.bill_to_address", "customer.ship_to_address",
+  // The header PR number the SO workspace shows beside the per-line ones.
+  "customer.requisition_no",
 ];
 
 const get = (obj, path) => {
@@ -145,7 +147,19 @@ const voteScalar = (entries, fieldPath) => {
 //      returned generic "Item 1", "Item 2") align by row index.
 //   4. Lines that exist in only one adapter still carry through;
 //      provenance shows that adapter alone supplied them.
-const LINE_FIELDS = ["partNumber", "description", "quantity", "unitPrice", "uom", "hsn", "gst_pct"];
+// customerItemCode / raw_description / specification were missing here, so
+// whenever the L6 cross-adapter vote ran it silently DROPPED the entire
+// dual-code payload: the buyer's SAP code (the tier-0 mapping key), the
+// verbatim description the part-split re-parses from, and the drawing/spec
+// code. A voted run therefore produced strictly less than a single-adapter run.
+// requisition_no is listed for the same reason. The voted line is rebuilt
+// from this list whatever the adapters returned, so without it the per-line
+// value was dropped on every voted run (two or more adapters returned a
+// result), not only on runs where they agreed.
+const LINE_FIELDS = [
+  "partNumber", "customerItemCode", "description", "raw_description",
+  "specification", "requisition_no", "quantity", "unitPrice", "uom", "hsn", "gst_pct",
+];
 
 const stringifyKey = (v) => (v == null ? "" : String(v).trim().toLowerCase());
 

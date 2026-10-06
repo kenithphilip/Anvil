@@ -3,7 +3,7 @@
 // column mapping, and per-format line normalization. Pure, no I/O.
 
 import { describe, it, expect } from "vitest";
-import { BUILTIN_FORMATS, mergeFormats, findHeaderRow, detectFormatKey, mapSheet } from "../api/_lib/bom-format.js";
+import { BUILTIN_FORMATS, mergeFormats, findHeaderRow, isHeaderRow, detectFormatKey, mapSheet } from "../api/_lib/bom-format.js";
 
 const F = BUILTIN_FORMATS;
 
@@ -11,6 +11,26 @@ describe("findHeaderRow", () => {
   it("finds the row with both a part-no and a part-name label", () => {
     const rows = [["Some title"], ["Part No", "Part Name", "Qty"], ["A", "Widget", 2]];
     expect(findHeaderRow(rows)).toBe(1);
+  });
+});
+
+describe("isHeaderRow / repeated page-header skip", () => {
+  it("flags a row that repeats the column labels; not a real data row", () => {
+    expect(isHeaderRow(["Part No.", "Part Name", "Material", "Q'ty", "Remarks"])).toBe(true);
+    expect(isHeaderRow(["A1", "Widget", "EN8", "2", ""])).toBe(false);
+  });
+  it("mapSheet skips a page-header row reprinted mid-BOM (SRTC-2K0374 bug)", () => {
+    const rows = [
+      ["Part No", "Part Name", "Material", "Qty", "Remarks"],   // header (page 1)
+      ["A1", "Widget", "EN8", "2", ""],
+      ["Part No", "Part Name", "Material", "Qty", "Remarks"],   // reprinted header (page 2) — must be skipped
+      ["A2", "Gear", "C45", "1", ""],
+    ];
+    const out = mapSheet(rows, "SRTC-2K0374.xlsx", F);
+    const partNos = out.lines.map((l) => l.part_no);
+    expect(partNos).toEqual(["A1", "A2"]);          // the reprinted header is NOT ingested as a part
+    expect(partNos).not.toContain("Part No");
+    expect(out.lines.map((l) => l.seq_no)).toEqual([1, 2]);   // seq stays contiguous
   });
 });
 
@@ -50,6 +70,13 @@ describe("mapSheet - India (flat)", () => {
     expect(out.asset.asset_code).toBe("GUN-1");
     expect(out.lines).toHaveLength(2);
     expect(out.lines[0]).toMatchObject({ seq_no: 1, part_no: "A1", part_name: "Widget", qty: 2, material: "EN8", level: null });
+  });
+  it("leaves source_country NULL (india is the floor — never auto-stamp a country)", () => {
+    // A signal-less English BOM maps via the obara_india floor for its rich
+    // column map, but its origin must stay unknown, not be mis-stamped India.
+    const out = mapSheet([["Part No", "Part Name", "Qty"], ["A1", "x", 1]], "BOM.xlsx", F);
+    expect(out.source_format).toBe("obara_india");
+    expect(out.asset.source_country).toBeNull();
   });
 });
 

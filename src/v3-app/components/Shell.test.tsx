@@ -10,6 +10,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { fireEvent, render } from "@testing-library/react";
 import { Shell } from "./Shell";
 import { Wrap, installBackend, installRbac } from "../test-utils";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 beforeEach(() => {
   installBackend();
@@ -54,5 +56,39 @@ describe("Shell settings popover", () => {
     const last = rows[rows.length - 1] as HTMLElement;
     expect(last.classList.contains("settings-menu-danger")).toBe(true);
     expect(last.textContent || "").toMatch(/sign out/i);
+  });
+});
+
+/* Collapsed rail (56px) leaves ~28px of content width after padding. The
+   avatar alone is 22px, so the name/role block and the settings gear
+   overlapped — the reported layout break. jsdom does not apply styles.css,
+   so these pin the two halves of the fix that are actually checkable: the
+   identity block is a targetable element, and the stylesheet still carries
+   the rule that hides it and stacks the footer. */
+describe("sidebar footer survives the collapsed rail", () => {
+  it("wraps the name/role in a targetable .side-foot-id block", () => {
+    const { container } = render(<Wrap><Shell route="home" onRoute={() => {}}>x</Shell></Wrap>);
+    const foot = container.querySelector(".side-foot");
+    expect(foot).not.toBeNull();
+    expect(foot!.querySelector(".side-foot-id")).not.toBeNull();
+    // The avatar stays outside it, so hiding the text never hides identity.
+    expect(foot!.querySelector(".av")).not.toBeNull();
+  });
+
+  it("puts the full name on the avatar title, so collapsing loses nothing", () => {
+    const { container } = render(<Wrap><Shell route="home" onRoute={() => {}}>x</Shell></Wrap>);
+    const av = container.querySelector(".side-foot .av") as HTMLElement;
+    expect(av.getAttribute("title") || "").toMatch(/·/);
+  });
+
+  it("stylesheet hides the identity block and stacks the footer when collapsed", () => {
+    const css = readFileSync(resolve(__dirname, "../styles.css"), "utf8");
+    expect(css).toMatch(/\[data-rail="collapsed"\]\s*\.side-foot-id\s*\{\s*display:\s*none/);
+    expect(css).toMatch(/\[data-rail="collapsed"\]\s*\.side-foot\s*\{[^}]*flex-direction:\s*column/);
+  });
+
+  it("long names ellipsis rather than pushing the gear out of the rail", () => {
+    const css = readFileSync(resolve(__dirname, "../styles.css"), "utf8");
+    expect(css).toMatch(/\.side-foot-name,[\s\S]{0,80}text-overflow:\s*ellipsis/);
   });
 });

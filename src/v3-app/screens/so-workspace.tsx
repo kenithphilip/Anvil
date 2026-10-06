@@ -1,8 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { LoadingState } from "../components/LoadingState";
 import { ageLabel, stageOf, draftLabel } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Prov, Steps, Stream, WSTabs, WSTitle, fmtINR, fmtUSD } from "../lib/primitives";
+import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Modal, Prov, Steps, Stream, WSTabs, WSTitle, fmtINR, fmtUSD } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { BusyAction, busyLabel, busyVerb } from "../lib/busy-actions";
+import { QuotesStrip } from "../components/QuotesStrip";
+import { ThreeWayPanel } from "../components/ThreeWayPanel";
+import { InvoicePoCheck } from "../components/InvoicePoCheck";
+import { DeliveryChallanUpload } from "../components/DeliveryChallanUpload";
+import type { AttachedQuote } from "../components/QuotesStrip";
+import { QuotePane } from "../components/QuotePane";
+// The gate's own predicate, not a copy: a UI that disagreed with the server
+// about what blocks would offer a button that 409s, or hide the only way out.
+import { isUnresolvedBlocker as isBlockingFinding } from "../../api/_lib/blocking-findings.js";
+// Pure, no I/O — imported rather than twinned, so the rupee figure an approver
+// reads is computed by the same code the server would use.
+import { deviationValue, currencyOf } from "../../api/_lib/deviation-value.js";
 import { RBAC } from "../lib/rbac";
 import { pushRecent } from "../lib/recent-items";
 import { amountInWords } from "../lib/amount-words";
@@ -15,8 +29,19 @@ import { ItemMasterPicker, PickedItem } from "../components/ItemMasterPicker";
 import { ReviewDocPane, ReviewFieldsPane } from "../components/ReviewPane";
 import { ReviewPaneSelectionProvider, useReviewPaneSelection } from "../components/ReviewPaneContext";
 import type { EvidenceBbox } from "../components/PdfPagePreview";
-import { computeLineTotals, TAX_AMOUNT_KEYS, AUX_AMOUNT_KEYS, COMPONENT_LABEL } from "../lib/line-totals";
+import { computeLineTotals, TAX_AMOUNT_KEYS, AUX_AMOUNT_KEYS, COMPONENT_LABEL, LINE_ALIAS } from "../lib/line-totals";
 import { ExtractionProgress } from "../components/ExtractionProgress";
+import { OrderHeaderEditor, OrderLineTaxComponents, TallyTab } from "../components/SOWorkspaceOrderPanels";
+import { PipelineDiagnostics } from "../components/PipelineDiagnostics";
+import { FieldPill, ProvenanceChip, ExtractionQualityCard, EditableCell } from "../components/SOWorkspaceReviewCells";
+import { ResizableTh } from "../components/ResizableTh";
+import {
+  ColumnWidths, loadWidths, saveWidths, resizeColumn, clearColumn, tableLayoutFor, widthStyle,
+} from "../lib/column-widths";
+import { AskAnvil } from "../components/AskAnvil";
+import { mergeExtractedLines } from "../lib/line-merge";
+import { varianceLineFromGap, outstandingGaps } from "../lib/variance-line";
+import { lineRequisition, requisitionGroups, requisitionNotice } from "../lib/requisition";
 
 // Line-reconciliation table body, mounted inside the unified reconcile
 // view's ReviewPaneSelectionProvider so a row click drives the shared
@@ -56,15 +81,25 @@ export const mappingTitle = (ln: any): string => {
     + "\n\nMAPPED TO ITEM MASTER\n" + mapped.join("\n");
 };
 
+// Column identities for the reconciliation grid. Stable strings, not indexes:
+// a width stored against position 5 would land on a different column the moment
+// one is inserted.
+const RECON_TABLE_KEY = "so-recon";
+const RECON_COL_IDS = [
+  "n", "item", "pr", "uom", "qty", "rate", "hsn", "gst", "taxable", "tax", "line", "issues",
+] as const;
+
 const ReconLinesTable: React.FC<{
   lines: any[];
   head: React.ReactNode;
   footer: React.ReactNode;
+  /** "fixed" once a column has been dragged — see lib/column-widths.ts. */
+  layout?: "auto" | "fixed";
   renderRow: (ln: any, i: number, sel: { selected: boolean; onSelect: (e: React.MouseEvent) => void; onHover: () => void; onLeave: () => void }) => React.ReactNode;
-}> = ({ lines, head, footer, renderRow }) => {
+}> = ({ lines, head, footer, layout, renderRow }) => {
   const { selectedField, setSelectedField, setHoveredField } = useReviewPaneSelection();
   return (
-    <table className="tbl">
+    <table className="tbl grid" style={layout ? { tableLayout: layout } : undefined}>
       {head}
       <tbody>
         {lines.map((ln, i) => {
@@ -115,194 +150,6 @@ const soPerf = <T,>(label: string, p: Promise<T>): Promise<T> => {
   );
 };
 
-// Canonical-key -> candidate line-field aliases. Static data; hoisted to
-// module scope so it (and the components below) never depend on a render.
-const LINE_ALIAS: Record<string, string[]> = {
-  itemCode: ["itemCode", "partNumber", "sku", "code"],
-  description: ["description", "name", "item"],
-  qty: ["qty", "quantity"],
-  rate: ["rate", "unitPrice"],
-  uom: ["uom", "unit"],
-  hsn: ["hsn", "hsn_sac", "hsnCode"],
-  gst_pct: ["gst_pct", "gstRate", "rate_of_duty_pct"],
-  // Per-line tax-component aliases. Each one is the per-unit amount
-  // (matching the Meridian PO column layout). Identity maps because the
-  // extractor and the DB use the same key.
-  cgst_amount:    ["cgst_amount"],
-  sgst_amount:    ["sgst_amount"],
-  igst_amount:    ["igst_amount"],
-  utgst_amount:   ["utgst_amount"],
-  cess_amount:    ["cess_amount"],
-  excise_amount:  ["excise_amount"],
-  ed_cess_amount: ["ed_cess_amount"],
-  tooling_amount: ["tooling_amount"],
-  p_and_f_amount: ["p_and_f_amount"],
-  others_amount:  ["others_amount"],
-};
-
-// The recon-cell rendering components. HOISTED to module scope (they
-// were previously declared inside WiredSOWorkspace, which minted a new
-// function identity every render, so React unmounted + remounted each
-// <EditableCell> subtree on every keystroke -> the focused <input> was
-// destroyed and re-created, dropping the caret and every character
-// after the first). At module scope their identity is stable, so React
-// reconciles the inputs by position and focus survives edits. The
-// order-scoped values they used to close over are now passed as props.
-
-const FieldPill: React.FC<{ src: FieldSource | null }> = ({ src }) => {
-  if (src === "ocr") return <Chip k="ghost">OCR</Chip>;
-  if (src === "human") return <Chip k="info">edited</Chip>;
-  return null;
-};
-
-// Wave 4.1: adapter + confidence chip for a recon cell, coloured by the
-// worst validator/anomaly severity touching that cell. The tooltip
-// carries the adapter, confidence, and any issue messages so the
-// operator can see why a field is flagged without leaving the row.
-const ProvenanceChip: React.FC<{
-  canonicalKey: string; lineIndex: number; extractionIndex: ExtractionIndex;
-}> = ({ canonicalKey, lineIndex, extractionIndex }) => {
-  const prov = extractionIndex.lineProvenance(lineIndex, canonicalKey);
-  const cellIssues = issuesForCanonicalCell(extractionIndex.lineIssues(lineIndex), canonicalKey);
-  const sev = worstSeverity(cellIssues);
-  if (!prov && !sev) return null;
-  const tone = sev === "error" ? "bad" : sev === "warn" ? "warn" : "ghost";
-  const confPct = prov?.confidence != null ? Math.round(prov.confidence * 100) + "%" : null;
-  const voted = (prov?.voters?.length || 0) > 1;
-  const label = sev
-    ? (sev === "error" ? "check" : "review")
-    : (prov?.source || "src");
-  const title = [
-    prov?.source ? `source: ${prov.source}${voted ? " (voted)" : ""}` : null,
-    confPct ? `confidence: ${confPct}` : null,
-    ...cellIssues.map((x) => `${x.severity}: ${x.message || x.code}`),
-  ].filter(Boolean).join("\n");
-  return (
-    <span title={title} style={{ display: "inline-flex" }}>
-      <Chip k={tone as any}>{label}{confPct && !sev ? ` ${confPct}` : ""}</Chip>
-    </span>
-  );
-};
-
-// Wave 4.1: extraction-quality summary for the recon tab. Surfaces the
-// winning adapter, overall confidence, validator + anomaly counts, and
-// an expandable list of every flagged field so the operator knows where
-// to look before approving.
-const ExtractionQualityCard: React.FC<{
-  extractionRun: any; extractionIndex: ExtractionIndex;
-}> = ({ extractionRun, extractionIndex }) => {
-  const [open, setOpen] = React.useState(false);
-  if (!extractionRun) return null;
-  const s = extractionIndex.summary;
-  const issues: IssueEntry[] = extractionIndex.allIssues;
-  const confPct = s.confidence != null ? Math.round(s.confidence * 100) + "%" : "—";
-  const sevChip = (sev: string) =>
-    <Chip k={sev === "error" ? "bad" : sev === "warn" ? "warn" : "ghost"}>{sev}</Chip>;
-  return (
-    <Card
-      title="Extraction quality"
-      eyebrow="docai provenance · validators · anomalies"
-      right={issues.length
-        ? <Btn sm kind="ghost" onClick={() => setOpen((v) => !v)}>
-            {open ? "hide" : `${issues.length} flagged field${issues.length === 1 ? "" : "s"}`}
-          </Btn>
-        : <Chip k="good">clean</Chip>}
-    >
-      <KPIRow cols={4}>
-        <KPI lbl="Adapter" v={s.adapter || "—"} d={s.voterUsed ? "cross-adapter vote" : ""} />
-        <KPI lbl="Confidence" v={confPct}
-             dKind={s.confidence == null ? "" : (s.confidence >= 0.8 ? "up" : s.confidence < 0.5 ? "down" : "")} />
-        <KPI lbl="Validator" v={String(s.validator.total)}
-             d={`${s.validator.error} err · ${s.validator.warn} warn`}
-             dKind={s.validator.error ? "down" : ""} />
-        <KPI lbl="Anomalies" v={String(s.anomalies.total)}
-             d={`${s.anomalies.error} blocker${s.anomalies.error === 1 ? "" : "s"}`}
-             dKind={s.anomalies.error ? "down" : ""} />
-      </KPIRow>
-      {open && issues.length > 0 && (
-        <table className="tbl">
-          <thead><tr><th>Field</th><th>Check</th><th>Severity</th><th>Detail</th></tr></thead>
-          <tbody>
-            {issues.slice(0, 100).map((iss, n) => (
-              <tr key={iss.field + ":" + iss.code + ":" + n}>
-                <td className="mono-sm">{iss.field}</td>
-                <td className="mono-sm">{iss.kind === "anomaly" ? "anomaly" : "validator"} · {iss.code}</td>
-                <td>{sevChip(iss.severity)}</td>
-                <td>{iss.message || "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </Card>
-  );
-};
-
-const EditableCell: React.FC<{
-  line: any; i: number; canonicalKey: string;
-  type: "text" | "number"; align?: "left" | "right";
-  placeholder?: string;
-  canEditLines: boolean;
-  extractionIndex: ExtractionIndex;
-  onEditLine: (i: number, canonicalKey: string, value: any) => void;
-  recordFieldCorrection: (i: number, canonicalKey: string, before: string, after: string) => void;
-}> = ({ line, i, canonicalKey, type, align, placeholder, canEditLines, extractionIndex, onEditLine, recordFieldCorrection }) => {
-  const src = getFieldSource(line, canonicalKey);
-  const raw = LINE_ALIAS[canonicalKey]
-    .map((k) => line[k])
-    .find((v) => v != null && v !== "");
-  const value = raw == null ? "" : String(raw);
-  // Snapshot the value at focus so blur can tell whether the operator
-  // actually changed it (and feed the docai correction loop only when
-  // they did).
-  const focusValue = React.useRef<string>(value);
-  // Tighter input styling: no implicit browser styling, no outline
-  // ring, no min-width that would render an empty box for short / blank
-  // values. The cell shows the value as plain text until clicked; the
-  // hairline appears on focus.
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: align === "right" ? "flex-end" : "flex-start" }}>
-      <input
-        className={align === "right" ? "input mono-sm r" : "input mono-sm"}
-        style={{
-          background: "transparent",
-          border: "1px solid transparent",
-          outline: "none",
-          WebkitAppearance: "none",
-          MozAppearance: "none",
-          appearance: "none" as any,
-          padding: "2px 4px",
-          textAlign: align === "right" ? "right" : "left",
-          width: "100%",
-          minWidth: 0,
-          boxShadow: "none",
-        }}
-        value={value}
-        placeholder={placeholder || ""}
-        disabled={!canEditLines}
-        onFocus={(e) => {
-          focusValue.current = value;
-          e.currentTarget.style.border = "1px solid var(--hairline-2)";
-          e.currentTarget.style.background = "var(--paper)";
-        }}
-        onBlur={(e) => {
-          e.currentTarget.style.border = "1px solid transparent";
-          e.currentTarget.style.background = "transparent";
-          recordFieldCorrection(i, canonicalKey, focusValue.current, e.currentTarget.value);
-        }}
-        onChange={(e) => {
-          const v = type === "number"
-            ? (e.target.value === "" ? null : Number(e.target.value))
-            : e.target.value;
-          onEditLine(i, canonicalKey, v);
-        }}
-      />
-      {src && <FieldPill src={src} />}
-      <ProvenanceChip canonicalKey={canonicalKey} lineIndex={i} extractionIndex={extractionIndex} />
-    </div>
-  );
-};
-
 const WiredSOWorkspace = () => {
   const { useState: u, useEffect: e, useMemo: m } = React;
   const [order, setOrder] = u({ data: null, loading: true, error: null });
@@ -311,9 +158,57 @@ const WiredSOWorkspace = () => {
   const [cost, setCost] = u({ data: null, loading: true });
   const [schedule, setSchedule] = u({ data: [], loading: true, error: null });
   const [bump, setBump] = u(0);
+  // Inline editor for clearing a blocking finding. Declared HERE, with the
+  // other hooks: this component early-returns for the no-order / loading /
+  // error states further down, so a useState placed after them changes the hook
+  // count between renders ("Rendered more hooks than during the previous
+  // render") and takes the whole screen out.
+  // Unordered quoted lines are COLLAPSED by default, and adding one as a
+  // variance takes a second click.
+  //
+  // A variance means a mistake was made — the customer omitted a line, or the
+  // quote was wrong. The remedy is an amended PO; adding the line to the sales
+  // order is the exceptional fallback. Rendering a one-click "Add as variance"
+  // against every gap made the wrong action the easiest one, and on a real
+  // order that was 411 buttons sitting open in the banner.
+  // Re-read the attached-quotes card after an upload. Declared HERE with the
+  // other hooks — this component early-returns further down, and a useState
+  // placed after those changes the hook count between renders.
+  const [quotesBump, setQuotesBump] = u(0);
+  // Which attached quote the Quotes tab is showing, and the list the strip
+  // already fetched — so opening the tab does not re-request it.
+  const [quoteDoc, setQuoteDoc] = u<string | null>(null);
+  const [attachedQuotes, setAttachedQuotes] = u<AttachedQuote[]>([]);
+  const [gapsOpen, setGapsOpen] = u(false);
+  const [confirmGap, setConfirmGap] = u<string | null>(null);
+  const [resolvingCode, setResolvingCode] = u<string | null>(null);
+  const [resolveNote, setResolveNote] = u("");
   const [scheduleBump, setScheduleBump] = u(0);
   const [tsv, setTsv] = u("");
-  const [busy, setBusy] = u(false);
+  // WHICH action is running, not merely THAT one is. Every stage button shared
+  // one boolean, so the loader read "Extracting" whatever you pressed and the
+  // extract button read "extracting…" while you were approving. Holding the
+  // action id lets each label tell the truth; the cross-locking of the other
+  // buttons is unchanged, because any non-null id is still truthy.
+  // Mirrors so-intake.tsx, which already stores a string here.
+  const [busy, setBusy] = u<BusyAction>(null);
+
+  // Operator-dragged column widths for the reconciliation grid. Auto table
+  // layout starves short columns — HSN/SAC ends up a couple of characters wide
+  // and the <input> inside scrolls its value out of sight instead of wrapping.
+  const [colw, setColw] = u<ColumnWidths>(() => loadWidths(RECON_TABLE_KEY, RECON_COL_IDS));
+  const onColResize = React.useCallback((id: string, startPx: number, deltaPx: number) => {
+    setColw((w) => { const next = resizeColumn(w, id, startPx, deltaPx); saveWidths(RECON_TABLE_KEY, next); return next; });
+  }, []);
+  const onColAutoFit = React.useCallback((id: string) => {
+    setColw((w) => { const next = clearColumn(w, id); saveWidths(RECON_TABLE_KEY, next); return next; });
+  }, []);
+  const resetCols = React.useCallback(() => { setColw({}); saveWidths(RECON_TABLE_KEY, {}); }, []);
+  // Cancel confirmation. A native confirm() here silently returns false
+  // when the browser has suppressed dialogs ("don't allow more dialogs"),
+  // so clicking Cancel did nothing and the order looked un-cancellable.
+  // An in-app modal always shows and can't be blocked.
+  const [cancelOpen, setCancelOpen] = u(false);
   // Inline line-item editor state. Driven from the persisted lines
   // on the order; when null, the table renders the persisted values
   // directly. Once the operator changes a field, a draft is forked
@@ -354,6 +249,17 @@ const WiredSOWorkspace = () => {
   // table) without touching the tenant-wide provider order in Admin.
   const [extractEngine, setExtractEngine] = u<string>("");
 
+  // The router re-renders only when the ROUTE changes (#/so to #/quotes), so
+  // a link from one order to another left this screen on the old order until
+  // some unrelated render. Re-render on any hash change; the effects below
+  // are keyed on orderId and reload for the new order.
+  const [, setHashTick] = u(0);
+  e(() => {
+    const onHash = () => setHashTick((n: number) => n + 1);
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
   // Read order id + tab from URL hash query: #/so?id=...&tab=schedule
   const hashQuery = (() => {
     const hash = window.location.hash || "";
@@ -366,6 +272,9 @@ const WiredSOWorkspace = () => {
   // reconcile view, so a legacy ?tab=review deep-link opens Reconcile.
   const initialTab = rawTab === "review" ? "recon" : rawTab;
   const [tab, setTab] = u(initialTab);
+  // Bumped when a delivery challan is recorded, so the invoice check below
+  // re-reads the despatch lines and the docket it just gained.
+  const [invoiceCheckKey, setInvoiceCheckKey] = u(0);
   // Unified reconcile layout: pdf | split | lines. Persisted per-browser;
   // defaults to split on wide viewports and lines on narrow ones so a
   // small screen is not cramped by the side-by-side.
@@ -574,12 +483,24 @@ const WiredSOWorkspace = () => {
   // Lives in the above-early-returns block so the hook count stays
   // stable when the loading branch returns early. Stringify is the
   // cheap cache key; lineItems rarely exceeds a few hundred rows.
+  //
+  // The reset happens during render, not in an effect. As an effect it
+  // ran after the commit that first painted the loaded lines, so an edit
+  // made in that gap (Add line, a cell change) was queued first and then
+  // wiped by the late setLinesDraft(null). Under React 18 that was a rare
+  // test flake (see so-workspace-cell-focus.test.tsx); under React 19 the
+  // manual-lines tests landed in the gap about one run in four. Resetting
+  // while rendering means the first commit that shows the new lines
+  // already carries the reset, so nothing is left pending to clobber a
+  // later edit.
   const persistedLinesKey = JSON.stringify(
     order.data?.result?.salesOrder?.lineItems || []
   );
-  e(() => {
+  const [draftLinesKey, setDraftLinesKey] = u(persistedLinesKey);
+  if (draftLinesKey !== persistedLinesKey) {
+    setDraftLinesKey(persistedLinesKey);
     setLinesDraft(null);
-  }, [persistedLinesKey]);
+  }
 
   // Wave 4.1: load the rich extraction run for the recon tab. Only the
   // run id + overall confidence live on preflight_payload; the
@@ -682,6 +603,23 @@ const WiredSOWorkspace = () => {
   // diverges, after Save the server reload clears the draft back to
   // null and the persisted lines take over again.
   const draftLines: any[] = linesDraft ?? lines;
+  // Purchase requisition (PR) numbers per line, computed from the lines the
+  // operator is looking at, so a large PO is described correctly once the
+  // background worker has merged its full line set. The "PR no." column only
+  // appears when some line carries one: most POs carry none, and an empty
+  // column on every order would be noise. requisitionGroups gives every
+  // non-empty value a group, so "some group" is "some line carries a value".
+  const reqGroups = requisitionGroups(draftLines);
+  const showPrCol = reqGroups.length > 0;
+  const prCol = showPrCol ? 1 : 0;
+  // Widths of the columns actually on screen. A width the operator dragged
+  // for the PR column on one PO stays stored, but on a PO without the column
+  // it must not switch the grid to fixed layout (which squeezes every
+  // undragged column to an equal share) or offer a reset for a column that
+  // is not there.
+  const shownColw: ColumnWidths = showPrCol ? colw : clearColumn(colw, "pr");
+  const reqNotice = requisitionNotice(reqGroups);
+  const headerRequisition = String(o.result?.salesOrder?.customer?.requisition_no ?? "").trim();
   const grandTotal = Number(o.result?.salesOrder?.grandTotal) || 0;
   const subtotal = draftLines.reduce((s, ln) => s + (Number(ln.lineTotal) || (Number(ln.qty || ln.quantity) * Number(ln.rate || ln.unitPrice)) || 0), 0);
   const findings = Array.isArray(o.rule_findings) ? o.rule_findings : [];
@@ -696,10 +634,39 @@ const WiredSOWorkspace = () => {
   const canWrite = RBAC?.canDo?.("so.write") === true;
   const canAdmin = RBAC?.canDo?.("so.admin") === true;
 
+  // Clearing a blocking finding.
+  //
+  // The server has had this escape hatch since the blocker was introduced —
+  // PATCH { resolve_finding: { code, note } }, permissioned on "approve",
+  // audited as order_finding_resolved, and documented as "the escape hatch that
+  // guarantees no stuck order". Nothing in the client ever called it. So an
+  // order carrying a line_count_shortfall could not be approved (409) and could
+  // not be unblocked from any screen: permanently trapped, with the 409 telling
+  // the operator to "resolve it first" and no way to do so.
+  //
+  // (The existing resolveFinding in SOWorkspaceOrderPanels is a different
+  // thing entirely — Tally drift findings via /api/tally/reconcile.)
+  const resolveBlocker = async (code: string) => {
+    if (!o?.id || !code) return;
+    setBusy("resolve_finding");
+    try {
+      await AnvilBackend?.orders?.update?.(o.id, {
+        resolve_finding: { code, note: resolveNote.trim() || null },
+      });
+      setResolvingCode(null); setResolveNote("");
+      window.notifySuccess?.("Finding resolved", `${code} cleared — the order can be approved.`);
+      setBump((b) => b + 1);
+    } catch (err: any) {
+      window.notifyError?.("Could not resolve", String(err?.message || err));
+    } finally { setBusy(null); }
+  };
+
+  // The actual cancel, run only after the in-app confirmation modal is
+  // accepted (no native confirm() — see cancelOpen above).
   const cancelOrder = async () => {
     if (!o?.id) return;
-    if (!confirm(`Cancel order ${draftLabel(o)}? This sets status to CANCELLED.`)) return;
-    setBusy(true);
+    setCancelOpen(false);
+    setBusy("cancel");
     try {
       await AnvilBackend?.orders?.update?.(o.id, { status: "CANCELLED" });
       window.notifySuccess?.("Order cancelled", o.po_number || o.id.slice(0, 8));
@@ -707,7 +674,7 @@ const WiredSOWorkspace = () => {
     } catch (err) {
       window.notifyError?.("Cancel failed", err?.message || String(err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -725,7 +692,7 @@ const WiredSOWorkspace = () => {
       window.notifyError?.("Approve failed", "Order has no payload hash. Run 'send for review' first.");
       return;
     }
-    setBusy(true);
+    setBusy("approve");
     try {
       await AnvilBackend?.orders?.update?.(o.id, {
         status: "APPROVED",
@@ -736,7 +703,7 @@ const WiredSOWorkspace = () => {
     } catch (err: any) {
       window.notifyError?.("Approve failed", err?.message || String(err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -764,7 +731,7 @@ const WiredSOWorkspace = () => {
       window.notifyWarn?.("Reason required", "Add a one-line note so the operator knows what to fix.");
       return;
     }
-    setBusy(true);
+    setBusy("correct");
     try {
       await AnvilBackend?.orders?.update?.(o.id, {
         status: "DRAFT",
@@ -780,7 +747,7 @@ const WiredSOWorkspace = () => {
     } catch (err) {
       window.notifyError?.("Return-for-correction failed", err?.message || String(err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -849,7 +816,7 @@ const WiredSOWorkspace = () => {
       );
       return;
     }
-    setBusy(true);
+    setBusy("extract");
     try {
       // 1. Hit /api/docai/extract using the existing source_id
       //    plumbing. The endpoint accepts source_id as a docai
@@ -872,9 +839,27 @@ const WiredSOWorkspace = () => {
       //    so the workspace's reconciliation tab AND the "From PO"
       //    customer panel populate immediately.
       const nextResult = { ...(o.result || {}) };
+      const prevLines: any[] = Array.isArray(nextResult.salesOrder?.lineItems)
+        ? nextResult.salesOrder.lineItems : [];
+      // P0: a run that extracted NOTHING must not blank the order.
+      //
+      // This wrote `lineItems: lines` unconditionally, so a failed run replaced
+      // good data with an empty array — a real order lost 44 extracted lines
+      // that way. The guard immediately below already refuses to stamp
+      // extraction_run_id on an empty result "so the stepper does not
+      // green-light Extract"; the same reasoning was never applied to the lines
+      // themselves. The server's chunked path was hardened against this long
+      // ago ("do NOT blank the order's existing line items"); this synchronous
+      // path never was.
+      //
+      // P1: when the run DID extract, merge rather than replace. A fresh
+      // extraction is authoritative for what it extracted and says nothing
+      // about lines a human added, so operator entries are carried forward
+      // unless the extractor now reports them itself.
+      const merged = lines.length ? mergeExtractedLines(prevLines, lines) : null;
       nextResult.salesOrder = {
         ...(nextResult.salesOrder || {}),
-        lineItems: lines,
+        ...(merged ? { lineItems: merged.lines } : {}),
         customer: customer || nextResult.salesOrder?.customer || null,
       };
       // Bug fix May 2026 (stepper-lies report): only stamp
@@ -918,10 +903,26 @@ const WiredSOWorkspace = () => {
       }
       // 3. Best-effort OCR for the evidence bbox overlay.
       try { await (AnvilBackend as any)?.ocr?.run?.(sourceDocId, o.id); } catch (_) { /* surface in audit */ }
+      // Say what actually happened to the ORDER, not just what the run
+      // returned. "Returned no lines" while quietly keeping the previous ones
+      // would leave the operator unsure whether the grid is stale or fresh —
+      // and keeping them is the whole point of the guard above.
       const tone = lines.length === 0 ? "notifyWarn" : "notifySuccess";
+      const detail = lines.length === 0
+        ? (prevLines.length
+          ? "The " + prevLines.length + " line" + (prevLines.length === 1 ? "" : "s")
+            + " already on this order " + (prevLines.length === 1 ? "was" : "were") + " kept."
+          : "Nothing was extracted and the order has no lines.")
+        : lines.length + " line" + (lines.length === 1 ? "" : "s") + (adapter ? " (" + adapter + ")" : "")
+          + (merged && merged.preserved
+            ? " · " + merged.preserved + " manually added line" + (merged.preserved === 1 ? "" : "s") + " kept"
+            : "")
+          + (merged && merged.superseded
+            ? " · " + merged.superseded + " manual line" + (merged.superseded === 1 ? "" : "s") + " now extracted"
+            : "");
       window[tone]?.(
         lines.length === 0 ? "Extraction returned no lines" : "Extraction complete",
-        lines.length + " line" + (lines.length === 1 ? "" : "s") + (adapter ? " (" + adapter + ")" : ""),
+        detail,
       );
       setBump((n) => n + 1);
     } catch (err: any) {
@@ -950,13 +951,13 @@ const WiredSOWorkspace = () => {
         window.notifyError?.("Extraction failed", message);
       }
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
   const sendForReview = async () => {
     if (!o?.id) return;
-    setBusy(true);
+    setBusy("review");
     try {
       await AnvilBackend?.orders?.update?.(o.id, { status: "PENDING_REVIEW" });
       window.notifySuccess?.("Sent for review", o.po_number || o.id.slice(0, 8));
@@ -964,7 +965,7 @@ const WiredSOWorkspace = () => {
     } catch (err: any) {
       window.notifyError?.("Could not advance status", err?.message || String(err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -994,7 +995,7 @@ const WiredSOWorkspace = () => {
       );
       return;
     }
-    setBusy(true);
+    setBusy("validate");
     try {
       // Audit fix May 2026: was using o.result.salesOrder which
       // is the persisted lines, ignoring any unsaved operator
@@ -1024,13 +1025,13 @@ const WiredSOWorkspace = () => {
     } catch (err: any) {
       window.notifyError?.("Validation failed", err?.message || String(err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
   const pushToTally = async () => {
     if (!o?.id) return;
-    setBusy(true);
+    setBusy("push");
     try {
       const result = await AnvilBackend?.tally?.push?.({ orderId: o.id });
       if (result?.error) {
@@ -1042,7 +1043,7 @@ const WiredSOWorkspace = () => {
     } catch (err) {
       window.notifyError?.("Tally push failed", err?.message || String(err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -1111,11 +1112,33 @@ const WiredSOWorkspace = () => {
     }
   };
 
+  // The extracted sales order as a spreadsheet (orders/export.js -> .xlsx, or
+  // .csv if the xlsx dep is absent in the deploy). The server names the file
+  // and picks the extension, so honour the Content-Disposition it returns.
+  const downloadSoExcel = async (orderObj: any) => {
+    if (!orderObj?.id) return;
+    try {
+      const out = await (AnvilBackend as any)?.orders?.excelBlob?.(orderObj.id);
+      if (!out?.blob) throw new Error("Excel export helper unavailable");
+      const url = URL.createObjectURL(out.blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = out.filename || ("SO-" + (orderObj.po_number || String(orderObj.id).slice(0, 8)) + ".xlsx");
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      window.notifySuccess?.("Sales order exported", "Saved to Downloads as " + a.download + ".");
+    } catch (err: any) {
+      window.notifyError?.("Excel export failed", err?.message || String(err));
+    }
+  };
+
   // Re-fetch the customer's quotes and re-verify this order's lines
   // (price / qty / part / payment terms). Reloads the order via `bump`.
   const rerunReconcile = async (orderObj: any) => {
     if (!orderObj?.id) return;
-    setBusy(true);
+    setBusy("reconcile");
     try {
       const rep: any = await (AnvilBackend as any)?.orders?.reconcileQuotes?.(orderObj.id);
       const s = rep?.summary;
@@ -1126,7 +1149,7 @@ const WiredSOWorkspace = () => {
     } catch (err: any) {
       window.notifyError?.("Reconcile failed", err?.message || String(err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -1244,7 +1267,7 @@ const WiredSOWorkspace = () => {
         : "manual map";
       return (
         <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 2 }}>
-          <Chip k={tone}>{label}: {mi.part_no || "-"}</Chip>
+          <Chip k={tone} code>{label}: {mi.part_no || "-"}</Chip>
           {canEditLines && (
             <button
               type="button"
@@ -1263,7 +1286,7 @@ const WiredSOWorkspace = () => {
       // path) when lines are editable.
       return (
         <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 2 }}>
-          <Chip k="info">{(mi.match_via || "auto").replace(/_/g, " ")}: {mi.part_no}</Chip>
+          <Chip k="info" code>{(mi.match_via || "auto").replace(/_/g, " ")}: {mi.part_no}</Chip>
           {canEditLines && (
             <button
               type="button"
@@ -1281,7 +1304,7 @@ const WiredSOWorkspace = () => {
         <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3 }}>
           {sugg.map((s: any, j: number) => (
             <div key={j} style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
-              <Chip k="info">{s.part_no || "—"}</Chip>
+              <Chip k="info" code>{s.part_no || "—"}</Chip>
               <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
                 {Math.round(Number(s.confidence_pct) || 0)}%
               </span>
@@ -1369,19 +1392,65 @@ const WiredSOWorkspace = () => {
           }
         } : undefined}
       >
-        <td className="mono">{i + 1}</td>
+        <td className="mono">
+          {i + 1}
+          {/* A hand-added line must never be indistinguishable from one the
+              extractor read off the PO. "added" means the operator asserts the
+              document DOES say this and extraction missed it; "not on PO" means
+              it is owed under the quote and the customer has not ordered it —
+              which is why the second cannot be invoiced. */}
+          {ln._origin === "operator_recovered" && (
+            <div style={{ marginTop: 3 }} title="Added by an operator — not read from the PO">
+              <Chip k="warn">added</Chip>
+            </div>
+          )}
+          {ln._origin === "quote_variance" && (
+            <div style={{ marginTop: 3 }} title="Owed under the quote but NOT on the customer's PO — cannot be invoiced until the PO is amended">
+              <Chip k="bad">not on PO</Chip>
+            </div>
+          )}
+          {canEditLines && (
+            <div style={{ marginTop: 3 }}>
+              <button
+                type="button"
+                className="btn sm ghost"
+                style={{ padding: "0 5px", lineHeight: 1.5 }}
+                title={"Remove line " + (i + 1)}
+                aria-label={"Remove line " + (i + 1)}
+                onClick={(e) => { e.stopPropagation(); onRemoveLine(i); }}
+              >×</button>
+            </div>
+          )}
+        </td>
         <td title={mappingTitle(ln)}>
           <EditableCell {...cellProps} line={ln} i={i} canonicalKey="description" type="text" placeholder="description" />
           <div style={{ marginTop: 2 }}>
             <EditableCell {...cellProps} line={ln} i={i} canonicalKey="itemCode" type="text" placeholder="part / SKU" />
           </div>
+          {/* The buyer's own code for this part. Rendered with <Chip code> so
+              the chip's lowercase transform does not rewrite an identifier on
+              screen, and with the caption in its own <span className="lbl">
+              so it cannot be read as characters appended to the code — both
+              halves of the Aug 2026 "it added characters and ignored case"
+              report. Labelled generically rather than "SAP": most tenants'
+              customers are not on SAP. */}
           {(ln.customerItemCode || ln.customer_item_code) && (
-            <div style={{ marginTop: 2 }}>
-              <Chip k="ghost">SAP {ln.customerItemCode || ln.customer_item_code}</Chip>
+            <div style={{ marginTop: 2 }} title="Customer part number — the buyer's own code for this item">
+              <Chip k="ghost" code><span className="lbl">cust p/n</span>{ln.customerItemCode || ln.customer_item_code}</Chip>
             </div>
           )}
           {mapAffordance(ln, i)}
         </td>
+        {showPrCol && (
+          <td className="mono-sm" title="Purchase requisition (PR) number printed on this line of the PO">
+            {lineRequisition(ln) && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span>{lineRequisition(ln)}</span>
+                <FieldPill src={getFieldSource(ln, "requisition_no")} />
+              </div>
+            )}
+          </td>
+        )}
         <td><EditableCell {...cellProps} line={ln} i={i} canonicalKey="uom" type="text" placeholder="Nos" /></td>
         <td className="r mono"><EditableCell {...cellProps} line={ln} i={i} canonicalKey="qty" type="number" align="right" /></td>
         <td className="r mono"><EditableCell {...cellProps} line={ln} i={i} canonicalKey="rate" type="number" align="right" /></td>
@@ -1429,7 +1498,7 @@ const WiredSOWorkspace = () => {
     const breakdownRow = (
       <tr key={"brk-" + i} style={{ background: "var(--paper-2)" }}>
         <td></td>
-        <td colSpan={10} style={{ padding: "10px 6px" }}>
+        <td colSpan={10 + prCol} style={{ padding: "10px 6px" }}>
           <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 8, fontSize: 11 }}>
             Per-unit tax and auxiliary amounts. Set the ones the PO carries; the row above recomputes the line total from them. The "Rate" cell is the tax-exclusive ex-price.
           </div>
@@ -1517,7 +1586,7 @@ const WiredSOWorkspace = () => {
       window.notifyError?.("Nothing to add", "Paste rows like 2026-05-15<TAB>1200");
       return;
     }
-    setBusy(true);
+    setBusy("bulk_add");
     try {
       const resp = await AnvilBackend?.scheduleLines?.bulkCreate?.(orderId, rows);
       const inserted = resp?.inserted ?? rows.length;
@@ -1527,7 +1596,7 @@ const WiredSOWorkspace = () => {
     } catch (err) {
       window.notifyError?.("Bulk add failed", String(err?.message || err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -1536,7 +1605,7 @@ const WiredSOWorkspace = () => {
     if (!scheduleRows.length) return;
     const ok = window.confirm(`Delete ALL ${scheduleRows.length} schedule line${scheduleRows.length === 1 ? "" : "s"} for this order? This cannot be undone.`);
     if (!ok) return;
-    setBusy(true);
+    setBusy("clear_lines");
     try {
       const resp = await AnvilBackend?.scheduleLines?.clear?.(orderId);
       const deleted = resp?.deleted ?? scheduleRows.length;
@@ -1545,7 +1614,7 @@ const WiredSOWorkspace = () => {
     } catch (err) {
       window.notifyError?.("Clear failed", String(err?.message || err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -1556,7 +1625,7 @@ const WiredSOWorkspace = () => {
     // delete button silently dropped the line.
     const ok = window.confirm(`Delete schedule line for ${row.scheduled_date} (qty ${row.scheduled_qty})? This cannot be undone.`);
     if (!ok) return;
-    setBusy(true);
+    setBusy("delete_line");
     try {
       await AnvilBackend?.scheduleLines?.deleteOne?.(row.id);
       window.notifySuccess?.("Line deleted", `${row.scheduled_date} · qty ${row.scheduled_qty}`);
@@ -1564,7 +1633,7 @@ const WiredSOWorkspace = () => {
     } catch (err) {
       window.notifyError?.("Delete failed", String(err?.message || err));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -1598,6 +1667,33 @@ const WiredSOWorkspace = () => {
     && o.status !== "CANCELLED"
     && o.status !== "EXPORTED_TO_TALLY"
     && o.status !== "RECONCILED";
+
+  // Manual line entry. Extraction misses lines — LlamaParse handed back a
+  // shredded table and produced 6 of 45 on a live PO — and until now there was
+  // no way to put the missing one in by hand. The only route was re-running and
+  // hoping.
+  //
+  // Every added line is stamped _origin so it is never mistaken for something
+  // the extractor read off the document, and so mergeExtractedLines carries it
+  // through the next re-extraction instead of replacing it (see lib/line-merge).
+  const onAddLine = (origin: "operator_recovered" | "quote_variance" = "operator_recovered", seed: any = null) => {
+    const base = linesDraft ?? lines;
+    setLinesDraft([...base, {
+      _origin: origin,
+      _added_at: new Date().toISOString(),
+      description: null, itemCode: null, customerItemCode: null,
+      quantity: null, unitPrice: null, uom: null, hsn: null,
+      ...(seed || {}),
+    }]);
+  };
+
+  // Removing a line is only ever an operator act, so it is recorded the same
+  // way an edit is: the draft diverges and Save persists it. No line is removed
+  // from the server until the operator saves.
+  const onRemoveLine = (i: number) => {
+    const base = linesDraft ?? lines;
+    setLinesDraft(base.filter((_l: any, idx: number) => idx !== i));
+  };
 
   const onEditLine = (i: number, canonicalKey: string, value: any) => {
     const base = linesDraft ?? lines;
@@ -1776,9 +1872,9 @@ const WiredSOWorkspace = () => {
       await AnvilBackend?.orders?.update?.(o.id, { result: nextResult });
       // Audit fix May 2026: clear the draft immediately so a
       // second Save click during the reload window cannot fire a
-      // duplicate PATCH. The useEffect on persistedLinesKey will
-      // also null this when the new lines arrive, but it races
-      // the click; we win the race here.
+      // duplicate PATCH. The render-phase reset on persistedLinesKey
+      // also nulls this when the new lines arrive, but only after the
+      // reload; clearing here closes the window before it.
       setLinesDraft(null);
       window.notifySuccess?.("Line edits saved", `${draftLines.length} line${draftLines.length === 1 ? "" : "s"} on ${o.po_number || o.id.slice(0, 8)}`);
       setBump((n: number) => n + 1);
@@ -1797,8 +1893,18 @@ const WiredSOWorkspace = () => {
     { id: "margin", label: "Margin cockpit" },
     { id: "why", label: "Why" },
     { id: "evidence", label: "Evidence" },
+    // The quote beside what was read out of it. A tab rather than an overlay:
+    // checking line items is slow comparative work that needs the room.
+    { id: "quotes", label: "Quotes", count: attachedQuotes.length || null },
     { id: "approval", label: "Approval" },
     { id: "tally", label: "Tally" },
+    // Next to Tally deliberately: both are about what the ERP holds. This one
+    // asks whether it matches what the customer ordered.
+    { id: "threeway", label: "PO vs ERP" },
+    // The invoice against the same PO. Next to its sibling: one asks whether
+    // the ERP recorded the order correctly, the other whether the invoice
+    // bills it correctly, and both answer to the customer's document.
+    { id: "invoice_check", label: "Invoice vs PO" },
     { id: "schedule", label: "Schedule", count: scheduleRows.length || null },
     { id: "shipments", label: "Shipments" },
     { id: "activity", label: "Activity", count: mergedTimeline.length || null },
@@ -1845,7 +1951,7 @@ const WiredSOWorkspace = () => {
               </h1>
               {o.order_mode && <Chip k={o.order_mode === "INTERNAL" ? "plum" : o.order_mode.startsWith("PROJECT") ? "info" : "ghost"}>{o.order_mode}</Chip>}
               <Chip k={st.k}>{st.label}</Chip>
-              {o.payload_hash && <Chip k="ghost">payload {String(o.payload_hash).slice(0, 8)}…</Chip>}
+              {o.payload_hash && <Chip k="ghost" code>payload {String(o.payload_hash).slice(0, 8)}…</Chip>}
             </div>
           </div>
         </div>
@@ -1864,6 +1970,11 @@ const WiredSOWorkspace = () => {
                onClick={() => downloadSoPdf(o)}
                title="Download the Tally-style Sales Order acknowledgment PDF">
             {Icon.download} Download SO
+          </Btn>
+          <Btn sm kind="ghost"
+               onClick={() => downloadSoExcel(o)}
+               title="Export the extracted sales order (header + line items) as an Excel spreadsheet">
+            {Icon.download} Excel
           </Btn>
           {["APPROVED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED"].includes(o.status) && (
             <Btn sm kind="ghost"
@@ -1887,11 +1998,25 @@ const WiredSOWorkspace = () => {
           </Btn>
           <span style={{ flex: 1 }} />
           <Btn sm kind="ghost"
-               disabled={!canCancel || busy || o.status === "CANCELLED"}
-               onClick={cancelOrder}
+               disabled={!canCancel || !!busy || o.status === "CANCELLED"}
+               onClick={() => setCancelOpen(true)}
                title={canCancel ? "Set order status to CANCELLED" : "needs sales_manager / admin"}>
             {Icon.x} cancel
           </Btn>
+          <Modal open={cancelOpen} onClose={() => setCancelOpen(false)} title="Cancel this sales order?">
+            <Modal.Body>
+              <p style={{ margin: 0 }}>
+                Set <b>{draftLabel(o)}</b>{o.po_number ? <> (PO {o.po_number})</> : null} to <b>CANCELLED</b>.
+              </p>
+              <p className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 8 }}>
+                It stops flowing through review, approval and Tally push. You can move it back to DRAFT later if needed.
+              </p>
+            </Modal.Body>
+            <Modal.Footer>
+              <Btn kind="ghost" onClick={() => setCancelOpen(false)}>Keep order</Btn>
+              <Btn kind="danger" disabled={!!busy} onClick={cancelOrder}>{busyVerb(busy, "cancel", "Cancel order")}</Btn>
+            </Modal.Footer>
+          </Modal>
           {/* Run extraction: rescues orders stuck in DRAFT when the
               post-create OCR call from intake silently failed
               (ClamAV missing, transient network, etc.). Re-runs
@@ -1918,7 +2043,7 @@ const WiredSOWorkspace = () => {
             ))}
           </select>
           <Btn sm kind="ghost"
-               disabled={!canWrite || busy || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
+               disabled={!canWrite || !!busy || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
                onClick={runExtraction}
                title={
                  !sourceDocId
@@ -1929,14 +2054,21 @@ const WiredSOWorkspace = () => {
                          ? "Re-run docai/extract with " + extractEngine + " (this run only)"
                          : "Re-run docai/extract against the attached PO")
                }>
-            {Icon.cycle} {busy ? "extracting…" : (extractEngine ? "run with " + extractEngine : "run extraction")}
+            {Icon.cycle} {busyVerb(busy, "extract", extractEngine ? "run with " + extractEngine : "run extraction")}
           </Btn>
+          {/* An extraction run is budgeted at 45s inside a 60s platform
+              ceiling and routinely spends 9-30s inside one model call, so a
+              disabled button alone leaves the operator unable to tell a slow
+              run from a wedged one. The elapsed readout makes the wait
+              observable; it sits beside the button rather than inside it
+              because the button is too narrow for the grid + timer. */}
+          {busy && <LoadingState label={busyLabel(busy)} variant="drive" />}
           {/* Run validation: scores the extracted lines against the
               anomaly rule library and persists findings into
               orders.rule_findings. The Validate step in the stepper
               lights as done once last_validated_at is stamped. */}
           <Btn sm kind="ghost"
-               disabled={!canWrite || busy || !o.customer_id || lines.length === 0 || o.status === "CANCELLED"}
+               disabled={!canWrite || !!busy || !o.customer_id || lines.length === 0 || o.status === "CANCELLED"}
                onClick={runValidation}
                title={
                  !o.customer_id
@@ -1945,13 +2077,13 @@ const WiredSOWorkspace = () => {
                      ? "Run extraction first; the rules score line items"
                      : "Score the order against the anomaly rule library"
                }>
-            {Icon.shield} {busy ? "validating…" : "run validation"}
+            {Icon.shield} {busyVerb(busy, "validate", "run validation")}
           </Btn>
           {/* Send for review: explicit DRAFT to PENDING_REVIEW
               transition for orders that have lines but no operator
               has flipped them out of DRAFT yet. */}
           <Btn sm kind="ghost"
-               disabled={!canWrite || busy || o.status !== "DRAFT"}
+               disabled={!canWrite || !!busy || o.status !== "DRAFT"}
                onClick={sendForReview}
                title={
                  o.status !== "DRAFT"
@@ -1966,7 +2098,7 @@ const WiredSOWorkspace = () => {
               to roles that can approve, and only before the order has
               been pushed to Tally. */}
           <Btn sm kind="ghost"
-               disabled={!canApprove || busy || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED" || o.status === "CANCELLED" || o.status === "DRAFT"}
+               disabled={!canApprove || !!busy || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED" || o.status === "CANCELLED" || o.status === "DRAFT"}
                onClick={requestCorrection}
                title={
                  canApprove
@@ -1976,16 +2108,16 @@ const WiredSOWorkspace = () => {
             {Icon.cycle} return for fix
           </Btn>
           <Btn sm kind="ghost"
-               disabled={!canApprove || busy || o.status === "APPROVED" || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED"}
+               disabled={!canApprove || !!busy || o.status === "APPROVED" || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED"}
                onClick={approveOrder}
                title={canApprove ? "Approve order" : "needs sales_manager / finance / admin"}>
             {Icon.shieldCheck} approve
           </Btn>
           <Btn sm kind="primary"
-               disabled={!canPushTally || busy || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED" || o.status === "CANCELLED"}
+               disabled={!canPushTally || !!busy || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED" || o.status === "CANCELLED"}
                onClick={pushToTally}
                title={canPushTally ? "Push the order payload to Tally" : "needs finance / admin"}>
-            {Icon.send} {busy ? "pushing…" : "push to Tally"}
+            {Icon.send} {busyVerb(busy, "push", "push to Tally")}
           </Btn>
         </div>
         <div className="row mono-sm" style={{ color: "var(--ink-3)", flexWrap: "wrap", gap: 8 }}>
@@ -1999,6 +2131,105 @@ const WiredSOWorkspace = () => {
       </div>
 
       {(() => {
+        const mb = o.result?.quoteReconciliation?.mod_bom;
+        if (!mb?.is_modification_quote) return null;
+        // Its own banner, not a line in the discrepancy list: this one BLOCKS
+        // approval, and the operator's next action is to chase design rather
+        // than to reconcile anything.
+        return (
+          <Banner kind="warn" icon={Icon.alert}
+                  title={`Gun modification — final BOM outstanding (${mb.pending_parts.length} provisional part${mb.pending_parts.length === 1 ? "" : "s"})`}>
+            <div className="mono-sm">
+              Quoted against provisional “-MOD” numbers: {mb.pending_parts.slice(0, 8).join(", ")}
+              {mb.pending_parts.length > 8 ? `, +${mb.pending_parts.length - 8} more` : ""}.
+              <div style={{ marginTop: 4, color: "var(--ink-3)" }}>
+                A final BOM is one with no -MOD parts. Approval is blocked until design supplies it —
+                clear the blocking finding on this tab if the provisional numbers are intentional.
+              </div>
+            </div>
+          </Banner>
+        );
+      })()}
+
+      {/* Attaching a quote is how the operator FEEDS the comparison below, so
+          it sits directly above it rather than on a separate screen. Several
+          quotes can back one PO; the reconciler already pools them all. */}
+      {/* Attach, attached, and verdict as ONE strip of three columns. These
+          were three stacked Cards, each with an eyebrow and a title, using
+          most of a screen to say what fits on two lines — and an operator
+          reads them as a single question anyway: is this PO backed by a
+          quote, and does it agree? The verdict column carries the headline;
+          the full breakdown still renders below, but only when there IS one,
+          so the clean case collapses to a line. */}
+      <QuotesStrip
+        orderId={o.id}
+        customerId={o.customer_id || null}
+        refreshKey={quotesBump}
+        onLoaded={setAttachedQuotes}
+        onAttached={() => { setQuotesBump((n) => n + 1); rerunReconcile(o); }}
+        onOpen={(docId) => { setQuoteDoc(docId); setTab("quotes"); }}
+        verdict={(() => {
+          const recon = o.result?.quoteReconciliation;
+          const canReconcile = canWrite && o.status !== "CANCELLED" && !!o.customer_id;
+          const reBtn = canReconcile ? (
+            <Btn sm kind="ghost" disabled={!!busy} onClick={() => rerunReconcile(o)} title="Re-fetch the customer's quotes and re-verify price, quantity + payment terms">
+              {Icon.cycle} {busyVerb(busy, "reconcile", "reconcile")}
+            </Btn>
+          ) : null;
+          if (!recon) {
+            return (
+              <div className="qs-hint" style={{ display: "flex", flexDirection: "column", gap: 5, alignItems: "flex-start" }}>
+                <span>Not compared yet.</span>{reBtn}
+              </div>
+            );
+          }
+          const s = recon.summary || {};
+          const bad = (s.price_mismatch || 0) + (s.description_mismatch || 0) + (s.unmatched || 0);
+          // The money, which is the only form of this an approver can act on.
+          // A percentage tells you a rate moved; it does not tell you whether
+          // to accept the order.
+          const cur = currencyOf(o);
+          const dv = deviationValue(recon, { currency: cur.currency });
+          const money = (v: number) => {
+            try { return new Intl.NumberFormat("en-IN", { style: "currency", currency: cur.currency || "INR", maximumFractionDigits: 0 }).format(v); }
+            catch { return `${cur.currency || ""} ${Math.round(v).toLocaleString("en-IN")}`.trim(); }
+          };
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 5, alignItems: "flex-start" }}>
+              <span className="mono-sm" style={{ fontWeight: 600, color: bad ? "var(--amber)" : "var(--sage)" }}>
+                {bad ? `${s.matched || 0}/${s.total || 0} matched · ${bad} to review` : `Verified — ${s.matched || 0}/${s.total || 0} matched`}
+              </span>
+              {dv.any && cur.comparable && (
+                <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                  {/* Sign is the point: ABOVE means the customer will dispute
+                      the invoice, BELOW means we are short and nobody noticed. */}
+                  {dv.priced.count > 0 && (
+                    <b style={{ color: "var(--ink)" }}>
+                      {money(Math.abs(dv.net))} {dv.net >= 0 ? "above" : "below"} quote
+                    </b>
+                  )}
+                  {dv.priced.count > 0 && dv.unmatched.count > 0 && " · "}
+                  {dv.unmatched.count > 0 && `${money(dv.unmatched.amount)} unquoted`}
+                </span>
+              )}
+              {dv.any && !cur.comparable && (
+                <span className="mono-sm" style={{ color: "var(--amber)" }}>
+                  Lines disagree on currency — no single figure shown.
+                </span>
+              )}
+              {dv.unpriceable.length > 0 && (
+                /* Said out loud: "₹0 at risk" and "we could not price 6 of the
+                   8 exceptions" are very different statements. */
+                <span className="mono-sm" style={{ color: "var(--amber)" }}>
+                  {dv.unpriceable.length} exception{dv.unpriceable.length === 1 ? "" : "s"} could not be priced
+                </span>
+              )}
+              {reBtn}
+            </div>
+          );
+        })()}
+      />
+      {(() => {
         const recon = o.result?.quoteReconciliation;
         const canReconcile = canWrite && o.status !== "CANCELLED" && !!o.customer_id;
         const soBtn = (
@@ -2007,46 +2238,151 @@ const WiredSOWorkspace = () => {
           </Btn>
         );
         const reBtn = canReconcile ? (
-          <Btn sm kind="ghost" disabled={busy} onClick={() => rerunReconcile(o)} title="Re-fetch the customer's quotes and re-verify price, quantity + payment terms">
-            {Icon.cycle} {busy ? "reconciling…" : "reconcile"}
+          <Btn sm kind="ghost" disabled={!!busy} onClick={() => rerunReconcile(o)} title="Re-fetch the customer's quotes and re-verify price, quantity + payment terms">
+            {Icon.cycle} {busyVerb(busy, "reconcile", "reconcile")}
           </Btn>
         ) : null;
-        if (!recon) {
-          return (
-            <Banner kind="info" icon={Icon.info} title="Not yet reconciled against quotes"
-                    action={<>{reBtn}{soBtn}</>}>
-              Reconcile to auto-match this order's lines to the customer's quotes and verify price, quantity + payment terms.
-            </Banner>
-          );
-        }
+        // The strip's verdict column already carries "not compared yet" and
+        // the reconcile control; repeating it as a full-width banner is the
+        // clutter this change exists to remove.
+        if (!recon) return null;
         const s = recon.summary || {};
         const flags = Array.isArray(recon.flags) ? recon.flags : [];
         const pt = recon.payment_terms;
         const clean = flags.length === 0;
-        const lineFlags = flags.filter((f: any) => f.verdict !== "payment_terms_mismatch");
+        // Quoted-but-not-ordered is not a "flag", so a PO short against the
+        // agreed quote would otherwise vanish with the banner.
+        const gapCount = outstandingGaps(recon.quoted_not_ordered, draftLines).length;
+        // Header-level verdicts render on their own lines below; everything
+        // else is per-line. Filtering by an explicit set rather than by
+        // "not payment_terms" so a new header verdict cannot leak into the
+        // line list as a bare bullet.
+        const HEADER_VERDICTS = new Set([
+          "payment_terms_mismatch", "incoterms_mismatch", "incoterms_place_differs",
+        ]);
+        const ic = recon.incoterms;
+        const mod = recon.mod_bom;
+        const lineFlags = flags.filter((f: any) => !HEADER_VERDICTS.has(f.verdict));
+        // Nothing to review: the strip's verdict column has already said
+        // "Verified — n/n matched", and a full-width green banner repeating it
+        // is the clutter this change exists to remove. The gap list is still
+        // reachable below because quoted-but-not-ordered is not "clean".
+        if (clean && !gapCount) return null;
         return (
           <Banner
             kind={clean ? "good" : "warn"}
             icon={clean ? Icon.check : Icon.alert}
             title={clean
               ? `Quotes verified — ${s.matched}/${s.total} lines matched`
-              : `Quote check: ${s.matched}/${s.total} matched · ${s.price_mismatch || 0} price · ${s.unmatched || 0} unmatched${pt?.verdict === "mismatch" ? " · payment-terms" : ""}`}
+              : `Quote check: ${s.matched}/${s.total} matched · ${s.price_mismatch || 0} price · ${s.description_mismatch || 0} description · ${s.unmatched || 0} unmatched${pt?.verdict === "mismatch" ? " · payment-terms" : ""}${ic && ic.verdict !== "match" && ic.verdict !== "unknown" ? " · incoterms" : ""}`}
             action={<>{reBtn}{soBtn}</>}>
             {!clean && (
               <div className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4 }}>
                 {pt?.verdict === "mismatch" && (
                   <div>⚠ Payment terms: PO “{pt.po_terms}” vs quote “{pt.quote_terms}”{pt.source_quote_number ? ` (${pt.source_quote_number})` : ""}</div>
                 )}
+                {ic?.verdict === "mismatch" && (
+                  <div>⚠ Incoterms: PO “{ic.po_incoterm}” vs quote “{ic.quote_incoterm}”{ic.source_quote_number ? ` (${ic.source_quote_number})` : ""}</div>
+                )}
+                {ic?.verdict === "place_differs" && (
+                  <div>⚠ Incoterm place: both {ic.po_code}, but PO “{ic.po_place || "—"}” vs quote “{ic.quote_place || "—"}”</div>
+                )}
                 {lineFlags.slice(0, 10).map((f: any, i: number) => (
                   <div key={i}>
                     {f.verdict === "price_mismatch"
-                      ? `⚠ ${f.part_no}: PO ${f.po_rate} vs quote ${f.quote_rate} (${f.price_delta_pct > 0 ? "+" : ""}${f.price_delta_pct}%)${f.source_quote_number ? ` · ${f.source_quote_number}` : ""}`
-                      : `• unmatched: ${f.part_no || "—"}`}
+                      ? `⚠ ${f.part_no}: PO ${f.po_rate} vs quote ${f.quote_rate} (${f.price_delta_pct > 0 ? "+" : ""}${f.price_delta_pct}%)${
+                          /* The amount, beside the percentage. A rate delta on
+                             one unit and the same delta on 3,000 read
+                             identically as a percentage. */
+                          f.po_qty != null && f.po_rate != null && f.quote_rate != null
+                            ? ` = ${(f.po_rate - f.quote_rate) * f.po_qty > 0 ? "+" : ""}${Math.round((f.po_rate - f.quote_rate) * f.po_qty).toLocaleString("en-IN")} on ${f.po_qty}`
+                            : ""
+                        }${f.source_quote_number ? ` · ${f.source_quote_number}` : ""}`
+                      : f.verdict === "description_mismatch"
+                      ? `⚠ ${f.part_no}: description differs — PO “${f.po_description || "—"}” vs quote “${f.quote_description || "—"}”`
+                      : f.verdict === "unmatched"
+                      ? `• unmatched: ${f.part_no || "—"}`
+                      /* Unknown verdict: say what it is rather than mislabel it
+                         "unmatched", which is what the old else-branch did. */
+                      : `• ${String(f.verdict || "issue").replace(/_/g, " ")}: ${f.part_no || "—"}`}
                   </div>
                 ))}
                 {lineFlags.length > 10 && <div>…and {lineFlags.length - 10} more</div>}
               </div>
             )}
+            {/* Quoted but NOT ordered. P3's reverse walk reports these; this
+                turns each into one click instead of a re-typed part number and
+                price. The line lands as quote_variance — "not on PO" in the
+                grid, refused by the Tally push — because the customer has not
+                ordered it. A gap already acted on stops offering itself, so a
+                second click cannot double-order. */}
+            {(() => {
+              const gaps = outstandingGaps(recon.quoted_not_ordered, draftLines);
+              if (!gaps.length) return null;
+              const gapKey = (g: any, i: number) => String(g.part_no || "") + ":" + i;
+              return (
+                <div className="mono-sm" style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid var(--hairline-2)" }}>
+                  <div className="row" style={{ gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+                    {/* Closed, this is ONE button and nothing else.
+                        Everything about variance — the count, the reasoning,
+                        the per-line list — lives behind it. A variance means
+                        somebody made a mistake, and the remedy is an amended
+                        PO; narrating the gap inline put that thought in front
+                        of the operator on every single reconcile, which is how
+                        the exceptional path starts feeling routine. */}
+                    {canEditLines ? (
+                      <Btn sm kind="ghost" onClick={() => { setGapsOpen((o) => !o); setConfirmGap(null); }}>
+                        {gapsOpen ? "Hide quoted-only lines" : `Quoted-only lines (${gaps.length})`}
+                      </Btn>
+                    ) : (
+                      /* No write access: state the fact, offer no action. */
+                      <span style={{ color: "var(--ink-3)" }}>
+                        {gaps.length} quoted line{gaps.length === 1 ? "" : "s"} not on this PO
+                      </span>
+                    )}
+                  </div>
+                  {gapsOpen && (
+                    <div style={{ marginTop: 6 }}>
+                      <div style={{ color: "var(--ink-3)", marginBottom: 4 }}>
+                        These were quoted but not ordered — normally the customer amends the PO.
+                        Adding a line here does <b>not</b> fix the PO: a variance line cannot be invoiced or pushed to
+                        Tally until the customer amends it. Use this only when the omission is understood and accepted.
+                      </div>
+                      {gaps.slice(0, 8).map((g: any, i: number) => {
+                        const key = gapKey(g, i);
+                        return (
+                          <div key={key} style={{ display: "flex", gap: 8, alignItems: "center", padding: "1px 0" }}>
+                            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {g.part_no || "—"}
+                              {g.qty != null ? ` · ${g.qty}` : ""}
+                              {g.unit_price != null ? ` @ ${fmtINR(g.unit_price)}` : ""}
+                              {g.source_quote_number ? ` · ${g.source_quote_number}` : ""}
+                            </span>
+                            {confirmGap === key ? (
+                              <>
+                                <span style={{ color: "var(--ink-3)" }}>add anyway?</span>
+                                <Btn sm kind="danger"
+                                     onClick={() => {
+                                       const seed = varianceLineFromGap(g);
+                                       if (seed) onAddLine("quote_variance", seed);
+                                       setConfirmGap(null);
+                                     }}>
+                                  Add as variance
+                                </Btn>
+                                <Btn sm kind="ghost" onClick={() => setConfirmGap(null)}>Cancel</Btn>
+                              </>
+                            ) : (
+                              <Btn sm kind="ghost" onClick={() => setConfirmGap(key)}>Add…</Btn>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {gaps.length > 8 && <div style={{ color: "var(--ink-3)" }}>…and {gaps.length - 8} more</div>}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             {recon.quotes_used?.length ? (
               <div className="mono-sm" style={{ marginTop: 4, color: "var(--ink-3)" }}>
                 Priced from: {recon.quotes_used.map((q: any) => q.quote_number).filter(Boolean).join(", ")}
@@ -2066,7 +2402,7 @@ const WiredSOWorkspace = () => {
           regardless of which tab the operator is on. */}
       {busy && o?.id && (
         <div style={{ padding: "8px 16px 0" }}>
-          <ExtractionProgress orderId={o.id} active={busy === true} />
+          <ExtractionProgress orderId={o.id} active={busy === "extract"} />
         </div>
       )}
 
@@ -2158,7 +2494,7 @@ const WiredSOWorkspace = () => {
             icon={Icon.alert}
             title="Extraction returned no line items"
             action={
-              <Btn sm kind="primary" disabled={!sourceDocId || busy} onClick={runExtraction}>
+              <Btn sm kind="primary" disabled={!sourceDocId || !!busy} onClick={runExtraction}>
                 {Icon.cycle} retry extraction
               </Btn>
             }
@@ -2242,6 +2578,9 @@ const WiredSOWorkspace = () => {
               ["Bill to",     o.result.salesOrder.customer.bill_to_address || "—"],
               ["Ship to",     o.result.salesOrder.customer.ship_to_address
                               || o.result.salesOrder.customer.bill_to_address || "—"],
+              // The header-level PR number, read-only. Listed only when the
+              // PO header prints one; per-line PR numbers are in the grid.
+              ...(headerRequisition ? [["PR no.", headerRequisition] as [string, string]] : []),
             ]} />
                   </Card>
                 )}
@@ -2252,9 +2591,20 @@ const WiredSOWorkspace = () => {
               <span className="mono-sm">{draftLines.length} line{draftLines.length === 1 ? "" : "s"} · {findings.length} issue{findings.length === 1 ? "" : "s"}</span>
               <span className="mono-sm" style={{ color: "var(--ink-3)", marginLeft: 4 }}>
                 <Chip k="ghost">OCR</Chip> = from PO &nbsp;·&nbsp;
-                <Chip k="info">edited</Chip> = operator override
+                <Chip k="info">edited</Chip> = operator override &nbsp;·&nbsp;
+                <Chip k="warn">added</Chip> = typed in, not extracted
               </span>
               <span style={{ flex: 1 }} />
+              {canEditLines && (
+                <Btn
+                  sm
+                  kind="ghost"
+                  onClick={() => onAddLine("operator_recovered")}
+                  title="Add a line the extractor missed. It is marked as operator-added and survives the next re-extraction."
+                >
+                  + Add line
+                </Btn>
+              )}
               {canEditLines && draftLines.some((ln) => !ln._mapped_item || !ln._mapped_item.id) && (
                 <Btn
                   sm
@@ -2293,6 +2643,14 @@ const WiredSOWorkspace = () => {
                 Editing line items will invalidate the existing approval. The order will need to be re-approved before push.
               </div>
             )}
+            {/* Non-blocking: a consolidated PO answering several PRs is
+                legitimate. It is shown so the operator can see which lines
+                answer which PR, not to stop anything. */}
+            {reqNotice && (
+              <div role="status" className="mono-sm" style={{ padding: "8px 16px", color: "var(--ink-2)", background: "var(--paper-2)" }}>
+                {reqNotice}
+              </div>
+            )}
             {draftLines.length === 0 ? (
               <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
                 <div style={{ marginBottom: 12 }}>
@@ -2319,7 +2677,7 @@ const WiredSOWorkspace = () => {
                     ))}
                   </select>
                   <Btn kind="primary"
-                       disabled={!canWrite || busy || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
+                       disabled={!canWrite || !!busy || !sourceDocId || (o.status !== "DRAFT" && o.status !== "PENDING_REVIEW")}
                        onClick={runExtraction}
                        title={
                          !sourceDocId
@@ -2330,7 +2688,7 @@ const WiredSOWorkspace = () => {
                                  ? "Re-run docai/extract with " + extractEngine + " (this run only)"
                                  : "Re-run docai/extract against the attached PO")
                        }>
-                    {Icon.cycle} {busy ? "extracting…" : (extractEngine ? "run with " + extractEngine : "run extraction")}
+                    {Icon.cycle} {busyVerb(busy, "extract", extractEngine ? "run with " + extractEngine : "run extraction")}
                   </Btn>
                 </div>
               </div>
@@ -2351,25 +2709,41 @@ const WiredSOWorkspace = () => {
                 const auxTotal = perLine.reduce((s, t) => s + t.aux, 0);
                 const grandWithTax = round2(taxableTotal + taxTotal + auxTotal);
                 return (
+                  <>
+                  {/* Only offered once a column has actually been dragged —
+                      a reset for a layout nobody changed is noise. */}
+                  {Object.keys(shownColw).length > 0 && (
+                    <div className="row" style={{ justifyContent: "flex-end", marginBottom: 4 }}>
+                      <Btn sm kind="ghost" onClick={resetCols}
+                           title="Return every column to automatic width">
+                        reset column widths
+                      </Btn>
+                    </div>
+                  )}
                   <ReconLinesTable
                     lines={draftLines}
                     renderRow={reconRow}
+                    layout={tableLayoutFor(shownColw)}
                     head={<thead><tr>
                       <th style={{ width: 28 }}>#</th>
-                      <th>Item</th>
-                      <th>UoM</th>
-                      <th className="r">Qty</th>
-                      <th className="r">Rate</th>
-                      <th>HSN / SAC</th>
-                      <th className="r">GST %</th>
-                      <th className="r">Taxable ₹</th>
-                      <th className="r">Tax ₹</th>
-                      <th className="r">Line ₹</th>
-                      <th>Issues</th>
+                      {([
+                        ["item", "Item", ""],
+                        ...(showPrCol ? [["pr", "PR no.", ""]] : []),
+                        ["uom", "UoM", ""], ["qty", "Qty", "r"],
+                        ["rate", "Rate", "r"], ["hsn", "HSN / SAC", ""], ["gst", "GST %", "r"],
+                        ["taxable", "Taxable ₹", "r"], ["tax", "Tax ₹", "r"],
+                        ["line", "Line ₹", "r"], ["issues", "Issues", ""],
+                      ] as Array<[string, string, string]>).map(([id, label, cls]) => (
+                        <ResizableTh
+                          key={id} colId={id} className={cls || undefined}
+                          width={widthStyle(colw, id)}
+                          onResize={onColResize} onAutoFit={onColAutoFit}
+                        >{label}</ResizableTh>
+                      ))}
                     </tr></thead>}
                     footer={<tfoot>
                       <tr style={{ background: "var(--paper-2)" }}>
-                        <td colSpan={7} className="r mono" style={{ paddingTop: 8 }}>
+                        <td colSpan={7 + prCol} className="r mono" style={{ paddingTop: 8 }}>
                           <span style={{ color: "var(--ink-3)" }}>subtotal · taxable</span>
                         </td>
                         <td className="r mono"><b>{fmtINR(taxableTotal)}</b></td>
@@ -2379,7 +2753,7 @@ const WiredSOWorkspace = () => {
                       </tr>
                       {auxTotal > 0 && (
                         <tr style={{ background: "var(--paper-2)" }}>
-                          <td colSpan={9} className="r mono">
+                          <td colSpan={9 + prCol} className="r mono">
                             <span style={{ color: "var(--ink-3)" }}>auxiliary · tooling / P&amp;F / others</span>
                           </td>
                           <td className="r mono">{fmtINR(auxTotal)}</td>
@@ -2387,7 +2761,7 @@ const WiredSOWorkspace = () => {
                         </tr>
                       )}
                       <tr style={{ background: "var(--paper-2)" }}>
-                        <td colSpan={7} className="r mono" style={{ paddingBottom: 8 }}>
+                        <td colSpan={7 + prCol} className="r mono" style={{ paddingBottom: 8 }}>
                           <span style={{ color: "var(--ink-3)" }}>
                             grand total · taxable + tax{auxTotal > 0 ? " + aux" : ""}
                           </span>
@@ -2399,7 +2773,7 @@ const WiredSOWorkspace = () => {
                       </tr>
                       {grandWithTax > 0 && (
                         <tr style={{ background: "var(--paper-2)" }}>
-                          <td colSpan={11} className="mono-sm" style={{ paddingTop: 2, paddingBottom: 10, color: "var(--ink-3)" }}>
+                          <td colSpan={11 + prCol} className="mono-sm" style={{ paddingTop: 2, paddingBottom: 10, color: "var(--ink-3)" }}>
                             <span style={{ color: "var(--ink-3)" }}>amount chargeable (in words):</span>{" "}
                             <i>{amountInWords(grandWithTax, { currency: o.currency || "INR" })}</i>
                           </td>
@@ -2407,6 +2781,7 @@ const WiredSOWorkspace = () => {
                       )}
                     </tfoot>}
                   />
+                  </>
                 );
               })()
             )}
@@ -2478,7 +2853,39 @@ const WiredSOWorkspace = () => {
                     <b style={{ color: "var(--ink)" }}>{(f.code || f.rule_id || "finding").toUpperCase()}</b>
                     {f.line_index != null && <> · L{Number(f.line_index) + 1}</>}
                     {f.detail ? ` — ${f.detail}` : ""}
+                    {f.resolved === true && <> <Chip k="good">resolved</Chip></>}
                     {f.suggested_fix && <div style={{ marginTop: 4, color: "var(--ink-3)" }}>suggested fix · {f.suggested_fix}</div>}
+                    {isBlockingFinding(f) && (
+                      <div style={{ marginTop: 8 }}>
+                        {/* Gated on approve: the server requires it, and a
+                            button that always 403s is worse than none. */}
+                        {!canApprove ? (
+                          <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                            Blocks approval · needs an approver to clear
+                          </span>
+                        ) : resolvingCode === (f.code || f.rule_id) ? (
+                          <div className="row" style={{ gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                            <input
+                              className="input mono-sm" style={{ minWidth: 220, flex: 1 }}
+                              autoFocus placeholder="why is this safe to clear? (optional, kept in the audit trail)"
+                              value={resolveNote} onChange={(e) => setResolveNote(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === "Enter") resolveBlocker(f.code || f.rule_id); }}
+                            />
+                            <Btn sm kind="primary" disabled={!!busy}
+                                 onClick={() => resolveBlocker(f.code || f.rule_id)}>
+                              {busy === "resolve_finding" ? "resolving…" : "Confirm"}
+                            </Btn>
+                            <Btn sm kind="ghost" disabled={!!busy}
+                                 onClick={() => { setResolvingCode(null); setResolveNote(""); }}>Cancel</Btn>
+                          </div>
+                        ) : (
+                          <Btn sm kind="ghost" disabled={!!busy}
+                               onClick={() => { setResolvingCode(f.code || f.rule_id); setResolveNote(""); }}>
+                            Blocks approval — resolve…
+                          </Btn>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -2505,6 +2912,24 @@ const WiredSOWorkspace = () => {
               <div className="mono-sm" style={{ color: "var(--ink-3)" }}>Evidence map is empty. After OCR + extraction completes, every populated field has a citation here.</div>
             )}
           </Card>
+        )}
+
+        {tab === "threeway" && <ThreeWayPanel orderId={o.id} />}
+        {tab === "invoice_check" && (
+          <>
+            <DeliveryChallanUpload key={o.id} orderId={o.id} onRecorded={() => setInvoiceCheckKey((k: number) => k + 1)} />
+            <InvoicePoCheck key={invoiceCheckKey} orderId={o.id} />
+          </>
+        )}
+        {tab === "quotes" && (
+          <QuotePane
+            orderId={o.id}
+            attached={attachedQuotes}
+            selectedDocId={quoteDoc}
+            onSelect={setQuoteDoc}
+            onChanged={() => { setQuoteDoc(null); setQuotesBump((n) => n + 1); }}
+            canCorrect={canApprove}
+          />
         )}
 
         {tab === "approval" && (
@@ -2543,7 +2968,7 @@ const WiredSOWorkspace = () => {
                 <span className="mono-sm">{scheduleRows.length} row{scheduleRows.length === 1 ? "" : "s"}</span>
                 <span style={{ flex: 1 }} />
                 <Btn sm kind="ghost" onClick={() => setScheduleBump((n) => n + 1)} title="Refresh">{Icon.cycle} refresh</Btn>
-                <Btn sm kind="ghost" disabled={!scheduleRows.length || busy || !canAdmin} onClick={handleClearAll} title={canAdmin ? "Delete all schedule lines for this order" : "needs admin"}>
+                <Btn sm kind="ghost" disabled={!scheduleRows.length || !!busy || !canAdmin} onClick={handleClearAll} title={canAdmin ? "Delete all schedule lines for this order" : "needs admin"}>
                   {Icon.x} clear all
                 </Btn>
               </div>
@@ -2585,7 +3010,7 @@ const WiredSOWorkspace = () => {
                           <td><Chip k={stChip.k}>{stChip.label}</Chip></td>
                           <td className="mono-sm" style={{ color: "var(--ink-3)" }}>{r.remark || "—"}</td>
                           <td>
-                            <Btn sm kind="ghost" disabled={busy || !canAdmin} onClick={() => handleDeleteOne(r)} title={canAdmin ? "Delete this line" : "needs admin"}>
+                            <Btn sm kind="ghost" disabled={!!busy || !canAdmin} onClick={() => handleDeleteOne(r)} title={canAdmin ? "Delete this line" : "needs admin"}>
                               {Icon.x} delete
                             </Btn>
                           </td>
@@ -2617,7 +3042,7 @@ const WiredSOWorkspace = () => {
                   resize: "vertical",
                   boxSizing: "border-box",
                 }}
-                disabled={busy || !canWrite}
+                disabled={!!busy || !canWrite}
               />
               <div className="row" style={{ marginTop: 10, gap: 8, alignItems: "center" }}>
                 <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
@@ -2629,10 +3054,10 @@ const WiredSOWorkspace = () => {
                   })()}
                 </span>
                 <span style={{ flex: 1 }} />
-                <Btn sm kind="ghost" disabled={busy || !tsv.trim()} onClick={() => setTsv("")}>
+                <Btn sm kind="ghost" disabled={!!busy || !tsv.trim()} onClick={() => setTsv("")}>
                   {Icon.x} reset
                 </Btn>
-                <Btn sm kind="primary" disabled={busy || !tsv.trim() || !canWrite} onClick={handleBulkAdd} title={canWrite ? "" : "needs write permission"}>
+                <Btn sm kind="primary" disabled={!!busy || !tsv.trim() || !canWrite} onClick={handleBulkAdd} title={canWrite ? "" : "needs write permission"}>
                   {Icon.plus} bulk add
                 </Btn>
               </div>
@@ -2702,816 +3127,28 @@ const WiredSOWorkspace = () => {
           ? String((draftLines[pickerLineIdx]?.itemCode || draftLines[pickerLineIdx]?.partNumber || draftLines[pickerLineIdx]?.description || "")).slice(0, 60)
           : ""}
       />
+
+      {/* Ask Anvil — floating, read-only Sales Order agent.
+          Renders NOTHING unless the tenant has so_agent_enabled (migration 210);
+          the component asks /api/agent/personas itself rather than this screen
+          threading a flag down. Mounted here rather than in the Shell because
+          the suggestions are derived from THIS order's anomalies and findings,
+          which only this screen holds. Promoting it to a global surface is the
+          next slice, once a second persona exists to justify the plumbing. */}
+      <AskAnvil
+        route="so"
+        recordId={o.id}
+        context={{
+          anomalies: (pipelineState?.data?.extraction_runs?.[0] as any)?.anomalies || null,
+          findings,
+          lines: draftLines,
+          poNumber: o.po_number || null,
+        }}
+      />
     </div>
   );
 };
 
-// ============================================================
-// Pipeline Diagnostics tab. Self-contained component that lazy-
-// loads the order's pipeline-state on first open and renders the
-// adapter chain + extraction runs + processing events.
-// ============================================================
-const PipelineDiagnostics: React.FC<{
-  orderId: string;
-  state: { data: any; loading: boolean; error: any };
-  setState: (s: { data: any; loading: boolean; error: any }) => void;
-}> = ({ orderId, state, setState }) => {
-  React.useEffect(() => {
-    if (state.data || state.loading) return;
-    let cancelled = false;
-    setState({ data: null, loading: true, error: null });
-    Promise.resolve((AnvilBackend as any)?.orders?.pipelineState?.(orderId))
-      .then((data: any) => { if (!cancelled) setState({ data, loading: false, error: null }); })
-      .catch((err: any) => { if (!cancelled) setState({ data: null, loading: false, error: err }); });
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orderId]);
-
-  if (state.loading) {
-    return <Card><div className="body">Loading pipeline state…</div></Card>;
-  }
-  if (state.error) {
-    return (
-      <Banner kind="bad" icon={Icon.alert} title="Could not load pipeline state">
-        <span className="mono-sm">{String(state.error?.message || state.error || "")}</span>
-      </Banner>
-    );
-  }
-  const data = state.data;
-  if (!data) return <Card><div className="body">No pipeline data.</div></Card>;
-
-  const REASON_LABELS: Record<string, string> = {
-    ok: "OK · lines extracted",
-    low_confidence: "Low confidence · review",
-    empty_lines: "Empty lines · model returned no rows",
-    non_po: "Non-PO · classifier rejected",
-    non_ack: "Non-ack · classifier rejected the supplier-ack PDF",
-    no_adapter_configured: "No adapter configured · check tenant settings",
-    all_adapters_skipped: "All adapters skipped · keys missing",
-    image_pdf_no_text: "Image-only PDF · no text layer · needs OCR",
-    parse_failed: "Parse failed · model didn't call the tool",
-    model_refused: "Model refused · safety stop",
-    upstream_error: "Upstream error · provider 5xx",
-    no_source_bytes: "No document reached the extractor · re-upload the PO or re-run from intake",
-    no_api_key: "LLM API key not configured · ask an admin to set it",
-    no_tenant: "Tenant context missing on the run · internal error, retry",
-    adapter_threw: "Extractor crashed · see attempts for the error",
-    fail_unknown: "Unknown failure",
-  };
-  const reasonTone = (r: string): "good" | "info" | "warn" | "bad" =>
-    r === "ok" ? "good"
-    : r === "low_confidence" ? "warn"
-    : r === "empty_lines" || r === "non_po" || r === "image_pdf_no_text" ? "warn"
-    : r === "no_adapter_configured" || r === "all_adapters_skipped" ? "bad"
-    : "bad";
-
-  const latest = data.latest_run_summary;
-  const runs = data.extraction_runs || [];
-  const events = data.processing_events || [];
-  const ocrRuns = data.ocr_runs || [];
-  const adapterChain = data.adapter_chain || [];
-
-  return (
-    <div className="diag">
-      {/* Top-line summary banner */}
-      {latest ? (
-        <Banner
-          kind={reasonTone(latest.status_reason)}
-          icon={Icon.info}
-          title={"Latest extraction: " + (REASON_LABELS[latest.status_reason] || latest.status_reason || "unknown")}
-        >
-          <span className="mono-sm">
-            adapter <b>{latest.adapter_used || "none"}</b>
-            {latest.confidence_overall != null
-              ? " · confidence " + Number(latest.confidence_overall).toFixed(2)
-              : ""}
-            {latest.finished_at
-              ? " · " + new Date(latest.finished_at).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" })
-              : ""}
-          </span>
-          {/* The smoking gun for an empty-lines failure: the PO's own declared
-              line count vs what we extracted. Shown whenever they disagree. */}
-          {latest.extracted_line_count === 0 && (
-            <div className="body" style={{ marginTop: 6 }}>
-              {latest.stated_line_count
-                ? <>This PO declares <b>{latest.stated_line_count}</b> line item{latest.stated_line_count === 1 ? "" : "s"} but extraction returned <b>0</b>. </>
-                : <>Extraction returned <b>0</b> line items. </>}
-              The pipeline already auto-retries once on a stronger model when a PO
-              comes back with a header but no lines; a run still showing 0 means
-              even that retry read no table — the document likely needs OCR or a
-              manual line entry. See the escalation events below.
-            </div>
-          )}
-        </Banner>
-      ) : (
-        <Banner kind="info" icon={Icon.info} title="No extraction runs yet">
-          <span className="mono-sm">Run extraction from the action bar to populate this view.</span>
-        </Banner>
-      )}
-
-      {/* Adapter chain health */}
-      <Card title="Adapter chain" eyebrow="docai_provider_order">
-        <table className="tbl">
-          <thead><tr><th>#</th><th>Adapter</th><th>Configured</th></tr></thead>
-          <tbody>
-            {adapterChain.map((a: any, i: number) => (
-              <tr key={a.name}>
-                <td className="mono-sm">{i + 1}</td>
-                <td className="mono">{a.name}</td>
-                <td>
-                  <Chip k={a.configured_hint ? "good" : "bad"}>
-                    {a.configured_hint ? "yes" : "no"}
-                  </Chip>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Card>
-
-      {/* Source document */}
-      {data.document && (
-        <Card title="Source document">
-          <KV rows={[
-            ["Filename",    data.document.filename || "—"],
-            ["Mime",        data.document.mime_type || "—"],
-            ["Size",        data.document.size_bytes != null ? data.document.size_bytes + " bytes" : "—"],
-            ["Scan status", data.document.scan_status || "—"],
-            ["Threats",     Array.isArray(data.document.scan_threats) && data.document.scan_threats.length
-                              ? data.document.scan_threats.join(", ") : "(none)"],
-          ]} />
-        </Card>
-      )}
-
-      {/* Phase A-E pipeline layers. Surface L1 text-layer cache,
-          L2 OCR cache, and the latest run's layer/voter/template
-          flags so the operator can see at a glance whether the
-          deterministic stages ran. */}
-      {(data.text_layer || data.ocr_layer || latest) && (
-        <Card title="Pipeline layers" eyebrow="L1 · L2 · L3 · L6 · E">
-          <KV rows={[
-            ["L1 text layer", data.text_layer
-              ? (data.text_layer.text_status + " · "
-                  + (data.text_layer.char_count ?? 0) + " chars · "
-                  + (data.text_layer.page_count ?? 0) + " pages "
-                  + (data.text_layer.extractor ? "(" + data.text_layer.extractor + ")" : ""))
-              : "(no cache)"],
-            ["L2 OCR layer", data.ocr_layer
-              ? (data.ocr_layer.ocr_status + " · "
-                  + (data.ocr_layer.char_count ?? 0) + " chars · "
-                  + (data.ocr_layer.page_count ?? 0) + " pages · "
-                  + (data.ocr_layer.bbox_count ?? 0) + " bboxes "
-                  + (data.ocr_layer.provider ? "(" + data.ocr_layer.provider + ")" : ""))
-              : "(no cache)"],
-            ["Latest run used", latest ? [
-                latest.text_layer_used ? "L1 text" : null,
-                latest.ocr_layer_used ? "L2 OCR" : null,
-                latest.template_used ? "L3 template" : null,
-                latest.voter_used ? "L6 voter" : null,
-                latest.overrides_applied_count > 0
-                  ? "E overrides (" + latest.overrides_applied_count + ")"
-                  : null,
-              ].filter(Boolean).join(" · ") || "L4 LLM only"
-              : "—"],
-            ["Validator summary", latest?.validator_summary
-              ? (latest.validator_summary.error
-                  ? latest.validator_summary.error + " errors · "
-                  : "")
-                + (latest.validator_summary.warn
-                  ? latest.validator_summary.warn + " warnings · "
-                  : "")
-                + (latest.validator_summary.total
-                  ? latest.validator_summary.total + " total"
-                  : "no issues")
-              : "(no validator run yet)"],
-            ["Extraction kind", latest?.extraction_kind || "po"],
-            ["Lines declared / extracted", latest
-              ? (latest.stated_line_count ?? "—") + " declared · " + (latest.extracted_line_count ?? "—") + " extracted"
-              : "—"],
-            ["LLM model used", latest?.selected_model
-              ? latest.selected_model + (latest.model_selection_reason
-                  ? " (reason: " + latest.model_selection_reason + ")"
-                  : "")
-              : "—"],
-          ]} />
-        </Card>
-      )}
-
-      {/* Extraction runs */}
-      <Card flush>
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--hairline-2)" }}>
-          <span className="h2">Extraction runs</span>
-          <span className="mono-sm" style={{ marginLeft: 8, color: "var(--ink-3)" }}>
-            {runs.length} run{runs.length === 1 ? "" : "s"}
-          </span>
-        </div>
-        {runs.length === 0 ? (
-          <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-            No extraction_runs row found for this order's source document.
-          </div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-          <table className="tbl">
-            <thead><tr>
-              <th>Started</th>
-              <th>Kind</th>
-              <th>Status</th>
-              <th>Reason</th>
-              <th>Adapter</th>
-              <th>Model</th>
-              <th className="r">Conf</th>
-              <th className="r">Lines</th>
-              <th>Layers</th>
-              <th>Validator</th>
-              <th>Attempts</th>
-            </tr></thead>
-            <tbody>
-              {runs.map((r: any) => {
-                const layerBadges = [
-                  r.text_layer_used ? "L1" : null,
-                  r.ocr_layer_used ? "L2" : null,
-                  r.template_used ? "L3" : null,
-                  r.voter_used ? "L6" : null,
-                  Array.isArray(r.overrides_applied) && r.overrides_applied.length ? "E" : null,
-                ].filter(Boolean).join("·");
-                const vSum = r.validator_summary || {};
-                const vText = (vSum.error || vSum.warn)
-                  ? (vSum.error ? vSum.error + "e " : "") + (vSum.warn ? vSum.warn + "w" : "")
-                  : (vSum.total === 0 ? "ok" : "—");
-                return (
-                  <tr key={r.id}>
-                    <td className="mono-sm">
-                      {r.finished_at
-                        ? new Date(r.finished_at).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" })
-                        : "(running)"}
-                    </td>
-                    <td className="mono-sm">{r.extraction_kind || "po"}</td>
-                    <td><Chip k={r.status === "ok" ? "good" : r.status === "low_confidence" ? "warn" : "bad"}>{r.status}</Chip></td>
-                    <td title={r.status_reason || ""}>
-                      <Chip k={reasonTone(r.status_reason || "")}>
-                        {REASON_LABELS[r.status_reason] || r.status_reason || "—"}
-                      </Chip>
-                    </td>
-                    <td className="mono-sm">{r.adapter_used || "—"}</td>
-                    <td className="mono-sm" title={r.model_selection_reason || ""}>
-                      {r.selected_model || "—"}
-                    </td>
-                    <td className="r mono">{r.confidence_overall != null ? Number(r.confidence_overall).toFixed(2) : "—"}</td>
-                    <td className="r mono" title="declared → extracted">
-                      {(r.stated_line_count ?? "?") + " → " + (r.extracted_line_count ?? "?")}
-                    </td>
-                    <td className="mono-sm">{layerBadges || "L4"}</td>
-                    <td className="mono-sm">{vText}</td>
-                    <td className="mono-sm" title={Array.isArray(r.adapter_attempts) ? r.adapter_attempts.map((a: any) => a.adapter + ":" + a.status).join(" · ") : ""}>
-                      {Array.isArray(r.adapter_attempts)
-                        ? r.adapter_attempts.map((a: any) => a.adapter + ":" + a.status).join(" · ")
-                        : "—"}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          </div>
-        )}
-      </Card>
-
-      {/* OCR runs */}
-      {ocrRuns.length > 0 && (
-        <Card flush>
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--hairline-2)" }}>
-            <span className="h2">OCR runs</span>
-          </div>
-          <table className="tbl">
-            <thead><tr><th>Started</th><th>Provider</th><th>Status</th><th className="r">Pages</th><th className="r">Evidence</th><th>Error</th></tr></thead>
-            <tbody>
-              {ocrRuns.map((r: any) => (
-                <tr key={r.id}>
-                  <td className="mono-sm">{r.started_at ? new Date(r.started_at).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
-                  <td className="mono-sm">{r.provider}</td>
-                  <td><Chip k={r.status === "completed" ? "good" : r.status === "running" ? "info" : "bad"}>{r.status}</Chip></td>
-                  <td className="r mono">{r.page_count ?? "—"}</td>
-                  <td className="r mono">{r.evidence_count ?? "—"}</td>
-                  <td className="mono-sm" style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.error || ""}>{r.error || "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
-
-      {/* Processing events timeline */}
-      <Card flush>
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--hairline-2)" }}>
-          <span className="h2">Processing events</span>
-          <span className="mono-sm" style={{ marginLeft: 8, color: "var(--ink-3)" }}>{events.length}</span>
-        </div>
-        {events.length === 0 ? (
-          <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-            No processing_events keyed to this order's id or source document.
-          </div>
-        ) : (
-          <table className="tbl">
-            <thead><tr><th>When</th><th>Event</th><th>Object</th><th>Detail</th></tr></thead>
-            <tbody>
-              {events.map((ev: any) => (
-                <tr key={ev.id}>
-                  <td className="mono-sm">{new Date(ev.created_at).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</td>
-                  <td className="mono">{ev.event_type}</td>
-                  <td className="mono-sm">{ev.object_type}{ev.object_id ? "/" + String(ev.object_id).slice(0, 8) : ""}</td>
-                  <td className="mono-sm" style={{ maxWidth: 480, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={JSON.stringify(ev.detail)}>
-                    {JSON.stringify(ev.detail).slice(0, 200)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Card>
-
-      {/* Raw normalized + raw_extract previews for the latest run */}
-      {runs[0] && (
-        <Card title="Latest run · raw output" eyebrow="truncated for readability">
-          <details>
-            <summary className="mono-sm" style={{ cursor: "pointer" }}>normalized_extract</summary>
-            <pre className="mono-sm" style={{ whiteSpace: "pre-wrap", marginTop: 8, padding: 8, background: "var(--ink-bg-2)", borderRadius: 6, maxHeight: 320, overflow: "auto" }}>
-              {JSON.stringify(runs[0].normalized_extract, null, 2)}
-            </pre>
-          </details>
-          <details style={{ marginTop: 8 }}>
-            <summary className="mono-sm" style={{ cursor: "pointer" }}>raw_extract</summary>
-            <pre className="mono-sm" style={{ whiteSpace: "pre-wrap", marginTop: 8, padding: 8, background: "var(--ink-bg-2)", borderRadius: 6, maxHeight: 320, overflow: "auto" }}>
-              {JSON.stringify(runs[0].raw_extract, null, 2)}
-            </pre>
-          </details>
-        </Card>
-      )}
-    </div>
-  );
-};
 
 
 export default WiredSOWorkspace;
-
-// Order header-fields editor. Mounted inside the SO workspace as the
-// `Header fields` tab. Carries the six new columns added by migration
-// 106: dispatch_mode, registration_serial_no, incoterm_code,
-// delivery_terms, vendor_code, delivery_point_contact_id. Each save
-// flows through the existing /api/orders/[id] PATCH endpoint with
-// APPROVE_INPUTS already extended to accept them.
-const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = ({ order, onSaved }) => {
-  const buildDraft = (o: any) => ({
-    dispatch_mode: o.dispatch_mode || "",
-    registration_serial_no: o.registration_serial_no || "",
-    incoterm_code: o.incoterm_code || o.incoterms || "",
-    delivery_terms: o.delivery_terms || "",
-    vendor_code: o.vendor_code || "",
-    delivery_point_contact_id: o.delivery_point_contact_id || "",
-  });
-  const [draft, setDraft] = React.useState<any>(buildDraft(order));
-  // Audit fix May 2026: useState only runs its initialiser on the
-  // first mount. When the parent re-renders with a fresh order
-  // prop after save (setBump -> refetch), the draft retained the
-  // pre-save snapshot and a second save would push stale values
-  // over a concurrent edit. Re-sync the draft whenever the order
-  // identity or updated_at changes.
-  React.useEffect(() => {
-    setDraft(buildDraft(order));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [order.id, order.updated_at]);
-  const [reference, setReference] = React.useState<any>({ incoterms: [], contacts: [] });
-  const [busy, setBusy] = React.useState(false);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const cfg: any = (AnvilBackend as any)?.getConfig?.() || {};
-        const session: any = (AnvilBackend as any)?.getSession?.() || null;
-        const headers: any = { "Content-Type": "application/json" };
-        if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-        if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
-        const base = cfg.url.replace(/\/+$/, "");
-        const [refResp, contactsResp] = await Promise.all([
-          fetch(base + "/api/admin/item_reference", { headers }).then((r) => r.ok ? r.json() : { incoterms: [] }),
-          order.customer_id
-            ? fetch(base + "/api/customer_contacts?customer_id=" + order.customer_id, { headers }).then((r) => r.ok ? r.json() : { contacts: [] })
-            : Promise.resolve({ contacts: [] }),
-        ]);
-        if (cancelled) return;
-        setReference({
-          incoterms: refResp.incoterms || [],
-          contacts: contactsResp.contacts || contactsResp.rows || [],
-        });
-      } catch (_) {}
-    })();
-    return () => { cancelled = true; };
-  }, [order.customer_id]);
-
-  const save = async () => {
-    setBusy(true);
-    try {
-      // Audit fix May 2026: flip _header_field_sources for any
-      // field the operator actually changed from the persisted
-      // value, so the OCR pill drops after save instead of
-      // re-rendering on the new server data. Stamped inside
-      // result.salesOrder._header_field_sources, where so-intake
-      // initially writes it. Side-effect: PATCHing `result`
-      // invalidates approval per orders/[id].js:131 - that's the
-      // correct behaviour (header-field edits should require
-      // re-approval).
-      const headerSourcesPrev: Record<string, string> =
-        (order.result?.salesOrder?._header_field_sources) || {};
-      const headerSourcesNext = { ...headerSourcesPrev };
-      const HEADER_KEYS = [
-        "dispatch_mode", "registration_serial_no", "incoterm_code",
-        "delivery_terms", "vendor_code", "delivery_point_contact_id",
-      ];
-      let anyChanged = false;
-      for (const k of HEADER_KEYS) {
-        if ((draft[k] || "") !== (order[k] || "")) {
-          anyChanged = true;
-          if (headerSourcesNext[k] === "ocr") headerSourcesNext[k] = "human";
-        }
-      }
-      const patch: any = {
-        dispatch_mode: draft.dispatch_mode || null,
-        registration_serial_no: draft.registration_serial_no || null,
-        incoterm_code: draft.incoterm_code || null,
-        delivery_terms: draft.delivery_terms || null,
-        vendor_code: draft.vendor_code || null,
-        delivery_point_contact_id: draft.delivery_point_contact_id || null,
-      };
-      if (anyChanged && Object.keys(headerSourcesNext).length) {
-        patch.result = {
-          ...(order.result || {}),
-          salesOrder: {
-            ...(order.result?.salesOrder || {}),
-            _header_field_sources: headerSourcesNext,
-          },
-        };
-      }
-      await AnvilBackend?.orders?.update?.(order.id, patch);
-      window.notifySuccess?.("Header fields saved", order.po_number || order.id.slice(0, 8));
-      onSaved();
-    } catch (err: any) {
-      window.notifyError?.("Could not save header fields", err?.message || String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // Per-field provenance map populated by so-intake when the
-  // extractor returned the value. We render "from PO" next to a
-  // field whose label is still equal to the persisted column value;
-  // once the operator types, the pill drops and the field reads as
-  // operator-set. Stored under result.salesOrder._header_field_sources
-  // so no schema migration is required.
-  const headerSources: Record<string, string> = (order.result?.salesOrder?._header_field_sources) || {};
-  const fieldOcr = (key: string, persistedValue: any, draftValue: any) =>
-    headerSources[key] === "ocr" && (persistedValue || "") === (draftValue || "")
-      ? <Chip k="ghost">OCR</Chip>
-      : null;
-
-  const labelWithPill = (text: string, key: string, persistedValue: any, draftValue: any) => (
-    <label className="mono-sm" style={{ color: "var(--ink-3)", display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-      <span>{text}</span>
-      {fieldOcr(key, persistedValue, draftValue)}
-    </label>
-  );
-
-  return (
-    <Card title="Order header fields" eyebrow="dispatch . terms . vendor mapping . delivery contact">
-      <Banner kind="info">
-        These fields apply to the whole order: the SO PDF, the Tally
-        voucher, and the customer ack copy them verbatim. Values with
-        an <Chip k="ghost">OCR</Chip> pill were auto-detected from
-        the PO at intake. Edit any field to override; saving clears
-        the OCR pill so the next reviewer can see the override.
-      </Banner>
-      <div className="row" style={{ gap: 14, flexWrap: "wrap", marginTop: 12 }}>
-        <div style={{ flex: "1 1 220px" }}>
-          {labelWithPill("Dispatch mode", "dispatch_mode", order.dispatch_mode, draft.dispatch_mode)}
-          <select className="select" value={draft.dispatch_mode} onChange={(e) => setDraft({ ...draft, dispatch_mode: e.target.value })}>
-            <option value="">Not set</option>
-            <option value="By Ocean">By Ocean</option>
-            <option value="By Air">By Air</option>
-            <option value="By Road">By Road</option>
-            <option value="By Rail">By Rail</option>
-            <option value="By Courier">By Courier</option>
-            <option value="Self Pickup">Self Pickup</option>
-          </select>
-        </div>
-        <div style={{ flex: "1 1 220px" }}>
-          {labelWithPill("Incoterm", "incoterm_code", order.incoterm_code, draft.incoterm_code)}
-          <select className="select" value={draft.incoterm_code} onChange={(e) => setDraft({ ...draft, incoterm_code: e.target.value })}>
-            <option value="">Not set</option>
-            {(reference.incoterms || []).map((c: any) => (
-              <option key={c.code} value={c.code}>{c.code} . {c.label}</option>
-            ))}
-          </select>
-        </div>
-        <div style={{ flex: "1 1 220px" }}>
-          {labelWithPill("Registration serial no", "registration_serial_no", order.registration_serial_no, draft.registration_serial_no)}
-          <input className="input mono" value={draft.registration_serial_no} onChange={(e) => setDraft({ ...draft, registration_serial_no: e.target.value })} />
-        </div>
-        <div style={{ flex: "1 1 220px" }}>
-          {labelWithPill("Vendor code (as buyer refers to us)", "vendor_code", order.vendor_code, draft.vendor_code)}
-          <input className="input mono" value={draft.vendor_code} onChange={(e) => setDraft({ ...draft, vendor_code: e.target.value })} placeholder="e.g., TH1M" />
-        </div>
-        <div style={{ flex: "1 1 220px" }}>
-          {labelWithPill("Delivery point contact", "delivery_point_contact_id", order.delivery_point_contact_id, draft.delivery_point_contact_id)}
-          <select className="select" value={draft.delivery_point_contact_id || ""} onChange={(e) => setDraft({ ...draft, delivery_point_contact_id: e.target.value })}>
-            <option value="">Not set</option>
-            {(reference.contacts || []).map((c: any) => (
-              <option key={c.id} value={c.id}>{c.full_name || c.email || c.id?.slice(0, 8)}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-      <div style={{ marginTop: 12 }}>
-        {labelWithPill("Terms of delivery (free text)", "delivery_terms", order.delivery_terms, draft.delivery_terms)}
-        <textarea className="input" rows={3} style={{ width: "100%" }} value={draft.delivery_terms} onChange={(e) => setDraft({ ...draft, delivery_terms: e.target.value })} placeholder="e.g., Door delivery during business hours. Wooden box must remain dry." />
-      </div>
-      <div className="row" style={{ justifyContent: "flex-end", marginTop: 14 }}>
-        <Btn sm kind="primary" disabled={busy} onClick={save}>{busy ? "Saving..." : "Save header"}</Btn>
-      </div>
-
-      <div style={{ marginTop: 18, borderTop: "1px solid var(--hairline-2)", paddingTop: 14 }}>
-        <OrderLineTaxComponents orderId={order.id} lines={order.result?.salesOrder?.lineItems || []} />
-      </div>
-    </Card>
-  );
-};
-
-// Per-line tax + charge decomposition panel. Reads / writes
-// /api/admin/order_line_tax_components. The 15 component codes
-// (SGST, CGST, IGST, UTGST, Cess, Excise, Ed. Cess, S-VAT, C-VAT,
-// Tooling, P&F, Freight, Insurance, Handling, Others) are loaded
-// from the global reference table via /api/admin/item_reference.
-const OrderLineTaxComponents: React.FC<{ orderId: string; lines: any[] }> = ({ orderId, lines }) => {
-  const [components, setComponents] = React.useState<any[]>([]);
-  const [codes, setCodes] = React.useState<any[]>([]);
-  const [draft, setDraft] = React.useState<any>({ line_index: 0, component_code: "sgst", amount: 0 });
-
-  const headers = () => {
-    const cfg: any = (AnvilBackend as any)?.getConfig?.() || {};
-    const session: any = (AnvilBackend as any)?.getSession?.() || null;
-    const h: any = { "Content-Type": "application/json" };
-    if (session?.access_token) h["Authorization"] = "Bearer " + session.access_token;
-    if (cfg.tenantId) h["x-anvil-tenant"] = cfg.tenantId;
-    return { h, base: cfg.url.replace(/\/+$/, "") };
-  };
-
-  const reload = React.useCallback(async () => {
-    try {
-      const { h, base } = headers();
-      const [tc, ref] = await Promise.all([
-        fetch(base + "/api/admin/order_line_tax_components?order_id=" + orderId, { headers: h }).then((r) => r.ok ? r.json() : { components: [] }),
-        fetch(base + "/api/admin/item_reference", { headers: h }).then((r) => r.ok ? r.json() : { tax_component_codes: [] }),
-      ]);
-      setComponents(tc.components || []);
-      setCodes(ref.tax_component_codes || []);
-    } catch (_) {}
-  }, [orderId]);
-
-  React.useEffect(() => { reload(); }, [reload]);
-
-  const save = async () => {
-    if (!draft.component_code || draft.line_index == null) return;
-    const { h, base } = headers();
-    const body = JSON.stringify({ order_id: orderId, components: [draft] });
-    try {
-      const r = await fetch(base + "/api/admin/order_line_tax_components", { method: "POST", headers: h, body });
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      window.notifySuccess?.("Tax component saved", draft.component_code);
-      setDraft({ line_index: 0, component_code: "sgst", amount: 0 });
-      reload();
-    } catch (e: any) {
-      window.notifyError?.("Could not save tax component", e?.message || String(e));
-    }
-  };
-
-  const remove = async (id: string) => {
-    if (!window.confirm("Remove this tax component?")) return;
-    const { h, base } = headers();
-    try {
-      const r = await fetch(base + "/api/admin/order_line_tax_components?id=" + id, { method: "DELETE", headers: h });
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      reload();
-    } catch (e: any) {
-      window.notifyError?.("Could not delete", e?.message || String(e));
-    }
-  };
-
-  return (
-    <>
-      <div className="row" style={{ alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
-        <div>
-          <div className="mono-sm" style={{ color: "var(--ink-3)" }}>Per-line tax + charge decomposition</div>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>{components.length} component{components.length === 1 ? "" : "s"}</div>
-        </div>
-      </div>
-      <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 10 }}>
-        <div>
-          <label className="mono-sm">Line</label>
-          <select className="select" value={draft.line_index} onChange={(e) => setDraft({ ...draft, line_index: Number(e.target.value) })}>
-            {lines.length === 0 && <option value={0}>0</option>}
-            {lines.map((_, i) => <option key={i} value={i}>Line {i + 1}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="mono-sm">Component</label>
-          <select className="select" value={draft.component_code} onChange={(e) => setDraft({ ...draft, component_code: e.target.value })}>
-            {(codes.length > 0 ? codes : [{ code: "sgst", label: "SGST" }, { code: "cgst", label: "CGST" }, { code: "igst", label: "IGST" }]).map((c: any) => (
-              <option key={c.code} value={c.code}>{c.label}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="mono-sm">Amount</label>
-          <input className="input mono r" type="number" step="0.01" value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: Number(e.target.value) })} />
-        </div>
-        <div>
-          <label className="mono-sm">Rate %</label>
-          <input className="input mono r" type="number" step="0.01" value={draft.rate_pct ?? ""} onChange={(e) => setDraft({ ...draft, rate_pct: e.target.value === "" ? null : Number(e.target.value) })} />
-        </div>
-        <Btn sm kind="primary" onClick={save}>Add</Btn>
-      </div>
-      {components.length === 0 ? (
-        <div className="mono-sm" style={{ color: "var(--ink-3)" }}>No tax components on file. Add SGST / CGST / IGST / Tooling / P&F etc above.</div>
-      ) : (
-        <table className="tbl">
-          <thead><tr>
-            <th>Line</th><th>Component</th><th className="r">Rate %</th><th className="r">Amount</th><th></th>
-          </tr></thead>
-          <tbody>
-            {components.map((c) => (
-              <tr key={c.id}>
-                <td className="mono-sm">{c.line_index + 1}</td>
-                <td><span className="pri">{c.component_label || c.component_code.toUpperCase()}</span></td>
-                <td className="r mono">{c.rate_pct != null ? Number(c.rate_pct).toFixed(2) + "%" : "-"}</td>
-                <td className="r mono">{fmtINR(Number(c.amount))}</td>
-                <td className="r"><Btn sm kind="ghost" onClick={() => remove(c.id)}>remove</Btn></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </>
-  );
-};
-
-// ============================================================
-// Phase F.6 Tally tab. Renders voucher record + Tally-side state,
-// drift findings, run history, and a "Reconcile now" button that
-// fires /api/tally/reconcile?mode=drift_check scoped to this order.
-// ============================================================
-
-const TallyTab: React.FC<{
-  orderId: string;
-  order: any;
-  onRefresh: () => void;
-}> = ({ orderId, order, onRefresh }) => {
-  const [recon, setRecon] = useState<{ data: any; loading: boolean; error: any }>({ data: null, loading: true, error: null });
-  const [busy, setBusy] = useState(false);
-  const [busyMsg, setBusyMsg] = useState<string | null>(null);
-
-  const reload = React.useCallback(async () => {
-    setRecon({ data: null, loading: true, error: null });
-    try {
-      const next = await (AnvilBackend as any)?.tally?.getOrderRecon?.(orderId);
-      setRecon({ data: next, loading: false, error: null });
-    } catch (err) {
-      setRecon({ data: null, loading: false, error: err });
-    }
-  }, [orderId]);
-
-  React.useEffect(() => { reload(); }, [reload]);
-
-  const reconcileNow = async () => {
-    setBusy(true); setBusyMsg(null);
-    try {
-      const out = await (AnvilBackend as any)?.tally?.driftCheck?.({
-        scope: "order",
-        scopeValue: orderId,
-        trigger: "workspace",
-      });
-      setBusyMsg(
-        out?.vouchers_drifted
-          ? `Drift detected: ${out.vouchers_drifted} finding(s)`
-          : "Clean: no drift detected"
-      );
-      await reload();
-      onRefresh();
-    } catch (e: any) {
-      setBusyMsg("Error: " + String(e?.message || e));
-    } finally { setBusy(false); }
-  };
-
-  const resolveFinding = async (findingId: string) => {
-    try {
-      await (AnvilBackend as any)?.tally?.resolveFinding?.(findingId);
-      await reload();
-    } catch (_e) { /* no-op */ }
-  };
-
-  const vrec = recon.data?.voucher_record || null;
-  const findings: any[] = recon.data?.findings || [];
-  const unresolved = findings.filter((f) => !f.resolved_at);
-  const drift_summary = vrec?.drift_summary || {};
-  const driftKeys = Object.keys(drift_summary);
-
-  const tally_status = order.tally_status;
-  const eyebrow = order.status === "EXPORTED_TO_TALLY" ? "exported"
-    : order.status === "FAILED_TALLY_IMPORT" ? "failed"
-    : order.status === "TALLY_RECONCILED" ? "reconciled"
-    : "queued";
-
-  return (
-    <>
-      {vrec?.last_drift_at && unresolved.length > 0 && (
-        <Banner kind="bad" icon={Icon.alert} title={`Drift detected ${driftKeys.length === 0 ? "" : "(" + driftKeys.join(", ") + ")"}`}>
-          <span className="mono-sm">
-            {unresolved.length} unresolved finding{unresolved.length === 1 ? "" : "s"} since {new Date(vrec.last_drift_at).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" })}.
-          </span>
-        </Banner>
-      )}
-
-      <Card
-        title="Tally"
-        eyebrow={eyebrow}
-        right={
-          <Btn sm kind="primary" disabled={busy} onClick={reconcileNow}>
-            {busy ? "Reconciling…" : "Reconcile now"}
-          </Btn>
-        }
-      >
-        <KV rows={[
-          ["Voucher no", vrec?.voucher_no || "—"],
-          ["Voucher status", vrec?.status || tally_status || "—"],
-          ["Last reconciled", vrec?.last_reconciled_at ? new Date(vrec.last_reconciled_at).toLocaleString("en-IN") : "never"],
-          ["Last drift", vrec?.last_drift_at ? new Date(vrec.last_drift_at).toLocaleString("en-IN") : "(no drift)"],
-          ["Hash", order.payload_hash || "—"],
-          ["Pushed", order.status === "EXPORTED_TO_TALLY" || order.status === "TALLY_RECONCILED" ? "yes" : "no"],
-        ]} />
-        {busyMsg && (
-          <div className="mono-sm" style={{ marginTop: 8, color: "var(--ink-3)" }}>{busyMsg}</div>
-        )}
-      </Card>
-
-      <Card title="Reconciliation findings" eyebrow={`${findings.length} total · ${unresolved.length} unresolved`} flush>
-        {findings.length === 0 ? (
-          <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-            No reconciliation findings for this order. Run "Reconcile now" to check.
-          </div>
-        ) : (
-          <table className="tbl">
-            <thead><tr>
-              <th>When</th>
-              <th>Kind</th>
-              <th>Severity</th>
-              <th>Diff %</th>
-              <th>Expected</th>
-              <th>Actual</th>
-              <th>Auto-fix</th>
-              <th>Status</th>
-              <th></th>
-            </tr></thead>
-            <tbody>
-              {findings.map((f) => (
-                <tr key={f.id}>
-                  <td className="mono-sm">{f.created_at ? new Date(f.created_at).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
-                  <td className="mono-sm">{f.finding_kind}</td>
-                  <td>
-                    <Chip k={f.severity === "critical" || f.severity === "error" ? "bad" : f.severity === "warn" ? "warn" : "info"}>
-                      {f.severity}
-                    </Chip>
-                  </td>
-                  <td className="r mono">{f.diff_pct != null ? Number(f.diff_pct).toFixed(2) + "%" : "—"}</td>
-                  <td className="mono-sm" style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {f.expected ? JSON.stringify(f.expected) : "—"}
-                  </td>
-                  <td className="mono-sm" style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {f.actual ? JSON.stringify(f.actual) : "—"}
-                  </td>
-                  <td className="mono-sm">{f.auto_fix_applied || "—"}</td>
-                  <td>
-                    <Chip k={f.resolved_at ? "good" : "warn"}>
-                      {f.resolved_at ? "resolved" : "open"}
-                    </Chip>
-                  </td>
-                  <td>
-                    {!f.resolved_at && (
-                      <Btn sm kind="ghost" onClick={() => resolveFinding(f.id)}>Mark resolved</Btn>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Card>
-    </>
-  );
-};

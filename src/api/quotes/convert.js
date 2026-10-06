@@ -20,7 +20,7 @@
 // approval gate recognises the source.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 
@@ -106,6 +106,10 @@ export default async function handler(req, res) {
   try {
     const ctx = await resolveContext(req);
     requirePermission(ctx, "approve");
+    // MATRIX.quotes gives approve/convert to sales_manager + admin only; finance
+    // is read-only on quotes (its approve power is invoices/tally), so the coarse
+    // "approve" verb is too broad here.
+    requireAction(ctx, "quotes.approve");
     const body = await readBody(req);
     if (!body?.id) return json(res, 400, { error: { message: "id required" } });
 

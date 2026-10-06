@@ -17,7 +17,8 @@ import { decryptField } from "../secrets.js";
 import { callGemini, extractTextFromGemini, parseStructuredGemini, stopReasonFromGemini } from "../gemini.js";
 import { parseSchemaAligned } from "./parse.js";
 import { selectGeminiModel } from "./model_selector.js";
-import { coerceStatedLineCount } from "./claude.js";
+import { coerceStatedLineCount, LINE_REQUISITION_RULE, LINE_REQUISITION_DESCRIPTION } from "./claude.js";
+import { promptNameForKind } from "./prompt-versions.js";
 
 const apiKey = (settings) => {
   if (settings?.docai_gemini_api_key_enc && settings?.docai_creds_iv) {
@@ -31,7 +32,7 @@ export const isConfigured = (settings) => !!apiKey(settings);
 
 // Prompts. Reuse the same hard rules + classification taxonomy as
 // claude.js so the two adapters extract field-equivalent values.
-const PO_SYSTEM_PROMPT = [
+export const PO_SYSTEM_PROMPT = [
   "You are a purchase-order / RFQ extractor for a B2B manufacturing platform serving Indian and international customers.",
   "",
   "WHAT 'CUSTOMER' MEANS",
@@ -45,7 +46,7 @@ const PO_SYSTEM_PROMPT = [
   "NOT the supplier (the recipient of the PO).",
   "Common multi-party patterns where the LLM picks the wrong entity:",
   "  Summit Automation Pvt Ltd buys Northwind-brand spares for a Meridian customer site -> customer is Summit Automation.",
-  "  A Tier-2 supplier buys SKF bearings to assemble into a Tata line -> customer is the Tier-2 supplier.",
+  "  A Tier-2 supplier buys SKF bearings to assemble into a Comet Motors line -> customer is the Tier-2 supplier.",
   "If you find yourself returning a famous brand or end-customer name, re-read the bill-to block.",
   "",
   "STEP 1: Classify. Decide one of:",
@@ -75,17 +76,30 @@ const PO_SYSTEM_PROMPT = [
   "Strip 'M/s.' / 'M/S.' prefixes from name. Keep payment_terms verbatim.",
   "If only one address is on the document, ship_to_address = bill_to_address.",
   "",
-  "SANITY CHECK: name MUST appear inside bill_to_address. If it doesn't, you have probably",
-  "picked an end-customer or project name; re-read the bill-to block.",
+  "SANITY CHECK: when the document HAS an explicit bill-to / sold-to / buyer block, name MUST appear",
+  "inside bill_to_address; if it doesn't, you have probably picked an end-customer or project name;",
+  "re-read the bill-to block.",
+  "LETTERHEAD-ONLY BUYERS: some POs print NO bill-to block -- the only address block is the party the",
+  "PO is ADDRESSED TO ('TO: <name>', the firm asked to supply). Apply ONLY when BOTH hold: (a) there",
+  "is no bill-to/sold-to block, AND (b) that sole 'TO:' addressee is the SUPPLIER, i.e. us -- the",
+  "recipient asked to supply (matches the TENANT IDENTITY block below when present, or wording like",
+  "'we are pleased to place our order with your firm'). Then the buyer is the company on the",
+  "LETTERHEAD at the top: set name to it and bill_to_address to its address; do NOT return the 'TO:'",
+  "addressee (the seller) as the customer, and do NOT null the customer merely because there is no",
+  "'Bill To' label. If the 'TO:' party is a company OTHER than us, the doc was not issued to us --",
+  "treat the letterhead as the seller and re-read normally. NEVER overrides the distributor rule: if a",
+  "famous OEM appears only as an end-customer, site, or brand while another company issues the PO,",
+  "that issuer is the customer.",
   "",
-  "Each line: partNumber, customerItemCode, description, raw_description, specification, quantity, unitPrice, ...",
+  "Each line: partNumber, customerItemCode, description, raw_description, specification, requisition_no, quantity, unitPrice, ...",
   "partNumber = OUR part/SKU. The part is NOT always in a 'Part No' column - find it: (a) the Part-No column",
   "if populated; (b) if BLANK, the part-code token on the first line of the Description cell (e.g.",
-  "'TNA-16-04-10-2', ignoring boilerplate lines like 'Refer Table 1...'); (c) if the description has a",
-  "descriptive prefix, the embedded code, e.g. 'OBARA STD SHANK TWS-092-90-2' -> 'TWS-092-90-2'. Never null",
+  "'BRG-16-04-10-2', ignoring boilerplate lines like 'Refer Table 1...'); (c) if the description has a",
+  "descriptive prefix, the embedded code, e.g. 'ACME STD BUSHING AB-1042-7' -> 'AB-1042-7'. Never null",
   "just because a labelled Part-No column is empty. customerItemCode = the BUYER's own item/material/SAP code",
   "from a dedicated 'Item Number'/'Material'/'SAP Code' column (e.g. 'A12060OBAR010003'), distinct from OUR",
   "partNumber - capture BOTH when present. raw_description = the Description cell VERBATIM, uncut (for audit).",
+  "lines[].requisition_no = " + LINE_REQUISITION_RULE,
   "quantity, unitPrice (ALWAYS tax-exclusive ex-price - prefer the 'Ex-Price' / 'Net Pr.' / 'Basic Price'",
   "column over a tax-inclusive 'Unit Price' column), uom, hsn (4-8 digits, IN only), gst_pct (only when",
   "the PO prints a consolidated GST percentage and not per-component amounts).",
@@ -207,7 +221,38 @@ const PART_DRAWING_SYSTEM_PROMPT = [
 // subset of JSON Schema we need (enum, nullable types via type:
 // ["string", "null"]). Keep these in lockstep with the claude.js
 // tool definitions.
-const PO_SCHEMA = {
+// Flatten the nested `charges` group back to the flat per-unit keys.
+//
+// The schema nests them so an absent group costs one null instead of ten (see
+// PO_SCHEMA). Every consumer — computeLineTotals, the completeness guard's
+// lineGross, the Tally emitter — reads the FLAT keys, and the claude adapter
+// still produces them directly. Flattening here keeps the normalized shape
+// identical across adapters, so the nesting is purely a wire optimisation.
+//
+// A model that ignores the nesting and emits the flat keys anyway is handled:
+// existing flat values win, because they are what the model actually asserted.
+export const CHARGE_KEYS = [
+  "cgst_amount", "sgst_amount", "igst_amount", "utgst_amount",
+  "cess_amount", "excise_amount", "ed_cess_amount",
+  "tooling_amount", "p_and_f_amount", "others_amount",
+];
+
+export const flattenCharges = (line) => {
+  if (!line || typeof line !== "object") return line;
+  const c = line.charges;
+  if (c == null && !("charges" in line)) return line;
+  const out = { ...line };
+  delete out.charges;
+  if (c && typeof c === "object") {
+    for (const k of CHARGE_KEYS) {
+      // Never overwrite a value the model put at the top level.
+      if (out[k] == null && c[k] != null) out[k] = c[k];
+    }
+  }
+  return out;
+};
+
+export const PO_SCHEMA = {
   type: "object",
   properties: {
     classification: { type: "string", enum: ["po", "rfq", "non_po"] },
@@ -238,28 +283,51 @@ const PO_SCHEMA = {
       items: {
         type: "object",
         properties: {
-          partNumber: { type: ["string", "null"], description: "OUR part number. Parse from the description when the Part-No column is blank; strip descriptive prefixes ('OBARA STD SHANK TWS-092-90-2' -> 'TWS-092-90-2'). Never null just because a labelled column is empty." },
+          partNumber: { type: ["string", "null"], description: "OUR part number. Parse from the description when the Part-No column is blank; strip descriptive prefixes ('ACME STD BUSHING AB-1042-7' -> 'AB-1042-7'). Never null just because a labelled column is empty." },
           customerItemCode: { type: ["string", "null"], description: "The BUYER's own item/material/SAP code from a dedicated column (e.g. 'A12060OBAR010003'); distinct from partNumber (ours). Null if no such column." },
           description: { type: ["string", "null"] },
           raw_description: { type: ["string", "null"], description: "The Description cell VERBATIM, uncut - audit source for the part parse." },
           specification: { type: ["string", "null"], description: "Per-tenant spec / drawing code if printed separately." },
+          requisition_no: { type: ["string", "null"], description: LINE_REQUISITION_DESCRIPTION },
           quantity: { type: ["number", "null"] },
           unitPrice: { type: ["number", "null"], description: "TAX-EXCLUSIVE per-unit price." },
           uom: { type: ["string", "null"] },
           hsn: { type: ["string", "null"] },
           gst_pct: { type: ["number", "null"], description: "Consolidated GST percentage; only when per-component amounts are absent." },
-          // Per-unit tax components. Kept in lockstep with claude.js.
-          cgst_amount: { type: ["number", "null"] },
-          sgst_amount: { type: ["number", "null"] },
-          igst_amount: { type: ["number", "null"] },
-          utgst_amount: { type: ["number", "null"] },
-          cess_amount: { type: ["number", "null"] },
-          excise_amount: { type: ["number", "null"] },
-          ed_cess_amount: { type: ["number", "null"] },
-          // Per-unit auxiliary charges (tooling, P&F, miscellaneous).
-          tooling_amount: { type: ["number", "null"] },
-          p_and_f_amount: { type: ["number", "null"] },
-          others_amount: { type: ["number", "null"] },
+          // Per-unit tax + auxiliary charges, NESTED so the whole group can be
+          // one null.
+          //
+          // These were ten flat properties, and structured output fills every
+          // property in the schema whether or not the document has the field.
+          // On a PO that prints a single "Taxes" column, eleven of the twenty-one
+          // per-line fields came back null — 218 of 467 characters, 47% of every
+          // line, ~2,725 tokens across a 45-line PO spent transmitting nulls.
+          //
+          // That mattered because the answer alone needed 5,400-6,800 tokens
+          // against a max_tokens of 8,000, leaving a REASONING model (a 13-page
+          // PO selects gemini-3.1-pro) barely 2,000 tokens to think in. It ran
+          // out mid-array and the run failed on MAX_TOKENS.
+          //
+          // Nested, an absent group is `"charges":null` — 16 characters instead
+          // of ~180. The adapter flattens this back to the flat keys before
+          // anything downstream sees it, so computeLineTotals, lineGross and the
+          // claude adapter's shape are all unchanged.
+          charges: {
+            type: ["object", "null"],
+            description: "Per-UNIT tax and auxiliary amounts. Omit entirely (null) unless the document prints them per component; use gst_pct for a single consolidated rate.",
+            properties: {
+              cgst_amount: { type: ["number", "null"] },
+              sgst_amount: { type: ["number", "null"] },
+              igst_amount: { type: ["number", "null"] },
+              utgst_amount: { type: ["number", "null"] },
+              cess_amount: { type: ["number", "null"] },
+              excise_amount: { type: ["number", "null"] },
+              ed_cess_amount: { type: ["number", "null"] },
+              tooling_amount: { type: ["number", "null"] },
+              p_and_f_amount: { type: ["number", "null"] },
+              others_amount: { type: ["number", "null"] },
+            },
+          },
         },
       },
     },
@@ -552,6 +620,25 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   } else if (isPartDrawing) {
     systemPrompt = PART_DRAWING_SYSTEM_PROMPT;
     schema = PART_DRAWING_SCHEMA;
+  } else if (expectedKind !== "po" && expectedKind !== "rfq" && expectedKind !== "generic") {
+    // THE GUARD THIS FILE CLAIMED TO HAVE.
+    //
+    // The comment above says "lockstep with claude.js". It was not: claude.js
+    // grew this refusal in #485, after invoice and eway_bill documents were
+    // read as purchase orders and reported 95%-confident nonsense. gemini.js
+    // kept falling through to PO_SCHEMA for every kind without a branch —
+    // quote, invoice, eway_bill, packing_list — and gemini is FIRST in
+    // DEFAULT_PROVIDER_ORDER, so the unguarded adapter is the one that runs.
+    //
+    // Second time the same drift has surfaced: the multi-row prompt block
+    // (#106) also landed on claude.js alone. A refusal is the right answer
+    // rather than a silent default — the dispatcher moves to the next adapter,
+    // which may well have the schema this one lacks.
+    return {
+      ok: false,
+      reason: "unsupported_kind",
+      error: `No extraction schema for kind "${expectedKind}" on the gemini adapter. Add a branch here rather than letting it fall through to the purchase-order schema.`,
+    };
   }
 
   const built = buildBodyBlock({ hints, bytes, mime, url });
@@ -580,6 +667,24 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
   const userContent = [block, { type: "text", text: "Return the structured JSON object now." }];
   const systemBlocks = [{ type: "text", text: systemPrompt }];
 
+  // The A/B prompt variant, appended — the same contract claude.js honours.
+  // Gemini is FIRST in DEFAULT_PROVIDER_ORDER, so an experiment that only
+  // reached claude would only ever reach the last-resort adapter and could not
+  // move the number it was run to move.
+  const variant = hints?.promptVariant;
+  if (variant && Array.isArray(variant.system_append) && variant.system_append.length
+      && variant.name && variant.name === promptNameForKind(expectedKind)) {
+    systemBlocks.push({
+      type: "text",
+      text: [
+        `PROMPT VARIANT ${variant.name}@${variant.version} — the instructions below`,
+        "refine the rules above. Where they are more specific, follow them.",
+        "",
+        ...variant.system_append,
+      ].join("\n"),
+    });
+  }
+
   // Audit fix May 2026: surface tenant identity (same shape as
   // claude.js) so Gemini does not promote the seller's printed
   // contact details into the customer record.
@@ -601,6 +706,13 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
         "to null when the only contact details on the document belong to",
         "the seller. Buyer blocks on Indian POs frequently omit email and",
         "phone; null is the correct value in that case.",
+        "",
+        "CRITICAL: this is a PO / RFQ addressed to you (the seller above).",
+        "The tenant legal_name / gstin above is therefore the ADDRESSEE / 'TO:'",
+        "party, NOT the customer. If the customer.name or customer.gstin you",
+        "are about to return matches the tenant identity above, you have",
+        "picked the seller by mistake -- the customer is the BUYER who issued",
+        "the PO (the letterhead company at the top). Re-read and correct.",
       ].join("\n"),
     });
   }
@@ -630,12 +742,45 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     system: systemBlocks,
     model: selection.model,
     temperature: 0,
-    max_tokens: 2000,
+    // 2000 truncated a real 4-line PO down to ONE line: each line carries
+    // ~20 tax/aux fields (cgst/sgst/igst/utgst/cess/excise/ed_cess/tooling/
+    // p_and_f/others...), so a dense multi-line PO blows a 2K budget long
+    // before the array closes. The truncated JSON was then REPAIRED into
+    // valid JSON downstream, so nothing noticed.
+    // 8000 was ~12% of what the model can emit — gemini-3.1-pro supports 64K
+    // output and the API DEFAULT is 8,192, which is where that number came
+    // from. Measured against a real 45-line PO the answer alone needs
+    // 5,400-6,800 tokens, leaving a reasoning model under 2,600 to think in;
+    // it ran out mid-array and the run failed on MAX_TOKENS.
+    //
+    // The earlier estimate in this file said "~4,800 tokens of JSON". That was
+    // low: 21 schema fields at 467 chars per line is 5,400-6,800.
+    //
+    // Raising the ceiling alone would NOT have fixed it — reaching 8,000 took
+    // 26-30s of a 45s RUN_BUDGET_MS, so a bigger budget just converts the
+    // truncation into a timeout. It is the nested `charges` group (PO_SCHEMA)
+    // that makes the answer smaller and therefore faster; this removes the
+    // artificial ceiling so a genuinely large PO is not capped on top of that.
+    //
+    // Costs nothing unless generated — output tokens bill per token produced.
+    max_tokens: Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 24000),
+    // Structured line-item extraction is mechanical — responseSchema carries
+    // the structure, so deep reasoning buys little and costs line items.
+    // Gemini 3 thinks at MEDIUM by default and those tokens come out of
+    // max_tokens. Pinning low
+    // hands the budget back to the answer (and cuts latency, which matters
+    // against RUN_BUDGET_MS). Env-overridable per deployment; set
+    // GEMINI_THINKING_LEVEL="" to fall back to the model default.
+    thinking_level: process.env.GEMINI_THINKING_LEVEL ?? "low",
     response_schema: schema,
     // Bet 1: Gemini 3 media_resolution knob. Per-tenant override
     // via tenant_settings.docai_gemini_media_resolution (default
     // "high"). Lower values reduce token cost on simple POs.
     media_resolution: settings?.docai_gemini_media_resolution || "high",
+    // Run deadline from the pipeline. Gemini runs FIRST in the default order,
+    // so an unbounded call here is what strands the whole run: the platform
+    // kills the function mid-flight and run.js never writes a terminal status.
+    deadlineAt: hints?.deadlineAt || 0,
   });
 
   if (!result.ok) {
@@ -676,6 +821,29 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       parse_retries: sap.retries,
     };
   }
+  // A truncated response is REPAIRED into valid JSON by parseSchemaAligned
+  // above, so a MAX_TOKENS stop is otherwise completely invisible: the run
+  // "succeeds" with however many lines fit the budget, and every downstream
+  // completeness check reads a model-authored field (stated_line_count) that
+  // was itself cut off — detector and evidence die together. stopReasonFromGemini
+  // was only ever consulted on the PARSE-FAILURE path below, never here.
+  // Observed: a 4-line PO truncated to 1, reported 95% confidence, 0 anomalies
+  // and "clean", against a document worth 6.7x the extracted total.
+  const stopReason = stopReasonFromGemini(result.data);
+  if (stopReason === "MAX_TOKENS") {
+    return {
+      ok: false,
+      status: result.status,
+      mode,
+      reason: "output_truncated",
+      error: "Gemini stopped at max_tokens; the response was truncated and would silently drop line items",
+      raw: result.data,
+      selected_model: selection.model,
+      model_selection_reason: selection.reason,
+      parse_method: sap.parse_method,
+    };
+  }
+
   const out = sap.value;
   const parseMethod = sap.parse_method;
   const parseRepairs = sap.repairs;
@@ -806,7 +974,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     };
   }
 
-  const lines = Array.isArray(out.lines) ? out.lines : [];
+  const lines = (Array.isArray(out.lines) ? out.lines : []).map(flattenCharges);
   const overall = Number(out.confidence);
   const conf = Number.isFinite(overall) ? Math.max(0, Math.min(1, overall)) : 0.7;
   const confidences = { overall: conf };

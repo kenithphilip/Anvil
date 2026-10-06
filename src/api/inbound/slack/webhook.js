@@ -74,7 +74,16 @@ export default async function handler(req, res) {
     const creds = decryptChatCreds(matched);
     const signature = req.headers["x-slack-signature"] || "";
     const timestamp = req.headers["x-slack-request-timestamp"] || "";
-    if (creds.signing_secret && !verifySlackSignature(creds.signing_secret, timestamp, raw, signature)) {
+    // Fail CLOSED. An active config without a signing secret must NOT accept
+    // unsigned requests — otherwise anyone who knows the public team_id can
+    // forge an event_callback and inject messages (which the drain then drafts
+    // into a real order). Mirrors the email webhook's fail-closed posture; the
+    // old `if (secret && !verify)` form skipped verification when the secret
+    // was absent (audit SO-processing #16).
+    if (!creds.signing_secret) {
+      return json(res, 403, { error: { message: "Slack signing secret not configured; unsigned requests are rejected" } });
+    }
+    if (!verifySlackSignature(creds.signing_secret, timestamp, raw, signature)) {
       return json(res, 403, { error: { message: "Invalid Slack signature" } });
     }
 

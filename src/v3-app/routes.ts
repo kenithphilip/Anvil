@@ -53,6 +53,7 @@ const screens = {
   soWorkspace:        lazyReload(() => import("./screens/so-workspace")),
   soIntake:           lazyReload(() => import("./screens/so-intake")),
   soHistory:          lazyReload(() => import("./screens/so-history")),
+  pendingSos:         lazyReload(() => import("./screens/pending-sos")),
   internal:           lazyReload(() => import("./screens/internal-sos")),
   approvals:          lazyReload(() => import("./screens/approvals")),
   // Sales
@@ -67,6 +68,7 @@ const screens = {
   // Inventory-planning module (Phase 3).
   inventoryPlanning:    lazyReload(() => import("./screens/inventory-planning")),
   inventoryPlans:       lazyReload(() => import("./screens/inventory-plans")),
+  demandStory:          lazyReload(() => import("./screens/demand-story")),
   inventoryExceptions:  lazyReload(() => import("./screens/inventory-exceptions")),
   inventoryItem:        lazyReload(() => import("./screens/inventory-item")),
   inventoryAllocations: lazyReload(() => import("./screens/inventory-allocations")),
@@ -155,6 +157,7 @@ export const RESOLVERS = {
   so:          ({ params }) => {
     const view = params.get("view");
     if (view === "history") return screens.soHistory;
+    if (view === "pending") return screens.pendingSos;
     if (params.get("id")) return screens.soWorkspace;
     if (params.get("new")) return screens.soIntake;
     return screens.soList;
@@ -171,6 +174,7 @@ export const RESOLVERS = {
   // Inventory-planning module (Phase 3).
   "inventory-planning":   () => screens.inventoryPlanning,
   "inventory-plans":      () => screens.inventoryPlans,
+  "demand-story":         () => screens.demandStory,
   "inventory-exceptions": () => screens.inventoryExceptions,
   "inventory-item":       () => screens.inventoryItem,
   "inventory-allocations":() => screens.inventoryAllocations,

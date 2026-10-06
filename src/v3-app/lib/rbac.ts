@@ -7,7 +7,8 @@
 // The matrix is the canonical source. See docs/RBAC.md for the human-
 // readable version. Tests live in rbac.test.js.
 
-export type Role =
+// The 7 base roles the MATRIX below is keyed by.
+export type BaseRole =
   | "sales_engineer"
   | "sales_manager"
   | "procurement"
@@ -16,10 +17,17 @@ export type Role =
   | "operator"
   | "viewer";
 
-export const ROLES: Role[] = ["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer"];
+// Extra roles inherit a base role's matrix cells (ROLE_INHERIT) plus per-resource
+// overrides (ROLE_OVERRIDES), so the ~55-row MATRIX stays keyed by the 7 base
+// roles only — no per-row churn when a role is added. Design roles inherit a
+// sales role (with write on gun/spare data); customer_support inherits the
+// read-only viewer. Server-side writer membership lives in api/_lib/auth.js.
+export type Role = BaseRole | "design_engineer" | "design_manager" | "customer_support";
+
+export const ROLES: Role[] = ["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "viewer", "design_engineer", "design_manager", "customer_support"];
 
 export type MatrixCell = string; // permission verbs r/w/a/x or empty
-export type MatrixRow = Record<Role, MatrixCell>;
+export type MatrixRow = Record<BaseRole, MatrixCell>;
 
 // r=read, w=write, a=approve, x=admin-only.
 // '' (empty) means hidden / blocked.
@@ -38,7 +46,7 @@ export const MATRIX: Record<string, MatrixRow> = {
   shipments:   { sales_engineer: "rw",  sales_manager: "rw", procurement: "rw", finance: "r",   admin: "r",  operator: "r",  viewer: "r" },
   spo:         { sales_engineer: "r",   sales_manager: "r",  procurement: "rwa",finance: "r",   admin: "r",  operator: "",   viewer: "r" },
   "supplier-rfq": { sales_engineer: "r", sales_manager: "rw", procurement: "rwa", finance: "r", admin: "rwa", operator: "", viewer: "r" },
-  spares:      { sales_engineer: "rw",  sales_manager: "r",  procurement: "rw", finance: "r",   admin: "r",  operator: "",   viewer: "r" },
+  spares:      { sales_engineer: "rw",  sales_manager: "rw", procurement: "rw", finance: "r",   admin: "r",  operator: "",   viewer: "r" },
   "svc-visits":{ sales_engineer: "r",   sales_manager: "r",  procurement: "",   finance: "",    admin: "r",  operator: "rw", viewer: "r" },
   amc:         { sales_engineer: "r",   sales_manager: "r",  procurement: "",   finance: "",    admin: "rw", operator: "rw", viewer: "r" },
   car:         { sales_engineer: "r",   sales_manager: "r",  procurement: "",   finance: "",    admin: "rw", operator: "rw", viewer: "r" },
@@ -107,6 +115,11 @@ export const ACTIONS: Record<string, Role[]> = {
   "so.edit_after_approval":["admin"],
   "customer.edit_gstin":  ["sales_manager", "admin"],
   "customer.edit_profile":["sales_engineer", "sales_manager", "admin"],
+  // Naming a customer's account owner. Mirrors auth.js SERVER_ACTIONS.
+  "customer.assign_owner":["sales_manager", "admin"],
+  // Share a spare matrix to the customer portal (generates a scoped portal link).
+  "spare_matrix.share":   ["sales_engineer", "sales_manager", "design_engineer", "design_manager", "customer_support", "admin"],
+  "drawing.download":     ["design_engineer", "design_manager", "sales_engineer", "sales_manager", "admin"],
   "item.mark_obsolete":   ["procurement", "admin"],
   "spo.record_ack":       ["procurement", "admin"],
   "spo.mark_received":    ["procurement", "admin"],
@@ -116,6 +129,11 @@ export const ACTIONS: Record<string, Role[]> = {
   "einvoice.cancel":      ["finance", "admin"],
   "amc.generate_visits":  ["operator", "admin"],
   "service.submit_closure":["operator", "admin"],
+  // Assigning a visit to a person is dispatch, not data entry.
+  "service.assign":       ["operator", "admin"],
+  // Log a rep touch on a quote / opportunity (TouchLog). The server's coarse
+  // "write" roles; viewer and customer_support are read-only there.
+  "touch.log":            ["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "design_engineer", "design_manager"],
   "admin.add_member":     ["admin"],
   "admin.change_role":    ["admin"],
   "security.edit_redaction":["admin"],
@@ -140,10 +158,30 @@ export const setRole = (role: Role): void => {
   }
 };
 
+// Which base role each non-base role inherits its matrix cells from.
+const ROLE_INHERIT: Record<"design_engineer" | "design_manager" | "customer_support", BaseRole> = {
+  design_engineer: "sales_engineer",
+  design_manager: "sales_manager",
+  customer_support: "viewer",           // read-only across the app; sharing is a canDo() action, not a cell
+};
+// Per-resource overrides where an inheriting role's access differs from its base.
+// Design owns the gun/spare/drawing data (full write). customer_support needs no
+// override — read-only viewer access is exactly right for viewing spare matrices.
+const ROLE_OVERRIDES: Record<string, Partial<Record<Role, MatrixCell>>> = {
+  spares:         { design_engineer: "rw", design_manager: "rw" },
+  items:          { design_engineer: "rw", design_manager: "rw" },
+  "items-import": { design_engineer: "rw", design_manager: "rw" },
+};
+
 const cell = (navId: string): string => {
   const row = MATRIX[navId];
   if (!row) return "";
-  return row[getRole()] || "";
+  const role = getRole();
+  const override = ROLE_OVERRIDES[navId]?.[role];
+  if (override !== undefined) return override;
+  // Inheriting roles map to their base; base roles map to themselves.
+  const base: BaseRole = (ROLE_INHERIT as Record<string, BaseRole>)[role] || (role as BaseRole);
+  return row[base] || "";
 };
 
 export const canRead = (navId: string): boolean => /[rwax]/.test(cell(navId));

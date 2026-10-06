@@ -1,9 +1,10 @@
 // Vite config. After Phase 8 Sub-PR 10, the Vite build IS the only
 // frontend the deployed app serves. The legacy concatenated unified
 // app is gone; `public/index.html` is now the Vite entry HTML and
-// `public/assets/*` are the per-route hashed JS + CSS chunks Rollup
-// emits. Vercel serves `/` and `/assets/*` directly with no shim,
-// no redirect, no second build.
+// `public/assets/*` are the per-route hashed JS + CSS chunks the
+// bundler emits (Rolldown since Vite 8, Rollup before that). Vercel
+// serves `/` and `/assets/*` directly with no shim, no redirect, no
+// second build.
 //
 // `emptyOutDir: false` because outDir lives outside the project root
 // (we point it at the repo's `public/`) and we share that folder with
@@ -36,7 +37,16 @@ export default defineConfig({
     emptyOutDir: false,
     sourcemap: true,
     target: "es2020",
-    rollupOptions: {
+    // Vite 8 bundles with Rolldown, so the Rollup-era `rollupOptions`
+    // key is now `rolldownOptions`. The input and output file-name
+    // options below are unchanged by the rename.
+    rolldownOptions: {
+      // Two entries: the staff app (index.html) and the SEPARATE customer
+      // portal (portal.html) — the customer never loads staff code.
+      input: {
+        main: path.resolve(__dirname, "src/v3-app/index.html"),
+        portal: path.resolve(__dirname, "src/v3-app/portal.html"),
+      },
       output: {
         chunkFileNames: "assets/[name]-[hash].js",
         entryFileNames: "assets/[name]-[hash].js",

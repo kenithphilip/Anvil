@@ -15,6 +15,7 @@ import { dispatchExtract } from "../api/_lib/docai/index.js";
 import {
   chunkedExtract,
   mergeChunkResults,
+  normalizedResult,
   CHUNK_PAGE_THRESHOLD,
   __test,
 } from "../api/_lib/docai/chunked-extract.js";
@@ -293,5 +294,38 @@ describe("mergeChunkResults", () => {
     );
     expect(m.ok).toBe(true);
     expect(m.reason).toBeUndefined();
+  });
+});
+
+// normalizedResult is the shared accessor BOTH readers of a mergeChunkResults
+// output must use: run.js (sync) and cron/extraction_jobs.js (background job).
+// The background cron previously read a flat `merged.lines` / `merged.customer`
+// after the merge started returning the nested `.normalized` shape, so every
+// chunked background PO persisted ZERO line items + null customer while the job
+// was marked 'completed'. These lock the read contract so that drift fails CI.
+describe("normalizedResult (shared cron/sync read accessor)", () => {
+  it("reads lines/customer out of a MULTI-chunk merge (the exact background-cron read)", () => {
+    const merged = mergeChunkResults(
+      [ok({ lines: [{ partNumber: "A" }, { partNumber: "B" }], customer: { name: "ACME" } }), ok({ lines: [{ partNumber: "C" }] })],
+      [{ pageCount: 1, pageStart: 1, pageEnd: 1 }, { pageCount: 1, pageStart: 2, pageEnd: 2 }],
+    );
+    // A flat read — what the cron used to do — is undefined and would zero-line.
+    expect(merged.lines).toBeUndefined();
+    // The shared accessor recovers the real, concatenated lines + customer.
+    const norm = normalizedResult(merged);
+    expect(norm.lines.map((l) => l.partNumber)).toEqual(["A", "B", "C"]);
+    expect(norm.customer).toEqual({ name: "ACME" });
+  });
+
+  it("reads lines out of a SINGLE-chunk merge", () => {
+    const merged = mergeChunkResults([ok({ lines: [{ partNumber: "X-1" }] })], [{ pageStart: 1, pageEnd: 3, pageCount: 3 }]);
+    expect(normalizedResult(merged).lines.map((l) => l.partNumber)).toEqual(["X-1"]);
+  });
+
+  it("reads a raw dispatchExtract result and tolerates a flat stub without throwing", () => {
+    expect(normalizedResult(ok({ lines: [{ partNumber: "Z" }] })).lines.map((l) => l.partNumber)).toEqual(["Z"]);
+    // The failed-chunk stub the cron builds is flat ({ lines: [], customer: null }).
+    expect(normalizedResult({ ok: false, lines: [], customer: null }).lines).toEqual([]);
+    expect(normalizedResult(null)).toEqual({});
   });
 });

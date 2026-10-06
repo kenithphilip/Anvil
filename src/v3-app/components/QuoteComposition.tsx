@@ -35,6 +35,27 @@ type MatRow = {
   dimensions: string;     // free text, stored as { note }
   consumption_per_unit: string;
   uom: string;
+  // The price side. unit_cost is auto-filled server-side from
+  // material_price_references when the operator leaves it blank.
+  unit_cost: string;
+  currency: string;
+  // 'auto' = the value came back from the server's market-reference fill, not
+  // from a keystroke. Sending an auto value back would PIN it, so a later
+  // market move would never reach the quote (migration 144 exists to stop
+  // exactly that).
+  unit_cost_source?: "auto" | "typed";
+  // consumption_per_unit x unit_cost, computed by the API (never stored: both
+  // factors move). { amount, currency, ok, reason }.
+  material_cost?: any;
+};
+
+// Why a material cost could not be computed, in words an operator can act on.
+const MAT_COST_REASON: Record<string, string> = {
+  no_consumption: "No consumption per unit yet — enter how much material one finished unit uses.",
+  no_unit_cost: "No rate — type one, or add a market price for this material under Admin.",
+  negative_consumption: "Consumption cannot be negative.",
+  negative_unit_cost: "Rate cannot be negative.",
+  uom_mismatch: "The market rate is quoted in a different unit to this line — set the UOM to match.",
 };
 
 // In-code fallback used when the tenant has no configured profiles yet
@@ -43,13 +64,43 @@ const FALLBACK_PROFILES: PricingProfile[] = [PROFILE_GRANULAR, PROFILE_COMPACT];
 // Used when the admin currency list (Admin > Settings) is empty.
 const DEFAULT_CURRENCIES = ["INR", "USD", "EUR", "CNY", "KRW", "JPY", "GBP"];
 
+// LEGACY FALLBACK. Currency is a property of who you are buying FROM, not of
+// where the part was made — `suppliers.default_currency` is the real source, and
+// this map is consulted only when no supplier is chosen yet or the picked one
+// has no default on file.
+//
+// The Korea line below is the proof: Korea's currency is KRW. "USD" encodes the
+// fact that OUR Korean supplier invoices in USD, which is a supplier
+// relationship wearing a country's name. Any tenant whose Korean supplier bills
+// in KRW, or who buys Japanese-origin parts through an Indian distributor, gets
+// the wrong currency and silently the wrong FX conversion.
 const currencyForCountry = (sc?: string): string => {
   const s = (sc || "").toUpperCase();
-  if (s.includes("KOR")) return "USD"; // Korean supply is priced in USD
+  if (s.includes("KOR")) return "USD"; // our Korean supplier invoices in USD
   if (s.includes("JPN") || s.includes("JAPAN")) return "JPY";
   if (s.includes("CHN") || s.includes("CHINA")) return "CNY";
   if (s.includes("IND")) return "INR";
   return "INR";
+};
+
+/**
+ * The currency a line should be priced in.
+ *
+ * Order matters and is the whole point of this change: the SUPPLIER's own
+ * default wins, because currency is a property of who you buy from. The
+ * origin-country map is a fallback for a supplier with no default on file, or a
+ * name that exists only as an RFQ vendor and therefore has no master row.
+ *
+ * Exported for tests — the alternative is asserting on a JSX onChange.
+ */
+export const resolveSupplierCurrency = (
+  name: string | undefined,
+  metaByName: Record<string, { currency?: string; country?: string }>,
+  sourceCountry?: string,
+): string => {
+  const fromSupplier = name ? metaByName?.[name]?.currency : undefined;
+  if (fromSupplier && String(fromSupplier).trim()) return String(fromSupplier).trim().toUpperCase();
+  return currencyForCountry(sourceCountry);
 };
 
 const pct = (n: number) => (n * 100).toFixed(1) + "%";
@@ -77,6 +128,8 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
   // keyed by line_index. Saving syncs into bill_of_materials so the
   // demand planner's BOM explosion is fed from this RFQ work.
   const [materials, setMaterials] = useState<Record<number, MatRow[]>>({});
+  // Per-composition-line derived material-cost rollup, straight from the API.
+  const [matCost, setMatCost] = useState<Record<number, any>>({});
   const [matSaving, setMatSaving] = useState(false);
 
   useEffect(() => {
@@ -112,6 +165,10 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
   // name -> suppliers-master id, so a picked supplier name resolves to the FK
   // (migration 161). RFQ vendor names have no supplier-master id and stay null.
   const [supplierIdByName, setSupplierIdByName] = useState<Record<string, string>>({});
+  // name -> the supplier's own default currency + country. `suppliers` has
+  // carried both since it was created and neither was ever read here, so the
+  // operator retyped the currency on every line and the country map guessed.
+  const [supplierMetaByName, setSupplierMetaByName] = useState<Record<string, { currency?: string; country?: string }>>({});
   useEffect(() => {
     let cancel = false;
     (async () => {
@@ -127,12 +184,24 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
         if (cancel) return;
         const names = new Set<string>();
         const idByName: Record<string, string> = {};
+        const metaByName: Record<string, { currency?: string; country?: string }> = {};
         (Array.isArray(sup) ? sup : (sup?.suppliers || sup?.rows || [])).forEach((s: any) => {
-          if (s?.supplier_name) { names.add(s.supplier_name); if (s.id) idByName[s.supplier_name] = s.id; }
+          if (!s?.supplier_name) return;
+          names.add(s.supplier_name);
+          if (s.id) idByName[s.supplier_name] = s.id;
+          if (s.default_currency || s.country) {
+            metaByName[s.supplier_name] = {
+              currency: s.default_currency || undefined,
+              country: s.country || undefined,
+            };
+          }
         });
+        // RFQ vendors have no country/currency of their own, so a name that only
+        // exists there still falls back to the country map.
         (Array.isArray(ven) ? ven : (ven?.vendors || [])).forEach((v: any) => v?.vendor_name && names.add(v.vendor_name));
         setSupplierOptions(Array.from(names).sort());
         setSupplierIdByName(idByName);
+        setSupplierMetaByName(metaByName);
       } catch { /* suppliers optional */ }
     })();
     return () => { cancel = true; };
@@ -211,19 +280,38 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
             dimensions: (r.dimensions && r.dimensions.note) || "",
             consumption_per_unit: r.consumption_per_unit != null ? String(r.consumption_per_unit) : "",
             uom: r.uom || "kg",
+            unit_cost: r.unit_cost != null ? String(r.unit_cost) : "",
+            currency: r.currency || "",
+            unit_cost_source: "auto",
+            material_cost: r.material_cost_per_unit || null,
           });
         }
         if (Object.keys(byLine).length) setMaterials(byLine);
+        const rolls: Record<number, any> = {};
+        for (const r of (resp?.material_cost || [])) rolls[r.composition_line_index] = r;
+        setMatCost(rolls);
       } catch { /* no saved recipe yet */ }
     })();
     return () => { cancelled = true; };
   }, [quoteId]);
 
   const matRows = (li: number) => materials[li] || [];
+  const matRollUp = (li: number) => matCost[li] || null;
   const addMat = (li: number) =>
-    setMaterials((m) => ({ ...m, [li]: [...(m[li] || []), { raw_material_part_no: "", material: "", form: "", dimensions: "", consumption_per_unit: "", uom: "kg" }] }));
-  const updMat = (li: number, i: number, patch: Partial<MatRow>) =>
-    setMaterials((m) => { const arr = [...(m[li] || [])]; arr[i] = { ...arr[i], ...patch }; return { ...m, [li]: arr }; });
+    setMaterials((m) => ({ ...m, [li]: [...(m[li] || []), { raw_material_part_no: "", material: "", form: "", dimensions: "", consumption_per_unit: "", uom: "kg", unit_cost: "", currency: "" }] }));
+  // Editing any factor invalidates the server-computed cost: leaving the old
+  // number beside new inputs shows three values that do not multiply out.
+  // A rate the operator TYPES stops being an auto value and is sent on save.
+  const STALE_KEYS = ["consumption_per_unit", "unit_cost", "uom", "currency"];
+  const updMat = (li: number, i: number, patchIn: Partial<MatRow>) =>
+    setMaterials((m) => {
+      const arr = [...(m[li] || [])];
+      const patch: Partial<MatRow> = { ...patchIn };
+      if (STALE_KEYS.some((k) => k in patch)) patch.material_cost = null;
+      if ("unit_cost" in patch) patch.unit_cost_source = "typed";
+      arr[i] = { ...arr[i], ...patch };
+      return { ...m, [li]: arr };
+    });
   const rmMat = (li: number, i: number) =>
     setMaterials((m) => { const arr = [...(m[li] || [])]; arr.splice(i, 1); return { ...m, [li]: arr }; });
 
@@ -245,8 +333,37 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
           dimensions: r.dimensions ? { note: r.dimensions } : {},
           consumption_per_unit: r.consumption_per_unit !== "" ? Number(r.consumption_per_unit) : null,
           uom: r.uom || "kg",
+          // Send the rate only when the operator typed one: the server fills a
+          // blank from the market reference, and sending null would overwrite
+          // that auto-fill with nothing on every save.
+          // Auto-filled values are deliberately NOT sent: omitting unit_cost is
+          // what lets the server re-resolve the market reference, so the cost
+          // moves with the market rather than with whoever last saved.
+          ...(r.unit_cost !== "" && r.unit_cost_source === "typed" ? { unit_cost: Number(r.unit_cost) } : {}),
+          ...(r.currency ? { currency: r.currency } : {}),
         })),
       });
+      // Take the server's computed cost back so the row shows it without a
+      // refetch (it is derived, so only the server should produce it).
+      // Match by the seq we SENT, not by array position: `arr` filters out
+      // rows with a blank part no, so a half-typed row shifts every index and
+      // the computed cost would land on the wrong material.
+      const savedLines = Array.isArray(resp?.lines) ? resp.lines : [];
+      if (savedLines.length) {
+        const bySeq = new Map<number, any>(savedLines.map((sv: any) => [Number(sv.seq), sv]));
+        const seqOf = new Map<MatRow, number>();
+        arr.forEach((r, seq) => seqOf.set(r, seq));
+        setMaterials((m) => ({
+          ...m,
+          [li]: (m[li] || []).map((row) => {
+            const seq = seqOf.get(row);
+            const sv = seq == null ? null : bySeq.get(seq);
+            return sv ? { ...row, unit_cost: sv.unit_cost != null ? String(sv.unit_cost) : row.unit_cost,
+              currency: sv.currency || row.currency, unit_cost_source: "auto" as const,
+              material_cost: sv.material_cost_per_unit || null } : row;
+          }),
+        }));
+      }
       const synced = resp?.bom_synced ?? 0;
       window.notifySuccess?.(
         "Materials saved",
@@ -353,6 +470,29 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
   }, [rows, profile]);
 
   const sel = selected != null ? rows.find((r) => r.ln.line_index === selected) : null;
+  // Position within the visible list, so the detail panel can step to the next
+  // line without sending the operator back up to the table to find it.
+  const selIdx = sel ? rows.findIndex((r) => r.ln.line_index === sel.ln.line_index) : -1;
+  const goTo = (i: number) => {
+    const r = rows[i];
+    if (r) setSelected(r.ln.line_index);
+  };
+  // The two detail Cards render AFTER the table, so on a quote with fifty lines
+  // clicking a row put the breakdown a full screen below the fold — the
+  // operator scrolled to the bottom, read it, scrolled back up, and repeated.
+  // Bring it to them instead.
+  const detailRef = React.useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (selected == null) return;
+    const el = detailRef.current;
+    // `?.` guards a null ref, not a missing method — jsdom (and older browsers)
+    // do not implement scrollIntoView at all, and calling it threw straight
+    // through React's commit phase and took the whole component down. Same
+    // check PdfPagePreview already uses.
+    if (el && typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ block: "start", behavior: "smooth" });
+    }
+  }, [selected]);
 
   return (
     <>
@@ -398,6 +538,9 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
       </div>
 
       <Card flush>
+        {/* Own scroll box so the header row and the totals foot stay pinned while
+            a long line list scrolls between them — see .qc-scroll in styles.css. */}
+        <div className="qc-scroll">
         <table className="tbl" style={{ fontSize: 12 }}>
           <thead><tr>
             <th>#</th><th>Part</th><th className="r">Qty</th>
@@ -421,7 +564,18 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
                     aria-label={"supplier name line " + ((ln.line_index ?? 0) + 1)}
                     placeholder="who quoted this?"
                     value={sup.name || ""} onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => setSup(ln, { name: e.target.value, id: supplierIdByName[e.target.value] || "" })} /></td>
+                    onChange={(e) => {
+                      const name = e.target.value;
+                      // Take the supplier's own default currency. This set only
+                      // name and id, leaving `cur` at whatever the country map
+                      // guessed, so every line had to be corrected by hand — and
+                      // an uncorrected one converted at the wrong FX rate.
+                      setSup(ln, {
+                        name,
+                        id: supplierIdByName[name] || "",
+                        cur: resolveSupplierCurrency(name, supplierMetaByName, ln.source_country),
+                      });
+                    }} /></td>
                   <td className="r"><input className="input mono r" style={{ width: 90 }} type="number" step="0.01"
                     aria-label={"supplier price line " + ((ln.line_index ?? 0) + 1)}
                     value={sup.price || ""} onClick={(e) => e.stopPropagation()}
@@ -450,6 +604,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
             </tr>
           </tfoot>
         </table>
+        </div>
       </Card>
 
       {totals.belowFloor > 0 && (
@@ -459,12 +614,27 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
       )}
 
       {sel && (
-      <>
+      <div ref={detailRef}>
         <Card title={`Waterfall - line ${(sel.ln.line_index ?? 0) + 1} ${sel.ln.part_no || ""}`}
           eyebrow="Adjust overhead rates/amounts for this line" style={{ marginTop: 10 }}
-          right={Object.keys(overridesByLine[sel.ln.line_index] ?? {}).length
-            ? <Btn sm kind="ghost" onClick={() => resetOverrides(sel.ln.line_index)}>Reset adjustments</Btn>
-            : undefined}>
+          right={
+            <div className="row" style={{ gap: 6, alignItems: "center" }}>
+              {/* Step through lines from here. Without this the only way to the
+                  next line's breakdown was to scroll back up, find the row, and
+                  scroll down again — once per line, on a fifty-line quote. */}
+              <Btn sm kind="ghost" disabled={selIdx <= 0} onClick={() => goTo(selIdx - 1)}
+                   aria-label="Previous line">{"‹"}</Btn>
+              <span className="mono-sm" style={{ color: "var(--ink-3)", minWidth: 78, textAlign: "center" }}>
+                line {selIdx + 1} of {rows.length}
+              </span>
+              <Btn sm kind="ghost" disabled={selIdx < 0 || selIdx >= rows.length - 1} onClick={() => goTo(selIdx + 1)}
+                   aria-label="Next line">{"›"}</Btn>
+              {Object.keys(overridesByLine[sel.ln.line_index] ?? {}).length
+                ? <Btn sm kind="ghost" onClick={() => resetOverrides(sel.ln.line_index)}>Reset adjustments</Btn>
+                : null}
+              <Btn sm kind="ghost" onClick={() => setSelected(null)} aria-label="Close breakdown">Close</Btn>
+            </div>
+          }>
           <table className="tbl" style={{ fontSize: 12 }}>
             <thead><tr><th>Step</th><th>Kind</th><th className="r">Rate / amount</th><th className="r">+ / -</th><th className="r">Subtotal</th></tr></thead>
             <tbody>
@@ -523,11 +693,12 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
           <table className="tbl" style={{ fontSize: 12 }}>
             <thead><tr>
               <th>Raw material part</th><th>Grade</th><th>Form</th>
-              <th>Dimensions</th><th className="r">Consumption / unit</th><th>UOM</th><th></th>
+              <th>Dimensions</th><th className="r">Consumption / unit</th><th>UOM</th>
+              <th className="r">Rate / unit</th><th className="r">Material cost / unit</th><th></th>
             </tr></thead>
             <tbody>
               {matRows(sel.ln.line_index).length === 0 ? (
-                <tr><td colSpan={7} className="muted" style={{ padding: 14, textAlign: "center" }}>
+                <tr><td colSpan={9} className="muted" style={{ padding: 14, textAlign: "center" }}>
                   No materials yet. Add the raw material(s) this part consumes.
                 </td></tr>
               ) : matRows(sel.ln.line_index).map((m, i) => (
@@ -550,11 +721,57 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
                   <td><input className="input mono" style={{ width: 52 }}
                     aria-label={"uom " + (i + 1)}
                     value={m.uom} onChange={(e) => updMat(sel.ln.line_index, i, { uom: e.target.value })} /></td>
+                  <td className="r"><input className="input mono r" style={{ width: 90 }} type="number" step="0.0001"
+                    aria-label={"unit cost " + (i + 1)} placeholder="auto"
+                    title={"Rate per " + (m.uom || "kg") + ". Leave blank to take the market reference (Admin > material prices)."}
+                    value={m.unit_cost} onChange={(e) => updMat(sel.ln.line_index, i, { unit_cost: e.target.value })} /></td>
+                  {/* THE MULTIPLY: consumption x rate. Server-computed, and
+                      deliberately blank rather than 0 when either half is
+                      missing -- an unpriced material is unpriced, not free. */}
+                  <td className="r mono">{
+                    m.material_cost?.ok
+                      ? ((m.material_cost.currency || m.currency || "")
+                          + " "
+                          // A cost that rounds to 0.00 is indistinguishable from
+                          // free; say "< 0.01" instead of lying about it.
+                          + (Number(m.material_cost.amount) > 0 && Number(m.material_cost.amount) < 0.01
+                              ? "< 0.01" : Number(m.material_cost.amount).toFixed(2))).trim()
+                      : <span className="muted" title={MAT_COST_REASON[m.material_cost?.reason as string] || "Save the recipe to compute the material cost."}>—</span>
+                  }</td>
                   <td><Btn sm kind="ghost" onClick={() => rmMat(sel.ln.line_index, i)} title="Remove">×</Btn></td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {/* The rolled-up derived cost: what the RAW MATERIAL for one finished
+              unit costs, beside the supplier price typed above. Deliberately
+              refuses to show a single number across currencies, and says so
+              when only some of the recipe is priced. */}
+          {(() => {
+            const roll = matRollUp(sel.ln.line_index);
+            if (!roll || roll.priced_lines === 0) return null;
+            return (
+              <div className="row" style={{ gap: 10, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <span className="mono-sm" style={{ opacity: 0.75 }}>Material cost / unit (derived):</span>
+                <strong className="mono">{
+                  roll.mixed_currency
+                    ? roll.by_currency.map((b: any) => b.currency + " " + Number(b.amount).toFixed(2)).join("  +  ")
+                    : (roll.currency || "") + " " + Number(roll.amount).toFixed(2)
+                }</strong>
+                {roll.mixed_currency && (
+                  <span className="mono-sm" style={{ color: "var(--amber)" }}>
+                    mixed currencies — not totalled
+                  </span>
+                )}
+                {!roll.complete && (
+                  <span className="mono-sm" style={{ color: "var(--amber)" }}>
+                    {roll.unpriced_lines} of {roll.priced_lines + roll.unpriced_lines} material
+                    {roll.priced_lines + roll.unpriced_lines === 1 ? "" : "s"} unpriced — this understates the part
+                  </span>
+                )}
+              </div>
+            );
+          })()}
           <div className="row" style={{ gap: 8, marginTop: 8, alignItems: "center" }}>
             <Btn sm kind="ghost" onClick={() => addMat(sel.ln.line_index)}>+ Add material</Btn>
             <Btn sm kind="primary" disabled={!quoteId || matSaving} onClick={() => saveMaterials(sel.ln)}
@@ -568,7 +785,7 @@ export const QuoteComposition: React.FC<{ lines: Line[]; currency?: string; quot
             )}
           </div>
         </Card>
-      </>
+      </div>
       )}
     </>
   );

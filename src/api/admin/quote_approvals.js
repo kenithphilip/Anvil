@@ -3,6 +3,7 @@
 //   POST upsert threshold or record approval decision
 //   DELETE ?id=  remove threshold
 
+import { orderMargin } from "../_lib/order-margin.js";
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
@@ -75,16 +76,22 @@ export default async function handler(req, res) {
         // Flatten the embed into the top-level shape the UI already
         // expects (a.po_number, a.customer_name, ...) so no client
         // change is needed beyond adding the Line-items column.
-        // value_inr / margin_pct are derived from the order's result
-        // JSONB; margin is read defensively because the field name
-        // drifts between marginPct (camel) and margin_pct (snake)
-        // across older orders.
+        // value_inr / margin_pct are derived from the order's result JSONB.
+        //
+        // margin USED to read `so.marginPct ?? so.margin_pct`, with a comment
+        // explaining that the field name "drifts between camel and snake
+        // across older orders". It does not drift — nothing writes either
+        // spelling, so this column was blank on every row ever rendered.
+        // The real source is result.priceComposition, which
+        // _lib/approval-evaluator.js already walks correctly when it decides
+        // whether the order needs approval at all. Both now share
+        // _lib/order-margin.js.
         const approvals = (data || []).map((row) => {
           const ord = row.order || null;
           const so = ord?.result?.salesOrder || null;
           const lines = Array.isArray(so?.lineItems) ? so.lineItems : [];
           const grand = so ? Number(so.grandTotal) : NaN;
-          const margin = so ? Number(so.marginPct ?? so.margin_pct) : NaN;
+          const m = ord ? orderMargin(ord) : null;
           const { order: _omit, ...rest } = row;
           return {
             ...rest,
@@ -96,7 +103,13 @@ export default async function handler(req, res) {
             state_code: ord?.customer?.state_code || null,
             line_count: lines.length,
             value_inr: Number.isFinite(grand) ? grand : null,
-            margin_pct: Number.isFinite(margin) ? margin : null,
+            margin_pct: m ? m.marginPct : null,
+            // The approver has to be able to tell "thin margin" from "we never
+            // costed this". Null margin_pct alone cannot say which, and the
+            // queue coloured a missing value the same as a healthy one.
+            margin_state: m ? (m.partial ? "partial" : "computed") : "not_costed",
+            margin_lines_matched: m ? m.linesMatched : null,
+            margin_lines_total: m ? m.linesTotal : (Array.isArray(lines) ? lines.length : null),
           };
         });
         return json(res, 200, { approvals });

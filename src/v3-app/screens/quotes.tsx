@@ -77,7 +77,7 @@ const toRows = (data: any): Quote[] => {
 };
 
 // Drawer tab order for keyboard switching; must match QuoteDetailDrawer.
-const QUOTE_TAB_ORDER = ["header", "lines", "comp", "rfq", "terms", "history"];
+const QUOTE_TAB_ORDER = ["header", "lines", "comp", "rfq", "terms", "followup", "history"];
 
 // Deep-link: ?id=<quote>&tab=<tab> in the #/quotes hash, so the open quote +
 // active tab survive reload and are shareable. replaceState keeps it out of

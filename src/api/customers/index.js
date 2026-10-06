@@ -4,6 +4,10 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { safeAwait } from "../_lib/safe-thenable.js";
 import { validateGstin } from "../_lib/gstin.js";
+import { userDisplayNames } from "../_lib/assignee.js";
+import { isMissingOwnerColumn } from "../_lib/customer-owner.js";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Best-effort parser that pulls structured fields out of a multi-line
 // address blob. The intake dialog gives us free-text; the
@@ -98,15 +102,59 @@ export default async function handler(req, res) {
     const svc = serviceClient();
     if (req.method === "GET") {
       requirePermission(ctx, "read");
-      const { data: customers, error } = await svc.from("customers").select("*").eq("tenant_id", ctx.tenantId).order("updated_at", { ascending: false }).limit(500);
+      // Account owner filter (migration 227): owner=me | <member uuid> | none.
+      // Absent means everyone's, as before. The Customers screen sends all
+      // three (Mine, Unassigned, and a manager's per-member options).
+      const ownerParam = req.query && req.query.owner ? String(req.query.owner) : "";
+      let ownerFilter = null;   // { kind: "none" } | { kind: "user", id }
+      if (ownerParam) {
+        if (ownerParam === "none") ownerFilter = { kind: "none" };
+        else if (ownerParam === "me") {
+          if (!ctx.user || !ctx.user.id) return json(res, 400, { error: { message: "owner=me needs a signed-in user" } });
+          ownerFilter = { kind: "user", id: ctx.user.id };
+        } else if (UUID_RE.test(ownerParam)) ownerFilter = { kind: "user", id: ownerParam };
+        else return json(res, 400, { error: { message: "owner must be me, none or a member id" } });
+      }
+      const listQuery = (withOwnerFilter) => {
+        let q = svc.from("customers").select("*").eq("tenant_id", ctx.tenantId);
+        if (withOwnerFilter && ownerFilter) {
+          q = ownerFilter.kind === "none" ? q.is("owner_user_id", null) : q.eq("owner_user_id", ownerFilter.id);
+        }
+        return q.order("updated_at", { ascending: false }).limit(500);
+      };
+      let { data: customers, error } = await listQuery(true);
+      let ownerUnavailable = false;
+      if (error && ownerFilter && isMissingOwnerColumn(error)) {
+        // Migration 227 not applied: the owner is a nullable ATTRIBUTE, so it
+        // degrades instead of failing the list. With no column, nobody owns
+        // anything. That is a fact, not a guess: "none" is every customer and
+        // a named owner has none.
+        ownerUnavailable = true;
+        if (ownerFilter.kind === "none") ({ data: customers, error } = await listQuery(false));
+        else { customers = []; error = null; }
+      }
       if (error) throw new Error(error.message);
+      customers = customers || [];
+      for (const c of customers) c.owner_user_id = c.owner_user_id || null;
+      // The owner's display name, only when asked (?include=owner_name, sent
+      // by the Customers screen). Names live in auth, one getUserById per
+      // distinct owner, and about twenty other screens load this list only
+      // to fill a customer picker: they should not wait on auth round trips
+      // for a name they never render.
+      const include = new Set(String((req.query && req.query.include) || "").split(",").map((v) => v.trim()).filter(Boolean));
+      if (include.has("owner_name")) {
+        const ownerNames = await userDisplayNames(svc, customers.map((c) => c.owner_user_id));
+        for (const c of customers) c.owner_name = c.owner_user_id ? (ownerNames.get(c.owner_user_id) || null) : null;
+      }
       const ids = customers.map((c) => c.id);
       const profiles = ids.length
         ? await svc.from("customer_format_profiles").select("*").eq("tenant_id", ctx.tenantId).in("customer_id", ids).eq("is_current", true)
         : { data: [] };
       const profileByCustomer = {};
       (profiles.data || []).forEach((p) => { profileByCustomer[p.customer_id] = p; });
-      return json(res, 200, { customers, profiles: profileByCustomer });
+      return json(res, 200, ownerUnavailable
+        ? { customers, profiles: profileByCustomer, warning: "owner_unavailable" }
+        : { customers, profiles: profileByCustomer });
     }
     if (req.method === "POST") {
       requirePermission(ctx, "write");

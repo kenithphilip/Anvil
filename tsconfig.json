@@ -21,11 +21,10 @@
     "checkJs": false,
     "forceConsistentCasingInFileNames": true,
     "types": ["node", "vitest/globals"],
-    "baseUrl": ".",
     "paths": {
-      "@v3/*": ["src/v3-app/*"],
-      "@v3-lib/*": ["src/v3-app/lib/*"],
-      "@v3-screens/*": ["src/v3-app/screens/*"]
+      "@v3/*": ["./src/v3-app/*"],
+      "@v3-lib/*": ["./src/v3-app/lib/*"],
+      "@v3-screens/*": ["./src/v3-app/screens/*"]
     }
   },
   "include": [

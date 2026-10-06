@@ -6,6 +6,7 @@ import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 import { CustomerContactsPanel } from "../components/CustomerContactsPanel";
 import { CustomerHierarchyPanel } from "../components/CustomerHierarchyPanel";
+import { AccountOwnerPanel, approvedMembers, memberLabel } from "../components/AccountOwnerPanel";
 import { CustomerExtractionLearning } from "../components/CustomerExtractionLearning";
 
 // Create-customer modal. Customers usually auto-register from orders/email/
@@ -170,11 +171,91 @@ const CUSTOMER_TYPE_CHIP = (t) => {
   return map[t] || { k: "ghost", label: (t || "—").toLowerCase() };
 };
 
+// Account owner filter (migration 227). "all" reads the whole list; the others
+// ask the server (GET /api/customers?owner=me|none|<member id>), so a tenant
+// with more customers than one page still sees every account in the view.
+// "user:<id>" is one member's accounts, offered to managers (who have the
+// member list).
+type OwnerFilter = "all" | "mine" | "none" | `user:${string}`;
+const ownerFilterParam = (f: OwnerFilter): string =>
+  f === "mine" ? "me" : f === "none" ? "none" : f.slice("user:".length);
+// The list asks for owner names (one auth lookup per distinct owner) only
+// here, where the Owner column renders them.
+const LIST_INCLUDE = "owner_name";
+
 const WiredCustomers = () => {
   const list = useFetch(
-    () => AnvilBackend?.customers?.list?.() || Promise.resolve({ customers: [] }),
+    () => AnvilBackend?.customers?.list?.({ include: LIST_INCLUDE }) || Promise.resolve({ customers: [] }),
     []
   );
+  // The table's own fetch when an owner filter is on. The full list above
+  // still drives the detail card, the hierarchy picker and the KPIs, so
+  // filtering the table never hides a customer opened by link.
+  const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>("all");
+  const ownerList = useFetch(
+    () => (ownerFilter === "all"
+      ? Promise.resolve(null)
+      : (AnvilBackend?.customers?.list?.({ owner: ownerFilterParam(ownerFilter), include: LIST_INCLUDE }) || Promise.resolve({ customers: [] }))),
+    [ownerFilter]
+  );
+  // Assigning owners is a manager's call (customer.assign_owner); only they
+  // need the member list, the row checkboxes and the bulk action.
+  const canAssignOwner = RBAC.canDo("customer.assign_owner");
+  const membersResp = useFetch(
+    () => (canAssignOwner
+      ? (AnvilBackend?.admin?.listMembers?.() || Promise.resolve({ members: [] }))
+      : Promise.resolve({ members: [] })),
+    [canAssignOwner]
+  );
+  const memberOptions = approvedMembers(membersResp.data);
+  const membersError = canAssignOwner && membersResp.error
+    ? String((membersResp.error as any)?.message || membersResp.error)
+    : null;
+  // In the Unassigned view a manager sees, per account, who the history says
+  // owns it (GET /api/customers/owner?suggest=1, every unowned account at
+  // once). Shown, never saved: assigning is still a tick and a click.
+  const suggestionsResp = useFetch(
+    () => (canAssignOwner && ownerFilter === "none"
+      ? (AnvilBackend?.customers?.ownerSuggestions?.() || Promise.resolve(null))
+      : Promise.resolve(null)),
+    [canAssignOwner, ownerFilter]
+  );
+  const suggestionByCustomer = new Map<string, any>(
+    (((suggestionsResp.data as any)?.suggestions) || [])
+      .filter((x: any) => x && x.owner_user_id)
+      .map((x: any) => [x.customer_id, x]),
+  );
+  const [checked, setChecked] = useState<Set<string>>(() => new Set());
+  const [bulkOwner, setBulkOwner] = useState("");
+  const [bulkMove, setBulkMove] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const reloadAll = () => { list.reload(); ownerList.reload(); suggestionsResp.reload(); };
+  const changeOwnerFilter = (f: OwnerFilter) => { setOwnerFilter(f); setChecked(new Set()); };
+  const toggleChecked = (id: string) => setChecked((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const bulkAssign = async () => {
+    const ids = Array.from(checked);
+    if (!ids.length) return;
+    if (!bulkOwner && !window.confirm(`Clear the account owner of ${ids.length} customer${ids.length === 1 ? "" : "s"}?`)) return;
+    setBulkBusy(true);
+    try {
+      const r: any = await AnvilBackend?.customers?.assignOwner?.({
+        customer_ids: ids,
+        owner_user_id: bulkOwner || null,
+        move_open_opportunities: !!bulkOwner && bulkMove,
+      });
+      const who = bulkOwner ? memberLabel(memberOptions.find((m) => m.user_id === bulkOwner)) : "nobody";
+      window.notifySuccess?.("Account owner saved", `${ids.length} customer${ids.length === 1 ? "" : "s"} now owned by ${who}`);
+      for (const w of r?.warnings || []) window.notifyWarn?.("Opportunities not moved", w.message || "");
+      setChecked(new Set());
+      reloadAll();
+    } catch (e: any) {
+      window.notifyError?.("Could not assign the owner", e?.message || String(e));
+    } finally { setBulkBusy(false); }
+  };
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(customerIdFromHash());
   // Audit P9.3: per-customer refresh-health spinner.
@@ -277,7 +358,9 @@ const WiredCustomers = () => {
   const profilesById = (list.data && list.data.profiles) || {};
   const selectedProfile = selectedCustomer ? profilesById[selectedCustomer.id] || null : null;
 
-  const filtered = rows.filter((r) => {
+  const tableRows = ownerFilter === "all" ? rows : customerRows(ownerList.data);
+  const ownerUnavailable = ownerFilter !== "all" && (ownerList.data as any)?.warning === "owner_unavailable";
+  const filtered = tableRows.filter((r) => {
     if (!query) return true;
     const q = query.toLowerCase();
     return (
@@ -286,6 +369,11 @@ const WiredCustomers = () => {
       (r.gstin || "").toLowerCase().includes(q)
     );
   });
+  // Ticked rows the search (or the 200-row cap) now hides. They stay ticked,
+  // so a manager can gather accounts across several searches, but the bulk
+  // bar says how many will be assigned that are not on screen.
+  const shownIds = new Set(filtered.slice(0, 200).map((r) => r.id));
+  const hiddenChecked = Array.from(checked).filter((id) => !shownIds.has(id)).length;
 
   return (
     <>
@@ -302,7 +390,19 @@ const WiredCustomers = () => {
             style={{ width: 240, height: 28 }}
             aria-label="Search customers"
           />
-          <Btn icon kind="ghost" sm onClick={list.reload} title="Refresh">{Icon.cycle}</Btn>
+          <select
+            className="select"
+            aria-label="Owner filter"
+            value={ownerFilter}
+            onChange={(ev) => changeOwnerFilter(ev.target.value as OwnerFilter)}
+            style={{ height: 28 }}
+          >
+            <option value="all">All customers</option>
+            <option value="mine">Mine</option>
+            <option value="none">Unassigned</option>
+            {memberOptions.map((m) => <option key={m.user_id} value={`user:${m.user_id}`}>Owned by {memberLabel(m)}</option>)}
+          </select>
+          <Btn icon kind="ghost" sm onClick={reloadAll} title="Refresh">{Icon.cycle}</Btn>
           {(canApply || canSubmit) && <Btn sm kind="primary" onClick={() => setShowNew(true)}>{Icon.plus} New customer</Btn>}
         </>}
       />
@@ -473,6 +573,15 @@ const WiredCustomers = () => {
             </div>
             <div className="divider" />
             <div style={{ marginTop: 10 }}>
+              <AccountOwnerPanel
+                customer={selectedCustomer}
+                members={memberOptions}
+                membersError={membersError}
+                onChanged={reloadAll}
+              />
+            </div>
+            <div className="divider" />
+            <div style={{ marginTop: 10 }}>
               <CustomerHierarchyPanel
                 customer={selectedCustomer}
                 allCustomers={rows}
@@ -488,9 +597,63 @@ const WiredCustomers = () => {
         )}
 
         <Card flush>
-          {filtered.length === 0 ? (
+          {ownerUnavailable && (
+            <div style={{ padding: 12 }}>
+              <Banner kind="warn" icon={Icon.alert} title="Account owners are not set up on this database">
+                <span className="mono-sm">Apply migration 227_customer_owner.sql. Until then nobody owns a customer, so Mine is empty and Unassigned is everyone.</span>
+              </Banner>
+            </div>
+          )}
+          {canAssignOwner && checked.size > 0 && (
+            <div className="row" role="region" aria-label="Bulk assign owner" style={{ gap: 10, alignItems: "center", padding: "10px 12px", borderBottom: "1px solid var(--hairline-2)", flexWrap: "wrap" }}>
+              <span className="mono-sm">{checked.size} selected</span>
+              {hiddenChecked > 0 && (
+                <span className="mono-sm" data-testid="bulk-hidden" style={{ color: "var(--ink-3)" }}>
+                  {hiddenChecked} of them not shown by the current search, and assigned too
+                </span>
+              )}
+              <select
+                className="select"
+                aria-label="Bulk owner"
+                disabled={bulkBusy}
+                value={bulkOwner}
+                onChange={(ev) => setBulkOwner(ev.target.value)}
+                style={{ minWidth: 200 }}
+              >
+                <option value="">Unassigned</option>
+                {memberOptions.map((m) => <option key={m.user_id} value={m.user_id}>{memberLabel(m)}</option>)}
+              </select>
+              {!!bulkOwner && (
+                <label className="mono-sm" style={{ display: "inline-flex", gap: 6, alignItems: "center", color: "var(--ink-3)" }}>
+                  <input type="checkbox" checked={bulkMove} onChange={(ev) => setBulkMove(ev.target.checked)} aria-label="Bulk move open opportunities" />
+                  move open opportunities
+                </label>
+              )}
+              <Btn sm kind="primary" disabled={bulkBusy} onClick={bulkAssign}>{bulkBusy ? "Saving..." : "Assign owner"}</Btn>
+              <Btn sm kind="ghost" onClick={() => setChecked(new Set())}>Clear selection</Btn>
+              {membersError && (
+                <span className="mono-sm" role="alert" style={{ color: "var(--bad)" }}>
+                  Could not load the team list: {membersError}
+                </span>
+              )}
+            </div>
+          )}
+          {ownerFilter !== "all" && ownerList.loading ? (
+            <div className="body" style={{ padding: 28, textAlign: "center", color: "var(--ink-3)" }}>Loading customers…</div>
+          ) : ownerFilter !== "all" && ownerList.error ? (
+            <div style={{ padding: 12 }}>
+              <Banner kind="bad" icon={Icon.alert} title="Could not load these customers" action={<Btn sm onClick={ownerList.reload}>Retry</Btn>}>
+                <span className="mono-sm">{String((ownerList.error as any)?.message || ownerList.error)}</span>
+              </Banner>
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="body" style={{ padding: 28, textAlign: "center", color: "var(--ink-3)", display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}>
-              {query ? (
+              {ownerFilter !== "all" && !query ? (
+                <>
+                  <div>{ownerFilter === "mine" ? "No customers are assigned to you." : ownerFilter === "none" ? "Every customer has an owner." : "No customers are assigned to this member."}</div>
+                  <Btn sm onClick={() => changeOwnerFilter("all")}>Show all customers</Btn>
+                </>
+              ) : query ? (
                 <>
                   <div>No customers match <span className="mono">{query}</span>.</div>
                   <Btn sm onClick={() => setQuery("")}>{Icon.x} clear search</Btn>
@@ -512,7 +675,18 @@ const WiredCustomers = () => {
           ) : (
             <table className="tbl">
               <thead><tr>
+                {canAssignOwner && (
+                  <th style={{ width: 28 }}>
+                    <input
+                      type="checkbox"
+                      aria-label="Select all shown customers"
+                      checked={filtered.slice(0, 200).length > 0 && filtered.slice(0, 200).every((r) => checked.has(r.id))}
+                      onChange={(ev) => setChecked(ev.target.checked ? new Set(filtered.slice(0, 200).map((r) => r.id).filter(Boolean)) : new Set())}
+                    />
+                  </th>
+                )}
                 <th>Customer</th>
+                <th>Owner</th>
                 <th>Health</th>
                 <th>Key</th>
                 <th>GSTIN</th>
@@ -538,7 +712,28 @@ const WiredCustomers = () => {
                       }}
                       style={{ cursor: "pointer" }}
                     >
+                      {canAssignOwner && (
+                        <td onClick={(ev) => ev.stopPropagation()} onKeyDown={(ev) => ev.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${r.customer_name || r.customer_key || "customer"}`}
+                            checked={checked.has(r.id)}
+                            disabled={!r.id}
+                            onChange={() => toggleChecked(r.id)}
+                          />
+                        </td>
+                      )}
                       <td><span className="pri">{r.customer_name || "—"}</span></td>
+                      <td className="mono-sm">
+                        {r.owner_user_id
+                          ? (r.owner_name || r.owner_user_id.slice(0, 8))
+                          : <span style={{ color: "var(--ink-3)" }}>Unassigned</span>}
+                        {!r.owner_user_id && suggestionByCustomer.has(r.id) && (
+                          <div style={{ color: "var(--ink-4)", fontSize: 10 }} data-testid="owner-suggestion">
+                            suggested: {suggestionByCustomer.get(r.id).owner_name || suggestionByCustomer.get(r.id).owner_user_id.slice(0, 8)}
+                          </div>
+                        )}
+                      </td>
                       <td title={r.ai_health_reasoning || (r.ai_health_score == null ? "Run /api/customers/health_score to populate" : "")}>
                         <Chip k={hc.k}>{hc.label}</Chip>
                       </td>

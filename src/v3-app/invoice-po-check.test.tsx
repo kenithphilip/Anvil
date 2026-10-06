@@ -21,7 +21,10 @@ const ws = read("screens/so-workspace.tsx");
 describe("it is reachable at last", () => {
   it("has a tab on the SO workspace", () => {
     expect(ws).toMatch(/id: "invoice_check", label: "Invoice vs PO"/);
-    expect(ws).toMatch(/tab === "invoice_check" && <InvoicePoCheck orderId=\{o\.id\} \/>/);
+    // The tab now also hosts the delivery challan upload, and the check is
+    // re-keyed after a challan is recorded so it re-reads the despatch lines.
+    expect(ws).toMatch(/tab === "invoice_check" && \(/);
+    expect(ws).toMatch(/<InvoicePoCheck key=\{invoiceCheckKey\} orderId=\{o\.id\} \/>/);
   });
 
   it("calls the endpoint #467 built", () => {

@@ -33,6 +33,10 @@
 export const CANONICAL_LINE_FIELDS = Object.freeze([
   // identity
   "partNumber", "customerItemCode", "description", "specification", "lineNo",
+  // the buyer's purchase requisition (PR) the line was raised against. Snake
+  // case to match customer.requisition_no, the header slot it sits beside: a
+  // consolidated PO can carry a different one per line.
+  "requisition_no",
   // measure
   "quantity", "uom",
   // money

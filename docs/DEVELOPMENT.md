@@ -2,7 +2,7 @@
 
 ## Prereqs
 
-- Node 20 (use `nvm use` to pin from `.nvmrc`)
+- Node 22 (use `nvm use` to pin from `.nvmrc`)
 - A Supabase project (free tier works) and `.env.local` populated from
   `.env.example`
 - Anthropic API key with access to Claude Sonnet and Haiku

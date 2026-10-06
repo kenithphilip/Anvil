@@ -17,7 +17,7 @@ import { decryptField } from "../secrets.js";
 import { callGemini, extractTextFromGemini, parseStructuredGemini, stopReasonFromGemini } from "../gemini.js";
 import { parseSchemaAligned } from "./parse.js";
 import { selectGeminiModel } from "./model_selector.js";
-import { coerceStatedLineCount } from "./claude.js";
+import { coerceStatedLineCount, LINE_REQUISITION_RULE, LINE_REQUISITION_DESCRIPTION } from "./claude.js";
 import { promptNameForKind } from "./prompt-versions.js";
 
 const apiKey = (settings) => {
@@ -32,7 +32,7 @@ export const isConfigured = (settings) => !!apiKey(settings);
 
 // Prompts. Reuse the same hard rules + classification taxonomy as
 // claude.js so the two adapters extract field-equivalent values.
-const PO_SYSTEM_PROMPT = [
+export const PO_SYSTEM_PROMPT = [
   "You are a purchase-order / RFQ extractor for a B2B manufacturing platform serving Indian and international customers.",
   "",
   "WHAT 'CUSTOMER' MEANS",
@@ -91,7 +91,7 @@ const PO_SYSTEM_PROMPT = [
   "famous OEM appears only as an end-customer, site, or brand while another company issues the PO,",
   "that issuer is the customer.",
   "",
-  "Each line: partNumber, customerItemCode, description, raw_description, specification, quantity, unitPrice, ...",
+  "Each line: partNumber, customerItemCode, description, raw_description, specification, requisition_no, quantity, unitPrice, ...",
   "partNumber = OUR part/SKU. The part is NOT always in a 'Part No' column - find it: (a) the Part-No column",
   "if populated; (b) if BLANK, the part-code token on the first line of the Description cell (e.g.",
   "'BRG-16-04-10-2', ignoring boilerplate lines like 'Refer Table 1...'); (c) if the description has a",
@@ -99,6 +99,7 @@ const PO_SYSTEM_PROMPT = [
   "just because a labelled Part-No column is empty. customerItemCode = the BUYER's own item/material/SAP code",
   "from a dedicated 'Item Number'/'Material'/'SAP Code' column (e.g. 'A12060OBAR010003'), distinct from OUR",
   "partNumber - capture BOTH when present. raw_description = the Description cell VERBATIM, uncut (for audit).",
+  "lines[].requisition_no = " + LINE_REQUISITION_RULE,
   "quantity, unitPrice (ALWAYS tax-exclusive ex-price - prefer the 'Ex-Price' / 'Net Pr.' / 'Basic Price'",
   "column over a tax-inclusive 'Unit Price' column), uom, hsn (4-8 digits, IN only), gst_pct (only when",
   "the PO prints a consolidated GST percentage and not per-component amounts).",
@@ -251,7 +252,7 @@ export const flattenCharges = (line) => {
   return out;
 };
 
-const PO_SCHEMA = {
+export const PO_SCHEMA = {
   type: "object",
   properties: {
     classification: { type: "string", enum: ["po", "rfq", "non_po"] },
@@ -287,6 +288,7 @@ const PO_SCHEMA = {
           description: { type: ["string", "null"] },
           raw_description: { type: ["string", "null"], description: "The Description cell VERBATIM, uncut - audit source for the part parse." },
           specification: { type: ["string", "null"], description: "Per-tenant spec / drawing code if printed separately." },
+          requisition_no: { type: ["string", "null"], description: LINE_REQUISITION_DESCRIPTION },
           quantity: { type: ["number", "null"] },
           unitPrice: { type: ["number", "null"], description: "TAX-EXCLUSIVE per-unit price." },
           uom: { type: ["string", "null"] },

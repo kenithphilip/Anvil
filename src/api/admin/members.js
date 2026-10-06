@@ -1,5 +1,5 @@
 // /api/admin/members
-//   GET    list current tenant members with email, role, last sign-in
+//   GET    list current tenant members with email, role, status, last sign-in
 //   POST   { email, role } invite a new member by email; sends magic link
 //   PATCH  { user_id, role } change role
 //   DELETE ?user_id=  revoke membership
@@ -9,6 +9,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { isPortalIdentity, isPortalEmail } from "../_lib/tenancy.js";
 
 // Phase 1 F11: role enum drift fix.
 //
@@ -48,7 +49,12 @@ export default async function handler(req, res) {
     const svc = serviceClient();
     if (req.method === "GET") {
       requirePermission(ctx, "read");
-      const { data: members, error } = await svc.from("tenant_members").select("user_id, role, created_at").eq("tenant_id", ctx.tenantId);
+      // status (migration 042: pending | approved | denied | deactivated) is
+      // returned so a caller can tell a colleague from an access request.
+      // Without it this list offered pending, denied and deactivated users as
+      // if they were the team, and an owner picker built on it would offer
+      // people the server then refuses.
+      const { data: members, error } = await svc.from("tenant_members").select("user_id, role, status, created_at").eq("tenant_id", ctx.tenantId);
       if (error) throw new Error(error.message);
       // Audit H11 (May 2026): replace the global listUsers() call
       // (which read every user across the entire Supabase project
@@ -72,6 +78,7 @@ export default async function handler(req, res) {
           email: u.email || "",
           display_name: meta.name || meta.full_name || null,
           role: m.role,
+          status: m.status || null,
           created_at: m.created_at,
           last_sign_in_at: u.last_sign_in_at || null,
         };
@@ -95,10 +102,21 @@ export default async function handler(req, res) {
       }
 
       const role = normaliseRole(body.role, "sales_engineer");
+      // Refuse a customer portal email BEFORE Supabase sends anything, so the
+      // customer never receives a staff invite.
+      if (await isPortalEmail(svc, body.email)) {
+        return json(res, 409, { error: { code: "PORTAL_ACCOUNT", message: "This email belongs to a customer portal user and cannot be invited as staff." } });
+      }
       const invite = await svc.auth.admin.inviteUserByEmail(body.email);
       if (invite.error) throw new Error(invite.error.message);
       const userId = invite.data && invite.data.user && invite.data.user.id;
       if (!userId) throw new Error("Auth invite returned no user id");
+      // Second check, by auth id: the invite can return an existing auth
+      // user whose portal row has a different email. Upserting it here would
+      // make the customer staff, approved by default (042).
+      if (await isPortalIdentity(svc, userId)) {
+        return json(res, 409, { error: { code: "PORTAL_ACCOUNT", message: "This email belongs to a customer portal user and cannot be invited as staff." } });
+      }
       const upsert = await svc.from("tenant_members").upsert({ tenant_id: ctx.tenantId, user_id: userId, role }, { onConflict: "tenant_id,user_id" }).select("*").single();
       if (upsert.error) throw new Error(upsert.error.message);
       await recordAudit(ctx, { action: "member_invite", objectType: "tenant_members", objectId: userId, after: { email: body.email, role } });

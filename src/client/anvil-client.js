@@ -690,9 +690,13 @@
     // orderId is optional — omit it and the endpoint resolves the order from
     // the challan's buyer PO number, then its invoice number, REFUSING rather
     // than guessing when neither is unambiguous.
-    ingestDeliveryNote: async (documentId, extracted, orderId = null) =>
+    // opts.confirm_po_mismatch records the challan on orderId even though its
+    // PO is on no order and differs from the order's (the "po_differs"
+    // refusal is overridable; an order_mismatch is not).
+    ingestDeliveryNote: async (documentId, extracted, orderId = null, opts = {}) =>
       apiFetch("/api/documents/delivery_note_ingest", { method: "POST", body: {
         document_id: documentId, extracted, ...(orderId ? { order_id: orderId } : {}),
+        ...(opts && opts.confirm_po_mismatch === true ? { confirm_po_mismatch: true } : {}),
       } }),
     fetch: async (id) => apiFetch("/api/documents/" + id),
     remove: async (id) => apiFetch("/api/documents/" + id, { method: "DELETE" }),
@@ -898,8 +902,24 @@
   };
 
   const customers = {
-    list: async () => apiFetch("/api/customers"),
+    // params (optional): { owner: "me" | "none" | <member id> } narrows the
+    // list to an account owner's customers, or the unassigned ones;
+    // { include: "owner_name" } adds each owner's display name (an auth
+    // lookup per distinct owner, so only screens that render it ask).
+    list: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/customers" + (qs ? "?" + qs : ""));
+    },
     upsert: async (payload) => apiFetch("/api/customers", { method: "POST", body: payload }),
+    // Account owner (migration 227). assignOwner payload:
+    //   { customer_ids: [...], owner_user_id: <member id> | null, move_open_opportunities: bool }
+    // ownerSuggestions params (optional): { customer_id } to ask about one
+    // account; none for every unowned account of the tenant.
+    assignOwner: async (payload) => apiFetch("/api/customers/owner", { method: "POST", body: payload }),
+    ownerSuggestions: async (params) => {
+      const qs = new URLSearchParams({ suggest: "1", ...(params || {}) }).toString();
+      return apiFetch("/api/customers/owner?" + qs);
+    },
     // Issue #186: validate + derive (state code / PAN / validity) from a GSTIN,
     // and fetch the registry (name/address) when a GST provider is configured.
     gstLookup: async (gstin) => apiFetch("/api/customers/gst_lookup", { method: "POST", body: { gstin } }),

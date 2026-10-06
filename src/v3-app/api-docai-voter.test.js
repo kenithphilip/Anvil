@@ -137,3 +137,36 @@ describe("voter / voteAcrossAdapters end-to-end", () => {
     expect(out.confidence_overall).toBeGreaterThan(0);
   });
 });
+
+// The voted line is rebuilt from a field whitelist, so a field the adapters
+// read but the whitelist omits is dropped on exactly the runs where two
+// adapters agreed. That already happened once to customerItemCode /
+// raw_description / specification; the requisition number must not repeat it.
+describe("voter / requisition numbers survive a vote", () => {
+  it("keeps a different PR on each line, and the header PR", () => {
+    const doc = {
+      classification: "po",
+      customer: { name: "Fixture Buyer", requisition_no: "1000343964" },
+      lines: [
+        { partNumber: "PN-1", quantity: 2, unitPrice: 100, requisition_no: "1000343964" },
+        { partNumber: "PN-2", quantity: 1, unitPrice: 50, requisition_no: "1000344102" },
+      ],
+    };
+    const out = voteAcrossAdapters([adapter("gemini", doc, 0.9, 0), adapter("claude", doc, 0.85, 1)]);
+    expect(out.voter_used).toBe(true);
+    const byPart = Object.fromEntries(out.normalized.lines.map((l) => [l.partNumber, l.requisition_no]));
+    expect(byPart).toEqual({ "PN-1": "1000343964", "PN-2": "1000344102" });
+    expect(out.normalized.customer.requisition_no).toBe("1000343964");
+  });
+
+  it("votes on it like any other line field when the adapters disagree", () => {
+    const line = (pr) => ({ partNumber: "PN-1", quantity: 1, unitPrice: 10, requisition_no: pr });
+    const out = voteAcrossAdapters([
+      adapter("gemini", { classification: "po", customer: {}, lines: [line("1000343964")] }, 0.9, 0),
+      adapter("claude", { classification: "po", customer: {}, lines: [line("1000343964")] }, 0.8, 1),
+      adapter("llamaparse", { classification: "po", customer: {}, lines: [line("1000999999")] }, 0.95, 2),
+    ]);
+    expect(out.normalized.lines[0].requisition_no).toBe("1000343964");
+    expect(out.voter_lines[0].fields.requisition_no.voters).toHaveLength(3);
+  });
+});

@@ -62,7 +62,7 @@ jobs:
       PHASE: ${{ inputs.phase }}
       SEED_ENV: ${{ inputs.seed_env }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install psql client
         run: |

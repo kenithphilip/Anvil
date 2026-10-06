@@ -6,6 +6,7 @@ import React from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, waitFor, fireEvent, within } from "@testing-library/react";
 import { QuoteDetailDrawer } from "./QuoteDetailDrawer";
+import { installRbac } from "../test-utils";
 
 const ITEMS = [
   {
@@ -104,6 +105,30 @@ describe("QuoteDetailDrawer — line enrichment", () => {
     fireEvent.click(getByText("Composition"));
     // With no lines loaded, the preview shows its empty state.
     await waitFor(() => expect(getByText(/No lines to price yet/i)).toBeTruthy());
+  });
+
+  // Composition shows supplier price, landed cost and margin (rbac cost.view).
+  for (const role of ["viewer", "procurement", "operator"]) {
+    it(`hides the Composition tab from ${role}`, async () => {
+      installRbac(role);
+      try {
+        const { getByText, queryByText } = render(<QuoteDetailDrawer quote={QUOTE} onClose={() => undefined} />);
+        await waitFor(() => expect(getByText("Lines")).toBeTruthy());
+        expect(queryByText("Composition")).toBeNull();
+      } finally {
+        installRbac("sales_engineer");
+      }
+    });
+  }
+
+  it("shows the Composition tab to finance", async () => {
+    installRbac("finance");
+    try {
+      const { getByText } = render(<QuoteDetailDrawer quote={QUOTE} onClose={() => undefined} />);
+      await waitFor(() => expect(getByText("Composition")).toBeTruthy());
+    } finally {
+      installRbac("sales_engineer");
+    }
   });
 
   it("shows DRAFT lifecycle actions", async () => {

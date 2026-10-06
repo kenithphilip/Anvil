@@ -57,7 +57,7 @@ export const MATRIX: Record<string, MatrixRow> = {
   "recurring-invoices": { sales_engineer: "r",   sales_manager: "rw", procurement: "",   finance: "rwa", admin: "rwa",operator: "",   viewer: "r" },
   "eway-bills":         { sales_engineer: "r",   sales_manager: "r",  procurement: "r",  finance: "rwa", admin: "rwa",operator: "r",  viewer: "r" },
   delays:               { sales_engineer: "r",   sales_manager: "r",  procurement: "rw", finance: "r",   admin: "r",  operator: "r",  viewer: "r" },
-  cost:        { sales_engineer: "r",   sales_manager: "rw", procurement: "r",  finance: "rw",  admin: "rw", operator: "",   viewer: "r" },
+  cost:        { sales_engineer: "r",   sales_manager: "rw", procurement: "",   finance: "rw",  admin: "rw", operator: "",   viewer: "" },
   customers:   { sales_engineer: "rw",  sales_manager: "rw", procurement: "r",  finance: "r",   admin: "rw", operator: "r",  viewer: "r" },
   items:       { sales_engineer: "r",   sales_manager: "r",  procurement: "rw", finance: "r",   admin: "rw", operator: "r",  viewer: "r" },
   "items-import": { sales_engineer: "rw", sales_manager: "rw", procurement: "rw", finance: "r", admin: "rw", operator: "r", viewer: "r" },
@@ -134,6 +134,10 @@ export const ACTIONS: Record<string, Role[]> = {
   // Log a rep touch on a quote / opportunity (TouchLog). The server's coarse
   // "write" roles; viewer and customer_support are read-only there.
   "touch.log":            ["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "design_engineer", "design_manager"],
+  // What a quote costs us: Price Compo, raw-material cost, pricing profiles,
+  // margin floors, margin history and the margin column. Mirrors the server's
+  // SERVER_ACTIONS["cost.view"]; the endpoints refuse every other role.
+  "cost.view":            ["sales_engineer", "sales_manager", "finance", "admin"],
   "admin.add_member":     ["admin"],
   "admin.change_role":    ["admin"],
   "security.edit_redaction":["admin"],

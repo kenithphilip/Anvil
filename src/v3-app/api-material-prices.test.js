@@ -68,7 +68,7 @@ const H = vi.hoisted(() => {
   }
   return { tables, from, reset() { for (const k of Object.keys(tables)) delete tables[k]; idc = 0; }, seed(t, rs) { (tables[t] = tables[t] || []).push(...rs.map(clone)); } };
 });
-vi.mock("../api/_lib/auth.js", () => ({ resolveContext: vi.fn(async () => ({ user: { id: "u-1" }, tenantId: "t-1", role: "admin" })), requirePermission: vi.fn(() => {}) }));
+vi.mock("../api/_lib/auth.js", () => ({ resolveContext: vi.fn(async () => ({ user: { id: "u-1" }, tenantId: "t-1", role: "admin" })), requirePermission: vi.fn(() => {}), requireAction: vi.fn(() => {}), hasAction: vi.fn(() => true) }));
 vi.mock("../api/_lib/audit.js", () => ({ recordAudit: vi.fn(async () => {}) }));
 vi.mock("../api/_lib/supabase.js", () => ({ serviceClient: () => ({ from: H.from }) }));
 const { default: refHandler } = await import("../api/admin/material_price_references.js");

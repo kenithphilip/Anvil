@@ -1,5 +1,5 @@
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, hasAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 
 // ============================================================================
@@ -724,6 +724,8 @@ const buildCtx = async (svc, tenantId, customerId, candidate) => {
   };
 };
 
+export const COST_RULE_IDS = new Set(["rate_below_landed_cost", "margin_floor_breach", "margin_drop_vs_baseline"]);
+
 // ---- Handler ----
 
 export default async function handler(req, res) {
@@ -742,7 +744,12 @@ export default async function handler(req, res) {
     const svc = serviceClient();
     const ctx = await buildCtx(svc, ctxAuth.tenantId, customerId, candidate);
     const flags = [];
+    // These rules print landed cost and margin (including the customer's past
+    // margin baseline, read from stored orders), so they run only for a role
+    // that may see cost.
+    const seesCost = hasAction(ctxAuth, "cost.view");
     for (const rule of RULES) {
+      if (!seesCost && COST_RULE_IDS.has(rule.id)) continue;
       if (rule.applies && !rule.applies(ctx)) continue;
       flags.push(...rule.evaluate(ctx));
     }

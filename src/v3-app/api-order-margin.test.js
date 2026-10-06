@@ -115,7 +115,8 @@ describe("the queue can tell the three states apart", () => {
   const ui = code("src/v3-app/screens/approvals.tsx");
 
   it("the endpoint reports which state each row is in", () => {
-    expect(api).toMatch(/margin_state: m \? \(m\.partial \? "partial" : "computed"\) : "not_costed"/);
+    // A role without cost.view gets "hidden" first (api-cost-view-gate.test.js).
+    expect(api).toMatch(/margin_state: !seesCost \? "hidden" : m \? \(m\.partial \? "partial" : "computed"\) : "not_costed"/);
   });
 
   it("the screen shows 'not costed' rather than a dash", () => {

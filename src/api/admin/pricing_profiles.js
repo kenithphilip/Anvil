@@ -13,7 +13,7 @@
 // migration 135; a tenant clones one and customises into its own row.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 
@@ -63,6 +63,7 @@ export default async function handler(req, res) {
 
     if (req.method === "GET") {
       requirePermission(ctx, "read");
+      requireAction(ctx, "cost.view");
       const globals = await svc.from("pricing_profiles").select("*")
         .is("tenant_id", null).eq("is_active", true).order("sort_order", { ascending: true });
       if (globals.error) throw new Error(globals.error.message);

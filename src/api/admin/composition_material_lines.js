@@ -12,7 +12,7 @@
 // here are ensured as RAW_MATERIAL item_master rows (planning opt-in).
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { recipeToBomRows } from "../_lib/composition-recipe.js";
@@ -95,6 +95,7 @@ export default async function handler(req, res) {
 
     if (req.method === "GET") {
       requirePermission(ctx, "read");
+      requireAction(ctx, "cost.view");
       let q = svc.from("composition_material_lines").select("*").eq("tenant_id", ctx.tenantId);
       if (req.query.quote_id) q = q.eq("quote_id", req.query.quote_id);
       else if (req.query.finished_part_no) q = q.eq("finished_part_no", req.query.finished_part_no);
@@ -126,6 +127,7 @@ export default async function handler(req, res) {
 
     if (req.method === "POST") {
       requirePermission(ctx, "write");
+      requireAction(ctx, "cost.view");
       const body = await readBody(req);
       if (!body.quote_id) return json(res, 400, { error: { message: "quote_id required" } });
       const inputs = Array.isArray(body.lines) ? body.lines : (body.composition_line_index != null ? [body] : []);
@@ -183,6 +185,7 @@ export default async function handler(req, res) {
 
     if (req.method === "DELETE") {
       requirePermission(ctx, "write");
+      requireAction(ctx, "cost.view");
       const id = req.query.id;
       if (!id) return json(res, 400, { error: { message: "id required" } });
       const { error } = await svc.from("composition_material_lines")

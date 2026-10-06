@@ -2,7 +2,7 @@
 // Returns historical margin baseline for a customer using past orders' price comp data.
 
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 
 const median = (arr) => {
@@ -37,6 +37,7 @@ export default async function handler(req, res) {
   try {
     const ctx = await resolveContext(req);
     requirePermission(ctx, "read");
+    requireAction(ctx, "cost.view");
     const svc = serviceClient();
     const customerId = req.query.customer_id;
     if (!customerId) return json(res, 400, { error: { message: "customer_id required" } });

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { canDo } from "../lib/rbac";
 import { QuoteComposition } from "./QuoteComposition";
 import { QuoteHistoryTab } from "./QuoteHistoryTab";
 import { QuoteRfqTab } from "./QuoteRfqTab";
@@ -449,7 +450,7 @@ export const QuoteDetailDrawer: React.FC<{
         <div style={{ flexShrink: 0, display: "flex", gap: 2, padding: "0 18px", borderBottom: "1px solid var(--line)", overflowX: "auto" }}>
           <TabBtn active={tab === "header"} onClick={() => setTab("header")}>Header</TabBtn>
           <TabBtn active={tab === "lines"} onClick={() => setTab("lines")}>Lines</TabBtn>
-          <TabBtn active={tab === "comp"} onClick={() => setTab("comp")}>Composition</TabBtn>
+          {canDo("cost.view") && <TabBtn active={tab === "comp"} onClick={() => setTab("comp")}>Composition</TabBtn>}
           <TabBtn active={tab === "rfq"} onClick={() => setTab("rfq")}>Vendor RFQ</TabBtn>
           <TabBtn active={tab === "terms"} onClick={() => setTab("terms")}>Terms</TabBtn>
           <TabBtn active={tab === "followup"} onClick={() => setTab("followup")}>Follow-up</TabBtn>
@@ -699,7 +700,7 @@ export const QuoteDetailDrawer: React.FC<{
             </>
           )}
 
-          {visited.has("comp") && (
+          {visited.has("comp") && canDo("cost.view") && (
             <div style={{ display: tab === "comp" ? undefined : "none" }}>
               <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 8 }}>
                 Cost composition preview. Enter supplier prices to see the landed-cost waterfall, the

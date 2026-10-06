@@ -28,6 +28,9 @@ const h = vi.hoisted(() => ({
 vi.mock("../api/_lib/auth.js", () => ({
   resolveContext: vi.fn(async () => ({ user: { id: "u-1" }, tenantId: "t-1", role: "admin" })),
   requirePermission: vi.fn(() => {}),
+  // admin may see cost (cost.view); the gate itself is tested in api-cost-view-gate.test.js.
+  requireAction: vi.fn(() => {}),
+  hasAction: vi.fn(() => true),
 }));
 
 vi.mock("../api/_lib/audit.js", () => ({

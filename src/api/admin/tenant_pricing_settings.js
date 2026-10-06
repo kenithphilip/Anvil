@@ -8,7 +8,7 @@
 // these as defaults; per-quote overrides via price_composition_lines.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 
@@ -24,6 +24,7 @@ export default async function handler(req, res) {
 
     if (req.method === "GET") {
       requirePermission(ctx, "read");
+      requireAction(ctx, "cost.view");
       const { data, error } = await svc.from("tenant_pricing_settings")
         .select("*")
         .eq("tenant_id", ctx.tenantId)

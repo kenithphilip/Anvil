@@ -242,6 +242,13 @@ export const SERVER_ACTIONS = {
   // rbac.ts canDo) hides itself for the roles this endpoint always refuses
   // (viewer, customer_support) instead of offering a form that 403s.
   "touch.log":           new Set(["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "design_engineer", "design_manager"]),
+  // Reading or changing what a quote COSTS us: Price Compo lines (supplier
+  // price, landed cost, the margin tiers), raw-material cost lines, pricing
+  // profiles and margin floors, and margin history. The coarse "read" verb
+  // admits every signed-in role, so a viewer, an operator or a design engineer
+  // could read the margin on any quote. Sales engineers keep it because they
+  // build the Price Compo. Mirrors rbac.ts cost.view.
+  "cost.view":           new Set(["sales_engineer", "sales_manager", "finance", "admin"]),
 };
 
 export const hasAction = (ctx, action) => {

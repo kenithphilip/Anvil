@@ -10,8 +10,10 @@ import { RBAC } from "../lib/rbac";
 // Guard rails (2026-06): editing the customer master is admin-only, and a
 // parent change is staged as a draft that must be explicitly confirmed +
 // saved - it no longer mutates the record the instant the dropdown changes.
-// Saving sends the full customer object through customers.upsert so the
-// partial change does not clobber other columns.
+// Saving sends only the parent change, addressed by id: customers.upsert
+// updates exactly the keys it receives. Resending the whole (possibly
+// stale) customer object would revert concurrent edits and re-run the
+// address mirror into customer_locations.
 
 type Customer = any;
 
@@ -49,7 +51,7 @@ export const CustomerHierarchyPanel: React.FC<{
     if (!window.confirm(`Change the parent of "${nameOf(customer)}" to "${targetName}"?\n\nThis updates the customer master hierarchy.`)) return;
     setBusy(true);
     try {
-      await AnvilBackend?.customers?.upsert?.({ ...customer, parent_customer_id: draftParent || null });
+      await AnvilBackend?.customers?.upsert?.({ id: customer.id, customer_key: customer.customer_key, parent_customer_id: draftParent || null });
       window.notifySuccess?.("Hierarchy updated", draftParent ? "Parent set" : "Parent cleared");
       onChanged?.();
     } catch (e: any) {

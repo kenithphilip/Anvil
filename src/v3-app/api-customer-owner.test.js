@@ -676,13 +676,17 @@ describe("POST /api/customers never writes the owner", () => {
       body: { customer_key: "bolt", customer_name: "Bolt Industries", owner_user_id: U2, owner_name: "Ravi Rep" },
     });
     expect(r.status).toBe(200);
-    // The upsert ran and landed the edit...
+    // The write ran and landed the edit...
     expect(customer(C2).customer_name).toBe("Bolt Industries");
     // ...and the owner is still the one the owner endpoint set.
     expect(customer(C2).owner_user_id).toBe(U3);
-    const upsert = H.calls.find((c) => c.table === "customers" && c.mode === "upsert");
-    expect(upsert.row.customer_key).toBe("bolt");
-    expect("owner_user_id" in upsert.row).toBe(false);
+    // An existing customer is now updated with only the keys the body carries
+    // (#555), not upserted whole; either way the written row has no owner.
+    const write = H.calls.find((c) => c.table === "customers" && (c.mode === "update" || c.mode === "upsert"));
+    expect(write).toBeTruthy();
+    const written = write.patch || write.row;
+    expect(written.customer_name).toBe("Bolt Industries");
+    expect("owner_user_id" in written).toBe(false);
   });
 
   it("nor does a body WITHOUT owner_user_id clear it", async () => {

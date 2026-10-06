@@ -159,6 +159,9 @@ const CUSTOMER_HEALTH_CHIP = (band, score) => {
   return { k: "ghost", label: "health?" };
 };
 
+// Migration 006 customer_type enum; the API refuses any other value.
+const CUSTOMER_TYPES = ["AUTO_OEM", "TIER_ONE", "LINE_BUILDER", "OTHER"];
+
 const CUSTOMER_TYPE_CHIP = (t) => {
   const map = {
     AUTO_OEM: { k: "info", label: "auto oem" },
@@ -294,7 +297,9 @@ const WiredCustomers = () => {
     if (!Object.keys(payload).length) { setEditing(false); return; }
     try {
       if (canApply) {
-        await AnvilBackend?.customers?.upsert?.({ customer_key: c.customer_key, ...payload });
+        // Address the row by id and send only the changed fields: the
+        // endpoint updates exactly the keys it receives.
+        await AnvilBackend?.customers?.upsert?.({ id: c.id, customer_key: c.customer_key, ...payload });
         window.notifySuccess?.("Customer updated", c.customer_name || c.customer_key);
         list.reload();
       } else {
@@ -456,7 +461,12 @@ const WiredCustomers = () => {
                   <div><div className="label">customer name</div><input className="input" value={editDraft.customer_name} onChange={(e) => setEditDraft((d: any) => ({ ...d, customer_name: e.target.value }))} style={{ width: 220 }} /></div>
                   <div><div className="label">GSTIN</div><input className="input mono" value={editDraft.gstin} onChange={(e) => setEditDraft((d: any) => ({ ...d, gstin: e.target.value }))} style={{ width: 180 }} /></div>
                   <div><div className="label">currency</div><input className="input mono" maxLength={3} value={editDraft.currency} onChange={(e) => setEditDraft((d: any) => ({ ...d, currency: e.target.value.toUpperCase() }))} style={{ width: 90 }} /></div>
-                  <div><div className="label">type</div><input className="input mono" value={editDraft.customer_type} onChange={(e) => setEditDraft((d: any) => ({ ...d, customer_type: e.target.value }))} style={{ width: 140 }} /></div>
+                  <div><div className="label">type</div>
+                    <select className="select mono" aria-label="Customer type" value={editDraft.customer_type} onChange={(e) => setEditDraft((d: any) => ({ ...d, customer_type: e.target.value }))} style={{ width: 140 }}>
+                      <option value="">(none)</option>
+                      {CUSTOMER_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
                 </div>
                 <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
                   <Btn sm kind="ghost" onClick={() => setEditing(false)}>Cancel</Btn>

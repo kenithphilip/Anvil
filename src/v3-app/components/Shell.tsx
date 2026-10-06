@@ -151,7 +151,10 @@ const NotificationsBell: React.FC<{ onRoute?: (id: string) => void; isAdminLike:
             "The target screen `" + n.link_route + "` no longer exists.",
           );
         } else {
-          const params = n.link_params ? new URLSearchParams(n.link_params as Record<string, string>).toString() : "";
+          // dedup_key is notifyAdmins' bookkeeping, not a screen param.
+          const linkParams = { ...(n.link_params || {}) };
+          delete linkParams.dedup_key;
+          const params = new URLSearchParams(linkParams).toString();
           window.location.hash = "#/" + n.link_route + (params ? "?" + params : "");
           if (onRoute) onRoute(n.link_route);
         }

@@ -34,21 +34,29 @@ const safeArr = (v) => Array.isArray(v) ? v : [];
 export const notifyAdmins = async (svc, tenantId, payload, opts = {}) => {
   if (!svc || !tenantId || !payload?.kind || !payload?.title) return { notified: 0 };
   const roles = safeArr(opts.roles).length ? opts.roles : ["admin"];
+  const dedupKey = opts.dedupKey ? String(opts.dedupKey) : null;
 
   try {
     // Optional dedup: skip if an unresolved row with the same kind +
-    // dedup-target was created in the last 5 minutes. Cheap and
-    // catches most flap loops.
-    if (opts.dedupKey) {
+    // dedupKey was created in the last 5 minutes. Cheap and catches
+    // most flap loops.
+    //
+    // This never fired before. The lookup was a head:true count, which
+    // returns a count and no rows, and the guard read the rows, so it
+    // always saw none. It also matched on kind alone and never compared
+    // the key. The key now rides on the row in link_params.dedup_key
+    // (the table's one jsonb column, so no migration), and the guard
+    // reads the count. Different keys of one kind still each notify.
+    if (dedupKey) {
       const since = new Date(Date.now() - 5 * 60_000).toISOString();
-      const { data: prior } = await svc.from("admin_notifications")
+      const { count: prior } = await svc.from("admin_notifications")
         .select("id", { count: "exact", head: true })
         .eq("tenant_id", tenantId)
         .eq("kind", payload.kind)
         .eq("resolved", false)
-        .gte("created_at", since)
-        .limit(1);
-      if ((prior?.length || 0) > 0) return { notified: 0, deduped: true };
+        .eq("link_params->>dedup_key", dedupKey)
+        .gte("created_at", since);
+      if ((prior || 0) > 0) return { notified: 0, deduped: true };
     }
 
     // Find approved admins on this tenant. We could also fan out
@@ -68,7 +76,9 @@ export const notifyAdmins = async (svc, tenantId, payload, opts = {}) => {
       title: payload.title,
       body: payload.body || null,
       link_route: payload.link_route || null,
-      link_params: payload.link_params || {},
+      link_params: dedupKey
+        ? { ...(payload.link_params || {}), dedup_key: dedupKey }
+        : (payload.link_params || {}),
       actor_user_id: payload.actor_user_id || null,
       actor_email: payload.actor_email || null,
       object_type: payload.object_type || null,

@@ -1,12 +1,19 @@
 // GET /api/inbound/email/threads
+// GET /api/inbound/email/threads?intent=complaint,support_question
 // GET /api/inbound/email/threads?id=...&messages=true
 //
 // Read surface for the Inbox screen. Returns threads sorted by
 // priority then last_received_at.
+//
+// Every row carries the classifier's verdict (classified_intent,
+// classification_confidence; migration 067). `intent` narrows the
+// list to those intents IN the query, before the limit, so a filter
+// for complaints is not cut off by higher-priority RFQs.
 
 import { applyCors, handlePreflight, json, sendError } from "../../_lib/cors.js";
 import { resolveContext, requirePermission } from "../../_lib/auth.js";
 import { serviceClient } from "../../_lib/supabase.js";
+import { INTENT_ENUM } from "../../_lib/email-classifier.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -30,7 +37,7 @@ export default async function handler(req, res) {
       let messages = [];
       if (url.searchParams.get("messages") === "true") {
         const m = await svc.from("inbound_emails")
-          .select("id, provider, message_id, from_address, from_name, subject, body_text, attachments, status, priority_score, customer_id, customer_tier, received_at, parsed_at")
+          .select("id, provider, message_id, from_address, from_name, subject, body_text, attachments, status, priority_score, customer_id, customer_tier, classified_intent, classification_confidence, received_at, parsed_at")
           .eq("thread_id", id)
           .order("received_at", { ascending: true });
         messages = m.data || [];
@@ -40,10 +47,14 @@ export default async function handler(req, res) {
 
     const status = url.searchParams.get("status");
     const limit = Math.min(200, Number(url.searchParams.get("limit") || 100));
+    const intents = (url.searchParams.get("intent") || "")
+      .split(",").map((s) => s.trim()).filter((s) => INTENT_ENUM.includes(s));
     // We pull the latest email per thread to surface tier + priority.
-    const inbox = await svc.from("inbound_emails")
-      .select("id, thread_id, status, priority_score, customer_id, customer_tier, from_address, subject, received_at")
-      .eq("tenant_id", ctx.tenantId)
+    let q = svc.from("inbound_emails")
+      .select("id, thread_id, status, priority_score, customer_id, customer_tier, classified_intent, classification_confidence, from_address, subject, received_at")
+      .eq("tenant_id", ctx.tenantId);
+    if (intents.length) q = q.in("classified_intent", intents);
+    const inbox = await q
       .order("priority_score", { ascending: false })
       .order("received_at", { ascending: false })
       .limit(limit);

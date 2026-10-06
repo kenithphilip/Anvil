@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { ageLabel, draftLabel, useFetch } from "../lib/helpers";
-import { Banner, Btn, Card, Chip, KV, WSTitle } from "../lib/primitives";
+import { Banner, Btn, Card, Chip, KV, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 
@@ -13,8 +13,14 @@ import { AnvilBackend } from "../lib/api";
 // Accepts either the legacy /api/email/inbound shape (rows with
 // `from`, `subject`, `classification`) or the
 // /api/inbound/email/threads shape (rows with `from_address`,
-// `customer_tier`, `priority_score`). Aliases the latter so the
-// existing renderers below keep working.
+// `classified_intent`, `classification_confidence`). Aliases the
+// latter so the renderers below read one name.
+//
+// The intent is the email classifier's verdict (migration 067). It
+// used to be read from `classification` / `intent`, which the threads
+// endpoint never returns, and any row with a priority_score was then
+// labelled "Customer PO". A complaint showed as a PO. A row the
+// classifier has not reached now shows a dash, not a guess.
 const emailRowsFromResp = (resp) => {
   let rows = [];
   if (!resp) return rows;
@@ -23,25 +29,44 @@ const emailRowsFromResp = (resp) => {
   else if (Array.isArray(resp.messages)) rows = resp.messages;
   else if (Array.isArray(resp.rows)) rows = resp.rows;
   else if (Array.isArray(resp.events)) rows = resp.events;
-  return rows.map((r) => ({
-    ...r,
-    from: r.from || r.sender || r.from_address || "",
-    classification: r.classification || r.intent || (r.priority_score != null
-      ? "Customer PO"
-      : null),
-  }));
+  return rows.map((r) => {
+    const conf = Number(r.classification_confidence ?? r.confidence ?? NaN);
+    return {
+      ...r,
+      from: r.from || r.sender || r.from_address || "",
+      intent: r.classified_intent || r.intent || r.classification || null,
+      confidence: Number.isFinite(conf) ? conf : null,
+    };
+  });
 };
 
+// One chip per value of INTENT_ENUM in api/_lib/email-classifier.js.
 const intentChip = (intent) => {
   const map = {
-    "Customer PO":          { k: "info",  label: "Customer PO" },
-    "Supplier rate":        { k: "ghost", label: "Supplier rate" },
-    "Payment":              { k: "plum",  label: "Payment" },
-    "Service · breakdown":  { k: "bad",   label: "Service" },
-    "Spam":                 { k: "ghost", label: "Spam" },
+    rfq:                 { k: "info",  label: "RFQ" },
+    purchase_order:      { k: "info",  label: "Customer PO" },
+    po_revision:         { k: "info",  label: "PO revision" },
+    quote_accept:        { k: "good",  label: "Quote accepted" },
+    payment_acknowledge: { k: "plum",  label: "Payment" },
+    delivery_query:      { k: "warn",  label: "Delivery query" },
+    complaint:           { k: "bad",   label: "Complaint" },
+    support_question:    { k: "warn",  label: "Support" },
+    out_of_office:       { k: "ghost", label: "Out of office" },
+    marketing:           { k: "ghost", label: "Marketing" },
+    phishing:            { k: "bad",   label: "Phishing" },
+    other:               { k: "ghost", label: "Other" },
   };
   return map[intent] || { k: "ghost", label: (intent || "—") };
 };
+
+// The "Complaints and support" view. The endpoint filters on these
+// before its limit; the screen filters again so an older API that
+// ignores `intent` still shows only these rows.
+const SUPPORT_INTENTS = ["complaint", "support_question"];
+const EMAIL_VIEWS = [
+  { id: "all",     label: "All" },
+  { id: "support", label: "Complaints and support" },
+];
 
 const truncate = (s, n) => {
   if (!s) return "—";
@@ -59,17 +84,20 @@ const WiredEmailTriage = () => {
   // /api/inbound/email/threads (GET) via the
   // AnvilBackend.inbound.listThreads helper, which authenticates
   // via the user's session token.
+  const [view, setView] = useState("all");
   const inbox = useFetch(
-    () => AnvilBackend?.inbound?.listThreads?.({ limit: 50 })
+    () => AnvilBackend?.inbound?.listThreads?.(
+      view === "support" ? { limit: 50, intent: SUPPORT_INTENTS.join(",") } : { limit: 50 })
       || Promise.resolve({ messages: [] }),
-    []
+    [view]
   );
   const orders = useFetch(
     () => AnvilBackend?.orders?.list?.({ limit: 100 }) || Promise.resolve([]),
     []
   );
 
-  const rows = emailRowsFromResp(inbox.data);
+  const allRows = emailRowsFromResp(inbox.data);
+  const rows = view === "support" ? allRows.filter((r) => SUPPORT_INTENTS.includes(r.intent)) : allRows;
   const orderList = Array.isArray(orders.data) ? orders.data : (orders.data?.rows || orders.data?.orders || []);
 
   const [selectedId, setSelectedId] = useState(rows[0]?.id || null);
@@ -152,6 +180,7 @@ const WiredEmailTriage = () => {
           <Btn icon kind="ghost" sm onClick={inbox.reload} title="Refresh">{Icon.cycle}</Btn>
         </>}
       />
+      <WSTabs tabs={EMAIL_VIEWS} active={view} onChange={setView} />
 
       <div className="ws-content">
         {flash && (
@@ -169,6 +198,10 @@ const WiredEmailTriage = () => {
           <Card flush>
             {inbox.loading ? (
               <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading inbox…</div>
+            ) : rows.length === 0 && view === "support" ? (
+              <div className="body" style={{ padding: 28, textAlign: "center", color: "var(--ink-3)" }}>
+                No complaints or support questions in the inbox.
+              </div>
             ) : rows.length === 0 ? (
               <div className="body" style={{ padding: 28, textAlign: "center", color: "var(--ink-3)", display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}>
                 <div>Inbox empty.</div>
@@ -191,7 +224,7 @@ const WiredEmailTriage = () => {
                 <tbody>
                   {rows.slice(0, 50).map((r) => {
                     const isSel = r.id === selectedId;
-                    const intent = intentChip(r.classification || r.intent);
+                    const intent = intentChip(r.intent);
                     const attCount = (r.attachments && r.attachments.length) || r.attachment_count || 0;
                     return (
                       <tr
@@ -231,7 +264,7 @@ const WiredEmailTriage = () => {
                   <KV rows={[
                     ["From", selected.from || selected.sender || "—"],
                     ["Received", selected.received_at || selected.created_at || "—"],
-                    ["Intent", (selected.classification || selected.intent || "—")],
+                    ["Intent", intentChip(selected.intent).label],
                     ["Confidence", selected.confidence != null ? selected.confidence.toFixed(2) : "—"],
                   ]} />
                   {(selected.attachments && selected.attachments.length > 0) && (

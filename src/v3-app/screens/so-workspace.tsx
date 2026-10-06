@@ -467,12 +467,24 @@ const WiredSOWorkspace = () => {
   // Lives in the above-early-returns block so the hook count stays
   // stable when the loading branch returns early. Stringify is the
   // cheap cache key; lineItems rarely exceeds a few hundred rows.
+  //
+  // The reset happens during render, not in an effect. As an effect it
+  // ran after the commit that first painted the loaded lines, so an edit
+  // made in that gap (Add line, a cell change) was queued first and then
+  // wiped by the late setLinesDraft(null). Under React 18 that was a rare
+  // test flake (see so-workspace-cell-focus.test.tsx); under React 19 the
+  // manual-lines tests landed in the gap about one run in four. Resetting
+  // while rendering means the first commit that shows the new lines
+  // already carries the reset, so nothing is left pending to clobber a
+  // later edit.
   const persistedLinesKey = JSON.stringify(
     order.data?.result?.salesOrder?.lineItems || []
   );
-  e(() => {
+  const [draftLinesKey, setDraftLinesKey] = u(persistedLinesKey);
+  if (draftLinesKey !== persistedLinesKey) {
+    setDraftLinesKey(persistedLinesKey);
     setLinesDraft(null);
-  }, [persistedLinesKey]);
+  }
 
   // Wave 4.1: load the rich extraction run for the recon tab. Only the
   // run id + overall confidence live on preflight_payload; the
@@ -1817,9 +1829,9 @@ const WiredSOWorkspace = () => {
       await AnvilBackend?.orders?.update?.(o.id, { result: nextResult });
       // Audit fix May 2026: clear the draft immediately so a
       // second Save click during the reload window cannot fire a
-      // duplicate PATCH. The useEffect on persistedLinesKey will
-      // also null this when the new lines arrive, but it races
-      // the click; we win the race here.
+      // duplicate PATCH. The render-phase reset on persistedLinesKey
+      // also nulls this when the new lines arrive, but only after the
+      // reload; clearing here closes the window before it.
       setLinesDraft(null);
       window.notifySuccess?.("Line edits saved", `${draftLines.length} line${draftLines.length === 1 ? "" : "s"} on ${o.po_number || o.id.slice(0, 8)}`);
       setBump((n: number) => n + 1);

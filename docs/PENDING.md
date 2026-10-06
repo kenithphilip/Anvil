@@ -449,6 +449,27 @@ Five open questions in the doc, two of which gate everything: whether the phase
 timestamps are recorded as work happens or retro-filled in batches, and whether
 the customer's required date is contractual or aspirational.
 
+### 2.AP: Sales accounts, installed assets and the customer portal
+
+Scoped 2026-10-04 in `docs/ACCOUNTS_ASSETS_PORTAL_SCOPE.md`. Nothing built.
+
+A prospective tenant (welding guns, weld timers and spares to OEM body shops) asked for four things: rep pipelines over assigned accounts; installed assets that define which spares apply; quote follow-up as the sales cadence; and a customer portal. In the portal their maintenance team sees assets, applicable spares and quotes, answers "PR raised" against our quote, and tracks orders to despatch.
+
+**Almost every link already exists and does not reach the next one.** Some examples:
+- `opportunities.owner_id` is written and never editable or filtered.
+- The agent cadence arms on quote send but nudges within the hour and never stops on DECLINED.
+- The portal has session auth, but a signed-in customer sees only spare matrices, and every portal link we email is a 404.
+- DocAI already extracts the customer's requisition number and stores it in `orders.result`, where nothing reads it. That number is the hinge that lets a PO close the quote it answers.
+
+The scope is wiring, not modelling: five additive migrations (227 to 231), no new tables, no new enum values. It has 25 PRs, 17 of them in the pilot. Wave A (PRs 1, 3, 4, 5, 10) is decision-free, and PR 1 closes two unsafe legacy portal paths before any customer is invited. Twenty-one owner decisions are recorded with defaults. The ones that gate most are:
+- D1, whether this is for account owners or for ops (the `GAP_ANALYSIS.md:495` warning);
+- D5, the spare matrix as the customer's asset view;
+- D9, "PR raised" sets ACCEPTED;
+- D18, retiring the legacy URL tokens;
+- D20, the portal sign-in bar for a pilot versus an OEM go-live.
+
+The most dangerous step is the automatic quote conversion (PR 18). It converts only on a unique PR-number match on a fully extracted, approved order, and never through part overlap.
+
 ---
 
 ## 3. Known-unfixed defects

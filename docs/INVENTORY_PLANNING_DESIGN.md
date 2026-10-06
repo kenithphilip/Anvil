@@ -785,6 +785,12 @@ This lets us answer "how many ATD does this gun consume?" with a
 single query: `select total_qty from v_bom_walk_recursive where
 root_part_no = 'GUN-XYZ' and child_part_no = 'ATD-STD-1'`.
 
+As built, this view has no `tenant_id` and its recursive join does not
+match on tenant, so it mixes every tenant's BOM. The planner does not
+read it: the project-equivalent floor reads `v_bom_where_used_recursive`
+(migration 183) filtered on `tenant_id`, and the demand explosion reads
+`bill_of_materials` filtered on `tenant_id`.
+
 ### 5.5 Inventory allocations
 
 ```sql

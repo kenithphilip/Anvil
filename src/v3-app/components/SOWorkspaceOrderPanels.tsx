@@ -7,6 +7,10 @@ import { Banner, Btn, Card, Chip, KV, fmtINR } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 
+// GET /api/customers/contacts returns at most this many rows (the .limit in
+// src/api/customers/contacts.js). Keep the two in step.
+const CONTACTS_LIST_CAP = 500;
+
 // Order header-fields editor. Mounted inside the SO workspace as the
 // `Header fields` tab. Carries the six new columns added by migration
 // 106: dispatch_mode, registration_serial_no, incoterm_code,
@@ -34,7 +38,12 @@ export const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = 
     setDraft(buildDraft(order));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [order.id, order.updated_at]);
-  const [reference, setReference] = React.useState<any>({ incoterms: [], contacts: [] });
+  const [reference, setReference] = React.useState<any>({ incoterms: [] });
+  // The customer's contacts for the delivery contact picker. null until
+  // the list arrives, so the picker can tell "not loaded" apart from
+  // "this customer has no such contact".
+  const [contactRows, setContactRows] = React.useState<any[] | null>(null);
+  const [contactsFailed, setContactsFailed] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
 
   React.useEffect(() => {
@@ -47,19 +56,35 @@ export const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = 
         if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
         if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
         const base = cfg.url.replace(/\/+$/, "");
-        const [refResp, contactsResp] = await Promise.all([
-          fetch(base + "/api/admin/item_reference", { headers }).then((r) => r.ok ? r.json() : { incoterms: [] }),
-          order.customer_id
-            ? fetch(base + "/api/customer_contacts?customer_id=" + order.customer_id, { headers }).then((r) => r.ok ? r.json() : { contacts: [] })
-            : Promise.resolve({ contacts: [] }),
-        ]);
+        const refResp = await fetch(base + "/api/admin/item_reference", { headers }).then((r) => r.ok ? r.json() : { incoterms: [] });
         if (cancelled) return;
-        setReference({
-          incoterms: refResp.incoterms || [],
-          contacts: contactsResp.contacts || contactsResp.rows || [],
-        });
+        setReference({ incoterms: refResp.incoterms || [] });
       } catch (_) {}
     })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Contacts load through the client wrapper (GET /api/customers/contacts),
+  // the same call CustomerContactsPanel makes. This used to fetch
+  // /api/customer_contacts, a route the router never had: it 404ed, so the
+  // picker only ever offered "Not set" and a saved contact was invisible.
+  // Loaded on its own so a contacts failure cannot cost the incoterm list.
+  React.useEffect(() => {
+    let cancelled = false;
+    setContactRows(null);
+    setContactsFailed(false);
+    // No customer means no list to check a saved contact against, so the
+    // rows stay null (unknown) rather than an empty list that would read
+    // as "this customer has no such contact".
+    if (!order.customer_id) return;
+    Promise.resolve(AnvilBackend?.customers?.listContacts?.({ customer_id: order.customer_id }))
+      .then((resp: any) => {
+        if (cancelled) return;
+        const rows = Array.isArray(resp) ? resp : resp?.contacts;
+        if (Array.isArray(rows)) setContactRows(rows);
+        else setContactsFailed(true);
+      })
+      .catch(() => { if (!cancelled) setContactsFailed(true); });
     return () => { cancelled = true; };
   }, [order.customer_id]);
 
@@ -137,6 +162,29 @@ export const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = 
     </label>
   );
 
+  // customer_contacts carries the person's name in `name`.
+  const contactLabel = (c: any) => c?.name || c?.email || String(c?.id || "").slice(0, 8);
+  // Inactive contacts (migration 128) are not offered for a new pick. A row
+  // without is_active predates that column and counts as active.
+  const activeContacts = (contactRows || []).filter((c: any) => c && c.is_active !== false);
+  // The order can hold a contact the picker does not offer: one since
+  // marked inactive, one on another customer, one past the list cap, or
+  // any while the list is not loaded (or the order has no customer). Give
+  // it its own option so it stays visible and can be cleared, instead of
+  // the select showing "Not set" while every save quietly writes the
+  // hidden id back.
+  const savedContactId: string = draft.delivery_point_contact_id || "";
+  const savedContactUnlisted = !!savedContactId && !activeContacts.some((c: any) => c.id === savedContactId);
+  const savedContactRow = savedContactUnlisted ? (contactRows || []).find((c: any) => c && c.id === savedContactId) : null;
+  // Absence from the list proves the contact is not on this customer only
+  // when the list is complete. GET /api/customers/contacts stops at
+  // CONTACTS_LIST_CAP rows (src/api/customers/contacts.js), so a full page
+  // may simply have cut the saved contact off.
+  const contactsListComplete = !!contactRows && contactRows.length < CONTACTS_LIST_CAP;
+  const savedContactLabel = savedContactRow
+    ? contactLabel(savedContactRow) + " (inactive)"
+    : "Saved contact " + savedContactId.slice(0, 8) + (contactsListComplete ? " (not on this customer)" : "");
+
   return (
     <Card title="Order header fields" eyebrow="dispatch . terms . vendor mapping . delivery contact">
       <Banner kind="info">
@@ -178,12 +226,16 @@ export const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = 
         </div>
         <div style={{ flex: "1 1 220px" }}>
           {labelWithPill("Delivery point contact", "delivery_point_contact_id", order.delivery_point_contact_id, draft.delivery_point_contact_id)}
-          <select className="select" value={draft.delivery_point_contact_id || ""} onChange={(e) => setDraft({ ...draft, delivery_point_contact_id: e.target.value })}>
+          <select className="select" aria-label="Delivery point contact" value={savedContactId} onChange={(e) => setDraft({ ...draft, delivery_point_contact_id: e.target.value })}>
             <option value="">Not set</option>
-            {(reference.contacts || []).map((c: any) => (
-              <option key={c.id} value={c.id}>{c.full_name || c.email || c.id?.slice(0, 8)}</option>
+            {savedContactUnlisted && <option value={savedContactId}>{savedContactLabel}</option>}
+            {activeContacts.map((c: any) => (
+              <option key={c.id} value={c.id}>{contactLabel(c)}</option>
             ))}
           </select>
+          {contactsFailed && (
+            <div className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 4 }}>{"Could not load this customer's contacts."}</div>
+          )}
         </div>
         <div style={{ flex: "1 1 220px" }}>
           {labelWithPill("Committed delivery date", "committed_delivery_date", order.committed_delivery_date, draft.committed_delivery_date)}

@@ -139,9 +139,11 @@ describe("conformLines", () => {
 // llamaparse to declare that it spoke `line_total`.
 describe("every registered adapter has a declared line shape", () => {
   // One representative line per adapter, taken from what each actually emits.
+  // gemini, claude and openrouter (which sends claude's own tool schema) read
+  // the buyer's requisition number per line; it must cross as a known field.
   const ADAPTER_LINE_SHAPES = {
-    gemini:       { partNumber: "P", customerItemCode: "C", quantity: 1, unitPrice: 2, uom: "each", hsn: "8207", gst_pct: 18, cgst_amount: 0.18 },
-    claude:       { partNumber: "P", customerItemCode: "C", quantity: 1, unitPrice: 2, uom: "each", hsn: "8207", gst_pct: 18, cgst_amount: 0.18 },
+    gemini:       { partNumber: "P", customerItemCode: "C", requisition_no: "1000343964", quantity: 1, unitPrice: 2, uom: "each", hsn: "8207", gst_pct: 18, cgst_amount: 0.18 },
+    claude:       { partNumber: "P", customerItemCode: "C", requisition_no: "1000343964", quantity: 1, unitPrice: 2, uom: "each", hsn: "8207", gst_pct: 18, cgst_amount: 0.18 },
     llamaparse:   { partNumber: "P", customerItemCode: "C", quantity: 1, unitPrice: 2, uom: "each", hsn: null, tax_amount: 0.36, line_total: 2.36, lineNo: 1 },
     excel:        { partNumber: "P", quantity: 1, unitPrice: 2 },
     unstructured: { partNumber: "P", customerItemCode: "C", qty: 1, unitPrice: 2 },
@@ -150,7 +152,7 @@ describe("every registered adapter has a declared line shape", () => {
     reducto:      { partNumber: "P", quantity: 1, unitPrice: 2 },
     azure_di:     { partNumber: "P", quantity: 1, unitPrice: 2 },
     gaeb:         { partNumber: "P", quantity: 1, unitPrice: 2 },
-    openrouter:   { partNumber: "P", customerItemCode: "C", quantity: 1, unitPrice: 2 },
+    openrouter:   { partNumber: "P", customerItemCode: "C", requisition_no: "1000343964", quantity: 1, unitPrice: 2 },
   };
 
   it("covers the registry with no gaps and no stale entries", () => {

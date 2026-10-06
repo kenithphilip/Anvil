@@ -8,6 +8,7 @@ import { BusyAction, busyLabel, busyVerb } from "../lib/busy-actions";
 import { QuotesStrip } from "../components/QuotesStrip";
 import { ThreeWayPanel } from "../components/ThreeWayPanel";
 import { InvoicePoCheck } from "../components/InvoicePoCheck";
+import { DeliveryChallanUpload } from "../components/DeliveryChallanUpload";
 import type { AttachedQuote } from "../components/QuotesStrip";
 import { QuotePane } from "../components/QuotePane";
 // The gate's own predicate, not a copy: a UI that disagreed with the server
@@ -40,6 +41,7 @@ import {
 import { AskAnvil } from "../components/AskAnvil";
 import { mergeExtractedLines } from "../lib/line-merge";
 import { varianceLineFromGap, outstandingGaps } from "../lib/variance-line";
+import { lineRequisition, requisitionGroups, requisitionNotice } from "../lib/requisition";
 
 // Line-reconciliation table body, mounted inside the unified reconcile
 // view's ReviewPaneSelectionProvider so a row click drives the shared
@@ -84,7 +86,7 @@ export const mappingTitle = (ln: any): string => {
 // one is inserted.
 const RECON_TABLE_KEY = "so-recon";
 const RECON_COL_IDS = [
-  "n", "item", "uom", "qty", "rate", "hsn", "gst", "taxable", "tax", "line", "issues",
+  "n", "item", "pr", "uom", "qty", "rate", "hsn", "gst", "taxable", "tax", "line", "issues",
 ] as const;
 
 const ReconLinesTable: React.FC<{
@@ -247,6 +249,17 @@ const WiredSOWorkspace = () => {
   // table) without touching the tenant-wide provider order in Admin.
   const [extractEngine, setExtractEngine] = u<string>("");
 
+  // The router re-renders only when the ROUTE changes (#/so to #/quotes), so
+  // a link from one order to another left this screen on the old order until
+  // some unrelated render. Re-render on any hash change; the effects below
+  // are keyed on orderId and reload for the new order.
+  const [, setHashTick] = u(0);
+  e(() => {
+    const onHash = () => setHashTick((n: number) => n + 1);
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
   // Read order id + tab from URL hash query: #/so?id=...&tab=schedule
   const hashQuery = (() => {
     const hash = window.location.hash || "";
@@ -259,6 +272,9 @@ const WiredSOWorkspace = () => {
   // reconcile view, so a legacy ?tab=review deep-link opens Reconcile.
   const initialTab = rawTab === "review" ? "recon" : rawTab;
   const [tab, setTab] = u(initialTab);
+  // Bumped when a delivery challan is recorded, so the invoice check below
+  // re-reads the despatch lines and the docket it just gained.
+  const [invoiceCheckKey, setInvoiceCheckKey] = u(0);
   // Unified reconcile layout: pdf | split | lines. Persisted per-browser;
   // defaults to split on wide viewports and lines on narrow ones so a
   // small screen is not cramped by the side-by-side.
@@ -467,12 +483,24 @@ const WiredSOWorkspace = () => {
   // Lives in the above-early-returns block so the hook count stays
   // stable when the loading branch returns early. Stringify is the
   // cheap cache key; lineItems rarely exceeds a few hundred rows.
+  //
+  // The reset happens during render, not in an effect. As an effect it
+  // ran after the commit that first painted the loaded lines, so an edit
+  // made in that gap (Add line, a cell change) was queued first and then
+  // wiped by the late setLinesDraft(null). Under React 18 that was a rare
+  // test flake (see so-workspace-cell-focus.test.tsx); under React 19 the
+  // manual-lines tests landed in the gap about one run in four. Resetting
+  // while rendering means the first commit that shows the new lines
+  // already carries the reset, so nothing is left pending to clobber a
+  // later edit.
   const persistedLinesKey = JSON.stringify(
     order.data?.result?.salesOrder?.lineItems || []
   );
-  e(() => {
+  const [draftLinesKey, setDraftLinesKey] = u(persistedLinesKey);
+  if (draftLinesKey !== persistedLinesKey) {
+    setDraftLinesKey(persistedLinesKey);
     setLinesDraft(null);
-  }, [persistedLinesKey]);
+  }
 
   // Wave 4.1: load the rich extraction run for the recon tab. Only the
   // run id + overall confidence live on preflight_payload; the
@@ -575,6 +603,23 @@ const WiredSOWorkspace = () => {
   // diverges, after Save the server reload clears the draft back to
   // null and the persisted lines take over again.
   const draftLines: any[] = linesDraft ?? lines;
+  // Purchase requisition (PR) numbers per line, computed from the lines the
+  // operator is looking at, so a large PO is described correctly once the
+  // background worker has merged its full line set. The "PR no." column only
+  // appears when some line carries one: most POs carry none, and an empty
+  // column on every order would be noise. requisitionGroups gives every
+  // non-empty value a group, so "some group" is "some line carries a value".
+  const reqGroups = requisitionGroups(draftLines);
+  const showPrCol = reqGroups.length > 0;
+  const prCol = showPrCol ? 1 : 0;
+  // Widths of the columns actually on screen. A width the operator dragged
+  // for the PR column on one PO stays stored, but on a PO without the column
+  // it must not switch the grid to fixed layout (which squeezes every
+  // undragged column to an equal share) or offer a reset for a column that
+  // is not there.
+  const shownColw: ColumnWidths = showPrCol ? colw : clearColumn(colw, "pr");
+  const reqNotice = requisitionNotice(reqGroups);
+  const headerRequisition = String(o.result?.salesOrder?.customer?.requisition_no ?? "").trim();
   const grandTotal = Number(o.result?.salesOrder?.grandTotal) || 0;
   const subtotal = draftLines.reduce((s, ln) => s + (Number(ln.lineTotal) || (Number(ln.qty || ln.quantity) * Number(ln.rate || ln.unitPrice)) || 0), 0);
   const findings = Array.isArray(o.rule_findings) ? o.rule_findings : [];
@@ -1396,6 +1441,16 @@ const WiredSOWorkspace = () => {
           )}
           {mapAffordance(ln, i)}
         </td>
+        {showPrCol && (
+          <td className="mono-sm" title="Purchase requisition (PR) number printed on this line of the PO">
+            {lineRequisition(ln) && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span>{lineRequisition(ln)}</span>
+                <FieldPill src={getFieldSource(ln, "requisition_no")} />
+              </div>
+            )}
+          </td>
+        )}
         <td><EditableCell {...cellProps} line={ln} i={i} canonicalKey="uom" type="text" placeholder="Nos" /></td>
         <td className="r mono"><EditableCell {...cellProps} line={ln} i={i} canonicalKey="qty" type="number" align="right" /></td>
         <td className="r mono"><EditableCell {...cellProps} line={ln} i={i} canonicalKey="rate" type="number" align="right" /></td>
@@ -1443,7 +1498,7 @@ const WiredSOWorkspace = () => {
     const breakdownRow = (
       <tr key={"brk-" + i} style={{ background: "var(--paper-2)" }}>
         <td></td>
-        <td colSpan={10} style={{ padding: "10px 6px" }}>
+        <td colSpan={10 + prCol} style={{ padding: "10px 6px" }}>
           <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 8, fontSize: 11 }}>
             Per-unit tax and auxiliary amounts. Set the ones the PO carries; the row above recomputes the line total from them. The "Rate" cell is the tax-exclusive ex-price.
           </div>
@@ -1817,9 +1872,9 @@ const WiredSOWorkspace = () => {
       await AnvilBackend?.orders?.update?.(o.id, { result: nextResult });
       // Audit fix May 2026: clear the draft immediately so a
       // second Save click during the reload window cannot fire a
-      // duplicate PATCH. The useEffect on persistedLinesKey will
-      // also null this when the new lines arrive, but it races
-      // the click; we win the race here.
+      // duplicate PATCH. The render-phase reset on persistedLinesKey
+      // also nulls this when the new lines arrive, but only after the
+      // reload; clearing here closes the window before it.
       setLinesDraft(null);
       window.notifySuccess?.("Line edits saved", `${draftLines.length} line${draftLines.length === 1 ? "" : "s"} on ${o.po_number || o.id.slice(0, 8)}`);
       setBump((n: number) => n + 1);
@@ -2523,6 +2578,9 @@ const WiredSOWorkspace = () => {
               ["Bill to",     o.result.salesOrder.customer.bill_to_address || "—"],
               ["Ship to",     o.result.salesOrder.customer.ship_to_address
                               || o.result.salesOrder.customer.bill_to_address || "—"],
+              // The header-level PR number, read-only. Listed only when the
+              // PO header prints one; per-line PR numbers are in the grid.
+              ...(headerRequisition ? [["PR no.", headerRequisition] as [string, string]] : []),
             ]} />
                   </Card>
                 )}
@@ -2583,6 +2641,14 @@ const WiredSOWorkspace = () => {
             {linesDirty && o.approval && (
               <div className="mono-sm" style={{ padding: "8px 16px", color: "var(--rust)", background: "var(--paper-2)" }}>
                 Editing line items will invalidate the existing approval. The order will need to be re-approved before push.
+              </div>
+            )}
+            {/* Non-blocking: a consolidated PO answering several PRs is
+                legitimate. It is shown so the operator can see which lines
+                answer which PR, not to stop anything. */}
+            {reqNotice && (
+              <div role="status" className="mono-sm" style={{ padding: "8px 16px", color: "var(--ink-2)", background: "var(--paper-2)" }}>
+                {reqNotice}
               </div>
             )}
             {draftLines.length === 0 ? (
@@ -2646,7 +2712,7 @@ const WiredSOWorkspace = () => {
                   <>
                   {/* Only offered once a column has actually been dragged —
                       a reset for a layout nobody changed is noise. */}
-                  {Object.keys(colw).length > 0 && (
+                  {Object.keys(shownColw).length > 0 && (
                     <div className="row" style={{ justifyContent: "flex-end", marginBottom: 4 }}>
                       <Btn sm kind="ghost" onClick={resetCols}
                            title="Return every column to automatic width">
@@ -2657,11 +2723,13 @@ const WiredSOWorkspace = () => {
                   <ReconLinesTable
                     lines={draftLines}
                     renderRow={reconRow}
-                    layout={tableLayoutFor(colw)}
+                    layout={tableLayoutFor(shownColw)}
                     head={<thead><tr>
                       <th style={{ width: 28 }}>#</th>
                       {([
-                        ["item", "Item", ""], ["uom", "UoM", ""], ["qty", "Qty", "r"],
+                        ["item", "Item", ""],
+                        ...(showPrCol ? [["pr", "PR no.", ""]] : []),
+                        ["uom", "UoM", ""], ["qty", "Qty", "r"],
                         ["rate", "Rate", "r"], ["hsn", "HSN / SAC", ""], ["gst", "GST %", "r"],
                         ["taxable", "Taxable ₹", "r"], ["tax", "Tax ₹", "r"],
                         ["line", "Line ₹", "r"], ["issues", "Issues", ""],
@@ -2675,7 +2743,7 @@ const WiredSOWorkspace = () => {
                     </tr></thead>}
                     footer={<tfoot>
                       <tr style={{ background: "var(--paper-2)" }}>
-                        <td colSpan={7} className="r mono" style={{ paddingTop: 8 }}>
+                        <td colSpan={7 + prCol} className="r mono" style={{ paddingTop: 8 }}>
                           <span style={{ color: "var(--ink-3)" }}>subtotal · taxable</span>
                         </td>
                         <td className="r mono"><b>{fmtINR(taxableTotal)}</b></td>
@@ -2685,7 +2753,7 @@ const WiredSOWorkspace = () => {
                       </tr>
                       {auxTotal > 0 && (
                         <tr style={{ background: "var(--paper-2)" }}>
-                          <td colSpan={9} className="r mono">
+                          <td colSpan={9 + prCol} className="r mono">
                             <span style={{ color: "var(--ink-3)" }}>auxiliary · tooling / P&amp;F / others</span>
                           </td>
                           <td className="r mono">{fmtINR(auxTotal)}</td>
@@ -2693,7 +2761,7 @@ const WiredSOWorkspace = () => {
                         </tr>
                       )}
                       <tr style={{ background: "var(--paper-2)" }}>
-                        <td colSpan={7} className="r mono" style={{ paddingBottom: 8 }}>
+                        <td colSpan={7 + prCol} className="r mono" style={{ paddingBottom: 8 }}>
                           <span style={{ color: "var(--ink-3)" }}>
                             grand total · taxable + tax{auxTotal > 0 ? " + aux" : ""}
                           </span>
@@ -2705,7 +2773,7 @@ const WiredSOWorkspace = () => {
                       </tr>
                       {grandWithTax > 0 && (
                         <tr style={{ background: "var(--paper-2)" }}>
-                          <td colSpan={11} className="mono-sm" style={{ paddingTop: 2, paddingBottom: 10, color: "var(--ink-3)" }}>
+                          <td colSpan={11 + prCol} className="mono-sm" style={{ paddingTop: 2, paddingBottom: 10, color: "var(--ink-3)" }}>
                             <span style={{ color: "var(--ink-3)" }}>amount chargeable (in words):</span>{" "}
                             <i>{amountInWords(grandWithTax, { currency: o.currency || "INR" })}</i>
                           </td>
@@ -2847,7 +2915,12 @@ const WiredSOWorkspace = () => {
         )}
 
         {tab === "threeway" && <ThreeWayPanel orderId={o.id} />}
-        {tab === "invoice_check" && <InvoicePoCheck orderId={o.id} />}
+        {tab === "invoice_check" && (
+          <>
+            <DeliveryChallanUpload key={o.id} orderId={o.id} onRecorded={() => setInvoiceCheckKey((k: number) => k + 1)} />
+            <InvoicePoCheck key={invoiceCheckKey} orderId={o.id} />
+          </>
+        )}
         {tab === "quotes" && (
           <QuotePane
             orderId={o.id}

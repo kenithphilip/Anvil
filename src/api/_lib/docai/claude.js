@@ -41,6 +41,25 @@ import { promptNameForKind } from "./prompt-versions.js";
 
 export const isConfigured = (_settings) => !!process.env.ANTHROPIC_API_KEY;
 
+// The per-line requisition (PR) number, worded ONCE and imported by gemini.js.
+//
+// The multi-row block below has told the model since #106 that row 4 of an OEM
+// item block prints a requisition number, but the only slot the schema offered
+// was customer.requisition_no, and a line is additionalProperties:false. So a
+// consolidated PO raised against several purchase requisitions kept one of
+// them at most, and gemini.js (which runs FIRST) never asked at all. Each
+// adapter wording this for itself is exactly how the multi-row block (#106)
+// and the unsupported-kind guard (#485) drifted apart, so both prompts and
+// both schemas take these strings from here.
+export const LINE_REQUISITION_RULE =
+  "the buyer's requisition (PR) number printed ON THIS LINE: a 'Req No' / 'PR No' / 'Requisition' "
+  + "cell, or the requisition row of a multi-row item block (e.g. '1000343964'). A consolidated PO can "
+  + "carry a different one on each line, so read it per line. Null when the line prints none; never "
+  + "copy customer.requisition_no onto a line.";
+export const LINE_REQUISITION_DESCRIPTION =
+  "Buyer's requisition / PR number printed on THIS line (a consolidated PO can carry one per line). "
+  + "Null when the line prints none; never copied from customer.requisition_no.";
+
 export const SYSTEM_PROMPT = [
   "You are a purchase-order / RFQ extractor for a B2B manufacturing platform serving Indian and international customers.",
   "",
@@ -148,6 +167,7 @@ export const SYSTEM_PROMPT = [
   "  - lines[].raw_description the Description / Item-Description cell VERBATIM and uncut (before stripping any",
   "                       prefix or boilerplate). Always return this so the part parse is auditable/re-runnable.",
   "  - lines[].specification per-tenant specification or drawing code if printed as a separate cell (e.g., '4-XY31062', '502B8K1172'). Null otherwise.",
+  "  - lines[].requisition_no " + LINE_REQUISITION_RULE,
   "  - lines[].quantity   numeric, no units",
   "  - lines[].unitPrice  numeric, in customer.currency. ALWAYS the TAX-EXCLUSIVE ex-price.",
   "                       If the PO prints both an 'Ex-Price' / 'Net Pr.' / 'Basic Price' column and a",
@@ -1346,6 +1366,7 @@ export const TOOL_DEFINITION = {
             description:      { type: ["string", "null"] },
             raw_description:  { type: ["string", "null"], description: "The Description / Item-Description cell VERBATIM, uncut — before any prefix or boilerplate ('Refer Table 1...', delivery-date lines) is stripped. The audit source for re-parsing the part number." },
             specification:    { type: ["string", "null"], description: "Per-tenant spec / drawing code if printed separately." },
+            requisition_no:   { type: ["string", "null"], description: LINE_REQUISITION_DESCRIPTION },
             quantity:      { type: ["number", "null"] },
             unitPrice:     { type: ["number", "null"], description: "TAX-EXCLUSIVE per-unit price." },
             uom:           { type: ["string", "null"] },

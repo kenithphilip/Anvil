@@ -206,14 +206,21 @@ export const requirePermission = (ctx, level) => {
 // the per-resource MATRIX restrict them further, but until now that was
 // enforced ONLY client-side. SERVER_ACTIONS mirrors the sensitive entries so the
 // server is the real gate. Enforced at the specific endpoints (share, invoices,
-// quotes convert/send, customer GSTIN). Kept in sync with rbac.ts by
-// src/scripts/audit-rbac.mjs.
+// quotes convert/send, customer GSTIN). Kept in sync with rbac.ts ACTIONS BY
+// HAND: src/scripts/audit-rbac.mjs compares roles, verb sets and the MATRIX,
+// not these tables, so a new action needs its own parity test (see
+// api-customer-owner.test.js for customer.assign_owner).
 export const SERVER_ACTIONS = {
   // Share a spare matrix to the customer portal — the ONE write customer_support
   // is allowed (it is otherwise read-only). Mirrors rbac.ts ACTIONS.
   "spare_matrix.share":  new Set(["sales_engineer", "sales_manager", "design_engineer", "design_manager", "customer_support", "admin"]),
   // GSTIN edits are restricted (a bad GSTIN breaks e-invoice IRN / Tally lookup).
   "customer.edit_gstin": new Set(["sales_manager", "admin"]),
+  // Naming a customer's account owner decides whose pipeline, chase list and
+  // follow-ups the account lands on. That is a manager's call: the coarse
+  // write verb would let any rep (or finance, or procurement) take an account
+  // or hand one away. Mirrors rbac.ts customer.assign_owner.
+  "customer.assign_owner": new Set(["sales_manager", "admin"]),
   // MATRIX.invoices: only sales_manager (rw), finance (rwa), admin (rwa) — NOT
   // operator/procurement/customer_support/sales_engineer (r or hidden).
   "invoices.write":      new Set(["sales_manager", "finance", "admin"]),
@@ -229,6 +236,12 @@ export const SERVER_ACTIONS = {
   // Visits screen (MATRIX["svc-visits"] gives them ""), yet could reassign
   // another engineer's scheduled visit. Mirrors rbac.ts service.assign.
   "service.assign":      new Set(["operator", "admin"]),
+  // Logging a rep touch (call / meeting / visit) against a quote or an
+  // opportunity: exactly the coarse "write" roles, so it tightens nothing
+  // server-side. It is registered so the Follow-up form (TouchLog.tsx, via
+  // rbac.ts canDo) hides itself for the roles this endpoint always refuses
+  // (viewer, customer_support) instead of offering a form that 403s.
+  "touch.log":           new Set(["sales_engineer", "sales_manager", "procurement", "finance", "admin", "operator", "design_engineer", "design_manager"]),
 };
 
 export const hasAction = (ctx, action) => {

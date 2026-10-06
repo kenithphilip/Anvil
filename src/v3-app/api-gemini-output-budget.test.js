@@ -73,10 +73,14 @@ describe("the output budget, measured", () => {
   // Reproduces the sizing that motivated both changes, so a future schema
   // addition that re-inflates the line shows up as a failing test rather than
   // as a truncated PO in production.
+  //
+  // requisition_no is carried POPULATED on every line (the worst case: a
+  // consolidated PO printing a PR in every item block). It costs ~30 chars a
+  // line, and 45 such lines still sit well inside the bound below.
   const flatLine = {
     partNumber: "PN-092-1-2", customerItemCode: "A12060ACME010001",
     description: "ACME STD SHANK PN-092-1", raw_description: "ACME STD SHANK PN-092-1-2",
-    specification: null, quantity: 1, unitPrice: 1000.8, uom: "each", hsn: null,
+    specification: null, requisition_no: "1000343964", quantity: 1, unitPrice: 1000.8, uom: "each", hsn: null,
     gst_pct: 18, discount_pct: null,
     cgst_amount: 90.07, sgst_amount: 90.07, igst_amount: null, utgst_amount: null,
     cess_amount: null, excise_amount: null, ed_cess_amount: null,
@@ -85,7 +89,7 @@ describe("the output budget, measured", () => {
   const nestedLine = {
     partNumber: "PN-092-1-2", customerItemCode: "A12060ACME010001",
     description: "ACME STD SHANK PN-092-1", raw_description: "ACME STD SHANK PN-092-1-2",
-    specification: null, quantity: 1, unitPrice: 1000.8, uom: "each", hsn: null,
+    specification: null, requisition_no: "1000343964", quantity: 1, unitPrice: 1000.8, uom: "each", hsn: null,
     gst_pct: 18, discount_pct: null,
     charges: { cgst_amount: 90.07, sgst_amount: 90.07 },
   };

@@ -5,6 +5,9 @@
 // limit. Single email to ops (not to the customer); marks complete
 // once a review row is recorded.
 
+import { isMissingOwnerColumn } from "../../_lib/customer-owner.js";
+import { resolveAssignee } from "../../_lib/assignee.js";
+
 const HOURS = 60 * 60 * 1000;
 
 const sumOutstanding = async (svc, tenantId, customerId) => {
@@ -18,13 +21,47 @@ const sumOutstanding = async (svc, tenantId, customerId) => {
     .reduce((s, i) => s + (Number(i.grand_total) || 0) - (Number(i.paid_amount) || 0), 0);
 };
 
+// The account owner's email. Auth users live in the auth schema, which
+// PostgREST does not expose; this used to read a `users` table that does not
+// exist, so the owner fallback could never produce a recipient.
+//
+// Only while the owner is still an APPROVED member of this tenant: an owner
+// was a member when assigned, but membership can be revoked afterwards, and a
+// credit-limit summary must not go to someone who has left.
+//
+// Returns { email } or { reason } for an answer, and THROWS when it could not
+// find out: a failed membership read or auth lookup is a transient fault, not
+// evidence that the owner left, so the caller retries instead of escalating
+// with a reason that would be false.
+const ownerRecipient = async (svc, tenantId, userId) => {
+  if (!(await resolveAssignee(svc, tenantId, userId))) return { reason: "owner_not_member" };
+  const { data, error } = await svc.auth.admin.getUserById(userId);
+  if (error) throw new Error("could not read the owner's auth user: " + (error.message || String(error)));
+  const email = data && data.user && data.user.email;
+  return email ? { email } : { reason: "owner_has_no_email" };
+};
+
+const OWNER_REASON_THOUGHT = {
+  owner_not_member: "the account owner is no longer an approved member of this tenant",
+  owner_has_no_email: "the account owner has no email address on their login",
+};
+
+const readCustomer = (svc, goal, cols) => svc.from("customers")
+  .select(cols)
+  .eq("tenant_id", goal.tenant_id)
+  .eq("id", goal.object_id)
+  .maybeSingle();
+
 export const creditReviewRequest = async (goal, ctx) => {
   const svc = ctx.svc;
-  const r = await svc.from("customers")
-    .select("id, customer_name, credit_limit, currency, owner_user_id")
-    .eq("tenant_id", goal.tenant_id)
-    .eq("id", goal.object_id)
-    .maybeSingle();
+  let r = await readCustomer(svc, goal, "id, customer_name, credit_limit, currency, owner_user_id");
+  // owner_user_id arrives with migration 227. Before it is applied, selecting
+  // it fails the whole read, and the review never runs. The owner is a
+  // nullable ATTRIBUTE (it only picks a fallback recipient), so drop it and
+  // read again rather than stall the agent.
+  if (r.error && isMissingOwnerColumn(r.error)) {
+    r = await readCustomer(svc, goal, "id, customer_name, credit_limit, currency");
+  }
   if (r.error) return { thought: "customer read failed: " + r.error.message, action: "noop", action_payload: {} };
   if (!r.data) return { thought: "customer missing", action: "give_up", action_payload: { reason: "customer_not_found" } };
   const cust = r.data;
@@ -49,9 +86,24 @@ export const creditReviewRequest = async (goal, ctx) => {
   let recipient = null;
   const ts = await svc.from("tenant_settings").select("finance_email").eq("tenant_id", goal.tenant_id).maybeSingle();
   if (ts.data?.finance_email) recipient = ts.data.finance_email;
+  let ownerReason = null;
   if (!recipient && cust.owner_user_id) {
-    const u = await svc.from("users").select("email").eq("id", cust.owner_user_id).maybeSingle();
-    if (u.data?.email) recipient = u.data.email;
+    let o;
+    try {
+      o = await ownerRecipient(svc, goal.tenant_id, cust.owner_user_id);
+    } catch (err) {
+      // Same as a failed customer read above: try again next tick.
+      return { thought: "account owner lookup failed: " + (err && err.message ? err.message : String(err)) + "; retrying.", action: "noop", action_payload: {} };
+    }
+    if (o.email) recipient = o.email;
+    else ownerReason = o.reason;
+  }
+  if (!recipient && ownerReason) {
+    return {
+      thought: "No internal recipient: tenant_settings.finance_email is empty and " + OWNER_REASON_THOUGHT[ownerReason] + "; escalating.",
+      action: "escalate",
+      action_payload: { reason: ownerReason },
+    };
   }
   if (!recipient) {
     return { thought: "No internal recipient (tenant_settings.finance_email + owner_user_id both empty); escalating.", action: "escalate", action_payload: { reason: "no_internal_recipient" } };

@@ -296,6 +296,35 @@ const checkLineCountShortfall = (normalized, opts = {}) => {
   }];
 };
 
+// The other direction: MORE lines than the PO declares. The shortfall check
+// above is blind to it, so a 25-item PO that came back as 103 lines (each
+// item split into one line per printed row) reported nothing at all. A gap in
+// this direction means printed rows were read as separate items, or a line
+// was read twice. Warn, not error: the declared count is model-reported, and a
+// PO that restarts its serials on each page can make it low.
+//   opts.lineCountExcessEnabled === false -> disabled.
+//   opts.lineCountExcessSlack (default 0) -> tolerated surplus.
+const checkLineCountExcess = (normalized, opts = {}) => {
+  if (opts.lineCountExcessEnabled === false) return [];
+  if (opts.kind && opts.kind !== "po" && opts.kind !== "rfq") return [];
+  const declared = numberOrNull(normalized?.stated_line_count);
+  if (declared == null || declared < 1) return [];
+  const extracted = Array.isArray(normalized?.lines) ? normalized.lines.length : 0;
+  const slackRaw = Number(opts.lineCountExcessSlack);
+  const slack = Number.isFinite(slackRaw) ? Math.max(0, slackRaw) : 0;
+  if (extracted <= declared + slack) return [];
+  const extra = extracted - declared;
+  return [{
+    code: "line_count_excess",
+    severity: "warn",
+    path: "lines",
+    actual: extracted,
+    expected: declared,
+    detail: "PO declares " + declared + " line items; extraction returned " + extracted
+      + " (" + extra + " more). Printed rows of one item may have been read as separate lines, or a line read twice.",
+  }];
+};
+
 // CM P0 (Aug 2026): the money-completeness guard.
 //
 // Every other detector in this file — checkLineCountShortfall above very much
@@ -441,6 +470,70 @@ const checkDocumentTotalShortfall = (normalized, opts = {}) => {
   }];
 };
 
+// CONTINUATION FOLDS (continuation-rows.js). When printed continuation rows
+// were merged into the line above them, say so, and check the folded lines
+// against the document's printed total in BOTH directions.
+//
+// The fold never moves money: a folded row has no quantity, no amount and no
+// price of its own. So a total that does not match after the fold is not the
+// fold's doing, but it is exactly when the operator must look, because the
+// line set they are about to approve was repaired rather than read. Reported,
+// never hidden.
+//
+// The info entry is always written when a fold happened, so a run that was
+// repaired is visible in diagnostics even when everything adds up.
+const FOLD_TOTAL_TOLERANCE = 0.02;
+const checkContinuationFolds = (normalized, opts = {}) => {
+  const folds = normalized?.continuation_folds;
+  const rows = numberOrNull(folds?.rows_folded);
+  if (rows == null || rows <= 0) return [];
+  const lines = Array.isArray(normalized?.lines) ? normalized.lines : [];
+  const before = numberOrNull(folds.lines_before);
+  const out = [{
+    code: "continuation_rows_folded",
+    severity: "info",
+    path: "lines",
+    actual: lines.length,
+    expected: before,
+    detail: rows + " printed row" + (rows === 1 ? "" : "s") + " with no quantity or amount of their own "
+      + (rows === 1 ? "was" : "were") + " merged into the line above"
+      + (before != null ? " (" + before + " rows read, " + lines.length + " lines kept)" : "")
+      + ". The merged text is kept on each line.",
+  }];
+  if (opts.kind && opts.kind !== "po") return out;
+  const printed = printedDocumentTotal(opts.bodyText);
+  if (printed == null || !lines.length) return out;
+  let gross = 0;
+  let anyTax = false;
+  let anyMoney = false;
+  for (const l of lines) {
+    const t = lineGross(l);
+    gross += t.gross;
+    if (t.taxSeen) anyTax = true;
+    if (t.taxable > 0) anyMoney = true;
+  }
+  if (!anyMoney) return out;
+  // With no tax captured the printed total may legitimately carry tax the
+  // lines do not, so the upper bound gets the same allowance the shortfall
+  // check uses.
+  const highest = anyTax ? gross : gross * MAX_TAX_INFLATION;
+  const tolerance = printed * FOLD_TOTAL_TOLERANCE;
+  if (gross <= printed + tolerance && highest >= printed - tolerance) return out;
+  const acct = Math.round(gross * 100) / 100;
+  out.push({
+    code: "continuation_fold_total_mismatch",
+    severity: "warn",
+    path: "lines",
+    actual: acct,
+    expected: printed,
+    detail: "after merging " + rows + " continuation row" + (rows === 1 ? "" : "s") + ", the "
+      + lines.length + " line" + (lines.length === 1 ? "" : "s") + " add up to " + acct.toFixed(2)
+      + " but the document prints a total of " + printed.toFixed(2)
+      + ". Check the merged lines and their prices.",
+  });
+  return out;
+};
+
 // CONSERVATION: rows the parser accepted vs lines it emitted.
 //
 // The one completeness invariant that needs to know NOTHING about the
@@ -568,7 +661,9 @@ export const detectAnomalies = (normalized, opts = {}) => {
   if (currIssue) anomalies.push(currIssue);
   anomalies.push(...checkTotals(normalized));
   anomalies.push(...checkLineCountShortfall(normalized, opts));
+  anomalies.push(...checkLineCountExcess(normalized, opts));
   anomalies.push(...checkDocumentTotalShortfall(normalized, opts));
+  anomalies.push(...checkContinuationFolds(normalized, opts));
   anomalies.push(...checkParserConservation(normalized, opts));
 
   const summary = { error: 0, warn: 0, info: 0, total: anomalies.length };
@@ -584,4 +679,4 @@ export const detectAnomalies = (normalized, opts = {}) => {
   };
 };
 
-export const __test = { lineArithmetic, linePriceSanity, lineQtySanity, lineHsnSanity, lineGstSanity, checkTotals, checkLineCountShortfall, checkDocumentTotalShortfall, checkParserConservation, printedDocumentTotal, lineGross, KNOWN_GST_SLABS };
+export const __test = { lineArithmetic, linePriceSanity, lineQtySanity, lineHsnSanity, lineGstSanity, checkTotals, checkLineCountShortfall, checkLineCountExcess, checkDocumentTotalShortfall, checkContinuationFolds, checkParserConservation, printedDocumentTotal, lineGross, KNOWN_GST_SLABS };

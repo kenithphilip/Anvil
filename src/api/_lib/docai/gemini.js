@@ -17,7 +17,7 @@ import { decryptField } from "../secrets.js";
 import { callGemini, extractTextFromGemini, parseStructuredGemini, stopReasonFromGemini } from "../gemini.js";
 import { parseSchemaAligned } from "./parse.js";
 import { selectGeminiModel } from "./model_selector.js";
-import { coerceStatedLineCount, LINE_REQUISITION_RULE, LINE_REQUISITION_DESCRIPTION } from "./claude.js";
+import { coerceStatedLineCount, LINE_REQUISITION_RULE, LINE_REQUISITION_DESCRIPTION, CONTINUATION_ROW_RULE } from "./claude.js";
 import { promptNameForKind } from "./prompt-versions.js";
 
 const apiKey = (settings) => {
@@ -100,6 +100,7 @@ export const PO_SYSTEM_PROMPT = [
   "from a dedicated 'Item Number'/'Material'/'SAP Code' column (e.g. 'A12060OBAR010003'), distinct from OUR",
   "partNumber - capture BOTH when present. raw_description = the Description cell VERBATIM, uncut (for audit).",
   "lines[].requisition_no = " + LINE_REQUISITION_RULE,
+  CONTINUATION_ROW_RULE,
   "quantity, unitPrice (ALWAYS tax-exclusive ex-price - prefer the 'Ex-Price' / 'Net Pr.' / 'Basic Price'",
   "column over a tax-inclusive 'Unit Price' column), uom, hsn (4-8 digits, IN only), gst_pct (only when",
   "the PO prints a consolidated GST percentage and not per-component amounts).",

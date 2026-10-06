@@ -99,6 +99,13 @@ const REGISTRY = {
       // over-fitted part of the block, and carrying it would confound the
       // experiment with a second, different treatment.
       //
+      // BOTH ARMS MOVED ONCE. Both base prompts (v1, this arm's control) now
+      // carry the one-paragraph CONTINUATION_ROW_RULE from claude.js, after a
+      // multi-row OEM PO came back with about four lines per item. This arm
+      // still appends the full block on top of it, so the comparison stays
+      // clean, but do not pool runs from before that change with runs after
+      // it.
+      //
       // Read-out: empty_lines share of extraction_failure_rate, the
       // line_count_shortfall anomaly rate, and replay's line_recall_avg —
       // sliced by adapter, because the two arms are not the same treatment on

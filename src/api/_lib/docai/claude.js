@@ -60,6 +60,26 @@ export const LINE_REQUISITION_DESCRIPTION =
   "Buyer's requisition / PR number printed on THIS line (a consolidated PO can carry one per line). "
   + "Null when the line prints none; never copied from customer.requisition_no.";
 
+// One item printed across several physical rows, worded ONCE and imported by
+// gemini.js, for the same reason as the requisition rule above.
+//
+// The MULTI-ROW-PER-ITEM block below has been in this prompt since #106.
+// gemini.js, which runs FIRST for POs, never had any of it (prompt-versions.js
+// v3 is a canary of the full block). An OEM PO whose 25 items each print as a
+// part row, a description row, a drawing-code row and a requisition row came
+// back with about four lines per item: each item's part row, then every row
+// below it as a line of its own with no quantity, one of them carrying the
+// item's line total as a unit price. The deterministic backstop is
+// continuation-rows.js; this rule asks the model not to produce those lines.
+export const CONTINUATION_ROW_RULE =
+  "CONTINUATION ROWS: one line item often prints across several physical rows: the part number, "
+  + "quantity and price on the first row, then rows that carry only a description, a drawing or "
+  + "specification code, a requisition (PR) number, a delivery date or the line total. A row that "
+  + "prints no quantity and no S.No of its own is part of the item above it, not a new item. Put its text in that "
+  + "item's description, specification or requisition_no, and never return it as a lines[] entry of "
+  + "its own. A line total printed on such a row is the item's total, never a unit price. Return "
+  + "exactly one lines[] entry per printed S.No / item serial.";
+
 export const SYSTEM_PROMPT = [
   "You are a purchase-order / RFQ extractor for a B2B manufacturing platform serving Indian and international customers.",
   "",
@@ -212,6 +232,7 @@ export const SYSTEM_PROMPT = [
   "entry. Do NOT emit one lines[] entry per physical row -- that would multiply the line count by 4-5x",
   "and shred every per-unit amount. If the document prints 8 S.No values you must return exactly 8",
   "lines[] entries; if it prints 32 you must return exactly 32.",
+  CONTINUATION_ROW_RULE,
   "",
   "Also set stated_line_count = the total number of line items the PO DECLARES it has: a printed total",
   "('Total items: 190', 'No. of items', 'Total no. of lines') if one exists, else the HIGHEST S.No / Line /",

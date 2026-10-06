@@ -31,6 +31,7 @@ import { recordEvent, recordAudit } from "../_lib/audit.js";
 import { chunkPdf, probePdfPageCount, BACKGROUND_MAX_TOTAL_PAGES } from "../_lib/docai/pdf-chunker.js";
 import { profileDocument } from "../_lib/docai/toc-profiler.js";
 import { mergeChunkResults, normalizedResult } from "../_lib/docai/chunked-extract.js";
+import { foldContinuationRows, remapLineKeys } from "../_lib/docai/continuation-rows.js";
 import { dispatchExtract } from "../_lib/docai/index.js";
 import { ingestQuote, quoteHeadFromExtract } from "../_lib/quote-ingest.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
@@ -583,6 +584,30 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
       pageCount: c.page_count ?? c.item_count,
     }));
     const merged = mergeChunkResults(chunkResults, chunks);
+    // Fold printed continuation rows into the line above them, on the MERGED
+    // set so a row cut off from its item at a chunk boundary still finds it.
+    // The same pass the sync pipeline runs (run.js); this path skips run.js,
+    // so without it a large PO in the same multi-row layout would be written
+    // to the order with every item's description, drawing-code and
+    // requisition rows as lines of their own. Purchase orders only, and the
+    // same tenant switch (docai_fold_continuation_rows=false) turns it off.
+    const foldSettings = await settingsForTenant(svc, job.tenant_id, settingsCache);
+    if (foldSettings?.docai_fold_continuation_rows !== false) {
+      let fold = null;
+      try {
+        fold = foldContinuationRows(normalizedResult(merged), { kind: kindOfJob(job) || "po" });
+      } catch { fold = null; /* a repair must never fail the job; the unfolded lines stand */ }
+      if (fold && fold.folded > 0) {
+        merged.normalized = fold.normalized;
+        if (merged.confidences) merged.confidences = remapLineKeys(merged.confidences, fold.keptIndices);
+        await emit(svc, tenantCtx, "docai_continuation_rows_folded", {
+          job_id: job.id, order_id: orderId,
+          rows_folded: fold.folded,
+          lines_before: fold.normalized.continuation_folds?.lines_before ?? null,
+          lines_after: fold.normalized.lines.length,
+        });
+      }
+    }
     // mergeChunkResults returns the nested `normalized` shape (lines/customer
     // under .normalized); read through the shared accessor. Reading flat
     // `merged.lines`/`merged.customer` here is exactly what zero-lined every

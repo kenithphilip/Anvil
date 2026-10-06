@@ -108,6 +108,36 @@ const fillMissingFromDuplicates = (primary, duplicates) => {
   return patch;
 };
 
+// The account owner (customers.owner_user_id, migration 227). A duplicate
+// that a manager had assigned must not lose its owner because the merge kept
+// the other row, so:
+//   - the primary already has an owner: it keeps it (the operator chose the
+//     primary, and the primary's owner with it);
+//   - the primary has none and every owned duplicate names the SAME member:
+//     that member is carried onto the primary;
+//   - the owned duplicates disagree: nobody decided between them, so the
+//     primary stays Unassigned rather than take a guess.
+// Every owner the duplicates held is recorded in the merge audit either way,
+// so a dropped assignment can be seen and restored. Before 227 the rows have
+// no owner_user_id, nothing is carried, and the column is never written.
+const resolveMergedOwner = (primary, duplicates) => {
+  const duplicateOwners = duplicates
+    .filter((d) => d.owner_user_id)
+    .map((d) => ({ customer_id: d.id, owner_user_id: d.owner_user_id }));
+  const distinct = [...new Set(duplicateOwners.map((d) => d.owner_user_id))];
+  const kept = primary.owner_user_id || null;
+  let patch = {};
+  let outcome = kept ? "primary_kept" : "none";
+  if (!kept && distinct.length === 1) { patch = { owner_user_id: distinct[0] }; outcome = "carried"; }
+  else if (!kept && distinct.length > 1) outcome = "conflict_left_unassigned";
+  return {
+    patch,
+    audit: duplicateOwners.length || kept
+      ? { outcome, owner_user_id: kept || patch.owner_user_id || null, duplicate_owners: duplicateOwners }
+      : null,
+  };
+};
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);
@@ -156,7 +186,8 @@ export default async function handler(req, res) {
     // primary; only fill nulls.
     const merged = mergeExternalRef(primaryQ.data, dupsQ.data);
     const fill = fillMissingFromDuplicates(primaryQ.data, dupsQ.data);
-    const patch = { external_ref: merged, ...fill, updated_at: new Date().toISOString() };
+    const owner = resolveMergedOwner(primaryQ.data, dupsQ.data);
+    const patch = { external_ref: merged, ...fill, ...owner.patch, updated_at: new Date().toISOString() };
     const upd = await svc.from("customers")
       .update(patch)
       .eq("tenant_id", ctx.tenantId).eq("id", body.primary_id)
@@ -184,6 +215,7 @@ export default async function handler(req, res) {
         merged_from: body.duplicate_ids,
         moved_row_counts: moveCounts,
         deleted,
+        ...(owner.audit ? { owner: owner.audit } : {}),
       },
     });
 

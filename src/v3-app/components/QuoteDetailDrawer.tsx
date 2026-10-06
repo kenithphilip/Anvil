@@ -5,6 +5,7 @@ import { AnvilBackend } from "../lib/api";
 import { QuoteComposition } from "./QuoteComposition";
 import { QuoteHistoryTab } from "./QuoteHistoryTab";
 import { QuoteRfqTab } from "./QuoteRfqTab";
+import { TouchLog } from "./TouchLog";
 
 // Quote detail drawer.
 //
@@ -451,6 +452,7 @@ export const QuoteDetailDrawer: React.FC<{
           <TabBtn active={tab === "comp"} onClick={() => setTab("comp")}>Composition</TabBtn>
           <TabBtn active={tab === "rfq"} onClick={() => setTab("rfq")}>Vendor RFQ</TabBtn>
           <TabBtn active={tab === "terms"} onClick={() => setTab("terms")}>Terms</TabBtn>
+          <TabBtn active={tab === "followup"} onClick={() => setTab("followup")}>Follow-up</TabBtn>
           <TabBtn active={tab === "history"} onClick={() => setTab("history")}>History</TabBtn>
           {onTab && (
             <span className="mono-sm" style={{ marginLeft: "auto", alignSelf: "center", color: "var(--ink-4)", fontSize: 10, whiteSpace: "nowrap" }} title="Keyboard: j / k next & previous quote · ← / → switch tabs · Esc close">
@@ -737,6 +739,17 @@ export const QuoteDetailDrawer: React.FC<{
                 <Btn sm kind="primary" disabled={busy} onClick={saveTerms}>{busy ? "Saving..." : "Save terms"}</Btn>
               </div>
             </>
+          )}
+
+          {/* Rep touches (call / meeting / whatsapp / visit / note) plus the
+              quote email and automatic nudges filed against this quote. The
+              log form is prefilled with the quote's contact as currently
+              picked on the Header tab. */}
+          {visited.has("followup") && (
+            <div style={{ display: tab === "followup" ? undefined : "none" }}>
+              <TouchLog key={quote.id} objectType="quote" objectId={quote.id} customerId={quote.customer_id}
+                contactId={draft.customer_contact_id || null} contacts={contacts} />
+            </div>
           )}
 
           {visited.has("history") && (

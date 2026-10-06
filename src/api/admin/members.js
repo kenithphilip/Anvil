@@ -1,5 +1,5 @@
 // /api/admin/members
-//   GET    list current tenant members with email, role, last sign-in
+//   GET    list current tenant members with email, role, status, last sign-in
 //   POST   { email, role } invite a new member by email; sends magic link
 //   PATCH  { user_id, role } change role
 //   DELETE ?user_id=  revoke membership
@@ -49,7 +49,12 @@ export default async function handler(req, res) {
     const svc = serviceClient();
     if (req.method === "GET") {
       requirePermission(ctx, "read");
-      const { data: members, error } = await svc.from("tenant_members").select("user_id, role, created_at").eq("tenant_id", ctx.tenantId);
+      // status (migration 042: pending | approved | denied | deactivated) is
+      // returned so a caller can tell a colleague from an access request.
+      // Without it this list offered pending, denied and deactivated users as
+      // if they were the team, and an owner picker built on it would offer
+      // people the server then refuses.
+      const { data: members, error } = await svc.from("tenant_members").select("user_id, role, status, created_at").eq("tenant_id", ctx.tenantId);
       if (error) throw new Error(error.message);
       // Audit H11 (May 2026): replace the global listUsers() call
       // (which read every user across the entire Supabase project
@@ -73,6 +78,7 @@ export default async function handler(req, res) {
           email: u.email || "",
           display_name: meta.name || meta.full_name || null,
           role: m.role,
+          status: m.status || null,
           created_at: m.created_at,
           last_sign_in_at: u.last_sign_in_at || null,
         };

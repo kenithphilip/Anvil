@@ -130,6 +130,8 @@ import customersGstLookup        from "./customers/gst_lookup.js";
 import docaiProviderKeys         from "./admin/docai_provider_keys.js";
 import customersDuplicates      from "./customers/duplicates.js";
 import customersMerge           from "./customers/merge.js";
+// Account owner on customers (migration 227): assign + suggest.
+import customersOwner           from "./customers/owner.js";
 import customerLocationsIndex   from "./customer_locations/index.js";
 import locationsIndex           from "./locations/index.js";
 // Phase 7.3: customer health score (Haiku per-customer + cron drain).
@@ -981,6 +983,7 @@ const STATIC_ROUTES = {
   "/customers/gst_lookup":          customersGstLookup,
   "/customers/duplicates":          customersDuplicates,
   "/customers/merge":               customersMerge,
+  "/customers/owner":               customersOwner,
   "/customer_locations":            customerLocationsIndex,
   "/locations":                     locationsIndex,
   "/customers/health_score":        customersHealthScore,

@@ -115,6 +115,8 @@ export const ACTIONS: Record<string, Role[]> = {
   "so.edit_after_approval":["admin"],
   "customer.edit_gstin":  ["sales_manager", "admin"],
   "customer.edit_profile":["sales_engineer", "sales_manager", "admin"],
+  // Naming a customer's account owner. Mirrors auth.js SERVER_ACTIONS.
+  "customer.assign_owner":["sales_manager", "admin"],
   // Share a spare matrix to the customer portal (generates a scoped portal link).
   "spare_matrix.share":   ["sales_engineer", "sales_manager", "design_engineer", "design_manager", "customer_support", "admin"],
   "drawing.download":     ["design_engineer", "design_manager", "sales_engineer", "sales_manager", "admin"],

@@ -472,6 +472,28 @@ The most dangerous step is the automatic quote conversion (PR 18). It converts o
 
 ---
 
+### 2.TI: Tally ERP integration for any tenant
+
+Scoped 2026-10-05 in `docs/TALLY_INTEGRATION_SCOPE.md`. Nothing built.
+
+The goal: any tenant whose books run on TallyPrime or Tally.ERP 9 gets the accounts, products and approved sales orders that Anvil owns into its Tally company exactly once, masters before vouchers, with every attempt and acknowledgement recorded. The first candidate tenant's field workbook and its Tally partner's pull-and-acknowledge collections are reference material only. The owner said not to implement their tokens or APIs.
+
+**What exists.** Anvil already has a push path: an XML voucher builder posted through a per-tenant bridge. It has never run for any tenant, sends vouchers only (no ledgers or stock items), and has verified defects that can post an order twice. There is no pull endpoint, no acknowledgement, no per-record sync state, no CRM sales order number, no sales order line table and no accounting snapshot.
+
+**The recommendation:**
+- One integration service with one state-machine table, fed by domain hooks plus an enrolling sweep. State changes run inside Postgres functions.
+- Transports behind it. A generic partner pull-and-acknowledge API comes first, with Anvil's own endpoint names, header auth and per-tenant hashed credentials. Bridge push moves onto the same records second.
+- Everything named after Tally lives in a versioned per-company mapping profile, with the first tenant's workbook as the first example profile.
+- Migrations from 232 upward.
+
+**Two owner decisions sit above it:**
+- whether Anvil becomes a tenant's system of record for accounts and products, against the recorded "not another ERP or CRM" positioning (overlaps #547's D1);
+- whether Mode B also covers masters (O17).
+
+The design works under either answer.
+
+---
+
 ## 3. Known-unfixed defects
 
 Each verified, none currently breaking a user flow.

@@ -11,9 +11,10 @@
 // tenant. The first user to ever sign in becomes the tenant admin; every
 // subsequent user gets the configured default role.
 //
-// Both auth/verify.js (immediately after the user clicks the magic link)
-// and _lib/auth.js (resolveContext fallback for users who signed in
-// before this fix shipped) call this helper.
+// Callers: auth/verify.js (after the magic link), _lib/auth.js
+// (resolveContext fallback for users who signed in before this existed),
+// auth/password_login.js, auth/passkey/auth_finish.js and auth/signup.js.
+// A customer portal identity is refused on the insert path (see below).
 
 const DEFAULT_TENANT = process.env.DEFAULT_TENANT_ID || "00000000-0000-0000-0000-000000000001";
 const NEW_USER_ROLE = process.env.NEW_USER_ROLE || "sales_engineer";
@@ -37,6 +38,54 @@ export const isAutoOnboardEnabled = () => AUTO_ONBOARD;
 export const requiresApproval = () => REQUIRE_APPROVAL;
 
 export const defaultTenantId = () => DEFAULT_TENANT;
+
+// True when this Supabase auth user is a customer portal identity (any
+// portal_users row, in any tenant, at any status).
+//
+// A missing table (migration 199 not applied: Postgres 42P01, PostgREST
+// PGRST205) means no portal identity can exist, so the answer is false.
+// Any other read error, or a response that is not a row list, throws 500:
+// failing open would let a portal user be onboarded or approved as staff.
+const portalUsersLookup = async (svc, column, value) => {
+  const r = await svc
+    .from("portal_users")
+    .select("id")
+    .eq(column, value)
+    .limit(1);
+  if (r.error) {
+    const code = r.error.code;
+    if (code === "42P01" || code === "PGRST205") return false;
+    const err = new Error("portal_users lookup failed: " + r.error.message);
+    err.status = 500;
+    throw err;
+  }
+  if (!Array.isArray(r.data)) {
+    const err = new Error("portal_users lookup returned no row list");
+    err.status = 500;
+    throw err;
+  }
+  return r.data.length > 0;
+};
+
+export const isPortalIdentity = async (svc, authUserId) => {
+  if (!authUserId) return false;
+  return portalUsersLookup(svc, "auth_user_id", authUserId);
+};
+
+// Same rule by email (portal_users.email is stored lowercased). Used before a
+// staff invite is SENT, so a portal customer never receives a staff invite.
+export const isPortalEmail = async (svc, email) => {
+  const e = String(email || "").trim().toLowerCase();
+  if (!e) return false;
+  return portalUsersLookup(svc, "email", e);
+};
+
+export const portalAccountError = () => {
+  const err = new Error("This is a customer portal account. Sign in at /portal.");
+  err.status = 403;
+  err.code = "PORTAL_ACCOUNT";
+  return err;
+};
 
 // Returns the user's memberships, inserting one if none exist and
 // auto-onboarding is enabled. The returned array always contains at
@@ -63,6 +112,28 @@ export const ensureMembership = async (svc, user, opts = {}) => {
 
   if (!AUTO_ONBOARD) {
     return [];
+  }
+
+  // A customer portal identity is never onboarded as staff.
+  //
+  // Every Supabase auth user reaching this point used to be inserted into
+  // tenant_members, including a customer's maintenance engineer whose account
+  // was created by the portal invite (portal/auth/invite.js writes
+  // portal_users.auth_user_id at invite time). One approval click on that
+  // access request then made a customer a staff user of the seller. Five
+  // callers reach this insert (resolveContext, auth/verify, password_login,
+  // passkey/auth_finish, signup), so the guard lives here rather than in any
+  // one of them. admin/access_requests (approve) and admin/members (invite)
+  // apply the same check, so a PENDING row created before this guard cannot
+  // be approved. A row that is already APPROVED is not revoked by this code:
+  // find those with the query in the PR that introduced this guard.
+  //
+  // It runs only on the insert path: an existing membership has already been
+  // returned above, so staff are untouched. It throws instead of returning []
+  // so that password_login and passkey refuse before returning a session, and
+  // the customer is told where to sign in.
+  if (await isPortalIdentity(svc, user.id)) {
+    throw portalAccountError();
   }
 
   // Make sure the default tenant row exists. The 001_init.sql migration

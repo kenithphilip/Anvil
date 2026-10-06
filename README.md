@@ -11,7 +11,7 @@ multi-channel intake (email + WhatsApp + Slack + Teams + voice via
 Vapi/Retell), PLM mirror (PTC Windchill, Arena), in-network
 back-to-back sourcing, and a Vite + React + TypeScript browser app.
 
-Stack: Vercel serverless functions (Node 20), Supabase Postgres
+Stack: Vercel serverless functions (Node 22), Supabase Postgres
 with RLS + Auth, Vite + React + TypeScript v3 app at
 `src/v3-app/`, design-system primitives shared across 46 screens.
 

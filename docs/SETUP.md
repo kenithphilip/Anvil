@@ -5,7 +5,7 @@ to with magic-link auth, with all 10 migrations applied and the corpus
 customer and item master rows in place. Time required: 30 to 45 minutes the
 first time, 5 minutes for subsequent environments.
 
-This guide assumes Node 20 (`nvm use` after cloning), a free Supabase
+This guide assumes Node 22 (`nvm use` after cloning), a free Supabase
 account, a Vercel account, and an Anthropic API key. Optional integrations
 (Mistral OCR, ClamAV, Tally bridge, GSTN) are listed at the end and can be
 added incrementally.
@@ -15,7 +15,7 @@ added incrementally.
 ```sh
 git clone https://github.com/kenithphilip/Anvil.git anvil
 cd anvil
-nvm use                         # picks Node 20.18.0 from .nvmrc
+nvm use                         # picks Node 22 from .nvmrc
 npm install
 npm run check                   # syntax-checks every api file + bridge client
 npm run build                   # produces public/index.html

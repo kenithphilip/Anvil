@@ -49,8 +49,19 @@ export default async function handler(req, res) {
     if (!user) return json(res, 500, { error: { message: "Sign-in returned no user" } });
 
     // Recovery for legacy users who signed up before auto-onboarding.
+    // A customer portal identity is refused (403 PORTAL_ACCOUNT); sign out
+    // the session signInWithPassword just created so it is not left live.
+    // scope 'local' revokes only that session, not the customer's live
+    // portal sessions.
     const svc = serviceClient();
-    await ensureMembership(svc, user);
+    try {
+      await ensureMembership(svc, user);
+    } catch (err) {
+      if (err && err.code === "PORTAL_ACCOUNT") {
+        try { await anon.auth.signOut({ scope: "local" }); } catch { /* ignore */ }
+      }
+      throw err;
+    }
 
     // MFA gate. If the user has TOTP enrolled, the password alone is
     // not enough: we require a fresh code from their authenticator.

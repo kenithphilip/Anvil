@@ -24,9 +24,28 @@ import { resolvePortalAccess } from "../_lib/portal-auth.js";
 //
 // Naming it once is the point: two copies of an access rule is one copy and
 // one oversight.
+//
+// Every value must exist in the order_status enum (001_init.sql). The list
+// used to carry SCHEDULED and DISPATCHED, which are not enum values: Postgres
+// rejects a whole `status in (...)` filter that names an unknown enum label,
+// so the query errored and, with the error unread, every branch returned an
+// empty list.
 const CUSTOMER_VISIBLE_ORDER_STATUSES = [
-  "APPROVED", "EXPORTED_TO_TALLY", "SCHEDULED", "DISPATCHED", "RECONCILED",
+  "APPROVED", "EXPORTED_TO_TALLY", "RECONCILED",
 ];
+
+// The order columns a token may read, in one place. Never `result`: it holds
+// whatever the staff side wrote (validator issues, ERP error text, price
+// composition with landed cost), and never internal ids or hashes. These
+// legacy kinds were unreachable while the status list above named values the
+// enum rejects; fixing that list made them answer again, so they answer with
+// this projection only.
+const PORTAL_ORDER_COLUMNS = "quote_number, po_number, status, created_at";
+
+// Invoices a customer may see: issued ones. `draft` has not been sent and
+// `void` was withdrawn; neither is the customer's document. Values are the
+// invoices.status CHECK list (012_invoices.sql).
+const CUSTOMER_VISIBLE_INVOICE_STATUSES = ["sent", "partial", "paid", "overdue"];
 
 const logAccess = async (svc, t, req, status, path) => {
   await svc.from("portal_access_log").insert({
@@ -82,14 +101,14 @@ export default async function handler(req, res) {
       };
     } else if (kind === "quotes") {
       const r = await svc.from("orders")
-        .select("id, quote_number, po_number, status, payload_hash, result, created_at")
+        .select(PORTAL_ORDER_COLUMNS)
         .eq("tenant_id", t.tenant_id).eq("customer_id", t.customer_id)
         .in("status", CUSTOMER_VISIBLE_ORDER_STATUSES)
         .order("created_at", { ascending: false }).limit(50);
       payload = { quotes: r.data || [] };
     } else if (kind === "orders") {
       const r = await svc.from("orders")
-        .select("id, quote_number, po_number, status, tally_status, result, created_at")
+        .select(PORTAL_ORDER_COLUMNS)
         .eq("tenant_id", t.tenant_id).eq("customer_id", t.customer_id)
         .in("status", CUSTOMER_VISIBLE_ORDER_STATUSES)
         .order("created_at", { ascending: false }).limit(50);
@@ -98,6 +117,7 @@ export default async function handler(req, res) {
       const r = await svc.from("invoices")
         .select("id, invoice_number, issue_date, due_date, currency, grand_total, paid_amount, status")
         .eq("tenant_id", t.tenant_id).eq("customer_id", t.customer_id)
+        .in("status", CUSTOMER_VISIBLE_INVOICE_STATUSES)
         .order("issue_date", { ascending: false }).limit(50);
       payload = { invoices: r.data || [] };
     } else if (kind === "spares") {

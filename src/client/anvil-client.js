@@ -690,9 +690,13 @@
     // orderId is optional — omit it and the endpoint resolves the order from
     // the challan's buyer PO number, then its invoice number, REFUSING rather
     // than guessing when neither is unambiguous.
-    ingestDeliveryNote: async (documentId, extracted, orderId = null) =>
+    // opts.confirm_po_mismatch records the challan on orderId even though its
+    // PO is on no order and differs from the order's (the "po_differs"
+    // refusal is overridable; an order_mismatch is not).
+    ingestDeliveryNote: async (documentId, extracted, orderId = null, opts = {}) =>
       apiFetch("/api/documents/delivery_note_ingest", { method: "POST", body: {
         document_id: documentId, extracted, ...(orderId ? { order_id: orderId } : {}),
+        ...(opts && opts.confirm_po_mismatch === true ? { confirm_po_mismatch: true } : {}),
       } }),
     fetch: async (id) => apiFetch("/api/documents/" + id),
     remove: async (id) => apiFetch("/api/documents/" + id, { method: "DELETE" }),
@@ -898,8 +902,24 @@
   };
 
   const customers = {
-    list: async () => apiFetch("/api/customers"),
+    // params (optional): { owner: "me" | "none" | <member id> } narrows the
+    // list to an account owner's customers, or the unassigned ones;
+    // { include: "owner_name" } adds each owner's display name (an auth
+    // lookup per distinct owner, so only screens that render it ask).
+    list: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/customers" + (qs ? "?" + qs : ""));
+    },
     upsert: async (payload) => apiFetch("/api/customers", { method: "POST", body: payload }),
+    // Account owner (migration 227). assignOwner payload:
+    //   { customer_ids: [...], owner_user_id: <member id> | null, move_open_opportunities: bool }
+    // ownerSuggestions params (optional): { customer_id } to ask about one
+    // account; none for every unowned account of the tenant.
+    assignOwner: async (payload) => apiFetch("/api/customers/owner", { method: "POST", body: payload }),
+    ownerSuggestions: async (params) => {
+      const qs = new URLSearchParams({ suggest: "1", ...(params || {}) }).toString();
+      return apiFetch("/api/customers/owner?" + qs);
+    },
     // Issue #186: validate + derive (state code / PAN / validity) from a GSTIN,
     // and fetch the registry (name/address) when a GST provider is configured.
     gstLookup: async (gstin) => apiFetch("/api/customers/gst_lookup", { method: "POST", body: { gstin } }),
@@ -1489,14 +1509,29 @@
     draft: async (payload) => apiFetch("/api/communications/draft", { method: "POST", body: payload }),
     send: async (id) => apiFetch("/api/communications/send", { method: "POST", body: { id } }),
     missingDoc: async (orderId) => apiFetch("/api/communications/missing_doc", { method: "POST", body: { orderId } }),
-    // List communications for an order or source PO. ThreadDrawer
-    // populates its comms panel from this endpoint; was missing,
-    // so the comms timeline rendered empty regardless of how many
-    // emails the order had attached.
-    list: async (orderId) => {
-      const qs = orderId ? "?order_id=" + encodeURIComponent(orderId) : "";
-      return apiFetch("/api/communications" + qs);
+    // List communications. ThreadDrawer populates its comms panel from
+    // this endpoint; was missing, so the comms timeline rendered empty
+    // regardless of how many emails the order had attached.
+    //
+    // A string argument is an order id (the ThreadDrawer call). An object
+    // is a filter set of object_type, object_id, customer_id, order_id,
+    // source_po_id, versions and limit. The Follow-up timeline (TouchLog)
+    // passes object_type + object_id, plus versions: "all" on a quote so
+    // every version's touches show. Empty values are dropped, not sent.
+    list: async (filters) => {
+      const params = typeof filters === "string" ? { order_id: filters } : (filters || {});
+      const sp = new URLSearchParams();
+      for (const k of Object.keys(params)) {
+        const v = params[k];
+        if (v != null && v !== "") sp.set(k, String(v));
+      }
+      const qs = sp.toString();
+      return apiFetch("/api/communications" + (qs ? "?" + qs : ""));
     },
+    // Record a rep touch (call / meeting / whatsapp / visit / note) against a
+    // quote or an opportunity. Payload: { object_type, object_id, channel,
+    // body, customer_contact_id?, metadata: { next_followup_at? } }.
+    log: async (payload) => apiFetch("/api/communications/log", { method: "POST", body: payload }),
   };
 
   const evalExt = {

@@ -4,6 +4,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { resolveAssignee } from "../_lib/assignee.js";
 
 const STATUSES = new Set(["PLANNED","CHECKED_IN","CHECKED_OUT","REPORT_SUBMITTED","CLOSED"]);
 
@@ -12,27 +13,9 @@ const STATUSES = new Set(["PLANNED","CHECKED_IN","CHECKED_OUT","REPORT_SUBMITTED
 // field_engineer used to be hardcoded to whoever created the row and was absent
 // from the PATCH allow-list, so a visit could never be assigned to anybody --
 // Anvil RECORDED field work but could not ROUTE it. Assignment is the smallest
-// thing that turns the former into the latter.
-//
-// The assignee must be an APPROVED member of this tenant. A raw user id off the
-// request body would otherwise let a visit be assigned to a member of another
-// tenant, which is the same class of hole as any caller-supplied FK; and an
-// unapproved / removed member cannot be given work. Returns the id when it is
-// assignable, otherwise null.
-const resolveAssignee = async (svc, tenantId, userId) => {
-  if (!userId) return null;
-  const { data, error } = await svc.from("tenant_members")
-    .select("user_id")
-    .eq("tenant_id", tenantId)
-    .eq("user_id", userId)
-    .eq("status", "approved")
-    .maybeSingle();
-  // A read failure is not "not a member": say so, so the caller reports a
-  // transient fault instead of accusing a real colleague of not existing.
-  if (error) throw new Error("could not verify the assignee: " + error.message);
-  if (!data) return null;
-  return data.user_id;
-};
+// thing that turns the former into the latter. The membership check itself
+// (resolveAssignee) lives in _lib/assignee.js, shared with the customer
+// account-owner endpoint.
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;

@@ -25,7 +25,7 @@
 //            derived columns the operator never sees a source for.
 //
 // Canonical keys (used across the reconciliation table):
-//   itemCode, description, qty, rate, uom, hsn
+//   itemCode, description, qty, rate, uom, hsn, gst_pct, requisition_no
 //
 // The same pattern works at the header level via
 // `result.salesOrder._header_field_sources` for fields like
@@ -50,6 +50,10 @@ const ALIASES: Record<string, ReadonlyArray<string>> = {
   // table renders + edits this directly so the operator can see
   // exactly what tax basis the line is on before Tally push.
   gst_pct: ["gst_pct", "gstRate", "rate_of_duty_pct"],
+  // The buyer's purchase requisition (PR) number printed on the line, read
+  // per line by both PO adapters. The recon table's "PR no." column shows
+  // this marker beside it, like every other field read off the PO.
+  requisition_no: ["requisition_no"],
 };
 
 // Canonical keys for the recon table; exported so tests + UI agree.

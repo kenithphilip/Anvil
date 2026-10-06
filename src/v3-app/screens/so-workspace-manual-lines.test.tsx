@@ -112,6 +112,35 @@ describe("adding a line", () => {
   });
 });
 
+describe("an edit made the moment the loaded lines first paint", () => {
+  // The draft used to be reset by an effect keyed on the persisted lines. That
+  // effect ran AFTER the commit that first showed the loaded grid, so a click
+  // landing in between was queued first and then wiped by the late reset. The
+  // waitFor callback below fires from the MutationObserver for that very
+  // commit, i.e. inside the gap, so it reproduces the race reliably instead
+  // of one run in four.
+  it("keeps a line added before the load has fully settled", async () => {
+    const o = order();
+    window.location.hash = "#/so?id=" + o.id;
+    installBackend({
+      orders: { get: vi.fn(async () => ({ order: o })), update: vi.fn(async () => ({})) },
+      audit: { list: vi.fn(async () => []) },
+      events: { list: vi.fn(async () => []) },
+      cost: { breakdown: vi.fn(async () => null) },
+    });
+    const mod = await import("./so-workspace");
+    const { container } = renderScreen(mod.default);
+    let clicked = false;
+    await waitFor(() => {
+      const add = btn(container, "+ Add line");
+      expect(add).toBeTruthy();
+      if (!clicked) { clicked = true; add!.click(); }
+    });
+    await waitFor(() => { expect(rowCount(container)).toBe(LINES.length + 1); });
+    expect(btn(container, "Save line edits")).toBeTruthy();
+  });
+});
+
 describe("removing a line", () => {
   it("drops the row from the grid", async () => {
     const { container } = await openWorkspace();

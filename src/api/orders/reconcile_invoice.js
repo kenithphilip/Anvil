@@ -123,7 +123,7 @@ export default async function handler(req, res) {
     let dispatchRows = null;
     try {
       const dq = await svc.from("dispatch_lines")
-        .select("line_index, part_no, description, dispatched_qty, uom, dispatch_date, invoice_number")
+        .select("line_index, part_no, description, dispatched_qty, uom, dispatch_date, invoice_number, lr_number")
         .eq("tenant_id", ctx.tenantId).eq("order_id", orderId);
       if (!dq.error) dispatchRows = dq.data || [];
     } catch (_e) { /* leave unchecked */ }
@@ -186,8 +186,27 @@ export default async function handler(req, res) {
     }
 
     // The docket comes off the despatch register when it has one. Reuses the
-    // rows already fetched above for the under-delivery leg.
-    const docket = (dispatchRows || []).map((d) => d?.lr_number).find((v) => v) || null;
+    // rows already fetched above for the under-delivery leg (lr_number must be
+    // in that select: it was not, so the docket was always null).
+    //
+    // It is the docket for THIS invoice. A despatch row billed on this
+    // invoice counts first. A row that names no invoice, or one Anvil does
+    // not hold (a Tally-raised number is not mirrored), cannot be attributed,
+    // so it stands in at order level. A row billed on ANOTHER known invoice of
+    // this order never counts: that consignment does not prove this one moved.
+    const norm = (v) => String(v == null ? "" : v).trim().toUpperCase();
+    const rowsAll = dispatchRows || [];
+    const subjectNo = norm(subject?.invoice_number);
+    const otherKnown = new Set(
+      invoices.filter((i) => !subject || i.id !== subject.id).map((i) => norm(i.invoice_number)).filter(Boolean),
+    );
+    const lr = (d) => d?.lr_number;
+    const mine = subjectNo ? rowsAll.filter((d) => norm(d?.invoice_number) === subjectNo) : [];
+    const unattributed = rowsAll.filter((d) => {
+      const n = norm(d?.invoice_number);
+      return !n || (n !== subjectNo && !otherKnown.has(n));
+    });
+    const docket = mine.map(lr).find((v) => v) || unattributed.map(lr).find((v) => v) || null;
 
     const dispatchReadiness = subject
       ? assessDispatchReadiness({

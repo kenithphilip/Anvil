@@ -176,9 +176,9 @@ describe("a variant can be judged before any live traffic sees it", () => {
     expect(src).toMatch(/"live-replay:prompt:" \+ promptVersion/);
   });
 
-  it("is reachable from the API", () => {
-    expect(src).toMatch(/promptVersion: body\.prompt_version \|\| null/);
-  });
+  // Reachability from the API is driven through the real handler in
+  // api-eval-replay.test.js ("prompt_version through the handler"), which also
+  // covers the registry check an unknown version now meets.
 
   it("still writes nothing to production", () => {
     // The whole safety case for allowVariants:true here rests on this.

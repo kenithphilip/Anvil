@@ -138,11 +138,25 @@ describe("stampOcrSources", () => {
       uom: "Nos",
       hsn: "8482",
       gst_pct: 18,
+      requisition_no: "1000343964",
     };
     const stamped = stampOcrSources(all);
     for (const k of CANONICAL_LINE_FIELDS) {
       expect(stamped._field_sources?.[k]).toBe("ocr");
     }
+  });
+
+  it("stamps the per-line requisition number the PO adapters now read", () => {
+    // The recon table's "PR no." column shows this marker; without the stamp
+    // a value read off the PO would render with no provenance at all.
+    expect(CANONICAL_LINE_FIELDS).toContain("requisition_no");
+    const stamped = stampOcrSources({ partNumber: "PN-1", requisition_no: "1000343964" });
+    expect(stamped._field_sources).toEqual({ itemCode: "ocr", requisition_no: "ocr" });
+  });
+
+  it("does not stamp a blank requisition number", () => {
+    const stamped = stampOcrSources({ partNumber: "PN-1", requisition_no: "" });
+    expect(stamped._field_sources).toEqual({ itemCode: "ocr" });
   });
 });
 

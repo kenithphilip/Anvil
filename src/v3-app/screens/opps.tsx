@@ -3,6 +3,7 @@ import { ageLabel, fmtINRShort, useFetch, useHashParam } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTitle } from "../lib/primitives";
 import { OpportunityQuotesPanel } from "../components/OpportunityQuotesPanel";
 import { OpportunityQuoteRevisions } from "../components/OpportunityQuoteRevisions";
+import { TouchLog } from "../components/TouchLog";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 
@@ -425,6 +426,13 @@ const WiredOpportunities = () => {
             </div>
             <div style={{ marginTop: 10 }}>
               <OpportunityQuoteRevisions opportunityId={selected.id} customerId={selected.customer_id} opportunityAmount={selected.amount_inr ?? selected.value} />
+            </div>
+            {/* Same follow-up log as the quote drawer's Follow-up tab. An
+                opportunity has no contact column, so the contact prefill
+                comes from its last touch. Keyed by id so switching
+                opportunities starts a fresh form. */}
+            <div style={{ marginTop: 10 }}>
+              <TouchLog key={selected.id} objectType="opportunity" objectId={selected.id} customerId={selected.customer_id} />
             </div>
           </Card>
         )}

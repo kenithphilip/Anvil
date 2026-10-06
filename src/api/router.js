@@ -108,6 +108,7 @@ import claudeMessages          from "./claude/messages.js";
 
 import commsDraft              from "./communications/draft.js";
 import commsList               from "./communications/list.js";
+import commsLog                from "./communications/log.js";
 import commsMissingDoc         from "./communications/missing_doc.js";
 import commsSend               from "./communications/send.js";
 import copilotConfirm          from "./copilot/confirm.js";
@@ -130,6 +131,8 @@ import customersGstLookup        from "./customers/gst_lookup.js";
 import docaiProviderKeys         from "./admin/docai_provider_keys.js";
 import customersDuplicates      from "./customers/duplicates.js";
 import customersMerge           from "./customers/merge.js";
+// Account owner on customers (migration 227): assign + suggest.
+import customersOwner           from "./customers/owner.js";
 import customerLocationsIndex   from "./customer_locations/index.js";
 import locationsIndex           from "./locations/index.js";
 // Phase 7.3: customer health score (Haiku per-customer + cron drain).
@@ -960,6 +963,7 @@ const STATIC_ROUTES = {
 
   "/communications":                commsList,
   "/communications/draft":          commsDraft,
+  "/communications/log":            commsLog,
   "/communications/missing_doc":    commsMissingDoc,
   "/communications/send":           commsSend,
   "/copilot/confirm":               copilotConfirm,
@@ -981,6 +985,7 @@ const STATIC_ROUTES = {
   "/customers/gst_lookup":          customersGstLookup,
   "/customers/duplicates":          customersDuplicates,
   "/customers/merge":               customersMerge,
+  "/customers/owner":               customersOwner,
   "/customer_locations":            customerLocationsIndex,
   "/locations":                     locationsIndex,
   "/customers/health_score":        customersHealthScore,

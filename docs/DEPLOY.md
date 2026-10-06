@@ -97,7 +97,7 @@ matching handler.
 ### Function runtime
 
 Vercel auto-detects Node.js from the `engines.node` field in
-`package.json` (currently `"20.x"`, pinned to a single major so the
+`package.json` (currently `"22.x"`, pinned to a single major so the
 auto-upgrade warnings stop). Do NOT specify a `runtime` value in
 `vercel.json`. The legacy `nodejs20.x` literal is not a valid
 descriptor in current Vercel projects and causes:

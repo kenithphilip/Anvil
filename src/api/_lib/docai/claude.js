@@ -1889,6 +1889,10 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     // Run deadline from the pipeline so a retryable 5xx can't burn the whole
     // budget and starve the Gemini/LlamaParse fallbacks below this adapter.
     deadlineAt: hints?.deadlineAt || 0,
+    // The dispatcher has already held back the next adapters' time from this
+    // deadline. A second 8s reserve on top is what turned a 13.5s slice into
+    // the 5.5s attempt that timed out on 2026-10-07.
+    reserveMs: hints?.downstreamReserved ? 0 : undefined,
   });
 
   if (!result.ok) {
@@ -1900,6 +1904,10 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       error: result.error || result.data?.error?.message || "claude failed",
       selected_model: selection.model,
       model_selection_reason: selection.reason,
+      // Overload, rate limit and timeout are transient: "run extraction again
+      // later" is honest advice for them and not for a 400.
+      failure_class: result.failure_class || null,
+      transient: !!result.transient,
     };
   }
   const tool = findToolUse(result.data, activeToolName);

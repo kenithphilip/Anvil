@@ -91,6 +91,19 @@ const validateGeminiModel = (value) => {
   return null;
 };
 
+// The model callGemini switches to when the selected one is overloaded. Same
+// family rule as docai_gemini_model, plus the two words that turn it off.
+const validateGeminiFallbackModel = (value) => {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string") return "docai_gemini_fallback_model must be a string";
+  const v = value.trim();
+  if (/^(none|off)$/i.test(v)) return null;
+  if (!GEMINI_MODEL_PATTERN.test(v)) {
+    return "docai_gemini_fallback_model must start with 'gemini-', or be 'none' to turn it off";
+  }
+  return null;
+};
+
 // Bet 1: validate the new tunables.
 const validateFallbackConfidence = (value) => {
   if (value == null) return null;
@@ -119,6 +132,7 @@ const SAFE_KEYS = [
   "docai_daily_limits",
   "docai_anthropic_model",
   "docai_gemini_model",
+  "docai_gemini_fallback_model",
   // Bet 1.
   "docai_fallback_confidence",
   "docai_mistral_ocr_batch",
@@ -162,6 +176,7 @@ export default async function handler(req, res) {
         docai_daily_limits: settings?.docai_daily_limits || null,
         docai_anthropic_model: settings?.docai_anthropic_model || null,
         docai_gemini_model: settings?.docai_gemini_model || null,
+        docai_gemini_fallback_model: settings?.docai_gemini_fallback_model || null,
         // Bet 1.
         docai_fallback_confidence: settings?.docai_fallback_confidence ?? null,
         docai_mistral_ocr_batch: settings?.docai_mistral_ocr_batch !== false,
@@ -198,6 +213,11 @@ export default async function handler(req, res) {
         const err = validateGeminiModel(body.docai_gemini_model);
         if (err) errors.push(err);
         else updates.docai_gemini_model = body.docai_gemini_model || null;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, "docai_gemini_fallback_model")) {
+        const err = validateGeminiFallbackModel(body.docai_gemini_fallback_model);
+        if (err) errors.push(err);
+        else updates.docai_gemini_fallback_model = (body.docai_gemini_fallback_model || "").trim() || null;
       }
       // Bet 1.
       if (Object.prototype.hasOwnProperty.call(body, "docai_fallback_confidence")) {
@@ -255,6 +275,15 @@ export default async function handler(req, res) {
               message: "The prompt A/B columns are not in this database yet. Apply supabase/migrations/218_docai_prompt_variants.sql, then retry.",
               code: "MIGRATION_NOT_APPLIED",
               migration: "218_docai_prompt_variants.sql",
+            },
+          });
+        }
+        if (/docai_gemini_fallback_model/.test(msg) && /column|42703/i.test(msg)) {
+          return json(res, 409, {
+            error: {
+              message: "The Gemini fallback model column is not in this database yet. Apply supabase/migrations/248_docai_gemini_fallback_model.sql, then retry.",
+              code: "MIGRATION_NOT_APPLIED",
+              migration: "248_docai_gemini_fallback_model.sql",
             },
           });
         }

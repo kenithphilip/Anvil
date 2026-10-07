@@ -11,10 +11,14 @@
 // A customer messaging "I need a quote for WGC-K12464 qty 50"
 // over Slack ended up in a table no one read.
 //
-// Intent routing here is a deliberately simple keyword classifier;
+// Intent routing here is a deliberately simple keyword classifier
+// (_lib/chat-intent.js, shared with the legacy whatsapp/inbound.js);
 // the LLM-based triage classifier (Haiku-tier) lands in Phase 5
 // of the audit roadmap. For now:
 //
+//   complaint                                    -> processing_event
+//                                                   (inbound_complaint,
+//                                                   same shape as email)
 //   purchase_order / quote_request / po_revision -> DRAFT order
 //   status_request                               -> processing_event
 //                                                   (operator triage)
@@ -25,21 +29,10 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { drainQueue } from "../_lib/queue-runner.js";
+import { classifyChatIntent, chatSubject, ORDER_INTENTS } from "../_lib/chat-intent.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const BATCH_SIZE = 25;
-
-// Same heuristic the legacy whatsapp/inbound.js uses, lifted so
-// both paths classify consistently. Phase 5 swaps this for a
-// Haiku-tier classifier.
-const classifyIntent = (text) => {
-  const t = String(text || "").toLowerCase();
-  if (/(revis|amend|update.*po\b|po.*update)/.test(t)) return "po_revision";
-  if (/(quote|quotation|rfq|pricing|price|cost)/.test(t)) return "quote_request";
-  if (/(status|delivery|eta|tracking|where\s+is)/.test(t)) return "status_request";
-  if (/(po|purchase\s*order|p\.o\.|buy)/.test(t)) return "purchase_order";
-  return "other";
-};
 
 const buildOrderRow = (msg, intent) => ({
   tenant_id: msg.tenant_id,
@@ -104,6 +97,34 @@ const handleStatusRequest = async (svc, msg) => {
   };
 };
 
+// A complaint writes the same processing_event the email path writes
+// (agents/handle_replies.js handleComplaint): event_type
+// inbound_complaint, the source row as case and object, severity warn.
+// It never becomes an order. The email path leaves a complaint email
+// un-resolved and marks it handled in a side column; inbound_messages
+// has no such column, so the message moves to `intake-extracted` (the
+// step before `resolved` in migration 039's lifecycle). That takes it
+// off the `arrived` queue, so the next drain does not record it twice,
+// and it stays un-resolved.
+const handleComplaint = async (svc, msg) => {
+  const ev = await svc.from("processing_events").insert({
+    tenant_id: msg.tenant_id,
+    case_id: msg.id,
+    event_type: "inbound_complaint",
+    object_type: "inbound_message",
+    object_id: msg.id,
+    detail: { from: msg.sender_handle || null, subject: chatSubject(msg.text_body), severity: "warn" },
+  });
+  if (ev.error) return { ok: false, error: "processing_events insert: " + ev.error.message };
+  return {
+    ok: true,
+    patch: {
+      status: "intake-extracted",
+      processed_at: new Date().toISOString(),
+    },
+  };
+};
+
 const handleOther = async (_svc, _msg) => {
   return {
     ok: true,
@@ -115,10 +136,9 @@ const handleOther = async (_svc, _msg) => {
 };
 
 const dispatch = async (svc, msg) => {
-  const intent = classifyIntent(msg.text_body);
-  if (intent === "purchase_order" || intent === "quote_request" || intent === "po_revision") {
-    return handleOrderIntent(svc, msg, intent);
-  }
+  const intent = classifyChatIntent(msg.text_body);
+  if (intent === "complaint") return handleComplaint(svc, msg);
+  if (ORDER_INTENTS.includes(intent)) return handleOrderIntent(svc, msg, intent);
   if (intent === "status_request") return handleStatusRequest(svc, msg);
   return handleOther(svc, msg);
 };

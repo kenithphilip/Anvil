@@ -18,30 +18,27 @@
 // table, attempts to bundle the message into an existing DRAFT order
 // from the same sender within a 7-day window, audits every step.
 //
+// A complaint is the exception: it never creates or joins an order.
+// It writes the same inbound_complaint processing_event the email
+// path writes, and the webhook returns order_id null.
+//
 // Configure exactly one provider and point its webhook here:
 //   - Twilio: https://www.twilio.com/console/sms/whatsapp/sandbox
 //   - Meta:   https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks
 
+import crypto from "node:crypto";
 import { applyCors, handlePreflight, json } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { documentsBucket } from "../_lib/storage.js";
 import { safeFetch } from "../_lib/safe-fetch.js";
+import { classifyChatIntent, chatSubject } from "../_lib/chat-intent.js";
 
 const TENANT_DEFAULT = process.env.DEFAULT_TENANT_ID || "00000000-0000-0000-0000-000000000001";
 const TOKEN = process.env.WHATSAPP_INBOUND_TOKEN || "";
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || ""; // optional; for media fetch with auth
 
 const sanitize = (s) => String(s || "").replace(/[^A-Za-z0-9._@-]+/g, "_").slice(0, 200);
-
-const classifyIntent = (text) => {
-  const t = String(text || "").toLowerCase();
-  if (/(revis|amend|update.*po\b|po.*update)/.test(t)) return "po_revision";
-  if (/(quote|quotation|rfq|pricing|price|cost)/.test(t)) return "quote_request";
-  if (/(status|delivery|eta|tracking|where\s+is)/.test(t)) return "status_request";
-  if (/(po|purchase\s*order|p\.o\.|buy)/.test(t)) return "purchase_order";
-  return "other";
-};
 
 const parseBody = async (req) => {
   if (req.body && typeof req.body === "object") return req.body;
@@ -64,7 +61,9 @@ const parseBody = async (req) => {
 };
 
 // Normalize either the Twilio or Meta envelope into a single shape:
-//   { from, name, text, media: [{ url, contentType, filename }] }
+//   { from, name, text, media: [{ url, contentType, filename }], external_id }
+// external_id is the provider message id (Meta message id, Twilio
+// MessageSid), or null when the envelope has none.
 const normalize = (raw) => {
   // Meta Cloud API
   if (Array.isArray(raw?.entry)) {
@@ -88,7 +87,7 @@ const normalize = (raw) => {
         });
       }
     }
-    return { from: msg.from, name: profile.name || null, text, media, raw };
+    return { from: msg.from, name: profile.name || null, text, media, external_id: msg.id || null, raw };
   }
   // Twilio
   if (raw?.From) {
@@ -100,7 +99,7 @@ const normalize = (raw) => {
       const ct = raw["MediaContentType" + i] || null;
       if (url) media.push({ provider: "twilio", url, contentType: ct, filename: "media_" + i });
     }
-    return { from, name: raw.ProfileName || null, text: raw.Body || "", media, raw };
+    return { from, name: raw.ProfileName || null, text: raw.Body || "", media, external_id: raw.MessageSid || null, raw };
   }
   return null;
 };
@@ -194,7 +193,38 @@ export default async function handler(req, res) {
       if (id) documentIds.push(id);
     }
 
-    const intent = classifyIntent(msg.text);
+    const intent = classifyChatIntent(msg.text);
+    const ctx = { tenantId, user: { id: null }, role: "service" };
+
+    // A complaint is not an order: no new DRAFT, no bundling into one.
+    // Same processing_event as the email complaint path. This webhook
+    // stores no inbound row, so the provider message id stands in as
+    // the case and object id. document_ids is the one extra key: with
+    // no order to link to, it is the only trail from the complaint to
+    // its photos.
+    if (intent === "complaint") {
+      const caseId = msg.external_id || crypto.randomUUID();
+      await recordEvent(ctx, {
+        caseId,
+        eventType: "inbound_complaint",
+        objectType: "whatsapp_message",
+        objectId: caseId,
+        detail: { from: msg.from, subject: chatSubject(msg.text), severity: "warn", document_ids: documentIds },
+      });
+      await recordAudit(ctx, {
+        action: "whatsapp_intake",
+        objectType: "whatsapp_message",
+        objectId: caseId,
+        detail: msg.from + " :: " + intent + " :: docs=" + documentIds.length,
+      });
+      return json(res, 200, {
+        ok: true,
+        order_id: null,
+        bundled: false,
+        intent,
+        document_ids: documentIds,
+      });
+    }
 
     // Try to bundle into an existing DRAFT order from the same sender
     // within a 7-day window. We use phone-number similarity stored on
@@ -243,7 +273,6 @@ export default async function handler(req, res) {
     }
 
     // Audit + event so the meter + activity timeline pick this up.
-    const ctx = { tenantId, user: { id: null }, role: "service" };
     await recordAudit(ctx, {
       action: "whatsapp_intake",
       objectType: "order",

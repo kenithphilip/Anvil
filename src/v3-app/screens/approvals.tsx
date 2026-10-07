@@ -396,7 +396,11 @@ const WiredApprovals = () => {
                           same, in the same colour as a healthy one. An approver
                           cannot weigh what they cannot distinguish. */}
                       <td className="r mono" style={{ color: margin > 0 && margin < 10 ? "var(--rust)" : "var(--ink)", fontWeight: 600 }}>
-                        {a.margin_state === "not_costed" ? (
+                        {a.margin_state === "hidden" ? (
+                          <span style={{ color: "var(--ink-4)", fontWeight: 400 }} title="Margin is cost data, and your role cannot see cost">
+                            hidden
+                          </span>
+                        ) : a.margin_state === "not_costed" ? (
                           <span style={{ color: "var(--ink-4)", fontWeight: 400 }} title="No price composition on this order — margin cannot be computed">
                             not costed
                           </span>

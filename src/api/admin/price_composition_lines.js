@@ -8,7 +8,7 @@
 // Excel master sheet. Migration 106.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { composePrice, mapProfile, applyOverrides } from "../_lib/pricing.js";
@@ -164,6 +164,7 @@ export default async function handler(req, res) {
 
     if (req.method === "GET") {
       requirePermission(ctx, "read");
+      requireAction(ctx, "cost.view");
       if (!req.query.quote_id) return json(res, 400, { error: { message: "quote_id required" } });
       const { data, error } = await svc.from("price_composition_lines")
         .select("*")
@@ -176,6 +177,7 @@ export default async function handler(req, res) {
 
     if (req.method === "POST") {
       requirePermission(ctx, "write");
+      requireAction(ctx, "cost.view");
       const body = await readBody(req);
       // Server-authoritative recompute: ?action=recompute or { recompute:true }.
       if (req.query?.action === "recompute" || body.recompute === true) {
@@ -209,6 +211,7 @@ export default async function handler(req, res) {
 
     if (req.method === "DELETE") {
       requirePermission(ctx, "write");
+      requireAction(ctx, "cost.view");
       const id = req.query.id;
       if (!id) return json(res, 400, { error: { message: "id required" } });
       const { error } = await svc.from("price_composition_lines")

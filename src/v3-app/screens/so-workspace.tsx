@@ -17,7 +17,7 @@ import { isUnresolvedBlocker as isBlockingFinding } from "../../api/_lib/blockin
 // Pure, no I/O — imported rather than twinned, so the rupee figure an approver
 // reads is computed by the same code the server would use.
 import { deviationValue, currencyOf } from "../../api/_lib/deviation-value.js";
-import { RBAC } from "../lib/rbac";
+import { RBAC, canDo } from "../lib/rbac";
 import { pushRecent } from "../lib/recent-items";
 import { amountInWords } from "../lib/amount-words";
 import {
@@ -1890,7 +1890,8 @@ const WiredSOWorkspace = () => {
     // side-by-side with the line grid inside this Reconcile tab.
     { id: "recon", label: "Reconcile", count: findings.length || null },
     { id: "header", label: "Header fields" },
-    { id: "margin", label: "Margin cockpit" },
+    // Realized margin and the cost split are cost data (rbac cost.view).
+    ...(canDo("cost.view") ? [{ id: "margin", label: "Margin cockpit" }] : []),
     { id: "why", label: "Why" },
     { id: "evidence", label: "Evidence" },
     // The quote beside what was read out of it. A tab rather than an overlay:
@@ -2795,7 +2796,7 @@ const WiredSOWorkspace = () => {
           <OrderHeaderEditor order={o} onSaved={() => setBump((n) => n + 1)} />
         )}
 
-        {tab === "margin" && (
+        {tab === "margin" && canDo("cost.view") && (
           <Card title="Margin cockpit" eyebrow="this SO">
             {grandTotal === 0 ? (
               <div className="mono-sm" style={{ color: "var(--ink-3)" }}>No grand total yet — extraction or pricing has not completed.</div>

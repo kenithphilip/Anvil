@@ -5,7 +5,7 @@
 
 import { orderMargin } from "../_lib/order-margin.js";
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, hasAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 
@@ -86,12 +86,16 @@ export default async function handler(req, res) {
         // _lib/approval-evaluator.js already walks correctly when it decides
         // whether the order needs approval at all. Both now share
         // _lib/order-margin.js.
+        // Margin is cost data. A role without cost.view still sees the queue
+        // (value, lines, customer) but not the margin, and "hidden" tells the
+        // screen not to show the row as "not costed".
+        const seesCost = hasAction(ctx, "cost.view");
         const approvals = (data || []).map((row) => {
           const ord = row.order || null;
           const so = ord?.result?.salesOrder || null;
           const lines = Array.isArray(so?.lineItems) ? so.lineItems : [];
           const grand = so ? Number(so.grandTotal) : NaN;
-          const m = ord ? orderMargin(ord) : null;
+          const m = ord && seesCost ? orderMargin(ord) : null;
           const { order: _omit, ...rest } = row;
           return {
             ...rest,
@@ -107,9 +111,9 @@ export default async function handler(req, res) {
             // The approver has to be able to tell "thin margin" from "we never
             // costed this". Null margin_pct alone cannot say which, and the
             // queue coloured a missing value the same as a healthy one.
-            margin_state: m ? (m.partial ? "partial" : "computed") : "not_costed",
+            margin_state: !seesCost ? "hidden" : m ? (m.partial ? "partial" : "computed") : "not_costed",
             margin_lines_matched: m ? m.linesMatched : null,
-            margin_lines_total: m ? m.linesTotal : (Array.isArray(lines) ? lines.length : null),
+            margin_lines_total: !seesCost ? null : m ? m.linesTotal : (Array.isArray(lines) ? lines.length : null),
           };
         });
         return json(res, 200, { approvals });

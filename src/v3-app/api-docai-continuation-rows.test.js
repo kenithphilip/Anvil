@@ -273,3 +273,117 @@ describe("anomalies after a fold", () => {
     expect(codes(detectAnomalies(n, { kind: "quote" }))).not.toContain("line_count_excess");
   });
 });
+
+// A table parser's view of the same layout, as llamaparse's one-row path
+// stored it in production: the header's three lower label rows came first as
+// lines, then each item as four lines. A blank S.No cell was read as the number
+// 0, so every lower row carried lineNo 0, which rule 4 took for a line number
+// of its own. Nothing folded and nothing was dropped.
+const tableShredded = (items = ITEMS) => {
+  const lines = [
+    { lineNo: 0, quantity: 0, unitPrice: 0, customerItemCode: "Description", partNumber: null },
+    { lineNo: 0, quantity: 0, unitPrice: 0, customerItemCode: "Specification", partNumber: null },
+    { lineNo: 0, quantity: 0, unitPrice: 0, customerItemCode: "Req.No", partNumber: null },
+  ];
+  items.forEach((it, i) => {
+    lines.push({ lineNo: i + 1, quantity: it.qty, unitPrice: it.rate, customerItemCode: it.part });
+    lines.push({ lineNo: 0, quantity: 0, unitPrice: amountOf(it), customerItemCode: it.desc });
+    lines.push({ lineNo: 0, quantity: 0, unitPrice: 0, customerItemCode: it.spec });
+    lines.push({ lineNo: 0, quantity: 0, unitPrice: 0, customerItemCode: it.req });
+  });
+  return { classification: "po", lines, stated_line_count: items.length };
+};
+
+describe("foldContinuationRows: the table-parser shape (lineNo 0, leading header rows)", () => {
+  it("folds lineNo-0 rows and drops the leading header rows: N items in, N lines out", () => {
+    const { normalized, folded, headerRowsDropped } = foldContinuationRows(tableShredded(), { kind: "po" });
+    expect(normalized.lines.map((l) => l.customerItemCode)).toEqual(["ZX-1001-A", "ZX-1002-B", "ZX-1003-C"]);
+    expect(folded).toBe(9);
+    expect(headerRowsDropped).toBe(3);
+    expect(normalized.lines.map((l) => [l.quantity, l.unitPrice])).toEqual([[4, 250], [2, 1200.5], [10, 19.75]]);
+    expect(normalized.lines[1].description).toBe("CLAMP ARM | DRW-77-02 | 4400011122");
+  });
+
+  it("keeps every dropped header row whole on continuation_folds.header_rows_dropped", () => {
+    const { normalized } = foldContinuationRows(tableShredded(), { kind: "po" });
+    expect(normalized.continuation_folds.header_rows_dropped.map((r) => [r.customerItemCode, r._fold_reason, r._source_index]))
+      .toEqual([["Description", "header_row", 0], ["Specification", "header_row", 1], ["Req.No", "header_row", 2]]);
+    expect(normalized.continuation_folds).toMatchObject({ rows_folded: 9, lines_before: 15, lines_after: 3 });
+  });
+
+  it.each([0, "0", "", null, "0.0"])("treats lineNo %p as no line number", (n) => {
+    const anchor = { lineNo: 1, partNumber: "ZX-9001", quantity: 3, unitPrice: 50 };
+    expect(continuationReason({ lineNo: n, description: "x" }, anchor)).toBe("no_quantity_no_amount");
+  });
+
+  it("still treats a different real line number as a separate item", () => {
+    const anchor = { lineNo: 1, partNumber: "ZX-9001", quantity: 3, unitPrice: 50 };
+    expect(continuationReason({ lineNo: 2, description: "x" }, anchor)).toBeNull();
+  });
+
+  it("drops a header row only when every text value on it is a column label", () => {
+    const n = {
+      classification: "po",
+      lines: [
+        { lineNo: 0, customerItemCode: "Description", description: "Spares for press line 3" },
+        { lineNo: 0, partNumber: "Item No", description: "Description", uom: "U/M", quantity: null },
+        { partNumber: "ZX-7001", quantity: 1, unitPrice: 10 },
+      ],
+    };
+    const { normalized, headerRowsDropped } = foldContinuationRows(n, { kind: "po" });
+    expect(headerRowsDropped).toBe(1);
+    expect(normalized.lines.map((l) => l.description)).toEqual(["Spares for press line 3", undefined]);
+  });
+
+  it("never drops a label-only row that comes after the first real line", () => {
+    const n = {
+      classification: "po",
+      lines: [
+        { partNumber: "ZX-7101", quantity: 1, unitPrice: 10 },
+        { lineNo: 0, customerItemCode: "Description" },
+      ],
+    };
+    const { normalized, headerRowsDropped } = foldContinuationRows(n, { kind: "po" });
+    expect(headerRowsDropped).toBe(0);
+    expect(normalized.continuation_folds.header_rows_dropped).toBeUndefined();
+    expect(normalized.lines[0]._folded_rows).toHaveLength(1);
+  });
+
+  it("does not drop a leading row that carries a figure", () => {
+    const n = {
+      classification: "po",
+      lines: [
+        { customerItemCode: "Description", unitPrice: 75 },
+        { partNumber: "ZX-7201", quantity: 1, unitPrice: 10 },
+      ],
+    };
+    expect(foldContinuationRows(n, { kind: "po" }).normalized.lines).toHaveLength(2);
+  });
+
+  it("reports dropped header rows as an info anomaly", () => {
+    const { normalized } = foldContinuationRows(tableShredded(), { kind: "po" });
+    const r = detectAnomalies(normalized, { kind: "po" });
+    expect(r.anomalies.find((a) => a.code === "header_rows_dropped")).toMatchObject({ severity: "info", actual: 3 });
+    expect(r.has_blockers).toBe(false);
+  });
+
+  it("reports header rows even when nothing was folded", () => {
+    const n = {
+      classification: "po",
+      lines: [
+        { lineNo: 0, customerItemCode: "S.No" },
+        { lineNo: 1, partNumber: "ZX-7301", quantity: 1, unitPrice: 10 },
+      ],
+    };
+    const { normalized, folded, headerRowsDropped } = foldContinuationRows(n, { kind: "po" });
+    expect([folded, headerRowsDropped]).toEqual([0, 1]);
+    expect(detectAnomalies(normalized, { kind: "po" }).anomalies.map((a) => a.code)).toContain("header_rows_dropped");
+  });
+
+  it("is idempotent on the table-parser shape too", () => {
+    const once = foldContinuationRows(tableShredded(), { kind: "po" });
+    const twice = foldContinuationRows(once.normalized, { kind: "po" });
+    expect([twice.folded, twice.headerRowsDropped]).toEqual([0, 0]);
+    expect(twice.normalized).toEqual(once.normalized);
+  });
+});

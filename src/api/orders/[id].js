@@ -108,6 +108,21 @@ export default async function handler(req, res) {
         evidence = e.data || [];
         sourcePos = s.data || [];
       }
+      // The order's customer, by name. The workspace header reads
+      // order.customer.customer_name, and nothing ever set it: the row is
+      // select("*") with no join, so every order showed its customer_id prefix
+      // ("a1b2c3d4 · created ...") unless the extracted PO block happened to
+      // carry a name. A separate lookup rather than an embed, so a missing or
+      // renamed relationship can never turn this GET into a 404. Best-effort.
+      // Same columns the orders list embeds, so a label built from them (the
+      // draft label) reads the same on the list and in the workspace.
+      if (data.customer_id) {
+        try {
+          const c = await svc.from("customers").select("customer_name, state_code")
+            .eq("tenant_id", ctx.tenantId).eq("id", data.customer_id).maybeSingle();
+          if (c?.data) data.customer = c.data;
+        } catch { /* the header falls back to the id prefix */ }
+      }
       return json(res, 200, { order: data, findings, evidence, sourcePos });
     }
 

@@ -1232,7 +1232,12 @@ const WiredSOWorkspace = () => {
     }
   };
 
-  const customerName = o.customer?.customer_name || o.customer_name || (o.customer_id ? o.customer_id.slice(0, 8) : "—");
+  // The name on the order's customer record (GET /api/orders/[id] attaches
+  // it), else, for an order with no customer yet, the buyer the PO names. A
+  // linked customer whose record could not be read shows its id prefix: that
+  // is still the right customer, where the PO's text might not be.
+  const customerName = o.customer?.customer_name || o.customer_name
+    || (o.customer_id ? o.customer_id.slice(0, 8) : (o.result?.salesOrder?.customer?.name || "—"));
   const customerEmail = o.customer?.contact_email || o.customer?.email;
 
   const st = stageOf(o.status);

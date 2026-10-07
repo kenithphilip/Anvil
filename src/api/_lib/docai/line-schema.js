@@ -39,6 +39,10 @@ export const CANONICAL_LINE_FIELDS = Object.freeze([
   "requisition_no",
   // measure
   "quantity", "uom",
+  // the delivery date printed on the line, ISO when it parsed (llamaparse's
+  // stacked layout prints one per item). Per-line schedules proper live in
+  // order_schedule_lines; this is what the document said.
+  "delivery_date",
   // money
   "unitPrice", "taxTotal", "lineTotal", "currency",
   // classification

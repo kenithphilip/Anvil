@@ -111,6 +111,17 @@ describe("background merge folds continuation rows", () => {
     expect(writtenLines(svc)).toHaveLength(6);
   });
 
+  it("drops the table's own header rows read as leading lines, even when nothing else folds", async () => {
+    const job = mergingJob("po", [chunk([
+      { lineNo: 0, quantity: 0, unitPrice: 0, customerItemCode: "Specification" },
+      { lineNo: 1, partNumber: "ZX-1001-A", quantity: 4, unitPrice: 250 },
+      { lineNo: 2, partNumber: "ZX-1002-B", quantity: 2, unitPrice: 1200.5 },
+    ])]);
+    const svc = makeSvc(job);
+    await advanceJob(svc, job);
+    expect(writtenLines(svc).map((l) => l.partNumber)).toEqual(["ZX-1001-A", "ZX-1002-B"]);
+  });
+
   it("leaves an RFQ job's lines as extracted", async () => {
     const job = mergingJob("rfq", CHUNKS);
     const svc = makeSvc(job);

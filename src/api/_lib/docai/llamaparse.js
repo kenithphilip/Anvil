@@ -23,6 +23,8 @@
 
 import { safeFetch } from "../safe-fetch.js";
 import { decryptField } from "../secrets.js";
+import { parsePoDate } from "../parse-date.js";
+import { readPoHeader } from "./po-header-text.js";
 
 // Per-tenant key (encrypted, shared docai_creds_iv) first, then env vars.
 const apiKey = (settings) => {
@@ -102,16 +104,29 @@ const stripTags = (s) => String(s)
 // <thead> holds bare <th> while <tbody> rows are wrapped. A naive <tr> scan
 // therefore captures data rows but NO header, the first data row becomes row 0,
 // the column-label test fails, and the whole table is discarded.
-export const parseHtmlTables = (html) => {
+//
+// Each table also says how many of its leading rows are HEADER rows: rows
+// inside <thead>, or rows made only of <th> cells. A stacked layout prints its
+// column labels on several header rows (see headerBlockOf), and once the rows
+// are plain arrays of text there is no other way to tell a label row from data.
+const parseHtmlTablesDetailed = (html) => {
   const tables = [];
   for (const tbl of String(html || "").match(/<table[\s\S]*?<\/table>/gi) || []) {
     const rows = [];
     let sawHeaderRow = false;
-    for (const tr of tbl.match(/<tr[\s\S]*?<\/tr>/gi) || []) {
+    let headRows = 0;
+    let inHead = true;
+    const theadEnd = tbl.search(/<\/thead>/i);
+    for (const m of tbl.matchAll(/<tr[\s\S]*?<\/tr>/gi)) {
+      const tr = m[0];
       const cells = (tr.match(/<t[hd][\s\S]*?<\/t[hd]>/gi) || []).map(stripTags);
       if (!cells.length) continue;
       rows.push(cells);
-      if (/<th[\s>]/i.test(tr)) sawHeaderRow = true;
+      const isTh = /<th[\s>]/i.test(tr);
+      if (isTh) sawHeaderRow = true;
+      const inThead = theadEnd >= 0 && m.index < theadEnd;
+      if (inHead && (inThead || (isTh && !/<td[\s>]/i.test(tr)))) headRows++;
+      else inHead = false;
     }
     // Synthesise a header from bare <th> ONLY when no <tr> carried one.
     //
@@ -122,17 +137,19 @@ export const parseHtmlTables = (html) => {
     // of 14-wide data. Every column then reads one to the left — the parser
     // returns confidently-shaped garbage instead of nothing, which is worse.
     const ths = (tbl.match(/<th[\s\S]*?<\/th>/gi) || []).map(stripTags);
-    if (ths.length && !sawHeaderRow) rows.unshift(ths);
+    if (ths.length && !sawHeaderRow) { rows.unshift(ths); headRows = 1; }
     // No <tr> anywhere: chunk the <td> stream by header width. Exact for a
     // rectangular table, which a rendered PO table is.
     if (rows.length <= 1 && ths.length) {
       const tds = (tbl.match(/<td[\s\S]*?<\/td>/gi) || []).map(stripTags);
       for (let i = 0; i + ths.length <= tds.length; i += ths.length) rows.push(tds.slice(i, i + ths.length));
     }
-    if (rows.length) tables.push(rows);
+    if (rows.length) tables.push({ rows, headRows: Math.min(headRows, rows.length) });
   }
   return tables;
 };
+
+export const parseHtmlTables = (html) => parseHtmlTablesDetailed(html).map((t) => t.rows);
 
 // Column labels that mark a table as the line-item table rather than the
 // vendor/address block or the tax summary that bracket it.
@@ -201,19 +218,327 @@ const cellNum = (s) => {
 };
 const EMPTY_CELL = /^[-–—]$/;   // this layout writes an absent value as "-"
 
+// ── stacked records: one item printed across several rows ──────────────────
+//
+// Many OEM purchase orders print each item as a BLOCK of physical rows under a
+// header that is itself several rows deep:
+//
+//   S.No | Item No       | Qty | Ex-Price     | SGST  | Unit Price | ...
+//        | Description   | U/M | Tooling Cost | CGST  | TotAmt     | ...
+//        | Specification | CUR | P&F          | IGST  |            | Delivery
+//        | Req.No        |     | Others       | UTGST | Inspection | ...
+//
+// Each label row describes the matching row of every item block. Reading only
+// the first header row, as the one-row path does, turned a 25-item PO into 103
+// "lines": the three lower header rows, then four lines per item, three of them
+// carrying a description, a drawing code or a requisition number where the
+// item code belongs. Nothing grouped the rows, because the only continuation
+// logic here handles a TABLE with no labels (a continuation page), and a
+// document whose pages LlamaParse merged into one table never has one.
+//
+// So: when the header is K rows deep, an item is a RECORD of up to K body rows,
+// read through a per-(row offset, column) label map. A record starts at a row
+// that prints its own line number, or its own quantity where the layout has no
+// other field. The header rows themselves are never data.
+
+const MAX_RECORD_ROWS = 6;
+
+// Labels a stacked layout prints on its second and later header rows. Used
+// only to recognise such a row when the emitter put it in <tbody> rather than
+// <thead>; a <thead> row needs no recognising.
+const SUB_HEADER_LABELS = [
+  /\bdesc(ription)?\b/i, /\bspec(ification)?\b|\bdrawing\b|\bdrg\b/i,
+  /\breq(uisition)?\b|\bp\.?\s*r\.?\s*no\b|\bindent\b/i, /\bu\s*\/\s*m\b|\buom\b|\bunits?\b/i,
+  /^cur(rency)?\.?$/i, /\bdeliver/i, /\btot\.?\s*amt\b|\btotal\b|\bamount\b/i,
+  /\b(c|s|i|ut)gst\b|\bgst\b|\bvat\b|\bcess\b|\bexcise\b|\btax/i,
+  /\btooling\b|\bp\s*&\s*f\b|\bothers?\b|\bfreight\b/i,
+  /\binspection\b|\bmaker\b|\bremarks?\b|\bitem\b|\bhsn\b|\bsac\b/i,
+];
+
+// A label row carries words and no figures, and most of its words are labels.
+const isLabelRow = (row) => {
+  const cells = (row || []).map((c) => String(c ?? "").trim()).filter(Boolean);
+  if (cells.length < 2) return false;
+  if (cells.some((c) => /\d/.test(c))) return false;
+  const hits = cells.filter((c) => SUB_HEADER_LABELS.some((re) => re.test(c))).length;
+  return hits >= 2 && hits * 2 >= cells.length;
+};
+
+// The header rows of one record: the picked header row, then every row below
+// it that is a header too, either because it sat in <thead> or because it is
+// recognisably a label row. Each must align to the header's width: a narrower
+// row is a column-GROUP header (one label over two sub-columns), a different
+// structure that this does not claim to read.
+const headerBlockOf = (t, hi, headRows) => {
+  const head = t[hi];
+  const block = [head];
+  for (let j = hi + 1; j < t.length && block.length < MAX_RECORD_ROWS; j++) {
+    const a = alignRow(t[j], head.length);
+    if (!a) break;
+    if (j < headRows || isLabelRow(a)) { block.push(a); continue; }
+    break;
+  }
+  return block;
+};
+
+// Strict numbers for the stacked path: a blank cell is NO value. The one-row
+// path's cellNum turns "" into 0, which is how a blank S.No became lineNo 0
+// and a "NOS" in the quantity column became quantity 0.
+const strictNum = (s) => {
+  const t = String(s ?? "").replace(/[,\s]/g, "").replace(/^(?:inr|rs\.?|₹)/i, "");
+  if (!/^-?\d+(?:\.\d+)?$/.test(t)) return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+};
+const lineNumberOf = (s) => {
+  const t = String(s ?? "").trim().replace(/\.$/, "");
+  return /^\d{1,5}$/.test(t) && Number(t) > 0 ? Number(t) : null;
+};
+
+// Field -> label patterns, in preference order: the first pattern that matches
+// any label decides which cells the field reads (see slotsFor). The one-row
+// path's choices are kept where they overlap.
+const STACKED_FIELDS = {
+  lineNo:           [/^line$/i, /^line\s*(no|num|item)/i, /^s\.?\s*no/i, /^sl\.?\s*no/i, /^sr\.?\s*no/i],
+  customerItemCode: [/item\s*(no|code|number)/i],
+  partNumber:       [/part\s*(no|number|code)/i, /sku|material|catalog/i],
+  description:      [/item\s*desc/i, /^description$/i, /desc/i],
+  specification:    [/item\s*spec|specification/i, /^spec\.?$/i, /drawing|^drg\.?(\s*no)?/i],
+  requisition_no:   [/^req(uisition)?\.?\s*(no|num|number)?\.?$/i, /requisition/i, /^p\.?\s*r\.?\s*(no|num)/i, /^indent\s*no/i],
+  quantity:         [/q(ua)?nt|qty/i],
+  uom:              [/uom|u\s*\/\s*m/i, /^units?$/i],
+  currency:         [/^cur(rency)?\.?$/i],
+  hsn:              [/hsn|sac/i],
+  delivery_date:    [/deliver/i, /need\s*by/i, /due\s*date/i],
+  // The price the buyer prints INCLUDING per-unit tax on this layout family,
+  // and the pre-tax price beside it. Which one is the rate is PROVED per
+  // record (rateFor), never assumed from the label.
+  unit_price:       [/unit\s*price/i, /^price$/i],
+  pre_tax_price:    [/^ex\W*price$/i, /^basic\s*(price|rate)$/i, /^rate$/i, /price\s*before\s*tax/i],
+  line_total:       [/^tot\.?\s*amt\.?$/i, /line\s*total/i, /^total(\s*amount)?$/i, /^amount$/i],
+  // Per-UNIT tax and auxiliary amounts, the canonical keys the LLM adapters
+  // fill on this layout (line-schema.js).
+  sgst_amount:      [/^sgst\b/i],
+  cgst_amount:      [/^cgst\b/i],
+  igst_amount:      [/^igst\b/i],
+  utgst_amount:     [/^utgst\b/i],
+  cess_amount:      [/^cess$/i],
+  ed_cess_amount:   [/^ed\.?\s*cess$/i],
+  excise_amount:    [/excise/i],
+  tooling_amount:   [/tooling/i],
+  p_and_f_amount:   [/^p\s*&\s*f$/i, /packing\s*(&|and)\s*forwarding/i],
+  others_amount:    [/^others?'?$/i],
+};
+const TAX_FIELDS = ["sgst_amount", "cgst_amount", "igst_amount", "utgst_amount", "cess_amount", "ed_cess_amount", "excise_amount"];
+const AUX_FIELDS = ["tooling_amount", "p_and_f_amount", "others_amount"];
+const TEXT_FIELDS = ["partNumber", "customerItemCode", "description", "specification", "requisition_no", "uom", "currency", "hsn"];
+
+// Two printed money figures agree when they match to the paisa, allowing half
+// a paisa of rounding per unit (a per-unit tax printed to the paisa, times qty).
+const PAISA = 0.011;
+const moneyClose = (a, b, qty = 1) =>
+  Math.abs(a - b) <= Math.max(PAISA, Math.abs(qty || 1) * 0.005);
+const round2 = (n) => Math.round(n * 100) / 100;
+
+// Every labelled cell, as { o: row offset, c: column, label }.
+const slotsOf = (block) => {
+  const slots = [];
+  block.forEach((hr, o) => hr.forEach((label, c) => {
+    const l = String(label ?? "").trim();
+    if (l) slots.push({ o, c, label: l });
+  }));
+  return slots;
+};
+// The cells a field reads: every slot matching its FIRST matching pattern. A
+// merged header cell repeats its label across the columns it spans ("Maker |
+// Maker", "Delivery | Delivery"), so a field can own several slots; the
+// record's first non-empty one is its value.
+const slotsFor = (slots, res) => {
+  for (const re of res) {
+    const hit = slots.filter((s) => re.test(s.label));
+    if (hit.length) return hit;
+  }
+  return [];
+};
+
+// Decide the rate, and prove it. When a record prints both a pre-tax price and
+// a "Unit Price", the unit price may already include the per-unit taxes. Taking
+// it as the rate shows the GST-inclusive figure as the taxable value, and a
+// Tally push then adds GST a second time. So switch to the pre-tax price ONLY
+// when the record's own figures prove unit = pre-tax + per-unit taxes (or + the
+// per-unit auxiliary costs too). Anything else keeps the old reading and says so.
+const rateFor = ({ pre, unit, tax, aux }) => {
+  if (pre != null && unit != null) {
+    if (moneyClose(unit, pre + tax)) return { rate: pre, basis: "pre_tax", unit_includes: tax > 0 ? "tax" : "nothing" };
+    if (aux > 0 && moneyClose(unit, pre + tax + aux)) return { rate: pre, basis: "pre_tax", unit_includes: "tax_and_aux" };
+    return { rate: unit, basis: "unproven" };
+  }
+  if (pre != null) return { rate: pre, basis: "pre_tax_column" };
+  if (unit != null) return { rate: unit, basis: "unit_price" };
+  return { rate: null, basis: null };
+};
+
+// Check the printed line total against qty and rate: it is the gross (rate +
+// per-unit tax, with or without the auxiliary costs, times qty) or the taxable
+// value (rate times qty). Anything else is reported, never smoothed over.
+const totalCheckOf = ({ qty, rate, tax, aux, total }) => {
+  if (total == null || qty == null || rate == null) return null;
+  if (moneyClose(total, qty * (rate + tax + aux), qty) || moneyClose(total, qty * (rate + tax), qty)) return "gross";
+  if (tax + aux > 0 && moneyClose(total, qty * rate, qty)) return "pre_tax";
+  return "mismatch";
+};
+
+// Group body rows into records and map each to a line. `block` is the header
+// rows, top first; every row in `rows` is already aligned to its width.
+export const normalizeStackedRecords = (rows, block, diag = {}) => {
+  const K = block.length;
+  const slots = slotsOf(block);
+  const F = {};
+  for (const [field, res] of Object.entries(STACKED_FIELDS)) F[field] = slotsFor(slots, res);
+  // Starting a record is read off the FIRST header row only: that is where a
+  // line number and a quantity of an item's own are printed.
+  const lineNoCols = F.lineNo.filter((s) => s.o === 0).map((s) => s.c);
+  const qtyCols = F.quantity.filter((s) => s.o === 0).map((s) => s.c);
+  const labelled = new Set(slots.map((s) => s.o + ":" + s.c));
+  const startsRecord = (r, nextOffset) => {
+    if (nextOffset >= K) return true;
+    if (lineNoCols.some((c) => lineNumberOf(r[c]) != null)) return true;
+    // A quantity in a cell the stacked layout gives no field at this offset
+    // can only be a new item's own quantity.
+    if (qtyCols.some((c) => strictNum(r[c]) && !labelled.has(nextOffset + ":" + c))) return true;
+    // With no line-number or quantity column there is nothing to group by.
+    return !lineNoCols.length && !qtyCols.length;
+  };
+
+  const records = [];
+  let cur = null;
+  let merged = 0;
+  for (const r of rows) {
+    if (!r.some((c) => String(c ?? "").trim())) continue;     // spacer row
+    if (!cur || startsRecord(r, cur.length)) { cur = [r]; records.push(cur); continue; }
+    cur.push(r);
+    merged++;
+  }
+
+  const cell = (rec, s) => {
+    const v = String(rec[s.o]?.[s.c] ?? "").trim();
+    return !v || EMPTY_CELL.test(v) ? null : v;
+  };
+  const textOf = (rec, field) => {
+    for (const s of F[field]) { const v = cell(rec, s); if (v != null) return v; }
+    return null;
+  };
+  const numOf = (rec, field) => {
+    for (const s of F[field]) { const n = strictNum(cell(rec, s)); if (n != null) return n; }
+    return null;
+  };
+
+  const lines = [];
+  let rejected = 0;
+  let unproven = 0;
+  let preTax = 0;
+  let totalMismatch = 0;
+  for (const rec of records) {
+    const li = { _source: "table_columns" };
+    li.lineNo = F.lineNo.length ? lineNumberOf(textOf(rec, "lineNo")) : null;
+    for (const f of TEXT_FIELDS) li[f] = textOf(rec, f);
+    li.quantity = numOf(rec, "quantity");
+    const rawDate = textOf(rec, "delivery_date");
+    // Day-first, as Indian and most non-US documents print it. An unparseable
+    // date is kept as printed rather than dropped.
+    li.delivery_date = rawDate ? (parsePoDate(rawDate, { hint: "DMY" }) || rawDate) : null;
+
+    const taxes = {};
+    for (const f of [...TAX_FIELDS, ...AUX_FIELDS]) {
+      if (F[f].length) taxes[f] = numOf(rec, f);
+    }
+    const sum = (fs) => fs.reduce((a, f) => a + (taxes[f] > 0 ? taxes[f] : 0), 0);
+    const tax = sum(TAX_FIELDS);
+    const aux = sum(AUX_FIELDS);
+    const pre = numOf(rec, "pre_tax_price");
+    const unit = numOf(rec, "unit_price");
+    const total = numOf(rec, "line_total");
+    const r = rateFor({ pre, unit, tax, aux });
+    li.unitPrice = r.rate;
+
+    // An unproven pair keeps the old reading (the unit price as the rate), so
+    // the per-unit taxes stay OFF the canonical slots: adding them to a rate
+    // that may already include them is the double count this exists to stop.
+    // They are kept on _rate_basis, and anomaly.js reports the line.
+    if (r.basis !== "unproven") Object.assign(li, taxes);
+    const check = totalCheckOf({ qty: li.quantity, rate: li.unitPrice, tax: r.basis === "unproven" ? 0 : tax, aux: r.basis === "unproven" ? 0 : aux, total });
+    // line_total is the GROSS for the line (line-schema.js). A printed total
+    // proved to be the taxable value is not one, so it stays on _rate_basis.
+    li.line_total = check === "pre_tax" ? null : total;
+
+    if (pre != null || unit != null) {
+      li._rate_basis = {
+        basis: r.basis,
+        ...(r.unit_includes ? { unit_includes: r.unit_includes } : {}),
+        ...(pre != null ? { pre_tax_price: pre } : {}),
+        ...(unit != null ? { unit_price_printed: unit } : {}),
+        ...(tax > 0 ? { per_unit_tax: round2(tax) } : {}),
+        ...(aux > 0 ? { per_unit_aux: round2(aux) } : {}),
+        ...(r.basis === "unproven" ? { taxes_printed: taxes } : {}),
+        ...(total != null ? { total_printed: total } : {}),
+        ...(check ? { total_check: check } : {}),
+      };
+    }
+    if (rec.length > 1) li._record_rows = rec.length;
+
+    // Identity AND money, as on the one-row path.
+    if ((li.partNumber || li.customerItemCode || li.description) &&
+        (li.quantity != null || li.unitPrice != null)) {
+      lines.push(li);
+      if (r.basis === "pre_tax") preTax++;
+      if (r.basis === "unproven") unproven++;
+      if (check === "mismatch") totalMismatch++;
+    } else rejected++;
+  }
+
+  diag.record_rows = K;
+  diag.continuation = (diag.continuation || 0) + merged;
+  diag.rows_considered = records.length;
+  diag.rows_rejected = rejected;
+  if (preTax) diag.rate_pre_tax = preTax;
+  if (unproven) diag.rate_unproven = unproven;
+  if (totalMismatch) diag.total_mismatch = totalMismatch;
+  const maxLineNo = lines.reduce((m, l) => (Number.isFinite(l.lineNo) && l.lineNo > m ? l.lineNo : m), 0);
+  if (maxLineNo > 0) diag.max_line_no = maxLineNo;
+  return { lines, diag };
+};
+
+// A one-row header that prints BOTH a pre-tax price and a unit price takes the
+// record path too, so the rate is proved the same way. Every other one-row
+// header keeps the path below exactly as it was.
+const needsRecordPath = (block) => {
+  if (block.length > 1) return true;
+  const slots = slotsOf(block);
+  return slotsFor(slots, STACKED_FIELDS.pre_tax_price).length > 0
+    && slotsFor(slots, STACKED_FIELDS.unit_price).length > 0;
+};
+
 export const normalizeFromHtml = (html) => {
-  const tables = parseHtmlTables(html);
+  const tables = parseHtmlTablesDetailed(html);
   let header = null;
+  let block = null;              // the header rows of one record, top first
   const rows = [];
   const diag = { tables: tables.length, matched: 0, continuation: 0, skipped: 0, misaligned: 0 };
 
-  for (const t of tables) {
+  for (const { rows: t, headRows } of tables) {
     const hi = pickHeaderRow(t);
     if (hi >= 0 && t.length > hi + 1) {
-      if (!header) header = t[hi];
-      const key = shapeKey(header);
-      for (const r of t.slice(hi + 1)) {
-        if (shapeKey(r) === key) continue;                 // repeated header
+      const blk = headerBlockOf(t, hi, headRows);
+      if (!header) { header = t[hi]; block = blk; }
+      // A header row repeated further down (a page break inside a merged
+      // table) is skipped. On a stacked layout that is every header row, not
+      // just the first; rows with no letters at all are never treated as one.
+      const keys = new Set([shapeKey(header)]);
+      if (block.length > 1 || blk.length > 1) {
+        for (const h of [...block, ...blk]) { const k = shapeKey(h); if (/[a-z]/.test(k)) keys.add(k); }
+      }
+      for (const r of t.slice(hi + blk.length)) {
+        if (keys.has(shapeKey(r))) continue;               // repeated header
         const a = alignRow(r, header.length);
         if (a) rows.push(a); else diag.misaligned++;
       }
@@ -235,6 +560,7 @@ export const normalizeFromHtml = (html) => {
     }
   }
   if (!header) return { lines: [], diag };
+  if (needsRecordPath(block)) return normalizeStackedRecords(rows, block, diag);
 
   // Order matters. A naive /desc|name/ matches "Service Parent Name" — which is
   // "-" on every row of the observed layout — BEFORE "Item Description".
@@ -341,15 +667,22 @@ export const normalizeFromMarkdown = (md) => {
 };
 
 // LlamaParse returns no confidence score, so derive one from extraction
-// completeness: the share of lines that carry BOTH a part number and a
+// completeness: the share of lines that carry BOTH an item identity and a
 // quantity. A clean line table clears the dispatcher's fallback threshold
 // (docai_fallback_confidence, 0.85 default); a table with no quantities stays
 // below it so the chain falls through to another engine rather than trusting a
 // half-read table. Hardcoding 0.8 (the old value) sat permanently below the
 // threshold, so LlamaParse could never win as the primary.
+//
+// The identity is our part number OR the buyer's own item code. Counting only
+// partNumber kept every table keyed by the buyer's code at 0.82, below the
+// threshold, on exactly the layouts this parser reads best: neither the
+// one-row layout above nor the stacked one prints a part column of ours. The
+// intake's customer match refuses any run below 0.85, so a perfect 25-of-25
+// read could never select its customer.
 export const scoreConfidence = (lines) => {
   if (!lines || !lines.length) return 0.4;
-  const complete = lines.filter((l) => l && l.partNumber && l.quantity != null).length / lines.length;
+  const complete = lines.filter((l) => l && (l.partNumber || l.customerItemCode) && l.quantity != null).length / lines.length;
   return Math.min(0.97, 0.82 + 0.15 * complete);
 };
 
@@ -366,6 +699,23 @@ export const markdownOf = (result) => {
   if (Array.isArray(pages)) return pages.map((p) => p?.markdown || p?.md || "").join("\n\n").trim();
   return "";
 };
+
+// The PO header, read from the same markdown. The tenant's own names and
+// GSTINs come from tenant_settings (the e-invoice seller block, migration 062,
+// plus the older keys tenant-scrub.js and run.js also read), so the supplier
+// block the PO is addressed to is never taken as the buyer.
+const ownIdentity = (settings) => ({
+  ownNames: [
+    settings?.einvoice_seller_legal_name, settings?.einvoice_seller_trade_name,
+    settings?.tenant_display_name, settings?.tally_company_name,
+  ].filter(Boolean),
+  ownGstins: [settings?.einvoice_seller_gstin, settings?.tenant_gstin].filter(Boolean),
+});
+const isLineItemTable = (tableHtml) => {
+  const t = parseHtmlTables(tableHtml)[0];
+  return !!t && pickHeaderRow(t) >= 0;
+};
+export const readHeader = (md, settings) => readPoHeader(md, { ...ownIdentity(settings), isLineItemTable });
 
 // The LlamaCloud SDK's parse() polls to completion internally and exposes no
 // timeout or AbortSignal, so it is the ONE call in the whole extraction chain
@@ -487,19 +837,22 @@ export const extract = async ({ url, bytes, filename, mime, settings, hints }) =
         },
       };
     }
+    const header = readHeader(md, settings);
     const overall = scoreConfidence(lines);
     const confidences = { overall };
     lines.forEach((_li, i) => { confidences["lines[" + i + "]"] = overall; });
 
     return {
       ok: true,
-      // LlamaParse parses tables; it does not classify or read the customer
-      // header. A line table having been found is the reason this adapter is
-      // selected for this flow, so we treat it as a PO; downstream customer
-      // matching can run off raw.markdown. (The empty case returned above.)
+      // LlamaParse parses tables; it does not classify. A line table having
+      // been found is the reason this adapter is selected for this flow, so
+      // we treat it as a PO. (The empty case returned above.) The header (PO
+      // number, date, buyer, vendor code, printed total) is read from the
+      // same markdown by po-header-text.js, by label, and never as us.
       normalized: {
         classification: "po",
-        customer: null,
+        customer: header.customer,
+        ...(header.totals ? { totals: header.totals } : {}),
         lines,
         // CONSERVATION, carried onto the SUCCESS path.
         //
@@ -521,6 +874,10 @@ export const extract = async ({ url, bytes, filename, mime, settings, hints }) =
           tables_skipped: norm.diag?.skipped ?? null,
           rows_misaligned: norm.diag?.misaligned ?? null,
           max_line_no: norm.diag?.max_line_no ?? null,
+          // A stacked layout: rows_considered counts ITEMS (records of up to
+          // record_rows printed rows), and continuation_rows the printed rows
+          // merged into them.
+          ...(norm.diag?.record_rows ? { record_rows: norm.diag.record_rows, continuation_rows: norm.diag.continuation } : {}),
         },
         ...(norm.diag?.max_line_no ? { stated_line_count: norm.diag.max_line_no } : {}),
       },
@@ -534,6 +891,7 @@ export const extract = async ({ url, bytes, filename, mime, settings, hints }) =
         version: parseVersion(),
         parse_format: /<table/i.test(md) ? "html" : (/^\s*\|/m.test(md) ? "pipe" : "none"),
         table_diag: norm.diag || null,
+        header_fields: header.fields,
       },
     };
   } catch (err) {
@@ -542,4 +900,4 @@ export const extract = async ({ url, bytes, filename, mime, settings, hints }) =
 };
 
 // Exported for tests (pure mapping, no network).
-export const __test__ = { parseMarkdownTable, normalizeFromMarkdown, normalizeFromHtml, parseHtmlTables, pickHeaderRow, alignRow, scoreConfidence, markdownOf, tier, parseVersion, apiKey };
+export const __test__ = { parseMarkdownTable, normalizeFromMarkdown, normalizeFromHtml, normalizeStackedRecords, parseHtmlTables, pickHeaderRow, alignRow, isLabelRow, scoreConfidence, markdownOf, readHeader, tier, parseVersion, apiKey };

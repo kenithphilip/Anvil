@@ -185,6 +185,40 @@ const lineDiscountSanity = (line) => {
   return null;
 };
 
+// RATE BASIS (llamaparse.js, stacked records). When a line prints a pre-tax
+// price AND a unit price, the parser switches the rate to the pre-tax price only
+// when unit = pre-tax + per-unit taxes is proved on the line's own figures.
+// When it is not, the printed unit price stays the rate and the taxes stay off
+// the line, so nothing is counted twice; the operator must decide which figure
+// is the rate.
+const lineRateUnproven = (line) => {
+  const rb = line?._rate_basis;
+  if (!rb || rb.basis !== "unproven") return null;
+  return {
+    code: "rate_basis_unproven",
+    severity: "warn",
+    actual: numberOrNull(rb.unit_price_printed),
+    expected: numberOrNull(rb.pre_tax_price),
+    detail: "the line prints a pre-tax price " + rb.pre_tax_price + " and a unit price " + rb.unit_price_printed
+      + " that its per-unit taxes do not reconcile; the unit price was kept as the rate and the taxes were not added."
+      + " Check which one is the rate before approving.",
+  };
+};
+
+// The printed line total agrees with neither qty x (rate + per-unit taxes) nor
+// qty x rate. Reported, never smoothed over: the rate, the quantity or the
+// total was read wrong, or the document is inconsistent.
+const lineTotalInconsistent = (line) => {
+  const rb = line?._rate_basis;
+  if (!rb || rb.total_check !== "mismatch") return null;
+  return {
+    code: "line_total_inconsistent",
+    severity: "warn",
+    actual: numberOrNull(rb.total_printed),
+    detail: "the printed line total " + rb.total_printed + " is neither qty x rate nor qty x (rate + per-unit taxes)",
+  };
+};
+
 // Aggregate per-line anomaly check.
 export const checkLine = (line, index, opts = {}) => {
   if (!line) return [];
@@ -198,6 +232,8 @@ export const checkLine = (line, index, opts = {}) => {
   push(lineHsnSanity(line));
   push(lineGstSanity(line));
   push(lineDiscountSanity(line));
+  push(lineRateUnproven(line));
+  push(lineTotalInconsistent(line));
   return issues;
 };
 
@@ -366,7 +402,9 @@ const MONEY_AFTER_LABEL_RE = /^\s*(?:\([^)]{0,24}\))?\s*[:\-]?\s*(?:INR|Rs\.?|â‚
 // The grand total is the largest labelled figure in the document: a PO that
 // prints per-section subtotals under the same words still yields the true
 // total as the maximum. Returns null when nothing is labelled -> check no-ops.
-const printedDocumentTotal = (text) => {
+// Also read by po-header-text.js, so a table parser's header carries the same
+// printed total this guard checks against.
+export const printedDocumentTotal = (text) => {
   if (typeof text !== "string" || text.length < 20) return null;
   let best = null;
   // Two-stage: find a total-ish LABEL, then read the money immediately after
@@ -485,11 +523,23 @@ const checkDocumentTotalShortfall = (normalized, opts = {}) => {
 const FOLD_TOTAL_TOLERANCE = 0.02;
 const checkContinuationFolds = (normalized, opts = {}) => {
   const folds = normalized?.continuation_folds;
+  // Leading header rows the fold dropped. Always said, so a row that left the
+  // line set is never silent; the rows themselves are kept on the summary.
+  const headerRows = Array.isArray(folds?.header_rows_dropped) ? folds.header_rows_dropped : [];
+  const headerOut = headerRows.length ? [{
+    code: "header_rows_dropped",
+    severity: "info",
+    path: "lines",
+    actual: headerRows.length,
+    detail: headerRows.length + " leading row" + (headerRows.length === 1 ? "" : "s")
+      + " carrying only column labels (the table's own header read as line items) "
+      + (headerRows.length === 1 ? "was" : "were") + " dropped. They are kept on continuation_folds.header_rows_dropped.",
+  }] : [];
   const rows = numberOrNull(folds?.rows_folded);
-  if (rows == null || rows <= 0) return [];
+  if (rows == null || rows <= 0) return headerOut;
   const lines = Array.isArray(normalized?.lines) ? normalized.lines : [];
   const before = numberOrNull(folds.lines_before);
-  const out = [{
+  const out = [...headerOut, {
     code: "continuation_rows_folded",
     severity: "info",
     path: "lines",

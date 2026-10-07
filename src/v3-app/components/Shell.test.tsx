@@ -7,7 +7,7 @@
 
 import React from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { fireEvent, render } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import { Shell } from "./Shell";
 import { Wrap, installBackend, installRbac } from "../test-utils";
 import { readFileSync } from "node:fs";
@@ -90,5 +90,36 @@ describe("sidebar footer survives the collapsed rail", () => {
   it("long names ellipsis rather than pushing the gear out of the rail", () => {
     const css = readFileSync(resolve(__dirname, "../styles.css"), "utf8");
     expect(css).toMatch(/\.side-foot-name,[\s\S]{0,80}text-overflow:\s*ellipsis/);
+  });
+});
+
+/* notifyAdmins records its dedupKey in link_params.dedup_key, the table's one
+   jsonb column. The bell builds the deep link from link_params, so it must
+   drop that bookkeeping key and keep the real screen params. */
+describe("notification bell deep link", () => {
+  it("opens the target with its params and without dedup_key", async () => {
+    const list = vi.fn(async () => ({
+      notifications: [{
+        id: "n-1", kind: "push_failed", title: "Push to ERP failed",
+        link_route: "admin", link_params: { tab: "tally", dedup_key: "erp:ord-81" },
+      }],
+      unread_count: 1,
+    }));
+    installBackend({ notifications: { list, markRead: vi.fn(async () => ({})) } });
+    window.location.hash = "#/home";
+    const { container, getByText } = render(
+      <Wrap>
+        <Shell route="home" nav={[]} role={{ id: "admin", label: "Admin", short: "AD" }}>x</Shell>
+      </Wrap>,
+    );
+    await waitFor(() => expect(list).toHaveBeenCalled());
+    const bell = await waitFor(() => {
+      const b = container.querySelector('button[aria-label="1 unread notifications"]') as HTMLElement | null;
+      expect(b).not.toBeNull();
+      return b!;
+    });
+    fireEvent.click(bell);
+    fireEvent.click(getByText("Push to ERP failed"));
+    await waitFor(() => expect(window.location.hash).toBe("#/admin?tab=tally"));
   });
 });

@@ -8,33 +8,28 @@ import { AnvilBackend } from "../lib/api";
 // ANVIL v3 — wired CAR Reports (Corrective Action Reports)
 // ============================================================
 
+// One tab per status car_reports allows (migration 006 CHECK, and
+// STATUSES in api/service/car_reports.js). The tabs used to list a
+// workflow the table never had (DRAFT, CONTAINMENT, INVESTIGATING and
+// more), so an UNDER_REVIEW or REOPENED CAR showed in no tab at all.
 const CAR_TABS = [
-  { id: "open",          label: "Open",          match: (s) => ["OPEN", "DRAFT", "CONTAINMENT"].includes(s) },
-  { id: "investigating", label: "Investigating", match: (s) => ["INVESTIGATING", "ROOT_CAUSE", "VERIFICATION"].includes(s) },
-  { id: "resolved",      label: "Resolved",      match: (s) => ["RESOLVED", "EFFECTIVE"].includes(s) },
-  { id: "closed",        label: "Closed",        match: (s) => ["CLOSED", "CANCELLED"].includes(s) },
+  { id: "open",         label: "Open",         match: (s) => s === "OPEN" },
+  { id: "under_review", label: "Under review", match: (s) => s === "UNDER_REVIEW" },
+  { id: "reopened",     label: "Reopened",     match: (s) => s === "REOPENED" },
+  { id: "closed",       label: "Closed",       match: (s) => s === "CLOSED" },
 ];
 
 const CAR_STATUS_CHIP = {
   OPEN:           { label: "open",          k: "warn" },
-  DRAFT:          { label: "draft",         k: "ghost" },
-  CONTAINMENT:    { label: "containment",   k: "warn" },
-  INVESTIGATING:  { label: "investigating", k: "warn" },
-  ROOT_CAUSE:     { label: "root cause",    k: "warn" },
-  VERIFICATION:   { label: "verification",  k: "info" },
-  RESOLVED:       { label: "resolved",      k: "good" },
-  EFFECTIVE:      { label: "effective",     k: "good" },
+  UNDER_REVIEW:   { label: "under review",  k: "info" },
+  REOPENED:       { label: "reopened",      k: "bad" },
   CLOSED:         { label: "closed",        k: "ghost" },
-  CANCELLED:      { label: "cancelled",     k: "ghost" },
 };
 
-const CAR_SEVERITY_CHIP = {
-  CRITICAL: { label: "critical", k: "bad" },
-  HIGH:     { label: "high",     k: "bad" },
-  MED:      { label: "med",      k: "warn" },
-  MEDIUM:   { label: "medium",   k: "warn" },
-  LOW:      { label: "low",      k: "info" },
-};
+// No severity column: car_reports has no severity or priority, and the
+// API returns the row as stored. The screen used to read c.severity,
+// fall back to "MED", and show every CAR as "med". It no longer shows
+// one.
 
 const carFmtDate = (iso) => {
   if (!iso) return "—";
@@ -224,7 +219,7 @@ const WiredCAR = () => {
                 <select className="input" value={draft.status}
                         onChange={(ev) => setDraft({ ...draft, status: ev.target.value })}>
                   <option value="OPEN">OPEN</option>
-                  <option value="UNDER_INVESTIGATION">UNDER_INVESTIGATION</option>
+                  <option value="UNDER_REVIEW">UNDER_REVIEW</option>
                   <option value="CLOSED">CLOSED</option>
                 </select>
               </label>
@@ -251,21 +246,18 @@ const WiredCAR = () => {
               <th>Customer</th>
               <th>Equipment</th>
               <th>Raised</th>
-              <th>Severity</th>
               <th>Status</th>
               <th>Owner</th>
               <th></th>
             </tr></thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={8} className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+                <tr><td colSpan={7} className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
                   No CAR reports in this tab.
                 </td></tr>
               ) : filtered.map((c) => {
                 const status = (c.status || "OPEN").toUpperCase();
-                const sev = (c.severity || "MED").toUpperCase();
                 const chip = CAR_STATUS_CHIP[status] || { label: status.toLowerCase(), k: "ghost" };
-                const sevChip = CAR_SEVERITY_CHIP[sev] || { label: sev.toLowerCase(), k: "ghost" };
                 const carNum = c.car_number || c.number || c.id?.slice(0, 8) || "—";
                 const closure = closuresByCar[c.id];
                 return (
@@ -277,7 +269,6 @@ const WiredCAR = () => {
                     <td>{c.customer_name || c.customer?.customer_name || c.customer_id?.slice(0, 8) || "—"}</td>
                     <td className="mono-sm">{c.equipment_label || c.equipment?.label || c.equipment_serial || c.equipment_id?.slice(0, 8) || "—"}</td>
                     <td className="mono-sm">{carFmtDate(c.raised_at || c.opened_at || c.created_at)}</td>
-                    <td><Chip k={sevChip.k}>{sevChip.label}</Chip></td>
                     <td><Chip k={chip.k}>{chip.label}</Chip></td>
                     <td className="mono-sm">{c.owner_name || c.owner?.name || c.assigned_to_name || "—"}</td>
                     <td><Btn sm onClick={() => window.location.hash = `#/car?id=${c.id}`}>open {Icon.arrowR}</Btn></td>

@@ -104,14 +104,11 @@ const alertOnImpact = async (svc, tenantId, upserted, beforeUpsert) => {
 // Fires only when the supplier's REVISION MOVED (or the assembly is new to
 // us), and only for assemblies we hold a BOM for.
 //
-// The revision test is the ONLY thing making this idempotent, and that is not
-// belt-and-braces — it is the single mechanism. notifyAdmins appears to dedup
-// on a five-minute window but does not: notifications.js:42 uses dedupKey only
-// as a truthiness gate, never comparing the string, and the guard behind it
-// reads `data` from a head:true request, which postgrest always returns as
-// null. Nothing has ever been deduped, for any caller. So without the revision
-// gate a drifted BOM — which stays drifted until somebody fixes it — would
-// alert on every tick forever.
+// The revision test is the ONLY thing making this idempotent across ticks.
+// notifyAdmins' dedupKey suppresses a repeat of one key for five minutes and
+// no longer, so it cannot stand in for the gate. Without the revision gate a
+// drifted BOM, which stays drifted until somebody fixes it, would alert again
+// every few ticks forever.
 //
 // Nothing to compare against, i.e. no BOM of our own for that parent, is not
 // drift; alerting on it would fire for the supplier's entire catalogue.
@@ -183,13 +180,6 @@ const alertOnBomDrift = async (svc, tenantId, rows, priorRev) => {
       // neither belongs here. Left null rather than passing a type that fails
       // the insert into an error notifyAdmins swallows.
       // NO dedupKey, and that is not an oversight.
-      //
-      // notifyAdmins does not read the key's VALUE — notifications.js:42-51
-      // filters on tenant + kind + unresolved + the last five minutes, and the
-      // string is never compared. So passing one here would mean the FIRST
-      // drifted assembly notifies and every other one in the same tick is
-      // silently swallowed, which is the opposite of what a per-assembly key
-      // looks like it is doing.
       //
       // Idempotency across ticks comes from the revision gate above, which is
       // the honest mechanism. Within a tick, each drifted assembly is distinct

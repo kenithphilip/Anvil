@@ -173,6 +173,42 @@ export const selectGeminiModel = (ctx = {}) => {
   return { model: GEMINI_TIERS.preflight, tier: "preflight", reason: "default_cost_optimised" };
 };
 
+// The model callGemini switches to when the selected one answers 503
+// "overloaded" / "high demand". Overload is per MODEL: on 2026-10-06 and 10-07
+// the model a 6-page PO routes to (the reasoning tier, po_multipage) answered
+// 503 on every attempt, and nothing said the generation-tier model was busy.
+// Retrying the same model only spent the run budget.
+//
+// Order of precedence:
+//   1. tenant_settings.docai_gemini_fallback_model ("none" or "off" disables)
+//   2. GEMINI_MODEL_FALLBACK env (same opt-out words)
+//   3. the generation-tier model, then the preflight-tier model, from
+//      gemini.js MODEL_BY_TIER: the first one that is not the primary. These
+//      are ids this deployment already runs every day, so the default never
+//      names a model nobody has tried. The reasoning tier is deliberately not
+//      a default: it is slower and dearer, and a fallback runs inside a
+//      deadline.
+//
+// A tenant that PINNED docai_gemini_model gets no default fallback: a pin is
+// there for compliance or reproducibility, and answering from another model
+// would quietly break it. Setting docai_gemini_fallback_model opts back in.
+//
+// Pure. Returns null when there is nothing distinct to fall back to.
+const FALLBACK_OFF = /^(none|off)$/i;
+export const selectGeminiFallbackModel = ({ primary, setting, pinned = false, env = process.env.GEMINI_MODEL_FALLBACK } = {}) => {
+  const clean = (v) => (typeof v === "string" ? v.trim() : "");
+  const explicit = clean(setting) || clean(env);
+  if (explicit) {
+    if (FALLBACK_OFF.test(explicit)) return null;
+    return explicit === primary ? null : explicit;
+  }
+  if (pinned) return null;
+  for (const m of [GEMINI_TIERS.generation, GEMINI_TIERS.preflight]) {
+    if (m && m !== primary) return m;
+  }
+  return null;
+};
+
 // Reactive escalation: after a first extraction pass, decide whether an
 // empty-lines PO/RFQ result warrants ONE retry at the generation tier. This is
 // the safety net behind selectClaudeModel's po_multipage rule — it catches

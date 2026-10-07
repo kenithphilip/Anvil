@@ -24,6 +24,7 @@
 import { safeFetch } from "./safe-fetch.js";
 import { serviceClient } from "./supabase.js";
 import { safeAwait } from "./safe-thenable.js";
+import { classifyUpstreamFailure, describeUpstreamStatus } from "./upstream-failure.js";
 
 export const REDACTION_PATTERNS = [
   { name: "credit_card", re: /\b(?:\d[ -]*?){13,19}\b/g, replacement: "[REDACTED-CC]" },
@@ -125,6 +126,12 @@ const MAX_RETRY_SLEEP_MS = Number(process.env.ANTHROPIC_MAX_RETRY_SLEEP_MS || 80
 const FALLBACK_RESERVE_MS = Number(process.env.ANTHROPIC_FALLBACK_RESERVE_MS || 8000);
 const ATTEMPT_TIMEOUT_MS = Number(process.env.ANTHROPIC_TIMEOUT_MS || 15000);
 const MIN_ATTEMPT_MS = 2000;
+
+// The configured time one Claude extraction call may take. Exported so the
+// docai dispatcher can hold back THIS much for a Claude call still queued
+// behind another adapter, instead of a generic floor that is too short for a
+// multi-page PO. Raise ANTHROPIC_TIMEOUT_MS and the reservation follows.
+export const ANTHROPIC_ATTEMPT_TIMEOUT_MS = ATTEMPT_TIMEOUT_MS;
 
 // Pure, exported for tests. Cap a retry sleep at MAX_RETRY_SLEEP_MS and, when a
 // run deadline is set, return null (= "don't retry") once sleeping would eat
@@ -282,35 +289,57 @@ export const callAnthropic = async (opts) => {
   // Optional run deadline (epoch ms) threaded from the docai pipeline. 0 => no
   // deadline, and every guard below collapses to the historical behaviour.
   const deadlineAt = Number(opts.deadlineAt) || 0;
+  // The tail this call leaves for whatever runs after it. The docai dispatcher
+  // passes 0 because it has ALREADY carved this call's deadline out of the run
+  // budget with the next adapters' time held back. Subtracting the default 8s
+  // again on top was a double reservation: on 2026-10-07 it cut a 13.5s Claude
+  // slice down to a 5.5s attempt that could not finish a 6-page PO.
+  const retryOpts = opts.reserveMs != null && Number.isFinite(Number(opts.reserveMs))
+    ? { deadlineAt, reserveMs: Math.max(0, Number(opts.reserveMs)) }
+    : { deadlineAt };
 
-  let lastErr = null;
+  // What ended the last attempt: a retryable STATUS or a thrown network error.
+  // Kept so that, when the budget then stops the loop, the error names the
+  // real cause ("529 model overloaded ...") instead of "run budget exhausted".
+  let lastFailure = null;
   let primaryResp = null;
   let primaryData = null;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     // Time-box this attempt to the remaining budget (minus the fallback
     // reserve), capped at the normal per-call timeout. No deadline => ceiling.
-    const attemptTimeoutMs = attemptTimeout({ deadlineAt });
+    const attemptTimeoutMs = attemptTimeout(retryOpts);
     if (deadlineAt && attemptTimeoutMs < MIN_ATTEMPT_MS) {
       // Not enough budget left to even try without starving the fallback.
-      lastErr = lastErr || new Error("run budget exhausted before Anthropic call");
+      lastFailure = lastFailure
+        ? { ...lastFailure, budgetStopped: true }
+        : { kind: "error", message: "run budget exhausted before Anthropic call" };
       break;
     }
     let upstream;
     try {
       upstream = await safeFetch(ANTHROPIC_URL, { method: "POST", headers, body: JSON.stringify(upstreamPayload), timeoutMs: attemptTimeoutMs });
     } catch (networkErr) {
-      lastErr = new Error("Network error: " + networkErr.message);
-      const wait = attempt < 3 ? capRetrySleep(600 * Math.pow(2, attempt - 1), { deadlineAt }) : null;
+      lastFailure = { kind: "error", message: "Network error: " + networkErr.message };
+      const wait = attempt < 3 ? capRetrySleep(600 * Math.pow(2, attempt - 1), retryOpts) : null;
       if (wait != null) { await sleep(wait); continue; }
       break;
     }
     if (RETRYABLE.has(upstream.status) && attempt < 3) {
       const retryHdr = Number(upstream.headers.get("retry-after")) * 1000;
       const base = Number.isFinite(retryHdr) && retryHdr > 0 ? retryHdr : 600 * Math.pow(2, attempt - 1);
-      const wait = capRetrySleep(base, { deadlineAt });
+      const wait = capRetrySleep(base, retryOpts);
       // wait == null => capped budget won't allow a retry; fall through and
       // return this response so the ladder can move to a fallback immediately.
-      if (wait != null) { await sleep(wait); continue; }
+      if (wait != null) {
+        // Read the body before retrying: it is the only place the provider
+        // says WHY (e.g. "Overloaded"), and the final error must be able to.
+        let body = null;
+        try { const t = await upstream.text(); try { body = JSON.parse(t); } catch { body = { raw: t.slice(0, 400) }; } }
+        catch { body = null; }
+        lastFailure = { kind: "status", status: upstream.status, body };
+        await sleep(wait);
+        continue;
+      }
     }
     primaryResp = upstream;
     const text = await upstream.text();
@@ -319,8 +348,21 @@ export const callAnthropic = async (opts) => {
     break;
   }
   if (!primaryResp) {
+    if (lastFailure?.kind === "status") {
+      return {
+        ok: false, status: 502,
+        upstream_status: lastFailure.status,
+        error: describeUpstreamStatus({ status: lastFailure.status, body: lastFailure.body, model })
+          + (lastFailure.budgetStopped ? "; run budget exhausted before a retry" : ""),
+        ...classifyUpstreamFailure({ status: lastFailure.status, body: lastFailure.body }),
+        model, tier: routedModel.tier,
+      };
+    }
+    const message = (lastFailure?.message || "Anthropic call failed")
+      + (lastFailure?.budgetStopped ? "; run budget exhausted before a retry" : "");
     return {
-      ok: false, status: 502, error: lastErr?.message || "Anthropic call failed",
+      ok: false, status: 502, error: message,
+      ...classifyUpstreamFailure({ status: 0, error: message }),
       model, tier: routedModel.tier,
     };
   }
@@ -331,7 +373,7 @@ export const callAnthropic = async (opts) => {
   // must obey the same reserve as the retry loop, or it could starve the
   // downstream fallback provider the whole fix exists to protect. When there's
   // no budget for it, keep the (low-confidence) primary result instead.
-  const fallbackTimeoutMs = attemptTimeout({ deadlineAt });
+  const fallbackTimeoutMs = attemptTimeout(retryOpts);
   const fallbackHasBudget = !deadlineAt || fallbackTimeoutMs >= MIN_ATTEMPT_MS;
 
   if (allowFallback && fallbackHasBudget && primaryResp.ok && confidence < minConfidence && routedModel.tier !== "reasoning") {
@@ -390,6 +432,7 @@ export const callAnthropic = async (opts) => {
     data: primaryData,
     model,
     tier: routedModel.tier,
+    ...(primaryResp.ok ? {} : classifyUpstreamFailure({ status: primaryResp.status, body: primaryData })),
     confidence,
     firewall_bypassed: bypassFirewall,
     tools_used: !!tools,

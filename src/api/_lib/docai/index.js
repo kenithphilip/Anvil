@@ -29,6 +29,9 @@ import { allowedToCall, recordCall } from "../cost_guard.js";
 import { serviceClient } from "../supabase.js";
 import { rankAdaptersForCustomer } from "./adapter-learning.js";
 import { readPdfBias, composeOrderWithBias } from "./pdf-metadata.js";
+import { ANTHROPIC_ATTEMPT_TIMEOUT_MS } from "../anthropic.js";
+import { classifyUpstreamFailure } from "../upstream-failure.js";
+import { isLlmExtractor } from "./llm-fallback.js";
 
 const ADAPTERS = {
   reducto,
@@ -208,18 +211,75 @@ const MIN_ADAPTER_MS = Number(process.env.DOCAI_MIN_ADAPTER_MS || 6000);
 // order that keeps the head's slice comfortably dominant.
 const MAX_RESERVE_FRACTION = Number(process.env.DOCAI_MAX_RESERVE_FRACTION || 0.5);
 
-export const allocateAdapterDeadline = ({ now, runDeadlineAt, queuedAfter }) => {
+// A USEFUL LLM ATTEMPT. MIN_ADAPTER_MS (6s) is the right floor for a parser
+// and the wrong one for an LLM: it is what Gemini held back for Claude on
+// 2026-10-07, and Claude then got a 5.5s attempt at a 6-page PO and timed out.
+//
+// So a queued LLM is reserved the time Claude is CONFIGURED to take for one
+// extraction call: ANTHROPIC_TIMEOUT_MS, the per-attempt ceiling callAnthropic
+// already enforces (15s by default). That is the measure the code already
+// trusts for "one Claude PO call", and raising it raises this with it.
+// DOCAI_LLM_USEFUL_MS overrides it for a deployment.
+export const LLM_USEFUL_MS = Number(process.env.DOCAI_LLM_USEFUL_MS) || ANTHROPIC_ATTEMPT_TIMEOUT_MS;
+
+// Below this an LLM adapter is SKIPPED (status skipped_insufficient_budget)
+// rather than started. Half the useful time by default: the 2026-10-07 Claude
+// attempt had 37% of it and could not finish, and a call that cannot finish is
+// billed for nothing and tells the operator nothing. A skip says exactly what
+// happened. DOCAI_LLM_MIN_ATTEMPT_MS overrides it.
+export const LLM_MIN_ATTEMPT_MS = Number(process.env.DOCAI_LLM_MIN_ATTEMPT_MS) || Math.round(LLM_USEFUL_MS / 2);
+
+// Whether this adapter will make a real LLM call for this kind of document.
+// An LLM adapter outside KIND_CAPABLE_ADAPTERS for the kind refuses it at once
+// (gemini on a quote), so it needs only the generic floor.
+const isLlmFor = (name, kind) => {
+  if (!isLlmExtractor(name)) return false;
+  const capable = KIND_CAPABLE_ADAPTERS[kind];
+  return !capable || capable.includes(name);
+};
+
+// The time to hold back for one adapter still queued, and the least time an
+// adapter must have before it is worth starting.
+export const adapterNeedMs = (name, kind) => (isLlmFor(name, kind) ? LLM_USEFUL_MS : MIN_ADAPTER_MS);
+export const adapterFloorMs = (name, kind) => (isLlmFor(name, kind) ? LLM_MIN_ATTEMPT_MS : MIN_ADAPTER_MS);
+
+// The slice this adapter gets: what remains, less what the queue behind it
+// needs, never holding back more than MAX_RESERVE_FRACTION. `reserveMs` is the
+// queue's need (sum of adapterNeedMs); when omitted it is queuedAfter x
+// MIN_ADAPTER_MS, the original rule.
+const sliceMs = ({ now, runDeadlineAt, queuedAfter, reserveMs }) => {
+  const remaining = runDeadlineAt - now;
+  const queued = Math.max(0, Number(queuedAfter) || 0);
+  const wanted = reserveMs != null && Number.isFinite(Number(reserveMs))
+    ? Math.max(0, Number(reserveMs))
+    : queued * MIN_ADAPTER_MS;
+  const reserve = Math.min(wanted, Math.floor(remaining * MAX_RESERVE_FRACTION));
+  return remaining - reserve;
+};
+
+export const allocateAdapterDeadline = ({ now, runDeadlineAt, queuedAfter, reserveMs, floorMs }) => {
   if (!runDeadlineAt) return null;                  // no run budget => unchanged
   const remaining = runDeadlineAt - now;
   if (remaining <= 0) return runDeadlineAt;
-  const queued = Math.max(0, Number(queuedAfter) || 0);
-  const wanted = queued * MIN_ADAPTER_MS;
-  const reserve = Math.min(wanted, Math.floor(remaining * MAX_RESERVE_FRACTION));
-  const slice = remaining - reserve;
+  const slice = sliceMs({ now, runDeadlineAt, queuedAfter, reserveMs });
   // Below the floor there is no point starting: the adapter would consume its
   // slice and time out. The caller skips instead.
-  if (slice < MIN_ADAPTER_MS) return null;
+  const floor = floorMs != null && Number.isFinite(Number(floorMs)) ? Number(floorMs) : MIN_ADAPTER_MS;
+  if (slice < floor) return null;
   return now + slice;
+};
+
+// Why an adapter failed, in the terms the run needs: was it TRANSIENT? The
+// LLM adapters say so themselves; anything else that failed upstream is
+// classified from its status and error. Other failures (parse_failed,
+// output_truncated, unsupported_kind, no_api_key) are not upstream failures
+// and carry nothing, so they can never read as "busy".
+const failureMeta = (out) => {
+  if (!out || out.ok) return {};
+  if (out.failure_class) return { failure_class: out.failure_class, transient: out.transient === true };
+  if (out.reason !== "upstream_error") return {};
+  const c = classifyUpstreamFailure({ status: out.status, body: out.raw, error: out.error });
+  return { failure_class: c.failure_class, transient: c.transient };
 };
 
 // Rank two successful results. Used only when every adapter came in UNDER the
@@ -483,18 +543,39 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
       attempts.push({ adapter: adapterName, status: "skipped_not_configured" });
       continue;
     }
-    // How many CONFIGURED adapters are still queued behind this one. Counting
+    // The CONFIGURED adapters still queued behind this one. Counting
     // unconfigured ones would reserve time for adapters that never run and
-    // starve the ones that do.
-    const queuedAfter = order.slice(idx + 1)
-      .filter((n) => ADAPTERS[n] && isAdapterConfigured(n, settings)).length;
+    // starve the ones that do. Each is held back what it needs: an LLM a
+    // useful attempt (LLM_USEFUL_MS), a parser the generic floor.
+    const queued = order.slice(idx + 1)
+      .filter((n) => ADAPTERS[n] && isAdapterConfigured(n, settings));
+    const kind = hints?.expectedKind || "po";
+    const reserveMs = queued.reduce((sum, n) => sum + adapterNeedMs(n, kind), 0);
+    const floorMs = adapterFloorMs(adapterName, kind);
     const adapterDeadlineAt = hints?.deadlineAt
-      ? allocateAdapterDeadline({ now: Date.now(), runDeadlineAt: hints.deadlineAt, queuedAfter })
+      ? allocateAdapterDeadline({
+          now: Date.now(), runDeadlineAt: hints.deadlineAt, queuedAfter: queued.length, reserveMs, floorMs,
+        })
       : null;
     // Below the floor, starting is worse than skipping: the adapter consumes
     // its slice and times out, and the run records a timeout where it could
     // have recorded a reason.
     if (hints?.deadlineAt && !adapterDeadlineAt) {
+      if (isLlmFor(adapterName, kind)) {
+        // An LLM that cannot get a useful attempt. Named apart from the
+        // generic skip so a run shows the model was not tried, not that it
+        // was tried and failed.
+        attempts.push({
+          adapter: adapterName,
+          status: "skipped_insufficient_budget",
+          reason: "llm_attempt_would_be_too_short",
+          available_ms: Math.max(0, sliceMs({
+            now: Date.now(), runDeadlineAt: hints.deadlineAt, queuedAfter: queued.length, reserveMs,
+          })),
+          needed_ms: floorMs,
+        });
+        continue;
+      }
       attempts.push({
         adapter: adapterName,
         status: "skipped_deadline",
@@ -542,9 +623,11 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
         settings,
         customerId,
         // Fair-share deadline: this adapter's slice, not the whole run budget.
-        // Holding back MIN_ADAPTER_MS per adapter still queued behind it is
-        // what stops the tail being handed 6s on a document that needs 12.
-        hints: adapterDeadlineAt ? { ...hints, deadlineAt: adapterDeadlineAt } : hints,
+        // Holding back what each queued adapter needs is what stops the tail
+        // being handed 6s on a document that needs 12. downstreamReserved
+        // tells the LLM helpers that slice ALREADY excludes the next
+        // adapters' time, so they must not subtract their own 8s reserve too.
+        hints: adapterDeadlineAt ? { ...hints, deadlineAt: adapterDeadlineAt, downstreamReserved: true } : hints,
         promptOverrides: buildPromptOverrides(settings, customerId),
       });
     } catch (err) {
@@ -603,6 +686,13 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
         ...(out.reason ? { reason: out.reason } : {}),
         ...(out.error ? { error: String(out.error).slice(0, 500) } : {}),
       }),
+      // transient + failure_class: whether "run extraction again later" could
+      // help. Read by llm-fallback.js to mark a run that a parser read only
+      // because every LLM was busy.
+      ...failureMeta(out),
+      // Every model call inside the adapter, when there was more than one
+      // (e.g. "gemini-3.1-pro-preview 503, then gemini-3-flash-preview 200").
+      ...(Array.isArray(out.model_attempts) && out.model_attempts.length > 1 ? { models: out.model_attempts } : {}),
       // Only present when the adapter spoke a dialect. An `unknown` key here
       // is a field the adapter emitted that NOTHING downstream reads — the
       // exact silent-loss shape that cost an entire tax column.

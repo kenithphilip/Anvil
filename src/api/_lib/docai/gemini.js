@@ -16,7 +16,7 @@
 import { decryptField } from "../secrets.js";
 import { callGemini, extractTextFromGemini, parseStructuredGemini, stopReasonFromGemini } from "../gemini.js";
 import { parseSchemaAligned } from "./parse.js";
-import { selectGeminiModel } from "./model_selector.js";
+import { selectGeminiModel, selectGeminiFallbackModel } from "./model_selector.js";
 import { coerceStatedLineCount, LINE_REQUISITION_RULE, LINE_REQUISITION_DESCRIPTION, CONTINUATION_ROW_RULE } from "./claude.js";
 import { promptNameForKind } from "./prompt-versions.js";
 
@@ -736,12 +736,22 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     });
   }
 
+  // A second Gemini model for when the selected one is overloaded (503 "high
+  // demand"). See selectGeminiFallbackModel for the precedence and why a
+  // tenant pin gets none by default.
+  const fallbackModel = selectGeminiFallbackModel({
+    primary: selection.model,
+    setting: settings?.docai_gemini_fallback_model,
+    pinned: selection.tier === "tenant_pinned",
+  });
+
   const result = await callGemini({
     tenantId,
     apiKey: key,
     messages: [{ role: "user", content: userContent }],
     system: systemBlocks,
     model: selection.model,
+    fallback_model: fallbackModel,
     temperature: 0,
     // 2000 truncated a real 4-line PO down to ONE line: each line carries
     // ~20 tax/aux fields (cgst/sgst/igst/utgst/cess/excise/ed_cess/tooling/
@@ -782,7 +792,17 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     // so an unbounded call here is what strands the whole run: the platform
     // kills the function mid-flight and run.js never writes a terminal status.
     deadlineAt: hints?.deadlineAt || 0,
+    // The dispatcher has already held back the next adapters' time from this
+    // deadline, so leave no second reserve on top of it.
+    reserveMs: hints?.downstreamReserved ? 0 : undefined,
   });
+
+  // The model that actually answered (the fallback, after an overload), so the
+  // run records what read the document rather than what was asked first.
+  const usedModel = result.model || selection.model;
+  const modelMeta = result.fallback_from
+    ? { model_fallback_from: result.fallback_from, model_attempts: result.model_attempts }
+    : {};
 
   if (!result.ok) {
     return {
@@ -792,8 +812,14 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       reason: "upstream_error",
       error: result.error || "gemini failed",
       raw: result.data,
-      selected_model: selection.model,
+      selected_model: usedModel,
+      ...modelMeta,
       model_selection_reason: selection.reason,
+      // Overload, rate limit and timeout are transient: "run extraction again
+      // later" is honest advice for them and not for a 400.
+      failure_class: result.failure_class || null,
+      transient: !!result.transient,
+      ...(Array.isArray(result.model_attempts) ? { model_attempts: result.model_attempts } : {}),
     };
   }
   // Bet 4 (May 2026): route through parseSchemaAligned so the
@@ -815,7 +841,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       reason: stop === "SAFETY" ? "model_refused" : "parse_failed",
       error: (sap.error || "parse_failed") + " (stop=" + stop + ")",
       raw: result.data,
-      selected_model: selection.model,
+      selected_model: usedModel,
+      ...modelMeta,
       model_selection_reason: selection.reason,
       parse_method: sap.parse_method,
       parse_repairs: sap.repairs,
@@ -839,7 +866,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       reason: "output_truncated",
       error: "Gemini stopped at max_tokens; the response was truncated and would silently drop line items",
       raw: result.data,
-      selected_model: selection.model,
+      selected_model: usedModel,
+      ...modelMeta,
       model_selection_reason: selection.reason,
       parse_method: sap.parse_method,
     };
@@ -859,7 +887,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
         reason: "non_ack",
         normalized: { classification: "non_ack", customer: null, lines: [], supplier_ack: null },
         confidences: { overall: Number(out.confidence) || 0.4 },
-        selected_model: selection.model,
+        selected_model: usedModel,
+        ...modelMeta,
         model_selection_reason: selection.reason,
         parse_method: parseMethod,
         parse_repairs: parseRepairs,
@@ -878,7 +907,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       reason: normalized.lines.length === 0 ? "empty_lines" : "ok",
       normalized,
       confidences,
-      selected_model: selection.model,
+      selected_model: usedModel,
+      ...modelMeta,
       model_selection_reason: selection.reason,
       parse_method: parseMethod,
       parse_repairs: parseRepairs,
@@ -895,7 +925,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
         reason: "non_drawing",
         normalized: { classification: "non_drawing", customer: null, title_block: null, lines: [] },
         confidences: { overall: Number(out.confidence) || 0.4 },
-        selected_model: selection.model,
+        selected_model: usedModel,
+        ...modelMeta,
         model_selection_reason: selection.reason,
         parse_method: parseMethod,
         parse_repairs: parseRepairs,
@@ -914,7 +945,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       reason: normalized.lines.length === 0 ? "empty_lines" : "ok",
       normalized,
       confidences,
-      selected_model: selection.model,
+      selected_model: usedModel,
+      ...modelMeta,
       model_selection_reason: selection.reason,
       parse_method: parseMethod,
       parse_repairs: parseRepairs,
@@ -931,7 +963,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
         reason: "non_drawing",
         normalized: { classification: "non_drawing", customer: null, part_spec: null, lines: [] },
         confidences: { overall: Number(out.confidence) || 0.4 },
-        selected_model: selection.model,
+        selected_model: usedModel,
+        ...modelMeta,
         model_selection_reason: selection.reason,
         parse_method: parseMethod,
         parse_repairs: parseRepairs,
@@ -951,7 +984,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       reason: hasContent ? "ok" : "empty_spec",
       normalized,
       confidences: { overall: conf },
-      selected_model: selection.model,
+      selected_model: usedModel,
+      ...modelMeta,
       model_selection_reason: selection.reason,
       parse_method: parseMethod,
       parse_repairs: parseRepairs,
@@ -967,7 +1001,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       reason: "non_po",
       normalized: { classification: "non_po", customer: null, lines: [] },
       confidences: { overall: Number(out.confidence) || 0.4 },
-      selected_model: selection.model,
+      selected_model: usedModel,
+      ...modelMeta,
       model_selection_reason: selection.reason,
       parse_method: parseMethod,
       parse_repairs: parseRepairs,
@@ -993,7 +1028,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       stated_line_count: coerceStatedLineCount(out.stated_line_count),
     },
     confidences,
-    selected_model: selection.model,
+    selected_model: usedModel,
+    ...modelMeta,
     model_selection_reason: selection.reason,
     parse_method: parseMethod,
     parse_repairs: parseRepairs,

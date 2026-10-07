@@ -4,7 +4,8 @@
 // across renders (focus survives edits); order-scoped values come in as props.
 
 import React, { useState, useRef } from "react";
-import { Btn, Card, Chip, KPI, KPIRow } from "../lib/primitives";
+import { Banner, Btn, Card, Chip, KPI, KPIRow } from "../lib/primitives";
+import { Icon } from "../lib/icons";
 import { FieldSource, getFieldSource, ExtractionIndex, issuesForCanonicalCell, worstSeverity, IssueEntry } from "../lib/field-sources";
 import { LINE_ALIAS } from "../lib/line-totals";
 
@@ -43,6 +44,10 @@ export const ProvenanceChip: React.FC<{
   );
 };
 
+// The anomaly code run.js records when a fallback parser read the document
+// because every LLM was busy (src/api/_lib/docai/llm-fallback.js).
+const LLM_UNAVAILABLE_CODE = "llm_unavailable_fallback_parse";
+
 // Wave 4.1: extraction-quality summary for the recon tab. Surfaces the
 // winning adapter, overall confidence, validator + anomaly counts, and
 // an expandable list of every flagged field so the operator knows where
@@ -57,6 +62,11 @@ export const ExtractionQualityCard: React.FC<{
   const confPct = s.confidence != null ? Math.round(s.confidence * 100) + "%" : "—";
   const sevChip = (sev: string) =>
     <Chip k={sev === "error" ? "bad" : sev === "warn" ? "warn" : "ghost"}>{sev}</Chip>;
+  // The models were busy and a parser read this PO. A parse like that can
+  // miss the header and split items, and running extraction again later
+  // usually reaches a model, so say both plainly above the numbers.
+  const llmUnavailable = (Array.isArray(extractionRun.anomalies) ? extractionRun.anomalies : [])
+    .find((a: any) => a?.code === LLM_UNAVAILABLE_CODE);
   return (
     <Card
       title="Extraction quality"
@@ -67,6 +77,14 @@ export const ExtractionQualityCard: React.FC<{
           </Btn>
         : <Chip k="good">clean</Chip>}
     >
+      {llmUnavailable && (
+        <Banner kind="warn" icon={Icon.alert} title="Read by the fallback parser">
+          The AI models were busy, so the fallback parser
+          ({String(llmUnavailable.actual || s.adapter || "parser")}) read this PO.
+          It can miss header fields and split one item into several lines. Check
+          the header and the lines. Run extraction again later for a better result.
+        </Banner>
+      )}
       <KPIRow cols={4}>
         <KPI lbl="Adapter" v={s.adapter || "—"} d={s.voterUsed ? "cross-adapter vote" : ""} />
         <KPI lbl="Confidence" v={confPct}

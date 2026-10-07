@@ -56,6 +56,7 @@ import { prepareEmailBody } from "./email-body.js";
 import { annotateLineLanguages, translateBatch } from "./multi-language.js";
 import { detectHandwriting, planHandwritingRoute } from "./handwriting.js";
 import { detectAnomalies } from "./anomaly.js";
+import { llmUnavailableFallback, llmUnavailableAnomaly } from "./llm-fallback.js";
 import { computeLayoutFingerprint, findRunByLayoutFingerprint, adapterBiasFromPriorLayout } from "./layout-fingerprint.js";
 import { enqueueReview } from "./review-queue.js";
 import { stampEvidenceOnLines } from "./bbox-evidence.js";
@@ -1511,6 +1512,23 @@ export const runExtractionPipeline = async (params) => {
     documentTotalWarnCoverage: settings?.docai_document_total_warn_coverage,
   };
   const anomalyReport = detectAnomalies(out?.normalized || null, anomalyOpts);
+  // A fallback parser read the document because every LLM was busy (overload
+  // or timeout). Recorded as an anomaly so it is persisted and shown by the
+  // extraction-quality card with no new column, and so the operator knows
+  // that running extraction again later may give a much better result. See
+  // llm-fallback.js for exactly when this is set.
+  const llmUnavailable = llmUnavailableFallback({
+    ok: !!out?.ok, adapterUsed: out?.adapter_used, attempts: out?.attempts,
+  });
+  if (llmUnavailable) {
+    anomalyReport.anomalies.push(llmUnavailableAnomaly(llmUnavailable));
+    anomalyReport.summary.warn += 1;
+    anomalyReport.summary.total += 1;
+    await recordRunEvent("docai_llm_unavailable_fallback_parse", {
+      adapter_used: llmUnavailable.adapter,
+      llm_attempts: llmUnavailable.llm_attempts,
+    });
+  }
   if (anomalyReport.summary.total > 0) {
     await recordRunEvent("docai_anomalies_detected", {
       summary: anomalyReport.summary,

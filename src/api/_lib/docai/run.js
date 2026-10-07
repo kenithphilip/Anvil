@@ -74,6 +74,7 @@ import { shouldEscalateEmptyLines, shouldEscalateTruncated } from "./model_selec
 import { densityChunkedExtract, isDensityKind } from "./density-chunk.js";
 import { shouldRowChunk } from "./text-row-chunker.js";
 import { repairPartCodes, brandTokensFromTenantName } from "./part-split.js";
+import { foldContinuationRows, remapLineKeys } from "./continuation-rows.js";
 import { validateExtraction } from "./validators.js";
 import { recordEvent } from "../audit.js";
 import { buildTenantIdentity, scrubCustomerOfTenantIdentity } from "./tenant-scrub.js";
@@ -1302,6 +1303,35 @@ export const runExtractionPipeline = async (params) => {
     } catch (_e) { /* never break the run */ }
   }
 
+  // 6a2b. Fold printed continuation rows into the line above them. An OEM PO
+  // that prints each item across several rows (part row, then description,
+  // drawing-code and requisition rows) came back with every row below the
+  // first as a line of its own, with no quantity, about four lines per item.
+  // Runs on the FINAL line set (after chunk merge, voter, escalation and
+  // density) so a row cut off from its item at a chunk boundary still finds
+  // it, and BEFORE part repair, evidence, validators and anomalies so they
+  // all see whole items. Purchase orders only; see continuation-rows.js for
+  // the evidence a row must show before it is folded.
+  //
+  // Per-line confidence keys are re-keyed to match: lineCountOf in
+  // extraction-kpis counts them, so leaving them would report the unfolded
+  // count. (Voter provenance, on voted runs only, keeps its own indices.)
+  if (out?.ok && out.normalized && settings?.docai_fold_continuation_rows !== false) {
+    try {
+      const fold = foldContinuationRows(out.normalized, { kind });
+      if (fold.folded > 0) {
+        out.normalized = fold.normalized;
+        if (out.confidences) out.confidences = remapLineKeys(out.confidences, fold.keptIndices);
+        await recordRunEvent("docai_continuation_rows_folded", {
+          rows_folded: fold.folded,
+          lines_before: fold.normalized.continuation_folds?.lines_before ?? null,
+          lines_after: fold.normalized.lines.length,
+          rate_copies: fold.normalized.continuation_folds?.rate_copies ?? 0,
+        });
+      }
+    } catch { /* a repair must never break the run; the unfolded lines stand */ }
+  }
+
   // 6a3. Deterministic part-code repair. The prompt asks the model to pull our
   // code out of a prefixed description ("OBARA STD SHANK TWS-092-90-2" ->
   // "TWS-092-90-2"), but that split lived entirely inside the LLM with no
@@ -1464,6 +1494,11 @@ export const runExtractionPipeline = async (params) => {
     // docai_line_count_shortfall_slack=N to tolerate a small gap.
     lineCountShortfallEnabled: settings?.docai_line_count_shortfall_enabled !== false,
     lineCountShortfallSlack: settings?.docai_line_count_shortfall_slack,
+    // The other direction: more lines than the PO declares (rows of one item
+    // read as separate lines). Warn only; docai_line_count_excess_enabled=false
+    // silences it, docai_line_count_excess_slack=N tolerates a small surplus.
+    lineCountExcessEnabled: settings?.docai_line_count_excess_enabled !== false,
+    lineCountExcessSlack: settings?.docai_line_count_excess_slack,
     // CM P0: money-completeness gate. Unlike the line-count gate above this
     // reads the document's own printed total out of the text layer, so it
     // still fires when a truncated response took stated_line_count down with

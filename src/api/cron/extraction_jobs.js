@@ -597,12 +597,15 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
       try {
         fold = foldContinuationRows(normalizedResult(merged), { kind: kindOfJob(job) || "po" });
       } catch { fold = null; /* a repair must never fail the job; the unfolded lines stand */ }
-      if (fold && fold.folded > 0) {
+      // A fold that only dropped the table's own header rows (read as
+      // leading lines) is a repair too, and is applied and reported the same.
+      if (fold && (fold.folded > 0 || fold.headerRowsDropped > 0)) {
         merged.normalized = fold.normalized;
         if (merged.confidences) merged.confidences = remapLineKeys(merged.confidences, fold.keptIndices);
         await emit(svc, tenantCtx, "docai_continuation_rows_folded", {
           job_id: job.id, order_id: orderId,
           rows_folded: fold.folded,
+          header_rows_dropped: fold.headerRowsDropped,
           lines_before: fold.normalized.continuation_folds?.lines_before ?? null,
           lines_after: fold.normalized.lines.length,
         });

@@ -452,13 +452,37 @@ const WiredSOIntake = () => {
     // (b) and (c) covers that case while keeping the false-positive
     // guard: each signal independently rules out a different class
     // of mistaken match.
+    //   (d) the name was read off the document's LETTERHEAD by the
+    //       deterministic header pass (po-header-text.js, on the
+    //       llamaparse path), the PO prints no GSTIN and no bill-to
+    //       block that could contradict it, and it resolves to exactly
+    //       one customer. (a) to (c) guard against a model picking a
+    //       brand or a project out of line-item text; a letterhead read
+    //       by label cannot do that, and without (d) a table-parsed PO
+    //       whose only buyer evidence is its letterhead never matched.
     const name = (extracted.name || "").trim();
     if (!name) return null;
     const target = norm(name);
     if (target.length < 3) return null;
 
-    const exact = list.find((c) => norm(c.customer_name) === target);
-    if (!exact) return null;
+    // Every customer whose canonical name equals the target. The same
+    // buyer entered twice (one record with a GSTIN, one without) is
+    // common, and taking the first in list order picked whichever was
+    // edited last. Prefer the record with a GSTIN, then the one with a
+    // format profile (built from that customer's own processed POs, the
+    // order history this list carries). A tie is a choice the operator
+    // makes: the matcher returns the candidates instead of guessing.
+    const sameName = list.filter((c) => norm(c.customer_name) === target);
+    if (!sameName.length) return null;
+    const profiles = customers.data?.profiles || {};
+    const rank = (c) => ((c.gstin || "").trim() ? 2 : 0) + (profiles[c.id] ? 1 : 0);
+    let exact = sameName[0];
+    if (sameName.length > 1) {
+      const best = Math.max(...sameName.map(rank));
+      const top = sameName.filter((c) => rank(c) === best);
+      if (best === 0 || top.length !== 1) return { customer: null, confidence: "ambiguous_name", choices: sameName };
+      exact = top[0];
+    }
 
     const billToTight = normTight(extracted.bill_to_address);
     // First word of the canonical name, stripped to alphanumerics so
@@ -473,10 +497,13 @@ const WiredSOIntake = () => {
 
     const extCountry = String(extracted.country || "").trim().toUpperCase();
     const countryOk = extCountry && exact.country && extCountry === String(exact.country).toUpperCase();
-    const nameIsUnique = list.filter((c) => norm(c.customer_name) === target).length === 1;
-    const countrySignal = countryOk && nameIsUnique;
+    // (c) and (d) need the name to point at ONE customer. Reaching here
+    // means it does: it was unique, or the GSTIN / history preference
+    // above chose one record and a tie already returned the choices.
+    const countrySignal = countryOk;
+    const letterheadSignal = extracted._name_source === "letterhead" && !gstin && !billToTight;
 
-    if (!billOk && !stateOk && !countrySignal) {
+    if (!billOk && !stateOk && !countrySignal && !letterheadSignal) {
       // No corroborating signal. Refuse to auto-match. The operator
       // confirms via the dialog.
       return null;
@@ -807,6 +834,20 @@ const WiredSOIntake = () => {
           "Customer matched",
           (matchResult.customer.customer_name || matchResult.customer.id?.slice(0, 8))
             + " (" + matchResult.confidence.replace(/_/g, " ") + ")",
+        );
+        return;
+      }
+
+      // Several existing records carry the buyer's name and nothing
+      // tells them apart. The buyer exists, so the new-customer dialog
+      // would only invite a third copy: name the candidates and leave
+      // the pick to the operator.
+      if (matchResult?.choices?.length) {
+        const label = (c) => (c.customer_name || c.id?.slice(0, 8))
+          + ((c.gstin || "").trim() ? " (GSTIN " + c.gstin + ")" : " (no GSTIN)");
+        window.notifyLive?.(
+          matchResult.choices.length + " customers are named " + (customer.name || "like this buyer"),
+          "Pick the right one from the customer list: " + matchResult.choices.map(label).join(", ") + ".",
         );
         return;
       }

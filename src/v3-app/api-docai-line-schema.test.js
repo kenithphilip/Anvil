@@ -144,7 +144,12 @@ describe("every registered adapter has a declared line shape", () => {
   const ADAPTER_LINE_SHAPES = {
     gemini:       { partNumber: "P", customerItemCode: "C", requisition_no: "1000343964", quantity: 1, unitPrice: 2, uom: "each", hsn: "8207", gst_pct: 18, cgst_amount: 0.18 },
     claude:       { partNumber: "P", customerItemCode: "C", requisition_no: "1000343964", quantity: 1, unitPrice: 2, uom: "each", hsn: "8207", gst_pct: 18, cgst_amount: 0.18 },
-    llamaparse:   { partNumber: "P", customerItemCode: "C", quantity: 1, unitPrice: 2, uom: "each", hsn: null, tax_amount: 0.36, line_total: 2.36, lineNo: 1 },
+    // The one-row path's fields, then the stacked-record path's (a PO that
+    // prints each item across several rows under a several-row header).
+    llamaparse:   { partNumber: "P", customerItemCode: "C", quantity: 1, unitPrice: 2, uom: "each", hsn: null, tax_amount: 0.36, line_total: 2.36, lineNo: 1,
+      description: "D", specification: "S", requisition_no: "4400000001", currency: "INR", delivery_date: "2027-01-07",
+      sgst_amount: 0.18, cgst_amount: 0.18, igst_amount: 0, utgst_amount: 0, excise_amount: 0, ed_cess_amount: 0,
+      tooling_amount: 0, p_and_f_amount: 0, others_amount: 0, _rate_basis: { basis: "pre_tax" }, _record_rows: 4 },
     excel:        { partNumber: "P", quantity: 1, unitPrice: 2 },
     unstructured: { partNumber: "P", customerItemCode: "C", qty: 1, unitPrice: 2 },
     docling:      { partNumber: "P", customerItemCode: "C", qty: 1, unitPrice: 2 },

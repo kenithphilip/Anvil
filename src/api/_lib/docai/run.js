@@ -1320,11 +1320,12 @@ export const runExtractionPipeline = async (params) => {
   if (out?.ok && out.normalized && settings?.docai_fold_continuation_rows !== false) {
     try {
       const fold = foldContinuationRows(out.normalized, { kind });
-      if (fold.folded > 0) {
+      if (fold.folded > 0 || fold.headerRowsDropped > 0) {
         out.normalized = fold.normalized;
         if (out.confidences) out.confidences = remapLineKeys(out.confidences, fold.keptIndices);
         await recordRunEvent("docai_continuation_rows_folded", {
           rows_folded: fold.folded,
+          header_rows_dropped: fold.headerRowsDropped,
           lines_before: fold.normalized.continuation_folds?.lines_before ?? null,
           lines_after: fold.normalized.lines.length,
           rate_copies: fold.normalized.continuation_folds?.rate_copies ?? 0,

@@ -22,12 +22,25 @@
 //   3. It has no unit price of its own. A unit price equal to the amount of
 //      the line above it is a copy of that amount, not a price.
 //   4. It prints no line number of its own. A lineNo that differs from the
-//      line above means a separately numbered item.
+//      line above means a separately numbered item. A lineNo of 0, "0" or
+//      blank is NO line number: a table parser that reads an empty S.No cell
+//      as the number 0 (llamaparse's one-row path does) must not make every
+//      continuation row look separately numbered, which is how a 25-item PO
+//      kept all 103 of its rows.
 //   5. The line above it (after any earlier folds) is a real line: it has its
 //      own quantity. A row with no real line above it is left alone.
 // A row with its own quantity is never folded, whatever else it lacks. So a
 // real line with a quantity and no price (a free-of-charge item) survives, and
 // so does every row with its own quantity and its own rate or amount.
+//
+// HEADER ROWS. A row BEFORE the first real line, with no quantity, price or
+// amount, whose every text value is a column label (HEADER_LABELS below) is the
+// table's own header read as a line: a multi-row header's lower rows
+// ("Description", "Specification", "Req.No") come back exactly so. Rule 5 can
+// never fold them, because nothing real sits above them. They are dropped, and
+// each is kept whole on normalized.continuation_folds.header_rows_dropped, so
+// nothing vanishes silently. A leading row with ANY non-label text ("Section
+// A: spares") is not a header row and is left alone.
 //
 // NOTHING IS LOST
 //
@@ -108,14 +121,23 @@ const amountsOf = (l) => {
 // (after float noise) or within 0.05%.
 const sameMoney = (a, b) => Math.abs(a - b) <= Math.max(0.011, Math.abs(b) * 0.0005);
 
+// A printed line number, or "" when there is none. 0 is not a line number:
+// no document numbers an item 0, and a blank cell read as a number becomes 0.
+const lineNoOf = (v) => {
+  const t = text(v);
+  if (!t) return "";
+  const n = Number(t);
+  return Number.isFinite(n) && n === 0 ? "" : t;
+};
+
 // Why `row` is a continuation of `anchor`, or null when it is not one.
 export const continuationReason = (row, anchor) => {
   if (!row || typeof row !== "object" || !anchor || typeof anchor !== "object") return null;
   if (!hasOwnQuantity(anchor)) return null;            // 5: nothing real to join
   if (hasOwnQuantity(row)) return null;                // 1
   if (hasOwnAmount(row)) return null;                  // 2
-  const ownLineNo = text(row.lineNo);
-  if (ownLineNo && ownLineNo !== text(anchor.lineNo)) return null;   // 4
+  const ownLineNo = lineNoOf(row.lineNo);
+  if (ownLineNo && ownLineNo !== lineNoOf(anchor.lineNo)) return null;   // 4
   const rate = nonZero(rateOf(row));
   if (rate == null) return "no_quantity_no_amount";
   // 3: a "rate" that is the amount of the line above was copied from it.
@@ -185,18 +207,66 @@ const mergeInto = (anchor, row, reason, index) => {
   return next;
 };
 
-// Public. Fold continuation rows into the line above them.
+// Column labels a PO line-item table prints in its header rows, compared by
+// keyOf (case and punctuation ignored: "Req.No", "REQ NO" and "req-no" are one
+// label). Deliberately small: a leading row is dropped only when EVERY text
+// value on it is one of these, so a missing label keeps a header row as a line
+// (as before), while a too-generous one could drop a real row.
+const HEADER_LABELS = new Set([
+  "sno", "srno", "slno", "serialno", "line", "lineno", "linenumber",
+  "item", "itemno", "itemcode", "itemnumber", "partno", "partnumber", "partcode", "materialcode",
+  "description", "itemdescription", "desc", "specification", "spec", "itemspecification", "drawing", "drawingno", "drgno",
+  "reqno", "requisition", "requisitionno", "prno", "indentno",
+  "um", "uom", "unit", "qty", "quantity",
+  "rate", "price", "unitprice", "exprice", "basicprice", "basicrate",
+  "amount", "totamt", "total", "totalamount", "linetotal", "value",
+  "hsn", "hsncode", "hsnsac", "sac", "cur", "currency",
+  "tax", "taxes", "gst", "cgst", "sgst", "igst", "utgst",
+  "delivery", "deliverydate", "duedate", "needbydate",
+  "maker", "make", "remarks", "remark", "inspection", "inspectionitem",
+]);
+
+// A figure that is zero ("0", "0.000") says nothing; any other figure means
+// the row is not a pure label row.
+const isZeroText = (s) => /^-?0+(?:[.,]0+)?$/.test(s);
+
+// The row is the table's own header read as a line: no quantity, no price, no
+// amount, no line number, and every text value on it is a column label.
+const isHeaderRow = (row) => {
+  if (!row || typeof row !== "object") return false;
+  if (hasOwnQuantity(row) || hasOwnAmount(row) || nonZero(rateOf(row)) != null) return false;
+  if (lineNoOf(row.lineNo)) return false;
+  let labels = 0;
+  for (const [k, v] of Object.entries(row)) {
+    if (k.startsWith("_") || k === "lineNo" || v == null || v === "") continue;
+    if (typeof v === "number") {
+      if (v !== 0) return false;
+      continue;
+    }
+    if (typeof v !== "string") return false;
+    const t = v.trim();
+    if (!t || isZeroText(t)) continue;
+    if (!HEADER_LABELS.has(keyOf(t))) return false;
+    labels++;
+  }
+  return labels > 0;
+};
+
+// Public. Fold continuation rows into the line above them, and drop the
+// table's own header rows read as leading lines.
 //
-// Returns { normalized, folded, keptIndices }:
-//   normalized   a new normalized block (the input when nothing folded)
-//   folded       how many rows were folded
-//   keptIndices  for each output line, its index in the input lines, so a
-//                caller can re-key per-line maps (see remapLineKeys)
+// Returns { normalized, folded, headerRowsDropped, keptIndices }:
+//   normalized         a new normalized block (the input when nothing changed)
+//   folded             how many rows were folded into a line above
+//   headerRowsDropped  how many leading header rows were dropped
+//   keptIndices        for each output line, its index in the input lines, so
+//                      a caller can re-key per-line maps (see remapLineKeys)
 export const foldContinuationRows = (normalized, opts = {}) => {
   const lines = Array.isArray(normalized?.lines) ? normalized.lines : null;
   const identity = {
     normalized,
     folded: 0,
+    headerRowsDropped: 0,
     keptIndices: lines ? lines.map((_l, i) => i) : [],
   };
   if (!lines || lines.length < 2) return identity;
@@ -207,9 +277,15 @@ export const foldContinuationRows = (normalized, opts = {}) => {
   const out = [];
   const keptIndices = [];
   const into = new Map();       // output index -> rows folded into it
+  const headerRows = [];
   let rateCopies = 0;
+  let sawRealLine = false;
   for (let i = 0; i < lines.length; i++) {
     const row = lines[i];
+    if (!sawRealLine && isHeaderRow(row)) {
+      headerRows.push(snapshotOf(row, "header_row", i));
+      continue;
+    }
     const anchorAt = out.length - 1;
     const reason = anchorAt >= 0 ? continuationReason(row, out[anchorAt]) : null;
     if (reason) {
@@ -220,23 +296,27 @@ export const foldContinuationRows = (normalized, opts = {}) => {
     }
     out.push(row);
     keptIndices.push(i);
+    if (hasOwnQuantity(row)) sawRealLine = true;
   }
-  const folded = lines.length - out.length;
-  if (!folded) return identity;
+  const folded = lines.length - out.length - headerRows.length;
+  if (!folded && !headerRows.length) return identity;
 
   const prior = normalized.continuation_folds && typeof normalized.continuation_folds === "object"
     ? normalized.continuation_folds
     : null;
+  const priorHeaders = Array.isArray(prior?.header_rows_dropped) ? prior.header_rows_dropped : [];
   const summary = {
     rows_folded: (Number(prior?.rows_folded) || 0) + folded,
     rate_copies: (Number(prior?.rate_copies) || 0) + rateCopies,
     lines_before: Number.isFinite(Number(prior?.lines_before)) ? Number(prior.lines_before) : lines.length,
     lines_after: out.length,
     into: [...into.entries()].map(([line_index, rows]) => ({ line_index, rows })),
+    ...(priorHeaders.length || headerRows.length ? { header_rows_dropped: [...priorHeaders, ...headerRows] } : {}),
   };
   return {
     normalized: { ...normalized, lines: out, continuation_folds: summary },
     folded,
+    headerRowsDropped: headerRows.length,
     keptIndices,
   };
 };
@@ -260,4 +340,4 @@ export const remapLineKeys = (map, keptIndices) => {
   return out;
 };
 
-export const __test = { amountsOf, sameMoney, hasOwnQuantity, hasOwnAmount, DESCRIPTION_JOINER };
+export const __test = { amountsOf, sameMoney, hasOwnQuantity, hasOwnAmount, isHeaderRow, lineNoOf, HEADER_LABELS, DESCRIPTION_JOINER };

@@ -10,7 +10,8 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const H = vi.hoisted(() => ({ body: "" }));
+// lines: when set, the dispatcher returns these instead of the shredded items.
+const H = vi.hoisted(() => ({ body: "", lines: null }));
 
 vi.mock("../api/_lib/docai/text_layer.js", () => ({
   extractTextLayer: vi.fn(async () => ({
@@ -33,8 +34,8 @@ const ITEMS = [
 
 vi.mock("../api/_lib/docai/index.js", () => ({
   dispatchExtract: vi.fn(async () => {
-    const lines = [];
-    for (const it of ITEMS) {
+    const lines = H.lines ? H.lines.map((l) => ({ ...l })) : [];
+    for (const it of H.lines ? [] : ITEMS) {
       lines.push({ partNumber: it.part, quantity: it.qty, unitPrice: it.rate });
       lines.push({ partNumber: it.desc, quantity: null, unitPrice: it.qty * it.rate });
       lines.push({ partNumber: it.spec, quantity: null, unitPrice: null });
@@ -108,6 +109,7 @@ const finalRunWrite = (svc) => svc.writes
 beforeEach(() => {
   vi.clearAllMocks();
   H.body = "PURCHASE ORDER\nFixture Buyer\nTotal Amount : INR 3,598.50\nItem No Qty Ex Price\n";
+  H.lines = null;
 });
 
 describe("runExtractionPipeline folds continuation rows", () => {
@@ -150,6 +152,23 @@ describe("runExtractionPipeline folds continuation rows", () => {
     const result = await run(makeSvc(), { docai_fold_continuation_rows: false });
     expect(result.normalized.lines).toHaveLength(12);
     expect(result.anomalies.map((a) => a.code)).toContain("line_count_excess");
+  });
+
+  it("drops the table's own header rows read as leading lines, even when nothing else folds", async () => {
+    H.lines = [
+      { lineNo: 0, quantity: 0, unitPrice: 0, customerItemCode: "Description" },
+      { lineNo: 0, quantity: 0, unitPrice: 0, customerItemCode: "Req.No" },
+      ...ITEMS.map((it, i) => ({ lineNo: i + 1, partNumber: it.part, quantity: it.qty, unitPrice: it.rate })),
+    ];
+    const svc = makeSvc();
+    const result = await run(svc);
+    expect(result.normalized.lines.map((l) => l.partNumber)).toEqual(["ZX-1001-A", "ZX-1002-B", "ZX-1003-C"]);
+    expect(result.anomalies.map((a) => a.code)).toContain("header_rows_dropped");
+    const w = finalRunWrite(svc);
+    expect(w.normalized_extract.continuation_folds.header_rows_dropped.map((r) => r.customerItemCode))
+      .toEqual(["Description", "Req.No"]);
+    expect(Object.keys(w.field_confidences).filter((k) => /^lines\[\d+\]$/.test(k)).sort())
+      .toEqual(["lines[0]", "lines[1]", "lines[2]"]);
   });
 
   it("a non-PO kind is not folded", async () => {

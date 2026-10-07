@@ -1,4 +1,4 @@
--- Migration 244: a fallback Gemini model for when the selected one is overloaded.
+-- Migration 248: a fallback Gemini model for when the selected one is overloaded.
 --
 -- Adds tenant_settings.docai_gemini_fallback_model (nullable text).
 --

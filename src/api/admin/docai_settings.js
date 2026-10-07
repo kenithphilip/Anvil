@@ -281,9 +281,9 @@ export default async function handler(req, res) {
         if (/docai_gemini_fallback_model/.test(msg) && /column|42703/i.test(msg)) {
           return json(res, 409, {
             error: {
-              message: "The Gemini fallback model column is not in this database yet. Apply supabase/migrations/244_docai_gemini_fallback_model.sql, then retry.",
+              message: "The Gemini fallback model column is not in this database yet. Apply supabase/migrations/248_docai_gemini_fallback_model.sql, then retry.",
               code: "MIGRATION_NOT_APPLIED",
-              migration: "244_docai_gemini_fallback_model.sql",
+              migration: "248_docai_gemini_fallback_model.sql",
             },
           });
         }

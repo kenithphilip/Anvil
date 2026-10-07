@@ -68,11 +68,11 @@ describe("docai_gemini_fallback_model", () => {
     expect(res._json.error.message).toMatch(/docai_gemini_fallback_model must start with 'gemini-'/);
   });
 
-  it("names migration 244 when the column is not in the database yet", async () => {
+  it("names migration 248 when the column is not in the database yet", async () => {
     stripe.updateTenantSettings.mockRejectedValueOnce(new Error("column tenant_settings.docai_gemini_fallback_model does not exist (42703)"));
     const res = await call("PATCH", { docai_gemini_fallback_model: "gemini-3-flash-preview" });
     expect(res.statusCode).toBe(409);
     expect(res._json.error.code).toBe("MIGRATION_NOT_APPLIED");
-    expect(res._json.error.migration).toBe("244_docai_gemini_fallback_model.sql");
+    expect(res._json.error.migration).toBe("248_docai_gemini_fallback_model.sql");
   });
 });

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { LoadingState } from "../components/LoadingState";
-import { ageLabel, stageOf, draftLabel } from "../lib/helpers";
+import { ageLabel, stageOf, draftLabel, approvalPatch, NO_PAYLOAD_HASH_MESSAGE } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Modal, Prov, Steps, Stream, WSTabs, WSTitle, fmtINR, fmtUSD } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
@@ -688,16 +688,14 @@ const WiredSOWorkspace = () => {
     // anchor approval to: editing result.lineItems / line_edits
     // afterward clears the approval, which is the documented
     // invalidation contract.
-    if (!o.payload_hash) {
-      window.notifyError?.("Approve failed", "Order has no payload hash. Run 'send for review' first.");
+    const patch = approvalPatch(o);
+    if (!patch) {
+      window.notifyError?.("Approve failed", NO_PAYLOAD_HASH_MESSAGE);
       return;
     }
     setBusy("approve");
     try {
-      await AnvilBackend?.orders?.update?.(o.id, {
-        status: "APPROVED",
-        approval: { payloadHash: o.payload_hash },
-      });
+      await AnvilBackend?.orders?.update?.(o.id, patch);
       window.notifySuccess?.("Order approved", o.po_number || o.id.slice(0, 8));
       setBump((n) => n + 1);
     } catch (err: any) {

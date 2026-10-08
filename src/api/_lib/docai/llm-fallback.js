@@ -15,7 +15,10 @@
 //   - at least one LLM really tried and failed with a TRANSIENT error
 //     (overload, rate limit, timeout, network);
 //   - every other LLM either failed transiently too or was skipped for lack of
-//     run time, which the busy ones used up.
+//     run time, which the busy ones used up;
+//   - an LLM the circuit breaker skipped (skipped_circuit_open) counts as busy:
+//     the breaker skips a provider only after it was overloaded on every model
+//     within the last few minutes (circuit-breaker.js).
 // A 400, a refusal, a parse failure, a cost cap or a thrown adapter all mean
 // "retry later" is not the fix, so any of them leaves the marker off. An LLM
 // that is not configured, or that has no schema for this kind of document, is
@@ -23,6 +26,8 @@
 //
 // Pure. Reads the dispatcher's attempt records, which carry `transient` (see
 // index.js) and survive the chunk merge.
+
+import { CIRCUIT_OPEN_STATUS } from "./circuit-breaker.js";
 
 // Adapters that ask a language model to read the document. llamaparse is a
 // parsing engine even though it sits in index.js's LLM_FALLBACK_ADAPTERS
@@ -34,6 +39,10 @@ export const LLM_UNAVAILABLE_CODE = "llm_unavailable_fallback_parse";
 
 // Skips caused by the run running out of time, not by the adapter itself.
 const TIME_SKIPS = new Set(["skipped_deadline", "skipped_insufficient_budget"]);
+// A skip by the provider circuit breaker. The provider was overloaded, which
+// is transient, so it counts like a transient failure.
+const CIRCUIT_OPEN = CIRCUIT_OPEN_STATUS;
+const isBusy = (a) => a.status === CIRCUIT_OPEN || (a.status === "failed" && a.transient === true);
 // Attempts that say the adapter could never have read this document.
 const NOT_APPLICABLE = (a) => a.status === "skipped_not_configured" || a.reason === "unsupported_kind";
 
@@ -45,23 +54,28 @@ export const llmUnavailableFallback = ({ ok, adapterUsed, attempts } = {}) => {
   if (!ok || !adapterUsed || adapterUsed === "voter" || isLlmExtractor(adapterUsed)) return null;
   const llm = (Array.isArray(attempts) ? attempts : []).filter((a) => a && isLlmExtractor(a.adapter));
   const relevant = llm.filter((a) => !NOT_APPLICABLE(a));
-  const failed = relevant.filter((a) => a.status === "failed");
+  const failed = relevant.filter((a) => a.status === "failed" || a.status === CIRCUIT_OPEN);
   if (!failed.length) return null;
-  if (!failed.every((a) => a.transient === true)) return null;
-  // Every LLM that could have read it either failed or ran out of time. An
-  // ok or low_confidence attempt (an LLM DID answer), a cost-cap skip or a
-  // thrown adapter all stop the marker here.
-  if (!relevant.every((a) => a.status === "failed" || TIME_SKIPS.has(a.status))) return null;
+  if (!failed.every(isBusy)) return null;
+  // Every LLM that could have read it either failed, was skipped as busy, or
+  // ran out of time. An ok or low_confidence attempt (an LLM DID answer), a
+  // cost-cap skip or a thrown adapter all stop the marker here.
+  if (!relevant.every((a) => a.status === "failed" || a.status === CIRCUIT_OPEN || TIME_SKIPS.has(a.status))) return null;
   return {
     adapter: adapterUsed,
     llm_attempts: relevant.map((a) => ({
       adapter: a.adapter,
       status: a.status,
       ...(a.failure_class ? { failure_class: a.failure_class } : {}),
+      ...(a.status === CIRCUIT_OPEN && a.window_minutes ? { window_minutes: a.window_minutes } : {}),
       ...(a.error ? { error: String(a.error).slice(0, 200) } : {}),
     })),
   };
 };
+
+const skippedWhy = (a) => (a.status === CIRCUIT_OPEN
+  ? "skipped, overloaded in the last " + (a.window_minutes || "few") + " minutes"
+  : "skipped, no time left");
 
 const PLAIN_CLASS = {
   overload: "overloaded",
@@ -83,7 +97,7 @@ export const llmUnavailableAnomaly = (marker) => {
   const why = marker.llm_attempts
     .map((a) => a.adapter + " " + (a.status === "failed"
       ? (PLAIN_CLASS[a.failure_class] || "failed")
-      : "skipped, no time left"))
+      : skippedWhy(a)))
     .join(", ");
   return {
     code: LLM_UNAVAILABLE_CODE,

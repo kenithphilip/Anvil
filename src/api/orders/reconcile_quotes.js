@@ -13,7 +13,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-import { reconcilePoAgainstQuotes, comparePaymentTerms, compareIncoterms } from "../_lib/quote-reconcile.js";
+import { reconcilePoAgainstQuotes, comparePaymentTerms, compareIncoterms, parseIncoterm } from "../_lib/quote-reconcile.js";
 import { modBomFinding, provisionalParts, MOD_BOM_FINDING_CODE } from "../_lib/mod-parts.js";
 import { mergeBlockersForward, isUnresolvedBlocker } from "../_lib/blocking-findings.js";
 
@@ -145,25 +145,35 @@ export default async function handler(req, res) {
       });
     }
 
-    // 3c. Header-level INCOTERM check — the delivery rule was never compared,
+    // 3c. Header-level INCOTERM check. The delivery rule was never compared,
     // so a PO switching FOB to CIF (who pays the freight and carries the risk)
     // passed reconciliation silently.
     //
-    // `quotes` has no incoterm column, so the quote side is parsed out of its
-    // terms text: parseIncoterm finds a rule code anywhere in a string, which
-    // is how these are actually written ("FOB Busan, 30 days net").
-    const poIncoterm = order.incoterm_code
-      || order.result?.salesOrder?.incoterms
-      || order.result?.salesOrder?.incoterm_code
-      || order.delivery_terms || null;
+    // Incoterm against incoterm. `quotes` has no incoterm column, so the quote
+    // side is the rule written in its terms text ("FOB Busan, 30 days net").
+    // That text is usually just the payment terms, and compareIncoterms only
+    // compares a parsed rule code, so "30 days credit" reads as "quote has no
+    // incoterm" and never as a mismatch.
+    //
+    // The PO side is the first of its sources that names a rule. Header
+    // "terms of delivery" is often a schedule ("within 4 weeks"), and must not
+    // shadow a rule written in a later source.
+    const poIncotermSources = [
+      order.incoterm_code,
+      order.result?.salesOrder?.incoterms,
+      order.result?.salesOrder?.incoterm_code,
+      order.delivery_terms,
+    ];
+    const poIncoterm = poIncotermSources.find((v) => parseIncoterm(v).code) || null;
     const primaryQuoteRow = primary ? quoteMeta.get(primary.quote_id) : null;
-    const quoteIncoterm = primaryQuoteRow
-      ? (primaryQuoteRow.incoterm_code || primaryQuoteRow.delivery_terms || primaryQuoteRow.terms || null)
-      : null;
-    const incoterms = compareIncoterms(poIncoterm, quoteIncoterm);
+    const incoterms = compareIncoterms(poIncoterm, primaryQuoteRow?.terms || null);
+    // No quote priced any line, so there is no quote to be silent. Saying
+    // "quote has no incoterm" here would blame a quote nobody matched.
+    if (!primary && incoterms.verdict === "quote_missing") incoterms.verdict = "unknown";
     if (primary) incoterms.source_quote_number = primary.quote_number;
     // place_differs is reported too: the rule is the same but the named place
-    // moved, which still changes who pays for what leg.
+    // moved, which still changes who pays for what leg. quote_missing is not a
+    // discrepancy and raises no flag; it rides on `incoterms` for the screen.
     if (incoterms.verdict === "mismatch" || incoterms.verdict === "place_differs") {
       rec.flags.push({
         line_no: null, part_no: null, verdict: "incoterms_" + incoterms.verdict,
@@ -268,6 +278,7 @@ export default async function handler(req, res) {
       quotes_used: rec.quotes_used,
       ambiguous_parts: rec.ambiguous_parts,
       payment_terms: paymentTerms,
+      incoterms,
       flags: rec.flags,
       quotes_available: quotes.length,
     });

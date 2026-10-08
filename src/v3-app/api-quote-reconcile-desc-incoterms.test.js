@@ -85,8 +85,10 @@ describe("parseIncoterm", () => {
     expect(parseIncoterm("EXW")).toEqual({ code: "EXW", place: null });
   });
 
-  it("keeps unparseable text as a place rather than discarding it", () => {
-    expect(parseIncoterm("to be agreed")).toEqual({ code: null, place: "to be agreed" });
+  it("does not call text with no rule in it a place", () => {
+    // It used to come back as the place, and the compare below then
+    // string-matched it against the other side's text.
+    expect(parseIncoterm("to be agreed")).toEqual({ code: null, place: null });
   });
 
   it.each([null, undefined, "", "   "])("is empty for %p", (v) => {
@@ -125,13 +127,15 @@ describe("compareIncoterms", () => {
     expect(r.quote_code).toBe("FOB");
   });
 
-  it("is unknown when either side is absent, not a mismatch", () => {
-    expect(compareIncoterms(null, "FOB Busan").verdict).toBe("unknown");
-    expect(compareIncoterms("FOB Busan", "").verdict).toBe("unknown");
+  it("names the silent side when one is absent, not a mismatch", () => {
+    expect(compareIncoterms(null, "FOB Busan").verdict).toBe("po_missing");
+    expect(compareIncoterms("FOB Busan", "").verdict).toBe("quote_missing");
   });
 
-  it("still compares free text when neither parses", () => {
-    expect(compareIncoterms("to be agreed", "to be agreed").verdict).toBe("match");
-    expect(compareIncoterms("to be agreed", "ex works our plant").verdict).toBe("mismatch");
+  it("never string-compares text that names no rule", () => {
+    // The quote side is usually payment terms. Comparing it as text reported
+    // "EXW" against "30 days credit" as an incoterm mismatch.
+    expect(compareIncoterms("to be agreed", "to be agreed").verdict).toBe("unknown");
+    expect(compareIncoterms("to be agreed", "ex works our plant").verdict).toBe("po_missing");
   });
 });

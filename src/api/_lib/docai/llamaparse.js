@@ -94,10 +94,42 @@ export const parseMarkdownTable = (md) => {
 // parseVersion below), so LlamaParse changed what its output looks like
 // underneath us. Hence: parse BOTH shapes, and treat neither-shape-parsed as
 // the loud failure it is.
-const stripTags = (s) => String(s)
-  .replace(/<[^>]*>/g, " ")
-  .replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">")
+//
+// Entities are decoded in ONE pass, numeric ones included: LlamaParse writes
+// "P&F" as "P&#x26;F" inside a cell, and a two-pass decode would turn a
+// literal "&amp;lt;" into "<".
+const ENTITY = /&(nbsp|amp|lt|gt|quot|apos|#x[0-9a-f]{1,6}|#\d{1,7});/gi;
+const NAMED = { nbsp: " ", amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'" };
+const decodeEntities = (s) => String(s).replace(ENTITY, (m, e) => {
+  const k = e.toLowerCase();
+  if (NAMED[k] != null) return NAMED[k];
+  const code = k.startsWith("#x") ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10);
+  return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+});
+const stripTags = (s) => decodeEntities(String(s).replace(/<[^>]*>/g, " "))
   .replace(/\s+/g, " ").trim();
+
+// A line break written as an ESCAPED tag: "&#x3C;br/>", "&lt;br/&gt;",
+// "&#60;br>". LlamaParse emits these inside a header cell that stacks several
+// labels ("Item No&#x3C;br/>Description&#x3C;br/>..."). Made a real <br/> first,
+// so it splits labels (cellParts) and strips to a space like any other tag.
+const ESCAPED_BR = /(?:&lt;|&#x0*3c;|&#0*60;)\s*br\s*\/?\s*(?:&gt;|&#x0*3e;|&#0*62;|>)/gi;
+const unescapeBreaks = (s) => String(s).replace(ESCAPED_BR, "<br/>");
+
+// The labels a header cell stacks, top first: its text split at each line
+// break (<br>, or a newline). A cell that is one label gives one part. Parts
+// keep their positions; trailing empty ones are dropped.
+const cellParts = (cellHtml) => {
+  // Leading structural tags (and the whitespace between them) are not a label
+  // position: a bare <th> matched from "<thead>\n<tr>\n<th>" starts with them.
+  const inner = String(cellHtml)
+    .replace(/^(?:\s*<\/?(?:thead|tbody|tr|th|td)\b[^>]*>)+/i, "")
+    .replace(/<\/t[hd]>\s*$/i, "")
+    .trim();
+  const parts = inner.split(/\s*<br\s*\/?>\s*|\s*\n\s*/i).map(stripTags);
+  while (parts.length > 1 && !parts[parts.length - 1]) parts.pop();
+  return parts;
+};
 
 // Rows for every <table> in the document. Header recovery matters: emitters
 // differ on whether header cells sit inside a <tr>. Observed in production:
@@ -109,20 +141,28 @@ const stripTags = (s) => String(s)
 // inside <thead>, or rows made only of <th> cells. A stacked layout prints its
 // column labels on several header rows (see headerBlockOf), and once the rows
 // are plain arrays of text there is no other way to tell a label row from data.
+//
+// `parts[i]` is, for a row of <th> cells, each cell's stacked labels
+// (cellParts); null for a data row. A data cell's line breaks are wrapped
+// text, never separate labels.
 const parseHtmlTablesDetailed = (html) => {
   const tables = [];
-  for (const tbl of String(html || "").match(/<table[\s\S]*?<\/table>/gi) || []) {
+  for (const raw of String(html || "").match(/<table[\s\S]*?<\/table>/gi) || []) {
+    const tbl = unescapeBreaks(raw);
     const rows = [];
+    const parts = [];
     let sawHeaderRow = false;
     let headRows = 0;
     let inHead = true;
     const theadEnd = tbl.search(/<\/thead>/i);
     for (const m of tbl.matchAll(/<tr[\s\S]*?<\/tr>/gi)) {
       const tr = m[0];
-      const cells = (tr.match(/<t[hd][\s\S]*?<\/t[hd]>/gi) || []).map(stripTags);
+      const cellHtml = tr.match(/<t[hd][\s\S]*?<\/t[hd]>/gi) || [];
+      const cells = cellHtml.map(stripTags);
       if (!cells.length) continue;
       rows.push(cells);
       const isTh = /<th[\s>]/i.test(tr);
+      parts.push(isTh ? cellHtml.map(cellParts) : null);
       if (isTh) sawHeaderRow = true;
       const inThead = theadEnd >= 0 && m.index < theadEnd;
       if (inHead && (inThead || (isTh && !/<td[\s>]/i.test(tr)))) headRows++;
@@ -136,15 +176,16 @@ const parseHtmlTablesDetailed = (html) => {
     // comparison fails, and a 15-wide synthetic header gets prepended in front
     // of 14-wide data. Every column then reads one to the left — the parser
     // returns confidently-shaped garbage instead of nothing, which is worse.
-    const ths = (tbl.match(/<th[\s\S]*?<\/th>/gi) || []).map(stripTags);
-    if (ths.length && !sawHeaderRow) { rows.unshift(ths); headRows = 1; }
+    const thHtml = tbl.match(/<th[\s\S]*?<\/th>/gi) || [];
+    const ths = thHtml.map(stripTags);
+    if (ths.length && !sawHeaderRow) { rows.unshift(ths); parts.unshift(thHtml.map(cellParts)); headRows = 1; }
     // No <tr> anywhere: chunk the <td> stream by header width. Exact for a
     // rectangular table, which a rendered PO table is.
     if (rows.length <= 1 && ths.length) {
       const tds = (tbl.match(/<td[\s\S]*?<\/td>/gi) || []).map(stripTags);
-      for (let i = 0; i + ths.length <= tds.length; i += ths.length) rows.push(tds.slice(i, i + ths.length));
+      for (let i = 0; i + ths.length <= tds.length; i += ths.length) { rows.push(tds.slice(i, i + ths.length)); parts.push(null); }
     }
-    if (rows.length) tables.push({ rows, headRows: Math.min(headRows, rows.length) });
+    if (rows.length) tables.push({ rows, parts, headRows: Math.min(headRows, rows.length) });
   }
   return tables;
 };
@@ -269,6 +310,9 @@ const isLabelRow = (row) => {
 // recognisably a label row. Each must align to the header's width: a narrower
 // row is a column-GROUP header (one label over two sub-columns), a different
 // structure that this does not claim to read.
+// Returns { block, physical }: the header rows of one record, and how many
+// table rows they occupied (the same here; see stackedHeaderOf for the case
+// where they differ).
 const headerBlockOf = (t, hi, headRows) => {
   const head = t[hi];
   const block = [head];
@@ -278,7 +322,7 @@ const headerBlockOf = (t, hi, headRows) => {
     if (j < headRows || isLabelRow(a)) { block.push(a); continue; }
     break;
   }
-  return block;
+  return { block, physical: block.length };
 };
 
 // Strict numbers for the stacked path: a blank cell is NO value. The one-row
@@ -340,12 +384,40 @@ const moneyClose = (a, b, qty = 1) =>
   Math.abs(a - b) <= Math.max(PAISA, Math.abs(qty || 1) * 0.005);
 const round2 = (n) => Math.round(n * 100) / 100;
 
-// Every labelled cell, as { o: row offset, c: column, label }.
+// GLUED LABELS. LlamaParse sometimes drops the separator between two stacked
+// labels and prints them as one: "TotAmtInspection Item" is "TotAmt" (this
+// row offset) run into "Inspection Item" (a lower one). A label that matches no
+// field as a whole is split where a lower-case letter, digit or "." runs
+// straight into a capital, and read as the first run of pieces that matches a
+// field's own pattern, prefix first. The vocabulary is STACKED_FIELDS itself,
+// so nothing here knows any one document. The rest of the glued text has no
+// knowable offset, so it is dropped and reported (table_diag.glued_labels).
+// A label that matches as a whole is never split: "UnitPrice", "TotAmt" and
+// "DeliveryInspection Item" stay as printed.
+const isFieldLabel = (l) => Object.values(STACKED_FIELDS).some((res) => res.some((re) => re.test(l)));
+const GLUE_POINT = /(?<=[a-z0-9.'])(?=[A-Z])/;
+const unglue = (label) => {
+  if (!label || isFieldLabel(label)) return null;
+  const pieces = label.split(GLUE_POINT);
+  if (pieces.length < 2) return null;
+  for (let i = 0; i < pieces.length; i++) {
+    for (let j = pieces.length; j > i; j--) {
+      const run = pieces.slice(i, j).join("").trim();
+      if (run && run !== label && isFieldLabel(run)) return run;
+    }
+  }
+  return null;
+};
+
+// Every labelled cell, as { o: row offset, c: column, label }, plus
+// `glued_from` when the label was read out of a glued one.
 const slotsOf = (block) => {
   const slots = [];
   block.forEach((hr, o) => hr.forEach((label, c) => {
     const l = String(label ?? "").trim();
-    if (l) slots.push({ o, c, label: l });
+    if (!l) return;
+    const run = unglue(l);
+    slots.push(run ? { o, c, label: run, glued_from: l } : { o, c, label: l });
   }));
   return slots;
 };
@@ -388,9 +460,10 @@ const totalCheckOf = ({ qty, rate, tax, aux, total }) => {
   return "mismatch";
 };
 
-// Group body rows into records and map each to a line. `block` is the header
-// rows, top first; every row in `rows` is already aligned to its width.
-export const normalizeStackedRecords = (rows, block, diag = {}) => {
+// How a header block reads: each field's slots, and how body rows group into
+// records. Built once per block; also used to TEST a stacked reading before
+// committing to it (stackedHeaderOf).
+const recordReader = (block) => {
   const K = block.length;
   const slots = slotsOf(block);
   const F = {};
@@ -409,16 +482,58 @@ export const normalizeStackedRecords = (rows, block, diag = {}) => {
     // With no line-number or quantity column there is nothing to group by.
     return !lineNoCols.length && !qtyCols.length;
   };
+  const group = (rows) => {
+    const records = [];
+    let cur = null;
+    let merged = 0;
+    // A merged row that prints a figure in a quantity column: under a true
+    // stacked header that cell holds the lower row's own field (a UOM, a
+    // currency), never a number.
+    let mergedWithQty = 0;
+    for (const r of rows) {
+      if (!r.some((c) => String(c ?? "").trim())) continue;     // spacer row
+      if (!cur || startsRecord(r, cur.length)) { cur = [r]; records.push(cur); continue; }
+      cur.push(r);
+      merged++;
+      if (qtyCols.some((c) => strictNum(r[c]) != null)) mergedWithQty++;
+    }
+    return { records, merged, mergedWithQty };
+  };
+  return { K, slots, F, group };
+};
 
-  const records = [];
-  let cur = null;
-  let merged = 0;
-  for (const r of rows) {
-    if (!r.some((c) => String(c ?? "").trim())) continue;     // spacer row
-    if (!cur || startsRecord(r, cur.length)) { cur = [r]; records.push(cur); continue; }
-    cur.push(r);
-    merged++;
-  }
+// ONE header row whose cells stack their labels ("Item No<br/>Description<br/>
+// Specification<br/>Req.No", "Qty<br/>U/M<br/>CUR", ...) is the K-row header
+// above written into a single row. LlamaParse emits either form for the same
+// document from one run to the next. Label i of a cell is that column's label
+// at record row offset i, K is the deepest stack, and a cell with fewer labels
+// has none at the lower offsets.
+//
+// A header cell can also carry a line break only because its label WRAPPED
+// ("Unit<br/>Price", "Line<br/>Total"). Reading that as a stack would split one
+// label across two offsets. So the stacked reading is taken only when the
+// header and the body prove it: a lower label row reads as labels (so at least
+// two cells stack, isLabelRow needs two), at least a third of the body rows
+// join a record above them, and none of those rows prints its own quantity.
+// Otherwise the cell's labels are joined with a space, exactly as before.
+const stackedHeaderOf = (cellPartsRow, body, width) => {
+  if (!Array.isArray(cellPartsRow) || cellPartsRow.length !== width) return null;
+  const K = Math.min(MAX_RECORD_ROWS, Math.max(...cellPartsRow.map((p) => p.length)));
+  if (K < 2) return null;
+  const block = Array.from({ length: K }, (_, o) => cellPartsRow.map((p) => p[o] ?? ""));
+  if (!block.slice(1).some(isLabelRow)) return null;
+  const aligned = body.map((r) => alignRow(r, width)).filter(Boolean);
+  const { records, merged, mergedWithQty } = recordReader(block).group(aligned);
+  const considered = records.length + merged;
+  if (!considered || merged * 3 < considered || mergedWithQty > 0) return null;
+  return block;
+};
+
+// Group body rows into records and map each to a line. `block` is the header
+// rows, top first; every row in `rows` is already aligned to its width.
+export const normalizeStackedRecords = (rows, block, diag = {}) => {
+  const { K, slots, F, group } = recordReader(block);
+  const { records, merged } = group(rows);
 
   const cell = (rec, s) => {
     const v = String(rec[s.o]?.[s.c] ?? "").trim();
@@ -498,6 +613,8 @@ export const normalizeStackedRecords = (rows, block, diag = {}) => {
 
   diag.record_rows = K;
   diag.continuation = (diag.continuation || 0) + merged;
+  const glued = slots.filter((s) => s.glued_from);
+  if (glued.length) diag.glued_labels = glued.map((s) => ({ offset: s.o, column: s.c, printed: s.glued_from, read_as: s.label }));
   diag.rows_considered = records.length;
   diag.rows_rejected = rejected;
   if (preTax) diag.rate_pre_tax = preTax;
@@ -525,11 +642,27 @@ export const normalizeFromHtml = (html) => {
   const rows = [];
   const diag = { tables: tables.length, matched: 0, continuation: 0, skipped: 0, misaligned: 0 };
 
-  for (const { rows: t, headRows } of tables) {
+  for (const { rows: t, parts, headRows } of tables) {
     const hi = pickHeaderRow(t);
     if (hi >= 0 && t.length > hi + 1) {
-      const blk = headerBlockOf(t, hi, headRows);
-      if (!header) { header = t[hi]; block = blk; }
+      // The header rows of one record: several <thead> / label rows
+      // ("stacked_rows"), or one row whose cells stack their labels
+      // ("stacked_cells"). Either way the body reads the same; `physical` is
+      // how many table rows the header itself took.
+      const hb = headerBlockOf(t, hi, headRows);
+      const physical = hb.physical;
+      let blk = hb.block;
+      let form = blk.length > 1 ? "stacked_rows" : null;
+      if (blk.length === 1) {
+        const stacked = stackedHeaderOf(parts?.[hi], t.slice(hi + 1), t[hi].length);
+        if (stacked) { blk = stacked; form = "stacked_cells"; }
+      }
+      if (!header) {
+        header = t[hi];
+        block = blk;
+        // Which form LlamaParse sent. It varies run to run for one document.
+        if (form) diag.header_form = form;
+      }
       // A header row repeated further down (a page break inside a merged
       // table) is skipped. On a stacked layout that is every header row, not
       // just the first; rows with no letters at all are never treated as one.
@@ -537,7 +670,7 @@ export const normalizeFromHtml = (html) => {
       if (block.length > 1 || blk.length > 1) {
         for (const h of [...block, ...blk]) { const k = shapeKey(h); if (/[a-z]/.test(k)) keys.add(k); }
       }
-      for (const r of t.slice(hi + blk.length)) {
+      for (const r of t.slice(hi + physical)) {
         if (keys.has(shapeKey(r))) continue;               // repeated header
         const a = alignRow(r, header.length);
         if (a) rows.push(a); else diag.misaligned++;
@@ -900,4 +1033,4 @@ export const extract = async ({ url, bytes, filename, mime, settings, hints }) =
 };
 
 // Exported for tests (pure mapping, no network).
-export const __test__ = { parseMarkdownTable, normalizeFromMarkdown, normalizeFromHtml, normalizeStackedRecords, parseHtmlTables, pickHeaderRow, alignRow, isLabelRow, scoreConfidence, markdownOf, readHeader, tier, parseVersion, apiKey };
+export const __test__ = { parseMarkdownTable, normalizeFromMarkdown, normalizeFromHtml, normalizeStackedRecords, parseHtmlTables, pickHeaderRow, alignRow, isLabelRow, unglue, scoreConfidence, markdownOf, readHeader, tier, parseVersion, apiKey };

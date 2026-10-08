@@ -390,6 +390,25 @@ export const TallyTab: React.FC<{
   const [recon, setRecon] = useState<{ data: any; loading: boolean; error: any }>({ data: null, loading: true, error: null });
   const [busy, setBusy] = useState(false);
   const [busyMsg, setBusyMsg] = useState<string | null>(null);
+  // The tenant's sales-order processing mode (Admin > Sales-order processing).
+  // In Mode B the push and the retry drain both refuse, so this tab says so
+  // up front instead of leaving the operator to find out from a 409.
+  const [mode, setMode] = useState<{ mode: string; label?: string } | null>(null);
+  const [modeErr, setModeErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    Promise.resolve((AnvilBackend as any)?.docai?.soProcessingMode?.())
+      .then((r: any) => {
+        if (!live) return;
+        const m = r?.mode === "B" ? "B" : "A";
+        // The label comes from the API, so this tab keeps no second copy of
+        // what the modes are called.
+        setMode({ mode: m, label: r?.modes?.[m]?.label });
+      })
+      .catch((e: any) => { if (live) setModeErr(e?.message || String(e)); });
+    return () => { live = false; };
+  }, []);
 
   const reload = React.useCallback(async () => {
     setRecon({ data: null, loading: true, error: null });
@@ -449,6 +468,24 @@ export const TallyTab: React.FC<{
           <span className="mono-sm">
             {unresolved.length} unresolved finding{unresolved.length === 1 ? "" : "s"} since {new Date(vrec.last_drift_at).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" })}.
           </span>
+        </Banner>
+      )}
+
+      {mode && (
+        <Banner
+          kind={mode.mode === "B" ? "warn" : "info"}
+          title={"Mode " + mode.mode + (mode.label ? ": " + mode.label : "")}
+        >
+          <span className="mono-sm">
+            {mode.mode === "B"
+              ? "Your team enters this sales order in Tally by hand. Anvil does not push it: a push or a queued retry is refused."
+              : "Anvil pushes this sales order to Tally as a voucher once it is approved."}
+          </span>
+        </Banner>
+      )}
+      {modeErr && (
+        <Banner kind="warn" title="Sales-order processing mode unknown">
+          <span className="mono-sm">Could not read the mode: {modeErr}</span>
         </Banner>
       )}
 

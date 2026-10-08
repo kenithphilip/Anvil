@@ -48,6 +48,39 @@ export const ProvenanceChip: React.FC<{
 // because every LLM was busy (src/api/_lib/docai/llm-fallback.js).
 const LLM_UNAVAILABLE_CODE = "llm_unavailable_fallback_parse";
 
+// The attempt status the dispatcher records when the provider circuit breaker
+// skipped a model that was overloaded within the last N minutes
+// (src/api/_lib/docai/circuit-breaker.js).
+const CIRCUIT_OPEN_STATUS = "skipped_circuit_open";
+
+const clockTime = (iso: any): string | null => {
+  const t = Date.parse(String(iso || ""));
+  if (!Number.isFinite(t)) return null;
+  return new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+};
+
+// What the card says when the breaker skipped a model: which model, why, and
+// when Anvil tries it again. A chunked PO records one skip per chunk, so each
+// model is named once.
+const circuitSkipSentence = (attempts: any): string | null => {
+  const byAdapter = new Map<string, any>();
+  for (const a of Array.isArray(attempts) ? attempts : []) {
+    if (a?.status === CIRCUIT_OPEN_STATUS && a.adapter && !byAdapter.has(a.adapter)) byAdapter.set(a.adapter, a);
+  }
+  if (!byAdapter.size) return null;
+  const skips = [...byAdapter.values()];
+  const one = skips.length === 1;
+  const list = (xs: string[]) => (xs.length === 1 ? xs[0] : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1]);
+  const minutes = skips.map((a) => Number(a.window_minutes)).find((n) => Number.isFinite(n) && n > 0);
+  const again = skips
+    .map((a) => ({ adapter: a.adapter, at: clockTime(a.half_open_at) }))
+    .filter((x) => x.at)
+    .map((x, i) => (i === 0 ? `${x.adapter} again from ${x.at}` : `${x.adapter} from ${x.at}`));
+  return `This run skipped ${list(skips.map((a) => a.adapter))} because ${one ? "it was" : "they were"} overloaded`
+    + ` in the last ${minutes || "few"} minutes. The next engine got ${one ? "its" : "their"} time.`
+    + (again.length ? ` Anvil tries ${list(again)}.` : "");
+};
+
 // Wave 4.1: extraction-quality summary for the recon tab. Surfaces the
 // winning adapter, overall confidence, validator + anomaly counts, and
 // an expandable list of every flagged field so the operator knows where
@@ -67,6 +100,9 @@ export const ExtractionQualityCard: React.FC<{
   // usually reaches a model, so say both plainly above the numbers.
   const llmUnavailable = (Array.isArray(extractionRun.anomalies) ? extractionRun.anomalies : [])
     .find((a: any) => a?.code === LLM_UNAVAILABLE_CODE);
+  // A model skipped because it was overloaded a few minutes earlier. Said
+  // inside the busy-models banner when there is one, else on its own.
+  const circuitSkip = circuitSkipSentence(extractionRun.adapter_attempts);
   return (
     <Card
       title="Extraction quality"
@@ -83,6 +119,12 @@ export const ExtractionQualityCard: React.FC<{
           ({String(llmUnavailable.actual || s.adapter || "parser")}) read this PO.
           It can miss header fields and split one item into several lines. Check
           the header and the lines. Run extraction again later for a better result.
+          {circuitSkip && <> {circuitSkip}</>}
+        </Banner>
+      )}
+      {!llmUnavailable && circuitSkip && (
+        <Banner kind="info" icon={Icon.info} title="Skipped a busy model">
+          {circuitSkip}
         </Banner>
       )}
       <KPIRow cols={4}>

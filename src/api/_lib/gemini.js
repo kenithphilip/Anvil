@@ -421,7 +421,12 @@ export const callGemini = async ({
     }
     if (RETRYABLE.has(resp.status)) {
       const body = await readBody(resp);
-      modelAttempts.push({ model: current, status: resp.status, ms: Date.now() - t0 });
+      // failure_class per model, so the docai circuit breaker can tell "every
+      // model was overloaded" from "one was, and the next timed out".
+      modelAttempts.push({
+        model: current, status: resp.status, ms: Date.now() - t0,
+        failure_class: classifyUpstreamFailure({ status: resp.status, body }).failure_class,
+      });
       lastFailure = { kind: "status", status: resp.status, body, model: current };
       if (overloadFastPath && isOverload(resp.status, body)) {
         if (!firstOverload) firstOverload = lastFailure;

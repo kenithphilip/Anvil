@@ -32,6 +32,9 @@ import { readPdfBias, composeOrderWithBias } from "./pdf-metadata.js";
 import { ANTHROPIC_ATTEMPT_TIMEOUT_MS } from "../anthropic.js";
 import { classifyUpstreamFailure } from "../upstream-failure.js";
 import { isLlmExtractor } from "./llm-fallback.js";
+import {
+  isBreakerProvider, readCircuitBreakers, claimHalfOpenTrial, noteCircuitOutcome, circuitOpenAttempt,
+} from "./circuit-breaker.js";
 
 const ADAPTERS = {
   reducto,
@@ -76,11 +79,15 @@ export const isAdapterConfigured = (name, settings) => !!ADAPTERS[name]?.isConfi
 // so it runs first, keeping the tenant's existing order as fallback. A blank
 // or unknown engine returns settings unchanged. Used by /api/docai/extract for
 // the SO workspace "run extraction with engine X" picker.
+//
+// docai_engine_override names the engine the operator chose, for this run
+// only. The provider circuit breaker never skips it: an operator who picks
+// Gemini while it is marked overloaded is asking to try it anyway.
 export const withEngineOverride = (settings, provider) => {
   const eng = typeof provider === "string" ? provider.trim().toLowerCase() : null;
   if (!eng || !ADAPTER_NAMES.includes(eng)) return settings;
   const rest = (settings?.docai_provider_order || []).filter((a) => a !== eng);
-  return { ...settings, docai_provider_order: [eng, ...rest] };
+  return { ...settings, docai_provider_order: [eng, ...rest], docai_engine_override: eng };
 };
 
 // LLM extractors that must always be reachable so a stale / broken provider
@@ -520,6 +527,23 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
   // "no limits" (legacy behaviour).
   let svc = null;
   try { svc = serviceClient(); } catch (_e) { svc = null; }
+  // PROVIDER CIRCUIT BREAKER (circuit-breaker.js). A provider that was
+  // overloaded on every model it tried within the last N minutes, with no
+  // success since, is skipped at once, so its time goes to the adapters behind
+  // it instead of being spent learning the same 503 again (run f0e2b29a gave
+  // Gemini 20.7s and Claude nothing). The engine the operator picked is never
+  // skipped. Read once per dispatch, from a 30s per-instance cache.
+  const tenantId = settings?.tenant_id || null;
+  const explicitEngine = settings?.docai_engine_override || null;
+  const breakers = order.some((n) => isBreakerProvider(n) && n !== explicitEngine && isAdapterConfigured(n, settings))
+    ? await readCircuitBreakers({ svc, tenantId })
+    : null;
+  const circuitFor = (name) => (name === explicitEngine ? null : breakers?.states?.[name] || null);
+  const configuredAfter = (i) => order.slice(i + 1).some((n) => ADAPTERS[n] && isAdapterConfigured(n, settings));
+  // An open provider is skipped only while a configured adapter is still
+  // queued behind it. With none left, skipping would turn a slow failure into
+  // a certain one, so it is tried as a last resort.
+  const breakerSkips = (name, i) => circuitFor(name)?.state === "open" && configuredAfter(i);
   for (const [idx, adapterName] of order.entries()) {
     const adapter = ADAPTERS[adapterName];
     if (!adapter) continue;
@@ -543,12 +567,25 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
       attempts.push({ adapter: adapterName, status: "skipped_not_configured" });
       continue;
     }
+    // Breaker open: skip, saying when it opened and when it will half-open.
+    // Also skipped when a result is already in hand, since nothing then
+    // depends on this provider.
+    const circuit = circuitFor(adapterName);
+    let lastResort = false;
+    if (circuit?.state === "open") {
+      if (breakerSkips(adapterName, idx) || best) {
+        attempts.push(circuitOpenAttempt(adapterName, circuit, breakers.minutes));
+        continue;
+      }
+      lastResort = true;
+    }
     // The CONFIGURED adapters still queued behind this one. Counting
     // unconfigured ones would reserve time for adapters that never run and
-    // starve the ones that do. Each is held back what it needs: an LLM a
-    // useful attempt (LLM_USEFUL_MS), a parser the generic floor.
+    // starve the ones that do, and the same goes for a provider the breaker
+    // will skip. Each is held back what it needs: an LLM a useful attempt
+    // (LLM_USEFUL_MS), a parser the generic floor.
     const queued = order.slice(idx + 1)
-      .filter((n) => ADAPTERS[n] && isAdapterConfigured(n, settings));
+      .filter((n, j) => ADAPTERS[n] && isAdapterConfigured(n, settings) && !breakerSkips(n, idx + 1 + j));
     const kind = hints?.expectedKind || "po";
     const reserveMs = queued.reduce((sum, n) => sum + adapterNeedMs(n, kind), 0);
     const floorMs = adapterFloorMs(adapterName, kind);
@@ -615,6 +652,19 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
       });
       continue;
     }
+    // Breaker half-open: the cool-down is over, so try the provider once. On
+    // this instance only one request at a time makes that trial; a concurrent
+    // one (another chunk of this PO) skips it while something else can read
+    // the document.
+    let trial = false;
+    if (circuit?.state === "half_open") {
+      trial = claimHalfOpenTrial({ tenantId, provider: adapterName });
+      if (!trial && (configuredAfter(idx) || best)) {
+        attempts.push(circuitOpenAttempt(adapterName, circuit, breakers.minutes, "half_open_trial_in_flight"));
+        continue;
+      }
+    }
+    const breakerTag = trial ? { breaker: "half_open" } : lastResort ? { breaker: "open_last_resort" } : {};
     const t0 = Date.now();
     let out;
     try {
@@ -631,7 +681,8 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
         promptOverrides: buildPromptOverrides(settings, customerId),
       });
     } catch (err) {
-      attempts.push({ adapter: adapterName, status: "error", ms: Date.now() - t0, error: err.message });
+      attempts.push({ adapter: adapterName, status: "error", ms: Date.now() - t0, error: err.message, ...breakerTag });
+      noteCircuitOutcome({ tenantId, attempt: attempts[attempts.length - 1], trial });
       // Carry a reason so a thrown adapter surfaces as
       // status_reason='adapter_threw' instead of 'fail_unknown'.
       //
@@ -697,7 +748,12 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
       // is a field the adapter emitted that NOTHING downstream reads — the
       // exact silent-loss shape that cost an entire tax column.
       ...(schemaDiag ? { schema: schemaDiag } : {}),
+      // A half-open trial or a last-resort try of an open provider.
+      ...breakerTag,
     });
+    // Tell the breaker at once, so the next chunk or run on this instance
+    // sees the outcome before its cache expires.
+    noteCircuitOutcome({ tenantId, attempt: attempts[attempts.length - 1], trial });
     // Telemetry: record the call against today's counter so
     // /api/docai/usage shows live usage and the guard locks the
     // adapter out once the cap is hit. Best-effort: failures are

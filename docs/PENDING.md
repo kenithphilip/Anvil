@@ -494,6 +494,24 @@ The design works under either answer.
 
 ---
 
+### 2.WM: Work management from opportunity to cash
+
+Scoped 2026-10-08 in `docs/WORK_MANAGEMENT_SCOPE.md`. Nothing built.
+
+The owner asked for a Jira-like work layer inside Anvil that carries a deal from opportunity to invoice across sales, design, procurement, finance, logistics and service. The owner also asked for a better system than the team's project kickoff workbook.
+
+**What the audit found.** No human task object, no dependency, no per-user inbox. The opportunity-to-order chain breaks in four places: no screen moves an opportunity stage, no screen links a quote to an opportunity, nothing writes `orders.opportunity_id` after migration 204, and orders have no link to projects or internal SOs. The kickoff workbook plans with constant lead times, cannot plan before the PO (every date becomes `#VALUE!`), has no customer date, and authorises money on checkboxes with no approver.
+
+**The design:**
+- one `work_items` table with a polymorphic subject and ancestry, plus links and append-only events; most items are created and closed by events Anvil already emits;
+- a project kickoff built from the opportunity, with parties linked to the customer master, scope as rows, existing equipment linked to the installed base, and sourcing from a versioned rule table;
+- five gates that commit money before a PO, each with a basis (PO, LOI or risk waiver), an exposure, an approver who is not the requester, and an audit record;
+- a schedule engine with learned P50 and P90 durations, calendars and sailings as data, float against the customer's date, and an assumed PO date when the PO is missing.
+
+28 PRs in six waves, migrations 252 to 263. Wave 0 (WM-1 to WM-4) repairs the chain and is decision-free. Fifteen owner decisions. The ones that gate most are D1 (build or buy), D2 (advisory or enforced gates), D5 (project-to-order cardinality) and D6 (whether support cases reuse work items).
+
+---
+
 ## 3. Known-unfixed defects
 
 Each verified, none currently breaking a user flow.

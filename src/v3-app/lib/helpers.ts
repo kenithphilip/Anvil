@@ -148,6 +148,17 @@ export const sevOf = (order: { status?: string } | null | undefined): "high" | "
   return "low";
 };
 
+// The PATCH body that approves an order. src/api/orders/[id].js refuses
+// status APPROVED without approval.payloadHash (400), and the hash it
+// anchors the approval to is the one stored on the order at
+// send-for-review time. The SO workspace and the kanban both approve
+// with this body, so they cannot drift apart. Returns null when the
+// order has no stored hash: the caller says why, and sends nothing.
+export interface ApprovalPatch { status: "APPROVED"; approval: { payloadHash: string } }
+export const approvalPatch = (order: { payload_hash?: string | null } | null | undefined): ApprovalPatch | null =>
+  order?.payload_hash ? { status: "APPROVED", approval: { payloadHash: order.payload_hash } } : null;
+export const NO_PAYLOAD_HASH_MESSAGE = "Order has no payload hash. Run 'send for review' first.";
+
 // Order identifier resolution. Replaces the ad-hoc fallback chain
 //   o.po_number || o.quote_number || `draft ${o.id.slice(0,8)}`
 // that was inlined at ~15 call sites and gave the operator a row of

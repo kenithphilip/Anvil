@@ -1,6 +1,6 @@
 // /api/sales/projects
 //   GET    list (filter by phase, customer)
-//   POST   create
+//   POST   create (insert only; a code already used in this tenant gets 409)
 //   PATCH  update (phase advance logged)
 //   DELETE remove
 
@@ -89,7 +89,24 @@ export default async function handler(req, res) {
         expected_sop_date: body.expected_sop_date || null,
         status: STATUSES.has(body.status) ? body.status : "ACTIVE",
       };
-      const ins = await svc.from("projects").upsert(row, { onConflict: "tenant_id,project_code" }).select("*").single();
+      // Insert only. This used to upsert on (tenant_id, project_code), so a
+      // create that reused a code silently replaced that project (name,
+      // customer, value, and its phase reset past the PATCH phase guard)
+      // and logged a new phase row. Edits go through PATCH by id.
+      // unique (tenant_id, project_code) (migration 006) is the only unique
+      // key this insert can hit (id is generated), so 23505 means the code
+      // is taken in this tenant.
+      const ins = await svc.from("projects").insert(row).select("*").single();
+      if (ins.error && ins.error.code === "23505") {
+        return json(res, 409, {
+          error: {
+            code: "PROJECT_CODE_EXISTS",
+            message: "A project with code \"" + row.project_code + "\" already exists. Open that project to edit it, or use a different code.",
+            field: "project_code",
+            project_code: row.project_code,
+          },
+        });
+      }
       if (ins.error) throw new Error(ins.error.message);
       await svc.from("project_phase_log").insert({ tenant_id: ctx.tenantId, project_id: ins.data.id, phase: row.current_phase });
       await recordAudit(ctx, { action: "project_create", objectType: "project", objectId: ins.data.id, after: ins.data });

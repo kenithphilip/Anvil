@@ -2,7 +2,7 @@
 //
 // Reads /api/invoices for the tenant's invoices, lets the operator
 // open a detail view for any row, send the invoice to the customer
-// (queues a comms row + flips status to sent), download the PDF,
+// (emails it now; the status flips to sent only when it left), download the PDF,
 // regenerate the share link, mark paid, void.
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -148,24 +148,19 @@ const WiredInvoices = () => {
   const sendInvoice = async (row: any) => {
     setBusy(row.id);
     try {
+      // One call. The server drafts the email and sends it in the same
+      // request, then reports what really happened. The old second call
+      // to communications.send passed { id } into send(id), so its body
+      // was { id: { id } } and it always 404'd: no invoice email ever
+      // left, and the "reaper will retry" message never came true.
       const resp: any = await AnvilBackend?.invoices?.send?.({ id: row.id });
-      // Fire the queued comm immediately via the existing comms.send
-      // path. Audit fix (May 2026): the previous code swallowed
-      // errors silently; the operator saw "queued + sent" even when
-      // the immediate-send failed and the comm sat in the queue.
-      // Now we surface the queue status honestly.
-      let immediateOk = true;
-      let immediateErr = null;
-      if (resp?.communication_id) {
-        try { await AnvilBackend?.communications?.send?.({ id: resp.communication_id }); }
-        catch (e: any) { immediateOk = false; immediateErr = e; }
-      }
-      if (immediateOk) {
-        setFlash({ kind: "good", msg: "Invoice " + row.invoice_number + " queued + sent" });
+      if (resp?.sent) {
+        setFlash({ kind: "good", msg: "Invoice " + row.invoice_number + " sent" });
         window.notifySuccess?.("Invoice sent", row.invoice_number);
       } else {
-        setFlash({ kind: "warn", msg: "Invoice " + row.invoice_number + " queued. Immediate send failed: " + (immediateErr?.message || "unknown") + ". Comms reaper will retry." });
-        window.notifyWarn?.("Queued, immediate send failed", immediateErr?.message || "unknown");
+        const reason = resp?.error || "the server did not confirm the send";
+        setFlash({ kind: "bad", msg: "Invoice " + row.invoice_number + " not sent: " + reason });
+        window.notifyError?.("Invoice not sent", reason);
       }
       await load();
     } catch (err: any) {
@@ -321,9 +316,10 @@ const WiredInvoices = () => {
               atomically per tenant; concurrent drafts always get distinct invoice numbers.
             </p>
             <p style={{ marginTop: 8 }}>
-              <code>Send</code> renders a fresh PDF, uploads it, regenerates a 7-day share link, queues an
-              email via the existing comms pipeline (SendGrid if configured), and flips status to
-              <code> sent</code>. <code>Record payment</code> logs an OEM payment (bank transfer, RTGS, NEFT
+              <code>Send</code> renders a fresh PDF, uploads it, regenerates a 7-day share link and
+              emails it now through the configured mail provider. The status flips to <code>sent</code> only
+              when the email left; otherwise the reason is shown and the invoice stays a draft.
+              <code> Record payment</code> logs an OEM payment (bank transfer, RTGS, NEFT
               or wire) with its reference; enter the <code>cash received</code> plus any <code>TDS withheld</code>
               and the invoice clears in full (cash + TDS), matching how SAP settles an AR open item. Short
               receipts flip the invoice to <code>partial</code> until fully settled.

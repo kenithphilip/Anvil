@@ -587,7 +587,14 @@ export const dispatchExtract = async ({ source, settings, customerId, hints, run
     const queued = order.slice(idx + 1)
       .filter((n, j) => ADAPTERS[n] && isAdapterConfigured(n, settings) && !breakerSkips(n, idx + 1 + j));
     const kind = hints?.expectedKind || "po";
-    const reserveMs = queued.reduce((sum, n) => sum + adapterNeedMs(n, kind), 0);
+    // The engine the operator CHOSE holds nothing back for the fallbacks queued
+    // behind it. It gets the run budget, which already leaves the function time
+    // to persist the run; the fallbacks get whatever it leaves. On 2026-10-08
+    // run 03594260 an explicit LlamaParse got under 18s because time was held
+    // for Gemini and Claude, and timed out on a 6-page PO that missed its cache.
+    const reserveMs = adapterName === explicitEngine
+      ? 0
+      : queued.reduce((sum, n) => sum + adapterNeedMs(n, kind), 0);
     const floorMs = adapterFloorMs(adapterName, kind);
     const adapterDeadlineAt = hints?.deadlineAt
       ? allocateAdapterDeadline({

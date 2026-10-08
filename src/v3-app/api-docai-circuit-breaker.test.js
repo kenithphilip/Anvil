@@ -13,7 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const H = vi.hoisted(() => ({ fetch: null, now: 0, svc: null, llamaparseConfigured: true }));
+const H = vi.hoisted(() => ({ fetch: null, now: 0, svc: null, llamaparseConfigured: true, llamaparse: null }));
 
 vi.mock("../api/_lib/supabase.js", () => ({ serviceClient: () => H.svc }));
 vi.mock("../api/_lib/safe-fetch.js", () => ({ safeFetch: (url, init) => H.fetch(url, init) }));
@@ -28,16 +28,22 @@ vi.mock("../api/_lib/docai/claude.js", async (importOriginal) => {
 for (const m of ["docling", "marker", "unstructured", "azure_di", "reducto"]) {
   vi.doMock("../api/_lib/docai/" + m + ".js", () => ({ isConfigured: () => false, extract: vi.fn() }));
 }
-// The configured last resort. Its own parsing is not under test here.
-vi.mock("../api/_lib/docai/llamaparse.js", () => ({
-  isConfigured: () => H.llamaparseConfigured,
-  extract: vi.fn(async () => ({
-    ok: true,
-    reason: "ok",
-    normalized: { classification: "po", customer: null, lines: [{ partNumber: "ROW-1", quantity: 1 }] },
-    confidences: { overall: 0.6 },
-  })),
-}));
+// The configured last resort. Its own parsing is not under test here, but its
+// real parseBudgetMs is kept: it turns the dispatcher's deadline into the
+// timeout LlamaParse runs with. H.llamaparse can replace the parse.
+vi.mock("../api/_lib/docai/llamaparse.js", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    isConfigured: () => H.llamaparseConfigured,
+    extract: vi.fn(async (args) => (H.llamaparse ? H.llamaparse(args) : {
+      ok: true,
+      reason: "ok",
+      normalized: { classification: "po", customer: null, lines: [{ partNumber: "ROW-1", quantity: 1 }] },
+      confidences: { overall: 0.6 },
+    })),
+  };
+});
 
 const { dispatchExtract, withEngineOverride, LLM_MIN_ATTEMPT_MS } = await import("../api/_lib/docai/index.js");
 const breaker = await import("../api/_lib/docai/circuit-breaker.js");
@@ -190,6 +196,7 @@ beforeEach(() => {
   delete process.env.DOCAI_BREAKER_MINUTES;
   H.now = 1_800_000_000_000;
   H.llamaparseConfigured = true;
+  H.llamaparse = null;
   vi.spyOn(Date, "now").mockImplementation(() => H.now);
   vi.mocked(llamaparse.extract).mockClear();
   vi.mocked(claudeAdapter.extract).mockClear();
@@ -356,6 +363,62 @@ describe("what keeps the breaker closed", () => {
     expect(seen.gemini).toBe(1);
     expect(out.adapter_used).toBe("gemini");
     expect(H.svc.queries).toHaveLength(0);
+  });
+});
+
+describe("an engine the operator chose", () => {
+  // Run 03594260, 2026-10-08: the operator chose LlamaParse, the dispatcher
+  // held time back for the Gemini and Claude fallbacks queued behind it, and
+  // LlamaParse got 17.7s and timed out on a 6-page PO that missed its cache.
+  const BUDGET = 40_000;
+  // LlamaParse's own margin to record its attempt (llamaparse.js).
+  const PARSE_MARGIN_MS = 2000;
+  // A parse that uses all the time it is given, as the 03594260 one did.
+  const timingOutParse = (timeouts) => ({ hints }) => {
+    const ms = llamaparse.parseBudgetMs(hints.deadlineAt);
+    timeouts.push(ms);
+    H.now += ms;
+    return { ok: false, reason: "timeout", error: "LlamaParse parse timed out after " + ms + "ms" };
+  };
+
+  it("gets the whole run budget, and the queued fallbacks get only what it leaves", async () => {
+    H.svc = makeSvc([]);
+    const timeouts = [];
+    H.llamaparse = timingOutParse(timeouts);
+    const seen = network();
+    const settings = withEngineOverride({ tenant_id: "t1", docai_provider_order: ORDER, docai_fallback_confidence: 0.85 }, "llamaparse");
+    const out = await run({ budgetMs: BUDGET, settings });
+
+    expect(timeouts).toEqual([BUDGET - PARSE_MARGIN_MS]);
+    // Gemini and Claude were queued and configured; the time was not theirs.
+    expect(attempt(out, "gemini").status).toBe("skipped_insufficient_budget");
+    expect(attempt(out, "claude").status).toBe("skipped_insufficient_budget");
+    expect(seen.gemini).toBe(0);
+    expect(seen.claude).toHaveLength(0);
+  });
+
+  it("leaves the fallbacks after it to share what remains as usual", async () => {
+    H.svc = makeSvc([]);
+    // The chosen parse fails fast, so the fallbacks have most of the run.
+    H.llamaparse = () => { H.now += 1000; return { ok: false, reason: "empty_lines", error: "no line-item table" }; };
+    const geminiTimeouts = [];
+    network();
+    const inner = H.fetch;
+    H.fetch = (url, init) => { if (isGemini(url)) geminiTimeouts.push(init.timeoutMs); return inner(url, init); };
+    const settings = withEngineOverride({ tenant_id: "t1", docai_provider_order: ORDER, docai_fallback_confidence: 0.85 }, "llamaparse");
+    await run({ budgetMs: BUDGET, settings });
+    // Gemini holds back Claude's useful attempt (15s) from the 39s left.
+    expect(geminiTimeouts[0]).toBe(BUDGET - 1000 - 15_000);
+  });
+
+  it("is a choice: the same order set by the tenant still holds time for the queued LLMs", async () => {
+    H.svc = makeSvc([]);
+    const timeouts = [];
+    H.llamaparse = timingOutParse(timeouts);
+    network();
+    await run({ budgetMs: BUDGET, settings: { docai_provider_order: ["llamaparse", "gemini", "claude"] } });
+    // Half the run, the cap on what the queue can hold back.
+    expect(timeouts[0]).toBe(BUDGET / 2 - PARSE_MARGIN_MS);
   });
 });
 

@@ -55,6 +55,12 @@ const spoFmtDate = (iso) => {
   return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
 };
 
+// source_pos columns (migration 001) are `reference` and `supplier`
+// (text). The older names stay as fallbacks.
+const spoRef = (po) => po?.reference || po?.po_reference || po?.po_number || po?.id?.slice(0, 8) || "";
+const spoSupplier = (po) =>
+  (typeof po?.supplier === "string" ? po.supplier : po?.supplier?.name) || po?.supplier_name || "";
+
 // Read `new=1` from the hash so the route resolver can stay simple
 // (always returns the SPO list screen) while this screen still
 // branches into a creation form when the New SPO button asks for it.
@@ -69,7 +75,7 @@ const WiredSourcePOs = () => {
   const { useState: uS, useEffect: eS, useMemo: mS } = React;
   const [active, setActive] = uS("open");
   const [ackPo, setAckPo] = uS(null);
-  const [ackForm, setAckForm] = uS({ acked_unit_price: "", acked_eta_date: "", acked_qty: "", notes: "" });
+  const [ackForm, setAckForm] = uS({ acked_total: "", acked_eta: "", supplier_ref: "", notes: "" });
   const [submitting, setSubmitting] = uS(false);
   const [submitErr, setSubmitErr] = uS(null);
   // P2 GRN: receive modal state.
@@ -186,10 +192,13 @@ const WiredSourcePOs = () => {
   const openAck = (po) => {
     setReceivePo(null);   // mutual exclusion: opening ack fully closes any receive panel
     setAckPo(po);
+    // Prefill from the PO's own columns: the last acked figures if an
+    // ack exists, else what the PO says.
+    const price = po.acknowledged_price ?? po.total_foreign;
     setAckForm({
-      acked_unit_price: po.unit_price != null ? String(po.unit_price) : "",
-      acked_eta_date:   po.eta_date ? String(po.eta_date).slice(0, 10) : "",
-      acked_qty:        po.qty != null ? String(po.qty) : "",
+      acked_total:  price != null ? String(price) : "",
+      acked_eta:    po.acknowledged_eta ? String(po.acknowledged_eta).slice(0, 10) : "",
+      supplier_ref: po.ack_payload?.supplierRef || "",
       notes: "",
     });
     setSubmitErr(null);
@@ -197,19 +206,24 @@ const WiredSourcePOs = () => {
 
   const closeAck = () => { setAckPo(null); setSubmitErr(null); };
 
+  // The client is ack(sourcePoId, ack), and /api/source_pos/ack reads
+  // the ack in its own field names. confirmedPrice is the PO TOTAL: the
+  // API compares it with source_pos.total_foreign to set PRICE_CHANGED.
+  // remarks is the name the PDF ack path (ack_accept.js) uses for the
+  // same note, so both paths store one ack_payload shape.
   const submitAck = async () => {
     if (!ackPo) return;
     setSubmitting(true);
     setSubmitErr(null);
     try {
       const ack = {
-        acked_unit_price: ackForm.acked_unit_price ? Number(ackForm.acked_unit_price) : null,
-        acked_eta_date:   ackForm.acked_eta_date || null,
-        acked_qty:        ackForm.acked_qty ? Number(ackForm.acked_qty) : null,
-        notes:            ackForm.notes || null,
+        confirmedPrice: ackForm.acked_total ? Number(ackForm.acked_total) : null,
+        confirmedEta:   ackForm.acked_eta || null,
+        supplierRef:    ackForm.supplier_ref.trim() || null,
+        remarks:        ackForm.notes.trim() || null,
       };
-      await AnvilBackend?.sourcePos?.ack?.({ sourcePoId: ackPo.id, ack });
-      window.notifySuccess?.("Ack submitted", ackPo.po_number || ackPo.id?.slice(0, 8));
+      await AnvilBackend?.sourcePos?.ack?.(ackPo.id, ack);
+      window.notifySuccess?.("Ack submitted", spoRef(ackPo));
       closeAck();
       reload();
     } catch (err: any) {
@@ -416,14 +430,14 @@ const WiredSourcePOs = () => {
                       tabIndex={0}
                       onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openAck(po); } }}
                       style={{ cursor: "pointer" }}
-                      aria-label={`Open ack for ${po.po_reference || po.id}`}
+                      aria-label={`Open ack for ${spoRef(po)}`}
                     >
-                      <td className="mono"><span className="pri">{po.po_reference || po.po_number || po.id?.slice(0, 8) || "—"}</span></td>
-                      <td>{po.supplier_name || po.supplier?.name || po.supplier_id?.slice(0, 8) || "—"}</td>
+                      <td className="mono"><span className="pri">{spoRef(po)}</span></td>
+                      <td>{spoSupplier(po) || po.supplier_id?.slice(0, 8)}</td>
                       <td className="mono-sm">{po.country || po.supplier?.country || "—"}</td>
                       <td className="mono-sm">{ccy}</td>
-                      <td className="r mono">{spoFmtValue(po.value || po.total_value || po.unit_price * po.qty, ccy)}</td>
-                      <td className="mono-sm">{spoFmtDate(po.eta_date || po.acked_eta_date)}</td>
+                      <td className="r mono">{spoFmtValue(po.total_foreign ?? po.value ?? po.total_value, ccy)}</td>
+                      <td className="mono-sm">{spoFmtDate(po.acknowledged_eta || po.eta_date || po.acked_eta_date)}</td>
                       <td><Chip k={chip.k}>{chip.label}</Chip></td>
                       <td style={{ whiteSpace: "nowrap" }}>
                         <Btn sm onClick={(ev) => { ev.stopPropagation(); openAck(po); }}>ack {Icon.arrowR}</Btn>{" "}
@@ -437,18 +451,23 @@ const WiredSourcePOs = () => {
           </Card>
 
           {ackPo ? (
-            <Card title={`Record ack · ${ackPo.po_reference || ackPo.id?.slice(0, 8) || ""}`} eyebrow={ackPo.supplier_name || ""}
+            <Card title={`Record ack · ${spoRef(ackPo)}`} eyebrow={spoSupplier(ackPo)}
                   right={<Btn sm kind="ghost" onClick={closeAck} title="Close">{Icon.x}</Btn>}>
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 <div>
-                  <label htmlFor="spo-ack-price" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Acked unit price ({spoCurrency(ackPo)})</label>
+                  {/* The PO total, not a unit price: the API compares it
+                      with the PO's total_foreign. The API has no header
+                      quantity, so this form asks for none. Per-line acks
+                      exist only on the PDF ack endpoints (ack_extract,
+                      ack_accept). */}
+                  <label htmlFor="spo-ack-price" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Acked PO total ({spoCurrency(ackPo)})</label>
                   <input
                     id="spo-ack-price"
                     className="input"
                     type="number"
                     step="0.01"
-                    value={ackForm.acked_unit_price}
-                    onChange={(ev) => setAckForm((f) => ({ ...f, acked_unit_price: ev.target.value }))}
+                    value={ackForm.acked_total}
+                    onChange={(ev) => setAckForm((f) => ({ ...f, acked_total: ev.target.value }))}
                     style={{ width: "100%", height: 30 }}
                   />
                 </div>
@@ -458,19 +477,19 @@ const WiredSourcePOs = () => {
                     id="spo-ack-eta"
                     className="input"
                     type="date"
-                    value={ackForm.acked_eta_date}
-                    onChange={(ev) => setAckForm((f) => ({ ...f, acked_eta_date: ev.target.value }))}
+                    value={ackForm.acked_eta}
+                    onChange={(ev) => setAckForm((f) => ({ ...f, acked_eta: ev.target.value }))}
                     style={{ width: "100%", height: 30 }}
                   />
                 </div>
                 <div>
-                  <label htmlFor="spo-ack-qty" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Acked qty</label>
+                  <label htmlFor="spo-ack-ref" className="mono-sm" style={{ display: "block", marginBottom: 4, color: "var(--ink-3)" }}>Supplier ref</label>
                   <input
-                    id="spo-ack-qty"
+                    id="spo-ack-ref"
                     className="input"
-                    type="number"
-                    value={ackForm.acked_qty}
-                    onChange={(ev) => setAckForm((f) => ({ ...f, acked_qty: ev.target.value }))}
+                    type="text"
+                    value={ackForm.supplier_ref}
+                    onChange={(ev) => setAckForm((f) => ({ ...f, supplier_ref: ev.target.value }))}
                     style={{ width: "100%", height: 30 }}
                   />
                 </div>
@@ -484,8 +503,10 @@ const WiredSourcePOs = () => {
                     style={{ width: "100%", minHeight: 60, padding: 6 }}
                   />
                 </div>
+                {/* The API's own message (the client throws with
+                    error.message from the response body). */}
                 {submitErr && (
-                  <div className="mono-sm" style={{ color: "var(--rust)" }}>
+                  <div role="alert" className="mono-sm" style={{ color: "var(--rust)" }}>
                     {String(submitErr.message || submitErr)}
                   </div>
                 )}

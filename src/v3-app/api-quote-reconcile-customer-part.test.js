@@ -223,7 +223,8 @@ describe("matching through item_customer_parts", () => {
 });
 
 describe("the route builds the map safely", () => {
-  const src = read("src/api/orders/reconcile_quotes.js");
+  // The route's work moved to the shared library the server trigger also runs.
+  const src = read("src/api/_lib/order-reconcile.js");
 
   it("filters to the ACTIVE mapping", () => {
     // Migration 129 enforces one active row per (tenant, customer, code);

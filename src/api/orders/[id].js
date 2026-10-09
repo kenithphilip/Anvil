@@ -7,6 +7,7 @@ import { lineCandidates, lineSapCandidates } from "../_lib/item-mapper.js";
 import { upsertCustomerPart } from "../_lib/item-customer-parts.js";
 import { promoteApprovedOrder } from "../eval/promote.js";
 import { computeOrderPayloadHash } from "../_lib/payload-hash.js";
+import { autoReconcileOrder, hasReconcilableLines, AUTO_RECONCILE_STATUSES } from "../_lib/order-reconcile.js";
 import { hasUnresolvedBlocker, firstUnresolvedBlocker, mergeBlockersForward, resolveFinding } from "../_lib/blocking-findings.js";
 
 const APPROVE_INPUTS = [
@@ -374,6 +375,16 @@ export default async function handler(req, res) {
             detail: "created=" + approvalsCreated.length,
           });
         }
+      }
+
+      // The lines may have changed (an extraction in the workspace, which is
+      // how an inbound email, WhatsApp or voice order gets its lines, or an
+      // operator edit), so reconcile against the quotes on the server. After
+      // the write, never before it: autoReconcileOrder never throws, skips an
+      // approved order, and does nothing when the payload hash is the one it
+      // last reconciled.
+      if ("result" in body && AUTO_RECONCILE_STATUSES.has(data.status) && hasReconcilableLines(data)) {
+        await autoReconcileOrder(svc, ctx, data.id, { trigger: "lines_changed" });
       }
 
       return json(res, 200, { order: data, approvals_created: approvalsCreated });

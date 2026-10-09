@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Banner, Btn, Card, Chip, KPI, KPIRow } from "../lib/primitives";
 import { AnvilBackend } from "../lib/api";
+import { ErpSalesOrderUpload } from "./ErpSalesOrderUpload";
 
 // The PO, Anvil and the ERP side by side, for one order.
 //
@@ -77,7 +78,20 @@ const FieldRow: React.FC<{ f: Field }> = ({ f }) => {
   );
 };
 
+// The tab: the ERP sales-order upload, then the comparison. The upload sits
+// outside the report so its outcome (for example "it names a different PO")
+// stays on screen while the report reloads with the newly attached document.
 export const ThreeWayPanel: React.FC<{ orderId: string }> = ({ orderId }) => {
+  const [reloadKey, setReloadKey] = useState(0);
+  return (
+    <>
+      <ErpSalesOrderUpload orderId={orderId} onAttached={() => setReloadKey((n) => n + 1)} />
+      <ThreeWayReport orderId={orderId} reloadKey={reloadKey} />
+    </>
+  );
+};
+
+const ThreeWayReport: React.FC<{ orderId: string; reloadKey: number }> = ({ orderId, reloadKey }) => {
   const [rep, setRep] = useState<Report | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -92,7 +106,9 @@ export const ThreeWayPanel: React.FC<{ orderId: string }> = ({ orderId }) => {
       .finally(() => setBusy(false));
   };
 
-  useEffect(load, [orderId]);
+  // reloadKey moves when a sales order is attached, so the comparison is
+  // rebuilt against it.
+  useEffect(load, [orderId, reloadKey]);
 
   if (err) return <Banner kind="bad" title="Could not build the comparison">{err}</Banner>;
   if (busy && !rep) return <Card><div className="body mono-sm" style={{ padding: 18 }}>Comparing…</div></Card>;

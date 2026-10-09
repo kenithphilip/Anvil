@@ -11,6 +11,7 @@ import { PricingProfilesAdmin } from "../components/PricingProfilesAdmin";
 import { NavVisibilityAdmin } from "../components/NavVisibilityAdmin";
 import { LogisticsMonitorEditor } from "../components/LogisticsMonitorEditor";
 import { SoProcessingModeEditor } from "../components/SoProcessingModeEditor";
+import { OrderHandoffSettingsEditor } from "../components/OrderHandoffSettingsEditor";
 import { OptionListEditor } from "../components/OptionListEditor";
 import { adminCrudFetch, parseCSV } from "../lib/admin-shared";
 import {
@@ -78,6 +79,7 @@ const ADMIN_CRUD_TABS = [
   { id: "freight", label: "Freight rates" },
   { id: "logistics_monitor", label: "Logistics monitor" },
   { id: "so_mode",           label: "Sales-order processing" },
+  { id: "order_handoff",     label: "Order handoff" },
   { id: "pricing", label: "Pricing settings" },
   { id: "pricing_profiles", label: "Pricing profiles" },
   { id: "vendor_codes", label: "Vendor codes" },
@@ -98,7 +100,7 @@ const ADMIN_TAB_GROUPS: { label: string; ids: string[] }[] = [
   { label: "Team & access", ids: ["access", "members", "profile", "security", "roles", "navigation", "billing", "company"] },
   { label: "ERP connectors", ids: ["netsuite", "tally", "sage_x3", "ifs", "oracle_fusion", "ramco", "jde", "plex", "jobboss", "oracle_ebs", "proalpha", "plm"] },
   { label: "Channels", ids: ["voice", "chat"] },
-  { label: "Sales & quotes", ids: ["settings", "so_mode", "holidays", "leadtimes", "fx", "thresh", "doc_templates", "terms_packs"] },
+  { label: "Sales & quotes", ids: ["settings", "so_mode", "order_handoff", "holidays", "leadtimes", "fx", "thresh", "doc_templates", "terms_packs"] },
   { label: "Master data", ids: ["locations", "contracts", "items", "item_fields", "vendor_codes", "customer_parts"] },
   { label: "Pricing & freight", ids: ["pricing", "pricing_profiles", "freight", "logistics_monitor"] },
   { label: "AI & diagnostics", ids: ["docai_cost", "diag"] },
@@ -2103,6 +2105,7 @@ const WiredAdminCRUD = () => {
         {active === "navigation" && <NavVisibilityAdmin />}
         {active === "logistics_monitor" && <LogisticsMonitorEditor />}
         {active === "so_mode" && <SoProcessingModeEditor />}
+        {active === "order_handoff" && <OrderHandoffSettingsEditor />}
 
         {/* The tenant's own registered identity. Its own component rather than
             another 200 lines in this file, which is already ~4,000 long. */}

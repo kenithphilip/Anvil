@@ -99,45 +99,128 @@ export const comparePaymentTerms = (poTerms, quoteTerms) => {
 };
 
 // Incoterm rules are three-letter codes (FOB, CIF, EXW, DAP...) usually written
-// with a named place: "FOB Busan", "CIF Nhava Sheva". Compare the CODE, and
-// report the places separately — a changed place is a real commercial
-// difference but not the same thing as a changed rule.
+// with a named place: "FOB Busan", "CIF Nhava Sheva". Compare the CODE first,
+// then the place. A changed place is a real commercial difference, but it is
+// not the same thing as a changed rule.
+//
+// Only a parsed code is ever compared. The check used to fall back to a plain
+// string compare when a side carried no rule, and the quote side is read out
+// of the quote's terms text, which is usually just its payment terms. So
+// "EXW" against "30 days credit" reported an incoterm mismatch on every such
+// order. Text with no rule in it is not an incoterm, and says nothing about
+// one.
 const INCOTERM_CODES = new Set([
   "EXW", "FCA", "FAS", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP",
   // Superseded but still written on real documents.
   "DAT", "DAF", "DES", "DEQ", "DDU",
 ]);
+const BARE_CODE = new RegExp("\\b(" + [...INCOTERM_CODES].join("|") + ")\\b", "i");
 
+// The spelled-out forms, as quotes and POs often write them ("Ex-Works Pune",
+// "C&F Chennai"). When two forms start at the same place the longer one wins,
+// so "Delivered at Place Unloaded" is DPU and not DAP.
+const INCOTERM_NAMES = [
+  [/\bex[\s.-]*works?\b/i, "EXW"],
+  [/\bfree\s+carrier\b/i, "FCA"],
+  [/\bfree\s+alongside(?:\s+ship)?\b/i, "FAS"],
+  [/\bfree\s+on\s+board\b/i, "FOB"],
+  [/\bcost\s*(?:,|and|&)?\s*insurance\s*(?:,|and|&)\s*freight\b/i, "CIF"],
+  [/\bcost\s*(?:and|&)\s*freight\b/i, "CFR"],
+  [/\bc\s*(?:&|and|n)\s*f\b/i, "CFR"],
+  [/\bcarriage\s*(?:and|&)?\s*insurance\s+paid(?:\s+to)?\b/i, "CIP"],
+  [/\bcarriage\s+paid\s+to\b/i, "CPT"],
+  [/\bdelivered\s+at\s+place\s+unloaded\b/i, "DPU"],
+  [/\bdelivered\s+at\s+place\b/i, "DAP"],
+  [/\bdelivered\s+duty\s+paid\b/i, "DDP"],
+  [/\bdelivered\s+duty\s+unpaid\b/i, "DDU"],
+  [/\bdelivered\s+at\s+terminal\b/i, "DAT"],
+  [/\bfree\s+on\s+road\b/i, "FOR"],
+  [/\bfree\s+house\b/i, "FH"],
+];
+
+// FOR and FH are Indian conventions, and the incoterm picklist offers both
+// (migration 106 seeds them). "FOR" is also an English word, so the bare code
+// counts only in capitals at the start of the value, which is how the picklist
+// and a PO header write it ("FOR Halol Plant"). Dotted ("F.O.R.") and spelled
+// out forms count anywhere.
+const LOCAL_CODES = new Set(["FOR", "FH"]);
+const LEADING_LABEL = /^inco\s*-?\s*terms?\s*[:-]?\s*/i;
+const LEADING_LOCAL_CODE = /^(FOR|FH)\b/;
+const DOTTED_CODE = /\b([A-Za-z])\.\s?([A-Za-z])\.\s?([A-Za-z])\b\.?/g;
+
+// "FOB Busan (Incoterms 2020)": the edition is not part of the place.
+const EDITION = /\(?\s*incoterms?\s*\u00ae?\s*(?:(?:19|20)\d{2})?\s*\)?/gi;
+
+// The named place is the text after the code, up to where the next clause
+// starts: "FOB Busan, 30 days net" names Busan, not "Busan 30 days net".
+const placeAfter = (raw, end) => {
+  let rest = raw.slice(end).replace(EDITION, " ");
+  rest = rest.replace(/^[\s,:;.\-\u2013\u2014]+/, "");
+  const stop = rest.search(/[,;|/()[\]\n\r]|\.(?:\s|$)|\s[-\u2013\u2014]\s/);
+  if (stop >= 0) rest = rest.slice(0, stop);
+  rest = rest.replace(/\s+/g, " ").trim();
+  return rest || null;
+};
+
+// { code, place }. code is null when the text names no rule, and then place is
+// null too: unparsed text is not a place.
 export const parseIncoterm = (v) => {
   const raw = String(v == null ? "" : v).trim();
   if (!raw) return { code: null, place: null };
-  const tokens = raw.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
-  const idx = tokens.findIndex((t) => INCOTERM_CODES.has(t));
-  if (idx < 0) return { code: null, place: raw };
-  const place = raw.split(/[^A-Za-z0-9]+/).filter(Boolean).slice(idx + 1).join(" ") || null;
-  return { code: tokens[idx], place };
+  const hits = [];
+  const take = (m, code) => {
+    if (m) hits.push({ code, index: m.index, end: m.index + m[0].length });
+  };
+  const bare = BARE_CODE.exec(raw);
+  if (bare) take(bare, bare[1].toUpperCase());
+  for (const [re, code] of INCOTERM_NAMES) take(re.exec(raw), code);
+  for (const m of raw.matchAll(DOTTED_CODE)) {
+    const code = (m[1] + m[2] + m[3]).toUpperCase();
+    if (INCOTERM_CODES.has(code) || LOCAL_CODES.has(code)) { take(m, code); break; }
+  }
+  const body = raw.replace(LEADING_LABEL, "");
+  const local = LEADING_LOCAL_CODE.exec(body);
+  if (local) {
+    const offset = raw.length - body.length;
+    hits.push({ code: local[1], index: offset, end: offset + local[0].length });
+  }
+  if (!hits.length) return { code: null, place: null };
+  hits.sort((a, b) => a.index - b.index || (b.end - b.index) - (a.end - a.index));
+  return { code: hits[0].code, place: placeAfter(raw, hits[0].end) };
 };
 
+// Case, spacing and punctuation do not make two places different.
+const normPlace = (s) => String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+const showIncoterm = (p) => (p.code ? [p.code, p.place].filter(Boolean).join(" ") : null);
+
 // Header-level commercial check on the delivery rule. verdict:
-// match | mismatch | place_differs | unknown.
+//   match          same code, and the same place (or a side names no place)
+//   mismatch       different codes
+//   place_differs  same code, both sides name a place, and the places differ
+//   quote_missing  the PO names a rule and the quote names none
+//   po_missing     the quote names a rule and the PO names none
+//   unknown        neither side names a rule
+// quote_missing and po_missing are not discrepancies: one side is silent.
 export const compareIncoterms = (poIncoterm, quoteIncoterm) => {
   const po = parseIncoterm(poIncoterm);
   const qt = parseIncoterm(quoteIncoterm);
-  const has = (v) => v != null && String(v).trim() !== "";
   let verdict;
-  if (!has(poIncoterm) || !has(quoteIncoterm)) verdict = "unknown";
-  else if (!po.code || !qt.code) {
-    // Neither side parsed as a known rule — fall back to a string compare so a
-    // free-text difference is still reported rather than silently passing.
-    verdict = normTerms(poIncoterm) === normTerms(quoteIncoterm) ? "match" : "mismatch";
-  } else if (po.code !== qt.code) verdict = "mismatch";
-  else if (normTerms(po.place) !== normTerms(qt.place)) verdict = "place_differs";
-  else verdict = "match";
+  let placeCompared = false;
+  if (!po.code && !qt.code) verdict = "unknown";
+  else if (!qt.code) verdict = "quote_missing";
+  else if (!po.code) verdict = "po_missing";
+  else if (po.code !== qt.code) verdict = "mismatch";
+  else if (po.place && qt.place) {
+    placeCompared = true;
+    verdict = normPlace(po.place) === normPlace(qt.place) ? "match" : "place_differs";
+  } else verdict = "match";
   return {
-    po_incoterm: has(poIncoterm) ? String(poIncoterm) : null,
-    quote_incoterm: has(quoteIncoterm) ? String(quoteIncoterm) : null,
+    po_incoterm: showIncoterm(po),
+    quote_incoterm: showIncoterm(qt),
     po_code: po.code, quote_code: qt.code,
     po_place: po.place, quote_place: qt.place,
+    place_compared: placeCompared,
     verdict,
   };
 };

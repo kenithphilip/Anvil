@@ -2228,6 +2228,14 @@ const WiredSOWorkspace = () => {
                   {dv.unpriceable.length} exception{dv.unpriceable.length === 1 ? "" : "s"} could not be priced
                 </span>
               )}
+              {recon.incoterms?.verdict === "quote_missing" && (
+                /* Here as well as in the banner below, because the clean case
+                   renders no banner, and an unconfirmed delivery rule is still
+                   worth knowing. */
+                <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
+                  Incoterm {recon.incoterms.po_incoterm}: quote has no incoterm
+                </span>
+              )}
               {reBtn}
             </div>
           );
@@ -2278,7 +2286,7 @@ const WiredSOWorkspace = () => {
             icon={clean ? Icon.check : Icon.alert}
             title={clean
               ? `Quotes verified — ${s.matched}/${s.total} lines matched`
-              : `Quote check: ${s.matched}/${s.total} matched · ${s.price_mismatch || 0} price · ${s.description_mismatch || 0} description · ${s.unmatched || 0} unmatched${pt?.verdict === "mismatch" ? " · payment-terms" : ""}${ic && ic.verdict !== "match" && ic.verdict !== "unknown" ? " · incoterms" : ""}`}
+              : `Quote check: ${s.matched}/${s.total} matched · ${s.price_mismatch || 0} price · ${s.description_mismatch || 0} description · ${s.unmatched || 0} unmatched${pt?.verdict === "mismatch" ? " · payment-terms" : ""}${ic?.verdict === "mismatch" || ic?.verdict === "place_differs" ? " · incoterms" : ""}`}
             action={<>{reBtn}{soBtn}</>}>
             {!clean && (
               <div className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4 }}>
@@ -2290,6 +2298,11 @@ const WiredSOWorkspace = () => {
                 )}
                 {ic?.verdict === "place_differs" && (
                   <div>⚠ Incoterm place: both {ic.po_code}, but PO “{ic.po_place || "—"}” vs quote “{ic.quote_place || "—"}”</div>
+                )}
+                {ic?.verdict === "quote_missing" && (
+                  /* Not a discrepancy: the quote is silent on the rule, so the
+                     PO's incoterm is unconfirmed rather than contradicted. */
+                  <div>• Incoterm: PO “{ic.po_incoterm}”, quote has no incoterm{ic.source_quote_number ? ` (${ic.source_quote_number})` : ""}</div>
                 )}
                 {lineFlags.slice(0, 10).map((f: any, i: number) => (
                   <div key={i}>

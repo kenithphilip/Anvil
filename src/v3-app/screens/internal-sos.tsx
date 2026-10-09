@@ -8,7 +8,14 @@ import { AnvilBackend } from "../lib/api";
 // ANVIL v3 — Internal SOs CRUD overlay
 // Adds per-type tab strip + create form on top of the read-only
 // list in wired-internal-sos.jsx.
+//
+// Field names are the API's own (src/api/sales/internal_so.js):
+// GET returns { internalSos }, each row with iso_number and lines;
+// POST requires iso_number and takes lines, approximate_cost_inr and
+// purpose. Statuses are the table's check constraint (migration 006).
 // ============================================================
+
+const ISO_STATUSES = ["DRAFT", "PENDING_APPROVAL", "APPROVED", "DISPATCHED", "CLOSED", "CANCELLED"];
 
 const ISO_TYPES = [
   { id: "FOC_SUPPLY",           label: "FOC Supply",          k: "good"  },
@@ -20,13 +27,13 @@ const ISO_TYPES = [
 
 const ISO_FORM_BLANK = (type?: string): any => ({
   iso_type: type || "FOC_SUPPLY",
-  reference: "",
+  iso_number: "",
   customer_id: "",
   customer_location_id: "",
-  notes: "",
+  purpose: "",
   status: "DRAFT",
-  expected_value_inr: "",
-  iso_lines: [{ part_no: "", description: "", qty: 1, uom: "Nos" }],
+  approximate_cost_inr: "",
+  lines: [{ part_no: "", description: "", qty: 1, uom: "Nos" }],
 });
 
 const isoReadParams = () => {
@@ -53,7 +60,7 @@ const WiredInternalSosCRUD = () => {
     setList((s) => ({ ...s, loading: true }));
     Promise.resolve(AnvilBackend?.sales?.listInternalSos?.() || { rows: [] })
       .then((r) => {
-        const rows = Array.isArray(r) ? r : (r?.internal_sales_orders || r?.rows || []);
+        const rows = Array.isArray(r) ? r : (r?.internalSos || []);
         setList({ rows, loading: false, error: null });
       })
       .catch((err) => setList({ rows: [], loading: false, error: err }));
@@ -62,7 +69,7 @@ const WiredInternalSosCRUD = () => {
   e(reload, []);
   e(() => {
     Promise.resolve(AnvilBackend?.customers?.list?.() || [])
-      .then((r) => setCustomers(Array.isArray(r) ? r : (r?.rows || [])));
+      .then((r) => setCustomers(Array.isArray(r) ? r : (r?.customers || [])));
   }, []);
 
   e(() => {
@@ -90,24 +97,24 @@ const WiredInternalSosCRUD = () => {
   };
 
   const updateLine = (i, field, value) => {
-    const lines = [...(form.iso_lines || [])];
+    const lines = [...(form.lines || [])];
     lines[i] = { ...lines[i], [field]: value };
-    setForm({ ...form, iso_lines: lines });
+    setForm({ ...form, lines: lines });
   };
 
   const addLine = () => {
-    setForm({ ...form, iso_lines: [...(form.iso_lines || []), { part_no: "", description: "", qty: 1, uom: "Nos" }] });
+    setForm({ ...form, lines: [...(form.lines || []), { part_no: "", description: "", qty: 1, uom: "Nos" }] });
   };
 
   const removeLine = (i) => {
-    const lines = (form.iso_lines || []).filter((_, j) => j !== i);
-    setForm({ ...form, iso_lines: lines });
+    const lines = (form.lines || []).filter((_, j) => j !== i);
+    setForm({ ...form, lines: lines });
   };
 
   const submit = async () => {
     if (!form) return;
-    if (!form.reference?.trim()) {
-      window.notifyError?.("Reference is required");
+    if (!form.iso_number?.trim()) {
+      window.notifyError?.("ISO number is required");
       return;
     }
     if (!form.customer_id) {
@@ -117,7 +124,7 @@ const WiredInternalSosCRUD = () => {
     setBusy(true);
     try {
       const payload = { ...form };
-      if (payload.expected_value_inr) payload.expected_value_inr = Number(payload.expected_value_inr);
+      if (payload.approximate_cost_inr) payload.approximate_cost_inr = Number(payload.approximate_cost_inr);
       if (editing && editing !== "__new__") payload.id = editing;
       const fn = (editing && editing !== "__new__")
         ? AnvilBackend?.sales?.updateInternalSo
@@ -140,7 +147,7 @@ const WiredInternalSosCRUD = () => {
         if (!resp.ok) throw new Error("HTTP " + resp.status + ": " + (await resp.text()));
         result = await resp.json();
       }
-      window.notifySuccess?.(editing === "__new__" ? "Internal SO created" : "Internal SO updated", result?.iso?.reference || form.reference);
+      window.notifySuccess?.(editing === "__new__" ? "Internal SO created" : "Internal SO updated", result?.internalSo?.iso_number || form.iso_number);
       reload();
       closeForm();
     } catch (err) {
@@ -207,7 +214,7 @@ const WiredInternalSosCRUD = () => {
         )}
 
         {form && (
-          <Card title={editing === "__new__" ? "New internal SO" : "Edit " + form.reference}
+          <Card title={editing === "__new__" ? "New internal SO" : "Edit " + form.iso_number}
                 eyebrow={ISO_TYPES.find(t => t.id === form.iso_type)?.label || "form"}
                 right={<Btn sm icon kind="ghost" onClick={closeForm} aria-label="Close">{Icon.x}</Btn>}>
             <div className="form-grid">
@@ -218,8 +225,8 @@ const WiredInternalSosCRUD = () => {
                 </select>
               </div>
               <div>
-                <label htmlFor="iso-ref" className="label">Reference *</label>
-                <input id="iso-ref" className="input mono" value={form.reference} onChange={(ev) => setForm({ ...form, reference: ev.target.value })} />
+                <label htmlFor="iso-ref" className="label">ISO number *</label>
+                <input id="iso-ref" className="input mono" value={form.iso_number || ""} onChange={(ev) => setForm({ ...form, iso_number: ev.target.value })} />
               </div>
               <div>
                 <label htmlFor="iso-customer" className="label">Customer *</label>
@@ -231,16 +238,16 @@ const WiredInternalSosCRUD = () => {
               <div>
                 <label htmlFor="iso-status" className="label">Status</label>
                 <select id="iso-status" className="select" value={form.status} onChange={(ev) => setForm({ ...form, status: ev.target.value })}>
-                  {["DRAFT", "ISSUED", "DELIVERED", "CLOSED", "CANCELLED"].map((s) => <option key={s} value={s}>{s}</option>)}
+                  {ISO_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
               <div>
-                <label htmlFor="iso-value" className="label">Expected value INR (optional)</label>
-                <input id="iso-value" type="number" className="input mono" value={form.expected_value_inr || ""} onChange={(ev) => setForm({ ...form, expected_value_inr: ev.target.value })} />
+                <label htmlFor="iso-value" className="label">Approximate cost INR (optional)</label>
+                <input id="iso-value" type="number" className="input mono" value={form.approximate_cost_inr || ""} onChange={(ev) => setForm({ ...form, approximate_cost_inr: ev.target.value })} />
               </div>
               <div className="span-2">
-                <label htmlFor="iso-notes" className="label">Notes</label>
-                <textarea id="iso-notes" className="input" rows={2} value={form.notes || ""} onChange={(ev) => setForm({ ...form, notes: ev.target.value })} />
+                <label htmlFor="iso-notes" className="label">Purpose</label>
+                <textarea id="iso-notes" className="input" rows={2} value={form.purpose || ""} onChange={(ev) => setForm({ ...form, purpose: ev.target.value })} />
               </div>
             </div>
 
@@ -261,7 +268,7 @@ const WiredInternalSosCRUD = () => {
                 <th></th>
               </tr></thead>
               <tbody>
-                {(form.iso_lines || []).map((ln, i) => (
+                {(form.lines || []).map((ln, i) => (
                   <tr key={i}>
                     <td><input className="input mono" value={ln.part_no || ""} onChange={(ev) => updateLine(i, "part_no", ev.target.value)} aria-label={`Line ${i + 1} part number`} style={{ height: 26 }} /></td>
                     <td><input className="input" value={ln.description || ""} onChange={(ev) => updateLine(i, "description", ev.target.value)} aria-label={`Line ${i + 1} description`} style={{ height: 26 }} /></td>
@@ -278,7 +285,7 @@ const WiredInternalSosCRUD = () => {
               <Btn kind="ghost" onClick={closeForm}>Cancel</Btn>
               <span style={{ flex: 1 }} />
               {editing && editing !== "__new__" && (
-                <Btn kind="danger" disabled={busy} onClick={() => remove(editing, form.reference)}>{Icon.x} Delete</Btn>
+                <Btn kind="danger" disabled={busy} onClick={() => remove(editing, form.iso_number)}>{Icon.x} Delete</Btn>
               )}
             </div>
           </Card>
@@ -308,16 +315,16 @@ const WiredInternalSosCRUD = () => {
                   const tdef = ISO_TYPES.find((t) => t.id === r.iso_type);
                   return (
                     <tr key={r.id}>
-                      <td className="mono"><span className="pri">{r.reference}</span></td>
+                      <td className="mono"><span className="pri">{r.iso_number}</span></td>
                       <td><Chip k={tdef?.k || "ghost"}>{tdef?.label || r.iso_type}</Chip></td>
                       <td className="mono-sm">{customerName(r.customer_id)}</td>
-                      <td className="r mono">{(r.iso_lines || []).length || "—"}</td>
-                      <td><Chip k={r.status === "CLOSED" || r.status === "DELIVERED" ? "good" : r.status === "CANCELLED" ? "bad" : "ghost"}>{(r.status || "DRAFT").toLowerCase()}</Chip></td>
+                      <td className="r mono">{(r.lines || []).length || "—"}</td>
+                      <td><Chip k={r.status === "CLOSED" || r.status === "DISPATCHED" ? "good" : r.status === "CANCELLED" ? "bad" : "ghost"}>{(r.status || "DRAFT").toLowerCase()}</Chip></td>
                       <td className="mono-sm">{ageLabel(r.created_at)}</td>
                       <td>
                         <div className="row" style={{ gap: 4, justifyContent: "flex-end" }}>
                           <Btn sm kind="ghost" onClick={() => window.location.hash = `#/internal?id=${r.id}`}>{Icon.eye}</Btn>
-                          <Btn sm kind="ghost" onClick={() => remove(r.id, r.reference)} disabled={busy}>{Icon.x}</Btn>
+                          <Btn sm kind="ghost" onClick={() => remove(r.id, r.iso_number)} disabled={busy}>{Icon.x}</Btn>
                         </div>
                       </td>
                     </tr>

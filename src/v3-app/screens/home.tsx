@@ -31,7 +31,10 @@ const WiredHomeEngineer = () => {
   const orders = useFetch(() => AnvilBackend?.orders?.list?.({ limit: 50 }) || Promise.resolve([]), []);
   const audit = useFetch(() => AnvilBackend?.audit?.list?.({ limit: 6 }) || Promise.resolve([]), []);
 
-  const list = Array.isArray(orders.data) ? orders.data : (orders.data?.rows || []);
+  // GET /api/orders returns { orders } and GET /api/audit returns
+  // { events }. Both lists read `rows`, which neither sends, so the
+  // queue and the activity stream were always empty.
+  const list = Array.isArray(orders.data) ? orders.data : (orders.data?.orders || []);
 
   const myQueue = list
     .filter((o) => o.status !== "RECONCILED" && o.status !== "CANCELLED")
@@ -60,7 +63,7 @@ const WiredHomeEngineer = () => {
   });
   const pushedValueMtd = pushedMtd.reduce((sum, o) => sum + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
 
-  const auditRows = (Array.isArray(audit.data) ? audit.data : (audit.data?.rows || [])).slice(0, 6);
+  const auditRows = (Array.isArray(audit.data) ? audit.data : (audit.data?.events || [])).slice(0, 6);
 
   if (orders.loading) {
     return (
@@ -167,7 +170,8 @@ const WiredHomeEngineer = () => {
                 <Stream rows={auditRows.map((a) => ({
                   t: new Date(a.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
                   a: (a.action || "evt").toUpperCase().slice(0, 5),
-                  m: `<b>${a.action || "event"}</b> · ${a.object_type || ""} ${a.object_id ? a.object_id.slice(0, 8) : ""}`,
+                  // Stream renders text, not HTML, so no markup here.
+                  m: `${a.action || "event"} · ${a.object_type || ""} ${a.object_id ? a.object_id.slice(0, 8) : ""}`,
                 }))} />
               )}
             </Card>

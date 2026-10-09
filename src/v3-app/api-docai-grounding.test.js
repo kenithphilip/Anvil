@@ -3,7 +3,7 @@
 // passes the results in.
 
 import { describe, it, expect } from "vitest";
-import { computeGstinPin, nameConflicts } from "../api/_lib/docai/grounding.js";
+import { computeGstinPin, applyGstinPin, nameConflicts } from "../api/_lib/docai/grounding.js";
 
 const VALID = { ok: true, normalized: "27AAACA1234B1Z5" };
 
@@ -125,5 +125,90 @@ describe("computeGstinPin", () => {
     });
     expect(r.patch).toEqual({});                     // all fields already present
     expect(r.confidenceFloors["customer.gstin"]).toBe(0.98);
+  });
+});
+
+// A payment term filled from the customer master is not the PO's wording.
+//
+// The fill lands in customer.payment_terms, the slot the extractor writes the
+// PO's own terms into, and the only trace used to be a run event. So the
+// reconciler showed a master default as "PO". The fill now records where it
+// came from, beside the value (docs/SO_TERMS_AND_HANDOFF_SCOPE.md 3.3).
+describe("payment terms filled from the customer master carry their provenance", () => {
+  const MASTER = { id: "c-1", customer_name: "Acme Steels", state_code: "27", default_payment_terms: "Net 30" };
+
+  it("names customer_master for a term it fills", () => {
+    const r = computeGstinPin({
+      extractedCustomer: { gstin: VALID.normalized, name: "Acme Steels", payment_terms: "" },
+      matchedCustomer: MASTER,
+      gstinValidation: VALID,
+      stateFromGstin: "27",
+    });
+    expect(r.patch.payment_terms).toBe("Net 30");
+    expect(r.provenance).toEqual({ "customer.payment_terms": "customer_master" });
+  });
+
+  it("names nothing when the PO printed its own terms", () => {
+    const r = computeGstinPin({
+      extractedCustomer: { gstin: VALID.normalized, name: "Acme Steels", payment_terms: "60 days from GRN" },
+      matchedCustomer: MASTER,
+      gstinValidation: VALID,
+      stateFromGstin: "27",
+    });
+    expect(r.patch.payment_terms).toBeUndefined();
+    expect(r.provenance).toEqual({});
+  });
+
+  it("applyGstinPin writes the value and its provenance onto the extraction", () => {
+    const out = {
+      normalized: { customer: { gstin: VALID.normalized, name: "Acme Steels", payment_terms: null }, lines: [] },
+      confidences: { "customer.payment_terms": 0.2 },
+    };
+    const pin = computeGstinPin({
+      extractedCustomer: out.normalized.customer, matchedCustomer: MASTER,
+      gstinValidation: VALID, stateFromGstin: "27",
+    });
+    applyGstinPin(out, pin);
+    expect(out.normalized.customer.payment_terms).toBe("Net 30");
+    expect(out.normalized._provenance).toEqual({ "customer.payment_terms": "customer_master" });
+    expect(out.confidences["customer.payment_terms"]).toBe(0.85);
+    expect(out.confidences["customer.gstin"]).toBe(0.98);
+  });
+
+  it("keeps provenance another step already recorded", () => {
+    const out = {
+      normalized: { customer: { gstin: VALID.normalized, name: "Acme Steels" }, _provenance: { "customer.email": "operator_entry" } },
+      confidences: {},
+    };
+    applyGstinPin(out, computeGstinPin({
+      extractedCustomer: out.normalized.customer, matchedCustomer: MASTER,
+      gstinValidation: VALID, stateFromGstin: "27",
+    }));
+    expect(out.normalized._provenance).toEqual({
+      "customer.email": "operator_entry",
+      "customer.payment_terms": "customer_master",
+    });
+  });
+
+  it("adds no provenance key when nothing was filled from the master", () => {
+    const out = {
+      normalized: { customer: { gstin: VALID.normalized, name: "Acme Steels", payment_terms: "Advance", state_code: "27" } },
+      confidences: {},
+    };
+    applyGstinPin(out, computeGstinPin({
+      extractedCustomer: out.normalized.customer, matchedCustomer: MASTER,
+      gstinValidation: VALID, stateFromGstin: "27",
+    }));
+    expect(out.normalized.customer.payment_terms).toBe("Advance");
+    expect("_provenance" in out.normalized).toBe(false);
+  });
+
+  it("caps an invalid GSTIN's confidence, as the pipeline did inline", () => {
+    const out = { normalized: { customer: { gstin: "27BADGSTIN0000Z9" } }, confidences: { "customer.gstin": 0.95 } };
+    applyGstinPin(out, computeGstinPin({
+      extractedCustomer: out.normalized.customer, matchedCustomer: null,
+      gstinValidation: { ok: false, code: "checksum" }, stateFromGstin: null,
+    }));
+    expect(out.confidences["customer.gstin"]).toBe(0.3);
   });
 });

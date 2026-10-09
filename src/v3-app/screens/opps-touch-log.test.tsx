@@ -17,7 +17,7 @@ beforeEach(() => {
   installBackend({
     sales: {
       listOpportunities: async () => ({ opportunities: [
-        { id: "o-1", opportunity_name: "Line 4 retrofit", customer_id: "c-1", customer_name: "Gestamp", stage: "RFQ", value: 100000 },
+        { id: "o-1", opportunity_name: "Line 4 retrofit", customer_id: "c-1", customer_name: "Fixture Axle Works", stage: "RFQ", amount_inr: 100000, owner_id: null, owner_name: null, probability: 50 },
       ] }),
     },
     customers: { listContacts: async () => ({ contacts: [{ id: "ct-9", name: "Meera Iyer" }] }) },

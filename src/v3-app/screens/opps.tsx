@@ -19,7 +19,7 @@ import { AnvilBackend } from "../lib/api";
 // memory (it has to, to bucket it), so a round trip per sort would be slower
 // and would make the two views disagree about what "the pipeline" contains.
 const OPP_COLUMNS = [
-  { key: "title", label: "Opportunity", align: "left" },
+  { key: "name", label: "Opportunity", align: "left" },
   { key: "customer", label: "Customer", align: "left" },
   { key: "stage", label: "Stage", align: "left" },
   { key: "value", label: "Value", align: "right" },
@@ -29,23 +29,33 @@ const OPP_COLUMNS = [
   { key: "age", label: "Age", align: "right" },
 ];
 
+// The row as GET /api/sales/opportunities sends it: opportunity_name,
+// customer_id with customer_name, amount_inr, owner_id with owner_name, and
+// close_date. The screen used to read title, value, owner and
+// expected_close_date, which the API never sent, so those cells were blank.
+const oppValue = (r) => Number(r.amount_inr) || 0;
+// The customer lookup is tenant-scoped and best-effort, so a row can arrive
+// without a name. Its id prefix is still a handle somebody can search for.
+const oppCustomer = (r) => r.customer_name || (r.customer_id ? String(r.customer_id).slice(0, 8) : "");
+const oppOwner = (r) => r.owner_name || (r.owner_id ? String(r.owner_id).slice(0, 8) : "unassigned");
+
 const oppSortValue = (r, key) => {
   switch (key) {
-    case "title": return String(r.title || r.customer_name || r.customer || "").toLowerCase();
-    case "customer": return String(r.customer_name || r.customer || "").toLowerCase();
+    case "name": return String(r.opportunity_name || "").toLowerCase();
+    case "customer": return oppCustomer(r).toLowerCase();
     // Sorted by the stage's WEIGHT, not its name: alphabetical stage order is
     // meaningless, and pipeline order is what somebody scanning this wants.
     case "stage": return OPP_STAGES.findIndex((s) => s.id === r.stage);
-    case "value": return Number(r.value) || 0;
+    case "value": return oppValue(r);
     case "weighted": {
       const w = OPP_STAGES.find((s) => s.id === r.stage)?.w ?? 0;
-      return (Number(r.value) || 0) * w;
+      return oppValue(r) * w;
     }
     // -1, not 0: an opportunity nobody has scored is not the same as one
     // scored at zero, and sorting them together hides exactly the rows that
     // need attention.
     case "probability": return Number.isFinite(Number(r.ai_probability)) ? Number(r.ai_probability) : -1;
-    case "owner": return String(r.owner || "").toLowerCase();
+    case "owner": return oppOwner(r).toLowerCase();
     case "age": {
       const t = r.created_at || r.updated_at;
       return t ? new Date(t).getTime() : 0;
@@ -103,7 +113,7 @@ const OppList = ({ rows, sortKey, sortDir, onSort }) => {
               const stage = OPP_STAGES.find((s) => s.id === r.stage);
               const sc = OPP_STAGE_CHIP(r.stage);
               const prob = OPP_PROB_CHIP(r.ai_probability);
-              const v = Number(r.value) || 0;
+              const v = oppValue(r);
               const created = r.created_at || r.updated_at;
               return (
                 <tr
@@ -118,21 +128,21 @@ const OppList = ({ rows, sortKey, sortDir, onSort }) => {
                   }}
                   style={{ cursor: "pointer" }}
                 >
-                  <td>{r.title || r.customer_name || r.customer || "—"}</td>
-                  <td>{r.customer_name || r.customer || "—"}</td>
+                  <td>{r.opportunity_name || "-"}</td>
+                  <td>{oppCustomer(r) || "-"}</td>
                   <td><Chip k={sc.k}>{sc.label}</Chip></td>
                   {/* tabular-nums so the figures line up down the column */}
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{v ? fmtINRShort(v) : "—"}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{v ? fmtINRShort(v) : "-"}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                    {v && stage ? fmtINRShort(v * stage.w) : "—"}
+                    {v && stage ? fmtINRShort(v * stage.w) : "-"}
                   </td>
                   <td style={{ textAlign: "right" }}>
                     <span title={r.ai_probability_reasoning || (r.ai_probability == null ? "Not scored yet" : "")}>
                       <Chip k={prob.k}>{prob.label}</Chip>
                     </span>
                   </td>
-                  <td>{r.owner || "—"}</td>
-                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{created ? ageLabel(created) : "—"}</td>
+                  <td>{oppOwner(r)}</td>
+                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{created ? ageLabel(created) : "-"}</td>
                 </tr>
               );
             })}
@@ -200,6 +210,34 @@ const oppRows = (resp) => {
   if (Array.isArray(resp.opportunities)) return resp.opportunities;
   if (Array.isArray(resp.rows)) return resp.rows;
   return [];
+};
+
+// The KPI tiles, counted over the real stage ids. They used to count
+// DISCOVERY, DEMO, QUOTE, NEGOTIATION and WON, which are not stages, so every
+// tile but Total read 0. The weighted figure is the OPEN pipeline only: a won
+// deal at weight 1.0 is revenue, not pipeline, and counting it would inflate
+// the pipeline with every deal ever won.
+const OPP_EARLY_STAGES = ["QUALIFICATION", "STRATEGY_CHECK", "NEEDS_ANALYSIS", "FOLLOW_UP"];
+const OPP_QUOTING_STAGES = ["RFQ", "INTERNAL_PROPOSAL", "PROPOSAL_PRICE_QUOTE"];
+const OPP_CLOSED_STAGES = ["CLOSE_WON", "CLOSE_LOST", "REGRETTED"];
+
+const oppKpis = (rows) => {
+  const weightOf = (stage) => OPP_STAGES.find((s) => s.id === stage)?.w ?? 0;
+  const inStages = (ids) => rows.filter((r) => ids.includes(r.stage));
+  const open = rows.filter((r) => OPP_STAGES.some((s) => s.id === r.stage) && !OPP_CLOSED_STAGES.includes(r.stage));
+  const won = inStages(["CLOSE_WON"]);
+  return {
+    open: open.length,
+    openValue: open.reduce((sum, r) => sum + oppValue(r), 0),
+    weighted: open.reduce((sum, r) => sum + oppValue(r) * weightOf(r.stage), 0),
+    early: inStages(OPP_EARLY_STAGES).length,
+    quoting: inStages(OPP_QUOTING_STAGES).length,
+    negotiation: inStages(["NEGOTIATION_REVIEW"]).length,
+    won: won.length,
+    wonValue: won.reduce((sum, r) => sum + oppValue(r), 0),
+    lost: inStages(["CLOSE_LOST"]).length,
+    regretted: inStages(["REGRETTED"]).length,
+  };
 };
 
 const WiredOpportunities = () => {
@@ -297,35 +335,13 @@ const WiredOpportunities = () => {
   }
 
   const rows = oppRows(list.data);
-  const total = rows.length;
-  const stageMap = OPP_STAGES.reduce((acc, s) => { acc[s.id] = s.w; return acc; }, {});
 
   // Detail-card lookup. selectedId is read at the top of the
   // function (above the early-return guards) so the hook count
   // stays stable; we resolve `selected` here once rows are known.
   const selected = selectedId ? rows.find((r) => r.id === selectedId) || null : null;
 
-  const weighted = rows.reduce((sum, r) => {
-    const v = Number(r.value) || 0;
-    const w = stageMap[r.stage] != null ? stageMap[r.stage] : 0;
-    return sum + v * w;
-  }, 0);
-
-  const countByStage = (stage) => rows.filter((r) => r.stage === stage).length;
-  const discoveryCount = countByStage("DISCOVERY");
-  const demoCount = countByStage("DEMO");
-  const quoteCount = countByStage("QUOTE");
-  const negotCount = countByStage("NEGOTIATION");
-
-  const wonMtd = rows.filter((r) => {
-    if (r.stage !== "WON") return false;
-    const t = r.closed_at || r.updated_at;
-    if (!t) return false;
-    const d = new Date(t);
-    const now = new Date();
-    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-  });
-  const wonValueMtd = wonMtd.reduce((sum, r) => sum + (Number(r.value) || 0), 0);
+  const kpi = oppKpis(rows);
 
   // Group rows by stage for the kanban
   const byStage = {};
@@ -340,7 +356,7 @@ const WiredOpportunities = () => {
       <WSTitle
         eyebrow="Sales · Opportunities"
         title="Opportunities · 11-stage pipeline"
-        meta={`${total} active · weighted ${fmtINRShort(weighted)}`}
+        meta={`${kpi.open} open · weighted ${fmtINRShort(kpi.weighted)}`}
         right={<>
           <Btn
             sm
@@ -372,16 +388,18 @@ const WiredOpportunities = () => {
 
       <div className="ws-content">
         <KPIRow cols={5}>
-          <KPI lbl="Total" v={String(total)} d="all stages" />
-          <KPI lbl="Weighted ₹" v={fmtINRShort(weighted)} d="probability-adjusted" live={weighted > 0} />
-          <KPI lbl="Discovery" v={String(discoveryCount)} d={`${demoCount} demo · ${quoteCount} quote`} />
-          <KPI lbl="Negotiation" v={String(negotCount)} d="late stage" />
-          <KPI lbl="Won · MTD" v={fmtINRShort(wonValueMtd)} d={`${wonMtd.length} closed`} dKind={wonMtd.length ? "up" : ""} />
+          <KPI lbl="Open" v={String(kpi.open)} d={`${fmtINRShort(kpi.openValue)} open value`} />
+          <KPI lbl="Weighted ₹" v={fmtINRShort(kpi.weighted)} d="stage-weighted, open only" live={kpi.weighted > 0} />
+          <KPI lbl="Early stage" v={String(kpi.early)} d="qualification to follow-up" />
+          <KPI lbl="Quoting" v={String(kpi.quoting)} d={`${kpi.negotiation} in negotiation`} />
+          <KPI lbl="Won" v={fmtINRShort(kpi.wonValue)}
+               d={`${kpi.won} won · ${kpi.lost} lost` + (kpi.regretted ? ` · ${kpi.regretted} regretted` : "")}
+               dKind={kpi.won ? "up" : ""} />
         </KPIRow>
 
         {selected && (
           <Card
-            title={selected.name || selected.opportunity_name || "Opportunity"}
+            title={selected.opportunity_name || "Opportunity"}
             eyebrow={"opportunity detail · " + (selected.id?.slice(0, 8) || "")}
             right={<>
               <Btn sm kind={selected.ai_probability == null ? "live" : "ghost"} disabled={predictingId === selected.id}
@@ -397,26 +415,31 @@ const WiredOpportunities = () => {
             </>}
           >
             <KV rows={[
-              ["Name",       selected.name || selected.opportunity_name || "—"],
-              ["Customer",   selected.customer_name || selected.customer || "—"],
-              ["Stage",      selected.stage || "—"],
-              ["Owner",      selected.owner || selected.assigned_to || "—"],
-              ["Value",      selected.value ? fmtINRShort(Number(selected.value)) : "—"],
-              ["Probability (operator)", selected.probability != null ? Math.round(Number(selected.probability) * 100) + "%" : "—"],
+              ["Name",       selected.opportunity_name || "-"],
+              ["Customer",   oppCustomer(selected) || "-"],
+              ["Stage",      selected.stage || "-"],
+              ["Owner",      oppOwner(selected)],
+              ["Value",      oppValue(selected) ? fmtINRShort(oppValue(selected)) : "not set"],
+              // The column is a percent, 0 to 100 (default 50); the forecast
+              // and the funnel divide it by 100. Multiplying it by 100 here
+              // showed the default as 5000%.
+              ["Probability (operator)", selected.probability != null ? Math.round(Number(selected.probability)) + "%" : "not set"],
               ["AI probability", (() => {
                 if (selected.ai_probability == null) return <span style={{ color: "var(--ink-3)" }}>not predicted yet</span>;
                 const c = OPP_PROB_CHIP(selected.ai_probability);
                 return <Chip k={c.k}>{c.label}</Chip>;
               })()],
-              ["AI reasoning", selected.ai_probability_reasoning || <span style={{ color: "var(--ink-3)" }}>—</span>],
-              ["Expected close", selected.expected_close_date || selected.expected_close || "—"],
-              ["Last update",   selected.updated_at ? ageLabel(selected.updated_at) : "—"],
+              ["AI reasoning", selected.ai_probability_reasoning || <span style={{ color: "var(--ink-3)" }}>-</span>],
+              ["Expected close", selected.close_date || "not set"],
+              ["Last update",   selected.updated_at ? ageLabel(selected.updated_at) : "-"],
             ]} />
-            {selected.notes && (
+            {/* opportunities has no notes column; product_summary is its
+                free-text field. */}
+            {selected.product_summary && (
               <>
                 <div className="divider" />
                 <pre style={{ font: "inherit", fontSize: 12.5, color: "var(--ink-2)", whiteSpace: "pre-wrap", margin: 0 }}>
-                  {selected.notes}
+                  {selected.product_summary}
                 </pre>
               </>
             )}
@@ -425,7 +448,7 @@ const WiredOpportunities = () => {
               <OpportunityQuotesPanel opportunityId={selected.id} />
             </div>
             <div style={{ marginTop: 10 }}>
-              <OpportunityQuoteRevisions opportunityId={selected.id} customerId={selected.customer_id} opportunityAmount={selected.amount_inr ?? selected.value} />
+              <OpportunityQuoteRevisions opportunityId={selected.id} customerId={selected.customer_id} opportunityAmount={selected.amount_inr} />
             </div>
             {/* Same follow-up log as the quote drawer's Follow-up tab. An
                 opportunity has no contact column, so the contact prefill
@@ -526,12 +549,12 @@ const WiredOpportunities = () => {
                     )}
                   </div>
                   {cards.length === 0 ? (
-                    <div className="mono-sm" style={{ color: "var(--ink-4)", padding: "8px 4px" }}>—</div>
+                    <div className="mono-sm" style={{ color: "var(--ink-4)", padding: "8px 4px" }}>-</div>
                   ) : (
                     cards.map((kard) => {
-                      const v = Number(kard.value) || 0;
-                      const customer = kard.customer_name || kard.customer || "—";
-                      const owner = kard.owner || "—";
+                      const v = oppValue(kard);
+                      const customer = oppCustomer(kard) || "-";
+                      const owner = oppOwner(kard);
                       const created = kard.created_at || kard.updated_at;
                       const prob = OPP_PROB_CHIP(kard.ai_probability);
                       return (
@@ -548,9 +571,9 @@ const WiredOpportunities = () => {
                           }}
                           style={{ cursor: "pointer" }}
                         >
-                          <div className="ti">{kard.title || customer}</div>
+                          <div className="ti">{kard.opportunity_name || customer}</div>
                           <div className="meta">
-                            {customer} · {v ? fmtINRShort(v) : "—"} · {owner}
+                            {customer} · {v ? fmtINRShort(v) : "-"} · {owner}
                           </div>
                           <div className="ft">
                             <Chip k={sc.k}>{sc.label}</Chip>
@@ -558,7 +581,7 @@ const WiredOpportunities = () => {
                               <Chip k={prob.k}>{prob.label}</Chip>
                             </span>
                             <span className="mono-sm" style={{ marginLeft: "auto", color: "var(--ink-4)" }}>
-                              {created ? ageLabel(created) : "—"}
+                              {created ? ageLabel(created) : "-"}
                             </span>
                           </div>
                         </div>

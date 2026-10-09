@@ -1,102 +1,241 @@
-// A list view for the opportunity pipeline.
+// The opportunities screen reads what GET /api/sales/opportunities returns.
 //
-// The board answers "what is in each stage". It cannot answer "what is the
-// biggest thing in this pipeline", "what has not moved in a month", or "which
-// of these is least likely to close" — questions ABOUT the pipeline rather
-// than about a stage, each needing a comparison across all eleven columns at
-// once. Eleven columns is also a lot of horizontal scrolling.
+// The screen read title, customer_name, value, owner and expected_close_date.
+// The API sent opportunity_name, customer_id, amount_inr, owner_id and
+// close_date, so name, value, weighted value and owner were blank. The KPI
+// tiles counted DISCOVERY, DEMO, QUOTE, NEGOTIATION and WON, which are not
+// stages, so every tile but Total read 0. The operator probability is stored
+// as a percent and was multiplied by 100 (the default 50 showed as 5000%).
+//
+// These tests run the REAL handler against an in-memory Supabase and feed its
+// response to the screen, so a fixture cannot drift from the API again.
+// Every name and id here is invented.
 
-import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { waitFor, fireEvent } from "@testing-library/react";
+import { installBackend, installRbac, renderScreen } from "../test-utils";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const src = readFileSync(join(HERE, "opps.tsx"), "utf8");
+const DB = vi.hoisted(() => ({
+  tables: {} as Record<string, any[]>,
+  users: {} as Record<string, any>,
+  failRead: {} as Record<string, any>,
+  ctx: null as any,
+}));
 
-describe("the view toggle", () => {
-  it("offers both views", () => {
-    expect(src).toMatch(/const \[view, setView\] = useState/);
-    expect(src).toMatch(/view === "list" \? "List" : "Board"/);
+vi.mock("../../api/_lib/auth.js", async (importOriginal) => {
+  const actual: any = await importOriginal();
+  return { ...actual, resolveContext: vi.fn(async () => DB.ctx) };
+});
+
+const makeSvc = () => ({
+  auth: { admin: { getUserById: async (id: string) => ({ data: { user: DB.users[id] || null }, error: null }) } },
+  from(table: string) {
+    const filters: ((r: any) => boolean)[] = [];
+    let order: { col: string; asc: boolean } | null = null;
+    let limit: number | null = null;
+    const run = () => {
+      if (DB.failRead[table]) return { data: null, error: DB.failRead[table] };
+      let out = (DB.tables[table] || []).filter((r) => filters.every((f) => f(r))).map((r) => ({ ...r }));
+      if (order) {
+        const { col, asc } = order;
+        out.sort((a, b) => (a[col] < b[col] ? -1 : a[col] > b[col] ? 1 : 0) * (asc ? 1 : -1));
+      }
+      if (limit != null) out = out.slice(0, limit);
+      return { data: out, error: null };
+    };
+    const b: any = {
+      select: () => b,
+      eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return b; },
+      in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return b; },
+      gte: (c: string, v: any) => { filters.push((r) => r[c] >= v); return b; },
+      lte: (c: string, v: any) => { filters.push((r) => r[c] <= v); return b; },
+      order: (col: string, opts: any) => { order = { col, asc: !opts || opts.ascending !== false }; return b; },
+      limit: (n: number) => { limit = n; return b; },
+      then: (res: any, rej: any) => Promise.resolve(run()).then(res, rej),
+    };
+    return b;
+  },
+});
+vi.mock("../../api/_lib/supabase.js", () => ({ serviceClient: () => makeSvc() }));
+
+const callGet = async (query: Record<string, string> = {}) => {
+  const handler = (await import("../../api/sales/opportunities.js")).default;
+  let body: any = null;
+  const res: any = {
+    statusCode: 200,
+    setHeader() {}, status(c: number) { this.statusCode = c; return this; },
+    json(o: any) { body = o; return this; }, send(p: any) { body = typeof p === "string" ? JSON.parse(p) : p; return this; },
+    end() { return this; },
+  };
+  await handler({ method: "GET", headers: {}, query, url: "/api/sales/opportunities" }, res);
+  return { status: res.statusCode, body };
+};
+
+const T = "t-1";
+const OPP = (id: string, over: any) => ({
+  id, tenant_id: T, customer_id: "c-axle", stage: "QUALIFICATION", amount_inr: null,
+  probability: 50, owner_id: null, close_date: null, product_summary: null, ai_probability: null,
+  created_at: "2026-09-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z",
+  ...over,
+});
+
+const seed = () => {
+  DB.ctx = { user: { id: "u-ravi" }, tenantId: T, role: "sales_engineer" };
+  DB.failRead = {};
+  DB.users = {
+    "u-ravi": { id: "u-ravi", email: "ravi@fixture.test", user_metadata: { name: "Ravi Fixture" } },
+    "u-meera": { id: "u-meera", email: "meera@fixture.test", user_metadata: {} },
+  };
+  DB.tables = {
+    customers: [
+      { id: "c-axle", tenant_id: T, customer_name: "Fixture Axle Works" },
+      { id: "c-press", tenant_id: T, customer_name: "Fixture Press Shop" },
+      // Same id, another tenant: its name must never reach this tenant.
+      { id: "c-foreign", tenant_id: "t-2", customer_name: "Another Tenant Buyer" },
+    ],
+    opportunities: [
+      OPP("o-1", { opportunity_name: "Line 4 retrofit", stage: "RFQ", amount_inr: 200000, owner_id: "u-ravi", close_date: "2026-11-30", updated_at: "2026-10-06T00:00:00Z" }),
+      OPP("o-2", { opportunity_name: "Weld gun spares", customer_id: "c-press", stage: "QUALIFICATION", amount_inr: 100000, probability: 20, updated_at: "2026-10-05T00:00:00Z" }),
+      OPP("o-3", { opportunity_name: "Press line cell", stage: "NEGOTIATION_REVIEW", amount_inr: 1000000, owner_id: "u-meera", updated_at: "2026-10-04T00:00:00Z" }),
+      OPP("o-4", { opportunity_name: "Robot dress packs", customer_id: "c-press", stage: "CLOSE_WON", amount_inr: 250000, owner_id: "u-ravi", updated_at: "2026-10-03T00:00:00Z" }),
+      OPP("o-5", { opportunity_name: "Old tender", stage: "CLOSE_LOST", amount_inr: 300000, lost_reason: "PRICE_HIGH", updated_at: "2026-10-02T00:00:00Z" }),
+      OPP("o-6", { opportunity_name: "Fixture rework", customer_id: "c-foreign", stage: "INTERNAL_PROPOSAL", amount_inr: 100000, updated_at: "2026-10-01T00:00:00Z" }),
+      { ...OPP("o-x", { opportunity_name: "Not this tenant's deal", stage: "RFQ", amount_inr: 9900000 }), tenant_id: "t-2" },
+    ],
+  };
+};
+
+const mount = async (hash: string) => {
+  const { body } = await callGet();
+  installBackend({ sales: { listOpportunities: vi.fn(async () => body) } });
+  window.location.hash = hash;
+  const { default: Opps } = await import("./opps");
+  const r = renderScreen(Opps);
+  await waitFor(() => expect(r.container.textContent).toContain("Line 4 retrofit"));
+  return r;
+};
+
+const kpi = (c: HTMLElement, label: string) => {
+  const tile = Array.from(c.querySelectorAll(".kpi")).find((k) => k.querySelector(".lbl")?.textContent === label);
+  return { v: tile?.querySelector(".v")?.textContent, d: tile?.querySelector(".d")?.textContent };
+};
+const listRows = (c: HTMLElement) => Array.from(c.querySelectorAll("table.tbl tbody tr"))
+  .map((tr) => Array.from(tr.querySelectorAll("td")).map((td) => td.textContent));
+const kv = (c: HTMLElement, key: string) => {
+  const dt = Array.from(c.querySelectorAll("dl.kv dt")).find((d) => d.textContent === key);
+  return dt?.nextElementSibling?.textContent;
+};
+
+beforeEach(() => {
+  seed();
+  installRbac("sales_engineer");
+  vi.stubGlobal("confirm", () => true);
+});
+afterEach(() => { window.location.hash = ""; });
+
+describe("GET /api/sales/opportunities names the customer and the owner", () => {
+  it("returns this tenant's rows only, each with customer_name and owner_name", async () => {
+    const { status, body } = await callGet();
+    expect(status).toBe(200);
+    const byId = new Map(body.opportunities.map((o: any) => [o.id, o]));
+    expect([...byId.keys()].sort()).toEqual(["o-1", "o-2", "o-3", "o-4", "o-5", "o-6"]);
+    expect(byId.get("o-1")).toMatchObject({ customer_name: "Fixture Axle Works", owner_name: "Ravi Fixture", amount_inr: 200000, probability: 50 });
+    // No display name in the metadata: the email is the name.
+    expect(byId.get("o-3")).toMatchObject({ owner_name: "meera@fixture.test" });
+    expect(byId.get("o-2")).toMatchObject({ customer_name: "Fixture Press Shop", owner_id: null, owner_name: null });
   });
 
-  it("keeps the choice in the hash, so it survives a refresh and can be linked", () => {
-    // Matches the ?id= convention already on this screen.
-    expect(src).toMatch(/window\.location\.hash\.includes\("view=list"\)/);
-    expect(src).toMatch(/\?view=list/);
+  it("does not name a customer that belongs to another tenant", async () => {
+    const { body } = await callGet();
+    const o6 = body.opportunities.find((o: any) => o.id === "o-6");
+    expect(o6.customer_id).toBe("c-foreign");
+    expect(o6.customer_name).toBeNull();
   });
 
-  it("hides the probability sort in list view", () => {
-    // It re-sorts WITHIN each column — a board affordance. In the list every
-    // column sorts by its header, so both would fight over one ordering.
-    expect(src).toMatch(/view === "board" && \(\s*<Btn sm kind=\{sortByProb/);
+  it("still returns the list when the customer lookup fails", async () => {
+    DB.failRead.customers = { message: "statement timeout" };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { status, body } = await callGet();
+    warn.mockRestore();
+    expect(status).toBe(200);
+    expect(body.opportunities).toHaveLength(6);
+    expect(body.opportunities.every((o: any) => o.customer_name === null)).toBe(true);
   });
 });
 
-describe("what the list adds over the board", () => {
-  it("shows weighted value, which the board never computed per row", () => {
-    // The board shows a stage weight in its header; the list applies it, which
-    // is what makes rows comparable across stages.
-    expect(src).toMatch(/\{ key: "weighted", label: "Weighted"/);
-    expect(src).toMatch(/\(Number\(r\.value\) \|\| 0\) \* w/);
-  });
-
-  it("sorts stage by PIPELINE ORDER, not alphabetically", () => {
-    // Alphabetical stage order is meaningless; pipeline order is the question.
-    expect(src).toMatch(/OPP_STAGES\.findIndex\(\(s\) => s\.id === r\.stage\)/);
-  });
-
-  it("sorts an unscored probability apart from a zero one", () => {
-    // Not the same thing. Sorting them together hides exactly the rows that
-    // need attention.
-    expect(src).toMatch(/Number\.isFinite\(Number\(r\.ai_probability\)\) \? Number\(r\.ai_probability\) : -1/);
-  });
-
-  it("starts a newly-chosen column descending", () => {
-    // Every column here is one where biggest / newest / furthest along is the
-    // question being asked.
-    expect(src).toMatch(/else \{ setSortKey\(k\); setSortDir\("desc"\); \}/);
+describe("the KPI tiles count the real stages", () => {
+  it("counts open, early, quoting, negotiation, won and lost from the data", async () => {
+    const { container } = await mount("#/opps");
+    // Open: RFQ, QUALIFICATION, NEGOTIATION_REVIEW, INTERNAL_PROPOSAL.
+    expect(kpi(container, "Open")).toEqual({ v: "4", d: "₹ 14.0 L open value" });
+    // 0.45 x 2L + 0.05 x 1L + 0.85 x 10L + 0.55 x 1L = 10L. The won deal is not pipeline.
+    expect(kpi(container, "Weighted ₹").v).toBe("₹ 10.0 L");
+    expect(kpi(container, "Early stage").v).toBe("1");
+    expect(kpi(container, "Quoting")).toEqual({ v: "2", d: "1 in negotiation" });
+    expect(kpi(container, "Won")).toEqual({ v: "₹ 250k", d: "1 won · 1 lost" });
   });
 });
 
-describe("it behaves like a table people can use", () => {
-  it("scrolls inside itself rather than making the page scroll sideways", () => {
-    expect(src).toMatch(/overflowX: "auto"/);
+describe("the list view", () => {
+  it("shows the name, customer, value, weighted value and owner the API sent", async () => {
+    const { container } = await mount("#/opps?view=list");
+    const rows = listRows(container);
+    const line4 = rows.find((r) => r[0] === "Line 4 retrofit");
+    expect(line4?.slice(0, 5)).toEqual(["Line 4 retrofit", "Fixture Axle Works", "rfq", "₹ 200k", "₹ 90k"]);
+    expect(line4?.[6]).toBe("Ravi Fixture");
+    const spares = rows.find((r) => r[0] === "Weld gun spares");
+    expect(spares?.[1]).toBe("Fixture Press Shop");
+    expect(spares?.[6]).toBe("unassigned");
+    // The foreign customer gets no name; its id prefix is still shown.
+    expect(rows.find((r) => r[0] === "Fixture rework")?.[1]).toBe("c-foreig");
   });
 
-  it("lines the figures up", () => {
-    expect(src).toMatch(/fontVariantNumeric: "tabular-nums"/);
+  it("sorts by value, biggest first, and by stage in pipeline order", async () => {
+    const { container, getByTitle } = await mount("#/opps?view=list");
+    expect(listRows(container).map((r) => r[0]).slice(0, 4))
+      .toEqual(["Press line cell", "Old tender", "Robot dress packs", "Line 4 retrofit"]);
+    // A newly chosen column starts descending: furthest along first.
+    fireEvent.click(getByTitle("Sort by stage"));
+    expect(listRows(container).map((r) => r[2]))
+      .toEqual(["closed lost", "closed won", "negotiation review", "internal proposal", "rfq", "qualification"]);
+    fireEvent.click(getByTitle("Sort by stage"));
+    expect(listRows(container)[0][2]).toBe("qualification");
   });
 
-  it("announces the sort to a screen reader, not only with an arrow", () => {
-    expect(src).toMatch(/aria-sort=\{active \? \(sortDir === "desc" \? "descending" : "ascending"\) : "none"\}/);
-  });
-
-  it("opens a row by keyboard as well as click", () => {
-    const list = src.slice(src.indexOf("const OppList"));
-    expect(list).toMatch(/onKeyDown/);
-    expect(list).toMatch(/ev\.key === "Enter" \|\| ev\.key === " "/);
-    expect(list).toMatch(/tabIndex=\{0\}/);
-  });
-
-  it("goes to the same place a card does", () => {
-    // One opportunity, one destination — a list that opened something else
-    // would be a second, quietly different app.
-    const list = src.slice(src.indexOf("const OppList"));
-    expect(list).toMatch(/#\/opps\?id=\$\{r\.id\}/);
+  it("keeps the view in the hash and opens a row in the detail card", async () => {
+    const { container } = await mount("#/opps?view=list");
+    const tr = Array.from(container.querySelectorAll("table.tbl tbody tr")).find((r) => r.textContent?.includes("Line 4 retrofit"))!;
+    fireEvent.keyDown(tr, { key: "Enter" });
+    expect(window.location.hash).toBe("#/opps?id=o-1");
   });
 });
 
-describe("the board is untouched", () => {
-  it("still renders when the view is not list", () => {
-    expect(src).toMatch(/<div className="kanban" role="list" aria-label="Opportunity pipeline">/);
+describe("the board", () => {
+  it("puts each card in its stage column with the customer, value and owner", async () => {
+    const { container } = await mount("#/opps");
+    const card = Array.from(container.querySelectorAll(".kard")).find((k) => k.querySelector(".ti")?.textContent === "Press line cell")!;
+    expect(card.querySelector(".meta")?.textContent).toBe("Fixture Axle Works · ₹ 10.0 L · meera@fixture.test");
+    const col = card.closest(".col");
+    expect(col?.querySelector(".col-h .t")?.textContent).toBe("Negotiation review");
+  });
+});
+
+describe("the detail card", () => {
+  it("shows the operator probability once, as a percent, and the close date", async () => {
+    const { container } = await mount("#/opps?id=o-1");
+    await waitFor(() => expect(kv(container, "Name")).toBe("Line 4 retrofit"));
+    expect(kv(container, "Customer")).toBe("Fixture Axle Works");
+    expect(kv(container, "Owner")).toBe("Ravi Fixture");
+    expect(kv(container, "Value")).toBe("₹ 200k");
+    expect(kv(container, "Probability (operator)")).toBe("50%");
+    expect(kv(container, "Expected close")).toBe("2026-11-30");
   });
 
-  it("still shows the empty state before either view", () => {
-    // The "no opportunities yet" card must not be reachable only from one view.
-    const emptyIdx = src.indexOf("No opportunities yet");
-    const listIdx = src.indexOf('view === "list" ? (');
-    expect(emptyIdx).toBeGreaterThan(-1);
-    expect(emptyIdx).toBeLessThan(listIdx);
+  it("says an unowned opportunity is unassigned", async () => {
+    const { container } = await mount("#/opps?id=o-2");
+    await waitFor(() => expect(kv(container, "Name")).toBe("Weld gun spares"));
+    expect(kv(container, "Owner")).toBe("unassigned");
+    expect(kv(container, "Probability (operator)")).toBe("20%");
+    expect(kv(container, "Expected close")).toBe("not set");
   });
 });

@@ -46,6 +46,19 @@ export const CRON_EXPECTED_MAX_AGE_MS = {
   // up as a stale "cron/tick", so the signal is not lost either way.
   "logistics/monitor_daily": 30 * 60 * 60 * 1000,
   "logistics-monitor-tick":  30 * 60 * 60 * 1000,
+  // The inventory planner runs from cron/daily on ONE UTC weekday
+  // (INVENTORY_PLANNING_DAY), so both of its rows are written once a week:
+  //
+  //   inventory/planning_weekly   the daily group's registration.
+  //   inventory-planning-weekly   self-recorded INSIDE the handler.
+  //
+  // On the 10-minute default either row would read stale for all but ten
+  // minutes of every week. 8 days is the 7-day cadence plus a day of grace, so
+  // a single missed week still shows. This does not on its own take
+  // /api/_healthz off 503: the once-a-day rows cron/daily writes (fx/cron,
+  // quotes/expire and the rest) are still on the 10-minute default.
+  "inventory/planning_weekly": 8 * 24 * 60 * 60 * 1000,
+  "inventory-planning-weekly": 8 * 24 * 60 * 60 * 1000,
   default:                10 * 60 * 1000,
 };
 

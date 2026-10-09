@@ -864,6 +864,35 @@
       apiFetch("/api/orders/three_way_summary" + (limit ? "?limit=" + encodeURIComponent(limit) : "")),
     threeWayReport: async (orderId) =>
       apiFetch("/api/orders/three_way_report?orderId=" + encodeURIComponent(orderId)),
+    // The sales-order register: one row per received PO, server-paginated.
+    // params: { page, page_size, from, to, customer, channel, status,
+    // has_flags }. Empty values are dropped so they do not filter.
+    register: async (params) => {
+      const p = Object.fromEntries(Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== null && v !== ""));
+      const qs = new URLSearchParams(p).toString();
+      return apiFetch("/api/orders/register" + (qs ? "?" + qs : ""));
+    },
+    // The same filters as register(), as an .xlsx (or .csv) Blob.
+    registerExportBlob: async (params) => {
+      const cfg = readConfig();
+      if (!cfg.url) throw new Error("Backend URL not configured");
+      const session = readSession();
+      const p = Object.fromEntries(Object.entries(params || {}).filter(([k, v]) => k !== "page" && k !== "page_size" && v !== undefined && v !== null && v !== ""));
+      const qs = new URLSearchParams({ ...p, format: "xlsx" }).toString();
+      const url = cfg.url.replace(/\/+$/, "") + "/api/orders/register?" + qs;
+      const headers = {};
+      if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
+      if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
+      const resp = await fetch(url, { headers });
+      if (!resp.ok) {
+        let msg = "Register export " + resp.status;
+        try { const j = await resp.json(); msg = j?.error?.message || msg; } catch { /* binary/empty */ }
+        throw new Error(msg);
+      }
+      const disposition = resp.headers.get("Content-Disposition") || "";
+      const m = disposition.match(/filename="?([^"]+)"?/);
+      return { blob: await resp.blob(), filename: m ? m[1] : "SO_register.xlsx" };
+    },
     attachedQuotes: async (orderId) => apiFetch("/api/orders/quotes?order_id=" + encodeURIComponent(orderId)),
     // One attached quote in full: a signed URL to read the PDF, plus the
     // extracted lines with rates converted back to PERCENTAGES, because the

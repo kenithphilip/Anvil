@@ -178,6 +178,7 @@ const WiredSOList = () => {
             const p = AnvilBackend?.orders?.list?.({ limit: 200, slim: 1 });
             if (p) p.then((d: any) => setOrders({ rows: toRows(d), loading: false, error: null }));
           }}>{Icon.cycle} refresh</Btn>
+          <Btn sm kind="ghost" onClick={() => window.location.hash = "#/so?view=register"} title="Every received PO with its channel, extraction, reconciliation flags, status and ERP sales order">Register</Btn>
           <Btn sm kind="ghost" onClick={() => window.location.hash = "#/so?view=pending"} title="Per-customer pending order tracker: balance, ready date, work order / import status">Pending by customer</Btn>
           <Btn sm kind="primary" onClick={() => window.location.hash = "#/so?new=1"}>{Icon.plus} New from PO</Btn>
         </>}

@@ -67,7 +67,7 @@ import {
   __consts as marketplaceConsts,
 } from "./marketplace.js";
 import { applyOverrides, loadOverrides, recordOverrideUsage } from "./overrides.js";
-import { computeGstinPin } from "./grounding.js";
+import { computeGstinPin, applyGstinPin } from "./grounding.js";
 import { validateGstin, gstinStateCode } from "../gstin.js";
 import { findByGstin, findCustomersByPan } from "../customer-canonicalizer.js";
 import { voteAcrossAdapters } from "./voter.js";
@@ -1279,21 +1279,9 @@ export const runExtractionPipeline = async (params) => {
         stateFromGstin: gv.ok ? gstinStateCode(gv.normalized) : null,
         panCandidates,
       });
-      // computeGstinPin only emits patch keys for fields it treats as blank
-      // (null / empty / whitespace), so apply directly. Re-guarding here with
-      // a stricter non-trim check would leave a whitespace value in place yet
-      // still floor its confidence below.
-      for (const [k, v] of Object.entries(pin.patch)) {
-        out.normalized.customer[k] = v;
-      }
-      out.confidences = { ...(out.confidences || {}) };
-      for (const [fp, floor] of Object.entries(pin.confidenceFloors)) {
-        if (Number(out.confidences[fp] || 0) < floor) out.confidences[fp] = floor;
-      }
-      for (const [fp, cap] of Object.entries(pin.confidenceCaps)) {
-        const cur = out.confidences[fp] == null ? 1 : Number(out.confidences[fp]);
-        if (cur > cap) out.confidences[fp] = cap;
-      }
+      // Fills the blanks, records where each non-document value came from
+      // (normalized._provenance), and applies the confidence floors and caps.
+      applyGstinPin(out, pin);
       if (pin.matched_customer_id || pin.flags.length) {
         await recordRunEvent("docai_gstin_grounding", {
           matched_customer_id: pin.matched_customer_id,

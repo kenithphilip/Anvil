@@ -14,6 +14,10 @@ import { AnvilBackend } from "../lib/api";
 // Only `customer_id` is required server-side; everything else has a
 // sensible default. Validity prefills from the customer's
 // default_quote_validity_days when present.
+//
+// The quote can name the opportunity it is for (quotes.opportunity_id).
+// The picker lists the chosen customer's open opportunities. Opened from
+// an opportunity, the modal starts with that customer and opportunity.
 
 interface Customer {
   id: string;
@@ -23,11 +27,17 @@ interface Customer {
   currency?: string | null;
 }
 
+// Stages after which an opportunity takes no new quote by default.
+const CLOSED_STAGES = new Set(["CLOSE_WON", "CLOSE_LOST", "REGRETTED"]);
+
 export const NewQuoteModal: React.FC<{
   open: boolean;
   onClose: () => void;
   onCreated: (quote: any) => void;
-}> = ({ open, onClose, onCreated }) => {
+  // Opened from an opportunity: start with its customer and itself.
+  initialCustomerId?: string | null;
+  initialOpportunityId?: string | null;
+}> = ({ open, onClose, onCreated, initialCustomerId, initialOpportunityId }) => {
   const [customers, setCustomers] = useState<Customer[] | null>(null);
   const [customerId, setCustomerId] = useState("");
   const [query, setQuery] = useState("");
@@ -37,30 +47,77 @@ export const NewQuoteModal: React.FC<{
   // customer is picked; defaults to the customer's primary contact.
   const [contacts, setContacts] = useState<any[] | null>(null);
   const [contactId, setContactId] = useState("");
+  // The customer's open opportunities, loaded after a customer is picked.
+  const [opps, setOpps] = useState<any[] | null>(null);
+  const [oppId, setOppId] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // A customer's own currency and validity, when it has them.
+  const adoptCustomerDefaults = (list: Customer[] | null, id: string) => {
+    const c: any = (list || []).find((x) => x.id === id);
+    if (c?.default_quote_validity_days) setValidityDays(Number(c.default_quote_validity_days));
+    if (c?.currency) setCurrency(String(c.currency).toUpperCase());
+  };
 
   // Load the customer list once when the modal opens. Reset the form
   // each time it reopens so a prior selection does not leak in.
   useEffect(() => {
     if (!open) return;
-    setCustomerId("");
+    setCustomerId(initialCustomerId || "");
     setQuery("");
     setCurrency("INR");
     setValidityDays(30);
     setContacts(null);
     setContactId("");
+    setOpps(null);
+    setOppId(initialOpportunityId || "");
     setErr(null);
     setCustomers(null);
-    Promise.resolve(AnvilBackend?.customers?.list?.())
-      .then((data: any) => setCustomers(Array.isArray(data) ? data : data?.customers || []))
-      .catch((e: any) => setErr(e?.message || String(e)));
     // Seed validity from the tenant default (Admin > Settings) before any
     // customer is picked. A customer's own default overrides this in pick().
-    Promise.resolve(AnvilBackend?.admin?.quoteSettings?.())
+    const tenantDefault = Promise.resolve(AnvilBackend?.admin?.quoteSettings?.())
       .then((r: any) => { const v = r?.quote_default_validity_days; if (v != null) setValidityDays(Number(v)); })
       .catch(() => { /* keep the 30-day default */ });
-  }, [open]);
+    Promise.resolve(AnvilBackend?.customers?.list?.())
+      .then(async (data: any) => {
+        const list = Array.isArray(data) ? data : data?.customers || [];
+        setCustomers(list);
+        // Opened for a known customer: its defaults land after the tenant
+        // default, so the customer's own value wins, as it does in pick().
+        if (initialCustomerId) { await tenantDefault; adoptCustomerDefaults(list, initialCustomerId); }
+      })
+      .catch((e: any) => setErr(e?.message || String(e)));
+  }, [open, initialCustomerId, initialOpportunityId]);
+
+  // When a customer is picked, list its open opportunities. The one the
+  // modal was opened from stays listed whatever its stage. A single open
+  // opportunity is preselected; the operator can still pick "No opportunity".
+  useEffect(() => {
+    setOpps(null);
+    if (!open || !customerId) return;
+    let cancelled = false;
+    (async () => {
+      let list: any[];
+      try {
+        const resp: any = await AnvilBackend?.sales?.listOpportunities?.({ customer_id: customerId });
+        const all = Array.isArray(resp) ? resp : resp?.opportunities || [];
+        list = all.filter((o: any) => o?.id
+          && (!o.customer_id || String(o.customer_id) === String(customerId))
+          && (!CLOSED_STAGES.has(o.stage) || o.id === initialOpportunityId));
+      } catch {
+        // Keep the opportunity the modal was opened from; the server checks it.
+        list = initialOpportunityId && customerId === initialCustomerId ? [{ id: initialOpportunityId }] : [];
+      }
+      if (cancelled) return;
+      setOpps(list);
+      setOppId((cur) => {
+        if (cur && list.some((o) => o.id === cur)) return cur;
+        return list.length === 1 ? list[0].id : "";
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [open, customerId, initialCustomerId, initialOpportunityId]);
 
   // When a customer is picked, fetch that customer's contacts and
   // default the picker to the primary contact (if any). Best-effort:
@@ -96,9 +153,7 @@ export const NewQuoteModal: React.FC<{
   // preview just keeps the modal honest.
   const pick = (id: string) => {
     setCustomerId(id);
-    const c: any = (customers || []).find((x) => x.id === id);
-    if (c?.default_quote_validity_days) setValidityDays(Number(c.default_quote_validity_days));
-    if (c?.currency) setCurrency(String(c.currency).toUpperCase());
+    adoptCustomerDefaults(customers, id);
   };
 
   const create = async () => {
@@ -109,6 +164,7 @@ export const NewQuoteModal: React.FC<{
       const resp: any = await AnvilBackend?.quotes?.create?.({
         customer_id: customerId,
         customer_contact_id: contactId || null,
+        opportunity_id: oppId || null,
         currency: currency || "INR",
         validity_days: Number(validityDays) || 30,
       });
@@ -172,6 +228,27 @@ export const NewQuoteModal: React.FC<{
               {(contacts || []).map((c: any) => (
                 <option key={c.id} value={c.id}>
                   {(c.name || c.email || c.id.slice(0, 8)) + (c.is_primary ? " [primary]" : "") + (c.role ? " - " + c.role : "")}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {customerId && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <label className="mono-sm" style={{ color: "var(--ink-3)" }}>Opportunity</label>
+            <select
+              className="select"
+              aria-label="Opportunity"
+              value={oppId}
+              onChange={(e) => setOppId(e.target.value)}
+            >
+              <option value="">
+                {opps == null ? "Loading opportunities..." : opps.length === 0 ? "No open opportunities" : "No opportunity"}
+              </option>
+              {(opps || []).map((o: any) => (
+                <option key={o.id} value={o.id}>
+                  {(o.opportunity_name || o.name || o.id.slice(0, 8)) + (o.stage ? " - " + o.stage : "")}
                 </option>
               ))}
             </select>

@@ -24,6 +24,7 @@ import { recordAudit } from "../_lib/audit.js";
 import { belowFloorLines } from "../_lib/quote-margin.js";
 import { tenantSettings } from "../_lib/stripe-client.js";
 import { computeTotals, generateQuoteNumber } from "./_lib/quote-build.js";
+import { verifyOpportunity } from "../_lib/order-opportunity.js";
 
 const VALID_STATUSES = new Set([
   "DRAFT", "PENDING_INTERNAL_APPROVAL", "SENT", "ACCEPTED",
@@ -187,6 +188,20 @@ export default async function handler(req, res) {
       requirePermission(ctx, "write");
       const body = await readBody(req);
       if (!body?.customer_id) return json(res, 400, { error: { message: "customer_id required" } });
+      // The opportunity this quote is for. The FK accepts any tenant's id, so
+      // it is checked here: it must be this tenant's, and this customer's.
+      if (body.opportunity_id) {
+        const chk = await verifyOpportunity(svc, ctx.tenantId, body.opportunity_id, body.customer_id);
+        if (chk.reason === "lookup_failed") throw new Error("opportunities read: " + chk.error);
+        if (!chk.ok) {
+          return json(res, 400, { error: {
+            code: "INVALID_OPPORTUNITY",
+            message: chk.reason === "customer_mismatch"
+              ? "That opportunity belongs to another customer."
+              : "Opportunity not found.",
+          } });
+        }
+      }
 
       // Fall back currency + validity_days from the customer's defaults
       // when the caller omitted them. Track which fields were filled

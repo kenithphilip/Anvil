@@ -1,14 +1,20 @@
 import React, { useEffect, useState } from "react";
-import { Banner, Chip } from "../lib/primitives";
+import { Banner, Btn, Chip } from "../lib/primitives";
 import { ageLabel, fmtINRShort } from "../lib/helpers";
 import { AnvilBackend } from "../lib/api";
+import { canWrite } from "../lib/rbac";
+import { NewQuoteModal } from "./NewQuoteModal";
 
-// Lists every quote that points at a given opportunity. Read-only --
-// click navigates to the Quotes screen (no per-quote deep-link exists
-// today; future PR can add URL-state to the quotes screen).
+// Lists every quote that points at a given opportunity. Click navigates
+// to the Quotes screen (no per-quote deep-link exists today; future PR
+// can add URL-state to the quotes screen).
 //
 // Backed by quotes.list({ opportunity_id }) which now filters
 // server-side (PR 3B).
+//
+// "New quote" opens NewQuoteModal with this opportunity and its customer
+// already chosen, then drops the operator into the new draft's lines, the
+// same as the Quotes screen does.
 
 const STATUS_TONE: Record<string, "info" | "good" | "bad" | "warn" | "ghost"> = {
   DRAFT: "info",
@@ -21,9 +27,10 @@ const STATUS_TONE: Record<string, "info" | "good" | "bad" | "warn" | "ghost"> = 
   CANCELLED: "ghost",
 };
 
-export const OpportunityQuotesPanel: React.FC<{ opportunityId: string }> = ({ opportunityId }) => {
+export const OpportunityQuotesPanel: React.FC<{ opportunityId: string; customerId?: string | null }> = ({ opportunityId, customerId }) => {
   const [quotes, setQuotes] = useState<any[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     if (!opportunityId) return;
@@ -36,8 +43,12 @@ export const OpportunityQuotesPanel: React.FC<{ opportunityId: string }> = ({ op
 
   return (
     <div>
-      <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 6 }}>
-        Quotes {quotes ? `(${quotes.length})` : ""}
+      <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 6, display: "flex", alignItems: "center", gap: 8 }}>
+        <span>Quotes {quotes ? `(${quotes.length})` : ""}</span>
+        <span style={{ flex: 1 }} />
+        {customerId && canWrite("quotes") && (
+          <Btn sm kind="ghost" onClick={() => setCreating(true)} title="Create a draft quote for this opportunity">New quote</Btn>
+        )}
       </div>
       {err && <Banner kind="bad" title="Could not load quotes">{err}</Banner>}
       {quotes == null ? (
@@ -63,6 +74,17 @@ export const OpportunityQuotesPanel: React.FC<{ opportunityId: string }> = ({ op
           </tbody>
         </table>
       )}
+      <NewQuoteModal
+        open={creating}
+        onClose={() => setCreating(false)}
+        initialCustomerId={customerId || null}
+        initialOpportunityId={opportunityId}
+        onCreated={(quote) => {
+          setCreating(false);
+          // Straight into the new draft's lines, as the Quotes screen does.
+          window.location.hash = `#/quotes?id=${encodeURIComponent(quote.id)}&tab=lines`;
+        }}
+      />
     </div>
   );
 };

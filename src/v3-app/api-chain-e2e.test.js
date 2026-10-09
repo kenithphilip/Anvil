@@ -171,6 +171,8 @@ describe("sales chain E2E", () => {
     expect(order.status).toBe("DRAFT");
     expect(order.result.salesOrder.lineItems).toHaveLength(2);
     expect(r.parsed.quote.status).toBe("CONVERTED");
+    // The order carries the opportunity back, so win/loss can attribute it.
+    expect(order.opportunity_id).toBe(oppId);
     const orderId = order.id;
 
     // 5. SO DRAFT → PENDING_REVIEW

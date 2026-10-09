@@ -19,6 +19,7 @@ import { reconcilePoAgainstQuotes, comparePaymentTerms, compareIncoterms, parseI
 import { modBomFinding, provisionalParts, MOD_BOM_FINDING_CODE } from "./mod-parts.js";
 import { mergeBlockersForward, isUnresolvedBlocker } from "./blocking-findings.js";
 import { computeOrderPayloadHash } from "./payload-hash.js";
+import { linkOrderOpportunityFromQuotes } from "./order-opportunity.js";
 
 // Quotes in these states can't have priced this PO.
 // DRAFT is excluded as well as CANCELLED.
@@ -63,6 +64,7 @@ const reportOf = (orderId, recon) => ({
 //   superseded   opts.guardConcurrent, and a newer write landed meanwhile
 //   skipped      opts.statuses excludes the order's status
 //   not_found / no_customer / no_lines
+// A reconciled result also carries opportunity_link (order-opportunity.js).
 // Throws on a database error. Every query is scoped to ctx.tenantId, and
 // there is no query at all without one.
 export const reconcileOrderQuotes = async (svc, ctx, orderId, opts = {}) => {
@@ -322,13 +324,18 @@ export const reconcileOrderQuotes = async (svc, ctx, orderId, opts = {}) => {
   if (upd.error) throw new Error("orders update: " + upd.error.message);
   if (opts.guardConcurrent && Array.isArray(upd.data) && upd.data.length === 0) return { status: "superseded" };
 
+  // The opportunity the quotes that priced this PO imply. Written once, only
+  // while the order has none, and never on ambiguity. See order-opportunity.js.
+  const opportunityLink = await linkOrderOpportunityFromQuotes(
+    svc, ctx, orderId, rec.quotes_used.map((q) => q.quote_id), { source: "reconcile" });
+
   await recordAudit(ctx, {
     action: "order_reconcile_quotes", objectType: "order", objectId: orderId,
     detail: (trigger !== "manual" ? "auto (" + trigger + "): " : "")
       + rec.summary.matched + "/" + rec.summary.total + " matched, " + rec.summary.price_mismatch + " price-mismatch, " + rec.summary.unmatched + " unmatched across " + rec.quotes_used.length + " quote(s)" + (paymentTerms.verdict === "mismatch" ? "; PAYMENT-TERMS MISMATCH (PO " + paymentTerms.po_terms + " vs quote " + paymentTerms.quote_terms + ")" : ""),
   });
 
-  return { status: "reconciled", report: reportOf(orderId, quoteReconciliation) };
+  return { status: "reconciled", report: reportOf(orderId, quoteReconciliation), opportunity_link: opportunityLink };
 };
 
 // The server trigger. Call it AFTER the order write has succeeded.

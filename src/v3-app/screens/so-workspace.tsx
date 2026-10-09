@@ -6,6 +6,7 @@ import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 import { BusyAction, busyLabel, busyVerb } from "../lib/busy-actions";
 import { QuotesStrip } from "../components/QuotesStrip";
+import { OpportunityWonOffer } from "../components/OpportunityWonOffer";
 import { ThreeWayPanel } from "../components/ThreeWayPanel";
 import { InvoicePoCheck } from "../components/InvoicePoCheck";
 import { DeliveryChallanUpload } from "../components/DeliveryChallanUpload";
@@ -2154,6 +2155,10 @@ const WiredSOWorkspace = () => {
           </Banner>
         );
       })()}
+
+      {/* A PO linked to an open opportunity: propose the win (D15). It
+          never moves the stage by itself. */}
+      <OpportunityWonOffer order={o} />
 
       {/* Attaching a quote is how the operator FEEDS the comparison below, so
           it sits directly above it rather than on a separate screen. Several

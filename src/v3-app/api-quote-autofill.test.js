@@ -42,7 +42,9 @@ const resolver = (table) => (state, mode) => {
     return { data: h.customer, error: null };
   }
   if (table === "opportunities") {
-    return { data: h.opportunity, error: null };
+    // A real opportunity row carries its customer. The POST checks that it
+    // is the quote's customer before it links the two.
+    return { data: h.opportunity ? { id: "OPP-1", customer_id: "c-1", ...h.opportunity } : null, error: null };
   }
   if (table === "leads") {
     return { data: h.lead, error: null };

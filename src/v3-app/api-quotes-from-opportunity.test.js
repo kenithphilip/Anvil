@@ -23,7 +23,8 @@ vi.mock("../api/_lib/supabase.js", () => ({
         like() { return this; },
         order() { return Promise.resolve({ data: h.oli, error: null }); },
         maybeSingle() {
-          if (this._table === "opportunities") return Promise.resolve({ data: { related_lead_id: null }, error: null });
+          // A real opportunity row carries its customer. The POST checks it.
+          if (this._table === "opportunities") return Promise.resolve({ data: { id: "opp-1", customer_id: "c-1", related_lead_id: null }, error: null });
           return Promise.resolve({ data: null, error: null });
         },
         single() {

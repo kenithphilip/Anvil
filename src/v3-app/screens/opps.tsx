@@ -422,7 +422,7 @@ const WiredOpportunities = () => {
             )}
             <div className="divider" />
             <div style={{ marginTop: 10 }}>
-              <OpportunityQuotesPanel opportunityId={selected.id} />
+              <OpportunityQuotesPanel opportunityId={selected.id} customerId={selected.customer_id} />
             </div>
             <div style={{ marginTop: 10 }}>
               <OpportunityQuoteRevisions opportunityId={selected.id} customerId={selected.customer_id} opportunityAmount={selected.amount_inr ?? selected.value} />

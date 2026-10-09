@@ -33,6 +33,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { ingestQuotes, quoteHeadFromExtract } from "../_lib/quote-ingest.js";
 import { parseQuoteRef, findSelfIssuedQuote } from "../_lib/quote-provenance.js";
+import { linkOrderOpportunityFromQuotes } from "../_lib/order-opportunity.js";
 
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
@@ -118,6 +119,9 @@ export default async function handler(req, res) {
             quote_id: self.quote.id, quote_number: self.quote.quote_number,
           },
         });
+        // The order takes this quote's opportunity, once, if it has none.
+        const opportunityLink = await linkOrderOpportunityFromQuotes(
+          svc, ctx, orderId, [self.quote.id], { source: "attach_quote" });
         // A DRAFT quote is excluded from reconciliation by design, so saying
         // "linked" without saying that would promise a comparison that never
         // runs.
@@ -125,6 +129,7 @@ export default async function handler(req, res) {
         return json(res, 200, {
           attached: true, ingested: false, needs_extraction: false,
           matched_authored: true,
+          opportunity_link: opportunityLink,
           quote_id: self.quote.id, quote_number: self.quote.quote_number,
           reason: draft
             ? `That is quote ${self.quote.quote_number}, authored in Anvil — linked as-is. It is still a draft, so send it to include it in the quote check.`
@@ -201,10 +206,19 @@ export default async function handler(req, res) {
       },
     });
 
+    // The quote rows this document now stands for: the one it wrote, or ours
+    // when the number was one we authored. The order takes their opportunity,
+    // once, if it has none.
+    const attachedQuoteIds = (report.reports || [])
+      .filter((r) => r && r.quote_id && !r.error).map((r) => r.quote_id);
+    const opportunityLink = await linkOrderOpportunityFromQuotes(
+      svc, ctx, orderId, attachedQuoteIds, { source: "attach_quote" });
+
     return json(res, 200, {
       attached: true,
       ingested: ingestedForReal,
       matched_authored: authoredMatch,
+      opportunity_link: opportunityLink,
       reason: authoredMatch
         ? `That quote was authored in Anvil — linked as-is, and its existing lines were kept.`
         : (!ingestedForReal

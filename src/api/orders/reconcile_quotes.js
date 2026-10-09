@@ -48,6 +48,7 @@ export default async function handler(req, res) {
     return json(res, 200, {
       ...out.report,
       ...(out.status === "unchanged" ? { skipped: "unchanged" } : {}),
+      ...(out.opportunity_link ? { opportunity_link: out.opportunity_link } : {}),
     });
   } catch (err) {
     sendError(res, err);

@@ -10,7 +10,9 @@
 //   2. Builds the orders row with status=DRAFT, customer_id and
 //      currency from the quote, lineItems mapped into the
 //      orders.result.salesOrder shape.
-//   3. Sets orders.quote_id (FK back to the source quote).
+//   3. Sets orders.quote_id (FK back to the source quote), and
+//      orders.opportunity_id from the quote when that opportunity is
+//      this tenant's and this customer's.
 //   4. Flips the quote to CONVERTED with converted_order_id +
 //      converted_at populated.
 //
@@ -23,6 +25,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
+import { verifyOpportunity, recordLinkSkipped } from "../_lib/order-opportunity.js";
 
 const VALID_ORDER_MODES = new Set(["SPARES", "SPARES_ASSEMBLY", "PROJECT_FOR", "PROJECT_HSS", "INTERNAL"]);
 
@@ -143,9 +146,22 @@ export default async function handler(req, res) {
       ? buildSalesOrderFromLines(quote, lineRows)
       : buildSalesOrderFromJsonb(quote);
 
+    // The order inherits the quote's opportunity, so win/loss and the
+    // shipment tracker can attribute it. Only when the opportunity is this
+    // tenant's and this customer's. Otherwise the order is still created,
+    // with no opportunity, and the reason is recorded below.
+    let opportunityLink = { status: "none" };
+    if (quote.opportunity_id) {
+      const chk = await verifyOpportunity(svc, ctx.tenantId, quote.opportunity_id, quote.customer_id);
+      opportunityLink = chk.ok
+        ? { status: "linked", opportunity_id: quote.opportunity_id }
+        : { status: "refused", reason: chk.reason, opportunity_id: quote.opportunity_id };
+    }
+
     const insOrder = await svc.from("orders").insert({
       tenant_id: ctx.tenantId,
       customer_id: quote.customer_id || null,
+      opportunity_id: opportunityLink.status === "linked" ? quote.opportunity_id : null,
       status: "DRAFT",
       quote_id: quote.id,
       quote_number: quote.quote_number,
@@ -163,6 +179,11 @@ export default async function handler(req, res) {
     if (insOrder.error) throw new Error("orders insert: " + insOrder.error.message);
 
     const newOrder = insOrder.data;
+    if (opportunityLink.status === "refused") {
+      await recordLinkSkipped(ctx, newOrder.id, "quote_convert", opportunityLink.reason, {
+        opportunity_id: quote.opportunity_id, quote_ids: [quote.id],
+      });
+    }
 
     // Flip the quote to CONVERTED. Use the lifecycle PATCH path
     // shape so any future change to allowed_transitions catches
@@ -195,6 +216,7 @@ export default async function handler(req, res) {
       ok: true,
       order: newOrder,
       quote: upd.data,
+      opportunity_link: opportunityLink,
     });
   } catch (err) { sendError(res, err); }
 }

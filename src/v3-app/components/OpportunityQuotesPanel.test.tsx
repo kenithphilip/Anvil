@@ -4,7 +4,7 @@
 
 import React from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { render, waitFor, fireEvent } from "@testing-library/react";
 import { installBackend } from "../test-utils";
 import { OpportunityQuotesPanel } from "./OpportunityQuotesPanel";
 
@@ -32,6 +32,40 @@ describe("OpportunityQuotesPanel", () => {
     expect(getByText("Q-202605-0002")).toBeTruthy();
     expect(getByText("DRAFT")).toBeTruthy();
     expect(getByText("SENT")).toBeTruthy();
+  });
+
+  it("New quote opens the modal with this opportunity and its customer, and saves both", async () => {
+    const createSpy = vi.fn(async (payload: any) => ({ quote: { id: "q-new", quote_number: "Q-202610-0001", ...payload } }));
+    installBackend({
+      quotes: { list: listSpy, create: createSpy },
+      customers: {
+        list: vi.fn(async () => ({ customers: [{ id: "CUST-1", customer_name: "Test Buyer Ltd" }] })),
+        listContacts: vi.fn(async () => ({ contacts: [] })),
+      },
+      sales: {
+        listOpportunities: vi.fn(async () => ({ opportunities: [
+          { id: "OPP-1", customer_id: "CUST-1", opportunity_name: "Line 4 retrofit", stage: "RFQ" },
+          { id: "OPP-2", customer_id: "CUST-1", opportunity_name: "Spares 2027", stage: "RFQ" },
+        ] })),
+      },
+    });
+    window.location.hash = "#/opps";
+    const { findByText, getByText, getByLabelText } = render(<OpportunityQuotesPanel opportunityId="OPP-1" customerId="CUST-1" />);
+    fireEvent.click(await findByText("New quote"));
+    await findByText("Line 4 retrofit - RFQ");
+    expect((getByLabelText("Customer") as HTMLSelectElement).value).toBe("CUST-1");
+    expect((getByLabelText("Opportunity") as HTMLSelectElement).value).toBe("OPP-1");
+    fireEvent.click(getByText("Create draft"));
+    await waitFor(() => expect(createSpy).toHaveBeenCalledTimes(1));
+    expect(createSpy.mock.calls[0][0]).toMatchObject({ customer_id: "CUST-1", opportunity_id: "OPP-1" });
+    // Straight into the new draft's lines.
+    await waitFor(() => expect(window.location.hash).toBe("#/quotes?id=q-new&tab=lines"));
+  });
+
+  it("offers no New quote without the opportunity's customer", async () => {
+    const { findByText, queryByText } = render(<OpportunityQuotesPanel opportunityId="OPP-1" />);
+    await findByText("Q-202605-0001");
+    expect(queryByText("New quote")).toBeNull();
   });
 
   it("shows the empty-state when there are no quotes for the opp", async () => {

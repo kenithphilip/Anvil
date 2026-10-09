@@ -54,6 +54,7 @@ const screens = {
   soIntake:           lazyReload(() => import("./screens/so-intake")),
   soHistory:          lazyReload(() => import("./screens/so-history")),
   pendingSos:         lazyReload(() => import("./screens/pending-sos")),
+  soRegister:         lazyReload(() => import("./screens/so-register")),
   internal:           lazyReload(() => import("./screens/internal-sos")),
   approvals:          lazyReload(() => import("./screens/approvals")),
   // Sales
@@ -158,6 +159,7 @@ export const RESOLVERS = {
     const view = params.get("view");
     if (view === "history") return screens.soHistory;
     if (view === "pending") return screens.pendingSos;
+    if (view === "register") return screens.soRegister;
     if (params.get("id")) return screens.soWorkspace;
     if (params.get("new")) return screens.soIntake;
     return screens.soList;

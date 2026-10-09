@@ -1,0 +1,85 @@
+name: cron-tick
+
+# Calls GET /api/cron/tick every 5 minutes.
+#
+# vercel.json can schedule only /api/cron/daily on the Hobby tier, so the
+# sub-daily tick needs an outside scheduler. This is one of them; docs/CRONS.md
+# lists the others and the one-time setup.
+#
+# Required secrets (Settings -> Secrets and variables -> Actions):
+#   CRON_SECRET     the same value as CRON_SECRET in the Vercel project
+#   ANVIL_BASE_URL  the production origin, e.g. https://your-app.vercel.app
+# With either one unset, every run exits 0 with a notice and calls nothing.
+#
+# WHAT the tick runs is decided on the server, by CRON_TICK_HANDLERS in
+# Vercel. Unset, it runs only extraction/jobs. Read docs/CRONS.md before
+# widening it: most drains have months of backlog.
+#
+# This repository is public, so this log is public. The step prints handler
+# names, status codes, counts and durations only. It never prints a response
+# body (bodies can carry tenant ids and error text) or a secret.
+#
+# GitHub runs schedules best-effort: a run can start minutes late, or not at
+# all under load. A handler on an exact-minute cadence (syncs at :00 and :30,
+# agents/run at :00, the eval at :05) runs only when a call lands on that
+# minute. GitHub also disables a public repository's schedules after 60 days
+# with no repository activity.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: cron-tick
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Call /api/cron/tick
+        shell: bash
+        env:
+          ANVIL_BASE_URL: ${{ secrets.ANVIL_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "${ANVIL_BASE_URL}" ] || [ -z "${CRON_SECRET}" ]; then
+            echo "::notice title=cron-tick not configured::Add the repository secrets ANVIL_BASE_URL and CRON_SECRET to turn the tick on (docs/CRONS.md). Nothing was called."
+            exit 0
+          fi
+
+          body="$(mktemp)"
+          rc=0
+          # No --retry: a retried tick runs every allowed drain a second time.
+          http="$(curl --fail-with-body --silent --show-error \
+            --max-time 90 \
+            --request GET \
+            --header "Authorization: Bearer ${CRON_SECRET}" \
+            --output "${body}" \
+            --write-out '%{http_code}' \
+            "${ANVIL_BASE_URL%/}/api/cron/tick")" || rc=$?
+
+          if [ "${rc}" -ne 0 ]; then
+            hint="See cron_health and the Vercel function logs."
+            if [ "${http}" = "401" ]; then
+              hint="The CRON_SECRET secret here does not match CRON_SECRET in Vercel, or Vercel has none."
+            fi
+            echo "::error title=cron-tick failed::HTTP ${http:-000}, curl exit ${rc}. ${hint}"
+            exit 1
+          fi
+
+          jq '{
+                ran_at, minute, gate, ran, skipped_by_gate, not_due,
+                total, ok, failed, duration_ms,
+                results: [.results[] | {name, ok, status, duration_ms, timed_out}]
+              }' "${body}"
+
+          failed="$(jq -r '.failed // 0' "${body}")"
+          if [ "${failed}" != "0" ]; then
+            names="$(jq -r '[.results[] | select(.ok | not) | .name] | join(", ")' "${body}")"
+            echo "::warning title=cron-tick handler failures::${failed} failed: ${names}"
+          fi

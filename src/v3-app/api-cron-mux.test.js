@@ -111,6 +111,42 @@ describe("cron-mux / runCronHandler", () => {
   });
 });
 
+// Several handlers answer Node-style: `res.statusCode = n; res.end(body)`.
+// agents/run does it on a crash and cron/extraction_jobs on every path. The
+// mock used to keep statusCode as a plain property the outcome never saw, so
+// end() stamped 200 and the crash was recorded as ok.
+describe("cron-mux / Node-style res.statusCode", () => {
+  it("records res.statusCode = 500 + res.end as failed", async () => {
+    const crashed = async (_req, res) => {
+      res.statusCode = 500;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ error: { message: "db down" } }));
+    };
+    const r = await runCronHandler("fake/node-500", crashed, { writeHeartbeat: false });
+    expect(r.ok).toBe(false);
+    expect(r.status).toBe(500);
+    expect(r.body_preview).toContain("db down");
+  });
+
+  it("records res.statusCode = 401 + res.end as failed", async () => {
+    const refused = async (_req, res) => { res.statusCode = 401; res.end("{}"); };
+    const r = await runCronHandler("fake/node-401", refused, { writeHeartbeat: false });
+    expect(r).toMatchObject({ ok: false, status: 401 });
+  });
+
+  it("still records res.statusCode = 200 + res.end as ok", async () => {
+    const fine = async (_req, res) => { res.statusCode = 200; res.end("{}"); };
+    const r = await runCronHandler("fake/node-200", fine, { writeHeartbeat: false });
+    expect(r).toMatchObject({ ok: true, status: 200 });
+  });
+
+  it("reads back what status() set", () => {
+    const { res } = makeMockRes();
+    res.status(404);
+    expect(res.statusCode).toBe(404);
+  });
+});
+
 describe("cron-mux / per-handler timeout (Phase 1 F10)", () => {
   it("times out a hanging handler within the budget", async () => {
     const stuck = () => new Promise(() => { /* never resolves */ });

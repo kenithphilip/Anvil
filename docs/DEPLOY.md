@@ -37,7 +37,7 @@ Migrations are NOT auto-applied. Apply them manually after merge:
 - `buildCommand: npm run build`
 - `outputDirectory: public`
 - `functions:` `maxDuration` 60s for the catch-all dispatcher
-- `crons:` daily fx_cron at 04:00 UTC and amc_cron at 05:00 UTC
+- `crons:` `/api/cron/daily` at 02:30 UTC (see "Cron triggers" below)
 - `headers:` CORS for `/api/*` and immutable cache for `/assets/*`
 - `rewrites:` `/v3.html` and `/v3-app/*` map back to `/index.html`
   for any user with stale bookmarks from the soft-launch period
@@ -317,20 +317,20 @@ The new tenant's members will see only their own data thanks to RLS.
 
 ## Cron triggers
 
-Two cron jobs are wired in `vercel.json`:
+`vercel.json` schedules one cron, `/api/cron/daily` at 02:30 UTC, which fans
+out to the daily jobs (FX rates, AMC reminders and the rest). The 5-minute
+`/api/cron/tick` needs an external caller, because the Hobby tier rejects a
+sub-daily schedule; `.github/workflows/cron-tick.yml` is one. What tick runs
+is gated by `CRON_TICK_HANDLERS` (unset runs `extraction/jobs` only).
+`docs/CRONS.md` has the owner's one-time setup, the handler inventory and the
+cleanup each handler needs before it is enabled.
 
-- `0 4 * * *` (daily 04:00 UTC): `/api/fx/cron`
-- `0 5 * * *` (daily 05:00 UTC): `/api/service/amc_cron`
-
-Both accept an optional `Authorization: Bearer $CRON_SECRET` header. Vercel
-sends this automatically when `CRON_SECRET` is set in the project env. To
+Both endpoints require `Authorization: Bearer $CRON_SECRET`. Vercel sends it
+on its scheduled runs when `CRON_SECRET` is set in the project env. To
 trigger manually:
 
 ```sh
-curl -X GET 'https://YOUR-URL/api/fx/cron' \
-  -H "Authorization: Bearer $CRON_SECRET"
-
-curl -X GET 'https://YOUR-URL/api/service/amc_cron' \
+curl -X GET 'https://YOUR-URL/api/cron/tick' \
   -H "Authorization: Bearer $CRON_SECRET"
 ```
 

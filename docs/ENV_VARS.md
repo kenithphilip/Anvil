@@ -36,6 +36,7 @@ want to tighten them.
 | `MAGIC_LINK_REDIRECT_URL` | `auth/magic_link.js`, the unified app | none | set to `<APP_URL>/auth/callback.html` |
 | `RESET_RATE_LIMIT` | `auth/request_reset.js` | `5` | max password-reset requests per email per hour. Sliding window in the `password_reset_attempts` table. Throttle hits return a generic 200 (no enumeration) but get audited. |
 | `CRON_SECRET` | `fx/cron.js`, `service/amc_cron.js`, `cron/tick.js`, `cron/daily.js`, every ERP `retry.js` and `sync.js` | none | when set, cron endpoints require `Authorization: Bearer <secret>`. **Always set in production.** |
+| `CRON_TICK_HANDLERS` | `cron/tick.js` | unset (runs `extraction/jobs` only) | comma-separated allow-list of the tick handlers that may run. `all` restores the full fan-out, `none` runs nothing. Widen it one handler at a time after the cleanup in `docs/CRONS.md`; most tick drains hold months of backlog. |
 | `ANVIL_SECRETS_KEY` | `_lib/secrets.js` (encrypts ERP creds, TOTP secrets, chat-channel creds, voice creds, PLM creds) | unset | 32 raw bytes (64 hex chars) of secret key material. **Always set in production.** Without it the secret-encryption helpers fall back to plaintext storage with a `[secrets] running unencrypted` warning, which is fine for dev only. Generate with `openssl rand -hex 32`. |
 
 ## Anthropic configuration

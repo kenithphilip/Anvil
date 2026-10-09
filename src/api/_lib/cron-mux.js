@@ -34,11 +34,20 @@ export const makeMockReq = ({ path = "/", method = "GET", body = null, query = {
 };
 
 // Build a synthetic res that captures everything the handlers do
-// (res.status(n).send/json(body), res.setHeader, res.end). All
-// methods chain. The captured outcome is exposed via _outcome.
+// (res.status(n).send/json(body), res.statusCode = n, res.setHeader,
+// res.end). All methods chain. The captured outcome is exposed via
+// _outcome.
+//
+// statusCode is an accessor onto the outcome because several handlers
+// answer Node-style, `res.statusCode = 500; res.end(...)` (agents/run's
+// crash path, cron/extraction_jobs). As a plain property the assignment
+// never reached the outcome, so end() stamped 200 and a crashed handler
+// was recorded as ok.
 export const makeMockRes = () => {
   const out = { statusCode: 0, headers: {}, body: null };
   const res = {
+    get statusCode() { return out.statusCode; },
+    set statusCode(n) { out.statusCode = Number(n) || 0; },
     setHeader: (k, v) => { out.headers[k] = v; return res; },
     status: (n) => { out.statusCode = n || 200; return res; },
     send: (b) => {

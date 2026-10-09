@@ -20,6 +20,7 @@
 import {
   normPart, num, round2, pick, descAgreement, DESC_AGREEMENT_FLOOR,
 } from "./line-compare.js";
+import { poLineRate } from "./so-line-money.js";
 
 // Lightweight token overlap for the qualitative description check (0..1).
 
@@ -202,7 +203,11 @@ export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
         }
       }
     }
-    const poRate = num(pick(ln.discounted_unit_price, ln.rate, ln.unit_price, ln.unitPrice, ln.ex_price));
+    // The PO's own rate. discounted_unit_price is NOT read here: on an order
+    // line only this function writes it. It used to be read first, and it used
+    // to hold the quote's rate, so a second reconcile compared the quote with
+    // itself and every price mismatch vanished.
+    const poRate = poLineRate(ln);
     const poQty = num(pick(ln.qty, ln.quantity));
 
     if (!q) {
@@ -268,10 +273,17 @@ export const reconcilePoAgainstQuotes = (orderLines, quoteLines, opts = {}) => {
 
     const enriched = {
       ...ln,
-      // Quote-authoritative pricing / tax / classification:
+      // Quote-authoritative tax / classification:
       hsn: pick(ln.hsn, q.hsn_sac) || null,
-      // Keep the PO's rate when the quote line carries no real price.
-      discounted_unit_price: quotePriced ? quoteRate : (poRate ?? null),
+      // NOT pricing. The PO rate is the customer's commitment, so it stays the
+      // line's rate. This used to be set to the quote's rate, which every
+      // export and the SO PDF then printed as the order's price, and a price
+      // mismatch was quietly repriced instead of decided. The quote's rate is
+      // reference data on quote_unit_price and _match.quote_rate. Only a line
+      // whose PO printed no rate takes the quote's, because then it is the
+      // only price agreed.
+      discounted_unit_price: poRate != null ? poRate : (quotePriced ? quoteRate : null),
+      quote_unit_price: quotePriced ? quoteRate : null,
       source_country: pick(ln.source_country, q.source_country) || null,
       discount_pct: q.discount_pct != null ? Number(q.discount_pct) : (ln.discount_pct ?? null),
       cgst_pct: q.cgst_pct != null ? Number(q.cgst_pct) : (ln.cgst_pct ?? null),

@@ -159,6 +159,8 @@ describe("a zero quoted rate does not overwrite the PO's price", () => {
   it("still compares a real quoted price", () => {
     const r = reconcilePoAgainstQuotes([oline("P-1", { unitPrice: 250 })], [qline("P-1")]);
     expect(r.lines[0]._match.verdict).toBe("price_mismatch");
-    expect(r.lines[0].discounted_unit_price).toBe(90);
+    // Compared, not repriced: the PO's 250 stays, the quote's 90 is reference.
+    expect(r.lines[0].discounted_unit_price).toBe(250);
+    expect(r.lines[0].quote_unit_price).toBe(90);
   });
 });

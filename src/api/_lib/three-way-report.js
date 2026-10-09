@@ -103,7 +103,7 @@ const lineFieldSpecs = (pair) => {
     anvil: num(first(a.discounted_unit_price, a.rate, a.unit_price)),
     tally: num(first(e.rate, e.unitPrice)),
     note: priceAlreadyFlagged
-      ? "Not scored: the reconciler already reports this line as a price mismatch against the agreed quote, and Anvil prices from the quote by design."
+      ? "Not scored: the reconciler already reports this line as a price mismatch against the agreed quote."
       : null,
   });
 

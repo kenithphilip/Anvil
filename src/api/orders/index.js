@@ -5,6 +5,7 @@ import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { parsePoDate } from "../_lib/parse-date.js";
 import { mapLinesToItemMaster } from "../_lib/item-mapper.js";
 import { projectAnomaliesToFindings } from "../_lib/blocking-findings.js";
+import { autoReconcileOrder, hasReconcilableLines } from "../_lib/order-reconcile.js";
 
 const STATUS_VALUES = new Set(["DRAFT", "PENDING_REVIEW", "APPROVED", "BLOCKED", "DUPLICATE", "REUSED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED", "CANCELLED"]);
 
@@ -241,6 +242,13 @@ export default async function handler(req, res) {
         // eslint-disable-next-line no-console
         console.warn("[orders] auto-attach terms pack failed: " + (e?.message || e));
       }
+
+      // Reconcile against the customer's quotes on the server, so an order is
+      // analysed whatever created it. The insert above has already committed:
+      // autoReconcileOrder never throws, and a failure is an event on the
+      // order, not a failed create. The intake screen still asks for a
+      // reconciliation afterwards, with if_changed, and gets this one back.
+      if (hasReconcilableLines(data)) await autoReconcileOrder(svc, ctx, data.id, { trigger: "order_created" });
 
       return json(res, 201, { order: data });
     }

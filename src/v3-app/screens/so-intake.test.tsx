@@ -38,6 +38,7 @@ describe("SoIntake order create carries per-line requisition numbers", () => {
 
   it("posts lineItems[].requisition_no from the extraction, stamped ocr", async () => {
     const create = vi.fn(async (_body: any) => ({ order: { id: "ord-new-1" } }));
+    const reconcileQuotes = vi.fn(async (_id: string, _opts?: any) => ({ summary: null }));
     installBackend({
       health: async () => ({ integrations: [] }),
       customers: {
@@ -59,7 +60,7 @@ describe("SoIntake order create carries per-line requisition numbers", () => {
           },
         }),
       },
-      orders: { create, reconcileQuotes: async () => ({ summary: null }) },
+      orders: { create, reconcileQuotes },
     });
     (window as any).notifySuccess = vi.fn();
     (window as any).notifyError = vi.fn();
@@ -95,5 +96,8 @@ describe("SoIntake order create carries per-line requisition numbers", () => {
     // The header slot rides along on the extracted customer block, which is
     // what the workspace's "Customer from PO header" panel reads.
     expect(body.result.salesOrder.customer.requisition_no).toBe("1000343964");
+    // The server reconciles on create, so the intake asks only if the lines
+    // changed since, and gets that run back rather than running it again.
+    await waitFor(() => expect(reconcileQuotes).toHaveBeenCalledWith("ord-new-1", { if_changed: true }), { timeout: 2000 });
   });
 });

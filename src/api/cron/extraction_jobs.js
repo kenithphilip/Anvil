@@ -39,6 +39,7 @@ import { getPromptVersion, promptNameForKind } from "../_lib/docai/prompt-versio
 import { extractTextLayer } from "../_lib/docai/text_layer.js";
 import { planDensityChunking } from "../_lib/docai/density-plan.js";
 import { buildWindowBodyText } from "../_lib/docai/text-row-chunker.js";
+import { autoReconcileOrder } from "../_lib/order-reconcile.js";
 
 // Real tenant settings, cached for the life of one tick.
 //
@@ -774,6 +775,9 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
           + "' — refusing to write it into the order's lines. Apply migration 219 and re-queue.",
       });
     }
+    // Set once the order's lines are written, so the reconciliation below runs
+    // only for a writeback that happened.
+    let wroteOrderLines = false;
     if (orderId && PO_SHAPED.has(jobKind) && !classifiedNonPo) {
       const ord = await svc.from("orders").select("result, preflight_payload").eq("tenant_id", job.tenant_id).eq("id", orderId).maybeSingle();
       if (ord.error) throw new Error("order read (merge): " + ord.error.message);
@@ -805,6 +809,7 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
         await emit(svc, tenantCtx, "docai_extract_failed", { job_id: job.id, order_id: orderId, error: "writeback: " + wb.error.message });
         return { job: (f.data || job), hasMore: false };
       }
+      wroteOrderLines = true;
     }
     // TELL extraction_runs WHAT ACTUALLY CAME OUT.
     //
@@ -892,6 +897,12 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
       objectId: job.id,
       after: { line_count: mergedLines.length, chunk_count: chunks.length },
     });
+    // The full line set just landed on the order, so reconcile it against the
+    // customer's quotes now rather than when someone next opens it. The job is
+    // already completed: autoReconcileOrder never throws, and a failure is an
+    // event on the order. A shorter budget than the default, because this
+    // shares the tick's time with the other jobs.
+    if (wroteOrderLines) await autoReconcileOrder(svc, tenantCtx, orderId, { trigger: "background_extraction", budgetMs: 5000 });
     return { job: upd.data, hasMore: false };
   }
 

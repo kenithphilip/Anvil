@@ -1071,12 +1071,15 @@ const WiredSOIntake = () => {
       }
       // Auto-reconcile the received PO against the customer's quotes so the
       // SO is priced + verified with NO manual quote-picking. Skip for large
-      // POs (lines still extracting in the background — the workspace re-runs
-      // once they land). Best-effort: never blocks the draft.
+      // POs (lines still extracting in the background; the background job
+      // reconciles once they land). Best-effort: never blocks the draft.
       let reconMsg = "";
       if (!largePo && customerId && extractedLines && extractedLines.length) {
         try {
-          const rep: any = await AnvilBackend?.orders?.reconcileQuotes?.(newId);
+          // The server reconciles on create now. if_changed hands back that
+          // run's report instead of running it a second time for the same
+          // lines, and still runs it if the server's run did not happen.
+          const rep: any = await AnvilBackend?.orders?.reconcileQuotes?.(newId, { if_changed: true });
           const s = rep?.summary;
           if (s) {
             reconMsg = ` · quotes ${s.matched}/${s.total} matched`

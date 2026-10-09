@@ -62,7 +62,7 @@ export const registerParams = (f: Filters, page: number) => ({
   has_flags: f.hasFlags ? "1" : "",
 });
 
-const pct = (v: number | null | undefined) => (v == null ? "" : Math.round(Number(v) * 100) + "%");
+const confidencePct = (v: number | null | undefined) => (v == null ? "" : Math.round(Number(v) * 100) + "%");
 
 const SoRegister: React.FC = () => {
   const [filters, setFilters] = React.useState<Filters>(EMPTY);
@@ -240,7 +240,7 @@ const SoRegister: React.FC = () => {
                       <td className="mono-sm"><span className="pri">{r.po_number || "no PO number"}</span><div style={{ color: "var(--ink-3)" }}>{fmtDate(r.po_date)}</div></td>
                       <td className="r mono">{r.value != null ? fmtCurrency(r.value, r.currency || "INR") : ""}</td>
                       <td className="r mono">{r.line_count ?? 0}</td>
-                      <td><Chip k={ex.k as any}>{ex.label}</Chip>{r.extraction?.confidence != null ? <span className="mono-sm"> {pct(r.extraction.confidence)}</span> : null}</td>
+                      <td><Chip k={ex.k as any}>{ex.label}</Chip>{r.extraction?.confidence != null ? <span className="mono-sm"> {confidencePct(r.extraction.confidence)}</span> : null}</td>
                       <td className="mono-sm">
                         {!rec.analysed ? <span style={{ color: "var(--ink-3)" }}>not analysed</span> : (
                           <>

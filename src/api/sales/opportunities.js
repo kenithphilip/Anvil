@@ -1,5 +1,7 @@
 // /api/sales/opportunities
-//   GET    list (filter by stage, customer, close_from/to)
+//   GET    list (filter by stage, customer, close_from/to). Each row also
+//          carries customer_name and owner_name. probability is a percent,
+//          0 to 100 (column default 50).
 //   POST   create
 //   PATCH  update (stage transitions logged)
 //   DELETE soft delete
@@ -9,6 +11,34 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { recordStageEvent } from "../_lib/funnel-analytics.js";
+import { userDisplayNames } from "../_lib/assignee.js";
+import { chunk } from "../_lib/customer-owner.js";
+
+// The opportunities screen names each row's customer and owner, and a row
+// carries only their ids. Without the names the screen had nothing to show
+// but a uuid. Two lookups rather than a PostgREST embed, so the list does not
+// depend on the relationship being in the schema cache (the pattern
+// quotes/index.js uses). The customer read is scoped to the tenant, so a
+// customer id that belongs to another tenant gets no name. Best-effort: a
+// failed lookup leaves the name null and the list still loads.
+const attachNames = async (svc, tenantId, rows) => {
+  const customerNames = new Map();
+  const customerIds = [...new Set(rows.map((r) => r.customer_id).filter(Boolean))];
+  for (const part of chunk(customerIds)) {
+    const r = await svc.from("customers").select("id, customer_name").eq("tenant_id", tenantId).in("id", part);
+    if (r.error) {
+      console.warn("[opportunities] customer names not loaded:", r.error.message);
+      continue;
+    }
+    for (const c of r.data || []) customerNames.set(c.id, c.customer_name);
+  }
+  const ownerNames = await userDisplayNames(svc, rows.map((r) => r.owner_id));
+  for (const r of rows) {
+    r.customer_name = customerNames.get(r.customer_id) || null;
+    r.owner_name = r.owner_id ? (ownerNames.get(r.owner_id) || null) : null;
+  }
+  return rows;
+};
 
 // Append a funnel stage event without ever failing the request it
 // rides on — the opportunity write + audit have already committed.
@@ -69,7 +99,7 @@ export default async function handler(req, res) {
       if (req.query.close_to) q = q.lte("close_date", req.query.close_to);
       const { data, error } = await q;
       if (error) throw new Error(error.message);
-      return json(res, 200, { opportunities: data || [] });
+      return json(res, 200, { opportunities: await attachNames(svc, ctx.tenantId, data || []) });
     }
     if (req.method === "POST") {
       requirePermission(ctx, "write");

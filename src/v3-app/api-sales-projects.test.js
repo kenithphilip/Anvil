@@ -70,6 +70,11 @@ const H = vi.hoisted(() => {
         if (r.error) return { data: null, error: r.error };
         return r.data[0] ? { data: r.data[0], error: null } : { data: null, error: { message: "no rows" } };
       },
+      maybeSingle: async () => {
+        const r = exec();
+        if (r.error) return { data: null, error: r.error };
+        return { data: r.data[0] || null, error: null };
+      },
       then: (resolve, reject) => {
         try { const r = exec(); resolve({ data: r.data || null, error: r.error || null }); } catch (e) { reject(e); }
       },
@@ -191,10 +196,65 @@ describe("PATCH /api/sales/projects (the edit path, by id)", () => {
     expect(H.tables.projects.find((p) => p.id === "prj-1")).toEqual(EXISTING);
   });
 
-  it("does not touch another tenant's project", async () => {
-    const r = await call("PATCH", { id: "prj-t2", total_value_inr: 1 });
+  it("answers 404 for another tenant's project, and writes nothing", async () => {
+    const r = await call("PATCH", { id: "prj-t2", current_phase: "SHIPPING", total_value_inr: 1 });
 
-    expect(r.status).toBeGreaterThanOrEqual(400);
-    expect(H.tables.projects.find((p) => p.id === "prj-t2").total_value_inr).toBe(5000000);
+    expect(r.status).toBe(404);
+    expect(r.body.error.message).toBe("Project not found");
+    expect(H.tables.projects.find((p) => p.id === "prj-t2")).toEqual({ ...EXISTING, id: "prj-t2", tenant_id: "t-2", project_code: "PRJ-T2-ONLY" });
+    expect(H.calls.filter((c) => c.op !== "select")).toEqual([]);
+    expect(H.tables.project_phase_log).toHaveLength(1);
+    expect(recordAudit).not.toHaveBeenCalled();
+  });
+
+  it("answers 404 for an id that is no project at all", async () => {
+    const r = await call("PATCH", { id: "prj-missing", current_phase: "SHIPPING" });
+
+    expect(r.status).toBe(404);
+    expect(H.calls.filter((c) => c.op !== "select")).toEqual([]);
+  });
+});
+
+describe("POST /api/sales/projects: links are checked against the tenant", () => {
+  const OPP = "0aaaaaaa-0000-4000-8000-000000000001";
+  const OPP_T2 = "0bbbbbbb-0000-4000-8000-000000000002";
+  const CUST = "0ccccccc-0000-4000-8000-000000000003";
+  const CUST_T2 = "0ddddddd-0000-4000-8000-000000000004";
+
+  beforeEach(() => {
+    H.seed("opportunities", [
+      { id: OPP, tenant_id: "t-1", opportunity_name: "Line 5 welding cells" },
+      { id: OPP_T2, tenant_id: "t-2", opportunity_name: "Not ours" },
+    ]);
+    H.seed("customers", [
+      { id: CUST, tenant_id: "t-1", customer_name: "Heron Castings" },
+      { id: CUST_T2, tenant_id: "t-2", customer_name: "Not ours" },
+    ]);
+  });
+
+  it("writes related_opportunity_id and customer_id when both are this tenant's", async () => {
+    const r = await call("POST", { project_code: "PRJ-2026-0003", project_name: "Line 5", related_opportunity_id: OPP, customer_id: CUST });
+
+    expect(r.status).toBe(201);
+    expect(H.tables.projects.find((p) => p.project_code === "PRJ-2026-0003")).toMatchObject({
+      tenant_id: "t-1", related_opportunity_id: OPP, customer_id: CUST,
+    });
+  });
+
+  it("refuses another tenant's opportunity, and creates nothing", async () => {
+    const r = await call("POST", { project_code: "PRJ-2026-0003", project_name: "Line 5", related_opportunity_id: OPP_T2 });
+
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatchObject({ field: "related_opportunity_id", message: "related_opportunity_id is not an opportunity of this tenant" });
+    expect(H.tables.projects).toHaveLength(2);
+    expect(H.calls.filter((c) => c.op === "insert")).toEqual([]);
+  });
+
+  it("refuses another tenant's customer, and creates nothing", async () => {
+    const r = await call("POST", { project_code: "PRJ-2026-0003", project_name: "Line 5", customer_id: CUST_T2 });
+
+    expect(r.status).toBe(400);
+    expect(r.body.error.field).toBe("customer_id");
+    expect(H.tables.projects).toHaveLength(2);
   });
 });

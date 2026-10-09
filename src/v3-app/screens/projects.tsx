@@ -3,11 +3,20 @@ import { ageLabel, fmtINRShort, useFetch, useHashParam } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Steps, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { RBAC } from "../lib/rbac";
 
 // ============================================================
 // ANVIL v3 — wired Projects
 // Wave B · Sales · Project lifecycle (15-phase enum)
 // Reads via AnvilBackend.sales.listProjects (api/sales/projects GET)
+// Moves a phase via AnvilBackend.sales.updateProject (PATCH), whose
+// phase guard answers 409 INVALID_PHASE_TRANSITION for a move it
+// refuses; the screen shows that message.
+//
+// Field names are the projects table's own (migration 006):
+// current_phase, total_value_inr, customer_id (the GET embeds
+// customer.customer_name), related_opportunity_id. There is no owner
+// column, so the screen shows none.
 // ============================================================
 
 // Phase enum matches the project_phase Postgres enum in
@@ -72,12 +81,24 @@ const projectRows = (resp) => {
   return [];
 };
 
+// KPI buckets over the real enum, in phase order. Together they cover
+// every open phase: pre-order runs to LB finalization, execution from
+// kickoff through manufacturing, and delivery from shipping on.
+const phaseIn = (phase: string, from: string, to: string): boolean => {
+  const i = PROJECT_PHASES.indexOf(phase);
+  return i >= 0 && i >= PROJECT_PHASES.indexOf(from) && i <= PROJECT_PHASES.indexOf(to);
+};
+const isOpenProject = (r: any): boolean =>
+  r.current_phase !== "CLOSED" && r.status !== "COMPLETED" && r.status !== "CANCELLED";
+
+const BLANK_DRAFT = {
+  project_code: "", project_name: "", related_opportunity_id: "", customer_id: "", current_phase: "INITIAL_INFO", total_value_inr: "",
+};
+
 const WiredProjects = () => {
   // Inline create-project state (replaces dead-button bug per audit).
   const [creating, setCreating] = useState(false);
-  const [draft, setDraft] = useState({
-    project_code: "", project_name: "", customer_id: "", current_phase: "INITIAL_INFO", total_value_inr: "",
-  });
+  const [draft, setDraft] = useState({ ...BLANK_DRAFT });
   const [submitErr, setSubmitErr] = useState(null);
   const [submitBusy, setSubmitBusy] = useState(false);
   const customers = useFetch(
@@ -87,6 +108,14 @@ const WiredProjects = () => {
   const customerRows = (() => {
     const d = customers.data;
     return Array.isArray(d) ? d : (d?.customers || []);
+  })();
+  const opportunities = useFetch(
+    () => creating ? (AnvilBackend?.sales?.listOpportunities?.() || Promise.resolve({ opportunities: [] })) : Promise.resolve({ opportunities: [] }),
+    [creating],
+  );
+  const opportunityRows: any[] = (() => {
+    const d: any = opportunities.data;
+    return Array.isArray(d) ? d : (d?.opportunities || []);
   })();
 
   const list = useFetch(
@@ -99,6 +128,43 @@ const WiredProjects = () => {
   // rows are computed below.
   const selectedId = useHashParam("id");
 
+  // Phase move on the open project. The target starts at the next
+  // phase; the server's guard decides, and its refusal is shown.
+  const canWrite = RBAC?.canWrite?.("projects") === true;
+  const [phaseTarget, setPhaseTarget] = useState("");
+  const [phaseBusy, setPhaseBusy] = useState(false);
+  const [phaseErr, setPhaseErr] = useState<string | null>(null);
+  useEffect(() => { setPhaseTarget(""); setPhaseErr(null); }, [selectedId]);
+
+  const movePhase = async (project: any, to: string) => {
+    if (!project?.id || !to) return;
+    setPhaseBusy(true);
+    setPhaseErr(null);
+    try {
+      await AnvilBackend?.sales?.updateProject?.({ id: project.id, current_phase: to });
+      window.notifySuccess?.("Phase moved", PROJECT_PHASE_LABEL(to));
+      setPhaseTarget("");
+      list.reload();
+    } catch (err: any) {
+      setPhaseErr(err?.message || String(err));
+    } finally {
+      setPhaseBusy(false);
+    }
+  };
+
+  // Choosing the opportunity a project comes from fills the fields it
+  // already knows (customer, name, value) where they are still empty.
+  const pickOpportunity = (id: string) => {
+    const opp = opportunityRows.find((o) => o.id === id);
+    setDraft((d) => ({
+      ...d,
+      related_opportunity_id: id,
+      customer_id: d.customer_id || opp?.customer_id || "",
+      project_name: d.project_name || opp?.opportunity_name || "",
+      total_value_inr: d.total_value_inr || (opp?.amount_inr != null ? String(opp.amount_inr) : ""),
+    }));
+  };
+
   const submitNewProject = async () => {
     setSubmitErr(null);
     if (!draft.project_code.trim()) { setSubmitErr({ message: "Project code is required." }); return; }
@@ -109,12 +175,13 @@ const WiredProjects = () => {
         project_code: draft.project_code.trim(),
         project_name: draft.project_name.trim(),
         customer_id: draft.customer_id || null,
+        related_opportunity_id: draft.related_opportunity_id || null,
         current_phase: draft.current_phase,
         total_value_inr: draft.total_value_inr ? Number(draft.total_value_inr) : null,
       });
       window.notifySuccess?.("Project created", draft.project_code);
       setCreating(false);
-      setDraft({ project_code: "", project_name: "", customer_id: "", current_phase: "INITIAL_INFO", total_value_inr: "" });
+      setDraft({ ...BLANK_DRAFT });
       list.reload();
     } catch (err) {
       setSubmitErr(err);
@@ -150,21 +217,18 @@ const WiredProjects = () => {
   const rows = projectRows(list.data);
   const total = rows.length;
 
-  const isClosed = (p) => p === "CLOSED";
-  const inDesign = (p) => ["INITIAL_INFO", "REQUIREMENT_GATHERING", "DESIGN", "QUOTE"].includes(p);
-  const inMfg = (p) => ["PO_RECEIVED", "PRODUCTION_PLANNING", "MATERIALS_IN", "MANUFACTURING", "FAT"].includes(p);
-  const delivered = (p) => ["DISPATCHED", "ON_SITE_INSTALL", "SAT", "COMMISSIONED"].includes(p);
-
-  const activeCount = rows.filter((r) => !isClosed(r.phase)).length;
-  const designCount = rows.filter((r) => inDesign(r.phase)).length;
-  const mfgCount = rows.filter((r) => inMfg(r.phase)).length;
-  const deliveredCount = rows.filter((r) => delivered(r.phase)).length;
+  const open = rows.filter(isOpenProject);
+  const activeCount = open.length;
+  const preOrderCount = open.filter((r) => phaseIn(r.current_phase, "INITIAL_INFO", "LB_FINALIZATION")).length;
+  const executionCount = open.filter((r) => phaseIn(r.current_phase, "KICKOFF", "MANUFACTURING")).length;
+  const deliveryCount = open.filter((r) => phaseIn(r.current_phase, "SHIPPING", "PAYMENT_FOLLOWUP")).length;
 
   // Detail-card lookup. selectedId was read at the top of the
   // function (rules-of-hooks); resolve `selected` here once rows
   // are loaded.
   const selected = selectedId ? rows.find((r) => r.id === selectedId) || null : null;
-  const selectedPhaseIdx = selected ? PROJECT_PHASES.indexOf(selected.current_phase || selected.phase) : -1;
+  const selectedPhaseIdx = selected ? PROJECT_PHASES.indexOf(selected.current_phase) : -1;
+  const moveTo = phaseTarget || (selectedPhaseIdx >= 0 ? PROJECT_PHASES[selectedPhaseIdx + 1] || "" : "");
 
   return (
     <>
@@ -183,9 +247,9 @@ const WiredProjects = () => {
       <div className="ws-content">
         <KPIRow cols={4}>
           <KPI lbl="Active" v={String(activeCount)} d="not yet closed" live={activeCount > 0} />
-          <KPI lbl="In design" v={String(designCount)} d="info → quote" />
-          <KPI lbl="In manufacturing" v={String(mfgCount)} d="PO → FAT" />
-          <KPI lbl="Delivered" v={String(deliveredCount)} d="dispatched → commissioned" dKind={deliveredCount ? "up" : ""} />
+          <KPI lbl="Pre-order" v={String(preOrderCount)} d="initial info → LB finalization" />
+          <KPI lbl="In execution" v={String(executionCount)} d="kickoff → manufacturing" />
+          <KPI lbl="Shipping and site" v={String(deliveryCount)} d="shipping → payment follow-up" dKind={deliveryCount ? "up" : ""} />
         </KPIRow>
 
         {selected && (
@@ -195,16 +259,18 @@ const WiredProjects = () => {
             right={<Btn sm kind="ghost" onClick={() => { window.location.hash = "#/projects"; }}>{Icon.x} close</Btn>}
           >
             <KV rows={[
-              ["Code",     selected.project_code || selected.code || "—"],
-              ["Customer", selected.customer_name || selected.customer || "—"],
-              ["Phase",    PROJECT_PHASE_LABEL(selected.current_phase || selected.phase)],
+              ["Code",     selected.project_code || "—"],
+              ["Customer", selected.customer?.customer_name || "—"],
+              ["Opportunity", selected.related_opportunity_id
+                ? <a href={"#/opps?id=" + selected.related_opportunity_id}>open opportunity</a>
+                : "—"],
+              ["Phase",    PROJECT_PHASE_LABEL(selected.current_phase)],
               ["Progress", selectedPhaseIdx >= 0
                 ? Math.round((selectedPhaseIdx + 1) / PROJECT_PHASES.length * 100) + "% (" + (selectedPhaseIdx + 1) + " of " + PROJECT_PHASES.length + ")"
                 : "—"],
-              ["Value",    selected.total_value_inr || selected.value
-                ? fmtINRShort(Number(selected.total_value_inr || selected.value))
+              ["Value",    selected.total_value_inr
+                ? fmtINRShort(Number(selected.total_value_inr))
                 : "—"],
-              ["Owner",    selected.owner || selected.assigned_to || "—"],
               // Schema-drift fix: the projects table has
               // `expected_delivery_date` (the canonical end-of-project
               // date); older code used `expected_close_date` /
@@ -232,6 +298,39 @@ const WiredProjects = () => {
                 />
               </div>
             )}
+            {/* Move the phase. CLOSED is terminal, so a closed project
+                offers no move. Any phase can be picked; the server's
+                guard refuses a jump back of more than one phase, and
+                its message is shown here. */}
+            {canWrite && selectedPhaseIdx >= 0 && selected.current_phase !== "CLOSED" && (
+              <div style={{ marginTop: 14 }}>
+                <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 8 }}>Move phase</div>
+                {phaseErr && (
+                  <div style={{ marginBottom: 8 }}>
+                    <Banner kind="bad" icon={Icon.alert} title="Phase not moved">
+                      <span className="mono-sm">{phaseErr}</span>
+                    </Banner>
+                  </div>
+                )}
+                <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <select
+                    className="select"
+                    aria-label="Move to phase"
+                    value={moveTo}
+                    disabled={phaseBusy}
+                    onChange={(ev) => setPhaseTarget(ev.target.value)}
+                    style={{ minWidth: 220 }}
+                  >
+                    {PROJECT_PHASES.filter((p) => p !== selected.current_phase).map((p) => (
+                      <option key={p} value={p}>{PROJECT_PHASE_LABEL(p)}</option>
+                    ))}
+                  </select>
+                  <Btn sm kind="primary" disabled={phaseBusy || !moveTo} onClick={() => movePhase(selected, moveTo)}>
+                    {phaseBusy ? "Moving…" : "Move"}
+                  </Btn>
+                </div>
+              </div>
+            )}
           </Card>
         )}
 
@@ -254,6 +353,16 @@ const WiredProjects = () => {
                        onChange={(ev) => setDraft({ ...draft, project_name: ev.target.value })} />
               </label>
               <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span>Opportunity</span>
+                <select className="input" value={draft.related_opportunity_id}
+                        onChange={(ev) => pickOpportunity(ev.target.value)}>
+                  <option value="">{opportunities.loading ? "loading…" : "none"}</option>
+                  {opportunityRows.map((o: any) => (
+                    <option key={o.id} value={o.id}>{o.opportunity_name || o.id?.slice(0, 8)}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <span>Customer</span>
                 <select className="input" value={draft.customer_id}
                         onChange={(ev) => setDraft({ ...draft, customer_id: ev.target.value })}>
@@ -270,7 +379,7 @@ const WiredProjects = () => {
                   {PROJECT_PHASES.map((p) => <option key={p} value={p}>{PROJECT_PHASE_LABEL_MAP[p] || p}</option>)}
                 </select>
               </label>
-              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4, gridColumn: "1 / -1" }}>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <span>Total value (INR)</span>
                 <input className="input mono r" type="number" value={draft.total_value_inr}
                        onChange={(ev) => setDraft({ ...draft, total_value_inr: ev.target.value })} />
@@ -298,13 +407,12 @@ const WiredProjects = () => {
                 <th>Phase</th>
                 <th>Progress</th>
                 <th className="r">Value</th>
-                <th>Owner</th>
                 <th>Expected close</th>
               </tr></thead>
               <tbody>
                 {rows.slice(0, 200).map((r) => {
-                  const pc = PROJECT_PHASE_CHIP(r.phase);
-                  const v = Number(r.value) || 0;
+                  const pc = PROJECT_PHASE_CHIP(r.current_phase);
+                  const v = Number(r.total_value_inr) || 0;
                   const expected = r.expected_delivery_date || r.expected_close_date || r.expected_close;
                   // Phase timeline: a 15-dot strip showing where in
                   // the lifecycle this project sits. Active dot is
@@ -312,7 +420,7 @@ const WiredProjects = () => {
                   // dots are hairline. Replaces the design's
                   // standalone phase-timeline component without
                   // adding a new file.
-                  const phase = r.current_phase || r.phase;
+                  const phase = r.current_phase;
                   const phaseIdx = PROJECT_PHASES.indexOf(phase);
                   const closed = phase === "CLOSED";
                   const pct = phaseIdx >= 0
@@ -331,8 +439,8 @@ const WiredProjects = () => {
                       }}
                       style={{ cursor: "pointer" }}
                     >
-                      <td className="mono"><span className="pri">{r.project_code || r.code || (r.id ? r.id.slice(0, 12) : "—")}</span></td>
-                      <td>{r.customer_name || r.customer || "—"}</td>
+                      <td className="mono"><span className="pri">{r.project_code || (r.id ? r.id.slice(0, 12) : "—")}</span></td>
+                      <td>{r.customer?.customer_name || "—"}</td>
                       <td><Chip k={pc.k}>{pc.label}</Chip></td>
                       <td>
                         <div
@@ -360,7 +468,6 @@ const WiredProjects = () => {
                         </div>
                       </td>
                       <td className="r mono">{v ? fmtINRShort(v) : "—"}</td>
-                      <td className="mono-sm">{r.owner || "—"}</td>
                       <td className="mono-sm">{expected || "—"}</td>
                     </tr>
                   );

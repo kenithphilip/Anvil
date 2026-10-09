@@ -2,19 +2,33 @@
 // Body: { id, to?, subject?, body?, share_link? }
 //
 // Drafts a `communications` row for the invoice with a share link to
-// the rendered PDF, then fires it via the existing comm send path.
+// the rendered PDF, then sends it in the same request through the
+// shared send core (_lib/comms-send.js: Graph when connected, then the
+// switchable mailer, then the generic webhook).
 // If `share_link` is true (default), regenerates the signed URL via
 // /api/invoices/pdf?format=share so the customer always sees the
 // latest invoice bytes.
+//
+// The send is direct. It is never left for the queue: queued email
+// drains only through the agents/run reaper, which runs only for
+// tenants with a due agent goal. The screen used to queue here and then
+// make a second call to /api/communications/send with the wrong body
+// shape ({ id: { id } }). That call returned 404, so no invoice email
+// was ever sent.
+//
+// The response reports what really happened. `sent` is true only when
+// a provider accepted the message. The invoice moves from draft to sent
+// only then, so a failed send leaves a draft that can be sent again.
 
 import crypto from "node:crypto";
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { renderInvoice } from "../_lib/pdf-renderer.js";
 import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "../_lib/storage.js";
 import { commsRow } from "../_lib/comms-row.js";
+import { sendCommunication } from "../_lib/comms-send.js";
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -54,6 +68,18 @@ const issuePortalTokenForInvoice = async (svc, ctx, invoice, customer) => {
   return { id: ins.data.id, token: ins.data.token, expires_at: ins.data.expires_at, url };
 };
 
+// Why a send did not go out, in words the operator can act on.
+// sendCommunication leaves the row `queued` when no provider is
+// configured (nothing was transmitted). It marks the row `failed`, with
+// an error, when a provider refused the message or a requested
+// attachment could not be resolved.
+const sendFailureReason = (result) => {
+  if (!result || result.notFound) return "The email draft could not be read back, so nothing was sent.";
+  if (result.error) return String(result.error);
+  if (result.configured === false) return "No mail provider is configured, so the email was not sent.";
+  return "The email was not sent (status " + (result.communication?.status || "unknown") + ").";
+};
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);
@@ -61,6 +87,11 @@ export default async function handler(req, res) {
   try {
     const ctx = await resolveContext(req);
     requirePermission(ctx, "write");
+    // Sending an invoice is an invoices write (MATRIX.invoices:
+    // sales_manager, finance, admin). These are also the approver roles
+    // that /api/communications/send requires, so sending from here does
+    // not widen who can send invoice email.
+    requireAction(ctx, "invoices.write");
     const body = await readBody(req);
     if (!body?.id) return json(res, 400, { error: { message: "id required" } });
 
@@ -141,10 +172,8 @@ export default async function handler(req, res) {
     }
     const text = body.body || lines.join("\n");
 
-    // Draft a communications row with status=queued. The client can
-    // immediately call /api/communications/send to fire it. The agent
-    // runner's reaper (Phase 3) will also fire any leftover queued
-    // rows on its next tick.
+    // Draft a communications row with status=queued, then send it below
+    // in this same request.
     const draft = await svc.from("communications").insert(commsRow({
       tenant_id: ctx.tenantId,
       object_type: "invoice",
@@ -164,27 +193,38 @@ export default async function handler(req, res) {
     })).select("*").single();
     if (draft.error) throw new Error("comm draft: " + draft.error.message);
 
-    // Flip the invoice to sent if it was draft.
-    if (invQ.data.status === "draft") {
-      await svc.from("invoices")
+    const result = await sendCommunication(svc, ctx, draft.data.id);
+    const commStatus = result?.communication?.status || "queued";
+    const sent = commStatus === "sent";
+    const error = sent ? null : sendFailureReason(result);
+
+    // Flip the invoice to sent only when the email really left. On a
+    // failure the invoice stays a draft, so the operator can fix the
+    // cause and send again (the screen offers "send" on drafts only).
+    if (sent && invQ.data.status === "draft") {
+      const upd = await svc.from("invoices")
         .update({ status: "sent", sent_at: new Date().toISOString() })
         .eq("tenant_id", ctx.tenantId).eq("id", invQ.data.id);
+      if (upd?.error) throw new Error("invoice status: " + upd.error.message);
     }
 
     await recordAudit(ctx, {
-      action: "invoice_sent",
+      action: sent ? "invoice_sent" : "invoice_send_failed",
       objectType: "invoice",
       objectId: invQ.data.id,
-      detail: recipient,
+      detail: sent ? recipient : recipient + " · " + error,
     });
 
     return json(res, 200, {
       ok: true,
+      sent,
+      status: commStatus,
+      error,
+      provider: result?.provider || null,
       communication_id: draft.data.id,
       share_url: shareUrl,
       portal_url: portal?.url || null,
       portal_token_id: portal?.id || null,
-      status: "queued",
     });
   } catch (err) {
     sendError(res, err);

@@ -1762,6 +1762,14 @@
     // GET is read-level; update is approve-level.
     quoteSettings:       async () => apiFetch("/api/admin/quote_settings"),
     updateQuoteSettings: async (patch) => apiFetch("/api/admin/quote_settings", { method: "PATCH", body: patch }),
+    // Order-processing handoff recipients (migration 251). Admin only. GET and
+    // PATCH return the settings plus how the To and CC lists resolve now;
+    // previewOrderHandoffRecipients resolves a draft { to, cc } and saves
+    // nothing. Without migration 251 GET and PATCH throw a 409 whose
+    // err.body.error.code is MIGRATION_NOT_APPLIED.
+    orderHandoffSettings:          async () => apiFetch("/api/admin/order_handoff_settings"),
+    updateOrderHandoffSettings:    async (patch) => apiFetch("/api/admin/order_handoff_settings", { method: "PATCH", body: patch }),
+    previewOrderHandoffRecipients: async (draft) => apiFetch("/api/admin/order_handoff_settings", { method: "POST", body: draft }),
     listHolidays: async (params) => {
       const qs = new URLSearchParams(params || {}).toString();
       return apiFetch("/api/admin/holidays" + (qs ? "?" + qs : ""));

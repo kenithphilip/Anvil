@@ -38,6 +38,23 @@ const spoCurrency = (po) => {
   return "INR";
 };
 
+// A source PO's value in rupees. total_inr is the column (migration
+// 001), but the create form sends only total_foreign and currency, so
+// most rows have no total_inr. An INR PO's foreign total is already in
+// rupees, and a foreign one converts at its own exchange_rate. A
+// foreign PO with no rate has no rupee value: null, so the KPI counts
+// it apart instead of guessing a rate.
+const spoNum = (v) => (v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
+const spoValueInr = (po) => {
+  const inr = spoNum(po?.total_inr);
+  if (inr != null) return inr;
+  const foreign = spoNum(po?.total_foreign);
+  if (foreign == null) return null;
+  if (spoCurrency(po) === "INR") return foreign;
+  const rate = spoNum(po?.exchange_rate);
+  return rate != null && rate > 0 ? foreign * rate : null;
+};
+
 const spoFmtValue = (n, ccy) => {
   if (n == null || Number.isNaN(Number(n))) return "—";
   const v = Number(n);
@@ -180,13 +197,23 @@ const WiredSourcePOs = () => {
     return sum / total;
   }, [scorecardRows]);
 
-  const totalOpen = rows.filter((p) => SPO_TABS[0].match(p.status) || SPO_TABS[1].match(p.status) || SPO_TABS[2].match(p.status)).length;
+  const isOpenSpo = (p) => SPO_TABS[0].match(p.status) || SPO_TABS[1].match(p.status) || SPO_TABS[2].match(p.status);
+  const totalOpen = rows.filter(isOpenSpo).length;
 
-  const totalValueINR = mS(() => {
-    return rows.reduce((s, p) => {
-      const v = Number(p.value_inr || p.total_value_inr || p.value) || 0;
-      return s + v;
-    }, 0);
+  // "Total value" of the open SPOs, in rupees. It read value_inr,
+  // total_value_inr and value, which source_pos does not have, so it
+  // was always 0. The column is total_inr; see spoValueInr for the rows
+  // that lack it.
+  const openValue = mS(() => {
+    let inr = 0;
+    let unpriced = 0;
+    for (const p of rows) {
+      if (!isOpenSpo(p)) continue;
+      const v = spoValueInr(p);
+      if (v == null) unpriced += 1;
+      else inr += v;
+    }
+    return { inr, unpriced };
   }, [rows]);
 
   const openAck = (po) => {
@@ -399,7 +426,8 @@ const WiredSourcePOs = () => {
           <KPI lbl="On-time" v={onTimeRate != null ? `${(onTimeRate * 100).toFixed(0)}%` : "—"} d="rolling 90d" />
           <KPI lbl="Price accuracy" v={priceAccRate != null ? `${(priceAccRate * 100).toFixed(0)}%` : "—"} d="vs quoted" />
           <KPI lbl="Total open" v={String(totalOpen)} d="awaiting closure" live={totalOpen > 0} />
-          <KPI lbl="Total value" v={fmtINRShort(totalValueINR)} d="all open SPOs" />
+          <KPI lbl="Total value" v={fmtINRShort(openValue.inr)}
+               d={"all open SPOs" + (openValue.unpriced ? " · " + openValue.unpriced + " without an INR value" : "")} />
         </KPIRow>
 
         <div style={{ display: "grid", gridTemplateColumns: ackPo ? "1.5fr 1fr" : "1fr 380px", gap: 14 }}>

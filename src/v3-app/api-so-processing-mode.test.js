@@ -38,45 +38,10 @@ describe("the mode column preserves existing behaviour", () => {
   });
 });
 
-describe("Mode B does not write to the ledger", () => {
-  const src = read("src/api/tally/push.js");
-
-  it("refuses the push", () => {
-    // The mode's entire promise is that their process is unchanged, and a
-    // voucher nobody entered breaks it in the one way a settings toggle cannot
-    // undo.
-    expect(src).toMatch(/so_processing_mode === "B"/);
-    expect(src).toMatch(/SO_PROCESSING_MODE_B/);
-  });
-
-  it("refuses LOUDLY rather than no-oping", () => {
-    // A push that silently does nothing is how a tenant discovers their mode
-    // by finding an empty ledger a week later.
-    // Searched FORWARD from the mode check: tallyResolveCompany also appears
-    // in the import at the top of the file, so a plain indexOf pointed
-    // backwards and sliced an empty string — an assertion that passes on
-    // nothing at all.
-    const modeIdx = src.indexOf('so_processing_mode === "B"');
-    const block = src.slice(modeIdx, src.indexOf("tallyResolveCompany(svc", modeIdx));
-    expect(block.length).toBeGreaterThan(50);
-    expect(block).toMatch(/return json\(res, 409/);
-  });
-
-  it("checks the mode BEFORE resolving the bridge", () => {
-    const modeIdx = src.indexOf('so_processing_mode === "B"');
-    const bridgeIdx = src.indexOf("tallyResolveCompany(svc");
-    expect(modeIdx).toBeGreaterThan(-1);
-    expect(modeIdx).toBeLessThan(bridgeIdx);
-  });
-
-  it("proceeds when the setting cannot be read", () => {
-    // A database without migration 221, or a transient read error, leaves this
-    // undefined — and that is Mode A, the behaviour every tenant already has.
-    // Failing the other way would stop pushes on a blip.
-    expect(src).toMatch(/An unreadable setting, or a database without migration 221/);
-    expect(src).not.toMatch(/if \(modeQ\.error\) return/);
-  });
-});
+// "Mode B does not write to the ledger" is proven by running the handlers, not
+// by reading their source: api-tally-mode-b.test.js calls tally/push.js and
+// tally/retry.js in Mode B (409, the bridge never resolved, nothing pushed),
+// in Mode A, and with an unreadable setting (proceeds as Mode A).
 
 describe("both paths are described where the choice is made", () => {
   it("says what Anvil does AND what you do, for each", () => {

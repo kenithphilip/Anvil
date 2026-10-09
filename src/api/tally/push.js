@@ -26,6 +26,7 @@ import { tallyPush, tallyResolveCompany, tallyIsRecoverable } from "../_lib/tall
 import { resolveSalesVoucherType } from "../_lib/tally-voucher-type.js";
 import { buildSalesVoucherXml, isPlaceholderXml } from "../_lib/tally-build-voucher.js";
 import { firstUnresolvedBlocker } from "../_lib/blocking-findings.js";
+import { isModeB, modeBRefusal } from "../_lib/so-processing-mode.js";
 
 const idempotencyKey = (gstin, poNumber, payloadHash) =>
   [String(gstin || ""), String(poNumber || ""), String(payloadHash || "")].join("|");
@@ -79,21 +80,13 @@ export default async function handler(req, res) {
     // later; a 409 naming the mode is how they discover it in the second it
     // happens. Everything else Anvil does — extract, reconcile, propose,
     // compare — is untouched by the mode.
-    const modeQ = await svc.from("tenant_settings")
-      .select("so_processing_mode").eq("tenant_id", ctx.tenantId).maybeSingle();
-    // An unreadable setting, or a database without migration 221, leaves this
-    // undefined and the push proceeds — which is mode A, the behaviour every
-    // tenant already has. Failing the other way would stop pushes on a
-    // transient read error.
-    if (modeQ?.data?.so_processing_mode === "B") {
-      return json(res, 409, {
-        error: {
-          code: "SO_PROCESSING_MODE_B",
-          message: "This tenant is in Mode B: sales orders are processed by hand in the ERP and Anvil does not"
-            + " push vouchers. Anvil's own proposal is still recorded and compared. Switch to Mode A under"
-            + " Admin > Sales-order processing to let Anvil push.",
-        },
-      });
+    //
+    // The read and the refusal live in _lib/so-processing-mode.js, shared with
+    // tally/retry.js, so the push and the retry drain refuse identically. An
+    // unreadable setting, or a database without migration 221, reads as mode
+    // A and the push proceeds.
+    if (await isModeB(svc, ctx.tenantId)) {
+      return json(res, 409, modeBRefusal());
     }
 
     const company = await tallyResolveCompany(svc, ctx.tenantId, body.companyId);

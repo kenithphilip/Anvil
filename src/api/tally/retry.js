@@ -7,12 +7,20 @@
 //
 // Backoff schedule mirrors the NetSuite runner: 1m, 5m, 15m, 60m,
 // 240m, 720m. After 5 attempts the row flips to status='gave_up'.
+//
+// MODE B: a tenant in Mode B (migration 221) has said Anvil must not write
+// to its ledger. The retry drain refuses exactly as tally/push.js does: the
+// manual call returns the same 409, and the cron skips the tenant. Its rows
+// stay pending and untouched; nothing reaches the bridge. Without this, a
+// row queued before a switch to B (or enqueued by the copilot) could still
+// post a voucher.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { tallyPush, tallyResolveCompany, tallyIsRecoverable } from "../_lib/tally-client.js";
+import { isModeB, modeBRefusal, MODE_B_CODE } from "../_lib/so-processing-mode.js";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const BACKOFF_MIN = [1, 5, 15, 60, 240, 720];
@@ -108,6 +116,11 @@ const replay = async (svc, row, ctx) => {
 };
 
 const drainTenant = async (svc, tenantId, opts) => {
+  // Checked per tenant, before any row is read, so both the cron and the
+  // manual path are covered by the one gate.
+  if (await isModeB(svc, tenantId)) {
+    return { tenant_id: tenantId, processed: 0, results: [], refused: MODE_B_CODE };
+  }
   const q = svc.from("tally_retry_queue").select("*")
     .eq("tenant_id", tenantId)
     .eq("status", "pending")
@@ -154,6 +167,7 @@ export default async function handler(req, res) {
       limit: Math.min(100, body?.limit || 50),
       ctx,
     });
+    if (result.refused === MODE_B_CODE) return json(res, 409, modeBRefusal());
     return json(res, 200, { ran_at: new Date().toISOString(), ...result });
   } catch (err) {
     sendError(res, err);

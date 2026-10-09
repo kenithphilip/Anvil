@@ -52,8 +52,10 @@ describe("reconcilePoAgainstQuotes", () => {
     expect(r.lines[0]._match.quote_rate).toBe(27244);
     expect(r.lines[0]._match.price_delta_pct).toBeGreaterThan(0);
     expect(r.flags[0].verdict).toBe("price_mismatch");
-    // discounted_unit_price is set to the QUOTE (authoritative) rate, not the PO's
-    expect(r.lines[0].discounted_unit_price).toBe(27244);
+    // The PO rate is the customer's commitment and stays the line's rate. The
+    // quote's rate is reference data beside it; it used to replace the PO's.
+    expect(r.lines[0].discounted_unit_price).toBe(30000);
+    expect(r.lines[0].quote_unit_price).toBe(27244);
   });
 
   it("reports UNMATCHED PO lines (part not in any quote)", () => {

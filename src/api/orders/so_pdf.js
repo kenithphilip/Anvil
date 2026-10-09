@@ -18,6 +18,7 @@ import { renderSalesOrder } from "../_lib/pdf-renderer.js";
 import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "../_lib/storage.js";
 import { classifyOrigin } from "../_lib/pending-so/part-origin.js";
 import { hasUnresolvedBlocker, firstUnresolvedBlocker } from "../_lib/blocking-findings.js";
+import { soLineMoney } from "../_lib/so-line-money.js";
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -56,15 +57,19 @@ const fmtDate = (d) => {
 
 const addrLines = (...parts) => parts.map((p) => (p == null ? "" : String(p).trim())).filter(Boolean);
 
-const buildSalesOrderData = ({ order, customer, consigneeLoc, seller, contact, schedules }) => {
+// Exported for tests, so the line money can be checked against the Excel
+// export without rendering a PDF.
+export const buildSalesOrderData = ({ order, customer, consigneeLoc, seller, contact, schedules }) => {
   const soData = order.result?.salesOrder || {};
   const soItems = Array.isArray(soData.lineItems) ? soData.lineItems : [];
   const dueByIndex = new Map((schedules || []).map((s) => [Number(s.line_index), s.scheduled_date]));
 
   const items = soItems.map((ln, i) => {
     const partNo = pick(ln.part_no, ln.partNumber, ln.itemCode) || "";
-    const qty = Number(pick(ln.qty, ln.quantity)) || 0;
-    const rate = Number(pick(ln.discounted_unit_price, ln.unit_price, ln.rate, ln.unitPrice)) || 0;
+    // The PO's rate, from the helper the Excel export reads too. This used to
+    // read discounted_unit_price first, which the reconciler had set to the
+    // QUOTE's rate, so the PDF and the Excel disagreed on a reconciled line.
+    const { qty, rate, amount } = soLineMoney(ln);
     const discPct = ln.discount_pct != null ? Number(ln.discount_pct) : null;
     return {
       sl: i + 1,
@@ -77,7 +82,7 @@ const buildSalesOrderData = ({ order, customer, consigneeLoc, seller, contact, s
       uom: pick(ln.uom, ln.unit) || "No.",
       rate,
       disc: discPct != null ? (discPct <= 1 ? round2(discPct * 100) : round2(discPct)) : "",
-      amount: round2(qty * rate),
+      amount,
       batch: order.po_number || "",
     };
   });

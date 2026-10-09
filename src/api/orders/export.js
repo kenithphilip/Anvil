@@ -14,8 +14,8 @@ import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
+import { soLineMoney } from "../_lib/so-line-money.js";
 
-const num = (v) => { if (v === null || v === undefined || v === "") return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
 const first = (...xs) => { for (const x of xs) if (x !== undefined && x !== null && x !== "") return x; return null; };
 
 // A line-item field is attacker-influenced (it comes off the customer's PO), so
@@ -55,9 +55,10 @@ export const buildSalesOrderAoa = (order) => {
   ];
 
   const rows = lines.map((li, i) => {
-    const qty = num(first(li.qty, li.quantity)) ?? 0;
-    const rate = num(first(li.rate, li.unitPrice, li.unit_price)) ?? 0;
-    const amount = num(first(li.amount, li.line_amount));
+    // The same rate and amount the SO PDF prints, from the one helper both
+    // read. They used to read different fields and disagreed on a reconciled
+    // line.
+    const { qty, rate, amount } = soLineMoney(li);
     return [
       i + 1,
       first(li.partNumber, li.part_no, li.partNo) || "",
@@ -67,7 +68,7 @@ export const buildSalesOrderAoa = (order) => {
       qty,
       li.uom || "",
       rate,
-      amount != null ? amount : Math.round(qty * rate * 100) / 100,
+      amount,
       first(li.hsn, li.hsn_sac, li.hsnCode) || "",
     ];
   });

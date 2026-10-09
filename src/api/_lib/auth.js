@@ -221,6 +221,13 @@ export const SERVER_ACTIONS = {
   // write verb would let any rep (or finance, or procurement) take an account
   // or hand one away. Mirrors rbac.ts customer.assign_owner.
   "customer.assign_owner": new Set(["sales_manager", "admin"]),
+  // Giving an opportunity to someone, taking it from someone, or clearing its
+  // owner. Same rule as an account: whose pipeline a deal sits in is a
+  // manager's call (#547 D2: a manager is sales_manager or admin). A rep may
+  // still CLAIM an unowned opportunity for themselves; sales/opportunities.js
+  // lets that through on the coarse write verb. Mirrors rbac.ts
+  // opportunity.assign.
+  "opportunity.assign":  new Set(["sales_manager", "admin"]),
   // MATRIX.invoices: only sales_manager (rw), finance (rwa), admin (rwa) — NOT
   // operator/procurement/customer_support/sales_engineer (r or hidden).
   "invoices.write":      new Set(["sales_manager", "finance", "admin"]),

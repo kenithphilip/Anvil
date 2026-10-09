@@ -4,6 +4,7 @@ import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTitle } from "../lib/primit
 import { OpportunityQuotesPanel } from "../components/OpportunityQuotesPanel";
 import { OpportunityQuoteRevisions } from "../components/OpportunityQuoteRevisions";
 import { TouchLog } from "../components/TouchLog";
+import { OpportunityStageOwner } from "../components/OpportunityStageOwner";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 
@@ -311,7 +312,10 @@ const WiredOpportunities = () => {
     }
   };
 
-  if (list.loading) {
+  // Only the first load blanks the screen. A reload (after a stage move, an
+  // owner change or a prediction) keeps the rows on screen, so the detail
+  // card the person is working in stays where it is.
+  if (list.loading && !list.data) {
     return (
       <div className="ws ws-no-rail">
         <WSTitle eyebrow="Sales · Opportunities" title="Opportunities" meta="loading…" />
@@ -406,6 +410,7 @@ const WiredOpportunities = () => {
                    onClick={async () => {
                      setPredictingId(selected.id);
                      try { await AnvilBackend?.sales?.predictOpportunity?.(selected.id); list.reload(); }
+                     catch (err) { window.notifyError?.("Could not predict the close probability", err?.message || String(err)); }
                      finally { setPredictingId(null); }
                    }}
                    title="Run the AI close-probability predictor for this opportunity">
@@ -443,6 +448,10 @@ const WiredOpportunities = () => {
                 </pre>
               </>
             )}
+            <div className="divider" />
+            <div style={{ marginTop: 10 }}>
+              <OpportunityStageOwner opportunity={selected} stages={OPP_STAGES} onChanged={list.reload} />
+            </div>
             <div className="divider" />
             <div style={{ marginTop: 10 }}>
               <OpportunityQuotesPanel opportunityId={selected.id} customerId={selected.customer_id} />

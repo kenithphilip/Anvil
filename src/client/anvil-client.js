@@ -1688,8 +1688,9 @@
     addOpportunityQuote: async (payload) => apiFetch("/api/opportunities/quotes", { method: "POST", body: payload }),
     updateOpportunityQuote: async (id, payload) => apiFetch("/api/opportunities/quotes?id=" + encodeURIComponent(id), { method: "PATCH", body: payload }),
     deleteOpportunityQuote: async (id) => apiFetch("/api/opportunities/quotes?id=" + encodeURIComponent(id), { method: "DELETE" }),
-    // Audit P7.2: Haiku close-probability prediction.
-    predictOpportunity: async (id) => apiFetch("/api/sales/predict_opportunity" + (id ? "?id=" + encodeURIComponent(id) : "")),
+    // Audit P7.2: Haiku close-probability prediction. The handler accepts
+    // only POST with the id in the body; a GET with ?id= got 405.
+    predictOpportunity: async (id) => apiFetch("/api/sales/predict_opportunity", { method: "POST", body: { id } }),
     repredictOpportunities: async () => apiFetch("/api/sales/predict_opportunity", { method: "POST" }),
     listInternalSos: async (params) => apiFetch("/api/sales/internal_so" + (params ? "?" + new URLSearchParams(params).toString() : "")),
     createInternalSo: async (payload) => apiFetch("/api/sales/internal_so", { method: "POST", body: payload }),

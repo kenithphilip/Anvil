@@ -33,7 +33,7 @@
     "@llamaindex/llama-cloud": "^2.10.0",
     "@react-pdf/renderer": "^4.5.1",
     "@simplewebauthn/browser": "^11.0.0",
-    "@simplewebauthn/server": "^11.0.0",
+    "@simplewebauthn/server": "^14.0.3",
     "@supabase/supabase-js": "^2.45.0",
     "cytoscape": "^3.30.0",
     "cytoscape-dagre": "^2.5.0",

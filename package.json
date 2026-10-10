@@ -34,7 +34,7 @@
     "@react-pdf/renderer": "^4.5.1",
     "@simplewebauthn/browser": "^11.0.0",
     "@simplewebauthn/server": "^11.0.0",
-    "@supabase/supabase-js": "^2.45.0",
+    "@supabase/supabase-js": "^2.117.2",
     "cytoscape": "^3.30.0",
     "cytoscape-dagre": "^2.5.0",
     "dagre": "^0.8.5",

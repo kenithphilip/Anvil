@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Banner, Btn, Card, Chip, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { MATERIAL_HEADER_ALIASES } from "../../api/_lib/bom-format.js";
 
 // ============================================================
 // ANVIL v3 - wired BOM Import
@@ -189,7 +190,7 @@ const inferHierarchyLevel = (val) => {
   return Math.max(1, Math.min(9, level));
 };
 
-const extractItems = (rows2d) => {
+export const extractItems = (rows2d) => {
   if (!rows2d || !rows2d.length) return { items: [], headerRow: -1 };
   const hi = findHeaderRow(rows2d);
   if (hi === -1) return { items: [], headerRow: -1 };
@@ -198,6 +199,9 @@ const extractItems = (rows2d) => {
   const ciName = idxOf(hdr, PART_NAME_LABELS);
   const ciQty  = idxOf(hdr, QTY_LABELS);
   const ciUom  = idxOf(hdr, UOM_LABELS);
+  // Same material headers as the server format engine, so this fallback no
+  // longer drops the Material column (it used to hard-code material: null).
+  const ciMat  = idxOf(hdr, MATERIAL_HEADER_ALIASES);
   if (ciPart === -1) return { items: [], headerRow: hi };
   const items = [];
   for (let r = hi + 1; r < rows2d.length; r++) {
@@ -207,12 +211,14 @@ const extractItems = (rows2d) => {
     const nameRaw = ciName !== -1 ? String(row[ciName] == null ? "" : row[ciName]) : "";
     const qtyRaw  = ciQty  !== -1 ? row[ciQty]  : 1;
     const uomRaw  = ciUom  !== -1 ? String(row[ciUom] == null ? "" : row[ciUom]).trim() : "";
+    const matRaw  = ciMat  !== -1 ? String(row[ciMat] == null ? "" : row[ciMat]).trim() : "";
     const qtyN = Number(String(qtyRaw).replace(/[^0-9.\-]/g, "")) || 1;
     items.push({
       part_no: partRaw,
       description: String(nameRaw).trim(),
       qty: qtyN,
       uom: uomRaw || null,
+      material: matRaw || null,
       hierarchy_level: inferHierarchyLevel(nameRaw || partRaw),
     });
   }
@@ -264,7 +270,7 @@ const parseRowsRich = async (rows, fileName) => {
   } catch (_) { /* fall through to client mapping */ }
   const { items } = extractItems(rows);
   return {
-    items: items.map((it) => ({ ...it, level: it.hierarchy_level || null, material: null, supplier_part_no: null })),
+    items: items.map((it) => ({ ...it, level: it.hierarchy_level || null, material: it.material || null, supplier_part_no: null })),
     source_format: null,
     asset: null,
   };

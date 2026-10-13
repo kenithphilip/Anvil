@@ -3,6 +3,7 @@ import { fmtCurrency, fmtDate, stageOf } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTitle, rowActivateProps } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { isAdmin } from "../lib/rbac";
 
 // ============================================================
 // ANVIL v3: Sales-order register
@@ -11,6 +12,10 @@ import { AnvilBackend } from "../lib/api";
 // whether the ERP's own sales order is on file. In Mode B this is the
 // record of every sales order received and analysed while the voucher
 // lives in the ERP. Data: GET /api/orders/register (server-paginated).
+// The Terms column (plan PR 13) shows each order's open terms flags by
+// severity, and the "undecided terms" filter keeps the orders with a flag
+// nobody has decided. Both show only when the tenant's terms check is on, or
+// in shadow mode for an admin.
 // ============================================================
 
 const CHANNEL_LABEL: Record<string, string> = {
@@ -41,8 +46,8 @@ const EXTRACTION_CHIP: Record<string, { k: string; label: string }> = {
 
 const PAGE_SIZE = 50;
 
-type Filters = { from: string; to: string; customer: string; channel: string; status: string; hasFlags: boolean };
-const EMPTY: Filters = { from: "", to: "", customer: "", channel: "", status: "", hasFlags: false };
+type Filters = { from: string; to: string; customer: string; channel: string; status: string; hasFlags: boolean; undecidedTerms: boolean };
+const EMPTY: Filters = { from: "", to: "", customer: "", channel: "", status: "", hasFlags: false, undecidedTerms: false };
 
 // A local calendar day as the instant it starts, so "from 1 Oct" means the
 // operator's own midnight, not UTC's. `to` is exclusive: the next midnight.
@@ -60,7 +65,32 @@ export const registerParams = (f: Filters, page: number) => ({
   channel: f.channel,
   status: f.status,
   has_flags: f.hasFlags ? "1" : "",
+  has_undecided_terms: f.undecidedTerms ? "1" : "",
+  // An admin also sees a shadow-mode terms check; the server refuses anyone
+  // else who asks.
+  include_shadow: isAdmin() ? "1" : "",
 });
+
+const SEVERITY_CHIP: Record<string, string> = { critical: "bad", high: "bad", warn: "warn", info: "info" };
+
+// The Terms cell: open flags by severity, then amendments and decisions.
+// Never "no flags" for an order whose PO terms were not read.
+export const TermsCell: React.FC<{ terms: any }> = ({ terms }) => {
+  if (!terms) return <span style={{ color: "var(--ink-3)" }}>not available</span>;
+  if (terms.status === "not_checked") return <span style={{ color: "var(--ink-3)" }}>not checked</span>;
+  const open = ["critical", "high", "warn", "info"].filter((s) => terms.open?.[s]);
+  return (
+    <span className="mono-sm">
+      {terms.status === "not_read" && <Chip k="bad">PO terms not read</Chip>}
+      {open.map((s) => <Chip key={s} k={SEVERITY_CHIP[s] as any}>{terms.open[s]} {s} open</Chip>)}
+      {terms.amendment_requested ? <Chip k="info">{terms.amendment_requested} amendment requested</Chip> : null}
+      {terms.decided ? <Chip k="good">{terms.decided} decided</Chip> : null}
+      {!open.length && !terms.amendment_requested && !terms.decided && terms.status !== "not_read"
+        ? <Chip k="ghost">nothing to decide</Chip> : null}
+      {terms.shadow && <Chip k="warn">shadow</Chip>}
+    </span>
+  );
+};
 
 const confidencePct = (v: number | null | undefined) => (v == null ? "" : Math.round(Number(v) * 100) + "%");
 
@@ -68,8 +98,8 @@ const SoRegister: React.FC = () => {
   const [filters, setFilters] = React.useState<Filters>(EMPTY);
   const [page, setPage] = React.useState(1);
   const [customers, setCustomers] = React.useState<any[]>([]);
-  const [state, setState] = React.useState<{ rows: any[]; total: number | null; hasMore: boolean; channels: string[]; loading: boolean; error: any }>(
-    { rows: [], total: null, hasMore: false, channels: DEFAULT_CHANNELS, loading: true, error: null },
+  const [state, setState] = React.useState<{ rows: any[]; total: number | null; hasMore: boolean; channels: string[]; terms: any; loading: boolean; error: any }>(
+    { rows: [], total: null, hasMore: false, channels: DEFAULT_CHANNELS, terms: null, loading: true, error: null },
   );
   const [exporting, setExporting] = React.useState(false);
   const [exportErr, setExportErr] = React.useState<string | null>(null);
@@ -95,6 +125,7 @@ const SoRegister: React.FC = () => {
           total: typeof r?.total === "number" ? r.total : null,
           hasMore: !!r?.has_more,
           channels: Array.isArray(r?.channels) && r.channels.length ? r.channels : DEFAULT_CHANNELS,
+          terms: r?.terms && typeof r.terms === "object" ? r.terms : null,
           loading: false,
           error: null,
         });
@@ -126,6 +157,9 @@ const SoRegister: React.FC = () => {
   };
 
   const pages = state.total != null ? Math.max(1, Math.ceil(state.total / PAGE_SIZE)) : null;
+  // The Terms column and its filter, when this caller may see the check.
+  const showTerms = !!state.terms?.visible;
+  const cols = showTerms ? 12 : 11;
   const selectStyle = { background: "transparent", border: "none", color: "inherit", font: "inherit", outline: "none", cursor: "pointer", padding: 0 };
 
   return (
@@ -182,6 +216,15 @@ const SoRegister: React.FC = () => {
             &nbsp;has flags
           </label>
         </Chip>
+        {(showTerms || filters.undecidedTerms) && (
+          <Chip k={filters.undecidedTerms ? "fill" : undefined}>
+            <label style={{ cursor: "pointer" }}>
+              <input type="checkbox" aria-label="Only orders with undecided terms" checked={filters.undecidedTerms}
+                     onChange={(e) => setFilter({ undecidedTerms: e.target.checked })} />
+              &nbsp;undecided terms
+            </label>
+          </Chip>
+        )}
         {anyFilter && (
           <button type="button" onClick={() => { setFilters(EMPTY); setPage(1); }}
                   style={{ background: "none", border: "none", color: "var(--ink-3)", cursor: "pointer", fontSize: 12, textDecoration: "underline" }}>
@@ -214,15 +257,16 @@ const SoRegister: React.FC = () => {
                 <th className="r">Lines</th>
                 <th>Extraction</th>
                 <th>Reconciliation</th>
+                {showTerms && <th>Terms</th>}
                 <th>Status</th>
                 <th>ERP SO</th>
                 <th>Handoff</th>
               </tr></thead>
               <tbody>
                 {state.loading ? (
-                  <tr><td colSpan={11} className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading the register…</td></tr>
+                  <tr><td colSpan={cols} className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading the register…</td></tr>
                 ) : state.rows.length === 0 ? (
-                  <tr><td colSpan={11} className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+                  <tr><td colSpan={cols} className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
                     {anyFilter ? "No orders match these filters." : "No orders received yet."}
                   </td></tr>
                 ) : state.rows.map((r) => {
@@ -252,6 +296,7 @@ const SoRegister: React.FC = () => {
                           </>
                         )}
                       </td>
+                      {showTerms && <td><TermsCell terms={r.terms} /></td>}
                       <td><Chip k={st.k as any}>{st.label}</Chip></td>
                       <td className="mono-sm">{r.erp_so?.attached ? (r.erp_so.voucher_no || "attached") : <span style={{ color: "var(--ink-3)" }}>none</span>}</td>
                       {/* Placeholder until the order-processing handoff ships. */}

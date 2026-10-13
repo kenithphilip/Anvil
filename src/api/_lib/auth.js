@@ -256,6 +256,14 @@ export const SERVER_ACTIONS = {
   // could read the margin on any quote. Sales engineers keep it because they
   // build the Price Compo. Mirrors rbac.ts cost.view.
   "cost.view":           new Set(["sales_engineer", "sales_manager", "finance", "admin"]),
+  // Deciding a terms flag (docs/SO_TERMS_AND_HANDOFF_SCOPE.md 6.2, owner
+  // decision 2 of 2026-10-13). Anyone who may decide may request an
+  // amendment or reject a term at any severity, and may accept an info or
+  // warn flag. Accepting a high or critical flag, or calling it not a
+  // deviation, also needs order.terms_accept_high: a sales manager or an
+  // admin. orders/terms_decide.js applies both. Mirrors rbac.ts.
+  "order.terms_decide":      new Set(["sales_engineer", "sales_manager", "admin"]),
+  "order.terms_accept_high": new Set(["sales_manager", "admin"]),
 };
 
 export const hasAction = (ctx, action) => {

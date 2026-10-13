@@ -141,6 +141,12 @@ export const ACTIONS: Record<string, Role[]> = {
   // margin floors, margin history and the margin column. Mirrors the server's
   // SERVER_ACTIONS["cost.view"]; the endpoints refuse every other role.
   "cost.view":            ["sales_engineer", "sales_manager", "finance", "admin"],
+  // Deciding a terms flag (owner decision 2). Request an amendment or reject
+  // a term at any severity, accept info or warn. Mirrors auth.js
+  // SERVER_ACTIONS; the server enforces both.
+  "order.terms_decide":   ["sales_engineer", "sales_manager", "admin"],
+  // Accept, or call "not a deviation", a high or critical terms flag.
+  "order.terms_accept_high":["sales_manager", "admin"],
   "admin.add_member":     ["admin"],
   "admin.change_role":    ["admin"],
   "security.edit_redaction":["admin"],

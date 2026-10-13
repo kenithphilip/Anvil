@@ -18,7 +18,7 @@ import { isUnresolvedBlocker as isBlockingFinding } from "../../api/_lib/blockin
 // Pure, no I/O — imported rather than twinned, so the rupee figure an approver
 // reads is computed by the same code the server would use.
 import { deviationValue, currencyOf } from "../../api/_lib/deviation-value.js";
-import { RBAC, canDo } from "../lib/rbac";
+import { RBAC, canDo, isAdmin } from "../lib/rbac";
 import { pushRecent } from "../lib/recent-items";
 import { amountInWords } from "../lib/amount-words";
 import {
@@ -34,6 +34,7 @@ import { computeLineTotals, TAX_AMOUNT_KEYS, AUX_AMOUNT_KEYS, COMPONENT_LABEL, L
 import { ExtractionProgress } from "../components/ExtractionProgress";
 import { OrderHeaderEditor, OrderLineTaxComponents, TallyTab } from "../components/SOWorkspaceOrderPanels";
 import { PipelineDiagnostics } from "../components/PipelineDiagnostics";
+import { TermsPane } from "../components/TermsPane";
 import { FieldPill, ProvenanceChip, ExtractionQualityCard, EditableCell } from "../components/SOWorkspaceReviewCells";
 import { ResizableTh } from "../components/ResizableTh";
 import {
@@ -180,6 +181,11 @@ const WiredSOWorkspace = () => {
   // already fetched — so opening the tab does not re-request it.
   const [quoteDoc, setQuoteDoc] = u<string | null>(null);
   const [attachedQuotes, setAttachedQuotes] = u<AttachedQuote[]>([]);
+  // The terms check of this order (GET /api/orders/terms). null until read,
+  // or when the endpoint is unavailable. The tab shows only when the view is
+  // visible: the tenant's check is on, or in shadow for an admin, who reads
+  // it with include_shadow. Engineers see nothing in shadow mode.
+  const [termsView, setTermsView] = u<any>(null);
   const [gapsOpen, setGapsOpen] = u(false);
   const [confirmGap, setConfirmGap] = u<string | null>(null);
   const [resolvingCode, setResolvingCode] = u<string | null>(null);
@@ -399,6 +405,15 @@ const WiredSOWorkspace = () => {
           setAudit({ data: [], loading: false });
         }
       });
+    return () => { cancelled = true; };
+  }, [orderId, bump]);
+
+  e(() => {
+    if (!orderId) return;
+    let cancelled = false;
+    Promise.resolve(AnvilBackend?.orders?.terms?.(orderId, { includeShadow: isAdmin() }))
+      .then((v: any) => { if (!cancelled) setTermsView(v && typeof v === "object" && !Array.isArray(v) ? v : null); })
+      .catch(() => { if (!cancelled) setTermsView(null); });
     return () => { cancelled = true; };
   }, [orderId, bump]);
 
@@ -1901,6 +1916,9 @@ const WiredSOWorkspace = () => {
     // The quote beside what was read out of it. A tab rather than an overlay:
     // checking line items is slow comparative work that needs the room.
     { id: "quotes", label: "Quotes", count: attachedQuotes.length || null },
+    // The PO's terms beside the quote's, with a decision per flag. Shown only
+    // when the terms check is on, or in shadow mode for an admin.
+    ...(termsView?.visible ? [{ id: "terms", label: "Terms", count: termsView?.counts?.undecided || null }] : []),
     { id: "approval", label: "Approval" },
     { id: "tally", label: "Tally" },
     // Next to Tally deliberately: both are about what the ERP holds. This one
@@ -2951,6 +2969,17 @@ const WiredSOWorkspace = () => {
             onSelect={setQuoteDoc}
             onChanged={() => { setQuoteDoc(null); setQuotesBump((n) => n + 1); }}
             canCorrect={canApprove}
+          />
+        )}
+
+        {tab === "terms" && termsView?.visible && (
+          <TermsPane
+            orderId={o.id}
+            sourceDocId={sourceDocId}
+            view={termsView}
+            isAdmin={isAdmin()}
+            canWrite={canWrite}
+            onView={setTermsView}
           />
         )}
 

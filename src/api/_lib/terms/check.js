@@ -10,7 +10,14 @@
 //   runTermsAfterReconcile  the server trigger at the end of the quote
 //                           reconcile. Never throws and never fails the
 //                           reconcile; it has its own time budget.
-//   readTermsView           what GET /api/orders/terms returns.
+//   readTermsView           what GET /api/orders/terms returns, with each
+//                           flag's decision history and the decisions the
+//                           caller may make.
+//
+// A re-run carries a decision forward to the new flag only when the clause
+// and the text hash of both sides are unchanged (section 5.4), and only when
+// the person who decided could still make that decision at the new severity.
+// Otherwise the flag reopens and the old decision stays in its history.
 //
 // The mode (tenant_settings.terms_check_mode, migration 250):
 //   off     nothing is run, written or shown (the default).
@@ -33,8 +40,15 @@ import {
 } from "./sides.js";
 import { labelled } from "./labels.js";
 import { loadTermsPass } from "./terms-pass-hook.js";
+import {
+  OPEN_DECISIONS, allowedDecisions, decisionView, historyByFlag, mayDecide, readDecisions,
+} from "./decisions.js";
+import {
+  TERMS_MIGRATION, isMissingTermsSchema, migrationNotApplied, migrationErrorBody, termsDbError,
+} from "./errors.js";
 
-export const TERMS_MIGRATION = "250_order_terms.sql";
+export { TERMS_MIGRATION, isMissingTermsSchema, migrationNotApplied, migrationErrorBody };
+
 export const TERMS_MODES = Object.freeze(["off", "shadow", "on"]);
 export const TERMS_TRIGGERS = Object.freeze(["reconcile", "manual", "quote_attached"]);
 
@@ -46,39 +60,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 // ── errors ──────────────────────────────────────────────────────────────────
 
-// Objects migration 250 creates. A missing table or column of any other name
-// is a different fault and is not reported as this one.
-const TERMS_SCHEMA = /\b(order_term_checks|order_term_flags|order_term_decisions|terms_check_mode|terms_policy|terms_snapshot|terms_snapshot_at|validity_text)\b/;
-const QUOTE_TERM_COLUMN = /\b(incoterm|delivery_terms|validity_text|terms_snapshot)\b/;
-
-export const isMissingTermsSchema = (err, { quoteColumns = false } = {}) => {
-  if (!err) return false;
-  const msg = [err.message, err.details, err.hint].filter(Boolean).join(" ");
-  const named = TERMS_SCHEMA.test(msg) || (quoteColumns && QUOTE_TERM_COLUMN.test(msg));
-  if (!named) return false;
-  return ["42P01", "42703", "PGRST204", "PGRST205"].includes(err.code) || /does not exist|schema cache|could not find/i.test(msg);
-};
-
-export const migrationNotApplied = () => {
-  const err = new Error("Migration " + TERMS_MIGRATION + " has not been applied to this database, so the terms check is not available. Apply it by hand, then reload the PostgREST schema cache.");
-  err.status = 409;
-  err.code = "MIGRATION_NOT_APPLIED";
-  err.migration = TERMS_MIGRATION;
-  return err;
-};
-
 const tenantRequired = () => {
   const err = new Error("terms check: no tenant in context");
   err.status = 403;
   return err;
 };
 
-const fail = (what, error, opts) => (isMissingTermsSchema(error, opts) ? migrationNotApplied() : new Error(what + ": " + error.message));
-
-// The body an endpoint sends for MIGRATION_NOT_APPLIED.
-export const migrationErrorBody = (err) => ({
-  error: { code: err.code, migration: err.migration, message: err.message, status: err.status },
-});
+const fail = termsDbError;
 
 // ── reads ───────────────────────────────────────────────────────────────────
 
@@ -294,31 +282,37 @@ export const runTermsCheck = async (svc, ctx, orderId, opts = {}) => {
     created_by: ctx.user?.id || null,
   };
 
-  if (previous) {
-    const prevFlags = await readFlags(svc, tenantId, previous.id);
-    if (checkFingerprint(previous, prevFlags) === checkFingerprint(check, flags)) {
-      return { status: "unchanged", mode, check: previous, flags: prevFlags };
-    }
+  const prevFlags = previous ? await readFlags(svc, tenantId, previous.id) : [];
+  if (previous && checkFingerprint(previous, prevFlags) === checkFingerprint(check, flags)) {
+    return { status: "unchanged", mode, check: previous, flags: prevFlags };
   }
 
   const ins = await svc.from("order_term_checks").insert(check).select("*").single();
   if (ins.error) throw fail("order_term_checks insert", ins.error);
   const saved = ins.data;
+  // The new check must not become current without its flags and their
+  // carried decisions: a current check with no flags reads as "no
+  // deviations", and a dropped decision reopens a flag someone closed. On a
+  // failure the new check is set aside and the previous one stays current.
+  const setAside = () => svc.from("order_term_checks").update({ superseded_at: new Date().toISOString() })
+    .eq("tenant_id", tenantId).eq("id", saved.id);
   let savedFlags = [];
+  let carried = 0;
   if (flags.length) {
     const fi = await svc.from("order_term_flags")
       .insert(flags.map((f) => ({ ...f, tenant_id: tenantId, order_id: order.id, check_id: saved.id })))
       .select("*");
     if (fi.error) {
-      // The new check must not become current without its flags: a current
-      // check with no flags reads as "no deviations". The previous check
-      // stays current.
-      const nowIso = new Date().toISOString();
-      await svc.from("order_term_checks").update({ superseded_at: nowIso })
-        .eq("tenant_id", tenantId).eq("id", saved.id);
+      await setAside();
       throw fail("order_term_flags insert", fi.error);
     }
     savedFlags = fi.data || [];
+    try {
+      carried = await carryDecisions(svc, tenantId, order.id, settings.policy, prevFlags, savedFlags);
+    } catch (err) {
+      await setAside();
+      throw err;
+    }
   }
 
   // Supersede every other current check of this order, and their flags.
@@ -335,7 +329,36 @@ export const runTermsCheck = async (svc, ctx, orderId, opts = {}) => {
       .eq("tenant_id", tenantId).in("check_id", older).is("superseded_at", null);
     if (u2.error) throw fail("order_term_flags supersede", u2.error);
   }
-  return { status: "checked", mode, check: saved, flags: savedFlags };
+  return { status: "checked", mode, check: saved, flags: savedFlags, carried };
+};
+
+// Carry each decision from the previous check to the new flag with the same
+// clause and the same text hash (both sides' wording unchanged). Only when
+// the person who decided may still make that decision at the new severity: a
+// re-rated policy that lifts a warn flag to high does not keep an engineer's
+// accept. Returns how many were carried. The carried row keeps the original
+// reason, person and time, and names the row it came from.
+const carryDecisions = async (svc, tenantId, orderId, policy, prevFlags, newFlags) => {
+  if (!prevFlags.length || !newFlags.length) return 0;
+  const history = historyByFlag(await readDecisions(svc, tenantId, prevFlags.map((f) => f.id)));
+  const rows = [];
+  for (const nf of newFlags) {
+    const old = prevFlags.find((pf) => (pf.clause ?? null) === (nf.clause ?? null)
+      && pf.text_hash && pf.text_hash === nf.text_hash && (history.get(pf.id) || []).length);
+    if (!old) continue;
+    const cur = history.get(old.id)[0];
+    const clausePolicy = nf.clause ? policy.clauses[nf.clause] : null;
+    if (!mayDecide({ role: cur.decided_role }, cur.decision, nf.severity, clausePolicy)) continue;
+    rows.push({
+      tenant_id: tenantId, order_id: orderId, flag_id: nf.id, decision: cur.decision, reason: cur.reason,
+      decided_by: cur.decided_by || null, decided_role: cur.decided_role || null,
+      decided_at: cur.decided_at, carried_from: cur.id,
+    });
+  }
+  if (!rows.length) return 0;
+  const ins = await svc.from("order_term_decisions").insert(rows);
+  if (ins.error) throw fail("order_term_decisions carry", ins.error);
+  return rows.length;
 };
 
 // ── the reconcile trigger ───────────────────────────────────────────────────
@@ -379,9 +402,21 @@ export const runTermsAfterReconcile = async (svc, ctx, orderId, opts = {}) => {
 
 const countBySeverity = (flags) => Object.fromEntries(SEVERITY_LEVELS.map((s) => [s, flags.filter((f) => f.severity === s).length]));
 
+// Where a flag stands:
+//   display              below decide_at_or_above; shown, not decided
+//   undecided            needs a decision and has none
+//   amendment_requested  the current decision asks the customer to amend; the
+//                        flag stays open
+//   decided              accepted, rejected or not a deviation
+export const flagState = (needs, current) => {
+  if (current) return OPEN_DECISIONS.has(current.decision) ? "amendment_requested" : "decided";
+  return needs ? "undecided" : "display";
+};
+
 // A flag as the API returns it: both sides labelled with their provenance,
-// the clause's name, and whether it needs a decision.
-export const flagView = (f, policy) => ({
+// the clause's name, whether it needs a decision, its decision history
+// (newest first) and the decisions this caller may make.
+export const flagView = (f, policy, { history = [], ctx = null } = {}) => ({
   id: f.id,
   clause: f.clause,
   clause_label: f.clause ? CLAUSE_TAXONOMY[f.clause]?.label || f.clause : "PO terms",
@@ -396,6 +431,10 @@ export const flagView = (f, policy) => ({
   rationale: f.rationale || null,
   text_hash: f.text_hash || null,
   created_at: f.created_at || null,
+  state: flagState(needsDecision(policy, f.severity), history[0] || null),
+  decision: decisionView(history[0] || null),
+  decisions: history.map(decisionView),
+  allowed: ctx ? allowedDecisions(ctx, f, policy) : [],
 });
 
 export const checkView = (c) => (c ? {
@@ -435,7 +474,7 @@ export const readTermsView = async (svc, ctx, orderId, opts = {}) => {
     check: null,
     po_clauses: [],
     flags: [],
-    counts: { total: 0, needs_decision: 0, by_severity: countBySeverity([]) },
+    counts: { total: 0, needs_decision: 0, undecided: 0, amendment_requested: 0, decided: 0, by_severity: countBySeverity([]) },
   };
   if (mode === "off") return { status: "ok", view: base };
   if (mode === "shadow" && !opts.includeShadow) return { status: "ok", view: { ...base, hidden: true } };
@@ -444,7 +483,10 @@ export const readTermsView = async (svc, ctx, orderId, opts = {}) => {
   if (!order.data) return { status: "not_found" };
   const check = await readCurrentCheck(svc, tenantId, orderId);
   if (!check) return { status: "ok", view: { ...base, visible: true } };
-  const flags = sortFlags(await readFlags(svc, tenantId, check.id)).map((f) => flagView(f, policy));
+  const rows = sortFlags(await readFlags(svc, tenantId, check.id));
+  const history = historyByFlag(await readDecisions(svc, tenantId, rows.map((f) => f.id)));
+  const flags = rows.map((f) => flagView(f, policy, { history: history.get(f.id) || [], ctx }));
+  const inState = (st) => flags.filter((f) => f.state === st).length;
   return {
     status: "ok",
     view: {
@@ -456,6 +498,9 @@ export const readTermsView = async (svc, ctx, orderId, opts = {}) => {
       counts: {
         total: flags.length,
         needs_decision: flags.filter((f) => f.needs_decision).length,
+        undecided: inState("undecided"),
+        amendment_requested: inState("amendment_requested"),
+        decided: inState("decided"),
         by_severity: countBySeverity(flags),
       },
     },

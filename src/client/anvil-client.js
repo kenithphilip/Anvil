@@ -901,6 +901,10 @@
     // Re-run the terms check ("Re-check terms"). Returns the same view.
     termsCheck: async (orderId, opts) =>
       apiFetch("/api/orders/terms_check", { method: "POST", body: { order_id: orderId, ...(opts && opts.includeShadow ? { include_shadow: true } : {}) } }),
+    // Decide one terms flag: accept, request_amendment, reject_term or
+    // not_a_deviation, with a required reason. Append-only on the server.
+    termsDecide: async (orderId, flagId, decision, reason) =>
+      apiFetch("/api/orders/terms_decide", { method: "POST", body: { order_id: orderId, flag_id: flagId, decision, reason } }),
     attachedQuotes: async (orderId) => apiFetch("/api/orders/quotes?order_id=" + encodeURIComponent(orderId)),
     // One attached quote in full: a signed URL to read the PDF, plus the
     // extracted lines with rates converted back to PERCENTAGES, because the

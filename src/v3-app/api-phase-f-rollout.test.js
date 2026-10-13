@@ -22,7 +22,7 @@ vi.mock("../api/_lib/cors.js", () => ({
 }));
 
 vi.mock("../api/_lib/auth.js", () => ({
-  resolveContext: async (req) => req._ctx || { tenantId: "t1", userId: "u1" },
+  resolveContext: async (req) => req._ctx || { tenantId: "t1", user: { id: "u1" } },
   requirePermission: () => undefined,
 }));
 
@@ -247,7 +247,7 @@ describe("Phase F.2 / source_pos ack_extract -> ack_accept", () => {
       url: "/api/source_pos/" + supplierPoId + "/ack_extract",
       query: { id: supplierPoId },
       _body: { bytes_base64: Buffer.from("ack pdf bytes ".repeat(20)).toString("base64") },
-      _ctx: { tenantId: "t1", userId: "u1" },
+      _ctx: { tenantId: "t1", user: { id: "u1" } },
       headers: {},
     };
     const res = { statusCode: 0, _json: null, setHeader() {}, end() {} };
@@ -261,6 +261,10 @@ describe("Phase F.2 / source_pos ack_extract -> ack_accept", () => {
     expect(ackRows[0].confirmed_eta).toBe("2026-06-30");
     expect(ackRows[0].line_acks).toHaveLength(1);
     expect(ackRows[0].status).toBe("extracted");
+    // The run records who triggered it (ctx.user.id).
+    const runs = svc._tables.get("extraction_runs");
+    expect(runs).toHaveLength(1);
+    expect(runs[0].triggered_by).toBe("u1");
   });
 
   it("commits a reviewed extraction into source_pos via ack_accept", async () => {
@@ -300,7 +304,7 @@ describe("Phase F.2 / source_pos ack_extract -> ack_accept", () => {
       url: "/api/source_pos/" + supplierPoId + "/ack_accept",
       query: { id: supplierPoId },
       _body: { supplier_ack_extraction_id: "ack-1" },
-      _ctx: { tenantId: "t1", userId: "u1" },
+      _ctx: { tenantId: "t1", user: { id: "u1" } },
       headers: {},
     };
     const res = { statusCode: 0, _json: null, setHeader() {}, end() {} };
@@ -371,7 +375,7 @@ describe("Phase F.4 + F.6 / invoices/extract materialises AP rows", () => {
         vendor_invoice_number: "INV-9001",
         source_po_id: "sp-99",
       },
-      _ctx: { tenantId: "t1", userId: "u1" },
+      _ctx: { tenantId: "t1", user: { id: "u1" } },
       headers: {},
     };
     const res = { statusCode: 0, _json: null, setHeader() {}, end() {} };
@@ -398,6 +402,10 @@ describe("Phase F.4 + F.6 / invoices/extract materialises AP rows", () => {
       po_line_ref: "BRG-6204",
     });
     expect(apLines[0].extended).toBeCloseTo(12_500, 2);
+    // The run records who triggered it (ctx.user.id).
+    const runs = svc._tables.get("extraction_runs");
+    expect(runs).toHaveLength(1);
+    expect(runs[0].triggered_by).toBe("u1");
   });
 
   it("appends lines to an existing ap_invoice when ap_invoice_id is supplied", async () => {
@@ -435,7 +443,7 @@ describe("Phase F.4 + F.6 / invoices/extract materialises AP rows", () => {
         bytes_base64: Buffer.from("invoice pdf ".repeat(20)).toString("base64"),
         ap_invoice_id: "ap-existing-1",
       },
-      _ctx: { tenantId: "t1", userId: "u1" },
+      _ctx: { tenantId: "t1", user: { id: "u1" } },
       headers: {},
     };
     const res = { statusCode: 0, _json: null, setHeader() {}, end() {} };
@@ -447,5 +455,35 @@ describe("Phase F.4 + F.6 / invoices/extract materialises AP rows", () => {
     const remaining = (svc._tables.get("ap_invoice_lines") || []);
     expect(remaining.every((l) => l.line_no !== 99)).toBe(true);
     expect(remaining).toHaveLength(2);
+  });
+});
+
+// --- Phase F.5 --------------------------------------------------
+
+describe("Phase F.5 / eway_bills/extract", () => {
+  it("runs the pipeline and records the signed-in user as the trigger", async () => {
+    const svc = buildSvc({});
+    const { __setSvc } = await import("../api/_lib/supabase.js");
+    __setSvc(svc);
+
+    const handler = (await import("../api/eway_bills/extract.js")).default;
+    const req = {
+      method: "POST",
+      url: "/api/eway_bills/extract",
+      query: {},
+      _body: {
+        bytes_base64: Buffer.from("eway bill pdf ".repeat(20)).toString("base64"),
+        invoice_id: "inv-7",
+      },
+      _ctx: { tenantId: "t1", user: { id: "u1" } },
+      headers: {},
+    };
+    const res = { statusCode: 0, _json: null, setHeader() {}, end() {} };
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(res._json.run_id).toBeTruthy();
+    const runs = svc._tables.get("extraction_runs");
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ tenant_id: "t1", extraction_kind: "eway_bill", triggered_by: "u1" });
   });
 });

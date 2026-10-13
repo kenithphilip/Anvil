@@ -55,7 +55,7 @@ export default async function handler(req, res) {
       const signedHash = crypto.createHash("sha256").update(payload).digest("hex");
       const ins = await svc.from("access_reviews").insert({
         tenant_id: ctx.tenantId,
-        reviewed_by: ctx.userId || null,
+        reviewed_by: ctx.user?.id || null,
         members,
         acknowledgement_text: ack,
         signed_hash: signedHash,

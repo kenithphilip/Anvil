@@ -26,7 +26,7 @@ vi.mock("../api/_lib/cors.js", () => ({
 }));
 
 vi.mock("../api/_lib/auth.js", () => ({
-  resolveContext: async (req) => req._ctx || { tenantId: "t1", userId: "u1" },
+  resolveContext: async (req) => req._ctx || { tenantId: "t1", user: { id: "u1" } },
   requirePermission: () => undefined,
 }));
 

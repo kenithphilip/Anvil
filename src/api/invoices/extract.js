@@ -135,7 +135,7 @@ export default async function handler(req, res) {
       sourceId: documentRow?.id || null,
       caseId: body?.order_id || documentRow?.id || null,
       kind: "invoice",
-      triggeredBy: ctx.userId || null,
+      triggeredBy: ctx.user?.id || null,
       vote: !!body?.vote,
       hints: { order_id: body?.order_id || null, ...(body?.hints || {}) },
     });

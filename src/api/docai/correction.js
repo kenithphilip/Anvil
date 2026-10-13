@@ -69,7 +69,7 @@ export default async function handler(req, res) {
     const customerId = body?.customer_id || run.data.customer_id;
     // Actor id is ctx.user.id (ctx.userId is undefined in this codebase),
     // so the correction and rlhf rows were recording a null author.
-    const actorId = ctx.user?.id || ctx.userId || null;
+    const actorId = ctx.user?.id || null;
 
     const ins = await svc.from("extraction_corrections").insert({
       tenant_id: ctx.tenantId,

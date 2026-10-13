@@ -76,7 +76,7 @@ export default async function handler(req, res) {
     const meta = {
       meta: {
         tenant_id: ctx.tenantId,
-        exported_by: ctx.userId || null,
+        exported_by: ctx.user?.id || null,
         exported_at: new Date().toISOString(),
         from_ts: fromTs || null,
         to_ts: toTs,
@@ -91,7 +91,7 @@ export default async function handler(req, res) {
     // Log the export run for SOC 2 evidence (who pulled what).
     await svc.from("audit_export_runs").insert({
       tenant_id: ctx.tenantId,
-      exported_by: ctx.userId || null,
+      exported_by: ctx.user?.id || null,
       from_ts: fromTs || null,
       to_ts: toTs,
       type_filters: types.length ? types : null,

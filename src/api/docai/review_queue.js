@@ -32,7 +32,7 @@ const ALLOWED_STATUS = new Set(["open", "in_review", "resolved", "archived"]);
 const ALLOWED_SEVERITY = new Set(["low", "medium", "high", "critical"]);
 const ALLOWED_RESOLUTION = new Set(["confirmed", "rejected", "reextracted"]);
 
-const userIdOf = (ctx) => ctx.user?.id || ctx.userId || null;
+const userIdOf = (ctx) => ctx.user?.id || null;
 
 const listQueue = async (svc, ctx, url) => {
   const statusParam = url.searchParams.get("status");

@@ -31,7 +31,7 @@ export default async function handler(req, res) {
       }
       const ins = await svc.from("rlhf_feedback").insert({
         tenant_id: ctx.tenantId,
-        user_id: ctx.userId || null,
+        user_id: ctx.user?.id || null,
         surface: body.surface,
         case_id: body.case_id || null,
         prompt: body.prompt || null,

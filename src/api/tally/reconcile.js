@@ -44,7 +44,7 @@ const handlePost = async (req, res, ctx, svc, body) => {
       orderId: body.orderId,
       status: body.status,
       tallyVoucherId: body.tally_voucher_id || null,
-      triggeredBy: ctx.userId || null,
+      triggeredBy: ctx.user?.id || null,
     });
     await recordAudit(ctx, {
       action: "tally_reconciled",
@@ -89,7 +89,7 @@ const handlePost = async (req, res, ctx, svc, body) => {
       scopeValue,
       autoFix,
       trigger,
-      triggeredBy: ctx.userId || null,
+      triggeredBy: ctx.user?.id || null,
     });
     await recordAudit(ctx, {
       action: result.vouchers_drifted > 0 ? "tally_drift_detected" : "tally_recon_run",
@@ -201,7 +201,7 @@ const handlePatch = async (req, res, ctx, svc, body) => {
   if (!findingId) return json(res, 400, { error: { message: "finding_id required" } });
   const upd = await svc.from("tally_reconciliation_findings").update({
     resolved_at: new Date().toISOString(),
-    resolved_by: ctx.userId || null,
+    resolved_by: ctx.user?.id || null,
   }).eq("tenant_id", ctx.tenantId).eq("id", findingId).select("*").single();
   if (upd.error) throw new Error(upd.error.message);
   await recordAudit(ctx, {

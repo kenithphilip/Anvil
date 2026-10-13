@@ -48,7 +48,7 @@ export default async function handler(req, res) {
         subject: body.subject || null,
         message: body.message || null,
         signers: body.signers.map((s) => ({ name: s.name, email: s.email, status: "pending" })),
-        created_by: ctx.userId || null,
+        created_by: ctx.user?.id || null,
       }).select("*").single();
       if (ins.error) throw new Error(ins.error.message);
       const resp = await docusignCreateEnvelope(settings, {

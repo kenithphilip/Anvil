@@ -87,7 +87,7 @@ export default async function handler(req, res) {
       const patch = {};
       if (body.action === "approve") {
         patch.status = "approved";
-        patch.approved_by = ctx.userId || null;
+        patch.approved_by = ctx.user?.id || null;
         patch.approved_at = new Date().toISOString();
       } else if (body.action === "deny") {
         patch.status = "denied";

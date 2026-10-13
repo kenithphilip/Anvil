@@ -131,7 +131,7 @@ export default async function handler(req, res) {
         patch.status = status;
         if (status !== "open") {
           patch.resolved_at = new Date().toISOString();
-          patch.resolved_by = ctx.userId || null;
+          patch.resolved_by = ctx.user?.id || null;
         }
       }
       const upd = await svc.from("deduction_queue").update(patch)

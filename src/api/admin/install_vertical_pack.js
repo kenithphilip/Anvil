@@ -169,7 +169,7 @@ export default async function handler(req, res) {
         vertical_id: verticalId,
         pack_version: pack.version || 1,
         content_hash: contentHash,
-        installed_by: ctx.userId || null,
+        installed_by: ctx.user?.id || null,
         details,
       });
     }

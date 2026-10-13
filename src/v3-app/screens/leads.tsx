@@ -3,13 +3,36 @@ import { ageLabel, fmtINRShort, useFetch, useHashParam } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { RBAC } from "../lib/rbac";
+import { approvedMembers, memberLabel } from "../components/AccountOwnerPanel";
 
 // ============================================================
 // ANVIL v3 — wired Leads
 // Wave B · Sales pipeline · top of funnel
 // Reads via AnvilBackend.sales.listLeads (api/sales/leads GET)
 // Creates via AnvilBackend.sales.createLead (api/sales/leads POST)
+//
+// Field names are the leads table's own (migration 006), which is what
+// the API returns and accepts: company_name, lead_source, allocated_to
+// (a member id; the GET adds allocated_to_name), budget_estimate and
+// account_id (the customer the lead converts onto).
 // ============================================================
+
+const BLANK_DRAFT = {
+  company_name: "",
+  lead_source: "",
+  status: "NEW",
+  allocated_to: "",
+  account_id: "",
+  budget_estimate: "",
+};
+
+// A lead is CONVERTED only by the convert action, so the create form
+// does not offer it.
+const CREATE_STATUSES = ["NEW", "CONTACTED", "QUALIFIED", "REJECTED", "REGRETTED"];
+
+const ownerName = (lead: any): string =>
+  lead?.allocated_to_name || (lead?.allocated_to ? String(lead.allocated_to).slice(0, 8) : "");
 
 const LEAD_STATUS_CHIP = (s) => {
   const map = {
@@ -62,18 +85,42 @@ const WiredLeads = () => {
   const [sortByScore, setSortByScore] = useState(false);
   const [scoringId, setScoringId] = useState<string | null>(null);
   const [convertingId, setConvertingId] = useState<string | null>(null);
+  const [linkAccount, setLinkAccount] = useState("");
+  const [linking, setLinking] = useState(false);
+  const canWrite = RBAC?.canWrite?.("leads") === true;
+  // A customer picked for one lead must not carry over to the next.
+  useEffect(() => { setLinkAccount(""); }, [selectedId]);
+
+  // Customer accounts, for the create form and for linking an open lead
+  // that has none. Loaded only while one of those is on screen.
+  const customers = useFetch(
+    () => (creating || selectedId)
+      ? (AnvilBackend?.customers?.list?.() || Promise.resolve({ customers: [] }))
+      : Promise.resolve({ customers: [] }),
+    [creating, !!selectedId],
+  );
+  const customerRows: any[] = Array.isArray(customers.data) ? customers.data : ((customers.data as any)?.customers || []);
+  // Approved members, for the owner picker on the create form. The server
+  // refuses anyone else.
+  const members = useFetch(
+    () => creating
+      ? (AnvilBackend?.admin?.listMembers?.() || Promise.resolve({ members: [] }))
+      : Promise.resolve({ members: [] }),
+    [creating],
+  );
+  const memberOptions = approvedMembers(members.data);
 
   // Promote a lead to an opportunity via the existing
-  // PATCH /api/sales/leads {convert_to_opportunity}. Requires a linked
-  // customer account (opportunities.customer_id is NOT NULL); we guide
-  // the operator rather than fail opaquely when it's missing. On
-  // success we jump straight to the new opportunity.
+  // PATCH /api/sales/leads {convert_to_opportunity}. The server opens
+  // the opportunity on the lead's own account (opportunities.customer_id
+  // is NOT NULL), so a lead with no account is guided to link one first
+  // rather than fail opaquely. On success we jump straight to the new
+  // opportunity.
   const convertLead = async (lead: any) => {
     if (!lead?.id) return;
-    const accountId = lead.account_id || lead.customer_id || null;
-    if (!accountId) {
+    if (!lead.account_id) {
       window.notifyError?.("Link a customer first",
-        "This lead has no linked customer account. Set one before converting to an opportunity.");
+        "This lead has no linked customer account. Link one before converting to an opportunity.");
       return;
     }
     setConvertingId(lead.id);
@@ -81,8 +128,6 @@ const WiredLeads = () => {
       const r: any = await AnvilBackend?.sales?.updateLead?.({
         id: lead.id,
         convert_to_opportunity: true,
-        account_id: accountId,
-        company_name: lead.company_name || lead.company || lead.name || null,
       });
       const oppId = r?.lead?.converted_opportunity_id;
       window.notifySuccess?.("Lead converted", "An opportunity was created.");
@@ -94,13 +139,23 @@ const WiredLeads = () => {
       setConvertingId(null);
     }
   };
-  const [draft, setDraft] = useState({
-    name: "",
-    source: "",
-    status: "NEW",
-    owner: "",
-    estimated_value: "",
-  });
+  // Link a customer account to a lead that has none (PATCH account_id;
+  // the server refuses an account outside this tenant).
+  const linkLeadAccount = async (lead: any) => {
+    if (!lead?.id || !linkAccount) return;
+    setLinking(true);
+    try {
+      await AnvilBackend?.sales?.updateLead?.({ id: lead.id, account_id: linkAccount });
+      window.notifySuccess?.("Customer linked", "The lead can now be converted.");
+      setLinkAccount("");
+      list.reload();
+    } catch (err: any) {
+      window.notifyError?.("Could not link the customer", err?.message || String(err));
+    } finally {
+      setLinking(false);
+    }
+  };
+  const [draft, setDraft] = useState({ ...BLANK_DRAFT });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
 
@@ -150,35 +205,27 @@ const WiredLeads = () => {
   const convertedCount = byStatus("CONVERTED");
 
   const submitNew = async () => {
-    if (!draft.name.trim()) {
-      setSubmitError(new Error("Lead name is required"));
+    if (!draft.company_name.trim()) {
+      setSubmitError(new Error("Company is required"));
       return;
     }
     setSubmitting(true);
     setSubmitError(null);
     try {
-      // Schema-drift fix: /api/sales/leads POST requires
-      // `company_name` (the leads table's NOT NULL column). The
-      // form labels its single text field "Name" which we treat as
-      // the company name; the screen used to send it as `name` and
-      // the endpoint rejected with "company_name required". Send
-      // both the canonical column AND a `name` alias so any older
-      // proxy that reads the legacy field still resolves it.
-      // `estimated_value_inr` is the column; we keep `estimated_value`
-      // too for the same reason.
+      // The leads table's own column names, which POST /api/sales/leads
+      // reads. allocated_to is a member id and account_id a customer id;
+      // the server checks both against this tenant.
       const payload = {
-        company_name: draft.name.trim(),
-        name: draft.name.trim(),
-        source: draft.source.trim() || null,
+        company_name: draft.company_name.trim(),
+        lead_source: draft.lead_source.trim() || null,
         status: draft.status,
-        allocated_to: draft.owner.trim() || null,
-        owner: draft.owner.trim() || null,
-        budget_estimate: draft.estimated_value ? Number(draft.estimated_value) : null,
-        estimated_value: draft.estimated_value ? Number(draft.estimated_value) : null,
+        allocated_to: draft.allocated_to || null,
+        account_id: draft.account_id || null,
+        budget_estimate: draft.budget_estimate ? Number(draft.budget_estimate) : null,
       };
       await AnvilBackend?.sales?.createLead?.(payload);
       setCreating(false);
-      setDraft({ name: "", source: "", status: "NEW", owner: "", estimated_value: "" });
+      setDraft({ ...BLANK_DRAFT });
       list.reload();
     } catch (err) {
       setSubmitError(err);
@@ -189,8 +236,14 @@ const WiredLeads = () => {
 
   const cancelNew = () => {
     setCreating(false);
-    setDraft({ name: "", source: "", status: "NEW", owner: "", estimated_value: "" });
+    setDraft({ ...BLANK_DRAFT });
     setSubmitError(null);
+  };
+
+  const customerName = (id: string | null | undefined): string => {
+    if (!id) return "";
+    const c = customerRows.find((x: any) => x.id === id);
+    return (c && (c.customer_name || c.customer_key)) || String(id).slice(0, 8);
   };
 
   return (
@@ -220,7 +273,7 @@ const WiredLeads = () => {
 
         {selected && (
           <Card
-            title={selected.name || selected.company || "Lead"}
+            title={selected.company_name || "Lead"}
             eyebrow={"lead detail · " + (selected.id?.slice(0, 8) || "")}
             right={<>
               <Btn sm kind={selected.ai_score == null ? "live" : "ghost"} disabled={scoringId === selected.id}
@@ -249,17 +302,15 @@ const WiredLeads = () => {
             </>}
           >
             <KV rows={[
-              ["Name",     selected.name || "—"],
-              ["Company",  selected.company || "—"],
-              ["Email",    selected.email || "—"],
-              ["Phone",    selected.phone || "—"],
+              ["Company",  selected.company_name || "—"],
+              ["Contact",  selected.contact_name || "—"],
+              ["Email",    selected.contact_email || "—"],
+              ["Phone",    selected.contact_phone || "—"],
               ["Status",   selected.status || "—"],
-              ["Source",   selected.source || "—"],
-              ["Owner",    selected.owner || selected.assigned_to || "—"],
-              ["Value",    (() => {
-                const v = selected.budget_estimate ?? selected.estimated_value ?? selected.estimated_value_inr;
-                return v != null ? fmtINRShort(Number(v)) : "—";
-              })()],
+              ["Source",   selected.lead_source || "—"],
+              ["Owner",    ownerName(selected) || "—"],
+              ["Customer", selected.account_id ? customerName(selected.account_id) : <span style={{ color: "var(--ink-3)" }}>not linked</span>],
+              ["Value",    selected.budget_estimate != null ? fmtINRShort(Number(selected.budget_estimate)) : "—"],
               ["AI score", (() => {
                 if (selected.ai_score == null) return <span style={{ color: "var(--ink-3)" }}>not scored yet</span>;
                 const sc = LEAD_SCORE_CHIP(selected.ai_score);
@@ -268,6 +319,31 @@ const WiredLeads = () => {
               ["Reasoning", selected.ai_score_reasoning || <span style={{ color: "var(--ink-3)" }}>—</span>],
               ["Created",  selected.created_at ? ageLabel(selected.created_at) : "—"],
             ]} />
+            {/* A lead converts onto its customer account. One with no
+                account can be linked here, so it can be converted. */}
+            {!selected.account_id && canWrite && selected.status !== "CONVERTED" && (
+              <>
+                <div className="divider" />
+                <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <select
+                    className="select"
+                    aria-label="Customer account"
+                    value={linkAccount}
+                    disabled={linking}
+                    onChange={(ev) => setLinkAccount(ev.target.value)}
+                    style={{ minWidth: 220 }}
+                  >
+                    <option value="">{customers.loading ? "loading…" : "Pick a customer…"}</option>
+                    {customerRows.map((c: any) => (
+                      <option key={c.id} value={c.id}>{c.customer_name || c.customer_key || c.id?.slice(0, 8)}</option>
+                    ))}
+                  </select>
+                  <Btn sm kind="primary" disabled={!linkAccount || linking} onClick={() => linkLeadAccount(selected)}>
+                    {linking ? "Linking…" : "Link customer"}
+                  </Btn>
+                </div>
+              </>
+            )}
             {selected.notes && (
               <>
                 <div className="divider" />
@@ -284,11 +360,11 @@ const WiredLeads = () => {
           <Card title="New lead" eyebrow="quick capture">
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 }}>
               <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span>Name *</span>
+                <span>Company *</span>
                 <input
                   className="input"
-                  value={draft.name}
-                  onChange={(ev) => setDraft({ ...draft, name: ev.target.value })}
+                  value={draft.company_name}
+                  onChange={(ev) => setDraft({ ...draft, company_name: ev.target.value })}
                   placeholder="Customer or company"
                 />
               </label>
@@ -296,8 +372,8 @@ const WiredLeads = () => {
                 <span>Source</span>
                 <input
                   className="input"
-                  value={draft.source}
-                  onChange={(ev) => setDraft({ ...draft, source: ev.target.value })}
+                  value={draft.lead_source}
+                  onChange={(ev) => setDraft({ ...draft, lead_source: ev.target.value })}
                   placeholder="Inbound · referral · trade show…"
                 />
               </label>
@@ -308,22 +384,32 @@ const WiredLeads = () => {
                   value={draft.status}
                   onChange={(ev) => setDraft({ ...draft, status: ev.target.value })}
                 >
-                  <option value="NEW">NEW</option>
-                  <option value="CONTACTED">CONTACTED</option>
-                  <option value="QUALIFIED">QUALIFIED</option>
-                  <option value="CONVERTED">CONVERTED</option>
-                  <option value="REJECTED">REJECTED</option>
-                  <option value="REGRETTED">REGRETTED</option>
+                  {CREATE_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               </label>
               <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <span>Owner</span>
-                <input
+                <select
                   className="input"
-                  value={draft.owner}
-                  onChange={(ev) => setDraft({ ...draft, owner: ev.target.value })}
-                  placeholder="Sales rep name"
-                />
+                  value={draft.allocated_to}
+                  onChange={(ev) => setDraft({ ...draft, allocated_to: ev.target.value })}
+                >
+                  <option value="">{members.loading ? "loading…" : "Unassigned"}</option>
+                  {memberOptions.map((m) => <option key={m.user_id} value={m.user_id}>{memberLabel(m)}</option>)}
+                </select>
+              </label>
+              <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span>Customer account</span>
+                <select
+                  className="input"
+                  value={draft.account_id}
+                  onChange={(ev) => setDraft({ ...draft, account_id: ev.target.value })}
+                >
+                  <option value="">{customers.loading ? "loading…" : "Not linked yet"}</option>
+                  {customerRows.map((c: any) => (
+                    <option key={c.id} value={c.id}>{c.customer_name || c.customer_key || c.id?.slice(0, 8)}</option>
+                  ))}
+                </select>
               </label>
               <label className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <span>Estimated value (₹)</span>
@@ -331,8 +417,8 @@ const WiredLeads = () => {
                   className="input"
                   type="number"
                   min="0"
-                  value={draft.estimated_value}
-                  onChange={(ev) => setDraft({ ...draft, estimated_value: ev.target.value })}
+                  value={draft.budget_estimate}
+                  onChange={(ev) => setDraft({ ...draft, budget_estimate: ev.target.value })}
                   placeholder="0"
                 />
               </label>
@@ -376,7 +462,7 @@ const WiredLeads = () => {
                 {sortedRows.slice(0, 200).map((r) => {
                   const sc = LEAD_STATUS_CHIP(r.status);
                   const score = LEAD_SCORE_CHIP(r.ai_score);
-                  const value = Number(r.estimated_value) || 0;
+                  const value = Number(r.budget_estimate) || 0;
                   const last = r.last_touch_at || r.updated_at || r.created_at;
                   return (
                     <tr
@@ -391,13 +477,13 @@ const WiredLeads = () => {
                       }}
                       style={{ cursor: "pointer" }}
                     >
-                      <td><span className="pri">{r.name || r.customer_name || (r.id ? r.id.slice(0, 8) : "—")}</span></td>
+                      <td><span className="pri">{r.company_name || (r.id ? r.id.slice(0, 8) : "—")}</span></td>
                       <td title={r.ai_score_reasoning || (r.ai_score == null ? "Run /api/sales/score_lead to populate" : "")}>
                         <Chip k={score.k}>{score.label}</Chip>
                       </td>
-                      <td className="mono-sm">{r.source || "—"}</td>
+                      <td className="mono-sm">{r.lead_source || "—"}</td>
                       <td><Chip k={sc.k}>{sc.label}</Chip></td>
-                      <td className="mono-sm">{r.owner || "—"}</td>
+                      <td className="mono-sm">{ownerName(r) || "—"}</td>
                       <td className="mono-sm">{last ? ageLabel(last) : "—"}</td>
                       <td className="r mono">{value ? fmtINRShort(value) : "—"}</td>
                     </tr>

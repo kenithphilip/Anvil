@@ -31,19 +31,27 @@ import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
 import { stageOf, ageLabel, approvalPatch, NO_PAYLOAD_HASH_MESSAGE } from "../lib/helpers";
 
+// A row of GET /api/orders. The customer comes under the `customer`
+// embed and the totals inside result.salesOrder, the places the SO list
+// reads them. The card used to read customer_name, grand_total and
+// line_count, which the list does not return, so every card showed a
+// blank customer and no value.
 interface Order {
   id: string;
   po_number?: string | null;
   quote_number?: string | null;
-  customer_name?: string | null;
+  customer?: { customer_name?: string | null } | null;
   status?: string | null;
-  grand_total?: number | string | null;
-  margin_pct?: number | null;
-  line_count?: number | null;
+  result?: { salesOrder?: { grandTotal?: number | string | null; lineItems?: unknown[] | null } | null } | null;
   payload_hash?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
+
+const lineCountOf = (o: Order): number => {
+  const items = o.result?.salesOrder?.lineItems;
+  return Array.isArray(items) ? items.length : 0;
+};
 
 // Each column carries a `target` status: the value to PATCH the
 // dragged order's `status` to when dropped here. Columns with
@@ -269,8 +277,8 @@ const PipelineKanban: React.FC = () => {
                   >
                     <div className="kanban-card-h">
                       <span className="kanban-card-id">{o.po_number || o.quote_number || ("SO-" + o.id.slice(0, 6))}</span>
-                      {o.line_count != null && (
-                        <Chip k="info">{o.line_count} lines</Chip>
+                      {lineCountOf(o) > 0 && (
+                        <Chip k="info">{lineCountOf(o)} lines</Chip>
                       )}
                       {/* Name the status when the column holds more than
                           one (a blocked order in Validate, a cancelled
@@ -279,9 +287,9 @@ const PipelineKanban: React.FC = () => {
                         <Chip k={stageOf(o.status).k}>{stageOf(o.status).label}</Chip>
                       )}
                     </div>
-                    <div className="kanban-card-c">{o.customer_name || "—"}</div>
+                    <div className="kanban-card-c">{o.customer?.customer_name || "—"}</div>
                     <div className="kanban-card-foot">
-                      <span>{fmtMoney(o.grand_total)}</span>
+                      <span>{fmtMoney(o.result?.salesOrder?.grandTotal)}</span>
                       <span className="kanban-card-age">{ageLabel(o.updated_at || o.created_at)}</span>
                     </div>
                   </a>

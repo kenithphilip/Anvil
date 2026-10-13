@@ -317,6 +317,39 @@ describe("Phase F.2 / source_pos ack_extract -> ack_accept", () => {
     expect(accepted.forwarded_at).toBeTruthy();
     expect(accepted.ack_payload).toBeTruthy();
   });
+
+  // resolveContext returns { user, tenantId, role } (no userId). The accept
+  // used to read ctx.userId, so reviewed_by and forwarded_by were null on
+  // every accepted ack. This ctx has the real shape.
+  it("stamps the accepting user as reviewer and forwarder", async () => {
+    const supplierPoId = "sp-3";
+    const svc = buildSvc({
+      source_pos: [{ id: supplierPoId, tenant_id: "t1", status: "SENT_TO_SUPPLIER", supplier: "Vendor Co", total_foreign: 12_500, currency: "INR", payload: {} }],
+      supplier_ack_extractions: [{
+        id: "ack-3", tenant_id: "t1", source_po_id: supplierPoId, extraction_run_id: "run-3",
+        confirmed_price: 12_500, confirmed_eta: "2026-06-30", line_acks: [], status: "extracted",
+      }],
+    });
+    const { __setSvc } = await import("../api/_lib/supabase.js");
+    __setSvc(svc);
+
+    const handler = (await import("../api/source_pos/ack_accept.js")).default;
+    const res = { statusCode: 0, _json: null, setHeader() {}, end() {} };
+    await handler({
+      method: "POST",
+      url: "/api/source_pos/" + supplierPoId + "/ack_accept",
+      query: { id: supplierPoId },
+      _body: { supplier_ack_extraction_id: "ack-3" },
+      _ctx: { user: { id: "u-acc" }, tenantId: "t1", role: "procurement" },
+      headers: {},
+    }, res);
+
+    expect(res.statusCode).toBe(200);
+    const accepted = svc._tables.get("supplier_ack_extractions")[0];
+    expect(accepted).toMatchObject({ status: "accepted", reviewed_by: "u-acc", forwarded_by: "u-acc" });
+    expect(res._json.supplier_ack_extraction).toMatchObject({ reviewed_by: "u-acc", forwarded_by: "u-acc" });
+    expect(svc._tables.get("source_po_events")).toEqual([expect.objectContaining({ actor: "u-acc", to_status: "SUPPLIER_ACK" })]);
+  });
 });
 
 // --- Phase F.4 + F.6 end-to-end --------------------------------

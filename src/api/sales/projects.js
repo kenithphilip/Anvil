@@ -1,7 +1,7 @@
 // /api/sales/projects
-//   GET    list (filter by phase, customer)
+//   GET    list (filter by phase, customer); each row embeds customer.customer_name
 //   POST   create (insert only; a code already used in this tenant gets 409)
-//   PATCH  update (phase advance logged)
+//   PATCH  update (phase advance logged; another tenant's project is a 404)
 //   DELETE remove
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
@@ -11,6 +11,23 @@ import { recordAudit } from "../_lib/audit.js";
 
 const PHASES = new Set(["INITIAL_INFO","STRATEGY","PROMOTIONAL","RFQ_PREP","BUDGETARY_QUOTATION","PRICE_NEGOTIATION","LB_FINALIZATION","KICKOFF","DESIGN","APPROVAL_PROCESSING","MANUFACTURING","SHIPPING","INSTALLATION_COMMISSIONING","PAYMENT_FOLLOWUP","CLOSED"]);
 const STATUSES = new Set(["ACTIVE","ON_HOLD","COMPLETED","CANCELLED"]);
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (s) => typeof s === "string" && UUID_RE.test(s);
+
+// The fields of a new project that point at other rows. They are bare FKs
+// and the service role bypasses RLS, so each must name a row of THIS tenant,
+// or a project could hang off another tenant's customer or opportunity.
+const LINKS = [
+  { field: "customer_id", table: "customers", noun: "a customer" },
+  { field: "related_opportunity_id", table: "opportunities", noun: "an opportunity" },
+];
+const ownRow = async (svc, table, tenantId, id) => {
+  if (!isUuid(id)) return false;
+  const { data, error } = await svc.from(table).select("id").eq("tenant_id", tenantId).eq("id", id).maybeSingle();
+  if (error) throw new Error("could not verify " + table + ": " + error.message);
+  return !!data;
+};
 
 // Audit P7.4. Project phases used to allow any-to-any
 // transitions including INITIAL_INFO -> CLOSED. Each phase is
@@ -47,7 +64,9 @@ export default async function handler(req, res) {
     const svc = serviceClient();
     if (req.method === "GET") {
       requirePermission(ctx, "read");
-      let q = svc.from("projects").select("*").eq("tenant_id", ctx.tenantId).order("updated_at", { ascending: false }).limit(500);
+      // The customer's name rides along under `customer` (the orders list
+      // does the same), so the screen does not show a bare customer id.
+      let q = svc.from("projects").select("*, customer:customer_id(customer_name)").eq("tenant_id", ctx.tenantId).order("updated_at", { ascending: false }).limit(500);
       if (req.query.phase && PHASES.has(req.query.phase)) q = q.eq("current_phase", req.query.phase);
       if (req.query.customer_id) q = q.eq("customer_id", req.query.customer_id);
       const { data, error } = await q;
@@ -64,6 +83,11 @@ export default async function handler(req, res) {
       requirePermission(ctx, "write");
       const body = await readBody(req);
       if (!body.project_code || !body.project_name) return json(res, 400, { error: { message: "project_code and project_name required" } });
+      for (const link of LINKS) {
+        if (body[link.field] && !(await ownRow(svc, link.table, ctx.tenantId, body[link.field]))) {
+          return json(res, 400, { error: { message: link.field + " is not " + link.noun + " of this tenant", field: link.field } });
+        }
+      }
       const row = {
         tenant_id: ctx.tenantId,
         project_code: body.project_code,
@@ -116,7 +140,12 @@ export default async function handler(req, res) {
       requirePermission(ctx, "write");
       const body = await readBody(req);
       if (!body.id) return json(res, 400, { error: { message: "id required" } });
-      const before = await svc.from("projects").select("current_phase").eq("tenant_id", ctx.tenantId).eq("id", body.id).single();
+      const before = await svc.from("projects").select("current_phase").eq("tenant_id", ctx.tenantId).eq("id", body.id).maybeSingle();
+      if (before.error) throw new Error(before.error.message);
+      // Not a project of this tenant. The update below is tenant-scoped, so
+      // it wrote nothing, but its .single() then failed and answered 500.
+      // Say what happened, and write nothing (no phase log, no audit).
+      if (!before.data) return json(res, 404, { error: { message: "Project not found" } });
       const patch = { updated_at: new Date().toISOString() };
       const allowed = ["current_phase","status","total_value_inr","budgeted_design_mandays","budgeted_install_mandays","budgeted_travel_mandays","budgeted_warranty_pct","shipping_mode","expected_po_release_date","expected_design_final_date","expected_ready_date","expected_shipping_etd","expected_delivery_date","expected_sop_date","customer_location_id","end_user"];
       for (const k of allowed) if (body[k] !== undefined) patch[k] = body[k];

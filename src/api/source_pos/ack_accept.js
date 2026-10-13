@@ -134,15 +134,18 @@ export default async function handler(req, res) {
       actor: ctx.user ? ctx.user.id : null,
     });
 
-    // Mark the review row accepted + stamp the forward.
+    // Mark the review row accepted + stamp the forward. The actor is
+    // ctx.user.id: resolveContext has no ctx.userId, so reading it left
+    // reviewed_by and forwarded_by null on every accepted ack.
+    const actorId = ctx.user ? ctx.user.id : null;
     const reviewUpdate = await svc.from("supplier_ack_extractions").update({
       status: "accepted",
-      reviewed_by: ctx.userId || null,
+      reviewed_by: actorId,
       reviewed_at: new Date().toISOString(),
       forwarded_at: new Date().toISOString(),
-      forwarded_by: ctx.userId || null,
+      forwarded_by: actorId,
       ack_payload: ackPayload,
-    }).eq("id", review.data.id).select("*").single();
+    }).eq("tenant_id", ctx.tenantId).eq("id", review.data.id).select("*").single();
     if (reviewUpdate.error) throw new Error(reviewUpdate.error.message);
 
     await recordAudit(ctx, {

@@ -9,24 +9,9 @@ import { resolve } from "node:path";
 
 const read = (p) => readFileSync(resolve(process.cwd(), p), "utf8");
 
-describe("leads.tsx: company_name in payload (data-loss fix)", () => {
-  it("sends company_name (the schema column) on createLead", () => {
-    const src = read("src/v3-app/screens/leads.tsx");
-    // Find the actual call site (not the comment header at the top
-    // of the file). Scan for the call expression.
-    const idx = src.indexOf("createLead?.(");
-    expect(idx).toBeGreaterThan(0);
-    const block = src.slice(Math.max(0, idx - 800), idx);
-    expect(block).toMatch(/company_name\s*:\s*draft\.name/);
-  });
-  it("sends budget_estimate (the schema column) for the value", () => {
-    const src = read("src/v3-app/screens/leads.tsx");
-    const idx = src.indexOf("createLead?.(");
-    expect(idx).toBeGreaterThan(0);
-    const block = src.slice(Math.max(0, idx - 800), idx);
-    expect(block).toMatch(/budget_estimate\s*:/);
-  });
-});
+// leads.tsx's create payload (company_name, budget_estimate and the rest)
+// is checked by screens/leads-fields.test.tsx, which drives the form through
+// the real /api/sales/leads handler and reads the row it writes.
 
 describe("comms.tsx: to_addr + templateCode in draft payload (data-loss fix)", () => {
   it("sends to_addr (the column the API reads) not just recipient", () => {

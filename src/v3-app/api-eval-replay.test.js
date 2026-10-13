@@ -27,6 +27,7 @@ import { tenantSettings } from "../api/_lib/stripe-client.js";
 import { recordAudit } from "../api/_lib/audit.js";
 import { safeFetch } from "../api/_lib/safe-fetch.js";
 import { listPromptVersions, resolvePromptVersion } from "../api/_lib/docai/prompt-versions.js";
+import { PO_DELIVERY_CONTACT_FEATURE } from "../api/_lib/docai/po-delivery-contact.js";
 import replayHandler, { replayGoldens, modelOwnedExpected, fetchDocBytes } from "../api/eval/replay.js";
 
 const goodExtract = (lines, extra = {}) => ({
@@ -194,7 +195,7 @@ describe("prompt_version through the handler", () => {
     const res = await post({ prompt_version: "v9" });
 
     expect(res.statusCode).toBe(400);
-    expect(res.payload.error.allowed_versions).toEqual(["v1", "v3"]);
+    expect(res.payload.error.allowed_versions).toEqual(["v1", "v4", "v3"]);
     expect(res.payload.error.message).toContain("v9");
     expect(chunkedExtract).not.toHaveBeenCalled();
     expect(handlerSvc.log.tables).toEqual([]);
@@ -211,7 +212,7 @@ describe("prompt_version through the handler", () => {
     const res = await post({ prompt_version: "v2" });
 
     expect(res.statusCode).toBe(400);
-    expect(res.payload.error.allowed_versions).toEqual(["v1", "v3"]);
+    expect(res.payload.error.allowed_versions).toEqual(["v1", "v4", "v3"]);
     expect(res.payload.error.message).toContain("retired");
     expect(chunkedExtract).not.toHaveBeenCalled();
     expect(handlerSvc.log.tables).toEqual([]);
@@ -263,6 +264,25 @@ describe("prompt_version through the handler", () => {
     }
     expect(handlerSvc.log.evalRunInserts).toHaveLength(1);
     expect(handlerSvc.log.evalRunInserts[0].prompt_version).toBe("live-replay:prompt:v1");
+  });
+
+  it("forcing v4 hands every case the delivery-date and contact treatment, which carries no appended text", async () => {
+    // v4 is a named feature, not system_append. A replay that looked only for
+    // appended text would run the base prompt and attest it as v4.
+    chunkedExtract.mockResolvedValue(goodExtract([{ partNumber: "A", quantity: 1, unitPrice: 10 }]));
+    handlerSvc = recordingSvc([poCase("A", CANARY_CUSTOMER), poCase("B", CONTROL_CUSTOMER)], docRow);
+    const res = await post({ prompt_version: "v4" });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.payload.scored).toBe(2);
+    const calls = chunkedExtract.mock.calls.map((c) => c[0]);
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call.hints.promptVariant).toEqual({
+        name: "po_extractor", version: "v4", system_append: null, features: [PO_DELIVERY_CONTACT_FEATURE],
+      });
+    }
+    expect(handlerSvc.log.evalRunInserts[0].prompt_version).toBe("live-replay:prompt:v4");
   });
 });
 

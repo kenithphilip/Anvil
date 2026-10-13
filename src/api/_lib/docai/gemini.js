@@ -19,6 +19,9 @@ import { parseSchemaAligned } from "./parse.js";
 import { selectGeminiModel, selectGeminiFallbackModel } from "./model_selector.js";
 import { coerceStatedLineCount, LINE_REQUISITION_RULE, LINE_REQUISITION_DESCRIPTION, CONTINUATION_ROW_RULE } from "./claude.js";
 import { promptNameForKind } from "./prompt-versions.js";
+import {
+  PO_DELIVERY_CONTACT_RULE, withDeliveryContactSlots, deliveryContactRequested, normalizeDeliveryContact,
+} from "./po-delivery-contact.js";
 
 const apiKey = (settings) => {
   if (settings?.docai_gemini_api_key_enc && settings?.docai_creds_iv) {
@@ -340,6 +343,11 @@ export const PO_SCHEMA = {
   required: ["classification", "confidence", "customer", "lines"],
 };
 
+// PO_SCHEMA on the po_extractor@v4 canary: the delivery date and contact
+// slots, from the definitions claude.js adds to its tool (po-delivery-contact.js).
+// PO_SCHEMA itself is unchanged, so a run off the canary sends what it did.
+const PO_SCHEMA_DELIVERY_CONTACT = withDeliveryContactSlots(PO_SCHEMA);
+
 const SUPPLIER_ACK_SCHEMA = {
   type: "object",
   properties: {
@@ -642,6 +650,12 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     };
   }
 
+  // po_extractor@v4 (canary): the PO's delivery date and the buyer's contact
+  // person, by the gate, rule and slots claude.js uses. Only po / rfq / generic
+  // map to po_extractor, so schema here is always PO_SCHEMA.
+  const deliveryContact = deliveryContactRequested(hints?.promptVariant, promptNameForKind(expectedKind));
+  if (deliveryContact) schema = PO_SCHEMA_DELIVERY_CONTACT;
+
   const built = buildBodyBlock({ hints, bytes, mime, url });
   if (!built) {
     return { ok: false, reason: "no_source_bytes", error: "Gemini adapter needs hints.bodyText, bytes, or url" };
@@ -685,6 +699,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       ].join("\n"),
     });
   }
+  // The v4 rule, the identical string claude.js sends.
+  if (deliveryContact) systemBlocks.push({ type: "text", text: PO_DELIVERY_CONTACT_RULE });
 
   // Audit fix May 2026: surface tenant identity (same shape as
   // claude.js) so Gemini does not promote the seller's printed
@@ -1010,7 +1026,13 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     };
   }
 
-  const lines = (Array.isArray(out.lines) ? out.lines : []).map(flattenCharges);
+  // Delivery dates to ISO (day-first) and a digits-only phone, by the
+  // normalizer claude.js runs on the same fields (lockstep with claude.js).
+  const shaped = normalizeDeliveryContact(
+    { customer: out.customer || null, lines: (Array.isArray(out.lines) ? out.lines : []).map(flattenCharges) },
+    { slots: deliveryContact },
+  );
+  const lines = shaped.lines;
   const overall = Number(out.confidence);
   const conf = Number.isFinite(overall) ? Math.max(0, Math.min(1, overall)) : 0.7;
   const confidences = { overall: conf };
@@ -1022,7 +1044,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     reason: lines.length === 0 ? "empty_lines" : "ok",
     normalized: {
       classification: out.classification || null,
-      customer: out.customer || null,
+      customer: shaped.customer,
       lines,
       // CM P3: PO's own declared line count (lockstep with claude.js).
       stated_line_count: coerceStatedLineCount(out.stated_line_count),

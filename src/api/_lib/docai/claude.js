@@ -29,6 +29,9 @@ import { callAnthropic } from "../anthropic.js";
 import { selectClaudeModel } from "./model_selector.js";
 import { parseSchemaAligned } from "./parse.js";
 import { promptNameForKind } from "./prompt-versions.js";
+import {
+  PO_DELIVERY_CONTACT_RULE, withDeliveryContactSlots, deliveryContactRequested, normalizeDeliveryContact,
+} from "./po-delivery-contact.js";
 
 // Per-call model selection delegates to the deterministic
 // model_selector. Selection priority (highest first):
@@ -1422,6 +1425,15 @@ export const TOOL_DEFINITION = {
   },
 };
 
+// The PO tool on the po_extractor@v4 canary: the same tool plus the delivery
+// date and contact slots that gemini.js adds to its own schema from the same
+// definitions (po-delivery-contact.js). TOOL_DEFINITION itself is unchanged,
+// so a run off the canary sends exactly what it sent before.
+const TOOL_DEFINITION_DELIVERY_CONTACT = {
+  ...TOOL_DEFINITION,
+  input_schema: withDeliveryContactSlots(TOOL_DEFINITION.input_schema),
+};
+
 // Field guidance, kept verbatim from PR #27 so the model strips
 // "M/s." prefixes, preserves payment_terms verbatim (no
 // re-formatting), and only emits a 15-character GSTIN that matches
@@ -1688,6 +1700,13 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     };
   }
 
+  // po_extractor@v4 (canary): the PO's delivery date and the buyer's contact
+  // person. The gate, the rule and the slots are shared with gemini.js, so the
+  // two adapters cannot ask for different things. Only po / rfq / generic map
+  // to po_extractor, so activeTool here is always TOOL_DEFINITION.
+  const deliveryContact = deliveryContactRequested(hints?.promptVariant, promptNameForKind(expectedKind));
+  if (deliveryContact) activeTool = TOOL_DEFINITION_DELIVERY_CONTACT;
+
   // Deterministic model pick based on extraction context. The
   // selector's reason gets persisted on extraction_runs so the
   // diagnostics tab can render "we used Sonnet because L2 OCR
@@ -1799,6 +1818,8 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
       ].join("\n"),
     });
   }
+  // The v4 rule, the identical string gemini.js sends.
+  if (deliveryContact) systemBlocks.push({ type: "text", text: PO_DELIVERY_CONTACT_RULE });
 
   // Audit fix May 2026: surface the tenant identity to the model
   // so it does not promote the seller's printed contact details
@@ -2123,7 +2144,16 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     };
   }
 
-  const lines = Array.isArray(out.lines) ? out.lines : [];
+  // A PO's delivery dates go to ISO (day-first) and its phone gains a
+  // digits-only form, by the normalizer gemini.js runs on the same fields. The
+  // other kinds that reach this return keep their own shapes.
+  const poShaped = promptNameForKind(expectedKind) === "po_extractor"
+    ? normalizeDeliveryContact(
+      { customer: out.customer || null, lines: Array.isArray(out.lines) ? out.lines : [] },
+      { slots: deliveryContact },
+    )
+    : null;
+  const lines = poShaped ? poShaped.lines : (Array.isArray(out.lines) ? out.lines : []);
   const overall = Number(out.confidence);
   // Per-field confidence falls back to the model's own number for
   // each line; the dispatcher's 0.7 threshold now triggers
@@ -2150,7 +2180,7 @@ export const extract = async ({ url, bytes, filename: _filename, mime, settings,
     model_selection_reason: selection.reason,
     normalized: {
       classification: out.classification || null,
-      customer: out.customer || (isQuote && out.customer_name ? { name: out.customer_name } : null),
+      customer: poShaped ? poShaped.customer : (out.customer || (isQuote && out.customer_name ? { name: out.customer_name } : null)),
       lines,
       // CM P3: the PO's own declared line count (for the
       // line_count_shortfall completeness detector). Coerced to a

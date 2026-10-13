@@ -811,11 +811,18 @@ export const runExtractionPipeline = async (params) => {
   // was asked. This is the wire that makes it an experiment rather than a
   // caption. Present only when the variant actually applies (see
   // getPromptVersion), so an adapter cannot run one by accident.
-  if (promptChoice?.is_variant && Array.isArray(promptChoice.system_append) && promptChoice.system_append.length) {
+  //
+  // A variant is appended text (system_append, v3) or a named treatment the
+  // adapters build themselves (features, v4: the delivery date and contact
+  // slots). Either one is a variant; a row with neither is only a label.
+  const variantFeatures = Array.isArray(promptChoice?.features) ? promptChoice.features : [];
+  if (promptChoice?.is_variant && ((Array.isArray(promptChoice.system_append) && promptChoice.system_append.length)
+      || variantFeatures.length)) {
     dispatchHints.promptVariant = {
       name: promptChoice.name,
       version: promptChoice.version,
       system_append: promptChoice.system_append,
+      ...(variantFeatures.length ? { features: variantFeatures } : {}),
     };
   }
 

@@ -114,6 +114,19 @@ export const scrubCustomerOfTenantIdentity = (customer, identity) => {
     }
   }
 
+  // The digits-only form the adapters derive from the phone
+  // (po-delivery-contact.js). Checked on its own: it is the FIRST
+  // number printed, so it can be ours when the whole phone string
+  // ("ours / theirs") is not, and nulling only `phone` would leave
+  // our number behind in it.
+  if (next.phone_digits) {
+    const tenantPhones = [identity.phone, ...identity.alias_phones].filter(Boolean);
+    if (next.phone == null || tenantPhones.some((tp) => samePhone(next.phone_digits, tp))) {
+      next.phone_digits = null;
+      scrubbed.push("phone_digits");
+    }
+  }
+
   // GSTIN. A customer with the tenant's own GSTIN is by
   // definition the seller, not the buyer. Hard nullification.
   if (next.gstin && identity.gstin && sameGstin(next.gstin, identity.gstin)) {

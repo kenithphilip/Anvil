@@ -25,6 +25,7 @@
 //     version per adapter per customer".
 
 import { createHash } from "node:crypto";
+import { PO_DELIVERY_CONTACT_FEATURE } from "./po-delivery-contact.js";
 
 // Stable registry. New versions are added by adding rows here;
 // status='active' enables the split, status='canary' restricts to a small
@@ -38,6 +39,11 @@ import { createHash } from "node:crypto";
 // answerable, and until a row supplies real prompt text there is nothing to
 // compare. Say that out loud rather than implying an A/B is running.
 //
+// Two kinds of row change the request today. `system_append` is text the
+// adapters append as it stands (v3). `features` names a treatment whose text
+// and schema slots live in code that both adapters import (v4), for a change
+// that needs schema slots as well as words.
+//
 // This header used to instruct adapters to "import getPromptVersion()". No
 // such export existed — the file exported resolvePromptVersion — so nobody
 // ever wired it, and extraction_runs.prompt_version (migration 124) was
@@ -48,7 +54,8 @@ const REGISTRY = {
     {
       version: "v1",
       status: "active",
-      traffic_weight: 0.90,
+      // 0.90 until v4 took its 0.05 from here (see v4).
+      traffic_weight: 0.85,
       description: "Original (May 2025) PO extractor system prompt.",
     },
     {
@@ -65,6 +72,30 @@ const REGISTRY = {
       status: "retired",
       traffic_weight: 0,
       description: "Label-only. Recorded on ~30% of runs before variants could change the request; never executed anything different from v1.",
+    },
+    {
+      // Plan PR 17 (docs/SO_TERMS_AND_HANDOFF_SCOPE.md 4.6): the PO's delivery
+      // date and the buyer's contact person, which the order-processing
+      // handoff needs. One shared rule and three schema slots
+      // (customer.contact_name, customer.delivery_date, lines[].delivery_date),
+      // sent by claude.js and gemini.js alike from po-delivery-contact.js.
+      //
+      // Why a canary: the slots add output to every line, and the rule tells
+      // the model that a "Delivery date :" line it was told to treat as
+      // boilerplate now carries a value. Both are changes to what the model is
+      // asked on every PO, so they are measured before they become the base.
+      // Read-out: how often each slot is filled against the document, and that
+      // line_recall_avg and the line-count anomalies do not move against v1.
+      //
+      // ORDER MATTERS. The split walks the live rows in array order, so this
+      // row sits BEFORE v3: v1 gives up 0.05 and v3 keeps exactly the slice of
+      // the hash space, and so the documents, it had. Added after v3, it would
+      // move v3's slice and send re-extracted documents to a different arm.
+      version: "v4",
+      status: "canary",
+      traffic_weight: 0.05,
+      description: "PO delivery date and the buyer's contact person: one shared rule and three schema slots, in both adapters.",
+      features: [PO_DELIVERY_CONTACT_FEATURE],
     },
     {
       version: "v3",
@@ -218,8 +249,11 @@ export const resolvePromptVersion = (promptName, opts = {}) => {
 export const getPromptVersion = (promptName, opts = {}) => {
   const r = resolvePromptVersion(promptName, opts);
   if (!r) return null;
+  // A named treatment counts as prompt text: the adapters send its rule and
+  // its slots (po-delivery-contact.js for v4).
+  const features = Array.isArray(r.features) ? r.features.filter((f) => typeof f === "string" && f) : [];
   // Does this ROW carry prompt text at all?
-  const hasText = !!(r.system || r.tools || (Array.isArray(r.system_append) && r.system_append.length));
+  const hasText = !!(r.system || r.tools || (Array.isArray(r.system_append) && r.system_append.length) || features.length);
   // Did THIS RUN actually use it? Two different questions, and conflating them
   // is how a comparison ends up measuring nothing: with variants disabled, a
   // v2-labelled run executes the identical base prompt, so charting "v1 vs v2"
@@ -235,6 +269,9 @@ export const getPromptVersion = (promptName, opts = {}) => {
     // Only handed out when applied, so a caller cannot inject a variant it was
     // not authorised to run by reading the row off the result.
     system_append: applied && Array.isArray(r.system_append) ? r.system_append : null,
+    // Withheld the same way, or the spread above would hand the row's
+    // features to a run that was not authorised to use them.
+    features: applied && features.length ? features : null,
   };
 };
 

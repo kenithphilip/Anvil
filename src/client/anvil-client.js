@@ -893,6 +893,14 @@
       const m = disposition.match(/filename="?([^"]+)"?/);
       return { blob: await resp.blob(), filename: m ? m[1] : "SO_register.xlsx" };
     },
+    // The terms check of one order: the PO wording beside each quote's, per
+    // flag, with where each came from. opts.includeShadow: an admin reading
+    // a shadow-mode check (the server refuses anyone else).
+    terms: async (orderId, opts) =>
+      apiFetch("/api/orders/terms?order_id=" + encodeURIComponent(orderId) + (opts && opts.includeShadow ? "&include_shadow=1" : "")),
+    // Re-run the terms check ("Re-check terms"). Returns the same view.
+    termsCheck: async (orderId, opts) =>
+      apiFetch("/api/orders/terms_check", { method: "POST", body: { order_id: orderId, ...(opts && opts.includeShadow ? { include_shadow: true } : {}) } }),
     attachedQuotes: async (orderId) => apiFetch("/api/orders/quotes?order_id=" + encodeURIComponent(orderId)),
     // One attached quote in full: a signed URL to read the PDF, plus the
     // extracted lines with rates converted back to PERCENTAGES, because the

@@ -13,6 +13,11 @@
 //   autoReconcileOrder    the server trigger, after an order's lines are
 //                         written. It never throws, it runs once per payload
 //                         hash, and it never touches an approved order.
+//
+// Both end with the terms check (terms/check.js,
+// docs/SO_TERMS_AND_HANDOFF_SCOPE.md 5.4). It runs after the reconcile is
+// stored, never fails it, does nothing while the tenant's mode is off, and is
+// skipped cleanly on a database without migration 250.
 
 import { recordAudit, recordEvent } from "./audit.js";
 import { reconcilePoAgainstQuotes, comparePaymentTerms, compareIncoterms, parseIncoterm } from "./quote-reconcile.js";
@@ -20,6 +25,7 @@ import { modBomFinding, provisionalParts, MOD_BOM_FINDING_CODE } from "./mod-par
 import { mergeBlockersForward, isUnresolvedBlocker } from "./blocking-findings.js";
 import { computeOrderPayloadHash } from "./payload-hash.js";
 import { linkOrderOpportunityFromQuotes } from "./order-opportunity.js";
+import { runTermsAfterReconcile } from "./terms/check.js";
 
 // Quotes in these states can't have priced this PO.
 // DRAFT is excluded as well as CANCELLED.
@@ -359,6 +365,11 @@ export const reconcileOrderQuotes = async (svc, ctx, orderId, opts = {}) => {
       + rec.summary.matched + "/" + rec.summary.total + " matched, " + rec.summary.price_mismatch + " price-mismatch, " + rec.summary.unmatched + " unmatched across " + rec.quotes_used.length + " quote(s)" + (paymentTerms.verdict === "mismatch" ? "; PAYMENT-TERMS MISMATCH (PO " + paymentTerms.po_terms + " vs quote " + paymentTerms.quote_terms + ")" : ""),
   });
 
+  // The terms check reads the quotes this run just found (quotes_used). The
+  // server trigger runs it after its own budget instead (skipTerms), so a
+  // slow terms read never turns a stored reconcile into a "timeout".
+  if (!opts.skipTerms) await runTermsAfterReconcile(svc, ctx, orderId, { trigger: "reconcile" });
+
   return { status: "reconciled", report: reportOf(orderId, quoteReconciliation), opportunity_link: opportunityLink };
 };
 
@@ -381,7 +392,7 @@ export const autoReconcileOrder = async (svc, ctx, orderId, opts = {}) => {
   let out;
   try {
     const run = reconcileOrderQuotes(svc, ctx, orderId, {
-      ifChanged: true, guardConcurrent: true, statuses: AUTO_RECONCILE_STATUSES, trigger,
+      ifChanged: true, guardConcurrent: true, statuses: AUTO_RECONCILE_STATUSES, trigger, skipTerms: true,
     });
     const late = new Promise((resolve) => { timer = setTimeout(() => resolve({ status: "timeout" }), budgetMs); });
     // A rejection before the budget lands in the catch below. One after it is
@@ -402,5 +413,8 @@ export const autoReconcileOrder = async (svc, ctx, orderId, opts = {}) => {
       });
     } catch { /* the console line above is the fallback record */ }
   }
+  // Once per payload hash: only a run that reconciled (the payload moved)
+  // checks the terms. Never throws; it has its own budget.
+  if (out.status === "reconciled") await runTermsAfterReconcile(svc, ctx, orderId, { trigger: "reconcile" });
   return out;
 };

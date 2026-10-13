@@ -843,6 +843,12 @@ const ownIdentity = (settings) => ({
     settings?.tenant_display_name, settings?.tally_company_name,
   ].filter(Boolean),
   ownGstins: [settings?.einvoice_seller_gstin, settings?.tenant_gstin].filter(Boolean),
+  // The numbers tenant-scrub.js treats as ours, so the header never offers
+  // one as the buyer's phone.
+  ownPhones: [
+    settings?.einvoice_seller_phone, settings?.tenant_phone,
+    ...(Array.isArray(settings?.docai_tenant_aliases?.phones) ? settings.docai_tenant_aliases.phones : []),
+  ].filter(Boolean),
 });
 const isLineItemTable = (tableHtml) => {
   const t = parseHtmlTables(tableHtml)[0];

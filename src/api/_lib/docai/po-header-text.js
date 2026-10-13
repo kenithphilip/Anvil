@@ -20,6 +20,19 @@
 //   name         the buyer: a labelled Buyer / Bill To block, else the
 //                letterhead (the first heading above the vendor block)
 //   grand_total  the printed grand total, on normalized.totals
+//   delivery_date  Delivery Date / Dely. Date / Required by / Need by, read
+//                day-first, returned as ISO (the field the po_extractor@v4
+//                canary asks the LLM adapters for)
+//   contact_name the buyer's Contact Person / Contact Name
+//   phone        Tel / Phone / Ph / Mob / Contact No beside that person, else
+//                the buyer's first printed number; plus phone_digits
+//
+// The delivery date may be read anywhere in the header, as the PO date is. The
+// contact and the phone are a PERSON and a NUMBER, so they are read only where
+// they are the buyer's: the labelled buyer block, and the lines above the
+// supplier block. Never at or below it, where "Kind Attn", "Contact Person"
+// and "Tel" are our own. With no supplier block found, only from a labelled
+// buyer block, because nothing then says whose they are.
 //
 // NEVER US. A PO is addressed TO its supplier, so our own name and GSTIN are
 // printed on it, often as the only company block with a GSTIN. Three guards:
@@ -35,6 +48,7 @@
 
 import { parsePoDate } from "../parse-date.js";
 import { printedDocumentTotal } from "./anomaly.js";
+import { isoDayFirst, phoneOf, phoneDigits, contactNameOf } from "./po-delivery-contact.js";
 
 const decode = (s) => String(s)
   .replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">")
@@ -127,9 +141,48 @@ const dateFrom = (text) => {
   return null;
 };
 
+// The order's delivery date. A label followed by no date ("Delivery Date :
+// within 4 weeks") is passed over for the next one; nothing that is not a date
+// is returned.
+const DELIVERY_DATE_LABELS = [
+  /\b(?:delivery|del[yv]\.?)[ \t]*(?:date|dt\b\.?)/,
+  /\b(?:required|reqd\.?|need)[ \t]*by(?:[ \t]*date)?/,
+];
+const deliveryDateFrom = (text) => {
+  for (const label of DELIVERY_DATE_LABELS) {
+    for (const m of text.matchAll(new RegExp(label.source + SEP + DATE_VALUE, "gi"))) {
+      const iso = isoDayFirst(m[1]);
+      if (iso) return iso;
+    }
+  }
+  return null;
+};
+
+// The buyer's contact person. The value is a name on the label's line: it
+// stops at a digit, a colon or a comma, and at the next label on the same line
+// ("A. Rao Tel : ..."). A designation or a company name is not a person, so a
+// value that is one of our own names is skipped.
+const CONTACT_LABEL = /\bcontact[ \t]*(?:person|name)\b/;
+const NAME_VALUE = String.raw`((?:(?:mr|mrs|ms|miss|dr|shri|smt|sri)\.?[ \t]+)?\p{L}[\p{L}.' \t\-]{1,60})`;
+const NEXT_LABEL = /\b(?:tel(?:ephone)?|ph(?:one)?|mob(?:ile)?|cell|e-?mail|fax|desig(?:nation)?|dept|department|contact|ext(?:n)?)\b.*$/i;
+// A phone label, then the number: digits with the separators a phone is
+// printed with, and "/" for a second number ("020-2712 3456 / 57").
+const PHONE_LABEL = /\b(?:tel(?:ephone)?|ph(?:one)?|mob(?:ile)?|cell|contact[ \t]*(?:no\b|number))\.?(?:[ \t]*(?:no\b\.?|number|#))?/;
+const PHONE_VALUE = String.raw`(\+?\(?\d[\d \t().\-/]{4,}\d)`;
+const phoneAfter = (text, isOwnPhone) => {
+  for (const m of text.matchAll(new RegExp(PHONE_LABEL.source + SEP + PHONE_VALUE, "gi"))) {
+    const printed = phoneOf(m[1]);
+    const digits = phoneDigits(printed);
+    if (!digits || isOwnPhone(digits)) continue;
+    return printed;
+  }
+  return null;
+};
+
 // Read the header. opts:
 //   ownNames         the tenant's own company names (never the buyer)
 //   ownGstins        the tenant's own GSTINs (never the buyer's)
+//   ownPhones        the tenant's own phone numbers (never the buyer's)
 //   isLineItemTable  (html) => bool, so the header is read above the table
 // Returns { customer, totals, fields } with customer null when nothing was
 // found; `fields` lists what was filled, for the run's diagnostics.
@@ -140,6 +193,10 @@ export const readPoHeader = (md, opts = {}) => {
     const k = nameKey(s);
     return !!k && ownNames.some((o) => k === o || (o.length >= 6 && k.includes(o)));
   };
+  // The last 10 digits, so a country code printed or not is the same number
+  // (tenant-scrub.js compares the same way).
+  const ownPhones = (opts.ownPhones || []).map((p) => String(p || "").replace(/\D+/g, "").slice(-10)).filter((d) => d.length >= 6);
+  const isOwnPhone = (digits) => ownPhones.includes(String(digits).slice(-10));
   const lines = toLines(md, opts.isLineItemTable);
   const tableAt = lines.findIndex((l) => l.lineTable);
   const head = tableAt >= 0 ? lines.slice(0, tableAt) : lines;
@@ -166,6 +223,7 @@ export const readPoHeader = (md, opts = {}) => {
   let name = null;
   let source = null;
   let billTo = null;
+  let buyerBlock = [];
   let gstin = null;
   for (let i = 0; i < head.length && !name; i++) {
     const m = head[i].text.match(BUYER_LABEL);
@@ -181,6 +239,7 @@ export const readPoHeader = (md, opts = {}) => {
     name = candidate;
     source = "buyer_block";
     billTo = block.join("\n");
+    buyerBlock = block;
     const g = block.join(" ").toUpperCase().match(GSTIN_IN_TEXT);
     if (g && !ownGstins.has(g[0])) gstin = g[0];
   }
@@ -199,6 +258,30 @@ export const readPoHeader = (md, opts = {}) => {
   if (billTo) set("bill_to_address", billTo);
   if (gstin) set("gstin", gstin);
 
+  // The order's delivery date: anywhere in the header, as the PO date.
+  set("delivery_date", scan(deliveryDateFrom));
+
+  // The buyer's contact person and phone: the labelled buyer block, then the
+  // lines above the supplier block. Nothing at or below the supplier block.
+  const party = [...buyerBlock, ...(vendorAt >= 0 ? above.map((l) => l.text) : [])].join("\n");
+  let contact = null;
+  let phone = null;
+  for (const m of party.matchAll(new RegExp(CONTACT_LABEL.source + SEP + NAME_VALUE, "giu"))) {
+    const person = contactNameOf(m[1].replace(NEXT_LABEL, ""));
+    if (!person || isOwnName(person)) continue;
+    contact = person;
+    // A number printed with the person: the label's line and the next three,
+    // which is where a table row's cells land once they are one per line.
+    phone = phoneAfter(party.slice(m.index).split("\n").slice(0, 4).join("\n"), isOwnPhone);
+    break;
+  }
+  if (!phone) phone = phoneAfter(party, isOwnPhone);
+  set("contact_name", contact);
+  if (phone) {
+    set("phone", phone);
+    customer.phone_digits = phoneDigits(phone);
+  }
+
   const allText = lines.map((l) => l.text).join("\n");
   const grand = printedDocumentTotal(allText);
   const totals = grand != null ? { grand_total: grand } : null;
@@ -211,4 +294,4 @@ export const readPoHeader = (md, opts = {}) => {
   };
 };
 
-export const __test = { toLines, nameKey, valueAfter, dateFrom };
+export const __test = { toLines, nameKey, valueAfter, dateFrom, deliveryDateFrom, phoneAfter };

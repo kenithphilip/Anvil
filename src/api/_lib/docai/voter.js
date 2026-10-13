@@ -35,6 +35,11 @@ const FIELD_PATHS = [
   "customer.bill_to_address", "customer.ship_to_address",
   // The header PR number the SO workspace shows beside the per-line ones.
   "customer.requisition_no",
+  // The handoff inputs the po_extractor@v4 canary reads (po-delivery-contact.js).
+  // The customer block is rebuilt from this list, so without them a voted run
+  // drops both. customer.phone_digits is NOT voted: it is derived from the
+  // voted phone below, so the two can never come from different adapters.
+  "customer.contact_name", "customer.delivery_date",
 ];
 
 const get = (obj, path) => {
@@ -156,9 +161,12 @@ const voteScalar = (entries, fieldPath) => {
 // from this list whatever the adapters returned, so without it the per-line
 // value was dropped on every voted run (two or more adapters returned a
 // result), not only on runs where they agreed.
+// delivery_date likewise: llamaparse has filled it from the table all along,
+// and the v4 canary asks both LLM adapters for it.
 const LINE_FIELDS = [
   "partNumber", "customerItemCode", "description", "raw_description",
   "specification", "requisition_no", "quantity", "unitPrice", "uom", "hsn", "gst_pct",
+  "delivery_date",
 ];
 
 const stringifyKey = (v) => (v == null ? "" : String(v).trim().toLowerCase());
@@ -251,6 +259,7 @@ const voteLines = (entries) => {
 };
 
 import { augmentVoterOutput } from "./field-voter.js";
+import { phoneDigits } from "./po-delivery-contact.js";
 
 // Reduce N adapter results into a single voted output. Returns the
 // canonical { ok, normalized, confidences, field_provenance,
@@ -271,6 +280,7 @@ export const voteAcrossAdapters = (adapterResults) => {
       customer[subPath] = fp.value;
     }
   }
+  if (customer.phone != null) customer.phone_digits = phoneDigits(customer.phone);
 
   // Classification: pick majority; ties broken by max confidence.
   const classProvenance = voteScalar(entries, "classification");

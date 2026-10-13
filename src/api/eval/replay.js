@@ -137,8 +137,19 @@ export const replayGoldens = async (svc, { suite = "po-extraction", tenantId, ma
     if (!choice || choice.version !== promptVersion) {
       return { refused: "prompt_version_not_applicable: " + promptVersion + " for kind " + kind };
     }
-    if (!choice.is_variant || !Array.isArray(choice.system_append) || !choice.system_append.length) return { hint: null };
-    return { hint: { promptVariant: { name: choice.name, version: choice.version, system_append: choice.system_append } } };
+    // A variant is appended text (v3) or a named treatment (v4). Checking the
+    // text alone would replay v4 with the base prompt under v4's name.
+    const append = Array.isArray(choice.system_append) && choice.system_append.length ? choice.system_append : null;
+    const features = Array.isArray(choice.features) && choice.features.length ? choice.features : null;
+    if (!choice.is_variant || (!append && !features)) return { hint: null };
+    return {
+      hint: {
+        promptVariant: {
+          name: choice.name, version: choice.version, system_append: choice.system_append,
+          ...(features ? { features } : {}),
+        },
+      },
+    };
   };
   const casesQ = await svc.from("eval_cases")
     .select("case_id, expected, documents")

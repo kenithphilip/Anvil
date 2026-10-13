@@ -1179,6 +1179,53 @@ would pull Anvil off its wedge exactly as §3.27 and §3.28 would.
    reversed, which is also Gainfront's SpendPower in one sentence. Anvil would
    be reusing a solved mechanism, not inventing one.
 
+### 3.33 Manufacturing software funding rounds, September 2026 (8 companies, landscape scan)
+
+Source list: Manuel Dao's LinkedIn post (8 rounds, USD 258M in total), checked
+against the funding announcements in Appendix B. Added 2026-10-13. This is a
+landscape scan, not a teardown: no product was used or inspected. Websites for
+Atira, IPercept and Harmoni were confirmed in search results. The CADDi, Flow
+Engineering, CloudNC and Axya domains come from general knowledge, and the
+Magentic domain was not confirmed. Verify them before publishing anything that
+cites them.
+
+| Company | Country | Round | What it does | Website | Intended customer |
+|---|---|---|---|---|---|
+| CADDi | Japan / US | USD 114M Series D (USD 1.2B valuation) | AI data platform that reads engineering drawings and connects drawing, ERP and quality data. CADDi Explorer searches past parts by shape or spec. CADDi Agent analyses data and takes actions in each company's operating context. | caddi.com | Large manufacturers (more than half of Japan's 100 largest) |
+| Flow Engineering | US | USD 50M Series B (USD 750M valuation) | Agents watch changes in CAD, Git, simulations and docs, then run impact analysis, flag conflicts and detect requirement failures. | flowengineering.com | Hardware engineering teams at OEMs (GM PPU, RV Tech, Anduril, Stoke Space, Intuitive Machines) |
+| CloudNC | UK | USD 20M | CAM Assist automates parts of CNC programming. Quote Agent (launching later in 2026) automates quoting and estimating for machining jobs. | cloudnc.com | Job shops and machine shops (1,000+ globally) |
+| Atira | Germany | USD 17.5M Pre-seed + Seed | Multi-agent platform that processes complex RFQs: it reviews specs, flags key requirements, configures solutions and produces bid documents. Works across CRM, ERP and CPQ. | atira.ai | Manufacturers selling complex, built-to-order products (for example ABB E-Mobility) |
+| Magentic | UK | USD 18M Series A | Multi-agent "Mages" work inside a manufacturer's systems, communicate through Teams and email, and handle supplier selection, contract negotiation, ordering and invoice clearing. | Not confirmed | Procurement and supply chain teams at large manufacturers |
+| Axya | Canada | USD 12M Series A (incl. venture debt) | Human-in-the-loop AI procurement: data normalisation, early risk flagging, savings identification. Integrates with Infor, Epicor, Oracle, SAP, Microsoft Dynamics and Sage. | axya.co | Mid-market and enterprise manufacturers (MDA Space, GE Aerospace) |
+| IPercept | Sweden | USD 16.5M Series A | A device mounted on any CNC machine turns micrometre-scale motion into component-level condition data, with no connection to the controller or the IT network. Predicts failures. | ipercept.io | Plants running CNC fleets (Airbus, Bosch, Scania, Hitachi Energy, Volvo) |
+| Harmoni | US | USD 10M Series A | Factory orchestration that connects operators, machines, engineering systems and enterprise software, plus HAL, a context-aware AI assistant for the production floor. | harmoni.io | Shop-floor operators and plant managers, including legacy-machine shops |
+
+**Categories**
+
+- Engineering and data: CADDi, Flow Engineering
+- Quoting and sales: CloudNC, Atira
+- Procurement: Magentic, Axya
+- Shop floor: IPercept, Harmoni
+
+**Gap signals (from the source scan)**
+
+- Only CloudNC and Harmoni are built for the job shop itself. The rest mostly
+  sell to OEMs and large plants.
+- Quoting (Atira) and procurement (Magentic, Axya) are being solved for
+  enterprises with heavy ERP integrations.
+- Opportunity: agentic quoting, supplier follow-up and drawing review for
+  small and mid-size job shops, with light setup and no large ERP dependency.
+
+**Where each category meets Anvil.** This is a reading against the sections
+above, not a new code audit.
+
+| Category | Anvil today | Read |
+|---|---|---|
+| Quoting and sales (Atira, CloudNC) | Anvil's core: inbound PO and RFQ extraction, quote building and quote-to-PO reconciliation, for a distributor of engineered parts. | Atira is the closest overlap, but sells to built-to-order OEMs with CPQ. CloudNC's Quote Agent quotes machining work, which needs routing and machine costing that Anvil does not have (see the job-shop verdict referenced in section 3.30). |
+| Procurement (Magentic, Axya) | Supplier RFQ, source POs and a supplier three-way match exist. Supplier identity is fragmented (section 3.32). | Same buy-side gaps as section 3.32. These two raise the bar on supplier follow-up done by agents over email. |
+| Engineering and data (CADDi, Flow) | Drawing and BOM extraction for spare identification, and per-gun drawings on the spare matrix. No shape search and no change-impact analysis. | CADDi's "search past parts by spec" is the same direction as the spec-driven part selection design (#542). Flow is out of scope. |
+| Shop floor (IPercept, Harmoni) | None: no machine data and no MES. | Out of scope for Anvil's wedge. |
+
 ## 4. Cross-cutting themes from the competitor scan
 
 Five things the competitors collectively prove are now table stakes:
@@ -1574,3 +1621,12 @@ After the post-implementation pass, the remaining open items in Now are:
 - Prototyping.io: https://www.prototyping.io, ycombinator.com/companies/prototypingio (YC P26, founded 2026; waitlist only — no pricing, turnaround SLA, logos or metrics published, so capability claims are read as intent)
 - YC requests-for-startups, hardware track (reviewed 2026-08-29): "Hardware Supply Chain" (Nicolas Dessaigne), "New Operating Systems for the Physical World" (Charlie Warren), "Modern Metal Mills" (Zane Hengsperger) — used as a diagnostic of Anvil, not as a competitor scan
 - Verdantis: https://www.verdantis.com (reviewed 2026-08-29; MRO360 + MDM Suite. Logos, savings metrics and the ">95% accuracy" forecasting claim are the vendor's own, unaudited)
+- Manufacturing software funding rounds, September 2026 (section 3.33, added 2026-10-13):
+  - CADDi Series D: https://siliconangle.com/2026/09/16/caddi-raises-114m-at-1-2b-valuation-to-bring-manufacturing-ai-to-north-america/
+  - Flow Engineering: https://develop3d.com/collaborate/flow-raises-50m-series-b/
+  - CloudNC: https://pulse2.com/cloudnc-raises-20-million-to-expand-ai-tools-for-cnc-precision-machining/
+  - Atira: https://dealroom.co/companies/atira/ and https://tech.eu/2026/09/03/atira-raises-175m-to-bring-ai-orchestration-to-industrial-sales/
+  - Magentic: https://thenextweb.com/news/magentic-18m-series-a-ai-agents-procurement
+  - Axya: https://fundraiseinsider.com/blog/mcrock-leads-axyas-c17m-series-a-for-manufacturing-procurement-ai/
+  - IPercept: https://bebeez.eu/2026/09/29/swedish-startup-raises-16-5-million-to-make-cnc-machines-more-intelligent/
+  - Harmoni: https://vcnewsdaily.com/Harmoni/venture-funding.php

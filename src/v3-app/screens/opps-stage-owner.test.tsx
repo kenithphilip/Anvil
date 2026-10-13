@@ -21,6 +21,15 @@ vi.mock("../../api/_lib/auth.js", async (importOriginal) => {
 });
 vi.mock("../../api/_lib/supabase.js", () => ({ serviceClient: () => H.db.svc() }));
 
+// Imported once, here, so a cold import of the screen and three handlers on a
+// busy machine is not charged to the first test's timeout.
+const handlers = {
+  opps: (await import("../../api/sales/opportunities.js")).default,
+  lost: (await import("../../api/admin/lost_reasons.js")).default,
+  members: (await import("../../api/admin/members.js")).default,
+};
+const { default: Opps } = await import("./opps");
+
 const T1 = "10000000-0000-4000-8000-000000000001";
 const u = (n: string) => "00000000-0000-4000-8000-0000000000" + n;
 const MGR = u("a1"), REP = u("a2"), REP2 = u("a3"), GONE = u("a4");
@@ -35,11 +44,6 @@ let patchCalls = 0;
 const mount = async (role: string, oppId: string, me: string, serverRole = role) => {
   H.ctx = { user: { id: me }, tenantId: T1, role: serverRole };
   installRbac(role);
-  const handlers = {
-    opps: (await import("../../api/sales/opportunities.js")).default,
-    lost: (await import("../../api/admin/lost_reasons.js")).default,
-    members: (await import("../../api/admin/members.js")).default,
-  };
   // What anvil-client's handleResponse does with a reply.
   const call = async (h: any, init: any) => {
     const r = await callHandler(h, init);
@@ -63,7 +67,6 @@ const mount = async (role: string, oppId: string, me: string, serverRole = role)
     },
   });
   window.location.hash = "#/opps?id=" + oppId;
-  const { default: Opps } = await import("./opps");
   const r = renderScreen(Opps);
   const card = await waitFor(() => r.getByTestId("opportunity-stage-owner"));
   return { ...r, card: within(card) };

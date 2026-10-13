@@ -61,6 +61,10 @@ const DEFAULT_TABLES = new Set([
   "anomaly_findings",
   "tenant_members",
   "tenant_settings",
+  // The terms check (migration 250).
+  "order_term_checks",
+  "order_term_flags",
+  "order_term_decisions",
 ]);
 
 // Allow-list. Each entry is { file: substring, line: number,

@@ -70,6 +70,7 @@ describe("SO register: rows", () => {
     expect(register).toHaveBeenCalledTimes(1);
     expect(lastParams()).toEqual({
       page: 1, page_size: 50, from: "", to: "", customer: "", channel: "", status: "", has_flags: "",
+      has_undecided_terms: "", include_shadow: "",
     });
   });
 });
@@ -123,5 +124,54 @@ describe("SO register: reachable", () => {
     expect(register).toBeTruthy();
     expect(register).not.toBe(so(""));
     expect(register).not.toBe(so("view=pending"));
+  });
+});
+
+describe("SO register: the Terms column (plan PR 13)", () => {
+  const TERMS = {
+    o1: { status: "read", shadow: false, open: { info: 0, warn: 0, high: 1, critical: 2 }, undecided: 3, amendment_requested: 1, decided: 2 },
+    o2: { status: "not_read", shadow: false, open: { info: 0, warn: 0, high: 0, critical: 0 }, undecided: 0, amendment_requested: 0, decided: 0 },
+  };
+  const mountTerms = async (terms: any, role = "sales_engineer") => {
+    register = vi.fn(async (params: any) => ({
+      rows: ROWS.map((r) => ({ ...r, terms: terms.visible ? (TERMS as any)[r.id] : null })),
+      page: params.page, page_size: 50, total: 2, has_more: false,
+      channels: ["upload", "email"], terms,
+    }));
+    installBackend({ orders: { register }, customers: { list: vi.fn(async () => ({ customers: [] })) } });
+    installRbac(role);
+    const mod = await import("./so-register");
+    const utils = renderScreen(mod.default);
+    await waitFor(() => expect(utils.container.textContent).toContain("PO-T-001"));
+    return utils;
+  };
+
+  it("shows open flags by severity, amendments, decisions, and terms not read", async () => {
+    const { container } = await mountTerms({ mode: "on", visible: true, applied: true, shadow: false });
+    const head = Array.from(container.querySelectorAll("thead th")).map((th) => th.textContent);
+    expect(head).toContain("Terms");
+    const rows = Array.from(container.querySelectorAll("tbody tr")).map((tr) => tr.textContent || "");
+    for (const text of ["2 critical open", "1 high open", "1 amendment requested", "2 decided"]) expect(rows[0]).toContain(text);
+    expect(rows[1]).toContain("PO terms not read");
+    expect(rows[1]).not.toContain("nothing to decide");
+  });
+
+  it("the undecided-terms filter asks the server for has_undecided_terms", async () => {
+    const { getByLabelText } = await mountTerms({ mode: "on", visible: true, applied: true, shadow: false });
+    fireEvent.click(getByLabelText("Only orders with undecided terms"));
+    await waitFor(() => expect(lastParams().has_undecided_terms).toBe("1"));
+    expect(lastParams().page).toBe(1);
+  });
+
+  it("with the check off or hidden, there is no Terms column and no filter", async () => {
+    const { container, queryByLabelText } = await mountTerms({ mode: "shadow", visible: false, applied: true, shadow: false });
+    expect(Array.from(container.querySelectorAll("thead th")).map((th) => th.textContent)).not.toContain("Terms");
+    expect(queryByLabelText("Only orders with undecided terms")).toBeNull();
+    expect(lastParams().include_shadow).toBe("");
+  });
+
+  it("an admin asks for the shadow check", async () => {
+    await mountTerms({ mode: "shadow", visible: true, applied: true, shadow: true }, "admin");
+    expect(lastParams().include_shadow).toBe("1");
   });
 });

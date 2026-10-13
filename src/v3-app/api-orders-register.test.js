@@ -9,7 +9,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import * as XLSX from "xlsx";
 
-const H = vi.hoisted(() => ({ ctx: null, store: null, audits: [] }));
+// fail[table]: every read of that table returns that error (a database
+// without a migration, for one).
+const H = vi.hoisted(() => ({ ctx: null, store: null, audits: [], fail: {} }));
 
 vi.mock("../api/_lib/auth.js", async (importOriginal) => {
   const actual = await importOriginal();
@@ -107,6 +109,7 @@ const makeSvc = () => ({
       range(a, b) { this._range = [a, b]; return this; },
       _run() {
         (H.queries[table] = H.queries[table] || []).push(this._filters);
+        if (H.fail[table]) return { data: null, error: H.fail[table], count: null };
         let rows = (H.store[table] || []).filter((r) => this._preds.every((p) => p(r)));
         const count = rows.length;
         for (const { c, asc } of [...this._orders].reverse()) {
@@ -119,7 +122,7 @@ const makeSvc = () => ({
         const data = this._cols === "*" ? rows : rows.map((r) => project(r, this._cols));
         return { data, error: null, count: this._count ? count : null };
       },
-      maybeSingle() { const r = this._run(); return Promise.resolve({ data: r.data[0] || null, error: null }); },
+      maybeSingle() { const r = this._run(); return Promise.resolve(r.error ? { data: null, error: r.error } : { data: r.data[0] || null, error: null }); },
       then(res, rej) { return Promise.resolve(this._run()).then(res, rej); },
     };
     return q;
@@ -164,6 +167,7 @@ beforeEach(() => {
   H.ctx = { user: { id: "u-1" }, tenantId: "t-1", role: "sales_engineer" };
   H.audits = [];
   H.queries = {};
+  H.fail = {};
   H.store = {
     customers: [
       { id: C1, tenant_id: "t-1", customer_name: "Acme Test Works" },
@@ -265,6 +269,8 @@ describe("register: the row", () => {
       reconciliation: { analysed: true, as_of: null, matched: 1, total: 2, line_flags: 1, terms_flags: 1 },
       status: "APPROVED",
       erp_so: { attached: true, voucher_no: "SO-77" },
+      // The terms check is off for this tenant (no settings row): no column.
+      terms: null,
       handoff: { status: "not_sent" },
     });
   });
@@ -371,5 +377,123 @@ describe("register: Excel export", () => {
     expect(aoa[2]).toContain("not sent");
     expect(JSON.stringify(aoa)).not.toContain("Other Tenant Co");
     expect(H.audits).toEqual([expect.objectContaining({ action: "so_register_exported", detail: "rows=2" })]);
+  });
+});
+
+// ── The terms check (plan PR 13): the Terms column and its filter ─────────
+
+const seedTerms = (mode) => {
+  H.store.tenant_settings = [
+    { tenant_id: "t-1", terms_check_mode: mode, terms_policy: null },
+    { tenant_id: "t-2", terms_check_mode: "on", terms_policy: null },
+  ];
+  const check = (id, orderId, over = {}) => ({ id, tenant_id: "t-1", order_id: orderId, po_terms_status: "read", superseded_at: null, created_at: "2026-10-10T00:00:00Z", ...over });
+  const flag = (id, checkId, orderId, severity, over = {}) => ({ id, tenant_id: "t-1", check_id: checkId, order_id: orderId, clause: "payment_terms", outcome: "deviates", severity, superseded_at: null, ...over });
+  H.store.order_term_checks = [
+    check("ck1", "o1"),
+    check("ck1-old", "o1", { superseded_at: "2026-10-10T00:00:00Z", created_at: "2026-10-09T00:00:00Z" }),
+    check("ck3", "o3", { po_terms_status: "not_read" }),
+    check("ck4", "o4"),
+    check("ckx", "x1", { tenant_id: "t-2" }),
+  ];
+  H.store.order_term_flags = [
+    flag("f1", "ck1", "o1", "critical", { clause: "ld_penalty", outcome: "po_only" }),
+    flag("f2", "ck1", "o1", "high"),
+    flag("f3", "ck1", "o1", "warn", { clause: "warranty" }),
+    // Below decide_at_or_above: shown, never counted as undecided.
+    flag("f4", "ck1", "o1", "info", { clause: "incoterm", outcome: "quote_only" }),
+    flag("f1-old", "ck1-old", "o1", "critical", { superseded_at: "2026-10-10T00:00:00Z" }),
+    flag("f5", "ck3", "o3", "high", { clause: null, outcome: "not_read" }),
+    flag("f6", "ck4", "o4", "warn", { clause: "taxes" }),
+    flag("fx", "ckx", "x1", "critical", { tenant_id: "t-2" }),
+  ];
+  H.store.order_term_decisions = [
+    { id: "d2", tenant_id: "t-1", order_id: "o1", flag_id: "f2", decision: "accept", decided_at: "2026-10-10T01:00:00Z" },
+    { id: "d3", tenant_id: "t-1", order_id: "o1", flag_id: "f3", decision: "request_amendment", decided_at: "2026-10-10T02:00:00Z" },
+    { id: "d5", tenant_id: "t-1", order_id: "o3", flag_id: "f5", decision: "accept", decided_at: "2026-10-10T03:00:00Z" },
+  ];
+};
+
+const zero = { info: 0, warn: 0, high: 0, critical: 0 };
+
+describe("register: the terms column", () => {
+  it("shows each order's open flags by severity, amendments and decisions", async () => {
+    seedTerms("on");
+    const r = await get();
+    expect(r.body.terms).toEqual({ mode: "on", visible: true, applied: true, shadow: false });
+    const t = Object.fromEntries(r.body.rows.map((x) => [x.id, x.terms]));
+    expect(t.o1).toEqual({ status: "read", shadow: false, open: { ...zero, critical: 1 }, undecided: 1, amendment_requested: 1, decided: 1 });
+    // Terms not read is said, even with its one flag decided.
+    expect(t.o3).toEqual({ status: "not_read", shadow: false, open: zero, undecided: 0, amendment_requested: 0, decided: 1 });
+    expect(t.o4.open).toEqual({ ...zero, warn: 1 });
+    expect(t.o2).toEqual({ status: "not_checked", shadow: false, open: zero, undecided: 0, amendment_requested: 0, decided: 0 });
+  });
+
+  it("has_undecided_terms keeps the orders with a flag nobody decided, with a true total", async () => {
+    seedTerms("on");
+    const r = await get({ has_undecided_terms: "1" });
+    expect(ids(r)).toEqual(["o4", "o1"]);
+    expect(r.body.total).toBe(2);
+    // Combined with the other filters, still in the database's terms.
+    const c = await get({ has_undecided_terms: "1", customer: C1 });
+    expect(ids(c)).toEqual(["o1"]);
+    expect(c.body.total).toBe(1);
+  });
+
+  it("pages the filtered set", async () => {
+    seedTerms("on");
+    const p1 = await get({ has_undecided_terms: "1", page_size: "1" });
+    expect([ids(p1), p1.body.total, p1.body.has_more]).toEqual([["o4"], 2, true]);
+    const p2 = await get({ has_undecided_terms: "1", page_size: "1", page: "2" });
+    expect([ids(p2), p2.body.has_more]).toEqual([["o1"], false]);
+  });
+
+  it("an order whose flags are all decided, or only for information, is not undecided", async () => {
+    seedTerms("on");
+    H.store.order_term_decisions.push({ id: "d1", tenant_id: "t-1", order_id: "o1", flag_id: "f1", decision: "reject_term", decided_at: "2026-10-11T00:00:00Z" });
+    expect(ids(await get({ has_undecided_terms: "1" }))).toEqual(["o4"]);
+  });
+
+  it("shadow: hidden from an engineer, shown to an admin who asks", async () => {
+    seedTerms("shadow");
+    const r = await get();
+    expect(r.body.terms.visible).toBe(false);
+    expect(r.body.rows.every((x) => x.terms === null)).toBe(true);
+    expect((await get({ has_undecided_terms: "1" })).body).toMatchObject({ rows: [], total: 0 });
+    expect((await get({ include_shadow: "1" })).status).toBe(403);
+    H.ctx = { user: { id: "u-9" }, tenantId: "t-1", role: "admin" };
+    const a = await get({ include_shadow: "1" });
+    expect(a.body.terms).toMatchObject({ visible: true, shadow: true });
+    expect(a.body.rows.find((x) => x.id === "o1").terms).toMatchObject({ shadow: true, undecided: 1 });
+  });
+
+  it("off: no column and the filter matches nothing", async () => {
+    seedTerms("off");
+    const r = await get();
+    expect(r.body.terms).toMatchObject({ mode: "off", visible: false });
+    expect(r.body.rows.every((x) => x.terms === null)).toBe(true);
+    expect((await get({ has_undecided_terms: "1" })).body).toMatchObject({ rows: [], total: 0 });
+  });
+
+  it("before migration 250: the register works without the column, and the filter is 409", async () => {
+    seedTerms("on");
+    H.fail.tenant_settings = { code: "42703", message: "column tenant_settings.terms_check_mode does not exist" };
+    const r = await get();
+    expect(r.status).toBe(200);
+    expect(r.body.terms).toMatchObject({ applied: false, visible: false });
+    const f = await get({ has_undecided_terms: "1" });
+    expect(f.status).toBe(409);
+    expect(f.body.error).toMatchObject({ code: "MIGRATION_NOT_APPLIED", migration: "250_order_terms.sql" });
+  });
+
+  it("the export carries the terms column as words", async () => {
+    seedTerms("on");
+    const r = await get({ format: "xlsx", customer: C1 });
+    const wb = XLSX.read(r.body, { type: "buffer" });
+    const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+    const col = aoa[0].indexOf("Terms check");
+    expect(col).toBeGreaterThan(-1);
+    const o1 = aoa.find((row) => row[3] === "PO-T-001");
+    expect(o1[col]).toBe("1 critical undecided; 1 amendment requested; 1 decided");
   });
 });

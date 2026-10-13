@@ -413,6 +413,7 @@ import ordersThreeWaySummary from "./orders/three_way_summary.js";
 import ordersRegister         from "./orders/register.js";
 import ordersTerms            from "./orders/terms.js";
 import ordersTermsCheck       from "./orders/terms_check.js";
+import ordersTermsDecide      from "./orders/terms_decide.js";
 import ordersExtractionJobs   from "./orders/extraction_jobs.js";
 import ordersExtractionJobsId from "./orders/extraction_jobs_id.js";
 import ordersCostSummary      from "./orders/cost_summary.js";
@@ -682,6 +683,7 @@ const STATIC_ROUTES = {
   "/orders/register":               ordersRegister,
   "/orders/terms":                  ordersTerms,
   "/orders/terms_check":            ordersTermsCheck,
+  "/orders/terms_decide":           ordersTermsDecide,
   "/supplier_rfq":                  supplierRfqIndex,
   "/supplier_rfq/send":             supplierRfqSend,
   "/supplier_rfq/quote":            supplierRfqQuote,

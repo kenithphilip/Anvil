@@ -1,5 +1,9 @@
 // The sales-order register: one row per received PO, with what Anvil did
 // with it. Pure helpers for /api/orders/register. No I/O.
+
+import { SEVERITY_LEVELS } from "./terms/taxonomy.js";
+import { needsDecision } from "./terms/compare.js";
+import { OPEN_DECISIONS } from "./terms/decisions.js";
 //
 // In Mode B Anvil is the repository of every sales order received and
 // analysed, while the ERP holds the voucher. The orders list shows an order's
@@ -112,8 +116,53 @@ export const extractionOf = (row, run, lineCount) => {
   };
 };
 
-// One register row. erp: { attached, voucher_no } or null.
-export const registerRow = (row, { run = null, erp = null } = {}) => {
+// The terms check of one order, for the register's "Terms" column
+// (docs/SO_TERMS_AND_HANDOFF_SCOPE.md 7.2, plan PR 13). Counts only, no
+// wording.
+//   status               not_checked, or the check's po_terms_status
+//                        (read, partial, not_read)
+//   open                 flags that need a decision and have none, by
+//                        severity
+//   undecided            the sum of open
+//   amendment_requested  flags whose current decision asks for an amendment
+//                        (still open)
+//   decided              flags accepted, rejected or called not a deviation
+// check: the current order_term_checks row or null. flags: its flags.
+// history: flag id -> decisions, newest first.
+export const termsSummaryOf = ({ check = null, flags = [], history = new Map(), policy, shadow = false }) => {
+  const open = Object.fromEntries(SEVERITY_LEVELS.map((s) => [s, 0]));
+  const out = { status: check ? check.po_terms_status || "read" : "not_checked", shadow, open, undecided: 0, amendment_requested: 0, decided: 0 };
+  for (const f of flags) {
+    const current = (history.get(f.id) || [])[0] || null;
+    if (current) {
+      if (OPEN_DECISIONS.has(current.decision)) out.amendment_requested += 1;
+      else out.decided += 1;
+    } else if (needsDecision(policy, f.severity)) {
+      open[f.severity] += 1;
+      out.undecided += 1;
+    }
+  }
+  return out;
+};
+
+// The Terms column as words, for the export.
+export const termsText = (t) => {
+  if (!t) return "";
+  if (t.status === "not_checked") return "not checked";
+  const parts = [];
+  if (t.status === "not_read") parts.push("PO terms not read");
+  const open = [...SEVERITY_LEVELS].reverse().filter((s) => t.open[s]).map((s) => t.open[s] + " " + s);
+  if (open.length) parts.push(open.join(", ") + " undecided");
+  if (t.amendment_requested) parts.push(t.amendment_requested + " amendment requested");
+  if (t.decided) parts.push(t.decided + " decided");
+  if (!parts.length) parts.push("nothing to decide");
+  return parts.join("; ") + (t.shadow ? " (shadow)" : "");
+};
+
+// One register row. erp: { attached, voucher_no } or null. terms: the
+// summary above, or null when the terms check is off or hidden from this
+// caller (the column then says nothing, never "no flags").
+export const registerRow = (row, { run = null, erp = null, terms = null } = {}) => {
   const so = (row.sales_order && typeof row.sales_order === "object") ? row.sales_order : {};
   const lines = Array.isArray(so.lineItems) ? so.lineItems.length : 0;
   return {
@@ -131,6 +180,7 @@ export const registerRow = (row, { run = null, erp = null } = {}) => {
     reconciliation: reconciliationOf(row.reconciliation),
     status: row.status,
     erp_so: erp ? { attached: true, voucher_no: erp.voucher_no || null } : { attached: false, voucher_no: null },
+    terms,
     // Placeholder until the order-processing handoff ships. Nothing sends a
     // handoff today, so every order truthfully reads "not sent".
     handoff: { status: "not_sent" },
@@ -140,7 +190,7 @@ export const registerRow = (row, { run = null, erp = null } = {}) => {
 // The register as a worksheet: a header row, then one row per order.
 export const REGISTER_COLUMNS = [
   "Received", "Channel", "Customer", "PO number", "PO date", "Currency", "Value", "Lines",
-  "Extraction", "Confidence", "Matched", "Line flags", "Terms flags", "Status", "ERP SO", "Handoff",
+  "Extraction", "Confidence", "Matched", "Line flags", "Terms flags", "Status", "ERP SO", "Handoff", "Terms check",
 ];
 
 export const registerAoa = (rows) => [
@@ -162,5 +212,6 @@ export const registerAoa = (rows) => [
     r.status,
     r.erp_so.attached ? (r.erp_so.voucher_no || "attached") : "",
     r.handoff.status === "not_sent" ? "not sent" : r.handoff.status,
+    termsText(r.terms),
   ]),
 ];

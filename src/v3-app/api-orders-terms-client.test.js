@@ -34,8 +34,17 @@ describe("orders client: terms", () => {
     expect(JSON.parse(lastCall()[1].body)).toEqual({ order_id: ORDER });
   });
 
-  it("both are static routes the API serves, not an order id", async () => {
-    for (const path of ["/api/orders/terms?order_id=" + ORDER, "/api/orders/terms_check"]) {
+  it("POSTs a decision to /api/orders/terms_decide", async () => {
+    await client.orders.termsDecide(ORDER, "flag-1", "request_amendment", "Ask the buyer to cap LD at 5%.");
+    expect(lastCall()[0]).toBe("https://api.test/api/orders/terms_decide");
+    expect(lastCall()[1].method).toBe("POST");
+    expect(JSON.parse(lastCall()[1].body)).toEqual({
+      order_id: ORDER, flag_id: "flag-1", decision: "request_amendment", reason: "Ask the buyer to cap LD at 5%.",
+    });
+  });
+
+  it("all three are static routes the API serves, not an order id", async () => {
+    for (const path of ["/api/orders/terms?order_id=" + ORDER, "/api/orders/terms_check", "/api/orders/terms_decide"]) {
       const req = { url: path, method: path.includes("check") ? "POST" : "GET", query: {}, headers: {} };
       const res = { statusCode: 200, headers: {}, setHeader(k, v) { this.headers[k] = v; }, end(b) { this.body = b; } };
       res.status = (c) => { res.statusCode = c; return res; };

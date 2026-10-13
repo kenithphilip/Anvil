@@ -169,6 +169,14 @@ const REGISTRY = {
   supplier_ack_extractor: [
     { version: "v1", status: "active", traffic_weight: 1.0 },
   ],
+  // The terms pass (docs/SO_TERMS_AND_HANDOFF_SCOPE.md 4.1, plan PR 11): the
+  // PO's commercial terms, read from the cached document text by
+  // _lib/terms/terms-pass.js. Not an extraction kind, so it has no row in
+  // PROMPT_NAME_BY_KIND; the pass resolves it by name and records
+  // "terms_pass@<version>" on order_term_checks.prompt_version.
+  terms_pass: [
+    { version: "v1", status: "active", traffic_weight: 1.0, description: "Commercial terms and conditions, one rule and one tool for both providers." },
+  ],
   ocr_postprocess: [
     { version: "v1", status: "active", traffic_weight: 1.0 },
   ],

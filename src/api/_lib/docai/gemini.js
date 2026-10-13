@@ -33,6 +33,11 @@ const apiKey = (settings) => {
 
 export const isConfigured = (settings) => !!apiKey(settings);
 
+// The same key, for a caller outside this adapter that sends its own request
+// (the terms pass, _lib/terms/terms-pass.js), so the tenant key and the env
+// fallback are resolved in one place.
+export const geminiApiKey = (settings) => apiKey(settings);
+
 // Prompts. Reuse the same hard rules + classification taxonomy as
 // claude.js so the two adapters extract field-equivalent values.
 export const PO_SYSTEM_PROMPT = [

@@ -53,14 +53,17 @@ const CONF = {
 //   gstinValidation   : { ok, normalized?, code? } from validateGstin()
 //   stateFromGstin    : gstinStateCode(normalized) or null
 // Returns:
-//   { patch, confidenceFloors, confidenceCaps, flags, matched_customer_id }
+//   { patch, confidenceFloors, confidenceCaps, flags, matched_customer_id, provenance }
 // `patch` is fill-blanks-only (the caller must not overwrite non-blank values).
+// `provenance` names, per field path, a filled value that did NOT come from
+// the document. See applyGstinPin.
 export const computeGstinPin = ({ extractedCustomer, matchedCustomer, gstinValidation, stateFromGstin, panCandidates }) => {
   const cust = extractedCustomer || {};
   const patch = {};
   const confidenceFloors = {};
   const confidenceCaps = {};
   const flags = [];
+  const provenance = {};
 
   // 1. Bad checksum: cannot trust the GSTIN itself. Cap its confidence so
   //    the field is surfaced for review; do not attempt a registry match.
@@ -69,7 +72,7 @@ export const computeGstinPin = ({ extractedCustomer, matchedCustomer, gstinValid
     // Covers any validation failure (bad shape, unknown state code, or failed
     // Mod-36 checksum); the specific reason is preserved in `detail`.
     flags.push({ code: "gstin_invalid", detail: gstinValidation?.code || "invalid" });
-    return { patch, confidenceFloors, confidenceCaps, flags, matched_customer_id: null };
+    return { patch, confidenceFloors, confidenceCaps, flags, matched_customer_id: null, provenance };
   }
 
   // The state code is deterministic from a valid GSTIN regardless of the
@@ -97,7 +100,7 @@ export const computeGstinPin = ({ extractedCustomer, matchedCustomer, gstinValid
     } else {
       flags.push({ code: "gstin_valid_unknown_customer", detail: gstinValidation.normalized });
     }
-    return { patch, confidenceFloors, confidenceCaps, flags, matched_customer_id: null };
+    return { patch, confidenceFloors, confidenceCaps, flags, matched_customer_id: null, provenance };
   }
 
   // 3. Registry match -> this customer is known and authoritative.
@@ -122,11 +125,50 @@ export const computeGstinPin = ({ extractedCustomer, matchedCustomer, gstinValid
   }
 
   // Customer defaults fill blanks only (never override what the PO prints).
+  //
+  // The filled value is the customer MASTER's default, not the PO's wording,
+  // and it lands in the same slot the extractor writes the PO's terms into.
+  // The only trace used to be a run event, so the reconciler labelled the
+  // master default "PO" (docs/SO_TERMS_AND_HANDOFF_SCOPE.md 2.4). The field
+  // now says where it came from (section 3.3).
   const terms = matchedCustomer.default_payment_terms || matchedCustomer.payment_terms || null;
   if (terms && blank(cust.payment_terms)) {
     patch.payment_terms = terms;
     confidenceFloors["customer.payment_terms"] = CONF.filled_terms;
+    provenance["customer.payment_terms"] = "customer_master";
   }
 
-  return { patch, confidenceFloors, confidenceCaps, flags, matched_customer_id: matchedCustomer.id || null };
+  return { patch, confidenceFloors, confidenceCaps, flags, matched_customer_id: matchedCustomer.id || null, provenance };
+};
+
+// Apply a pin to an extraction result, in place: out.normalized.customer and
+// out.confidences, as runExtraction holds them.
+//
+// computeGstinPin only emits patch keys for fields it treats as blank (null,
+// empty or whitespace), so the patch is applied directly. Re-guarding here
+// with a stricter non-trim check would leave a whitespace value in place yet
+// still floor its confidence below.
+//
+// Each filled value that did not come from the document is recorded beside
+// it, as normalized._provenance["<field path>"] (section 3.3 of the terms
+// design). A value the document printed carries no entry.
+export const applyGstinPin = (out, pin) => {
+  if (!out || !out.normalized || !pin) return out;
+  out.normalized.customer = out.normalized.customer || {};
+  for (const [k, v] of Object.entries(pin.patch || {})) {
+    out.normalized.customer[k] = v;
+  }
+  const provenance = pin.provenance || {};
+  if (Object.keys(provenance).length) {
+    out.normalized._provenance = { ...(out.normalized._provenance || {}), ...provenance };
+  }
+  out.confidences = { ...(out.confidences || {}) };
+  for (const [fp, floor] of Object.entries(pin.confidenceFloors || {})) {
+    if (Number(out.confidences[fp] || 0) < floor) out.confidences[fp] = floor;
+  }
+  for (const [fp, cap] of Object.entries(pin.confidenceCaps || {})) {
+    const cur = out.confidences[fp] == null ? 1 : Number(out.confidences[fp]);
+    if (cur > cap) out.confidences[fp] = cap;
+  }
+  return out;
 };

@@ -21,6 +21,11 @@ import {
   normPart, num, round2, pick, descAgreement, DESC_AGREEMENT_FLOOR,
 } from "./line-compare.js";
 import { poLineRate } from "./so-line-money.js";
+// The clause normalizers sit below the comparators. parseIncoterm moved there
+// unchanged and is re-exported here, so every caller keeps its import.
+import { parseIncoterm, normalizePaymentTerms } from "./terms/normalize.js";
+
+export { parseIncoterm };
 
 // Lightweight token overlap for the qualitative description check (0..1).
 
@@ -67,8 +72,8 @@ const indexQuoteLines = (quoteLines) => {
 
 // Extract a credit-period day count from a free-text payment-terms string.
 // "30 Days credit" -> 30, "Net 45" -> 45, "PAYMENT : 60 days" -> 60.
-// Returns null when no day figure is present (advance / against-delivery /
-// letter-of-credit style terms fall back to a normalized string compare).
+// Returns null when no day figure is present. comparePaymentTerms no longer
+// uses it: it reads the whole term through normalizePaymentTerms.
 export const extractPaymentDays = (s) => {
   const str = String(s == null ? "" : s).toLowerCase();
   if (!str.trim()) return null;
@@ -81,21 +86,53 @@ export const extractPaymentDays = (s) => {
 
 const normTerms = (s) => String(s == null ? "" : s).toLowerCase().replace(/\s+/g, " ").trim();
 
+// The parts of a payment term that are compared, in the order they are named.
+const PAYMENT_PARTS = ["days", "basis", "advance_pct", "instrument"];
+
 // Header-level commercial check: does the PO's payment terms agree with
-// the quote's? Compares credit days when both are numeric, else a
-// normalized string compare. verdict: match | mismatch | unknown.
+// the quote's?
+//
+// It compared the day count only, so "60 days from GRN" matched "60 days from
+// invoice", and "50% advance, balance 30 days" matched "30 days". Text with no
+// day count fell back to comparing the words. Both sides now go through
+// normalizePaymentTerms, and the parts are compared:
+//   days         the credit period
+//   basis        the clock it runs from (invoice, delivery, GRN, dispatch, BL)
+//   advance_pct  the share paid before dispatch
+//   instrument   TT, LC, PDC
+// A part is compared only when both sides state it. verdict:
+//   match     every part both sides state agrees
+//   mismatch  a part both sides state differs; `differs` names which
+//   unknown   a side is missing, a side names nothing that can be read, or
+//             the two sides state no part in common. Unreadable text is never
+//             a mismatch; the same words on both sides are still a match.
+// "60 days from GRN" against "60 days" is a mismatch on basis: a credit period
+// with no stated clock runs from the invoice, and the GRN comes later.
 export const comparePaymentTerms = (poTerms, quoteTerms) => {
-  const poDays = extractPaymentDays(poTerms);
-  const quoteDays = extractPaymentDays(quoteTerms);
   const has = (v) => v != null && String(v).trim() !== "";
+  const po = has(poTerms) ? normalizePaymentTerms(poTerms) : null;
+  const qt = has(quoteTerms) ? normalizePaymentTerms(quoteTerms) : null;
+  const differs = [];
   let verdict;
   if (!has(poTerms) || !has(quoteTerms)) verdict = "unknown";
-  else if (poDays != null && quoteDays != null) verdict = poDays === quoteDays ? "match" : "mismatch";
-  else verdict = normTerms(poTerms) === normTerms(quoteTerms) ? "match" : "mismatch";
+  else if (po && qt) {
+    const shared = PAYMENT_PARTS.filter((k) => po[k] != null && qt[k] != null);
+    for (const k of shared) if (po[k] !== qt[k]) differs.push(k);
+    verdict = !shared.length ? "unknown" : differs.length ? "mismatch" : "match";
+  } else verdict = normTerms(poTerms) === normTerms(quoteTerms) ? "match" : "unknown";
   return {
     po_terms: has(poTerms) ? String(poTerms) : null,
     quote_terms: has(quoteTerms) ? String(quoteTerms) : null,
-    po_days: poDays, quote_days: quoteDays, verdict,
+    po_days: po ? po.days : null,
+    quote_days: qt ? qt.days : null,
+    po_basis: po ? po.basis : null,
+    quote_basis: qt ? qt.basis : null,
+    po_advance_pct: po ? po.advance_pct : null,
+    quote_advance_pct: qt ? qt.advance_pct : null,
+    po_instrument: po ? po.instrument : null,
+    quote_instrument: qt ? qt.instrument : null,
+    differs,
+    verdict,
   };
 };
 
@@ -109,86 +146,7 @@ export const comparePaymentTerms = (poTerms, quoteTerms) => {
 // of the quote's terms text, which is usually just its payment terms. So
 // "EXW" against "30 days credit" reported an incoterm mismatch on every such
 // order. Text with no rule in it is not an incoterm, and says nothing about
-// one.
-const INCOTERM_CODES = new Set([
-  "EXW", "FCA", "FAS", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP",
-  // Superseded but still written on real documents.
-  "DAT", "DAF", "DES", "DEQ", "DDU",
-]);
-const BARE_CODE = new RegExp("\\b(" + [...INCOTERM_CODES].join("|") + ")\\b", "i");
-
-// The spelled-out forms, as quotes and POs often write them ("Ex-Works Pune",
-// "C&F Chennai"). When two forms start at the same place the longer one wins,
-// so "Delivered at Place Unloaded" is DPU and not DAP.
-const INCOTERM_NAMES = [
-  [/\bex[\s.-]*works?\b/i, "EXW"],
-  [/\bfree\s+carrier\b/i, "FCA"],
-  [/\bfree\s+alongside(?:\s+ship)?\b/i, "FAS"],
-  [/\bfree\s+on\s+board\b/i, "FOB"],
-  [/\bcost\s*(?:,|and|&)?\s*insurance\s*(?:,|and|&)\s*freight\b/i, "CIF"],
-  [/\bcost\s*(?:and|&)\s*freight\b/i, "CFR"],
-  [/\bc\s*(?:&|and|n)\s*f\b/i, "CFR"],
-  [/\bcarriage\s*(?:and|&)?\s*insurance\s+paid(?:\s+to)?\b/i, "CIP"],
-  [/\bcarriage\s+paid\s+to\b/i, "CPT"],
-  [/\bdelivered\s+at\s+place\s+unloaded\b/i, "DPU"],
-  [/\bdelivered\s+at\s+place\b/i, "DAP"],
-  [/\bdelivered\s+duty\s+paid\b/i, "DDP"],
-  [/\bdelivered\s+duty\s+unpaid\b/i, "DDU"],
-  [/\bdelivered\s+at\s+terminal\b/i, "DAT"],
-  [/\bfree\s+on\s+road\b/i, "FOR"],
-  [/\bfree\s+house\b/i, "FH"],
-];
-
-// FOR and FH are Indian conventions, and the incoterm picklist offers both
-// (migration 106 seeds them). "FOR" is also an English word, so the bare code
-// counts only in capitals at the start of the value, which is how the picklist
-// and a PO header write it ("FOR Halol Plant"). Dotted ("F.O.R.") and spelled
-// out forms count anywhere.
-const LOCAL_CODES = new Set(["FOR", "FH"]);
-const LEADING_LABEL = /^inco\s*-?\s*terms?\s*[:-]?\s*/i;
-const LEADING_LOCAL_CODE = /^(FOR|FH)\b/;
-const DOTTED_CODE = /\b([A-Za-z])\.\s?([A-Za-z])\.\s?([A-Za-z])\b\.?/g;
-
-// "FOB Busan (Incoterms 2020)": the edition is not part of the place.
-const EDITION = /\(?\s*incoterms?\s*\u00ae?\s*(?:(?:19|20)\d{2})?\s*\)?/gi;
-
-// The named place is the text after the code, up to where the next clause
-// starts: "FOB Busan, 30 days net" names Busan, not "Busan 30 days net".
-const placeAfter = (raw, end) => {
-  let rest = raw.slice(end).replace(EDITION, " ");
-  rest = rest.replace(/^[\s,:;.\-\u2013\u2014]+/, "");
-  const stop = rest.search(/[,;|/()[\]\n\r]|\.(?:\s|$)|\s[-\u2013\u2014]\s/);
-  if (stop >= 0) rest = rest.slice(0, stop);
-  rest = rest.replace(/\s+/g, " ").trim();
-  return rest || null;
-};
-
-// { code, place }. code is null when the text names no rule, and then place is
-// null too: unparsed text is not a place.
-export const parseIncoterm = (v) => {
-  const raw = String(v == null ? "" : v).trim();
-  if (!raw) return { code: null, place: null };
-  const hits = [];
-  const take = (m, code) => {
-    if (m) hits.push({ code, index: m.index, end: m.index + m[0].length });
-  };
-  const bare = BARE_CODE.exec(raw);
-  if (bare) take(bare, bare[1].toUpperCase());
-  for (const [re, code] of INCOTERM_NAMES) take(re.exec(raw), code);
-  for (const m of raw.matchAll(DOTTED_CODE)) {
-    const code = (m[1] + m[2] + m[3]).toUpperCase();
-    if (INCOTERM_CODES.has(code) || LOCAL_CODES.has(code)) { take(m, code); break; }
-  }
-  const body = raw.replace(LEADING_LABEL, "");
-  const local = LEADING_LOCAL_CODE.exec(body);
-  if (local) {
-    const offset = raw.length - body.length;
-    hits.push({ code: local[1], index: offset, end: offset + local[0].length });
-  }
-  if (!hits.length) return { code: null, place: null };
-  hits.sort((a, b) => a.index - b.index || (b.end - b.index) - (a.end - a.index));
-  return { code: hits[0].code, place: placeAfter(raw, hits[0].end) };
-};
+// one. The parser is parseIncoterm in terms/normalize.js.
 
 // Case, spacing and punctuation do not make two places different.
 const normPlace = (s) => String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9]+/g, "");

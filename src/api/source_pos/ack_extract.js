@@ -107,7 +107,7 @@ export default async function handler(req, res) {
       sourceId: documentRow?.id || null,
       caseId: sourcePoId,
       kind: "supplier_ack",
-      triggeredBy: ctx.userId || null,
+      triggeredBy: ctx.user?.id || null,
       vote: !!body?.vote,
       hints: { source_po_id: sourcePoId, ...(body?.hints || {}) },
     });

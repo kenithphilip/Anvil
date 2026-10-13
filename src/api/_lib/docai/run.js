@@ -311,7 +311,7 @@ const runAllAdaptersInParallel = async ({ source, settings, customerId, hints, r
 };
 
 // Top-level runner. Caller supplies:
-//   ctx        { tenantId, userId, user? }
+//   ctx        { tenantId, user? }  (the actor is ctx.user.id; pass it as triggeredBy)
 //   svc        supabase client
 //   settings   tenant_settings row
 //   bytes?     Buffer

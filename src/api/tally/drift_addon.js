@@ -85,7 +85,7 @@ export default async function handler(req, res) {
             tenantId: ctx.tenantId,
             scope: "tenant_recent",
             trigger: "workspace",
-            triggeredBy: ctx.userId || null,
+            triggeredBy: ctx.user?.id || null,
             limit: 200,                              // expanded scope for the first scan
           });
         } catch (err) {

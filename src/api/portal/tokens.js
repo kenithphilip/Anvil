@@ -40,7 +40,7 @@ export default async function handler(req, res) {
         scopes: body.scopes || ["quotes", "orders", "invoices", "pay"],
         expires_at: body.expires_at || null,
         token: newToken(),
-        created_by: ctx.userId || null,
+        created_by: ctx.user?.id || null,
       }).select("*").single();
       if (ins.error) throw new Error(ins.error.message);
       await recordAudit(ctx, {

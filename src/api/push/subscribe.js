@@ -16,7 +16,10 @@ export default async function handler(req, res) {
   try {
     const ctx = await resolveContext(req);
     requirePermission(ctx, "read");
-    if (!ctx.userId) return json(res, 401, { error: { message: "must be signed in" } });
+    // The actor is ctx.user.id. resolveContext never sets ctx.userId, so the
+    // old check refused every caller and push could never be enabled.
+    const userId = ctx.user?.id || null;
+    if (!userId) return json(res, 401, { error: { message: "must be signed in" } });
     const body = await readBody(req);
     const channel = body?.channel || "web";
     if (channel === "web" && (!body?.endpoint || !body?.p256dh || !body?.auth)) {
@@ -28,7 +31,7 @@ export default async function handler(req, res) {
     const svc = serviceClient();
     const existing = await svc.from("push_subscriptions").select("id")
       .eq("tenant_id", ctx.tenantId)
-      .eq("user_id", ctx.userId)
+      .eq("user_id", userId)
       .or(channel === "web"
         ? `endpoint.eq.${body.endpoint}`
         : `device_token.eq.${body.device_token}`)
@@ -48,7 +51,7 @@ export default async function handler(req, res) {
     }
     const ins = await svc.from("push_subscriptions").insert({
       tenant_id: ctx.tenantId,
-      user_id: ctx.userId,
+      user_id: userId,
       channel,
       endpoint: body.endpoint || null,
       p256dh: body.p256dh || null,

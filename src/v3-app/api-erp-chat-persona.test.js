@@ -25,6 +25,8 @@ const sentMessages = [];
 // empty and the "message stays clean" assertion vacuous — so echo the inserted
 // row, which is what the real read does.
 const inserted = [];
+// The erp_chat_sessions insert is the only one that carries a title.
+const sessionRows = [];
 const chainable = () => {
   const api = new Proxy({}, {
     get: (_t, prop) => {
@@ -32,6 +34,7 @@ const chainable = () => {
       if (prop === "maybeSingle" || prop === "single") return async () => ({ data: { id: "s1" }, error: null });
       if (prop === "insert") return (row) => {
         if (row && row.role === "user") inserted.push({ role: "user", content: row.content });
+        if (row && "title" in row) sessionRows.push(row);
         return api;
       };
       return () => api;
@@ -81,7 +84,7 @@ const call = async (body) => {
   return res;
 };
 
-beforeEach(() => { flagState = false; sentTools.length = 0; sentSystems.length = 0; sentMessages.length = 0; inserted.length = 0; vi.clearAllMocks(); });
+beforeEach(() => { flagState = false; sentTools.length = 0; sentSystems.length = 0; sentMessages.length = 0; inserted.length = 0; sessionRows.length = 0; vi.clearAllMocks(); });
 
 describe("persona gating", () => {
   it("rejects a persona the tenant has not enabled, with 403", async () => {
@@ -197,5 +200,13 @@ describe("no persona means no change", () => {
     const names = (sentTools[0] || []).map((t) => t.name);
     expect(names).toContain("create_lead");  // the pre-existing behaviour
     expect(sentSystems[0]).toMatch(/Anvil ERP query assistant/);
+  });
+});
+
+describe("a new session belongs to the caller", () => {
+  it("stamps the signed-in user (ctx.user.id) on the session row", async () => {
+    await call({ content: "hi" });
+    expect(sessionRows).toHaveLength(1);
+    expect(sessionRows[0]).toMatchObject({ tenant_id: "t1", user_id: "u1" });
   });
 });

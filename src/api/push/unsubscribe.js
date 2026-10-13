@@ -10,13 +10,17 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return json(res, 405, { error: { message: "Method not allowed" } });
   try {
     const ctx = await resolveContext(req);
-    if (!ctx.userId) return json(res, 401, { error: { message: "must be signed in" } });
+    // The actor is ctx.user.id (resolveContext never sets ctx.userId). The
+    // user_id filter is the ownership check: a caller only ever deactivates
+    // their own subscriptions, even when the body names another row's id.
+    const userId = ctx.user?.id || null;
+    if (!userId) return json(res, 401, { error: { message: "must be signed in" } });
     const body = await readBody(req);
     const svc = serviceClient();
     const q = svc.from("push_subscriptions")
       .update({ is_active: false })
       .eq("tenant_id", ctx.tenantId)
-      .eq("user_id", ctx.userId);
+      .eq("user_id", userId);
     if (body?.id) q.eq("id", body.id);
     else if (body?.endpoint) q.eq("endpoint", body.endpoint);
     const r = await q;

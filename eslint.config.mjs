@@ -88,6 +88,15 @@ export default [
       // runtime, and a rule that costs a day of churn to satisfy is a rule
       // that gets switched off.
       "no-use-before-define": ["warn", { variables: true, functions: false, classes: false }],
+      // AN ERROR. resolveContext returns { user, tenantId, role, anonymous }
+      // and never sets userId, so ctx.userId is always undefined. Reading it
+      // stored a null actor in fourteen handlers and made push subscribe and
+      // unsubscribe refuse every caller. The rule also catches
+      // `const { userId } = ctx`.
+      "no-restricted-properties": ["error",
+        { object: "ctx", property: "userId", message: "resolveContext never sets ctx.userId. Use ctx.user.id (ctx.user?.id when the caller may be anonymous)." },
+        { object: "ctxAuth", property: "userId", message: "resolveContext never sets ctx.userId. Use ctxAuth.user.id (ctxAuth.user?.id when the caller may be anonymous)." },
+      ],
     },
   },
   {

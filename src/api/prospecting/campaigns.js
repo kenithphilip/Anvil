@@ -46,7 +46,7 @@ export default async function handler(req, res) {
         send_window_local_start: body.send_window_local_start || "09:00",
         send_window_local_end: body.send_window_local_end || "17:00",
         daily_send_cap: Number(body.daily_send_cap || 100),
-        created_by: ctx.userId || null,
+        created_by: ctx.user?.id || null,
       }).select("id").single();
       if (ins.error) throw new Error(ins.error.message);
       await recordAudit(ctx, {

@@ -30,10 +30,13 @@ describe("the quote head is built once, not twice", () => {
     const h = quoteHeadFromExtract({
       quote_number: "Q-1", quote_date: "2026-08-01", currency: "INR",
       payment_terms: "30 days", notes: "MOQ 10", grand_total: 1234.5,
+      incoterm: "FCA Chennai", delivery_terms: "4 weeks", validity: "30 days",
     });
     expect(h).toEqual({
       quote_number: "Q-1", quote_date: "2026-08-01", currency: "INR",
       terms: "30 days", notes: "MOQ 10", grand_total: 1234.5,
+      // Migration 250: the quote's other terms, as printed.
+      incoterm: "FCA Chennai", delivery_terms: "4 weeks", validity_text: "30 days",
     });
   });
 

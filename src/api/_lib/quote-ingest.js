@@ -178,6 +178,15 @@ export const quoteHeadFromExtract = (extracted) => {
     // requirements, validity caveats.
     notes: e.notes || null,
     grand_total: e.grand_total ?? null,
+    // The quote's other terms, as printed. QUOTE_TOOL has always read all
+    // three, and this head dropped them, so the incoterm check had to dig the
+    // quote's rule out of its payment-terms text (migration 250,
+    // docs/SO_TERMS_AND_HANDOFF_SCOPE.md 3.4). The extract calls the last one
+    // `validity`; the column is validity_text because it holds the wording
+    // ("One(1) Month"), not a date or a day count.
+    incoterm: e.incoterm || null,
+    delivery_terms: e.delivery_terms || null,
+    validity_text: e.validity_text || e.validity || null,
   };
 };
 
@@ -286,6 +295,12 @@ export const ingestQuote = async (svc, ctx, input = {}) => {
       // them, so they were parsed and dropped.
       ...(quote.revision ? { revision: s(quote.revision) } : {}),
       ...(quote.revised_date ? { revised_date: String(quote.revised_date).slice(0, 10) } : {}),
+      // The quote's incoterm, delivery terms and validity wording (migration
+      // 250). Only an ingested quote reaches this write: one authored in
+      // Anvil returned above, untouched.
+      ...(quote.incoterm ? { incoterm: s(quote.incoterm) } : {}),
+      ...(quote.delivery_terms ? { delivery_terms: s(quote.delivery_terms) } : {}),
+      ...((quote.validity_text || quote.validity) ? { validity_text: s(quote.validity_text || quote.validity) } : {}),
       source_document_id: sourceDocumentId,
       ingest_source: ingestSource,
       updated_at: new Date().toISOString(),
@@ -296,28 +311,43 @@ export const ingestQuote = async (svc, ctx, input = {}) => {
     // not present in every database — and PostgREST rejects the WHOLE write
     // over one unknown name. Without this, a tenant behind on 215 (or 188)
     // would have every quote ingest fail outright rather than lose one
-    // optional field. Strip the newest columns and retry once.
-    const OPTIONAL_COLS = ["revision", "revised_date", "notes", "terms"];
+    // optional field.
+    //
+    // One group per hand-applied migration, newest first. A write refused over
+    // a named column drops only the group that owns it, so a database behind
+    // on 250 alone still stores revision, notes and terms. Every column here is
+    // a nullable attribute; nothing in this list decides behaviour.
+    const OPTIONAL_GROUPS = [
+      ["incoterm", "delivery_terms", "validity_text"],   // 250
+      ["revision", "revised_date", "notes", "terms"],    // 215 and older
+    ];
+    const OPTIONAL_COLS = OPTIONAL_GROUPS.flat();
+    const names = (e, c) => new RegExp("\\b" + c + "\\b").test(e.message || "");
     const unknownColumn = (e) =>
-      !!e && (e.code === "42703" || OPTIONAL_COLS.some((c) => new RegExp("\\b" + c + "\\b").test(e.message || "")));
-    const withoutOptional = (h) => {
-      const copy = { ...h };
-      for (const c of OPTIONAL_COLS) delete copy[c];
-      return copy;
+      !!e && (e.code === "42703" || e.code === "PGRST204" || OPTIONAL_COLS.some((c) => names(e, c)));
+    // Run `write` with the head, and on a missing column retry without the
+    // group the error names (or, when it names none of ours, the newest
+    // group still present). At most one retry per group.
+    const writeHead = async (write) => {
+      let h = head;
+      let out = await write(h);
+      const left = [...OPTIONAL_GROUPS];
+      while (unknownColumn(out.error) && left.length) {
+        const i = Math.max(0, left.findIndex((g) => g.some((c) => names(out.error, c))));
+        const [group] = left.splice(i, 1);
+        h = { ...h };
+        for (const c of group) delete h[c];
+        out = await write(h);
+      }
+      return out;
     };
 
     let quoteId = existing?.data?.id || null;
     if (quoteId) {
-      let upd = await svc.from("quotes").update(head).eq("tenant_id", ctx.tenantId).eq("id", quoteId);
-      if (unknownColumn(upd.error)) {
-        upd = await svc.from("quotes").update(withoutOptional(head)).eq("tenant_id", ctx.tenantId).eq("id", quoteId);
-      }
+      const upd = await writeHead((h) => svc.from("quotes").update(h).eq("tenant_id", ctx.tenantId).eq("id", quoteId));
       if (upd.error) { report.error = "quote update: " + upd.error.message; return report; }
     } else {
-      let ins = await svc.from("quotes").insert(head).select("id").single();
-      if (unknownColumn(ins.error)) {
-        ins = await svc.from("quotes").insert(withoutOptional(head)).select("id").single();
-      }
+      const ins = await writeHead((h) => svc.from("quotes").insert(h).select("id").single());
       if (ins.error) { report.error = "quote insert: " + ins.error.message; return report; }
       quoteId = ins.data.id;
     }

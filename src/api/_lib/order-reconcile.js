@@ -30,6 +30,22 @@ import { linkOrderOpportunityFromQuotes } from "./order-opportunity.js";
 // customer PO, which is where the 411 zero-rupee gap rows came from.
 const EXCLUDED_QUOTE_STATUSES = ["CANCELLED", "DRAFT"];
 
+// The quote's own terms, as an uploaded quotation prints them (migration 250).
+// Read here for the terms check that runs at the end of this reconcile
+// (docs/SO_TERMS_AND_HANDOFF_SCOPE.md 5.4).
+export const QUOTE_TERM_COLUMNS = ["incoterm", "delivery_terms", "validity_text"];
+
+// True only for a read refused because one of those columns does not exist
+// yet: 42703 from Postgres, PGRST204 or "schema cache" from PostgREST, and the
+// message must name the column. A missing column of any other name is a
+// different fault and is not swallowed.
+export const isMissingQuoteTermColumn = (err) => {
+  if (!err) return false;
+  const msg = String(err.message || "");
+  if (!QUOTE_TERM_COLUMNS.some((c) => new RegExp("\\b" + c + "\\b").test(msg))) return false;
+  return err.code === "42703" || err.code === "PGRST204" || /does not exist|schema cache/i.test(msg);
+};
+
 // The server trigger runs only before approval. An approved order's lines are
 // what the approver signed off, and rewriting them afterwards (the reconciler
 // fills HSN and tax from the quote) would change an approved document behind
@@ -100,11 +116,19 @@ export const reconcileOrderQuotes = async (svc, ctx, orderId, opts = {}) => {
   }
 
   // 1. All the customer's quotes (most recent first = preferred price).
-  const quotesQ = await svc.from("quotes")
-    .select("id, quote_number, created_at, status, terms")
+  //
+  // incoterm, delivery_terms and validity_text are the terms an uploaded
+  // quote prints (migration 250, applied by hand). They are nullable
+  // attributes, so a database without them reads the quotes exactly as
+  // before. Only an error that names one of them is retried; any other read
+  // error still fails the reconcile.
+  const readQuotes = (cols) => svc.from("quotes")
+    .select(cols)
     .eq("tenant_id", ctx.tenantId).eq("customer_id", order.customer_id)
     .not("status", "in", "(" + EXCLUDED_QUOTE_STATUSES.join(",") + ")")
     .order("created_at", { ascending: false });
+  let quotesQ = await readQuotes("id, quote_number, created_at, status, terms, " + QUOTE_TERM_COLUMNS.join(", "));
+  if (isMissingQuoteTermColumn(quotesQ.error)) quotesQ = await readQuotes("id, quote_number, created_at, status, terms");
   if (quotesQ.error) throw new Error("quotes read: " + quotesQ.error.message);
   const quotes = quotesQ.data || [];
   const quoteMeta = new Map(quotes.map((q) => [q.id, q]));

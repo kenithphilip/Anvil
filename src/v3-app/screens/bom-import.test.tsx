@@ -26,4 +26,12 @@ describe("BomImport", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(container.innerHTML.length).toBeGreaterThan(0);
   });
+
+  // Spare matrix iteration: the client fallback (used when /api/bom/parse is
+  // unreachable) used to hard-code material: null and drop the column.
+  it("client fallback keeps the Material column", async () => {
+    const { extractItems } = await import("./bom-import");
+    const { items } = extractItems([["Part No", "Part Name", " MATERIAL ", "Qty"], ["P1", "TIP", "CuCrZr", 2], ["P2", "ARM", "", 1]]);
+    expect(items.map((it: any) => it.material)).toEqual(["CuCrZr", null]);
+  });
 });

@@ -3,8 +3,13 @@ import { fmtINRShort, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
-import { matchSpares, computeAutoFill, SPARE_PRESETS, isConsumableCol, nameMatchCandidates, suggestSpareColumns, type SpareBomItem, type SpareSuggestion } from "../lib/spare-match";
-import { lsGet } from "../lib/storage-keys";
+import { matchSpares, generateSpareMatrix, orderSpareColumns, buildSpareSheet, SPARE_PRESETS, isConsumableCol, nameMatchCandidates, suggestSpareColumns, type SpareBomItem, type SpareSuggestion, type SpareGenerationFlag } from "../lib/spare-match";
+import {
+  META_COLUMNS, EXTRA_META_COLUMNS, BOM_FIELD_RULES, layoutToAoa, discoverBomFields, bomFieldIndex,
+  columnGroupOf, columnClass,
+} from "../../api/_lib/spare-matrix-columns.js";
+import { MATERIAL_HEADER_ALIASES } from "../../api/_lib/bom-format.js";
+import { lsGet, lsSet } from "../lib/storage-keys";
 import { GunDrawingsPanel } from "../components/GunDrawingsPanel";
 import { SparePartPicker } from "../components/SparePartPicker";
 import { RBAC } from "../lib/rbac";
@@ -86,9 +91,11 @@ const numOrNull = (v) => (v === "" || v == null ? null : Number(v));
 const serverId = (id) =>
   (typeof id === "string" && id && !id.startsWith("mx_")) ? id : undefined;
 
+// Columns are saved in the displayed order (Consumables, Spares, then the
+// fallback class; shared rule), so the stored position matches the grid.
 const toServer = (matrix) => ({
   header: { customer_id: matrix.customer_id || null, project_name: matrix.project_name || null, name: matrix.name || null },
-  columns: (matrix.cols || []).map((c, i) => ({ id: serverId(c.id), col_name: c.col_name, category: c.col_type || null, locked: !!c.locked, position: i })),
+  columns: orderSpareColumns(matrix.cols || []).map((c: any, i) => ({ id: serverId(c.id), col_name: c.col_name, category: c.col_type || null, locked: !!c.locked, position: i })),
   rows: (matrix.rows || []).map((r, i) => ({
     id: serverId(r.id),
     position: i,
@@ -154,8 +161,12 @@ const smFmtTs = (iso) => {
   return d.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 };
 
-// Fetch the rich BOM lines for one gun/asset code, normalized to the
-// { part_no, part_name, material, size } shape the matcher consumes.
+// Fetch the rich BOM lines for one gun/asset code. The four fields the
+// matcher consumes ({ part_no, part_name, material, size }) are normalized,
+// and every other field the line carries is KEPT: "Columns from BOM" discovers
+// the selectable BOM fields (Material, Size ...) from them. This used to
+// project each line down to those four fields, a hardcoded allowlist that hid
+// every other BOM column from the panel.
 // Prefers the imported bom_assets/bom_lines detail (asset_code lookup);
 // falls back to flat bill_of_materials children for legacy data.
 const smFetchLinesForGun = async (code: string): Promise<SpareBomItem[]> => {
@@ -167,6 +178,7 @@ const smFetchLinesForGun = async (code: string): Promise<SpareBomItem[]> => {
       const lines = r?.lines || [];
       if (Array.isArray(lines) && lines.length) {
         return lines.map((l: any) => ({
+          ...l,
           part_no: l.part_no || l.supplier_part_no || "",
           part_name: l.part_name || "",
           material: l.material || "",
@@ -175,12 +187,14 @@ const smFetchLinesForGun = async (code: string): Promise<SpareBomItem[]> => {
       }
     }
   } catch (_) { /* fall through to legacy */ }
-  // Legacy fallback: flat bill_of_materials children (no material/size,
-  // so only name + part-number matching can apply).
+  // Legacy fallback: flat bill_of_materials children. That table has no
+  // material/size columns, so only name + part-number matching can apply and
+  // "Columns from BOM" reports Material as not available for these guns.
   try {
     const resp: any = await AnvilBackend?.bom?.list?.({ parent: c });
     const rows = Array.isArray(resp) ? resp : (resp?.rows || resp?.bom || []);
     return (rows || []).map((b: any) => ({
+      ...b,
       part_no: String(b.child_part_no || b.child_item || b.child || "").trim(),
       part_name: String(b.child_name || b.child_description || "").trim(),
       material: String(b.material || "").trim(),
@@ -189,21 +203,17 @@ const smFetchLinesForGun = async (code: string): Promise<SpareBomItem[]> => {
   } catch (_) { return []; }
 };
 
-// Fixed station-identity columns (reference "Guns Spare Matrix" model),
-// rendered as a leading block before the spare-category cols. gun_no is
-// the sticky identity column; qty folds in here.
-const SM_STATION_COLS = [
-  { key: "line", label: "Line", w: 84 },
-  { key: "station_no", label: "Station", w: 84 },
-  { key: "robot_no", label: "Robot", w: 68 },
-  { key: "gun_type", label: "Type", w: 84 },
-  { key: "l_qty", label: "L", w: 44, num: true },
-  { key: "r_qty", label: "R", w: 44, num: true },
-  { key: "timer", label: "Timer", w: 90 },
-  { key: "atd", label: "ATD", w: 100 },
-  { key: "qty", label: "Qty", w: 52, num: true },
-];
+// Fixed station-identity columns, rendered as a leading block before the
+// spare-category cols. Labels and order come from the shared module (the
+// owner's 7 export headers, then the extra fields this worksheet already
+// carried), so the grid header and the exported header are the same list.
+// gun_no (GUN NO.) is the sticky identity column and is rendered on its own.
 const SM_NUM_ROW_FIELDS = new Set(["qty", "l_qty", "r_qty"]);
+const SM_COL_WIDTH: Record<string, number> = { line: 84, station_no: 84, robot_no: 68, gun_type: 84, atd: 100, qty: 52, l_qty: 56, r_qty: 56, timer: 90 };
+const SM_GUN_LABEL = META_COLUMNS[0].header;
+const SM_STATION_COLS = [...META_COLUMNS.slice(1), ...EXTRA_META_COLUMNS].map((m) => ({
+  key: m.key, label: m.header, w: SM_COL_WIDTH[m.key] || 84, num: SM_NUM_ROW_FIELDS.has(m.key),
+}));
 
 // Frozen identity block: Gun + every (visible) station column stays pinned
 // sticky-left while only the spare-category columns scroll. Excel-style freeze
@@ -217,6 +227,9 @@ const SM_NUM_ROW_FIELDS = new Set(["qty", "l_qty", "r_qty"]);
 const SM_GUN_W = 172;   // Gun identity col — fits "SRTX-2C2195" + BOM button under fixed layout.
 const SM_SPARE_W = 150; // Fixed width per spare-category column (part numbers wrap within it).
 const SM_ACTION_W = 30; // Trailing remove-row column.
+const SM_HEAD_H = 34;   // Header row height (fixed, so the metadata rows can stick under it).
+const SM_META_H = 24;   // Each header-metadata row (PART NO., MATERIAL ...).
+const SM_CLASS_LABEL: Record<string, string> = { consumable: "Consumable", spare: "Spare", other: "Other (after Spares)" };
 // Compute the freeze block: each visible station's cumulative left offset (Gun
 // is always at 0, width SM_GUN_W) plus the total frozen-block width.
 const smFrozen = (visStations: any[]) => {
@@ -227,17 +240,44 @@ const smFrozen = (visStations: any[]) => {
 // Identity columns are hidden via the same hiddenCols set, namespaced "id:" so a
 // spare column literally named e.g. "line" can't collide with the station key.
 const SM_ID_PREFIX = "id:";
-// Import header aliases for the station-identity columns.
+// Import header aliases for the station-identity columns. Matched after
+// smImportHeader (trim, lowercase, collapse spaces), so "GUN TYPE",
+// " gun  type " and "Gun Type" are the same header.
 const SM_STATION_ALIASES = {
   line: ["line", "line name"],
-  station_no: ["station_no", "station", "station no", "station no.", "s'tn no", "s'tn  no", "station name", "s.tn no"],
+  station_no: ["station_no", "station", "station no", "station no.", "s'tn no", "station name", "s.tn no"],
   robot_no: ["robot_no", "robot", "robot no", "robot no.", "robot number"],
   gun_type: ["gun_type", "type", "gun type"],
   l_qty: ["l_qty", "l qty", "l-qty", "l q'ty", "l"],
   r_qty: ["r_qty", "r qty", "r-qty", "r q'ty", "r"],
   timer: ["timer"],
-  atd: ["atd"],
+  atd: ["atd", "atdc/atd", "atdc", "atd/atdc"],
   qty: ["qty", "quantity", "m"],
+};
+const smImportHeader = (h: any) => String(h == null ? "" : h).trim().replace(/\s+/g, " ").toLowerCase();
+const SM_GUN_ALIASES = ["gun_no", "gun", "gun no", "gun no.", "part"];
+
+// Per-matrix "Columns from BOM" field selection (Material, Size ...). A view
+// setting like the hidden columns, so it needs no schema change. It is absent
+// on every existing matrix, which therefore looks exactly as before.
+const smFieldsKey = (id: string) => "v3_spare_bom_fields:" + (id || "new");
+const smReadFields = (id: string): string[] => {
+  try {
+    const raw = lsGet(smFieldsKey(id));
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter((k) => typeof k === "string") : [];
+  } catch (_) { return []; }
+};
+const smFieldLabel = (key: string, discovered?: Array<{ key: string; label: string }>) =>
+  (discovered || []).find((f) => f.key === key)?.label
+  || BOM_FIELD_RULES.find((r) => r.key === key)?.label
+  || String(key).replace(/^raw:/, "");
+
+// Review list kinds, in plain words.
+const SM_FLAG_TEXT: Record<string, (f: SpareGenerationFlag) => string> = {
+  no_part_no: (f) => `${f.group}: gun ${f.gun_no || "?"} BOM line ${f.line} "${f.description || "?"}" has no part number. Not placed in any column.`,
+  inconsistent_description: (f) => `${f.group}: part ${f.part_no} has different descriptions (${(f.descriptions || []).join(" | ")}). Kept as one column.`,
+  similar_part_no: (f) => `${f.group}: part numbers ${(f.part_nos || []).join(", ")} differ only in case or spacing. Kept as separate columns.`,
 };
 
 // ---------- Worksheet pane ---------------------------------------------
@@ -285,7 +325,52 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   };
   const hideCol = (name: string) => { const n = new Set(hiddenCols); n.add(name); persistHidden(n); };
   const showColByName = (name: string) => { const n = new Set(hiddenCols); n.delete(name); persistHidden(n); };
-  const visibleCols = mM(() => (draft.cols || []).filter((c: any) => !hiddenCols.has(c.col_name)), [draft.cols, hiddenCols]);
+
+  // BOM fields picked in "Columns from BOM" (e.g. Material), shown as header
+  // rows under each part column, plus the per-gun BOM lines they are read
+  // from (fetched once per gun, shared with Auto-fill and the panel).
+  const [bomFields, setBomFields] = uM<string[]>(() => smReadFields(matrix.id));
+  eM(() => { setBomFields(smReadFields(draft.id)); }, [draft.id]);
+  const persistFields = (next: string[]) => {
+    setBomFields(next);
+    lsSet(smFieldsKey(draft.id), JSON.stringify(next));
+  };
+  const [bomIndex, setBomIndex] = uM<Map<string, SpareBomItem[]>>(() => new Map());
+  const rememberLines = (entries: Array<[string, SpareBomItem[]]>) => {
+    setBomIndex((prev) => { const m = new Map(prev); entries.forEach(([g, ls]) => m.set(String(g).toUpperCase(), ls || [])); return m; });
+  };
+  const loadBomIndex = async (): Promise<Map<string, SpareBomItem[]>> => {
+    const guns = Array.from(new Set((draft.rows || []).map((r) => String(r.gun_no || "").trim()).filter(Boolean))) as string[];
+    const have = bomIndex;
+    const missing = guns.filter((g) => !have.has(g.toUpperCase()));
+    if (!missing.length) return have;
+    const fetched = await Promise.all(missing.map(async (g) => [g, await smFetchLinesForGun(g)] as [string, SpareBomItem[]]));
+    const next = new Map(have);
+    fetched.forEach(([g, ls]) => next.set(g.toUpperCase(), ls || []));
+    setBomIndex(next);
+    return next;
+  };
+  // Load the lines the selected fields need (only when a field is selected).
+  eM(() => {
+    if (!bomFields.length) return;
+    loadBomIndex().catch(() => { /* header rows just stay empty */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bomFields.join("|"), (draft.rows || []).map((r) => r.gun_no).join("|")]);
+  const attributesFrom = (index: Map<string, SpareBomItem[]>) => {
+    if (!bomFields.length) return [];
+    const lines = Array.from(index.values()).flat();
+    const byKey = bomFieldIndex(lines, bomFields);
+    const discovered = discoverBomFields(lines).fields;
+    return bomFields.map((key) => ({ key, label: smFieldLabel(key, discovered), byPart: byKey[key] }));
+  };
+  const attributes = mM(() => attributesFrom(bomIndex), [bomFields, bomIndex]);
+  // ONE layout (shared module) drives the grid below AND the export, so the
+  // preview and the file cannot disagree: column order, headers, PART NO. row.
+  const layout = mM(() => buildSpareSheet({ cols: draft.cols || [], rows: draft.rows || [], attributes }), [draft.cols, draft.rows, attributes]);
+  const visibleParts = mM(() => layout.partColumns.filter((p: any) => !hiddenCols.has(p.header)), [layout, hiddenCols]);
+  const visibleCols = mM(() => visibleParts.map((p: any) => p.col), [visibleParts]);
+  // Review items from the last Auto-fill (missing part numbers etc.).
+  const [genFlags, setGenFlags] = uM<SpareGenerationFlag[]>([]);
   // Identity (Gun→Qty) column visibility. Gun is the anchor and always shows;
   // the station columns (Line…Qty) can be hidden via the Columns menu. Hidden
   // stations are dropped from the freeze block AND the cumulative left offsets
@@ -426,27 +511,34 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   };
 
   // ------- Configure cols (modal) ---------------------------------------
-  const onColMove = (ix, dir) => {
+  // The modal lists columns in the DISPLAYED order (shared ordering rule), so
+  // these handlers address a column by id, not by its index in d.cols.
+  // A move stays inside its class: Consumables always precede Spares, so a
+  // move across that boundary would snap back on the next render.
+  const onColMove = (id, dir) => {
     dirty((d) => {
-      const cols = [...(d.cols || [])];
+      const cols = orderSpareColumns(d.cols || []) as any[];
+      const ix = cols.findIndex((c) => c.id === id);
       const j = ix + dir;
-      if (j < 0 || j >= cols.length) return d;
+      if (ix < 0 || j < 0 || j >= cols.length) return d;
+      const names = cols.map((c) => c.col_name);
+      if (columnClass(cols[ix], names, isConsumableCol) !== columnClass(cols[j], names, isConsumableCol)) return d;
       const tmp = cols[ix]; cols[ix] = cols[j]; cols[j] = tmp;
       return { ...d, cols };
     });
   };
 
-  const onColLockToggle = (ix) => {
-    dirty((d) => ({ ...d, cols: (d.cols || []).map((c, i) => i === ix ? { ...c, locked: !c.locked } : c) }));
+  const onColLockToggle = (id) => {
+    dirty((d) => ({ ...d, cols: (d.cols || []).map((c) => c.id === id ? { ...c, locked: !c.locked } : c) }));
   };
 
-  const onColDelete = (ix) => {
+  const onColDelete = (id) => {
     dirty((d) => {
-      const removed = (d.cols || [])[ix];
+      const removed = (d.cols || []).find((c) => c.id === id);
       if (!removed) return d;
       return {
         ...d,
-        cols: (d.cols || []).filter((_, i) => i !== ix),
+        cols: (d.cols || []).filter((c) => c.id !== id),
         rows: (d.rows || []).map((r) => {
           const v = { ...(r.values || {}) }; delete v[removed.col_name]; return { ...r, values: v };
         }),
@@ -454,23 +546,23 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
     });
   };
 
-  const onColRename = (ix, name) => {
+  const onColRename = (id, name) => {
     const trimmed = String(name || "").trim();
     if (!trimmed) return;
     const cols = draft.cols || [];
-    const old = cols[ix];
+    const old = cols.find((c) => c.id === id);
     if (!old || old.col_name === trimmed) return;
     // Reject a rename onto an existing column name. Without this guard the
     // per-row `values[trimmed] = values[old]` below overwrote the OTHER
     // column's cells and made two columns share one JSONB key — editing one
     // edited both, and recompute double-counted installed_qty.
-    if (cols.some((c, i) => i !== ix && c.col_name === trimmed)) {
+    if (cols.some((c) => c.id !== id && c.col_name === trimmed)) {
       window.notifyError?.("Column exists", `A column named "${trimmed}" already exists — rename cancelled.`);
       return;
     }
     dirty((d) => ({
       ...d,
-      cols: (d.cols || []).map((c, i) => i === ix ? { ...c, col_name: trimmed } : c),
+      cols: (d.cols || []).map((c) => c.id === id ? { ...c, col_name: trimmed } : c),
       rows: (d.rows || []).map((r) => {
         const v = { ...(r.values || {}) };
         if (old.col_name in v) { v[trimmed] = v[old.col_name]; delete v[old.col_name]; }
@@ -479,11 +571,15 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
     }));
   };
 
-  // ------- Auto-fill from BOMs ------------------------------------------
+  // ------- Auto-fill from BOMs (matrix generation) ----------------------
   // Matches each gun's BOM parts INTO the spare-category columns - same
   // engine as the standalone tool (part-name keyword + part-number pattern
-  // + copper-material filter for consumables). A cell holds the matched
-  // part number(s). Locked columns and manually edited cells are preserved.
+  // + copper-material filter for consumables). A cell holds a part number.
+  // A category with 2+ part numbers across the matrix is split into
+  // CAT-1, CAT-2 ... (one column per part number, one global mapping; see
+  // src/api/_lib/spare-matrix-columns.js). Values already in a category's
+  // cells are re-homed into their own column, never dropped. A category with
+  // a locked column is left exactly as it is.
   const onAutoFill = async () => {
     const colNames = (draft.cols || []).map((c) => c.col_name);
     if (!colNames.length) {
@@ -497,26 +593,29 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
     }
     setBusyAuto(true);
     try {
-      const lockedCols = new Set<string>((draft.cols || []).filter((c) => c.locked).map((c) => String(c.col_name)));
-      // Fetch each unique gun's rich BOM lines once.
+      // Fetch each unique gun's rich BOM lines once (fresh, not the cache, so
+      // a BOM re-imported since the page opened is used).
       const linesByGun = new Map<string, SpareBomItem[]>();
       await Promise.all(guns.map(async (code: string) => {
         linesByGun.set(code.toUpperCase(), await smFetchLinesForGun(code));
       }));
+      rememberLines(Array.from(linesByGun.entries()));
       // Computed PURELY, then applied — not counted inside a setDraft updater.
       // React runs an updater during the following render, so the counters were
       // read while still 0 and the toast always said "0 cells filled across 0
       // gun(s)" however much it had filled in.
       const base = latestRef.current?.draft || draft;
-      const outcome = computeAutoFill(
-        base.rows || [],
-        (base.cols || []).map((c) => c.col_name),
-        linesByGun,
-        lockedCols,
-      );
-      dirty((d) => ({ ...d, rows: outcome.rows }));
+      const outcome = generateSpareMatrix({ cols: base.cols || [], rows: base.rows || [], linesByGun, makeId: smUid });
+      dirty((d) => ({ ...d, cols: orderSpareColumns(outcome.cols), rows: outcome.rows }));
+      // A hidden category stays hidden after it is split.
+      const hide = outcome.splits.filter((s) => s.from.some((n) => hiddenCols.has(n)));
+      if (hide.length) { const n = new Set(hiddenCols); hide.forEach((s) => s.to.forEach((t) => n.add(t))); persistHidden(n); }
+      setGenFlags(outcome.flags);
+      const splitText = outcome.splits.filter((s) => s.created.length)
+        .map((s) => ` ${s.group}: ${s.to.length} columns, one per part number.`).join("");
+      const review = outcome.flags.length ? ` ${outcome.flags.length} item(s) to review below.` : "";
       const tail = outcome.emptyGuns ? ` ${outcome.emptyGuns} gun(s) had no imported BOM.` : "";
-      window.notifySuccess?.("Auto-fill complete", `${outcome.filled} cells filled across ${outcome.matchedGuns} gun(s).${tail}`);
+      window.notifySuccess?.("Auto-fill complete", `${outcome.filled} cells filled across ${outcome.matchedGuns} gun(s).${splitText}${review}${tail}`);
     } catch (err) {
       window.notifyError?.("Auto-fill failed", String(err.message || err));
     } finally {
@@ -567,8 +666,9 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
   const onCommitImport = () => {
     if (!importPreview || importPreview.length < 2) return;
     const headers = importPreview[0].map((h) => String(h || "").trim());
-    const ix = (label) => headers.findIndex((h) => h.toLowerCase() === label.toLowerCase());
-    const gunIx = [ix("gun_no"), ix("gun"), ix("gun no"), ix("gun no."), ix("part")].find((n) => n >= 0);
+    const normHeaders = headers.map(smImportHeader);
+    const ix = (label) => normHeaders.indexOf(smImportHeader(label));
+    const gunIx = SM_GUN_ALIASES.map(ix).find((n) => n >= 0);
     if (gunIx == null || gunIx < 0) {
       setImportErr("File must include a 'gun' (or 'gun_no') column.");
       return;
@@ -578,12 +678,21 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
     const stationIxByKey: Record<string, number> = {};
     const reserved = new Set([gunIx]);
     Object.entries(SM_STATION_ALIASES).forEach(([key, aliases]) => {
-      const i = headers.findIndex((h) => aliases.includes(h.toLowerCase()));
+      const i = normHeaders.findIndex((h) => aliases.includes(h));
       if (i >= 0 && !reserved.has(i)) { stationIxByKey[key] = i; reserved.add(i); }
     });
+    // Two columns with the same header (e.g. ADAPTER twice) feed ONE column:
+    // their part numbers are merged per row. This used to keep only the last
+    // one and silently drop the other's part numbers.
     const spareCols = headers
       .map((h, i) => ({ name: h, i }))
       .filter((c) => !reserved.has(c.i) && c.name);
+    // Header-metadata rows written by our own export (PART NO., MATERIAL ...)
+    // are not guns. Their label sits in the gun column and the identity cells
+    // are empty.
+    const metaRowLabels = new Set(["part no.", ...BOM_FIELD_RULES.map((r) => r.label)].map(smImportHeader));
+    const isMetaRow = (row) => metaRowLabels.has(smImportHeader(row[gunIx]))
+      && Object.values(stationIxByKey).every((i) => row[i] == null || String(row[i]).trim() === "");
 
     const newCols = [...(draft.cols || [])];
     const colNames = new Set(newCols.map((c) => c.col_name));
@@ -596,9 +705,11 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
 
     const existingByGun = new Map((draft.rows || []).map((r) => [String(r.gun_no).toUpperCase(), r]));
     const merged = [...(draft.rows || [])];
+    let importedRows = 0;
     importPreview.slice(1).forEach((row) => {
       const gunNo = String(row[gunIx] || "").trim();
-      if (!gunNo) return;
+      if (!gunNo || isMetaRow(row)) return;
+      importedRows += 1;
       const station: Record<string, any> = {};
       Object.entries(stationIxByKey).forEach(([key, i]) => {
         const v = row[i];
@@ -607,7 +718,13 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       });
       const qty = station.qty != null ? station.qty : 1;
       const values: Record<string, string> = {};
-      spareCols.forEach((c) => { const v = row[c.i]; if (v != null && String(v) !== "") values[c.name] = String(v); });
+      spareCols.forEach((c) => {
+        const v = row[c.i];
+        if (v == null || String(v) === "") return;
+        const prev = values[c.name] ? values[c.name].split("\n") : [];
+        const add = String(v).split(/\r?\n/).filter((p) => p.trim() && !prev.includes(p));
+        values[c.name] = [...prev, ...add].join("\n");
+      });
       const upper = gunNo.toUpperCase();
       const exists = existingByGun.get(upper) as any;
       if (exists) {
@@ -624,25 +741,26 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
     setShowImport(false);
     setImportPreview(null);
     setImportErr("");
-    window.notifySuccess?.("Import complete", `${importPreview.length - 1} rows merged.`);
+    window.notifySuccess?.("Import complete", `${importedRows} rows merged.`);
   };
 
   // ------- Export --------------------------------------------------------
-  const exportAoa = () => {
-    const headers = ["gun_no", ...SM_STATION_COLS.map((sc) => sc.key), ...(draft.cols || []).map((c) => c.col_name)];
-    const data = (draft.rows || []).map((r) => [
-      r.gun_no || "",
-      ...SM_STATION_COLS.map((sc) => ((r as any)[sc.key] != null ? (r as any)[sc.key] : "")),
-      ...((draft.cols || []).map((c) => (r.values || {})[c.col_name] || "")),
-    ]);
-    return [headers, ...data];
+  // The same shared layout the grid renders: the owner's 7 metadata headers
+  // (GUN NO. ... QTY), the extra fields kept after them, then the part
+  // columns in display order, with the PART NO. row (and any BOM field rows
+  // picked in "Columns from BOM") under the header. JSON keeps its old shape:
+  // one object per gun, no header-metadata rows.
+  const exportAoa = async (format) => {
+    const index = bomFields.length ? await loadBomIndex() : bomIndex;
+    const sheet = buildSpareSheet({ cols: draft.cols || [], rows: draft.rows || [], attributes: attributesFrom(index) });
+    return layoutToAoa(sheet, draft.rows || [], { metaRows: format !== "json" });
   };
 
   const onExport = async (format) => {
     const filename = `SpareMatrix_${(draft.name || "untitled").replace(/[^A-Za-z0-9_-]+/g, "_")}_${new Date().toISOString().slice(0, 10)}`;
-    const aoa = exportAoa();
     setShowExport(false);
     try {
+      const aoa = await exportAoa(format);
       if (format === "xlsx") {
         const X = await smLoadXlsx();
         const ws = X.utils.aoa_to_sheet(aoa);
@@ -852,10 +970,10 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                 {/* Identity columns (Gun → Qty). Gun is the identity anchor and
                     always shows; the station columns can be hidden to declutter
                     when the spare columns need the room. */}
-                <div className="mono-sm" style={{ color: "var(--ink-4)", padding: "4px 6px 2px", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.04 }}>Identity (Gun → Qty)</div>
+                <div className="mono-sm" style={{ color: "var(--ink-4)", padding: "4px 6px 2px", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.04 }}>Identity ({SM_GUN_LABEL} → {SM_STATION_COLS[SM_STATION_COLS.length - 1].label})</div>
                 <label className="cmdk-row" style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", fontSize: 12, borderRadius: 4, opacity: 0.55 }} title="Gun is the identity anchor — always shown">
                   <input type="checkbox" checked readOnly disabled />
-                  <span style={{ flex: 1 }}>Gun</span>
+                  <span style={{ flex: 1 }}>{SM_GUN_LABEL}</span>
                 </label>
                 {SM_STATION_COLS.map((sc) => (
                   <label key={sc.key} className="cmdk-row" style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", cursor: "pointer", fontSize: 12, borderRadius: 4 }}>
@@ -864,9 +982,9 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                   </label>
                 ))}
                 <div className="mono-sm" style={{ color: "var(--ink-4)", padding: "8px 6px 2px", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.04, borderTop: "1px solid var(--hairline-2)", marginTop: 4 }}>Spare columns</div>
-                {(draft.cols || []).length === 0
+                {layout.partColumns.length === 0
                   ? <div className="mono-sm" style={{ padding: 6, color: "var(--ink-4)" }}>No spare columns yet.</div>
-                  : (draft.cols || []).map((c: any) => (
+                  : layout.partColumns.map(({ col: c }: any) => (
                     <label key={c.id} className="cmdk-row" style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", cursor: "pointer", fontSize: 12, borderRadius: 4 }}>
                       <input type="checkbox" checked={!hiddenCols.has(c.col_name)} onChange={(e) => e.target.checked ? showColByName(c.col_name) : hideCol(c.col_name)} />
                       <span style={{ flex: 1 }}>{c.col_name}</span>
@@ -945,7 +1063,25 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       )}
       {/* Suggest columns by scanning every gun's BOM */}
       {showSuggest && !recView && (
-        <SuggestColsPanel guns={(draft.rows || []).map((r) => r.gun_no).filter(Boolean)} existing={draft.cols || []} onAdd={onAddCol} onClose={() => setShowSuggest(false)} />
+        <SuggestColsPanel
+          guns={(draft.rows || []).map((r) => r.gun_no).filter(Boolean)}
+          existing={draft.cols || []}
+          onAdd={onAddCol}
+          fields={bomFields}
+          onFieldsChange={persistFields}
+          onLines={rememberLines}
+          onClose={() => setShowSuggest(false)}
+        />
+      )}
+      {/* Review list from the last Auto-fill: nothing is dropped silently. */}
+      {genFlags.length > 0 && !recView && (
+        <Banner kind="warn" icon={Icon.alert} title={`Review after Auto-fill (${genFlags.length})`}
+          action={<Btn sm kind="ghost" onClick={() => setGenFlags([])}>Dismiss</Btn>}>
+          <ul className="mono-sm" style={{ margin: "4px 0 0", paddingLeft: 18, maxHeight: 160, overflow: "auto" }}>
+            {genFlags.slice(0, 50).map((f, i) => <li key={i}>{(SM_FLAG_TEXT[f.kind] || (() => f.kind))(f)}</li>)}
+          </ul>
+          {genFlags.length > 50 && <div className="mono-sm" style={{ color: "var(--ink-3)" }}>+ {genFlags.length - 50} more</div>}
+        </Banner>
       )}
       {/* Gun BOM drill-down drawer */}
       {bomGun && <GunBomDrawer gunNo={bomGun} onClose={() => setBomGun(null)} />}
@@ -1019,24 +1155,56 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
                 </colgroup>
                 <thead>
                   <tr>
-                    {/* Frozen identity block (Gun → Qty): sticky on BOTH axes so it
-                        stays pinned while the spare columns scroll horizontally. */}
-                    <th style={{ position: "sticky", left: 0, top: 0, background: "var(--paper-3)", zIndex: 6, ...(frozen.stations.length === 0 ? { borderRight: "2px solid var(--hairline)" } : {}) }}>Gun</th>
+                    {/* Frozen identity block (GUN NO. → TIMER): sticky on BOTH axes so it
+                        stays pinned while the spare columns scroll horizontally.
+                        Fixed row heights let the header-metadata rows below
+                        stick at known offsets. */}
+                    <th style={{ position: "sticky", left: 0, top: 0, height: SM_HEAD_H, boxSizing: "border-box", background: "var(--paper-3)", zIndex: 6, ...(frozen.stations.length === 0 ? { borderRight: "2px solid var(--hairline)" } : {}) }}><span data-sm-label>{SM_GUN_LABEL}</span></th>
                     {frozen.stations.map((sc, si) => (
-                      <th key={sc.key} className={sc.num ? "r" : ""} style={{ position: "sticky", left: sc.left, top: 0, zIndex: 5, background: "var(--paper-3)", ...(si === frozen.stations.length - 1 ? { borderRight: "2px solid var(--hairline)" } : {}) }}>{sc.label}</th>
+                      <th key={sc.key} className={sc.num ? "r" : ""} style={{ position: "sticky", left: sc.left, top: 0, height: SM_HEAD_H, boxSizing: "border-box", zIndex: 5, background: "var(--paper-3)", whiteSpace: "nowrap", ...(si === frozen.stations.length - 1 ? { borderRight: "2px solid var(--hairline)" } : {}) }}><span data-sm-label>{sc.label}</span></th>
                     ))}
-                    {visibleCols.map((c) => (
-                      <th key={c.id} style={{ minWidth: 120, position: "sticky", top: 0, zIndex: 3, background: "var(--paper-3)" }} title={c.col_type}>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, width: "100%" }}>
-                          {c.locked && <span style={{ color: "var(--ink-4)" }}>{Icon.lock}</span>}
-                          <span style={{ flex: 1 }}>{c.col_name}</span>
-                          <button onClick={() => hideCol(c.col_name)} title="Hide this column from the view (data is kept)"
-                            style={{ border: "none", background: "none", cursor: "pointer", color: "var(--ink-4)", padding: 0, fontSize: 12, lineHeight: 1 }}>⊘</button>
-                        </span>
-                      </th>
-                    ))}
-                    <th style={{ width: 28, position: "sticky", top: 0, zIndex: 3, background: "var(--paper-3)" }}></th>
+                    {visibleParts.map((p: any) => {
+                      const c = p.col;
+                      return (
+                        <th key={c.id} style={{ minWidth: 120, position: "sticky", top: 0, height: SM_HEAD_H, boxSizing: "border-box", zIndex: 3, background: "var(--paper-3)" }}
+                          title={`${c.col_name} · ${SM_CLASS_LABEL[p.cls] || p.cls}${p.group !== c.col_name ? ` · category ${p.group}` : ""}`}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, width: "100%", minWidth: 0 }}>
+                            {c.locked && <span style={{ color: "var(--ink-4)" }}>{Icon.lock}</span>}
+                            <span data-sm-label style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.col_name}</span>
+                            <button onClick={() => hideCol(c.col_name)} title="Hide this column from the view (data is kept)"
+                              style={{ border: "none", background: "none", cursor: "pointer", color: "var(--ink-4)", padding: 0, fontSize: 12, lineHeight: 1 }}>⊘</button>
+                          </span>
+                        </th>
+                      );
+                    })}
+                    <th style={{ width: 28, position: "sticky", top: 0, height: SM_HEAD_H, boxSizing: "border-box", zIndex: 3, background: "var(--paper-3)" }}></th>
                   </tr>
+                  {/* Header metadata: the part number each column stands for
+                      (spec section 10), then any BOM field picked in "Columns
+                      from BOM" (e.g. MATERIAL). Same rows as the export. */}
+                  {visibleParts.length > 0 && layout.metaRows.map((mr: any, mi: number) => {
+                    const top = SM_HEAD_H + mi * SM_META_H;
+                    const cell = { position: "sticky" as const, top, height: SM_META_H, boxSizing: "border-box" as const, background: "var(--paper-2)", fontSize: 10.5, padding: "2px 6px", whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" };
+                    return (
+                      <tr key={mr.key} data-sm-meta={mr.key}>
+                        <th style={{ ...cell, left: 0, zIndex: 6, color: "var(--ink-3)", ...(frozen.stations.length === 0 ? { borderRight: "2px solid var(--hairline)" } : {}) }}><span data-sm-label>{mr.label}</span></th>
+                        {frozen.stations.map((sc, si) => (
+                          <th key={sc.key} style={{ ...cell, left: sc.left, zIndex: 5, ...(si === frozen.stations.length - 1 ? { borderRight: "2px solid var(--hairline)" } : {}) }}></th>
+                        ))}
+                        {visibleParts.map((p: any) => {
+                          const v = mr.key === "part_no" ? p.part_no_label : (p.attrs[mr.key] || "");
+                          const mixed = mr.key === "part_no" && p.part_nos.length > 1;
+                          return (
+                            <th key={p.col.id} className="mono" title={v ? (mixed ? `${p.part_nos.length} part numbers in this column; Auto-fill splits it one per part number.\n${v}` : v) : ""}
+                              style={{ ...cell, zIndex: 3, fontWeight: 500, color: mixed ? "var(--warn, #b45309)" : "var(--ink-2)" }}>
+                              <span data-sm-meta-cell>{v}</span>
+                            </th>
+                          );
+                        })}
+                        <th style={{ ...cell, zIndex: 3 }}></th>
+                      </tr>
+                    );
+                  })}
                 </thead>
                 <tbody>
                   {(draft.rows || []).map((r) => (
@@ -1211,6 +1379,7 @@ const SMWorksheetPane = ({ matrix, onChange, onDelete, customers }) => {
       {showConfig && (
         <SMConfigColsModal
           cols={draft.cols || []}
+          parts={layout.partColumns}
           onAddCol={onAddCol}
           guns={(draft.rows || []).map((r) => r.gun_no).filter(Boolean)}
           onMove={onColMove}
@@ -1470,34 +1639,55 @@ const GunBomDrawer = ({ gunNo, onClose }) => {
   );
 };
 
-// Columns from BOM: scan every gun's BOM and list EVERY spare category (no cap)
-// using the SAME matcher as auto-fill (preset-aware), so what's offered is what
-// auto-fill can populate — and a rare part on a single gun in a big matrix is
-// still selectable. Copper parts are typed as consumables. Filter box + "select
-// all shown" keep the full list navigable.
-const SuggestColsPanel = ({ guns, existing, onAdd, onClose }: any) => {
+// Columns from BOM: ONE scan of every gun's BOM feeds two lists.
+//  1. Spare categories: EVERY category (no cap) found by the SAME matcher as
+//     auto-fill (preset-aware), so what's offered is what auto-fill can
+//     populate, and a rare part on a single gun in a big matrix is still
+//     selectable. Copper parts are typed as consumables. A category with 2+
+//     part numbers becomes CAT-1, CAT-2 ... on Auto-fill.
+//  2. BOM fields (Material, Size ...): discovered from the fields the BOM
+//     lines actually carry (schema-driven, discoverBomFields), not from an
+//     allowlist. A ticked field becomes a header row under each part column,
+//     in the grid and in the export. Missing and excluded fields are listed
+//     with the reason, so "where is Material?" has an answer on screen.
+// Filter box + "select all shown" keep the category list navigable.
+export const SuggestColsPanel = ({ guns, existing, onAdd, onClose, fields, onFieldsChange, onLines }: any) => {
   const gunList = useMemo(
     () => Array.from(new Set((guns || []).map((g: any) => String(g || "").trim()).filter(Boolean))) as string[],
     [guns],
   );
-  const existingNames = useMemo(
-    () => (existing || []).map((c: any) => (c && c.col_name != null ? c.col_name : c)).filter(Boolean),
-    [existing],
-  );
-  const [state, setState] = useState<{ loading: boolean; suggestions: SpareSuggestion[] }>({ loading: true, suggestions: [] });
+  // Existing columns as CATEGORIES: a split ADAPTER-1 / ADAPTER-2 pair means
+  // ADAPTER is already a column and is not offered again.
+  const existingNames = useMemo(() => {
+    const names = (existing || []).map((c: any) => (c && c.col_name != null ? c.col_name : c)).filter(Boolean);
+    return Array.from(new Set(names.map((n: string) => columnGroupOf(n, names)))) as string[];
+  }, [existing]);
+  const [state, setState] = useState<{ loading: boolean; suggestions: SpareSuggestion[]; discovery: any }>({ loading: true, suggestions: [], discovery: null });
   const [picked, setPicked] = useState<Record<string, boolean>>({});
+  const [pickedFields, setPickedFields] = useState<string[]>(() => [...(fields || [])]);
   useEffect(() => {
     let cancel = false;
-    if (!gunList.length) { setState({ loading: false, suggestions: [] }); return; }
+    if (!gunList.length) { setState({ loading: false, suggestions: [], discovery: null }); return; }
     setState((s) => ({ ...s, loading: true }));
     (async () => {
       const perGun = await Promise.all(gunList.map(async (gun) => ({ gun, lines: await smFetchLinesForGun(gun) })));
       if (cancel) return;
-      setState({ loading: false, suggestions: suggestSpareColumns(perGun, existingNames) });
-    })().catch(() => { if (!cancel) setState({ loading: false, suggestions: [] }); });
+      onLines?.(perGun.map((p) => [p.gun, p.lines]));
+      setState({
+        loading: false,
+        suggestions: suggestSpareColumns(perGun, existingNames),
+        discovery: discoverBomFields(perGun.flatMap((p) => p.lines || [])),
+      });
+    })().catch(() => { if (!cancel) setState({ loading: false, suggestions: [], discovery: null }); });
     return () => { cancel = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gunList.join("|"), existingNames.join("|")]);
+  const discovery = state.discovery || { fields: [], unavailable: [], excluded: [] };
+  const fieldsChanged = (fields || []).join("|") !== pickedFields.join("|");
+  const toggleField = (key: string) => setPickedFields((cur) => (cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key]));
+  // Selected earlier but not in these BOMs now: still listed, so it can be
+  // unticked, and never dropped silently.
+  const selectedMissing = pickedFields.filter((k) => !discovery.fields.some((f: any) => f.key === k));
 
   const suggestions = state.suggestions;
   const [q, setQ] = useState("");
@@ -1517,25 +1707,33 @@ const SuggestColsPanel = ({ guns, existing, onAdd, onClose }: any) => {
   });
   const addPicked = () => {
     const chosen = suggestions.filter((s) => picked[s.col_name]);
-    if (!chosen.length) { window.notifyError?.("Nothing selected", "Tick one or more columns to add."); return; }
+    if (!chosen.length && !fieldsChanged) { window.notifyError?.("Nothing selected", "Tick one or more columns or BOM fields to add."); return; }
     chosen.forEach((s) => onAdd(s.col_name, s.col_type));
-    window.notifySuccess?.("Columns added", `${chosen.length} spare column${chosen.length === 1 ? "" : "s"} added. Open Auto-fill to populate parts.`);
+    if (fieldsChanged) onFieldsChange?.(pickedFields);
+    const parts = [];
+    if (chosen.length) parts.push(`${chosen.length} spare column${chosen.length === 1 ? "" : "s"} added. Open Auto-fill to populate parts.`);
+    if (fieldsChanged) parts.push(pickedFields.length ? `Header rows: ${pickedFields.map((k) => smFieldLabel(k, discovery.fields)).join(", ")}.` : "BOM field rows removed.");
+    window.notifySuccess?.("Columns updated", parts.join(" "));
     onClose();
   };
+  const pickedTotal = pickedCount + (fieldsChanged ? 1 : 0);
+  const materialMissing = discovery.unavailable.some((u: any) => u.key === "material");
   return (
     <Card title="Add spare columns from BOM"
           eyebrow={state.loading
             ? "scanning every gun's BOM…"
-            : `${suggestions.length} categor${suggestions.length === 1 ? "y" : "ies"} across ${gunList.length} gun BOM${gunList.length === 1 ? "" : "s"} · every category, incl. parts on a single gun`}
+            : `${suggestions.length} categor${suggestions.length === 1 ? "y" : "ies"} · ${discovery.fields.length} BOM field${discovery.fields.length === 1 ? "" : "s"} across ${gunList.length} gun BOM${gunList.length === 1 ? "" : "s"} · every category, incl. parts on a single gun`}
           right={<>
             <Btn sm kind="ghost" onClick={onClose}>Close</Btn>
-            <Btn sm kind="primary" onClick={addPicked} disabled={!pickedCount}>Add selected{pickedCount ? ` (${pickedCount})` : ""}</Btn>
+            <Btn sm kind="primary" onClick={addPicked} disabled={!pickedTotal}>Add selected{pickedCount ? ` (${pickedCount})` : ""}</Btn>
           </>}>
       {state.loading ? (
         <div className="body" style={{ padding: 12, color: "var(--ink-3)" }}>Scanning every gun's BOM…</div>
       ) : !gunList.length ? (
         <Banner kind="info">Add guns (rows) with imported BOMs first — then this lists every spare category to choose from.</Banner>
-      ) : suggestions.length === 0 ? (
+      ) : (
+        <>
+        {suggestions.length === 0 ? (
         <div className="body" style={{ padding: 12, color: "var(--ink-3)" }}>No categories to add — every BOM category is already a column, or the guns have no BOM parts.</div>
       ) : (
         <>
@@ -1565,11 +1763,74 @@ const SuggestColsPanel = ({ guns, existing, onAdd, onClose }: any) => {
               </tbody>
             </table>
           </div>
+          <div className="mono-sm" style={{ padding: "6px 4px", color: "var(--ink-3)" }}>
+            A category with 2 or more part numbers becomes CATEGORY-1, CATEGORY-2 ... on Auto-fill, one column per part number. The PART NO. row under the header shows which part each column holds.
+          </div>
+        </>
+      )}
+        <SuggestFieldsSection
+          discovery={discovery}
+          picked={pickedFields}
+          selectedMissing={selectedMissing}
+          materialMissing={materialMissing}
+          onToggle={toggleField}
+        />
         </>
       )}
     </Card>
   );
 };
+
+// "Columns from BOM", part 2: the BOM fields that can be shown as header rows
+// under each part column. Eligible fields get a checkbox; fields that are
+// missing or excluded are listed with the reason.
+const SuggestFieldsSection = ({ discovery, picked, selectedMissing, materialMissing, onToggle }: any) => (
+  <div style={{ borderTop: "1px solid var(--hairline-2)", marginTop: 8, paddingTop: 8 }}>
+    <div className="label" style={{ padding: "0 4px 4px" }}>BOM fields · shown as header rows under each part column (grid and export)</div>
+    {discovery.fields.length === 0 && selectedMissing.length === 0 ? (
+      <div className="mono-sm" style={{ padding: "4px", color: "var(--ink-4)" }}>No BOM fields with values in these guns' BOMs.</div>
+    ) : (
+      <table className="tbl">
+        <thead><tr><th style={{ width: 30 }}></th><th>Field</th><th>Source headers</th><th className="r">Lines</th><th>Sample values</th></tr></thead>
+        <tbody>
+          {discovery.fields.map((f: any) => (
+            <tr key={f.key} style={{ cursor: "pointer" }} onClick={() => onToggle(f.key)}>
+              <td><input type="checkbox" checked={picked.includes(f.key)} onChange={() => onToggle(f.key)} onClick={(e) => e.stopPropagation()} aria-label={`Show ${f.label}`} /></td>
+              <td className="mono">{f.label}</td>
+              <td className="mono-sm" style={{ color: "var(--ink-3)" }} title={f.duplicate_headers ? "Several source headers map to this field; the first non-empty value is used." : ""}>
+                {f.source_labels.join(", ")}{f.duplicate_headers ? " (duplicate headers)" : ""}
+              </td>
+              <td className="r mono-sm">{f.count}</td>
+              <td className="mono-sm" style={{ maxWidth: 300, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--ink-3)" }}>{f.samples.join(" · ")}</td>
+            </tr>
+          ))}
+          {selectedMissing.map((k: string) => (
+            <tr key={k} style={{ cursor: "pointer" }} onClick={() => onToggle(k)}>
+              <td><input type="checkbox" checked={picked.includes(k)} onChange={() => onToggle(k)} onClick={(e) => e.stopPropagation()} aria-label={`Show ${smFieldLabel(k)}`} /></td>
+              <td className="mono">{smFieldLabel(k)}</td>
+              <td colSpan={3} className="mono-sm" style={{ color: "var(--warn, #b45309)" }}>Selected, but no line in these BOMs has a value. The header row stays empty.</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )}
+    {materialMissing && (
+      <div className="mono-sm" data-sm-material-missing style={{ padding: "6px 4px", color: "var(--ink-3)" }}>
+        Material is not available: no line in these guns' BOMs has a material value. Re-import the BOM with a material column (accepted headers: {MATERIAL_HEADER_ALIASES.join(", ")}). Guns with only a flat BOM carry no material. "Material No." and "Material Number" are not treated as Material.
+      </div>
+    )}
+    {discovery.unavailable.filter((u: any) => u.key !== "material").length > 0 && (
+      <div className="mono-sm" style={{ padding: "2px 4px", color: "var(--ink-4)" }}>
+        Not in these BOMs: {discovery.unavailable.filter((u: any) => u.key !== "material").map((u: any) => u.label).join(", ")}.
+      </div>
+    )}
+    {discovery.excluded.length > 0 && (
+      <div className="mono-sm" style={{ padding: "2px 4px", color: "var(--ink-4)" }}>
+        Left out on purpose: {discovery.excluded.map((x: any) => `${x.label} (${x.reason})`).join(" ")}
+      </div>
+    )}
+  </div>
+);
 
 const SMAddColForm = ({ onAdd, onClose, existing, guns, embedded }: any) => {
   const { useState: uF, useRef: rF, useEffect: eF } = React;
@@ -1689,7 +1950,10 @@ const SMAddColForm = ({ onAdd, onClose, existing, guns, embedded }: any) => {
 };
 
 // ---------- Configure Cols modal ----------
-const SMConfigColsModal = ({ cols, onAddCol, guns, onMove, onLockToggle, onDelete, onRename, onClose }: any) => {
+// Lists the columns in the DISPLAYED order (parts = the shared layout's part
+// columns), grouped by class. Moves stay inside a class, because Consumables
+// always precede Spares and the fallback class always comes last.
+const SMConfigColsModal = ({ cols, parts, onAddCol, guns, onMove, onLockToggle, onDelete, onRename, onClose }: any) => {
   const { useEffect: eM } = React;
   eM(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
@@ -1715,27 +1979,37 @@ const SMConfigColsModal = ({ cols, onAddCol, guns, onMove, onLockToggle, onDelet
           </div>
           <div>
             <div className="label" style={{ marginBottom: 6 }}>Existing columns</div>
-          {cols.length === 0 ? (
+          {(parts || []).length === 0 ? (
             <div className="body" style={{ color: "var(--ink-3)" }}>No columns yet — add one above.</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {cols.map((c, ix) => (
-                <div key={c.id} style={{ display: "flex", gap: 6, alignItems: "center", padding: 6, border: "1px solid var(--hairline)", borderRadius: 4 }}>
-                  <span className="mono-sm" style={{ width: 28, color: "var(--ink-4)" }}>{ix + 1}</span>
-                  <input
-                    className="input mono"
-                    defaultValue={c.col_name}
-                    onBlur={(e) => onRename(ix, e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                    style={{ flex: 1 }}
-                  />
-                  <span className="chip ghost" style={{ minWidth: 70, justifyContent: "center" }}>{c.col_type}</span>
-                  <Btn icon sm kind="ghost" onClick={() => onMove(ix, -1)} disabled={ix === 0} title="Move up">{Icon.arrowU}</Btn>
-                  <Btn icon sm kind="ghost" onClick={() => onMove(ix, 1)} disabled={ix === cols.length - 1} title="Move down">{Icon.arrowD}</Btn>
-                  <Btn icon sm kind={c.locked ? "primary" : "ghost"} onClick={() => onLockToggle(ix)} title={c.locked ? "Unlock" : "Lock"}>{Icon.lock}</Btn>
-                  <Btn icon sm kind="ghost" onClick={() => onDelete(ix)} title="Delete column">{Icon.x}</Btn>
-                </div>
-              ))}
+              {(parts || []).map((p, ix) => {
+                const c = p.col;
+                const prev = parts[ix - 1];
+                const next = parts[ix + 1];
+                return (
+                  <React.Fragment key={c.id}>
+                    {(!prev || prev.cls !== p.cls) && (
+                      <div className="mono-sm" style={{ color: "var(--ink-4)", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.04, marginTop: ix ? 6 : 0 }}>{SM_CLASS_LABEL[p.cls] || p.cls}</div>
+                    )}
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", padding: 6, border: "1px solid var(--hairline)", borderRadius: 4 }}>
+                      <span className="mono-sm" style={{ width: 28, color: "var(--ink-4)" }}>{ix + 1}</span>
+                      <input
+                        className="input mono"
+                        defaultValue={c.col_name}
+                        onBlur={(e) => onRename(c.id, e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                        style={{ flex: 1 }}
+                      />
+                      <span className="chip ghost" style={{ minWidth: 70, justifyContent: "center" }} title={p.part_nos.length === 1 ? `Part no. ${p.part_nos[0]}` : ""}>{c.col_type}</span>
+                      <Btn icon sm kind="ghost" onClick={() => onMove(c.id, -1)} disabled={!prev || prev.cls !== p.cls} title="Move up">{Icon.arrowU}</Btn>
+                      <Btn icon sm kind="ghost" onClick={() => onMove(c.id, 1)} disabled={!next || next.cls !== p.cls} title="Move down">{Icon.arrowD}</Btn>
+                      <Btn icon sm kind={c.locked ? "primary" : "ghost"} onClick={() => onLockToggle(c.id)} title={c.locked ? "Unlock" : "Lock"}>{Icon.lock}</Btn>
+                      <Btn icon sm kind="ghost" onClick={() => onDelete(c.id)} title="Delete column">{Icon.x}</Btn>
+                    </div>
+                  </React.Fragment>
+                );
+              })}
             </div>
           )}
           </div>

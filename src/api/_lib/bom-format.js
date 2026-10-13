@@ -16,6 +16,18 @@
 // the SheetJS `{header:1}` shape) and the merged format list. See
 // docs/BOM_INGESTION_DESIGN.md section 3.3.
 
+// Material (grade / spec) headers, shared by every built-in profile. The lists
+// had drifted apart, so "Mat." mapped only in the China profile and "Mat'l",
+// "Matl", "Material Grade" and "Material Spec" mapped nowhere: the column was
+// dropped at import and the spare matrix had no material to offer (spec
+// docs/SPARE_MATRIX_ITERATION.md section 5). "Material No.", "Material Number"
+// and "Material Description" are deliberately NOT here: in many ERP exports
+// those are the part number and the part name, not the material.
+export const MATERIAL_HEADER_ALIASES = Object.freeze([
+  "material", "mat", "mat.", "mat'l", "mat’l", "matl",
+  "material grade", "material spec", "material specification",
+]);
+
 // ── built-in profiles ────────────────────────────────────────────────
 // detect signals (all optional):
 //   headers_all : every label must appear in the header row
@@ -36,7 +48,7 @@ export const BUILTIN_FORMATS = [
       part_no: ["item no", "item no.", "part no", "part number"],
       part_name: ["part name", "name", "description", "product name"],
       structure: ["structure"],
-      material: ["material", "material code"],
+      material: [...MATERIAL_HEADER_ALIASES, "material code"],
       qty: ["qty", "quantity", "q'ty"],
       lr: ["lr is or not", "lr", "l/r"],
       size: ["size", "model name"],
@@ -54,7 +66,7 @@ export const BUILTIN_FORMATS = [
       jpn_model: ["jpn model"],
       model: ["model"],
       size: ["size", "model name"],
-      material: ["material", "mat", "mat."],
+      material: [...MATERIAL_HEADER_ALIASES],
       qty: ["qty", "quantity", "q'ty"],
       std_category: ["level", "lv"],
       hier_no: ["no"],
@@ -69,7 +81,7 @@ export const BUILTIN_FORMATS = [
       part_no: ["part no", "part no.", "part number", "item no"],
       part_name: ["part name", "name", "description"],
       size: ["size", "dimension"],
-      material: ["material", "mat"],
+      material: [...MATERIAL_HEADER_ALIASES],
       qty: ["qty", "quantity", "q'ty"],
       std_category: ["lv", "std", "standard", "level"],
       remarks: ["remarks", "remark", "note"],
@@ -88,7 +100,7 @@ export const BUILTIN_FORMATS = [
       part_no: ["part no", "part no.", "part number", "partno", "part_no"],
       part_name: ["part name", "name", "description", "item name"],
       size: ["size", "dimension"],
-      material: ["material", "mat"],
+      material: [...MATERIAL_HEADER_ALIASES],
       qty: ["qty", "quantity"],
       side: ["side", "lh/rh"],
       lr: ["lr", "l/r"],
@@ -106,7 +118,7 @@ export const BUILTIN_FORMATS = [
       part_name: ["part name", "name", "description", "item name", "desc"],
       qty: ["qty", "quantity", "amount"],
       uom: ["uom", "unit"],
-      material: ["material", "mat"],
+      material: [...MATERIAL_HEADER_ALIASES],
       size: ["size", "dimension"],
       supplier_part_no: ["supplier part", "supplier part no", "vendor part", "mpn"],
       remarks: ["remarks", "remark", "note", "comment"],

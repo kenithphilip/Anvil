@@ -3,7 +3,7 @@
 // column mapping, and per-format line normalization. Pure, no I/O.
 
 import { describe, it, expect } from "vitest";
-import { BUILTIN_FORMATS, mergeFormats, findHeaderRow, isHeaderRow, detectFormatKey, mapSheet } from "../api/_lib/bom-format.js";
+import { BUILTIN_FORMATS, mergeFormats, findHeaderRow, isHeaderRow, detectFormatKey, mapSheet, MATERIAL_HEADER_ALIASES } from "../api/_lib/bom-format.js";
 
 const F = BUILTIN_FORMATS;
 
@@ -155,5 +155,34 @@ describe("mergeFormats", () => {
     expect(merged.find((f) => f.key === "old")).toBeFalsy();
     // other built-ins still present
     expect(merged.find((f) => f.key === "obara_china")).toBeTruthy();
+  });
+});
+
+// Spare matrix iteration (docs/SPARE_MATRIX_ITERATION.md section 5): a BOM's
+// material column must reach bom_lines.material, whatever the profile and
+// whatever the header's case, spacing or common abbreviation.
+describe("material header (spare matrix Material root cause)", () => {
+  const sheet = (matHeader) => [["Part No", "Part Name", matHeader, "Qty"], ["P1", "TIP", "CuCrZr", 2]];
+  it.each([["Material"], ["MATERIAL"], ["  material  "], ["Mat."], ["Mat'l"], ["Matl"], ["Material Grade"], ["material   spec"]])(
+    "maps %j to material on the default (floor) profile", (h) => {
+      const out = mapSheet(sheet(h), "BOM.xlsx", F);
+      expect(out.source_format).toBe("obara_india");
+      expect(out.lines[0].material).toBe("CuCrZr");
+    });
+
+  it("every built-in profile accepts the same material headers", () => {
+    for (const f of F) expect(f.column_map.material).toEqual(expect.arrayContaining([...MATERIAL_HEADER_ALIASES]));
+  });
+
+  it("never reads Material Number or Material Description as the material", () => {
+    const rows = [["Part No", "Part Name", "Material Number", "Material Description", "Qty"], ["P1", "TIP", "100-200", "TIP CAP", 2]];
+    const out = mapSheet(rows, "BOM.xlsx", F);
+    expect(out.lines[0].material).toBeNull();
+    expect(out.lines[0].part_no).toBe("P1");
+  });
+
+  it("duplicate material headers: the first one wins, predictably", () => {
+    const rows = [["Part No", "Part Name", "Material", "MATERIAL", "Qty"], ["P1", "TIP", "CuCrZr", "SS304", 2]];
+    expect(mapSheet(rows, "BOM.xlsx", F).lines[0].material).toBe("CuCrZr");
   });
 });

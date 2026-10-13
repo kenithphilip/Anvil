@@ -7,6 +7,12 @@
 //
 // Pure: feed it bom_lines ({ part_no, part_name, material, size }) +
 // the category column names; it returns { colName: "pn1\npn2" }.
+//
+// Column identity, split naming (ADAPTER-1, ADAPTER-2 ...) and column order
+// live in ONE shared module, src/api/_lib/spare-matrix-columns.js, so
+// generation here, the worksheet preview and the export cannot disagree.
+
+import { buildSheetLayout, orderColumns, planSpareColumns, spareColumnGroups } from "../../api/_lib/spare-matrix-columns.js";
 
 export interface SparePreset { name: string; category: string; }
 
@@ -196,7 +202,55 @@ export const nameIsCleanMatch = (candidate: string, keyword: string): boolean =>
   return remainderIsSpecOnly(after);
 };
 
-export interface SpareBomItem { part_no?: string | null; part_name?: string | null; material?: string | null; size?: string | null; }
+export interface SpareBomItem { part_no?: string | null; part_name?: string | null; material?: string | null; size?: string | null; [extra: string]: any; }
+
+// The BOM lines one category column matches, BEFORE de-duplication, so a line
+// with a blank part number is still visible to the caller (generateSpareMatrix
+// flags it instead of dropping it). matchSpares below is this plus the dedup.
+export const matchSpareItems = (
+  bomItems: SpareBomItem[],
+  col: string,
+  opts: { skipMaterialFilter?: boolean } = {},
+): SpareBomItem[] => {
+  const base = stripVariant(col);
+  const colUp = base.toUpperCase().trim();
+  const exclusions = (COL_EXCLUSIONS[colUp] || []).map((ex) => new RegExp("^" + escapeRe(ex) + "(?:\\s|$)", "i"));
+
+  // Path A: clean name match (specificity-guarded, CJK-prefix aware).
+  // Match on the BASE category so "SHANK (MOVING)"/"SHANK (FIXED)" both
+  // pull shank candidates; the operator assigns which is moving vs fixed.
+  let matches = (bomItems || []).filter((p) => {
+    if (!p || !p.part_name) return false;
+    const cands = nameMatchCandidates(p.part_name);
+    if (!cands.some((c) => nameIsCleanMatch(c, base))) return false;
+    // Exclusions compare the assembly-normalized candidate so a "GEAR CASE
+    // ASSEMBLY"/"...ASS'Y" part is still kept out of the broad "GEAR CASE".
+    if (cands.some((c) => exclusions.some((re) => re.test(normalizeAssy(c))))) return false;
+    return true;
+  });
+
+  // Path B: part-number pattern (origin-agnostic)
+  const patterns = PART_NO_PATTERNS[colUp];
+  if (patterns && patterns.length) {
+    const matchedKeys = new Set(matches.map((m) => m.part_no));
+    (bomItems || []).forEach((p) => {
+      if (!p || !p.part_no || matchedKeys.has(p.part_no)) return;
+      const pn = String(p.part_no).trim();
+      const sz = String(p.size || "").trim();
+      if (patterns.some((re) => re.test(pn) || re.test(sz))) matches.push(p);
+    });
+  }
+
+  // Consumable columns: only copper-type material, BUT keep parts whose
+  // material is blank (legacy flat BOMs carry no material metadata; filtering
+  // them out silently emptied cap-tip/shank/shunt/electrode columns). A
+  // present, non-copper material still excludes the part. The column scan opts
+  // out of the filter entirely (surfaces the category by name).
+  if (!opts.skipMaterialFilter && isConsumableCol(col)) {
+    matches = matches.filter((p) => !String(p.material || "").trim() || isCopperMaterial(p.material));
+  }
+  return matches;
+};
 
 // matchSpares(bomItems, colNames, opts?) -> { colName: "pn1\npn2" }
 // opts.skipMaterialFilter: don't require copper material for consumable columns
@@ -210,44 +264,7 @@ export const matchSpares = (
 ): Record<string, string> => {
   const result: Record<string, string> = {};
   (colNames || []).forEach((col) => {
-    const base = stripVariant(col);
-    const colUp = base.toUpperCase().trim();
-    const exclusions = (COL_EXCLUSIONS[colUp] || []).map((ex) => new RegExp("^" + escapeRe(ex) + "(?:\\s|$)", "i"));
-
-    // Path A: clean name match (specificity-guarded, CJK-prefix aware).
-    // Match on the BASE category so "SHANK (MOVING)"/"SHANK (FIXED)" both
-    // pull shank candidates; the operator assigns which is moving vs fixed.
-    let matches = (bomItems || []).filter((p) => {
-      if (!p || !p.part_name) return false;
-      const cands = nameMatchCandidates(p.part_name);
-      if (!cands.some((c) => nameIsCleanMatch(c, base))) return false;
-      // Exclusions compare the assembly-normalized candidate so a "GEAR CASE
-      // ASSEMBLY"/"...ASS'Y" part is still kept out of the broad "GEAR CASE".
-      if (cands.some((c) => exclusions.some((re) => re.test(normalizeAssy(c))))) return false;
-      return true;
-    });
-
-    // Path B: part-number pattern (origin-agnostic)
-    const patterns = PART_NO_PATTERNS[colUp];
-    if (patterns && patterns.length) {
-      const matchedKeys = new Set(matches.map((m) => m.part_no));
-      (bomItems || []).forEach((p) => {
-        if (!p || !p.part_no || matchedKeys.has(p.part_no)) return;
-        const pn = String(p.part_no).trim();
-        const sz = String(p.size || "").trim();
-        if (patterns.some((re) => re.test(pn) || re.test(sz))) matches.push(p);
-      });
-    }
-
-    // Consumable columns: only copper-type material — BUT keep parts whose
-    // material is blank (legacy flat BOMs carry no material metadata; filtering
-    // them out silently emptied cap-tip/shank/shunt/electrode columns). A
-    // present, non-copper material still excludes the part. The column scan opts
-    // out of the filter entirely (surfaces the category by name).
-    if (!opts.skipMaterialFilter && isConsumableCol(col)) {
-      matches = matches.filter((p) => !String(p.material || "").trim() || isCopperMaterial(p.material));
-    }
-
+    const matches = matchSpareItems(bomItems, col, opts);
     // dedup by part_no, preserve order
     const seen = new Set<string>();
     const dedup: SpareBomItem[] = [];
@@ -370,18 +387,75 @@ export interface AutoFillOutcome {
   emptyGuns: number;
 }
 
+/** A row the operator should review after generation (never silently dropped). */
+export interface SpareGenerationFlag {
+  kind: "no_part_no" | "inconsistent_description" | "similar_part_no";
+  group: string;
+  gun_no?: string;
+  description?: string;
+  line?: number;
+  part_no?: string;
+  descriptions?: string[];
+  part_nos?: string[];
+}
+
+/** generateSpareMatrix output: the new columns as well as the rows. */
+export interface SpareGeneration extends AutoFillOutcome {
+  cols: any[];
+  flags: SpareGenerationFlag[];
+  /** Groups that were split (or re-split): from = removed columns, to = the group's columns now. */
+  splits: Array<{ group: string; from: string[]; to: string[]; created: string[] }>;
+}
+
+/** Consumables first, then Spares, then the fallback class (shared rule). */
+export const orderSpareColumns = <T,>(cols: T[]): T[] => orderColumns(cols, isConsumableCol) as T[];
+
+/** The preview/export layout (shared rule), with the consumable classifier injected. */
+export const buildSpareSheet = (args: { cols: any[]; rows: any[]; attributes?: any[] }) =>
+  buildSheetLayout({ ...args, isConsumableName: isConsumableCol });
+
 /**
- * Apply matched BOM parts into the spare-category columns, and count what it did.
+ * Matrix generation (Auto-fill): match every gun's BOM into the category
+ * columns, then apply ONE global part-number-to-column plan (see
+ * src/api/_lib/spare-matrix-columns.js). A category with 2+ part numbers is
+ * split into CAT-1, CAT-2 ...; one part number keeps today's single column.
  *
- * Pure, and that is the entire point. This ran inside a `setDraft` updater with
- * `filled` / `matchedGuns` / `emptyGuns` declared in the enclosing scope and read
- * on the next synchronous line — but React runs an updater during the following
- * render, not at the call site, so the toast always read
- * "0 cells filled across 0 gun(s)". Auto-fill worked; it just always reported
- * having done nothing, which is indistinguishable from being broken.
- *
- * Returning the counts with the rows means the number shown is the number
- * produced, and cannot drift from it again.
+ * Pure, and that is the entire point. Auto-fill once ran inside a `setDraft`
+ * updater with its counters declared in the enclosing scope and read on the
+ * next synchronous line, but React runs an updater during the following
+ * render, so the toast always read "0 cells filled across 0 gun(s)". Returning
+ * the counts with the rows means the number shown is the number produced.
+ */
+export const generateSpareMatrix = ({
+  cols, rows, linesByGun, makeId,
+}: {
+  cols: any[];
+  rows: any[];
+  linesByGun: Map<string, SpareBomItem[]>;
+  makeId?: () => string;
+}): SpareGeneration => {
+  const rowList = Array.isArray(rows) ? rows : [];
+  const groups = spareColumnGroups(cols || []);
+  const matchesByRow = rowList.map((r) => {
+    const lines = linesByGun.get(String(r?.gun_no || "").toUpperCase()) || [];
+    if (!lines.length) return null;
+    const lineIndex = new Map<SpareBomItem, number>(lines.map((l, i) => [l, i]));
+    const out: Record<string, Array<{ part_no: any; part_name: any; material: any; line: number }>> = {};
+    for (const g of groups) {
+      if (g.locked) continue;
+      out[g.key] = matchSpareItems(lines, g.name).map((it) => ({
+        part_no: it.part_no, part_name: it.part_name, material: it.material, line: lineIndex.get(it) ?? 0,
+      }));
+    }
+    return out;
+  });
+  return planSpareColumns({ cols: cols || [], rows: rowList, matchesByRow, makeId }) as SpareGeneration;
+};
+
+/**
+ * Row-level view of generateSpareMatrix for callers that only hold column
+ * names (kept for compatibility). A category with 2+ part numbers comes back
+ * split into CAT-1, CAT-2 ... keys, exactly as the worksheet generates it.
  */
 export const computeAutoFill = (
   rows: any[],
@@ -389,24 +463,7 @@ export const computeAutoFill = (
   linesByGun: Map<string, SpareBomItem[]>,
   lockedCols: Set<string> = new Set(),
 ): AutoFillOutcome => {
-  let filled = 0;
-  let matchedGuns = 0;
-  let emptyGuns = 0;
-  const next = (rows || []).map((r) => {
-    const lines = linesByGun.get(String(r?.gun_no || "").toUpperCase()) || [];
-    if (!lines.length) { emptyGuns += 1; return r; }
-    const matched = matchSpares(lines, colNames);
-    const values = { ...((r && r.values) || {}) };
-    let any = false;
-    (colNames || []).forEach((col) => {
-      if (lockedCols.has(col)) return;
-      const val = matched[col];
-      // Only a genuine change counts — re-running auto-fill on an already
-      // filled matrix should report 0, not the whole grid again.
-      if (val && values[col] !== val) { values[col] = val; filled += 1; any = true; }
-    });
-    if (any) matchedGuns += 1;
-    return { ...r, values };
-  });
-  return { rows: next, filled, matchedGuns, emptyGuns };
+  const cols = (colNames || []).map((n) => ({ id: n, col_name: n, col_type: isConsumableCol(n) ? "consumable" : "spare", locked: lockedCols.has(n) }));
+  const out = generateSpareMatrix({ cols, rows: rows || [], linesByGun });
+  return { rows: out.rows, filled: out.filled, matchedGuns: out.matchedGuns, emptyGuns: out.emptyGuns };
 };

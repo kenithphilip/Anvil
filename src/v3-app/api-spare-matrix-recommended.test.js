@@ -163,3 +163,50 @@ describe("recommended bulk auto-fill", () => {
     }
   });
 });
+
+// Spare matrix iteration (docs/SPARE_MATRIX_ITERATION.md): a category split
+// into ADAPTER-1 / ADAPTER-2 (one part number per column) must produce the
+// SAME Recommended rows as the unsplit column did: description = category,
+// installed_qty = COUNT of guns, human edits carried over.
+describe("recompute_recommended with split columns", () => {
+  const splitStore = (recommended) => ({
+    spare_matrix: [{ id: "m2", tenant_id: "t-1" }],
+    spare_matrix_columns: [
+      { id: "s1", tenant_id: "t-1", matrix_id: "m2", col_name: "ADAPTER-1", category: "consumable" },
+      { id: "s2", tenant_id: "t-1", matrix_id: "m2", col_name: "ADAPTER-2", category: "consumable" },
+      { id: "s3", tenant_id: "t-1", matrix_id: "m2", col_name: "M-8", category: "spare" },
+    ],
+    spare_matrix_rows: [
+      { id: "q1", tenant_id: "t-1", matrix_id: "m2", position: 0, gun_no: "G1", spare_values: { "ADAPTER-1": "PN-1001", "ADAPTER-2": "PN-1002", "M-8": "BLT-1" } },
+      { id: "q2", tenant_id: "t-1", matrix_id: "m2", position: 1, gun_no: "G2", spare_values: { "ADAPTER-1": "PN-1001" } },
+      // A stray duplicate of PN-1001 in the other split column still counts G3 once.
+      { id: "q3", tenant_id: "t-1", matrix_id: "m2", position: 2, gun_no: "G3", spare_values: { "ADAPTER-1": "PN-1001", "ADAPTER-2": "PN-1001" } },
+    ],
+    recommended_spares: recommended,
+  });
+
+  it("reports the category, counts guns once, and keeps edits made before the split", async () => {
+    // Edited while ADAPTER was still ONE column.
+    H.store = splitStore([{ id: "pre", tenant_id: "t-1", matrix_id: "m2", part_no: "PN-1001", description: "ADAPTER", recommended_qty: 40, priority: "High", lead_time_days: "6 weeks", installed_qty: 0 }]);
+    const out = await run(recompute, { method: "POST", query: { id: "m2" } });
+    expect(out.statusCode).toBe(200);
+    const byKey = Object.fromEntries(out.body.recommended.map((r) => [r.description + "|" + r.part_no, r]));
+    expect(Object.keys(byKey).sort()).toEqual(["ADAPTER|PN-1001", "ADAPTER|PN-1002", "M-8|BLT-1"]);
+    expect(byKey["ADAPTER|PN-1001"].installed_qty).toBe(3);      // G1, G2, G3 (G3 once)
+    expect(byKey["ADAPTER|PN-1002"].installed_qty).toBe(1);
+    expect(byKey["ADAPTER|PN-1001"]).toMatchObject({ id: "pre", recommended_qty: 40, priority: "High", lead_time_days: "6 weeks" });
+    // A hand-made column that merely ends in "-<digit>" keeps its own name.
+    expect(byKey["M-8|BLT-1"].installed_qty).toBe(1);
+  });
+
+  it("a lone split column keeps edits made under its category", async () => {
+    H.store = splitStore([{ id: "pre", tenant_id: "t-1", matrix_id: "m2", part_no: "PN-1002", description: "ADAPTER", recommended_qty: 7, installed_qty: 0 }]);
+    H.store.spare_matrix_columns = H.store.spare_matrix_columns.filter((c) => c.col_name !== "ADAPTER-1");
+    H.store.spare_matrix_rows = [{ id: "q1", tenant_id: "t-1", matrix_id: "m2", position: 0, gun_no: "G1", spare_values: { "ADAPTER-2": "PN-1002" } }];
+    const out = await run(recompute, { method: "POST", query: { id: "m2" } });
+    const rows = out.body.recommended.filter((r) => r.part_no === "PN-1002");
+    // Replaced, not duplicated: the old row was not quoted.
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ description: "ADAPTER-2", recommended_qty: 7 });
+  });
+});

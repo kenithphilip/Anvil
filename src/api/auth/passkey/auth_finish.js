@@ -98,7 +98,7 @@ export default async function handler(req, res) {
     // credential id used).
     const credIdB64url = response.id;
     const { data: cred } = await svc.from("user_passkeys")
-      .select("id, credential_id, public_key, counter")
+      .select("id, credential_id, public_key, counter, transports")
       .eq("user_id", user.id)
       .eq("credential_id", credIdB64url)
       .maybeSingle();
@@ -112,10 +112,15 @@ export default async function handler(req, res) {
       expectedChallenge: (challenge) => sha256Hex(challenge) === pending.pending_challenge_hash,
       expectedOrigin: expectedOrigin(),
       expectedRPID: rpIdFromOrigin(),
-      authenticator: {
-        credentialID: Buffer.from(cred.credential_id, "base64url"),
-        credentialPublicKey: Buffer.from(cred.public_key, "base64"),
+      // Since @simplewebauthn/server v11 the stored credential goes in
+      // as `credential` = { id (base64url), publicKey (COSE bytes),
+      // counter, transports }. The v10 name `authenticator` is ignored,
+      // which left `credential` undefined and threw on every sign-in.
+      credential: {
+        id: cred.credential_id,
+        publicKey: new Uint8Array(Buffer.from(cred.public_key, "base64")),
         counter: Number(cred.counter || 0),
+        transports: cred.transports?.length ? cred.transports : undefined,
       },
       // Hardened May 2026 (security audit M1). Phishing-resistance
       // is the whole point of passkeys; we require the authenticator

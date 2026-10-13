@@ -13,6 +13,13 @@
 //   beforeEach(() => { H.db = createMemoryDb({ opportunities: [...] }); });
 //
 // failRead[table] makes every read of that table return that error.
+//
+// Opt-in, for handlers whose select strings matter: createMemoryDb(tables,
+// users, { project: true }) applies the select list to reads the way
+// PostgREST does (plain columns, alias:column, and JSON paths with -> and
+// ->>), so a misspelled column reads back undefined. Embedded resources are
+// not supported and throw. Off by default, so existing tests see whole rows.
+// Also: neq, not(col, "in", "(a,b)"), not(col, "is", null), and range.
 
 type Row = Record<string, any>;
 
@@ -23,13 +30,55 @@ export type MemoryDb = {
   svc: () => any;
 };
 
-export const createMemoryDb = (tables: Record<string, Row[]> = {}, users: Record<string, Row> = {}): MemoryDb => {
+const splitTop = (str: string): string[] => {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of str) {
+    if (ch === "(") depth += 1;
+    if (ch === ")") depth -= 1;
+    if (ch === "," && depth === 0) { out.push(cur.trim()); cur = ""; } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+};
+
+// A column or a JSON path ("result->salesOrder->>po") read off a row.
+const readPath = (row: Row, path: string): any => {
+  const parts = path.split(/(->>|->)/);
+  let v: any = row[parts[0]];
+  let asText = false;
+  for (let i = 1; i < parts.length; i += 2) {
+    v = v == null || typeof v !== "object" ? undefined : v[parts[i + 1]];
+    asText = parts[i] === "->>";
+  }
+  if (v === undefined) return parts.length > 1 ? null : undefined;
+  if (asText && v !== null) return typeof v === "object" ? JSON.stringify(v) : String(v);
+  return v;
+};
+
+const projectRow = (row: Row, cols: string): Row => {
+  const out: Row = {};
+  for (const item of splitTop(cols)) {
+    if (item === "*") { Object.assign(out, row); continue; }
+    if (item.includes("(")) throw new Error("memory db: embedded select " + item + " unsupported");
+    const i = item.indexOf(":");
+    const alias = i >= 0 ? item.slice(0, i).trim() : null;
+    const path = (i >= 0 ? item.slice(i + 1) : item).trim();
+    const key = alias || path.split(/->>|->/).pop()!;
+    const v = readPath(row, path);
+    if (v !== undefined) out[key] = v;
+  }
+  return out;
+};
+
+export const createMemoryDb = (tables: Record<string, Row[]> = {}, users: Record<string, Row> = {}, opts: { project?: boolean } = {}): MemoryDb => {
   const db: MemoryDb = { tables, users, failRead: {}, svc: () => null };
   let seq = 0;
 
   const from = (table: string) => {
     if (!db.tables[table]) db.tables[table] = [];
-    const st: any = { filters: [], mode: "select", patch: null, row: null, single: null, order: null, limit: null };
+    const st: any = { filters: [], mode: "select", patch: null, row: null, single: null, order: null, limit: null, cols: null, range: null };
     const matches = (r: Row) => st.filters.every((f: (r: Row) => boolean) => f(r));
     const run = () => {
       const ds = db.tables[table];
@@ -50,7 +99,9 @@ export const createMemoryDb = (tables: Record<string, Row[]> = {}, users: Record
         const { col, asc } = st.order;
         out.sort((a, b) => (a[col] < b[col] ? -1 : a[col] > b[col] ? 1 : 0) * (asc ? 1 : -1));
       }
+      if (st.range) out = out.slice(st.range[0], st.range[1] + 1);
       if (st.limit != null) out = out.slice(0, st.limit);
+      if (opts.project && st.mode === "select" && typeof st.cols === "string") out = out.map((r) => projectRow(r, st.cols));
       if (st.single === "one") {
         return out.length === 1
           ? { data: out[0], error: null }
@@ -60,8 +111,19 @@ export const createMemoryDb = (tables: Record<string, Row[]> = {}, users: Record
       return { data: out, error: null };
     };
     const b: any = {
-      select: () => b,
+      select: (cols?: string) => { if (st.mode === "select" && cols !== undefined) st.cols = cols; return b; },
       eq: (c: string, v: unknown) => { st.filters.push((r: Row) => r[c] === v); return b; },
+      neq: (c: string, v: unknown) => { st.filters.push((r: Row) => r[c] !== v); return b; },
+      not: (c: string, op: string, v: unknown) => {
+        if (op === "in") {
+          const banned = String(v).replace(/^\(|\)$/g, "").split(",").map((x) => x.trim());
+          st.filters.push((r: Row) => !banned.includes(String(r[c])));
+        } else if (op === "is") {
+          st.filters.push((r: Row) => (r[c] ?? null) !== v);
+        } else throw new Error("memory db: not(" + op + ") unsupported");
+        return b;
+      },
+      range: (from: number, to: number) => { st.range = [from, to]; return b; },
       in: (c: string, vs: unknown[]) => { st.filters.push((r: Row) => vs.includes(r[c])); return b; },
       is: (c: string, v: unknown) => { st.filters.push((r: Row) => (r[c] ?? null) === v); return b; },
       gte: (c: string, v: any) => { st.filters.push((r: Row) => r[c] >= v); return b; },

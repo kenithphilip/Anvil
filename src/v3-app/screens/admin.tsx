@@ -587,7 +587,7 @@ const WiredAdminCRUD = () => {
       const begin: any = await AnvilBackend?.auth?.passkeyRegisterBegin?.(passkeyLabel.trim() || null);
       // Lazy-load @simplewebauthn/browser to keep the main bundle small.
       const { startRegistration } = await import("@simplewebauthn/browser");
-      const att = await startRegistration(begin.options);
+      const att = await startRegistration({ optionsJSON: begin.options });
       await AnvilBackend?.auth?.passkeyRegisterFinish?.(begin.pending_id, att);
       flashOk("Passkey registered.");
       window.notifySuccess?.("Passkey registered", passkeyLabel || "Default");

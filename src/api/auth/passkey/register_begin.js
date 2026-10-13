@@ -12,7 +12,16 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../../_li
 import { resolveContext } from "../../_lib/auth.js";
 import { serviceClient } from "../../_lib/supabase.js";
 import { generateRegistrationOptions } from "@simplewebauthn/server";
+import { COSEALG } from "@simplewebauthn/server/helpers";
 import crypto from "node:crypto";
+
+// The COSE algorithms we offer, pinned. @simplewebauthn/server v14
+// puts ML-DSA-44 first whenever the runtime's WebCrypto supports it
+// (Node 24.7+ experimental, not Node 22). Unpinned, the offer would
+// change with the runtime, and a PQC credential enrolled on one
+// runtime could not be verified on another. register_finish passes
+// the same list to verifyRegistrationResponse.
+export const PASSKEY_ALG_IDS = [COSEALG.EdDSA, COSEALG.ES256, COSEALG.RS256];
 
 // Computes the relying-party id from APP_URL. Defaults to
 // "localhost" so dev works without env config.
@@ -70,6 +79,7 @@ export default async function handler(req, res) {
         userVerification: "preferred",
       },
       excludeCredentials,
+      supportedAlgorithmIDs: PASSKEY_ALG_IDS,
       timeout: 60_000,
     });
 

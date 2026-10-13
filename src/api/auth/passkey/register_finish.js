@@ -11,6 +11,7 @@ import { resolveContext } from "../../_lib/auth.js";
 import { serviceClient } from "../../_lib/supabase.js";
 import { verifyRegistrationResponse } from "@simplewebauthn/server";
 import { safeAwait } from "../../_lib/safe-thenable.js";
+import { PASSKEY_ALG_IDS } from "./register_begin.js";
 import crypto from "node:crypto";
 
 const rpIdFromOrigin = () => {
@@ -61,6 +62,7 @@ export default async function handler(req, res) {
       // authenticator to actually perform UV (biometric or PIN) so
       // the credential is phishing-resistant from day 1.
       requireUserVerification: true,
+      supportedAlgorithmIDs: PASSKEY_ALG_IDS,
     });
 
     if (!verification.verified || !verification.registrationInfo) {
@@ -68,9 +70,16 @@ export default async function handler(req, res) {
       return json(res, 400, { error: { code: "VERIFY_FAILED", message: "Could not verify registration." } });
     }
 
+    // Since @simplewebauthn/server v11 the new credential is
+    // registrationInfo.credential = { id, publicKey, counter, transports }.
+    // id is already a base64url string; publicKey is the COSE key bytes,
+    // stored as base64 and opaque to us (any algorithm fits). This read
+    // the v10 fields credentialID / credentialPublicKey, which v11
+    // removed, so every registration threw after a good verify.
     const info = verification.registrationInfo;
-    const credentialIdB64 = Buffer.from(info.credentialID).toString("base64url");
-    const publicKeyB64 = Buffer.from(info.credentialPublicKey).toString("base64");
+    const credential = info.credential;
+    const credentialIdB64 = credential.id;
+    const publicKeyB64 = Buffer.from(credential.publicKey).toString("base64");
 
     // Replace the placeholder row with the real credential.
     await svc.from("user_passkeys").delete().eq("credential_id", pendingId);
@@ -78,8 +87,8 @@ export default async function handler(req, res) {
       user_id: ctx.user.id,
       credential_id: credentialIdB64,
       public_key: publicKeyB64,
-      counter: info.counter || 0,
-      transports: response.response?.transports || [],
+      counter: credential.counter || 0,
+      transports: credential.transports || response.response?.transports || [],
       label: pending.label || "Passkey",
       backup_eligible: info.credentialBackedUp || false,
       backup_state: info.credentialBackedUp || false,

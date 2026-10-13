@@ -189,7 +189,7 @@ const SignInScreen: React.FC = () => {
     try {
       const begin: any = await AnvilBackend?.auth?.passkeyAuthBegin?.(email.trim());
       const { startAuthentication } = await import("@simplewebauthn/browser");
-      const assertion = await startAuthentication(begin.options);
+      const assertion = await startAuthentication({ optionsJSON: begin.options });
       const resp: any = await AnvilBackend?.auth?.passkeyAuthFinish?.(email.trim(), begin.challenge_id, assertion);
       const accessToken = resp?.session?.access_token;
       if (!accessToken) throw new Error("No session returned after passkey verification");

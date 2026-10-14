@@ -31,16 +31,16 @@
 //   6. Places the wording on its page, and on the page's geometry when the
 //      PDF has a text layer (bbox_norm, for the hover highlight).
 //
-// Where it runs: after the server-side reconcile (order-reconcile.js), on the
-// cached text, inside a time budget, after the order is written. It never
-// throws to that caller. "PO terms not read" is an explicit outcome
-// (po_terms_status not_read), never an empty list that reads as "no
-// deviations".
+// Where it runs: inside the terms check (terms/check.js, section 5.4), which
+// runs after the server-side reconcile, after the order is written, inside
+// its own time budget. The check passes its deadline in, and the pass never
+// throws to it. "PO terms not read" is an explicit outcome (po_terms_status
+// not_read), never an empty list that reads as "no deviations".
 //
-// Where the clauses go: order_term_checks.po_clauses (migration 250), one row
-// per run, the previous row superseded. The comparator (plan PR 12) reads
-// them from there. Before migration 250 is applied the store is refused, the
-// run records a terms_pass_not_stored event, and nothing throws.
+// Where the clauses go: the pass stores nothing. It returns the
+// order_term_checks columns (po_terms_status, po_clauses, ...), and the check
+// writes them as one row WITH its flags, so a current check never stands
+// without its flags. The pass only reads earlier rows, to reuse clauses.
 //
 // What it never does: send T&C text anywhere while the tenant's mode is off,
 // write clause wording to an event or a log line, or show a clause it could
@@ -49,7 +49,6 @@
 import { createHash } from "node:crypto";
 import { callAnthropic, cacheableSystem, cacheableTools } from "../anthropic.js";
 import { callGemini, parseStructuredGemini } from "../gemini.js";
-import { recordEvent } from "../audit.js";
 import { allowedToCall, recordCall } from "../cost_guard.js";
 import { readCircuitBreakers, claimHalfOpenTrial, noteCircuitOutcome } from "../docai/circuit-breaker.js";
 import { geminiApiKey } from "../docai/gemini.js";
@@ -60,19 +59,19 @@ import { extractOfficeText, isDocx, isRtf } from "../docai/office.js";
 import { buildBlockIndex, findEvidenceForLine } from "../docai/bbox-evidence.js";
 import { CLAUSE_KEYS, CLAUSE_TAXONOMY, valueFitsShape } from "./taxonomy.js";
 import { NORMALIZERS, normalizeClause } from "./normalize.js";
-import { readTermsCheckMode, termsCheckRuns, isMissingTermsSchema } from "./mode.js";
+import { readTermsCheckMode, termsCheckRuns } from "./mode.js";
 
 // ── limits ──────────────────────────────────────────────────────────────────
 
 export const TERMS_PROMPT_NAME = "terms_pass";
 
-// The wall-clock budget for one run, from the reconcile trigger. The order is
-// already written by then; this caps how long that caller waits. Claude gets
-// one full attempt (callAnthropic caps an attempt at 15s) and Gemini what is
-// left.
+// The wall-clock budget for one read: one full Claude attempt (callAnthropic
+// caps an attempt at 15 s) and the Gemini fallback behind it. The terms check
+// sizes its own budget on this and passes the pass a deadline; a caller that
+// passes none gets this budget less STORE_MARGIN_MS.
 export const TERMS_PASS_BUDGET_MS = Math.max(5_000, Number(process.env.TERMS_PASS_BUDGET_MS) || 25_000);
-// Held back at the end of the budget to store the check and record the event.
-const STORE_MARGIN_MS = 2_500;
+// Held back at the end of the budget for the comparison and the writes.
+export const STORE_MARGIN_MS = 2_500;
 // What a Claude attempt leaves for the Gemini fallback behind it.
 const GEMINI_RESERVE_MS = 8_000;
 // Below this a provider call cannot finish, so it is not started.
@@ -1176,8 +1175,8 @@ const readOrderRow = async (svc, ctx, orderId) => {
   return q.data || null;
 };
 
-// The pass for one document, with the tenant's settings already read. Shared
-// by runTermsPass and runOrderTermsPass. Stores nothing.
+// The pass for one document, with the tenant's settings already read. Stores
+// nothing.
 const passFor = async ({ svc, ctx, settings, order, documentId, kind, previous, deadlineAt }) => {
   const src = await resolveTermsText(svc, ctx, { order, documentId });
   const prompt = promptChoice(settings, ctx.tenantId, src.document?.id || order?.id || null);
@@ -1230,164 +1229,6 @@ export const runTermsPass = async ({
     console.warn("[terms-pass] failed: " + (err?.message || err));
     return { ...RESULT_BASE, po_terms_status: "not_read", reason: "pass_failed", error: err?.message || String(err) };
   }
-};
-
-// ── storing ─────────────────────────────────────────────────────────────────
-
-export const TERMS_CHECK_TRIGGERS = Object.freeze(["reconcile", "manual", "quote_attached"]);
-
-// One order_term_checks row for this run; the order's previous rows are
-// superseded. Never throws.
-//
-// Returns { stored: true, check_id } or { stored: false, reason, error }.
-// reason migration_250_missing: the table (or a column) is not there yet.
-export const storeTermsCheck = async (svc, ctx, { orderId, trigger, result }) => {
-  if (!ctx?.tenantId || !orderId) return { stored: false, reason: "no_tenant_or_order" };
-  const row = {
-    tenant_id: ctx.tenantId,
-    order_id: orderId,
-    trigger: TERMS_CHECK_TRIGGERS.includes(trigger) ? trigger : "reconcile",
-    po_document_id: result.po_document_id || null,
-    po_text_source: result.po_text_source || "none",
-    po_terms_status: ["read", "partial", "not_read"].includes(result.po_terms_status) ? result.po_terms_status : "not_read",
-    po_clauses: Array.isArray(result.po_clauses) ? result.po_clauses : [],
-    segmenter: result.segmenter || null,
-    dropped_unverified: Number(result.dropped_unverified) || 0,
-    prompt_version: result.prompt_version || null,
-    model: result.model || null,
-    created_by: ctx.user?.id || null,
-  };
-  try {
-    const ins = await svc.from("order_term_checks").insert(row).select("id").single();
-    if (ins.error) {
-      return { stored: false, reason: isMissingTermsSchema(ins.error) ? "migration_250_missing" : "store_failed", error: ins.error.message || null };
-    }
-    const checkId = ins.data?.id || null;
-    // Supersede the order's earlier checks. A failure here leaves two current
-    // rows, and a reader takes the newest, so it is noted and not fatal.
-    let q = svc.from("order_term_checks")
-      .update({ superseded_at: new Date().toISOString() })
-      .eq("tenant_id", ctx.tenantId).eq("order_id", orderId).is("superseded_at", null);
-    if (checkId) q = q.neq("id", checkId);
-    const sup = await q;
-    return { stored: true, check_id: checkId, ...(sup?.error ? { supersede_error: sup.error.message } : {}) };
-  } catch (err) {
-    const reason = isMissingTermsSchema(err) ? "migration_250_missing" : "store_failed";
-    return { stored: false, reason, error: err?.message || String(err) };
-  }
-};
-
-const eventOf = async (ctx, orderId, eventType, detail, started) => {
-  try {
-    await recordEvent(ctx, {
-      caseId: orderId, eventType, objectType: "order", objectId: orderId,
-      detail, durationMs: started ? Date.now() - started : null,
-    });
-  } catch { /* the console line the caller writes is the fallback record */ }
-};
-
-// Counts and ids only: no clause wording in an event (section 12.4).
-const eventDetail = (result, extra = {}) => ({
-  mode: result.mode,
-  po_terms_status: result.po_terms_status,
-  reason: result.reason || null,
-  source: result.po_text_source || null,
-  document_id: result.po_document_id || null,
-  segmenter: result.segmenter || null,
-  segments: result.segments || 0,
-  clauses: Array.isArray(result.po_clauses) ? result.po_clauses.length : 0,
-  dropped_unverified: result.dropped_unverified || 0,
-  dropped_invalid: result.dropped_invalid || 0,
-  provider: result.provider || null,
-  model: result.model || null,
-  prompt_version: result.prompt_version || null,
-  cached: !!result.cached,
-  ...extra,
-});
-
-// The server trigger at the end of the reconcile (order-reconcile.js), until
-// the terms check lands.
-//
-// INTERIM. The design runs this pass inside the terms check (plan PR 12,
-// section 5.4), which writes one order_term_checks row WITH its flags. When
-// that check is merged, its own trigger replaces the call to this function in
-// autoReconcileOrder, and it reaches the pass through runTermsPass. The two
-// must never both write: a current check with no flags would read as "no
-// deviations". Until then this stores the PO side alone, so a tenant in
-// shadow mode builds the record the precision read-out needs.
-//
-// It never throws. It runs only while the tenant's mode is shadow or on, and
-// within a time budget; a run that outlives the budget is recorded and left
-// to finish if the function lives that long.
-//
-// Returns { status, mode, shadow, check_id?, result? }:
-//   off          the mode is off (or migration 250 is not applied, reason
-//                migration_250_missing): nothing was read or sent
-//   stored       one order_term_checks row written; result.po_terms_status is
-//                read, partial or not_read
-//   not_stored   the run finished and the row could not be written (reason
-//                migration_250_missing or store_failed); a
-//                terms_pass_not_stored event says so
-//   timeout | failed | skipped
-//
-// shadow is true in shadow mode: the row is stored the same way, and the
-// comparator and the Terms tab read the mode to keep the flags from
-// engineers (section 4.5).
-export const runOrderTermsPass = async (svc, ctx, orderId, opts = {}) => {
-  const trigger = TERMS_CHECK_TRIGGERS.includes(opts.trigger) ? opts.trigger : "reconcile";
-  if (!ctx?.tenantId || !orderId) return { status: "skipped", reason: "no tenant or order" };
-  const started = Date.now();
-  const budgetMs = opts.budgetMs != null ? Math.max(1_000, Number(opts.budgetMs)) : TERMS_PASS_BUDGET_MS;
-
-  let m;
-  try { m = await readTermsCheckMode(svc, ctx.tenantId); } catch { m = { mode: "off", migrated: null }; }
-  if (!termsCheckRuns(m.mode)) {
-    return { status: "off", mode: "off", shadow: false, reason: m.migrated === false ? "migration_250_missing" : null };
-  }
-  const mode = m.mode;
-  const shadow = mode === "shadow";
-
-  const work = (async () => {
-    const order = await readOrderRow(svc, ctx, orderId);
-    if (!order) return { status: "skipped", mode, shadow, reason: "order_not_found" };
-    const pass = await passFor({
-      svc, ctx, settings: m.settings || {}, order, kind: "po",
-      deadlineAt: started + budgetMs - STORE_MARGIN_MS,
-    });
-    const result = { ...pass, mode, shadow };
-
-    const store = await storeTermsCheck(svc, ctx, { orderId, trigger, result });
-    if (!store.stored) {
-      await eventOf(ctx, orderId, "terms_pass_not_stored", eventDetail(result, { trigger, not_stored: store.reason }), started);
-      if (store.reason !== "migration_250_missing") {
-        console.warn("[terms-pass] check not stored for order " + orderId + ": " + (store.error || store.reason));
-      }
-      return { status: "not_stored", mode, shadow, reason: store.reason, result };
-    }
-    await eventOf(ctx, orderId, "terms_pass_stored", eventDetail(result, { trigger, check_id: store.check_id }), started);
-    return { status: "stored", mode, shadow, check_id: store.check_id, result };
-  })();
-
-  let timer = null;
-  let out;
-  try {
-    const late = new Promise((resolve) => { timer = setTimeout(() => resolve({ status: "timeout" }), budgetMs); });
-    out = await Promise.race([work, late]);
-  } catch (err) {
-    out = { status: "failed", error: err?.message || String(err) };
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-  if (out.status === "timeout" || out.status === "failed") {
-    // The run may still finish; a late rejection must not go unhandled.
-    work.catch(() => {});
-    console.warn("[terms-pass] " + out.status + " for order " + orderId + (out.error ? ": " + out.error : ""));
-    await eventOf(ctx, orderId, "terms_pass_" + out.status, {
-      mode, trigger, budget_ms: budgetMs, error: out.error || null, severity: "warn",
-    }, started);
-    return { ...out, mode, shadow };
-  }
-  return out;
 };
 
 export const __test = { linesOf, pageOfSpan, geometryPages, bboxOn, placeClauses, keywordHits };

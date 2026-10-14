@@ -130,10 +130,9 @@ vi.mock("../api/_lib/docai/text_layer.js", async (orig) => ({
 }));
 
 const {
-  runOrderTermsPass, runTermsPass, verifyQuote, segmentTerms, buildClauses, TERMS_RULE, TERMS_TOOL, BODY_TEXT_CAP,
+  runTermsPass, verifyQuote, segmentTerms, buildClauses, TERMS_RULE, TERMS_TOOL, BODY_TEXT_CAP,
 } = await import("../api/_lib/terms/terms-pass.js");
-const { autoReconcileOrder } = await import("../api/_lib/order-reconcile.js");
-const { termsModeOf, termsCheckRuns, isMissingTermsSchema } = await import("../api/_lib/terms/mode.js");
+const { termsModeOf, termsCheckRuns, readTermsCheckMode } = await import("../api/_lib/terms/mode.js");
 const { toGeminiSchema } = await import("../api/_lib/gemini.js");
 const { __resetCircuitBreakers } = await import("../api/_lib/docai/circuit-breaker.js");
 
@@ -207,7 +206,6 @@ const GOOD = [
 
 const checks = () => H.db.tables.order_term_checks;
 const calls = (provider) => H.fetches.filter((f) => !provider || f.provider === provider);
-const eventsOf = (type) => H.events.filter((e) => e.eventType === type);
 
 beforeAll(() => {
   process.env.ANTHROPIC_API_KEY = "test-anthropic-key";
@@ -305,27 +303,26 @@ describe("segmentTerms", () => {
   });
 });
 
-// ── what the pass stores ─────────────────────────────────────────────────────
+
+// ── what the pass returns ────────────────────────────────────────────────────
+//
+// The pass stores nothing: the terms check (check.js) writes its result as one
+// order_term_checks row with the flags. api-terms-e2e.test.js covers that.
+
+const pass = (over = {}) => runTermsPass({ svc: H.db, ctx, orderId: ORDER, ...over });
 
 describe("the verbatim check in the pass", () => {
-  it("drops an invented clause and counts it, and stores only the clauses the PO states", async () => {
+  it("drops an invented clause and counts it, and returns only the clauses the PO states", async () => {
     H.responders.claude = claudeSays({ clauses: [
       ...GOOD,
       { clause: "payment_terms", segment: "S1", quote: "Payment: 120 days from the date of invoice.", value: { days: 120 }, confidence: 0.95 },
       { clause: "one_sided", segment: "S1", quote: "The seller accepts unlimited liability for all losses.", value: { subtype: "unlimited_liability" }, confidence: 0.9 },
     ] });
-    const out = await runOrderTermsPass(H.db, ctx, ORDER);
-    expect(out.status).toBe("stored");
-    const row = checks()[0];
-    expect(row.po_terms_status).toBe("read");
-    expect(row.dropped_unverified).toBe(2);
-    expect(row.po_clauses.map((c) => c.text)).toEqual([PAYMENT, WARRANTY, JURISDICTION]);
-    expect(row.po_clauses.every((c) => c.verified === true && c.provenance === "po_text" && c.side === "po")).toBe(true);
-    // The hallucination rate is on the event; no wording is.
-    const ev = eventsOf("terms_pass_stored")[0];
-    expect(ev.detail).toMatchObject({ dropped_unverified: 2, clauses: 3, mode: "on", po_terms_status: "read" });
-    const logged = JSON.stringify(H.events);
-    for (const w of ["Exampleville", "60 days", "unlimited liability", "120 days"]) expect(logged).not.toContain(w);
+    const r = await pass();
+    expect(r).toMatchObject({ po_terms_status: "read", dropped_unverified: 2, mode: "on" });
+    expect(r.po_clauses.map((c) => c.text)).toEqual([PAYMENT, WARRANTY, JURISDICTION]);
+    expect(r.po_clauses.every((c) => c.verified === true && c.provenance === "po_text" && c.side === "po")).toBe(true);
+    expect(checks()).toHaveLength(0);
   });
 
   it("drops a clause whose quote is in no segment the model was sent", () => {
@@ -345,8 +342,7 @@ describe("structured values", () => {
       { clause: "payment_terms", segment: "S1", quote: PAYMENT, value: { days: 90, basis: "invoice", advance_pct: 10 }, confidence: 0.9 },
       { clause: "warranty", segment: "S1", quote: WARRANTY, value: { months: 18, from: "delivery" }, confidence: 0.9 },
     ] });
-    await runOrderTermsPass(H.db, ctx, ORDER);
-    const [pay, war] = checks()[0].po_clauses;
+    const [pay, war] = (await pass()).po_clauses;
     expect(pay.value).toEqual({ days: 60, basis: "grn", advance_pct: 0, instrument: null });
     expect(pay.confidence).toBeLessThan(0.9);
     // An agreeing hint leaves the model's confidence as it was.
@@ -360,18 +356,13 @@ describe("structured values", () => {
 // ── the mode ─────────────────────────────────────────────────────────────────
 
 describe("the mode", () => {
-  it("off makes no call, reads no PO text and stores nothing", async () => {
+  it("off makes no call and reads no PO text", async () => {
     seed({ mode: "off" });
-    const out = await runOrderTermsPass(H.db, ctx, ORDER);
-    expect(out).toMatchObject({ status: "off", mode: "off" });
+    const r = await pass();
+    expect(r).toMatchObject({ status: "off", mode: "off" });
     expect(calls()).toHaveLength(0);
     expect(H.db.reads).not.toContain("extraction_text_layer");
     expect(H.db.reads).not.toContain("documents");
-    expect(checks()).toHaveLength(0);
-    // The per-document entry point is gated the same way.
-    const direct = await runTermsPass({ svc: H.db, ctx, documentId: DOC });
-    expect(direct.status).toBe("off");
-    expect(calls()).toHaveLength(0);
   });
 
   it("reads the mode off the settings row, and anything but shadow or on is off", () => {
@@ -384,35 +375,34 @@ describe("the mode", () => {
     expect(["off", "shadow", "on", "bogus", "", null, undefined].filter(termsCheckRuns)).toEqual(["shadow", "on"]);
   });
 
-  it("knows a missing migration 250 from any other database error", () => {
-    expect(isMissingTermsSchema({ code: "42P01", message: "relation \"public.order_term_checks\" does not exist" })).toBe(true);
-    expect(isMissingTermsSchema({ code: "PGRST205", message: "Could not find the table 'public.order_term_checks' in the schema cache" })).toBe(true);
-    expect(isMissingTermsSchema({ message: "column tenant_settings.terms_check_mode does not exist" })).toBe(true);
-    expect(isMissingTermsSchema({ code: "42P01", message: "relation \"public.some_other_table\" does not exist" })).toBe(false);
-    expect(isMissingTermsSchema({ code: "23503", message: "insert on order_term_checks violates foreign key constraint" })).toBe(false);
-    expect(isMissingTermsSchema(null)).toBe(false);
+  it("knows a missing migration 250 from any other refusal of the settings read", async () => {
+    H.fail.tenant_settings = { code: "42703", message: "column tenant_settings.terms_check_mode does not exist" };
+    expect(await readTermsCheckMode(H.db, TENANT)).toMatchObject({ mode: "off", migrated: false });
+    H.fail.tenant_settings = { code: "42703", message: "column tenant_settings.some_other_flag does not exist" };
+    expect(await readTermsCheckMode(H.db, TENANT)).toMatchObject({ mode: "off", migrated: null });
+    H.fail = {};
+    expect(await readTermsCheckMode(H.db, null)).toMatchObject({ mode: "off", error: "no tenant" });
   });
 
   it("an unknown mode value is off", async () => {
     seed({ settings: { tenant_id: TENANT, terms_check_mode: "ON_PLEASE" } });
-    expect((await runOrderTermsPass(H.db, ctx, ORDER)).status).toBe("off");
+    expect((await pass()).status).toBe("off");
     expect(calls()).toHaveLength(0);
   });
 
-  it("shadow runs, stores the clauses, and marks the result as shadow", async () => {
+  it("a settings row with no terms_check_mode column is off, and sends nothing", async () => {
+    seed({ settings: { tenant_id: TENANT, docai_daily_limits: null } });
+    expect(await pass()).toMatchObject({ status: "off", reason: "migration_250_missing" });
+    expect(calls()).toHaveLength(0);
+  });
+
+  it("shadow reads, and marks the result as shadow", async () => {
     seed({ mode: "shadow" });
-    const out = await runOrderTermsPass(H.db, ctx, ORDER);
-    expect(out).toMatchObject({ status: "stored", mode: "shadow", shadow: true });
-    expect(out.result).toMatchObject({ mode: "shadow", shadow: true, po_terms_status: "read" });
-    expect(checks()).toHaveLength(1);
-    expect(checks()[0]).toMatchObject({
-      id: out.check_id, po_terms_status: "read", trigger: "reconcile", created_by: USER,
-      po_document_id: DOC, po_text_source: "text_layer", segmenter: "headings", prompt_version: "terms_pass@v1",
-    });
-    expect(checks()[0].po_clauses).toHaveLength(3);
+    const r = await pass();
+    expect(r).toMatchObject({ mode: "shadow", shadow: true, po_terms_status: "read", po_document_id: DOC, po_text_source: "text_layer", segmenter: "headings", prompt_version: "terms_pass@v1" });
+    expect(r.po_clauses).toHaveLength(3);
     // Page 2 of the cached text, worked out from its page breakdown.
-    expect(checks()[0].po_clauses.map((c) => c.page)).toEqual([2, 2, 2]);
-    expect(eventsOf("terms_pass_stored")[0].detail.mode).toBe("shadow");
+    expect(r.po_clauses.map((c) => c.page)).toEqual([2, 2, 2]);
   });
 });
 
@@ -421,9 +411,9 @@ describe("the mode", () => {
 describe("the text it reads", () => {
   it("reads a PO that arrived as the body of an email", async () => {
     seed({ preflight: { source: "inbound_email", text: "Dear team, please supply as below.\n\n" + TERMS_PAGE } });
-    await runOrderTermsPass(H.db, ctx, ORDER);
-    expect(checks()[0]).toMatchObject({ po_terms_status: "read", po_text_source: "email_body", po_document_id: null });
-    expect(checks()[0].po_clauses.map((c) => c.text)).toEqual([PAYMENT, WARRANTY, JURISDICTION]);
+    const r = await pass();
+    expect(r).toMatchObject({ po_terms_status: "read", po_text_source: "email_body", po_document_id: null });
+    expect(r.po_clauses.map((c) => c.text)).toEqual([PAYMENT, WARRANTY, JURISDICTION]);
   });
 
   it("reads an office PO from the text the pipeline derives from it", async () => {
@@ -431,56 +421,57 @@ describe("the text it reads", () => {
     const rtfDoc = H.db.tables.documents.find((d) => d.id === DOC);
     Object.assign(rtfDoc, { filename: "po.rtf", mime_type: "application/rtf", storage_path: "po/test.rtf" });
     H.files["docs/po/test.rtf"] = Buffer.from("{\\rtf1\\ansi " + TERMS_PAGE.split("\n").join("\\par\n") + "}", "latin1");
-    await runOrderTermsPass(H.db, ctx, ORDER);
-    expect(checks()[0]).toMatchObject({ po_terms_status: "read", po_text_source: "office", po_document_id: DOC });
-    expect(checks()[0].po_clauses).toHaveLength(3);
+    const r = await pass();
+    expect(r).toMatchObject({ po_terms_status: "read", po_text_source: "office", po_document_id: DOC });
+    expect(r.po_clauses).toHaveLength(3);
   });
 });
 
 // ── PO terms not read ────────────────────────────────────────────────────────
 
 describe("PO terms not read", () => {
-  it("a scanned PO with no text is stored as not_read, and nothing is sent", async () => {
+  it("a scanned PO with no text is not_read, and nothing is sent", async () => {
     seed({ layers: [{ tenant_id: TENANT, document_id: DOC, text_status: "image_only", page_count: 3, char_count: 0, body_text: null, page_breakdown: [] }] });
-    const out = await runOrderTermsPass(H.db, ctx, ORDER);
-    expect(out.status).toBe("stored");
-    expect(checks()[0]).toMatchObject({ po_terms_status: "not_read", po_text_source: "none", po_document_id: DOC, po_clauses: [] });
+    const r = await pass();
+    expect(r).toMatchObject({ po_terms_status: "not_read", po_text_source: "none", po_document_id: DOC, po_clauses: [] });
     expect(calls()).toHaveLength(0);
   });
 
   it("an order with no PO document is not_read, never an empty read", async () => {
     seed({ preflight: { source: "api" } });
-    await runOrderTermsPass(H.db, ctx, ORDER);
-    expect(checks()[0]).toMatchObject({ po_terms_status: "not_read", po_text_source: "none", po_document_id: null });
+    expect(await pass()).toMatchObject({ po_terms_status: "not_read", po_text_source: "none", po_document_id: null });
   });
 
   it("an image-only T&C page with nothing found elsewhere is not_read, not a clean read", async () => {
     // Page 2 (the T&C) is an image: the text layer has nothing on it.
     seed({ layers: [textLayer([HEADER_PAGE, ""], { text_status: "mixed" })] });
     H.responders.claude = claudeSays({ clauses: [] });
-    await runOrderTermsPass(H.db, ctx, ORDER);
-    expect(checks()[0]).toMatchObject({ po_terms_status: "not_read", po_text_source: "text_layer", po_clauses: [] });
+    expect(await pass()).toMatchObject({ po_terms_status: "not_read", po_text_source: "text_layer", po_clauses: [] });
   });
 
   it("an image-only page beside terms that were read is a partial read", async () => {
     seed({ layers: [textLayer([HEADER_PAGE, TERMS_PAGE, ""], { text_status: "mixed" })] });
-    await runOrderTermsPass(H.db, ctx, ORDER);
-    expect(checks()[0].po_terms_status).toBe("partial");
-    expect(checks()[0].po_clauses).toHaveLength(3);
+    const r = await pass();
+    expect(r.po_terms_status).toBe("partial");
+    expect(r.po_clauses).toHaveLength(3);
   });
 
   it("a failed provider is not_read, not a read with no clauses", async () => {
     H.responders.claude = () => ({ status: 400, json: { error: { message: "refused" } } });
     H.responders.gemini = () => ({ status: 400, json: { error: { message: "refused" } } });
-    const out = await runOrderTermsPass(H.db, ctx, ORDER);
-    expect(out.result.reason).toBe("provider_failed");
-    expect(checks()[0]).toMatchObject({ po_terms_status: "not_read", po_clauses: [] });
+    expect(await pass()).toMatchObject({ po_terms_status: "not_read", reason: "provider_failed", po_clauses: [] });
+  });
+
+  it("a read that runs past its deadline is not_read", async () => {
+    // The deadline is already too close for any provider call to finish.
+    const r = await pass({ deadlineAt: Date.now() + 1_000 });
+    expect(r).toMatchObject({ po_terms_status: "not_read", reason: "provider_failed", po_clauses: [] });
+    expect(calls()).toHaveLength(0);
   });
 
   it("a document of another tenant is never read", async () => {
     seed({ preflight: { source_document_id: OTHER_DOC } });
-    await runOrderTermsPass(H.db, ctx, ORDER);
-    expect(checks()[0]).toMatchObject({ po_terms_status: "not_read", po_document_id: null });
+    expect(await pass()).toMatchObject({ po_terms_status: "not_read", po_document_id: null });
     expect(calls()).toHaveLength(0);
   });
 });
@@ -495,13 +486,12 @@ describe("a long PO", () => {
     const pages = Array.from({ length: 28 }, (_, i) => itemPage(i + 1));
     pages.push(TERMS_PAGE, "Authorised signatory\nFor Example Components Pvt Ltd");
     seed({ layers: [textLayer(pages)] });
-    await runOrderTermsPass(H.db, ctx, ORDER);
+    const r = await pass();
     const sent = calls("claude")[0].body.messages[0].content[0].text;
     expect(sent).toContain("SEGMENT S1 (page 29)");
     expect(sent).toContain(PAYMENT);
     expect(sent).not.toContain("Test part 3-1");
-    const pay = checks()[0].po_clauses.find((c) => c.clause === "payment_terms");
-    expect(pay.page).toBe(29);
+    expect(r.po_clauses.find((c) => c.clause === "payment_terms").page).toBe(29);
   });
 
   it("knows the cached text's cap", async () => {
@@ -525,13 +515,12 @@ describe("a long PO", () => {
         { index: 59, width: 600, height: 800, blocks: TERMS_PAGE.split("\n").map((t, k) => block(t, 100 + k * 20)) },
       ],
     };
-    await runOrderTermsPass(H.db, ctx, ORDER);
+    const r = await pass();
     const sent = calls("claude")[0].body.messages[0].content[0].text;
     expect(sent).toContain("SEGMENT S1 (page 60)");
     expect(sent).toContain(PAYMENT);
-    const row = checks()[0];
-    expect(row.po_terms_status).toBe("read");
-    const pay = row.po_clauses.find((c) => c.clause === "payment_terms");
+    expect(r.po_terms_status).toBe("read");
+    const pay = r.po_clauses.find((c) => c.clause === "payment_terms");
     expect(pay.page).toBe(60);
     // The payment line is the second block on that page: y 120..132 of 800.
     expect(pay.bbox_norm).toEqual([0.1, 0.15, 0.9, 0.165]);
@@ -543,7 +532,7 @@ describe("a long PO", () => {
 describe("the Gemini fallback", () => {
   it("is asked with the same rule string and the same tool schema as Claude", async () => {
     H.responders.claude = () => ({ status: 400, json: { type: "error", error: { type: "invalid_request_error", message: "test refusal" } } });
-    await runOrderTermsPass(H.db, ctx, ORDER);
+    const r = await pass();
     const claudeReq = calls("claude")[0].body;
     const geminiReq = calls("gemini")[0].body;
     expect(claudeReq.system.map((b) => b.text)).toContain(TERMS_RULE);
@@ -552,69 +541,22 @@ describe("the Gemini fallback", () => {
     expect(geminiReq.generationConfig.responseSchema).toEqual(toGeminiSchema(TERMS_TOOL.input_schema));
     expect(geminiReq.contents[0].parts[0].text).toBe(claudeReq.messages[0].content[0].text);
     // And what it returned went through the same verification.
-    const row = checks()[0];
-    expect(row.po_terms_status).toBe("read");
-    expect(row.model).toMatch(/^gemini/);
-    expect(row.po_clauses.map((c) => c.text)).toEqual([PAYMENT, WARRANTY, JURISDICTION]);
+    expect(r.po_terms_status).toBe("read");
+    expect(r.model).toMatch(/^gemini/);
+    expect(r.po_clauses.map((c) => c.text)).toEqual([PAYMENT, WARRANTY, JURISDICTION]);
   });
 
   it("is not asked when Claude answers", async () => {
-    await runOrderTermsPass(H.db, ctx, ORDER);
+    const r = await pass();
     expect(calls("claude")).toHaveLength(1);
     expect(calls("gemini")).toHaveLength(0);
-    expect(checks()[0].model).toMatch(/^claude/);
-  });
-});
-
-// ── before migration 250 ─────────────────────────────────────────────────────
-
-describe("a database without migration 250", () => {
-  it("records 'not stored: migration 250 missing' and does not throw", async () => {
-    const missing = { code: "42P01", message: "relation \"public.order_term_checks\" does not exist" };
-    H.fail["order_term_checks:insert"] = missing;
-    H.fail["order_term_checks:select"] = missing;
-    const out = await runOrderTermsPass(H.db, ctx, ORDER);
-    expect(out).toMatchObject({ status: "not_stored", reason: "migration_250_missing" });
-    expect(out.result.po_clauses).toHaveLength(3);
-    const ev = eventsOf("terms_pass_not_stored");
-    expect(ev).toHaveLength(1);
-    expect(ev[0].detail).toMatchObject({ not_stored: "migration_250_missing", clauses: 3 });
-  });
-
-  it("reads a settings row with no terms_check_mode column as off, and sends nothing", async () => {
-    seed({ settings: { tenant_id: TENANT, docai_daily_limits: null } });
-    const out = await runOrderTermsPass(H.db, ctx, ORDER);
-    expect(out).toMatchObject({ status: "off", reason: "migration_250_missing" });
-    expect(calls()).toHaveLength(0);
-  });
-
-  it("does not swallow an unrelated store failure as a missing migration", async () => {
-    H.fail["order_term_checks:insert"] = { code: "23503", message: "insert violates foreign key constraint on orders" };
-    const out = await runOrderTermsPass(H.db, ctx, ORDER);
-    expect(out).toMatchObject({ status: "not_stored", reason: "store_failed" });
-  });
-});
-
-// ── re-runs ──────────────────────────────────────────────────────────────────
-
-describe("a re-run on the same text", () => {
-  it("reuses the stored clauses without a call, and supersedes the previous check", async () => {
-    await runOrderTermsPass(H.db, ctx, ORDER);
-    expect(calls()).toHaveLength(1);
-    const second = await runOrderTermsPass(H.db, ctx, ORDER, { trigger: "manual" });
-    expect(calls()).toHaveLength(1);
-    expect(second.result.cached).toBe(true);
-    const [first, latest] = checks();
-    expect(first.superseded_at).toBeTruthy();
-    expect(latest).toMatchObject({ trigger: "manual", po_terms_status: "read" });
-    expect(latest.superseded_at ?? null).toBeNull();
-    expect(latest.po_clauses).toEqual(first.po_clauses);
+    expect(r.model).toMatch(/^claude/);
   });
 });
 
 // ── the entry the terms check calls ──────────────────────────────────────────
 
-describe("runTermsPass, as the terms check (plan PR 12) calls it", () => {
+describe("runTermsPass, as the terms check (check.js) calls it", () => {
   const call = (over = {}) => runTermsPass({ svc: H.db, ctx, orderId: ORDER, documentId: DOC, kind: "po", mode: "on", previous: null, ...over });
 
   it("returns the order_term_checks columns and stores nothing", async () => {
@@ -626,7 +568,6 @@ describe("runTermsPass, as the terms check (plan PR 12) calls it", () => {
     expect(r.model).toMatch(/^claude/);
     expect(r.po_clauses.map((c) => c.text)).toEqual([PAYMENT, WARRANTY, JURISDICTION]);
     expect(checks()).toHaveLength(0);
-    expect(eventsOf("terms_pass_stored")).toHaveLength(0);
   });
 
   it("reuses the previous check's clauses for the same text and prompt version, without a call", async () => {
@@ -643,65 +584,43 @@ describe("runTermsPass, as the terms check (plan PR 12) calls it", () => {
     // A check from another prompt version is not this read.
     await call({ previous: { ...previous, prompt_version: "terms_pass@v0" } });
     expect(calls()).toHaveLength(2);
+    // Nor is a check that was not a full read.
+    await call({ previous: { ...previous, po_terms_status: "partial" } });
+    expect(calls()).toHaveLength(3);
+  });
+
+  it("looks the latest reusable check up itself when the caller passes none", async () => {
+    const first = await call();
+    H.db.tables.order_term_checks.push({
+      id: "check-2", tenant_id: TENANT, order_id: ORDER, po_terms_status: "read", prompt_version: "terms_pass@v1",
+      po_document_id: DOC, po_text_source: "text_layer", po_clauses: first.po_clauses, created_at: "2026-10-10T00:00:00Z",
+    });
+    const again = await call({ previous: undefined });
+    expect(calls()).toHaveLength(1);
+    expect(again).toMatchObject({ cached: true, cached_from: "check-2" });
   });
 
   it("does not run for a tenant that is off, whatever mode the caller passes", async () => {
     seed({ mode: "off" });
-    const r = await call({ mode: "on" });
-    expect(r.status).toBe("off");
+    expect((await call({ mode: "on" })).status).toBe("off");
     expect(calls()).toHaveLength(0);
+  });
+
+  it("does not run when the caller says off, whatever the tenant says", async () => {
+    expect((await call({ mode: "off" })).status).toBe("off");
+    expect(calls()).toHaveLength(0);
+  });
+
+  it("the check's reconcile budget holds one full Claude attempt and the comparison", async () => {
+    const { TERMS_AFTER_RECONCILE_BUDGET_MS, TERMS_CHECK_MARGIN_MS } = await import("../api/_lib/terms/check.js");
+    const { ANTHROPIC_ATTEMPT_TIMEOUT_MS } = await import("../api/_lib/anthropic.js");
+    expect(TERMS_AFTER_RECONCILE_BUDGET_MS - TERMS_CHECK_MARGIN_MS).toBeGreaterThanOrEqual(ANTHROPIC_ATTEMPT_TIMEOUT_MS);
+    expect(TERMS_CHECK_MARGIN_MS).toBeGreaterThan(0);
   });
 
   it("never throws: a read that broke is not_read", async () => {
     H.throwOn = "documents";
-    const r = await call();
-    expect(r).toMatchObject({ po_terms_status: "not_read", reason: "pass_failed" });
+    expect(await call()).toMatchObject({ po_terms_status: "not_read", reason: "pass_failed" });
     expect(calls()).toHaveLength(0);
-  });
-});
-
-// ── where it runs ────────────────────────────────────────────────────────────
-
-describe("after the server-side reconcile", () => {
-  const PO_LINES = [{ line_no: 1, partNumber: "PART-A", description: "Test bracket", quantity: 4, unitPrice: 250 }];
-  const withQuote = () => ({
-    quotes: [{ id: "q1", tenant_id: TENANT, customer_id: CUSTOMER, quote_number: "Q-TEST-1", created_at: "2026-09-01T00:00:00Z", status: "SENT", terms: "60 days credit" }],
-    quote_lines: [{ quote_id: "q1", tenant_id: TENANT, line_index: 0, part_no: "PART-A", description: "Test bracket", qty: 4, discounted_unit_price: 250 }],
-    item_customer_parts: [],
-    item_master: [],
-  });
-  const seedOrder = (mode) => {
-    seed({ mode, extra: withQuote() });
-    H.db.tables.orders[0].result = { salesOrder: { lineItems: PO_LINES } };
-  };
-
-  it("runs once the order is reconciled, and stores a check for it", async () => {
-    seedOrder("on");
-    const out = await autoReconcileOrder(H.db, ctx, ORDER, { trigger: "lines_changed" });
-    expect(out.status).toBe("reconciled");
-    expect(out.terms).toMatchObject({ status: "stored" });
-    expect(H.db.tables.orders[0].result.quoteReconciliation).toBeTruthy();
-    expect(checks()).toHaveLength(1);
-    expect(checks()[0]).toMatchObject({ trigger: "reconcile", order_id: ORDER, po_terms_status: "read" });
-  });
-
-  it("sends nothing when the mode is off, and the reconcile is unchanged", async () => {
-    seedOrder("off");
-    const out = await autoReconcileOrder(H.db, ctx, ORDER, { trigger: "lines_changed" });
-    expect(out.status).toBe("reconciled");
-    expect(out.terms).toMatchObject({ status: "off" });
-    expect(calls()).toHaveLength(0);
-    expect(checks()).toHaveLength(0);
-  });
-
-  it("never fails the reconcile when the pass throws", async () => {
-    seedOrder("on");
-    H.throwOn = "documents";
-    const out = await autoReconcileOrder(H.db, ctx, ORDER, { trigger: "lines_changed" });
-    expect(out.status).toBe("reconciled");
-    expect(out.terms).toMatchObject({ status: "failed", mode: "on" });
-    expect(H.db.tables.orders[0].result.quoteReconciliation).toBeTruthy();
-    expect(eventsOf("terms_pass_failed")).toHaveLength(1);
-    expect(checks()).toHaveLength(0);
   });
 });

@@ -42,6 +42,7 @@ import { labelled } from "./labels.js";
 import { loadTermsPass } from "./terms-pass-hook.js";
 import { STORE_MARGIN_MS, TERMS_PASS_BUDGET_MS } from "./terms-pass.js";
 import { TERMS_CHECK_MODES, readTermsCheckMode } from "./mode.js";
+import { judgeTermFlags } from "./judge.js";
 import {
   OPEN_DECISIONS, allowedDecisions, decisionView, historyByFlag, mayDecide, readDecisions,
 } from "./decisions.js";
@@ -251,8 +252,9 @@ const readPoSide = async (svc, ctx, order, { termsPass, mode, previous, customer
 // Throws MIGRATION_NOT_APPLIED before migration 250, and on a database error.
 //
 // opts: trigger (reconcile | manual | quote_attached), termsPass (inject the
-// PR 11 pass; default: the hook), settings (already read), deadlineAt (when
-// the PO read must end; the reconcile trigger sets it inside its budget).
+// PR 11 pass; default: the hook), judge (inject the PR 12b batch; default
+// judgeWordingBatch), settings (already read), deadlineAt (when the PO read
+// and the judge must end; the reconcile trigger sets it inside its budget).
 export const runTermsCheck = async (svc, ctx, orderId, opts = {}) => {
   if (!ctx || !ctx.tenantId) throw tenantRequired();
   const tenantId = ctx.tenantId;
@@ -266,7 +268,7 @@ export const runTermsCheck = async (svc, ctx, orderId, opts = {}) => {
   const termsPass = opts.termsPass !== undefined ? opts.termsPass : await loadTermsPass();
   const po = await readPoSide(svc, ctx, order, { termsPass, mode, previous, customer, deadlineAt: opts.deadlineAt || 0 });
   const quotes = await readBaselineQuotes(svc, tenantId, order);
-  const flags = compareTerms({
+  const ruleFlags = compareTerms({
     poStatus: po.status,
     poClauses: po.clauses,
     quotes,
@@ -274,6 +276,13 @@ export const runTermsCheck = async (svc, ctx, orderId, opts = {}) => {
     policy: settings.policy,
     poDate: order.po_date || null,
     notReadReason: po.reason,
+  });
+  // The LLM wording judge (plan PR 12b, section 5.1): only the flags the
+  // rules left "unknown" on a wording clause where both sides state it. A
+  // judged flag is stored with method "llm" and cites both texts; anything
+  // the judge cannot stand behind leaves the rule's flag as it was.
+  const flags = await judgeTermFlags(svc, ctx, ruleFlags, {
+    policy: settings.policy, orderId: order.id, deadlineAt: opts.deadlineAt || 0, judge: opts.judge,
   });
 
   const check = {

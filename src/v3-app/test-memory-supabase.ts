@@ -19,7 +19,8 @@
 // PostgREST does (plain columns, alias:column, and JSON paths with -> and
 // ->>), so a misspelled column reads back undefined. Embedded resources are
 // not supported and throw. Off by default, so existing tests see whole rows.
-// Also: neq, not(col, "in", "(a,b)"), not(col, "is", null), and range.
+// Also: neq, not(col, "in", "(a,b)"), not(col, "is", null), range, and
+// upsert(rows, { onConflict }).
 
 type Row = Record<string, any>;
 
@@ -91,6 +92,18 @@ export const createMemoryDb = (tables: Record<string, Row[]> = {}, users: Record
         const rows = Array.isArray(st.row) ? st.row : [st.row];
         out = rows.map((r: Row) => ({ id: r.id || "gen-" + (++seq), ...r }));
         ds.push(...out);
+      } else if (st.mode === "upsert") {
+        // On the onConflict columns (default id): update the matching row in
+        // place, else insert.
+        const rows = Array.isArray(st.row) ? st.row : [st.row];
+        const keys = String(st.onConflict || "id").split(",").map((k) => k.trim());
+        out = rows.map((r: Row) => {
+          const hit = ds.find((x) => keys.every((k) => x[k] === r[k]));
+          if (hit) return Object.assign(hit, r);
+          const row = { id: r.id || "gen-" + (++seq), ...r };
+          ds.push(row);
+          return row;
+        });
       } else {
         out = ds.filter(matches);
       }
@@ -143,6 +156,7 @@ export const createMemoryDb = (tables: Record<string, Row[]> = {}, users: Record
       limit: (n: number) => { st.limit = n; return b; },
       update: (patch: Row) => { st.mode = "update"; st.patch = patch; return b; },
       insert: (row: Row | Row[]) => { st.mode = "insert"; st.row = row; return b; },
+      upsert: (row: Row | Row[], o?: { onConflict?: string }) => { st.mode = "upsert"; st.row = row; st.onConflict = o?.onConflict || null; return b; },
       maybeSingle: () => { st.single = "maybe"; return Promise.resolve(run()); },
       single: () => { st.single = "one"; return Promise.resolve(run()); },
       then: (res: any, rej: any) => Promise.resolve(run()).then(res, rej),

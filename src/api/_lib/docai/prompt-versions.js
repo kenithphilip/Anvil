@@ -177,6 +177,12 @@ const REGISTRY = {
   terms_pass: [
     { version: "v1", status: "active", traffic_weight: 1.0, description: "Commercial terms and conditions, one rule and one tool for both providers." },
   ],
+  // The LLM wording judge (section 5.1, plan PR 12b): one clause's PO wording
+  // against the quote's, cited verbatim. _lib/terms/judge.js resolves it by
+  // name; "terms_judge@<version>" keys its cache.
+  terms_judge: [
+    { version: "v1", status: "active", traffic_weight: 1.0, description: "PO wording against quote wording for one clause; both texts cited; no decision." },
+  ],
   ocr_postprocess: [
     { version: "v1", status: "active", traffic_weight: 1.0 },
   ],

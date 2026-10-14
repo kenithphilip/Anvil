@@ -113,6 +113,49 @@ describe("Terms tab: side by side, with provenance", () => {
   });
 });
 
+describe("Terms tab: a flag the LLM judge raised (plan PR 12b)", () => {
+  const llmView = () => ({
+    ...baseView(),
+    flags: [{
+      id: "f-can", clause: "cancellation", clause_label: "Cancellation", outcome: "deviates", direction: "against_us",
+      severity: "high", method: "llm", needs_decision: true, state: "undecided",
+      po: { clause: "cancellation", text: "The buyer may cancel this order at any time without compensation.", cited: "may cancel this order at any time", label: "from PO, page 4", page: 4 },
+      quote: { clause: "cancellation", quote_id: "q1", quote_number: "Q-1", primary: true, side: "quote", text: "Orders once confirmed cannot be cancelled.", cited: "cannot be cancelled", label: "from quote Q-1, as held today (not as sent)" },
+      baseline: null, rationale: "The PO lets the buyer cancel at will; the quote allows no cancellation.",
+      decision: null, decisions: [], allowed: ["request_amendment", "reject_term"],
+    }, {
+      id: "f-war-eq", clause: "warranty", clause_label: "Warranty", outcome: "unknown", direction: null,
+      severity: "info", method: "llm", needs_decision: false, state: "display",
+      po: { clause: "warranty", text: "Warranty covers parts and labour.", cited: "parts and labour", label: "from PO, page 4" },
+      quote: { clause: "warranty", quote_id: "q1", quote_number: "Q-1", primary: true, side: "quote", text: "Warranty: parts and labour included.", cited: "parts and labour included" },
+      baseline: null, rationale: "LLM judged equivalent. Both cover parts and labour.",
+      decision: null, decisions: [], allowed: [],
+    }],
+  });
+
+  it("is labelled LLM judged, and shows the phrase it cited from each side", () => {
+    const { container } = render(<Harness initial={llmView()} />);
+    const c = card(container, "f-can");
+    expect(within(c).getByText("LLM judged")).toBeTruthy();
+    expect(within(c).getByText("differs, against us")).toBeTruthy();
+    const cited = [...c.querySelectorAll('[data-testid="term-cited"]')].map((n) => n.textContent);
+    expect(cited).toEqual(["Cited: may cancel this order at any time", "Cited: cannot be cancelled"]);
+    expect(c.textContent).toContain("Why flagged (LLM): The PO lets the buyer cancel at will");
+  });
+
+  it("says when the judge found the wording equivalent", () => {
+    const { container } = render(<Harness initial={llmView()} />);
+    const c = card(container, "f-war-eq");
+    expect(within(c).getByText("LLM judged equivalent, kept for information")).toBeTruthy();
+    expect(c.querySelectorAll('[data-testid="term-cited"]')).toHaveLength(2);
+  });
+
+  it("a rule flag carries no LLM label", () => {
+    const { container } = render(<Harness initial={baseView()} />);
+    expect(within(card(container, "f-pay")).queryByText("LLM judged")).toBeNull();
+  });
+});
+
 describe("Terms tab: decisions", () => {
   it("a decision without a reason is refused: the record button stays off until the reason says why", async () => {
     const { container } = render(<Harness initial={baseView()} />);

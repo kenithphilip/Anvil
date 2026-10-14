@@ -82,9 +82,10 @@ vi.mock("../api/_lib/supabase.js", () => ({ serviceClient: () => H.db }));
 vi.mock("../api/_lib/audit.js", () => ({ recordAudit: async () => {}, recordEvent: async () => {} }));
 
 const {
-  judgeWording, judgeWordingBatch, judgeNeeded, judgementOutcome, checkJudgement,
+  judgeWording, judgeWordingBatch, judgeNeeded, judgementOutcome, checkJudgement, judgedFlag, judgeTermFlags,
   JUDGE_RULE, JUDGE_TOOL, JUDGE_FLAG_METHOD,
 } = await import("../api/_lib/terms/judge.js");
+const { effectivePolicy } = await import("../api/_lib/terms/compare.js");
 const { toGeminiSchema } = await import("../api/_lib/gemini.js");
 const { __resetCircuitBreakers } = await import("../api/_lib/docai/circuit-breaker.js");
 
@@ -338,5 +339,95 @@ describe("the Gemini fallback", () => {
     const j = await judge();
     expect(j).toMatchObject({ status: "failed", deviates: "unclear", reason: "provider_failed" });
     expect(judgementOutcome(j).outcome).toBe("unknown");
+  });
+});
+
+// ── the comparator's flags ───────────────────────────────────────────────────
+
+describe("judgedFlag: a rule flag after the judge", () => {
+  const POLICY = effectivePolicy(null);
+  // The rule's row for a wording clause both sides state.
+  const ruleFlag = (clause = "cancellation", over = {}) => ({
+    clause, outcome: "unknown", direction: null, severity: "warn", method: "rule",
+    po: { ...po, clause }, quote: { ...quote, clause, quote_id: "q1" }, rationale: "both sides state it", text_hash: "h1", ...over,
+  });
+  const judged = (over = {}) => checkJudgement({ ...GOOD, ...over }, { clause: "cancellation", poText: PO_CANCEL, quoteText: QUOTE_CANCEL });
+
+  it("a yes becomes an llm flag at the policy's severity, citing both texts, with the rule's text hash", () => {
+    const f = judgedFlag(ruleFlag(), judged(), POLICY);
+    expect(f).toMatchObject({
+      method: "llm", outcome: "deviates", direction: "against_us", severity: "high", text_hash: "h1",
+      rationale: GOOD.rationale,
+    });
+    expect(f.po).toMatchObject({ text: PO_CANCEL, cited: "may cancel this order at any time" });
+    expect(f.quote).toMatchObject({ text: QUOTE_CANCEL, cited: "Orders once confirmed cannot be cancelled.", quote_id: "q1" });
+  });
+
+  it("a no on a high-rated clause stays visible at info as LLM judged equivalent", () => {
+    const f = judgedFlag(ruleFlag(), judged({ deviates: "no", rationale: "Same effect." }), POLICY);
+    expect(f).toMatchObject({ method: "llm", outcome: "unknown", severity: "info", direction: null, rationale: "LLM judged equivalent. Same effect." });
+    expect(f.po.cited).toBeTruthy();
+    expect(f.quote.cited).toBeTruthy();
+  });
+
+  it("a no on a lower-rated clause is a match: no flag", () => {
+    expect(judgedFlag(ruleFlag("jurisdiction"), judged({ deviates: "no" }), POLICY)).toBeNull();
+  });
+
+  it("a judgement that does not stand up leaves the rule's flag exactly as it was", () => {
+    const rule = ruleFlag();
+    for (const j of [judged({ cites: ["P1"] }), judged({ po_phrase: "not in the PO at all" }), judged({ deviates: "unclear" }), null]) {
+      expect(judgedFlag(rule, j, POLICY)).toBe(rule);
+    }
+  });
+
+  it("a yes the policy rates no flag for keeps the rule's row, so the judge cannot hide it", () => {
+    const rule = ruleFlag("one_sided", { po: { ...po, clause: "one_sided", value: { subtype: "indemnity" } } });
+    expect(judgedFlag(rule, judged(), POLICY)).toBe(rule);
+  });
+});
+
+describe("judgeTermFlags: the judge inside the check", () => {
+  const POLICY = effectivePolicy(null);
+  const flags = () => [
+    { clause: "payment_terms", outcome: "deviates", direction: "against_us", severity: "high", method: "rule", po: { ...po, clause: "payment_terms" }, quote: { ...quote, clause: "payment_terms" } },
+    { clause: "cancellation", outcome: "unknown", direction: null, severity: "warn", method: "rule", po, quote },
+    { clause: "jurisdiction", outcome: "po_only", direction: null, severity: "warn", method: "rule", po: { ...po, clause: "jurisdiction" }, quote: null },
+    // Already the judge's (an equivalent row): never judged twice.
+    {
+      clause: "inspection_acceptance", outcome: "unknown", direction: null, severity: "info", method: "llm",
+      po: { ...po, clause: "inspection_acceptance", text: "Inspection at our stores." },
+      quote: { ...quote, clause: "inspection_acceptance", text: "Inspection at the buyer's stores." },
+    },
+    // The rule already decided this one: the months differ.
+    {
+      clause: "warranty", outcome: "deviates", direction: "against_us", severity: "high", method: "rule",
+      po: { ...po, clause: "warranty", text: "Warranty: 18 months, parts and labour." },
+      quote: { ...quote, clause: "warranty", text: "Warranty: 12 months, parts only." },
+    },
+  ];
+
+  it("sends only the flags the rules left unknown on a wording clause", async () => {
+    const seen = [];
+    const out = await judgeTermFlags(H.db, ctx, flags(), {
+      policy: POLICY, judge: async ({ pairs }) => { seen.push(...pairs); return pairs.map(() => checkJudgement(GOOD, { clause: "cancellation", poText: PO_CANCEL, quoteText: QUOTE_CANCEL })); },
+    });
+    expect(seen.map((p) => p.clause)).toEqual(["cancellation"]);
+    expect(out.map((f) => f.method)).toEqual(["rule", "llm", "rule", "llm", "rule"]);
+    expect(out[3]).toMatchObject({ clause: "inspection_acceptance", severity: "info" });
+    expect(out[4]).toMatchObject({ clause: "warranty", outcome: "deviates", severity: "high" });
+  });
+
+  it("never throws: a judge that breaks leaves the rule's flags", async () => {
+    const before = flags();
+    const out = await judgeTermFlags(H.db, ctx, before, { policy: POLICY, judge: async () => { throw new Error("judge exploded"); } });
+    expect(out).toEqual(before);
+  });
+
+  it("off: the real batch makes no call, and the flags stand", async () => {
+    seed("off");
+    const before = flags();
+    expect(await judgeTermFlags(H.db, ctx, before, { policy: POLICY })).toEqual(before);
+    expect(calls()).toHaveLength(0);
   });
 });

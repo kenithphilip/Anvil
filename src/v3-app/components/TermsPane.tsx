@@ -38,7 +38,10 @@ const DECISION_DONE: Record<string, string> = {
 const SEVERITY_CHIP: Record<string, string> = { critical: "bad", high: "bad", warn: "warn", info: "info" };
 const DIRECTION_TEXT: Record<string, string> = { against_us: "against us", for_us: "for us", neutral: "neutral" };
 
-const outcomeText = (f: any): string => {
+export const outcomeText = (f: any): string => {
+  // An "unknown" row from the LLM judge is the one it judged equivalent on a
+  // high or critical clause, kept visible at info (section 5.1 step 3).
+  if (f.method === "llm" && f.outcome === "unknown") return "LLM judged equivalent, kept for information";
   switch (f.outcome) {
     case "deviates": return "differs" + (f.direction ? ", " + (DIRECTION_TEXT[f.direction] || f.direction) : "");
     case "po_only": return "PO only, the quote is silent";
@@ -109,6 +112,13 @@ const Side: React.FC<{ title: string; rec: any; silent: string }> = ({ title, re
       {text
         ? <div className="body" style={{ whiteSpace: "pre-wrap" }}>{text}</div>
         : <div className="body" style={{ color: "var(--ink-3)" }}>{silent}</div>}
+      {rec?.cited && (
+        // The words the LLM judge cited from this side, checked word for word
+        // against the text above.
+        <div className="mono-sm" data-testid="term-cited" style={{ marginTop: 4 }}>
+          Cited: <q>{rec.cited}</q>
+        </div>
+      )}
       {rec?.label && <div className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 4 }}>{rec.label}</div>}
       {rec?.printed_note && <div className="mono-sm" style={{ color: "var(--ink-3)" }}>{rec.printed_note}</div>}
     </div>
@@ -175,7 +185,10 @@ const FlagCard: React.FC<{ flag: any; orderId: string; canDecide: boolean; onDec
         eyebrow={<Chip k={SEVERITY_CHIP[flag.severity] as any}>{flag.severity}</Chip>}
         right={stateChip}
       >
-        <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 8 }}>{outcomeText(flag)}</div>
+        <div className="row gap-sm" style={{ marginBottom: 8, alignItems: "center" }}>
+          {flag.method === "llm" && <Chip k="info">LLM judged</Chip>}
+          <span className="mono-sm" style={{ color: "var(--ink-3)" }}>{outcomeText(flag)}</span>
+        </div>
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 16 }}>
           <Side title="PO wording" rec={flag.po} silent={flag.outcome === "not_read" ? "not read" : "the PO is silent"} />
           <Side

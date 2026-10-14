@@ -31,6 +31,7 @@ import { createHash } from "node:crypto";
 import { CLAUSE_KEYS, CLAUSE_TAXONOMY } from "./taxonomy.js";
 import { readTermsCheckMode, termsCheckRuns } from "./mode.js";
 import { callTermsModel, normalizeForMatch, verifyQuote } from "./terms-pass.js";
+import { severityFor, severityRank, valueOf } from "./compare.js";
 import { getPromptVersion } from "../docai/prompt-versions.js";
 
 export const JUDGE_PROMPT_NAME = "terms_judge";
@@ -100,13 +101,20 @@ export const JUDGE_TOOL = {
 // one-sided clauses.
 export const JUDGE_CLAUSES = Object.freeze(CLAUSE_KEYS.filter((k) => CLAUSE_TAXONOMY[k].llm_wording));
 
-const usableText = (rec) => !!rec && rec.verified !== false && typeof rec.text === "string" && !!rec.text.trim();
+const hasText = (rec) => !!rec && typeof rec.text === "string" && !!rec.text.trim();
+// The PO side must be wording the terms pass verified against the document.
+// The quote side is our own record (the quote row, its snapshot, our
+// template) or an uploaded quote's, which sides.js keeps with verified: false
+// because the pass did not read it; it is the quote's text all the same, and
+// the judge's citation of it is checked against exactly that text.
+const usablePo = (rec) => hasText(rec) && rec.verified !== false;
+const usableQuote = (rec) => hasText(rec) && rec.side !== "po";
 const norm = (text) => normalizeForMatch(text).norm;
 
 // True only where the rules cannot decide (section 5.1):
 //   - the clause is one the taxonomy sends to the judge;
-//   - both sides state it, in verified wording (one side silent is po_only
-//     or quote_only, a rule outcome);
+//   - both sides state it, the PO side in verified wording (one side silent
+//     is po_only or quote_only, a rule outcome);
 //   - the wording differs (the same words need no judge);
 //   - and, for a clause with rule fields (warranty months, LD numbers), the
 //     rule has not already found the difference. ruleOutcome is the
@@ -114,7 +122,7 @@ const norm = (text) => normalizeForMatch(text).norm;
 export const judgeNeeded = ({ clause, po, quote, ruleOutcome = null } = {}) => {
   const def = CLAUSE_TAXONOMY[clause];
   if (!def || !def.llm_wording) return false;
-  if (!usableText(po) || !usableText(quote)) return false;
+  if (!usablePo(po) || !usableQuote(quote)) return false;
   if (norm(po.text) === norm(quote.text)) return false;
   if (def.rule_fields.length && ruleOutcome === "deviates") return false;
   return true;
@@ -193,6 +201,74 @@ export const judgementOutcome = (j) => {
   return { ...out, outcome: "match", direction: null, judged_equivalent: true };
 };
 
+// ── the comparator's flags ──────────────────────────────────────────────────
+
+// The refinements the policy keys on (compare.js severityFor): an LD the PO
+// imposes with no cap, and a one-sided clause's subtype.
+const refineFor = (clause, po) => {
+  const refine = {};
+  if (clause === "ld_penalty") {
+    const v = valueOf(clause, po);
+    if (v && !v.excluded && v.rate_pct != null && v.cap_pct == null) refine.uncapped = true;
+  }
+  if (clause === "one_sided" && po?.value?.subtype) refine.subtype = po.value.subtype;
+  return refine;
+};
+
+// How the policy rates a clause: the worst severity it gives a deviation
+// against us or a term the PO imposes alone.
+const clauseRating = (policy, clause, refine) => {
+  const levels = [severityFor(policy, clause, "deviates", "against_us", refine), severityFor(policy, clause, "po_only", null, refine)]
+    .filter(Boolean);
+  return levels.sort((a, b) => severityRank(b) - severityRank(a))[0] || null;
+};
+
+// One rule flag, after the judge looked at it. Pure.
+//
+//   judged yes  an llm flag: deviates, the judge's direction, the policy's
+//               severity for that, and each side carrying the phrase it was
+//               cited by (po.cited, quote.cited).
+//   judged no   section 5.1 step 3: on a clause the policy rates high or
+//               critical the row stays visible at info, "LLM judged
+//               equivalent", citing both texts. Migration 250 has no "match"
+//               outcome, so the row is "unknown". On a lower-rated clause it
+//               is a match, and there is no flag (null).
+//   otherwise   (unclear, dropped, failed, off) the rule's flag, unchanged:
+//               a judgement that does not stand up changes nothing.
+//
+// The text hash is the rule's: it hashes the two wordings, which the judge
+// does not change, so a decision carries forward as before.
+export const judgedFlag = (flag, j, policy) => {
+  if (!flag || !j || j.status !== "judged" || !flag.clause) return flag;
+  const outcome = judgementOutcome(j);
+  const cited = {
+    po: flag.po ? { ...flag.po, cited: j.po_phrase } : flag.po,
+    quote: flag.quote ? { ...flag.quote, cited: j.quote_phrase } : flag.quote,
+  };
+  const refine = refineFor(flag.clause, flag.po);
+  if (outcome.outcome === "deviates") {
+    const severity = severityFor(policy, flag.clause, "deviates", outcome.direction, refine);
+    // The policy rates no deviation for this clause: the rule's row stays,
+    // so nothing the judge said can hide it.
+    if (!severity) return flag;
+    return {
+      ...flag, ...cited,
+      outcome: "deviates", direction: outcome.direction, severity, method: JUDGE_FLAG_METHOD,
+      rationale: j.rationale || "The wording differs.",
+    };
+  }
+  if (outcome.outcome === "match") {
+    const rating = clauseRating(policy, flag.clause, refine);
+    if (rating !== "high" && rating !== "critical") return null;
+    return {
+      ...flag, ...cited,
+      outcome: "unknown", direction: null, severity: "info", method: JUDGE_FLAG_METHOD,
+      rationale: "LLM judged equivalent." + (j.rationale ? " " + j.rationale : ""),
+    };
+  }
+  return flag;
+};
+
 // ── the cache ───────────────────────────────────────────────────────────────
 
 // extraction_cache (001_init.sql) is a tenant-scoped LLM result cache, unique
@@ -254,7 +330,7 @@ const userText = (clause, poText, quoteText) => [
 // mode already known to allow it.
 const judgeOne = async ({ svc, ctx, settings, clause, po, quote, deadlineAt, orderId }) => {
   if (!CLAUSE_KEYS.includes(clause)) return judgement({ status: "skipped", clause: null, reason: "unknown_clause" });
-  if (!usableText(po) || !usableText(quote)) return judgement({ status: "skipped", clause, reason: "unverified_or_missing_text" });
+  if (!usablePo(po) || !usableQuote(quote)) return judgement({ status: "skipped", clause, reason: "unverified_or_missing_text" });
   const poText = po.text;
   const quoteText = quote.text;
   const label = promptLabelFor(settings, ctx.tenantId, judgePairHash(clause, poText, quoteText, JUDGE_PROMPT_NAME));
@@ -304,16 +380,18 @@ export const judgeWording = async ({ svc, ctx, clause, po, quote, orderId = null
 // Several pairs for one check, one mode read, one shared deadline. Pairs the
 // rules can decide (judgeNeeded) are returned as skipped without a call.
 //
-//   pairs  [{ clause, po, quote, ruleOutcome? }]
+//   pairs       [{ clause, po, quote, ruleOutcome? }]
+//   deadlineAt  when every judgement must end (the terms check passes its
+//               own); otherwise now + budgetMs
 //
 // Returns the judgements in the order of `pairs`. Never throws.
-export const judgeWordingBatch = async ({ svc, ctx, pairs = [], orderId = null, budgetMs = JUDGE_BUDGET_MS } = {}) => {
+export const judgeWordingBatch = async ({ svc, ctx, pairs = [], orderId = null, budgetMs = JUDGE_BUDGET_MS, deadlineAt: until = 0 } = {}) => {
   const list = Array.isArray(pairs) ? pairs : [];
   if (!ctx?.tenantId) return list.map((p) => judgement({ status: "skipped", clause: p?.clause || null, reason: "no_tenant" }));
   let m;
   try { m = await readTermsCheckMode(svc, ctx.tenantId); } catch { m = { mode: "off" }; }
   if (!termsCheckRuns(m.mode)) return list.map((p) => judgement({ status: "off", clause: p?.clause || null, reason: "mode_off" }));
-  const deadlineAt = Date.now() + Math.max(1_000, Number(budgetMs) || JUDGE_BUDGET_MS);
+  const deadlineAt = until || Date.now() + Math.max(1_000, Number(budgetMs) || JUDGE_BUDGET_MS);
   const out = [];
   for (const p of list) {
     if (!judgeNeeded(p || {})) {
@@ -328,4 +406,35 @@ export const judgeWordingBatch = async ({ svc, ctx, pairs = [], orderId = null, 
     }
   }
   return out;
+};
+
+// ── the judge in the terms check ────────────────────────────────────────────
+
+// The judge over a check's flags (check.js calls it after compareTerms):
+// every rule flag the rules could not decide ("unknown") on a wording clause
+// where both sides state it. One batch, one mode read, one deadline. Never
+// throws: on any failure the rule's flags stand as they are.
+//
+//   opts  policy (effectivePolicy), orderId, deadlineAt, judge (inject a
+//         batch function; default judgeWordingBatch)
+export const judgeTermFlags = async (svc, ctx, flags, { policy, orderId = null, deadlineAt = 0, judge = null } = {}) => {
+  const list = Array.isArray(flags) ? flags : [];
+  try {
+    const picks = list
+      .map((f, i) => ({ f, i }))
+      .filter(({ f }) => f && f.method === "rule" && f.outcome === "unknown"
+        && judgeNeeded({ clause: f.clause, po: f.po, quote: f.quote, ruleOutcome: "unknown" }));
+    if (!picks.length) return list;
+    const run = typeof judge === "function" ? judge : judgeWordingBatch;
+    const judgements = await run({
+      svc, ctx, orderId, deadlineAt,
+      pairs: picks.map(({ f }) => ({ clause: f.clause, po: f.po, quote: f.quote, ruleOutcome: "unknown" })),
+    });
+    const out = [...list];
+    picks.forEach(({ i }, k) => { out[i] = judgedFlag(list[i], Array.isArray(judgements) ? judgements[k] : null, policy); });
+    return out.filter(Boolean);
+  } catch (err) {
+    console.warn("[terms-judge] the judge step failed; the rule flags stand: " + (err?.message || err));
+    return list;
+  }
 };

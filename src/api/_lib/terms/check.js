@@ -40,6 +40,8 @@ import {
 } from "./sides.js";
 import { labelled } from "./labels.js";
 import { loadTermsPass } from "./terms-pass-hook.js";
+import { STORE_MARGIN_MS, TERMS_PASS_BUDGET_MS } from "./terms-pass.js";
+import { TERMS_CHECK_MODES, readTermsCheckMode } from "./mode.js";
 import {
   OPEN_DECISIONS, allowedDecisions, decisionView, historyByFlag, mayDecide, readDecisions,
 } from "./decisions.js";
@@ -49,12 +51,18 @@ import {
 
 export { TERMS_MIGRATION, isMissingTermsSchema, migrationNotApplied, migrationErrorBody };
 
-export const TERMS_MODES = Object.freeze(["off", "shadow", "on"]);
+export const TERMS_MODES = TERMS_CHECK_MODES;
 export const TERMS_TRIGGERS = Object.freeze(["reconcile", "manual", "quote_attached"]);
 
 // Upper bound on how long the reconcile waits for the terms step. The
-// reconcile is stored by then; this caps only the caller's wait.
-export const TERMS_AFTER_RECONCILE_BUDGET_MS = 10000;
+// reconcile is stored by then; this caps only the caller's wait. It holds one
+// full read by the terms pass (one Claude attempt, which callAnthropic caps at
+// 15 s, and the Gemini fallback behind it) and then the comparison and the
+// writes.
+export const TERMS_AFTER_RECONCILE_BUDGET_MS = TERMS_PASS_BUDGET_MS;
+// Held back from the pass's deadline for the comparison and the writes, so a
+// slow read ends as not_read inside the budget instead of as a timeout.
+export const TERMS_CHECK_MARGIN_MS = STORE_MARGIN_MS;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -70,17 +78,17 @@ const fail = termsDbError;
 
 // ── reads ───────────────────────────────────────────────────────────────────
 
-// The tenant's mode and effective policy. No settings row is "off". A value
-// outside the three modes is "off" too: the check runs only when a tenant
-// turned it on.
+// The tenant's mode and effective policy. The mode is read by mode.js, the
+// one reader; this adds the policy and makes the mode a discriminator
+// (section 9.4): a database without the column raises MIGRATION_NOT_APPLIED,
+// never a guess. No settings row is "off". A value outside the three modes
+// is "off" too: the check runs only when a tenant turned it on.
 export const readTermsSettings = async (svc, tenantId) => {
   if (!tenantId) throw tenantRequired();
-  const r = await svc.from("tenant_settings")
-    .select("terms_check_mode, terms_policy")
-    .eq("tenant_id", tenantId).maybeSingle();
-  if (r.error) throw fail("tenant_settings", r.error);
-  const mode = TERMS_MODES.includes(r.data?.terms_check_mode) ? r.data.terms_check_mode : "off";
-  return { mode, policy: effectivePolicy(r.data?.terms_policy || null) };
+  const m = await readTermsCheckMode(svc, tenantId);
+  if (m.migrated === false) throw migrationNotApplied();
+  if (m.error) throw new Error("tenant_settings: " + m.error);
+  return { mode: m.mode, policy: effectivePolicy(m.settings?.terms_policy || null) };
 };
 
 const ORDER_COLUMNS = [
@@ -206,10 +214,12 @@ const readBaselineQuotes = async (svc, tenantId, order) => {
 
 const NOT_READ_FALLBACK = "the terms reader has not run on this tenant, and extraction found no payment terms or incoterm";
 
-const readPoSide = async (svc, ctx, order, { termsPass, mode, previous, customer }) => {
+const readPoSide = async (svc, ctx, order, { termsPass, mode, previous, customer, deadlineAt }) => {
   const documentId = await poDocumentOf(svc, order);
   if (typeof termsPass === "function") {
-    const r = await termsPass({ svc, ctx, orderId: order.id, documentId, kind: "po", mode, previous });
+    // deadlineAt: when the read must end, so a slow provider ends as a
+    // not_read inside the caller's budget. 0 lets the pass use its own.
+    const r = await termsPass({ svc, ctx, orderId: order.id, documentId, kind: "po", mode, previous, deadlineAt: deadlineAt || 0 });
     return { ...normalizePassResult(r), documentId, from: "terms_pass" };
   }
   const provenance = await readRunProvenance(svc, ctx.tenantId, order.extraction_run_id);
@@ -241,7 +251,8 @@ const readPoSide = async (svc, ctx, order, { termsPass, mode, previous, customer
 // Throws MIGRATION_NOT_APPLIED before migration 250, and on a database error.
 //
 // opts: trigger (reconcile | manual | quote_attached), termsPass (inject the
-// PR 11 pass; default: the hook), settings (already read).
+// PR 11 pass; default: the hook), settings (already read), deadlineAt (when
+// the PO read must end; the reconcile trigger sets it inside its budget).
 export const runTermsCheck = async (svc, ctx, orderId, opts = {}) => {
   if (!ctx || !ctx.tenantId) throw tenantRequired();
   const tenantId = ctx.tenantId;
@@ -253,7 +264,7 @@ export const runTermsCheck = async (svc, ctx, orderId, opts = {}) => {
   const previous = await readCurrentCheck(svc, tenantId, order.id);
   const customer = await readCustomer(svc, tenantId, order.customer_id);
   const termsPass = opts.termsPass !== undefined ? opts.termsPass : await loadTermsPass();
-  const po = await readPoSide(svc, ctx, order, { termsPass, mode, previous, customer });
+  const po = await readPoSide(svc, ctx, order, { termsPass, mode, previous, customer, deadlineAt: opts.deadlineAt || 0 });
   const quotes = await readBaselineQuotes(svc, tenantId, order);
   const flags = compareTerms({
     poStatus: po.status,
@@ -373,10 +384,14 @@ export const runTermsAfterReconcile = async (svc, ctx, orderId, opts = {}) => {
   const trigger = opts.trigger || "reconcile";
   const budgetMs = opts.budgetMs != null ? opts.budgetMs : TERMS_AFTER_RECONCILE_BUDGET_MS;
   const started = Date.now();
+  // The read ends before the budget does, leaving the comparison and the
+  // writes their margin: a slow provider gives a stored not_read check, not
+  // a timeout with nothing stored.
+  const deadlineAt = started + Math.max(0, budgetMs - TERMS_CHECK_MARGIN_MS);
   let timer = null;
   let out;
   try {
-    const run = runTermsCheck(svc, ctx, orderId, { trigger, termsPass: opts.termsPass });
+    const run = runTermsCheck(svc, ctx, orderId, { trigger, termsPass: opts.termsPass, deadlineAt });
     const late = new Promise((resolve) => { timer = setTimeout(() => resolve({ status: "timeout" }), budgetMs); });
     out = await Promise.race([run, late]);
   } catch (err) {

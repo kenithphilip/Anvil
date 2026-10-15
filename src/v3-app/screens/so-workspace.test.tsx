@@ -28,7 +28,7 @@ describe("SoWorkspace", () => {
     expect(container.innerHTML.length).toBeGreaterThan(0);
   });
 
-  it("renders run-extraction + send-for-review buttons for DRAFT orders", async () => {
+  it("renders run-extraction and Send for approval for DRAFT orders", async () => {
     // Regression May 2026: orders that arrived in DRAFT had no
     // operator-facing trigger when post-create OCR silently failed.
     // The workspace's action bar now exposes both actions so a stuck
@@ -69,7 +69,7 @@ describe("SoWorkspace", () => {
       await waitFor(() => {
         expect(container.innerHTML).toContain("run extraction");
       });
-      expect(container.innerHTML).toContain("send for review");
+      expect(container.innerHTML).toContain("Send for approval");
     } finally {
       window.location.hash = original;
     }
@@ -186,7 +186,7 @@ describe("SoWorkspace", () => {
     }
   });
 
-  it("disables send-for-review on RECONCILED orders", async () => {
+  it("offers no Send for approval on RECONCILED orders", async () => {
     // The send-for-review action only makes sense for DRAFT. Once an
     // order has been pushed and reconciled, the button must be
     // disabled so a stale operator click cannot re-enter the review
@@ -221,13 +221,15 @@ describe("SoWorkspace", () => {
       const { container } = renderScreen(Screen);
       // Poll until the order-load effect resolves and the action bar
       // renders; a fixed tick count is racy in CI.
-      let sendForReview;
+      // The order has moved on: the review view's next-step bar is not
+      // there, so no enabled "Send for approval" button exists.
       await waitFor(() => {
-        sendForReview = Array.from(container.querySelectorAll("button"))
-          .find((b) => b.textContent && b.textContent.toLowerCase().includes("send for review"));
-        expect(sendForReview).toBeTruthy();
+        expect(container.querySelectorAll(".step").length).toBe(6);
       });
-      expect(sendForReview?.hasAttribute("disabled")).toBe(true);
+      const enabledSend = Array.from(container.querySelectorAll("button"))
+        .find((b) => (b.textContent || "").includes("Send for approval") && !b.hasAttribute("disabled"));
+      expect(enabledSend).toBeUndefined();
+      expect(container.querySelector("[data-testid='so-next-step-bar']")).toBeNull();
     } finally {
       window.location.hash = original;
     }

@@ -1715,6 +1715,30 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.5; resize: vert
 }
 .recon-fields[open] .recon-fields-summary { border-bottom: 1px solid var(--hairline-2); }
 .recon-fields .rp-pane-fields { border: 0; max-height: 46vh; }
+/* The line grid inside its collapsible (plan PR 12). */
+.recon-lines > .card { border: 0; margin: 0; border-radius: 0; }
+
+/* ── "Review and decide" (SO workspace, plan PR 12) ──
+ * A summary strip above the PO pane and the exceptions list, and the next
+ * step pinned to the foot of the screen. */
+.so-summary-strip {
+  display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline;
+  padding: 10px 14px; margin-bottom: 10px;
+  border: 1px solid var(--hairline); border-radius: var(--r-2); background: var(--paper);
+}
+.so-summary-item { display: inline-flex; gap: 6px; align-items: baseline; flex-wrap: wrap; min-width: 0; }
+.so-summary-item .lbl {
+  font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3);
+}
+.so-summary-item .v { color: var(--ink); font-weight: 500; }
+.so-next-step-bar {
+  position: sticky; bottom: 0; z-index: 3;
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: flex-end;
+  margin-top: 14px; padding: 10px 14px;
+  background: var(--paper); border-top: 1px solid var(--hairline-2);
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.04);
+}
+.so-next-step-why { flex: 1 1 260px; min-width: 0; }
 .recon-row { cursor: pointer; }
 .recon-row.is-active > td {
   background: var(--paper-2);

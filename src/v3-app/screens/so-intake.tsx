@@ -72,6 +72,17 @@ const WiredSOIntake = () => {
   const [doc, setDoc] = u(null);
   const [busy, setBusy] = u(null);
   const [err, setErr] = u(null);
+  // The tenant's processing mode, for the stepper's last label (audit F9):
+  // in Mode B the SO is entered in Tally by hand, never pushed. null until
+  // read; the label stays as in Mode A until then.
+  const [soMode, setSoMode] = u<"A" | "B" | null>(null);
+  e(() => {
+    let live = true;
+    Promise.resolve((AnvilBackend as any)?.docai?.soProcessingMode?.())
+      .then((m: any) => { if (live) setSoMode(m?.mode === "B" ? "B" : m?.mode === "A" ? "A" : null); })
+      .catch(() => { if (live) setSoMode(null); });
+    return () => { live = false; };
+  }, []);
   const fileRef = r(null);
   // Audit P13.B.3 follow-up. The camera-capture path lands a raw
   // photo (often skewed); we route it through the 4-corner
@@ -1118,7 +1129,7 @@ const WiredSOIntake = () => {
       />
 
       <div className="ws-content">
-        <Steps current={0} items={["Capture", "Preflight", "Extract", "Validate", "Approve", "Push to Tally"]} />
+        <Steps current={0} items={["Capture", "Preflight", "Extract", "Validate", "Approve", soMode === "B" ? "Enter in Tally (Mode B)" : "Push to Tally"]} />
 
         {err && (
           <Banner kind="bad" icon={Icon.alert} title="Could not continue" action={<Btn sm onClick={() => setErr(null)}>dismiss</Btn>}>

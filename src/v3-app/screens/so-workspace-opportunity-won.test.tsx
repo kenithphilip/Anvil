@@ -63,8 +63,8 @@ describe("SoWorkspace opportunity win offer", () => {
   });
 
   it("offers nothing when the order is not linked to an opportunity", async () => {
-    const { findByText, queryByText } = await mount(makeOrder({ opportunity_id: null }));
-    await findByText(/PO-WON-1/);
+    const { findByRole, queryByText } = await mount(makeOrder({ opportunity_id: null }));
+    await findByRole("heading", { name: /PO-WON-1/ });
     expect(oppListSpy).not.toHaveBeenCalled();
     expect(queryByText("Mark opportunity won")).toBeNull();
   });

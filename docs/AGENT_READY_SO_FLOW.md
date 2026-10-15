@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| Status | Built: the exceptions list and its hooks (plan PR 9). Not built: the agent runner, and the decisions table (plan PR 11). |
-| Code | `src/api/_lib/order-exceptions.js` (pure), `GET /api/orders/exceptions`, the "Needs decision" card in the SO workspace. |
+| Status | Built: the exceptions list and its hooks (plan PR 9), the delivery date read path (plan PR 10), the next-step function (plan PR 12). Not built: the agent runner, and the decisions table (plan PR 11). |
+| Code | `src/api/_lib/order-exceptions.js`, `src/api/_lib/order-delivery-date.js` and `src/api/_lib/order-next-step.js` (all pure), `GET /api/orders/exceptions`, and the SO workspace's "Review and decide" view. |
 | Migrations | None. |
 
 ## 1. Why
@@ -25,7 +25,8 @@ The rule is simple. **The agent and the person read the same queue.** `GET /api/
   clean:    true when rows is empty,
   customer_match: { basis, label, po_name, master_name },
   terms_state:    on | shadow | hidden | off | unavailable,
-  agent_policy:   the policy in force (section 5)
+  agent_policy:   the policy in force (section 5),
+  delivery:       { shown, po, committed, suggestion } (section 4.1)
 }
 ```
 
@@ -143,8 +144,51 @@ The rules, in order:
 
 A price difference inside the tolerance is `warn`; above it, `high`.
 
-## 6. Not built
+## 6. The next step
+
+The workspace's forward button is no longer hard-coded. `nextStep({ status, mode, exceptions, config, permissions })` in `src/api/_lib/order-next-step.js` (pure) returns:
+
+```
+{ action, label, enabled, blockers[], notes[], transitions[], review, mode }
+```
+
+- `blockers`: why the button is disabled. Each names an exception (`key`, `type`, `title`) or a missing permission.
+- `notes`: what stops a later step, named but not blocking now. An unresolved blocking finding stops approval, and only an approver clears it, so it must not stop the engineer from sending the order to that approver.
+- `transitions`: the existing calls the action makes, in order.
+- Permissions that are missing count as "no". The button is never enabled on a guess.
+- Shadow rows and decided rows never block.
+
+### 6.1 The workflow config
+
+`DEFAULT_WORKFLOW_CONFIG = { version: 1, review: "approval" }`. An unknown value reads as the default, so a typo can never switch a tenant to solo. No tenant setting is read yet, and there is no screen to set one.
+
+### 6.2 The default (today's flow)
+
+| Status | Mode | Action | Label | Enabled when | Existing call |
+|---|---|---|---|---|---|
+| DRAFT | A or B | `submit_for_approval` | Send for approval | write, and no `blocks: "send"` row | PATCH `/api/orders/{id}` `{ status: PENDING_REVIEW }` |
+| PENDING_REVIEW | A or B | `await_approval` | Waiting for approval | never (no approve permission) | none |
+| PENDING_REVIEW | A or B | `approve` | Approve | approve, and no `blocks: "approval"` row | PATCH `{ status: APPROVED, approval.payloadHash }` |
+| APPROVED, FAILED_TALLY_IMPORT | A | `push_to_tally` | Push to Tally | push permission | POST `/api/tally/push` |
+| APPROVED, FAILED_TALLY_IMPORT | B | `enter_in_tally` | Mode B: enter the SO in Tally by hand | never (a push is refused in Mode B) | none |
+| any other | | `none` | No next step (status) | never | none |
+
+The workspace shows the button in a bar pinned to the foot of the screen while the order is under review, with an optional note to the approver. The note is stored in `preflight_payload.submit_note` (already on the PATCH allowlist) and shown on the Approval tab.
+
+### 6.3 Solo mode (off)
+
+`review: "solo"` skips the second person by policy, and only when no `human_only` exception is open.
+
+| Status | Action | Label | Enabled when | Existing calls |
+|---|---|---|---|---|
+| DRAFT | `confirm_and_generate` | Confirm and generate SO | no open `human_only` row, write and approve | PATCH `PENDING_REVIEW`, PATCH `APPROVED` with the payload hash, GET `/api/orders/so_pdf` |
+| PENDING_REVIEW | `confirm_and_generate` | Confirm and generate SO | the same | PATCH `APPROVED`, GET `/api/orders/so_pdf` |
+
+Each open `human_only` row is a named blocker. The server checks every transition as today, the approve permission included. After approval, solo changes nothing: Mode A pushes, Mode B keys the SO into Tally by hand.
+
+## 7. Not built
 
 - **The agent runner.** Nothing reads the queue and acts on it yet.
 - **The decisions table** (plan PR 11, migration 264, `order_exception_decisions`), with `decided_by_kind` (`person` or `agent`) on each decision. Until it exists, every "not yet" option has no place to be recorded, and the card is read-only.
+- **A tenant setting for the workflow config and the agent policy.** Both are data with documented defaults; nothing reads an override yet, and no migration is added.
 - **The server-side anomaly run** (plan PR 8). Until it exists, an order whose rules never ran carries `anomaly_check_not_run`, whose option is the existing "run validation" button.

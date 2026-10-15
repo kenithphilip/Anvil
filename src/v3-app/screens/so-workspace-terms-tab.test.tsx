@@ -64,8 +64,8 @@ describe("SO workspace: the Terms tab", () => {
   it("in shadow mode an engineer has no Terms tab", async () => {
     installRbac("sales_engineer");
     terms = vi.fn(async () => ({ order_id: ORDER_ID, mode: "shadow", shadow: true, visible: false, hidden: true, flags: [] }));
-    const { findByText, queryByRole } = await mount();
-    await findByText(/PO-TERMS-1/);
+    const { findByRole, queryByRole } = await mount();
+    await findByRole("heading", { name: /PO-TERMS-1/ });
     await waitFor(() => expect(terms).toHaveBeenCalled());
     expect(queryByRole("tab", { name: /Terms/ })).toBeNull();
   });
@@ -83,8 +83,8 @@ describe("SO workspace: the Terms tab", () => {
   it("with the check off there is no Terms tab", async () => {
     installRbac("sales_manager");
     terms = vi.fn(async () => ({ mode: "off", visible: false, flags: [] }));
-    const { findByText, queryByRole } = await mount();
-    await findByText(/PO-TERMS-1/);
+    const { findByRole, queryByRole } = await mount();
+    await findByRole("heading", { name: /PO-TERMS-1/ });
     await waitFor(() => expect(terms).toHaveBeenCalled());
     expect(queryByRole("tab", { name: /Terms/ })).toBeNull();
   });

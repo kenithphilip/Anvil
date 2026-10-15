@@ -101,3 +101,28 @@ describe("SoIntake order create carries per-line requisition numbers", () => {
     await waitFor(() => expect(reconcileQuotes).toHaveBeenCalledWith("ord-new-1", { if_changed: true }), { timeout: 2000 });
   });
 });
+
+// Audit F9: the stepper ended at "Push to Tally" in Mode B, where a push is
+// refused. The label now says what Mode B does; nothing else changes.
+describe("SoIntake stepper in each processing mode", () => {
+  const lastStep = async (mode: string) => {
+    installBackend({ docai: { soProcessingMode: vi.fn(async () => ({ mode })) } });
+    const mod = await import("./so-intake");
+    const { container } = renderScreen(mod.default);
+    let last = "";
+    await waitFor(() => {
+      const steps = [...container.querySelectorAll(".step")].map((s) => (s.textContent || "").replace(/^\d+/, ""));
+      last = steps[steps.length - 1];
+      expect(last).toBe(mode === "B" ? "Enter in Tally (Mode B)" : "Push to Tally");
+    });
+    return last;
+  };
+
+  it("Mode B ends in Tally by hand", async () => {
+    expect(await lastStep("B")).toBe("Enter in Tally (Mode B)");
+  });
+
+  it("Mode A still ends with the push", async () => {
+    expect(await lastStep("A")).toBe("Push to Tally");
+  });
+});

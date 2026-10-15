@@ -24,7 +24,12 @@ import { deviationValue, currencyOf } from "../../api/_lib/deviation-value.js";
 // or if it fails.
 import { buildOrderExceptions, EXCEPTIONS_VERSION } from "../../api/_lib/order-exceptions.js";
 import { OrderExceptionsCard } from "../components/OrderExceptionsCard";
-import { DeliveryDateSummary } from "../components/DeliveryDateSummary";
+import { DeliveryDateSummary, deliveryDateText } from "../components/DeliveryDateSummary";
+import { lineExceptionIndexes } from "../../api/_lib/order-exceptions.js";
+// The forward step (plan PR 12): one button, from a pure workflow function.
+// The default config is today's flow; "solo" is off and has no screen.
+import { nextStep, DEFAULT_WORKFLOW_CONFIG, blockerSentence } from "../../api/_lib/order-next-step.js";
+import { SOWorkspaceMoreMenu } from "../components/SOWorkspaceMoreMenu";
 import { poLineDate, poHeaderDate, fmtDueDate } from "../../api/_lib/order-delivery-date.js";
 import type { ExceptionAction, ExceptionsResult } from "../components/OrderExceptionsCard";
 import { RBAC, canDo, isAdmin } from "../lib/rbac";
@@ -228,6 +233,23 @@ const WiredSOWorkspace = () => {
   // so clicking Cancel did nothing and the order looked un-cancellable.
   // An in-app modal always shows and can't be blocked.
   const [cancelOpen, setCancelOpen] = u(false);
+  // The "Review and decide" layout (plan PR 12). Declared here with the
+  // other hooks, above the early returns.
+  //   soMode            the tenant's processing mode, "A" or "B"; null until
+  //                     read (labels stay as in Mode A until then)
+  //   linesOpenChoice   the person's own open or close of the line grid; null
+  //                     follows the default (closed when no line needs a look)
+  //   submitNote        the optional note sent with "Send for approval"
+  const [soMode, setSoMode] = u<"A" | "B" | null>(null);
+  const [linesOpenChoice, setLinesOpenChoice] = u<boolean | null>(null);
+  const [submitNote, setSubmitNote] = u("");
+  e(() => {
+    let live = true;
+    Promise.resolve((AnvilBackend as any)?.docai?.soProcessingMode?.())
+      .then((r: any) => { if (live) setSoMode(r?.mode === "B" ? "B" : r?.mode === "A" ? "A" : null); })
+      .catch(() => { if (live) setSoMode(null); });
+    return () => { live = false; };
+  }, []);
   // Inline line-item editor state. Driven from the persisted lines
   // on the order; when null, the table renders the persisted values
   // directly. Once the operator changes a field, a draft is forked
@@ -286,6 +308,8 @@ const WiredSOWorkspace = () => {
     return new URLSearchParams(q || "");
   })();
   const orderId = hashQuery.get("id");
+  // A new order opens with the line grid at its default, and no note.
+  e(() => { setLinesOpenChoice(null); setSubmitNote(""); }, [orderId]);
   const rawTab = hashQuery.get("tab") || "recon";
   // The former standalone "Review" (PDF) tab is merged into the unified
   // reconcile view, so a legacy ?tab=review deep-link opens Reconcile.
@@ -1003,15 +1027,48 @@ const WiredSOWorkspace = () => {
     }
   };
 
+  // The existing DRAFT to PENDING_REVIEW transition. The optional note for
+  // the approver rides in preflight_payload (already on the PATCH
+  // allowlist; no migration), and the Approval tab shows it.
   const sendForReview = async () => {
     if (!o?.id) return;
     setBusy("review");
     try {
-      await AnvilBackend?.orders?.update?.(o.id, { status: "PENDING_REVIEW" });
-      window.notifySuccess?.("Sent for review", o.po_number || o.id.slice(0, 8));
+      const note = submitNote.trim();
+      await AnvilBackend?.orders?.update?.(o.id, {
+        status: "PENDING_REVIEW",
+        ...(note ? {
+          preflight_payload: { ...(o.preflight_payload || {}), submit_note: note, submit_note_at: new Date().toISOString() },
+        } : {}),
+      });
+      setSubmitNote("");
+      window.notifySuccess?.("Sent for approval", o.po_number || o.id.slice(0, 8));
       setBump((n) => n + 1);
     } catch (err: any) {
       window.notifyError?.("Could not advance status", err?.message || String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // "Confirm and generate SO" (workflow review: "solo"). Off by default and
+  // unreachable until a tenant workflow config turns it on. It makes the
+  // existing calls in order, each checked by the server as today: send for
+  // review (which stamps the payload hash), approve with that hash, then the
+  // SO PDF.
+  const confirmAndGenerate = async () => {
+    if (!o?.id) return;
+    setBusy("approve");
+    try {
+      if (o.status !== "PENDING_REVIEW") await AnvilBackend?.orders?.update?.(o.id, { status: "PENDING_REVIEW" });
+      const fresh: any = await AnvilBackend?.orders?.get?.(o.id);
+      const patch = approvalPatch(fresh?.order || fresh || o);
+      if (!patch) throw new Error(NO_PAYLOAD_HASH_MESSAGE);
+      await AnvilBackend?.orders?.update?.(o.id, patch);
+      setBump((n) => n + 1);
+      await downloadSoPdf(o);
+    } catch (err: any) {
+      window.notifyError?.("Could not confirm the order", err?.message || String(err));
     } finally {
       setBusy(null);
     }
@@ -1958,6 +2015,33 @@ const WiredSOWorkspace = () => {
   const exceptionsFromServer = !!exceptionsRemote && exceptionsRemote.order_id === o.id;
   const exceptions: ExceptionsResult = exceptionsFromServer ? exceptionsRemote : exceptionsLocal;
 
+  // The "Review and decide" layout (plan PR 12) is the default view of an
+  // order still under review. The line grid starts closed when no open
+  // exception points at a line, and open when one does, when there are no
+  // lines yet (the extraction controls live there), or when edits are
+  // unsaved. The person's own open or close wins until the order changes.
+  const reviewMode = o.status === "DRAFT" || o.status === "PENDING_REVIEW" || o.status === "BLOCKED";
+  const lineExceptionCount = lineExceptionIndexes(exceptions).size;
+  const linesOpenDefault = !reviewMode || lineExceptionCount > 0 || draftLines.length === 0
+    || (linesDraft !== null && JSON.stringify(linesDraft) !== JSON.stringify(lines));
+  const linesOpen = linesOpenChoice ?? linesOpenDefault;
+
+  // The forward step. The workflow config is the default (today's flow) until
+  // a tenant setting exists; "solo" cannot be reached from this screen.
+  const step = nextStep({
+    status: o.status,
+    mode: soMode === "B" ? "B" : "A",
+    exceptions,
+    config: DEFAULT_WORKFLOW_CONFIG,
+    permissions: { write: canWrite, approve: !!canApprove, push: !!canPushTally },
+  });
+  const runNextStep = () => {
+    if (step.action === "submit_for_approval") return sendForReview();
+    if (step.action === "confirm_and_generate") return confirmAndGenerate();
+    if (step.action === "approve") return approveOrder();
+    return undefined;
+  };
+
   // Bring a control into view once the tab that holds it has rendered.
   const scrollToAnchor = (name: string) => {
     setTimeout(() => {
@@ -1977,6 +2061,7 @@ const WiredSOWorkspace = () => {
     if (action.tab && action.tab !== tab) setTab(action.tab);
     if (action.target && action.target.startsWith("lines[")) {
       const i = Number(action.target.slice("lines[".length, -1));
+      setLinesOpenChoice(true);
       setTimeout(() => {
         const rows = typeof document !== "undefined" ? document.querySelectorAll("tr.recon-row") : [];
         (rows[i] as HTMLElement | undefined)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
@@ -2000,8 +2085,11 @@ const WiredSOWorkspace = () => {
 
   const tabs = [
     // The PO PDF (formerly the standalone "Review" tab) is now
-    // side-by-side with the line grid inside this Reconcile tab.
-    { id: "recon", label: "Reconcile", count: findings.length || null },
+    // side-by-side with the line grid inside this Reconcile tab. While the
+    // order is under review it is the "Review and decide" view; the id stays
+    // "recon" so every deep link (?tab=recon, and the legacy ?tab=review)
+    // still opens it.
+    { id: "recon", label: reviewMode ? "Review and decide" : "Reconcile", count: (reviewMode ? exceptions.rows.length : findings.length) || null },
     { id: "header", label: "Header fields" },
     // Realized margin and the cost split are cost data (rbac cost.view).
     ...(canDo("cost.view") ? [{ id: "margin", label: "Margin cockpit" }] : []),
@@ -2073,46 +2161,23 @@ const WiredSOWorkspace = () => {
           </div>
         </div>
         <div className="row gap-sm" style={{ width: "100%", flexWrap: "wrap", alignItems: "center" }}>
-          {customerEmail && (
-            <Btn sm kind="ghost" onClick={() => window.location.href = `mailto:${customerEmail}?subject=${encodeURIComponent(o.po_number || o.quote_number || "Order update")}`}>
-              {Icon.send} email customer
-            </Btn>
-          )}
-          <Btn sm kind="ghost"
-               onClick={() => downloadQuotePdf(o)}
-               title="Render a branded PDF of the quote and download it">
-            {Icon.download} quote PDF
-          </Btn>
-          <Btn sm kind="ghost"
-               onClick={() => downloadSoPdf(o)}
-               title="Download the Tally-style Sales Order acknowledgment PDF">
-            {Icon.download} Download SO
-          </Btn>
-          <Btn sm kind="ghost"
-               onClick={() => downloadSoExcel(o)}
-               title="Export the extracted sales order (header + line items) as an Excel spreadsheet">
-            {Icon.download} Excel
-          </Btn>
-          {["APPROVED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED"].includes(o.status) && (
-            <Btn sm kind="ghost"
-                 onClick={() => downloadVoucherPdf(o)}
-                 title="Render the ERP-format sales-order voucher (Tally style, with GST split)">
-              {Icon.download} ERP voucher
-            </Btn>
-          )}
-          <Btn sm kind="ghost"
-               onClick={() => createInvoiceForOrder(o)}
-               title="Draft a new invoice templated from this order">
-            {Icon.plus} new invoice
-          </Btn>
-          <Btn sm kind="ghost"
-               onClick={() => shareQuotePdf(o)}
-               title="Generate a 7-day signed share link to the quote PDF">
-            {Icon.send} share link
-          </Btn>
-          <Btn sm kind="ghost" onClick={() => exportAuditPack(o)} title="Bundle PO + quote + result + signed evidence URLs into a JSON download">
-            {Icon.download} audit pack
-          </Btn>
+          {/* The secondary actions (audit F9): documents, exports and
+              sharing. Each keeps its handler; only its place moved. */}
+          <SOWorkspaceMoreMenu items={[
+            ...(customerEmail ? [{
+              id: "email_customer", label: "Email customer", icon: Icon.send, title: "Open a mail to the customer about this order",
+              onSelect: () => { window.location.href = `mailto:${customerEmail}?subject=${encodeURIComponent(o.po_number || o.quote_number || "Order update")}`; },
+            }] : []),
+            { id: "quote_pdf", label: "Quote PDF", icon: Icon.download, title: "Render a branded PDF of the quote and download it", onSelect: () => downloadQuotePdf(o) },
+            { id: "download_so", label: "Download SO", icon: Icon.download, title: "Download the Tally-style Sales Order acknowledgment PDF", onSelect: () => downloadSoPdf(o) },
+            { id: "excel", label: "Excel", icon: Icon.download, title: "Export the extracted sales order (header + line items) as an Excel spreadsheet", onSelect: () => downloadSoExcel(o) },
+            ...(["APPROVED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED"].includes(o.status) ? [{
+              id: "erp_voucher", label: "ERP voucher", icon: Icon.download, title: "Render the ERP-format sales-order voucher (Tally style, with GST split)", onSelect: () => downloadVoucherPdf(o),
+            }] : []),
+            { id: "new_invoice", label: "New invoice", icon: Icon.plus, title: "Draft a new invoice templated from this order", onSelect: () => createInvoiceForOrder(o) },
+            { id: "share_link", label: "Share link", icon: Icon.send, title: "Generate a 7-day signed share link to the quote PDF", onSelect: () => shareQuotePdf(o) },
+            { id: "audit_pack", label: "Audit pack", icon: Icon.download, title: "Bundle PO + quote + result + signed evidence URLs into a JSON download", onSelect: () => exportAuditPack(o) },
+          ]} />
           <span style={{ flex: 1 }} />
           <Btn sm kind="ghost"
                disabled={!canCancel || !!busy || o.status === "CANCELLED"}
@@ -2196,19 +2261,6 @@ const WiredSOWorkspace = () => {
                }>
             {Icon.shield} {busyVerb(busy, "validate", "run validation")}
           </Btn>
-          {/* Send for review: explicit DRAFT to PENDING_REVIEW
-              transition for orders that have lines but no operator
-              has flipped them out of DRAFT yet. */}
-          <Btn sm kind="ghost"
-               disabled={!canWrite || !!busy || o.status !== "DRAFT"}
-               onClick={sendForReview}
-               title={
-                 o.status !== "DRAFT"
-                   ? "Already advanced past DRAFT"
-                   : "Move from DRAFT to PENDING_REVIEW"
-               }>
-            {Icon.send} send for review
-          </Btn>
           {/* Return for correction: manager exit-path when the SO has
               a wrong ship-to, rate, qty, etc. The operator sees the
               note next time they open the workspace. Available only
@@ -2230,12 +2282,21 @@ const WiredSOWorkspace = () => {
                title={canApprove ? "Approve order" : "needs sales_manager / finance / admin"}>
             {Icon.shieldCheck} approve
           </Btn>
-          <Btn sm kind="primary"
-               disabled={!canPushTally || !!busy || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED" || o.status === "CANCELLED"}
-               onClick={pushToTally}
-               title={canPushTally ? "Push the order payload to Tally" : "needs finance / admin"}>
-            {Icon.send} {busyVerb(busy, "push", "push to Tally")}
-          </Btn>
+          {soMode === "B" ? (
+            /* Mode B (Admin > Sales-order processing): the team keys the SO
+               into Tally by hand, and a push is refused with 409. The label
+               says so; nothing else changes. */
+            <span data-testid="mode-b-state" title="Mode B: Anvil does not push to Tally; the team enters the sales order in Tally by hand.">
+              <Chip k="warn">Mode B: entered in Tally by hand</Chip>
+            </span>
+          ) : (
+            <Btn sm kind="primary"
+                 disabled={!canPushTally || !!busy || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED" || o.status === "CANCELLED"}
+                 onClick={pushToTally}
+                 title={canPushTally ? "Push the order payload to Tally" : "needs finance / admin"}>
+              {Icon.send} {busyVerb(busy, "push", "push to Tally")}
+            </Btn>
+          )}
         </div>
         <div className="row mono-sm" style={{ color: "var(--ink-3)", flexWrap: "wrap", gap: 8 }}>
           <span>{customerName}</span>
@@ -2564,7 +2625,7 @@ const WiredSOWorkspace = () => {
           if (isApproved) step = 5;        // Approve done. Push in progress.
           if (isPushed) step = 6;          // Push done. Pipeline complete (no "cur").
           return step;
-        })()} items={["Capture", "Preflight", "Extract", "Validate", "Approve", "Push to Tally"]} />
+        })()} items={["Capture", "Preflight", "Extract", "Validate", "Approve", soMode === "B" ? "Enter in Tally (Mode B)" : "Push to Tally"]} />
 
         {/* Bug fix May 2026 (stepper-lies report): if extraction was
             attempted but produced 0 lines, surface an explicit
@@ -2630,15 +2691,35 @@ const WiredSOWorkspace = () => {
             extractionRunId={o.preflight_payload?.extraction_run_id || null}
             canCorrect={canApprove}
           >
-            {/* One list of what needs a decision (plan PR 9). Read-only: each
-                row links to the tab, control or grid line that resolves it. */}
-            <div style={{ marginBottom: 12 }}>
-              <OrderExceptionsCard
-                result={exceptions}
-                origin={exceptionsFromServer ? "server" : "local"}
-                onAction={onExceptionAction}
-                disabledReason={exceptionDisabledReason}
-              />
+            {/* The summary strip (plan PR 12): who, which PO, how much, how
+                many lines, when it is due and from where, and the mode. */}
+            <div className="so-summary-strip" data-testid="so-summary-strip">
+              <div className="so-summary-item">
+                <span className="lbl">Customer</span>
+                <span className="v">{customerName}</span>
+                {exceptions.customer_match?.label && <Chip k={exceptions.customer_match.basis === "gstin" || exceptions.customer_match.basis === "vendor_code" || exceptions.customer_match.basis === "name" ? "good" : "warn"}>{exceptions.customer_match.label}</Chip>}
+              </div>
+              <div className="so-summary-item">
+                <span className="lbl">PO</span>
+                <span className="v mono">{o.po_number || "no PO number"}</span>
+                <span className="mono-sm">{o.po_date ? "dated " + fmtDueDate({ iso: String(o.po_date).slice(0, 10) }) : "no PO date"}</span>
+              </div>
+              <div className="so-summary-item">
+                <span className="lbl">Value</span>
+                <span className="v mono">{(grandTotal || subtotal) ? fmtINR(Math.round((grandTotal || subtotal) * 100) / 100) : "not priced"}</span>
+              </div>
+              <div className="so-summary-item">
+                <span className="lbl">Lines</span>
+                <span className="v mono">{draftLines.length}</span>
+              </div>
+              <div className="so-summary-item">
+                <span className="lbl">Delivery</span>
+                <span className="v">{deliveryDateText(o)}</span>
+              </div>
+              <div className="so-summary-item">
+                <span className="lbl">Mode</span>
+                <span className="v">{soMode === "B" ? "Mode B (Tally by hand)" : soMode === "A" ? "Mode A (Anvil pushes)" : "not read"}</span>
+              </div>
             </div>
             <div className="recon-toolbar">
               <div className="recon-view-toggle" role="group" aria-label="Reconcile layout">
@@ -2669,6 +2750,15 @@ const WiredSOWorkspace = () => {
                 </div>
               )}
               <div className="recon-right">
+                {/* One list of what needs a decision (plan PR 9), beside the
+                    PO. Read-only: each row links to the tab, control or grid
+                    line that resolves it. */}
+                <OrderExceptionsCard
+                  result={exceptions}
+                  origin={exceptionsFromServer ? "server" : "local"}
+                  onAction={onExceptionAction}
+                  disabledReason={exceptionDisabledReason}
+                />
                 {o.evidence_by_field && Object.keys(o.evidence_by_field as Record<string, unknown>).length > 0 && (
                   <details className="recon-fields">
                     <summary className="recon-fields-summary mono-sm">
@@ -2707,6 +2797,24 @@ const WiredSOWorkspace = () => {
                 <div data-anchor="extraction_quality">
                   <ExtractionQualityCard extractionRun={extractionRun} extractionIndex={extractionIndex} />
                 </div>
+                {/* Closed when nothing on the lines needs a decision; the grid
+                    stays mounted, so its edits and widths survive a close. */}
+                <details
+                  className="recon-fields recon-lines"
+                  data-testid="lines-details"
+                  open={linesOpen}
+                  onToggle={(ev) => {
+                    const isOpen = (ev.currentTarget as HTMLDetailsElement).open;
+                    if (isOpen !== linesOpen) setLinesOpenChoice(isOpen);
+                  }}
+                >
+                  <summary className="recon-fields-summary mono-sm">
+                    Lines ({draftLines.length}) · {draftLines.length === 0
+                      ? "none yet"
+                      : lineExceptionCount
+                        ? lineExceptionCount + " line" + (lineExceptionCount === 1 ? "" : "s") + " need" + (lineExceptionCount === 1 ? "s" : "") + " a look"
+                        : "nothing to decide on the lines"}
+                  </summary>
                 <Card flush>
             <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--hairline-2)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               <span className="h2">Line reconciliation</span>
@@ -2909,6 +3017,7 @@ const WiredSOWorkspace = () => {
               })()
             )}
                 </Card>
+                </details>
               </div>
             </div>
           </ReviewPaneSelectionProvider>
@@ -3068,6 +3177,12 @@ const WiredSOWorkspace = () => {
 
         {tab === "approval" && (
           <Card title="Approval" eyebrow={o.approval ? "decided" : "pending"}>
+            {o.preflight_payload?.submit_note && (
+              <div className="mono-sm" data-testid="submit-note" style={{ marginBottom: 10 }}>
+                <span className="h-eyebrow">Note from the engineer: </span>
+                <span style={{ whiteSpace: "pre-wrap" }}>{o.preflight_payload.submit_note}</span>
+              </div>
+            )}
             {o.approval ? (
               <KV rows={[
                 ["Status", o.approval.status || o.approval.decision || "—"],
@@ -3246,6 +3361,45 @@ const WiredSOWorkspace = () => {
             state={pipelineState}
             setState={setPipelineState}
           />
+        )}
+        {/* The NEXT STEP (plan PR 12), pinned to the foot of the screen while
+            the order is under review, on every tab. The workflow function
+            picks the action and its label, and names what blocks it from the
+            exceptions list. The default config is today's flow. */}
+        {reviewMode && (
+          <div className="so-next-step-bar" data-testid="so-next-step-bar" data-action={step.action}>
+            <div className="so-next-step-why mono-sm">
+              {step.blockers.length > 0 ? (
+                <span data-testid="next-step-blockers" style={{ color: "var(--rust)" }}>{blockerSentence(step)}</span>
+              ) : exceptions.rows.length > 0 ? (
+                <span style={{ color: "var(--ink-3)" }}>{exceptions.rows.length} item{exceptions.rows.length === 1 ? "" : "s"} listed under Needs decision; none blocks this step.</span>
+              ) : (
+                <span style={{ color: "var(--ink-3)" }}>Nothing needs a decision.</span>
+              )}
+              {step.notes.length > 0 && (
+                <span data-testid="next-step-notes" style={{ color: "var(--ink-3)", display: "block" }}>
+                  An approver must clear before approval: {step.notes.map((n: any) => n.title).join("; ")}
+                </span>
+              )}
+            </div>
+            {step.action === "submit_for_approval" && (
+              <input
+                className="input mono-sm"
+                aria-label="Note to the approver (optional)"
+                placeholder="Note to the approver (optional)"
+                value={submitNote}
+                onChange={(ev) => setSubmitNote(ev.target.value)}
+                disabled={!step.enabled || !!busy}
+                style={{ minWidth: 220, flex: "0 1 320px" }}
+              />
+            )}
+            <Btn kind="primary"
+                 disabled={!step.enabled || !!busy || (step.action !== "submit_for_approval" && step.action !== "approve" && step.action !== "confirm_and_generate")}
+                 onClick={runNextStep}
+                 title={step.blockers.length ? blockerSentence(step) : step.label}>
+              {step.action === "submit_for_approval" ? Icon.send : Icon.shieldCheck} {step.action === "submit_for_approval" ? busyVerb(busy, "review", step.label) : step.label}
+            </Btn>
+          </div>
         )}
       </div>
       {/* Layer A: item_master picker. Renders only when the operator

@@ -15,6 +15,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { soLineMoney } from "../_lib/so-line-money.js";
+import { lineDueDate, fmtDueDate } from "../_lib/order-delivery-date.js";
 
 const first = (...xs) => { for (const x of xs) if (x !== undefined && x !== null && x !== "") return x; return null; };
 
@@ -33,11 +34,14 @@ const MAX_EXPORT_LINES = 5000;
 
 // The columns, in order, and how to pull each from a line whatever alias the
 // extractor / reconciler used (qty|quantity, rate|unitPrice, etc.).
-const LINE_COLUMNS = ["#", "Part Number", "Customer Part No", "Item Name", "Description", "Qty", "UOM", "Unit Price", "Amount", "HSN"];
+// "Due On" is the SO PDF's due date, from the same helper: our schedule,
+// else the PO line's date, else the PO header's, else the committed date.
+const LINE_COLUMNS = ["#", "Part Number", "Customer Part No", "Item Name", "Description", "Qty", "UOM", "Unit Price", "Amount", "HSN", "Due On"];
 
 // Pure: the extracted sales order as one worksheet's array-of-arrays. Exported
 // for tests so the shape is locked without a live workbook round-trip.
-export const buildSalesOrderAoa = (order) => {
+// schedules: the order's order_schedule_lines, for the due date.
+export const buildSalesOrderAoa = (order, { schedules = [] } = {}) => {
   const so = (order && order.result && order.result.salesOrder) || {};
   const cust = so.customer || {};
   const lines = (Array.isArray(so.lineItems) ? so.lineItems : []).slice(0, MAX_EXPORT_LINES);
@@ -70,11 +74,12 @@ export const buildSalesOrderAoa = (order) => {
       rate,
       amount,
       first(li.hsn, li.hsn_sac, li.hsnCode) || "",
+      fmtDueDate(lineDueDate(order, i, schedules)),
     ];
   });
 
   const totalAmt = rows.reduce((s, r) => s + (Number(r[8]) || 0), 0);
-  const totals = ["", "", "", "", "", "", "", "Total", Math.round(totalAmt * 100) / 100, ""];
+  const totals = ["", "", "", "", "", "", "", "Total", Math.round(totalAmt * 100) / 100, "", ""];
 
   return [...meta, LINE_COLUMNS, ...rows, totals];
 };
@@ -103,7 +108,7 @@ export default async function handler(req, res) {
 
     const svc = serviceClient();
     const { data: order, error } = await svc.from("orders")
-      .select("id, po_number, customer_id, result, payment_terms, created_at")
+      .select("id, po_number, customer_id, result, payment_terms, created_at, committed_delivery_date")
       .eq("tenant_id", ctx.tenantId).eq("id", orderId).maybeSingle();
     if (error) throw new Error(error.message);
     if (!order) return json(res, 404, { error: { message: "order not found" } });
@@ -116,7 +121,15 @@ export default async function handler(req, res) {
       if (c.data) order.customer_name = c.data.customer_name;
     }
 
-    const aoa = buildSalesOrderAoa(order);
+    // Per-line due dates, as the SO PDF reads them. Best-effort.
+    let schedules = [];
+    try {
+      const schQ = await svc.from("order_schedule_lines").select("line_index, scheduled_date")
+        .eq("tenant_id", ctx.tenantId).eq("order_id", order.id);
+      if (!schQ.error) schedules = schQ.data || [];
+    } catch (_) { /* optional */ }
+
+    const aoa = buildSalesOrderAoa(order, { schedules });
     // A full-order data export is auditable like the PDF siblings (voucher_pdf /
     // so_pdf both record a *_downloaded event).
     const rowCount = Math.max(0, aoa.length - 10); // meta(9) + header(1)
@@ -141,7 +154,7 @@ export default async function handler(req, res) {
     }
 
     const ws = xlsxMod.utils.aoa_to_sheet(aoa);
-    ws["!cols"] = [{ wch: 4 }, { wch: 20 }, { wch: 18 }, { wch: 22 }, { wch: 36 }, { wch: 8 }, { wch: 8 }, { wch: 12 }, { wch: 14 }, { wch: 10 }];
+    ws["!cols"] = [{ wch: 4 }, { wch: 20 }, { wch: 18 }, { wch: 22 }, { wch: 36 }, { wch: 8 }, { wch: 8 }, { wch: 12 }, { wch: 14 }, { wch: 10 }, { wch: 11 }];
     const wb = xlsxMod.utils.book_new();
     xlsxMod.utils.book_append_sheet(wb, ws, "Sales Order");
     const raw = xlsxMod.write(wb, { type: "buffer", bookType: "xlsx" });

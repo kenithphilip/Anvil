@@ -24,6 +24,8 @@ import { deviationValue, currencyOf } from "../../api/_lib/deviation-value.js";
 // or if it fails.
 import { buildOrderExceptions, EXCEPTIONS_VERSION } from "../../api/_lib/order-exceptions.js";
 import { OrderExceptionsCard } from "../components/OrderExceptionsCard";
+import { DeliveryDateSummary } from "../components/DeliveryDateSummary";
+import { poLineDate, poHeaderDate, fmtDueDate } from "../../api/_lib/order-delivery-date.js";
 import type { ExceptionAction, ExceptionsResult } from "../components/OrderExceptionsCard";
 import { RBAC, canDo, isAdmin } from "../lib/rbac";
 import { pushRecent } from "../lib/recent-items";
@@ -95,7 +97,7 @@ export const mappingTitle = (ln: any): string => {
 // one is inserted.
 const RECON_TABLE_KEY = "so-recon";
 const RECON_COL_IDS = [
-  "n", "item", "pr", "uom", "qty", "rate", "hsn", "gst", "taxable", "tax", "line", "issues",
+  "n", "item", "pr", "uom", "qty", "due", "rate", "hsn", "gst", "taxable", "tax", "line", "issues",
 ] as const;
 
 const ReconLinesTable: React.FC<{
@@ -653,12 +655,19 @@ const WiredSOWorkspace = () => {
   const reqGroups = requisitionGroups(draftLines);
   const showPrCol = reqGroups.length > 0;
   const prCol = showPrCol ? 1 : 0;
+  // The "Due" column: the delivery date printed on each PO line (#589). Shown
+  // only when some line carries one, like the PR column: most POs print none.
+  const showDueCol = draftLines.some((ln) => !!poLineDate(ln));
+  const dueCol = showDueCol ? 1 : 0;
+  const headerDue = poHeaderDate(o);
   // Widths of the columns actually on screen. A width the operator dragged
-  // for the PR column on one PO stays stored, but on a PO without the column
-  // it must not switch the grid to fixed layout (which squeezes every
-  // undragged column to an equal share) or offer a reset for a column that
-  // is not there.
-  const shownColw: ColumnWidths = showPrCol ? colw : clearColumn(colw, "pr");
+  // for the PR (or Due) column on one PO stays stored, but on a PO without
+  // the column it must not switch the grid to fixed layout (which squeezes
+  // every undragged column to an equal share) or offer a reset for a column
+  // that is not there.
+  let shownColw: ColumnWidths = colw;
+  if (!showPrCol) shownColw = clearColumn(shownColw, "pr");
+  if (!showDueCol) shownColw = clearColumn(shownColw, "due");
   const reqNotice = requisitionNotice(reqGroups);
   const headerRequisition = String(o.result?.salesOrder?.customer?.requisition_no ?? "").trim();
   const grandTotal = Number(o.result?.salesOrder?.grandTotal) || 0;
@@ -1497,6 +1506,18 @@ const WiredSOWorkspace = () => {
         )}
         <td><EditableCell {...cellProps} line={ln} i={i} canonicalKey="uom" type="text" placeholder="Nos" /></td>
         <td className="r mono"><EditableCell {...cellProps} line={ln} i={i} canonicalKey="qty" type="number" align="right" /></td>
+        {showDueCol && (() => {
+          const due = poLineDate(ln);
+          // A line date that is not the header's date is the PO saying two
+          // things; the exceptions list carries the same disagreement.
+          const differs = !!(due?.iso && headerDue?.iso && due.iso !== headerDue.iso);
+          return (
+            <td className="mono-sm" data-testid={"due-" + i} title={due ? "Delivery date printed on this PO line: " + due.printed : "This PO line prints no delivery date"}>
+              {due ? fmtDueDate(due) : ""}
+              {differs && <div style={{ marginTop: 2 }}><Chip k="warn">differs from header</Chip></div>}
+            </td>
+          );
+        })()}
         <td className="r mono"><EditableCell {...cellProps} line={ln} i={i} canonicalKey="rate" type="number" align="right" /></td>
         <td><EditableCell {...cellProps} line={ln} i={i} canonicalKey="hsn" type="text" placeholder="8482" /></td>
         <td className="r mono">
@@ -1542,7 +1563,7 @@ const WiredSOWorkspace = () => {
     const breakdownRow = (
       <tr key={"brk-" + i} style={{ background: "var(--paper-2)" }}>
         <td></td>
-        <td colSpan={10 + prCol} style={{ padding: "10px 6px" }}>
+        <td colSpan={10 + prCol + dueCol} style={{ padding: "10px 6px" }}>
           <div className="mono-sm" style={{ color: "var(--ink-3)", marginBottom: 8, fontSize: 11 }}>
             Per-unit tax and auxiliary amounts. Set the ones the PO carries; the row above recomputes the line total from them. The "Rate" cell is the tax-exclusive ex-price.
           </div>
@@ -2660,6 +2681,8 @@ const WiredSOWorkspace = () => {
                     />
                   </details>
                 )}
+                {/* The delivery date with its source (plan PR 10). */}
+                <DeliveryDateSummary order={o} onOpenHeader={() => { setTab("header"); scrollToAnchor("committed_date"); }} />
                 {o.result?.salesOrder?.customer && (
                   <div data-anchor="customer_card">
                   <Card title="Customer · from PO header" eyebrow="extracted by docai">
@@ -2829,6 +2852,7 @@ const WiredSOWorkspace = () => {
                         ["item", "Item", ""],
                         ...(showPrCol ? [["pr", "PR no.", ""]] : []),
                         ["uom", "UoM", ""], ["qty", "Qty", "r"],
+                        ...(showDueCol ? [["due", "Due", ""]] : []),
                         ["rate", "Rate", "r"], ["hsn", "HSN / SAC", ""], ["gst", "GST %", "r"],
                         ["taxable", "Taxable ₹", "r"], ["tax", "Tax ₹", "r"],
                         ["line", "Line ₹", "r"], ["issues", "Issues", ""],
@@ -2842,7 +2866,7 @@ const WiredSOWorkspace = () => {
                     </tr></thead>}
                     footer={<tfoot>
                       <tr style={{ background: "var(--paper-2)" }}>
-                        <td colSpan={7 + prCol} className="r mono" style={{ paddingTop: 8 }}>
+                        <td colSpan={7 + prCol + dueCol} className="r mono" style={{ paddingTop: 8 }}>
                           <span style={{ color: "var(--ink-3)" }}>subtotal · taxable</span>
                         </td>
                         <td className="r mono"><b>{fmtINR(taxableTotal)}</b></td>
@@ -2852,7 +2876,7 @@ const WiredSOWorkspace = () => {
                       </tr>
                       {auxTotal > 0 && (
                         <tr style={{ background: "var(--paper-2)" }}>
-                          <td colSpan={9 + prCol} className="r mono">
+                          <td colSpan={9 + prCol + dueCol} className="r mono">
                             <span style={{ color: "var(--ink-3)" }}>auxiliary · tooling / P&amp;F / others</span>
                           </td>
                           <td className="r mono">{fmtINR(auxTotal)}</td>
@@ -2860,7 +2884,7 @@ const WiredSOWorkspace = () => {
                         </tr>
                       )}
                       <tr style={{ background: "var(--paper-2)" }}>
-                        <td colSpan={7 + prCol} className="r mono" style={{ paddingBottom: 8 }}>
+                        <td colSpan={7 + prCol + dueCol} className="r mono" style={{ paddingBottom: 8 }}>
                           <span style={{ color: "var(--ink-3)" }}>
                             grand total · taxable + tax{auxTotal > 0 ? " + aux" : ""}
                           </span>
@@ -2872,7 +2896,7 @@ const WiredSOWorkspace = () => {
                       </tr>
                       {grandWithTax > 0 && (
                         <tr style={{ background: "var(--paper-2)" }}>
-                          <td colSpan={11 + prCol} className="mono-sm" style={{ paddingTop: 2, paddingBottom: 10, color: "var(--ink-3)" }}>
+                          <td colSpan={11 + prCol + dueCol} className="mono-sm" style={{ paddingTop: 2, paddingBottom: 10, color: "var(--ink-3)" }}>
                             <span style={{ color: "var(--ink-3)" }}>amount chargeable (in words):</span>{" "}
                             <i>{amountInWords(grandWithTax, { currency: o.currency || "INR" })}</i>
                           </td>

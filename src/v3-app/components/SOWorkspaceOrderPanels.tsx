@@ -6,6 +6,7 @@ import React, { useState, useEffect } from "react";
 import { Banner, Btn, Card, Chip, KV, fmtINR } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { suggestedCommittedDate, fmtDueDate, DUE_SOURCE_LABEL } from "../../api/_lib/order-delivery-date.js";
 
 // GET /api/customers/contacts returns at most this many rows (the .limit in
 // src/api/customers/contacts.js). Keep the two in step.
@@ -184,6 +185,8 @@ export const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = 
   const savedContactLabel = savedContactRow
     ? contactLabel(savedContactRow) + " (inactive)"
     : "Saved contact " + savedContactId.slice(0, 8) + (contactsListComplete ? " (not on this customer)" : "");
+  // The committed date the PO suggests (order-delivery-date.js), or null.
+  const suggestion = suggestedCommittedDate(order);
 
   return (
     <Card title="Order header fields" eyebrow="dispatch . terms . vendor mapping . delivery contact">
@@ -237,10 +240,21 @@ export const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = 
             <div className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 4 }}>{"Could not load this customer's contacts."}</div>
           )}
         </div>
-        <div style={{ flex: "1 1 220px" }}>
+        <div style={{ flex: "1 1 220px" }} data-anchor="committed_date">
           {labelWithPill("Committed delivery date", "committed_delivery_date", order.committed_delivery_date, draft.committed_delivery_date)}
-          <input className="input mono" type="date" value={draft.committed_delivery_date || ""} onChange={(e) => setDraft({ ...draft, committed_delivery_date: e.target.value })} />
+          <input className="input mono" type="date" aria-label="Committed delivery date" value={draft.committed_delivery_date || ""} onChange={(e) => setDraft({ ...draft, committed_delivery_date: e.target.value })} />
           <div className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 4 }}>Date we promised the customer. Feeds on-time-delivery (OTD) tracking.</div>
+          {/* The PO's date, offered as a suggestion only. The field is never
+              filled in by itself (owner decision 7 is open); "use" puts the
+              date in the field, and Save header stores it. */}
+          {suggestion && suggestion.value !== draft.committed_delivery_date && (
+            <div className="mono-sm" data-testid="committed-date-suggestion" style={{ marginTop: 6, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <span>
+                Suggested: <b>{fmtDueDate({ iso: suggestion.value })}</b> ({DUE_SOURCE_LABEL[suggestion.source] || suggestion.source}, {suggestion.confidence} confidence)
+              </span>
+              <Btn sm kind="ghost" onClick={() => setDraft({ ...draft, committed_delivery_date: suggestion.value })}>use</Btn>
+            </div>
+          )}
         </div>
       </div>
       <div style={{ marginTop: 12 }}>

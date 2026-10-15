@@ -383,8 +383,8 @@ describe("keys are stable", () => {
 describe("the type enum", () => {
   it("covers every source", () => {
     const covered = new Set(Object.values(EXCEPTION_TYPES).map((t) => t.source));
-    // delivery_date is filled in by the delivery-date read path (plan PR 10).
-    for (const s of SOURCES.filter((x) => x !== "delivery_date")) expect(covered.has(s)).toBe(true);
+    for (const s of SOURCES) expect(covered.has(s)).toBe(true);
+    expect([...covered].sort()).toEqual([...SOURCES].sort());
   });
 
   it("every row a busy order produces has a type in the enum", () => {

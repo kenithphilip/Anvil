@@ -63,6 +63,7 @@ Every row's type is in `EXCEPTION_TYPES`. A type ending in `:*` is a family; the
 | extraction (the run) | `extraction_no_lines`, `extraction_failed`, `extraction_low_confidence`, `extraction_fallback_parse`, `extraction_check:<code>` |
 | terms (the terms check) | `terms_flag`, `terms_not_read` |
 | customer (the match) | `customer_unmatched`, `customer_gstin_conflict`, `customer_low_confidence`, `customer_state_differs` |
+| delivery_date (plan PR 10) | `delivery_date_conflict`, one row per rule: `committed_after_po_date`, `line_differs_from_header`, `date_in_past` |
 
 Dedupe, one row per issue:
 
@@ -99,8 +100,26 @@ Each option names how it is applied today:
 | `terms_not_read` | `run_check` (POST `/api/orders/terms_check`) |
 | `customer_unmatched`, `customer_low_confidence` | `change_customer` (not yet: `customer_id` is not in the PATCH allowlist, plan PR 7), `confirm` (not yet) |
 | `customer_gstin_conflict`, `customer_state_differs` | `update_master` (POST `/api/customers`), `confirm` (not yet) |
+| `delivery_date_conflict` | `accept_suggested_date` and `set_value` (PATCH `committed_delivery_date`, the Header fields tab), `request_amendment` (not yet) |
 
 "Not yet" options become real when plan PR 11 stores decisions.
+
+### 4.1 The delivery date (plan PR 10)
+
+`src/api/_lib/order-delivery-date.js` is the one read path.
+
+- **Two dates.** The PO's date (what the customer asks for) and the committed date (ours, `orders.committed_delivery_date`). The response's `delivery` block carries both, and `shown`: the one date the summary shows, with its source (`po_header`, `po_line`, `committed`, `none`).
+- **A line's due date** (SO PDF and Excel, one helper): our schedule, then the PO line's date, then the PO header's date, then the committed date.
+- **The suggestion** for the committed date is a structure, never applied by itself (owner decision 7 is open):
+
+```
+{ value: "2026-11-30", source: "po_header" | "po_line" | "po_description",
+  rule: "po_header_date" | "earliest_po_line_date" | "delivery_date_in_description",
+  confidence: "high" (a PO header or line date) | "low" (otherwise),
+  applies_via: { PATCH /api/orders/{order_id}, body committed_delivery_date } }
+```
+
+It rides on each `delivery_date_conflict` row's payload and in `delivery.suggestion`. The option `accept_suggested_date` sets the committed date to it through the existing Header fields save.
 
 ## 5. The agent policy
 

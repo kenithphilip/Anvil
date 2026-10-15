@@ -11,6 +11,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { deviationValue, currencyOf } from "../api/_lib/deviation-value.js";
+import { buildOrderExceptions } from "../api/_lib/order-exceptions.js";
 
 const read = (p) => fs.readFileSync(path.join(process.cwd(), p), "utf8");
 
@@ -144,6 +145,19 @@ describe("the approver sees it", () => {
 
   it("puts the amount beside the percentage on each flagged line", () => {
     // The same rate delta on 1 unit and on 3,000 reads identically as a %.
-    expect(ws).toMatch(/f\.po_rate - f\.quote_rate\) \* f\.po_qty/);
+    // The per-line list moved from the quote-check banner to the one
+    // exceptions list (plan PR 9), which the workspace renders as built here.
+    const out = buildOrderExceptions({
+      order: {
+        id: "o", status: "DRAFT", customer_id: "c", preflight_payload: { last_validated_at: "2026-10-01" },
+        result: {
+          salesOrder: { lineItems: [{ partNumber: "BP8/35", _match: { verdict: "price_mismatch", part_no: "BP8/35" } }] },
+          quoteReconciliation: RECON,
+        },
+      },
+    });
+    const row = out.rows.find((r) => r.type === "line_price_mismatch");
+    expect(row.detail).toBe("PO 1,910 vs quote 1,872 (+2.03%) = +1,140 on 30");
+    expect(row.payload).toMatchObject({ delta_pct: 2.03, amount: 1140, qty: 30 });
   });
 });

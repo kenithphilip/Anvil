@@ -18,6 +18,13 @@ import { isUnresolvedBlocker as isBlockingFinding } from "../../api/_lib/blockin
 // Pure, no I/O — imported rather than twinned, so the rupee figure an approver
 // reads is computed by the same code the server would use.
 import { deviationValue, currencyOf } from "../../api/_lib/deviation-value.js";
+// The one exceptions list (plan PR 9). GET /api/orders/exceptions builds it on
+// the server; the same pure builder runs here over the order this screen
+// already holds, so the card is never empty while the request is in flight
+// or if it fails.
+import { buildOrderExceptions, EXCEPTIONS_VERSION } from "../../api/_lib/order-exceptions.js";
+import { OrderExceptionsCard } from "../components/OrderExceptionsCard";
+import type { ExceptionAction, ExceptionsResult } from "../components/OrderExceptionsCard";
 import { RBAC, canDo, isAdmin } from "../lib/rbac";
 import { pushRecent } from "../lib/recent-items";
 import { amountInWords } from "../lib/amount-words";
@@ -186,6 +193,9 @@ const WiredSOWorkspace = () => {
   // visible: the tenant's check is on, or in shadow for an admin, who reads
   // it with include_shadow. Engineers see nothing in shadow mode.
   const [termsView, setTermsView] = u<any>(null);
+  // GET /api/orders/exceptions for this order: the one list of what needs a
+  // decision. null until read, or when the endpoint is unavailable.
+  const [exceptionsRemote, setExceptionsRemote] = u<ExceptionsResult | null>(null);
   const [gapsOpen, setGapsOpen] = u(false);
   const [confirmGap, setConfirmGap] = u<string | null>(null);
   const [resolvingCode, setResolvingCode] = u<string | null>(null);
@@ -414,6 +424,21 @@ const WiredSOWorkspace = () => {
     Promise.resolve(AnvilBackend?.orders?.terms?.(orderId, { includeShadow: isAdmin() }))
       .then((v: any) => { if (!cancelled) setTermsView(v && typeof v === "object" && !Array.isArray(v) ? v : null); })
       .catch(() => { if (!cancelled) setTermsView(null); });
+    return () => { cancelled = true; };
+  }, [orderId, bump]);
+
+  e(() => {
+    if (!orderId) return;
+    let cancelled = false;
+    Promise.resolve(AnvilBackend?.orders?.exceptions?.(orderId, { includeShadow: isAdmin() }))
+      .then((v: any) => {
+        if (cancelled) return;
+        // Only a response of the shape this screen renders. Anything else
+        // (an older API, an error body) leaves the list to the local build.
+        const ok = v && typeof v === "object" && v.version === EXCEPTIONS_VERSION && Array.isArray(v.rows);
+        setExceptionsRemote(ok ? v : null);
+      })
+      .catch(() => { if (!cancelled) setExceptionsRemote(null); });
     return () => { cancelled = true; };
   }, [orderId, bump]);
 
@@ -1904,6 +1929,54 @@ const WiredSOWorkspace = () => {
     }
   };
 
+  // The one exceptions list: the server's answer for this order when it has
+  // one, else the same builder over what this screen holds. The local build
+  // has no customer master, so it says nothing about the match basis beyond
+  // "no customer"; everything else is the same rows from the same code.
+  const exceptionsLocal = buildOrderExceptions({ order: o, extractionRun, terms: termsView }) as unknown as ExceptionsResult;
+  const exceptionsFromServer = !!exceptionsRemote && exceptionsRemote.order_id === o.id;
+  const exceptions: ExceptionsResult = exceptionsFromServer ? exceptionsRemote : exceptionsLocal;
+
+  // Bring a control into view once the tab that holds it has rendered.
+  const scrollToAnchor = (name: string) => {
+    setTimeout(() => {
+      const el = typeof document !== "undefined" ? document.querySelector('[data-anchor="' + name + '"]') as HTMLElement | null : null;
+      el?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    }, 0);
+  };
+
+  // An exception row's link: open the tab, then the control or the grid line
+  // where it is resolved. Read-only: nothing is decided here. The one action
+  // that runs is "run anomaly check", the same handler and endpoint as the
+  // header's "run validation".
+  const onExceptionAction = (action: ExceptionAction) => {
+    if (!action) return;
+    if (action.href) { window.location.hash = action.href; return; }
+    if (action.control === "run_validation") { runValidation(); return; }
+    if (action.tab && action.tab !== tab) setTab(action.tab);
+    if (action.target && action.target.startsWith("lines[")) {
+      const i = Number(action.target.slice("lines[".length, -1));
+      setTimeout(() => {
+        const rows = typeof document !== "undefined" ? document.querySelectorAll("tr.recon-row") : [];
+        (rows[i] as HTMLElement | undefined)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      }, 0);
+      return;
+    }
+    if (action.control === "quoted_only") setGapsOpen(true);
+    if (action.control) scrollToAnchor(action.control);
+  };
+
+  // Why an exception's control cannot run now. Mirrors the header button.
+  const exceptionDisabledReason = (action: ExceptionAction | null): string | null => {
+    if (action?.control !== "run_validation") return null;
+    if (!canWrite) return "Needs write permission";
+    if (busy) return "Another action is running";
+    if (!o.customer_id) return "Set a customer first; the rules need one";
+    if (!lines.length) return "Run extraction first; the rules score line items";
+    if (o.status === "CANCELLED") return "The order is cancelled";
+    return null;
+  };
+
   const tabs = [
     // The PO PDF (formerly the standalone "Review" tab) is now
     // side-by-side with the line grid inside this Reconcile tab.
@@ -2298,6 +2371,8 @@ const WiredSOWorkspace = () => {
         const ic = recon.incoterms;
         const mod = recon.mod_bom;
         const lineFlags = flags.filter((f: any) => !HEADER_VERDICTS.has(f.verdict));
+        const headerItems = (pt?.verdict === "mismatch" ? 1 : 0)
+          + (ic?.verdict === "mismatch" || ic?.verdict === "place_differs" || ic?.verdict === "quote_missing" ? 1 : 0);
         // Nothing to review: the strip's verdict column has already said
         // "Verified — n/n matched", and a full-width green banner repeating it
         // is the clutter this change exists to remove. The gap list is still
@@ -2311,43 +2386,13 @@ const WiredSOWorkspace = () => {
               ? `Quotes verified — ${s.matched}/${s.total} lines matched`
               : `Quote check: ${s.matched}/${s.total} matched · ${s.price_mismatch || 0} price · ${s.description_mismatch || 0} description · ${s.unmatched || 0} unmatched${pt?.verdict === "mismatch" ? " · payment-terms" : ""}${ic?.verdict === "mismatch" || ic?.verdict === "place_differs" ? " · incoterms" : ""}`}
             action={<>{reBtn}{soBtn}</>}>
+            {/* The per-item list that sat here (payment terms, incoterm, and
+                each price, description and unmatched line) is now in the
+                "Needs decision" card at the top of the Reconcile tab, with
+                every other source, each linked to where it is resolved. */}
             {!clean && (
-              <div className="mono-sm" style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4 }}>
-                {pt?.verdict === "mismatch" && (
-                  <div>⚠ Payment terms: PO “{pt.po_terms}” vs quote “{pt.quote_terms}”{pt.source_quote_number ? ` (${pt.source_quote_number})` : ""}</div>
-                )}
-                {ic?.verdict === "mismatch" && (
-                  <div>⚠ Incoterms: PO “{ic.po_incoterm}” vs quote “{ic.quote_incoterm}”{ic.source_quote_number ? ` (${ic.source_quote_number})` : ""}</div>
-                )}
-                {ic?.verdict === "place_differs" && (
-                  <div>⚠ Incoterm place: both {ic.po_code}, but PO “{ic.po_place || "—"}” vs quote “{ic.quote_place || "—"}”</div>
-                )}
-                {ic?.verdict === "quote_missing" && (
-                  /* Not a discrepancy: the quote is silent on the rule, so the
-                     PO's incoterm is unconfirmed rather than contradicted. */
-                  <div>• Incoterm: PO “{ic.po_incoterm}”, quote has no incoterm{ic.source_quote_number ? ` (${ic.source_quote_number})` : ""}</div>
-                )}
-                {lineFlags.slice(0, 10).map((f: any, i: number) => (
-                  <div key={i}>
-                    {f.verdict === "price_mismatch"
-                      ? `⚠ ${f.part_no}: PO ${f.po_rate} vs quote ${f.quote_rate} (${f.price_delta_pct > 0 ? "+" : ""}${f.price_delta_pct}%)${
-                          /* The amount, beside the percentage. A rate delta on
-                             one unit and the same delta on 3,000 read
-                             identically as a percentage. */
-                          f.po_qty != null && f.po_rate != null && f.quote_rate != null
-                            ? ` = ${(f.po_rate - f.quote_rate) * f.po_qty > 0 ? "+" : ""}${Math.round((f.po_rate - f.quote_rate) * f.po_qty).toLocaleString("en-IN")} on ${f.po_qty}`
-                            : ""
-                        }${f.source_quote_number ? ` · ${f.source_quote_number}` : ""}`
-                      : f.verdict === "description_mismatch"
-                      ? `⚠ ${f.part_no}: description differs — PO “${f.po_description || "—"}” vs quote “${f.quote_description || "—"}”`
-                      : f.verdict === "unmatched"
-                      ? `• unmatched: ${f.part_no || "—"}`
-                      /* Unknown verdict: say what it is rather than mislabel it
-                         "unmatched", which is what the old else-branch did. */
-                      : `• ${String(f.verdict || "issue").replace(/_/g, " ")}: ${f.part_no || "—"}`}
-                  </div>
-                ))}
-                {lineFlags.length > 10 && <div>…and {lineFlags.length - 10} more</div>}
+              <div className="mono-sm" style={{ marginTop: 4, color: "var(--ink-3)" }}>
+                {headerItems + lineFlags.length} item{headerItems + lineFlags.length === 1 ? "" : "s"} listed under Needs decision on the Reconcile tab.
               </div>
             )}
             {/* Quoted but NOT ordered. P3's reverse walk reports these; this
@@ -2361,7 +2406,7 @@ const WiredSOWorkspace = () => {
               if (!gaps.length) return null;
               const gapKey = (g: any, i: number) => String(g.part_no || "") + ":" + i;
               return (
-                <div className="mono-sm" style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid var(--hairline-2)" }}>
+                <div className="mono-sm" data-anchor="quoted_only" style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid var(--hairline-2)" }}>
                   <div className="row" style={{ gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
                     {/* Closed, this is ONE button and nothing else.
                         Everything about variance — the count, the reasoning,
@@ -2564,6 +2609,16 @@ const WiredSOWorkspace = () => {
             extractionRunId={o.preflight_payload?.extraction_run_id || null}
             canCorrect={canApprove}
           >
+            {/* One list of what needs a decision (plan PR 9). Read-only: each
+                row links to the tab, control or grid line that resolves it. */}
+            <div style={{ marginBottom: 12 }}>
+              <OrderExceptionsCard
+                result={exceptions}
+                origin={exceptionsFromServer ? "server" : "local"}
+                onAction={onExceptionAction}
+                disabledReason={exceptionDisabledReason}
+              />
+            </div>
             <div className="recon-toolbar">
               <div className="recon-view-toggle" role="group" aria-label="Reconcile layout">
                 {([["pdf", "PDF"], ["split", "Split"], ["lines", "Lines"]] as const).map(([v, label]) => (
@@ -2606,6 +2661,7 @@ const WiredSOWorkspace = () => {
                   </details>
                 )}
                 {o.result?.salesOrder?.customer && (
+                  <div data-anchor="customer_card">
                   <Card title="Customer · from PO header" eyebrow="extracted by docai">
             <KV rows={[
               ["Name",        o.result.salesOrder.customer.name || "—"],
@@ -2623,8 +2679,11 @@ const WiredSOWorkspace = () => {
               ...(headerRequisition ? [["PR no.", headerRequisition] as [string, string]] : []),
             ]} />
                   </Card>
+                  </div>
                 )}
-                <ExtractionQualityCard extractionRun={extractionRun} extractionIndex={extractionIndex} />
+                <div data-anchor="extraction_quality">
+                  <ExtractionQualityCard extractionRun={extractionRun} extractionIndex={extractionIndex} />
+                </div>
                 <Card flush>
             <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--hairline-2)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               <span className="h2">Line reconciliation</span>
@@ -2692,7 +2751,7 @@ const WiredSOWorkspace = () => {
               </div>
             )}
             {draftLines.length === 0 ? (
-              <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
+              <div className="body" data-anchor="run_extraction" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
                 <div style={{ marginBottom: 12 }}>
                   No line items extracted yet. Re-run extraction — try a different
                   engine (e.g. <b>llamaparse</b> for complex tables) — or attach a

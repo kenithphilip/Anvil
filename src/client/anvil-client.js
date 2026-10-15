@@ -905,6 +905,12 @@
     // not_a_deviation, with a required reason. Append-only on the server.
     termsDecide: async (orderId, flagId, decision, reason) =>
       apiFetch("/api/orders/terms_decide", { method: "POST", body: { order_id: orderId, flag_id: flagId, decision, reason } }),
+    // One list of what needs a decision on the order: reconcile, findings,
+    // anomaly rules, extraction, terms flags and the customer match.
+    // opts.includeShadow: an admin reading shadow-mode terms rows (the server
+    // refuses anyone else). Read-only.
+    exceptions: async (orderId, opts) =>
+      apiFetch("/api/orders/exceptions?id=" + encodeURIComponent(orderId) + (opts && opts.includeShadow ? "&include_shadow=1" : "")),
     attachedQuotes: async (orderId) => apiFetch("/api/orders/quotes?order_id=" + encodeURIComponent(orderId)),
     // One attached quote in full: a signed URL to read the PDF, plus the
     // extracted lines with rates converted back to PERCENTAGES, because the

@@ -19,6 +19,7 @@ import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "..
 import { classifyOrigin } from "../_lib/pending-so/part-origin.js";
 import { hasUnresolvedBlocker, firstUnresolvedBlocker } from "../_lib/blocking-findings.js";
 import { soLineMoney } from "../_lib/so-line-money.js";
+import { lineDueDate, fmtDueDate } from "../_lib/order-delivery-date.js";
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -62,7 +63,6 @@ const addrLines = (...parts) => parts.map((p) => (p == null ? "" : String(p).tri
 export const buildSalesOrderData = ({ order, customer, consigneeLoc, seller, contact, schedules }) => {
   const soData = order.result?.salesOrder || {};
   const soItems = Array.isArray(soData.lineItems) ? soData.lineItems : [];
-  const dueByIndex = new Map((schedules || []).map((s) => [Number(s.line_index), s.scheduled_date]));
 
   const items = soItems.map((ln, i) => {
     const partNo = pick(ln.part_no, ln.partNumber, ln.itemCode) || "";
@@ -77,7 +77,10 @@ export const buildSalesOrderData = ({ order, customer, consigneeLoc, seller, con
       hsn: pick(ln.hsn, ln.hsn_sac) || "",
       custPartNo: pick(ln.customer_part_number, ln.cust_part_no, ln.customerPartNumber) || "",
       partNo: partNo ? partNo + partOriginMarker(ln, partNo, pick(ln.description, ln.itemName)) : "",
-      dueOn: fmtDate(dueByIndex.get(i) || soData.delivery_date || null),
+      // Our schedule, else the PO line's date, else the PO header's, else the
+      // date we committed to (order-delivery-date.js lineDueDate). The Excel
+      // export prints the same date from the same helper.
+      dueOn: fmtDueDate(lineDueDate(order, i, schedules)),
       qty,
       uom: pick(ln.uom, ln.unit) || "No.",
       rate,
@@ -147,7 +150,7 @@ export default async function handler(req, res) {
     const svc = serviceClient();
 
     const orderQ = await svc.from("orders")
-      .select("id, status, rule_findings, po_number, po_date, quote_number, quote_id, result, customer_id, created_at, approved_at, dispatch_mode, registration_serial_no, delivery_terms, so_voucher_no, so_message, customer_location_id, delivery_point_contact_id")
+      .select("id, status, rule_findings, po_number, po_date, quote_number, quote_id, result, customer_id, created_at, approved_at, dispatch_mode, registration_serial_no, delivery_terms, so_voucher_no, so_message, customer_location_id, delivery_point_contact_id, committed_delivery_date")
       .eq("tenant_id", ctx.tenantId).eq("id", orderId).maybeSingle();
     if (orderQ.error) throw new Error("orders read: " + orderQ.error.message);
     if (!orderQ.data) return json(res, 404, { error: { message: "Order not found" } });

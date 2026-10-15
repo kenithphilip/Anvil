@@ -60,10 +60,11 @@ describe("buildSalesOrderAoa", () => {
     expect(aoa.find((r) => r[0] === "PO Number")).toEqual(["PO Number", "P250432265"]);
     expect(aoa.find((r) => r[0] === "Customer")).toEqual(["Customer", "HYUNDAI MOTOR INDIA LTD"]);
     const headerRow = aoa.find((r) => r[0] === "#");
-    expect(headerRow).toEqual(["#", "Part Number", "Customer Part No", "Item Name", "Description", "Qty", "UOM", "Unit Price", "Amount", "HSN"]);
+    expect(headerRow).toEqual(["#", "Part Number", "Customer Part No", "Item Name", "Description", "Qty", "UOM", "Unit Price", "Amount", "HSN", "Due On"]);
     const hi = aoa.indexOf(headerRow);
     // line 1 uses partNumber/qty/rate/amount aliases
-    expect(aoa[hi + 1]).toEqual([1, "GD544202503060009", "AS2-0061", "ATD NS HEAD ASSY", "ATD NS HEAD ASSY", 1, "EA", 45408, 45408, "8479"]);
+    // No schedule, no PO date and no committed date: the due date is blank.
+    expect(aoa[hi + 1]).toEqual([1, "GD544202503060009", "AS2-0061", "ATD NS HEAD ASSY", "ATD NS HEAD ASSY", 1, "EA", 45408, 45408, "8479", ""]);
     // line 2 uses quantity/unitPrice aliases; amount derived = 2 * 166497.1
     expect(aoa[hi + 2][5]).toBe(2);
     expect(aoa[hi + 2][7]).toBe(166497.1);

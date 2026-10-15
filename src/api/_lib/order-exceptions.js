@@ -49,6 +49,7 @@
 
 import { SEVERITY_LEVELS } from "./terms/taxonomy.js";
 import { isUnresolvedBlocker } from "./blocking-findings.js";
+import { deliveryDateConflicts, orderDeliveryDate, poRequiredBy, committedDate, suggestedCommittedDate } from "./order-delivery-date.js";
 
 // The response shape. Bump it when a field changes meaning.
 export const EXCEPTIONS_VERSION = 1;
@@ -140,6 +141,7 @@ const termsDecide = (decision, permission) => endpoint("POST", "/api/orders/term
   "order_id, flag_id, decision: " + decision + ", reason", "Terms tab: the flag's decision buttons", permission);
 const RESOLVE_FINDING = endpoint("PATCH", ORDER, "resolve_finding: { code: {code}, note }",
   "Why tab: Blocks approval, resolve", "approve");
+const COMMITTED_DATE = headerField("committed_delivery_date");
 const UPDATE_MASTER = endpoint("POST", "/api/customers", "the customer record with the PO's values",
   "SO intake: Update customer dialog");
 
@@ -191,6 +193,10 @@ export const EXCEPTION_TYPES = Object.freeze({
   customer_gstin_conflict: { source: "customer", options: [opt("change_customer", NO_CUSTOMER_CHANGE), opt("update_master", UPDATE_MASTER), opt("confirm", NO_DECISION_RECORD)] },
   customer_low_confidence: { source: "customer", options: [opt("change_customer", NO_CUSTOMER_CHANGE), opt("confirm", NO_DECISION_RECORD)] },
   customer_state_differs: { source: "customer", options: [opt("update_master", UPDATE_MASTER), opt("confirm", NO_DECISION_RECORD)] },
+  // the delivery date (order-delivery-date.js). accept_suggested_date sets
+  // the committed date to payload.suggestion.value through the existing
+  // Header fields save; it is never applied by itself (owner decision 7).
+  delivery_date_conflict: { source: "delivery_date", options: [opt("accept_suggested_date", COMMITTED_DATE), opt("set_value", COMMITTED_DATE), opt("request_amendment", NO_AMENDMENT)] },
 });
 
 // The registry entry for a type, with the ":*" families resolved.
@@ -958,6 +964,32 @@ const termsClauseStates = (terms) => {
   return m;
 };
 
+// ── the delivery date ───────────────────────────────────────────────────────
+
+// One row per conflict rule (order-delivery-date.js CONFLICT_RULES). The
+// suggestion rides on the payload: the committed date is never set here.
+const deliveryRows = ({ order, now }) => {
+  const lines = linesOf(order);
+  const suggestion = suggestedCommittedDate(order);
+  return deliveryDateConflicts(order, { now }).map((c) => {
+    const lineIdx = Array.isArray(c.payload?.line_indexes) ? c.payload.line_indexes : [];
+    const onLines = c.rule === "line_differs_from_header" && lineIdx.length;
+    return {
+      type: "delivery_date_conflict", subject: "rule:" + c.rule, source: "delivery_date", severity: c.severity,
+      title: c.title, detail: c.detail,
+      payload: {
+        subject: lineIdx.length === 1 ? lineSubjectData(lines, lineIdx[0]) : ORDER_SUBJECT,
+        rule: c.rule, ...c.payload,
+        suggestion,
+        evidence_refs: lineIdx.flatMap((i) => lineEvidenceRefs(order, i)).slice(0, 10),
+      },
+      action: onLines
+        ? { tab: "recon", target: "lines[" + lineIdx[0] + "]", label: "The Due column on line " + (lineIdx[0] + 1) + " in the line grid" }
+        : { tab: "header", control: "committed_date", label: "Committed delivery date on the Header fields tab" },
+    };
+  });
+};
+
 // ── merge, sort, split ──────────────────────────────────────────────────────
 
 // The key: the type and the subject. Stable across re-reads of the same
@@ -1057,17 +1089,19 @@ const termsState = (terms) => {
 //                  or null when the check is not installed
 //   termsPolicy    the tenant's effective terms policy, or null
 //   agentPolicy    resolveAgentPolicy(tenant override); the defaults when null
+//   now            the review time (the delivery-date "in the past" rule)
 //
 // Returns the response GET /api/orders/exceptions sends, version 1:
 //   { version, order_id, status, rows, info, decided, counts, clean,
-//     customer_match, terms_state, agent_policy }
+//     customer_match, terms_state, agent_policy, delivery }
 export const buildOrderExceptions = ({
   order = null, customer = null, vendorCodes = [], extractionRun = null, terms = null, termsPolicy = null, agentPolicy = null,
+  now = new Date(),
 } = {}) => {
   const policy = agentPolicy ? resolveAgentPolicy(agentPolicy) : DEFAULT_AGENT_POLICY;
   const base = { version: EXCEPTIONS_VERSION, order_id: order?.id || null, status: order?.status || null, agent_policy: policy };
   if (!order || typeof order !== "object") {
-    return { ...base, rows: [], info: [], decided: [], counts: emptyCounts(), clean: true, customer_match: null, terms_state: termsState(terms) };
+    return { ...base, rows: [], info: [], decided: [], counts: emptyCounts(), clean: true, customer_match: null, terms_state: termsState(terms), delivery: null };
   }
   const termsByClause = termsClauseStates(terms);
   const cust = customerRows({ order, customer, vendorCodes });
@@ -1078,6 +1112,7 @@ export const buildOrderExceptions = ({
     ...cust.rows,
     ...anomalyRows({ order }),
     ...extractionRows({ order, extractionRun }),
+    ...deliveryRows({ order, now }),
   ])).map((r) => finish(r, policy));
   const sorted = orderRows(all);
   const rows = sorted.filter((r) => r.status === "open" && r.severity !== "info");
@@ -1098,6 +1133,15 @@ export const buildOrderExceptions = ({
     clean: rows.length === 0,
     customer_match: cust.match,
     terms_state: termsState(terms),
+    // The date the summary shows and where it came from (PO line, PO
+    // header, committed by us, or none), the PO's date, ours, and the
+    // suggestion for ours. Shown, never applied.
+    delivery: {
+      shown: orderDeliveryDate(order),
+      po: poRequiredBy(order),
+      committed: committedDate(order),
+      suggestion: suggestedCommittedDate(order),
+    },
   };
 };
 

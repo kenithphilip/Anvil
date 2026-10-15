@@ -195,3 +195,69 @@ describe("the reconciler keeps the PO rate", () => {
     expect(c.discounted_unit_price).toBe(80);
   });
 });
+
+// The due date (plan PR 10): both endpoints read the schedule and the
+// committed date and print each line's due date from one helper, so the two
+// documents agree line by line. Our schedule, else the PO line's date, else
+// the PO header's, else the committed date.
+describe("one order through both exports: the due date", () => {
+  const dueOrder = () => ({
+    ...reconciledOrder(),
+    committed_delivery_date: "2026-12-05",
+    result: {
+      salesOrder: {
+        currency: "INR",
+        customer: { name: "Test Buyer", delivery_date: "2026-11-30" },
+        lineItems: [
+          { line_no: 1, part_no: "PART-A", qty: 1, unitPrice: 10, delivery_date: "2026-11-20" },
+          { line_no: 2, part_no: "PART-B", qty: 1, unitPrice: 10 },
+          { line_no: 3, part_no: "PART-C", qty: 1, unitPrice: 10 },
+        ],
+      },
+    },
+  });
+
+  const excelDue = async () => {
+    const res = makeRes();
+    await exportHandler({ method: "GET", headers: {}, query: { orderId: ORDER_ID } }, res);
+    const wb = XLSX.read(res.body, { type: "buffer" });
+    const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, blankrows: false, defval: "" });
+    const head = aoa.findIndex((r) => r[0] === "#");
+    const col = aoa[head].indexOf("Due On");
+    return aoa.slice(head + 1, head + 4).map((r) => r[col]);
+  };
+  const pdfDue = async () => {
+    H.rendered = [];
+    await soPdfHandler({ method: "GET", headers: {}, query: { orderId: ORDER_ID } }, makeRes());
+    return H.rendered[0].items.map((it) => it.dueOn);
+  };
+
+  it("prints the same due date on every line, from the schedule, the line, then the header", async () => {
+    H.store = {
+      orders: [dueOrder()],
+      order_schedule_lines: [{ tenant_id: TENANT, order_id: ORDER_ID, line_index: 2, scheduled_date: "2026-11-02" }],
+    };
+    const xl = await excelDue();
+    expect(await pdfDue()).toEqual(xl);
+    expect(xl).toEqual(["20-Nov-26", "30-Nov-26", "02-Nov-26"]);
+  });
+
+  it("falls back to the committed date when the PO states none", async () => {
+    const o = dueOrder();
+    delete o.result.salesOrder.customer.delivery_date;
+    delete o.result.salesOrder.lineItems[0].delivery_date;
+    H.store = { orders: [o], order_schedule_lines: [] };
+    const xl = await excelDue();
+    expect(await pdfDue()).toEqual(xl);
+    expect(xl).toEqual(["05-Dec-26", "05-Dec-26", "05-Dec-26"]);
+  });
+
+  it("reads only this tenant's schedule", async () => {
+    H.store = {
+      orders: [dueOrder()],
+      order_schedule_lines: [{ tenant_id: "00000000-0000-0000-0000-0000000000ff", order_id: ORDER_ID, line_index: 1, scheduled_date: "2026-10-20" }],
+    };
+    expect(await excelDue()).toEqual(["20-Nov-26", "30-Nov-26", "30-Nov-26"]);
+    expect(await pdfDue()).toEqual(["20-Nov-26", "30-Nov-26", "30-Nov-26"]);
+  });
+});

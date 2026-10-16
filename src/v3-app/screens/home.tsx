@@ -24,12 +24,55 @@ import { Prefs } from "../lib/preferences";
 
 
 
+// Statuses an order holds once it has been approved and not withdrawn.
+const APPROVED_OR_LATER = new Set(["APPROVED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED"]);
+
+const grandTotalOf = (o: any): number => Number(o?.result?.salesOrder?.grandTotal) || 0;
+
+// The "done today" and "done this month" KPIs, by the tenant's processing mode.
+//
+// Mode A: an SO is done when Anvil has pushed it to Tally (unchanged).
+// Mode B: Anvil never pushes (the team keys the SO into Tally by hand), so
+// "Pushed" always read 0. The SO is done when it is approved: the count is
+// orders approved and not since returned or cancelled, by orders.approved_at.
+// Read from the orders the screen already lists; no new table.
+// mode null (not read yet) shows Mode A, as the SO workspace does.
+export const completionKpis = (list: any[], mode: "A" | "B" | null, now: Date = new Date()) => {
+  const modeB = mode === "B";
+  const isDone = (o: any) => (modeB
+    ? APPROVED_OR_LATER.has(o?.status) && !!o?.approved_at
+    : o?.status === "EXPORTED_TO_TALLY" || o?.status === "RECONCILED");
+  const at = (o: any) => (modeB ? o.approved_at : (o.updated_at || o.created_at));
+  const monthStart = new Date(now);
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const done = (Array.isArray(list) ? list : []).filter((o) => isDone(o) && at(o));
+  const today = done.filter((o) => new Date(at(o)).toDateString() === now.toDateString());
+  const mtd = done.filter((o) => new Date(at(o)).getTime() >= monthStart.getTime());
+  const sum = (rows: any[]) => rows.reduce((s, o) => s + grandTotalOf(o), 0);
+  return {
+    verb: modeB ? "Approved" : "Pushed",
+    today: { count: today.length, value: sum(today) },
+    mtd: { count: mtd.length, value: sum(mtd) },
+  };
+};
+
 // ─────────────────────────────────────────────────────────────
 // HomeEngineer (wired) — replaces the static demo of the same name.
 // ─────────────────────────────────────────────────────────────
 const WiredHomeEngineer = () => {
   const orders = useFetch(() => AnvilBackend?.orders?.list?.({ limit: 50 }) || Promise.resolve([]), []);
   const audit = useFetch(() => AnvilBackend?.audit?.list?.({ limit: 6 }) || Promise.resolve([]), []);
+  // The tenant's SO processing mode ("A" Anvil pushes, "B" Tally by hand);
+  // null until read, which shows the Mode A labels.
+  const [soMode, setSoMode] = useState<"A" | "B" | null>(null);
+  useEffect(() => {
+    let live = true;
+    Promise.resolve((AnvilBackend as any)?.docai?.soProcessingMode?.())
+      .then((r: any) => { if (live) setSoMode(r?.mode === "B" ? "B" : r?.mode === "A" ? "A" : null); })
+      .catch(() => { if (live) setSoMode(null); });
+    return () => { live = false; };
+  }, []);
 
   // GET /api/orders returns { orders } and GET /api/audit returns
   // { events }. Both lists read `rows`, which neither sends, so the
@@ -42,26 +85,9 @@ const WiredHomeEngineer = () => {
 
   const drafts = list.filter((o) => o.status === "DRAFT").length;
   const inApproval = list.filter((o) => o.status === "PENDING_REVIEW").length;
-  const isPushed = (o: any) => o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED";
-  const pushedToday = list.filter((o) => {
-    if (!isPushed(o)) return false;
-    const t = o.updated_at || o.created_at;
-    return t && new Date(t).toDateString() === new Date().toDateString();
-  });
-  const pushedValueToday = pushedToday.reduce((sum, o) => sum + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
-
-  // Audit P13.B.1.1. Add the design's 5th KPI (₹ pushed MTD).
-  // Same backend payload, different cut so the operator can see
-  // monthly volume without leaving the home screen.
-  const monthStart = new Date();
-  monthStart.setDate(1);
-  monthStart.setHours(0, 0, 0, 0);
-  const pushedMtd = list.filter((o) => {
-    if (!isPushed(o)) return false;
-    const t = o.updated_at || o.created_at;
-    return t && new Date(t).getTime() >= monthStart.getTime();
-  });
-  const pushedValueMtd = pushedMtd.reduce((sum, o) => sum + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
+  // Audit P13.B.1.1: the 4th and 5th KPIs (today, and month to date). Same
+  // backend payload, cut by the processing mode (completionKpis above).
+  const done = completionKpis(list, soMode);
 
   const auditRows = (Array.isArray(audit.data) ? audit.data : (audit.data?.events || [])).slice(0, 6);
 
@@ -112,8 +138,8 @@ const WiredHomeEngineer = () => {
           <KPI lbl="My queue" v={String(myQueue.length)} d={myQueue.length ? `oldest ${ageLabel(myQueue[0]?.updated_at)}` : "all clear"} live={myQueue.length > 0} />
           <KPI lbl="Drafts" v={String(drafts)} d="autosaved locally" />
           <KPI lbl="In approval" v={String(inApproval)} d={inApproval ? "pending review" : "none pending"} />
-          <KPI lbl="Pushed today" v={fmtINRShort(pushedValueToday)} d={`${pushedToday.length} SOs`} dKind={pushedToday.length ? "up" : ""} />
-          <KPI lbl="Pushed MTD" v={fmtINRShort(pushedValueMtd)} d={`${pushedMtd.length} SOs this month`} dKind={pushedMtd.length ? "up" : ""} />
+          <KPI lbl={done.verb + " today"} v={fmtINRShort(done.today.value)} d={`${done.today.count} SOs`} dKind={done.today.count ? "up" : ""} />
+          <KPI lbl={done.verb + " MTD"} v={fmtINRShort(done.mtd.value)} d={`${done.mtd.count} SOs this month`} dKind={done.mtd.count ? "up" : ""} />
         </KPIRow>
 
         <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 14 }}>

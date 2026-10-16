@@ -3,6 +3,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { evaluateApprovalsForOrder } from "../_lib/approval-evaluator.js";
+import { approvalExpiryBlocks, approvalClearedByReturn } from "../_lib/order-status-actions.js";
 import { lineCandidates, lineSapCandidates } from "../_lib/item-mapper.js";
 import { upsertCustomerPart } from "../_lib/item-customer-parts.js";
 import { promoteApprovedOrder } from "../eval/promote.js";
@@ -175,7 +176,9 @@ export default async function handler(req, res) {
       }
 
       const intendedAction = body.intendedAction || (body.status === "APPROVED" ? "approve" : body.status === "EXPORTED_TO_TALLY" ? "export_tally" : null);
-      if (prev.approval && prev.approval_expires_at && new Date(prev.approval_expires_at).getTime() < Date.now() && body.status && body.status !== prev.status && intendedAction !== "approve") {
+      // A cancel or a return for fix passes an expired approval (it withdraws
+      // the order from it); every other status change is refused as before.
+      if (approvalExpiryBlocks({ prev, body, intendedAction })) {
         return json(res, 409, { error: { message: "Approval expired. Re-approve before updating." } });
       }
       if (prev.approval && Array.isArray(prev.approval_actions) && prev.approval_actions.length && intendedAction && !prev.approval_actions.includes(intendedAction) && body.status && body.status !== prev.status) {
@@ -241,6 +244,10 @@ export default async function handler(req, res) {
         patch.approval_expires_at = null;
         patch.approval_actions = [];
       }
+      // A return to DRAFT withdraws the approval too: the order must be
+      // approved again, and an old approval must not refuse the resubmit.
+      const returnClears = approvalClearedByReturn(prev, body);
+      if (returnClears) Object.assign(patch, returnClears);
 
       // Stamp orders.payload_hash so a SCANNED PO can be approved at all.
       // Approve refuses without approval.payloadHash, and the workspace reads

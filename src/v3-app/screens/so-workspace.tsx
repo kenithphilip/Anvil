@@ -2261,9 +2261,11 @@ const WiredSOWorkspace = () => {
               observable; it sits beside the button rather than inside it
               because the button is too narrow for the grid + timer. */}
           {busy && <LoadingState label={busyLabel(busy)} variant="drive" />}
-          {/* Run validation: scores the extracted lines against the
+          {/* Re-run checks: scores the extracted lines against the
               anomaly rule library and persists findings into
-              orders.rule_findings. The Validate step in the stepper
+              orders.rule_findings. The server already runs the same rules
+              after each reconcile (plan PR 8); this runs them again now,
+              on the lines on screen. The Validate step in the stepper
               lights as done once last_validated_at is stamped. */}
           <Btn sm kind="ghost"
                disabled={!canWrite || !!busy || !o.customer_id || lines.length === 0 || o.status === "CANCELLED"}
@@ -2273,9 +2275,9 @@ const WiredSOWorkspace = () => {
                    ? "Set a customer first; rules need a tenant peer-set"
                    : lines.length === 0
                      ? "Run extraction first; the rules score line items"
-                     : "Score the order against the anomaly rule library"
+                     : "Run the rate, margin, GST, credit and hygiene checks again. The server runs them when the lines or the customer change."
                }>
-            {Icon.shield} {busyVerb(busy, "validate", "run validation")}
+            {Icon.shield} {busyVerb(busy, "validate", "Re-run checks")}
           </Btn>
           {/* Return for correction: manager exit-path when the SO has
               a wrong ship-to, rate, qty, etc. The operator sees the

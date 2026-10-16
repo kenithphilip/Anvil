@@ -187,7 +187,7 @@ describe("source: the anomaly rules", () => {
     const r = byType(out, "anomaly_check_not_run");
     expect(r).toMatchObject({ title: "Anomaly check not run", action: { control: "run_validation", label: "Run anomaly check" }, agent_policy: "apply" });
     expect(r.resolution_options).toEqual([
-      { option: "run_check", label: "Run the check again", applies_via: expect.objectContaining({ kind: "endpoint", method: "POST", path: "/api/anomaly/compute", control: "Header: run validation" }) },
+      { option: "run_check", label: "Run the check again", applies_via: expect.objectContaining({ kind: "endpoint", method: "POST", path: "/api/anomaly/compute", control: "Header: Re-run checks" }) },
     ]);
     // Not asked of an approved order, nor of one with no lines.
     expect(types(buildOrderExceptions({ order: { ...order, status: "APPROVED" }, customer: master }))).not.toContain("anomaly_check_not_run");

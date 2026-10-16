@@ -39,10 +39,11 @@
 // is both an extraction anomaly and a finding. The row from the source that
 // can decide it wins, and `sources` lists both.
 //
-// The anomaly rules (/api/anomaly/compute) run only from "run validation";
-// the server does not run them (plan PR 8 is not built). An order whose rules
-// never ran gets one row, "Anomaly check not run", whose option is that
-// existing button.
+// The anomaly rules (/api/anomaly/compute) run on the server after each
+// reconcile (plan PR 8, order-anomaly-check.js), and from the workspace's
+// "Re-run checks". An order whose rules never ran (no customer or no lines
+// yet, or the server's run failed) gets one row, "Anomaly check not run",
+// whose option is that button.
 //
 // PURE. No I/O, never throws on odd input. The endpoint reads the inputs; the
 // SO workspace imports this file too, so they cannot disagree.
@@ -60,7 +61,7 @@ export const SOURCES = Object.freeze([
   "reconciliation",  // result.quoteReconciliation: lines, header verdicts, gaps
   "customer",        // the order's customer against the PO's buyer block
   "delivery_date",   // the PO's delivery dates against ours
-  "anomaly",         // the anomaly rule library (run validation), anomaly_flags
+  "anomaly",         // the anomaly rule library (server run, Re-run checks), anomaly_flags
   "extraction",      // the extraction run: status, confidence, anomalies, validators
 ]);
 
@@ -136,7 +137,7 @@ const LINE_EDIT_ANY = endpoint("PATCH", ORDER, "result.salesOrder.lineItems[{lin
   "Line grid: edit line {line_number}, then Save line edits");
 const headerField = (field) => endpoint("PATCH", ORDER, field, "Header fields tab: Save header");
 const RUN_VALIDATION = endpoint("POST", "/api/anomaly/compute", "then PATCH " + ORDER + " rule_findings",
-  "Header: run validation");
+  "Header: Re-run checks");
 const RUN_EXTRACTION = endpoint("POST", "/api/docai/extract", "source_id, order_id", "Header: run extraction");
 const TERMS_CHECK = endpoint("POST", "/api/orders/terms_check", "order_id", "Terms tab: Re-check terms");
 const termsDecide = (decision, permission) => endpoint("POST", "/api/orders/terms_decide",
@@ -807,7 +808,7 @@ const anomalyRows = ({ order }) => {
     out.push(({
       type: "anomaly_check_not_run", subject: "order", source: "anomaly", severity: "warn",
       title: "Anomaly check not run",
-      detail: "The rate, margin, GST, credit and hygiene rules have not scored this order. They run only from “run validation”.",
+      detail: "The rate, margin, GST, credit and hygiene rules have not scored this order yet. The server runs them when the lines or the customer change; Re-run checks runs them now.",
       payload: { subject: ORDER_SUBJECT, field: "rule_findings", evidence_refs: [] },
       action: { tab: "recon", control: "run_validation", label: "Run anomaly check" },
     }));

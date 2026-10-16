@@ -658,6 +658,7 @@ const buildCtx = async (svc, tenantId, customerId, candidate) => {
     const cr = await svc
       .from("customers")
       .select("state_code, default_payment_terms, credit_limit")
+      .eq("tenant_id", tenantId)
       .eq("id", customerId)
       .maybeSingle();
     if (!cr.error && cr.data) customer = cr.data;
@@ -726,6 +727,40 @@ const buildCtx = async (svc, tenantId, customerId, candidate) => {
 
 export const COST_RULE_IDS = new Set(["rate_below_landed_cost", "margin_floor_breach", "margin_drop_vs_baseline"]);
 
+// ---- The run ----
+//
+// One run of the rule library over a candidate sales order: the history it
+// scores against, then every rule that applies. The endpoint below (the SO
+// workspace's "Re-run checks") and the server's own run after a reconcile
+// (_lib/order-anomaly-check.js, plan PR 8) both call this, so they cannot
+// score an order differently.
+//
+// The cost rules print landed cost and margin (including the customer's past
+// margin baseline, read from stored orders), so they run only when the caller
+// may see cost (seesCost).
+export const runAnomalyRules = async (svc, tenantId, customerId, candidate, { seesCost = false } = {}) => {
+  const ctx = await buildCtx(svc, tenantId, customerId, candidate);
+  const flags = [];
+  for (const rule of RULES) {
+    if (!seesCost && COST_RULE_IDS.has(rule.id)) continue;
+    if (rule.applies && !rule.applies(ctx)) continue;
+    flags.push(...rule.evaluate(ctx));
+  }
+  return {
+    flags,
+    sample: {
+      totals: ctx.totals.length,
+      lineCounts: ctx.lineCounts.length,
+      distinctParts: Object.keys(ctx.partRates).length,
+      crossDistinctParts: Object.keys(ctx.crossPartRates).length,
+      marginSamples: ctx.marginPctHistory.length,
+      leadTimeSamples: ctx.leadTimeDays.length,
+      aliasMatches: Object.keys(ctx.aliasConfByText).length,
+    },
+    rulesEvaluated: RULES.length,
+  };
+};
+
 // ---- Handler ----
 
 export default async function handler(req, res) {
@@ -742,30 +777,9 @@ export default async function handler(req, res) {
       return json(res, 400, { error: { message: "customerId and candidate required" } });
     }
     const svc = serviceClient();
-    const ctx = await buildCtx(svc, ctxAuth.tenantId, customerId, candidate);
-    const flags = [];
-    // These rules print landed cost and margin (including the customer's past
-    // margin baseline, read from stored orders), so they run only for a role
-    // that may see cost.
-    const seesCost = hasAction(ctxAuth, "cost.view");
-    for (const rule of RULES) {
-      if (!seesCost && COST_RULE_IDS.has(rule.id)) continue;
-      if (rule.applies && !rule.applies(ctx)) continue;
-      flags.push(...rule.evaluate(ctx));
-    }
-    return json(res, 200, {
-      flags,
-      sample: {
-        totals: ctx.totals.length,
-        lineCounts: ctx.lineCounts.length,
-        distinctParts: Object.keys(ctx.partRates).length,
-        crossDistinctParts: Object.keys(ctx.crossPartRates).length,
-        marginSamples: ctx.marginPctHistory.length,
-        leadTimeSamples: ctx.leadTimeDays.length,
-        aliasMatches: Object.keys(ctx.aliasConfByText).length,
-      },
-      rulesEvaluated: RULES.length,
-    });
+    // The cost rules run only for a role that may see cost.
+    const out = await runAnomalyRules(svc, ctxAuth.tenantId, customerId, candidate, { seesCost: hasAction(ctxAuth, "cost.view") });
+    return json(res, 200, out);
   } catch (err) {
     sendError(res, err);
   }

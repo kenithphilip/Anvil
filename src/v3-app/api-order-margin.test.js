@@ -112,34 +112,13 @@ describe("both consumers use the same one", () => {
 
 describe("the queue can tell the three states apart", () => {
   const api = code("src/api/admin/quote_approvals.js");
-  const ui = code("src/v3-app/screens/approvals.tsx");
 
   it("the endpoint reports which state each row is in", () => {
     // A role without cost.view gets "hidden" first (api-cost-view-gate.test.js).
     expect(api).toMatch(/margin_state: !seesCost \? "hidden" : m \? \(m\.partial \? "partial" : "computed"\) : "not_costed"/);
   });
 
-  it("the screen shows 'not costed' rather than a dash", () => {
-    // A dash meant both "thin" and "never costed", in the same colour as a
-    // healthy margin.
-    expect(ui).toMatch(/not costed/);
-    expect(ui).toMatch(/a\.margin_state === "not_costed"/);
-  });
-
-  it("the screen flags a partially-costed margin with its coverage", () => {
-    expect(ui).toMatch(/a\.margin_state === "partial"/);
-    expect(ui).toMatch(/margin_lines_matched/);
-  });
-
-  it("does not zero a negative margin", () => {
-    // `Number(x) || 0` painted an order below cost as unremarkable.
-    expect(ui).not.toMatch(/Number\(a\.margin_pct\) \|\| 0/);
-    expect(ui).toMatch(/Number\.isFinite\(Number\(a\.margin_pct\)\)/);
-  });
-
-  it("the reason chip can now say why, worst first", () => {
-    expect(ui).toMatch(/return "below cost"/);
-    expect(ui).toMatch(/return "margin breach"/);
-    expect(ui).toMatch(/return "not costed"/);
-  });
+  // How the screen shows each state (not costed, partial, a negative margin,
+  // and the reason chips worst first) is rendered and checked in
+  // screens/cost-view-screens.test.tsx.
 });

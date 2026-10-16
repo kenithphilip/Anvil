@@ -1,24 +1,67 @@
 import React, { useEffect, useState } from "react";
-import { fmtINRShort } from "../lib/helpers";
+import { ageLabel, approvalPatch, NO_PAYLOAD_HASH_MESSAGE } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle, fmtINR } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { RBAC } from "../lib/rbac";
 import { AnvilBackend } from "../lib/api";
 
-// In-page SO preview drawer used by the Approvals queue. Replaces
-// the prior "review" button that route-navigated to /so?id= and
-// lost the queue context. The drawer fetches the order via the
-// existing /api/orders/[id] handler and renders a read-only
-// summary (customer, line totals, key fields). Approve / Reject /
-// Return-for-correction land back on the parent screen so the
-// reviewer can decide without leaving the queue.
+// One order waiting for approval, as GET /api/admin/quote_approvals?type=queue
+// returns it. `thresholds` are the open quote_approvals rows for the order: the
+// policy reasons it needs a sign-off. An order with none is still listed: it
+// was sent for approval, and that is the decision this screen exists for.
+export interface QueueThreshold { id: string; approver_role?: string | null; comments?: string | null; created_at?: string | null }
+export interface QueueRow {
+  order_id: string;
+  status?: string;
+  payload_hash?: string | null;
+  po_number?: string | null;
+  quote_number?: string | null;
+  order_mode?: string | null;
+  customer_name?: string | null;
+  state_code?: string | null;
+  line_count?: number | null;
+  value_inr?: number | null;
+  margin_pct?: number | null;
+  margin_state?: string | null;
+  margin_lines_matched?: number | null;
+  margin_lines_total?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  thresholds?: QueueThreshold[];
+}
+
+const refOf = (r: QueueRow) => r.po_number || r.quote_number || (r.order_id ? r.order_id.slice(0, 12) : "this order");
+
+// Why the order is in front of the approver, worst first. A loss outranks a
+// thin margin, and both outrank the policy rows. Each open threshold row is a
+// reason of its own; an order with none was simply sent for approval. "Not
+// costed" comes last: it is not why the order is here, but the approver has to
+// be able to tell it from a healthy margin.
+export const reasonsOf = (r: QueueRow): Array<{ label: string; k: string }> => {
+  const out: Array<{ label: string; k: string }> = [];
+  const m = Number(r.margin_pct);
+  if (r.margin_pct != null && Number.isFinite(m) && m < 0) out.push({ label: "below cost", k: "bad" });
+  else if (r.margin_pct != null && Number.isFinite(m) && m < 10) out.push({ label: "margin breach", k: "warn" });
+  const thresholds = r.thresholds || [];
+  for (const t of thresholds) out.push({ label: (t.approver_role || "approver").replace(/_/g, " ") + " sign-off", k: "warn" });
+  if (!thresholds.length) out.push({ label: "sent for approval", k: "info" });
+  if (r.margin_state === "not_costed") out.push({ label: "not costed", k: "ghost" });
+  return out;
+};
+
+// In-page SO preview drawer used by the Approvals queue. It fetches the order
+// through /api/orders/[id] and shows a read-only summary, so the approver can
+// decide without leaving the queue. Approve and Return for fix land back on
+// the parent, which changes the ORDER. There is no reject: what reject means
+// is an open owner decision (3), and until it is made the screen offers none.
 const SOReviewDrawer: React.FC<{
-  orderId: string;
-  approval: any;
+  row: QueueRow;
+  busy: boolean;
   onClose: () => void;
-  onDecide: (decision: "APPROVED" | "REJECTED") => void;
+  onApprove: () => void;
   onReturnForCorrection: (reason: string) => void;
-}> = ({ orderId, approval, onClose, onDecide, onReturnForCorrection }) => {
+}> = ({ row, busy, onClose, onApprove, onReturnForCorrection }) => {
+  const orderId = row.order_id;
   const [state, setState] = useState<{ data: any; loading: boolean; error: any }>({ data: null, loading: true, error: null });
   const [reason, setReason] = useState("");
   const [showReasonBox, setShowReasonBox] = useState(false);
@@ -42,6 +85,7 @@ const SOReviewDrawer: React.FC<{
   const lines = order?.result?.salesOrder?.lineItems || [];
   const grandTotal = Number(order?.result?.salesOrder?.grandTotal) || 0;
   const customer = order?.result?.salesOrder?.customer || {};
+  const submitNote = String(order?.preflight_payload?.submit_note || "").trim();
 
   return (
     <div
@@ -65,11 +109,13 @@ const SOReviewDrawer: React.FC<{
         <div className="row" style={{ alignItems: "center", gap: 10 }}>
           <div style={{ flex: 1 }}>
             <div className="mono-sm" style={{ color: "var(--ink-3)" }}>Approvals . Review SO</div>
-            <div style={{ fontSize: 16, fontWeight: 600 }}>
-              {approval.po_number || approval.order_reference || (approval.order_id ? approval.order_id.slice(0, 12) : "SO")}
-            </div>
+            <div style={{ fontSize: 16, fontWeight: 600 }}>{refOf(row)}</div>
           </div>
           <Btn sm kind="ghost" onClick={onClose}>close</Btn>
+        </div>
+
+        <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+          {reasonsOf(row).map((r, i) => <Chip key={i} k={r.k}>{r.label}</Chip>)}
         </div>
 
         {state.loading && <div className="body">Loading order...</div>}
@@ -80,9 +126,14 @@ const SOReviewDrawer: React.FC<{
         )}
         {order && (
           <>
+            {submitNote && (
+              <Banner kind="info" icon={Icon.alert} title="Note from the engineer">
+                <span className="mono-sm" style={{ whiteSpace: "pre-wrap" }}>{submitNote}</span>
+              </Banner>
+            )}
             <Card title="Customer" eyebrow="from PO header">
               <div className="mono-sm" style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 4 }}>
-                <div style={{ color: "var(--ink-3)" }}>Name</div><div>{customer.name || order.customer_name || "-"}</div>
+                <div style={{ color: "var(--ink-3)" }}>Name</div><div>{customer.name || order.customer?.customer_name || row.customer_name || "-"}</div>
                 <div style={{ color: "var(--ink-3)" }}>GSTIN</div><div className="mono">{customer.gstin || "-"}</div>
                 <div style={{ color: "var(--ink-3)" }}>State</div><div>{customer.state_code || "-"}</div>
                 <div style={{ color: "var(--ink-3)" }}>Bill to</div><div style={{ whiteSpace: "pre-wrap" }}>{customer.bill_to_address || customer.bill_to || "-"}</div>
@@ -132,41 +183,46 @@ const SOReviewDrawer: React.FC<{
                 <span className="mono-sm">{order.correction_reason}</span>
               </Banner>
             )}
-
-            <div className="row" style={{ gap: 8, marginTop: "auto", justifyContent: "flex-end", flexWrap: "wrap" }}>
-              <Btn sm kind="ghost" onClick={() => { window.location.hash = `#/so?id=${orderId}`; }}>open full workspace</Btn>
-              <Btn sm kind="danger" onClick={() => onDecide("REJECTED")}>reject</Btn>
-              <Btn sm kind="ghost" onClick={() => setShowReasonBox((v) => !v)}>{showReasonBox ? "cancel return" : "return for fix"}</Btn>
-              <Btn sm kind="primary" onClick={() => onDecide("APPROVED")}>{Icon.check} approve</Btn>
-            </div>
-            {showReasonBox && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <label className="mono-sm" style={{ color: "var(--ink-3)" }}>Reason (shared with operator)</label>
-                <textarea
-                  className="input"
-                  rows={3}
-                  value={reason}
-                  placeholder="e.g. Ship-to address is wrong, should be Plant 2, not Plant 1."
-                  onChange={(e) => setReason(e.target.value)}
-                  style={{ width: "100%", padding: 6 }}
-                />
-                <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
-                  <Btn
-                    sm
-                    kind="primary"
-                    disabled={!reason.trim()}
-                    onClick={() => {
-                      onReturnForCorrection(reason.trim());
-                      setReason("");
-                      setShowReasonBox(false);
-                    }}
-                  >
-                    send back to operator
-                  </Btn>
-                </div>
-              </div>
-            )}
           </>
+        )}
+
+        <div className="row" style={{ gap: 8, marginTop: "auto", justifyContent: "flex-end", flexWrap: "wrap" }}>
+          <Btn sm kind="ghost" onClick={() => { window.location.hash = `#/so?id=${orderId}`; }}>open full workspace</Btn>
+          <Btn sm kind="ghost" disabled={busy} onClick={() => setShowReasonBox((v) => !v)}>{showReasonBox ? "cancel return" : "return for fix"}</Btn>
+          <Btn sm kind="primary" disabled={busy} onClick={onApprove} title="Approve this order">{Icon.check} approve</Btn>
+        </div>
+        {/* The reason for a return, typed here rather than in a browser
+            prompt (a browser can suppress native dialogs). Required: the
+            engineer has to know what to fix. */}
+        {showReasonBox && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <label className="mono-sm" style={{ color: "var(--ink-3)" }} htmlFor="approvals-return-reason">
+              What needs to be fixed? The engineer sees this on the order.
+            </label>
+            <textarea
+              id="approvals-return-reason"
+              className="input"
+              rows={3}
+              value={reason}
+              placeholder="e.g. Ship-to address is wrong, should be Plant 2, not Plant 1."
+              onChange={(e) => setReason(e.target.value)}
+              style={{ width: "100%", padding: 6 }}
+            />
+            <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
+              <Btn
+                sm
+                kind="primary"
+                disabled={busy || !reason.trim()}
+                onClick={() => {
+                  onReturnForCorrection(reason.trim());
+                  setReason("");
+                  setShowReasonBox(false);
+                }}
+              >
+                send back for fix
+              </Btn>
+            </div>
+          </div>
         )}
       </div>
     </div>
@@ -174,103 +230,115 @@ const SOReviewDrawer: React.FC<{
 };
 
 // ============================================================
-// ANVIL v3 — wired Approvals queue
-// Pulls quote_approvals via /api/admin/quote_approvals?type=approvals
-// (no client wrapper exists yet, so direct fetch.)
+// ANVIL v3: the wired Approvals queue
+//
+// Lists EVERY order waiting for approval (PENDING_REVIEW), with the
+// quote_approvals threshold rows shown as its reasons. It used to list the
+// threshold rows only, and its approve and reject wrote quote_approvals and
+// never the order: the order stayed PENDING_REVIEW after "approve".
+//
+// Approve now sends the SO workspace's request (approvalPatch: the order's
+// payload hash) to PATCH /api/orders/<id>, then closes the order's open
+// threshold rows. Return for fix sends the workspace's return body.
 // ============================================================
 
 const WiredApprovals = () => {
-  const { useState: u, useEffect: e } = React;
-  const [state, setState] = u({ data: null, loading: true, error: null });
-  const [bump, setBump] = u(0);
+  const [state, setState] = useState<{ data: any; loading: boolean; error: any }>({ data: null, loading: true, error: null });
+  const [bump, setBump] = useState(0);
   // Approval review previously route-navigated to /so?id= which lost
   // queue context. The drawer renders an in-page summary so the
   // reviewer can decide without leaving the screen.
-  const [reviewing, setReviewing] = u<any | null>(null);
+  const [reviewing, setReviewing] = useState<QueueRow | null>(null);
+  // The row whose approve is waiting for its second click. An in-app
+  // confirm, not window.confirm: a browser can suppress native dialogs, and
+  // then the approve did nothing and said nothing.
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
 
-  const fetchApprovals = async () => {
-    const cfg = (AnvilBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string };
-    const session = (AnvilBackend?.getSession?.() || null) as { access_token?: string } | null;
-    if (!cfg.url) throw new Error("Backend URL not configured");
-    const headers = { "Content-Type": "application/json" };
-    if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-    if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
-    const resp = await fetch(cfg.url.replace(/\/+$/, "") + "/api/admin/quote_approvals?type=approvals", { headers });
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
-    return resp.json();
-  };
-
-  const decideApproval = async (id, order_id, approver_role, status) => {
-    const cfg = (AnvilBackend?.getConfig?.() || {}) as { url?: string; tenantId?: string };
-    const session = (AnvilBackend?.getSession?.() || null) as { access_token?: string } | null;
-    if (!cfg.url) throw new Error("Backend URL not configured");
-    const headers = { "Content-Type": "application/json" };
-    if (session?.access_token) headers["Authorization"] = "Bearer " + session.access_token;
-    if (cfg.tenantId) headers["x-anvil-tenant"] = cfg.tenantId;
-    const resp = await fetch(cfg.url.replace(/\/+$/, "") + "/api/admin/quote_approvals?type=approvals", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ id, order_id, approver_role, status }),
-    });
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
-    return resp.json();
-  };
-
-  e(() => {
+  useEffect(() => {
     let cancelled = false;
     setState((s) => ({ ...s, loading: true }));
-    fetchApprovals()
-      .then((data) => { if (!cancelled) setState({ data, loading: false, error: null }); })
+    Promise.resolve(AnvilBackend?.admin?.listApprovalQueue?.())
+      .then((data) => {
+        if (cancelled) return;
+        if (!data) throw new Error("Approvals queue is not available");
+        setState({ data, loading: false, error: null });
+      })
       .catch((error) => { if (!cancelled) setState({ data: null, loading: false, error }); });
     return () => { cancelled = true; };
   }, [bump]);
 
   const reload = () => setBump((n) => n + 1);
-  // Approval decisions are non-trivial (they unblock or block a sales
-  // order); confirm before sending so a stray click doesn't auto-
-  // approve. Errors flow into a notify toast (visible, dismissable)
-  // instead of `window.alert` (modal, blocking, ugly).
-  const onDecide = async (a, decision) => {
-    const ref = a.po_number || a.order_reference || (a.order_id ? a.order_id.slice(0, 12) : "this order");
-    const verb = decision === "APPROVED" ? "approve" : "reject";
-    if (!window.confirm(`Are you sure you want to ${verb} ${ref}?`)) return;
-    try {
-      await decideApproval(a.id, a.order_id, a.approver_role || "sales_manager", decision);
-      window.notifySuccess?.(decision === "APPROVED" ? "Approved" : "Rejected", ref);
-      reload();
-      setReviewing(null);
-    } catch (err: any) {
-      window.notifyError?.("Could not record decision", err?.message || String(err));
+
+  // Close the order's open threshold rows once the order itself is decided,
+  // so the policy record says who decided and when. The order's status is
+  // the decision; a row that fails to close is reported, not retried.
+  const closeThresholds = async (row: QueueRow, status: "APPROVED" | "REJECTED", comments: string | null) => {
+    let failed = 0;
+    for (const t of row.thresholds || []) {
+      try {
+        await AnvilBackend?.admin?.decideApprovalRequest?.({
+          id: t.id, order_id: row.order_id, approver_role: t.approver_role || "sales_manager", status, comments,
+        });
+      } catch (_) { failed += 1; }
     }
+    return failed;
   };
 
-  // Return-for-correction from the in-page drawer. Flips the order
-  // back to DRAFT and stamps the reason; the operator sees a banner
-  // next time they open the SO workspace. The matching approval row
-  // is decided as REJECTED so the queue stops surfacing it.
-  const onReturnForCorrection = async (a, reason: string) => {
-    const ref = a.po_number || a.order_reference || (a.order_id ? a.order_id.slice(0, 12) : "this order");
+  const onApprove = async (row: QueueRow) => {
+    setConfirming(null);
+    const patch = approvalPatch(row);
+    if (!patch) {
+      window.notifyError?.("Approve failed", NO_PAYLOAD_HASH_MESSAGE);
+      return;
+    }
+    setBusy(row.order_id);
     try {
-      await AnvilBackend?.orders?.update?.(a.order_id, {
+      await AnvilBackend?.orders?.update?.(row.order_id, patch);
+    } catch (err: any) {
+      window.notifyError?.("Approve failed", err?.message || String(err));
+      setBusy(null);
+      return;
+    }
+    const failed = await closeThresholds(row, "APPROVED", null);
+    if (failed) {
+      window.notifyWarn?.("Order approved", refOf(row) + " . " + failed + " policy row" + (failed === 1 ? "" : "s") + " could not be closed");
+    } else {
+      window.notifySuccess?.("Order approved", refOf(row));
+    }
+    setBusy(null);
+    setReviewing(null);
+    reload();
+  };
+
+  // Return for fix: the same PATCH the SO workspace sends. The order goes back
+  // to DRAFT with the reason, which the server audits as
+  // manager_requested_correction and the workspace shows as a banner. Nobody
+  // is notified yet (plan PR 14), so the toast does not claim it.
+  const onReturnForCorrection = async (row: QueueRow, reason: string) => {
+    setBusy(row.order_id);
+    try {
+      await AnvilBackend?.orders?.update?.(row.order_id, {
         status: "DRAFT",
         correction_reason: reason,
         correction_requested_by: RBAC?.role?.() || "sales_manager",
         correction_requested_at: new Date().toISOString(),
       });
-      try {
-        await decideApproval(a.id, a.order_id, a.approver_role || "sales_manager", "REJECTED");
-      } catch (_) { /* best-effort: status flip already succeeded */ }
-      window.notifySuccess?.("Sent back for correction", ref + " . operator notified");
-      reload();
-      setReviewing(null);
     } catch (err: any) {
       window.notifyError?.("Return-for-correction failed", err?.message || String(err));
+      setBusy(null);
+      return;
     }
+    await closeThresholds(row, "REJECTED", "Returned for fix: " + reason);
+    window.notifySuccess?.("Sent back for correction", refOf(row) + " . the reason shows on the order");
+    setBusy(null);
+    setReviewing(null);
+    reload();
   };
 
-  const canApprove = RBAC?.canApprove?.("approvals") !== false;
+  const canApprove = RBAC?.canApprove?.("approvals") === true;
 
-  if (state.loading) {
+  if (state.loading && !state.data) {
     return (
       <>
         <WSTitle eyebrow="Workflows · Approvals" title="Approvals" meta="loading…" />
@@ -292,53 +360,17 @@ const WiredApprovals = () => {
     );
   }
 
-  const all = state.data?.approvals || [];
-  const pending = all.filter((a) => (a.status || "").toUpperCase() === "PENDING");
-  const decided = all.filter((a) => (a.status || "").toUpperCase() !== "PENDING");
-
-  // KPI math
-  const expiringSoon = pending.filter((a) => {
-    if (!a.expires_at) return false;
-    const ms = new Date(a.expires_at).getTime() - Date.now();
-    return ms > 0 && ms < 6 * 3600 * 1000;
-  }).length;
-  const marginBreaches = pending.filter((a) => Number(a.margin_pct) > 0 && Number(a.margin_pct) < 10).length;
-  const approvedToday = decided.filter((a) => {
-    const t = a.decided_at;
-    return t && new Date(t).toDateString() === new Date().toDateString() && (a.status === "APPROVED");
-  }).length;
-
-  const expiresLabel = (iso) => {
-    if (!iso) return "—";
-    const ms = new Date(iso).getTime() - Date.now();
-    if (ms <= 0) return "expired";
-    const mins = Math.floor(ms / 60000);
-    if (mins < 60) return `${mins}m`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ${mins - hrs * 60}m`;
-    const days = Math.floor(hrs / 24);
-    return `${days}d ${hrs - days * 24}h`;
-  };
-
-  const reasonOf = (a) => {
-    if (a.reasons && Array.isArray(a.reasons) && a.reasons.length) return a.reasons[0];
-    // Ordered worst-first. A loss outranks a thin margin, and both outrank
-    // "we could not tell" — which used to be indistinguishable from a healthy
-    // order because margin_pct was null for EVERY row.
-    const m = Number(a.margin_pct);
-    if (Number.isFinite(m) && m < 0) return "below cost";
-    if (Number.isFinite(m) && m < 10) return "margin breach";
-    if (a.margin_state === "not_costed") return "not costed";
-    if (a.over_threshold) return "value > threshold";
-    return a.comments || "policy match";
-  };
+  const pending: QueueRow[] = Array.isArray(state.data?.orders) ? state.data.orders : [];
+  const withPolicy = pending.filter((r) => (r.thresholds || []).length > 0).length;
+  const marginBreaches = pending.filter((r) => r.margin_pct != null && Number(r.margin_pct) < 10).length;
+  const waitingDay = pending.filter((r) => r.updated_at && Date.now() - new Date(r.updated_at).getTime() > 24 * 3600 * 1000).length;
 
   return (
     <>
       <WSTitle
         eyebrow="Workflows · Approvals"
         title="Approvals"
-        meta={`${pending.length} pending · ${expiringSoon} expiring soon`}
+        meta={`${pending.length} pending · ${withPolicy} with a policy match`}
         right={<>
           <Btn icon kind="ghost" sm onClick={reload} title="Refresh">{Icon.cycle}</Btn>
         </>}
@@ -347,24 +379,19 @@ const WiredApprovals = () => {
       <div className="ws-content">
         <KPIRow cols={4}>
           <KPI lbl="Pending" v={String(pending.length)} d={pending.length ? "needs decision" : "queue clear"} live={pending.length > 0} />
-          <KPI lbl="Expiring < 6h" v={String(expiringSoon)} d={expiringSoon ? "act now" : "no rush"} dKind={expiringSoon ? "down" : ""} />
+          <KPI lbl="Policy match" v={String(withPolicy)} d={withPolicy ? "threshold rows open" : "none"} />
           <KPI lbl="Margin breaches" v={String(marginBreaches)} d={marginBreaches ? "below floor" : "all healthy"} dKind={marginBreaches ? "down" : ""} />
-          <KPI lbl="Approved today" v={String(approvedToday)} d="auto + manual" />
+          <KPI lbl="Waiting > 1 day" v={String(waitingDay)} d={waitingDay ? "act now" : "no rush"} dKind={waitingDay ? "down" : ""} />
         </KPIRow>
 
         <Card flush>
           {pending.length === 0 ? (
             <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>
-              Queue is empty. Pending approvals appear here when an SO breaches policy.
+              Queue is empty. An order appears here when it is sent for approval.
             </div>
           ) : (
-            // Wrap the table in a horizontally scrollable container.
-            // The Actions column carries 3 buttons (review, approve,
-            // reject) plus generous gaps; on standard laptop widths
-            // (1280px) the rightmost button was being clipped by the
-            // viewport edge because the Card had no overflow guard.
-            // overflow-x: auto lets the user scroll if the columns
-            // exceed the Card width without ever hiding actions.
+            // Wrap the table in a horizontally scrollable container so the
+            // Actions column is never clipped on a laptop-width viewport.
             <div style={{ overflowX: "auto" }}>
             <table className="tbl" style={{ minWidth: 1040 }}>
               <thead><tr>
@@ -375,56 +402,69 @@ const WiredApprovals = () => {
                 <th>Why</th>
                 <th className="r">Value</th>
                 <th className="r">Margin</th>
-                <th className="r">Expires</th>
-                {canApprove && <th style={{ minWidth: 300 }} className="r">Actions</th>}
+                <th className="r">Waiting</th>
+                {canApprove && <th style={{ minWidth: 260 }} className="r">Actions</th>}
               </tr></thead>
               <tbody>
-                {pending.map((a) => {
+                {pending.map((r) => {
                   // NOT `|| 0`: a negative margin is a loss, and zero-ing it
                   // would paint the worst orders as merely unremarkable.
-                  const margin = Number.isFinite(Number(a.margin_pct)) ? Number(a.margin_pct) : 0;
+                  const margin = Number.isFinite(Number(r.margin_pct)) ? Number(r.margin_pct) : 0;
+                  const rowBusy = busy === r.order_id;
                   return (
-                    <tr key={a.id}>
-                      <td className="mono"><span className="pri">{a.po_number || a.order_reference || (a.order_id ? a.order_id.slice(0, 12) : "—")}</span></td>
-                      <td>{a.customer_name || "—"}{a.state_code ? <div className="mono-sm" style={{ color: "var(--ink-3)" }}>{a.state_code}</div> : null}</td>
-                      <td><Chip k={a.order_mode === "INTERNAL" ? "plum" : (a.order_mode || "").startsWith("PROJECT") ? "info" : "ghost"}>{a.order_mode || "—"}</Chip></td>
-                      <td className="r mono" style={{ color: a.line_count === 0 ? "var(--rust)" : "var(--ink)" }}>{a.line_count != null ? a.line_count : "—"}</td>
-                      <td><Chip k="warn">{reasonOf(a)}</Chip></td>
-                      <td className="r mono">{a.value_inr ? fmtINR(Number(a.value_inr)) : "—"}</td>
-                      {/* "—" used to mean two very different things: a thin
-                          margin and an order nobody costed. Both rendered the
-                          same, in the same colour as a healthy one. An approver
-                          cannot weigh what they cannot distinguish. */}
+                    <tr key={r.order_id} data-testid={"approvals-row-" + r.order_id}>
+                      <td className="mono"><span className="pri">{refOf(r)}</span></td>
+                      <td>{r.customer_name || "-"}{r.state_code ? <div className="mono-sm" style={{ color: "var(--ink-3)" }}>{r.state_code}</div> : null}</td>
+                      <td><Chip k={r.order_mode === "INTERNAL" ? "plum" : (r.order_mode || "").startsWith("PROJECT") ? "info" : "ghost"}>{r.order_mode || "-"}</Chip></td>
+                      <td className="r mono" style={{ color: r.line_count === 0 ? "var(--rust)" : "var(--ink)" }}>{r.line_count != null ? r.line_count : "-"}</td>
+                      <td>
+                        <div className="row" style={{ gap: 4, flexWrap: "wrap" }}>
+                          {reasonsOf(r).map((x, i) => <Chip key={i} k={x.k}>{x.label}</Chip>)}
+                        </div>
+                      </td>
+                      <td className="r mono">{r.value_inr ? fmtINR(Number(r.value_inr)) : "-"}</td>
+                      {/* A blank used to mean two very different things: a thin
+                          margin and an order nobody costed. */}
                       <td className="r mono" style={{ color: margin > 0 && margin < 10 ? "var(--rust)" : "var(--ink)", fontWeight: 600 }}>
-                        {a.margin_state === "hidden" ? (
+                        {r.margin_state === "hidden" ? (
                           <span style={{ color: "var(--ink-4)", fontWeight: 400 }} title="Margin is cost data, and your role cannot see cost">
                             hidden
                           </span>
-                        ) : a.margin_state === "not_costed" ? (
-                          <span style={{ color: "var(--ink-4)", fontWeight: 400 }} title="No price composition on this order — margin cannot be computed">
+                        ) : r.margin_state === "not_costed" ? (
+                          <span style={{ color: "var(--ink-4)", fontWeight: 400 }} title="No price composition on this order, so the margin cannot be computed">
                             not costed
                           </span>
                         ) : (
                           <>
                             {margin.toFixed(1)}%
-                            {a.margin_state === "partial" && (
+                            {r.margin_state === "partial" && (
                               <span
                                 style={{ color: "var(--amber)", fontWeight: 400 }}
-                                title={`Only ${a.margin_lines_matched} of ${a.margin_lines_total} lines are costed — this is the margin on the costed part, not on the order`}
-                              > ·{a.margin_lines_matched}/{a.margin_lines_total}</span>
+                                title={`Only ${r.margin_lines_matched} of ${r.margin_lines_total} lines are costed. This is the margin on the costed part, not on the order`}
+                              > ·{r.margin_lines_matched}/{r.margin_lines_total}</span>
                             )}
                           </>
                         )}
                       </td>
-                      <td className="r mono" style={{ color: a.expires_at && new Date(a.expires_at).getTime() - Date.now() < 6 * 3600 * 1000 ? "var(--rust)" : "var(--ink-3)" }}>
-                        {expiresLabel(a.expires_at)}
+                      <td className="r mono" style={{ color: "var(--ink-3)" }} title="Since the order was last changed">
+                        {ageLabel(r.updated_at || r.created_at)}
                       </td>
                       {canApprove && (
                         <td>
                           <div className="row" style={{ gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
-                            <Btn sm kind="ghost" onClick={() => setReviewing(a)}>review</Btn>
-                            <Btn sm kind="primary" onClick={() => onDecide(a, "APPROVED")}>{Icon.check} approve</Btn>
-                            <Btn sm kind="danger" onClick={() => onDecide(a, "REJECTED")}>reject</Btn>
+                            <Btn sm kind="ghost" disabled={rowBusy} onClick={() => setReviewing(r)}>review</Btn>
+                            {confirming === r.order_id ? (
+                              <>
+                                <Btn sm kind="ghost" disabled={rowBusy} onClick={() => setConfirming(null)}>cancel</Btn>
+                                <Btn sm kind="primary" disabled={rowBusy} onClick={() => onApprove(r)} title={"Confirm: approve " + refOf(r)}>
+                                  {Icon.check} confirm approve
+                                </Btn>
+                              </>
+                            ) : (
+                              <Btn sm kind="primary" disabled={rowBusy} onClick={() => setConfirming(r.order_id)} title={"Approve " + refOf(r)}>
+                                {Icon.check} approve
+                              </Btn>
+                            )}
                           </div>
                         </td>
                       )}
@@ -439,10 +479,10 @@ const WiredApprovals = () => {
       </div>
       {reviewing && (
         <SOReviewDrawer
-          orderId={reviewing.order_id}
-          approval={reviewing}
+          row={reviewing}
+          busy={busy === reviewing.order_id}
           onClose={() => setReviewing(null)}
-          onDecide={(decision) => onDecide(reviewing, decision)}
+          onApprove={() => onApprove(reviewing)}
           onReturnForCorrection={(reason) => onReturnForCorrection(reviewing, reason)}
         />
       )}

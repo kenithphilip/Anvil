@@ -18,12 +18,24 @@
 //
 // Polling discipline. The component should stop polling on a
 // terminal event_type or after a wall-clock timeout. The
-// endpoint itself is read-only and cheap (one indexed query) so
+// endpoint itself is read-only and cheap (two indexed queries) so
 // over-polling is not a correctness issue.
+//
+// The background job. A large PO is extracted by an extraction_jobs
+// row that the cron worker drains. Its events say how far it got,
+// but not whether it is still queued (no event yet) or how it ended
+// on a failure. So the response also carries the order's latest job
+// (`job`) and `job_in_flight`, which the SO workspace polls on.
 
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
+import { isJobInFlight } from "../_lib/extraction-job-status.js";
+
+// The columns orders/extraction_jobs.js GET returns: all exist since the
+// table was created, so the select cannot fail on a missing column.
+const JOB_COLUMNS = "id, order_id, status, total_pages, next_chunk_index, attempts, last_error, "
+  + "source_filename, created_at, updated_at, started_at, completed_at";
 
 const PROFILER_STAGES = new Set(["docai_profiler_started", "docai_profiler_done"]);
 const CHUNK_STAGES = new Set([
@@ -212,10 +224,30 @@ export default async function handler(req, res) {
       || RUN_STAGES.has(e.event_type),
     );
     const summary = summarise(docaiEvents);
+
+    // The order's latest background job, scoped to the caller's tenant.
+    // Best-effort: without it the event summary still answers.
+    let job = null;
+    try {
+      const j = await svc
+        .from("extraction_jobs")
+        .select(JOB_COLUMNS)
+        .eq("tenant_id", ctx.tenantId)
+        .eq("order_id", orderId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!j.error && j.data) job = j.data;
+    } catch {
+      job = null;
+    }
+
     return json(res, 200, {
       order_id: orderId,
       ...summary,
       events: docaiEvents.slice(0, 30), // most-recent 30 for the UI's event log
+      job,
+      job_in_flight: isJobInFlight(job),
     });
   } catch (err) {
     sendError(res, err);

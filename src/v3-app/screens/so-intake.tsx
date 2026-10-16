@@ -1061,9 +1061,14 @@ const WiredSOIntake = () => {
        });
       const newId = res?.order?.id || res?.id;
       if (!newId) throw new Error("Order create returned no id");
-      // Best-effort OCR kickoff if a doc was uploaded; don't block navigation on it.
+      // OCR for the evidence overlay. Fire and forget: the comment here always
+      // said "don't block navigation", but the call was awaited, so a slow
+      // OCR kept the operator on "creating…". The workspace does not need it
+      // to open; a failure shows in the workspace (Pipeline diag tab).
       if (doc?.id) {
-        try { await AnvilBackend?.ocr?.run?.(doc.id, newId); } catch (_) { /* surface in workspace */ }
+        Promise.resolve()
+          .then(() => AnvilBackend?.ocr?.run?.(doc.id, newId))
+          .catch(() => { /* surface in workspace */ });
       }
       // Large-PO: the intake extraction was a page-1 preview. Now that
       // the order exists, enqueue the full N-page extraction on the
@@ -1442,31 +1447,9 @@ const WiredSOIntake = () => {
               );
             })()}
 
-            <Card title="Profile match" eyebrow="prediction · cached">
-              <div className="mono-sm" style={{ color: "var(--ink-3)" }}>
-                Profile match runs after OCR completes. The pre-classifier picks Haiku when confidence is above 0.85,
-                otherwise falls back to Sonnet and logs to <b>model_routing_log</b>.
-              </div>
-            </Card>
-
-            <Card title="Estimated cost" eyebrow="this SO">
-              <div className="row" style={{ alignItems: "baseline", gap: 6 }}>
-                <span style={{ fontFamily: "var(--mono)", fontSize: 22, fontWeight: 600 }}>
-                  {doc ? "₹ 2.40" : "—"}
-                </span>
-                <span className="mono-sm">{doc ? "all-in · OCR + Claude + Tally" : "upload a PO to estimate"}</span>
-              </div>
-              {doc && (
-                <>
-                  <div className="divider" />
-                  <div className="mono-sm">
-                    <div className="row"><span>OCR · Mistral</span><span style={{ marginLeft: "auto" }}>₹ 0.80</span></div>
-                    <div className="row"><span>Pre-classifier · Haiku</span><span style={{ marginLeft: "auto" }}>₹ 1.20</span></div>
-                    <div className="row"><span>Validation pass</span><span style={{ marginLeft: "auto" }}>₹ 0.40</span></div>
-                  </div>
-                </>
-              )}
-            </Card>
+            {/* The "Profile match" and "Estimated cost" cards were removed
+                (audit S7): static text and a hardcoded rupee figure that
+                described no real run. */}
           </div>
         </div>
       </div>

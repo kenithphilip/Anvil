@@ -52,6 +52,7 @@ import { ReviewPaneSelectionProvider, useReviewPaneSelection } from "../componen
 import type { EvidenceBbox } from "../components/PdfPagePreview";
 import { computeLineTotals, TAX_AMOUNT_KEYS, AUX_AMOUNT_KEYS, COMPONENT_LABEL, LINE_ALIAS } from "../lib/line-totals";
 import { ExtractionProgress } from "../components/ExtractionProgress";
+import { BackgroundExtractionWatch } from "../components/BackgroundExtractionWatch";
 import { OrderHeaderEditor, OrderLineTaxComponents, TallyTab } from "../components/SOWorkspaceOrderPanels";
 import { PipelineDiagnostics } from "../components/PipelineDiagnostics";
 import { TermsPane } from "../components/TermsPane";
@@ -255,6 +256,9 @@ const WiredSOWorkspace = () => {
   const [soMode, setSoMode] = u<"A" | "B" | null>(null);
   const [linesOpenChoice, setLinesOpenChoice] = u<boolean | null>(null);
   const [submitNote, setSubmitNote] = u("");
+  // Bumped when this screen queues a background extraction job, so the
+  // background progress strip looks for it at once.
+  const [bgWatchKey, setBgWatchKey] = u(0);
   e(() => {
     let live = true;
     Promise.resolve((AnvilBackend as any)?.docai?.soProcessingMode?.())
@@ -1042,9 +1046,10 @@ const WiredSOWorkspace = () => {
       if (looksTooLarge && o?.id) {
         const queued = await enqueueBackgroundExtraction(o.id, sourceDocId);
         if (queued) {
+          setBgWatchKey((n) => n + 1);
           window.notifySuccess?.(
             "Large PDF queued for background extraction",
-            "The progress bar above will keep you posted; this can take several minutes for very large documents.",
+            "Progress shows under the tabs, and the lines load when it finishes. This can take several minutes for very large documents.",
           );
         } else {
           window.notifyError?.("Could not queue background job", "Re-run extraction to retry.");
@@ -2638,6 +2643,23 @@ const WiredSOWorkspace = () => {
           <ExtractionProgress orderId={o.id} active={busy === "extract"} />
         </div>
       )}
+
+      {/* A background extraction job (a large PO handed to the worker at
+          intake, or queued here): real progress while it is in flight, read
+          from extraction_status, and the order reloads when the lines land.
+          Renders nothing when no job is in flight. */}
+      <BackgroundExtractionWatch
+        orderId={o.id}
+        checkKey={bgWatchKey}
+        onLanded={(snap: any) => {
+          const n = Number(snap?.line_count) || 0;
+          window.notifySuccess?.(
+            "Line items landed",
+            (n ? n + " line" + (n === 1 ? "" : "s") + " from the full PO. " : "") + "The order has reloaded.",
+          );
+          setBump((b) => b + 1);
+        }}
+      />
 
       <div className="ws-content">
         {/* Bug fix May 2026: the previous stepper drove the entire

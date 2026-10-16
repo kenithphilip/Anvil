@@ -28,7 +28,7 @@
 // here would be a second copy of it, and a second place for it to drift.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { ingestQuotes, quoteHeadFromExtract } from "../_lib/quote-ingest.js";
@@ -45,6 +45,8 @@ export default async function handler(req, res) {
     }
     const ctx = await resolveContext(req);
     requirePermission(ctx, "write");
+    // so.write: MATRIX.so "rw" roles only (auth.js SERVER_ACTIONS).
+    requireAction(ctx, "so.write");
     const body = await readBody(req);
     const orderId = body?.order_id;
     const documentId = body?.document_id;

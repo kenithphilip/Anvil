@@ -19,7 +19,7 @@
 // Gated on write (an engineer re-checks), tenant-scoped.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission, hasPermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, requireAction, hasPermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import {
@@ -38,6 +38,8 @@ export default async function handler(req, res) {
   try {
     const ctx = await resolveContext(req);
     requirePermission(ctx, "write");
+    // so.write: MATRIX.so "rw" roles only (auth.js SERVER_ACTIONS).
+    requireAction(ctx, "so.write");
     if (!ctx || !ctx.tenantId) return json(res, 403, { error: { message: "No tenant in context" } });
     const body = (await readBody(req)) || {};
     const orderId = String(body.order_id || "");

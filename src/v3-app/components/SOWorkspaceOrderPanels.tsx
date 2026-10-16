@@ -6,6 +6,7 @@ import React, { useState, useEffect } from "react";
 import { Banner, Btn, Card, Chip, KV, fmtINR } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { canDo } from "../lib/rbac";
 import { suggestedCommittedDate, fmtDueDate, DUE_SOURCE_LABEL } from "../../api/_lib/order-delivery-date.js";
 
 // GET /api/customers/contacts returns at most this many rows (the .limit in
@@ -46,6 +47,8 @@ export const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = 
   const [contactRows, setContactRows] = React.useState<any[] | null>(null);
   const [contactsFailed, setContactsFailed] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
+  // Saving is a PATCH to the order: so.write, which the server checks too.
+  const canWriteSo = canDo("so.write");
 
   React.useEffect(() => {
     let cancelled = false;
@@ -262,7 +265,10 @@ export const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = 
         <textarea className="input" rows={3} style={{ width: "100%" }} value={draft.delivery_terms} onChange={(e) => setDraft({ ...draft, delivery_terms: e.target.value })} placeholder="e.g., Door delivery during business hours. Wooden box must remain dry." />
       </div>
       <div className="row" style={{ justifyContent: "flex-end", marginTop: 14 }}>
-        <Btn sm kind="primary" disabled={busy} onClick={save}>{busy ? "Saving..." : "Save header"}</Btn>
+        <Btn sm kind="primary" disabled={busy || !canWriteSo} onClick={save}
+             title={canWriteSo ? "Save the header fields" : "needs write permission on sales orders"}>
+          {busy ? "Saving..." : "Save header"}
+        </Btn>
       </div>
 
       <div style={{ marginTop: 18, borderTop: "1px solid var(--hairline-2)", paddingTop: 14 }}>

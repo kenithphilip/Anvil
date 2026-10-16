@@ -17,6 +17,7 @@ import React, { useEffect, useState } from "react";
 import { Banner, Btn, Chip } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { canDo } from "../lib/rbac";
 import { ReviewDocPane } from "./ReviewPane";
 import { ReviewPaneSelectionProvider, useReviewPaneSelection } from "./ReviewPaneContext";
 import { lineFieldPath, lineFieldFor, coerceCorrection } from "../lib/quote-field-paths";
@@ -163,6 +164,8 @@ export const QuotePane: React.FC<{
   /** Whether this operator may record corrections (so.approve, as on Reconcile). */
   canCorrect?: boolean;
 }> = ({ orderId, attached, selectedDocId, onSelect, onChanged, canCorrect = false }) => {
+  // Removing a quote writes to the order (so.write, which the server checks too).
+  const canWriteSo = canDo("so.write");
   const [data, setData] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -266,7 +269,7 @@ export const QuotePane: React.FC<{
           )}
           <span style={{ flex: 1 }} />
           {superseded && (
-            confirmDetach ? (
+            !canWriteSo ? null : confirmDetach ? (
               <>
                 <span style={{ color: "var(--ink-3)" }}>Remove this duplicate? The file itself is kept.</span>
                 <Btn sm kind="danger" disabled={busy} onClick={detach}>Remove</Btn>

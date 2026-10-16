@@ -16,7 +16,7 @@
 // button and a newly attached quote need: the quotes changed, the PO did not.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { reconcileOrderQuotes } from "../_lib/order-reconcile.js";
 
@@ -30,6 +30,8 @@ export default async function handler(req, res) {
   try {
     const ctx = await resolveContext(req);
     requirePermission(ctx, "write");
+    // so.write: MATRIX.so "rw" roles only (auth.js SERVER_ACTIONS).
+    requireAction(ctx, "so.write");
     const body = (await readBody(req)) || {};
     const orderId = body.order_id;
     if (!orderId) return json(res, 400, { error: { message: "order_id required" } });

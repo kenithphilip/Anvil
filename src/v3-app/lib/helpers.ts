@@ -159,6 +159,17 @@ export const approvalPatch = (order: { payload_hash?: string | null } | null | u
   order?.payload_hash ? { status: "APPROVED", approval: { payloadHash: order.payload_hash } } : null;
 export const NO_PAYLOAD_HASH_MESSAGE = "Order has no payload hash. Run 'send for review' first.";
 
+// The server refuses an approval whose hash is not the order's current one
+// (409 STALE_APPROVAL in src/api/orders/[id].js): the order changed after the
+// approver loaded it. Every approve caller reloads the order and says so.
+// The client's apiFetch puts the parsed response on err.body.
+export const STALE_APPROVAL_CODE = "STALE_APPROVAL";
+export const STALE_APPROVAL_MESSAGE = "This order changed since you opened it";
+export const isStaleApproval = (err: unknown): boolean => {
+  const e = err as { code?: unknown; body?: { error?: { code?: unknown } } } | null | undefined;
+  return !!e && (e.body?.error?.code === STALE_APPROVAL_CODE || e.code === STALE_APPROVAL_CODE);
+};
+
 // Order identifier resolution. Replaces the ad-hoc fallback chain
 //   o.po_number || o.quote_number || `draft ${o.id.slice(0,8)}`
 // that was inlined at ~15 call sites and gave the operator a row of

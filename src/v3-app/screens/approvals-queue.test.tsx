@@ -257,6 +257,46 @@ describe("the Approvals queue", () => {
   });
 });
 
+describe("a stale approval (plan PR 3)", () => {
+  it("reloads the queue when the order changed after it loaded, and approves the order as it is now", async () => {
+    await renderQueue();
+    // An engineer saves a line meanwhile, which re-stamps the hash.
+    row("pa").payload_hash = "hash-pa-v2";
+    const pa = screen.getByTestId("approvals-row-pa");
+    await act(async () => { fireEvent.click(within(pa).getByTitle("Approve PO-PA")); });
+    await act(async () => { fireEvent.click(within(pa).getByTitle("Confirm: approve PO-PA")); });
+
+    await waitFor(() => expect((window as any).notifyWarn).toHaveBeenCalledWith(
+      "This order changed since you opened it", expect.stringMatching(/reloaded/)));
+    expect(row("pa").status).toBe("PENDING_REVIEW");
+    expect(approvalRow("qa-1").status).toBe("PENDING");
+    // The queue reloaded, so the next approve carries the new hash.
+    await waitFor(() => expect(listQueue.mock.calls.length).toBeGreaterThan(1));
+    const again = screen.getByTestId("approvals-row-pa");
+    await act(async () => { fireEvent.click(within(again).getByTitle("Approve PO-PA")); });
+    await act(async () => { fireEvent.click(within(again).getByTitle("Confirm: approve PO-PA")); });
+    await waitFor(() => expect(row("pa").status).toBe("APPROVED"));
+    expect(row("pa").approval.payloadHash).toBe("hash-pa-v2");
+  });
+
+  it("refreshes an open drawer to the order as it is now", async () => {
+    await renderQueue();
+    const pa = screen.getByTestId("approvals-row-pa");
+    await act(async () => { fireEvent.click(within(pa).getByText("review")); });
+    const drawer = await screen.findByRole("dialog", { name: "Review sales order" });
+    const loads = orderGet.mock.calls.length;
+    row("pa").payload_hash = "hash-pa-v2";
+    await act(async () => { fireEvent.click(within(drawer).getByTitle("Approve this order")); });
+    await waitFor(() => expect((window as any).notifyWarn).toHaveBeenCalled());
+    // The drawer re-read the order, and its approve now sends the new hash.
+    await waitFor(() => expect(orderGet.mock.calls.length).toBeGreaterThan(loads));
+    const fresh = await screen.findByRole("dialog", { name: "Review sales order" });
+    await act(async () => { fireEvent.click(within(fresh).getByTitle("Approve this order")); });
+    await waitFor(() => expect(row("pa").status).toBe("APPROVED"));
+    expect(orderUpdate).toHaveBeenLastCalledWith("pa", { status: "APPROVED", approval: { payloadHash: "hash-pa-v2" } });
+  });
+});
+
 describe("the decision POST needs approve", () => {
   it("refuses a sales engineer, and the row stays open", async () => {
     H.ctx = { user: { id: "u-eng" }, tenantId: T, role: "sales_engineer" };

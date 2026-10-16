@@ -29,7 +29,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
 import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
-import { stageOf, ageLabel, approvalPatch, NO_PAYLOAD_HASH_MESSAGE } from "../lib/helpers";
+import { stageOf, ageLabel, approvalPatch, isStaleApproval, NO_PAYLOAD_HASH_MESSAGE, STALE_APPROVAL_MESSAGE } from "../lib/helpers";
 
 // A row of GET /api/orders. The customer comes under the `customer`
 // embed and the totals inside result.salesOrder, the places the SO list
@@ -199,8 +199,12 @@ const PipelineKanban: React.FC = () => {
         if (!resp.ok) throw new Error("HTTP " + resp.status + ": " + (await resp.text()).slice(0, 200));
       }
     } catch (e: any) {
-      // Revert by reloading.
-      setMoveErr(String(e?.message || e));
+      // Revert by reloading. A stale approval (409 STALE_APPROVAL) means the
+      // order changed after the board read it: say so, so the approver opens
+      // it before dropping it on Approve again.
+      setMoveErr(isStaleApproval(e)
+        ? STALE_APPROVAL_MESSAGE + ". The board has been reloaded; open the order and review it before you approve."
+        : String(e?.message || e));
       try {
         const resp: any = await AnvilBackend?.orders?.list?.({ limit: 200 });
         const list = Array.isArray(resp?.orders) ? resp.orders

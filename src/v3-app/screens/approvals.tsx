@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ageLabel, approvalPatch, NO_PAYLOAD_HASH_MESSAGE } from "../lib/helpers";
+import { ageLabel, approvalPatch, isStaleApproval, NO_PAYLOAD_HASH_MESSAGE, STALE_APPROVAL_MESSAGE } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle, fmtINR } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { RBAC } from "../lib/rbac";
@@ -73,7 +73,9 @@ const SOReviewDrawer: React.FC<{
       .then((data) => { if (!cancelled) setState({ data, loading: false, error: null }); })
       .catch((error) => { if (!cancelled) setState({ data: null, loading: false, error }); });
     return () => { cancelled = true; };
-  }, [orderId]);
+    // The hash too: after a stale approval the queue reloads, and the drawer
+    // must show the order as it is now, not as it was.
+  }, [orderId, row.payload_hash]);
 
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => { if (ev.key === "Escape") onClose(); };
@@ -259,10 +261,14 @@ const WiredApprovals = () => {
     let cancelled = false;
     setState((s) => ({ ...s, loading: true }));
     Promise.resolve(AnvilBackend?.admin?.listApprovalQueue?.())
-      .then((data) => {
+      .then((data: any) => {
         if (cancelled) return;
         if (!data) throw new Error("Approvals queue is not available");
         setState({ data, loading: false, error: null });
+        // An open drawer follows its order to the fresh row (its hash may
+        // have moved), and closes when the order has left the queue.
+        const fresh: QueueRow[] = Array.isArray(data?.orders) ? data.orders : [];
+        setReviewing((cur) => (cur ? fresh.find((r) => r.order_id === cur.order_id) || null : cur));
       })
       .catch((error) => { if (!cancelled) setState({ data: null, loading: false, error }); });
     return () => { cancelled = true; };
@@ -296,7 +302,14 @@ const WiredApprovals = () => {
     try {
       await AnvilBackend?.orders?.update?.(row.order_id, patch);
     } catch (err: any) {
-      window.notifyError?.("Approve failed", err?.message || String(err));
+      // The order moved after the queue read it (409 STALE_APPROVAL). Reload
+      // the queue, and with it the drawer, so the approver sees it as it is.
+      if (isStaleApproval(err)) {
+        window.notifyWarn?.(STALE_APPROVAL_MESSAGE, refOf(row) + " has been reloaded. Review it, then approve again.");
+        reload();
+      } else {
+        window.notifyError?.("Approve failed", err?.message || String(err));
+      }
       setBusy(null);
       return;
     }

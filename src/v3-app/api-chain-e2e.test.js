@@ -179,9 +179,13 @@ describe("sales chain E2E", () => {
     r = await call(orderH, { method: "PATCH", query: { id: orderId }, body: { status: "PENDING_REVIEW" } });
     expect(r.res.statusCode).toBe(200);
     expect(r.parsed.order.status).toBe("PENDING_REVIEW");
+    // The approver sends the hash the order carries, as the screens do
+    // (approvalPatch); any other hash is refused as stale.
+    const reviewedHash = r.parsed.order.payload_hash;
+    expect(reviewedHash).toBeTruthy();
 
     // 6. PENDING_REVIEW → APPROVED (payload-hash gate)
-    r = await call(orderH, { method: "PATCH", query: { id: orderId }, body: { status: "APPROVED", approval: { payloadHash: "h1" } } });
+    r = await call(orderH, { method: "PATCH", query: { id: orderId }, body: { status: "APPROVED", approval: { payloadHash: reviewedHash } } });
     expect(r.res.statusCode).toBe(200);
     expect(r.parsed.order.status).toBe("APPROVED");
     expect(r.parsed.order.approved_at).toBeTruthy();

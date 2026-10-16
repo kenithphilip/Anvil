@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { LoadingState } from "../components/LoadingState";
-import { ageLabel, stageOf, draftLabel, approvalPatch, NO_PAYLOAD_HASH_MESSAGE } from "../lib/helpers";
+import { ageLabel, stageOf, draftLabel, approvalPatch, NO_PAYLOAD_HASH_MESSAGE, isStaleApproval, STALE_APPROVAL_MESSAGE } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Modal, Prov, Steps, Stream, WSTabs, WSTitle, fmtINR, fmtUSD } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
@@ -773,7 +773,14 @@ const WiredSOWorkspace = () => {
       window.notifySuccess?.("Order approved", o.po_number || o.id.slice(0, 8));
       setBump((n) => n + 1);
     } catch (err: any) {
-      window.notifyError?.("Approve failed", err?.message || String(err));
+      // The order moved after this screen read it (409 STALE_APPROVAL).
+      // Reload it, so the approver reviews what is there now.
+      if (isStaleApproval(err)) {
+        window.notifyWarn?.(STALE_APPROVAL_MESSAGE, "It has been reloaded. Review it, then approve again.");
+        setBump((n) => n + 1);
+      } else {
+        window.notifyError?.("Approve failed", err?.message || String(err));
+      }
     } finally {
       setBusy(null);
     }
@@ -1068,7 +1075,12 @@ const WiredSOWorkspace = () => {
       setBump((n) => n + 1);
       await downloadSoPdf(o);
     } catch (err: any) {
-      window.notifyError?.("Could not confirm the order", err?.message || String(err));
+      if (isStaleApproval(err)) {
+        window.notifyWarn?.(STALE_APPROVAL_MESSAGE, "It has been reloaded. Review it, then confirm again.");
+        setBump((n) => n + 1);
+      } else {
+        window.notifyError?.("Could not confirm the order", err?.message || String(err));
+      }
     } finally {
       setBusy(null);
     }

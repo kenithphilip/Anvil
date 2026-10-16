@@ -184,6 +184,19 @@ export default async function handler(req, res) {
       if (body.status === "APPROVED") {
         if (!body.approval || !body.approval.payloadHash) return json(res, 400, { error: { message: "Approval requires payload hash" } });
         requirePermission(ctx, "approve");
+        // The approval is bound to the order the approver saw. The hash
+        // they send is the one their screen read; if the stored hash has
+        // moved since (an engineer saved a line, or the reconcile filled
+        // one), they are approving an order that no longer exists. It used
+        // to be enough that a hash was present. Nothing is written.
+        if (String(body.approval.payloadHash) !== String(prev.payload_hash || "")) {
+          return json(res, 409, {
+            error: {
+              code: "STALE_APPROVAL",
+              message: "This order changed since you opened it. Reload it and review it again before you approve.",
+            },
+          });
+        }
         // CM P3b: refuse to approve an order that still has an unresolved
         // blocking finding. Evaluate the INCOMING findings (the merged patch
         // when the body sets them, else prev) so a single save+approve PATCH

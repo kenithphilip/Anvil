@@ -61,7 +61,9 @@ const serverUpdate = vi.fn(async (id: string, body: Record<string, unknown>) => 
   };
   await orderHandler({ method: "PATCH", headers: {}, query: { id }, url: "/api/orders/" + id, body }, res);
   const parsed = sent ? JSON.parse(sent) : {};
-  if (status >= 400) throw new Error(parsed?.error?.message || "HTTP " + status);
+  // As the real client's apiFetch: the status and the parsed body ride on
+  // the error, so the screen can read the server's error code.
+  if (status >= 400) throw Object.assign(new Error(parsed?.error?.message || "HTTP " + status), { status, body: parsed });
   return parsed;
 });
 
@@ -208,6 +210,27 @@ describe("PipelineKanban", () => {
     expect(db.orders[0].approved_by).toBe("u-mgr");
     expect(within(column("Approve")).getByText("PO-PENDING_REVIEW")).toBeTruthy();
     expect(screen.queryByText(/Move rejected/)).toBeNull();
+  });
+
+  it("says the order changed, and approves nothing, when its hash moved after the board loaded", async () => {
+    seed([order("PENDING_REVIEW", { payload_hash: "hash-when-loaded" })]);
+    await renderBoard();
+    await screen.findByText("PO-PENDING_REVIEW");
+    // An engineer saves a line meanwhile, which re-stamps the hash.
+    db.orders[0].payload_hash = "hash-after-edit";
+
+    await dragTo("PO-PENDING_REVIEW", "Approve");
+
+    expect(serverUpdate).toHaveBeenCalledWith("o-pending_review", {
+      status: "APPROVED",
+      approval: { payloadHash: "hash-when-loaded" },
+    });
+    // The board's own words: it reloaded, and the order should be opened.
+    expect(await screen.findByText(/This order changed since you opened it\. The board has been reloaded; open the order/)).toBeTruthy();
+    expect(db.orders[0].status).toBe("PENDING_REVIEW");
+    expect(db.orders[0].approval).toBeUndefined();
+    // The board reloaded: the card is back in Validate.
+    await waitFor(() => expect(within(column("Validate")).getByText("PO-PENDING_REVIEW")).toBeTruthy());
   });
 
   it("refuses an Approve drop on an order with no payload hash, without calling the server", async () => {

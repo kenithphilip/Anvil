@@ -24,10 +24,13 @@ const makeOrder = (extra: Record<string, unknown> = {}) => ({
 
 let updateSpy: any;
 let notifyError: any;
+let notifyWarn: any;
+let getSpy: any;
 
 const mount = async (order: Record<string, unknown>) => {
+  getSpy = vi.fn(async () => ({ order }));
   installBackend({
-    orders: { get: vi.fn(async () => ({ order })), update: updateSpy },
+    orders: { get: getSpy, update: updateSpy },
     audit: { list: vi.fn(async () => []) },
     events: { list: vi.fn(async () => []) },
     cost: { breakdown: vi.fn(async () => null) },
@@ -48,7 +51,9 @@ const mount = async (order: Record<string, unknown>) => {
 beforeEach(() => {
   updateSpy = vi.fn(async () => ({}));
   notifyError = vi.fn();
+  notifyWarn = vi.fn();
   (window as any).notifyError = notifyError;
+  (window as any).notifyWarn = notifyWarn;
   (window as any).notifySuccess = vi.fn();
   // sales_manager holds so.approve.
   installRbac("sales_manager");
@@ -65,6 +70,33 @@ describe("SoWorkspace approve", () => {
         approval: { payloadHash: "hash-ws-1" },
       });
     });
+  });
+
+  it("reloads the order and says it changed when the server finds the hash stale", async () => {
+    // The client's apiFetch error for 409 STALE_APPROVAL (src/api/orders/[id].js).
+    updateSpy = vi.fn(async () => {
+      throw Object.assign(new Error("This order changed since you opened it."), {
+        status: 409, body: { error: { code: "STALE_APPROVAL", message: "This order changed since you opened it." } },
+      });
+    });
+    const btn = await mount(makeOrder({ payload_hash: "hash-ws-old" }));
+    const loads = getSpy.mock.calls.length;
+    await act(async () => { fireEvent.click(btn); });
+    await waitFor(() => {
+      expect(notifyWarn).toHaveBeenCalledWith("This order changed since you opened it", expect.stringMatching(/reloaded/));
+    });
+    expect(notifyError).not.toHaveBeenCalled();
+    await waitFor(() => expect(getSpy.mock.calls.length).toBeGreaterThan(loads));
+  });
+
+  it("still reports any other approve failure as an error", async () => {
+    updateSpy = vi.fn(async () => {
+      throw Object.assign(new Error("Cannot approve: unresolved blocking finding"), { status: 409, body: { error: { code: "ORDER_HAS_UNRESOLVED_BLOCKER" } } });
+    });
+    const btn = await mount(makeOrder({ payload_hash: "hash-ws-1" }));
+    await act(async () => { fireEvent.click(btn); });
+    await waitFor(() => expect(notifyError).toHaveBeenCalledWith("Approve failed", expect.stringMatching(/blocking finding/)));
+    expect(notifyWarn).not.toHaveBeenCalled();
   });
 
   it("says why, and sends nothing, when the order has no payload hash", async () => {

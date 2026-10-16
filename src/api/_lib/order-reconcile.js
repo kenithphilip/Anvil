@@ -18,6 +18,10 @@
 // docs/SO_TERMS_AND_HANDOFF_SCOPE.md 5.4). It runs after the reconcile is
 // stored, never fails it, does nothing while the tenant's mode is off, and is
 // skipped cleanly on a database without migration 250.
+//
+// The server trigger then runs the anomaly rule library (plan PR 8,
+// order-anomaly-check.js): the same rules as the workspace's "Re-run checks",
+// once per payload hash, before approval only, within its own budget.
 
 import { recordAudit, recordEvent } from "./audit.js";
 import { reconcilePoAgainstQuotes, comparePaymentTerms, compareIncoterms, parseIncoterm } from "./quote-reconcile.js";
@@ -26,6 +30,7 @@ import { mergeBlockersForward, isUnresolvedBlocker } from "./blocking-findings.j
 import { computeOrderPayloadHash } from "./payload-hash.js";
 import { linkOrderOpportunityFromQuotes } from "./order-opportunity.js";
 import { runTermsAfterReconcile } from "./terms/check.js";
+import { autoAnomalyCheck } from "./order-anomaly-check.js";
 
 // Quotes in these states can't have priced this PO.
 // DRAFT is excluded as well as CANCELLED.
@@ -416,5 +421,13 @@ export const autoReconcileOrder = async (svc, ctx, orderId, opts = {}) => {
   // Once per payload hash: only a run that reconciled (the payload moved)
   // checks the terms. Never throws; it has its own budget.
   if (out.status === "reconciled") await runTermsAfterReconcile(svc, ctx, orderId, { trigger: "reconcile" });
+  // Plan PR 8: the anomaly rules, on the order as the reconcile left it.
+  // "unchanged" runs it too: an order reconciled before this shipped has
+  // never been checked, and the check keeps its own once-per-hash record.
+  // A timeout, a failure or a newer write skips it: the order is not settled.
+  if (out.status === "reconciled" || out.status === "unchanged") {
+    const anomaly = await autoAnomalyCheck(svc, ctx, orderId, { trigger });
+    return { ...out, anomaly_check: anomaly.status };
+  }
   return out;
 };

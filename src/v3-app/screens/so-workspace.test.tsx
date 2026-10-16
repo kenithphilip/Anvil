@@ -115,10 +115,10 @@ describe("SoWorkspace", () => {
       const Screen = mod.default;
       const { container } = renderScreen(Screen);
       await waitFor(() => {
-        expect(container.innerHTML).toContain("run validation");
+        expect(container.innerHTML).toContain("Re-run checks");
       });
       const validate = Array.from(container.querySelectorAll("button"))
-        .find((b) => b.textContent && b.textContent.toLowerCase().includes("run validation"));
+        .find((b) => b.textContent && b.textContent.toLowerCase().includes("re-run checks"));
       expect(validate).toBeTruthy();
       expect(validate?.hasAttribute("disabled")).toBe(false);
     } finally {

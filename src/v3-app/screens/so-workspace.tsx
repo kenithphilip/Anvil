@@ -31,6 +31,11 @@ import { lineExceptionIndexes } from "../../api/_lib/order-exceptions.js";
 // The default config is today's flow; "solo" is off and has no screen.
 import { nextStep, DEFAULT_WORKFLOW_CONFIG, blockerSentence } from "../../api/_lib/order-next-step.js";
 import { SOWorkspaceMoreMenu } from "../components/SOWorkspaceMoreMenu";
+import { ReasonModal } from "../components/ReasonModal";
+import { orderDecisions, DECISION_LABEL } from "../lib/order-decisions";
+// Which statuses each decision is offered from, so no button is offered that
+// the server refuses. A test runs the PATCH handler to keep them in step.
+import { canApproveFrom, canCancelFrom, canReturnFrom } from "../../api/_lib/order-status-actions.js";
 import { poLineDate, poHeaderDate, fmtDueDate } from "../../api/_lib/order-delivery-date.js";
 import type { ExceptionAction, ExceptionsResult } from "../components/OrderExceptionsCard";
 import { RBAC, canDo, isAdmin } from "../lib/rbac";
@@ -208,6 +213,10 @@ const WiredSOWorkspace = () => {
   const [confirmGap, setConfirmGap] = u<string | null>(null);
   const [resolvingCode, setResolvingCode] = u<string | null>(null);
   const [resolveNote, setResolveNote] = u("");
+  // "Return for fix" asks for its reason in the shared in-app dialog
+  // (components/ReasonModal), as cancel does: window.prompt can be
+  // suppressed by the browser, and then the button did nothing.
+  const [returnOpen, setReturnOpen] = u(false);
   const [scheduleBump, setScheduleBump] = u(0);
   const [tsv, setTsv] = u("");
   // WHICH action is running, not merely THAT one is. Every stage button shared
@@ -596,27 +605,43 @@ const WiredSOWorkspace = () => {
   // ─────────────────────────────────────────────────────────────
   const mergedTimeline = m(() => {
     const all = [];
+    // Plain text only: Stream renders text, not HTML, so markup in these
+    // strings used to show as literal tags. An object detail is shown as
+    // JSON rather than "[object Object]".
+    const asText = (v: any): string => (v == null || v === "" ? "" : typeof v === "string" ? v : JSON.stringify(v));
     const auditRows = Array.isArray(audit.data) ? audit.data : [];
     for (const a of auditRows) {
       const action = String(a.action || "");
       const isComm = action.startsWith("communication.") || action.startsWith("comm.") || action.includes("communication");
+      // A status change reads as "PENDING_REVIEW to CANCELLED", from the
+      // before and after rows the PATCH handler records.
+      const from = a.before_payload?.status;
+      const to = a.after_payload?.status;
+      const parts = [
+        a.object_type || "",
+        from && to && from !== to ? from + " to " + to : "",
+        asText(a.detail).slice(0, 160),
+      ].filter(Boolean);
       all.push({
         ts: a.created_at || a.at || null,
         source: isComm ? "CM" : "AU",
         action,
-        summary: `<b>${action || "event"}</b>${a.object_type ? " · " + a.object_type : ""}${a.detail ? " · " + a.detail : ""}`,
+        text: parts.join(" · "),
+        // Why a person cancelled, returned or decided (audit_events.reason).
+        reason: typeof a.reason === "string" && a.reason.trim() ? a.reason.trim() : null,
         raw: a,
       });
     }
     const procRows = Array.isArray(procEvents.data) ? procEvents.data : [];
     for (const p of procRows) {
       const action = String(p.event_type || p.action || p.type || "processing");
-      const detail = p.detail || p.message || (p.payload ? (typeof p.payload === "string" ? p.payload : JSON.stringify(p.payload).slice(0, 120)) : "");
+      const detail = asText(p.detail || p.message || p.payload).slice(0, 160);
       all.push({
         ts: p.created_at || p.at || p.timestamp || null,
         source: "PR",
         action,
-        summary: `<b>${action}</b>${p.stage ? " · " + p.stage : ""}${detail ? " · " + String(detail).slice(0, 160) : ""}`,
+        text: [p.stage || "", detail].filter(Boolean).join(" · "),
+        reason: null,
         raw: p,
       });
     }
@@ -738,14 +763,15 @@ const WiredSOWorkspace = () => {
     } finally { setBusy(null); }
   };
 
-  // The actual cancel, run only after the in-app confirmation modal is
-  // accepted (no native confirm() — see cancelOpen above).
-  const cancelOrder = async () => {
+  // The actual cancel, run only after the reason dialog is confirmed (no
+  // native confirm(); see cancelOpen above). The server records the reason
+  // on the audit row, which the Activity and Approval tabs show.
+  const cancelOrder = async (reason: string) => {
     if (!o?.id) return;
     setCancelOpen(false);
     setBusy("cancel");
     try {
-      await AnvilBackend?.orders?.update?.(o.id, { status: "CANCELLED" });
+      await AnvilBackend?.orders?.update?.(o.id, { status: "CANCELLED", reason });
       window.notifySuccess?.("Order cancelled", o.po_number || o.id.slice(0, 8));
       setBump((n) => n + 1);
     } catch (err) {
@@ -797,22 +823,16 @@ const WiredSOWorkspace = () => {
   //
   // Return-for-correction transitions the order from
   // PENDING_REVIEW or APPROVED back to DRAFT with a required
-  // reason text. The reason is persisted via audit_events so the
-  // Activity tab + ThreadDrawer surface it next time the operator
-  // opens the workspace. The status flip also clears the approval
-  // queue entry so the row stops blocking the approver's view.
-  const requestCorrection = async () => {
+  // reason text, taken in the shared reason dialog (window.prompt
+  // can be suppressed by the browser). The reason is persisted via
+  // audit_events so the Activity and Approval tabs show it, and on
+  // the order so the banner shows it when the engineer opens it.
+  //
+  // Nobody is notified: notifications are plan PR 14. The toast
+  // says so rather than claiming "operator notified".
+  const requestCorrection = async (trimmed: string) => {
     if (!o?.id) return;
-    const reason = window.prompt(
-      "What needs to be corrected? This note is shared with the operator.",
-      "",
-    );
-    if (reason == null) return;
-    const trimmed = reason.trim();
-    if (!trimmed) {
-      window.notifyWarn?.("Reason required", "Add a one-line note so the operator knows what to fix.");
-      return;
-    }
+    setReturnOpen(false);
     setBusy("correct");
     try {
       await AnvilBackend?.orders?.update?.(o.id, {
@@ -822,8 +842,8 @@ const WiredSOWorkspace = () => {
         correction_requested_at: new Date().toISOString(),
       });
       window.notifySuccess?.(
-        "Sent back for correction",
-        (o.po_number || o.id.slice(0, 8)) + " · operator notified",
+        "Returned to the engineer",
+        (o.po_number || o.id.slice(0, 8)) + ": no notification is sent. They see your reason when they open the order.",
       );
       setBump((n) => n + 1);
     } catch (err) {
@@ -2196,25 +2216,49 @@ const WiredSOWorkspace = () => {
           ]} />
           <span style={{ flex: 1 }} />
           <Btn sm kind="ghost"
-               disabled={!canCancel || !!busy || o.status === "CANCELLED"}
+               disabled={!canCancel || !!busy || !canCancelFrom(o.status)}
                onClick={() => setCancelOpen(true)}
                title={canCancel ? "Set order status to CANCELLED" : "needs sales_manager / admin"}>
             {Icon.x} cancel
           </Btn>
-          <Modal open={cancelOpen} onClose={() => setCancelOpen(false)} title="Cancel this sales order?">
-            <Modal.Body>
+          {/* One reason dialog, for cancel and for return for fix. */}
+          <ReasonModal
+            open={cancelOpen}
+            onClose={() => setCancelOpen(false)}
+            title="Cancel this sales order?"
+            intro={<>
               <p style={{ margin: 0 }}>
                 Set <b>{draftLabel(o)}</b>{o.po_number ? <> (PO {o.po_number})</> : null} to <b>CANCELLED</b>.
               </p>
-              <p className="mono-sm" style={{ color: "var(--ink-3)", marginTop: 8 }}>
-                It stops flowing through review, approval and Tally push. You can move it back to DRAFT later if needed.
+              <p className="mono-sm" style={{ color: "var(--ink-3)", margin: 0 }}>
+                It stops flowing through review, approval and Tally. A cancelled order cannot be reopened.
               </p>
-            </Modal.Body>
-            <Modal.Footer>
-              <Btn kind="ghost" onClick={() => setCancelOpen(false)}>Keep order</Btn>
-              <Btn kind="danger" disabled={!!busy} onClick={cancelOrder}>{busyVerb(busy, "cancel", "Cancel order")}</Btn>
-            </Modal.Footer>
-          </Modal>
+            </>}
+            label="Why is it cancelled?"
+            confirmLabel={busyVerb(busy, "cancel", "Cancel order")}
+            confirmKind="danger"
+            dismissLabel="Keep order"
+            busy={!!busy}
+            onConfirm={cancelOrder}
+          />
+          <ReasonModal
+            open={returnOpen}
+            onClose={() => setReturnOpen(false)}
+            title="Return this order for a fix?"
+            intro={<>
+              <p style={{ margin: 0 }}>
+                Move <b>{draftLabel(o)}</b>{o.po_number ? <> (PO {o.po_number})</> : null} back to <b>DRAFT</b>.
+              </p>
+              <p className="mono-sm" style={{ color: "var(--ink-3)", margin: 0 }}>
+                The approval is cleared. No notification is sent: the engineer sees your reason when they open the order.
+              </p>
+            </>}
+            label="What needs to be fixed?"
+            confirmLabel={busyVerb(busy, "correct", "Return for fix")}
+            dismissLabel="Keep in review"
+            busy={!!busy}
+            onConfirm={requestCorrection}
+          />
           {/* Run extraction: rescues orders stuck in DRAFT when the
               post-create OCR call from intake silently failed
               (ClamAV missing, transient network, etc.). Re-runs
@@ -2282,11 +2326,11 @@ const WiredSOWorkspace = () => {
           {/* Return for correction: manager exit-path when the SO has
               a wrong ship-to, rate, qty, etc. The operator sees the
               note next time they open the workspace. Available only
-              to roles that can approve, and only before the order has
-              been pushed to Tally. */}
+              to roles that can approve, and only from a status the
+              server lets move back to DRAFT. */}
           <Btn sm kind="ghost"
-               disabled={!canApprove || !!busy || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED" || o.status === "CANCELLED" || o.status === "DRAFT"}
-               onClick={requestCorrection}
+               disabled={!canApprove || !!busy || !canReturnFrom(o.status)}
+               onClick={() => setReturnOpen(true)}
                title={
                  canApprove
                    ? "Send back to operator with a note explaining what to fix"
@@ -2294,12 +2338,16 @@ const WiredSOWorkspace = () => {
                }>
             {Icon.cycle} return for fix
           </Btn>
-          <Btn sm kind="ghost"
-               disabled={!canApprove || !!busy || o.status === "APPROVED" || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED"}
-               onClick={approveOrder}
-               title={canApprove ? "Approve order" : "needs sales_manager / finance / admin"}>
-            {Icon.shieldCheck} approve
-          </Btn>
+          {/* Approve: only for a role with so.approve, and only while the
+              order is pending review (the server refuses it from DRAFT). */}
+          {canApprove && (
+            <Btn sm kind="ghost"
+                 disabled={!!busy || !canApproveFrom(o.status)}
+                 onClick={approveOrder}
+                 title={canApproveFrom(o.status) ? "Approve order" : "Approve is available while the order is pending review"}>
+              {Icon.shieldCheck} approve
+            </Btn>
+          )}
           {soMode === "B" ? (
             /* Mode B (Admin > Sales-order processing): the team keys the SO
                into Tally by hand, and a push is refused with 409. The label
@@ -3200,28 +3248,60 @@ const WiredSOWorkspace = () => {
           />
         )}
 
-        {tab === "approval" && (
-          <Card title="Approval" eyebrow={o.approval ? "decided" : "pending"}>
-            {o.preflight_payload?.submit_note && (
-              <div className="mono-sm" data-testid="submit-note" style={{ marginBottom: 10 }}>
-                <span className="h-eyebrow">Note from the engineer: </span>
-                <span style={{ whiteSpace: "pre-wrap" }}>{o.preflight_payload.submit_note}</span>
-              </div>
-            )}
-            {o.approval ? (
-              <KV rows={[
-                ["Status", o.approval.status || o.approval.decision || "—"],
-                ["Approver", o.approval.approver || o.approval.approver_role || "—"],
-                ["Reason", o.approval.reason || o.approval.comments || "—"],
-                ["Payload hash", o.approval.payloadHash || o.payload_hash || "—"],
-              ]} />
-            ) : (
-              <div className="mono-sm" style={{ color: "var(--ink-3)" }}>
-                No approval recorded yet. Approvals are logged once a manager / finance role decides via the Approvals queue.
-              </div>
-            )}
-          </Card>
-        )}
+        {tab === "approval" && (() => {
+          // Every approve, return and cancel on this order, with its reason,
+          // from the audit rows this screen already reads.
+          const decisions = orderDecisions(audit.data);
+          const approvedNow = !!o.approval && ["APPROVED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED"].includes(o.status);
+          const lastApproval = decisions.find((d) => d.kind === "approved");
+          const when = (iso: any) => (iso ? new Date(iso).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "not recorded");
+          const roleText = (r: string | null) => (r ? r.replace(/_/g, " ") : "not recorded");
+          return (
+            <Card title="Approval" eyebrow={approvedNow ? "approved" : o.status === "PENDING_REVIEW" ? "pending review" : "not approved"}>
+              {o.preflight_payload?.submit_note && (
+                <div className="mono-sm" data-testid="submit-note" style={{ marginBottom: 10 }}>
+                  <span className="h-eyebrow">Note from the engineer: </span>
+                  <span style={{ whiteSpace: "pre-wrap" }}>{o.preflight_payload.submit_note}</span>
+                </div>
+              )}
+              {approvedNow ? (
+                <KV rows={[
+                  ["Status", "Approved"],
+                  ["Approved at", when(o.approved_at)],
+                  ["Approved by", roleText(lastApproval?.role || null)],
+                  ["Approval expires", when(o.approval_expires_at)],
+                  ["Payload hash", o.approval.payloadHash || o.payload_hash || "none"],
+                ]} />
+              ) : (
+                <div className="mono-sm" data-testid="approval-status-text" style={{ color: "var(--ink-3)" }}>
+                  {o.status === "PENDING_REVIEW"
+                    ? "Not approved yet. A sales manager, finance or admin approves it on this screen with the approve button."
+                    : o.status === "DRAFT"
+                      ? "Not approved yet. The engineer sends it for approval first."
+                      : "No approval is recorded on this order."}
+                </div>
+              )}
+              {decisions.length > 0 && (
+                <div data-testid="decision-history" style={{ marginTop: 12 }}>
+                  <div className="h-eyebrow" style={{ marginBottom: 4 }}>Decisions</div>
+                  <table className="tbl">
+                    <thead><tr><th>When</th><th>Decision</th><th>By</th><th>Reason</th></tr></thead>
+                    <tbody>
+                      {decisions.map((d, i) => (
+                        <tr key={i}>
+                          <td className="mono-sm">{when(d.at)}</td>
+                          <td>{DECISION_LABEL[d.kind]}</td>
+                          <td className="mono-sm">{roleText(d.role)}</td>
+                          <td style={{ whiteSpace: "pre-wrap" }}>{d.reason || "none given"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          );
+        })()}
 
         {tab === "tally" && (
           <TallyTab orderId={o.id} order={o} onRefresh={() => setBump((n: number) => n + 1)} />
@@ -3362,7 +3442,14 @@ const WiredSOWorkspace = () => {
               <Stream rows={mergedTimeline.slice(0, 80).map((ev) => ({
                 t: ev.ts ? new Date(ev.ts).toLocaleString("en-IN", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—",
                 a: ev.source,
-                m: `<span class="chip ${tagChipKind(ev.source)}" style="margin-right:6px">${ev.source}</span>${ev.summary}`,
+                m: (
+                  <>
+                    <Chip k={tagChipKind(ev.source)}>{ev.source}</Chip>{" "}
+                    <b>{ev.action || "event"}</b>
+                    {ev.text ? " · " + ev.text : ""}
+                    {ev.reason && <span data-testid="activity-reason"> · reason: {ev.reason}</span>}
+                  </>
+                ),
               }))} />
             )}
           </Card>

@@ -22,7 +22,8 @@ import { deviationValue, currencyOf } from "../../api/_lib/deviation-value.js";
 // the server; the same pure builder runs here over the order this screen
 // already holds, so the card is never empty while the request is in flight
 // or if it fails.
-import { buildOrderExceptions, EXCEPTIONS_VERSION } from "../../api/_lib/order-exceptions.js";
+import { buildOrderExceptions, EXCEPTIONS_VERSION, matchBasisTone } from "../../api/_lib/order-exceptions.js";
+import { OrderIdentityDialog, IDENTITY_EDITABLE } from "../components/OrderIdentityDialog";
 import { OrderExceptionsCard } from "../components/OrderExceptionsCard";
 import { DeliveryDateSummary, deliveryDateText } from "../components/DeliveryDateSummary";
 import { lineExceptionIndexes } from "../../api/_lib/order-exceptions.js";
@@ -233,6 +234,8 @@ const WiredSOWorkspace = () => {
   // so clicking Cancel did nothing and the order looked un-cancellable.
   // An in-app modal always shows and can't be blocked.
   const [cancelOpen, setCancelOpen] = u(false);
+  // The customer and PO details dialog (plan PR 7).
+  const [identityOpen, setIdentityOpen] = u(false);
   // The "Review and decide" layout (plan PR 12). Declared here with the
   // other hooks, above the early returns.
   //   soMode            the tenant's processing mode, "A" or "B"; null until
@@ -2070,6 +2073,7 @@ const WiredSOWorkspace = () => {
     if (!action) return;
     if (action.href) { window.location.hash = action.href; return; }
     if (action.control === "run_validation") { runValidation(); return; }
+    if (action.control === "change_customer") { setIdentityOpen(true); return; }
     if (action.tab && action.tab !== tab) setTab(action.tab);
     if (action.target && action.target.startsWith("lines[")) {
       const i = Number(action.target.slice("lines[".length, -1));
@@ -2709,12 +2713,18 @@ const WiredSOWorkspace = () => {
               <div className="so-summary-item">
                 <span className="lbl">Customer</span>
                 <span className="v">{customerName}</span>
-                {exceptions.customer_match?.label && <Chip k={exceptions.customer_match.basis === "gstin" || exceptions.customer_match.basis === "vendor_code" || exceptions.customer_match.basis === "name" ? "good" : "warn"}>{exceptions.customer_match.label}</Chip>}
+                {exceptions.customer_match?.label && <Chip k={matchBasisTone(exceptions.customer_match.basis)}>{exceptions.customer_match.label}</Chip>}
+                {canWrite && IDENTITY_EDITABLE.has(o.status) && (
+                  <button type="button" className="link-btn" onClick={() => setIdentityOpen(true)} title="Change the customer, PO number or PO date">change</button>
+                )}
               </div>
               <div className="so-summary-item">
                 <span className="lbl">PO</span>
                 <span className="v mono">{o.po_number || "no PO number"}</span>
                 <span className="mono-sm">{o.po_date ? "dated " + fmtDueDate({ iso: String(o.po_date).slice(0, 10) }) : "no PO date"}</span>
+                {canWrite && IDENTITY_EDITABLE.has(o.status) && (
+                  <button type="button" className="link-btn" onClick={() => setIdentityOpen(true)} title="Change the PO number or PO date">change</button>
+                )}
               </div>
               <div className="so-summary-item">
                 <span className="lbl">Value</span>
@@ -2733,6 +2743,7 @@ const WiredSOWorkspace = () => {
                 <span className="v">{soMode === "B" ? "Mode B (Tally by hand)" : soMode === "A" ? "Mode A (Anvil pushes)" : "not read"}</span>
               </div>
             </div>
+            <OrderIdentityDialog open={identityOpen} order={o} onClose={() => setIdentityOpen(false)} onSaved={() => setBump((n) => n + 1)} />
             <div className="recon-toolbar">
               <div className="recon-view-toggle" role="group" aria-label="Reconcile layout">
                 {([["pdf", "PDF"], ["split", "Split"], ["lines", "Lines"]] as const).map(([v, label]) => (

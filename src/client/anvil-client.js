@@ -898,6 +898,11 @@
     // a shadow-mode check (the server refuses anyone else).
     terms: async (orderId, opts) =>
       apiFetch("/api/orders/terms?order_id=" + encodeURIComponent(orderId) + (opts && opts.includeShadow ? "&include_shadow=1" : "")),
+    // Live state of the order's extraction: the stage and chunk progress from
+    // processing_events, plus the latest background job (`job`, with
+    // `job_in_flight`). The SO workspace polls it while a job is in flight.
+    extractionStatus: async (orderId) =>
+      apiFetch("/api/orders/extraction_status?order_id=" + encodeURIComponent(orderId)),
     // Re-run the terms check ("Re-check terms"). Returns the same view.
     termsCheck: async (orderId, opts) =>
       apiFetch("/api/orders/terms_check", { method: "POST", body: { order_id: orderId, ...(opts && opts.includeShadow ? { include_shadow: true } : {}) } }),

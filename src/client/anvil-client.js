@@ -1853,6 +1853,9 @@
     deleteApprovalThreshold: async (id) => apiFetch("/api/admin/quote_approvals?type=thresholds&id=" + encodeURIComponent(id), { method: "DELETE" }),
     listApprovalRequests: async (order_id) => apiFetch("/api/admin/quote_approvals?type=approvals" + (order_id ? "&order_id=" + encodeURIComponent(order_id) : "")),
     decideApprovalRequest: async (payload) => apiFetch("/api/admin/quote_approvals?type=approvals", { method: "POST", body: payload }),
+    // Every order waiting for approval (PENDING_REVIEW), each with its open
+    // threshold rows as reasons. The Approvals screen reads this.
+    listApprovalQueue: async () => apiFetch("/api/admin/quote_approvals?type=queue"),
     diagnostics: async () => apiFetch("/api/admin/diagnostics"),
   };
 

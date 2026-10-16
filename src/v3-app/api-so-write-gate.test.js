@@ -169,6 +169,25 @@ describe("PATCH /api/orders/[id]: an approver's decision stays open to finance",
   });
 });
 
+describe("PATCH /api/orders/[id]: the customer, PO number and PO date are edits", () => {
+  it("a sales engineer may fix the PO number", async () => {
+    as("sales_engineer");
+    const res = await call(patchOrder, { method: "PATCH", body: { po_number: "PO-GATE-2" } });
+    expect(res._status).toBe(200);
+    expect(H.db.rows[0].po_number).toBe("PO-GATE-2");
+  });
+
+  it("finance may not, on its own or inside an approval", async () => {
+    seed({ status: "PENDING_REVIEW" });
+    as("finance");
+    expect((await call(patchOrder, { method: "PATCH", body: { po_number: "PO-GATE-2" } }))._status).toBe(403);
+    const res = await call(patchOrder, { method: "PATCH", body: { status: "APPROVED", approval: { payloadHash: "hash-gate-1" }, po_number: "PO-GATE-2" } });
+    expect(res._status).toBe(403);
+    expect(H.db.rows[0].po_number).toBe("PO-GATE-1");
+    expect(H.db.rows[0].status).toBe("PENDING_REVIEW");
+  });
+});
+
 describe("PATCH /api/orders/[id]: a cancel needs so.cancel", () => {
   it.each(["sales_engineer", "finance", "design_manager"])("%s may not cancel", async (role) => {
     as(role);

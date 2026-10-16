@@ -16,11 +16,13 @@
 //   for approval, any other status move
 //
 // A decision is recognised by what it WRITES: the handler's allowlisted
-// patch must hold only decision columns. A key outside the allowlist is never
-// written, so it does not matter here. A decision that also edits the order
-// needs so.write as well.
+// patch must hold only decision columns, and the body must not carry the
+// customer, PO number or PO date (written by _lib/order-identity.js). Any
+// other key outside the allowlist is never written, so it does not matter
+// here. A decision that also edits the order needs so.write as well.
 
 import { hasAction, requireAction } from "./auth.js";
+import { IDENTITY_KEYS } from "./order-identity.js";
 
 const DECISION_COLUMNS = new Set([
   "status", "approval",
@@ -32,6 +34,9 @@ const DECISION_COLUMNS = new Set([
 export const isApproverDecision = (body, written = body) => {
   if (!body || typeof body !== "object") return false;
   if (body.resolve_finding && body.resolve_finding.code) return true;
+  // The customer, PO number and PO date are written outside the allowlist
+  // (_lib/order-identity.js), so a body that carries one edits the order.
+  if (IDENTITY_KEYS.some((k) => k in body)) return false;
   const cols = Object.keys(written && typeof written === "object" ? written : {});
   if (!cols.every((k) => DECISION_COLUMNS.has(k))) return false;
   if (body.status === "APPROVED") return true;

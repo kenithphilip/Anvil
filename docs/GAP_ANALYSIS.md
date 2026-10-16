@@ -1226,6 +1226,601 @@ above, not a new code audit.
 | Engineering and data (CADDi, Flow) | Drawing and BOM extraction for spare identification, and per-gun drawings on the spare matrix. No shape search and no change-impact analysis. | CADDi's "search past parts by spec" is the same direction as the spec-driven part selection design (#542). Flow is out of scope. |
 | Shop floor (IPercept, Harmoni) | None: no machine data and no MES. | Out of scope for Anvil's wedge. |
 
+### 3.34 Makeflow — `makeflow.in` (direct rival on the Tally order-entry wedge, early and thinly evidenced)
+
+Source: the makeflow.in homepage, including the hidden tab panels for agents 02
+to 05, the FAQ accordion and the enquiry-form script (`/js/home.js`), plus
+`/privacy` and `/tos`, all read as raw HTML and checked against a rendered
+fetch. Outside the site: Wayback Machine captures from November 2024 and
+February 2025, the .in WHOIS record, crt.sh certificate-transparency logs, and
+searches of Tracxn, Crunchbase, LinkedIn and Indian company registries. Added
+2026-10-16. **No product was used.** No demo, trial, video or public API was
+found, so every Makeflow capability below is the vendor's own claim. The Anvil
+side was checked twice against `main` at `80cd8151`. Could not confirm: the
+legal entity, CIN, GSTIN or address; the governing law; the LLM provider and
+the subprocessors; what the private-server claim means in practice; how each
+ERP is written to; whether the homepage or the privacy policy governs model
+training; prices and contract terms; the case-study customer or any outcome
+figure; any second customer; any certification or DPDP posture; team size,
+funding and founders. The registry search is incomplete, because Zaubacorp,
+InstaFinancials and TheCompanyCheck blocked automated fetches.
+
+Disambiguation: this entry covers the Indian vendor at makeflow.in. It is not
+the Notre Dame Cooperative Computing Lab workflow engine, not Make.com, not the
+Arabic-branded WhatsApp chatbot vendor at makeflow.tech, not the Chinese issue
+tracker at makeflow.com, and not the Brazilian document tool listed on
+Capterra. Four signs identified it: the .in domain with a Maharashtra WHOIS
+registrant, the Indian ERPs it names, its rupee pricing history and an unbroken
+certificate history since June 2024.
+
+One-liner, verbatim: **"Stop typing orders into your ERP."** The tagline is AI
+agents for manufacturers. The agents read orders that arrive on WhatsApp and
+email and enter them into the ERP the customer already runs. Staff check and
+approve each entry. The site frames the product as an assistant to staff, not a
+way to cut headcount.
+
+ICP: mid-size manufacturers. Named sectors are auto components, engineering and
+fabrication, pharma and chemicals, plastics and packaging, electricals, food
+processing and textiles. Distribution is not named. No headcount or revenue
+threshold is given.
+
+Capability surface: five named agents, sold one at a time. The site advises
+starting with one process and adding the next once it works.
+
+| agent | what the site says it does |
+|---|---|
+| **01 Order Entry** | reads an order in any format (PDF, Excel, a photo of a handwritten order, a plain message), matches the party, item codes and rates against the ERP masters, drafts the sales order, notifies production as soon as the order is in, and flags a new item, a rate change or a missing quantity |
+| **02 Invoice Matching** | checks item, quantity, rate and GST on every supplier-invoice line against the PO and the GRN (three-way), books matching invoices into the ERP for approval, explains each mismatch in one line, and leaves accounts with the exceptions only |
+| **03 Collections** | tracks each party's outstanding from the ERP ledger, sends reminders with the ledger statement on WhatsApp or email, logs promised payment dates, follows up when they pass, and hands a party to staff when it needs a conversation |
+| **04 Purchase & Stock** | compares stock with open sales orders and the production plan, flags shortfalls, slow-moving stock and inconsistent records, and drafts one PO per vendor from the last rates and lead times; no PO goes out without approval, and the agent stays inside the limits the customer sets |
+| **05 Reports** | answers MIS questions in English or Hindi, on WhatsApp or the web, from ERP data, and shows the figures it used |
+
+Inputs: WhatsApp Business, Gmail and Outlook; PDF, Excel, photos, scans and
+plain messages; shared drives on Google Drive, OneDrive, SharePoint and
+Dropbox. When an agent is unsure, the FAQ says it flags the item for the team
+rather than guessing.
+
+Integrations: **Tally Prime, SAP Business One, SAP S/4HANA, Oracle NetSuite,
+Microsoft Dynamics 365, Zoho Books, Marg ERP, Busy**, and custom or in-house
+ERPs, with no ERP replacement or migration. No connector mechanism (API,
+Tally XML or ODBC, UI automation) is described. The FAQ says the agents enter
+data the same way the team does today. That suggests entry through the ERP's
+own screens, but this is an inference and is unconfirmed.
+
+Controls: every entry lands as a draft for the right person to approve, and the
+customer decides what, if anything, may go through on its own. The stated
+limits are value caps, approved vendors and rate tolerances. Every action is
+logged (what was read, what was entered, who approved it), and any agent can be
+paused or any task taken over.
+
+Deployment and security: agents run on private servers set up for each company,
+and data stays within the customer's environment. The site does not say whether
+that means on-premise, the customer's cloud or a vendor-hosted single tenant,
+and it names no cloud. It also claims three things: customer data is never used
+to train a model, ERP and inbox credentials are held per company with least
+privilege, and data is encrypted in transit and at rest. No certification
+(SOC 2, ISO 27001) and no data-protection law (GDPR, DPDP) is named on any page.
+
+Setup and pricing: four steps.
+1. A free 20-minute discovery call with the CTO.
+2. Connect the ERP, the WhatsApp number, the inboxes and the drives. How
+   parties send documents does not change.
+3. Pilot one process: map masters and rules, and run one agent beside the
+   team. The team reviews every entry until it trusts the agent.
+4. Expand to invoices, collections and purchase on the same connections.
+
+The FAQ puts most setups at one to two months. Pricing is custom and comes in a
+proposal after discovery. No figure appears on the site.
+
+Case study: there is one, anonymous, labelled as in production. It is an
+auto-parts manufacturer in Nashik.
+- Before: orders arrived on WhatsApp and email, staff typed each one into the
+  ERP, and production heard about an order only after the typing.
+- After: every order is read and entered automatically, the production manager
+  is notified and approves, and the former typists review.
+
+No figure is given (volume, time saved, accuracy or headcount), the customer is
+not named, and no third party confirms it. The site labels every other company
+name and number as demo data, so they are left out here.
+
+Maturity: early, very small and recently pivoted, and the evidence is thin.
+
+- **Timeline.** The domain was registered on 2024-06-03 (registrant
+  organisation blank, registrant state Maharashtra). Certificates run without a
+  gap from June 2024 to August 2026. That suggests one operator through the
+  pivot, but does not prove it. Captures from November 2024 and February 2025
+  show a WhatsApp Business API automation service for EdTech, finance and
+  software firms, with no manufacturing positioning. Integration hosting was
+  priced from ₹3,000 a month plus Meta's per-conversation fees. The terms of
+  service, dated July 2025, already describe AI agents. The Discord webhook ID
+  in the current site script decodes to 2026-01-25, so the manufacturer site
+  was probably built in or after late January 2026 (medium confidence).
+- **No outside footprint found.** No Tracxn, Crunchbase or LinkedIn company
+  profile was found (the one LinkedIn company slug tried returns 404). No press,
+  launch post, job post or video was found. Registry searches found no Makeflow
+  company, but the search is incomplete (see the source line). Two roles are
+  visible: the CTO on the current site, and an integration specialist on the
+  2024-25 site. Team size is unknown and appears very small. A base around
+  Nashik or Pune is unconfirmed, because it rests only on the case study and the
+  demo-data place names. The earlier site claimed growth figures (40% revenue,
+  3x conversions). They named no client and no method, so they are unconfirmed.
+- **Legal pages are left over from the chatbot product.** The privacy policy
+  (December 2024) and the terms (July 2025) are still headed as WhatsApp
+  messaging for business. Governing law and the arbitration body are unfilled
+  template placeholders. The vendor publishes no legal entity, CIN, GSTIN or
+  address. The privacy and DPO contacts decode to a gmail.com address, although
+  the domain's own mail runs on Zoho Mail. Liability is capped at 12 months of
+  fees, and the vendor may terminate an account at its sole discretion.
+- **Two contradictions on its own site.** First, the privacy policy says chatbot
+  interactions may be used to train and improve its AI models, but the homepage
+  says data is never used for training. The policy also sets no fixed retention
+  period. Second, the terms describe subscriptions billed in advance,
+  non-refundable and priced on the website, but the homepage says pricing is
+  custom.
+- **Web hygiene.** The site is static and sits behind Cloudflare. The enquiry
+  form (name, company, mobile, ERP, process to automate) posts from browser
+  JavaScript straight to a Discord webhook. The webhook's full URL is public in
+  the script.
+
+Relevance to Anvil: **Makeflow is the first entrant in this document that names
+the pilot's ERP (Tally) and sells to Indian industrial firms that run it.** Its
+stated ICP is manufacturers, not distributors, and its one case study is a
+manufacturer. No earlier rival named Tally, Marg, Busy or Zoho Books, the
+accounting systems Indian SMEs run. The nearest is Pactle (§3.5), which lists
+Ramco, an Indian enterprise ERP. Makeflow also checks GST, answers in Hindi and
+treats WhatsApp as the primary channel. It claims to type orders. It does not
+claim to quote, run RFQs, build spare kits or check an order against a
+customer's PO or quote. The pilot's first customer asked for the opposite job,
+Mode B: a clerk keeps typing into Tally and Anvil checks the typing against the
+PO. Both products are paid for from the same line, the cost of order entry at an
+Indian industrial firm on Tally, and they answer it differently: one removes the
+typing, the other checks it. The two answers are not exclusive (see the options
+below). **Verdict: DIRECT RIVAL on the Tally order-entry wedge, on claims. The
+product is unverified and the company is thinly evidenced.**
+
+### What checking Makeflow corrected about Anvil's own record
+
+Mapping Makeflow's five agents onto the code found six places where this
+document overstates what Anvil runs today. All six are verified. Findings about
+credential handling are kept out of this public document and are tracked with
+the security backlog.
+
+| claim previously held | what the code says |
+|---|---|
+| WhatsApp ingestion is shipped: §0 and the status note above it list it, §5 marks it **F**, and §9 Now #11 marks it shipped (§3.2 and §7 had recommended absorbing Korso's channel) | **Partial.** The per-tenant Twilio webhook stores `MediaUrl` values as JSON and nothing downloads them (`inbound/whatsapp/webhook.js:90`). The draft order holds only the message text (`inbound/process_messages.js:37`), and the customer is matched only on an exact `contact_phone` (`_lib/inbound-chat.js:90`). The Meta path answers only POST, so Meta's verify handshake cannot complete (`whatsapp/inbound.js:164`). A customer's WhatsApp photo of a PO is never extracted. |
+| The agent loop, the queued-comms reaper and multi-channel inbound are shipped (§0, §9 Now #4 and #5) | **They run only inside `/api/cron/tick`, and an external trigger already calls it.** `vercel.json:12` schedules only `/api/cron/daily`, but `/api/_healthz` reported `tick_stale: false` when checked in October 2026, and `docs/CRONS.md:8` describes the external 5-minute trigger (the later `docs/WORK_MANAGEMENT_SCOPE.md:1518` is wrong to say the tick is not scheduled). On `main` the tick runs every handler, so the agent runner, the reply handler, the inbound workers and `tally/sync` run today, with the defects listed below. Open PR #566 adds an allow-list, `CRON_TICK_HANDLERS`, that defaults to `extraction/jobs` only, so merging it unchanged would switch the others off. Even so, `ar_collect` sends only the first, gentle reminder under default config. Every noop step stamps `last_action_at` (`agents/run.js:54`), so the handler's 96-hour cooldown (`agents/_handlers/ar_collect.js:199`) never elapses. |
+| Tally is **F** (§5); the India stack makes Anvil "the only option" for an India prospect (§8); the landing page says "XML bridge · 12ms" (`screens/landing.tsx:125`) | **The bridge has never carried a byte for anybody** (`docs/MODE_A_B_SCOPE.md:16`), and no bridge program is in the repo (`docs/TALLY_INTEGRATION_SCOPE.md:30`). By design (the Phase 1 F1 audit, `_lib/tally-voucher-type.js:26-29`), every UI push posts a Sales voucher, which books revenue and GST output: an invoice, not a Sales Order. No API or screen writes the per-company override. Mode B refuses the push by design (`tally/push.js:88`). Anvil's live India asset is the Mode B verifier, not the push. |
+| `ap/match.js` is "an asset, not a bug" (§3.32) | **It is an asset in design but does not work in operation.** The rate check reads `unit_price ?? price ?? 0` (`ap/match.js:82`), and no app writer produces those keys. The PO rate is therefore 0 and every priced line is flagged. POs created in the UI have no lines at all (`screens/source-pos.tsx:151`). Nothing calls the endpoint. An invoice with zero lines has no findings and is auto-approved (`ap/match.js:104`, default on at `:151`). |
+| Scheduling the planning cron converts the library into a product (§3.31) | **On `main`, scheduling alone drafts nothing.** `hysteresisOK` counts only existing `procurement_plans` rows (`cron/inventory-planning-weekly.js:103`) against a default streak of 2 (mig 085:64). A part with no prior plan therefore never qualifies. Open PR #534 fixes this. The positions and exceptions crons stay unscheduled even after #534, so the planner would run on zero or stale stock. |
+| The copilot is the real-time ERP-query surface (§0) | **Not for a Tally tenant.** No chat tool reads a Tally table, although the system prompt lists Tally among the mirrors (`erp_chat/send.js:30`). Sessions are listed per tenant, not per user (`erp_chat/sessions.js:21`), and Ask Anvil resumes the newest one (`screens/ask-anvil.tsx:236`). One user therefore opens and continues another user's thread, AR figures included. |
+
+### Makeflow's capabilities against Anvil's code
+
+96 Makeflow capabilities were mapped, and each Anvil status was checked a second
+time. One more, escalation in Collections, was mapped once only; it is shown
+below but not counted. Rows are merged only where the status matched. Totals:
+**15 live, 47 partial, 10 dormant, 3 designed only, 21 missing.** The second
+check changed 7 first-check statuses, 6 of them downward. Most of Anvil's live
+surface is the operator-upload order path and the checks around it. Almost
+everything Makeflow does after the order is in is partial, dormant or missing
+in Anvil.
+
+Legend:
+- **live**: routed, reachable from a screen or the Vercel-scheduled cron, migrations applied, no flag.
+- **dormant**: built, but behind a default-off flag, an unscheduled cron or missing config.
+- **partial**, **designed only** and **missing** mean what they say.
+- †: the second check changed the status. The first-check status is in brackets.
+- ‡: depends on `/api/cron/tick`. An external trigger calls the tick today (see the table above), so a ‡ row runs today, with its defects, unless the status says otherwise. A later run of `/api/_healthz` showing `tick_stale: true` would make these rows dormant.
+
+API paths are relative to `src/api/`, and screen and component paths to
+`src/v3-app/`. `mig NNN` means `supabase/migrations/NNN_*.sql`.
+
+**01 Order Entry**
+
+| Makeflow capability | Anvil status | Anvil evidence | Gap |
+|---|---|---|---|
+| Order intake on WhatsApp (Twilio) ‡ | partial | `inbound/whatsapp/webhook.js:90`, `inbound/process_messages.js:37` | Media never downloaded or extracted; the draft holds text only; drafts are created only inside the tick |
+| Order intake on WhatsApp (Meta Cloud API) | partial | `whatsapp/inbound.js:164`, `whatsapp/inbound.js:119` | No verify handshake or signature check; Meta media ids never resolved; outbound send uses deployment-wide env tokens, not per tenant (`whatsapp/send.js:44`) |
+| Order intake by email (forwarded mailbox) ‡ | partial † [dormant] | `inbound/email/webhook.js:89`, `inbound/auto_ocr.js:14` | Requires an `X-Postmark-Signature` HMAC that, per the verifier, Postmark's inbound webhook does not send (confirm outside the repo); no screen sets the config (`src/client/anvil-client.js:580` has no caller); attachments stay `pending` without ClamAV; the extraction never lands on the order |
+| Gmail mailbox connector | missing | `_lib/email-canonical.js:23` | Dot-folding only; no OAuth, push watch or IMAP |
+| Outlook / Microsoft 365 mailbox | partial | `_lib/graph-client.js:286`, `inbound/email/configure.js:46` | Attachments never fetched; subscriptions typed in by hand and never renewed; a send and reply-tracking channel, not intake |
+| Digital and scanned PDF ‡ | live | `screens/so-intake.tsx:672`, `_lib/docai/run.js:626` | Operator upload only; POs over 40 pages finish only when the tick drains the background queue (`docai/extract.js:139`) |
+| Excel and DOCX | partial | `src/client/anvil-client.js:747`, `_lib/docai/gemini.js:502` | First-pass upload is labelled `pdf`, so XLSX and DOCX reach the model as raw zip bytes, although the drop zone advertises both (`screens/so-intake.tsx:1294`); Excel works only on a workspace re-run; the parser takes row 0 as the header and returns no customer (`_lib/docai/excel.js:22`) |
+| Phone photo of an order | live | `screens/so-intake.tsx:1313` | Captured by the operator inside Anvil; a photo the customer sends on WhatsApp is not read |
+| Handwritten order | partial | `_lib/docai/handwriting.js:143`, `_lib/docai/review-queue.js:71` | General vision read only; detection needs an OCR layer; a score of 0.75 or more goes to the review queue; the re-OCR route is planned and never executed |
+| Order typed in a chat or email body | partial | `_lib/docai/run.js:376`, `docai/extract.js:110` | The `emailBody` input has no caller; `hints.bodyText` is accepted by the API and sent by no screen |
+| Match the party to the customer master | live | `screens/so-intake.tsx:421`, `tally/masters.js:63` | Matches Anvil's imported customers, not a live Tally ledger; channel orders match on sender email or phone only |
+| Match items, including customer part numbers | live | `_lib/item-mapper.js:13`, `orders/[id].js:307` | Runs only once a customer and lines exist, so channel drafts get none; `item_master` is imported, not synced from Tally |
+| Draft the sales order for approval | live | `screens/so-intake.tsx:1051`, `orders/[id].js:62` | The draft lives in Anvil, not the ERP; someone must upload the PO; the terms check defaults off (mig 250:203) |
+| Hands-free: message in, populated draft out ‡ | partial | `inbound/auto_ocr.js:14`, `screens/so-workspace.tsx:884` | No path runs end to end: auto-extract writes only an `extraction_runs` row, and a channel draft opens with no lines and no `source_document_id`, so it cannot be re-extracted |
+| Write the sales order into Tally (Mode A) | partial † [live] | `tally/push.js:88`, `_lib/tally-voucher-type.js:29` | Bridge absent and never run; by design the UI posts a Sales (invoice) voucher, not a Sales Order; refused in Mode B by design |
+| Mode B: check the SO a clerk keyed into Tally | live | `screens/so-workspace.tsx:2149`, `orders/attach_sales_order.js:105` | The clerk's SO must be uploaded as a document; nothing pulls it from Tally |
+| Handoff email to the team that keys the order | designed only | `admin/order_handoff_settings.js:18`, `_lib/order-register.js:184` | Recipients only (mig 251); nothing sends |
+| Notify production | missing | `orders/traveler.js:65`, `netsuite/push.js:187` | No notification, work order or traveler on approval for a Tally tenant; the traveler hook is NetSuite-only and behind `travelers_auto_print` (default false) |
+
+**02 Invoice Matching**
+
+| Makeflow capability | Anvil status | Anvil evidence | Gap |
+|---|---|---|---|
+| Capture a supplier invoice as a structured record | partial | `invoices/extract.js:150`, `_lib/docai/claude.js:2248` | Routed endpoint with no caller; header tax and grand totals are dropped, so the record is ex-GST; a failed insert is swallowed (`invoices/extract.js:193`); the duplicate key is tenant-wide, not per supplier |
+| Resolve the supplier | missing | `invoices/extract.js:182`, mig 085:77 | `vendor_id` comes from a parameter named `customer_id`; neither supplier master has a GSTIN column (the six-way split in §3.32) |
+| Priced PO lines to match against | partial | `screens/source-pos.tsx:151`, `ap/match.js:67` | UI POs carry no lines; plan-release lines carry no rate (`inventory/plans.js:53`); the invoice's PO reference is never used to find the PO; no PO import from Tally |
+| Goods receipt (GRN) | partial | `source_pos/receive.js:78`, `source_pos/receive.js:65` | Works only for POs with relational lines, which UI POs never have; the logistics workbook import bypasses the GRN ledger |
+| Item match, invoice to PO to GRN | partial | `ap/match.js:70`, `_lib/logistics/receiving.js:36` | Exact string on part number; the invoice carries the supplier's code and the PO carries Anvil's; no cross-reference |
+| Quantity check | partial | `ap/match.js:92`, `ap/match.js:97` | Default tolerance 0 against the full PO qty fails every partial invoice; earlier invoices are not netted, so a second bill for the same goods passes |
+| Rate check | partial | `ap/match.js:82`, mig 087:125 | Reads price keys no writer produces; currency not compared |
+| GST check (rate, HSN, amount, GSTIN, CGST/SGST against IGST) | missing | `ap/match.js:82`, mig 054:47 | No tax or HSN columns on `ap_invoice_lines`; the supplier GSTIN is never validated; `tax_total` computes as 0 (`invoices/extract.js:67`) |
+| GSTR-2B reconciliation for ITC | designed only | `docs/audits/2026_05_11_product_deep_dive/07-india-stack.md:754` | An audit proposal; no table, GSP integration or code |
+| Explain each mismatch | partial | `ap/match.js:108`, `src/client/anvil-client.js:1189` | Findings are a kind plus numbers; no screen; procurement lacks the `approve` permission the endpoint needs |
+| Auto-approve within tolerance | partial | `ap/match.js:104`, `ap/match.js:151` | A zero-line invoice auto-approves; nothing reads `approved` downstream |
+| Book the invoice into the ERP | missing | `tally/push.js:107`, `_lib/tally-voucher-type.js:16` | No purchase-voucher builder and no vendor-bill post for any ERP |
+| Match unattended, on arrival or on a schedule | missing | `ap/match.js:144`, `agents/_handlers/index.js:1` | No cron, agent handler or intake hook |
+
+**03 Collections**
+
+| Makeflow capability | Anvil status | Anvil evidence | Gap |
+|---|---|---|---|
+| Read outstanding from the ERP ledger | missing | `tally/sync.js:22`, `_lib/tally-client.js:15` | Sync covers voucher state and payments only; Tally masters carry an opening balance, not outstanding |
+| Overdue aging per customer | partial † [live] | `_lib/ops-kpis.js:41`, `comms/payment_statement.js:27` | Live aging is tenant-wide; per-customer aging exists only in an API no screen calls; mixed currencies are summed into one ₹ figure; the source is Anvil's own invoices, near-empty in Mode B |
+| Pick overdue invoices to chase automatically | missing | `screens/agents.tsx:102`, `cron/daily.js:67` | Each goal is armed by hand with a pasted invoice id |
+| Tiered reminders ‡ | partial † [dormant] | `agents/run.js:54`, `agents/_handlers/ar_collect.js:199` | Under default config only the gentle tier is ever sent; email only; the e-invoice branch selects columns that do not exist |
+| Deliver queued reminder emails ‡ | dormant | `agents/run.js:276`, `agents/run.js:361` | The only drain runs inside the agent runner, only for tenants with a due goal, with no age filter |
+| Statement of account with the reminder | partial | `comms/payment_statement.js:27`, `router.js:946` | Plain text, API only, never attached to a reminder |
+| Pay-now link | partial | `_lib/pay-link.js:48`, `vercel.json:45` | `/portal/<token>` has no route; the pay API charges `grand_total`, not the balance |
+| Log promised payment dates | missing | `_lib/email-classifier.js:58`, `agents/handle_replies.js:89` | A payment reply pauses the goal for a fixed 14 days and stores no date |
+| Act on customer replies ‡ | dormant | `agents/handle_replies.js:41`, `agents/handle_replies.js:127` | The goal select omits `tenant_id`, so the step row is silently dropped; the admin manual run drains every tenant's replies |
+| Escalate to staff when collection stalls ‡ | dormant (first check only) | `agents/run.js:102`, `agents/run.js:117` | In-app bell only, to admins by default because the Agents screen never sets `escalate_roles`; per the first check it ignores the goal owner and re-escalates every cooldown while the goal stays active |
+| Close reminders from ERP receipts ‡ | dormant | `tally/sync.js:154`, `screens/admin.tsx:2519` | Needs the bridge; the full re-pull button double-counts `paid_amount`; Anvil numbers its own invoices (`_lib/invoicing.js:26`), so a Tally receipt in Mode B will rarely match |
+| Do not chase TDS short-pays | partial | `invoices/payment.js:82`, `ap/deductions.js:89` | Manual cash and TDS posting only; dunning knows nothing about expected TDS |
+| Record payments against invoices | live | `invoices/payment.js:68`, `_lib/payments.js:73` | Anvil invoices only; no bank-statement matching |
+
+**04 Purchase & Stock**
+
+| Makeflow capability | Anvil status | Anvil evidence | Gap |
+|---|---|---|---|
+| Read current stock from Tally | partial | `_lib/tally-client.js:112`, `inventory/sync.js:34` | No pull; a push endpoint nothing calls; the Items > Inventory tab reads fields `tally_inventory` lacks, so every cell shows a placeholder (`screens/items.tsx:250`); chat stock search ignores the table |
+| Net stock position | dormant | `_lib/inventory/positions.js:152`, `_lib/inventory/positions.js:79` | Behind `inventory_planning_enabled` (default false) and an unscheduled cron; cancelled POs still count as in transit |
+| Stock against open sales orders | partial | `cron/inventory-planning-weekly.js:338`, `inventory/availability.js:50` | The planner sees an SO only through pasted schedule lines; the ATP endpoint has no caller |
+| Stock against the production plan | missing | `cron/inventory-planning-weekly.js:546` | No production plan, MPS or work order |
+| BOM explosion of demand | dormant | `_lib/inventory/pipeline-demand.js:155`, `cron/inventory-planning-weekly.js:204` | Runs only inside the flag-gated planner; a won deal can be counted twice |
+| Safety stock and reorder point | dormant | `_lib/inventory/safety-stock.js:97`, `components/ItemDetailDrawer.tsx:461` | Flag-gated; the Tally order level and minimum are editable and read by nothing |
+| Flag shortfalls | dormant | `_lib/inventory/exceptions-detector.js:49`, `cron/inventory-planning-weekly.js:705` | Unscheduled, flag-gated detector; each manual replan inserts a duplicate exception |
+| Draft a purchase recommendation | partial † [dormant] | `cron/inventory-planning-weekly.js:103`, mig 085:64 | Hysteresis deadlock: no plan is drafted unless a DB edit sets the streak to 1 (PR #534 fixes it) |
+| Approval before a PO is raised | dormant | `inventory/plans.js:92`, `source_pos/[id].js:18` | The gate works but has nothing to approve; hand-made POs can go straight to sent |
+| Approved plan to draft PO | dormant | `inventory/plans.js:28` | No price; supplier `'TBD'`; two concurrent clicks can create two POs |
+| One PO per vendor | missing | `inventory/plans.js:47`, mig 085:308 | `procurement_plans` has no supplier column |
+| Choose the vendor | partial | `inventory/plans.js:125`, `inventory/suppliers.js:64` | `default_supplier_id` has no writer, so every released PO gets `'TBD'` |
+| Compare vendor quotes (supplier RFQ) | live | `supplier_rfq/award.js:41`, `components/RfqDetail.tsx:210` | An award never creates a PO or sets an item's default supplier |
+| Raise a PO by hand | partial † [live] | `source_pos/index.js:66`, `source_pos/receive.js:65` | Header only, no lines; the GRN endpoint rejects it; no PO document |
+| Run the check on a schedule | dormant † [designed only] | `cron/inventory-planning-weekly.js:776`, `vercel.json:12` | Handlers complete and routed; no trigger; the flags need DB edits |
+
+**05 Reports**
+
+| Makeflow capability | Anvil status | Anvil evidence | Gap |
+|---|---|---|---|
+| Natural-language Q&A over business data | live | `erp_chat/send.js:148`, `_lib/anthropic.js:250` | Needs `ANTHROPIC_API_KEY`, no fallback provider; 26 tools (22 read, 4 write proposals) |
+| Answers from the ERP's own data | partial | `_lib/erp-chat-tools.js:183`, `erp_chat/send.js:30` | No tool reads a Tally table; no Tally sales register, outstanding or purchase mirror |
+| Governed figures, not model arithmetic | live | `_lib/metrics/catalog.js:563`, `_lib/metrics/catalog.js:28` | 28 metrics, window 1 to 365 days; none reads Tally; no booked-SO value |
+| Web chat with follow-up memory | live | `erp_chat/sessions.js:21`, `screens/ask-anvil.tsx:236` | Memory is per tenant, not per user, with no session ownership check (`erp_chat/send.js:85`) |
+| Ask on WhatsApp ‡ | missing | `inbound/whatsapp/webhook.js:113`, `_lib/chat-intent.js:79` | No reply path; the intent regex has no word boundaries, so "send me the sales report" becomes a `purchase_order` DRAFT |
+| Deliver answers to managers on WhatsApp | partial | `whatsapp/send.js:55`, `_lib/erp-chat-tools.js:729` | Plain text with no templates, so sends outside the 24-hour window fail; only an ad hoc propose-and-confirm path |
+| Scheduled briefings | designed only | `docs/GENAI_FOR_MANUFACTURING.md:168`, `cron/drift-report.js:121` | No report subscriptions; the one scheduled report (Tally drift) is flag-gated and loses its HTML body |
+| Answers in Hindi | partial | `erp_chat/send.js:27`, `_lib/docai/multi-language.js:53` | English only; Devanagari detection exists for extraction, not chat |
+| Show the figures used | partial | `erp_chat/send.js:186`, `screens/ask-anvil.tsx:254` | Table chips and row counts; the stored rows are never displayed |
+| Management dashboards | live | `screens/sales-ops.tsx:20`, `screens/inventory-planning.tsx:1` | Sales-ops scope; the inventory dashboard is dormant behind its flag; no purchase or Tally-ledger view |
+| Ask from an external assistant (MCP) | partial | `_lib/erp-chat-tools.js:769`, `_lib/mcp.js:106` | `tools/list` emits `input_schema` where MCP expects `inputSchema`, so standard clients will likely reject it (needs a live test); no token screen |
+| Role-scoped access to figures | partial | `_lib/auth.js:33`, `lib/nav-settings.ts:47` | Any reader, operator and viewer included, can ask for AR and revenue; the nav hide is client-side only |
+
+**ERPs, drives, controls and deployment**
+
+| Makeflow capability | Anvil status | Anvil evidence | Gap |
+|---|---|---|---|
+| Tally Prime | partial | `_lib/tally-client.js:1`, `tally/push.js:88` | Anvil side built and routed, never carried data; vouchers only; the generic Tally integration (migs 232-242) is not built |
+| SAP S/4HANA, Oracle NetSuite, Dynamics 365 | partial | `_lib/sap-client.js:54`, `netsuite/push.js:118`, `_lib/d365-client.js:1` | Backends routed; only NetSuite has an admin screen; no screen pushes an order to any of the three; no Mode B check on their pushes; Dynamics is F&O only, no Business Central |
+| SAP Business One, Zoho Books, Marg, Busy | missing | `router.js:343`, `_lib/sap-client.js:1` | No client, route or setting for any of the four |
+| Custom or in-house ERPs | partial | `_lib/erp-runner.js:1`, `orders/export.js:1` | Each ERP needs adapter code; no generic REST, webhook or file-drop connector; the fallbacks are xlsx export, EDI and read-only MCP |
+| Google Drive, OneDrive, SharePoint, Dropbox | missing | `_lib/graph-client.js:35`, `screens/admin.tsx:3390` | Graph scopes are mail only; the drawing base URL is a browser-local link prefix |
+| Approval gate on every entry | live | `orders/[id].js:205`, `_lib/tally-enqueue.js:27` | Pushes ignore the 24-hour approval expiry; the copilot Tally enqueue skips the blocker and hash checks; agent emails go out with no per-message approval |
+| Value caps | partial | `_lib/approval-evaluator.js:36`, `_lib/erp-runner.js:193` | Configurable but advisory; they block neither approval nor push |
+| Approved vendors | partial | `supplier_rfq/vendors.js:20` | The flag filters one picker and enforces nothing |
+| Rate tolerances | partial | `_lib/order-exceptions.js:222`, mig 054:117 | Sales-side tolerances are code constants; the two tenant settings have no editor |
+| Full audit log | live | `_lib/audit.js:74`, `audit/export.js:39` | Best-effort writes with no retry; export refuses without the HMAC secret |
+| Pause or take over an agent ‡ | partial | `screens/agents.tsx:251`, `agents/run.js:362` | Per-goal pause only; no tenant kill switch; a queued email is sent in the same run, so there is no window to take it over |
+| Private per-company servers | missing | `vercel.json:12`, `docs/COST_OPTIMIZED_DEPLOYMENT.md:250` | No container, IaC or install runbook |
+| Customer data not used for training | partial | `screens/landing.tsx:458`, `_lib/openrouter.js:96` | No training code, but no enforced control, provider opt-out, DPA or retention job |
+| Per-company least-privilege credentials; encryption in transit and at rest | partial | `tally/companies.js:78` | Credentials are encrypted per tenant; defects in credential handling are tracked in the security backlog, not in this public document |
+| One-process pilot in one to two months | partial | mig 221:27, `screens/onboarding.tsx:27` | Mode B and the three-way check exist; no ERP-connect or pilot wizard; the landing timelines (`screens/landing.tsx:457`) are unbacked |
+
+### Where Makeflow and Anvil overlap, and where they do not
+
+Makeflow sells **ERP data entry**. An agent types what a clerk would type,
+across order entry, AP, AR, purchasing and MIS, and a person approves the
+draft. Anvil sells **quote-to-cash verification**. It reads the customer's PO
+and checks it against Anvil's own quote, and in Mode B it also checks the
+clerk's Tally entry against the PO, with the PO as authority. The products
+overlap in the first agent and diverge everywhere else. Where they meet, they
+are complementary as much as rival: one types, the other checks the typing.
+
+| area | Makeflow (claimed) | Anvil (verified unless noted) | ahead |
+|---|---|---|---|
+| Order intake channels | WhatsApp first, email, shared drives | operator upload live; WhatsApp and email chains partial | Makeflow |
+| Reading the order | any format, including handwriting and plain messages | PDF, scan and photo live; Excel and DOCX misrouted on first pass; message text unread | Makeflow on breadth, if the claim holds |
+| Typing the order into the ERP | the core product, as an ERP-side draft | Tally push never run; by design it posts an invoice voucher, not a Sales Order; refused in Mode B by design | Makeflow |
+| Checking a human's ERP entry against the PO | not claimed | Mode B three-way check live (`components/ThreeWayPanel.tsx:88`) | **Anvil** |
+| PO against quote and terms | not claimed (flags a new item, a rate change, a missing qty against ERP masters) | quote reconciliation live in the SO workspace; terms check dormant (mig 250, `terms_check_mode` defaults off) | **Anvil**, on the live quote reconciliation alone |
+| Customer part-number learning | matches against the ERP masters | tiered matcher writes corrections back to `item_customer_parts` (`orders/[id].js:307`) | **Anvil**, on evidence |
+| Quoting, supplier RFQ, spare matrix, service ops | none claimed | supplier RFQ live; quoting, spare matrix and service ops per §8 (not re-verified here) | **Anvil** |
+| Supplier invoice three-way match with GST | a core agent | partial, unwired, no GST | Makeflow |
+| Collections from the ERP ledger | a core agent, WhatsApp and email | built on Anvil's own invoices; tick-dependent; one reminder under defaults | Makeflow |
+| Purchase from stock and production plan | a core agent, one PO per vendor | planner dormant and deadlocked; no production plan; no per-vendor PO | Makeflow |
+| MIS answers | WhatsApp or web, English or Hindi | web chat live with governed metric provenance; no Tally data, no WhatsApp, no Hindi | split: Anvil on governed numbers, Makeflow on channel, language and data source |
+| ERP breadth for Indian firms | Tally, Marg, Busy, Zoho Books, SAP B1 | Tally (write path never run); Ramco connector unverified in this review | Makeflow |
+| Deployment | private servers per company | multi-tenant Vercel and Supabase only | Makeflow, if the claim holds |
+| Proof | one anonymous case study, no figures | one pilot tenant whose first customer chose Mode B; no published outcome | neither |
+
+In short, Makeflow is ahead on everything that touches the ERP or the plant
+owner's phone, if its claims hold. Anvil is ahead on everything that requires
+knowing what the order **should** say: the quote, the customer's part numbers,
+and the three-way check of a human's entry, with the terms check built but off
+by default. Neither has published proof of its ERP write path.
+
+### Threat to the pilot segment
+
+**For the pilot itself, the threat is low today.** The pilot's first customer
+chose Mode B: the clerk keeps keying into Tally and Anvil verifies
+([[project_mode_a_b_verification]]). Makeflow removes the keying instead, and it
+claims no check of a human's entry against the PO. A buyer who wants a second
+pair of eyes on the clerk is not Makeflow's buyer. Makeflow would also struggle
+in a vendor-security review by an OEM-facing distributor. It publishes no legal
+entity, its governing-law clause is a placeholder, its privacy policy
+contradicts its no-training claim, and its lead form posts data to a public
+Discord webhook.
+
+**For the India and Tally segment, the threat is the highest of any entry in
+this document.** The test here is overlap with the pilot's ERP, country and
+intake channel, not product maturity. On maturity and breadth, Faction (§3.13)
+stays the highest-priority threat on the crowded cluster: it names four ERPs
+and spans quote to AR. But Faction names no Indian ERP, and the §3.13
+new-entrants table lists India rails as one of the two rows no entrant
+contests. On claims, Makeflow contests the Tally half of that row. Four reasons:
+
+1. **It narrows §8's India claim.** §8 says Anvil is the only option for an
+   India prospect, and §5's differentiator table lists Tally and GSTN as Anvil
+   only. No earlier rival named Tally, Marg, Busy or Zoho Books; Pactle (§3.5)
+   lists Ramco, an enterprise ERP. Makeflow names three Indian SME ERPs (Tally,
+   Marg, Busy), plus Zoho Books. This document had mentioned Zoho only once, as
+   an absence in §3.23. In the code, Anvil's Tally write has never carried data,
+   so the claim was already ahead of the product.
+   [[project_competitive_landscape]] lists Tally, Zoho and LLM commoditisation
+   as threats. Makeflow is the first vendor seen packaging LLM extraction on top
+   of exactly those ERPs.
+2. **It owns the channel this document says Anvil already has.** §4 theme 3
+   made multi-channel intake table stakes. §0, §5 and §9 Now #11 record WhatsApp
+   as shipped, following the §3.2 and §7 recommendation to absorb Korso's
+   channel. Indian plants send POs as WhatsApp photos, but Anvil stores the
+   media URL and never reads it.
+3. **It sells the step the pilot is likely to ask for next.** The adjudicator
+   described in §3.30 scores whether Anvil or the clerk was right against the
+   PO. Once it shows Anvil is right, the obvious next request is Mode A: let
+   Anvil type. Anvil's Mode A path into Tally has never run, and by design it
+   posts a Sales (invoice) voucher, not a Sales Order. The generic integration
+   that would replace it maps a per-profile sales-order voucher type
+   (`docs/TALLY_INTEGRATION_SCOPE.md:1306`) and is not built. Makeflow sells
+   that step as its whole product: an ERP-side draft behind the same human
+   approval that Mode B keeps.
+4. **It sells the back office Anvil built and has not switched on.** §0 and §5
+   list AR, dunning, agents and procurement as built. This entry finds them
+   dormant, deadlocked, or reading Anvil's own invoices, which a Mode B tenant
+   does not have. Makeflow sells collections and purchase from the ERP ledger,
+   which is where a Tally plant's numbers live.
+
+Two more points:
+- §4 theme 2 called named agents the market's frame. Makeflow uses that frame
+  in a way that suits Indian SMEs: an assistant to staff, Hindi, WhatsApp, one
+  process at a time. To a plant owner this reads as more credible than the
+  enterprise agent language of §3.24.
+- [[project_job_shop_segment]] found that Anvil's front half fits a machining
+  prospect and its back half (routing, costing, work orders) is absent.
+  Makeflow does not claim that back half either; it types orders into the ERP
+  the shop already runs. On claims, and for order entry only, it is the lighter
+  fit. Neither product quotes for a job shop.
+
+Four more angles:
+- **The counterparty.** Makeflow sells to manufacturers, the kind of firm that
+  buys from an industrial distributor. A customer of the pilot that ran
+  Makeflow's Invoice Matching agent would check the pilot's own invoices, line
+  by line with GST, against its PO and GRN. That is the counterparty frame §3.32
+  used for Gainfront, one tier down. It raises the value of running the buyer's
+  match before the invoice leaves (§3.32, idea 1).
+- **Price.** Makeflow publishes no current price. Its earlier WhatsApp product
+  charged hosting from ₹3,000 a month (February 2025 capture). That hints at an
+  SME price point but is unconfirmed for the current product. Anvil's public
+  card prices outcomes in US dollars, for example $0.50 per order processed and
+  $1.00 per ERP push (`docs/BILLING_OUTCOMES.md:14-15`; §4 theme 5). The
+  comparison has not been tested with any prospect.
+- **Talk track for a prospect comparing the two.** Makeflow claims to remove
+  the typing. Anvil checks the order against what the customer asked for and
+  what was quoted, and in Mode B checks what the clerk typed against the PO.
+  Ask any vendor that types into the ERP what checks the typing: Makeflow claims
+  flags against ERP masters (a new item, a rate change, a missing quantity),
+  not against the PO, the quote or the terms. Do not claim that Anvil types into
+  Tally today.
+- **Evidence, actively.** Two cheap steps beat waiting. Ask the pilot and its
+  peers whether Makeflow has pitched them. Take one discovery call, openly as
+  Anvil, to learn the connector mechanism and the price.
+
+The search also found a second Indian vendor with a similar pitch:
+`nyxsolution.in`, whose site says it sells TallyPrime and SAP agents over
+WhatsApp and email (low confidence, not checked further). The pairing is this
+review's own inference. If it holds, two such vendors would mean a category is
+forming.
+
+Five things would raise the threat: a named customer with figures, a registered
+entity with a DPA, a public demo of a Tally write, any verification or quoting
+module, or a pilot peer reporting a Makeflow pitch. Check the site each quarter,
+and run the two active steps above now.
+
+### How to respond: three options (decision)
+
+The products are complementary where they meet, so competing is not the only
+choice. **(decision)** The owner picks one; this review does not.
+
+| option | what it means | cost to Anvil | risk |
+|---|---|---|---|
+| **(a) Partner or integrate** | Makeflow types into Tally, and Anvil runs Mode B over its entries | Small. Mode B scores the ERP entry against the PO whoever keyed it, provided the Tally SO is uploaded (`orders/attach_sales_order.js:105`). A feed would need an API Makeflow has not published | Ties Anvil's India story to a vendor with no published legal entity, and concedes the typing step |
+| **(b) Build Mode A for Tally** | Anvil types the order into Tally behind its own approval gate | Large. It needs a transport the repo does not ship (`docs/TALLY_INTEGRATION_SCOPE.md:30`), the generic integration from docs PR #553 (17 PRs, four sized L; migrations 232-242, none built; 19 owner decisions in its §12.1), and the voucher-type decision below. The design's first transport is a partner pull, and the first tenant's Tally partner already pulls records and posts acknowledgements back (`docs/TALLY_INTEGRATION_SCOPE.md:22`). This review reads the path to a first partner-pull tenant (through PR 11, three PRs sized L) as roughly a quarter for a small team; the scope gives sizes, not weeks | Competes head on with a product whose whole pitch is this step |
+| **(c) Watch only** | quarterly site check plus the two active steps | None | Makeflow may land Tally plants first |
+
+Triggers that move the choice:
+- **(c) to (a)**: Makeflow publishes an API or a named Tally customer, and a
+  prospect wants both the typing and the check.
+- **(c) to (b)**: the Mode B adjudicator shows Anvil right on the pilot's real
+  POs and the pilot asks Anvil to type, or a second Tally prospect asks for
+  Mode A.
+- **Any option to urgent**: Makeflow adds a verification or quoting module, or
+  a pilot-segment prospect cites Makeflow in a lost deal.
+
+The voucher-type decision applies under (b) whatever else is chosen.
+**(decision)** Should Mode A for this pilot post an order-book Sales Order
+voucher or a Sales (invoice) voucher? The legacy push chose Sales on purpose:
+it books revenue and GST output, and a Sales Order "leaves the buyer's ITC chain
+broken" (`_lib/tally-voucher-type.js:26-29`). The generic design instead maps a
+sales-order voucher type per profile (`docs/TALLY_INTEGRATION_SCOPE.md:1306`).
+
+### What to borrow, and what to do next
+
+Borrow three patterns, none of which is a feature:
+
+- **The rollout script.** Makeflow's setup runs one process with one agent
+  beside the team. The team reviews every entry until it trusts the agent, then
+  expands on the same connections. That is Mode B told as a sales motion.
+  Anvil has the mechanism (`so_processing_mode`, mig 221; the three-way
+  adjudicator) but no wizard or story around it (`screens/onboarding.tsx:27`).
+  Tell it the same way: start in Mode B, and move to Mode A once a Tally write
+  path exists (docs PR #553, migrations 232-242) and the adjudicator shows Anvil
+  is right. Until that path exists, the Mode A step stays out of the pitch.
+- **The controls as one panel.** Makeflow lists its controls together: draft
+  until approved, value caps, approved vendors, rate tolerances, a log of what
+  was read, entered and approved, and pause or take over. Anvil has each
+  control at some depth but shows none of them together. The approval bound to
+  a payload hash and the audit log are live. Caps are advisory, and tolerances
+  are hard-coded.
+- **The assistant-not-replacement framing and an honest setup time.** One to two
+  months is more credible than the landing page's unbacked claim of two weeks
+  to the first voucher.
+
+Do not copy Makeflow's hygiene. Its site is the clearest example in this
+document of claims that contradict the vendor's own policies. Anvil's landing
+page has the same kind of defect on a smaller scale ([[backlog_landing_page]]).
+
+Next actions, ordered by leverage. **(decision)** marks an action that needs the
+owner. The rest are decision-free. Sizes are rough calendar time for a small
+team, in the §9 style, and are this review's estimates.
+
+0. **The tick question is answered.** An external trigger already calls
+   `/api/cron/tick` (`/api/_healthz` reported `tick_stale: false` in October
+   2026), so every ‡ row above runs today, defects included. Action 1b is
+   therefore urgent, not optional.
+1. **Keep the tick, and fix the handlers that already run.**
+   - **1a. (decision) Before merging PR #566, set `CRON_TICK_HANDLERS=all` in
+     Vercel.** Size: minutes, by the owner. Without it, #566 narrows the tick to
+     `extraction/jobs` and switches off what runs today. Keep the one external
+     trigger; do not add a second (the PR's GitHub workflow and its two
+     repository secrets are not needed while the external trigger runs).
+   - **1b. Fix five defects in handlers that already run, then narrow the
+     allow-list to what is fixed.** Size: about a week for the five fixes
+     together. The fixes:
+     - the dunning cooldown (`agents/run.js:54` against
+       `agents/_handlers/ar_collect.js:199`);
+     - the Tally full re-pull that double-counts `paid_amount`
+       (`tally/sync.js:154`);
+     - `handle_replies` dropping `tenant_id` and draining every tenant on a
+       manual run (`agents/handle_replies.js:41`, `:127`);
+     - the intent regex with no word boundaries (`_lib/chat-intent.js:79`);
+     - the reaper that would flush every stale queued email, because it has no
+       age filter (`agents/run.js:276`).
+
+     These tie to the hands-free, tiered-reminder, reply, receipt and
+     WhatsApp-query rows and to [[project_mailer_autosends]]. Also check the
+     status guard on the `extraction/jobs` merge, which writes a finished job's
+     lines into its order without reading the order's status
+     (`cron/extraction_jobs.js:781`).
+2. **Close the channel-to-draft seam.** Size: about two weeks. Three changes:
+   download Twilio media into `order_documents`, stamp
+   `preflight_payload.source_document_id`, and merge the auto-extract run onto
+   the order. Add the fixes #566 lists as keep-off reasons: the starvation in
+   `inbound/auto_ocr.js:55` and `inbound/email/persist_attachments.js:54`, and a
+   status guard on the `extraction/jobs` merge (`cron/extraction_jobs.js:781`),
+   so a background run cannot overwrite an approved order's lines. A WhatsApp or
+   email PO then opens as a populated draft. This ties to the WhatsApp, email
+   and hands-free rows, to [[project_po_to_so_flow]] (five clicks to one) and to
+   [[backlog_so_processing_audit]]. Also confirm how Postmark authenticates
+   inbound posts, outside the repo. If it sends no HMAC, switch the check to
+   basic auth. **(decision)** Either allow extraction of channel files whose
+   `scan_status` is `pending`, or make ClamAV a requirement.
+3. **Fix the first-pass XLSX and DOCX misroute**
+   (`src/client/anvil-client.js:747`). Size: a day. The drop zone already
+   advertises both formats.
+4. **Ship the Mode B handoff (plan PR 16).** Size: about a week. The settings
+   are live (mig 251), but the send is not built. Makeflow's notify-production
+   step is the same message, sent to a second audience. This ties to the
+   handoff and notify-production rows and to [[project_mode_a_b_verification]].
+   **(decision)** Whether production gets the handoff as well as order
+   processing.
+5. **Make chat sessions per user before any multi-user pilot.** Size: one to two
+   days. Filter `erp_chat_sessions` by user and check ownership at
+   `erp_chat/send.js:85`. This fixes a data-exposure defect; it is not a
+   feature. **(decision)** Whether to limit the AR and revenue tools by role,
+   and whether managers get a WhatsApp query channel and Hindi replies
+   ([[project_genai_copilot]], [[backlog_revenue_intel_ux]]).
+6. **Design a read path from Tally.** Size: a design document first; the build
+   is unsized. Mode B needs the clerk's SO pulled from Tally rather than
+   uploaded. Any collections or MIS answer for a Tally tenant needs bills
+   outstanding and the sales register. Neither is in the generic Tally
+   integration (docs PR #553), which moves Anvil's records into Tally and still
+   verifies with an uploaded Tally PDF (its PR 14). A read path is new design
+   ([[project_sf_to_tally_replacement]]). **(decision)** Two choices: the read
+   mechanism (the tenant's Tally partner, a bridge, or uploads only), and
+   whether Anvil does collections for Mode B tenants at all. OEM payers settle
+   by SAP AP transfer with TDS ([[project_payment_reality]]).
+7. **Correct the record and the pitch.** Size: a day. Amend three things: §5
+   (WhatsApp and Tally to **P**); §8's India claim, so it claims depth (Anvil
+   checks the typing against the PO) rather than presence; and the landing copy
+   that has nothing behind it (`screens/landing.tsx:125`, `:457`, `:458`;
+   [[backlog_landing_page]]). **(decision)** The owner decides marketing copy
+   and positioning.
+8. **Review credential handling before any security claim.** Size: two to
+   three days. The findings are in the security backlog, not here
+   ([[backlog_compliance_ciso]], [[reference_secrets_bytea_bug]]). Fix them
+   before the landing page or a vendor-security review repeats §8.
+9. **Record the remaining gaps; do not build them.** Size: none now. These are
+   real gaps, and each is a module, not wiring:
+   - AP matching with GST;
+   - one purchase PO per vendor;
+   - production plans;
+   - shared-drive connectors;
+   - Marg, Busy, Zoho Books and SAP B1 connectors;
+   - private deployment.
+
+   §3.32 already argued against becoming a procurement suite. The buy-side
+   thread lives in [[project_buy_side_supplier_reconciliation]], PR #534
+   (planner, open) and [[backlog_parked_prs]]. The private-deployment thread
+   lives in §3.24. **(decision)** Whether AP or procurement agents are in scope
+   at all. If they are, pointing `ap/match.js:82` at `source_po_lines.rate` is
+   only the first of several fixes. The minimum set:
+   - a writer for priced PO lines (plan release writes `rate: null` at
+     `inventory/plans.js:53`, and UI POs have no lines);
+   - a supplier part cross-reference, because the invoice carries the
+     supplier's code and the PO carries Anvil's;
+   - netting of earlier invoices, and a non-zero quantity tolerance;
+   - a zero-line guard before auto-approve (`ap/match.js:104`);
+   - a caller, on arrival or on a schedule;
+   - GST columns on `ap_invoice_lines`, if GST is in scope.
+
+   Only then is the matcher the asset §3.32 said it was.
+
+Sources are listed in Appendix B.
+
 ## 4. Cross-cutting themes from the competitor scan
 
 Five things the competitors collectively prove are now table stakes:
@@ -1630,3 +2225,10 @@ After the post-implementation pass, the remaining open items in Now are:
   - Axya: https://fundraiseinsider.com/blog/mcrock-leads-axyas-c17m-series-a-for-manufacturing-procurement-ai/
   - IPercept: https://bebeez.eu/2026/09/29/swedish-startup-raises-16-5-million-to-make-cnc-machines-more-intelligent/
   - Harmoni: https://vcnewsdaily.com/Harmoni/venture-funding.php
+- Makeflow, `makeflow.in` (section 3.34, reviewed 2026-10-16; vendor claims only, no third party confirms any of them; demo-data names and figures excluded):
+  - Site: https://makeflow.in/ (homepage, hidden agent tabs, FAQ), https://makeflow.in/privacy, https://makeflow.in/tos, https://makeflow.in/js/home.js?v=2
+  - Earlier WhatsApp-automation product: https://web.archive.org/web/20241130205147/https://makeflow.in/ and https://web.archive.org/web/20250226201208/https://makeflow.in/
+  - Domain and certificates: WHOIS via whois.nixiregistry.in (https://www.registry.in/), queried 2026-10-16; https://crt.sh/?q=%25.makeflow.in
+  - Absence checks: https://tracxn.com/d/explore/ai-agents-startups-in-india/__t1hDPgfNMfngK4dkUTH_z9o1yYaofHdHMmiYdK-EhYA/companies (not listed); https://www.linkedin.com/company/makeflow (404); Zaubacorp, InstaFinancials and TheCompanyCheck blocked automated fetches
+  - Disambiguation (not this vendor): https://ccl.cse.nd.edu/software/makeflow/ (Notre Dame CCL workflow engine), https://www.capterra.com/p/10047528/MakeFlow/ (Brazilian document tool), https://makeflow.tech/ (WhatsApp chatbots, Arabic branding), https://makeflow.com/ and https://github.com/mufancom/makeflow (Chinese issue tracker)
+  - Possible comparable, low confidence: https://nyxsolution.in/

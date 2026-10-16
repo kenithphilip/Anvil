@@ -5,6 +5,7 @@ import { AnvilBackend } from "../lib/api";
 import { DocCropper } from "../components/DocCropper";
 import { stampOcrSources } from "../lib/field-sources";
 import { parsePoDate } from "../lib/parse-date";
+import { customerMatchStamp } from "../../api/_lib/order-exceptions.js";
 
 // ============================================================
 // ANVIL v3 — wired SO Intake
@@ -69,6 +70,10 @@ const WiredSOIntake = () => {
   // an extra network hop per upload.
   const [vendorCodeIndex, setVendorCodeIndex] = u<any[]>([]);
   const [customerId, setCustomerId] = u("");
+  // What the matcher chose and on what basis (plan PR 7). Saved on the order
+  // at create, so the workspace and the approver can see how the customer was
+  // chosen. A customer the operator picks instead is saved as "operator".
+  const [autoMatch, setAutoMatch] = u<{ customer_id: string; basis: string } | null>(null);
   const [doc, setDoc] = u(null);
   const [busy, setBusy] = u(null);
   const [err, setErr] = u(null);
@@ -520,7 +525,9 @@ const WiredSOIntake = () => {
       return null;
     }
 
-    return { customer: exact, confidence: "exact_name" };
+    // `letterhead`: the letterhead was the only signal, which is the basis
+    // the order saves.
+    return { customer: exact, confidence: "exact_name", letterhead: !billOk && !stateOk && !countrySignal };
   };
 
   // Field-by-field mismatch detector. Compares a PO-extracted
@@ -835,12 +842,20 @@ const WiredSOIntake = () => {
         customer,
         typeof out?.confidence_overall === "number" ? out.confidence_overall : null,
       );
+      // A match from an earlier upload says nothing about this PO.
+      setAutoMatch(null);
       if (matchResult?.customer) {
         // High-confidence match (GSTIN exact OR normalized-name
         // exact). Auto-select. The right-hand card will still
         // render the "From PO" panel so the operator sees the
         // extracted fields next to the existing-customer record.
         setCustomerId(matchResult.customer.id);
+        setAutoMatch({
+          customer_id: matchResult.customer.id,
+          basis: matchResult.confidence === "exact_gstin" ? "gstin"
+            : matchResult.confidence === "exact_vendor_code" ? "vendor_code"
+            : matchResult.letterhead ? "letterhead" : "name",
+        });
         window.notifySuccess?.(
           "Customer matched",
           (matchResult.customer.customer_name || matchResult.customer.id?.slice(0, 8))
@@ -999,6 +1014,10 @@ const WiredSOIntake = () => {
       }
       if (extractMeta.adapter) initialPreflight.adapter_used = extractMeta.adapter;
       if (extractMeta.confidence != null) initialPreflight.confidence_overall = extractMeta.confidence;
+      // How the customer was chosen (plan PR 7): the matcher's basis when the
+      // order's customer is the one it chose, else "operator".
+      const matchStamp = customerMatchStamp({ autoMatch, customerId, at: new Date().toISOString() });
+      if (matchStamp) initialPreflight.customer_match = matchStamp;
 
       // Auto-populate first-class header columns the extractor
        // returned. Lets the Header fields tab in the workspace open

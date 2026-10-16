@@ -116,10 +116,12 @@ export const RESOLUTION_OPTIONS = Object.freeze({
 const NA = (reason) => Object.freeze({ kind: "not_available_yet", reason });
 const NO_DECISION_RECORD = NA("No decision record exists yet: plan PR 11 (order_exception_decisions) is not built.");
 const NO_AMENDMENT = NA("No amendment request exists yet: plan PR 11 decisions and the plan PR 16 handoff are not built.");
-const NO_CUSTOMER_CHANGE = NA("customer_id is not in the order PATCH allowlist: plan PR 7 is not built.");
 const endpoint = (method, path, body, control, permission = "write") =>
   Object.freeze({ kind: "endpoint", method, path, body, control, permission });
 const ORDER = "/api/orders/{order_id}";
+// Plan PR 7: customer_id is on the PATCH allowlist while the order is DRAFT or
+// PENDING_REVIEW (_lib/order-identity.js).
+const CHANGE_CUSTOMER = endpoint("PATCH", ORDER, "customer_id", "Summary strip: Customer, change");
 const lineEdit = (field) => endpoint("PATCH", ORDER, "result.salesOrder.lineItems[{line_index}]." + field,
   "Line grid: edit the cell on line {line_number}, then Save line edits");
 const LINE_REMOVE = endpoint("PATCH", ORDER, "result.salesOrder.lineItems without line {line_index}",
@@ -189,9 +191,9 @@ export const EXCEPTION_TYPES = Object.freeze({
   },
   terms_not_read: { source: "terms", options: [opt("run_check", TERMS_CHECK)] },
   // the customer
-  customer_unmatched: { source: "customer", options: [opt("change_customer", NO_CUSTOMER_CHANGE)] },
-  customer_gstin_conflict: { source: "customer", options: [opt("change_customer", NO_CUSTOMER_CHANGE), opt("update_master", UPDATE_MASTER), opt("confirm", NO_DECISION_RECORD)] },
-  customer_low_confidence: { source: "customer", options: [opt("change_customer", NO_CUSTOMER_CHANGE), opt("confirm", NO_DECISION_RECORD)] },
+  customer_unmatched: { source: "customer", options: [opt("change_customer", CHANGE_CUSTOMER)] },
+  customer_gstin_conflict: { source: "customer", options: [opt("change_customer", CHANGE_CUSTOMER), opt("update_master", UPDATE_MASTER), opt("confirm", NO_DECISION_RECORD)] },
+  customer_low_confidence: { source: "customer", options: [opt("change_customer", CHANGE_CUSTOMER), opt("confirm", NO_DECISION_RECORD)] },
   customer_state_differs: { source: "customer", options: [opt("update_master", UPDATE_MASTER), opt("confirm", NO_DECISION_RECORD)] },
   // the delivery date (order-delivery-date.js). accept_suggested_date sets
   // the committed date to payload.suggestion.value through the existing
@@ -386,6 +388,8 @@ export const MATCH_BASIS_LABEL = Object.freeze({
   gstin: "matched by GSTIN",
   vendor_code: "matched by vendor code",
   name: "matched by name",
+  letterhead: "matched by letterhead",
+  operator: "chosen by hand",
   gstin_conflict: "GSTIN on the PO differs",
   unverified: "not confirmed by the PO",
   not_on_po: "the PO names no buyer",
@@ -393,9 +397,40 @@ export const MATCH_BASIS_LABEL = Object.freeze({
   none: "no customer",
 });
 
-// How the order's customer is backed by the PO. The intake does not save the
-// basis it matched on (audit F8), so it is derived from what the PO's buyer
-// block and the customer master both say, strongest first:
+// The bases the intake and the PATCH save (plan PR 7), in
+// preflight_payload.customer_match: what the intake matched on, or "operator"
+// when a person picked the customer.
+export const SAVED_MATCH_BASES = Object.freeze(["gstin", "vendor_code", "name", "letterhead", "operator"]);
+
+// How a basis reads on the summary strip: good when the PO itself backs the
+// customer or a person chose it, warn otherwise.
+export const matchBasisTone = (basis) => (SAVED_MATCH_BASES.includes(basis) ? "good" : "warn");
+
+// The stamp the intake saves when it creates an order. `autoMatch` is what
+// its matcher chose ({ customer_id, basis }); when the order's customer is
+// not that one, a person picked it. No customer, no stamp.
+export const customerMatchStamp = ({ autoMatch = null, customerId = null, at = null } = {}) => {
+  const id = str(customerId);
+  if (!id) return null;
+  const auto = autoMatch && str(autoMatch.customer_id) === id && SAVED_MATCH_BASES.includes(autoMatch.basis) ? autoMatch.basis : null;
+  return { customer_id: id, basis: auto || "operator", at: at || null };
+};
+
+// The saved basis, when it is for the order's current customer.
+const savedBasis = (order) => {
+  const m = order?.preflight_payload?.customer_match;
+  if (!m || typeof m !== "object" || !order?.customer_id) return null;
+  if (str(m.customer_id) !== str(order.customer_id) || !SAVED_MATCH_BASES.includes(m.basis)) return null;
+  return m;
+};
+
+// How the order's customer is backed by the PO. Since plan PR 7 the intake
+// saves the basis it matched on and a customer change saves "operator"; that
+// saved basis is used for the order's current customer. A GSTIN conflict is
+// still reported over it: the master and the PO disagree today, whatever the
+// match was. Without a saved basis (older orders, inbound orders) it is
+// derived from what the PO's buyer block and the customer master both say,
+// strongest first:
 //   gstin           the PO's GSTIN is the master's
 //   gstin_conflict  both state a GSTIN and they differ
 //   vendor_code     the vendor code the PO prints is one this customer uses
@@ -408,13 +443,19 @@ export const customerMatchBasis = ({ order, customer = null, vendorCodes = [] } 
   const po = order?.result?.salesOrder?.customer || {};
   const base = { po_name: str(po.name) || null, master_name: str(customer?.customer_name) || null };
   if (!order?.customer_id) return { ...base, basis: "none", label: MATCH_BASIS_LABEL.none };
-  if (!customer) return { ...base, basis: "unknown", label: MATCH_BASIS_LABEL.unknown };
+  const saved = savedBasis(order);
+  const savedOut = saved
+    ? { ...base, basis: saved.basis, label: MATCH_BASIS_LABEL[saved.basis], saved: true, by: saved.by || null, at: saved.at || null }
+    : null;
+  if (!customer) return savedOut || { ...base, basis: "unknown", label: MATCH_BASIS_LABEL.unknown };
   const poGstin = normGstin(po.gstin);
   const masterGstin = normGstin(customer.gstin);
   if (poGstin && masterGstin) {
     const basis = poGstin === masterGstin ? "gstin" : "gstin_conflict";
-    return { ...base, basis, label: MATCH_BASIS_LABEL[basis], po_gstin: poGstin, master_gstin: masterGstin };
+    if (basis === "gstin" || !savedOut) return { ...base, basis, label: MATCH_BASIS_LABEL[basis], po_gstin: poGstin, master_gstin: masterGstin };
+    return { ...base, basis, label: MATCH_BASIS_LABEL[basis], po_gstin: poGstin, master_gstin: masterGstin, saved_basis: saved.basis };
   }
+  if (savedOut) return savedOut;
   const vendor = str(order.vendor_code) || str(po.vendor_code);
   if (vendor && arr(vendorCodes).map(str).includes(vendor)) return { ...base, basis: "vendor_code", label: MATCH_BASIS_LABEL.vendor_code };
   const poName = normName(po.name);
@@ -436,9 +477,8 @@ const customerRows = ({ order, customer, vendorCodes }) => {
       detail: (match.po_name ? "The PO names " + match.po_name + ". " : "")
         + "The quote check and the anomaly rules need a customer.",
       payload: { subject: subjectData, field: "customer_id", po_value: match.po_name, evidence_refs: [] },
-      // The PATCH allowlist has no customer_id (audit F8), so no screen can
-      // set it after create. The one place that can is a new intake.
-      action: { href: "#/so?new=1", label: "Cannot be set here yet: create the order again from New from PO" },
+      // Plan PR 7: the summary strip's customer picker sets it.
+      action: { tab: "recon", control: "change_customer", label: "Pick the customer" },
     }));
   } else if (match.basis === "gstin_conflict") {
     out.push(({

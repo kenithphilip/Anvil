@@ -18,6 +18,13 @@
 // customer identity change, and is stable across unrelated edits (status
 // flips, notes, timestamps). Line ORDER is significant: re-ordering lines is a
 // real change to the document.
+//
+// The customer is the order's customer_id as well as the buyer block the PO
+// printed. The id is who the SO is raised for (its bill-to, its tax state, its
+// ledger), and since plan PR 7 it can be changed before approval. Without it a
+// customer change left the hash where it was, so an approver's stale view
+// passed the hash check, and the reconcile's once-per-hash guard skipped the
+// new customer's quotes.
 
 import crypto from "node:crypto";
 
@@ -47,6 +54,7 @@ export const canonicalOrderPayload = (order) => {
   return {
     po_number: cust.po_number ?? order?.po_number ?? null,
     customer: {
+      id: order?.customer_id ?? null,
       name: cust.name ?? null,
       gstin: cust.gstin ?? null,
       currency: cust.currency ?? null,

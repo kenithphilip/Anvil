@@ -9,6 +9,7 @@ import { promoteApprovedOrder } from "../eval/promote.js";
 import { computeOrderPayloadHash } from "../_lib/payload-hash.js";
 import { autoReconcileOrder, hasReconcilableLines, AUTO_RECONCILE_STATUSES } from "../_lib/order-reconcile.js";
 import { hasUnresolvedBlocker, firstUnresolvedBlocker, mergeBlockersForward, resolveFinding } from "../_lib/blocking-findings.js";
+import { IDENTITY_KEYS, planIdentityEdit } from "../_lib/order-identity.js";
 
 const APPROVE_INPUTS = [
   "status", "approval", "payload_hash", "result",
@@ -181,6 +182,19 @@ export default async function handler(req, res) {
         return json(res, 409, { error: { message: "Action '" + intendedAction + "' not in approval allowlist " + prev.approval_actions.join(",") } });
       }
 
+      // Plan PR 7: the customer, the PO number and the PO date, fixable while
+      // the order is DRAFT or PENDING_REVIEW and refused after. They are not
+      // in APPROVE_INPUTS: planIdentityEdit checks the status, that the
+      // customer is this tenant's, and the date, and re-maps the lines for a
+      // new customer. See _lib/order-identity.js.
+      let identity = null;
+      if (IDENTITY_KEYS.some((k) => k in body)) {
+        identity = await planIdentityEdit(svc, ctx, prev, body);
+        if (identity.error) return json(res, identity.error.status, identity.error.body);
+        Object.assign(patch, identity.patch);
+      }
+      const identityChanged = !!identity && Object.keys(identity.changes).length > 0;
+
       if (body.status === "APPROVED") {
         if (!body.approval || !body.approval.payloadHash) return json(res, 400, { error: { message: "Approval requires payload hash" } });
         requirePermission(ctx, "approve");
@@ -220,8 +234,9 @@ export default async function handler(req, res) {
       // operator later re-validates produces new findings, and the
       // pre-validation approval no longer reflects the order's
       // current risk profile. Re-approval is required.
+      // A changed customer, PO number or PO date is a different document too.
       const editKeys = ["result", "line_edits", "rule_findings"];
-      if (editKeys.some((k) => k in body) && prev.approval) {
+      if ((editKeys.some((k) => k in body) || identityChanged) && prev.approval) {
         patch.approval = null;
         patch.approval_expires_at = null;
         patch.approval_actions = [];
@@ -238,13 +253,19 @@ export default async function handler(req, res) {
       // it stands. Quote-derived orders: only fill a MISSING hash — the value
       // carried over from quotes/send.js identifies the exact quote the
       // customer accepted, and overwriting it would break that linkage.
+      //
+      // An identity change counts as a content edit: the hash covers the
+      // customer (payload-hash.js), so an approver who loaded the order
+      // before the customer moved is refused as stale. A customer change can
+      // unlink the old customer's quote, and then the order is no longer
+      // quote-derived.
       const movingToReview = body.status === "PENDING_REVIEW" && prev.status !== "PENDING_REVIEW";
-      const resultEdited = "result" in body;
-      if (movingToReview || resultEdited) {
-        const isQuoteDerived = !!prev.quote_id;
+      const resultEdited = "result" in patch;
+      if (movingToReview || resultEdited || identityChanged) {
+        const isQuoteDerived = !!("quote_id" in patch ? patch.quote_id : prev.quote_id);
         if (!isQuoteDerived || !prev.payload_hash) {
-          const nextResult = resultEdited ? body.result : prev.result;
-          const hash = computeOrderPayloadHash({ ...prev, result: nextResult });
+          const nextResult = resultEdited ? patch.result : prev.result;
+          const hash = computeOrderPayloadHash({ ...prev, ...patch, result: nextResult });
           if (hash) patch.payload_hash = hash;
         }
       }
@@ -366,6 +387,16 @@ export default async function handler(req, res) {
       await recordAudit(ctx, { action: auditAction, objectType: "order", objectId: id, before: prev, after: data, payloadHash: data.payload_hash, reason: body.reason || (isReturnForCorrection ? body.correction_reason : undefined) });
       await recordEvent(ctx, { caseId: id, eventType: isReturnForCorrection ? "correction_requested" : (body.status === "APPROVED" ? "manager_approved" : "order_updated"), objectType: "order", objectId: id, detail: { status: data.status, intendedAction, correctionReason: isReturnForCorrection ? body.correction_reason : undefined } });
 
+      // Plan PR 7: every identity change has its own audit row, with each
+      // field's old and new value and any link it cut.
+      if (identityChanged) {
+        const fields = Object.keys(identity.changes);
+        const pick = (row) => Object.fromEntries(fields.map((k) => [k, k === "po_date" && row[k] ? String(row[k]).slice(0, 10) : (row[k] ?? null)]));
+        const detail = { changes: identity.changes, unlinked: identity.unlinked };
+        await recordAudit(ctx, { action: "order_identity_changed", objectType: "order", objectId: id, before: pick(prev), after: pick(data), payloadHash: data.payload_hash, reason: body.reason || undefined, detail });
+        await recordEvent(ctx, { caseId: id, eventType: "order_identity_changed", objectType: "order", objectId: id, detail });
+      }
+
       // Audit P2.6: when an order enters PENDING_REVIEW, evaluate
       // the tenant's quote_approval_thresholds and create the
       // matching pending quote_approvals rows. The thresholds had
@@ -396,8 +427,12 @@ export default async function handler(req, res) {
       // the write, never before it: autoReconcileOrder never throws, skips an
       // approved order, and does nothing when the payload hash is the one it
       // last reconciled.
-      if ("result" in body && AUTO_RECONCILE_STATUSES.has(data.status) && hasReconcilableLines(data)) {
-        await autoReconcileOrder(svc, ctx, data.id, { trigger: "lines_changed" });
+      // A new customer means new quotes to reconcile against (plan PR 7). The
+      // hash covers the customer, so the reconcile's once-per-hash guard
+      // lets it run.
+      const customerChanged = !!identity?.customerChanged;
+      if (("result" in body || customerChanged) && AUTO_RECONCILE_STATUSES.has(data.status) && hasReconcilableLines(data)) {
+        await autoReconcileOrder(svc, ctx, data.id, { trigger: customerChanged ? "customer_changed" : "lines_changed" });
       }
 
       return json(res, 200, { order: data, approvals_created: approvalsCreated });

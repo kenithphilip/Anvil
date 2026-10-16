@@ -283,7 +283,8 @@ describe("source: the customer match", () => {
   });
 
   it("no customer, a GSTIN conflict, an unconfirmed match, a different state", () => {
-    expect(byType(buildOrderExceptions({ order: cleanOrder({ customer_id: null }) }), "customer_unmatched")).toMatchObject({ severity: "high", action: { href: "#/so?new=1" } });
+    // Plan PR 7: the workspace's customer picker sets it.
+    expect(byType(buildOrderExceptions({ order: cleanOrder({ customer_id: null }) }), "customer_unmatched")).toMatchObject({ severity: "high", action: { tab: "recon", control: "change_customer" } });
     expect(byType(buildOrderExceptions({ order: cleanOrder(), customer: { ...master, gstin: "29AAACF0000A1Z5" } }), "customer_gstin_conflict").detail)
       .toBe("PO 27AAACF0000A1Z5 vs master 29AAACF0000A1Z5 (Fixture Buyer)");
     const other = cleanOrder({ result: { salesOrder: { customer: { name: "Somebody Else", state_code: "29" }, lineItems: cleanOrder().result.salesOrder.lineItems } } });
@@ -438,7 +439,7 @@ describe("resolution options", () => {
     expect(opts("terms_flag").request_amendment).toMatchObject({ kind: "endpoint", method: "POST", path: "/api/orders/terms_decide" });
     expect(opts("terms_not_read").run_check).toMatchObject({ path: "/api/orders/terms_check" });
     expect(opts("mod_bom_pending").confirm).toMatchObject({ path: "/api/orders/{order_id}", permission: "approve" });
-    expect(opts("customer_unmatched").change_customer.kind).toBe("not_available_yet");
+    expect(opts("customer_unmatched").change_customer).toMatchObject({ kind: "endpoint", method: "PATCH", path: "/api/orders/{order_id}", body: "customer_id" });
     expect(opts("anomaly:rate_10x_jump").run_check).toMatchObject({ path: "/api/anomaly/compute" });
     expect(resolutionOptionsFor("no_such_type")).toEqual([]);
   });

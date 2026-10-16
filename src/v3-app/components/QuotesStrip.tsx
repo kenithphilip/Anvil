@@ -15,6 +15,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Banner, Btn, Chip } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { canDo } from "../lib/rbac";
 
 export interface AttachedQuote {
   document_id: string;
@@ -105,6 +106,8 @@ export const QuotesStrip: React.FC<{
   onLoaded?: (rows: AttachedQuote[]) => void;
 }> = ({ orderId, customerId, refreshKey, verdict, onAttached, onOpen, onLoaded }) => {
   const hasCustomer = !!customerId;
+  // Attaching writes to the order (so.write, which the server checks too).
+  const canWriteSo = canDo("so.write");
   const [rows, setRows] = useState<AttachedQuote[] | null>(null);
   const [other, setOther] = useState<any[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -247,7 +250,11 @@ export const QuotesStrip: React.FC<{
         {/* 1 — the action */}
         <div className="qs-col">
           <div className="qs-lbl">Quotes</div>
-          {hasCustomer ? (
+          {!canWriteSo ? (
+            /* Attaching writes to the order (so.write, checked by the
+               server too): a read-only role sees the list, not the action. */
+            <div className="qs-hint">Read only: attaching a quote needs write permission on sales orders.</div>
+          ) : hasCustomer ? (
             <>
               <label className="btn btn-sm" style={{ cursor: busy ? "wait" : "pointer" }}>
                 {busy ? `${step}…` : <>{Icon.upload || "↑"} Attach quote PDF</>}

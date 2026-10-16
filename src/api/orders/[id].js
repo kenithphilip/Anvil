@@ -7,6 +7,7 @@ import { approvalExpiryBlocks, approvalClearedByReturn } from "../_lib/order-sta
 import { lineCandidates, lineSapCandidates } from "../_lib/item-mapper.js";
 import { upsertCustomerPart } from "../_lib/item-customer-parts.js";
 import { promoteApprovedOrder } from "../eval/promote.js";
+import { requireOrderPatchAction } from "../_lib/order-write-gate.js";
 import { computeOrderPayloadHash } from "../_lib/payload-hash.js";
 import { autoReconcileOrder, hasReconcilableLines, AUTO_RECONCILE_STATUSES } from "../_lib/order-reconcile.js";
 import { hasUnresolvedBlocker, firstUnresolvedBlocker, mergeBlockersForward, resolveFinding } from "../_lib/blocking-findings.js";
@@ -133,6 +134,9 @@ export default async function handler(req, res) {
       requirePermission(ctx, "write");
       const body = await readBody(req);
       const patch = buildPatch(body);
+      // so.write for an edit, so.cancel for a cancel; an approver's decision
+      // needs only the approve verb, checked below (_lib/order-write-gate.js).
+      requireOrderPatchAction(ctx, body, patch);
       const { data: prev, error: prevErr } = await svc.from("orders").select("*").eq("tenant_id", ctx.tenantId).eq("id", id).single();
       if (prevErr || !prev) return json(res, 404, { error: { message: "Order not found" } });
 

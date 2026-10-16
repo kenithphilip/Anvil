@@ -264,6 +264,30 @@ export const SERVER_ACTIONS = {
   // admin. orders/terms_decide.js applies both. Mirrors rbac.ts.
   "order.terms_decide":      new Set(["sales_engineer", "sales_manager", "admin"]),
   "order.terms_accept_high": new Set(["sales_manager", "admin"]),
+  // The sales-order actions the SO screens check with rbac.ts canDo. Every
+  // canDo key those screens use is registered here with the client's roles
+  // (rbac-so-parity.test.tsx renders the screens and checks it).
+  //
+  // so.write: write a sales order. MATRIX.so gives "rw" to sales_engineer and
+  // sales_manager; design_engineer and design_manager inherit those cells.
+  // The coarse "write" verb also admits procurement, finance and operator,
+  // who are read-only on sales orders. Enforced on PATCH /api/orders/[id]
+  // (_lib/order-write-gate.js) and on the order write endpoints the SO
+  // workspace calls: schedule_lines POST, reconcile_quotes, terms_check,
+  // extraction_jobs POST, attach_quote, detach_quote.
+  "so.write":      new Set(["sales_engineer", "sales_manager", "design_engineer", "design_manager", "admin"]),
+  // so.admin: delete schedule lines. The same set as the admin verb, which
+  // orders/schedule_lines.js DELETE already required.
+  "so.admin":      new Set(["admin"]),
+  // so.approve: approve an order, return it for a fix, clear a blocking
+  // finding. The same set as the approve verb, which orders/[id].js checks.
+  "so.approve":    new Set(["sales_manager", "finance", "admin"]),
+  // so.cancel: cancel an order. The coarse write verb used to admit every
+  // writer; orders/[id].js now requires this (_lib/order-write-gate.js).
+  "so.cancel":     new Set(["sales_manager", "admin"]),
+  // so.push_tally: push to Tally. The same set as the approve verb, which
+  // tally/push.js checks.
+  "so.push_tally": new Set(["sales_manager", "finance", "admin"]),
 };
 
 export const hasAction = (ctx, action) => {

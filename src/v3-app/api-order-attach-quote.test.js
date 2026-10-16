@@ -45,6 +45,8 @@ vi.mock("../api/_lib/cors.js", () => ({
 vi.mock("../api/_lib/auth.js", () => ({
   resolveContext: async () => ({ tenantId: TENANT, user: { id: "u1" }, role: "admin" }),
   requirePermission: () => {},
+  // The so.* action gates (auth.js SERVER_ACTIONS); this test is not about roles.
+  requireAction: () => {}, hasAction: () => true,
 }));
 vi.mock("../api/_lib/supabase.js", () => ({ serviceClient: () => makeSvc() }));
 vi.mock("../api/_lib/audit.js", () => ({ recordAudit: async (_c, p) => { captured.audits.push(p); } }));

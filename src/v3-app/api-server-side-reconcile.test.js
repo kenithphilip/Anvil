@@ -92,6 +92,8 @@ vi.mock("../api/_lib/cors.js", () => ({
 vi.mock("../api/_lib/auth.js", () => ({
   resolveContext: async () => ({ tenantId: "00000000-0000-0000-0000-0000000000aa", user: { id: "u-1" }, role: "sales_engineer" }),
   requirePermission: () => {},
+  // The so.* action gates (auth.js SERVER_ACTIONS); this test is not about roles.
+  requireAction: () => {}, hasAction: () => true,
 }));
 vi.mock("../api/_lib/audit.js", () => ({
   recordAudit: async (ctx, p) => { H.audits.push({ tenantId: ctx?.tenantId, ...p }); },

@@ -114,8 +114,11 @@ const PipelineKanban: React.FC = () => {
   // "approve" too. For anyone else the Approve column is view-only,
   // so the board never offers a move the API would refuse.
   const canApprove = RBAC?.canDo?.("so.approve") === true;
+  // Every other move is a write to the order (so.write), which the server
+  // now checks too. Without it, every column is view-only.
+  const canWriteSo = RBAC?.canDo?.("so.write") === true;
   const targetOf = (col: { id: string; target: string | null }): string | null =>
-    col.id === "approve" && !canApprove ? null : col.target;
+    col.id === "approve" ? (canApprove ? col.target : null) : (canWriteSo ? col.target : null);
 
   useEffect(() => {
     let cancelled = false;

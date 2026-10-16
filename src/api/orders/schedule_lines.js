@@ -4,7 +4,7 @@
 // to be sent separately" pointing at a separate spreadsheet attachment.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 
@@ -29,6 +29,8 @@ export default async function handler(req, res) {
     }
     if (req.method === "POST") {
       requirePermission(ctx, "write");
+      // so.write: MATRIX.so "rw" roles only (auth.js SERVER_ACTIONS).
+      requireAction(ctx, "so.write");
       const body = await readBody(req);
       if (!body.order_id) return json(res, 400, { error: { message: "order_id required" } });
       // Bulk insert when body.rows is provided. Otherwise single insert.
@@ -55,6 +57,9 @@ export default async function handler(req, res) {
     }
     if (req.method === "DELETE") {
       requirePermission(ctx, "admin");
+      // so.admin: the same set as the admin verb; named so the SO screens
+      // and the server check one registered action.
+      requireAction(ctx, "so.admin");
       const id = req.query.id;
       const orderId = req.query.order_id;
       if (id) {

@@ -281,6 +281,22 @@ describe("PipelineKanban", () => {
     await waitFor(() => expect(db.orders[0].status).toBe("PENDING_REVIEW"));
   });
 
+  it("keeps every column view-only for a role without so.write", async () => {
+    // Finance approves (so.approve) but does not write sales orders, and the
+    // server now refuses the move, so the board must not offer it.
+    installRbac("finance");
+    ctx.value = { user: { id: "u-fin" }, tenantId: "t-1", role: "finance" };
+    seed([order("DRAFT", { result: { salesOrder: { lineItems: [] } } })]);
+    await renderBoard();
+    await screen.findByText("PO-DRAFT");
+
+    const { accepted } = await dragTo("PO-DRAFT", "Validate");
+
+    expect(accepted).toBe(false);
+    expect(serverUpdate).not.toHaveBeenCalled();
+    expect(db.orders[0].status).toBe("DRAFT");
+  });
+
   it("still moves a DRAFT to Validate (send for review)", async () => {
     seed([order("DRAFT", { result: { salesOrder: { lineItems: [] } } })]);
     await renderBoard();

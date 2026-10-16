@@ -113,6 +113,18 @@ export const ACTIONS: Record<string, Role[]> = {
   "so.approve":           ["sales_manager", "finance", "admin"],
   "so.cancel":            ["sales_manager", "admin"],
   "so.edit_after_approval":["admin"],
+  // Writing a sales order: line edits, header fields, send for approval,
+  // extraction, validation, quote attach and reconcile, terms re-check,
+  // schedule lines. The roles MATRIX.so gives "rw": sales_engineer and
+  // sales_manager, plus design_engineer and design_manager, which inherit
+  // those cells (ROLE_INHERIT). Admin is "r" on that row, but every action
+  // admits admin (canDo, and the server's hasAction), so it is listed.
+  // These two were registered nowhere, so canDo allowed every role, viewers
+  // included. Mirrors auth.js SERVER_ACTIONS; the server enforces both.
+  "so.write":             ["sales_engineer", "sales_manager", "design_engineer", "design_manager", "admin"],
+  // Deleting a sales order's schedule lines. The server has required the
+  // admin verb for it all along (orders/schedule_lines.js).
+  "so.admin":             ["admin"],
   "customer.edit_gstin":  ["sales_manager", "admin"],
   "customer.edit_profile":["sales_engineer", "sales_manager", "admin"],
   // Naming a customer's account owner. Mirrors auth.js SERVER_ACTIONS.

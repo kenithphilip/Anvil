@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ageLabel, approvalPatch, isStaleApproval, NO_PAYLOAD_HASH_MESSAGE, STALE_APPROVAL_MESSAGE } from "../lib/helpers";
+import { ageLabel, approvalPatch, isStaleApproval, isBlockingException, BLOCKING_EXCEPTION_TITLE, NO_PAYLOAD_HASH_MESSAGE, STALE_APPROVAL_MESSAGE } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle, fmtINR } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { RBAC } from "../lib/rbac";
@@ -306,6 +306,11 @@ const WiredApprovals = () => {
       // the queue, and with it the drawer, so the approver sees it as it is.
       if (isStaleApproval(err)) {
         window.notifyWarn?.(STALE_APPROVAL_MESSAGE, refOf(row) + " has been reloaded. Review it, then approve again.");
+        reload();
+      } else if (isBlockingException(err)) {
+        // 409 ORDER_HAS_BLOCKING_EXCEPTION: the server's message names the
+        // rows, which are decided on the order.
+        window.notifyWarn?.(BLOCKING_EXCEPTION_TITLE, refOf(row) + ": " + (err?.message || String(err)));
         reload();
       } else {
         window.notifyError?.("Approve failed", err?.message || String(err));

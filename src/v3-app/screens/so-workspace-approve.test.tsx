@@ -89,6 +89,21 @@ describe("SoWorkspace approve", () => {
     await waitFor(() => expect(getSpy.mock.calls.length).toBeGreaterThan(loads));
   });
 
+  it("shows the server's words and reloads when an open exception blocks the approval", async () => {
+    // The client's apiFetch error for 409 ORDER_HAS_BLOCKING_EXCEPTION
+    // (src/api/_lib/order-move-gate.js): the message names the rows.
+    const message = "Cannot approve this order. Blocked by: Liquidated damages: only the PO states it. Decide it on the order first.";
+    updateSpy = vi.fn(async () => {
+      throw Object.assign(new Error(message), { status: 409, body: { error: { code: "ORDER_HAS_BLOCKING_EXCEPTION", message } } });
+    });
+    const btn = await mount(makeOrder({ payload_hash: "hash-ws-1" }));
+    const loads = getSpy.mock.calls.length;
+    await act(async () => { fireEvent.click(btn); });
+    await waitFor(() => expect(notifyWarn).toHaveBeenCalledWith("An open exception blocks this order", message));
+    expect(notifyError).not.toHaveBeenCalled();
+    await waitFor(() => expect(getSpy.mock.calls.length).toBeGreaterThan(loads));
+  });
+
   it("still reports any other approve failure as an error", async () => {
     updateSpy = vi.fn(async () => {
       throw Object.assign(new Error("Cannot approve: unresolved blocking finding"), { status: 409, body: { error: { code: "ORDER_HAS_UNRESOLVED_BLOCKER" } } });

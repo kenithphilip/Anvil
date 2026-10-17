@@ -112,8 +112,12 @@ export const nextStep = ({ status = null, mode = "A", exceptions = null, config 
     return out("submit_for_approval", "Send for approval", blockers.length === 0, blockers, approvalBlockers, [T.submit]);
   }
   if (status === "PENDING_REVIEW") {
-    if (!can.approve) return out("await_approval", "Waiting for approval", false, [], approvalBlockers, []);
-    return out("approve", "Approve", approvalBlockers.length === 0, approvalBlockers, [], [T.approve]);
+    // A send row still open here (the terms check flagged it after the send)
+    // stops the approval too. The server refuses both moves on it
+    // (order-move-gate.js), so the button says so before the click.
+    const reviewBlockers = [...sendBlockers, ...approvalBlockers];
+    if (!can.approve) return out("await_approval", "Waiting for approval", false, [], reviewBlockers, []);
+    return out("approve", "Approve", reviewBlockers.length === 0, reviewBlockers, [], [T.approve]);
   }
   if (status === "APPROVED" || status === "FAILED_TALLY_IMPORT") {
     // Mode B: the push is refused (409); the team keys the SO in by hand.

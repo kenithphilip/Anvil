@@ -12,6 +12,7 @@ import { computeOrderPayloadHash } from "../_lib/payload-hash.js";
 import { autoReconcileOrder, hasReconcilableLines, AUTO_RECONCILE_STATUSES } from "../_lib/order-reconcile.js";
 import { hasUnresolvedBlocker, firstUnresolvedBlocker, mergeBlockersForward, resolveFinding } from "../_lib/blocking-findings.js";
 import { IDENTITY_KEYS, planIdentityEdit } from "../_lib/order-identity.js";
+import { checkMoveBlockers } from "../_lib/order-move-gate.js";
 
 const APPROVE_INPUTS = [
   "status", "approval", "payload_hash", "result",
@@ -235,6 +236,17 @@ export default async function handler(req, res) {
         patch.approval_actions = Array.isArray(body.approval.approvedActions) && body.approval.approvedActions.length
           ? body.approval.approvedActions
           : ["approve", "export_tally", "create_source_pos", "send_customer_ack"];
+      }
+      // Plan R-F1 (c): a move to PENDING_REVIEW or APPROVED is refused while
+      // an open exception blocks it, so the Kanban, the Approvals queue and a
+      // direct call meet the rule the workspace's button shows. The list is
+      // built from the order as this PATCH leaves it, with the builder the
+      // workspace uses. Nothing is written. See _lib/order-move-gate.js.
+      const gatedMove = body.status === "APPROVED"
+        || (body.status === "PENDING_REVIEW" && prev.status !== "PENDING_REVIEW");
+      if (gatedMove) {
+        const refused = await checkMoveBlockers(svc, ctx, { order: { ...prev, ...patch }, to: body.status });
+        if (refused) return json(res, refused.status, refused.body);
       }
       // Editing a critical field invalidates approval. rule_findings
       // was added May 2026 (audit P0): an approved order that the

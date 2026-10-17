@@ -220,16 +220,19 @@ export default async function handler(req, res) {
     const ctx = await resolveContext(req);
     const svc = serviceClient();
 
+    // Awaited so a throw inside a mode (a 403, a 404 from markStatus, a
+    // database error) reaches sendError below instead of rejecting the
+    // whole request.
     if (req.method === "POST") {
       const body = await readBody(req);
-      return handlePost(req, res, ctx, svc, body);
+      return await handlePost(req, res, ctx, svc, body);
     }
     if (req.method === "GET") {
-      return handleGet(req, res, ctx, svc);
+      return await handleGet(req, res, ctx, svc);
     }
     if (req.method === "PATCH") {
       const body = await readBody(req);
-      return handlePatch(req, res, ctx, svc, body);
+      return await handlePatch(req, res, ctx, svc, body);
     }
     res.setHeader("Allow", "GET, POST, PATCH");
     return json(res, 405, { error: { message: "Method not allowed" } });

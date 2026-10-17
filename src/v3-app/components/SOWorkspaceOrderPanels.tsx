@@ -478,7 +478,7 @@ export const TallyTab: React.FC<{
   const tally_status = order.tally_status;
   const eyebrow = order.status === "EXPORTED_TO_TALLY" ? "exported"
     : order.status === "FAILED_TALLY_IMPORT" ? "failed"
-    : order.status === "TALLY_RECONCILED" ? "reconciled"
+    : order.status === "RECONCILED" ? "reconciled"
     : "queued";
 
   return (
@@ -524,7 +524,7 @@ export const TallyTab: React.FC<{
           ["Last reconciled", vrec?.last_reconciled_at ? new Date(vrec.last_reconciled_at).toLocaleString("en-IN") : "never"],
           ["Last drift", vrec?.last_drift_at ? new Date(vrec.last_drift_at).toLocaleString("en-IN") : "(no drift)"],
           ["Hash", order.payload_hash || "—"],
-          ["Pushed", order.status === "EXPORTED_TO_TALLY" || order.status === "TALLY_RECONCILED" ? "yes" : "no"],
+          ["Pushed", order.status === "EXPORTED_TO_TALLY" || order.status === "RECONCILED" ? "yes" : "no"],
         ]} />
         {busyMsg && (
           <div className="mono-sm" style={{ marginTop: 8, color: "var(--ink-3)" }}>{busyMsg}</div>

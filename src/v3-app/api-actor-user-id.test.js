@@ -321,9 +321,10 @@ describe("handlers that stamp the actor on the row they write", () => {
 
 describe("tally reconciliation records who ran it", () => {
   it("tally/reconcile mark: the reconciliation run carries the approver", async () => {
-    H.store.orders = [{ id: "o-1", tenant_id: TENANT, status: "TALLY_EXPORTED" }];
+    H.store.orders = [{ id: "o-1", tenant_id: TENANT, status: "EXPORTED_TO_TALLY" }];
     const out = await call(tallyReconcile, { body: { mode: "mark", orderId: "o-1", status: "reconciled" }, ctx: signedIn("u-1") });
     expect(out.status).toBe(200);
+    expect(table("orders")[0].status).toBe("RECONCILED");
     expect(table("tally_reconciliation_runs")).toHaveLength(1);
     expect(table("tally_reconciliation_runs")[0]).toMatchObject({ tenant_id: TENANT, scope_value: "o-1", triggered_by: "u-1" });
   });

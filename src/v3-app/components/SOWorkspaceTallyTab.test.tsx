@@ -19,12 +19,12 @@ const MODES = {
 
 const order = { id: "ord-1", status: "APPROVED", tally_status: null, payload_hash: "h-1" };
 
-const mount = (soProcessingMode: any) => {
+const mount = (soProcessingMode: any, o: any = order) => {
   installBackend({
     docai: { soProcessingMode },
     tally: { getOrderRecon: vi.fn(async () => ({ voucher_record: null, findings: [] })) },
   });
-  return render(<TallyTab orderId="ord-1" order={order} onRefresh={() => {}} />);
+  return render(<TallyTab orderId="ord-1" order={o} onRefresh={() => {}} />);
 };
 
 describe("TallyTab: processing mode", () => {
@@ -54,5 +54,20 @@ describe("TallyTab: processing mode", () => {
     expect(container.textContent).toContain("HTTP 500");
     expect(container.textContent).not.toContain("Mode A:");
     expect(container.textContent).not.toContain("Mode B:");
+  });
+});
+
+// "Mark reconciled" now writes RECONCILED, the enum value. The tab used to
+// look for TALLY_RECONCILED, which no row can hold, so a reconciled order
+// read as "queued" and "Pushed: no".
+describe("TallyTab: a reconciled order", () => {
+  it("reads as reconciled and pushed", async () => {
+    const reconciled = { ...order, status: "RECONCILED", tally_status: "reconciled" };
+    const { container } = mount(vi.fn(async () => ({ mode: "A", modes: MODES, applied: true })), reconciled);
+    await waitFor(() => expect(container.textContent).toContain("Mode A:"));
+    const card = Array.from(container.querySelectorAll(".card")).find((c) => c.querySelector(".card-h .t")?.textContent === "Tally");
+    expect(card?.querySelector(".card-h .eb")?.textContent).toBe("reconciled");
+    const kv = Array.from(card?.querySelectorAll("dt") || []).find((dt) => dt.textContent === "Pushed");
+    expect(kv?.nextElementSibling?.textContent).toBe("yes");
   });
 });

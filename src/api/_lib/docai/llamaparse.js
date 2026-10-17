@@ -26,9 +26,9 @@ import { decryptField } from "../secrets.js";
 import { parsePoDate } from "../parse-date.js";
 import { readPoHeader } from "./po-header-text.js";
 
-// Per-tenant key (encrypted, shared docai_creds_iv) first, then env vars.
+// Per-tenant key (encrypted in docai_llamacloud_api_key_enc) first, then env vars.
 const apiKey = (settings) => {
-  if (settings?.docai_llamacloud_api_key_enc && settings?.docai_creds_iv) {
+  if (settings?.docai_llamacloud_api_key_enc) {
     try { const k = decryptField(settings.docai_llamacloud_api_key_enc, settings.docai_creds_iv); if (k) return k; }
     catch (_e) { /* fall through to env */ }
   }

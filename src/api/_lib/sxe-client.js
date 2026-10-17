@@ -5,7 +5,7 @@
 // Endpoint pattern: /<tenant>/M3/m3api-rest/v2/<entity> for read,
 // /<tenant>/SXE/<entity> for write APIs that some hosts expose.
 
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { oauth2ClientCredentials, oauth2Evict } from "./oauth2.js";
 import { safeFetch } from "./safe-fetch.js";
 
@@ -13,7 +13,7 @@ export const sxeDecryptCreds = (s) => {
   if (!s) return s;
   const out = { ...s };
   const tryDec = (encCol, plainCol) => {
-    if (s[encCol] && s.sxe_creds_iv) {
+    if (s[encCol]) {
       try { return decryptField(s[encCol], s.sxe_creds_iv); }
       catch (_e) { return s[plainCol] || null; }
     }
@@ -25,15 +25,11 @@ export const sxeDecryptCreds = (s) => {
 };
 
 export const sxeEncryptCreds = ({ client_id, client_secret }) => {
-  if (!isSecretsConfigured()) {
-    return { sxe_client_id: client_id, sxe_client_id_enc: null, sxe_client_secret_enc: null, sxe_creds_iv: null };
-  }
-  const iv = newIv();
+  requireSecretsConfigured();
   return {
     sxe_client_id: null,
-    sxe_client_id_enc: encryptField(client_id, iv),
-    sxe_client_secret_enc: encryptField(client_secret, iv),
-    sxe_creds_iv: iv,
+    sxe_client_id_enc: encryptField(client_id),
+    sxe_client_secret_enc: encryptField(client_secret),
   };
 };
 

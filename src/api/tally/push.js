@@ -22,7 +22,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
-import { tallyPush, tallyResolveCompany, tallyIsRecoverable } from "../_lib/tally-client.js";
+import { tallyPush, tallyResolveCompany, tallyIsRecoverable, tallyBridgeUrlProblem } from "../_lib/tally-client.js";
 import { resolveSalesVoucherType } from "../_lib/tally-voucher-type.js";
 import { buildSalesVoucherXml, isPlaceholderXml } from "../_lib/tally-build-voucher.js";
 import { firstUnresolvedBlocker } from "../_lib/blocking-findings.js";
@@ -102,6 +102,10 @@ export default async function handler(req, res) {
           message: "No Tally company with a bridge URL is configured. Add one under Admin > Tally.",
         },
       });
+    }
+    const urlProblem = tallyBridgeUrlProblem(company.bridge_url);
+    if (urlProblem) {
+      return json(res, 409, { error: { code: "BRIDGE_URL_INSECURE", message: urlProblem + ". Update it under Admin > Tally." } });
     }
 
     const orderQ = await svc.from("orders").select("*").eq("tenant_id", ctx.tenantId).eq("id", body.orderId).single();

@@ -130,6 +130,7 @@ import customersContacts        from "./customers/contacts.js";
 import customersChangeRequests  from "./customers/change_requests.js";
 import customersGstLookup        from "./customers/gst_lookup.js";
 import docaiProviderKeys         from "./admin/docai_provider_keys.js";
+import adminSecretsReencrypt     from "./admin/secrets_reencrypt.js";
 import customersDuplicates      from "./customers/duplicates.js";
 import customersMerge           from "./customers/merge.js";
 // Account owner on customers (migration 227): assign + suggest.
@@ -868,6 +869,7 @@ const STATIC_ROUTES = {
   "/admin/so_processing_mode":      adminSoProcessingMode,
   "/admin/order_handoff_settings":  adminOrderHandoffSettings,
   "/admin/docai_provider_keys":     docaiProviderKeys,
+  "/admin/secrets_reencrypt":       adminSecretsReencrypt,
   "/admin/llm_settings":            adminLlmSettings,
   "/admin/nav_settings":            adminNavSettings,
   "/admin/quote_settings":          adminQuoteSettings,

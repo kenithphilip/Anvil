@@ -22,7 +22,7 @@ const providerConfig = (settings) => {
   const provider = String(settings?.gst_provider || "none").toLowerCase();
   if (provider === "none" || !provider) return { provider: "none" };
   let apiKey = null;
-  if (settings?.gst_provider_api_key_enc && settings?.docai_creds_iv) {
+  if (settings?.gst_provider_api_key_enc) {
     try { apiKey = decryptField(settings.gst_provider_api_key_enc, settings.docai_creds_iv); } catch (_e) { apiKey = null; }
   }
   apiKey = apiKey || process.env.GST_PROVIDER_API_KEY || null;

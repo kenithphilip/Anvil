@@ -31,7 +31,7 @@ import { decryptField } from "../secrets.js";
 import { safeFetch } from "../safe-fetch.js";
 
 const apiKey = (settings) => {
-  if (settings?.docai_marker_api_key_enc && settings?.docai_creds_iv) {
+  if (settings?.docai_marker_api_key_enc) {
     try { return decryptField(settings.docai_marker_api_key_enc, settings.docai_creds_iv); }
     catch (_e) { /* */ }
   }

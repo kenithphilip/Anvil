@@ -25,7 +25,7 @@ import { safeFetch } from "../safe-fetch.js";
 import { classifyColumns, columnMatchCount } from "./table-columns.js";
 
 const apiKey = (settings) => {
-  if (settings?.docai_docling_api_key_enc && settings?.docai_creds_iv) {
+  if (settings?.docai_docling_api_key_enc) {
     try { return decryptField(settings.docai_docling_api_key_enc, settings.docai_creds_iv); }
     catch (_e) { /* fall through */ }
   }

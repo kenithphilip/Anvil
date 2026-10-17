@@ -8,7 +8,7 @@
 // We cache the access token in-memory until ~30s before expiry.
 
 import crypto from "node:crypto";
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { safeFetch } from "./safe-fetch.js";
 
 const tokenCache = new Map();
@@ -21,7 +21,7 @@ export const docusignDecryptCreds = (s) => {
   if (!s) return s;
   const out = { ...s };
   const tryDec = (encCol) => {
-    if (s[encCol] && s.docusign_creds_iv) {
+    if (s[encCol]) {
       try { return decryptField(s[encCol], s.docusign_creds_iv); } catch (_e) { return null; }
     }
     return null;
@@ -31,13 +31,9 @@ export const docusignDecryptCreds = (s) => {
 };
 
 export const docusignEncryptCreds = ({ rsa_private_key }) => {
-  if (!isSecretsConfigured()) {
-    return { docusign_rsa_private_key_enc: null, docusign_creds_iv: null, _plaintext_key: rsa_private_key };
-  }
-  const iv = newIv();
+  requireSecretsConfigured();
   return {
-    docusign_rsa_private_key_enc: encryptField(rsa_private_key, iv),
-    docusign_creds_iv: iv,
+    docusign_rsa_private_key_enc: encryptField(rsa_private_key),
   };
 };
 

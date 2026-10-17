@@ -8,7 +8,7 @@
 // services (e.g. api_business_partner) or /sap/opu/odata/sap/ for
 // legacy V2 (we deliberately use V4 here).
 
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { oauth2ClientCredentials, oauth2Evict } from "./oauth2.js";
 import { safeFetch } from "./safe-fetch.js";
 
@@ -16,7 +16,7 @@ export const sapDecryptCreds = (settings) => {
   if (!settings) return settings;
   const out = { ...settings };
   const tryDec = (encCol, plainCol) => {
-    if (settings[encCol] && settings.sap_creds_iv) {
+    if (settings[encCol]) {
       try { return decryptField(settings[encCol], settings.sap_creds_iv); }
       catch (_e) { return settings[plainCol] || null; }
     }
@@ -28,15 +28,11 @@ export const sapDecryptCreds = (settings) => {
 };
 
 export const sapEncryptCreds = ({ client_id, client_secret }) => {
-  if (!isSecretsConfigured()) {
-    return { sap_client_id: client_id, sap_client_id_enc: null, sap_client_secret_enc: null, sap_creds_iv: null };
-  }
-  const iv = newIv();
+  requireSecretsConfigured();
   return {
     sap_client_id: null,
-    sap_client_id_enc: encryptField(client_id, iv),
-    sap_client_secret_enc: encryptField(client_secret, iv),
-    sap_creds_iv: iv,
+    sap_client_id_enc: encryptField(client_id),
+    sap_client_secret_enc: encryptField(client_secret),
   };
 };
 

@@ -200,6 +200,7 @@ You should see at least your email with role `admin` and status
    | `CLAMAV_TOKEN` | `/api/documents/scan` | bearer token for ClamAV proxy |
    | `TALLY_BRIDGE_URL` | `/api/tally/push` | needed to actually export to Tally |
    | `TALLY_BRIDGE_TOKEN` | `/api/tally/push` | bearer token for Tally bridge |
+   | `TALLY_BRIDGE_TENANT_ID` | `/api/tally/push` | the one tenant the env bridge serves; defaults to `DEFAULT_TENANT_ID` |
    | `COMMS_PROVIDER_URL` | `/api/communications/send` | enables real outbound email |
    | `GSTN_API_URL` | `/api/einvoice` | activates real e-invoice generation |
    | `GSTN_API_KEY` | `/api/einvoice` | client_id for GSTN |
@@ -263,9 +264,12 @@ hint, ZIP-bomb).
 
 Tally Prime exposes an HTTP listener on port 9000 by default. Run a small
 proxy on the same network that converts Anvil's voucher payload to Tally's
-XML grammar and posts to `http://tally-host:9000`. Set `TALLY_BRIDGE_URL`
-and `TALLY_BRIDGE_TOKEN`. Without these, the **Push to Tally** button
-records a `failed` voucher and returns a clear error.
+XML grammar and posts to `http://tally-host:9000`. Give each tenant its own
+bridge under Admin > Tally. The bridge URL must use `https` (plain `http` is
+accepted only for `localhost`). For a single-tenant deployment you can set
+`TALLY_BRIDGE_URL` and `TALLY_BRIDGE_TOKEN` instead; that bridge serves only
+`TALLY_BRIDGE_TENANT_ID` (default: `DEFAULT_TENANT_ID`). Without a bridge,
+the **Push to Tally** button returns a clear error.
 
 ### GSTN e-Invoice
 

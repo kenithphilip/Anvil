@@ -4,27 +4,26 @@
 // downstream extraction pipeline as inbound email.
 
 import crypto from "node:crypto";
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 
 // Encrypt the channel-specific creds bag as a single JSON blob.
 // On decrypt we parse back to an object. This keeps the schema
 // generic so a new channel doesn't need a migration.
+// Without ANVIL_SECRETS_KEY a non-empty bag throws 400: creds are never
+// stored in creds_plain any more (it is read for old rows only).
 export const encryptChatCreds = (channel, creds) => {
   const bag = creds || {};
-  if (!isSecretsConfigured()) {
-    return { creds_plain: bag, creds_enc: null, creds_iv: null };
-  }
-  const iv = newIv();
+  if (!Object.keys(bag).length) return { creds_plain: {}, creds_enc: null };
+  requireSecretsConfigured();
   return {
     creds_plain: {},
-    creds_enc: encryptField(JSON.stringify(bag), iv),
-    creds_iv: iv,
+    creds_enc: encryptField(JSON.stringify(bag)),
   };
 };
 
 export const decryptChatCreds = (config) => {
   if (!config) return {};
-  if (config.creds_enc && config.creds_iv) {
+  if (config.creds_enc) {
     try {
       const decoded = decryptField(config.creds_enc, config.creds_iv);
       return JSON.parse(decoded || "{}");

@@ -8,7 +8,7 @@
 // Reads use OData v2-style /api/v2/odata/data/<EntitySet>?$filter=...
 // Writes use /api/v2/data/<entity> (P21's REST mutation surface).
 
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { safeFetch } from "./safe-fetch.js";
 
 const tokenCache = new Map();
@@ -20,7 +20,7 @@ export const p21DecryptCreds = (s) => {
   if (!s) return s;
   const out = { ...s };
   const tryDec = (encCol, plainCol) => {
-    if (s[encCol] && s.p21_creds_iv) {
+    if (s[encCol]) {
       try { return decryptField(s[encCol], s.p21_creds_iv); }
       catch (_e) { return s[plainCol] || null; }
     }
@@ -32,15 +32,11 @@ export const p21DecryptCreds = (s) => {
 };
 
 export const p21EncryptCreds = ({ username, password }) => {
-  if (!isSecretsConfigured()) {
-    return { p21_username: username, p21_username_enc: null, p21_password_enc: null, p21_creds_iv: null };
-  }
-  const iv = newIv();
+  requireSecretsConfigured();
   return {
     p21_username: null,
-    p21_username_enc: encryptField(username, iv),
-    p21_password_enc: encryptField(password, iv),
-    p21_creds_iv: iv,
+    p21_username_enc: encryptField(username),
+    p21_password_enc: encryptField(password),
   };
 };
 

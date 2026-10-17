@@ -8,11 +8,10 @@
 // whether the connection works.
 //
 // v2: credentials live in netsuite_*_enc columns under AES-256-GCM
-// with a per-tenant IV. The plaintext columns remain on the schema
-// for the rotation window but are written as null so a stolen DB
-// dump doesn't expose live tokens. If ANVIL_SECRETS_KEY is missing
-// we fall back to plaintext (with a deprecation warning) so dev
-// environments without the key still work.
+// (_lib/secrets.js). The plaintext columns remain on the schema for
+// old rows but are written as null so a stolen DB dump doesn't expose
+// live tokens. Without ANVIL_SECRETS_KEY the request fails with 400:
+// credentials are never stored in plaintext.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
@@ -20,7 +19,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings, updateTenantSettings } from "../_lib/stripe-client.js";
 import { netsuiteFetch } from "../_lib/netsuite-client.js";
-import { encryptNetsuiteCreds, decryptNetsuiteCreds, isSecretsConfigured } from "../_lib/secrets.js";
+import { encryptNetsuiteCreds, decryptNetsuiteCreds } from "../_lib/secrets.js";
 import { safeProbeError } from "../_lib/sanitize.js";
 
 const REQUIRED = ["account_id", "consumer_key", "consumer_secret", "token_id", "token_secret"];
@@ -45,27 +44,14 @@ export default async function handler(req, res) {
       netsuite_default_location_id: body.default_location_id || null,
     };
 
-    let storageMode = "plaintext";
-    if (isSecretsConfigured()) {
-      const enc = encryptNetsuiteCreds({
-        consumer_key: body.consumer_key,
-        consumer_secret: body.consumer_secret,
-        token_id: body.token_id,
-        token_secret: body.token_secret,
-      });
-      Object.assign(patch, enc);
-      // Null out plaintext columns so dumps don't carry them.
-      patch.netsuite_consumer_key = null;
-      patch.netsuite_consumer_secret = null;
-      patch.netsuite_token_id = null;
-      patch.netsuite_token_secret = null;
-      storageMode = "encrypted";
-    } else {
-      patch.netsuite_consumer_key = body.consumer_key;
-      patch.netsuite_consumer_secret = body.consumer_secret;
-      patch.netsuite_token_id = body.token_id;
-      patch.netsuite_token_secret = body.token_secret;
-    }
+    // Throws 400 when ANVIL_SECRETS_KEY is unset; nulls the plaintext columns.
+    Object.assign(patch, encryptNetsuiteCreds({
+      consumer_key: body.consumer_key,
+      consumer_secret: body.consumer_secret,
+      token_id: body.token_id,
+      token_secret: body.token_secret,
+    }));
+    const storageMode = "encrypted";
 
     const updated = await updateTenantSettings(svc, ctx.tenantId, patch);
     const decrypted = decryptNetsuiteCreds(updated);

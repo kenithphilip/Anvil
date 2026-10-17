@@ -5,7 +5,7 @@
 
 import { describe, it, expect, afterEach, beforeAll, vi } from "vitest";
 import * as llamaparse from "../api/_lib/docai/llamaparse.js";
-import { encryptField, newIv } from "../api/_lib/secrets.js";
+import { encryptField } from "../api/_lib/secrets.js";
 
 const { parseMarkdownTable, normalizeFromMarkdown, scoreConfidence, markdownOf, tier } = llamaparse.__test__;
 
@@ -30,8 +30,8 @@ describe("llamaparse adapter — gating (per-tenant key first, then env)", () =>
     expect(llamaparse.isConfigured({})).toBe(true);
   });
   it("reads the per-tenant encrypted key (docai_llamacloud_api_key_enc) first, no env needed (#210)", () => {
-    const iv = newIv();
-    const settings = { docai_llamacloud_api_key_enc: encryptField("llx-tenant", iv), docai_creds_iv: iv };
+    // A v2 value carries its own IV: no docai_creds_iv on the row.
+    const settings = { docai_llamacloud_api_key_enc: encryptField("llx-tenant") };
     expect(llamaparse.isConfigured(settings)).toBe(true);            // env unset
     expect(llamaparse.__test__.apiKey(settings)).toBe("llx-tenant"); // decrypts the tenant key
   });

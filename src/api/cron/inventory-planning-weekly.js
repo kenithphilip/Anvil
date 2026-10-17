@@ -94,19 +94,22 @@ const projectEquivalentForPart = async (svc, tenantId, partNo) => {
 
 // Phase 3.5: hysteresis. The plan-emit signal must be stable across
 // N consecutive weekly runs (default 2 per tenant_settings) before
-// we draft a new procurement_plans row. We read the most recent N
-// forecast_runs and check whether each contained the part among
-// its plans (via models_evaluated.shortages or wape_summary; the
-// latter rolls up only WAPE so we use a small lookup table on
-// procurement_plans for the "did this part show a shortage in the
-// previous run" signal).
-const hysteresisOK = async (svc, tenantId, partNo, requiredStreak) => {
+// we draft a new procurement_plans row. Evidence that an earlier run
+// saw a shortage for this part, inside the last (requiredStreak * 7)
+// days, is either of:
+//
+//   - a DRAFT/APPROVED/RELEASED plan for the part. Approximate (a part
+//     could have had a plan for a different week) but persistent
+//     shortages produce persistent plans.
+//   - the 'hyst:<part>:<week>' info exception a run records when it holds
+//     a shortage back (the else branch in planTenant), from a week before
+//     thisWeek. A re-run inside the same week is not a second run.
+//
+// The exceptions are what let a streak start. With plans as the only
+// evidence, a plan needed a prior plan, so on the default of 2 runs the
+// planner held every shortage back forever and drafted nothing.
+const hysteresisOK = async (svc, tenantId, partNo, requiredStreak, thisWeek) => {
   if (requiredStreak <= 1) return { ok: true, streak: 1 };
-  // We use the existence of any DRAFT/APPROVED plan for this part
-  // in the last (requiredStreak * 7) days as evidence of a prior
-  // shortage detection. This is approximate (a part could have
-  // had a plan for a different week) but is good enough for
-  // hysteresis: persistent shortages produce persistent plans.
   const sinceISO = new Date(Date.now() - requiredStreak * 7 * 86400_000).toISOString();
   const r = await svc.from("procurement_plans")
     .select("id, created_at")
@@ -114,7 +117,21 @@ const hysteresisOK = async (svc, tenantId, partNo, requiredStreak) => {
     .eq("part_no", partNo)
     .in("status", ["draft", "approved", "released"])
     .gte("created_at", sinceISO);
-  const streak = (r.data || []).length + 1;
+  const held = await svc.from("inventory_exceptions")
+    .select("detail")
+    .eq("tenant_id", tenantId)
+    .eq("part_no", partNo)
+    .eq("exception_kind", "below_reorder_point")
+    .gte("created_at", sinceISO);
+  const prefix = "hyst:" + partNo + ":";
+  const heldWeeks = new Set();
+  for (const row of (held.data || [])) {
+    const fp = String(row?.detail?.fingerprint || "");
+    if (!fp.startsWith(prefix)) continue;
+    const week = fp.slice(prefix.length);
+    if (week && week < thisWeek) heldWeeks.add(week);
+  }
+  const streak = (r.data || []).length + heldWeeks.size + 1;
   return { ok: streak >= requiredStreak, streak };
 };
 
@@ -308,7 +325,9 @@ const planTenant = async (svc, tenantId) => {
   // it consumes, so RAW_MATERIAL (and any planning-enabled child) parts
   // receive procurement plans driven by upstream sales pipeline. Read
   // bill_of_materials directly (tenant-scoped column) rather than the
-  // v_bom_walk_recursive view, which has no tenant_id to filter on.
+  // v_bom_walk_recursive view, which has no tenant_id to filter on. The
+  // project-equivalent floor reads the same tenant's BOM through the
+  // where-used view (projectEquivalentForPart).
   // Inert for tenants without a BOM.
   const bomRows = await svc.from("bill_of_materials")
     .select("parent_part_no, child_part_no, qty")
@@ -673,7 +692,7 @@ const planTenant = async (svc, tenantId) => {
       // value is recorded on the plan's rationale so the operator
       // can see the engine waited.
       const requiredStreak = cfg.inventory_hysteresis_runs || 2;
-      const hyst = await hysteresisOK(svc, tenantId, item.part_no, requiredStreak);
+      const hyst = await hysteresisOK(svc, tenantId, item.part_no, requiredStreak, today);
       if (hyst.ok) {
         planResult.plan.tenant_id = tenantId;
         // Bet 3: stamp CP fields directly + record the legacy

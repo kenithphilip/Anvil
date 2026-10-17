@@ -20,8 +20,12 @@
 import { computeArAging, computeCycleTime, median } from "../ops-kpis.js";
 import {
   defectRate, runOutcomes, parseHealth, promptVersionSlices,
-  groupBy, isShipped, isFinished, kindKey, evidenceOf,
+  groupBy, isShipped, isFinished, kindKey, evidenceOf, EVIDENCE_SAMPLE,
 } from "../extraction-kpis.js";
+import { fetchAllRows } from "../customer-owner.js";
+import {
+  ORDER_ACTIONS, buildTimelines, timeToSo, timeToSubmit, approvalWait, rework, actionsPerOrder,
+} from "../so-cycle-kpis.js";
 
 const DAY = 86400000;
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -152,6 +156,41 @@ const fetchExtractionQuality = async (svc, tenantId, since) => {
   return { runs, corrections: corr };
 };
 
+// ── SO cycle and rework (plan C-7) ───────────────────────────────────
+//
+// The cohort is the orders created in the window. Their history is the order
+// audit rows written from the window start on: no row of an order is older
+// than the order. Only the status pair is read from the before and after
+// rows, not the whole order. Both reads page past PostgREST's silent row cap
+// and both are tenant-scoped: the reducer joins on object_id alone.
+const SO_CYCLE_MAX_PAGES = 30;
+const fetchSoCycle = async (svc, tenantId, since) => {
+  if (!tenantId) throw new Error("so cycle: tenant required");
+  const [orders, events] = await Promise.all([
+    fetchAllRows(() => svc.from("orders")
+      .select("id, created_at")
+      .eq("tenant_id", tenantId).gte("created_at", since)
+      .order("created_at", { ascending: true }).order("id", { ascending: true }), { maxPages: SO_CYCLE_MAX_PAGES }),
+    fetchAllRows(() => svc.from("audit_events")
+      .select("id, object_id, action, actor, actor_role, created_at, from_status:before_payload->>status, to_status:after_payload->>status")
+      .eq("tenant_id", tenantId).eq("object_type", "order").in("action", ORDER_ACTIONS).gte("created_at", since)
+      .order("created_at", { ascending: true }).order("id", { ascending: true }), { maxPages: SO_CYCLE_MAX_PAGES }),
+  ]);
+  if (orders.error) throw new Error("orders: " + orders.error.message);
+  if (events.error) throw new Error("audit_events: " + events.error.message);
+  return { orders: orders.rows, events: events.rows, complete: orders.complete && events.complete };
+};
+const soEvidence = (ids, complete, extra) => ({
+  table: "audit_events",
+  total_orders: ids.length,
+  order_ids: ids.slice(0, EVIDENCE_SAMPLE),
+  truncated: ids.length > EVIDENCE_SAMPLE,
+  ...extra,
+  ...(complete ? {} : { capped: true, note: "the order history hit the row cap, so the newest orders may read as pending" }),
+});
+// P50 and P90 as breakdown rows, so Ask Anvil draws both.
+const percentileRows = (s) => (s.n ? [{ label: "P50", value: s.p50 }, { label: "P90", value: s.p90 }] : []);
+
 // ── the catalog ──────────────────────────────────────────────────────
 export const METRICS = [
   // ---- Finance / AR (aging considers ALL outstanding invoices) ----
@@ -258,6 +297,86 @@ export const METRICS = [
     params: ["window_days"],
     fetch: (svc, t, p) => fetchOrders(svc, t, sinceIso(p.nowMs, p.windowDays)),
     reduce: (orders) => ({ value: (orders || []).length, provenance: "count(orders with created_at in window)" }),
+  },
+  // ---- SO cycle and rework baseline (plan C-7, _lib/so-cycle-kpis.js) ----
+  //
+  // Rebuilt from the append-only order audit rows, never from
+  // orders.approved_at, which each approval overwrites. The cohort is the
+  // orders created in the window.
+  {
+    id: "so_time_to_so_hours", label: "Time to SO (P50 hours)", domain: "operations", unit: "hours",
+    description: "Hours from an order being created to its first approval, P50 with P90 in the breakdown. A later re-approval does not move it.",
+    params: ["window_days"],
+    fetch: (svc, t, { nowMs, windowDays }) => fetchSoCycle(svc, t, sinceIso(nowMs, windowDays)),
+    reduce: ({ orders, events, complete }) => {
+      const s = timeToSo(buildTimelines(orders, events));
+      return {
+        value: s.p50, count: s.n, denominator: (orders || []).length,
+        breakdown: percentileRows(s),
+        evidence: soEvidence(s.ids, complete, { pending: s.pending, cancelled_before_approval: s.cancelled }),
+        provenance: "P50 and P90 of hours from orders.created_at to the first audit row that moves the order to APPROVED, over orders created in the window; orders.approved_at is not read",
+      };
+    },
+  },
+  {
+    id: "so_submit_time_hours", label: "Engineer time to submit (P50 hours)", domain: "operations", unit: "hours",
+    description: "Hours from an order being created to its first submission for review, P50 with P90 in the breakdown.",
+    params: ["window_days"],
+    fetch: (svc, t, { nowMs, windowDays }) => fetchSoCycle(svc, t, sinceIso(nowMs, windowDays)),
+    reduce: ({ orders, events, complete }) => {
+      const s = timeToSubmit(buildTimelines(orders, events));
+      return {
+        value: s.p50, count: s.n, denominator: (orders || []).length,
+        breakdown: percentileRows(s),
+        evidence: soEvidence(s.ids, complete, { pending: s.pending, cancelled_before_submit: s.cancelled }),
+        provenance: "P50 and P90 of hours from orders.created_at to the first audit row that moves the order to PENDING_REVIEW, over orders created in the window",
+      };
+    },
+  },
+  {
+    id: "so_approval_wait_hours", label: "Approval wait (P50 hours)", domain: "operations", unit: "hours",
+    description: "Hours from an order's first submission for review to the first decision on it (approve, return or cancel), P50 with P90 in the breakdown.",
+    params: ["window_days"],
+    fetch: (svc, t, { nowMs, windowDays }) => fetchSoCycle(svc, t, sinceIso(nowMs, windowDays)),
+    reduce: ({ orders, events, complete }) => {
+      const s = approvalWait(buildTimelines(orders, events));
+      return {
+        value: s.p50, count: s.n, denominator: s.ids.length + s.waiting,
+        breakdown: percentileRows(s),
+        evidence: soEvidence(s.ids, complete, { by_outcome: s.by_outcome, waiting: s.waiting }),
+        provenance: "P50 and P90 of hours from the first audit row that moves the order to PENDING_REVIEW to the next status change (the first decision), over orders created in the window; orders still in review are left out",
+      };
+    },
+  },
+  {
+    id: "so_rework_rate", label: "SO re-work rate", domain: "operations", unit: "percent",
+    description: "Share of orders sent for review that the approver returned at least once, with returns per order in the breakdown.",
+    params: ["window_days"],
+    fetch: (svc, t, { nowMs, windowDays }) => fetchSoCycle(svc, t, sinceIso(nowMs, windowDays)),
+    reduce: ({ orders, events, complete }) => {
+      const r = rework(buildTimelines(orders, events));
+      return {
+        value: r.rate, count: r.reworked, denominator: r.submitted,
+        breakdown: { returns: r.returns, returns_per_order: r.returns_per_order, max_returns: r.max_returns },
+        evidence: soEvidence(r.ids, complete, {}),
+        provenance: "count(orders with one or more manager_requested_correction audit rows) / count(orders sent to PENDING_REVIEW) x 100, over orders created in the window; returns_per_order = returns / orders sent",
+      };
+    },
+  },
+  {
+    id: "so_actions_per_order", label: "Actions per order", domain: "operations", unit: "count",
+    description: "Mean number of state-changing actions people took on an order that reached an SO, split by role.",
+    params: ["window_days"],
+    fetch: (svc, t, { nowMs, windowDays }) => fetchSoCycle(svc, t, sinceIso(nowMs, windowDays)),
+    reduce: ({ orders, events, complete }) => {
+      const a = actionsPerOrder(buildTimelines(orders, events));
+      return {
+        value: a.mean, count: a.orders,
+        breakdown: a.by_role,
+        evidence: soEvidence(a.ids, complete, { actions: a.actions, median: a.median, by_action: a.by_action }),
+        provenance: "audit rows with an actor and an action in {" + ORDER_ACTIONS.join(", ") + "} / count(orders created in the window that reached APPROVED); by role from actor_role; system rows, reads, exports and the ERP push are not counted",
+      };
+    },
   },
   // ---- Sales pipeline (opportunities; open = stage not terminal) ----
   {

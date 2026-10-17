@@ -29,7 +29,7 @@ describe("catalog surface", () => {
     // no duplicate ids
     expect(new Set(list.map((m) => m.id)).size).toBe(list.length);
     // every metric declares a valid unit
-    expect(METRICS.every((m) => ["currency", "count", "days", "percent"].includes(m.unit))).toBe(true);
+    expect(METRICS.every((m) => ["currency", "count", "days", "hours", "percent"].includes(m.unit))).toBe(true);
   });
 });
 

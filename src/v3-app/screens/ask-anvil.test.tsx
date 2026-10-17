@@ -68,6 +68,26 @@ describe("AskAnvil", () => {
     expect(getByText("orders")).toBeTruthy(); // citation chip
   });
 
+  it("renders an hours metric with its P50 and P90 rows (plan C-7)", async () => {
+    const catalog = [{ id: "so_time_to_so_hours", label: "Time to SO (P50 hours)", unit: "hours", domain: "operations" }];
+    const query = vi.fn(async () => ({
+      metric_id: "so_time_to_so_hours", label: "Time to SO (P50 hours)", unit: "hours", domain: "operations",
+      value: 5, count: 2, denominator: 4, window_days: 90,
+      breakdown: [{ label: "P50", value: 5 }, { label: "P90", value: 7.5 }],
+      as_of: "2026-10-17T00:00:00.000Z", provenance: "P50 and P90 of hours from orders.created_at to the first approval",
+    }));
+    installBackend({ metrics: { list: vi.fn(async () => ({ metrics: catalog })), query }, erpChat: { send: vi.fn() } });
+    const mod = await import("./ask-anvil");
+    const { getByText, getAllByText } = renderScreen(mod.default);
+    await waitFor(() => expect(getByText("Time to SO (P50 hours)")).toBeTruthy());
+    fireEvent.click(getByText("Time to SO (P50 hours)"));
+    // The headline and the P50 row both read "5 hours"; the P90 row reads 7.5.
+    await waitFor(() => expect(getAllByText("5 hours")).toHaveLength(2));
+    expect(getByText("7.5 hours")).toBeTruthy();
+    expect(getByText("P90")).toBeTruthy();
+    expect(getByText("2 of 4")).toBeTruthy();
+  });
+
   it("surfaces a metric error instead of a fake number", async () => {
     const query = vi.fn(async () => ({ error: "unknown metric" }));
     installBackend({ metrics: { list: vi.fn(async () => ({ metrics: CATALOG })), query }, erpChat: { send: vi.fn() } });

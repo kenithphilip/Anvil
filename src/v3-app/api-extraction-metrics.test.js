@@ -209,7 +209,7 @@ describe("the catalog entries", () => {
       expect(["percent", "count"]).toContain(m.unit);
     }
     // the pre-existing unit contract still holds across the whole catalog
-    expect(METRICS.every((m) => ["currency", "count", "days", "percent"].includes(m.unit))).toBe(true);
+    expect(METRICS.every((m) => ["currency", "count", "days", "hours", "percent"].includes(m.unit))).toBe(true);
   });
 
   it("computes the defect rate end to end, with provenance and evidence", async () => {

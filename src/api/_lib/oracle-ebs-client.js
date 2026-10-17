@@ -11,14 +11,14 @@
 // org_id for the operating unit. Both are sent as headers on every
 // call.
 
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { safeFetch } from "./safe-fetch.js";
 
 export const oracleEbsDecryptCreds = (s) => {
   if (!s) return s;
   const out = { ...s };
   const tryDec = (encCol, plainCol) => {
-    if (s[encCol] && s.oracle_ebs_creds_iv) {
+    if (s[encCol]) {
       try { return decryptField(s[encCol], s.oracle_ebs_creds_iv); }
       catch (_e) { return s[plainCol] || null; }
     }
@@ -30,20 +30,11 @@ export const oracleEbsDecryptCreds = (s) => {
 };
 
 export const oracleEbsEncryptCreds = ({ username, password }) => {
-  if (!isSecretsConfigured()) {
-    return {
-      oracle_ebs_username: username,
-      oracle_ebs_username_enc: null,
-      oracle_ebs_password_enc: null,
-      oracle_ebs_creds_iv: null,
-    };
-  }
-  const iv = newIv();
+  requireSecretsConfigured();
   return {
     oracle_ebs_username: null,
-    oracle_ebs_username_enc: encryptField(username, iv),
-    oracle_ebs_password_enc: encryptField(password, iv),
-    oracle_ebs_creds_iv: iv,
+    oracle_ebs_username_enc: encryptField(username),
+    oracle_ebs_password_enc: encryptField(password),
   };
 };
 

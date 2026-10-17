@@ -14,7 +14,7 @@
 // `lastUpdate` in the projection. Either form is accepted; we use
 // camel-case to match what API Explorer emits.
 
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { oauth2ClientCredentials, oauth2Evict } from "./oauth2.js";
 import { safeFetch } from "./safe-fetch.js";
 
@@ -22,7 +22,7 @@ export const ifsDecryptCreds = (s) => {
   if (!s) return s;
   const out = { ...s };
   const tryDec = (encCol, plainCol) => {
-    if (s[encCol] && s.ifs_creds_iv) {
+    if (s[encCol]) {
       try { return decryptField(s[encCol], s.ifs_creds_iv); }
       catch (_e) { return s[plainCol] || null; }
     }
@@ -34,20 +34,11 @@ export const ifsDecryptCreds = (s) => {
 };
 
 export const ifsEncryptCreds = ({ client_id, client_secret }) => {
-  if (!isSecretsConfigured()) {
-    return {
-      ifs_client_id: client_id,
-      ifs_client_id_enc: null,
-      ifs_client_secret_enc: null,
-      ifs_creds_iv: null,
-    };
-  }
-  const iv = newIv();
+  requireSecretsConfigured();
   return {
     ifs_client_id: null,
-    ifs_client_id_enc: encryptField(client_id, iv),
-    ifs_client_secret_enc: encryptField(client_secret, iv),
-    ifs_creds_iv: iv,
+    ifs_client_id_enc: encryptField(client_id),
+    ifs_client_secret_enc: encryptField(client_secret),
   };
 };
 

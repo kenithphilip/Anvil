@@ -30,7 +30,7 @@ const SANDBOX_PROVIDERS = new Set(["sandbox", "none", null, undefined]);
 
 const decryptCreds = (s) => {
   if (!s) return { client_id: null, client_secret: null };
-  if (s.aa_client_id_enc && s.aa_creds_iv) {
+  if (s.aa_client_id_enc) {
     try {
       return {
         client_id: decryptField(s.aa_client_id_enc, s.aa_creds_iv),

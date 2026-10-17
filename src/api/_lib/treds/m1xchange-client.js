@@ -26,7 +26,7 @@ const SANDBOX_PROVIDERS = new Set(["sandbox", "none", null, undefined]);
 
 const decryptCreds = (s) => {
   if (!s) return { member_id: null, api_key: null, api_secret: null };
-  if (s.treds_api_key_enc && s.treds_creds_iv) {
+  if (s.treds_api_key_enc) {
     try {
       return {
         member_id: s.treds_member_id || null,

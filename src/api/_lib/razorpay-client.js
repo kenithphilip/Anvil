@@ -8,7 +8,7 @@
 // encoded. The X-Razorpay-Signature header carries the expected hex.
 
 import crypto from "node:crypto";
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { safeFetch } from "./safe-fetch.js";
 
 const BASE_URL = "https://api.razorpay.com";
@@ -17,7 +17,7 @@ export const razorpayDecryptCreds = (s) => {
   if (!s) return s;
   const out = { ...s };
   const tryDec = (encCol, plainCol) => {
-    if (s[encCol] && s.razorpay_creds_iv) {
+    if (s[encCol]) {
       try { return decryptField(s[encCol], s.razorpay_creds_iv); }
       catch (_e) { return s[plainCol] || null; }
     }
@@ -29,15 +29,11 @@ export const razorpayDecryptCreds = (s) => {
 };
 
 export const razorpayEncryptCreds = ({ key_id, key_secret }) => {
-  if (!isSecretsConfigured()) {
-    return { razorpay_key_id: key_id, razorpay_key_id_enc: null, razorpay_key_secret_enc: null, razorpay_creds_iv: null };
-  }
-  const iv = newIv();
+  requireSecretsConfigured();
   return {
     razorpay_key_id: null,
-    razorpay_key_id_enc: encryptField(key_id, iv),
-    razorpay_key_secret_enc: encryptField(key_secret, iv),
-    razorpay_creds_iv: iv,
+    razorpay_key_id_enc: encryptField(key_id),
+    razorpay_key_secret_enc: encryptField(key_secret),
   };
 };
 

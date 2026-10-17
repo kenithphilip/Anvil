@@ -11,7 +11,7 @@ const BASE_URL = "https://api.reducto.ai/v1";
 
 const apiKey = (settings) => {
   if (!settings) return null;
-  if (settings.docai_reducto_api_key_enc && settings.docai_creds_iv) {
+  if (settings.docai_reducto_api_key_enc) {
     try { return decryptField(settings.docai_reducto_api_key_enc, settings.docai_creds_iv); }
     catch (_e) { /* fall through */ }
   }

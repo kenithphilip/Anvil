@@ -21,7 +21,7 @@
 // recommended pattern in AIS 9.2.4+). Sync entities use the
 // dataservice.
 
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { getOrMintToken, evictToken } from "./token-cache.js";
 import { safeFetch } from "./safe-fetch.js";
 
@@ -29,7 +29,7 @@ export const jdeDecryptCreds = (s) => {
   if (!s) return s;
   const out = { ...s };
   const tryDec = (encCol, plainCol) => {
-    if (s[encCol] && s.jde_creds_iv) {
+    if (s[encCol]) {
       try { return decryptField(s[encCol], s.jde_creds_iv); }
       catch (_e) { return s[plainCol] || null; }
     }
@@ -41,20 +41,11 @@ export const jdeDecryptCreds = (s) => {
 };
 
 export const jdeEncryptCreds = ({ username, password }) => {
-  if (!isSecretsConfigured()) {
-    return {
-      jde_username: username,
-      jde_username_enc: null,
-      jde_password_enc: null,
-      jde_creds_iv: null,
-    };
-  }
-  const iv = newIv();
+  requireSecretsConfigured();
   return {
     jde_username: null,
-    jde_username_enc: encryptField(username, iv),
-    jde_password_enc: encryptField(password, iv),
-    jde_creds_iv: iv,
+    jde_username_enc: encryptField(username),
+    jde_password_enc: encryptField(password),
   };
 };
 

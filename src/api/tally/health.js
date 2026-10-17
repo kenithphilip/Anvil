@@ -13,6 +13,7 @@ import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { isSecretsConfigured } from "../_lib/secrets.js";
+import { tallyEnvBridgeServes } from "../_lib/tally-client.js";
 
 const stripToken = (row) => {
   if (!row) return row;
@@ -61,7 +62,7 @@ export default async function handler(req, res) {
 
     return json(res, 200, {
       companies: (companies.data || []).map(stripToken),
-      configured: (companies.data || []).some((c) => !!c.bridge_url) || !!process.env.TALLY_BRIDGE_URL,
+      configured: (companies.data || []).some((c) => !!c.bridge_url) || tallyEnvBridgeServes(ctx.tenantId),
       secrets_key_present: isSecretsConfigured(),
       retry_pending: queued.count || 0,
       retry_gave_up: gaveUp.count || 0,

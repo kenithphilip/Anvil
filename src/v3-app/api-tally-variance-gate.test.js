@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 let orderRow = null;
+let bridgeUrl = "https://bridge.example";
 
 const chainable = () => {
   const api = new Proxy({}, {
@@ -26,14 +27,16 @@ const chainable = () => {
 vi.mock("../api/_lib/supabase.js", () => ({ serviceClient: () => chainable() }));
 // The bridge-config check runs BEFORE the order read, so without this the
 // handler 409s on BRIDGE_NOT_CONFIGURED and never reaches the gate under test.
-vi.mock("../api/_lib/tally-client.js", () => ({
+vi.mock("../api/_lib/tally-client.js", async () => ({
   tallyResolveCompany: async () => ({
-    id: "tc1", bridge_url: "https://bridge.example", company_name: "ACME",
+    id: "tc1", bridge_url: bridgeUrl, company_name: "ACME",
     default_sales_voucher_type: "Sales",
   }),
   // Never actually reached in these cases; present so the import resolves.
   tallyPush: async () => ({ ok: true, data: {} }),
   tallyIsRecoverable: () => false,
+  // The real https rule.
+  tallyBridgeUrlProblem: (await vi.importActual("../api/_lib/tally-client.js")).tallyBridgeUrlProblem,
 }));
 vi.mock("../api/_lib/tally-voucher-type.js", () => ({ resolveSalesVoucherType: () => "Sales" }));
 vi.mock("../api/_lib/auth.js", () => ({
@@ -63,7 +66,17 @@ const push = async () => {
   return res;
 };
 
-beforeEach(() => { vi.clearAllMocks(); });
+beforeEach(() => { vi.clearAllMocks(); bridgeUrl = "https://bridge.example"; });
+
+describe("the bridge URL", () => {
+  it("refuses a plain-http bridge with 409", async () => {
+    bridgeUrl = "http://bridge.example";
+    orderRow = withLines([{ partNumber: "P-1", quantity: 1, unitPrice: 100 }]);
+    const res = await push();
+    expect(res.__status).toBe(409);
+    expect(res.__body.error.code).toBe("BRIDGE_URL_INSECURE");
+  });
+});
 
 describe("the gate", () => {
   it("blocks the push with 409 when a variance line is present", async () => {

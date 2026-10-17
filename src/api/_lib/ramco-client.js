@@ -13,7 +13,7 @@
 // shape that matches Ramco's published v2 docs. We accept both the
 // v1 shape (`results`) and the v2 shape (`data`).
 
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { oauth2ClientCredentials, oauth2Evict } from "./oauth2.js";
 import { safeFetch } from "./safe-fetch.js";
 
@@ -21,7 +21,7 @@ export const ramcoDecryptCreds = (s) => {
   if (!s) return s;
   const out = { ...s };
   const tryDec = (encCol, plainCol) => {
-    if (s[encCol] && s.ramco_creds_iv) {
+    if (s[encCol]) {
       try { return decryptField(s[encCol], s.ramco_creds_iv); }
       catch (_e) { return s[plainCol] || null; }
     }
@@ -33,20 +33,11 @@ export const ramcoDecryptCreds = (s) => {
 };
 
 export const ramcoEncryptCreds = ({ client_id, client_secret }) => {
-  if (!isSecretsConfigured()) {
-    return {
-      ramco_client_id: client_id,
-      ramco_client_id_enc: null,
-      ramco_client_secret_enc: null,
-      ramco_creds_iv: null,
-    };
-  }
-  const iv = newIv();
+  requireSecretsConfigured();
   return {
     ramco_client_id: null,
-    ramco_client_id_enc: encryptField(client_id, iv),
-    ramco_client_secret_enc: encryptField(client_secret, iv),
-    ramco_creds_iv: iv,
+    ramco_client_id_enc: encryptField(client_id),
+    ramco_client_secret_enc: encryptField(client_secret),
   };
 };
 

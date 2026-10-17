@@ -1,5 +1,5 @@
-// Issue #210: the per-tenant DocAI provider-key write-path. Keys are encrypted
-// with the shared docai_creds_iv envelope; the pure buildKeyUpdates turns a
+// Issue #210: the per-tenant DocAI provider-key write-path. Each key is
+// encrypted with its own IV (secrets.js v2); the pure buildKeyUpdates turns a
 // { provider: plaintext|null } map into the tenant_settings column patch.
 
 import { describe, it, expect, beforeAll } from "vitest";
@@ -8,7 +8,10 @@ import { describe, it, expect, beforeAll } from "vitest";
 beforeAll(() => { process.env.ANVIL_SECRETS_KEY = "0".repeat(64); });
 
 import { DOCAI_PROVIDERS, buildKeyUpdates } from "../api/admin/docai_provider_keys.js";
-import { newIv, decryptField, isSecretsConfigured } from "../api/_lib/secrets.js";
+import { decryptField, isSecretsConfigured } from "../api/_lib/secrets.js";
+
+// v2 layout: "v2:" (3 bytes) || iv (12 bytes) || ciphertext || tag.
+const ivOf = (enc) => Buffer.from(enc.slice(2), "hex").subarray(3, 15).toString("hex");
 
 describe("DOCAI_PROVIDERS", () => {
   it("covers every provider incl. the previously env-only mistral + gst", () => {
@@ -24,14 +27,15 @@ describe("DOCAI_PROVIDERS", () => {
 describe("buildKeyUpdates", () => {
   it("encrypts a non-empty key (round-trips), clears on empty, skips unknown providers", () => {
     expect(isSecretsConfigured()).toBe(true);   // the test key is set
-    const iv = newIv();
-    const { patch, changed } = buildKeyUpdates({ mistral: "sk-mistral-123", gemini: "", nope: "x" }, iv);
+    const { patch, changed } = buildKeyUpdates({ mistral: "sk-mistral-123", gemini: "", nope: "x" });
 
     // mistral -> a bytea '\x'-hex STRING (NOT a Buffer — a Buffer never lands in
     // the bytea column through supabase-js) that decrypts back to the plaintext.
     expect(typeof patch.docai_mistral_api_key_enc).toBe("string");
     expect(patch.docai_mistral_api_key_enc.startsWith("\\x")).toBe(true);
-    expect(decryptField(patch.docai_mistral_api_key_enc, iv)).toBe("sk-mistral-123");
+    expect(decryptField(patch.docai_mistral_api_key_enc)).toBe("sk-mistral-123");
+    // No shared IV is written: docai_creds_iv stays as it is.
+    expect(patch).not.toHaveProperty("docai_creds_iv");
     // gemini "" -> cleared
     expect(patch.docai_gemini_api_key_enc).toBeNull();
     // unknown provider ignored (no stray column)
@@ -41,9 +45,24 @@ describe("buildKeyUpdates", () => {
   });
 
   it("trims whitespace and treats a whitespace-only value as a clear", () => {
-    const iv = newIv();
-    const { patch } = buildKeyUpdates({ reducto: "   ", llamacloud: "  key-x  " }, iv);
+    const { patch } = buildKeyUpdates({ reducto: "   ", llamacloud: "  key-x  " });
     expect(patch.docai_reducto_api_key_enc).toBeNull();
-    expect(decryptField(patch.docai_llamacloud_api_key_enc, iv)).toBe("key-x");
+    expect(decryptField(patch.docai_llamacloud_api_key_enc)).toBe("key-x");
+  });
+});
+
+describe("buildKeyUpdates — one IV per key", () => {
+  it("gives every key in one save its own IV", () => {
+    const { patch } = buildKeyUpdates({ gemini: "k-gemini", mistral: "k-mistral", reducto: "k-reducto" });
+    const ivs = [patch.docai_gemini_api_key_enc, patch.docai_mistral_api_key_enc, patch.docai_reducto_api_key_enc].map(ivOf);
+    expect(new Set(ivs).size).toBe(3);
+  });
+
+  it("gives a key saved later a different IV from a key saved earlier", () => {
+    const first = buildKeyUpdates({ gemini: "k-1" }).patch.docai_gemini_api_key_enc;
+    const second = buildKeyUpdates({ gemini: "k-2" }).patch.docai_gemini_api_key_enc;
+    expect(ivOf(first)).not.toBe(ivOf(second));
+    expect(decryptField(first)).toBe("k-1");
+    expect(decryptField(second)).toBe("k-2");
   });
 });

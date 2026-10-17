@@ -6,7 +6,7 @@ import { decryptField } from "./secrets.js";
 // MISTRAL_API_KEY env var. opts.settings carries the tenant settings row.
 const resolveMistralKey = (opts) => {
   const s = opts && opts.settings;
-  if (s && s.docai_mistral_api_key_enc && s.docai_creds_iv) {
+  if (s && s.docai_mistral_api_key_enc) {
     try { const k = decryptField(s.docai_mistral_api_key_enc, s.docai_creds_iv); if (k) return k; } catch (_e) { /* fall through to env */ }
   }
   return process.env.MISTRAL_API_KEY || null;

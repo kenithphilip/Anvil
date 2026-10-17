@@ -14,7 +14,7 @@ import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/c
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
-import { tallyEncryptedTokenColumns } from "../_lib/tally-client.js";
+import { tallyEncryptedTokenColumns, tallyBridgeUrlProblem } from "../_lib/tally-client.js";
 import { validateGstin } from "../_lib/gstin.js";
 
 // Phase 1 F8: reject typo'd GSTINs at the tally_companies entry
@@ -33,6 +33,18 @@ const checkCompanyGstin = (body) => {
     };
   }
   body.gstin = v.normalized;
+  return null;
+};
+
+// A bridge URL is optional (blank clears it), but a set one must be https
+// (plain http only for localhost). Returns a 400 error body or null.
+const checkBridgeUrl = (body) => {
+  if (!body || body.bridge_url === undefined || body.bridge_url === null) return null;
+  const raw = String(body.bridge_url).trim();
+  if (!raw) { body.bridge_url = null; return null; }
+  const problem = tallyBridgeUrlProblem(raw);
+  if (problem) return { code: "BRIDGE_URL_INSECURE", message: problem, field: "bridge_url" };
+  body.bridge_url = raw;
   return null;
 };
 
@@ -66,6 +78,8 @@ export default async function handler(req, res) {
       if (!body?.name) return json(res, 400, { error: { message: "name required" } });
       const gstinErr = checkCompanyGstin(body);
       if (gstinErr) return json(res, 400, { error: { ...gstinErr, field: "gstin" } });
+      const urlErr = checkBridgeUrl(body);
+      if (urlErr) return json(res, 400, { error: urlErr });
       const tokenColumns = tallyEncryptedTokenColumns(body.bridge_token || null);
 
       // First company auto-becomes default.
@@ -111,6 +125,8 @@ export default async function handler(req, res) {
       const body = await readBody(req);
       const gstinErr = checkCompanyGstin(body);
       if (gstinErr) return json(res, 400, { error: { ...gstinErr, field: "gstin" } });
+      const urlErr = checkBridgeUrl(body);
+      if (urlErr) return json(res, 400, { error: urlErr });
       const patch = {};
       const fields = ["name", "bridge_url", "bridge_version", "default_voucher_series",
         "default_sales_ledger", "default_party_group", "gstin", "state_code"];

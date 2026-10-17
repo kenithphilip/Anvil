@@ -26,25 +26,42 @@
 //
 // All endpoints accept Authorization: Bearer <bridge_token>.
 // The bridge token + URL live on tally_companies; we decrypt the
-// token at use time.
+// token at use time. The bridge URL must be https (plain http only
+// for a bridge on localhost, in dev).
 
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { safeFetch } from "./safe-fetch.js";
+import { defaultTenantId } from "./tenancy.js";
 
 export const tallyDecryptToken = (company) => {
   if (!company) return null;
-  if (company.bridge_token_enc && company.bridge_iv) {
+  if (company.bridge_token_enc) {
     try { return decryptField(company.bridge_token_enc, company.bridge_iv); }
     catch (_e) { return company.bridge_token || null; }
   }
   return company.bridge_token || null;
 };
 
+// Columns for a bridge-token write. Throws 400 without ANVIL_SECRETS_KEY:
+// the token is never stored in plaintext. bridge_iv is nulled because the
+// v2 value carries its own IV.
 export const tallyEncryptedTokenColumns = (token) => {
   if (!token) return { bridge_token: null, bridge_token_enc: null, bridge_iv: null };
-  if (!isSecretsConfigured()) return { bridge_token: token, bridge_token_enc: null, bridge_iv: null };
-  const iv = newIv();
-  return { bridge_token: null, bridge_token_enc: encryptField(token, iv), bridge_iv: iv };
+  requireSecretsConfigured();
+  return { bridge_token: null, bridge_token_enc: encryptField(token), bridge_iv: null };
+};
+
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+// Returns null when the bridge URL is acceptable, else the reason it is not.
+// The bridge receives the bearer token and the tenant's vouchers, so it must
+// be https. Plain http is accepted only for a bridge on localhost (dev).
+export const tallyBridgeUrlProblem = (raw) => {
+  let u;
+  try { u = new URL(String(raw)); } catch (_e) { return "Tally bridge URL is not a valid URL"; }
+  if (u.protocol === "https:") return null;
+  if (u.protocol === "http:" && (LOCAL_HOSTS.has(u.hostname) || u.hostname.endsWith(".localhost"))) return null;
+  return "Tally bridge URL must use https (plain http is accepted only for localhost)";
 };
 
 const headers = (company) => {
@@ -61,16 +78,19 @@ const jsonHeaders = (company) => {
   return out;
 };
 
-const ensureUrl = (company, suffix = "") => {
+// The bridge endpoint to call, or a 409 when the URL is missing or not https.
+export const tallyBridgeEndpoint = (company, suffix = "") => {
   if (!company?.bridge_url) {
     throw Object.assign(new Error("Tally bridge URL not configured for this company"), { status: 409 });
   }
+  const problem = tallyBridgeUrlProblem(company.bridge_url);
+  if (problem) throw Object.assign(new Error(problem), { status: 409 });
   const base = company.bridge_url.replace(/\/+$/, "");
   return suffix ? base + suffix : base;
 };
 
 export const tallyPush = async (company, xml, opts) => {
-  const url = ensureUrl(company);
+  const url = tallyBridgeEndpoint(company);
   const t0 = Date.now();
   const resp = await safeFetch(url, {
     method: "POST",
@@ -88,7 +108,7 @@ export const tallyPush = async (company, xml, opts) => {
 };
 
 export const tallyAmend = async (company, xml) => {
-  const url = ensureUrl(company, "/amend");
+  const url = tallyBridgeEndpoint(company, "/amend");
   const t0 = Date.now();
   const resp = await safeFetch(url, { method: "POST", headers: headers(company), body: xml });
   const text = await resp.text();
@@ -96,7 +116,7 @@ export const tallyAmend = async (company, xml) => {
 };
 
 export const tallyHealth = async (company) => {
-  const url = ensureUrl(company, "/health");
+  const url = tallyBridgeEndpoint(company, "/health");
   const t0 = Date.now();
   try {
     const resp = await safeFetch(url, { method: "GET", headers: jsonHeaders(company) });
@@ -110,7 +130,7 @@ export const tallyHealth = async (company) => {
 };
 
 export const tallySyncVouchers = async (company, since) => {
-  const url = ensureUrl(company, "/sync");
+  const url = tallyBridgeEndpoint(company, "/sync");
   const resp = await safeFetch(url, {
     method: "POST",
     headers: jsonHeaders(company),
@@ -123,7 +143,7 @@ export const tallySyncVouchers = async (company, since) => {
 };
 
 export const tallySyncPayments = async (company, since) => {
-  const url = ensureUrl(company, "/payments");
+  const url = tallyBridgeEndpoint(company, "/payments");
   const resp = await safeFetch(url, {
     method: "POST",
     headers: jsonHeaders(company),
@@ -138,9 +158,18 @@ export const tallySyncPayments = async (company, since) => {
 export const tallyIsRecoverable = (status) =>
   status === 0 || status === 408 || status === 429 || (status >= 500 && status < 600);
 
-// Default-company resolver. Falls back to env-configured single bridge
-// when no tally_companies row is set, so v1 deployments keep working
-// without a migration step.
+// The env-configured bridge (TALLY_BRIDGE_URL) is a legacy single-tenant
+// setting. It serves exactly one tenant: TALLY_BRIDGE_TENANT_ID, else the
+// deployment's default tenant (DEFAULT_TENANT_ID). Every other tenant needs
+// its own tally_companies row.
+export const tallyEnvBridgeServes = (tenantId) => {
+  if (!process.env.TALLY_BRIDGE_URL || !tenantId) return false;
+  return tenantId === (process.env.TALLY_BRIDGE_TENANT_ID || defaultTenantId());
+};
+
+// Default-company resolver. Falls back to the env-configured bridge when
+// no tally_companies row is set and that bridge serves this tenant, so v1
+// single-tenant deployments keep working without a migration step.
 export const tallyResolveCompany = async (svc, tenantId, companyId) => {
   if (companyId) {
     const r = await svc.from("tally_companies").select("*").eq("tenant_id", tenantId).eq("id", companyId).maybeSingle();
@@ -151,8 +180,8 @@ export const tallyResolveCompany = async (svc, tenantId, companyId) => {
   // Single-row fallback: pick the first company for this tenant.
   const any = await svc.from("tally_companies").select("*").eq("tenant_id", tenantId).order("created_at").limit(1).maybeSingle();
   if (any.data) return any.data;
-  // Env-configured legacy single bridge.
-  if (process.env.TALLY_BRIDGE_URL) {
+  // Env-configured legacy single bridge, for its one tenant only.
+  if (tallyEnvBridgeServes(tenantId)) {
     return {
       id: null,
       tenant_id: tenantId,

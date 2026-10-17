@@ -18,23 +18,22 @@
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { resolveContext } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
-import { encryptField, decryptField, isSecretsConfigured, newIv } from "../_lib/secrets.js";
+import { encryptField, decryptField, requireSecretsConfigured } from "../_lib/secrets.js";
 import { generateTotpSecret, otpauthUri, verifyTotp, verifyTotpAndConsume } from "../_lib/totp.js";
 import { checkRateLimit, recordRateLimitAttempt } from "../_lib/rate-limit.js";
 
 const ENROLL_PENDING_TTL_MIN = 10;
 
+// Throws 400 without ANVIL_SECRETS_KEY: a TOTP secret is never stored in
+// plaintext. The _iv column is nulled because the v2 value carries its own.
 const persistSecret = (column, secret) => {
-  if (!isSecretsConfigured()) {
-    return { [`${column}_enc`]: null, [column]: secret, [`${column}_iv`]: null };
-  }
-  const iv = newIv();
-  return { [`${column}_enc`]: encryptField(secret, iv), [column]: null, [`${column}_iv`]: iv };
+  requireSecretsConfigured();
+  return { [`${column}_enc`]: encryptField(secret), [column]: null, [`${column}_iv`]: null };
 };
 
 const readSecret = (row, column) => {
   if (!row) return null;
-  if (row[`${column}_enc`] && row[`${column}_iv`]) {
+  if (row[`${column}_enc`]) {
     try { return decryptField(row[`${column}_enc`], row[`${column}_iv`]); }
     catch (_) { return row[column] || null; }
   }

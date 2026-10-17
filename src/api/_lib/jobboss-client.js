@@ -15,14 +15,14 @@
 // implement a flat-file drop adapter against those, but it's out of
 // scope for v1. The REST path is the supported surface here.
 
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { safeFetch } from "./safe-fetch.js";
 
 export const jobbossDecryptCreds = (s) => {
   if (!s) return s;
   const out = { ...s };
   const tryDec = (encCol) => {
-    if (s[encCol] && s.jobboss_creds_iv) {
+    if (s[encCol]) {
       try { return decryptField(s[encCol], s.jobboss_creds_iv); }
       catch (_e) { return null; }
     }
@@ -33,16 +33,9 @@ export const jobbossDecryptCreds = (s) => {
 };
 
 export const jobbossEncryptCreds = ({ token }) => {
-  if (!isSecretsConfigured()) {
-    return {
-      jobboss_token_enc: null,
-      jobboss_creds_iv: null,
-    };
-  }
-  const iv = newIv();
+  requireSecretsConfigured();
   return {
-    jobboss_token_enc: encryptField(token, iv),
-    jobboss_creds_iv: iv,
+    jobboss_token_enc: encryptField(token),
   };
 };
 

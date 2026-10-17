@@ -10,13 +10,13 @@
 // number of calls made per minute.
 
 import crypto from "node:crypto";
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { safeFetch } from "./safe-fetch.js";
 
 export const voiceDecryptCreds = (s) => {
   if (!s) return s;
   const out = { ...s };
-  if (s.api_key_enc && s.creds_iv) {
+  if (s.api_key_enc) {
     try { out.api_key = decryptField(s.api_key_enc, s.creds_iv); }
     catch (_e) { out.api_key = s.api_key || null; }
   }
@@ -24,14 +24,10 @@ export const voiceDecryptCreds = (s) => {
 };
 
 export const voiceEncryptCreds = ({ apiKey }) => {
-  if (!isSecretsConfigured()) {
-    return { api_key: apiKey || null, api_key_enc: null, creds_iv: null };
-  }
-  const iv = newIv();
+  if (apiKey) requireSecretsConfigured();
   return {
     api_key: null,
-    api_key_enc: apiKey ? encryptField(apiKey, iv) : null,
-    creds_iv: iv,
+    api_key_enc: apiKey ? encryptField(apiKey) : null,
   };
 };
 
